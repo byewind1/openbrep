@@ -7,4 +7,4 @@ Usage:
     gdl-agent run "Add a sunshade parameter to the window"
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"

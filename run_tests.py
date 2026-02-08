@@ -17,6 +17,7 @@ from gdl_agent.dependencies import DependencyResolver
 from gdl_agent.sandbox import Sandbox
 from gdl_agent.context import slice_context, detect_relevant_sections
 from gdl_agent.preflight import PreflightAnalyzer
+from gdl_agent.gdl_parser import parse_gdl_source, parse_gdl_file, ParsedGDL
 from gdl_agent.xml_utils import (
     validate_xml, validate_gdl_structure, compute_diff,
     contents_identical, inject_debug_anchors
@@ -668,6 +669,155 @@ def _test_agent_blocked_by_preflight():
     assert result.status == Status.BLOCKED
     assert llm.call_count == 0, "LLM should NOT be called when preflight blocks"
 run_test("preflight blocker → no LLM call", _test_agent_blocked_by_preflight)
+
+# ── v0.3.1: GDL Parser Tests ─────────────────────────────
+print("\n📄 GDL Parser (v0.3.1)")
+
+BOOKSHELF_GDL = '''! ============================================================================
+! 对象名称：TestObj (测试)
+! 描述：A test object
+! 版本：2.0.0
+! ============================================================================
+
+! ============================================================================
+! 参数列表（PARAMETERS）
+! ============================================================================
+! rWidth      Length    1.00    Width
+! iCount      Integer   5       Count
+! bToggle     Boolean   1       Toggle
+! matSurf     Material  "Wood - Oak"    Surface
+
+! ============================================================================
+! MASTER SCRIPT
+! ============================================================================
+
+IF rWidth < 0.1 THEN rWidth = 0.1
+_half = rWidth / 2
+
+! ============================================================================
+! PARAMETER SCRIPT
+! ============================================================================
+
+VALUES "rWidth" RANGE [0.1, 5.0]
+
+! ============================================================================
+! 3D SCRIPT
+! ============================================================================
+
+SET MATERIAL matSurf
+FOR i = 1 TO iCount
+    ADD 0, 0, i * 0.3
+    BLOCK rWidth, 0.5, 0.02
+    DEL 1
+NEXT i
+
+IF bToggle THEN
+    ADD 0, 0, 0
+    BLOCK rWidth, 0.5, _half
+    DEL 1
+ENDIF
+'''
+
+def _test_parser_params():
+    r = parse_gdl_source(BOOKSHELF_GDL)
+    assert len(r.parameters) == 4, f"Expected 4 params, got {len(r.parameters)}"
+    names = [p.name for p in r.parameters]
+    assert "rWidth" in names
+    assert "matSurf" in names
+run_test("parse parameters from comments", _test_parser_params)
+
+def _test_parser_metadata():
+    r = parse_gdl_source(BOOKSHELF_GDL)
+    assert r.description == "A test object"
+    assert r.version == "2.0.0"
+run_test("extract metadata", _test_parser_metadata)
+
+def _test_parser_scripts():
+    r = parse_gdl_source(BOOKSHELF_GDL)
+    assert "rWidth" in r.master_script
+    assert "VALUES" in r.parameter_script
+    assert "BLOCK" in r.script_3d
+    assert "FOR" in r.script_3d
+run_test("extract all script sections", _test_parser_scripts)
+
+def _test_parser_to_xml():
+    r = parse_gdl_source(BOOKSHELF_GDL)
+    xml = r.to_xml()
+    vr = validate_xml(xml)
+    assert vr.valid, f"Generated XML invalid: {vr.error}"
+run_test("to_xml produces valid XML", _test_parser_to_xml)
+
+def _test_parser_xml_validates_gdl():
+    r = parse_gdl_source(BOOKSHELF_GDL)
+    xml = r.to_xml()
+    issues = validate_gdl_structure(xml)
+    assert len(issues) == 0, f"GDL issues: {issues}"
+run_test("generated XML passes GDL validation", _test_parser_xml_validates_gdl)
+
+def _test_parser_single_line_if():
+    """Single-line IF THEN should NOT need ENDIF."""
+    src = '''! ============================================================================
+! 参数列表（PARAMETERS）
+! ============================================================================
+! A Length 1.0 Width
+
+! ============================================================================
+! MASTER SCRIPT
+! ============================================================================
+IF A < 0 THEN A = 0
+IF A > 10 THEN A = 10
+
+! ============================================================================
+! 3D SCRIPT
+! ============================================================================
+BLOCK A, 1, 1
+'''
+    r = parse_gdl_source(src)
+    xml = r.to_xml()
+    issues = validate_gdl_structure(xml)
+    if_issues = [i for i in issues if "IF/ENDIF" in i]
+    assert len(if_issues) == 0, f"False positive IF/ENDIF: {if_issues}"
+run_test("single-line IF THEN: no false positive", _test_parser_single_line_if)
+
+def _test_parser_material_quoted():
+    r = parse_gdl_source(BOOKSHELF_GDL)
+    mat = [p for p in r.parameters if p.name == "matSurf"][0]
+    assert '"Wood - Oak"' in mat.value, f"Expected quoted value, got {mat.value}"
+run_test("Material with quoted value", _test_parser_material_quoted)
+
+def _test_parser_commented_ui():
+    src = '''! ============================================================================
+! 3D SCRIPT
+! ============================================================================
+BLOCK 1, 1, 1
+
+! ============================================================================
+! UI SCRIPT（如需要）
+! ============================================================================
+! UI_DIALOG "Settings"
+! UI_PAGE 1
+! UI_INFIELD "A", 10, 30, 80, 20
+'''
+    r = parse_gdl_source(src)
+    assert "UI_DIALOG" in r.script_ui, f"Should uncomment UI: {r.script_ui[:50]}"
+    assert not r.script_ui.startswith("!"), "Should NOT start with comment"
+run_test("uncomment commented-out UI script", _test_parser_commented_ui)
+
+def _test_parser_real_bookshelf():
+    """Parse the actual uploaded Bookshelf.gdl file."""
+    import os
+    path = "/mnt/user-data/uploads/Bookshelf.gdl"
+    if not os.path.exists(path):
+        return  # Skip if file not available
+    r = parse_gdl_file(path)
+    assert len(r.parameters) == 10, f"Expected 10 params, got {len(r.parameters)}"
+    assert r.name == "Bookshelf"
+    xml = r.to_xml()
+    vr = validate_xml(xml)
+    assert vr.valid
+    issues = validate_gdl_structure(xml)
+    assert len(issues) == 0, f"Issues: {issues}"
+run_test("real Bookshelf.gdl: 10 params, clean XML", _test_parser_real_bookshelf)
 
 # ── Summary ───────────────────────────────────────────────
 print(f"\n{'='*50}")

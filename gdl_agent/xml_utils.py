@@ -68,8 +68,11 @@ def validate_gdl_structure(content: str) -> list[str]:
         )
 
     # Check for nested CDATA (illegal in XML)
-    if re.search(r"<!\[CDATA\[.*<!\[CDATA\[", content, re.DOTALL):
-        issues.append("Nested CDATA sections detected — this is invalid XML.")
+    # Only check within each CDATA block, not across sections
+    for m in re.finditer(r"<!\[CDATA\[(.*?)\]\]>", content, re.DOTALL):
+        if "<![CDATA[" in m.group(1):
+            issues.append("Nested CDATA sections detected — this is invalid XML.")
+            break
 
     try:
         root = ET.fromstring(content)
@@ -82,9 +85,9 @@ def validate_gdl_structure(content: str) -> list[str]:
 
     # Check all script sections
     _BLOCK_PAIRS = [
-        (r"\bIF\b", r"\bENDIF\b", "IF/ENDIF"),
-        (r"\bFOR\b", r"\bNEXT\b", "FOR/NEXT"),
-        (r"\bWHILE\b", r"\bENDWHILE\b", "WHILE/ENDWHILE"),
+        ("IF", "ENDIF"),
+        ("FOR", "NEXT"),
+        ("WHILE", "ENDWHILE"),
     ]
 
     for script_tag in ["Script_1D", "Script_2D", "Script_3D", "Script_UI", "Script_PR",
@@ -94,14 +97,45 @@ def validate_gdl_structure(content: str) -> list[str]:
             continue
         script = elem.text
 
-        for open_pat, close_pat, label in _BLOCK_PAIRS:
-            open_count = len(re.findall(open_pat, script))
-            close_count = len(re.findall(close_pat, script))
-            if open_count != close_count:
-                issues.append(
-                    f"{script_tag}: {label} mismatch ({label.split('/')[0]}={open_count}, "
-                    f"{label.split('/')[1]}={close_count})"
-                )
+        # IF/ENDIF: distinguish single-line IF (no ENDIF needed) from multi-line
+        # Single-line: "IF x THEN y = z" (entire IF on one line, no block)
+        # Multi-line: "IF x THEN\n  ...\nENDIF"
+        all_if_lines = [l.strip() for l in script.splitlines()
+                        if re.match(r"\s*IF\b", l, re.IGNORECASE)]
+        multiline_ifs = 0
+        for if_line in all_if_lines:
+            # A single-line IF has THEN followed by a statement on the SAME line
+            # e.g., "IF A < 0.30 THEN A = 0.30"
+            then_match = re.search(r"\bTHEN\b(.+)", if_line, re.IGNORECASE)
+            if then_match:
+                after_then = then_match.group(1).strip()
+                if after_then and not after_then.startswith("!"):
+                    continue  # Single-line IF, no ENDIF needed
+            multiline_ifs += 1
+
+        endif_count = len(re.findall(r"\bENDIF\b", script))
+        if multiline_ifs != endif_count:
+            issues.append(
+                f"{script_tag}: IF/ENDIF mismatch "
+                f"(multi-line IF={multiline_ifs}, ENDIF={endif_count})"
+            )
+
+        # FOR/NEXT
+        for_count = len(re.findall(r"\bFOR\b", script))
+        next_count = len(re.findall(r"\bNEXT\b", script))
+        if for_count != next_count:
+            issues.append(
+                f"{script_tag}: FOR/NEXT mismatch (FOR={for_count}, NEXT={next_count})"
+            )
+
+        # WHILE/ENDWHILE
+        while_count = len(re.findall(r"\bWHILE\b", script))
+        endwhile_count = len(re.findall(r"\bENDWHILE\b", script))
+        if while_count != endwhile_count:
+            issues.append(
+                f"{script_tag}: WHILE/ENDWHILE mismatch "
+                f"(WHILE={while_count}, ENDWHILE={endwhile_count})"
+            )
 
         # Check GOSUB targets have matching labels
         gosub_targets = re.findall(r"\bGOSUB\s+(\d+)", script)
