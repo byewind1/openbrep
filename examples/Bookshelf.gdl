@@ -1,0 +1,150 @@
+! ============================================================================
+! 对象名称：Bookshelf (书架)
+! 文件：Bookshelf.gdlsrc
+! 版本：1.0.0
+! 作者：Claude
+! 描述：参数化书架，可调节层板数量和尺寸
+! ArchiCAD 版本：25+
+! ============================================================================
+
+! ============================================================================
+! 参数列表（PARAMETERS）
+! ============================================================================
+! A           Length    0.80    书架宽度
+! B           Length    0.30    书架深度
+! ZZYZX       Length    1.80    书架总高度
+! nShelves    Integer   4       层板数量（不含顶底板）
+! thickness   Length    0.02    板材厚度
+! sideW       Length    0.02    侧板厚度
+! hasBack     Boolean   1       是否有背板
+! backThick   Length    0.01    背板厚度
+! frameMat    Material  "Wood - Oak"    框架材质
+! shelfMat    Material  "Wood - Oak"    层板材质
+
+! ============================================================================
+! MASTER SCRIPT
+! ============================================================================
+
+! --- 参数验证 ---
+IF A < 0.30 THEN A = 0.30
+IF A > 3.00 THEN A = 3.00
+IF B < 0.20 THEN B = 0.20
+IF B > 0.60 THEN B = 0.60
+IF ZZYZX < 0.50 THEN ZZYZX = 0.50
+IF ZZYZX > 3.00 THEN ZZYZX = 3.00
+IF nShelves < 1 THEN nShelves = 1
+IF nShelves > 10 THEN nShelves = 10
+IF thickness < 0.01 THEN thickness = 0.01
+IF thickness > 0.05 THEN thickness = 0.05
+IF sideW < 0.01 THEN sideW = 0.01
+IF sideW > 0.05 THEN sideW = 0.05
+
+! --- 派生计算 ---
+_innerW = A - 2 * sideW                     ! 内部净宽
+_innerH = ZZYZX - 2 * thickness             ! 内部净高（去掉顶底板）
+_shelfSpacing = _innerH / (nShelves + 1)    ! 层板间距
+
+! ============================================================================
+! PARAMETER SCRIPT
+! ============================================================================
+
+VALUES "A" RANGE [0.30, 3.00]
+VALUES "B" RANGE [0.20, 0.60]
+VALUES "ZZYZX" RANGE [0.50, 3.00]
+VALUES "nShelves" RANGE [1, 10]
+VALUES "thickness" RANGE [0.01, 0.05]
+VALUES "sideW" RANGE [0.01, 0.05]
+VALUES "backThick" RANGE [0.005, 0.02]
+
+! ============================================================================
+! 2D SCRIPT
+! ============================================================================
+
+! --- 热点 ---
+HOTSPOT2 0, 0, 1
+HOTSPOT2 A, 0, 2
+HOTSPOT2 A, B, 3
+HOTSPOT2 0, B, 4
+HOTSPOT2 A/2, B/2, 5    ! 中心点
+
+! --- 拉伸热点 ---
+HOTSPOT2 0, 0, 1, A, 1 + 256        ! 基准点 - 宽度
+HOTSPOT2 A, 0, 2, A, 2              ! 移动点 - 宽度
+HOTSPOT2 -1, 0, 3, A, 3             ! 方向向量 - 宽度
+
+HOTSPOT2 0, 0, 4, B, 4 + 256        ! 基准点 - 深度
+HOTSPOT2 0, B, 5, B, 5              ! 移动点 - 深度
+HOTSPOT2 0, -1, 6, B, 6             ! 方向向量 - 深度
+
+! --- 绘制轮廓 ---
+RECT2 0, 0, A, B
+
+! --- 绘制侧板 ---
+LINE2 sideW, 0, sideW, B
+LINE2 A - sideW, 0, A - sideW, B
+
+! --- 绘制背板位置（如有）---
+IF hasBack THEN
+    LINE2 0, B - backThick, A, B - backThick
+ENDIF
+
+! ============================================================================
+! 3D SCRIPT
+! ============================================================================
+
+TOLER 0.001
+
+! --- 设置框架材质 ---
+SET MATERIAL frameMat
+
+! --- 绘制底板 ---
+BLOCK A, B, thickness
+
+! --- 绘制顶板 ---
+ADD 0, 0, ZZYZX - thickness
+BLOCK A, B, thickness
+DEL 1
+
+! --- 绘制左侧板 ---
+ADD 0, 0, thickness
+BLOCK sideW, B, _innerH
+DEL 1
+
+! --- 绘制右侧板 ---
+ADD A - sideW, 0, thickness
+BLOCK sideW, B, _innerH
+DEL 1
+
+! --- 绘制层板 ---
+SET MATERIAL shelfMat
+FOR i = 1 TO nShelves
+    _shelfZ = thickness + i * _shelfSpacing
+    ADD sideW, 0, _shelfZ
+    BLOCK _innerW, B, thickness
+    DEL 1
+NEXT i
+
+! --- 绘制背板（如有）---
+IF hasBack THEN
+    SET MATERIAL frameMat
+    ADD 0, B - backThick, 0
+    BLOCK A, backThick, ZZYZX
+    DEL 1
+ENDIF
+
+END
+
+! ============================================================================
+! UI SCRIPT（如需要）
+! ============================================================================
+
+! UI_DIALOG "书架设置"
+! UI_PAGE 1
+!     UI_OUTFIELD "尺寸设置", 10, 5, 100, 20
+!     UI_INFIELD "A", 10, 30, 80, 20
+!     UI_INFIELD "B", 10, 55, 80, 20
+!     UI_INFIELD "ZZYZX", 10, 80, 80, 20
+!     UI_SEPARATOR
+!     UI_OUTFIELD "层板设置", 10, 110, 100, 20
+!     UI_INFIELD "nShelves", 10, 135, 80, 20
+!     UI_INFIELD "thickness", 10, 160, 80, 20

@@ -64,18 +64,24 @@ class LLMAdapter:
         except ImportError:
             self._litellm = None
 
-    def generate(self, messages: list[Message], **kwargs) -> LLMResponse:
+    def generate(self, messages: list, **kwargs) -> LLMResponse:
         """
         Send messages to the LLM and return the response.
 
         Args:
-            messages: Conversation history as Message objects.
+            messages: List of Message objects or dicts with 'role' and 'content'.
             **kwargs: Additional parameters passed to litellm.completion().
 
         Returns:
             LLMResponse with the generated content.
         """
-        msg_dicts = [{"role": m.role, "content": m.content} for m in messages]
+        # Accept both Message objects and plain dicts
+        msg_dicts = []
+        for m in messages:
+            if isinstance(m, dict):
+                msg_dicts.append(m)
+            else:
+                msg_dicts.append({"role": m.role, "content": m.content})
 
         if self._litellm is None:
             raise RuntimeError(
