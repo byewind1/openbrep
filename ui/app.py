@@ -89,6 +89,8 @@ code, .stCodeBlock { font-family: 'JetBrains Mono', monospace !important; }
 
 if "project" not in st.session_state:
     st.session_state.project = None
+if "_import_key_done" not in st.session_state:
+    st.session_state._import_key_done = ""   # dedup: skip re-processing same file
 if "compile_log" not in st.session_state:
     st.session_state.compile_log = []
 if "chat_history" not in st.session_state:
@@ -901,211 +903,214 @@ _SCRIPT_HELP = {
 }
 
 with col_editor:
+    # ── Auto-init empty project so editor is always visible ──
+    if not st.session_state.project:
+        st.session_state.project = HSFProject.create_new(
+            "untitled", work_dir=st.session_state.work_dir
+        )
     proj_now = st.session_state.project
     _ev      = st.session_state.editor_version
 
-    # ── Import button — always visible at top ─────────────
-    any_upload = st.file_uploader(
-        "📂 导入文件 (gdl / txt / gsm)", type=["gdl", "txt", "gsm"],
-        key="editor_import",
-        help=".gdl / .txt → 直接解析脚本  |  .gsm → LP_XMLConverter 解包（需 LP 模式）",
-    )
-    if any_upload:
-        ok, _imp_msg = _handle_unified_import(any_upload)
-        if not ok:
-            st.error(_imp_msg)
-        else:
+    # ── Row 1: Import (left) | 🔧 编译 (right, primary/prominent) ──
+    tb_import, tb_compile_top = st.columns([1.8, 2.2])
+
+    with tb_import:
+        any_upload = st.file_uploader(
+            "📂 导入 gdl / txt / gsm", type=["gdl", "txt", "gsm"],
+            key="editor_import",
+            help=".gdl/.txt → 解析脚本  |  .gsm → LP_XMLConverter 解包",
+        )
+        if any_upload:
+            # Dedup: skip if this exact file was already processed this session
+            _fkey = f"{any_upload.name}_{any_upload.size}"
+            if st.session_state._import_key_done != _fkey:
+                ok, _imp_msg = _handle_unified_import(any_upload)
+                if ok:
+                    st.session_state._import_key_done = _fkey
+                    st.rerun()
+                else:
+                    st.error(_imp_msg)
+
+    with tb_compile_top:
+        # GSM name input + compile button stacked in this column
+        gsm_name_input = st.text_input(
+            "GSM名称", label_visibility="collapsed",
+            value=st.session_state.pending_gsm_name or proj_now.name,
+            placeholder="输出 GSM 名称（不含扩展名）",
+            key="toolbar_gsm_name",
+            help="编译输出文件名",
+        )
+        st.session_state.pending_gsm_name = gsm_name_input
+        if st.button("🔧  编  译  GSM", type="primary", use_container_width=True,
+                     help="将当前所有脚本编译为 ArchiCAD .gsm 对象"):
+            with st.spinner("编译中..."):
+                success, result_msg = do_compile(
+                    proj_now,
+                    gsm_name=gsm_name_input or proj_now.name,
+                    instruction="(toolbar compile)",
+                )
+            st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
+            if success:
+                st.toast("✅ 编译成功", icon="🏗️")
+            else:
+                st.error(result_msg)
             st.rerun()
 
-    if not proj_now:
-        st.info("📂 导入 .gdl / .gsm 文件，或在右侧 AI 对话框中描述需求，AI 将自动创建 GDL 对象。")
+    # ── Row 2: Secondary toolbar ───────────────────────────
+    tb_extract, tb_clear, tb_check = st.columns([1.5, 1.0, 1.2])
 
-    else:
-        # ── Toolbar (project-specific actions) ────────────
-        tb_extract, tb_clear, tb_name, tb_compile, tb_check = st.columns(
-            [1.0, 0.85, 2.0, 1.3, 1.1]
+    with tb_extract:
+        n_blocks = sum(
+            1 for m in st.session_state.chat_history
+            if m.get("role") == "assistant" and "```" in m.get("content", "")
         )
-
-        with tb_extract:
-            n_blocks = sum(
-                1 for m in st.session_state.chat_history
-                if m.get("role") == "assistant" and "```" in m.get("content", "")
-            )
-            lbl = f"📥 提取({n_blocks})" if n_blocks else "📥 提取"
-            if st.button(lbl, use_container_width=True,
-                         help="从 AI 对话中提取 GDL 代码块写入编辑器"):
-                extracted = _extract_gdl_from_chat()
-                if extracted:
-                    _apply_scripts_to_project(proj_now, extracted)
-                    st.session_state.editor_version += 1
-                    st.toast(f"📥 已写入 {len(extracted)} 个脚本", icon="✅")
-                    st.rerun()
-                else:
-                    st.toast("对话中未发现 GDL 代码块", icon="ℹ️")
-
-        with tb_clear:
-            if st.button("🗑️ 清空", use_container_width=True,
-                         help="清空所有脚本代码"):
-                st.session_state.confirm_clear = True
-
-        with tb_name:
-            gsm_name_input = st.text_input(
-                "输出 GSM 名称", label_visibility="collapsed",
-                value=st.session_state.pending_gsm_name or proj_now.name,
-                placeholder="输出 GSM 名称",
-                key="toolbar_gsm_name",
-                help="编译输出文件名（不含版本号和扩展名）",
-            )
-            st.session_state.pending_gsm_name = gsm_name_input
-
-        with tb_compile:
-            if st.button("🔧 编译", type="primary", use_container_width=True,
-                         help="编译当前所有脚本为 .gsm 对象"):
-                with st.spinner("编译中..."):
-                    success, result_msg = do_compile(
-                        proj_now,
-                        gsm_name=gsm_name_input or proj_now.name,
-                        instruction="(toolbar compile)",
-                    )
-                st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
-                if success:
-                    st.toast("✅ 编译成功", icon="🏗️")
-                else:
-                    st.error(result_msg)
+        lbl = f"📥 提取({n_blocks})" if n_blocks else "📥 提取"
+        if st.button(lbl, use_container_width=True,
+                     help="从 AI 对话中提取 GDL 代码块写入编辑器"):
+            extracted = _extract_gdl_from_chat()
+            if extracted:
+                _apply_scripts_to_project(proj_now, extracted)
+                st.session_state.editor_version += 1
+                st.toast(f"📥 已写入 {len(extracted)} 个脚本", icon="✅")
                 st.rerun()
-
-        with tb_check:
-            if st.button("🔍 全检查", use_container_width=True):
-                all_ok = True
-                for stype, fpath, label in _SCRIPT_MAP:
-                    content = proj_now.get_script(stype)
-                    if not content:
-                        continue
-                    skey = fpath.replace("scripts/", "").replace(".gdl", "")
-                    for iss in check_gdl_script(content, skey):
-                        if iss.startswith("✅"):
-                            st.success(f"{label}: {iss}")
-                        else:
-                            st.warning(f"{label}: {iss}")
-                            all_ok = False
-                if all_ok:
-                    st.success("✅ 所有脚本语法正常")
-
-        # ── 清空确认 ──────────────────────────────────────
-        if st.session_state.get("confirm_clear"):
-            st.warning("⚠️ 将清空所有脚本代码，此操作不可撤销。确认继续？")
-            cc1, cc2, _ = st.columns([1, 1, 4])
-            with cc1:
-                if st.button("✅ 确认清空", type="primary"):
-                    for stype, _fp, _lb in _SCRIPT_MAP:
-                        proj_now.set_script(stype, "")
-                    st.session_state.confirm_clear = False
-                    st.session_state.editor_version += 1
-                    _ev = st.session_state.editor_version
-                    st.toast("🗑️ 已清空所有脚本", icon="✅")
-                    st.rerun()
-            with cc2:
-                if st.button("❌ 取消"):
-                    st.session_state.confirm_clear = False
-                    st.rerun()
-
-        st.divider()
-
-        # ── Script / Param Tabs ────────────────────────────
-        tab_labels = ["参数"] + [lbl for _, _, lbl in _SCRIPT_MAP] + ["📋 日志"]
-        all_tabs   = st.tabs(tab_labels)
-        tab_params, *script_tabs, tab_log = all_tabs
-
-        # Params tab
-        with tab_params:
-            with st.expander("ℹ️ 参数说明"):
-                st.markdown(
-                    "**参数列表** — GDL 对象的可调参数。\n\n"
-                    "- **Type**: `Length` / `Integer` / `Boolean` / `Material` / `String`\n"
-                    "- **Name**: 代码中引用的变量名（camelCase，如 `iShelves`）\n"
-                    "- **Value**: 默认值\n"
-                    "- **Fixed**: 勾选后用户无法在 ArchiCAD 中修改"
-                )
-            param_data = [
-                {"Type": p.type_tag, "Name": p.name, "Value": p.value,
-                 "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
-                for p in proj_now.parameters
-            ]
-            if param_data:
-                st.dataframe(param_data, use_container_width=True, hide_index=True)
             else:
-                st.caption("暂无参数，通过 AI 对话添加，或手动添加。")
+                st.toast("对话中未发现 GDL 代码块", icon="ℹ️")
 
-            with st.expander("➕ 手动添加参数"):
-                pc1, pc2, pc3, pc4 = st.columns(4)
-                with pc1:
-                    p_type = st.selectbox("Type", [
-                        "Length", "Integer", "Boolean", "RealNum", "Angle",
-                        "String", "Material", "FillPattern", "LineType", "PenColor",
-                    ])
-                with pc2:
-                    p_name = st.text_input("Name", value="bNewParam")
-                with pc3:
-                    p_value = st.text_input("Value", value="0")
-                with pc4:
-                    p_desc = st.text_input("Description")
-                if st.button("添加参数"):
-                    try:
-                        proj_now.add_parameter(GDLParameter(p_name, p_type, p_desc, p_value))
-                        st.success(f"✅ {p_type} {p_name}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(str(e))
+    with tb_clear:
+        if st.button("🗑️ 清空", use_container_width=True, help="清空所有脚本"):
+            st.session_state.confirm_clear = True
 
-            if st.button("🔍 验证参数"):
-                issues = validate_paramlist(proj_now.parameters)
-                for i in issues:
-                    st.warning(i)
-                if not issues:
-                    st.success("✅ 参数验证通过")
-
-            with st.expander("paramlist.xml 预览"):
-                st.code(build_paramlist_xml(proj_now.parameters), language="xml")
-
-        # Script tabs
-        for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
-            with tab:
-                with st.expander(f"ℹ️ {label} 脚本说明"):
-                    st.markdown(_SCRIPT_HELP.get(fpath, ""))
-
-                current_code = proj_now.get_script(stype) or ""
+    with tb_check:
+        if st.button("🔍 全检查", use_container_width=True):
+            all_ok = True
+            for stype, fpath, label in _SCRIPT_MAP:
+                content = proj_now.get_script(stype)
+                if not content:
+                    continue
                 skey = fpath.replace("scripts/", "").replace(".gdl", "")
-                new_code = st.text_area(
-                    label, value=current_code, height=420,
-                    key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
-                )
-                if new_code != current_code:
-                    proj_now.set_script(stype, new_code)
-                if st.button("🔍 检查", key=f"chk_{fpath}_v{_ev}"):
-                    for iss in check_gdl_script(new_code, skey):
-                        st.success(iss) if iss.startswith("✅") else st.warning(iss)
+                for iss in check_gdl_script(content, skey):
+                    if iss.startswith("✅"):
+                        st.success(f"{label}: {iss}")
+                    else:
+                        st.warning(f"{label}: {iss}")
+                        all_ok = False
+            if all_ok:
+                st.success("✅ 所有脚本语法正常")
 
-        # Log tab
-        with tab_log:
-            if not st.session_state.compile_log:
-                st.info("暂无编译记录")
-            else:
-                for entry in reversed(st.session_state.compile_log):
-                    icon = "✅" if entry["success"] else "❌"
-                    st.markdown(f"**{icon} {entry['project']}** — {entry.get('instruction','')}")
-                    st.code(entry["message"], language="text")
-                    st.divider()
-            if st.button("清除日志"):
-                st.session_state.compile_log = []
+    # ── 清空确认 ──────────────────────────────────────────
+    if st.session_state.get("confirm_clear"):
+        st.warning("⚠️ 将清空所有脚本代码，此操作不可撤销。确认继续？")
+        cc1, cc2, _ = st.columns([1, 1, 4])
+        with cc1:
+            if st.button("✅ 确认清空", type="primary"):
+                for stype, _fp, _lb in _SCRIPT_MAP:
+                    proj_now.set_script(stype, "")
+                st.session_state.confirm_clear = False
+                st.session_state.editor_version += 1
+                st.toast("🗑️ 已清空所有脚本", icon="✅")
                 st.rerun()
-            with st.expander("HSF 目录结构"):
-                tree = [f"📁 {proj_now.name}/", "  ├── libpartdata.xml",
-                        "  ├── paramlist.xml", "  ├── ancestry.xml", "  └── scripts/"]
-                for stype in ScriptType:
-                    if stype in proj_now.scripts:
-                        n = proj_now.scripts[stype].count("\n") + 1
-                        tree.append(f"       ├── {stype.value} ({n} lines)")
-                st.code("\n".join(tree), language="text")
+        with cc2:
+            if st.button("❌ 取消"):
+                st.session_state.confirm_clear = False
+                st.rerun()
+
+    st.divider()
+
+    # ── Script / Param Tabs ───────────────────────────────
+    tab_labels = ["参数"] + [lbl for _, _, lbl in _SCRIPT_MAP] + ["📋 日志"]
+    all_tabs   = st.tabs(tab_labels)
+    tab_params, *script_tabs, tab_log = all_tabs
+
+    # Params tab
+    with tab_params:
+        with st.expander("ℹ️ 参数说明"):
+            st.markdown(
+                "**参数列表** — GDL 对象的可调参数。\n\n"
+                "- **Type**: `Length` / `Integer` / `Boolean` / `Material` / `String`\n"
+                "- **Name**: 代码中引用的变量名（camelCase，如 `iShelves`）\n"
+                "- **Value**: 默认值\n"
+                "- **Fixed**: 勾选后用户无法在 ArchiCAD 中修改"
+            )
+        param_data = [
+            {"Type": p.type_tag, "Name": p.name, "Value": p.value,
+             "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
+            for p in proj_now.parameters
+        ]
+        if param_data:
+            st.dataframe(param_data, use_container_width=True, hide_index=True)
+        else:
+            st.caption("暂无参数，通过 AI 对话添加，或手动添加。")
+
+        with st.expander("➕ 手动添加参数"):
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            with pc1:
+                p_type = st.selectbox("Type", [
+                    "Length", "Integer", "Boolean", "RealNum", "Angle",
+                    "String", "Material", "FillPattern", "LineType", "PenColor",
+                ])
+            with pc2:
+                p_name = st.text_input("Name", value="bNewParam")
+            with pc3:
+                p_value = st.text_input("Value", value="0")
+            with pc4:
+                p_desc = st.text_input("Description")
+            if st.button("添加参数"):
+                try:
+                    proj_now.add_parameter(GDLParameter(p_name, p_type, p_desc, p_value))
+                    st.success(f"✅ {p_type} {p_name}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+        if st.button("🔍 验证参数"):
+            issues = validate_paramlist(proj_now.parameters)
+            for i in issues:
+                st.warning(i)
+            if not issues:
+                st.success("✅ 参数验证通过")
+
+        with st.expander("paramlist.xml 预览"):
+            st.code(build_paramlist_xml(proj_now.parameters), language="xml")
+
+    # Script tabs
+    for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
+        with tab:
+            with st.expander(f"ℹ️ {label} 脚本说明"):
+                st.markdown(_SCRIPT_HELP.get(fpath, ""))
+
+            current_code = proj_now.get_script(stype) or ""
+            skey = fpath.replace("scripts/", "").replace(".gdl", "")
+            new_code = st.text_area(
+                label, value=current_code, height=420,
+                key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
+            )
+            if new_code != current_code:
+                proj_now.set_script(stype, new_code)
+            if st.button("🔍 检查", key=f"chk_{fpath}_v{_ev}"):
+                for iss in check_gdl_script(new_code, skey):
+                    st.success(iss) if iss.startswith("✅") else st.warning(iss)
+
+    # Log tab
+    with tab_log:
+        if not st.session_state.compile_log:
+            st.info("暂无编译记录")
+        else:
+            for entry in reversed(st.session_state.compile_log):
+                icon = "✅" if entry["success"] else "❌"
+                st.markdown(f"**{icon} {entry['project']}** — {entry.get('instruction','')}")
+                st.code(entry["message"], language="text")
+                st.divider()
+        if st.button("清除日志"):
+            st.session_state.compile_log = []
+            st.rerun()
+        with st.expander("HSF 目录结构"):
+            tree = [f"📁 {proj_now.name}/", "  ├── libpartdata.xml",
+                    "  ├── paramlist.xml", "  ├── ancestry.xml", "  └── scripts/"]
+            for stype in ScriptType:
+                if stype in proj_now.scripts:
+                    n = proj_now.scripts[stype].count("\n") + 1
+                    tree.append(f"       ├── {stype.value} ({n} lines)")
+            st.code("\n".join(tree), language="text")
 
 
 # ── Right: AI Chat panel ──────────────────────────────────
