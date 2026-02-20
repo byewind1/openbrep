@@ -68,6 +68,19 @@ code, .stCodeBlock { font-family: 'JetBrains Mono', monospace !important; }
     border-radius: 8px;
     border-left: 3px solid #22d3ee;
 }
+.diff-current { border-left: 3px solid #475569; padding-left: 0.5rem; }
+.diff-ai      { border-left: 3px solid #f59e0b; padding-left: 0.5rem; }
+.diff-badge {
+    display: inline-block;
+    background: #f59e0b22;
+    color: #f59e0b;
+    border: 1px solid #f59e0b55;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 4px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,10 +97,12 @@ if "work_dir" not in st.session_state:
     st.session_state.work_dir = str(Path.home() / "gdl-agent-workspace")
 if "agent_running" not in st.session_state:
     st.session_state.agent_running = False
-if "pending_changes" not in st.session_state:
-    # Stores AI-generated code waiting for user confirmation before compile
-    # Structure: {"gsm_name": str, "changes": {path: content}, "instruction": str}
-    st.session_state.pending_changes = None
+if "pending_diffs" not in st.session_state:
+    # AI-proposed changes awaiting user review. {script_path: new_content}
+    # e.g. {"scripts/3d.gdl": "...", "scripts/2d.gdl": "..."}
+    st.session_state.pending_diffs = {}
+if "pending_gsm_name" not in st.session_state:
+    st.session_state.pending_gsm_name = ""
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
@@ -141,7 +156,7 @@ def _key_for_model(model: str) -> str:
 
 with st.sidebar:
     st.markdown('<p class="main-header">gdl-agent</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">v0.4.1 · HSF-native · AI-powered</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">v0.5.0 · HSF-native · AI-powered</p>', unsafe_allow_html=True)
     st.divider()
 
     st.subheader("📁 工作目录")
@@ -485,12 +500,12 @@ def chat_respond(user_input: str, history: list, llm) -> str:
         return f"❌ {str(e)}"
 
 
-# ── Run Agent (shared logic) ──────────────────────────────
+# ── Run Agent ─────────────────────────────────────────────
 
 def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: str = None) -> str:
     """
-    Generate code only (no compile). Stores result in session_state.pending_changes.
-    Returns a status message for the chat.
+    Generate code only (no compile).
+    Stores result in session_state.pending_diffs — shown inline in script tabs.
     """
     status_ph = status_col.empty()
 
@@ -506,52 +521,45 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
     try:
         llm = get_llm()
         knowledge = load_knowledge()
-        skills_loader = load_skills()
-        skills_text = skills_loader.get_for_task(user_input)
+        skills_text = load_skills().get_for_task(user_input)
 
         agent = GDLAgent(llm=llm, compiler=get_compiler(), on_event=on_event)
         changes = agent.generate_only(
-            instruction=user_input,
-            project=proj,
-            knowledge=knowledge,
-            skills=skills_text,
+            instruction=user_input, project=proj,
+            knowledge=knowledge, skills=skills_text,
         )
-
         status_ph.empty()
 
         if not changes:
             return "❌ AI 输出无法解析，请重新描述需求。"
 
-        # Store for user confirmation
-        st.session_state.pending_changes = {
-            "gsm_name": gsm_name or proj.name,
-            "changes": changes,
-            "instruction": user_input,
-        }
-        return "✏️ **AI 已生成代码**，请在右侧「待确认」区域检查，确认后点击编译。"
+        # Merge into pending_diffs (AI may partially update scripts)
+        st.session_state.pending_diffs.update(changes)
+        if gsm_name:
+            st.session_state.pending_gsm_name = gsm_name
+
+        script_names = ", ".join(
+            p.replace("scripts/", "").replace(".gdl", "").upper()
+            for p in changes.keys()
+            if p.startswith("scripts/")
+        )
+        return f"✏️ **AI 已生成代码** — 脚本 [{script_names}] 右侧出现对比视图，确认后点击「替换」，最后「🔧 编译」。"
 
     except Exception as e:
         status_ph.empty()
         return f"❌ **错误**: {str(e)}"
 
 
-def compile_pending(proj: HSFProject, gsm_name: str, changes: dict) -> tuple:
+def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
     """
-    Apply pending changes to project and compile.
+    Compile current project state → versioned GSM.
     Returns (success: bool, message: str).
-    Caller clears pending_changes ONLY on success.
     """
     try:
-        from gdl_agent.core import GDLAgent
-        agent = GDLAgent(llm=get_llm(), compiler=get_compiler())
-        agent._apply_changes(proj, changes)
-
-        output_gsm = _versioned_gsm_path(gsm_name, st.session_state.work_dir)
+        output_gsm = _versioned_gsm_path(gsm_name or proj.name, st.session_state.work_dir)
         hsf_dir = proj.save_to_disk()
         result = get_compiler().hsf2libpart(str(hsf_dir), output_gsm)
-
         mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
-        instruction = (st.session_state.pending_changes or {}).get("instruction", "")
 
         if result.success:
             st.session_state.compile_log.append({
@@ -567,10 +575,38 @@ def compile_pending(proj: HSFProject, gsm_name: str, changes: dict) -> tuple:
                 "project": proj.name, "instruction": instruction,
                 "success": False, "attempts": 1, "message": result.stderr,
             })
-            return (False, f"❌ **编译失败**，代码保留可继续修改\n\n```\n{result.stderr[:500]}\n```")
-
+            return (False, f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```")
     except Exception as e:
         return (False, f"❌ **错误**: {str(e)}")
+
+
+def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
+    """
+    Decompile GSM → HSF → HSFProject.
+    Returns (project | None, message).
+    """
+    import tempfile, shutil
+    tmp = Path(tempfile.mkdtemp())
+    gsm_path = tmp / filename
+    gsm_path.write_bytes(gsm_bytes)
+    hsf_out = tmp / "hsf_out"
+    hsf_out.mkdir()
+    result = get_compiler().libpart2hsf(str(gsm_path), str(hsf_out))
+    if not result.success:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return (None, f"❌ GSM 解包失败: {result.stderr}")
+    try:
+        # LP_XMLConverter creates a subdirectory named after the object
+        subdirs = [d for d in hsf_out.iterdir() if d.is_dir()]
+        hsf_dir = subdirs[0] if subdirs else hsf_out
+        proj = HSFProject.from_hsf(str(hsf_dir))
+        proj.work_dir = Path(st.session_state.work_dir)
+        proj.root = proj.work_dir / proj.name
+        return (proj, f"✅ 已导入 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本")
+    except Exception as e:
+        return (None, f"❌ HSF 解析失败: {e}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def check_gdl_script(content: str, script_type: str = "") -> list:
@@ -660,83 +696,152 @@ with col_chat:
     live_output = st.empty()
 
 
-# ── Right: Welcome / Project Editor ──────────────────────
+# ── Right: Editor ─────────────────────────────────────────
+
+_SCRIPT_MAP = [
+    (ScriptType.SCRIPT_3D, "scripts/3d.gdl",  "3D"),
+    (ScriptType.SCRIPT_2D, "scripts/2d.gdl",  "2D"),
+    (ScriptType.MASTER,    "scripts/1d.gdl",  "Master"),
+    (ScriptType.PARAM,     "scripts/vl.gdl",  "Param"),
+    (ScriptType.UI,        "scripts/ui.gdl",  "UI"),
+    (ScriptType.PROPERTIES,"scripts/pr.gdl",  "Properties"),
+]
+
+def _diff_summary(old: str, new: str) -> str:
+    """Return a short +N/-N line diff summary."""
+    old_lines = set(old.splitlines())
+    new_lines = set(new.splitlines())
+    added   = len(new_lines - old_lines)
+    removed = len(old_lines - new_lines)
+    return f"+{added} / -{removed} lines"
+
 
 with col_editor:
-    # ── Pending Confirmation Panel (highest priority) ─────
-    if st.session_state.pending_changes and st.session_state.project:
-        pc = st.session_state.pending_changes
-        proj_now = st.session_state.project
-
-        st.markdown("### ⏳ AI 已生成代码 — 请确认后编译")
-
-        # Editable GSM name
-        confirmed_gsm_name = st.text_input(
-            "📦 GSM 文件名（可修改）",
-            value=pc["gsm_name"],
-            help="修改为你想要的构件名称，确认后用此名称编译输出",
-            key="pending_gsm_name",
-        )
-
-        # Show each changed file with editable text area
-        edited_changes = {}
-        for file_path, content in pc["changes"].items():
-            label = file_path.replace("scripts/", "").replace("paramlist.xml", "参数 paramlist.xml")
-            edited_content = st.text_area(
-                f"📄 {label}",
-                value=content,
-                height=200,
-                key=f"pending_{file_path}",
-            )
-            edited_changes[file_path] = edited_content
-
-        col_ok, col_cancel, col_check = st.columns([2, 1, 1])
-        with col_ok:
-            if st.button("✅ 确认编译", type="primary", use_container_width=True):
-                with st.spinner("编译中..."):
-                    success, result_msg = compile_pending(proj_now, confirmed_gsm_name, edited_changes)
-                st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
-                # Always keep pending panel — user dismisses with ❌ 放弃
-                st.session_state.pending_changes["changes"] = edited_changes
-                st.session_state.pending_changes["gsm_name"] = confirmed_gsm_name
-                if not success:
-                    st.error(result_msg)
-                st.rerun()
-        with col_cancel:
-            if st.button("❌ 放弃", use_container_width=True):
-                st.session_state.pending_changes = None
-                st.rerun()
-        with col_check:
-            if st.button("🔍 检查", use_container_width=True):
-                for fp, content in edited_changes.items():
-                    stype = fp.replace("scripts/", "").replace(".gdl", "")
-                    issues = check_gdl_script(content, stype)
-                    for iss in issues:
-                        if iss.startswith("✅"):
-                            st.success(f"{fp}: {iss}")
-                        else:
-                            st.warning(f"{fp}: {iss}")
-
-        st.divider()
-
     if not st.session_state.project:
         show_welcome()
     else:
         proj_now = st.session_state.project
+        diffs    = st.session_state.pending_diffs  # live reference
 
-        tab_edit, tab_compile, tab_log = st.tabs(["📝 编辑", "🔧 编译", "📋 日志"])
+        # ── Toolbar ───────────────────────────────────────
+        tb_imp, tb_gsm_imp, tb_sep, tb_name, tb_compile, tb_check = st.columns(
+            [1.2, 1.4, 0.2, 2.2, 1.4, 1.2]
+        )
 
-        # ── Edit Tab ──────────────────────────────────────
-        with tab_edit:
-            st.markdown("#### 参数列表")
+        # Import GDL (.gdl / .txt)
+        with tb_imp:
+            gdl_upload = st.file_uploader(
+                "📂 GDL", type=["gdl", "txt"], label_visibility="collapsed",
+                key="toolbar_gdl_upload", help="导入 .gdl 文件"
+            )
+            if gdl_upload:
+                content = gdl_upload.read().decode("utf-8", errors="replace")
+                name = Path(gdl_upload.name).stem
+                try:
+                    imported = parse_gdl_source(content, name)
+                    imported.work_dir = Path(st.session_state.work_dir)
+                    imported.root = imported.work_dir / imported.name
+                    st.session_state.project = imported
+                    st.session_state.pending_diffs = {}
+                    st.session_state.pending_gsm_name = imported.name
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": f"✅ 已导入 `{imported.name}` — {len(imported.parameters)} 参数，{len(imported.scripts)} 脚本",
+                    })
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"导入失败: {e}")
+
+        # Import GSM (LP mode only)
+        with tb_gsm_imp:
+            if compiler_mode.startswith("LP"):
+                gsm_upload = st.file_uploader(
+                    "📦 GSM", type=["gsm"], label_visibility="collapsed",
+                    key="toolbar_gsm_upload", help="导入 .gsm — 需 LP_XMLConverter"
+                )
+                if gsm_upload:
+                    with st.spinner("解包 GSM..."):
+                        proj_imp, imp_msg = import_gsm(gsm_upload.read(), gsm_upload.name)
+                    if proj_imp:
+                        st.session_state.project = proj_imp
+                        st.session_state.pending_diffs = {}
+                        st.session_state.pending_gsm_name = proj_imp.name
+                        st.session_state.chat_history.append({"role": "assistant", "content": imp_msg})
+                        st.rerun()
+                    else:
+                        st.error(imp_msg)
+            else:
+                st.caption("GSM 导入需 LP 模式")
+
+        # GSM output name
+        with tb_name:
+            gsm_name_input = st.text_input(
+                "📦", label_visibility="collapsed",
+                value=st.session_state.pending_gsm_name or proj_now.name,
+                placeholder="输出 GSM 名称",
+                key="toolbar_gsm_name",
+                help="编译输出文件名（不含版本号和扩展名）",
+            )
+            st.session_state.pending_gsm_name = gsm_name_input
+
+        # Compile button
+        with tb_compile:
+            n_diffs = len(diffs)
+            compile_label = f"🔧 编译 ({n_diffs}↑)" if n_diffs else "🔧 编译"
+            if st.button(compile_label, type="primary", use_container_width=True,
+                         help="编译当前所有脚本（接受的 AI 建议已自动应用）"):
+                with st.spinner("编译中..."):
+                    success, result_msg = do_compile(
+                        proj_now,
+                        gsm_name=gsm_name_input or proj_now.name,
+                        instruction="(toolbar compile)",
+                    )
+                st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
+                if success:
+                    st.toast("✅ 编译成功", icon="🏗️")
+                else:
+                    st.error(result_msg)
+                st.rerun()
+
+        # Global syntax check
+        with tb_check:
+            if st.button("🔍 全检查", use_container_width=True):
+                all_ok = True
+                for stype, fpath, label in _SCRIPT_MAP:
+                    content = proj_now.get_script(stype)
+                    if not content:
+                        continue
+                    skey = fpath.replace("scripts/", "").replace(".gdl", "")
+                    for iss in check_gdl_script(content, skey):
+                        if iss.startswith("✅"):
+                            st.success(f"{label}: {iss}")
+                        else:
+                            st.warning(f"{label}: {iss}")
+                            all_ok = False
+                if all_ok:
+                    st.success("✅ 所有脚本语法正常")
+
+        st.divider()
+
+        # ── Tab strip — labels show ● when diff pending ──
+        def _tlabel(name, fpath):
+            return f"{name} ●" if fpath in diffs else name
+
+        tab_labels = (
+            ["参数"]
+            + [_tlabel(label, fpath) for _, fpath, label in _SCRIPT_MAP]
+            + ["📋 日志"]
+        )
+        all_tabs = st.tabs(tab_labels)
+        tab_params = all_tabs[0]
+        script_tabs = all_tabs[1:-1]
+        tab_log = all_tabs[-1]
+
+        # ── 参数 Tab ──────────────────────────────────────
+        with tab_params:
             param_data = [
-                {
-                    "Type": p.type_tag,
-                    "Name": p.name,
-                    "Value": p.value,
-                    "Description": p.description,
-                    "Fixed": "✓" if p.is_fixed else "",
-                }
+                {"Type": p.type_tag, "Name": p.name, "Value": p.value,
+                 "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
                 for p in proj_now.parameters
             ]
             if param_data:
@@ -765,138 +870,112 @@ with col_editor:
                     except Exception as e:
                         st.error(str(e))
 
-            st.divider()
-            st.markdown("#### 脚本")
-            script_tabs = st.tabs(["3D", "2D", "Master", "Param", "UI", "Properties"])
-            script_map = [
-                (ScriptType.SCRIPT_3D, "3d.gdl"),
-                (ScriptType.SCRIPT_2D, "2d.gdl"),
-                (ScriptType.MASTER, "1d.gdl"),
-                (ScriptType.PARAM, "vl.gdl"),
-                (ScriptType.UI, "ui.gdl"),
-                (ScriptType.PROPERTIES, "pr.gdl"),
-            ]
-            for tab, (stype, fname) in zip(script_tabs, script_map):
-                with tab:
-                    current = proj_now.get_script(stype)
-                    new_content = st.text_area(
-                        fname, value=current, height=280, key=f"script_{fname}",
-                    )
-                    if new_content != current:
-                        proj_now.set_script(stype, new_content)
+            if st.button("🔍 验证参数"):
+                issues = validate_paramlist(proj_now.parameters)
+                for i in issues:
+                    st.warning(i)
+                if not issues:
+                    st.success("✅ 参数验证通过")
 
-                    # Per-script check button
-                    script_type_key = fname.replace(".gdl", "")
-                    if st.button(f"🔍 检查 {fname}", key=f"check_{fname}"):
-                        issues = check_gdl_script(new_content, script_type_key)
-                        for iss in issues:
+            with st.expander("paramlist.xml 预览"):
+                st.code(build_paramlist_xml(proj_now.parameters), language="xml")
+
+        # ── Script Tabs ───────────────────────────────────
+        for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
+            with tab:
+                current_code = proj_now.get_script(stype) or ""
+                skey = fpath.replace("scripts/", "").replace(".gdl", "")
+                has_diff = fpath in diffs
+
+                if has_diff:
+                    ai_code = diffs[fpath]
+                    summary = _diff_summary(current_code, ai_code)
+
+                    # ── Diff view: current (left) | AI (right) ──
+                    col_cur, col_ai = st.columns(2, gap="small")
+
+                    with col_cur:
+                        st.markdown(
+                            '<div class="diff-current"><b>当前代码</b></div>',
+                            unsafe_allow_html=True,
+                        )
+                        edited_cur = st.text_area(
+                            "current", value=current_code, height=340,
+                            key=f"cur_{fpath}", label_visibility="collapsed",
+                        )
+                        if edited_cur != current_code:
+                            proj_now.set_script(stype, edited_cur)
+
+                    with col_ai:
+                        st.markdown(
+                            f'<div class="diff-ai"><b>AI 建议</b> &nbsp;'
+                            f'<span class="diff-badge">{summary}</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                        edited_ai = st.text_area(
+                            "ai", value=ai_code, height=340,
+                            key=f"ai_{fpath}", label_visibility="collapsed",
+                        )
+                        diffs[fpath] = edited_ai  # track in-place edits to AI side
+
+                    btn_accept, btn_discard, btn_chk = st.columns([2, 1.5, 1.5])
+                    with btn_accept:
+                        if st.button(f"✅ 替换为 AI 版本", key=f"accept_{fpath}",
+                                     type="primary", use_container_width=True):
+                            proj_now.set_script(stype, diffs.pop(fpath))
+                            st.rerun()
+                    with btn_discard:
+                        if st.button(f"❌ 丢弃 AI 建议", key=f"discard_{fpath}",
+                                     use_container_width=True):
+                            diffs.pop(fpath)
+                            st.rerun()
+                    with btn_chk:
+                        if st.button(f"🔍 检查 AI", key=f"chk_ai_{fpath}",
+                                     use_container_width=True):
+                            for iss in check_gdl_script(diffs.get(fpath, ""), skey):
+                                if iss.startswith("✅"):
+                                    st.success(iss)
+                                else:
+                                    st.warning(iss)
+
+                else:
+                    # ── Normal single editor ──────────────────
+                    new_code = st.text_area(
+                        label, value=current_code, height=380,
+                        key=f"script_{fpath}", label_visibility="collapsed",
+                    )
+                    if new_code != current_code:
+                        proj_now.set_script(stype, new_code)
+
+                    if st.button(f"🔍 检查", key=f"chk_{fpath}"):
+                        for iss in check_gdl_script(new_code, skey):
                             if iss.startswith("✅"):
                                 st.success(iss)
                             else:
                                 st.warning(iss)
 
-            # Overall param + all-script check
-            st.divider()
-            col_vp, col_va = st.columns([1, 1])
-            with col_vp:
-                if st.button("🔍 验证参数"):
-                    issues = validate_paramlist(proj_now.parameters)
-                    if issues:
-                        for i in issues:
-                            st.warning(i)
-                    else:
-                        st.success("✅ 参数验证通过")
-            with col_va:
-                if st.button("🔍 全部脚本检查"):
-                    all_ok = True
-                    for stype, fname in script_map:
-                        content = proj_now.get_script(stype)
-                        if not content:
-                            continue
-                        skey = fname.replace(".gdl", "")
-                        issues = check_gdl_script(content, skey)
-                        for iss in issues:
-                            if iss.startswith("✅"):
-                                st.success(f"{fname}: {iss}")
-                            else:
-                                st.warning(f"{fname}: {iss}")
-                                all_ok = False
-                    if all_ok:
-                        st.success("✅ 所有脚本检查通过")
-
-        # ── Compile Tab ───────────────────────────────────
-        with tab_compile:
-            # Auto versioned output path — no manual input needed
-            next_gsm = _versioned_gsm_path(proj_now.name, st.session_state.work_dir)
-            next_ver = Path(next_gsm).stem  # e.g. MyShelf_v2
-            st.caption(f"📦 下次编译输出: `{Path(next_gsm).name}`")
-
-            col_c, col_p = st.columns([1, 1])
-
-            with col_c:
-                if st.button("🔧 手动编译", type="primary"):
-                    output_path = _versioned_gsm_path(proj_now.name, st.session_state.work_dir)
-
-                    with st.spinner("写入 HSF..."):
-                        try:
-                            hsf_dir = proj_now.save_to_disk()
-                        except Exception as e:
-                            st.error(f"写入失败: {e}")
-                            st.stop()
-
-                    with st.spinner("编译中..."):
-                        compiler = get_compiler()
-                        result = compiler.hsf2libpart(str(hsf_dir), output_path)
-
-                    if result.success:
-                        if compiler_mode.startswith("Mock"):
-                            st.success(
-                                f"✅ **[Mock]** 结构验证通过！\n\n"
-                                f"📁 HSF 目录: `{hsf_dir}`"
-                            )
-                        else:
-                            st.success(f"✅ 编译成功！\n\n📦 `{output_path}`")
-                    else:
-                        st.error(f"❌ 编译失败\n\n```\n{result.stderr}\n```")
-
-                    st.session_state.compile_log.append({
-                        "project": proj_now.name,
-                        "instruction": "(manual compile)",
-                        "success": result.success,
-                        "attempts": 1,
-                        "message": result.stderr or "Success",
-                    })
-
-            with col_p:
-                st.markdown("##### 预览")
-                with st.expander("paramlist.xml"):
-                    st.code(build_paramlist_xml(proj_now.parameters), language="xml")
-                with st.expander("HSF 目录结构", expanded=True):
-                    tree = [f"📁 {proj_now.name}/", "  ├── libpartdata.xml",
-                            "  ├── paramlist.xml", "  ├── ancestry.xml", "  └── scripts/"]
-                    for stype in ScriptType:
-                        if stype in proj_now.scripts:
-                            n = proj_now.scripts[stype].count("\n") + 1
-                            tree.append(f"       ├── {stype.value} ({n} lines)")
-                    st.code("\n".join(tree), language="text")
-
-        # ── Log Tab ───────────────────────────────────────
+        # ── 日志 Tab ──────────────────────────────────────
         with tab_log:
             if not st.session_state.compile_log:
-                st.info("暂无记录")
+                st.info("暂无编译记录")
             else:
                 for entry in reversed(st.session_state.compile_log):
                     icon = "✅" if entry["success"] else "❌"
-                    instr = entry.get("instruction", "")
-                    st.markdown(f"**{icon} {entry['project']}** — {instr}")
-                    if entry.get("attempts", 0) > 1:
-                        st.caption(f"尝试 {entry['attempts']} 次")
+                    st.markdown(f"**{icon} {entry['project']}** — {entry.get('instruction','')}")
                     st.code(entry["message"], language="text")
                     st.divider()
-
             if st.button("清除日志"):
                 st.session_state.compile_log = []
                 st.rerun()
+
+            with st.expander("HSF 目录结构"):
+                tree = [f"📁 {proj_now.name}/", "  ├── libpartdata.xml",
+                        "  ├── paramlist.xml", "  ├── ancestry.xml", "  └── scripts/"]
+                for stype in ScriptType:
+                    if stype in proj_now.scripts:
+                        n = proj_now.scripts[stype].count("\n") + 1
+                        tree.append(f"       ├── {stype.value} ({n} lines)")
+                st.code("\n".join(tree), language="text")
 
 
 # ══════════════════════════════════════════════════════════
@@ -939,10 +1018,16 @@ if user_input:
                     if not st.session_state.project:
                         new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
                         st.session_state.project = new_proj
+                        st.session_state.pending_gsm_name = gdl_obj_name
                         st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                     proj_current = st.session_state.project
-                    msg = run_agent_generate(user_input, proj_current, st.container(), gsm_name=gdl_obj_name)
+                    # Keep existing gsm_name if project already loaded
+                    effective_gsm = (
+                        st.session_state.pending_gsm_name
+                        or proj_current.name
+                    )
+                    msg = run_agent_generate(user_input, proj_current, st.container(), gsm_name=effective_gsm)
                     st.markdown(msg)
 
         st.session_state.chat_history.append({"role": "assistant", "content": msg})
@@ -953,7 +1038,7 @@ if user_input:
 st.divider()
 st.markdown(
     '<p style="text-align:center; color:#64748b; font-size:0.8rem;">'
-    'gdl-agent v0.4.1 · HSF-native · '
+    'gdl-agent v0.5.0 · HSF-native ·'
     '<a href="https://github.com/byewind/gdl-agent">GitHub</a>'
     '</p>',
     unsafe_allow_html=True,
