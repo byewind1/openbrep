@@ -711,11 +711,11 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
     if for_count != next_count:
         issues.append(f"⚠️ FOR/NEXT 不匹配：{for_count} 个 FOR，{next_count} 个 NEXT")
 
-    # ADD/DEL balance
-    add_count = sum(1 for l in lines if _re.match(r'\s*ADD\b', l, _re.I))
+    # ADD/DEL balance — ADDX/ADDY/ADDZ are single-axis variants, count equally
+    add_count = sum(1 for l in lines if _re.match(r'\s*ADD(X|Y|Z)?\b', l, _re.I))
     del_count = sum(1 for l in lines if _re.match(r'\s*DEL\b', l, _re.I))
     if add_count != del_count:
-        issues.append(f"⚠️ ADD/DEL 不匹配：{add_count} 个 ADD，{del_count} 个 DEL")
+        issues.append(f"⚠️ ADD/DEL 不匹配：{add_count} 个 ADD/ADDX/ADDY/ADDZ，{del_count} 个 DEL")
 
     # Markdown fence leak — common when AI generates code in chat
     if any(l.strip().startswith("```") for l in lines):
@@ -769,6 +769,16 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
         )
         if not has_proj:
             issues.append("⚠️ 2D 脚本缺少平面投影语句（PROJECT2 / RECT2）")
+
+    # _var 未在本脚本内赋值的中间变量（可能需在 Master 脚本中定义）
+    assigned = set(_re.findall(r'\b(_[A-Za-z]\w*)\s*=', content))
+    used     = set(_re.findall(r'\b(_[A-Za-z]\w*)\b', content))
+    undefined = used - assigned
+    if undefined:
+        issues.append(
+            f"ℹ️ 变量 {', '.join(sorted(undefined))} 在本脚本未赋值 — "
+            "若已在 Master 脚本中定义可忽略，否则会导致 ArchiCAD 运行时不显示"
+        )
 
     if not issues:
         issues = ["✅ 检查通过"]
