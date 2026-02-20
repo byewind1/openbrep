@@ -206,44 +206,66 @@ class GDLAgent:
         project: HSFProject,
         knowledge: str = "",
         skills: str = "",
-    ) -> Optional[dict]:
+        include_all_scripts: bool = False,
+        history: Optional[list] = None,
+    ) -> tuple[dict, str]:
         """
-        Generate code changes WITHOUT compiling.
-        Returns {file_path: content} dict, or None if LLM output unparseable.
-        Used for preview-before-compile workflow.
+        Generate code changes OR plain-text analysis WITHOUT compiling.
+
+        Returns (file_changes, plain_text):
+          - file_changes: {fpath: content} if LLM wrote [FILE: ...] blocks
+          - plain_text:   raw LLM reply if no [FILE: ...] blocks (debug/analysis mode)
+        Both can be non-empty if LLM mixes analysis text with code fixes.
         """
-        self.on_event("analyze", {
-            "affected_scripts": [s.value for s in project.get_affected_scripts(instruction)]
-        })
+        affected = project.get_affected_scripts(instruction)
+        self.on_event("analyze", {"affected_scripts": [s.value for s in affected]})
         self.on_event("attempt", {"attempt": 1})
 
-        affected = project.get_affected_scripts(instruction)
-        context = self._build_context(project, affected)
-        messages = self._build_messages(instruction, context, knowledge, skills, None)
+        context = self._build_context(project, affected, include_all=include_all_scripts)
+        messages = self._build_messages(
+            instruction, context, knowledge, skills,
+            error=None, history=history,
+            chat_mode=include_all_scripts,
+        )
 
         raw = self.llm.generate(messages)
         response = raw.content if hasattr(raw, "content") else str(raw)
 
         self.on_event("llm_response", {"length": len(response)})
-        return self._parse_response(response)  # None if unparseable
+        changes = self._parse_response(response)
+        # Plain text = everything BEFORE the first [FILE: ...] block (or full response if none)
+        first_file = response.find("[FILE:")
+        plain_text = response[:first_file].strip() if first_file > 0 else (response.strip() if not changes else "")
+        return changes, plain_text
 
     # ── Context Building ──────────────────────────────────
 
     def _build_context(
-        self, project: HSFProject, affected: list[ScriptType]
+        self, project: HSFProject, affected: list[ScriptType],
+        include_all: bool = False,
     ) -> str:
-        """Build focused context from project state."""
+        """Build focused context from project state.
+
+        include_all=True: inject every non-empty script (for debug/analysis).
+        include_all=False: inject only 'affected' scripts (for generation).
+        """
         parts = []
 
         # Always include paramlist
         parts.append("=== Parameters ===")
-        for p in project.parameters:
-            fixed = " [FIXED]" if p.is_fixed else ""
-            parts.append(f"  {p.type_tag} {p.name} = {p.value}  ! {p.description}{fixed}")
+        if project.parameters:
+            for p in project.parameters:
+                fixed = " [FIXED]" if p.is_fixed else ""
+                parts.append(f"  {p.type_tag} {p.name} = {p.value}  ! {p.description}{fixed}")
+        else:
+            parts.append("  (none)")
 
-        # Include affected scripts only
-        for script_type in affected:
+        # Script selection
+        script_types = list(ScriptType) if include_all else affected
+        for script_type in script_types:
             content = project.get_script(script_type)
+            if include_all and not content:
+                continue   # skip empty scripts in full-dump mode
             if content:
                 parts.append(f"\n=== {script_type.value} ===")
                 parts.append(content)
@@ -259,9 +281,28 @@ class GDLAgent:
         knowledge: str,
         skills: str,
         error: Optional[str],
+        history: Optional[list] = None,
+        chat_mode: bool = False,
     ) -> list[dict]:
-        """Build LLM message list."""
-        system = self._build_system_prompt(knowledge, skills)
+        """Build LLM message list.
+
+        chat_mode=True: prepend recent history; allow plain-text analysis reply.
+        history: list of {"role": "user"/"assistant", "content": str} from UI.
+        """
+        system = self._build_system_prompt(knowledge, skills, chat_mode=chat_mode)
+        messages = [{"role": "system", "content": system}]
+
+        # Inject recent conversation history (last 6 turns) for multi-turn context
+        if history:
+            for msg in history[-6:]:
+                role = msg.get("role")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content.strip():
+                    # Strip heavy code blocks from history to save tokens
+                    if role == "assistant" and "```" in content:
+                        # Keep only the first 300 chars of assistant code replies
+                        content = content[:300] + "\n... (truncated)"
+                    messages.append({"role": role, "content": content})
 
         user_parts = [f"Current HSF project state:\n```\n{context}\n```"]
 
@@ -271,17 +312,21 @@ class GDLAgent:
         else:
             user_parts.append(f"\nInstruction: {instruction}")
 
-        user_parts.append(
-            "\nReturn your changes using [FILE: path] format. "
-            "For parameters, use [FILE: paramlist.xml] with one parameter per line."
-        )
+        if chat_mode:
+            user_parts.append(
+                "\nIf you can identify specific bugs or fixes, write them using [FILE: path] format. "
+                "Otherwise respond in plain text with your analysis."
+            )
+        else:
+            user_parts.append(
+                "\nReturn your changes using [FILE: path] format. "
+                "For parameters, use [FILE: paramlist.xml] with one parameter per line."
+            )
 
-        return [
-            {"role": "system", "content": system},
-            {"role": "user", "content": "\n".join(user_parts)},
-        ]
+        messages.append({"role": "user", "content": "\n".join(user_parts)})
+        return messages
 
-    def _build_system_prompt(self, knowledge: str, skills: str) -> str:
+    def _build_system_prompt(self, knowledge: str, skills: str, chat_mode: bool = False) -> str:
         """Build system prompt with HSF-specific rules and knowledge injection."""
         prompt = (
             "You are an expert ArchiCAD GDL developer working with HSF (Hierarchical Source Format).\n\n"
@@ -338,12 +383,24 @@ class GDLAgent:
             "Do NOT use markdown code fences (```). Output raw GDL code directly.\n\n"
         )
 
+        if chat_mode:
+            prompt += (
+                "## RESPONSE MODE\n"
+                "The user may ask you to debug, analyze, or explain the current scripts.\n"
+                "- If you can write a concrete fix → use [FILE: path] format as above.\n"
+                "- If you're analyzing, explaining, or need more info → respond in plain Chinese or English.\n"
+                "- You may combine both: write analysis text first, then [FILE: ...] blocks for the fix.\n\n"
+            )
+
         if knowledge:
             prompt += f"## REFERENCE DOCUMENTATION\n{knowledge}\n\n"
         if skills:
             prompt += f"## TASK STRATEGY\n{skills}\n\n"
 
-        prompt += "Now, read the current HSF project state and make the requested changes."
+        if chat_mode:
+            prompt += "Now, read the current HSF project state and help the user debug or analyze their scripts."
+        else:
+            prompt += "Now, read the current HSF project state and make the requested changes."
 
         return prompt
 
