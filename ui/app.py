@@ -696,13 +696,10 @@ with col_editor:
                 with st.spinner("编译中..."):
                     success, result_msg = compile_pending(proj_now, confirmed_gsm_name, edited_changes)
                 st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
-                if success:
-                    # Only clear on success — failure keeps code editable
-                    st.session_state.pending_changes = None
-                else:
-                    # Keep pending so user can fix code and retry
-                    st.session_state.pending_changes["changes"] = edited_changes
-                    st.session_state.pending_changes["gsm_name"] = confirmed_gsm_name
+                # Always keep pending panel — user dismisses with ❌ 放弃
+                st.session_state.pending_changes["changes"] = edited_changes
+                st.session_state.pending_changes["gsm_name"] = confirmed_gsm_name
+                if not success:
                     st.error(result_msg)
                 st.rerun()
         with col_cancel:
