@@ -282,8 +282,18 @@ with st.sidebar:
         st.subheader(f"📦 {proj.name}")
         st.caption(f"参数: {len(proj.parameters)} | 脚本: {len(proj.scripts)}")
         if st.button("🗑️ 清除项目", use_container_width=True):
-            st.session_state.project = None
-            st.session_state.chat_history = []
+            _keep_work_dir = st.session_state.work_dir
+            _keep_api_keys = st.session_state.model_api_keys
+            st.session_state.project          = None
+            st.session_state.chat_history     = []
+            st.session_state.compile_log      = []
+            st.session_state.pending_diffs    = {}
+            st.session_state.pending_gsm_name = ""
+            st.session_state.agent_running    = False
+            st.session_state._import_key_done = ""
+            st.session_state.editor_version  += 1
+            st.session_state.work_dir         = _keep_work_dir
+            st.session_state.model_api_keys   = _keep_api_keys
             st.rerun()
 
 
@@ -1083,7 +1093,7 @@ with col_editor:
                 st.toast("对话中未发现 GDL 代码块", icon="ℹ️")
 
     with tb_clear:
-        if st.button("🗑️ 清空", use_container_width=True, help="清空所有脚本和参数"):
+        if st.button("🗑️ 清空", use_container_width=True, help="重置项目：脚本、参数、对话、日志全清，保留设置"):
             st.session_state.confirm_clear = True
 
     with tb_check:
@@ -1105,16 +1115,25 @@ with col_editor:
 
     # ── 清空确认 ──────────────────────────────────────────
     if st.session_state.get("confirm_clear"):
-        st.warning("⚠️ 将清空所有脚本和参数列表，此操作不可撤销。确认继续？")
+        st.warning("⚠️ 将重置整个项目（脚本、参数、对话记录、编译日志），保留工作目录和 API 设置。确认继续？")
         cc1, cc2, _ = st.columns([1, 1, 4])
         with cc1:
             if st.button("✅ 确认清空", type="primary"):
-                for stype, _fp, _lb in _SCRIPT_MAP:
-                    proj_now.set_script(stype, "")
-                proj_now.parameters = []
-                st.session_state.confirm_clear = False
+                # Full project state reset — equivalent to Cmd+R but keeps user settings
+                _keep_work_dir = st.session_state.work_dir
+                _keep_api_keys = st.session_state.model_api_keys
+                st.session_state.project         = None
+                st.session_state.chat_history    = []
+                st.session_state.compile_log     = []
+                st.session_state.pending_diffs   = {}
+                st.session_state.pending_gsm_name = ""
+                st.session_state.agent_running   = False
+                st.session_state._import_key_done = ""   # allow re-importing same file
+                st.session_state.confirm_clear   = False
                 st.session_state.editor_version += 1
-                st.toast("🗑️ 已清空所有脚本和参数", icon="✅")
+                st.session_state.work_dir        = _keep_work_dir
+                st.session_state.model_api_keys  = _keep_api_keys
+                st.toast("🗑️ 已重置项目（脚本、参数、对话、日志）", icon="✅")
                 st.rerun()
         with cc2:
             if st.button("❌ 取消"):
