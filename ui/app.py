@@ -105,6 +105,9 @@ if "pending_gsm_name" not in st.session_state:
     st.session_state.pending_gsm_name = ""
 if "confirm_clear" not in st.session_state:
     st.session_state.confirm_clear = False
+if "editor_version" not in st.session_state:
+    # Increment on import/clear to force text_area widget recreation (avoids stale Streamlit cache)
+    st.session_state.editor_version = 0
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
@@ -588,6 +591,7 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
         # Strip markdown fences, then directly apply to project scripts
         cleaned = {k: _strip_md_fences(v) for k, v in changes.items()}
         _apply_scripts_to_project(proj, cleaned)
+        st.session_state.editor_version += 1  # force text_area widget refresh
         if gsm_name:
             st.session_state.pending_gsm_name = gsm_name
 
@@ -885,6 +889,7 @@ with col_editor:
                     st.session_state.project = imported
                     st.session_state.pending_diffs = {}
                     st.session_state.pending_gsm_name = imported.name
+                    st.session_state.editor_version += 1
                     st.session_state.chat_history.append({
                         "role": "assistant",
                         "content": f"✅ 已导入 GDL `{imported.name}` — {len(imported.parameters)} 参数，{len(imported.scripts)} 脚本",
@@ -907,6 +912,7 @@ with col_editor:
                         st.session_state.project = proj_imp
                         st.session_state.pending_diffs = {}
                         st.session_state.pending_gsm_name = proj_imp.name
+                        st.session_state.editor_version += 1
                         st.session_state.chat_history.append({"role": "assistant", "content": imp_msg})
                         st.rerun()
                     else:
@@ -926,6 +932,7 @@ with col_editor:
                 extracted = _extract_gdl_from_chat()
                 if extracted:
                     _apply_scripts_to_project(proj_now, extracted)
+                    st.session_state.editor_version += 1
                     st.toast(f"📥 已写入 {len(extracted)} 个脚本", icon="✅")
                     st.rerun()
                 else:
@@ -992,6 +999,7 @@ with col_editor:
                     for stype, _fp, _lb in _SCRIPT_MAP:
                         proj_now.set_script(stype, "")
                     st.session_state.confirm_clear = False
+                    st.session_state.editor_version += 1
                     st.toast("🗑️ 已清空所有脚本", icon="✅")
                     st.rerun()
             with cc2:
@@ -1123,14 +1131,15 @@ with col_editor:
                 skey = fpath.replace("scripts/", "").replace(".gdl", "")
 
                 # ── Single editor (AI writes directly, no diff confirm needed) ──
+                _ev = st.session_state.editor_version
                 new_code = st.text_area(
                     label, value=current_code, height=400,
-                    key=f"script_{fpath}", label_visibility="collapsed",
+                    key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
                 )
                 if new_code != current_code:
                     proj_now.set_script(stype, new_code)
 
-                if st.button(f"🔍 检查", key=f"chk_{fpath}"):
+                if st.button(f"🔍 检查", key=f"chk_{fpath}_v{_ev}"):
                     for iss in check_gdl_script(new_code, skey):
                         if iss.startswith("✅"):
                             st.success(iss)
