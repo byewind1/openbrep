@@ -200,6 +200,33 @@ class GDLAgent:
             history=history,
         )
 
+    def generate_only(
+        self,
+        instruction: str,
+        project: HSFProject,
+        knowledge: str = "",
+        skills: str = "",
+    ) -> Optional[dict]:
+        """
+        Generate code changes WITHOUT compiling.
+        Returns {file_path: content} dict, or None if LLM output unparseable.
+        Used for preview-before-compile workflow.
+        """
+        self.on_event("analyze", {
+            "affected_scripts": [s.value for s in project.get_affected_scripts(instruction)]
+        })
+        self.on_event("attempt", {"attempt": 1})
+
+        affected = project.get_affected_scripts(instruction)
+        context = self._build_context(project, affected)
+        messages = self._build_messages(instruction, context, knowledge, skills, None)
+
+        raw = self.llm.generate(messages)
+        response = raw.content if hasattr(raw, "content") else str(raw)
+
+        self.on_event("llm_response", {"length": len(response)})
+        return self._parse_response(response)  # None if unparseable
+
     # ── Context Building ──────────────────────────────────
 
     def _build_context(
@@ -279,6 +306,19 @@ class GDLAgent:
             "- A, B, ZZYZX are RESERVED (width, depth, height)\n"
             "- 3D Script MUST end with END\n"
             "- Subroutine names must be in quotes: GOSUB \"DrawLegs\"\n\n"
+            "## 2D SCRIPT — MANDATORY MINIMUM\n"
+            "The 2D script (scripts/2d.gdl) MUST always include at minimum:\n"
+            "  PROJECT2 3, 270, 2\n"
+            "This projects the 3D geometry onto the floor plan. Without it the object\n"
+            "is invisible in ArchiCAD's 2D plan view — making it unusable.\n"
+            "If the object has bounding parameters A and B, also add bounding box and hotspots:\n"
+            "  [FILE: scripts/2d.gdl]\n"
+            "  HOTSPOT2 0, 0\n"
+            "  HOTSPOT2 A, 0\n"
+            "  HOTSPOT2 0, B\n"
+            "  HOTSPOT2 A, B\n"
+            "  PROJECT2 3, 270, 2\n"
+            "NEVER leave scripts/2d.gdl empty.\n\n"
             "## OUTPUT FORMAT - CRITICAL\n"
             "Return changes using [FILE: path] format. Each file section ends when next [FILE:] appears.\n\n"
             "For GDL scripts (scripts/1d.gdl, scripts/2d.gdl, scripts/3d.gdl, etc):\n"

@@ -84,6 +84,10 @@ if "work_dir" not in st.session_state:
     st.session_state.work_dir = str(Path.home() / "gdl-agent-workspace")
 if "agent_running" not in st.session_state:
     st.session_state.agent_running = False
+if "pending_changes" not in st.session_state:
+    # Stores AI-generated code waiting for user confirmation before compile
+    # Structure: {"gsm_name": str, "changes": {path: content}, "instruction": str}
+    st.session_state.pending_changes = None
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
@@ -305,46 +309,57 @@ def _versioned_gsm_path(proj_name: str, work_dir: str) -> str:
     return str(out_dir / f"{proj_name}_v{v}.gsm")
 
 
-def _extract_project_name_regex(text: str) -> str:
-    """Regex fallback: only use when LLM is unavailable."""
-    patterns = [
-        r'named?\s+([A-Za-z][A-Za-z0-9_]{2,30})',
-        r'called\s+([A-Za-z][A-Za-z0-9_]{2,30})',
-        r'名为\s*([A-Za-z][A-Za-z0-9_]{2,30})',
-        r'叫\s*([A-Za-z][A-Za-z0-9_]{2,30})',
-    ]
-    for pat in patterns:
+# ── Object Name Extraction (dictionary + regex, no LLM) ──
+
+_CN_TO_NAME = {
+    # 家具
+    "书架": "Bookshelf", "书柜": "Bookcase", "柜子": "Cabinet", "衣柜": "Wardrobe",
+    "桌子": "Table", "桌": "Table", "书桌": "Desk", "餐桌": "DiningTable",
+    "椅子": "Chair", "椅": "Chair", "沙发": "Sofa", "床": "Bed",
+    "茶几": "CoffeeTable", "电视柜": "TVStand", "鞋柜": "ShoeRack",
+    # 建筑构件
+    "窗": "Window", "窗框": "WindowFrame", "窗户": "Window", "百叶窗": "Louver",
+    "门": "Door", "门框": "DoorFrame", "推拉门": "SlidingDoor", "旋转门": "RevolvingDoor",
+    "墙": "Wall", "墙板": "WallPanel", "隔墙": "Partition", "幕墙": "CurtainWall",
+    "楼梯": "Staircase", "台阶": "StairStep", "扶手": "Handrail", "栏杆": "Railing",
+    "柱": "Column", "柱子": "Column", "梁": "Beam", "板": "Slab",
+    "屋顶": "Roof", "天花": "Ceiling", "地板": "Floor",
+    # 设备
+    "灯": "Light", "灯具": "LightFixture", "管道": "Pipe", "风管": "Duct",
+    "开关": "Switch", "插座": "Outlet", "空调": "AirConditioner",
+    # 景观
+    "花盆": "Planter", "树": "Tree", "围栏": "Fence", "长凳": "Bench",
+}
+
+def _extract_object_name(text: str) -> str:
+    """
+    Extract GDL object name from user input.
+    Priority: explicit English name > Chinese keyword dict > fallback.
+    Zero LLM calls — instant and 100% reliable.
+    """
+    # 1. Check for explicit English name: "named MyShelf", "叫 MyShelf"
+    for pat in [
+        r'named?\s+([A-Za-z][A-Za-z0-9]{2,30})',
+        r'called\s+([A-Za-z][A-Za-z0-9]{2,30})',
+        r'名为\s*([A-Za-z][A-Za-z0-9]{2,30})',
+        r'叫\s*([A-Za-z][A-Za-z0-9]{2,30})',
+    ]:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
             return m.group(1)
+
+    # 2. Chinese keyword → English CamelCase (longest match first)
+    for cn, en in sorted(_CN_TO_NAME.items(), key=lambda x: len(x[0]), reverse=True):
+        if cn in text:
+            print(f"[name] '{cn}' → {en}")
+            return en
+
+    # 3. Pick first CamelCase English word in text (skip short junk like UI, AI, GDL)
+    for word in re.findall(r'[A-Z][a-z]{2,}[A-Za-z0-9]*', text):
+        if word not in {"The", "For", "And", "Not", "But", "With"}:
+            return word
+
     return "MyObject"
-
-
-def _extract_project_name(text: str, llm=None) -> str:
-    """
-    Extract a valid GDL object name from user description.
-    Uses LLM for Chinese/ambiguous input; falls back to regex.
-    """
-    if llm is not None:
-        try:
-            resp = llm.generate([
-                {
-                    "role": "system",
-                    "content": (
-                        "Extract a short English GDL library object name from the user description. "
-                        "Rules: CamelCase, letters and digits only, 3-24 chars. "
-                        "Good examples: Bookshelf, WallPanel, WindowFrame, DoorUnit, StairStep, ColumnBase. "
-                        "Reply with ONLY the name — no explanation, no quotes."
-                    ),
-                },
-                {"role": "user", "content": text},
-            ], max_tokens=12, temperature=0)
-            name = resp.content.strip().split()[0]  # take first word only
-            if re.match(r'^[A-Za-z][A-Za-z0-9]{2,23}$', name):
-                return name
-        except Exception:
-            pass
-    return _extract_project_name_regex(text)
 
 
 # ── Welcome / Onboarding Panel ────────────────────────────
@@ -408,34 +423,42 @@ def _is_gdl_intent(text: str) -> bool:
     t = text.lower()
     return any(kw in t for kw in _GDL_KEYWORDS)
 
-def classify_intent(text: str, llm) -> str:
+def classify_and_extract(text: str, llm) -> tuple:
     """
-    Return 'GDL' if user wants to create/modify GDL objects,
-    otherwise 'CHAT' for casual conversation.
+    Returns: (intent, obj_name)
+    - intent: via keyword fast-path, LLM only for ambiguous cases
+    - obj_name: dictionary + regex, zero LLM calls
     """
-    # Fast path: obvious keywords
-    if _is_gdl_intent(text):
-        return "GDL"
+    # Name: always from dictionary (instant, no LLM)
+    obj_name = _extract_object_name(text)
 
-    # LLM-based classification for ambiguous cases
+    # Intent fast-path
+    if _is_gdl_intent(text):
+        return ("GDL", obj_name)
+
+    # Ambiguous → ask LLM just for GDL/CHAT (one word)
     try:
         resp = llm.generate([
             {
                 "role": "system",
                 "content": (
-                    "You are an intent classifier for a GDL object builder app. "
-                    "Reply with exactly one word: GDL or CHAT.\n"
-                    "GDL = user wants to create, modify, compile, or ask technical questions about ArchiCAD GDL library objects.\n"
-                    "CHAT = greeting, small talk, general questions about the app, or anything unrelated to GDL code generation."
+                    "你是意图分类器。判断用户是否想创建或修改 ArchiCAD GDL 构件。\n"
+                    "只回复一个词：GDL 或 CHAT\n"
+                    "GDL = 要创建/修改/编译构件\n"
+                    "CHAT = 闲聊/打招呼/问用法"
                 ),
             },
             {"role": "user", "content": text},
-        ], max_tokens=5, temperature=0)
-        result = resp.content.strip().upper()
-        return "GDL" if "GDL" in result else "CHAT"
-    except Exception:
-        # If classification fails, default to CHAT (safer)
-        return "CHAT"
+        ], max_tokens=10, temperature=0.1)
+
+        raw = resp.content.strip().upper()
+        print(f"[classify] intent raw: '{raw}'")
+        intent = "GDL" if "GDL" in raw else "CHAT"
+        return (intent, obj_name)
+
+    except Exception as e:
+        print(f"[classify] exception: {e}")
+        return ("CHAT", obj_name)
 
 
 def chat_respond(user_input: str, history: list, llm) -> str:
@@ -464,88 +487,93 @@ def chat_respond(user_input: str, history: list, llm) -> str:
 
 # ── Run Agent (shared logic) ──────────────────────────────
 
-def run_agent(user_input: str, proj: HSFProject, status_col):
-    """Run agent and return response message string."""
-    events = []
-
+def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: str = None) -> str:
+    """
+    Generate code only (no compile). Stores result in session_state.pending_changes.
+    Returns a status message for the chat.
+    """
     status_ph = status_col.empty()
-    detail_ph = status_col.empty()
 
     def on_event(event_type, data):
-        events.append((event_type, data))
         if event_type == "analyze":
             scripts = data.get("affected_scripts", [])
             status_ph.info(f"🔍 分析中... 影响脚本: {', '.join(scripts)}")
         elif event_type == "attempt":
-            status_ph.info(f"🧠 第 {data['attempt']} 次尝试，调用 AI...")
-        elif event_type == "compile_start":
-            status_ph.info("🔧 编译中...")
-        elif event_type == "compile_error":
-            detail_ph.warning(f"⚠️ 第 {data['attempt']} 次编译失败: {data['error'][:200]}")
-        elif event_type == "success":
-            status_ph.success(f"✅ 成功！第 {data['attempt']} 次尝试编译通过。")
+            status_ph.info("🧠 调用 AI 生成代码...")
+        elif event_type == "llm_response":
+            status_ph.info(f"✏️ 收到 {data['length']} 字符，解析中...")
 
     try:
         llm = get_llm()
-        compiler = get_compiler()
         knowledge = load_knowledge()
         skills_loader = load_skills()
         skills_text = skills_loader.get_for_task(user_input)
 
-        output_gsm = _versioned_gsm_path(proj.name, st.session_state.work_dir)
-
-        agent = GDLAgent(
-            llm=llm,
-            compiler=compiler,
-            max_iterations=max_retries,
-            on_event=on_event,
-        )
-
-        result = agent.run(
+        agent = GDLAgent(llm=llm, compiler=get_compiler(), on_event=on_event)
+        changes = agent.generate_only(
             instruction=user_input,
             project=proj,
-            output_gsm=output_gsm,
             knowledge=knowledge,
             skills=skills_text,
         )
 
-        mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
-        if result.status == Status.SUCCESS:
-            msg = (
-                f"✅ **编译成功{mock_tag}** — 第 {result.attempts} 次尝试\n\n"
-                f"📦 输出: `{result.output_path}`\n\n"
-                f"参数: {len(proj.parameters)} | "
-                f"脚本: {', '.join(st_type.value for st_type in proj.scripts)}"
-            )
-            if compiler_mode.startswith("Mock"):
-                msg += "\n\n⚠️ Mock 模式不生成真实 .gsm，切换到 LP_XMLConverter 进行真实编译。"
-        elif result.status == Status.FAILED:
-            msg = f"❌ **失败**: {result.error_summary}"
-        elif result.status == Status.EXHAUSTED:
-            msg = (
-                f"⚠️ **{result.attempts} 次尝试后仍未成功**\n\n"
-                f"最后错误: {result.error_summary[:300]}\n\n"
-                f"建议: 换一种描述方式，或切换到「编辑」Tab 手动修改代码。"
-            )
-        else:
-            msg = f"⛔ 任务被阻止: {result.error_summary}"
-
         status_ph.empty()
-        detail_ph.empty()
 
-        st.session_state.compile_log.append({
-            "project": proj.name,
+        if not changes:
+            return "❌ AI 输出无法解析，请重新描述需求。"
+
+        # Store for user confirmation
+        st.session_state.pending_changes = {
+            "gsm_name": gsm_name or proj.name,
+            "changes": changes,
             "instruction": user_input,
-            "success": result.status == Status.SUCCESS,
-            "attempts": result.attempts,
-            "message": result.error_summary or "Success",
-        })
-
-        return msg
+        }
+        return "✏️ **AI 已生成代码**，请在右侧「待确认」区域检查，确认后点击编译。"
 
     except Exception as e:
         status_ph.empty()
-        detail_ph.empty()
+        return f"❌ **错误**: {str(e)}"
+
+
+def compile_pending(proj: HSFProject, gsm_name: str, changes: dict) -> str:
+    """Apply pending changes to project and compile. Returns status message."""
+    try:
+        # Apply changes
+        from gdl_agent.core import GDLAgent
+        agent = GDLAgent(llm=get_llm(), compiler=get_compiler())
+        agent._apply_changes(proj, changes)
+
+        # Versioned output path using user-confirmed name
+        output_gsm = _versioned_gsm_path(gsm_name, st.session_state.work_dir)
+
+        # Save & compile
+        hsf_dir = proj.save_to_disk()
+        result = get_compiler().hsf2libpart(str(hsf_dir), output_gsm)
+
+        mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
+        if result.success:
+            st.session_state.compile_log.append({
+                "project": proj.name,
+                "instruction": st.session_state.pending_changes.get("instruction", ""),
+                "success": True,
+                "attempts": 1,
+                "message": "Success",
+            })
+            msg = f"✅ **编译成功{mock_tag}**\n\n📦 `{output_gsm}`"
+            if compiler_mode.startswith("Mock"):
+                msg += "\n\n⚠️ Mock 模式不生成真实 .gsm，切换 LP_XMLConverter 进行真实编译。"
+            return msg
+        else:
+            st.session_state.compile_log.append({
+                "project": proj.name,
+                "instruction": "",
+                "success": False,
+                "attempts": 1,
+                "message": result.stderr,
+            })
+            return f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```"
+
+    except Exception as e:
         return f"❌ **错误**: {str(e)}"
 
 
@@ -581,6 +609,51 @@ with col_chat:
 # ── Right: Welcome / Project Editor ──────────────────────
 
 with col_editor:
+    # ── Pending Confirmation Panel (highest priority) ─────
+    if st.session_state.pending_changes and st.session_state.project:
+        pc = st.session_state.pending_changes
+        proj_now = st.session_state.project
+
+        st.markdown("### ⏳ AI 已生成代码 — 请确认后编译")
+
+        # Editable GSM name
+        confirmed_gsm_name = st.text_input(
+            "📦 GSM 文件名（可修改）",
+            value=pc["gsm_name"],
+            help="修改为你想要的构件名称，确认后用此名称编译输出",
+            key="pending_gsm_name",
+        )
+
+        # Show each changed file with editable text area
+        edited_changes = {}
+        for file_path, content in pc["changes"].items():
+            label = file_path.replace("scripts/", "").replace("paramlist.xml", "参数 paramlist.xml")
+            edited_content = st.text_area(
+                f"📄 {label}",
+                value=content,
+                height=200,
+                key=f"pending_{file_path}",
+            )
+            edited_changes[file_path] = edited_content
+
+        col_ok, col_cancel = st.columns([1, 1])
+        with col_ok:
+            if st.button("✅ 确认编译", type="primary", use_container_width=True):
+                # Use user-confirmed name & potentially edited code
+                pc["gsm_name"] = confirmed_gsm_name
+                pc["changes"] = edited_changes
+                with st.spinner("编译中..."):
+                    result_msg = compile_pending(proj_now, confirmed_gsm_name, edited_changes)
+                st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
+                st.session_state.pending_changes = None
+                st.rerun()
+        with col_cancel:
+            if st.button("❌ 放弃", use_container_width=True):
+                st.session_state.pending_changes = None
+                st.rerun()
+
+        st.divider()
+
     if not st.session_state.project:
         show_welcome()
     else:
@@ -750,8 +823,8 @@ if user_input:
     else:
         llm_for_classify = get_llm()
 
-        # ── Intent classification ──
-        intent = classify_intent(user_input, llm_for_classify)
+        # ── Intent + Name in ONE call ──
+        intent, gdl_obj_name = classify_and_extract(user_input, llm_for_classify)
 
         with live_output.container():
             st.chat_message("user").markdown(user_input)
@@ -760,7 +833,7 @@ if user_input:
                     # ── Casual conversation — no project creation, no agent ──
                     msg = chat_respond(
                         user_input,
-                        st.session_state.chat_history[:-1],  # exclude the just-added user msg
+                        st.session_state.chat_history[:-1],
                         llm_for_classify,
                     )
                     st.markdown(msg)
@@ -768,13 +841,12 @@ if user_input:
                 else:
                     # ── GDL intent — create project if needed, then run agent ──
                     if not st.session_state.project:
-                        proj_name = _extract_project_name(user_input, llm=llm_for_classify)
-                        new_proj = HSFProject.create_new(proj_name, work_dir=st.session_state.work_dir)
+                        new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
                         st.session_state.project = new_proj
-                        st.info(f"📁 已初始化项目 `{proj_name}`")
+                        st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                     proj_current = st.session_state.project
-                    msg = run_agent(user_input, proj_current, st.container())
+                    msg = run_agent_generate(user_input, proj_current, st.container(), gsm_name=gdl_obj_name)
                     st.markdown(msg)
 
         st.session_state.chat_history.append({"role": "assistant", "content": msg})
