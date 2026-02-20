@@ -103,6 +103,8 @@ if "pending_diffs" not in st.session_state:
     st.session_state.pending_diffs = {}
 if "pending_gsm_name" not in st.session_state:
     st.session_state.pending_gsm_name = ""
+if "confirm_clear" not in st.session_state:
+    st.session_state.confirm_clear = False
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
@@ -540,12 +542,22 @@ def chat_respond(user_input: str, history: list, llm) -> str:
         return f"❌ {str(e)}"
 
 
+# ── Script Map (module-level, shared by agent + editor) ───
+_SCRIPT_MAP = [
+    (ScriptType.SCRIPT_3D, "scripts/3d.gdl",  "3D"),
+    (ScriptType.SCRIPT_2D, "scripts/2d.gdl",  "2D"),
+    (ScriptType.MASTER,    "scripts/1d.gdl",  "Master"),
+    (ScriptType.PARAM,     "scripts/vl.gdl",  "Param"),
+    (ScriptType.UI,        "scripts/ui.gdl",  "UI"),
+    (ScriptType.PROPERTIES,"scripts/pr.gdl",  "Properties"),
+]
+
 # ── Run Agent ─────────────────────────────────────────────
 
 def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: str = None) -> str:
     """
     Generate code only (no compile).
-    Stores result in session_state.pending_diffs — shown inline in script tabs.
+    Directly applies AI output to project scripts — no confirmation needed.
     """
     status_ph = status_col.empty()
 
@@ -573,22 +585,29 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
         if not changes:
             return "❌ AI 输出无法解析，请重新描述需求。"
 
-        # Strip markdown fences AI sometimes leaks, then merge into pending_diffs
+        # Strip markdown fences, then directly apply to project scripts
         cleaned = {k: _strip_md_fences(v) for k, v in changes.items()}
-        st.session_state.pending_diffs.update(cleaned)
+        _apply_scripts_to_project(proj, cleaned)
         if gsm_name:
             st.session_state.pending_gsm_name = gsm_name
 
         script_names = ", ".join(
             p.replace("scripts/", "").replace(".gdl", "").upper()
-            for p in changes.keys()
+            for p in cleaned.keys()
             if p.startswith("scripts/")
         )
-        return f"✏️ **AI 已生成代码** — 脚本 [{script_names}] 右侧出现对比视图，确认后点击「替换」，最后「🔧 编译」。"
+        return f"✏️ **AI 已写入脚本** [{script_names}]，点击「🔧 编译」即可。"
 
     except Exception as e:
         status_ph.empty()
         return f"❌ **错误**: {str(e)}"
+
+
+def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> None:
+    """Apply a {fpath: content} dict directly to project via set_script."""
+    for stype, fpath, _label in _SCRIPT_MAP:
+        if fpath in script_map:
+            proj.set_script(stype, script_map[fpath])
 
 
 def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
@@ -830,15 +849,6 @@ with col_chat:
 
 # ── Right: Editor ─────────────────────────────────────────
 
-_SCRIPT_MAP = [
-    (ScriptType.SCRIPT_3D, "scripts/3d.gdl",  "3D"),
-    (ScriptType.SCRIPT_2D, "scripts/2d.gdl",  "2D"),
-    (ScriptType.MASTER,    "scripts/1d.gdl",  "Master"),
-    (ScriptType.PARAM,     "scripts/vl.gdl",  "Param"),
-    (ScriptType.UI,        "scripts/ui.gdl",  "UI"),
-    (ScriptType.PROPERTIES,"scripts/pr.gdl",  "Properties"),
-]
-
 def _diff_summary(old: str, new: str) -> str:
     """Return a short +N/-N line diff summary."""
     old_lines = set(old.splitlines())
@@ -853,18 +863,17 @@ with col_editor:
         show_welcome()
     else:
         proj_now = st.session_state.project
-        diffs    = st.session_state.pending_diffs  # live reference
 
         # ── Toolbar ───────────────────────────────────────
-        tb_imp, tb_gsm_imp, tb_extract, tb_name, tb_compile, tb_check = st.columns(
-            [1.2, 1.4, 1.1, 2.0, 1.4, 1.2]
+        tb_imp, tb_gsm_imp, tb_extract, tb_clear, tb_name, tb_compile, tb_check = st.columns(
+            [1.0, 1.3, 1.0, 0.85, 1.8, 1.3, 1.1]
         )
 
-        # Import GDL (.gdl / .txt)
+        # 📂 Import GDL (.gdl / .txt) — single script file
         with tb_imp:
             gdl_upload = st.file_uploader(
-                "📂 GDL", type=["gdl", "txt"], label_visibility="collapsed",
-                key="toolbar_gdl_upload", help="导入 .gdl 文件"
+                "📂 GDL 脚本", type=["gdl", "txt"],
+                key="toolbar_gdl_upload", help="导入单个 .gdl 脚本文件（解析为对象）"
             )
             if gdl_upload:
                 content = gdl_upload.read().decode("utf-8", errors="replace")
@@ -878,18 +887,18 @@ with col_editor:
                     st.session_state.pending_gsm_name = imported.name
                     st.session_state.chat_history.append({
                         "role": "assistant",
-                        "content": f"✅ 已导入 `{imported.name}` — {len(imported.parameters)} 参数，{len(imported.scripts)} 脚本",
+                        "content": f"✅ 已导入 GDL `{imported.name}` — {len(imported.parameters)} 参数，{len(imported.scripts)} 脚本",
                     })
                     st.rerun()
                 except Exception as e:
                     st.error(f"导入失败: {e}")
 
-        # Import GSM (LP mode only)
+        # 📦 Import GSM — full object package (LP mode only)
         with tb_gsm_imp:
             if compiler_mode.startswith("LP"):
                 gsm_upload = st.file_uploader(
-                    "📦 GSM", type=["gsm"], label_visibility="collapsed",
-                    key="toolbar_gsm_upload", help="导入 .gsm — 需 LP_XMLConverter"
+                    "📦 GSM 对象", type=["gsm"],
+                    key="toolbar_gsm_upload", help="导入 ArchiCAD .gsm 对象包，需 LP_XMLConverter"
                 )
                 if gsm_upload:
                     with st.spinner("解包 GSM..."):
@@ -903,9 +912,9 @@ with col_editor:
                     else:
                         st.error(imp_msg)
             else:
-                st.caption("GSM 导入需 LP 模式")
+                st.caption("GSM 导入\n需 LP 模式")
 
-        # Extract GDL from chat history
+        # 📥 Extract GDL code blocks from chat history → apply directly
         with tb_extract:
             n_chat_blocks = sum(
                 1 for m in st.session_state.chat_history
@@ -913,19 +922,25 @@ with col_editor:
             )
             btn_label = f"📥 提取({n_chat_blocks})" if n_chat_blocks else "📥 提取"
             if st.button(btn_label, use_container_width=True,
-                         help="从对话记录中提取 GDL 代码块并填入编辑器 diff 视图"):
+                         help="从对话记录中提取 GDL 代码块，直接写入对应脚本"):
                 extracted = _extract_gdl_from_chat()
                 if extracted:
-                    st.session_state.pending_diffs.update(extracted)
-                    st.toast(f"📥 已提取 {len(extracted)} 个脚本", icon="✅")
+                    _apply_scripts_to_project(proj_now, extracted)
+                    st.toast(f"📥 已写入 {len(extracted)} 个脚本", icon="✅")
                     st.rerun()
                 else:
                     st.toast("对话中未发现 GDL 代码块", icon="ℹ️")
 
+        # 🗑️ Clear all scripts
+        with tb_clear:
+            if st.button("🗑️ 清空", use_container_width=True,
+                         help="清空所有脚本代码，等待重新导入或 AI 生成"):
+                st.session_state.confirm_clear = True
+
         # GSM output name
         with tb_name:
             gsm_name_input = st.text_input(
-                "📦", label_visibility="collapsed",
+                "输出名称", label_visibility="collapsed",
                 value=st.session_state.pending_gsm_name or proj_now.name,
                 placeholder="输出 GSM 名称",
                 key="toolbar_gsm_name",
@@ -935,10 +950,8 @@ with col_editor:
 
         # Compile button
         with tb_compile:
-            n_diffs = len(diffs)
-            compile_label = f"🔧 编译 ({n_diffs}↑)" if n_diffs else "🔧 编译"
-            if st.button(compile_label, type="primary", use_container_width=True,
-                         help="编译当前所有脚本（接受的 AI 建议已自动应用）"):
+            if st.button("🔧 编译", type="primary", use_container_width=True,
+                         help="编译当前所有脚本为 .gsm 对象"):
                 with st.spinner("编译中..."):
                     success, result_msg = do_compile(
                         proj_now,
@@ -970,15 +983,28 @@ with col_editor:
                 if all_ok:
                     st.success("✅ 所有脚本语法正常")
 
+        # ── 清空确认 ─────────────────────────────────────
+        if st.session_state.get("confirm_clear"):
+            st.warning("⚠️ 将清空所有脚本代码，此操作不可撤销。确认继续？")
+            cc1, cc2, _ = st.columns([1, 1, 4])
+            with cc1:
+                if st.button("✅ 确认清空", type="primary"):
+                    for stype, _fp, _lb in _SCRIPT_MAP:
+                        proj_now.set_script(stype, "")
+                    st.session_state.confirm_clear = False
+                    st.toast("🗑️ 已清空所有脚本", icon="✅")
+                    st.rerun()
+            with cc2:
+                if st.button("❌ 取消"):
+                    st.session_state.confirm_clear = False
+                    st.rerun()
+
         st.divider()
 
-        # ── Tab strip — labels show ● when diff pending ──
-        def _tlabel(name, fpath):
-            return f"{name} ●" if fpath in diffs else name
-
+        # ── Tab strip ─────────────────────────────────────
         tab_labels = (
             ["参数"]
-            + [_tlabel(label, fpath) for _, fpath, label in _SCRIPT_MAP]
+            + [label for _, _fp, label in _SCRIPT_MAP]
             + ["📋 日志"]
         )
         all_tabs = st.tabs(tab_labels)
@@ -1095,74 +1121,21 @@ with col_editor:
 
                 current_code = proj_now.get_script(stype) or ""
                 skey = fpath.replace("scripts/", "").replace(".gdl", "")
-                has_diff = fpath in diffs
 
-                if has_diff:
-                    ai_code = diffs[fpath]
-                    summary = _diff_summary(current_code, ai_code)
+                # ── Single editor (AI writes directly, no diff confirm needed) ──
+                new_code = st.text_area(
+                    label, value=current_code, height=400,
+                    key=f"script_{fpath}", label_visibility="collapsed",
+                )
+                if new_code != current_code:
+                    proj_now.set_script(stype, new_code)
 
-                    # ── Diff view: current (left) | AI (right) ──
-                    col_cur, col_ai = st.columns(2, gap="small")
-
-                    with col_cur:
-                        st.markdown(
-                            '<div class="diff-current"><b>当前代码</b></div>',
-                            unsafe_allow_html=True,
-                        )
-                        edited_cur = st.text_area(
-                            "current", value=current_code, height=340,
-                            key=f"cur_{fpath}", label_visibility="collapsed",
-                        )
-                        if edited_cur != current_code:
-                            proj_now.set_script(stype, edited_cur)
-
-                    with col_ai:
-                        st.markdown(
-                            f'<div class="diff-ai"><b>AI 建议</b> &nbsp;'
-                            f'<span class="diff-badge">{summary}</span></div>',
-                            unsafe_allow_html=True,
-                        )
-                        edited_ai = st.text_area(
-                            "ai", value=ai_code, height=340,
-                            key=f"ai_{fpath}", label_visibility="collapsed",
-                        )
-                        diffs[fpath] = edited_ai  # track in-place edits to AI side
-
-                    btn_accept, btn_discard, btn_chk = st.columns([2, 1.5, 1.5])
-                    with btn_accept:
-                        if st.button(f"✅ 替换为 AI 版本", key=f"accept_{fpath}",
-                                     type="primary", use_container_width=True):
-                            proj_now.set_script(stype, diffs.pop(fpath))
-                            st.rerun()
-                    with btn_discard:
-                        if st.button(f"❌ 丢弃 AI 建议", key=f"discard_{fpath}",
-                                     use_container_width=True):
-                            diffs.pop(fpath)
-                            st.rerun()
-                    with btn_chk:
-                        if st.button(f"🔍 检查 AI", key=f"chk_ai_{fpath}",
-                                     use_container_width=True):
-                            for iss in check_gdl_script(diffs.get(fpath, ""), skey):
-                                if iss.startswith("✅"):
-                                    st.success(iss)
-                                else:
-                                    st.warning(iss)
-
-                else:
-                    # ── Normal single editor ──────────────────
-                    new_code = st.text_area(
-                        label, value=current_code, height=380,
-                        key=f"script_{fpath}", label_visibility="collapsed",
-                    )
-                    if new_code != current_code:
-                        proj_now.set_script(stype, new_code)
-
-                    if st.button(f"🔍 检查", key=f"chk_{fpath}"):
-                        for iss in check_gdl_script(new_code, skey):
-                            if iss.startswith("✅"):
-                                st.success(iss)
-                            else:
-                                st.warning(iss)
+                if st.button(f"🔍 检查", key=f"chk_{fpath}"):
+                    for iss in check_gdl_script(new_code, skey):
+                        if iss.startswith("✅"):
+                            st.success(iss)
+                        else:
+                            st.warning(iss)
 
         # ── 日志 Tab ──────────────────────────────────────
         with tab_log:
