@@ -116,9 +116,12 @@ if "work_dir" not in st.session_state:
 if "agent_running" not in st.session_state:
     st.session_state.agent_running = False
 if "pending_diffs" not in st.session_state:
-    # AI-proposed changes awaiting user review. {script_path: new_content}
-    # e.g. {"scripts/3d.gdl": "...", "scripts/2d.gdl": "..."}
+    # AI-proposed changes awaiting user review.
+    # Keys: "scripts/3d.gdl" etc. + "paramlist.xml" for parameters
     st.session_state.pending_diffs = {}
+if "pending_ai_label" not in st.session_state:
+    # Human-readable label shown in the confirmation banner
+    st.session_state.pending_ai_label = ""
 if "pending_gsm_name" not in st.session_state:
     st.session_state.pending_gsm_name = ""
 if "confirm_clear" not in st.session_state:
@@ -299,6 +302,7 @@ with st.sidebar:
             st.session_state.project          = None
             st.session_state.compile_log      = []
             st.session_state.pending_diffs    = {}
+            st.session_state.pending_ai_label = ""
             st.session_state.pending_gsm_name = ""
             st.session_state.agent_running    = False
             st.session_state._import_key_done = ""
@@ -689,23 +693,52 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
         if plain_text:
             reply_parts.append(plain_text)
 
-        # Code changes — strip fences, apply, show in chat
+        # Code changes — strip fences, apply or queue for confirmation
         if changes:
             cleaned = {k: _strip_md_fences(v) for k, v in changes.items()}
-            _apply_scripts_to_project(proj, cleaned)
-            st.session_state.editor_version += 1
-            if gsm_name:
-                st.session_state.pending_gsm_name = gsm_name
 
             script_names = ", ".join(
                 p.replace("scripts/", "").replace(".gdl", "").upper()
                 for p in cleaned if p.startswith("scripts/")
             )
+            has_params = "paramlist.xml" in cleaned
+            param_count_preview = len(_parse_paramlist_text(cleaned.get("paramlist.xml", "")))
+
             code_blocks = []
             for fpath, code in cleaned.items():
                 lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
                 code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
-            reply_parts.append(f"✏️ **已写入脚本 [{script_names}]** — 可直接「🔧 编译」\n\n" + "\n\n".join(code_blocks))
+
+            if debug_mode:
+                # Debug / analysis: queue for user confirmation, don't overwrite immediately
+                st.session_state.pending_diffs = cleaned
+                label_parts = []
+                if script_names:
+                    label_parts.append(f"脚本 [{script_names}]")
+                if has_params:
+                    label_parts.append(f"{param_count_preview} 个参数")
+                st.session_state.pending_ai_label = " + ".join(label_parts)
+                notice = (
+                    f"🤖 **AI 已生成新内容** — {' + '.join(label_parts)}\n\n"
+                    "👆 编辑器顶部可确认写入或忽略。"
+                )
+                reply_parts.append(notice + "\n\n" + "\n\n".join(code_blocks))
+            else:
+                # Creation / edit mode: auto-apply immediately
+                sc, pc = _apply_scripts_to_project(proj, cleaned)
+                st.session_state.editor_version += 1
+                if gsm_name:
+                    st.session_state.pending_gsm_name = gsm_name
+                parts_applied = []
+                if script_names:
+                    parts_applied.append(f"脚本 [{script_names}]")
+                if pc:
+                    parts_applied.append(f"{pc} 个参数")
+                applied_label = " + ".join(parts_applied) if parts_applied else "内容"
+                reply_parts.append(
+                    f"✏️ **已写入 {applied_label}** — 可直接「🔧 编译」\n\n"
+                    + "\n\n".join(code_blocks)
+                )
 
         if reply_parts:
             return "\n\n---\n\n".join(reply_parts)
@@ -717,11 +750,50 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
         return f"❌ **错误**: {str(e)}"
 
 
-def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> None:
-    """Apply a {fpath: content} dict directly to project via set_script."""
+def _parse_paramlist_text(text: str) -> list:
+    """
+    Parse 'Type Name = Value ! Description' lines → list[GDLParameter].
+    Handles LLM output from [FILE: paramlist.xml] sections.
+    """
+    import re as _re
+    _VALID_TYPES = {
+        "Length", "Angle", "RealNum", "Integer", "Boolean",
+        "String", "PenColor", "FillPattern", "LineType", "Material",
+    }
+    params = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("!") or line.startswith("#"):
+            continue
+        # Format: Type Name = Value  [! description]
+        m = _re.match(r'(\w+)\s+(\w+)\s*=\s*(.+?)(?:\s*!\s*(.*))?$', line)
+        if m:
+            ptype, pname, pval, pdesc = m.groups()
+            if ptype in _VALID_TYPES:
+                params.append(GDLParameter(
+                    pname, ptype, (pdesc or "").strip(), pval.strip().strip('"'),
+                ))
+    return params
+
+
+def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, int]:
+    """
+    Apply {fpath: content} dict to project.
+    Handles scripts/3d.gdl etc. + paramlist.xml.
+    Returns (script_count, param_count) for notification.
+    """
+    sc = 0
     for stype, fpath, _label in _SCRIPT_MAP:
         if fpath in script_map:
             proj.set_script(stype, script_map[fpath])
+            sc += 1
+    pc = 0
+    if "paramlist.xml" in script_map:
+        new_params = _parse_paramlist_text(script_map["paramlist.xml"])
+        if new_params:
+            proj.parameters = new_params
+            pc = len(new_params)
+    return sc, pc
 
 
 def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
@@ -902,15 +974,27 @@ def _strip_md_fences(code: str) -> str:
 
 def _extract_gdl_from_chat() -> dict:
     """
-    Scan chat history for fenced code blocks containing GDL.
-    Returns {script_path: content} ready to merge into pending_diffs.
-    Heuristic type detection: 3D (has BODY/PRISM_/END), 2D (has PROJECT2),
-    Master (has GLOB_ / PARAMETERS keyword), Param (has PARAMETERS section).
+    Scan chat history for fenced code blocks containing GDL/paramlist.
+    Returns {script_path_or_"paramlist.xml": content}.
     Multiple blocks → last block wins per type.
+
+    Classification priority:
+      1. paramlist.xml  — lines look like 'Type Name = Value'
+      2. scripts/2d.gdl — has PROJECT2 / RECT2 / POLY2
+      3. scripts/vl.gdl — has VALUES or LOCK keyword (GDL param script)
+      4. scripts/1d.gdl — has GLOB_ variable
+      5. scripts/ui.gdl — has UI_CURRENT or DEFINE STYLE
+      6. scripts/3d.gdl — default
     """
     import re as _re
     collected: dict[str, str] = {}
-    code_block_pat = _re.compile(r"```(?:gdl|GDL)?\s*\n(.*?)```", _re.DOTALL)
+    # Match ``` (optional lang tag) ... ``` — handles empty lang, gdl, GDL, xml, etc.
+    code_block_pat = _re.compile(r"```[a-zA-Z]*[ \t]*\n(.*?)```", _re.DOTALL)
+    # Paramlist line: starts with a valid GDL type word followed by identifier = value
+    _PARAM_TYPE_RE = _re.compile(
+        r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
+        r'\s+\w+\s*=', _re.IGNORECASE | _re.MULTILINE
+    )
 
     for msg in st.session_state.get("chat_history", []):
         if msg.get("role") != "assistant":
@@ -920,16 +1004,25 @@ def _extract_gdl_from_chat() -> dict:
             block = m.group(1).strip()
             if not block:
                 continue
-            # Classify by content heuristics
             block_up = block.upper()
-            if _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
+
+            # 1. Paramlist: ≥2 lines matching 'Type Var = value'
+            if len(_PARAM_TYPE_RE.findall(block)) >= 2:
+                path = "paramlist.xml"
+            # 2. 2D projection
+            elif _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
                 path = "scripts/2d.gdl"
-            elif _re.search(r'\bPARAMETERS\b', block_up):
+            # 3. Param/Vl script
+            elif _re.search(r'\bVALUES\b|\bLOCK\b', block_up) and not _re.search(r'\bBLOCK\b', block_up):
                 path = "scripts/vl.gdl"
+            # 4. Master script
             elif _re.search(r'\bGLOB_\w+\b', block_up):
                 path = "scripts/1d.gdl"
+            # 5. UI script
+            elif _re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b', block_up):
+                path = "scripts/ui.gdl"
             else:
-                path = "scripts/3d.gdl"   # default: 3D
+                path = "scripts/3d.gdl"
             collected[path] = block
 
     return collected
@@ -1150,12 +1243,15 @@ with col_editor:
                      help="从 AI 对话中提取 GDL 代码块写入编辑器"):
             extracted = _extract_gdl_from_chat()
             if extracted:
-                _apply_scripts_to_project(proj_now, extracted)
+                sc, pc = _apply_scripts_to_project(proj_now, extracted)
                 st.session_state.editor_version += 1
-                st.toast(f"📥 已写入 {len(extracted)} 个脚本", icon="✅")
+                parts = []
+                if sc: parts.append(f"{sc} 个脚本")
+                if pc: parts.append(f"{pc} 个参数")
+                st.toast(f"📥 已写入 {'、'.join(parts)}", icon="✅")
                 st.rerun()
             else:
-                st.toast("对话中未发现 GDL 代码块", icon="ℹ️")
+                st.toast("对话中未发现 GDL/paramlist 代码块", icon="ℹ️")
 
     with tb_clear:
         if st.button("🗑️ 清空", use_container_width=True, help="重置项目：脚本、参数、对话、日志全清，保留设置"):
@@ -1190,6 +1286,7 @@ with col_editor:
                 st.session_state.project          = None
                 st.session_state.compile_log      = []
                 st.session_state.pending_diffs    = {}
+                st.session_state.pending_ai_label = ""
                 st.session_state.pending_gsm_name = ""
                 st.session_state.agent_running    = False
                 st.session_state._import_key_done = ""
@@ -1203,6 +1300,37 @@ with col_editor:
         with cc2:
             if st.button("❌ 取消"):
                 st.session_state.confirm_clear = False
+                st.rerun()
+
+    # ── Pending AI changes banner ─────────────────────────
+    if st.session_state.pending_diffs:
+        _label = st.session_state.pending_ai_label or "AI 生成的内容"
+        _n_scripts = sum(1 for k in st.session_state.pending_diffs if k.startswith("scripts/"))
+        _n_params  = len(_parse_paramlist_text(
+            st.session_state.pending_diffs.get("paramlist.xml", "")
+        ))
+        _summary = []
+        if _n_scripts: _summary.append(f"{_n_scripts} 个脚本")
+        if _n_params:  _summary.append(f"{_n_params} 个参数")
+        _banner_txt = "、".join(_summary) if _summary else _label
+
+        st.info(f"🤖 **AI 建议了新的 {_banner_txt}** — 是否写入编辑器？")
+        _pb1, _pb2, _pb3 = st.columns([1.2, 1, 6])
+        with _pb1:
+            if st.button("✅ 写入", type="primary", use_container_width=True, key="pending_apply"):
+                sc, pc = _apply_scripts_to_project(proj_now, st.session_state.pending_diffs)
+                st.session_state.pending_diffs    = {}
+                st.session_state.pending_ai_label = ""
+                st.session_state.editor_version  += 1
+                applied = []
+                if sc: applied.append(f"{sc} 个脚本")
+                if pc: applied.append(f"{pc} 个参数")
+                st.toast(f"✅ 已写入 {'、'.join(applied)}", icon="✏️")
+                st.rerun()
+        with _pb2:
+            if st.button("🗑️ 忽略", use_container_width=True, key="pending_discard"):
+                st.session_state.pending_diffs    = {}
+                st.session_state.pending_ai_label = ""
                 st.rerun()
 
     st.divider()
