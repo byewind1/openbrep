@@ -1,5 +1,7 @@
 # gdl-agent v0.5
 
+[简体中文](README.zh-CN.md) | English
+
 **用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。**
 
 > **Pre-release** — 核心功能完整，适合建筑师日常 GDL 开发测试。
