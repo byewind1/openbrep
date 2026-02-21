@@ -27,7 +27,7 @@
 ## 安装
 
 ```bash
-git clone https://github.com/byewind/gdl-agent.git
+git clone https://github.com/byewind1/gdl-agent.git
 cd gdl-agent
 
 # 安装核心 + Web 界面依赖

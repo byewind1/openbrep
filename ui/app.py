@@ -1770,7 +1770,7 @@ st.divider()
 st.markdown(
     '<p style="text-align:center; color:#64748b; font-size:0.8rem;">'
     'gdl-agent v0.5.0 · HSF-native ·'
-    '<a href="https://github.com/byewind/gdl-agent">GitHub</a>'
+    '<a href="https://github.com/byewind1/gdl-agent">GitHub</a>'
     '</p>',
     unsafe_allow_html=True,
 )
