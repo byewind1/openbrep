@@ -65,6 +65,7 @@ streamlit run ui/app.py
 
 | 功能 | 说明 |
 |---|---|
+| **🖼️ 图片即意图** | 上传建筑构件图片 → AI 识别几何、提取参数化维度 → 直接生成 GDL 脚本，无需文字描述 |
 | **自然语言创建** | "做一个宽 600mm 深 400mm 的书架，4 个层板" → 自动生成全部脚本和参数 |
 | **自然语言修改** | 已有项目时："把层板改成 5 个，材质加一个 shelfMat 参数" → AI 理解上下文按需修改 |
 | **Debug 模式** | 包含 "为什么"/"检查"/"修复" 等词时，自动注入全部脚本上下文；AI 可以给出分析文字 + 代码修复 |
@@ -178,7 +179,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/..."
 
 | 版本 | 主要内容 |
 |---|---|
-| **v0.5 pre** | 统一编辑器 UI；AI 对话修改脚本；确认写入流程；paramlist.xml 自动注入；GSM 导入（AC29）；streamlit-ace 语法高亮；全屏编辑；多模型支持 |
+| **v0.5 pre** | 统一编辑器 UI；**图片即意图**（上传图片 → AI 生成 GDL）；AI 对话修改脚本；确认写入流程；paramlist.xml 自动注入；GSM 导入（AC29）；streamlit-ace 语法高亮；全屏编辑；多模型支持 |
 | v0.4.0 | HSF-native 架构重构；Streamlit Web UI；强类型 paramlist；44 项单元测试 |
 | v0.3.x | GDL 解析器；Context surgery；Preflight |
 | v0.2.0 | Anti-hallucination；Golden snippets |

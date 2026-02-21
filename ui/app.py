@@ -8,6 +8,7 @@ import sys
 import re
 import os
 import time
+import base64
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -132,6 +133,9 @@ if "editor_version" not in st.session_state:
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
+if "vision_upload_key" not in st.session_state:
+    # Increment to reset the file_uploader widget after image is sent
+    st.session_state.vision_upload_key = 0
 
 
 # ── Load config.toml defaults ──────────────────────────
@@ -978,60 +982,167 @@ def _strip_md_fences(code: str) -> str:
     return code.strip()
 
 
-def _extract_gdl_from_chat() -> dict:
+def _classify_code_blocks(text: str) -> dict:
     """
-    Scan chat history for fenced code blocks containing GDL/paramlist.
-    Returns {script_path_or_"paramlist.xml": content}.
-    Multiple blocks → last block wins per type.
+    Extract and classify GDL/paramlist code blocks from raw text.
+    Returns {script_path_or_"paramlist.xml": code}.  Last block wins per type.
 
-    Classification priority:
-      1. paramlist.xml  — lines look like 'Type Name = Value'
-      2. scripts/2d.gdl — has PROJECT2 / RECT2 / POLY2
-      3. scripts/vl.gdl — has VALUES or LOCK keyword (GDL param script)
-      4. scripts/1d.gdl — has GLOB_ variable
-      5. scripts/ui.gdl — has UI_CURRENT or DEFINE STYLE
+    Classification priority (same as _extract_gdl_from_chat):
+      1. paramlist.xml  — ≥2 lines 'Type Name = Value'
+      2. scripts/2d.gdl — PROJECT2 / RECT2 / POLY2
+      3. scripts/vl.gdl — VALUES or LOCK (no BLOCK)
+      4. scripts/1d.gdl — GLOB_ variable
+      5. scripts/ui.gdl — UI_CURRENT or DEFINE STYLE
       6. scripts/3d.gdl — default
     """
     import re as _re
     collected: dict[str, str] = {}
-    # Match ``` (optional lang tag) ... ``` — handles empty lang, gdl, GDL, xml, etc.
     code_block_pat = _re.compile(r"```[a-zA-Z]*[ \t]*\n(.*?)```", _re.DOTALL)
-    # Paramlist line: starts with a valid GDL type word followed by identifier = value
     _PARAM_TYPE_RE = _re.compile(
         r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
         r'\s+\w+\s*=', _re.IGNORECASE | _re.MULTILINE
     )
+    for m in code_block_pat.finditer(text):
+        block = m.group(1).strip()
+        if not block:
+            continue
+        block_up = block.upper()
+        if len(_PARAM_TYPE_RE.findall(block)) >= 2:
+            path = "paramlist.xml"
+        elif _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
+            path = "scripts/2d.gdl"
+        elif _re.search(r'\bVALUES\b|\bLOCK\b', block_up) and not _re.search(r'\bBLOCK\b', block_up):
+            path = "scripts/vl.gdl"
+        elif _re.search(r'\bGLOB_\w+\b', block_up):
+            path = "scripts/1d.gdl"
+        elif _re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b', block_up):
+            path = "scripts/ui.gdl"
+        else:
+            path = "scripts/3d.gdl"
+        collected[path] = block
+    return collected
 
+
+def _extract_gdl_from_chat() -> dict:
+    """Scan all assistant messages in chat history; last block per type wins."""
+    collected: dict[str, str] = {}
     for msg in st.session_state.get("chat_history", []):
         if msg.get("role") != "assistant":
             continue
-        content = msg.get("content", "")
-        for m in code_block_pat.finditer(content):
-            block = m.group(1).strip()
-            if not block:
-                continue
-            block_up = block.upper()
-
-            # 1. Paramlist: ≥2 lines matching 'Type Var = value'
-            if len(_PARAM_TYPE_RE.findall(block)) >= 2:
-                path = "paramlist.xml"
-            # 2. 2D projection
-            elif _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
-                path = "scripts/2d.gdl"
-            # 3. Param/Vl script
-            elif _re.search(r'\bVALUES\b|\bLOCK\b', block_up) and not _re.search(r'\bBLOCK\b', block_up):
-                path = "scripts/vl.gdl"
-            # 4. Master script
-            elif _re.search(r'\bGLOB_\w+\b', block_up):
-                path = "scripts/1d.gdl"
-            # 5. UI script
-            elif _re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b', block_up):
-                path = "scripts/ui.gdl"
-            else:
-                path = "scripts/3d.gdl"
+        for path, block in _classify_code_blocks(msg.get("content", "")).items():
             collected[path] = block
-
     return collected
+
+
+# ── Vision prompt ─────────────────────────────────────────────────────────────
+
+_VISION_SYSTEM_PROMPT = """\
+你是专业 GDL 建筑师，精通 ArchiCAD GDL scripting（GDL Reference v26 标准）。
+用户上传了一张建筑构件/家具/设施图片，请按以下结构输出：
+
+## 构件识别
+- 类型：（书架 / 桌椅 / 门窗 / 楼梯 / 柱 / 墙面板 / 灯具 / ...）
+- 几何形态：（主体形状、结构层次、细部特征，2-4句）
+- 材料/表面：（可见材质，用于 Material 参数默认值）
+
+## 参数化分析
+以 GDL paramlist 格式列出所有可参数化维度，给出合理默认值（长度单位 mm，转为 m 除以 1000）：
+
+```
+Length w  = 0.9     ! 总宽度（m）
+Length h  = 2.1     ! 总高度（m）
+Length d  = 0.3     ! 总深度（m）
+Integer n = 4       ! 重复单元数量
+Material mat = "Wood"  ! 主体材质
+```
+
+## GDL 3D Script
+
+```gdl
+! [构件名称] — AI 从图片生成
+! 参数：w h d n mat
+
+MATERIAL mat
+
+! 主体
+BLOCK w, d, h
+
+END
+```
+
+规则：
+- paramlist 代码块内必须有 ≥2 行 `Type Name = value  ! 注释` 格式
+- 3D Script 最后一行必须是 `END`（单独一行）
+- 所有尺寸由参数驱动，禁止硬编码数字
+- GDL 命令必须全大写（BLOCK / CYLIND / LINE3 / ADD / DEL / FOR / NEXT 等）
+- 如有重复元素（层板/格栅/百叶）用 FOR/NEXT 循环
+"""
+
+
+# ── Vision generate ───────────────────────────────────────────────────────────
+
+def run_vision_generate(
+    image_b64: str,
+    image_mime: str,
+    extra_text: str,
+    proj: HSFProject,
+    status_col,
+    auto_apply: bool = True,
+) -> str:
+    """
+    Vision pipeline: image → LLM analysis → GDL extraction → pending_diffs or auto-apply.
+    Reuses the same confirmation flow as run_agent_generate.
+    """
+    status_ph = status_col.empty()
+    try:
+        llm = get_llm()
+        status_ph.info("🖼️ AI 正在解析图片...")
+
+        user_text = extra_text.strip() if extra_text else "请分析这张图片，生成对应的 GDL 脚本。"
+        resp = llm.generate_with_image(
+            text_prompt=user_text,
+            image_b64=image_b64,
+            image_mime=image_mime,
+            system_prompt=_VISION_SYSTEM_PROMPT,
+        )
+        status_ph.empty()
+
+        raw_text = resp.content
+        extracted = _classify_code_blocks(raw_text)
+
+        if extracted:
+            script_names = ", ".join(
+                k.replace("scripts/", "").replace(".gdl", "").upper()
+                for k in extracted if k.startswith("scripts/")
+            )
+            param_count = len(_parse_paramlist_text(extracted.get("paramlist.xml", "")))
+            label_parts = []
+            if script_names:
+                label_parts.append(f"脚本 [{script_names}]")
+            if param_count:
+                label_parts.append(f"{param_count} 个参数")
+            label_str = " + ".join(label_parts) or "内容"
+
+            if auto_apply:
+                _apply_scripts_to_project(proj, extracted)
+                st.session_state.editor_version += 1
+                prefix = f"🖼️ **图片解析完成，{label_str} 已写入编辑器** — 可直接「🔧 编译」\n\n"
+            else:
+                st.session_state.pending_diffs    = extracted
+                st.session_state.pending_ai_label = label_str
+                prefix = f"🖼️ **图片解析完成，AI 生成了 {label_str}** — 请在下方确认是否写入\n\n"
+
+            return prefix + raw_text
+
+        else:
+            return f"🖼️ **图片分析完成**（未检测到 GDL 代码块，AI 可能只给了文字分析）\n\n{raw_text}"
+
+    except Exception as e:
+        status_ph.empty()
+        return (
+            f"❌ **图片解析失败**: {str(e)}\n\n"
+            "💡 当前模型可能不支持图片输入，请切换到 **Claude Sonnet / GPT-4o / Gemini** 等多模态模型。"
+        )
 
 
 def check_gdl_script(content: str, script_type: str = "") -> list:
@@ -1508,12 +1619,41 @@ with col_chat:
                 st.session_state.pending_ai_label = ""
                 st.rerun()
 
+    # ── 图片上传（🖼️ 图片即意图）────────────────────────────────
+    with st.expander("📷 上传图片 → AI 直接生成 GDL", expanded=False):
+        st.caption("支持 JPG / PNG / WebP · 推荐模型：Claude Sonnet / GPT-4o / Gemini")
+        _vision_file = st.file_uploader(
+            "",
+            type=["jpg", "jpeg", "png", "webp", "gif"],
+            key=f"vision_upload_{st.session_state.vision_upload_key}",
+            label_visibility="collapsed",
+        )
+        if _vision_file is not None:
+            _raw_bytes = _vision_file.read()
+            st.image(_raw_bytes, width=220)
+            st.session_state["_vision_b64"]  = base64.b64encode(_raw_bytes).decode()
+            st.session_state["_vision_mime"] = _vision_file.type or "image/jpeg"
+            st.session_state["_vision_name"] = _vision_file.name
+            if st.button(
+                "🖼️ 分析图片 → 生成 GDL",
+                type="primary",
+                use_container_width=True,
+                key="vision_submit_btn",
+            ):
+                st.session_state["_vision_trigger"] = True
+                st.rerun()
+        elif "_vision_b64" in st.session_state:
+            # File cleared by user (clicked ✕ on uploader)
+            st.session_state.pop("_vision_b64", None)
+            st.session_state.pop("_vision_mime", None)
+            st.session_state.pop("_vision_name", None)
+
     # Live agent output placeholder (anchored inside this column)
     live_output = st.empty()
 
     # Chat input — immediately below message list / confirmation widget
     user_input = st.chat_input(
-        "描述需求或提问，如「把3D脚本高度改成1.2米」"
+        "描述需求、提问，或搭配图片补充说明…"
     )
 
 
@@ -1521,10 +1661,59 @@ with col_chat:
 #  Chat handler (outside columns — session state + rerun)
 # ══════════════════════════════════════════════════════════
 
-_redo_input = st.session_state.pop("_redo_input", None)
-effective_input = _redo_input or user_input
+_redo_input      = st.session_state.pop("_redo_input", None)
+_vision_trigger  = st.session_state.pop("_vision_trigger", False)
+_vision_b64      = st.session_state.get("_vision_b64")
+effective_input  = _redo_input or user_input
 
-if effective_input:
+# ── Vision path: image uploaded + "分析图片" button clicked ──────────────────
+if _vision_trigger and _vision_b64:
+    _vision_mime = st.session_state.get("_vision_mime", "image/jpeg")
+    _vision_name = st.session_state.get("_vision_name", "image")
+    _extra_text  = user_input or ""  # optional supplementary text from chat_input
+
+    _user_display = f"🖼️ `{_vision_name}`" + (f"  \n{_extra_text}" if _extra_text else "")
+    st.session_state.chat_history.append({"role": "user", "content": _user_display})
+
+    if not api_key and "ollama" not in model_name:
+        err = "❌ 请在左侧边栏填入 API Key 后再试。"
+        st.session_state.chat_history.append({"role": "assistant", "content": err})
+        st.rerun()
+    else:
+        # Ensure project exists
+        if not st.session_state.project:
+            _vname = Path(_vision_name).stem or "vision_object"
+            _vproj = HSFProject.create_new(_vname, work_dir=st.session_state.work_dir)
+            st.session_state.project = _vproj
+            st.session_state.pending_gsm_name = _vname
+
+        _proj_v = st.session_state.project
+        _has_any_v = any(_proj_v.get_script(s) for s, _, _ in _SCRIPT_MAP)
+
+        with live_output.container():
+            st.chat_message("user").markdown(_user_display)
+            with st.chat_message("assistant"):
+                msg = run_vision_generate(
+                    image_b64=_vision_b64,
+                    image_mime=_vision_mime,
+                    extra_text=_extra_text,
+                    proj=_proj_v,
+                    status_col=st.container(),
+                    auto_apply=not _has_any_v,
+                )
+                st.markdown(msg)
+
+        st.session_state.chat_history.append({"role": "assistant", "content": msg})
+
+        # Reset image uploader by incrementing key, clear stored image
+        st.session_state.vision_upload_key += 1
+        st.session_state.pop("_vision_b64", None)
+        st.session_state.pop("_vision_mime", None)
+        st.session_state.pop("_vision_name", None)
+        st.rerun()
+
+# ── Normal text path ─────────────────────────────────────────────────────────
+elif effective_input:
     # Redo: user msg already in history; new: append it
     if not _redo_input:
         st.session_state.chat_history.append({"role": "user", "content": effective_input})

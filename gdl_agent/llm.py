@@ -131,6 +131,76 @@ class LLMAdapter:
             finish_reason=choice.finish_reason or "",
         )
 
+    def generate_with_image(
+        self,
+        text_prompt: str,
+        image_b64: str,
+        image_mime: str = "image/jpeg",
+        system_prompt: str | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """
+        Call LLM with a base64-encoded image + text prompt (vision mode).
+
+        Uses litellm's OpenAI-compatible image_url format, which litellm
+        automatically translates to each provider's native format
+        (Anthropic image blocks, Gemini inline_data, etc.).
+
+        Args:
+            text_prompt: User text accompanying the image.
+            image_b64:   Base64-encoded image bytes (no data-URI prefix).
+            image_mime:  MIME type, e.g. "image/jpeg", "image/png".
+            system_prompt: Optional system message prepended to the call.
+        """
+        if self._litellm is None:
+            raise RuntimeError(
+                "litellm is not installed. Install it with: pip install litellm"
+            )
+
+        model = self._resolve_model_string()
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
+                },
+                {"type": "text", "text": text_prompt},
+            ],
+        })
+
+        completion_kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+        }
+
+        api_key = self.config.resolve_api_key()
+        if api_key:
+            completion_kwargs["api_key"] = api_key
+
+        native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
+        is_native = any(model.startswith(p) for p in native_providers)
+        if self.config.api_base and not is_native:
+            completion_kwargs["api_base"] = self.config.api_base
+
+        completion_kwargs.update(kwargs)
+
+        response = self._litellm.completion(**completion_kwargs)
+        choice = response.choices[0]
+        return LLMResponse(
+            content=choice.message.content or "",
+            model=response.model or self.config.model,
+            usage=dict(response.usage) if response.usage else {},
+            finish_reason=choice.finish_reason or "",
+        )
+
     def _resolve_model_string(self) -> str:
         """
         Resolve the model string for litellm.
