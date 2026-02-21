@@ -647,12 +647,21 @@ def _is_debug_intent(text: str) -> bool:
     return any(kw in t for kw in _DEBUG_KEYWORDS)
 
 
-def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: str = None) -> str:
+def run_agent_generate(
+    user_input: str,
+    proj: HSFProject,
+    status_col,
+    gsm_name: str = None,
+    auto_apply: bool = True,
+) -> str:
     """
     Unified chat+generate entry point.
-    - Debug/analysis intent  → all scripts in context, LLM may reply with plain text OR [FILE:] fixes
-    - Generation intent      → affected scripts only, LLM writes [FILE:] code blocks
-    Always applies [FILE:] code blocks if present; shows plain-text analysis in chat if not.
+
+    auto_apply=True  → immediately write changes to project (first creation of empty project).
+    auto_apply=False → queue changes in pending_diffs; UI shows confirmation banner in chat column.
+
+    debug_mode (intent-based) controls whether all scripts are injected into LLM context
+    and whether LLM is allowed to reply with plain-text analysis in addition to code.
     """
     status_ph = status_col.empty()
     debug_mode = _is_debug_intent(user_input)
@@ -709,34 +718,31 @@ def run_agent_generate(user_input: str, proj: HSFProject, status_col, gsm_name: 
                 lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
                 code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
 
-            if debug_mode:
-                # Debug / analysis: queue for user confirmation, don't overwrite immediately
-                st.session_state.pending_diffs = cleaned
-                label_parts = []
-                if script_names:
-                    label_parts.append(f"脚本 [{script_names}]")
-                if has_params:
-                    label_parts.append(f"{param_count_preview} 个参数")
-                st.session_state.pending_ai_label = " + ".join(label_parts)
-                notice = (
-                    f"🤖 **AI 已生成新内容** — {' + '.join(label_parts)}\n\n"
-                    "👆 编辑器顶部可确认写入或忽略。"
-                )
-                reply_parts.append(notice + "\n\n" + "\n\n".join(code_blocks))
-            else:
-                # Creation / edit mode: auto-apply immediately
+            label_parts = []
+            if script_names:
+                label_parts.append(f"脚本 [{script_names}]")
+            if has_params:
+                label_parts.append(f"{param_count_preview} 个参数")
+            label_str = " + ".join(label_parts) if label_parts else "内容"
+
+            if auto_apply:
+                # 全新空项目：直接写入，无需确认
                 sc, pc = _apply_scripts_to_project(proj, cleaned)
                 st.session_state.editor_version += 1
                 if gsm_name:
                     st.session_state.pending_gsm_name = gsm_name
-                parts_applied = []
-                if script_names:
-                    parts_applied.append(f"脚本 [{script_names}]")
-                if pc:
-                    parts_applied.append(f"{pc} 个参数")
-                applied_label = " + ".join(parts_applied) if parts_applied else "内容"
                 reply_parts.append(
-                    f"✏️ **已写入 {applied_label}** — 可直接「🔧 编译」\n\n"
+                    f"✏️ **已写入 {label_str}** — 可直接「🔧 编译」\n\n"
+                    + "\n\n".join(code_blocks)
+                )
+            else:
+                # 已有项目修改：暂存，聊天栏内显示确认按钮
+                st.session_state.pending_diffs    = cleaned
+                st.session_state.pending_ai_label = label_str
+                if gsm_name:
+                    st.session_state.pending_gsm_name = gsm_name
+                reply_parts.append(
+                    f"🤖 **AI 已生成 {label_str}** — 请在下方确认是否写入编辑器。\n\n"
                     + "\n\n".join(code_blocks)
                 )
 
@@ -1302,37 +1308,6 @@ with col_editor:
                 st.session_state.confirm_clear = False
                 st.rerun()
 
-    # ── Pending AI changes banner ─────────────────────────
-    if st.session_state.pending_diffs:
-        _label = st.session_state.pending_ai_label or "AI 生成的内容"
-        _n_scripts = sum(1 for k in st.session_state.pending_diffs if k.startswith("scripts/"))
-        _n_params  = len(_parse_paramlist_text(
-            st.session_state.pending_diffs.get("paramlist.xml", "")
-        ))
-        _summary = []
-        if _n_scripts: _summary.append(f"{_n_scripts} 个脚本")
-        if _n_params:  _summary.append(f"{_n_params} 个参数")
-        _banner_txt = "、".join(_summary) if _summary else _label
-
-        st.info(f"🤖 **AI 建议了新的 {_banner_txt}** — 是否写入编辑器？")
-        _pb1, _pb2, _pb3 = st.columns([1.2, 1, 6])
-        with _pb1:
-            if st.button("✅ 写入", type="primary", use_container_width=True, key="pending_apply"):
-                sc, pc = _apply_scripts_to_project(proj_now, st.session_state.pending_diffs)
-                st.session_state.pending_diffs    = {}
-                st.session_state.pending_ai_label = ""
-                st.session_state.editor_version  += 1
-                applied = []
-                if sc: applied.append(f"{sc} 个脚本")
-                if pc: applied.append(f"{pc} 个参数")
-                st.toast(f"✅ 已写入 {'、'.join(applied)}", icon="✏️")
-                st.rerun()
-        with _pb2:
-            if st.button("🗑️ 忽略", use_container_width=True, key="pending_discard"):
-                st.session_state.pending_diffs    = {}
-                st.session_state.pending_ai_label = ""
-                st.rerun()
-
     st.divider()
 
     # ── Script / Param Tabs ───────────────────────────────
@@ -1500,12 +1475,45 @@ with col_chat:
         if st.session_state.get(f"_showcopy_{_i}", False):
             st.code(_msg["content"], language="text")
 
+    # ── Pending AI changes — confirmation widget (in chat flow) ──
+    if st.session_state.pending_diffs:
+        _pd = st.session_state.pending_diffs
+        _pn_s = sum(1 for k in _pd if k.startswith("scripts/"))
+        _pn_p = len(_parse_paramlist_text(_pd.get("paramlist.xml", "")))
+        _pd_parts = []
+        if _pn_s: _pd_parts.append(f"{_pn_s} 个脚本")
+        if _pn_p: _pd_parts.append(f"{_pn_p} 个参数")
+        _pd_label = "、".join(_pd_parts) or st.session_state.pending_ai_label or "新内容"
+
+        st.info(f"⬆️ **是否将 AI 生成的 {_pd_label} 写入编辑器？**")
+        _pac1, _pac2, _pac3 = st.columns([1.2, 1, 5])
+        with _pac1:
+            if st.button("✅ 写入", type="primary", use_container_width=True,
+                         key="chat_pending_apply"):
+                _proj = st.session_state.project
+                if _proj:
+                    sc, pc = _apply_scripts_to_project(_proj, _pd)
+                    _ok_parts = []
+                    if sc: _ok_parts.append(f"{sc} 个脚本")
+                    if pc: _ok_parts.append(f"{pc} 个参数")
+                    st.session_state.editor_version += 1
+                    st.toast(f"✅ 已写入 {'、'.join(_ok_parts)}", icon="✏️")
+                st.session_state.pending_diffs    = {}
+                st.session_state.pending_ai_label = ""
+                st.rerun()
+        with _pac2:
+            if st.button("❌ 忽略", use_container_width=True,
+                         key="chat_pending_discard"):
+                st.session_state.pending_diffs    = {}
+                st.session_state.pending_ai_label = ""
+                st.rerun()
+
     # Live agent output placeholder (anchored inside this column)
     live_output = st.empty()
 
-    # Chat input — immediately below the message list / action bars
+    # Chat input — immediately below message list / confirmation widget
     user_input = st.chat_input(
-        "描述需求或提问，如「创建一个宽 600mm 的书架」"
+        "描述需求或提问，如「把3D脚本高度改成1.2米」"
     )
 
 
@@ -1551,10 +1559,16 @@ if effective_input:
                         st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                     proj_current = st.session_state.project
+                    # 只有全新空项目（无任何脚本内容）才自动写入；
+                    # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
+                    _has_any_script = any(
+                        proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
+                    )
                     effective_gsm = st.session_state.pending_gsm_name or proj_current.name
                     msg = run_agent_generate(
                         user_input, proj_current, st.container(),
                         gsm_name=effective_gsm,
+                        auto_apply=not _has_any_script,
                     )
                     st.markdown(msg)
 
