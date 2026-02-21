@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gdl-agent"
-version = "0.4.1"
+version = "0.5.0"
 description = "AI Agent for automated ArchiCAD GDL library object development (HSF-native)"
 readme = "README.md"
 license = { text = "MIT" }

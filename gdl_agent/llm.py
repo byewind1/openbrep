@@ -123,6 +123,8 @@ class LLMAdapter:
 
         response = self._litellm.completion(**completion_kwargs)
 
+        if not response.choices:
+            raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
         choice = response.choices[0]
         return LLMResponse(
             content=choice.message.content or "",
@@ -193,6 +195,8 @@ class LLMAdapter:
         completion_kwargs.update(kwargs)
 
         response = self._litellm.completion(**completion_kwargs)
+        if not response.choices:
+            raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
         choice = response.choices[0]
         return LLMResponse(
             content=choice.message.content or "",
