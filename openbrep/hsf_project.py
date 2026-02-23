@@ -142,7 +142,7 @@ class HSFProject:
     @classmethod
     def load_from_disk(cls, hsf_dir: str) -> HSFProject:
         """Load an existing HSF directory into memory."""
-        from gdl_agent.paramlist_builder import parse_paramlist_xml
+        from openbrep.paramlist_builder import parse_paramlist_xml
 
         root = Path(hsf_dir)
         if not root.is_dir():
@@ -187,7 +187,7 @@ class HSFProject:
         CRITICAL: All text files use UTF-8 with BOM (utf-8-sig).
         This is a hard requirement from LP_XMLConverter.
         """
-        from gdl_agent.paramlist_builder import build_paramlist_xml
+        from openbrep.paramlist_builder import build_paramlist_xml
 
         # Create directory structure
         self.root.mkdir(parents=True, exist_ok=True)

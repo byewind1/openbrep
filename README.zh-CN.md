@@ -1,10 +1,12 @@
-# gdl-agent v0.5
+# OpenBrep v0.5
 
 **用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。**
 
 [English](README.md) | 简体中文
 
-> **Pre-release** — 核心功能完整，适合建筑师日常 GDL 开发测试。
+> **OpenBrep: Code Your Boundaries**
+
+> 稳定发布版本 — 核心功能完整，适合建筑师日常 GDL 开发工作。
 
 ---
 
@@ -16,7 +18,7 @@
 打开库对象编辑器 → 手动填参数 → 切 5 个 Script 窗口 → 粘代码 → 编译
 ```
 
-**gdl-agent 把这个流程压缩到：**
+**openbrep 把这个流程压缩到：**
 
 ```
 描述需求（中文/英文皆可）→ AI 生成并填入脚本框 → 一键编译 → .gsm 拖入 ArchiCAD
@@ -33,8 +35,8 @@
 快速开始（已有 Python 3.10+）：
 
 ```bash
-git clone https://github.com/byewind1/gdl-agent.git
-cd gdl-agent
+git clone https://github.com/byewind1/openbrep.git
+cd openbrep
 pip install -e ".[ui]"
 streamlit run ui/app.py
 ```
@@ -124,14 +126,14 @@ MyBookshelf/
     └── ui.gdl          ← 自定义界面
 ```
 
-gdl-agent 以 HSF 为原生格式，每个脚本独立处理，AI 只读取与当前任务相关的脚本（减少 context 占用）。
+openbrep 以 HSF 为原生格式，每个脚本独立处理，AI 只读取与当前任务相关的脚本（减少 context 占用）。
 
 ---
 
 ## 项目结构
 
 ```
-gdl-agent/
+openbrep/
 ├── gdl_agent/
 │   ├── hsf_project.py       # HSF 数据模型
 │   ├── paramlist_builder.py # paramlist.xml 强类型生成

@@ -1,5 +1,5 @@
 """
-Configuration management for gdl-agent.
+Configuration management for openbrep.
 
 Uses stdlib dataclasses for zero-dependency operation.
 Reads from config.toml, environment variables, and CLI overrides.
@@ -128,7 +128,7 @@ class GDLAgentConfig:
 
     def to_toml_string(self) -> str:
         lines = [
-            "# gdl-agent configuration", "",
+            "# openbrep configuration", "",
             "[llm]", f'model = "{self.llm.model}"',
             f'# api_key = "your-key-here"',
         ]

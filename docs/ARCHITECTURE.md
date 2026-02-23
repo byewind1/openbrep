@@ -1,4 +1,4 @@
-# gdl-agent 技术架构
+# openbrep 技术架构
 
 # Technical Architecture
 

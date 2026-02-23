@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gdl-agent v0.4 Test Suite — HSF-native architecture.
+OpenBrep v0.5 Test Suite — HSF-native architecture.
 
 Run: python run_tests.py
 """
@@ -34,7 +34,7 @@ def run_test(name, func):
 # ══════════════════════════════════════════════════════════
 print("\n📦 HSF Project")
 
-from gdl_agent.hsf_project import (
+from openbrep.hsf_project import (
     HSFProject, GDLParameter, ScriptType,
     VALID_PARAM_TYPES, PARAM_TYPE_CORRECTIONS,
 )
@@ -208,7 +208,7 @@ run_test("GUID uniqueness", _test_guid_unique)
 # ══════════════════════════════════════════════════════════
 print("\n📋 Paramlist Builder")
 
-from gdl_agent.paramlist_builder import (
+from openbrep.paramlist_builder import (
     build_paramlist_xml, parse_paramlist_xml, validate_paramlist,
 )
 
@@ -297,7 +297,7 @@ run_test("validate: reserved param missing Fix", _test_validate_reserved_no_fix)
 # ══════════════════════════════════════════════════════════
 print("\n🔧 Compiler (Mock)")
 
-from gdl_agent.compiler import MockHSFCompiler, CompileResult
+from openbrep.compiler import MockHSFCompiler, CompileResult
 
 def _test_mock_compile_success():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -359,7 +359,7 @@ run_test("CompileResult: error/warning parsing", _test_compile_result_error_pars
 # ══════════════════════════════════════════════════════════
 print("\n📄 GDL Parser")
 
-from gdl_agent.gdl_parser import parse_gdl_source, parse_gdl_file
+from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
 
 def _test_parser_basic():
     src = """! A  Length  0.80  宽度
@@ -434,7 +434,7 @@ run_test("parse real Bookshelf.gdl", _test_parser_bookshelf)
 # ══════════════════════════════════════════════════════════
 print("\n🤖 Agent Core")
 
-from gdl_agent.core import GDLAgent, Status
+from openbrep.core import GDLAgent, Status
 
 class MockLLM:
     """Mock LLM that returns pre-defined responses."""
@@ -545,7 +545,7 @@ run_test("agent: unparseable LLM output → exhausted", _test_agent_unparseable)
 # ══════════════════════════════════════════════════════════
 print("\n🎯 Skills Loader")
 
-from gdl_agent.skills_loader import SkillsLoader
+from openbrep.skills_loader import SkillsLoader
 
 def _test_skills_empty():
     sl = SkillsLoader("/nonexistent")

@@ -14,9 +14,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
-from gdl_agent.hsf_project import HSFProject, ScriptType, GDLParameter
-from gdl_agent.compiler import CompileResult, HSFCompiler, MockHSFCompiler
-from gdl_agent.paramlist_builder import validate_paramlist
+from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
+from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
+from openbrep.paramlist_builder import validate_paramlist
 
 
 class Status(Enum):

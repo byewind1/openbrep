@@ -1,4 +1,4 @@
-# gdl-agent Configuration Example
+# openbrep Configuration Example
 # Copy this to config.toml and fill in your own API keys and paths
 
 [llm]

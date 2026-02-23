@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from gdl_agent.compiler import MockCompiler
-from gdl_agent.config import AgentConfig, CompilerConfig, GDLAgentConfig, LLMConfig
-from gdl_agent.core import GDLAgent, Status
-from gdl_agent.knowledge import KnowledgeBase
-from gdl_agent.llm import Message, MockLLM
-from gdl_agent.xml_utils import validate_xml, validate_gdl_structure, compute_diff
+from openbrep.compiler import MockCompiler
+from openbrep.config import AgentConfig, CompilerConfig, GDLAgentConfig, LLMConfig
+from openbrep.core import GDLAgent, Status
+from openbrep.knowledge import KnowledgeBase
+from openbrep.llm import Message, MockLLM
+from openbrep.xml_utils import validate_xml, validate_gdl_structure, compute_diff
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────

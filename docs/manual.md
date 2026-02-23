@@ -1,6 +1,6 @@
-# gdl-agent v0.5 用户手册
+# OpenBrep v0.5 用户手册
 
-> 对应版本：v0.5 pre-release
+> 对应版本：v0.5 Stable
 > 适用对象：使用 ArchiCAD GDL 开发库对象的建筑师及 BIM 工程师
 
 ---
@@ -63,7 +63,7 @@
 | gemini-2.5-flash / pro | Google | 上下文超长 |
 | qwen / deepseek-coder (Ollama) | 本地 | 无 API Key，离线可用 |
 
-> Ollama 需先在本机安装并启动 `ollama serve`，gdl-agent 自动连接 `http://localhost:11434`。
+> Ollama 需先在本机安装并启动 `ollama serve`，openbrep 自动连接 `http://localhost:11434`。
 
 ### API Key 输入
 
@@ -358,7 +358,7 @@ JPG / PNG / WebP / GIF — 推荐使用正面/轴测清晰图，分辨率 800×8
 **步骤：**
 
 1. 点击"📂 导入文件"，拖入 `.gsm` 文件
-2. gdl-agent 调用 LP_XMLConverter 将 .gsm 解包为 HSF，自动载入：
+2. openbrep 调用 LP_XMLConverter 将 .gsm 解包为 HSF，自动载入：
    - 所有 GDL 脚本（3D/2D/Master/Values/UI）
    - 参数表（paramlist.xml）
 3. 在脚本 Tab 中查看导入结果，参数表中可见全部参数
@@ -413,7 +413,7 @@ JPG / PNG / WebP / GIF — 推荐使用正面/轴测清晰图，分辨率 800×8
 
 ### 9.1 config.toml
 
-首次运行如未发现 `config.toml`，gdl-agent 会从 `config.example.toml` 提示创建。
+首次运行如未发现 `config.toml`，openbrep 会从 `config.example.toml` 提示创建。
 
 完整配置字段说明：
 
@@ -521,7 +521,7 @@ A：`streamlit-ace` 未安装。运行 `pip install streamlit-ace` 后重启 Str
 
 **Q：Ollama 模型无法连接？**
 
-A：确认 Ollama 服务已启动（`ollama serve`），且目标模型已拉取（`ollama pull qwen2.5:7b`）。gdl-agent 默认连接 `http://localhost:11434`。
+A：确认 Ollama 服务已启动（`ollama serve`），且目标模型已拉取（`ollama pull qwen2.5:7b`）。openbrep 默认连接 `http://localhost:11434`。
 
 ---
 
@@ -597,4 +597,4 @@ ArchiCAD 报错：[粘贴错误信息]
 
 ---
 
-*文档版本：v0.5 pre-release — 如发现文档与实际功能不符，欢迎在 GitHub Issues 反馈。*
+*文档版本：v0.5 Stable — 如发现文档与实际功能不符，欢迎在 GitHub Issues 反馈。*

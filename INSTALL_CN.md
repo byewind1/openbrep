@@ -1,4 +1,4 @@
-# gdl-agent v0.5 安装指南（中文）
+# openbrep v0.5 安装指南（中文）
 
 > 针对设计师用户的分步骤安装教程
 > 难度：⭐️ 小白可用
@@ -67,8 +67,8 @@ git config --global --unset https.proxy
 用 gitee（国内平台）的镜像：
 
 ```bash
-git clone https://gitee.com/byewind1/gdl-agent.git
-cd gdl-agent
+git clone https://gitee.com/byewind1/openbrep.git
+cd openbrep
 ```
 
 这样完全不需要 VPN。
@@ -78,7 +78,7 @@ cd gdl-agent
 如果上面都觉得麻烦，可以：
 
 1. 开启 VPN
-2. 访问 https://github.com/byewind1/gdl-agent
+2. 访问 https://github.com/byewind1/openbrep
 3. 点绿色 "Code" 按钮 → "Download ZIP"
 4. 解压到你喜欢的文件夹
 5. 跳过下面的 `git clone` 步骤
@@ -94,24 +94,24 @@ cd gdl-agent
 打开终端，输入：
 
 ```bash
-git clone https://github.com/byewind1/gdl-agent.git
-cd gdl-agent
+git clone https://github.com/byewind1/openbrep.git
+cd openbrep
 ```
 
 或国内镜像：
 
 ```bash
-git clone https://gitee.com/byewind1/gdl-agent.git
-cd gdl-agent
+git clone https://gitee.com/byewind1/openbrep.git
+cd openbrep
 ```
 
 **选方案 C（下载 ZIP）：**
 
-1. 解压 ZIP 文件到你喜欢的文件夹（如 `~/Documents/gdl-agent`）
+1. 解压 ZIP 文件到你喜欢的文件夹（如 `~/Documents/openbrep`）
 2. 在终端里进入这个文件夹：
 
 ```bash
-cd ~/Documents/gdl-agent
+cd ~/Documents/openbrep
 ```
 
 > **"cd" 是什么意思？** 它的意思是"进入这个文件夹"。后面所有命令都要在这个文件夹里运行。
@@ -120,7 +120,7 @@ cd ~/Documents/gdl-agent
 
 ### Step 2：安装依赖（2 分钟，最容易出错的步骤）
 
-在 gdl-agent 文件夹内，运行：
+在 openbrep 文件夹内，运行：
 
 ```bash
 pip install -e ".[ui]"
@@ -161,7 +161,7 @@ pip install streamlit litellm click rich tomli
 
 ### Step 3：配置 LLM（API Key）
 
-gdl-agent 需要调用 AI（如 Claude、GPT-4）。
+openbrep 需要调用 AI（如 Claude、GPT-4）。
 
 **选一个 LLM 服务：**
 
@@ -183,7 +183,7 @@ gdl-agent 需要调用 AI（如 Claude、GPT-4）。
 
 ### Step 4：启动应用
 
-在 gdl-agent 文件夹内，运行：
+在 openbrep 文件夹内，运行：
 
 ```bash
 streamlit run ui/app.py
@@ -192,7 +192,7 @@ streamlit run ui/app.py
 **会发生什么：**
 
 1. 终端显示 `You can now view your Streamlit app in your browser`
-2. 自动打开浏览器，显示 gdl-agent 的界面
+2. 自动打开浏览器，显示 openbrep 的界面
 3. 侧边栏会让你选择模型和填 API Key
 
 **如果浏览器没自动打开，手动访问：**
@@ -298,7 +298,7 @@ pip install streamlit-ace
 
 ## 需要帮助？
 
-- **技术问题**：在 GitHub 提 Issue：https://github.com/byewind1/gdl-agent/issues
+- **技术问题**：在 GitHub 提 Issue：https://github.com/byewind1/openbrep/issues
 - **功能建议**：用"差评"反馈（每个 AI 消息下方的 👎 按钮）
 
 ---

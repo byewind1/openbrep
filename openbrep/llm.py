@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-from gdl_agent.config import LLMConfig
+from openbrep.config import LLMConfig
 
 
 @dataclass

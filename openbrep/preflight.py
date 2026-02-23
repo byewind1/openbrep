@@ -18,8 +18,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from gdl_agent.context import detect_relevant_sections, slice_context, ContextSlice
-from gdl_agent.dependencies import DependencyResolver
+from openbrep.context import detect_relevant_sections, slice_context, ContextSlice
+from openbrep.dependencies import DependencyResolver
 
 
 @dataclass

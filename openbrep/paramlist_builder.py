@@ -15,7 +15,7 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-from gdl_agent.hsf_project import GDLParameter, VALID_PARAM_TYPES
+from openbrep.hsf_project import GDLParameter, VALID_PARAM_TYPES
 
 
 def build_paramlist_xml(parameters: list[GDLParameter]) -> str:

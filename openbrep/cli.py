@@ -1,5 +1,5 @@
 """
-Command-line interface for gdl-agent.
+Command-line interface for openbrep.
 
 Provides: init, run, chat, decompile, config subcommands.
 """
@@ -12,7 +12,7 @@ from typing import Optional
 
 import click
 
-from gdl_agent.config import GDLAgentConfig
+from openbrep.config import GDLAgentConfig
 
 
 # ── Rich console helpers ──────────────────────────────────────────────
@@ -134,22 +134,22 @@ def _cli_event_handler(event: str, **kwargs):
 
 
 @click.group()
-@click.version_option(package_name="gdl-agent")
+@click.version_option(package_name="openbrep")
 def cli():
-    """🤖 gdl-agent — AI Agent for ArchiCAD GDL development."""
+    """🤖 openbrep — AI Agent for ArchiCAD GDL development."""
     pass
 
 
 @cli.command()
 @click.option("--dir", "-d", default=".", help="Directory to initialize")
 def init(dir: str):
-    """Initialize a new gdl-agent workspace."""
+    """Initialize a new openbrep workspace."""
     workspace = Path(dir)
 
     config = GDLAgentConfig()
 
     # Auto-detect compiler
-    from gdl_agent.config import _auto_detect_converter
+    from openbrep.config import _auto_detect_converter
     converter = _auto_detect_converter()
     if converter:
         config.compiler.path = converter
@@ -183,7 +183,7 @@ def init(dir: str):
     # Write starter knowledge files
     _write_starter_knowledge(workspace / "knowledge")
 
-    _print(f"\n  [bold green]✓ Workspace ready![/] Run [cyan]gdl-agent run \"your task\"[/] to start.\n")
+    _print(f"\n  [bold green]✓ Workspace ready![/] Run [cyan]openbrep run \"your task\"[/] to start.\n")
 
 
 @cli.command()
@@ -215,7 +215,7 @@ def run(instruction, file, output, model, config_path, max_retries, mock):
     knowledge = _create_knowledge(config)
 
     # Run agent
-    from gdl_agent.core import GDLAgent
+    from openbrep.core import GDLAgent
     agent = GDLAgent(config, llm, compiler, knowledge, on_event=_cli_event_handler)
     result = agent.run(instruction, source, out)
 
@@ -241,11 +241,11 @@ def chat(model, config_path, mock):
     _print("\n[bold cyan]🤖 GDL Agent Interactive Mode[/]")
     _print("[dim]Type your instructions. Use 'quit' or Ctrl+C to exit.[/]\n")
 
-    from gdl_agent.core import GDLAgent
+    from openbrep.core import GDLAgent
 
     while True:
         try:
-            instruction = click.prompt("gdl-agent", prompt_suffix=" > ")
+            instruction = click.prompt("openbrep", prompt_suffix=" > ")
         except (click.Abort, EOFError, KeyboardInterrupt):
             _print("\n[dim]Bye![/]")
             break
@@ -275,7 +275,7 @@ def show_config(config_path):
     _print(config.to_toml_string())
 
     # Show compiler status
-    from gdl_agent.config import _auto_detect_converter
+    from openbrep.config import _auto_detect_converter
     converter = config.compiler.path or _auto_detect_converter()
     if converter and Path(converter).is_file():
         _print(f"[green]✓ LP_XMLConverter:[/] {converter}")
@@ -288,22 +288,22 @@ def show_config(config_path):
 
 def _create_llm(config: GDLAgentConfig):
     """Create LLM adapter from config."""
-    from gdl_agent.llm import LLMAdapter
+    from openbrep.llm import LLMAdapter
     return LLMAdapter(config.llm)
 
 
 def _create_compiler(config: GDLAgentConfig, mock: bool = False):
     """Create compiler from config."""
     if mock:
-        from gdl_agent.compiler import MockCompiler
+        from openbrep.compiler import MockCompiler
         return MockCompiler()
-    from gdl_agent.compiler import Compiler
+    from openbrep.compiler import Compiler
     return Compiler(config.compiler)
 
 
 def _create_knowledge(config: GDLAgentConfig) -> Optional:
     """Create knowledge base from config."""
-    from gdl_agent.knowledge import KnowledgeBase
+    from openbrep.knowledge import KnowledgeBase
     kb = KnowledgeBase(config.knowledge_dir)
     kb.load()
     return kb

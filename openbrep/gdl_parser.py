@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from gdl_agent.hsf_project import HSFProject, GDLParameter, ScriptType
+from openbrep.hsf_project import HSFProject, GDLParameter, ScriptType
 
 
 # ── Section Detection Patterns ────────────────────────────

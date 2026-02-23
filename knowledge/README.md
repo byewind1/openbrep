@@ -144,9 +144,9 @@ You should customize these documents based on:
 - Your target object types (doors, windows, furniture, MEP...)
 - Common mistakes you've observed in LLM output
 
-**The knowledge base is your competitive advantage.** The gdl-agent code is the engine; these documents are the fuel. Better documents = better GDL output.
+**The knowledge base is your competitive advantage.** The openbrep code is the engine; these documents are the fuel. Better documents = better GDL output.
 
-**知识库是你的核心竞争力。** gdl-agent 代码是引擎，这些文档是燃料。文档越好，GDL 输出质量越高。
+**知识库是你的核心竞争力。** openbrep 代码是引擎，这些文档是燃料。文档越好，GDL 输出质量越高。
 
 ## Tips / 建议
 

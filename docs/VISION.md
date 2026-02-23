@@ -1,4 +1,4 @@
-# gdl-agent 项目愿景与路线图
+# openbrep 项目愿景与路线图
 
 # Project Vision & Roadmap
 
@@ -6,9 +6,9 @@
 
 ## 一句话定位 / Elevator Pitch
 
-**gdl-agent** 是建筑行业第一个 AI 驱动的 ArchiCAD GDL 库对象开发工具——让不会编程的建筑师也能通过自然语言创建参数化 BIM 构件。
+**openbrep** 是建筑行业第一个 AI 驱动的 ArchiCAD GDL 库对象开发工具——让不会编程的建筑师也能通过自然语言创建参数化 BIM 构件。
 
-**gdl-agent** is the first AI-powered ArchiCAD GDL library object development tool for the architecture industry — enabling architects to create parametric BIM components through natural language, without coding skills.
+**openbrep** is the first AI-powered ArchiCAD GDL library object development tool for the architecture industry — enabling architects to create parametric BIM components through natural language, without coding skills.
 
 ---
 
@@ -44,7 +44,7 @@ v0.4 的核心决策：抛弃 XML 单体文件，全面拥抱 HSF（Hierarchical
 
 ### 3. 知识驱动，不是通用对话
 
-GDL 有太多隐式规则（Material 必须是整数索引、UTF-8 BOM 编码、IF/ENDIF 必须配对...）。通用 AI 不知道这些。gdl-agent 通过 `knowledge/` 和 `skills/` 文档将领域知识注入 AI 上下文，让每次代码生成都站在专家经验之上。
+GDL 有太多隐式规则（Material 必须是整数索引、UTF-8 BOM 编码、IF/ENDIF 必须配对...）。通用 AI 不知道这些。openbrep 通过 `knowledge/` 和 `skills/` 文档将领域知识注入 AI 上下文，让每次代码生成都站在专家经验之上。
 
 ### 4. 编译即验证
 
@@ -159,7 +159,7 @@ AI 写的代码不可信——必须通过 LP_XMLConverter 真实编译验证。
 
 ## 竞品对比 / Competitive Landscape
 
-| | gdl-agent | 手写 GDL | Param-O | ArchiCAD 内置编辑器 |
+| | openbrep | 手写 GDL | Param-O | ArchiCAD 内置编辑器 |
 |:---|:---|:---|:---|:---|
 | AI 辅助 | ✅ 核心能力 | ❌ | ❌ | ❌ |
 | 自然语言创建 | ✅ | ❌ | ❌ | ❌ |
@@ -182,7 +182,7 @@ AI 写的代码不可信——必须通过 LP_XMLConverter 真实编译验证。
 
 ## 商业模式构想 / Business Model Ideas
 
-gdl-agent 本身开源免费（MIT License）。可能的商业化方向：
+openbrep 本身开源免费（MIT License）。可能的商业化方向：
 
 - **托管服务** — 预配置的云端版本，免去安装和配置（SaaS 月费）
 - **企业定制** — 为大型事务所定制 knowledge/skills + 私有模板库
@@ -218,7 +218,7 @@ gdl-agent 本身开源免费（MIT License）。可能的商业化方向：
 
 ## 联系方式 / Contact
 
-- GitHub: [github.com/byewind/gdl-agent](https://github.com/byewind/gdl-agent)
+- GitHub: [github.com/byewind/openbrep](https://github.com/byewind/openbrep)
 - 作者: 朗朗晴空
 - 邮箱: [待填]
 

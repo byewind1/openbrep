@@ -1,5 +1,5 @@
 """
-gdl-agent Web UI — Streamlit interface for architects.
+openbrep Web UI — Streamlit interface for architects.
 
 Run: streamlit run ui/app.py
 """
@@ -20,19 +20,19 @@ try:
 except ImportError:
     _ACE_AVAILABLE = False
 
-from gdl_agent.hsf_project import HSFProject, ScriptType, GDLParameter
-from gdl_agent.gdl_parser import parse_gdl_source, parse_gdl_file
-from gdl_agent.paramlist_builder import build_paramlist_xml, validate_paramlist
-from gdl_agent.compiler import MockHSFCompiler, HSFCompiler, CompileResult
-from gdl_agent.core import GDLAgent, Status
-from gdl_agent.knowledge import KnowledgeBase
-from gdl_agent.skills_loader import SkillsLoader
+from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
+from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
+from openbrep.paramlist_builder import build_paramlist_xml, validate_paramlist
+from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
+from openbrep.core import GDLAgent, Status
+from openbrep.knowledge import KnowledgeBase
+from openbrep.skills_loader import SkillsLoader
 
 
 # ── Page Config ───────────────────────────────────────────
 
 st.set_page_config(
-    page_title="gdl-agent",
+    page_title="openbrep",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -113,7 +113,7 @@ if "compile_log" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "work_dir" not in st.session_state:
-    st.session_state.work_dir = str(Path.home() / "gdl-agent-workspace")
+    st.session_state.work_dir = str(Path.home() / "openbrep-workspace")
 if "agent_running" not in st.session_state:
     st.session_state.agent_running = False
 if "pending_diffs" not in st.session_state:
@@ -144,7 +144,7 @@ _config_defaults = {}
 _provider_keys: dict = {}   # {provider: api_key}
 
 try:
-    from gdl_agent.config import GDLAgentConfig
+    from openbrep.config import GDLAgentConfig
     import sys as _sys, os as _os
     # Load raw TOML to get provider_keys nested table
     if _sys.version_info >= (3, 11):
@@ -185,8 +185,8 @@ def _key_for_model(model: str) -> str:
 # ── Sidebar Config ────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown('<p class="main-header">gdl-agent</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">v0.5.0 · HSF-native · AI-powered</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">OpenBrep</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">v0.5 · HSF-native · Code Your Boundaries</p>', unsafe_allow_html=True)
     st.divider()
 
     st.subheader("📁 工作目录")
@@ -378,8 +378,8 @@ def get_compiler():
     return HSFCompiler(converter_path or None)
 
 def get_llm():
-    from gdl_agent.config import LLMConfig
-    from gdl_agent.llm import LLMAdapter
+    from openbrep.config import LLMConfig
+    from openbrep.llm import LLMAdapter
     config = LLMConfig(
         model=model_name,
         api_key=api_key,
@@ -492,7 +492,7 @@ def _extract_object_name(text: str) -> str:
 def show_welcome():
     st.markdown("""
 <div class="welcome-card">
-<h2 style="color:#22d3ee; margin-top:0; font-family:'JetBrains Mono';">欢迎使用 gdl-agent 🏗️</h2>
+<h2 style="color:#22d3ee; margin-top:0; font-family:'JetBrains Mono';">欢迎使用 OpenBrep 🏗️</h2>
 <p style="color:#94a3b8;">用自然语言驱动 ArchiCAD GDL 对象的创建与编译。无需了解 GDL 语法，直接描述需求即可。</p>
 </div>
 """, unsafe_allow_html=True)
@@ -606,7 +606,7 @@ def chat_respond(user_input: str, history: list, llm) -> str:
     system_msg = {
         "role": "system",
         "content": (
-            "你是 gdl-agent 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
+            "你是 openbrep 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
             "【重要约束】绝对禁止在回复中输出任何 GDL 代码、代码块或脚本片段。"
             "如果用户想创建或修改 GDL 对象，告诉他「直接在底部输入框描述需求，AI 会自动生成并填入编辑器」。\n"
             "不要提及 ArchiCAD 内部操作（如打开 GDL 对象编辑器），因为本工具就是体外的 GDL IDE。\n"
@@ -1769,8 +1769,8 @@ elif effective_input:
 st.divider()
 st.markdown(
     '<p style="text-align:center; color:#64748b; font-size:0.8rem;">'
-    'gdl-agent v0.5.0 · HSF-native ·'
-    '<a href="https://github.com/byewind1/gdl-agent">GitHub</a>'
+    'OpenBrep v0.5 · HSF-native · Code Your Boundaries ·'
+    '<a href="https://github.com/byewind1/openbrep">GitHub</a>'
     '</p>',
     unsafe_allow_html=True,
 )
