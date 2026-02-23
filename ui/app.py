@@ -220,19 +220,21 @@ with st.sidebar:
         "claude-opus-4-5-20250918",
         "claude-opus-4-6",
         # ── 智谱 GLM (Z.ai) ──
+        "glm-4.6v",     # 视觉模型，支持图片识别
+        "glm-5",
         "glm-4.7",
         "glm-4.7-flash",
         "glm-4-plus",
         "glm-4-flash",
         # ── OpenAI ──
-        "gpt-4o",
+        "gpt-4o",       # 视觉模型，支持图片识别
         "gpt-4o-mini",
         "o3-mini",
         # ── DeepSeek ──
         "deepseek-chat",
         "deepseek-reasoner",
         # ── Google Gemini ──
-        "gemini/gemini-2.5-flash",
+        "gemini/gemini-2.5-flash",  # 视觉模型，支持图片识别
         "gemini/gemini-2.5-pro",
         # ── Ollama 本地 ──
         "ollama/qwen2.5:14b",

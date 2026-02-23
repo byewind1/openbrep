@@ -54,11 +54,31 @@ class LLMConfig:
     api_base: Optional[str] = None
     temperature: float = 0.2
     max_tokens: int = 4096
+    provider_keys: dict[str, str] = field(default_factory=dict)
 
     def resolve_api_key(self) -> Optional[str]:
         if self.api_key:
             return self.api_key
-        for name in ["ZHIPU_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
+        # Check provider_keys first
+        model_lower = self.model.lower()
+        if "glm" in model_lower:
+            for key in ["zhipu", "zai", "zai_api_key"]:
+                if key in self.provider_keys:
+                    return self.provider_keys[key]
+        elif "deepseek" in model_lower:
+            for key in ["deepseek", "deepseek_api_key"]:
+                if key in self.provider_keys:
+                    return self.provider_keys[key]
+        elif "claude" in model_lower:
+            for key in ["anthropic", "claude", "anthropic_api_key"]:
+                if key in self.provider_keys:
+                    return self.provider_keys[key]
+        elif "gemini" in model_lower:
+            for key in ["google", "gemini", "gemini_api_key"]:
+                if key in self.provider_keys:
+                    return self.provider_keys[key]
+        # Fallback to environment variables
+        for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
             val = os.environ.get(name)
             if val:
                 return val

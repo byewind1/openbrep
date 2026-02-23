@@ -2,18 +2,23 @@
 # Copy this to config.toml and fill in your own API keys and paths
 
 [llm]
-# 选择 LLM 模型 (支持: glm-4-flash, deepseek-reasoner, claude-*, gpt-*)
+# 选择 LLM 模型 (支持: glm-4-flash, glm-4.7, glm-5, deepseek-*, claude-*, gpt-*, gemini-*)
 model = "glm-4-flash"
-api_key = "YOUR_API_KEY_HERE"
-api_base = "https://open.bigmodel.cn/api/paas/v4"  # 根据模型修改
+# api_base 通常不需要设置，每个 provider 的内置端点会自动匹配
+# api_base = "https://open.bigmodel.cn/api/paas/v4"  # 仅在自定义端点时使用
 temperature = 0.2
 max_tokens = 4096
 
-# 常见 API 端点:
-# GLM (智谱清言):       https://open.bigmodel.cn/api/paas/v4
-# DeepSeek:            https://api.deepseek.com
-# OpenAI:              https://api.openai.com/v1
-# Claude (Anthropic):  需要单独购买 API credits
+# Provider API Keys — 按 provider 分开存，切换模型自动匹配
+[llm.provider_keys]
+zhipu   = "YOUR_ZHIPU_API_KEY_HERE"       # glm-4-flash, glm-4.7, glm-5
+deepseek = "YOUR_DEEPSEEK_API_KEY_HERE"   # deepseek-*
+anthropic = "YOUR_ANTHROPIC_API_KEY_HERE" # claude-*
+openai    = "YOUR_OPENAI_API_KEY_HERE"    # gpt-*
+google    = "YOUR_GEMINI_API_KEY_HERE"    # gemini-*
+
+# 注意: 也可以直接设置顶层 api_key (单一 provider 时更简单)
+# api_key = "your-key-here"
 
 [agent]
 # Agent 循环参数
