@@ -354,6 +354,7 @@ class HSFProject:
         return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Ancestry>
 \t<MainGUID>{self.subtype_guid}</MainGUID>
+\t<MainGUID>103E8D2C-8230-42E1-9597-46F84CCE28C0</MainGUID>
 </Ancestry>
 '''
 
