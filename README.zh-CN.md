@@ -138,7 +138,7 @@ openbrep 以 HSF 为原生格式，每个脚本独立处理，AI 只读取与当
 
 ```
 openbrep/
-├── gdl_agent/
+├── openbrep/
 │   ├── hsf_project.py       # HSF 数据模型
 │   ├── paramlist_builder.py # paramlist.xml 强类型生成
 │   ├── gdl_parser.py        # .gdl → HSFProject
