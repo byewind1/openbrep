@@ -67,7 +67,7 @@ git config --global --unset https.proxy
 用 gitee（国内平台）的镜像：
 
 ```bash
-git clone https://gitee.com/byewind1/openbrep.git
+git clone https://gitee.com/byewind/openbrep.git
 cd openbrep
 ```
 
@@ -101,7 +101,7 @@ cd openbrep
 或国内镜像：
 
 ```bash
-git clone https://gitee.com/byewind1/openbrep.git
+git clone https://gitee.com/byewind/openbrep.git
 cd openbrep
 ```
 

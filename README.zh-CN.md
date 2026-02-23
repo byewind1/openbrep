@@ -35,7 +35,11 @@
 快速开始（已有 Python 3.10+）：
 
 ```bash
+# GitHub (国际用户)
 git clone https://github.com/byewind1/openbrep.git
+# 或 Gitee (国内用户，速度更快)
+git clone https://gitee.com/byewind/openbrep.git
+
 cd openbrep
 pip install -e ".[ui]"
 streamlit run ui/app.py

@@ -31,7 +31,11 @@
 ## 安装
 
 ```bash
+# GitHub (国际用户)
 git clone https://github.com/byewind1/openbrep.git
+# 或 Gitee (国内用户)
+git clone https://gitee.com/byewind/openbrep.git
+
 cd openbrep
 
 # 安装核心 + Web 界面依赖
