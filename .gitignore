@@ -16,3 +16,4 @@ src/
 .qoder/
 knowledge/ccgdl_dev_doc/
 skills/*.md
+ui/app.py.backup_*
