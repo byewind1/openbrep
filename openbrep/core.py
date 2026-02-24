@@ -207,6 +207,8 @@ class GDLAgent:
         knowledge: str = "",
         skills: str = "",
         include_all_scripts: bool = False,
+        last_code_context: Optional[str] = None,
+        syntax_report: str = "",
         history: Optional[list] = None,
     ) -> tuple[dict, str]:
         """
@@ -216,16 +218,24 @@ class GDLAgent:
           - file_changes: {fpath: content} if LLM wrote [FILE: ...] blocks
           - plain_text:   raw LLM reply if no [FILE: ...] blocks (debug/analysis mode)
         Both can be non-empty if LLM mixes analysis text with code fixes.
+
+        last_code_context: raw content of last assistant message (for [DEBUG:last] mode).
         """
         affected = project.get_affected_scripts(instruction)
         self.on_event("analyze", {"affected_scripts": [s.value for s in affected]})
         self.on_event("attempt", {"attempt": 1})
 
-        context = self._build_context(project, affected, include_all=include_all_scripts)
+        context = self._build_context(
+            project, affected,
+            include_all=include_all_scripts,
+            last_code_context=last_code_context,
+        )
+        chat_mode = include_all_scripts or (last_code_context is not None)
         messages = self._build_messages(
             instruction, context, knowledge, skills,
             error=None, history=history,
-            chat_mode=include_all_scripts,
+            chat_mode=chat_mode,
+            syntax_report=syntax_report,
         )
 
         raw = self.llm.generate(messages)
@@ -243,13 +253,29 @@ class GDLAgent:
     def _build_context(
         self, project: HSFProject, affected: list[ScriptType],
         include_all: bool = False,
+        last_code_context: Optional[str] = None,
     ) -> str:
         """Build focused context from project state.
 
         include_all=True: inject every non-empty script (for debug/analysis).
         include_all=False: inject only 'affected' scripts (for generation).
+        last_code_context: if set, inject as "last AI output" block instead of editor scripts.
         """
         parts = []
+
+        if last_code_context is not None:
+            # [DEBUG:last] mode: show last AI-generated code, not editor state
+            parts.append("=== Last AI-generated code (subject of this debug session) ===")
+            parts.append(last_code_context)
+            # Still include current params for reference
+            parts.append("\n=== Current Parameters (editor) ===")
+            if project.parameters:
+                for p in project.parameters:
+                    fixed = " [FIXED]" if p.is_fixed else ""
+                    parts.append(f"  {p.type_tag} {p.name} = {p.value}  ! {p.description}{fixed}")
+            else:
+                parts.append("  (none)")
+            return "\n".join(parts)
 
         # Always include paramlist
         parts.append("=== Parameters ===")
@@ -283,6 +309,7 @@ class GDLAgent:
         error: Optional[str],
         history: Optional[list] = None,
         chat_mode: bool = False,
+        syntax_report: str = "",
     ) -> list[dict]:
         """Build LLM message list.
 
@@ -298,13 +325,26 @@ class GDLAgent:
                 role = msg.get("role")
                 content = msg.get("content", "")
                 if role in ("user", "assistant") and content.strip():
-                    # Strip heavy code blocks from history to save tokens
                     if role == "assistant" and "```" in content:
-                        # Keep only the first 300 chars of assistant code replies
-                        content = content[:300] + "\n... (truncated)"
+                        # Replace code blocks with placeholder to save tokens.
+                        # Current scripts are always injected fresh via context,
+                        # so omitting history code does NOT lose information.
+                        import re as _re
+                        content = _re.sub(
+                            r"```[a-zA-Z]*\n.*?```",
+                            "[code block omitted — see current project state]",
+                            content, flags=_re.DOTALL
+                        )
                     messages.append({"role": role, "content": content})
 
-        user_parts = [f"Current HSF project state:\n```\n{context}\n```"]
+        if chat_mode:
+            # debug/analysis: label context clearly so LLM knows it's authoritative
+            user_parts = [
+                "## Current project state (complete — use this for analysis):\n"
+                f"```\n{context}\n```"
+            ]
+        else:
+            user_parts = [f"Current HSF project state:\n```\n{context}\n```"]
 
         if error:
             user_parts.append(f"\nPrevious attempt failed with error:\n{error}")
@@ -312,10 +352,17 @@ class GDLAgent:
         else:
             user_parts.append(f"\nInstruction: {instruction}")
 
+        if syntax_report:
+            user_parts.append(
+                f"\n## Syntax check warnings (fix these as part of your response):\n{syntax_report}"
+            )
+
         if chat_mode:
             user_parts.append(
-                "\nIf you can identify specific bugs or fixes, write them using [FILE: path] format. "
-                "Otherwise respond in plain text with your analysis."
+                "\nAnalyze the scripts above and respond to the instruction. "
+                "Fix all syntax warnings listed above. "
+                "If you find additional bugs or need to rewrite code, output fixes using [FILE: path] format. "
+                "If this is a question or analysis request, respond in plain text."
             )
         else:
             user_parts.append(
