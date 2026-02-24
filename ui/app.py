@@ -110,6 +110,8 @@ if "_import_key_done" not in st.session_state:
     st.session_state._import_key_done = ""   # dedup: skip re-processing same file
 if "compile_log" not in st.session_state:
     st.session_state.compile_log = []
+if "compile_result" not in st.session_state:
+    st.session_state.compile_result = None  # (success: bool, msg: str)
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "work_dir" not in st.session_state:
@@ -307,6 +309,7 @@ with st.sidebar:
             _keep_chat      = st.session_state.chat_history   # preserve chat
             st.session_state.project          = None
             st.session_state.compile_log      = []
+            st.session_state.compile_result   = None
             st.session_state.pending_diffs    = {}
             st.session_state.pending_ai_label = ""
             st.session_state.pending_gsm_name = ""
@@ -1296,483 +1299,493 @@ _SCRIPT_HELP = {
 }
 
 with col_editor:
-    # ── Auto-init empty project so editor is always visible ──
-    if not st.session_state.project:
-        st.session_state.project = HSFProject.create_new(
-            "untitled", work_dir=st.session_state.work_dir
-        )
-    proj_now = st.session_state.project
-    _ev      = st.session_state.editor_version
+    with st.container(height=820, border=False):
+        # ── Auto-init empty project so editor is always visible ──
+        if not st.session_state.project:
+            st.session_state.project = HSFProject.create_new(
+                "untitled", work_dir=st.session_state.work_dir
+            )
+        proj_now = st.session_state.project
+        _ev      = st.session_state.editor_version
 
-    # ── Row 1: Import (left) | 🔧 编译 (right, primary/prominent) ──
-    tb_import, tb_compile_top = st.columns([1.8, 2.2])
+        # ── Row 1: Import (left) | 🔧 编译 (right, primary/prominent) ──
+        tb_import, tb_compile_top = st.columns([1.8, 2.2])
 
-    with tb_import:
-        any_upload = st.file_uploader(
-            "📂 导入 gdl / txt / gsm", type=["gdl", "txt", "gsm"],
-            key="editor_import",
-            help=".gdl/.txt → 解析脚本  |  .gsm → LP_XMLConverter 解包",
-        )
-        if any_upload:
-            # Dedup: skip if this exact file was already processed this session
-            _fkey = f"{any_upload.name}_{any_upload.size}"
-            if st.session_state._import_key_done != _fkey:
-                ok, _imp_msg = _handle_unified_import(any_upload)
-                if ok:
-                    st.session_state._import_key_done = _fkey
+        with tb_import:
+            any_upload = st.file_uploader(
+                "📂 导入 gdl / txt / gsm", type=["gdl", "txt", "gsm"],
+                key="editor_import",
+                help=".gdl/.txt → 解析脚本  |  .gsm → LP_XMLConverter 解包",
+            )
+            if any_upload:
+                # Dedup: skip if this exact file was already processed this session
+                _fkey = f"{any_upload.name}_{any_upload.size}"
+                if st.session_state._import_key_done != _fkey:
+                    ok, _imp_msg = _handle_unified_import(any_upload)
+                    if ok:
+                        st.session_state._import_key_done = _fkey
+                        st.rerun()
+                    else:
+                        st.error(_imp_msg)
+
+        with tb_compile_top:
+            # GSM name input + compile button stacked in this column
+            gsm_name_input = st.text_input(
+                "GSM名称", label_visibility="collapsed",
+                value=st.session_state.pending_gsm_name or proj_now.name,
+                placeholder="输出 GSM 名称（不含扩展名）",
+                key="toolbar_gsm_name",
+                help="编译输出文件名",
+            )
+            st.session_state.pending_gsm_name = gsm_name_input
+            if st.button("🔧  编  译  GSM", type="primary", use_container_width=True,
+                         help="将当前所有脚本编译为 ArchiCAD .gsm 对象"):
+                with st.spinner("编译中..."):
+                    success, result_msg = do_compile(
+                        proj_now,
+                        gsm_name=gsm_name_input or proj_now.name,
+                        instruction="(toolbar compile)",
+                    )
+                st.session_state.compile_result = (success, result_msg)
+                if success:
+                    st.toast("✅ 编译成功", icon="🏗️")
+                st.rerun()
+
+        # ── Compile result banner ─────────────────────────────
+        if st.session_state.compile_result is not None:
+            _c_ok, _c_msg = st.session_state.compile_result
+            if _c_ok:
+                st.success(_c_msg)
+            else:
+                st.error(_c_msg)
+
+        # ── Row 2: Secondary toolbar ───────────────────────────
+        tb_extract, tb_clear, tb_check = st.columns([1.5, 1.0, 1.2])
+
+        with tb_extract:
+            n_blocks = sum(
+                1 for m in st.session_state.chat_history
+                if m.get("role") == "assistant" and "```" in m.get("content", "")
+            )
+            lbl = f"📥 提取({n_blocks})" if n_blocks else "📥 提取"
+            if st.button(lbl, use_container_width=True,
+                         help="从 AI 对话中提取 GDL 代码块写入编辑器"):
+                extracted = _extract_gdl_from_chat()
+                if extracted:
+                    sc, pc = _apply_scripts_to_project(proj_now, extracted)
+                    st.session_state.editor_version += 1
+                    parts = []
+                    if sc: parts.append(f"{sc} 个脚本")
+                    if pc: parts.append(f"{pc} 个参数")
+                    st.toast(f"📥 已写入 {'、'.join(parts)}", icon="✅")
                     st.rerun()
                 else:
-                    st.error(_imp_msg)
+                    st.toast("对话中未发现 GDL/paramlist 代码块", icon="ℹ️")
 
-    with tb_compile_top:
-        # GSM name input + compile button stacked in this column
-        gsm_name_input = st.text_input(
-            "GSM名称", label_visibility="collapsed",
-            value=st.session_state.pending_gsm_name or proj_now.name,
-            placeholder="输出 GSM 名称（不含扩展名）",
-            key="toolbar_gsm_name",
-            help="编译输出文件名",
-        )
-        st.session_state.pending_gsm_name = gsm_name_input
-        if st.button("🔧  编  译  GSM", type="primary", use_container_width=True,
-                     help="将当前所有脚本编译为 ArchiCAD .gsm 对象"):
-            with st.spinner("编译中..."):
-                success, result_msg = do_compile(
-                    proj_now,
-                    gsm_name=gsm_name_input or proj_now.name,
-                    instruction="(toolbar compile)",
-                )
-            st.session_state.chat_history.append({"role": "assistant", "content": result_msg})
-            if success:
-                st.toast("✅ 编译成功", icon="🏗️")
-            else:
-                st.error(result_msg)
-            st.rerun()
+        with tb_clear:
+            if st.button("🗑️ 清空", use_container_width=True, help="重置项目：脚本、参数、对话、日志全清，保留设置"):
+                st.session_state.confirm_clear = True
 
-    # ── Row 2: Secondary toolbar ───────────────────────────
-    tb_extract, tb_clear, tb_check = st.columns([1.5, 1.0, 1.2])
+        with tb_check:
+            if st.button("🔍 全检查", use_container_width=True):
+                all_ok = True
+                for stype, fpath, label in _SCRIPT_MAP:
+                    content = proj_now.get_script(stype)
+                    if not content:
+                        continue
+                    skey = fpath.replace("scripts/", "").replace(".gdl", "")
+                    for iss in check_gdl_script(content, skey):
+                        if iss.startswith("✅"):
+                            st.success(f"{label}: {iss}")
+                        else:
+                            st.warning(f"{label}: {iss}")
+                            all_ok = False
+                if all_ok:
+                    st.success("✅ 所有脚本语法正常")
 
-    with tb_extract:
-        n_blocks = sum(
-            1 for m in st.session_state.chat_history
-            if m.get("role") == "assistant" and "```" in m.get("content", "")
-        )
-        lbl = f"📥 提取({n_blocks})" if n_blocks else "📥 提取"
-        if st.button(lbl, use_container_width=True,
-                     help="从 AI 对话中提取 GDL 代码块写入编辑器"):
-            extracted = _extract_gdl_from_chat()
-            if extracted:
-                sc, pc = _apply_scripts_to_project(proj_now, extracted)
-                st.session_state.editor_version += 1
-                parts = []
-                if sc: parts.append(f"{sc} 个脚本")
-                if pc: parts.append(f"{pc} 个参数")
-                st.toast(f"📥 已写入 {'、'.join(parts)}", icon="✅")
-                st.rerun()
-            else:
-                st.toast("对话中未发现 GDL/paramlist 代码块", icon="ℹ️")
-
-    with tb_clear:
-        if st.button("🗑️ 清空", use_container_width=True, help="重置项目：脚本、参数、对话、日志全清，保留设置"):
-            st.session_state.confirm_clear = True
-
-    with tb_check:
-        if st.button("🔍 全检查", use_container_width=True):
-            all_ok = True
-            for stype, fpath, label in _SCRIPT_MAP:
-                content = proj_now.get_script(stype)
-                if not content:
-                    continue
-                skey = fpath.replace("scripts/", "").replace(".gdl", "")
-                for iss in check_gdl_script(content, skey):
-                    if iss.startswith("✅"):
-                        st.success(f"{label}: {iss}")
-                    else:
-                        st.warning(f"{label}: {iss}")
-                        all_ok = False
-            if all_ok:
-                st.success("✅ 所有脚本语法正常")
-
-    # ── 清空确认 ──────────────────────────────────────────
-    if st.session_state.get("confirm_clear"):
-        st.warning("⚠️ 将重置项目（脚本、参数、编译日志），聊天记录保留。确认继续？")
-        cc1, cc2, _ = st.columns([1, 1, 4])
-        with cc1:
-            if st.button("✅ 确认清空", type="primary"):
-                _keep_work_dir = st.session_state.work_dir
-                _keep_api_keys = st.session_state.model_api_keys
-                _keep_chat     = st.session_state.chat_history   # preserve chat
-                st.session_state.project          = None
-                st.session_state.compile_log      = []
-                st.session_state.pending_diffs    = {}
-                st.session_state.pending_ai_label = ""
-                st.session_state.pending_gsm_name = ""
-                st.session_state.agent_running    = False
-                st.session_state._import_key_done = ""
-                st.session_state.confirm_clear    = False
-                st.session_state.editor_version  += 1
-                st.session_state.work_dir         = _keep_work_dir
-                st.session_state.model_api_keys   = _keep_api_keys
-                st.session_state.chat_history     = _keep_chat
-                st.toast("🗑️ 已重置项目（脚本、参数、日志），聊天记录保留", icon="✅")
-                st.rerun()
-        with cc2:
-            if st.button("❌ 取消"):
-                st.session_state.confirm_clear = False
-                st.rerun()
-
-    st.divider()
-
-    # ── Script / Param Tabs ───────────────────────────────
-    tab_labels = ["参数"] + [lbl for _, _, lbl in _SCRIPT_MAP] + ["📋 日志"]
-    all_tabs   = st.tabs(tab_labels)
-    tab_params, *script_tabs, tab_log = all_tabs
-
-    # Params tab
-    with tab_params:
-        with st.expander("ℹ️ 参数说明"):
-            st.markdown(
-                "**参数列表** — GDL 对象的可调参数。\n\n"
-                "- **Type**: `Length` / `Integer` / `Boolean` / `Material` / `String`\n"
-                "- **Name**: 代码中引用的变量名（camelCase，如 `iShelves`）\n"
-                "- **Value**: 默认值\n"
-                "- **Fixed**: 勾选后用户无法在 ArchiCAD 中修改"
-            )
-        param_data = [
-            {"Type": p.type_tag, "Name": p.name, "Value": p.value,
-             "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
-            for p in proj_now.parameters
-        ]
-        if param_data:
-            st.dataframe(param_data, use_container_width=True, hide_index=True)
-        else:
-            st.caption("暂无参数，通过 AI 对话添加，或手动添加。")
-
-        with st.expander("➕ 手动添加参数"):
-            pc1, pc2, pc3, pc4 = st.columns(4)
-            with pc1:
-                p_type = st.selectbox("Type", [
-                    "Length", "Integer", "Boolean", "RealNum", "Angle",
-                    "String", "Material", "FillPattern", "LineType", "PenColor",
-                ])
-            with pc2:
-                p_name = st.text_input("Name", value="bNewParam")
-            with pc3:
-                p_value = st.text_input("Value", value="0")
-            with pc4:
-                p_desc = st.text_input("Description")
-            if st.button("添加参数"):
-                try:
-                    proj_now.add_parameter(GDLParameter(p_name, p_type, p_desc, p_value))
-                    st.success(f"✅ {p_type} {p_name}")
+        # ── 清空确认 ──────────────────────────────────────────
+        if st.session_state.get("confirm_clear"):
+            st.warning("⚠️ 将重置项目（脚本、参数、编译日志），聊天记录保留。确认继续？")
+            cc1, cc2, _ = st.columns([1, 1, 4])
+            with cc1:
+                if st.button("✅ 确认清空", type="primary"):
+                    _keep_work_dir = st.session_state.work_dir
+                    _keep_api_keys = st.session_state.model_api_keys
+                    _keep_chat     = st.session_state.chat_history   # preserve chat
+                    st.session_state.project          = None
+                    st.session_state.compile_log      = []
+                    st.session_state.compile_result   = None
+                    st.session_state.pending_diffs    = {}
+                    st.session_state.pending_ai_label = ""
+                    st.session_state.pending_gsm_name = ""
+                    st.session_state.agent_running    = False
+                    st.session_state._import_key_done = ""
+                    st.session_state.confirm_clear    = False
+                    st.session_state.editor_version  += 1
+                    st.session_state.work_dir         = _keep_work_dir
+                    st.session_state.model_api_keys   = _keep_api_keys
+                    st.session_state.chat_history     = _keep_chat
+                    st.toast("🗑️ 已重置项目（脚本、参数、日志），聊天记录保留", icon="✅")
                     st.rerun()
-                except Exception as e:
-                    st.error(str(e))
+            with cc2:
+                if st.button("❌ 取消"):
+                    st.session_state.confirm_clear = False
+                    st.rerun()
 
-        if st.button("🔍 验证参数"):
-            issues = validate_paramlist(proj_now.parameters)
-            for i in issues:
-                st.warning(i)
-            if not issues:
-                st.success("✅ 参数验证通过")
+        st.divider()
 
-        with st.expander("paramlist.xml 预览"):
-            st.code(build_paramlist_xml(proj_now.parameters), language="xml")
+        # ── Script / Param Tabs ───────────────────────────────
+        tab_labels = ["参数"] + [lbl for _, _, lbl in _SCRIPT_MAP] + ["📋 日志"]
+        all_tabs   = st.tabs(tab_labels)
+        tab_params, *script_tabs, tab_log = all_tabs
 
-    # Script tabs
-    for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
-        with tab:
-            _tab_help_col, _tab_fs_col = st.columns([6, 1])
-            with _tab_help_col:
-                with st.expander(f"ℹ️ {label} 脚本说明"):
-                    st.markdown(_SCRIPT_HELP.get(fpath, ""))
-            with _tab_fs_col:
-                if st.button("⛶", key=f"fs_{fpath}_v{_ev}",
-                             help="全屏编辑", use_container_width=True):
-                    _fullscreen_editor_dialog(stype, fpath, label)
-
-            current_code = proj_now.get_script(stype) or ""
-            skey = fpath.replace("scripts/", "").replace(".gdl", "")
-
-            if _ACE_AVAILABLE:
-                _raw_ace = st_ace(
-                    value=current_code,
-                    language="fortran",   # closest built-in: `!` comments + keyword structure
-                    theme="monokai",
-                    height=280,
-                    font_size=13,
-                    tab_size=2,
-                    show_gutter=True,
-                    show_print_margin=False,
-                    wrap=False,
-                    key=f"ace_{fpath}_v{_ev}",
+        # Params tab
+        with tab_params:
+            with st.expander("ℹ️ 参数说明"):
+                st.markdown(
+                    "**参数列表** — GDL 对象的可调参数。\n\n"
+                    "- **Type**: `Length` / `Integer` / `Boolean` / `Material` / `String`\n"
+                    "- **Name**: 代码中引用的变量名（camelCase，如 `iShelves`）\n"
+                    "- **Value**: 默认值\n"
+                    "- **Fixed**: 勾选后用户无法在 ArchiCAD 中修改"
                 )
-                # st_ace returns None on first render (widget not yet initialized).
-                # NEVER let None → "" silently overwrite real script content.
-                new_code = _raw_ace if _raw_ace is not None else current_code
+            param_data = [
+                {"Type": p.type_tag, "Name": p.name, "Value": p.value,
+                 "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
+                for p in proj_now.parameters
+            ]
+            if param_data:
+                st.dataframe(param_data, use_container_width=True, hide_index=True)
             else:
-                new_code = st.text_area(
-                    label, value=current_code, height=280,
-                    key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
-                ) or ""  # text_area never returns None; empty string is a valid clear
+                st.caption("暂无参数，通过 AI 对话添加，或手动添加。")
 
-            if new_code != current_code:
-                proj_now.set_script(stype, new_code)
-            if st.button("🔍 检查", key=f"chk_{fpath}_v{_ev}"):
-                for iss in check_gdl_script(new_code, skey):
-                    st.success(iss) if iss.startswith("✅") else st.warning(iss)
+            with st.expander("➕ 手动添加参数"):
+                pc1, pc2, pc3, pc4 = st.columns(4)
+                with pc1:
+                    p_type = st.selectbox("Type", [
+                        "Length", "Integer", "Boolean", "RealNum", "Angle",
+                        "String", "Material", "FillPattern", "LineType", "PenColor",
+                    ])
+                with pc2:
+                    p_name = st.text_input("Name", value="bNewParam")
+                with pc3:
+                    p_value = st.text_input("Value", value="0")
+                with pc4:
+                    p_desc = st.text_input("Description")
+                if st.button("添加参数"):
+                    try:
+                        proj_now.add_parameter(GDLParameter(p_name, p_type, p_desc, p_value))
+                        st.success(f"✅ {p_type} {p_name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
 
-    # Log tab
-    with tab_log:
-        if not st.session_state.compile_log:
-            st.info("暂无编译记录")
-        else:
-            for entry in reversed(st.session_state.compile_log):
-                icon = "✅" if entry["success"] else "❌"
-                st.markdown(f"**{icon} {entry['project']}** — {entry.get('instruction','')}")
-                st.code(entry["message"], language="text")
-                st.divider()
-        if st.button("清除日志"):
-            st.session_state.compile_log = []
-            st.rerun()
-        with st.expander("HSF 目录结构"):
-            tree = [f"📁 {proj_now.name}/", "  ├── libpartdata.xml",
-                    "  ├── paramlist.xml", "  ├── ancestry.xml", "  └── scripts/"]
-            for stype in ScriptType:
-                if stype in proj_now.scripts:
-                    n = proj_now.scripts[stype].count("\n") + 1
-                    tree.append(f"       ├── {stype.value} ({n} lines)")
-            st.code("\n".join(tree), language="text")
+            if st.button("🔍 验证参数"):
+                issues = validate_paramlist(proj_now.parameters)
+                for i in issues:
+                    st.warning(i)
+                if not issues:
+                    st.success("✅ 参数验证通过")
+
+            with st.expander("paramlist.xml 预览"):
+                st.code(build_paramlist_xml(proj_now.parameters), language="xml")
+
+        # Script tabs
+        for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
+            with tab:
+                _tab_help_col, _tab_fs_col = st.columns([6, 1])
+                with _tab_help_col:
+                    with st.expander(f"ℹ️ {label} 脚本说明"):
+                        st.markdown(_SCRIPT_HELP.get(fpath, ""))
+                with _tab_fs_col:
+                    if st.button("⛶", key=f"fs_{fpath}_v{_ev}",
+                                 help="全屏编辑", use_container_width=True):
+                        _fullscreen_editor_dialog(stype, fpath, label)
+
+                current_code = proj_now.get_script(stype) or ""
+                skey = fpath.replace("scripts/", "").replace(".gdl", "")
+
+                if _ACE_AVAILABLE:
+                    _raw_ace = st_ace(
+                        value=current_code,
+                        language="fortran",   # closest built-in: `!` comments + keyword structure
+                        theme="monokai",
+                        height=280,
+                        font_size=13,
+                        tab_size=2,
+                        show_gutter=True,
+                        show_print_margin=False,
+                        wrap=False,
+                        key=f"ace_{fpath}_v{_ev}",
+                    )
+                    # st_ace returns None on first render (widget not yet initialized).
+                    # NEVER let None → "" silently overwrite real script content.
+                    new_code = _raw_ace if _raw_ace is not None else current_code
+                else:
+                    new_code = st.text_area(
+                        label, value=current_code, height=280,
+                        key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
+                    ) or ""  # text_area never returns None; empty string is a valid clear
+
+                if new_code != current_code:
+                    proj_now.set_script(stype, new_code)
+                if st.button("🔍 检查", key=f"chk_{fpath}_v{_ev}"):
+                    for iss in check_gdl_script(new_code, skey):
+                        st.success(iss) if iss.startswith("✅") else st.warning(iss)
+
+        # Log tab
+        with tab_log:
+            if not st.session_state.compile_log:
+                st.info("暂无编译记录")
+            else:
+                for entry in reversed(st.session_state.compile_log):
+                    icon = "✅" if entry["success"] else "❌"
+                    st.markdown(f"**{icon} {entry['project']}** — {entry.get('instruction','')}")
+                    st.code(entry["message"], language="text")
+                    st.divider()
+            if st.button("清除日志"):
+                st.session_state.compile_log = []
+                st.session_state.compile_result = None
+                st.rerun()
+            with st.expander("HSF 目录结构"):
+                tree = [f"📁 {proj_now.name}/", "  ├── libpartdata.xml",
+                        "  ├── paramlist.xml", "  ├── ancestry.xml", "  └── scripts/"]
+                for stype in ScriptType:
+                    if stype in proj_now.scripts:
+                        n = proj_now.scripts[stype].count("\n") + 1
+                        tree.append(f"       ├── {stype.value} ({n} lines)")
+                st.code("\n".join(tree), language="text")
 
 
-# ── Right: AI Chat panel ──────────────────────────────────
+    # ── Right: AI Chat panel ──────────────────────────────────
 
 with col_chat:
-    _chat_proj = st.session_state.project
-    if _chat_proj:
-        st.markdown(f"### 💬 {_chat_proj.name}")
-        st.caption(f"参数: {len(_chat_proj.parameters)} | 脚本: {len(_chat_proj.scripts)}")
-    else:
-        st.markdown("### 💬 AI 助手")
-        st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
+    with st.container(height=820, border=False):
+        _chat_proj = st.session_state.project
+        if _chat_proj:
+            st.markdown(f"### 💬 {_chat_proj.name}")
+            st.caption(f"参数: {len(_chat_proj.parameters)} | 脚本: {len(_chat_proj.scripts)}")
+        else:
+            st.markdown("### 💬 AI 助手")
+            st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
 
-    # Chat history with action bar on each assistant message
-    for _i, _msg in enumerate(st.session_state.chat_history):
-        with st.chat_message(_msg["role"]):
-            st.markdown(_msg["content"])
-            if _msg["role"] == "assistant":
-                _ca, _cb, _cc, _cd, _ce = st.columns([1, 1, 1, 1, 8])
-                with _ca:
-                    if st.button("👍", key=f"like_{_i}", help="有帮助"):
-                        _save_feedback(_i, "positive", _msg["content"])
-                        st.toast("已记录 👍", icon="✅")
-                with _cb:
-                    if st.button("👎", key=f"dislike_{_i}", help="需改进"):
-                        _save_feedback(_i, "negative", _msg["content"])
-                        st.toast("已记录 👎，感谢反馈")
-                with _cc:
-                    if st.button("📋", key=f"copy_{_i}", help="展开可复制内容"):
-                        _flag = f"_showcopy_{_i}"
-                        st.session_state[_flag] = not st.session_state.get(_flag, False)
-                with _cd:
-                    _prev_user = next(
-                        (st.session_state.chat_history[j]["content"]
-                         for j in range(_i - 1, -1, -1)
-                         if st.session_state.chat_history[j]["role"] == "user"),
-                        None,
-                    )
-                    if _prev_user and st.button("🔄", key=f"redo_{_i}", help="重新生成"):
-                        st.session_state.chat_history = st.session_state.chat_history[:_i]
-                        st.session_state["_redo_input"] = _prev_user
-                        st.rerun()
-        if st.session_state.get(f"_showcopy_{_i}", False):
-            st.code(_msg["content"], language="text")
+        # Chat history with action bar on each assistant message
+        for _i, _msg in enumerate(st.session_state.chat_history):
+            with st.chat_message(_msg["role"]):
+                st.markdown(_msg["content"])
+                if _msg["role"] == "assistant":
+                    _ca, _cb, _cc, _cd, _ce = st.columns([1, 1, 1, 1, 8])
+                    with _ca:
+                        if st.button("👍", key=f"like_{_i}", help="有帮助"):
+                            _save_feedback(_i, "positive", _msg["content"])
+                            st.toast("已记录 👍", icon="✅")
+                    with _cb:
+                        if st.button("👎", key=f"dislike_{_i}", help="需改进"):
+                            _save_feedback(_i, "negative", _msg["content"])
+                            st.toast("已记录 👎，感谢反馈")
+                    with _cc:
+                        if st.button("📋", key=f"copy_{_i}", help="展开可复制内容"):
+                            _flag = f"_showcopy_{_i}"
+                            st.session_state[_flag] = not st.session_state.get(_flag, False)
+                    with _cd:
+                        _prev_user = next(
+                            (st.session_state.chat_history[j]["content"]
+                             for j in range(_i - 1, -1, -1)
+                             if st.session_state.chat_history[j]["role"] == "user"),
+                            None,
+                        )
+                        if _prev_user and st.button("🔄", key=f"redo_{_i}", help="重新生成"):
+                            st.session_state.chat_history = st.session_state.chat_history[:_i]
+                            st.session_state["_redo_input"] = _prev_user
+                            st.rerun()
+            if st.session_state.get(f"_showcopy_{_i}", False):
+                st.code(_msg["content"], language="text")
 
-    # ── Pending AI changes — confirmation widget (in chat flow) ──
-    if st.session_state.pending_diffs:
-        _pd = st.session_state.pending_diffs
-        _pn_s = sum(1 for k in _pd if k.startswith("scripts/"))
-        _pn_p = len(_parse_paramlist_text(_pd.get("paramlist.xml", "")))
-        _pd_parts = []
-        if _pn_s: _pd_parts.append(f"{_pn_s} 个脚本")
-        if _pn_p: _pd_parts.append(f"{_pn_p} 个参数")
-        _pd_label = "、".join(_pd_parts) or st.session_state.pending_ai_label or "新内容"
+        # ── Pending AI changes — confirmation widget (in chat flow) ──
+        if st.session_state.pending_diffs:
+            _pd = st.session_state.pending_diffs
+            _pn_s = sum(1 for k in _pd if k.startswith("scripts/"))
+            _pn_p = len(_parse_paramlist_text(_pd.get("paramlist.xml", "")))
+            _pd_parts = []
+            if _pn_s: _pd_parts.append(f"{_pn_s} 个脚本")
+            if _pn_p: _pd_parts.append(f"{_pn_p} 个参数")
+            _pd_label = "、".join(_pd_parts) or st.session_state.pending_ai_label or "新内容"
 
-        st.info(f"⬆️ **是否将 AI 生成的 {_pd_label} 写入编辑器？**")
-        _pac1, _pac2, _pac3 = st.columns([1.2, 1, 5])
-        with _pac1:
-            if st.button("✅ 写入", type="primary", use_container_width=True,
-                         key="chat_pending_apply"):
-                _proj = st.session_state.project
-                if _proj:
-                    sc, pc = _apply_scripts_to_project(_proj, _pd)
-                    _ok_parts = []
-                    if sc: _ok_parts.append(f"{sc} 个脚本")
-                    if pc: _ok_parts.append(f"{pc} 个参数")
-                    st.session_state.editor_version += 1
-                    st.toast(f"✅ 已写入 {'、'.join(_ok_parts)}", icon="✏️")
-                st.session_state.pending_diffs    = {}
-                st.session_state.pending_ai_label = ""
-                st.rerun()
-        with _pac2:
-            if st.button("❌ 忽略", use_container_width=True,
-                         key="chat_pending_discard"):
-                st.session_state.pending_diffs    = {}
-                st.session_state.pending_ai_label = ""
-                st.rerun()
+            st.info(f"⬆️ **是否将 AI 生成的 {_pd_label} 写入编辑器？**")
+            _pac1, _pac2, _pac3 = st.columns([1.2, 1, 5])
+            with _pac1:
+                if st.button("✅ 写入", type="primary", use_container_width=True,
+                             key="chat_pending_apply"):
+                    _proj = st.session_state.project
+                    if _proj:
+                        sc, pc = _apply_scripts_to_project(_proj, _pd)
+                        _ok_parts = []
+                        if sc: _ok_parts.append(f"{sc} 个脚本")
+                        if pc: _ok_parts.append(f"{pc} 个参数")
+                        st.session_state.editor_version += 1
+                        st.toast(f"✅ 已写入 {'、'.join(_ok_parts)}", icon="✏️")
+                    st.session_state.pending_diffs    = {}
+                    st.session_state.pending_ai_label = ""
+                    st.rerun()
+            with _pac2:
+                if st.button("❌ 忽略", use_container_width=True,
+                             key="chat_pending_discard"):
+                    st.session_state.pending_diffs    = {}
+                    st.session_state.pending_ai_label = ""
+                    st.rerun()
 
-    # ── 图片上传（🖼️ 图片即意图）────────────────────────────────
-    with st.expander("📷 上传图片 → AI 直接生成 GDL", expanded=False):
-        st.caption("支持 JPG / PNG / WebP · 推荐模型：Claude Sonnet / GPT-4o / Gemini")
-        _vision_file = st.file_uploader(
-            "",
-            type=["jpg", "jpeg", "png", "webp", "gif"],
-            key=f"vision_upload_{st.session_state.vision_upload_key}",
-            label_visibility="collapsed",
+        # ── 图片上传（🖼️ 图片即意图）────────────────────────────────
+        with st.expander("📷 上传图片 → AI 直接生成 GDL", expanded=False):
+            st.caption("支持 JPG / PNG / WebP · 推荐模型：Claude Sonnet / GPT-4o / Gemini")
+            _vision_file = st.file_uploader(
+                "",
+                type=["jpg", "jpeg", "png", "webp", "gif"],
+                key=f"vision_upload_{st.session_state.vision_upload_key}",
+                label_visibility="collapsed",
+            )
+            if _vision_file is not None:
+                _raw_bytes = _vision_file.read()
+                st.image(_raw_bytes, width=220)
+                st.session_state["_vision_b64"]  = base64.b64encode(_raw_bytes).decode()
+                st.session_state["_vision_mime"] = _vision_file.type or "image/jpeg"
+                st.session_state["_vision_name"] = _vision_file.name
+                if st.button(
+                    "🖼️ 分析图片 → 生成 GDL",
+                    type="primary",
+                    use_container_width=True,
+                    key="vision_submit_btn",
+                ):
+                    st.session_state["_vision_trigger"] = True
+                    st.rerun()
+            elif "_vision_b64" in st.session_state:
+                # File cleared by user (clicked ✕ on uploader)
+                st.session_state.pop("_vision_b64", None)
+                st.session_state.pop("_vision_mime", None)
+                st.session_state.pop("_vision_name", None)
+
+        # Live agent output placeholder (anchored inside this column)
+        live_output = st.empty()
+
+        # Chat input — immediately below message list / confirmation widget
+        user_input = st.chat_input(
+            "描述需求、提问，或搭配图片补充说明…"
         )
-        if _vision_file is not None:
-            _raw_bytes = _vision_file.read()
-            st.image(_raw_bytes, width=220)
-            st.session_state["_vision_b64"]  = base64.b64encode(_raw_bytes).decode()
-            st.session_state["_vision_mime"] = _vision_file.type or "image/jpeg"
-            st.session_state["_vision_name"] = _vision_file.name
-            if st.button(
-                "🖼️ 分析图片 → 生成 GDL",
-                type="primary",
-                use_container_width=True,
-                key="vision_submit_btn",
-            ):
-                st.session_state["_vision_trigger"] = True
-                st.rerun()
-        elif "_vision_b64" in st.session_state:
-            # File cleared by user (clicked ✕ on uploader)
+
+
+    # ══════════════════════════════════════════════════════════
+    #  Chat handler (outside columns — session state + rerun)
+    # ══════════════════════════════════════════════════════════
+
+    _redo_input      = st.session_state.pop("_redo_input", None)
+    _vision_trigger  = st.session_state.pop("_vision_trigger", False)
+    _vision_b64      = st.session_state.get("_vision_b64")
+    effective_input  = _redo_input or user_input
+
+    # ── Vision path: image uploaded + "分析图片" button clicked ──────────────────
+    if _vision_trigger and _vision_b64:
+        _vision_mime = st.session_state.get("_vision_mime", "image/jpeg")
+        _vision_name = st.session_state.get("_vision_name", "image")
+        _extra_text  = user_input or ""  # optional supplementary text from chat_input
+
+        _user_display = f"🖼️ `{_vision_name}`" + (f"  \n{_extra_text}" if _extra_text else "")
+        st.session_state.chat_history.append({"role": "user", "content": _user_display})
+
+        if not api_key and "ollama" not in model_name:
+            err = "❌ 请在左侧边栏填入 API Key 后再试。"
+            st.session_state.chat_history.append({"role": "assistant", "content": err})
+            st.rerun()
+        else:
+            # Ensure project exists
+            if not st.session_state.project:
+                _vname = Path(_vision_name).stem or "vision_object"
+                _vproj = HSFProject.create_new(_vname, work_dir=st.session_state.work_dir)
+                st.session_state.project = _vproj
+                st.session_state.pending_gsm_name = _vname
+
+            _proj_v = st.session_state.project
+            _has_any_v = any(_proj_v.get_script(s) for s, _, _ in _SCRIPT_MAP)
+
+            with live_output.container():
+                st.chat_message("user").markdown(_user_display)
+                with st.chat_message("assistant"):
+                    msg = run_vision_generate(
+                        image_b64=_vision_b64,
+                        image_mime=_vision_mime,
+                        extra_text=_extra_text,
+                        proj=_proj_v,
+                        status_col=st.container(),
+                        auto_apply=not _has_any_v,
+                    )
+                    st.markdown(msg)
+
+            st.session_state.chat_history.append({"role": "assistant", "content": msg})
+
+            # Reset image uploader by incrementing key, clear stored image
+            st.session_state.vision_upload_key += 1
             st.session_state.pop("_vision_b64", None)
             st.session_state.pop("_vision_mime", None)
             st.session_state.pop("_vision_name", None)
+            st.rerun()
 
-    # Live agent output placeholder (anchored inside this column)
-    live_output = st.empty()
+    # ── Normal text path ─────────────────────────────────────────────────────────
+    elif effective_input:
+        # Redo: user msg already in history; new: append it
+        if not _redo_input:
+            st.session_state.chat_history.append({"role": "user", "content": effective_input})
+        user_input = effective_input   # alias for rest of handler
 
-    # Chat input — immediately below message list / confirmation widget
-    user_input = st.chat_input(
-        "描述需求、提问，或搭配图片补充说明…"
+        if not api_key and "ollama" not in model_name:
+            err = "❌ 请在左侧边栏填入 API Key 后再试。"
+            st.session_state.chat_history.append({"role": "assistant", "content": err})
+            st.rerun()
+        else:
+            llm_for_classify = get_llm()
+            intent, gdl_obj_name = classify_and_extract(
+                user_input, llm_for_classify,
+                project_loaded=bool(st.session_state.project),
+            )
+
+            with live_output.container():
+                st.chat_message("user").markdown(user_input)
+                with st.chat_message("assistant"):
+                    if intent == "CHAT":
+                        msg = chat_respond(
+                            user_input,
+                            st.session_state.chat_history[:-1],
+                            llm_for_classify,
+                        )
+                        st.markdown(msg)
+                    else:
+                        if not st.session_state.project:
+                            new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
+                            st.session_state.project = new_proj
+                            st.session_state.pending_gsm_name = gdl_obj_name
+                            st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
+
+                        proj_current = st.session_state.project
+                        # 只有全新空项目（无任何脚本内容）才自动写入；
+                        # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
+                        _has_any_script = any(
+                            proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
+                        )
+                        effective_gsm = st.session_state.pending_gsm_name or proj_current.name
+                        msg = run_agent_generate(
+                            user_input, proj_current, st.container(),
+                            gsm_name=effective_gsm,
+                            auto_apply=not _has_any_script,
+                        )
+                        st.markdown(msg)
+
+            st.session_state.chat_history.append({"role": "assistant", "content": msg})
+            st.rerun()
+
+
+    # ── Footer ────────────────────────────────────────────────
+    st.divider()
+    st.markdown(
+        '<p style="text-align:center; color:#64748b; font-size:0.8rem;">'
+        'OpenBrep v0.5 · HSF-native · Code Your Boundaries ·'
+        '<a href="https://github.com/byewind1/openbrep">GitHub</a>'
+        '</p>',
+        unsafe_allow_html=True,
     )
-
-
-# ══════════════════════════════════════════════════════════
-#  Chat handler (outside columns — session state + rerun)
-# ══════════════════════════════════════════════════════════
-
-_redo_input      = st.session_state.pop("_redo_input", None)
-_vision_trigger  = st.session_state.pop("_vision_trigger", False)
-_vision_b64      = st.session_state.get("_vision_b64")
-effective_input  = _redo_input or user_input
-
-# ── Vision path: image uploaded + "分析图片" button clicked ──────────────────
-if _vision_trigger and _vision_b64:
-    _vision_mime = st.session_state.get("_vision_mime", "image/jpeg")
-    _vision_name = st.session_state.get("_vision_name", "image")
-    _extra_text  = user_input or ""  # optional supplementary text from chat_input
-
-    _user_display = f"🖼️ `{_vision_name}`" + (f"  \n{_extra_text}" if _extra_text else "")
-    st.session_state.chat_history.append({"role": "user", "content": _user_display})
-
-    if not api_key and "ollama" not in model_name:
-        err = "❌ 请在左侧边栏填入 API Key 后再试。"
-        st.session_state.chat_history.append({"role": "assistant", "content": err})
-        st.rerun()
-    else:
-        # Ensure project exists
-        if not st.session_state.project:
-            _vname = Path(_vision_name).stem or "vision_object"
-            _vproj = HSFProject.create_new(_vname, work_dir=st.session_state.work_dir)
-            st.session_state.project = _vproj
-            st.session_state.pending_gsm_name = _vname
-
-        _proj_v = st.session_state.project
-        _has_any_v = any(_proj_v.get_script(s) for s, _, _ in _SCRIPT_MAP)
-
-        with live_output.container():
-            st.chat_message("user").markdown(_user_display)
-            with st.chat_message("assistant"):
-                msg = run_vision_generate(
-                    image_b64=_vision_b64,
-                    image_mime=_vision_mime,
-                    extra_text=_extra_text,
-                    proj=_proj_v,
-                    status_col=st.container(),
-                    auto_apply=not _has_any_v,
-                )
-                st.markdown(msg)
-
-        st.session_state.chat_history.append({"role": "assistant", "content": msg})
-
-        # Reset image uploader by incrementing key, clear stored image
-        st.session_state.vision_upload_key += 1
-        st.session_state.pop("_vision_b64", None)
-        st.session_state.pop("_vision_mime", None)
-        st.session_state.pop("_vision_name", None)
-        st.rerun()
-
-# ── Normal text path ─────────────────────────────────────────────────────────
-elif effective_input:
-    # Redo: user msg already in history; new: append it
-    if not _redo_input:
-        st.session_state.chat_history.append({"role": "user", "content": effective_input})
-    user_input = effective_input   # alias for rest of handler
-
-    if not api_key and "ollama" not in model_name:
-        err = "❌ 请在左侧边栏填入 API Key 后再试。"
-        st.session_state.chat_history.append({"role": "assistant", "content": err})
-        st.rerun()
-    else:
-        llm_for_classify = get_llm()
-        intent, gdl_obj_name = classify_and_extract(
-            user_input, llm_for_classify,
-            project_loaded=bool(st.session_state.project),
-        )
-
-        with live_output.container():
-            st.chat_message("user").markdown(user_input)
-            with st.chat_message("assistant"):
-                if intent == "CHAT":
-                    msg = chat_respond(
-                        user_input,
-                        st.session_state.chat_history[:-1],
-                        llm_for_classify,
-                    )
-                    st.markdown(msg)
-                else:
-                    if not st.session_state.project:
-                        new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
-                        st.session_state.project = new_proj
-                        st.session_state.pending_gsm_name = gdl_obj_name
-                        st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
-
-                    proj_current = st.session_state.project
-                    # 只有全新空项目（无任何脚本内容）才自动写入；
-                    # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
-                    _has_any_script = any(
-                        proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
-                    )
-                    effective_gsm = st.session_state.pending_gsm_name or proj_current.name
-                    msg = run_agent_generate(
-                        user_input, proj_current, st.container(),
-                        gsm_name=effective_gsm,
-                        auto_apply=not _has_any_script,
-                    )
-                    st.markdown(msg)
-
-        st.session_state.chat_history.append({"role": "assistant", "content": msg})
-        st.rerun()
-
-
-# ── Footer ────────────────────────────────────────────────
-st.divider()
-st.markdown(
-    '<p style="text-align:center; color:#64748b; font-size:0.8rem;">'
-    'OpenBrep v0.5 · HSF-native · Code Your Boundaries ·'
-    '<a href="https://github.com/byewind1/openbrep">GitHub</a>'
-    '</p>',
-    unsafe_allow_html=True,
-)
