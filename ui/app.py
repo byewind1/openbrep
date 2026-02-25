@@ -27,6 +27,11 @@ from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
 from openbrep.core import GDLAgent, Status
 from openbrep.knowledge import KnowledgeBase
 from openbrep.skills_loader import SkillsLoader
+try:
+    from openbrep.tapir_bridge import get_bridge, errors_to_chat_message
+    _TAPIR_IMPORT_OK = True
+except ImportError:
+    _TAPIR_IMPORT_OK = False
 
 
 # ── Page Config ───────────────────────────────────────────
@@ -112,6 +117,10 @@ if "compile_log" not in st.session_state:
     st.session_state.compile_log = []
 if "compile_result" not in st.session_state:
     st.session_state.compile_result = None
+if "tapir_status" not in st.session_state:
+    st.session_state.tapir_status = None  # None | "checking" | "ok" | "no_tapir" | "no_ac"
+if "tapir_test_trigger" not in st.session_state:
+    st.session_state.tapir_test_trigger = False
 if "adopted_msg_index" not in st.session_state:
     st.session_state.adopted_msg_index = None
 if "_debug_mode_active" not in st.session_state:
@@ -1403,6 +1412,22 @@ with col_editor:
                 else:
                     st.error(_c_msg)
 
+            # ── Archicad 测试按钮 ─────────────────────────────
+            if _TAPIR_IMPORT_OK:
+                _bridge = get_bridge()
+                _tapir_ok = _bridge.is_available()
+                if _tapir_ok:
+                    _ac_col1, _ac_col2 = st.columns([2, 3])
+                    with _ac_col1:
+                        if st.button("🏗️ 在 Archicad 中测试", use_container_width=True,
+                                     help="触发 Archicad 重新加载库，捕获 GDL 运行期错误回传到 chat"):
+                            st.session_state.tapir_test_trigger = True
+                            st.rerun()
+                    with _ac_col2:
+                        st.caption("✅ Archicad + Tapir 已连接")
+                else:
+                    st.caption("⚪ Archicad 未运行或 Tapir 未安装，跳过实时测试")
+
             # ── Row 2: 全检查 | 清空 | 日志 ──────────────────────
             tb_check, tb_clear, tb_log_btn = st.columns([1.2, 1.0, 1.0])
 
@@ -1787,6 +1812,34 @@ with col_chat:
         _vision_trigger  = st.session_state.pop("_vision_trigger", False)
         _vision_b64      = st.session_state.get("_vision_b64")
         _active_dbg      = st.session_state.get("_debug_mode_active")
+        _tapir_trigger   = st.session_state.pop("tapir_test_trigger", False)
+
+        # ── Archicad 测试：ReloadLibraries + 捕获错误注入 chat ──
+        if _tapir_trigger and _TAPIR_IMPORT_OK:
+            _bridge = get_bridge()
+            _proj_for_tapir = st.session_state.project
+            with st.spinner("🏗️ 触发 Archicad 重新加载库，等待渲染..."):
+                _reload_ok, _gdl_errors = _bridge.reload_and_capture(
+                    timeout=6.0,
+                    project=_proj_for_tapir,
+                )
+            if _reload_ok:
+                _error_msg = errors_to_chat_message(_gdl_errors)
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": _error_msg,
+                })
+                if _gdl_errors:
+                    # 自动触发debug：把错误作为context发给LLM
+                    _auto_debug = f"[DEBUG:editor] 请根据以上 Archicad 报错修复脚本"
+                    st.session_state.chat_history.append({
+                        "role": "user",
+                        "content": _auto_debug,
+                    })
+                    st.session_state["_auto_debug_input"] = _auto_debug
+                st.rerun()
+            else:
+                st.toast("❌ Archicad 连接失败，请确认 Archicad 正在运行", icon="⚠️")
 
         # Debug模式：用户发送时附带前缀+语法检查报告
         if _active_dbg and user_input:
@@ -1808,7 +1861,8 @@ with col_chat:
             effective_input = f"{_dbg_prefix} {user_input.strip()}{_syntax_report}"
             st.session_state["_debug_mode_active"] = None
         else:
-            effective_input = _redo_input or user_input
+            _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
+            effective_input = _auto_debug_input or _redo_input or user_input
 
         # ── Vision path: image uploaded + "分析图片" button clicked ──────────────────
         if _vision_trigger and _vision_b64:
