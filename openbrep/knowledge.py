@@ -107,13 +107,20 @@ class KnowledgeBase:
         if not self._docs:
             return ""
 
-        # Get doc names for this task type
-        doc_names = self._layers.get(task_type, self._layers["all"])
+        # "all" → 直接返回全部已加载文档，不走写死列表
+        # 确保用户 copy 进 knowledge/ 的任意 .md 文件都能被加载
+        if task_type == "all":
+            return self.get_all()
 
+        doc_names = self._layers.get(task_type, [])
         parts = []
         for name in doc_names:
             if name in self._docs:
                 parts.append(f"## {name}\n\n{self._docs[name]}")
+
+        # 没有匹配到任何文档时降级到全部
+        if not parts:
+            return self.get_all()
 
         return "\n\n---\n\n".join(parts)
 

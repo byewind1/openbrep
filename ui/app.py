@@ -219,11 +219,14 @@ with st.sidebar:
 
     converter_path = ""
     if compiler_mode.startswith("LP"):
-        converter_path = st.text_input(
+        _raw_path = st.text_input(
             "LP_XMLConverter 路径",
             value=_config_defaults.get("compiler_path", ""),
             placeholder="/Applications/GRAPHISOFT/ArchiCAD 28/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter",
+            help="macOS/Linux 用正斜杠 /，Windows 用反斜杠 粘贴后自动转换",
         )
+        # 自动转换 Windows 反斜杠，去除首尾空格和引号
+        converter_path = _raw_path.strip().strip('"').strip("'").replace("\\\\", "/").replace("\\", "/")
 
     st.divider()
     st.subheader("🧠 AI 模型 / LLM")
@@ -340,7 +343,7 @@ with st.sidebar:
 
 import json as _json, datetime as _datetime
 
-def _save_feedback(msg_idx: int, rating: str, content: str) -> None:
+def _save_feedback(msg_idx: int, rating: str, content: str, comment: str = "") -> None:
     """Save 👍/👎 feedback to work_dir/feedback.jsonl (local only, not sent anywhere)."""
     try:
         feedback_path = Path(st.session_state.work_dir) / "feedback.jsonl"
@@ -350,6 +353,7 @@ def _save_feedback(msg_idx: int, rating: str, content: str) -> None:
             "rating": rating,           # "positive" | "negative"
             "msg_idx": msg_idx,
             "preview": content[:300],
+            "comment": comment.strip(),
         }
         with open(feedback_path, "a", encoding="utf-8") as _f:
             _f.write(_json.dumps(record, ensure_ascii=False) + "\n")
@@ -665,8 +669,18 @@ _DEBUG_KEYWORDS = {
     "review", "看一下", "看下", "告诉我", "这段", "这个脚本",
 }
 
+# Archicad GDL 错误格式特征
+import re as _re
+_ARCHICAD_ERROR_PATTERN = _re.compile(
+    r"(error|warning)\s+in\s+\w[\w\s]*script[,\s]+line\s+\d+",
+    _re.IGNORECASE
+)
+
 def _is_debug_intent(text: str) -> bool:
     if text.startswith("[DEBUG:editor]") or text.startswith("[DEBUG:last]"):
+        return True
+    # 自动识别粘贴进来的 Archicad 错误报告
+    if _ARCHICAD_ERROR_PATTERN.search(text):
         return True
     t = text.lower()
     return any(kw in t for kw in _DEBUG_KEYWORDS)
@@ -1067,7 +1081,7 @@ def _classify_code_blocks(text: str) -> dict:
             path = "scripts/vl.gdl"
         elif _re.search(r'\bGLOB_\w+\b', block_up):
             path = "scripts/1d.gdl"
-        elif _re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b', block_up):
+        elif _re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b|\bUI_DIALOG\b|\bUI_PAGE\b|\bUI_INFIELD\b|\bUI_OUTFIELD\b|\bUI_BUTTON\b|\bUI_GROUPBOX\b|\bUI_LISTFIELD\b|\bUI_SEPARATOR\b', block_up):
             path = "scripts/ui.gdl"
         else:
             path = "scripts/3d.gdl"
@@ -1639,8 +1653,28 @@ with col_chat:
                                 st.toast("已记录 👍", icon="✅")
                         with _cb:
                             if st.button("👎", key=f"dislike_{_i}", help="需改进"):
-                                _save_feedback(_i, "negative", _msg["content"])
-                                st.toast("已记录 👎，感谢反馈")
+                                st.session_state[f"_show_dislike_{_i}"] = True
+                        # 差评描述框
+                        if st.session_state.get(f"_show_dislike_{_i}"):
+                            with st.container():
+                                _fb_text = st.text_area(
+                                    "描述问题（可选）",
+                                    key=f"dislike_text_{_i}",
+                                    placeholder="哪里不对？期望的结果是什么？",
+                                    height=80,
+                                    label_visibility="collapsed",
+                                )
+                                _fb_c1, _fb_c2 = st.columns([1, 1])
+                                with _fb_c1:
+                                    if st.button("📤 提交", key=f"dislike_submit_{_i}", type="primary", use_container_width=True):
+                                        _save_feedback(_i, "negative", _msg["content"], comment=_fb_text)
+                                        st.session_state[f"_show_dislike_{_i}"] = False
+                                        st.toast("已记录 👎，感谢反馈", icon="📝")
+                                        st.rerun()
+                                with _fb_c2:
+                                    if st.button("取消", key=f"dislike_cancel_{_i}", use_container_width=True):
+                                        st.session_state[f"_show_dislike_{_i}"] = False
+                                        st.rerun()
                         with _cc:
                             if st.button("📋", key=f"copy_{_i}", help="展开可复制内容"):
                                 _flag = f"_showcopy_{_i}"
