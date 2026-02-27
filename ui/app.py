@@ -2166,19 +2166,20 @@ with col_chat:
         # Live agent output placeholder (anchored inside this column)
         live_output = st.empty()
 
-        # ── Debug 模式开关 ────────────────────────────────
-        _cur_dbg = st.session_state.get("_debug_mode_active")
-        _dbg_col1, _dbg_off = st.columns([1.6, 1.2])
-        with _dbg_col1:
-            _e_label = "✅ Debug 编辑器" if _cur_dbg == "editor" else "🔍 Debug 编辑器"
-            if st.button(_e_label, use_container_width=True,
-                         help="激活后：下次发送将附带编辑器全部脚本+参数+语法检查报告"):
-                _cur_dbg = None if _cur_dbg == "editor" else "editor"
-                st.session_state["_debug_mode_active"] = _cur_dbg
-        with _dbg_off:
-            if _cur_dbg and st.button("✖ 取消", use_container_width=True):
-                _cur_dbg = None
-                st.session_state["_debug_mode_active"] = None
+        # ── Debug 模式开关（单按钮双态）────────────────────────
+        _dbg_active = st.session_state.get("_debug_mode_active") == "editor"
+        _dbg_label = "✖ 退出 Debug" if _dbg_active else "🔍 开启 Debug 编辑器"
+        if st.button(
+            _dbg_label,
+            use_container_width=True,
+            type=("primary" if _dbg_active else "secondary"),
+            key="debug_editor_toggle_btn",
+            help="开启后：下次发送将附带编辑器全部脚本+参数+语法检查报告",
+        ):
+            _dbg_active = not _dbg_active
+            st.session_state["_debug_mode_active"] = "editor" if _dbg_active else None
+
+        _cur_dbg = "editor" if _dbg_active else None
 
         # Debug激活时只显示简洁提示，不跑obr本地语法检查
         if _cur_dbg == "editor":
