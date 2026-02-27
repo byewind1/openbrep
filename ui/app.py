@@ -1897,7 +1897,16 @@ with col_chat:
             if _pn_p: _pd_parts.append(f"{_pn_p} 个参数")
             _pd_label = "、".join(_pd_parts) or st.session_state.pending_ai_label or "新内容"
 
-            st.info(f"⬆️ **是否将 AI 生成的 {_pd_label} 写入编辑器？**")
+            _covered = sorted([k for k in _pd.keys() if k.startswith("scripts/") or k == "paramlist.xml"])
+            _all_targets = [p for _, p, _ in _SCRIPT_MAP] + ["paramlist.xml"]
+            _kept = [p for p in _all_targets if p not in _covered]
+            _covered_txt = "、".join(_covered) if _covered else "（无）"
+            _kept_txt = "、".join(_kept) if _kept else "（无）"
+            st.info(
+                f"⬆️ **写入策略：局部覆盖，不全清**\n"
+                f"覆盖：`{_covered_txt}`\n"
+                f"保留：`{_kept_txt}`"
+            )
             _pac1, _pac2, _pac3 = st.columns([1.2, 1, 5])
             with _pac1:
                 if st.button("✅ 写入", type="primary", use_container_width=True,
