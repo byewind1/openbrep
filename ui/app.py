@@ -178,12 +178,6 @@ if "script_revision" not in st.session_state:
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
-if "vision_upload_key" not in st.session_state:
-    # Increment to reset the file_uploader widget after image is sent
-    st.session_state.vision_upload_key = 0
-if "chat_image_upload_key" not in st.session_state:
-    # Unified chat image uploader reset key
-    st.session_state.chat_image_upload_key = 0
 if "chat_image_route_mode" not in st.session_state:
     # 图片模式：自动 / 强制生成 / 强制调试
     st.session_state.chat_image_route_mode = "自动"
@@ -2110,59 +2104,6 @@ with col_chat:
                     st.session_state.pending_ai_label = ""
                     st.rerun()
 
-        # ── 图片上传（统一入口：自动识别 生成 / 调试）──────────────────────────
-        with st.expander("📎 上传图片（自动识别生成/调试）", expanded=False):
-            st.caption("支持 JPG / PNG / WebP · 推荐模型：Claude Sonnet / GPT-4o / Gemini")
-            st.caption("💡 系统会结合图片与文字自动判断是“生成构件”还是“Debug 排错”")
-            _chat_img_file = st.file_uploader(
-                "",
-                type=["jpg", "jpeg", "png", "webp", "gif"],
-                key=f"chat_image_upload_{st.session_state.chat_image_upload_key}",
-                label_visibility="collapsed",
-            )
-            _chat_img_note = st.text_input(
-                "图片说明（可选）",
-                key=f"chat_image_note_{st.session_state.chat_image_upload_key}",
-                placeholder="例如：这是 Archicad 报错截图，请帮我定位并修复",
-            )
-            if _chat_img_file is not None:
-                _raw_bytes = _chat_img_file.read()
-                st.image(_raw_bytes, width=240)
-                st.session_state["_vision_b64"] = base64.b64encode(_raw_bytes).decode()
-                st.session_state["_vision_mime"] = _chat_img_file.type or "image/jpeg"
-                st.session_state["_vision_name"] = _chat_img_file.name
-
-                _route_pick = st.radio(
-                    "模式",
-                    ["自动", "强制生成", "强制调试"],
-                    horizontal=True,
-                    key="chat_image_route_mode",
-                )
-
-                if _route_pick == "强制调试":
-                    _pred_mode = "debug"
-                elif _route_pick == "强制生成":
-                    _pred_mode = "generate"
-                else:
-                    _pred_mode = "debug" if st.session_state.get("_debug_mode_active") else _detect_image_task_mode(_chat_img_note, _chat_img_file.name)
-
-                _mode_txt = "🧩 Debug 模式" if _pred_mode == "debug" else "🧱 生成模式"
-                st.caption(f"当前判定：{_mode_txt}")
-
-                if st.button(
-                    "📤 发送图片",
-                    type="primary",
-                    use_container_width=True,
-                    key="chat_image_submit_btn",
-                ):
-                    st.session_state["_vision_trigger"] = True
-                    st.rerun()
-            elif "_vision_b64" in st.session_state:
-                # File cleared by user (clicked ✕ on uploader)
-                st.session_state.pop("_vision_b64", None)
-                st.session_state.pop("_vision_mime", None)
-                st.session_state.pop("_vision_name", None)
-
         # Live agent output placeholder (anchored inside this column)
         live_output = st.empty()
 
@@ -2185,9 +2126,41 @@ with col_chat:
         if _cur_dbg == "editor":
             st.info("🔍 **全脚本 Debug 已激活** — 描述你观察到的问题，或直接发送让 AI 全面检查语法和逻辑")
 
-        # Chat input — immediately below message list / confirmation widget
+        st.caption("📎 图片路由（仅附图消息生效）")
+        st.radio(
+            "图片路由",
+            ["自动", "强制生成", "强制调试"],
+            horizontal=True,
+            key="chat_image_route_mode",
+            label_visibility="collapsed",
+        )
+
+        # Chat input — text + attachment icon (right side)
         _chat_placeholder = "描述需求、提问，或搭配图片补充说明…"
-        user_input = st.chat_input(_chat_placeholder, key="chat_main_input")
+        _chat_payload = st.chat_input(
+            _chat_placeholder,
+            key="chat_main_input",
+            accept_file=True,
+            file_type=["jpg", "jpeg", "png", "webp", "gif"],
+        )
+
+        user_input = None
+        _vision_b64 = None
+        _vision_mime = None
+        _vision_name = None
+
+        if isinstance(_chat_payload, str):
+            user_input = _chat_payload
+        elif _chat_payload is not None:
+            user_input = _chat_payload.get("text", "") or ""
+            _chat_files = _chat_payload.get("files", []) or []
+            if _chat_files:
+                _img = _chat_files[0]
+                _raw_bytes = _img.read()
+                if _raw_bytes:
+                    _vision_b64 = base64.b64encode(_raw_bytes).decode()
+                    _vision_mime = getattr(_img, "type", "") or "image/jpeg"
+                    _vision_name = getattr(_img, "name", "") or "image"
 
 
     # ══════════════════════════════════════════════════════════
@@ -2195,10 +2168,9 @@ with col_chat:
     # ══════════════════════════════════════════════════════════
 
     _redo_input      = st.session_state.pop("_redo_input", None)
-    _vision_trigger  = st.session_state.pop("_vision_trigger", False)
-    _vision_b64      = st.session_state.get("_vision_b64")
     _active_dbg      = st.session_state.get("_debug_mode_active")
     _tapir_trigger   = st.session_state.pop("tapir_test_trigger", False)
+    _has_image_input = bool(_vision_b64)
 
     # 历史锚点定位：延迟到页面末尾执行，避免打断当前LLM调用
     _anchor_pending = st.session_state.pop("chat_anchor_pending", None)
@@ -2238,7 +2210,7 @@ with col_chat:
         _dbg_prefix = f"[DEBUG:{_active_dbg}]"
         effective_input = f"{_dbg_prefix} {user_input.strip()}"
         st.session_state["_debug_mode_active"] = None
-    elif _active_dbg and user_input == "":
+    elif _active_dbg and user_input == "" and not _has_image_input:
         st.toast("请输入问题描述后再发送，或直接描述你看到的现象", icon="💬")
         effective_input = _auto_debug_input or _redo_input
     else:
@@ -2250,13 +2222,12 @@ with col_chat:
         if _gsm_candidate:
             st.session_state.pending_gsm_name = _gsm_candidate
 
-    # ── Vision path: image uploaded + "分析图片" button clicked ──────────────────
-    if _vision_trigger and _vision_b64:
-        _vision_mime = st.session_state.get("_vision_mime", "image/jpeg")
-        _vision_name = st.session_state.get("_vision_name", "image")
-        _img_note = st.session_state.get(f"chat_image_note_{st.session_state.chat_image_upload_key}", "") or ""
+    # ── Vision path: attachment on chat_input ────────────────────────────────────
+    if _has_image_input:
+        _vision_mime = _vision_mime or "image/jpeg"
+        _vision_name = _vision_name or "image"
         _extra_text = (user_input or "").strip()
-        _joined_text = "\n".join([x for x in [_img_note.strip(), _extra_text] if x]).strip()
+        _joined_text = _extra_text
 
         _route_pick = st.session_state.get("chat_image_route_mode", "自动")
         if _route_pick == "强制调试":
@@ -2322,12 +2293,6 @@ with col_chat:
                     st.markdown(msg)
 
             st.session_state.chat_history.append({"role": "assistant", "content": msg})
-
-            # Reset unified image uploader by incrementing key, clear stored image/note
-            st.session_state.chat_image_upload_key += 1
-            st.session_state.pop("_vision_b64", None)
-            st.session_state.pop("_vision_mime", None)
-            st.session_state.pop("_vision_name", None)
             st.rerun()
 
     # ── Normal text path ─────────────────────────────────────────────────────────
