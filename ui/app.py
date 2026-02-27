@@ -517,6 +517,31 @@ def _versioned_gsm_path(proj_name: str, work_dir: str, revision: int | None = No
     return str(out_dir / f"{proj_name}_v{v}.gsm")
 
 
+def _max_existing_gsm_revision(proj_name: str, work_dir: str) -> int:
+    """Return max existing revision in output dir for {proj_name}_v*.gsm."""
+    out_dir = Path(work_dir) / "output"
+    if not out_dir.exists():
+        return 0
+
+    pat = re.compile(rf"^{re.escape(proj_name)}_v(\d+)\.gsm$", re.IGNORECASE)
+    max_rev = 0
+    for p in out_dir.glob(f"{proj_name}_v*.gsm"):
+        m = pat.match(p.name)
+        if not m:
+            continue
+        try:
+            max_rev = max(max_rev, int(m.group(1)))
+        except ValueError:
+            continue
+    return max_rev
+
+
+def _safe_compile_revision(proj_name: str, work_dir: str, requested_revision: int) -> int:
+    """Pick a non-overwriting revision, monotonic by max(existing)+1."""
+    max_existing = _max_existing_gsm_revision(proj_name, work_dir)
+    return max(int(requested_revision or 1), max_existing + 1)
+
+
 def _derive_gsm_name_from_filename(filename: str) -> str:
     """Derive clean GSM name from imported filename.
 
@@ -1055,8 +1080,11 @@ def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
     Returns (success: bool, message: str).
     """
     try:
-        _rev_for_file = int(st.session_state.get("script_revision", 0)) or 1
-        output_gsm = _versioned_gsm_path(gsm_name or proj.name, st.session_state.work_dir, revision=_rev_for_file)
+        _requested_rev = int(st.session_state.get("script_revision", 0)) or 1
+        _compile_rev = _safe_compile_revision(gsm_name or proj.name, st.session_state.work_dir, _requested_rev)
+        if _compile_rev != _requested_rev:
+            st.session_state.script_revision = _compile_rev
+        output_gsm = _versioned_gsm_path(gsm_name or proj.name, st.session_state.work_dir, revision=_compile_rev)
         hsf_dir = proj.save_to_disk()
         result = get_compiler().hsf2libpart(str(hsf_dir), output_gsm)
         mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
