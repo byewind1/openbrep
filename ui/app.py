@@ -1785,7 +1785,7 @@ with col_editor:
 
 with col_chat:
     with st.container(height=820, border=False):
-        st.markdown("### AI 代码")
+        st.markdown("### AI 助手（生成与调试）")
 
         _chat_proj = st.session_state.project
         _chat_title_col, _chat_clear_col = st.columns([3, 1])
