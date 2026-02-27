@@ -183,6 +183,8 @@ if "vision_upload_key" not in st.session_state:
 if "debug_upload_key" not in st.session_state:
     # Increment to reset debug image uploader after sending/clearing
     st.session_state.debug_upload_key = 0
+if "chat_anchor_focus" not in st.session_state:
+    st.session_state.chat_anchor_focus = None
 
 
 # ── Load config.toml defaults ──────────────────────────
@@ -1332,6 +1334,37 @@ def _extract_gdl_from_chat() -> dict:
     return collected
 
 
+def _build_chat_script_anchors(history: list[dict]) -> list[dict]:
+    """Build script anchors from assistant messages containing code blocks."""
+    anchors: list[dict] = []
+    rev = 1
+    for i, msg in enumerate(history):
+        if msg.get("role") != "assistant":
+            continue
+        extracted = _classify_code_blocks(msg.get("content", ""))
+        if not extracted:
+            continue
+        script_keys = [
+            p.replace("scripts/", "").replace(".gdl", "").upper()
+            for p in extracted.keys()
+            if p.startswith("scripts/")
+        ]
+        parts = []
+        if script_keys:
+            parts.append("/".join(script_keys))
+        if "paramlist.xml" in extracted:
+            parts.append("PARAM")
+        scope = " + ".join(parts) if parts else "CODE"
+        anchors.append({
+            "rev": rev,
+            "msg_idx": i,
+            "label": f"r{rev} · {scope}",
+            "paths": sorted(extracted.keys()),
+        })
+        rev += 1
+    return anchors
+
+
 # ── Vision prompt ─────────────────────────────────────────────────────────────
 
 _VISION_SYSTEM_PROMPT = """\
@@ -1865,10 +1898,43 @@ with col_chat:
             if st.button("🗑️ 清空对话", use_container_width=True, help="清空聊天记录，不影响脚本和参数"):
                 st.session_state.chat_history = []
                 st.session_state.adopted_msg_index = None
+                st.session_state.chat_anchor_focus = None
                 st.rerun()
+
+        _anchors = _build_chat_script_anchors(st.session_state.chat_history)
+        if _anchors:
+            st.caption("🧭 历史锚点（点击快速定位）")
+            _anchor_cols = st.columns([1.8, 4.2, 1.2])
+            with _anchor_cols[0]:
+                _opts = [a["label"] for a in _anchors]
+                _default_idx = 0
+                _focus = st.session_state.get("chat_anchor_focus")
+                if isinstance(_focus, int):
+                    for idx, a in enumerate(_anchors):
+                        if a["msg_idx"] == _focus:
+                            _default_idx = idx
+                            break
+                _sel = st.selectbox(
+                    "历史锚点",
+                    _opts,
+                    index=_default_idx,
+                    label_visibility="collapsed",
+                    key="chat_anchor_select",
+                )
+            _picked = next((a for a in _anchors if a["label"] == _sel), _anchors[-1])
+            with _anchor_cols[1]:
+                st.caption(f"范围: {', '.join(_picked['paths'])}")
+            with _anchor_cols[2]:
+                if st.button("📍 定位", use_container_width=True, key="chat_anchor_go"):
+                    st.session_state.chat_anchor_focus = _picked["msg_idx"]
+                    st.rerun()
 
         # Chat history with action bar on each assistant message
         for _i, _msg in enumerate(st.session_state.chat_history):
+            _is_focus = st.session_state.get("chat_anchor_focus") == _i
+            if _is_focus:
+                st.markdown("<div style='border-top:1px dashed #38bdf8;margin:0.4rem 0;'></div>", unsafe_allow_html=True)
+                st.caption("📍 当前锚点")
             with st.chat_message(_msg["role"]):
                 st.markdown(_msg["content"])
                 if _msg["role"] == "assistant":
