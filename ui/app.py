@@ -153,6 +153,9 @@ if "confirm_clear" not in st.session_state:
 if "editor_version" not in st.session_state:
     # Increment on import/clear to force text_area widget recreation (avoids stale Streamlit cache)
     st.session_state.editor_version = 0
+if "script_revision" not in st.session_state:
+    # Script revision for header/file naming; starts from v1 on first write
+    st.session_state.script_revision = 0
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
@@ -496,14 +499,18 @@ def load_skills():
 
     return sl
 
-def _versioned_gsm_path(proj_name: str, work_dir: str) -> str:
+def _versioned_gsm_path(proj_name: str, work_dir: str, revision: int | None = None) -> str:
     """
-    Return next available versioned GSM path.
-    MyShelf_v1.gsm → MyShelf_v2.gsm → ...
-    Preserves all previous compilations.
+    Return versioned GSM path.
+    - If revision is provided: use exact {proj_name}_v{revision}.gsm
+    - Else: fallback to next available version by file scan.
     """
     out_dir = Path(work_dir) / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if revision is not None:
+        return str(out_dir / f"{proj_name}_v{revision}.gsm")
+
     v = 1
     while (out_dir / f"{proj_name}_v{v}.gsm").exists():
         v += 1
@@ -554,11 +561,11 @@ def _extract_gsm_name_candidate(text: str) -> str:
     return ""
 
 
-def _stamp_script_header(proj: HSFProject, script_label: str, content: str) -> str:
-    """Inject/refresh first-line script version header."""
+def _stamp_script_header(script_label: str, content: str, revision: int) -> str:
+    """Inject/refresh first-line script version header with unified revision."""
     body = content or ""
     today = _datetime.date.today().isoformat()
-    header = f"! v{proj.version} {today} {script_label} Script"
+    header = f"! v{revision} {today} {script_label} Script"
 
     lines = body.splitlines()
     if lines and re.match(r'^\!\s*v\d+\s+\d{4}-\d{2}-\d{2}\s+.+\s+Script\s*$', lines[0].strip(), re.IGNORECASE):
@@ -1014,6 +1021,15 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
         "scripts/ui.gdl": "UI",
         "scripts/pr.gdl": "Properties",
     }
+
+    has_script_update = any(
+        fpath in script_map and _sanitize_script_content(script_map.get(fpath, ""), fpath)
+        for _, fpath, _ in _SCRIPT_MAP
+    )
+    if has_script_update:
+        st.session_state.script_revision = int(st.session_state.get("script_revision", 0)) + 1
+    _rev = int(st.session_state.get("script_revision", 0))
+
     sc = 0
     for stype, fpath, _label in _SCRIPT_MAP:
         if fpath in script_map:
@@ -1021,7 +1037,7 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
             if not _clean:
                 continue
             _script_label = _label_map.get(fpath, _label)
-            _stamped = _stamp_script_header(proj, _script_label, _clean)
+            _stamped = _stamp_script_header(_script_label, _clean, _rev)
             proj.set_script(stype, _stamped)
             sc += 1
     pc = 0
@@ -1039,7 +1055,8 @@ def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
     Returns (success: bool, message: str).
     """
     try:
-        output_gsm = _versioned_gsm_path(gsm_name or proj.name, st.session_state.work_dir)
+        _rev_for_file = int(st.session_state.get("script_revision", 0)) or 1
+        output_gsm = _versioned_gsm_path(gsm_name or proj.name, st.session_state.work_dir, revision=_rev_for_file)
         hsf_dir = proj.save_to_disk()
         result = get_compiler().hsf2libpart(str(hsf_dir), output_gsm)
         mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
@@ -1195,6 +1212,7 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     st.session_state.pending_diffs = {}
     _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
     st.session_state.pending_gsm_name = _import_gsm_name
+    st.session_state.script_revision = 0
     st.session_state.editor_version += 1
     st.session_state.chat_history.append({"role": "assistant", "content": msg})
     return (True, msg)
@@ -1533,6 +1551,7 @@ with col_editor:
             st.session_state.project = HSFProject.create_new(
                 "untitled", work_dir=st.session_state.work_dir
             )
+            st.session_state.script_revision = 0
         proj_now = st.session_state.project
         _ev      = st.session_state.editor_version
 
@@ -1665,6 +1684,7 @@ with col_editor:
                     st.session_state.pending_diffs    = {}
                     st.session_state.pending_ai_label = ""
                     st.session_state.pending_gsm_name = ""
+                    st.session_state.script_revision  = 0
                     st.session_state.agent_running    = False
                     st.session_state._import_key_done = ""
                     st.session_state.confirm_clear    = False
@@ -2099,6 +2119,7 @@ with col_chat:
                 _vproj = HSFProject.create_new(_vname, work_dir=st.session_state.work_dir)
                 st.session_state.project = _vproj
                 st.session_state.pending_gsm_name = _vname
+                st.session_state.script_revision = 0
 
             _proj_v = st.session_state.project
             _has_any_v = any(_proj_v.get_script(s) for s, _, _ in _SCRIPT_MAP)
@@ -2158,6 +2179,7 @@ with col_chat:
                             new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
                             st.session_state.project = new_proj
                             st.session_state.pending_gsm_name = gdl_obj_name
+                            st.session_state.script_revision = 0
                             st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                         proj_current = st.session_state.project
