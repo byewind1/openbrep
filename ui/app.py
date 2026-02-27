@@ -132,7 +132,7 @@ if "tapir_test_trigger" not in st.session_state:
 if "adopted_msg_index" not in st.session_state:
     st.session_state.adopted_msg_index = None
 if "_debug_mode_active" not in st.session_state:
-    st.session_state["_debug_mode_active"] = None  # None | "editor" | "last"
+    st.session_state["_debug_mode_active"] = None  # None | "editor"
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "work_dir" not in st.session_state:
@@ -788,7 +788,7 @@ _ARCHICAD_ERROR_PATTERN = _re.compile(
 )
 
 def _is_debug_intent(text: str) -> bool:
-    if text.startswith("[DEBUG:editor]") or text.startswith("[DEBUG:last]"):
+    if text.startswith("[DEBUG:editor]"):
         return True
     # 自动识别粘贴进来的 Archicad 错误报告
     if _ARCHICAD_ERROR_PATTERN.search(text):
@@ -797,11 +797,9 @@ def _is_debug_intent(text: str) -> bool:
     return any(kw in t for kw in _DEBUG_KEYWORDS)
 
 def _get_debug_mode(text: str) -> str:
-    """Returns 'editor', 'last', or 'keyword' (fallback)."""
+    """Returns 'editor' or 'keyword' (fallback)."""
     if text.startswith("[DEBUG:editor]"):
         return "editor"
-    if text.startswith("[DEBUG:last]"):
-        return "last"
     return "keyword"
 
 
@@ -825,7 +823,7 @@ def run_agent_generate(
     """
     status_ph = status_col.empty()
     debug_mode = _is_debug_intent(user_input)
-    debug_type = _get_debug_mode(user_input)  # 'editor' | 'last' | 'keyword'
+    debug_type = _get_debug_mode(user_input)  # 'editor' | 'keyword'
 
     def on_event(event_type, data):
         if event_type == "analyze":
@@ -843,7 +841,7 @@ def run_agent_generate(
         # Strip debug prefix and extract syntax report
         clean_instruction = user_input
         syntax_report = ""
-        if user_input.startswith("[DEBUG:editor]") or user_input.startswith("[DEBUG:last]"):
+        if user_input.startswith("[DEBUG:editor]"):
             _after_prefix = user_input.split("]", 1)[-1].strip()
             if "[SYNTAX CHECK REPORT]" in _after_prefix:
                 _parts = _after_prefix.split("[SYNTAX CHECK REPORT]", 1)
@@ -860,13 +858,7 @@ def run_agent_generate(
             if m["role"] in ("user", "assistant")
         ]
 
-        # [DEBUG:last] — inject last assistant code as extra context
         last_code_context = None
-        if debug_type == "last":
-            for _m in reversed(st.session_state.chat_history):
-                if _m.get("role") == "assistant" and "```" in _m.get("content", ""):
-                    last_code_context = _m["content"]
-                    break
 
         agent = GDLAgent(llm=llm, compiler=get_compiler(), on_event=on_event)
         changes, plain_text = agent.generate_only(
@@ -1964,18 +1956,12 @@ with col_chat:
 
         # ── Debug 模式开关 ────────────────────────────────
         _cur_dbg = st.session_state.get("_debug_mode_active")
-        _dbg_col1, _dbg_col2, _dbg_off = st.columns([1.4, 1.4, 1.2])
+        _dbg_col1, _dbg_off = st.columns([1.6, 1.2])
         with _dbg_col1:
             _e_label = "✅ Debug 编辑器" if _cur_dbg == "editor" else "🔍 Debug 编辑器"
             if st.button(_e_label, use_container_width=True,
                          help="激活后：下次发送将附带编辑器全部脚本+参数+语法检查报告"):
                 st.session_state["_debug_mode_active"] = None if _cur_dbg == "editor" else "editor"
-                st.rerun()
-        with _dbg_col2:
-            _l_label = "✅ Debug 上条" if _cur_dbg == "last" else "🔍 Debug 上条"
-            if st.button(_l_label, use_container_width=True,
-                         help="激活后：下次发送将附带 AI 最近一次生成的代码+语法检查报告"):
-                st.session_state["_debug_mode_active"] = None if _cur_dbg == "last" else "last"
                 st.rerun()
         with _dbg_off:
             if _cur_dbg and st.button("✖ 取消", use_container_width=True):
@@ -1985,8 +1971,6 @@ with col_chat:
         # Debug激活时只显示简洁提示，不跑obr本地语法检查
         if _cur_dbg == "editor":
             st.info("🔍 **全脚本 Debug 已激活** — 描述你观察到的问题，或直接发送让 AI 全面检查语法和逻辑")
-        elif _cur_dbg == "last":
-            st.info("🔍 **Debug 上条已激活** — 描述问题方向，或直接发送让 AI 检查上一次生成的代码")
 
         # Debug 附图（可选）：上传或粘贴 Archicad 错误截图，让 AI 联合分析
         _debug_img_b64 = st.session_state.get("_debug_image_b64")
@@ -2022,8 +2006,6 @@ with col_chat:
         _chat_placeholder = (
             _debug_editor_prompt
             if _cur_dbg == "editor" else
-            "描述问题方向，或直接发送让 AI 检查上一次生成的代码…"
-            if _cur_dbg == "last" else
             "描述需求、提问，或搭配图片补充说明…"
         )
         user_input = st.chat_input(_chat_placeholder)
