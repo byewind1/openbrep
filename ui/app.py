@@ -60,15 +60,33 @@ st.markdown("""
 .stApp { font-family: 'Noto Sans SC', sans-serif; }
 code, .stCodeBlock { font-family: 'JetBrains Mono', monospace !important; }
 
-.main-header {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 2rem; font-weight: 600;
+section[data-testid="stSidebar"] .stMarkdown p.main-header {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 4.2rem !important;
+    font-weight: 900 !important;
+    text-align: center !important;
+    display: block !important;
+    width: 100% !important;
+    white-space: nowrap;
     background: linear-gradient(135deg, #22d3ee, #34d399);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 0;
+    margin: 0 0 0.12rem 0 !important;
+    line-height: 0.95 !important;
 }
-.sub-header { color: #94a3b8; font-size: 0.9rem; margin-top: -0.5rem; margin-bottom: 2rem; }
+.intro-header {
+    color: #cbd5e1;
+    font-size: 0.92rem;
+    margin-top: 0.15rem;
+    margin-bottom: 0.25rem;
+    line-height: 1.45;
+}
+.sub-header {
+    color: #94a3b8;
+    font-size: 0.86rem;
+    margin-top: 0;
+    margin-bottom: 1.2rem;
+}
 
 .welcome-card {
     background: linear-gradient(135deg, #0f172a, #1e293b);
@@ -234,7 +252,8 @@ def _key_for_model(model: str) -> str:
 
 with st.sidebar:
     st.markdown('<p class="main-header">OpenBrep</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">v0.5 · HSF-native · Code Your Boundaries</p>', unsafe_allow_html=True)
+    st.markdown('<p class="intro-header">用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">OpenBrep: Code Your Boundaries · v0.5 · HSF-native</p>', unsafe_allow_html=True)
     st.divider()
 
     st.subheader("📁 工作目录")
