@@ -2122,7 +2122,7 @@ with col_chat:
             )
             _chat_img_note = st.text_input(
                 "图片说明（可选）",
-                key="chat_image_note",
+                key=f"chat_image_note_{st.session_state.chat_image_upload_key}",
                 placeholder="例如：这是 Archicad 报错截图，请帮我定位并修复",
             )
             if _chat_img_file is not None:
@@ -2253,7 +2253,7 @@ with col_chat:
     if _vision_trigger and _vision_b64:
         _vision_mime = st.session_state.get("_vision_mime", "image/jpeg")
         _vision_name = st.session_state.get("_vision_name", "image")
-        _img_note = st.session_state.get("chat_image_note", "") or ""
+        _img_note = st.session_state.get(f"chat_image_note_{st.session_state.chat_image_upload_key}", "") or ""
         _extra_text = (user_input or "").strip()
         _joined_text = "\n".join([x for x in [_img_note.strip(), _extra_text] if x]).strip()
 
@@ -2327,7 +2327,6 @@ with col_chat:
             st.session_state.pop("_vision_b64", None)
             st.session_state.pop("_vision_mime", None)
             st.session_state.pop("_vision_name", None)
-            st.session_state["chat_image_note"] = ""
             st.rerun()
 
     # ── Normal text path ─────────────────────────────────────────────────────────
