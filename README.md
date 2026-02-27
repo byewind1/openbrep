@@ -183,10 +183,35 @@ path = "/Applications/GRAPHISOFT/Archicad 29/..."
 
 ---
 
+
+## 安装包（v0.5.1 起）
+
+为非命令行用户提供预构建安装包：
+
+- **macOS**: `release/OpenBrep-macOS.zip`
+- **Windows**: `release/OpenBrep-Windows.zip`
+
+本地构建：
+
+```bash
+bash scripts/build_macos.sh
+```
+
+Windows（本地或 CI）：
+
+```powershell
+./scripts/build_windows.ps1
+```
+
+GitHub Actions 也会在打 tag（`v*`）或手动触发时自动构建双平台安装包。
+
+---
+
 ## 版本历史
 
 | 版本 | 主要内容 |
 |---|---|
+| **v0.5.1** | 安装包发布准备：新增 macOS/Windows 打包脚本与 GitHub Actions 构建流程（PyInstaller） |
 | **v0.5** | **OpenBrep 品牌发布** — 项目更名为 OpenBrep；稳定版本发布；Gitee 镜像支持（国内用户快速访问） |
 | v0.5 pre | 统一编辑器 UI；**图片即意图**（上传图片 → AI 生成 GDL）；AI 对话修改脚本；确认写入流程；paramlist.xml 自动注入；GSM 导入（AC29）；streamlit-ace 语法高亮；全屏编辑；多模型支持 |
 | v0.4.0 | HSF-native 架构重构；Streamlit Web UI；强类型 paramlist；44 项单元测试 |
