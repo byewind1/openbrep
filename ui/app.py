@@ -429,7 +429,7 @@ def get_llm():
         api_key=api_key,
         api_base=api_base,
         temperature=0.2,
-        max_tokens=4096,
+        max_tokens=32768,
     )
     return LLMAdapter(config)
 
