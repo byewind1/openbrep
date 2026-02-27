@@ -450,7 +450,9 @@ class GDLAgent:
             "Integer iShelves = 3 ! Number of shelves\n"
             "Boolean bHasBack = 1 ! Has back panel\n\n"
             "Do NOT include XML tags in [FILE: paramlist.xml] — just parameter lines.\n"
-            "Do NOT use markdown code fences (```). Output raw GDL code directly.\n\n"
+            "Do NOT use markdown code fences (```). Output raw GDL code directly.\n"
+            "In each [FILE: scripts/*.gdl] block, output ONLY pure GDL statements and GDL comments (! ...).\n"
+            "Never include prose, markdown headings, bullets, or explanatory text inside script blocks.\n\n"
         )
 
         if chat_mode:

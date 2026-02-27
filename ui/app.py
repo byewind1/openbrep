@@ -967,6 +967,47 @@ def _parse_paramlist_text(text: str) -> list:
     return params
 
 
+def _sanitize_script_content(raw: str, fpath: str) -> str:
+    """Best-effort sanitize to avoid narrative text leaking into script editors."""
+    import re as _re
+
+    text = (raw or "").strip()
+    if not text:
+        return ""
+
+    # Remove fenced blocks if model leaked markdown wrappers
+    text = _strip_md_fences(text)
+
+    # If model accidentally included nested [FILE:] in content, keep only before next header
+    _next_header = _re.search(r"(?m)^\s*\[FILE:\s*.+?\]\s*$", text)
+    if _next_header:
+        text = text[:_next_header.start()].rstrip()
+
+    # For GDL scripts: drop obvious narrative lines (Chinese prose / markdown headings / bullets)
+    if fpath.startswith("scripts/"):
+        kept = []
+        _gdl_cmd_line = _re.compile(
+            r'^(\s*(!|IF\b|ELSE\b|ELSEIF\b|ENDIF\b|FOR\b|NEXT\b|WHILE\b|ENDWHILE\b|REPEAT\b|UNTIL\b|RETURN\b|END\b|GOSUB\b|CALL\b|ADD\b|ADD2\b|ADDX\b|ADDY\b|ADDZ\b|DEL\b|DEL\s+\d+|MUL\b|MUL2\b|ROTX\b|ROTY\b|ROTZ\b|PROJECT2\b|HOTSPOT2\b|LINE2\b|RECT2\b|POLY2\b|CIRCLE2\b|ARC2\b|TEXT2\b|BLOCK\b|BRICK\b|CYLIND\b|CONE\b|SPHERE\b|PRISM_\b|PRISM\b|TUBE\b|REVOLVE\b|SWEEP\b|RULED\b|MESH\b|EXTRUDE\b|BODY\b|MATERIAL\b|PEN\b|LINE_TYPE\b|FILL\b|DEFINE\b|UI_\w+\b|VALUES\b|LOCK\b|UNLOCK\b|PARAMETERS\b|DIM\b|FRAGMENT2\b|FRAGMENT\b|NTR\b|MIGRATION\b|LIBRARYGLOBAL\b|A\b|B\b|ZZYZX\b|[A-Za-z_][A-Za-z0-9_]*\s*=).*)$',
+            _re.IGNORECASE,
+        )
+
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not s:
+                kept.append(ln)
+                continue
+            if s.startswith(("#", "##", "###", "- ", "* ", ">", "分析", "说明", "原因", "修复", "结论")):
+                continue
+            if not _gdl_cmd_line.match(s):
+                continue
+            if _re.search(r"[\u4e00-\u9fff]", s) and not s.startswith("!"):
+                continue
+            kept.append(ln)
+        text = "\n".join(kept).strip()
+
+    return text
+
+
 def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, int]:
     """
     Apply {fpath: content} dict to project.
@@ -984,8 +1025,11 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
     sc = 0
     for stype, fpath, _label in _SCRIPT_MAP:
         if fpath in script_map:
+            _clean = _sanitize_script_content(script_map[fpath], fpath)
+            if not _clean:
+                continue
             _script_label = _label_map.get(fpath, _label)
-            _stamped = _stamp_script_header(proj, _script_label, script_map[fpath])
+            _stamped = _stamp_script_header(proj, _script_label, _clean)
             proj.set_script(stype, _stamped)
             sc += 1
     pc = 0
@@ -1949,7 +1993,7 @@ with col_chat:
         _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
         if _cur_dbg:
             with st.expander("🧩 Debug 附件（截图）", expanded=False):
-                st.caption("可直接在下方聊天输入框 Ctrl/Cmd+V 粘贴截图；也可用这里上传作为兜底。发送时将与文字一起进入 Debug 分析。")
+                st.caption("可上传 Archicad 报错或视图截图，发送时将与文字一起进入 Debug 分析。")
                 _debug_file = st.file_uploader(
                     "",
                     type=["jpg", "jpeg", "png", "webp", "gif"],
@@ -1982,20 +2026,7 @@ with col_chat:
             if _cur_dbg == "last" else
             "描述需求、提问，或搭配图片补充说明…"
         )
-        _chat_input_val = st.chat_input(
-            _chat_placeholder,
-            accept_file=(True if _cur_dbg else False),
-            file_type=["jpg", "jpeg", "png", "webp", "gif"],
-            max_upload_size=20,
-        )
-        _chat_files = []
-        if _chat_input_val is None:
-            user_input = None
-        elif isinstance(_chat_input_val, str):
-            user_input = _chat_input_val
-        else:
-            user_input = (_chat_input_val.text or "").strip()
-            _chat_files = list(_chat_input_val.files or [])
+        user_input = st.chat_input(_chat_placeholder)
 
 
     # ══════════════════════════════════════════════════════════
@@ -2008,17 +2039,6 @@ with col_chat:
     _active_dbg      = st.session_state.get("_debug_mode_active")
     _tapir_trigger   = st.session_state.pop("tapir_test_trigger", False)
 
-    # Debug: 支持在聊天输入框直接粘贴截图（专用粘贴通道）
-    if _active_dbg and _chat_files:
-        _clip_img = _chat_files[0]
-        _clip_bytes = _clip_img.read()
-        if _clip_bytes:
-            st.session_state["_debug_image_b64"] = base64.b64encode(_clip_bytes).decode()
-            st.session_state["_debug_image_mime"] = _clip_img.type or "image/png"
-            st.session_state["_debug_image_name"] = _clip_img.name or "clipboard-image"
-            _debug_img_b64 = st.session_state.get("_debug_image_b64")
-            _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
-            st.toast(f"📎 已附加截图：{st.session_state.get('_debug_image_name', 'clipboard-image')}", icon="🖼️")
 
     # ── Archicad 测试：ReloadLibraries + 捕获错误注入 chat ──
     if _tapir_trigger and _TAPIR_IMPORT_OK:
