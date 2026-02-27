@@ -1783,21 +1783,15 @@ with col_chat:
         # ── 图片上传（🖼️ 图片即意图）────────────────────────────────
         with st.expander("📷 上传图片 → AI 直接生成 GDL", expanded=False):
             st.caption("支持 JPG / PNG / WebP · 推荐模型：Claude Sonnet / GPT-4o / Gemini")
-            # 视觉模型检测（使用 config.py VISION_MODELS 集合）
+            # 视觉模型检测（保留供其他逻辑复用）
             _cur_model = st.session_state.get("current_model", "")
             _cur_is_vision = _cur_model in VISION_MODELS
-            if not _cur_is_vision:
-                _vision_hints = [m for m in VISION_MODELS if not m.startswith("ollama")][:3]
-                st.warning(
-                    f"⚠️ 当前模型 **{_cur_model}** 不支持图片分析。"
-                    f"请在左侧切换到视觉模型，例如：{', '.join(sorted(_vision_hints)[:2])}"
-                )
+            st.caption("💡 图片分析需视觉模型支持，如遇错误请切换至 glm-4v-plus / gpt-4o / claude-sonnet-4-6 等")
             _vision_file = st.file_uploader(
                 "",
                 type=["jpg", "jpeg", "png", "webp", "gif"],
                 key=f"vision_upload_{st.session_state.vision_upload_key}",
                 label_visibility="collapsed",
-                disabled=not _cur_is_vision,
             )
             if _vision_file is not None:
                 _raw_bytes = _vision_file.read()
@@ -1810,7 +1804,6 @@ with col_chat:
                     type="primary",
                     use_container_width=True,
                     key="vision_submit_btn",
-                    disabled=not _cur_is_vision,
                 ):
                     st.session_state["_vision_trigger"] = True
                     st.rerun()
