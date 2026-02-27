@@ -165,6 +165,7 @@ if "vision_upload_key" not in st.session_state:
 
 _config_defaults = {}
 _provider_keys: dict = {}   # {provider: api_key}
+_custom_providers: dict = {}  # {provider: {base_url, model, api_key}}
 
 try:
     from openbrep.config import GDLAgentConfig
@@ -179,7 +180,19 @@ try:
     if _os.path.exists(_toml_path):
         with open(_toml_path, "rb") as _f:
             _raw = _tomllib.load(_f)
-        _provider_keys = _raw.get("llm", {}).get("provider_keys", {})
+        _llm_raw = _raw.get("llm", {})
+        _provider_keys = _llm_raw.get("provider_keys", {})
+
+        # ── 自定义 Provider (config.toml) ──
+        for _pname, _pcfg in _llm_raw.items():
+            if _pname in {"provider_keys", "model", "api_key", "api_base", "temperature", "max_tokens"}:
+                continue
+            if isinstance(_pcfg, dict):
+                _custom_providers[_pname] = {
+                    "base_url": str(_pcfg.get("base_url", "") or ""),
+                    "model": str(_pcfg.get("model", "") or ""),
+                    "api_key": str(_provider_keys.get(_pname, "") or ""),
+                }
 
     _config = GDLAgentConfig.load()
     _config_defaults = {
@@ -193,6 +206,12 @@ except Exception:
 def _key_for_model(model: str) -> str:
     """Pick the right API Key from provider_keys based on model name."""
     m = model.lower()
+
+    # 自定义 provider 的模型精确匹配
+    for _pcfg in _custom_providers.values():
+        if m == str(_pcfg.get("model", "")).lower():
+            return str(_pcfg.get("api_key", "") or "")
+
     if "glm" in m:
         return _provider_keys.get("zhipu", "")
     elif "deepseek" in m and "ollama" not in m:
@@ -247,6 +266,11 @@ with st.sidebar:
         "claude-sonnet-4-6", "claude-opus-4-6",
         "gemini/gemini-2.5-flash",
     ]
+
+    # ── 自定义 Provider (config.toml) ──
+    _custom_models = [str(v.get("model", "") or "") for v in _custom_providers.values() if str(v.get("model", "") or "")]
+    if _custom_models:
+        _mo = list(dict.fromkeys(_custom_models + _mo))
     # 下拉显示时加视觉/推理标注
     def _model_label(m: str) -> str:
         tags = []
@@ -320,6 +344,12 @@ with st.sidebar:
     # zai/ (GLM), deepseek/, anthropic/ are native LiteLLM providers, no api_base needed
     def _get_default_api_base(model: str) -> str:
         m = model.lower()
+
+        # 自定义 provider 的模型精确匹配
+        for _pcfg in _custom_providers.values():
+            if m == str(_pcfg.get("model", "")).lower():
+                return str(_pcfg.get("base_url", "") or "")
+
         if "ollama" in m:
             return "http://localhost:11434"
         # GLM uses zai/ native provider — no api_base

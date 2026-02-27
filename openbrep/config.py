@@ -55,6 +55,7 @@ class LLMConfig:
     temperature: float = 0.2
     max_tokens: int = 4096
     provider_keys: dict[str, str] = field(default_factory=dict)
+    custom_providers: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def resolve_api_key(self) -> Optional[str]:
         if self.api_key:
@@ -77,6 +78,16 @@ class LLMConfig:
             for key in ["google", "gemini", "gemini_api_key"]:
                 if key in self.provider_keys:
                     return self.provider_keys[key]
+
+        # Check custom providers by exact configured model name
+        for provider_name, provider_cfg in self.custom_providers.items():
+            if model_lower == str(provider_cfg.get("model", "")).lower():
+                _k = provider_cfg.get("api_key")
+                if _k:
+                    return str(_k)
+                if provider_name in self.provider_keys:
+                    return self.provider_keys[provider_name]
+
         # Fallback to environment variables
         for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
             val = os.environ.get(name)
@@ -132,8 +143,26 @@ class GDLAgentConfig:
     def _from_dict(cls, data: dict) -> GDLAgentConfig:
         def pick(klass, d):
             return klass(**{k: v for k, v in d.items() if k in klass.__dataclass_fields__})
+
+        llm_data = data.get("llm", {})
+        custom_providers: dict[str, dict[str, str]] = {}
+        provider_keys = llm_data.get("provider_keys", {})
+        if isinstance(llm_data, dict):
+            for provider_name, provider_cfg in llm_data.items():
+                if provider_name in {"provider_keys", "model", "api_key", "api_base", "temperature", "max_tokens", "custom_providers"}:
+                    continue
+                if isinstance(provider_cfg, dict):
+                    custom_providers[provider_name] = {
+                        "base_url": str(provider_cfg.get("base_url", "") or ""),
+                        "model": str(provider_cfg.get("model", "") or ""),
+                        "api_key": str(provider_keys.get(provider_name, "") or ""),
+                    }
+
+        llm_cfg = pick(LLMConfig, llm_data)
+        llm_cfg.custom_providers = custom_providers
+
         return cls(
-            llm=pick(LLMConfig, data.get("llm", {})),
+            llm=llm_cfg,
             agent=pick(AgentConfig, data.get("agent", {})),
             compiler=pick(CompilerConfig, data.get("compiler", {})),
             knowledge_dir=data.get("knowledge_dir", "./knowledge"),
