@@ -9,6 +9,7 @@ import re
 import os
 import time
 import base64
+import asyncio
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -185,6 +186,8 @@ if "debug_upload_key" not in st.session_state:
     st.session_state.debug_upload_key = 0
 if "chat_anchor_focus" not in st.session_state:
     st.session_state.chat_anchor_focus = None
+if "chat_anchor_pending" not in st.session_state:
+    st.session_state.chat_anchor_pending = None
 
 
 # ── Load config.toml defaults ──────────────────────────
@@ -1926,8 +1929,7 @@ with col_chat:
                 st.caption(f"范围: {', '.join(_picked['paths'])}")
             with _anchor_cols[2]:
                 if st.button("📍 定位", use_container_width=True, key="chat_anchor_go"):
-                    st.session_state.chat_anchor_focus = _picked["msg_idx"]
-                    st.rerun()
+                    st.session_state.chat_anchor_pending = _picked["msg_idx"]
 
         # Chat history with action bar on each assistant message
         for _i, _msg in enumerate(st.session_state.chat_history):
@@ -2105,12 +2107,12 @@ with col_chat:
             _e_label = "✅ Debug 编辑器" if _cur_dbg == "editor" else "🔍 Debug 编辑器"
             if st.button(_e_label, use_container_width=True,
                          help="激活后：下次发送将附带编辑器全部脚本+参数+语法检查报告"):
-                st.session_state["_debug_mode_active"] = None if _cur_dbg == "editor" else "editor"
-                st.rerun()
+                _cur_dbg = None if _cur_dbg == "editor" else "editor"
+                st.session_state["_debug_mode_active"] = _cur_dbg
         with _dbg_off:
             if _cur_dbg and st.button("✖ 取消", use_container_width=True):
+                _cur_dbg = None
                 st.session_state["_debug_mode_active"] = None
-                st.rerun()
 
         # Debug激活时只显示简洁提示，不跑obr本地语法检查
         if _cur_dbg == "editor":
@@ -2146,13 +2148,8 @@ with col_chat:
                         st.rerun()
 
         # Chat input — immediately below message list / confirmation widget
-        _debug_editor_prompt = "请对当前所有脚本进行全面检查，重点检查：1.语法完整性（IF/ENDIF、FOR/NEXT、ADD/DEL配对）2.参数跨脚本一致性 3.脚本末尾完整性。用中文分脚本列出问题，没有问题也要明确说明。"
-        _chat_placeholder = (
-            _debug_editor_prompt
-            if _cur_dbg == "editor" else
-            "描述需求、提问，或搭配图片补充说明…"
-        )
-        user_input = st.chat_input(_chat_placeholder)
+        _chat_placeholder = "描述需求、提问，或搭配图片补充说明…"
+        user_input = st.chat_input(_chat_placeholder, key="chat_main_input")
 
 
     # ══════════════════════════════════════════════════════════
@@ -2164,6 +2161,9 @@ with col_chat:
     _vision_b64      = st.session_state.get("_vision_b64")
     _active_dbg      = st.session_state.get("_debug_mode_active")
     _tapir_trigger   = st.session_state.pop("tapir_test_trigger", False)
+
+    # 历史锚点定位：延迟到页面末尾执行，避免打断当前LLM调用
+    _anchor_pending = st.session_state.pop("chat_anchor_pending", None)
 
 
     # ── Archicad 测试：ReloadLibraries + 捕获错误注入 chat ──
@@ -2193,17 +2193,17 @@ with col_chat:
         else:
             st.toast("❌ Archicad 连接失败，请确认 Archicad 正在运行", icon="⚠️")
 
+    _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
+
     # Debug模式：仅用户主动发送时触发，不自动构造空输入消息
     if _active_dbg and user_input:
         _dbg_prefix = f"[DEBUG:{_active_dbg}]"
         effective_input = f"{_dbg_prefix} {user_input.strip()}"
         st.session_state["_debug_mode_active"] = None
-    elif _active_dbg and not user_input:
+    elif _active_dbg and user_input == "":
         st.toast("请输入问题描述后再发送，或直接描述你看到的现象", icon="💬")
-        _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
-        effective_input = _auto_debug_input or _redo_input or user_input
+        effective_input = _auto_debug_input or _redo_input
     else:
-        _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
         effective_input = _auto_debug_input or _redo_input or user_input
 
     # 在用户消息中提取物件名作为 GSM 名称候选（仅当当前为空）
@@ -2314,6 +2314,15 @@ with col_chat:
             st.session_state.chat_history.append({"role": "assistant", "content": msg})
             st.rerun()
 
+
+    # 锚点定位在页面末尾触发 rerun，尽量不打断当前生成流程
+    if _anchor_pending is not None:
+        st.session_state.chat_anchor_focus = _anchor_pending
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.call_soon(st.rerun)
+        except RuntimeError:
+            st.rerun()
 
     # ── Footer ────────────────────────────────────────────────
     st.divider()
