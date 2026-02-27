@@ -108,6 +108,11 @@ class LLMAdapter:
             "max_tokens": self.config.max_tokens,
         }
 
+        model_lower = model.lower()
+        if "codex" in model_lower or "gpt-5" in model_lower:
+            completion_kwargs["temperature"] = 1
+            completion_kwargs["drop_params"] = True
+
         # Pass API key and base URL
         api_key = self.config.resolve_api_key()
         if api_key:
@@ -182,6 +187,11 @@ class LLMAdapter:
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
         }
+
+        model_lower = model.lower()
+        if "codex" in model_lower or "gpt-5" in model_lower:
+            completion_kwargs["temperature"] = 1
+            completion_kwargs["drop_params"] = True
 
         api_key = self.config.resolve_api_key()
         if api_key:
