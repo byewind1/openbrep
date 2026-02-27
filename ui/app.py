@@ -184,6 +184,9 @@ if "vision_upload_key" not in st.session_state:
 if "chat_image_upload_key" not in st.session_state:
     # Unified chat image uploader reset key
     st.session_state.chat_image_upload_key = 0
+if "chat_image_route_mode" not in st.session_state:
+    # 图片模式：自动 / 强制生成 / 强制调试
+    st.session_state.chat_image_route_mode = "自动"
 if "chat_anchor_focus" not in st.session_state:
     st.session_state.chat_anchor_focus = None
 if "chat_anchor_pending" not in st.session_state:
@@ -2129,7 +2132,20 @@ with col_chat:
                 st.session_state["_vision_mime"] = _chat_img_file.type or "image/jpeg"
                 st.session_state["_vision_name"] = _chat_img_file.name
 
-                _pred_mode = "debug" if st.session_state.get("_debug_mode_active") else _detect_image_task_mode(_chat_img_note, _chat_img_file.name)
+                _route_pick = st.radio(
+                    "模式",
+                    ["自动", "强制生成", "强制调试"],
+                    horizontal=True,
+                    key="chat_image_route_mode",
+                )
+
+                if _route_pick == "强制调试":
+                    _pred_mode = "debug"
+                elif _route_pick == "强制生成":
+                    _pred_mode = "generate"
+                else:
+                    _pred_mode = "debug" if st.session_state.get("_debug_mode_active") else _detect_image_task_mode(_chat_img_note, _chat_img_file.name)
+
                 _mode_txt = "🧩 Debug 模式" if _pred_mode == "debug" else "🧱 生成模式"
                 st.caption(f"当前判定：{_mode_txt}")
 
@@ -2241,7 +2257,13 @@ with col_chat:
         _extra_text = (user_input or "").strip()
         _joined_text = "\n".join([x for x in [_img_note.strip(), _extra_text] if x]).strip()
 
-        _route_mode = "debug" if _active_dbg else _detect_image_task_mode(_joined_text, _vision_name)
+        _route_pick = st.session_state.get("chat_image_route_mode", "自动")
+        if _route_pick == "强制调试":
+            _route_mode = "debug"
+        elif _route_pick == "强制生成":
+            _route_mode = "generate"
+        else:
+            _route_mode = "debug" if _active_dbg else _detect_image_task_mode(_joined_text, _vision_name)
         _route_tag = "🧩 Debug" if _route_mode == "debug" else "🧱 生成"
         _user_display = f"🖼️ `{_vision_name}` · {_route_tag}" + (f"  \n{_joined_text}" if _joined_text else "")
         st.session_state.chat_history.append({
