@@ -1894,6 +1894,10 @@ with col_chat:
         _dbg_prefix = f"[DEBUG:{_active_dbg}]"
         effective_input = f"{_dbg_prefix} {user_input.strip()}"
         st.session_state["_debug_mode_active"] = None
+    elif _active_dbg and not user_input:
+        st.toast("请输入问题描述后再发送，或直接描述你看到的现象", icon="💬")
+        _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
+        effective_input = _auto_debug_input or _redo_input or user_input
     else:
         _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
         effective_input = _auto_debug_input or _redo_input or user_input
