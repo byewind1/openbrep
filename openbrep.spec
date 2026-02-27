@@ -3,7 +3,7 @@
 from pathlib import Path
 
 block_cipher = None
-root = Path(__file__).resolve().parent
+root = Path.cwd()
 
 added = []
 for item in ["ui", "openbrep", "knowledge", "skills", "config.example.toml", "README.md", "README.zh-CN.md"]:
