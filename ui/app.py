@@ -1949,7 +1949,7 @@ with col_chat:
         _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
         if _cur_dbg:
             with st.expander("🧩 Debug 附件（截图）", expanded=False):
-                st.caption("可上传/粘贴 Archicad 报错或视图截图，发送时将与文字一起进入 Debug 分析。")
+                st.caption("可直接在下方聊天输入框 Ctrl/Cmd+V 粘贴截图；也可用这里上传作为兜底。发送时将与文字一起进入 Debug 分析。")
                 _debug_file = st.file_uploader(
                     "",
                     type=["jpg", "jpeg", "png", "webp", "gif"],
@@ -1982,7 +1982,20 @@ with col_chat:
             if _cur_dbg == "last" else
             "描述需求、提问，或搭配图片补充说明…"
         )
-        user_input = st.chat_input(_chat_placeholder)
+        _chat_input_val = st.chat_input(
+            _chat_placeholder,
+            accept_file=(True if _cur_dbg else False),
+            file_type=["jpg", "jpeg", "png", "webp", "gif"],
+            max_upload_size=20,
+        )
+        _chat_files = []
+        if _chat_input_val is None:
+            user_input = None
+        elif isinstance(_chat_input_val, str):
+            user_input = _chat_input_val
+        else:
+            user_input = (_chat_input_val.text or "").strip()
+            _chat_files = list(_chat_input_val.files or [])
 
 
     # ══════════════════════════════════════════════════════════
@@ -1994,6 +2007,18 @@ with col_chat:
     _vision_b64      = st.session_state.get("_vision_b64")
     _active_dbg      = st.session_state.get("_debug_mode_active")
     _tapir_trigger   = st.session_state.pop("tapir_test_trigger", False)
+
+    # Debug: 支持在聊天输入框直接粘贴截图（专用粘贴通道）
+    if _active_dbg and _chat_files:
+        _clip_img = _chat_files[0]
+        _clip_bytes = _clip_img.read()
+        if _clip_bytes:
+            st.session_state["_debug_image_b64"] = base64.b64encode(_clip_bytes).decode()
+            st.session_state["_debug_image_mime"] = _clip_img.type or "image/png"
+            st.session_state["_debug_image_name"] = _clip_img.name or "clipboard-image"
+            _debug_img_b64 = st.session_state.get("_debug_image_b64")
+            _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
+            st.toast(f"📎 已附加截图：{st.session_state.get('_debug_image_name', 'clipboard-image')}", icon="🖼️")
 
     # ── Archicad 测试：ReloadLibraries + 捕获错误注入 chat ──
     if _tapir_trigger and _TAPIR_IMPORT_OK:
