@@ -1526,6 +1526,8 @@ _SCRIPT_HELP = {
 
 with col_editor:
     with st.container(height=820, border=False):
+        st.markdown("### GDL 脚本编辑")
+
         # ── Auto-init empty project so editor is always visible ──
         if not st.session_state.project:
             st.session_state.project = HSFProject.create_new(
@@ -1783,14 +1785,14 @@ with col_editor:
 
 with col_chat:
     with st.container(height=820, border=False):
+        st.markdown("### AI 代码")
+
         _chat_proj = st.session_state.project
         _chat_title_col, _chat_clear_col = st.columns([3, 1])
         with _chat_title_col:
             if _chat_proj:
-                st.markdown(f"### 💬 {_chat_proj.name}")
-                st.caption(f"参数: {len(_chat_proj.parameters)} | 脚本: {len(_chat_proj.scripts)}")
+                st.caption(f"当前项目: {_chat_proj.name} · 参数: {len(_chat_proj.parameters)} | 脚本: {len(_chat_proj.scripts)}")
             else:
-                st.markdown("### 💬 AI 助手")
                 st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
         with _chat_clear_col:
             if st.button("🗑️ 清空对话", use_container_width=True, help="清空聊天记录，不影响脚本和参数"):
