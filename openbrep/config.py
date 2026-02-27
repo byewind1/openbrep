@@ -129,6 +129,30 @@ class GDLAgentConfig:
         if path.exists() and tomllib is not None:
             with open(path, "rb") as f:
                 data = tomllib.load(f)
+                llm_data = data.get("llm", {}) if isinstance(data, dict) else {}
+                if isinstance(llm_data, dict):
+                    provider_keys = llm_data.get("provider_keys", {})
+                    for provider_name, provider_cfg in llm_data.items():
+                        if provider_name in {"provider_keys", "model", "api_key", "api_base", "temperature", "max_tokens", "custom_providers"}:
+                            continue
+                        if not isinstance(provider_cfg, dict):
+                            continue
+                        custom_model = str(provider_cfg.get("model", "") or "")
+                        if not custom_model:
+                            continue
+                        if str(llm_data.get("model", "") or "") == custom_model:
+                            custom_base = str(provider_cfg.get("base_url", "") or "")
+                            if custom_base and not str(llm_data.get("api_base", "") or ""):
+                                llm_data["api_base"] = custom_base
+                            if isinstance(provider_keys, dict):
+                                custom_key = str(provider_keys.get(provider_name, "") or "")
+                                if custom_key and not str(llm_data.get("api_key", "") or ""):
+                                    llm_data["api_key"] = custom_key
+                            if isinstance(llm_data.get("api_base"), str):
+                                _norm_base = llm_data["api_base"].rstrip("/")
+                                if _norm_base and not _norm_base.endswith("/v1"):
+                                    llm_data["api_base"] = _norm_base + "/v1"
+                            break
         for key, val in overrides.items():
             if val is not None:
                 _nested_set(data, key, val)
