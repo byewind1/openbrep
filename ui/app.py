@@ -181,9 +181,9 @@ if "model_api_keys" not in st.session_state:
 if "vision_upload_key" not in st.session_state:
     # Increment to reset the file_uploader widget after image is sent
     st.session_state.vision_upload_key = 0
-if "debug_upload_key" not in st.session_state:
-    # Increment to reset debug image uploader after sending/clearing
-    st.session_state.debug_upload_key = 0
+if "chat_image_upload_key" not in st.session_state:
+    # Unified chat image uploader reset key
+    st.session_state.chat_image_upload_key = 0
 if "chat_anchor_focus" not in st.session_state:
     st.session_state.chat_anchor_focus = None
 if "chat_anchor_pending" not in st.session_state:
@@ -1368,6 +1368,45 @@ def _build_chat_script_anchors(history: list[dict]) -> list[dict]:
     return anchors
 
 
+def _thumb_image_bytes(image_b64: str) -> bytes | None:
+    if not image_b64:
+        return None
+    try:
+        return base64.b64decode(image_b64)
+    except Exception:
+        return None
+
+
+def _detect_image_task_mode(user_text: str, image_name: str = "") -> str:
+    """Heuristic mode routing for unified image upload: 'debug' or 'generate'."""
+    t = (user_text or "").lower()
+    n = (image_name or "").lower()
+
+    debug_tokens = [
+        "debug", "error", "报错", "错误", "失败", "修复", "定位", "排查", "warning", "line ", "script",
+        "screenshot", "截图", "log", "trace", "崩溃", "不显示", "异常",
+    ]
+    gen_tokens = [
+        "生成", "创建", "建模", "构件", "参考", "外观", "照片", "photo", "reference", "design",
+    ]
+
+    if any(k in t for k in debug_tokens):
+        return "debug"
+    if any(k in t for k in gen_tokens):
+        return "generate"
+
+    # Filename cues fallback
+    if any(k in n for k in ["screenshot", "screen", "截屏", "截图", "error", "debug", "log"]):
+        return "debug"
+    if any(k in n for k in ["photo", "img", "image", "参考", "模型", "design"]):
+        return "generate"
+
+    # Project already exists -> default debug for safer modification path
+    if st.session_state.get("project"):
+        return "debug"
+    return "generate"
+
+
 # ── Vision prompt ─────────────────────────────────────────────────────────────
 
 _VISION_SYSTEM_PROMPT = """\
@@ -1939,6 +1978,10 @@ with col_chat:
                 st.caption("📍 当前锚点")
             with st.chat_message(_msg["role"]):
                 st.markdown(_msg["content"])
+                if _msg.get("image_b64"):
+                    _img_bytes = _thumb_image_bytes(_msg.get("image_b64", ""))
+                    if _img_bytes:
+                        st.image(_img_bytes, width=240)
                 if _msg["role"] == "assistant":
                     _ca, _cb, _cc, _cd, _ce = st.columns([1, 1, 1, 1, 8])
                     with _ca:
@@ -2064,30 +2107,37 @@ with col_chat:
                     st.session_state.pending_ai_label = ""
                     st.rerun()
 
-        # ── 图片上传（🖼️ 图片即意图）────────────────────────────────
-        with st.expander("📷 上传图片 → AI 直接生成 GDL", expanded=False):
+        # ── 图片上传（统一入口：自动识别 生成 / 调试）──────────────────────────
+        with st.expander("📎 上传图片（自动识别生成/调试）", expanded=False):
             st.caption("支持 JPG / PNG / WebP · 推荐模型：Claude Sonnet / GPT-4o / Gemini")
-            # 视觉模型检测（保留供其他逻辑复用）
-            _cur_model = st.session_state.get("current_model", "")
-            _cur_is_vision = _cur_model in VISION_MODELS
-            st.caption("💡 图片分析需视觉模型支持，如遇错误请切换至 glm-4v-plus / gpt-4o / claude-sonnet-4-6 等")
-            _vision_file = st.file_uploader(
+            st.caption("💡 系统会结合图片与文字自动判断是“生成构件”还是“Debug 排错”")
+            _chat_img_file = st.file_uploader(
                 "",
                 type=["jpg", "jpeg", "png", "webp", "gif"],
-                key=f"vision_upload_{st.session_state.vision_upload_key}",
+                key=f"chat_image_upload_{st.session_state.chat_image_upload_key}",
                 label_visibility="collapsed",
             )
-            if _vision_file is not None:
-                _raw_bytes = _vision_file.read()
-                st.image(_raw_bytes, width=220)
-                st.session_state["_vision_b64"]  = base64.b64encode(_raw_bytes).decode()
-                st.session_state["_vision_mime"] = _vision_file.type or "image/jpeg"
-                st.session_state["_vision_name"] = _vision_file.name
+            _chat_img_note = st.text_input(
+                "图片说明（可选）",
+                key="chat_image_note",
+                placeholder="例如：这是 Archicad 报错截图，请帮我定位并修复",
+            )
+            if _chat_img_file is not None:
+                _raw_bytes = _chat_img_file.read()
+                st.image(_raw_bytes, width=240)
+                st.session_state["_vision_b64"] = base64.b64encode(_raw_bytes).decode()
+                st.session_state["_vision_mime"] = _chat_img_file.type or "image/jpeg"
+                st.session_state["_vision_name"] = _chat_img_file.name
+
+                _pred_mode = "debug" if st.session_state.get("_debug_mode_active") else _detect_image_task_mode(_chat_img_note, _chat_img_file.name)
+                _mode_txt = "🧩 Debug 模式" if _pred_mode == "debug" else "🧱 生成模式"
+                st.caption(f"当前判定：{_mode_txt}")
+
                 if st.button(
-                    "🖼️ 分析图片 → 生成 GDL",
+                    "📤 发送图片",
                     type="primary",
                     use_container_width=True,
-                    key="vision_submit_btn",
+                    key="chat_image_submit_btn",
                 ):
                     st.session_state["_vision_trigger"] = True
                     st.rerun()
@@ -2117,35 +2167,6 @@ with col_chat:
         # Debug激活时只显示简洁提示，不跑obr本地语法检查
         if _cur_dbg == "editor":
             st.info("🔍 **全脚本 Debug 已激活** — 描述你观察到的问题，或直接发送让 AI 全面检查语法和逻辑")
-
-        # Debug 附图（可选）：上传或粘贴 Archicad 错误截图，让 AI 联合分析
-        _debug_img_b64 = st.session_state.get("_debug_image_b64")
-        _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
-        if _cur_dbg:
-            with st.expander("🧩 Debug 附件（截图）", expanded=False):
-                st.caption("可上传 Archicad 报错或视图截图，发送时将与文字一起进入 Debug 分析。")
-                _debug_file = st.file_uploader(
-                    "",
-                    type=["jpg", "jpeg", "png", "webp", "gif"],
-                    key=f"debug_upload_{st.session_state.debug_upload_key}",
-                    label_visibility="collapsed",
-                )
-                if _debug_file is not None:
-                    _db_raw = _debug_file.read()
-                    st.image(_db_raw, width=260)
-                    st.session_state["_debug_image_b64"] = base64.b64encode(_db_raw).decode()
-                    st.session_state["_debug_image_mime"] = _debug_file.type or "image/png"
-                    st.session_state["_debug_image_name"] = _debug_file.name
-                    _debug_img_b64 = st.session_state.get("_debug_image_b64")
-                    _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
-                elif st.session_state.get("_debug_image_b64"):
-                    st.caption(f"已附图：{st.session_state.get('_debug_image_name', 'image')}")
-                    if st.button("🗑️ 清除 Debug 图片", key="debug_img_clear_btn", use_container_width=True):
-                        st.session_state.pop("_debug_image_b64", None)
-                        st.session_state.pop("_debug_image_mime", None)
-                        st.session_state.pop("_debug_image_name", None)
-                        st.session_state.debug_upload_key += 1
-                        st.rerun()
 
         # Chat input — immediately below message list / confirmation widget
         _chat_placeholder = "描述需求、提问，或搭配图片补充说明…"
@@ -2216,10 +2237,20 @@ with col_chat:
     if _vision_trigger and _vision_b64:
         _vision_mime = st.session_state.get("_vision_mime", "image/jpeg")
         _vision_name = st.session_state.get("_vision_name", "image")
-        _extra_text  = user_input or ""  # optional supplementary text from chat_input
+        _img_note = st.session_state.get("chat_image_note", "") or ""
+        _extra_text = (user_input or "").strip()
+        _joined_text = "\n".join([x for x in [_img_note.strip(), _extra_text] if x]).strip()
 
-        _user_display = f"🖼️ `{_vision_name}`" + (f"  \n{_extra_text}" if _extra_text else "")
-        st.session_state.chat_history.append({"role": "user", "content": _user_display})
+        _route_mode = "debug" if _active_dbg else _detect_image_task_mode(_joined_text, _vision_name)
+        _route_tag = "🧩 Debug" if _route_mode == "debug" else "🧱 生成"
+        _user_display = f"🖼️ `{_vision_name}` · {_route_tag}" + (f"  \n{_joined_text}" if _joined_text else "")
+        st.session_state.chat_history.append({
+            "role": "user",
+            "content": _user_display,
+            "image_b64": _vision_b64,
+            "image_mime": _vision_mime,
+            "image_name": _vision_name,
+        })
 
         if not api_key and "ollama" not in model_name:
             err = "❌ 请在左侧边栏填入 API Key 后再试。"
@@ -2239,24 +2270,42 @@ with col_chat:
 
             with live_output.container():
                 st.chat_message("user").markdown(_user_display)
+                _img_bytes = _thumb_image_bytes(_vision_b64)
+                if _img_bytes:
+                    st.image(_img_bytes, width=240)
                 with st.chat_message("assistant"):
-                    msg = run_vision_generate(
-                        image_b64=_vision_b64,
-                        image_mime=_vision_mime,
-                        extra_text=_extra_text,
-                        proj=_proj_v,
-                        status_col=st.container(),
-                        auto_apply=not _has_any_v,
-                    )
+                    if _route_mode == "generate":
+                        msg = run_vision_generate(
+                            image_b64=_vision_b64,
+                            image_mime=_vision_mime,
+                            extra_text=_joined_text,
+                            proj=_proj_v,
+                            status_col=st.container(),
+                            auto_apply=not _has_any_v,
+                        )
+                    else:
+                        _debug_req = _joined_text or "请根据这张截图定位并修复当前项目中的问题。"
+                        if not _debug_req.startswith("[DEBUG:"):
+                            _debug_req = f"[DEBUG:editor] {_debug_req}"
+                        msg = run_agent_generate(
+                            _debug_req,
+                            _proj_v,
+                            st.container(),
+                            gsm_name=(st.session_state.pending_gsm_name or _proj_v.name),
+                            auto_apply=not _has_any_v,
+                            debug_image_b64=_vision_b64,
+                            debug_image_mime=_vision_mime,
+                        )
                     st.markdown(msg)
 
             st.session_state.chat_history.append({"role": "assistant", "content": msg})
 
-            # Reset image uploader by incrementing key, clear stored image
-            st.session_state.vision_upload_key += 1
+            # Reset unified image uploader by incrementing key, clear stored image/note
+            st.session_state.chat_image_upload_key += 1
             st.session_state.pop("_vision_b64", None)
             st.session_state.pop("_vision_mime", None)
             st.session_state.pop("_vision_name", None)
+            st.session_state["chat_image_note"] = ""
             st.rerun()
 
     # ── Normal text path ─────────────────────────────────────────────────────────
@@ -2306,8 +2355,6 @@ with col_chat:
                             user_input, proj_current, st.container(),
                             gsm_name=effective_gsm,
                             auto_apply=not _has_any_script,
-                            debug_image_b64=(_debug_img_b64 if _cur_dbg else None),
-                            debug_image_mime=(_debug_img_mime if _cur_dbg else "image/png"),
                         )
                         st.markdown(msg)
 
