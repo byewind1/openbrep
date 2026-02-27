@@ -62,7 +62,7 @@ code, .stCodeBlock { font-family: 'JetBrains Mono', monospace !important; }
 
 section[data-testid="stSidebar"] .stMarkdown p.main-header {
     font-family: 'JetBrains Mono', monospace !important;
-    font-size: 3.0rem !important;
+    font-size: 2.8rem !important;
     font-weight: 900 !important;
     text-align: center !important;
     display: block !important;
