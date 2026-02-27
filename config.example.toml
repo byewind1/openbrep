@@ -2,45 +2,63 @@
 # Copy this to config.toml and fill in your own API keys and paths
 
 [llm]
-# 选择 LLM 模型 (支持: glm-4-flash, glm-4.7, glm-5, deepseek-*, claude-*, gpt-*, gemini-*)
-model = "glm-4-flash"
-# api_base 通常不需要设置，每个 provider 的内置端点会自动匹配
-# api_base = "https://open.bigmodel.cn/api/paas/v4"  # 仅在自定义端点时使用
+# 默认模型，支持下列所有 provider
+# 👁 = 支持图片分析  🧠 = 推理模型
+#
+# ── 智谱 GLM (bigmodel.cn) ──
+#   glm-4.7 (★ 默认)  glm-4.7-flash  glm-4.6v 👁  glm-4-plus  glm-4-flash (免费)
+#
+# ── DeepSeek (api.deepseek.com) ──
+#   deepseek-chat  deepseek-reasoner 🧠
+#
+# ── 阿里通义 (dashscope.aliyuncs.com) ──
+#   qwen-max  qwen-plus  qwen-turbo  qwq-plus 🧠  qwen-vl-plus 👁
+#
+# ── 月之暗面 Kimi (api.moonshot.cn) ──
+#   moonshot-v1-8k  moonshot-v1-32k  moonshot-v1-128k
+#
+# ── OpenAI (api.openai.com) ──
+#   gpt-4.1 👁  gpt-4.1-mini 👁  gpt-4o 👁  gpt-4o-mini 👁
+#   o3 🧠  o3-mini 🧠  o4-mini 🧠
+#
+# ── Anthropic Claude (api.anthropic.com) ──
+#   claude-sonnet-4-6 👁  claude-opus-4-6 👁  claude-haiku-4-5-20251001 👁
+#
+# ── Google Gemini ──
+#   gemini/gemini-2.5-flash 👁  gemini/gemini-2.5-pro 👁
+#
+# ── Ollama 本地（无需 Key）──
+#   ollama/qwen2.5:14b  ollama/qwen3:8b  ollama/deepseek-coder-v2:16b
+#
+model = "glm-4.7"
 temperature = 0.2
 max_tokens = 4096
 
-# Provider API Keys — 按 provider 分开存，切换模型自动匹配
+# Provider API Keys — 按 provider 分开存，切换模型自动匹配对应 Key
 [llm.provider_keys]
-zhipu   = "YOUR_ZHIPU_API_KEY_HERE"       # glm-4-flash, glm-4.7, glm-5
-deepseek = "YOUR_DEEPSEEK_API_KEY_HERE"   # deepseek-*
-anthropic = "YOUR_ANTHROPIC_API_KEY_HERE" # claude-*
-openai    = "YOUR_OPENAI_API_KEY_HERE"    # gpt-*
-google    = "YOUR_GEMINI_API_KEY_HERE"    # gemini-*
-
-# 注意: 也可以直接设置顶层 api_key (单一 provider 时更简单)
-# api_key = "your-key-here"
+zhipu     = "YOUR_ZHIPU_API_KEY"       # glm-*        https://bigmodel.cn/usercenter/apikeys
+deepseek  = "YOUR_DEEPSEEK_API_KEY"    # deepseek-*   https://platform.deepseek.com/api_keys
+anthropic = "YOUR_ANTHROPIC_API_KEY"   # claude-*     https://console.anthropic.com/settings/keys
+openai    = "YOUR_OPENAI_API_KEY"      # gpt-*, o3    https://platform.openai.com/api-keys
+google    = "YOUR_GOOGLE_API_KEY"      # gemini-*     https://aistudio.google.com/apikey
+aliyun    = "YOUR_DASHSCOPE_API_KEY"   # qwen-*, qwq  https://dashscope.console.aliyun.com
+kimi      = "YOUR_KIMI_API_KEY"        # moonshot-*   https://platform.moonshot.cn/console/api-keys
 
 [agent]
-# Agent 循环参数
-max_iterations = 5      # 最大重试次数
-validate_xml = true     # 验证 XML 格式
-diff_check = true       # 检查变更差异
-auto_version = true     # 自动更新版本号
+max_iterations = 5
+validate_xml = true
+diff_check = true
+auto_version = true
 
 [compiler]
-# LP_XMLConverter 路径 (ArchiCAD 内置编译器)
-# macOS:   /Applications/GRAPHISOFT/Archicad 29/Archicad 29.app/Contents/MacOS/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter
+# LP_XMLConverter 路径（配置一次永久生效）
+# macOS:   /Applications/GRAPHISOFT/Archicad 29/Archicad 29.app/Contents/MacOS/LP_XMLConverter
 # Windows: C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe
-# Linux:   /opt/GRAPHISOFT/ArchiCAD29/LP_XMLConverter
 path = "/path/to/LP_XMLConverter"
-timeout = 60            # 编译超时（秒）
+timeout = 60
 
 [paths]
-# 工作目录
-knowledge_dir = "./knowledge"   # 知识库文档
-templates_dir = "./templates"   # GDL 模板
-src_dir = "./src"               # 源代码
-output_dir = "./output"         # 编译输出
-
-# 注意: 不要在此文件中提交敏感信息（API keys, 本地路径）
-# Use: git update-index --assume-unchanged config.toml (防止意外提交)
+knowledge_dir = "./knowledge"
+templates_dir = "./templates"
+src_dir = "./src"
+output_dir = "./output"
