@@ -1841,8 +1841,9 @@ with col_chat:
             st.info("🔍 **Debug 上条已激活** — 描述问题方向，或直接发送让 AI 检查上一次生成的代码")
 
         # Chat input — immediately below message list / confirmation widget
+        _debug_editor_prompt = "请对当前所有脚本进行全面检查，重点检查：1.语法完整性（IF/ENDIF、FOR/NEXT、ADD/DEL配对）2.参数跨脚本一致性 3.脚本末尾完整性。用中文分脚本列出问题，没有问题也要明确说明。"
         _chat_placeholder = (
-            "描述你看到的问题，或直接发送让 AI 全面检查所有脚本…"
+            _debug_editor_prompt
             if _cur_dbg == "editor" else
             "描述问题方向，或直接发送让 AI 检查上一次生成的代码…"
             if _cur_dbg == "last" else
@@ -1888,11 +1889,10 @@ with col_chat:
         else:
             st.toast("❌ Archicad 连接失败，请确认 Archicad 正在运行", icon="⚠️")
 
-    # Debug模式：附带前缀发送，空输入默认全面检查，不注入obr本地语法报告
-    if _active_dbg and (user_input or _active_dbg == "editor"):
+    # Debug模式：仅用户主动发送时触发，不自动构造空输入消息
+    if _active_dbg and user_input:
         _dbg_prefix = f"[DEBUG:{_active_dbg}]"
-        _user_text = user_input.strip() if user_input else "请对当前所有脚本进行全面的语法和逻辑检查，用中文列出发现的问题"
-        effective_input = f"{_dbg_prefix} {_user_text}"
+        effective_input = f"{_dbg_prefix} {user_input.strip()}"
         st.session_state["_debug_mode_active"] = None
     else:
         _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
