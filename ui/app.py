@@ -507,6 +507,63 @@ def _versioned_gsm_path(proj_name: str, work_dir: str) -> str:
     return str(out_dir / f"{proj_name}_v{v}.gsm")
 
 
+def _derive_gsm_name_from_filename(filename: str) -> str:
+    """Derive clean GSM name from imported filename.
+
+    Rules:
+    - remove extension
+    - remove trailing version suffix like v1 / v2.1 / _v1 / -v2
+    - remove trailing numeric suffix like _001 / -002 / 123
+    """
+    stem = Path(filename).stem.strip()
+    if not stem:
+        return ""
+
+    name = stem
+    for _ in range(3):
+        before = name
+        name = re.sub(r'(?i)[\s._-]*v\d+(?:\.\d+)*$', '', name).strip(" _-.")
+        name = re.sub(r'[\s._-]*\d+$', '', name).strip(" _-.")
+        if name == before:
+            break
+
+    return name or stem.strip(" _-.")
+
+
+def _extract_gsm_name_candidate(text: str) -> str:
+    """Extract object name candidate from prompt with simple regex."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+
+    # Strip debug prefix if present
+    if t.startswith("[DEBUG:") and "]" in t:
+        t = t.split("]", 1)[1].strip()
+
+    pats = [
+        r'(?:生成|创建|制作|做一个|做个|建一个|建个)\s*(?:一个|个)?\s*([A-Za-z0-9_\-\u4e00-\u9fff]{1,40})',
+        r'(?:生成|创建|制作)\s*([A-Za-z0-9_\-\u4e00-\u9fff]{1,40})',
+    ]
+    for p in pats:
+        m = re.search(p, t)
+        if m:
+            return m.group(1).strip(" _-.")
+    return ""
+
+
+def _stamp_script_header(proj: HSFProject, script_label: str, content: str) -> str:
+    """Inject/refresh first-line script version header."""
+    body = content or ""
+    today = _datetime.date.today().isoformat()
+    header = f"! v{proj.version} {today} {script_label} Script"
+
+    lines = body.splitlines()
+    if lines and re.match(r'^\!\s*v\d+\s+\d{4}-\d{2}-\d{2}\s+.+\s+Script\s*$', lines[0].strip(), re.IGNORECASE):
+        lines[0] = header
+        return "\n".join(lines)
+    return f"{header}\n{body}" if body else header
+
+
 # ── Object Name Extraction (dictionary + regex, no LLM) ──
 
 _CN_TO_NAME = {
@@ -852,6 +909,7 @@ def run_agent_generate(
                 st.session_state.editor_version += 1
                 if gsm_name:
                     st.session_state.pending_gsm_name = gsm_name
+                    st.session_state["toolbar_gsm_name"] = gsm_name
                 reply_parts.append(
                     f"✏️ **已写入 {label_str}** — 可直接「🔧 编译」\n\n"
                     + "\n\n".join(code_blocks)
@@ -862,6 +920,7 @@ def run_agent_generate(
                 st.session_state.pending_ai_label = label_str
                 if gsm_name:
                     st.session_state.pending_gsm_name = gsm_name
+                    st.session_state["toolbar_gsm_name"] = gsm_name
                 reply_parts.append(
                     f"🤖 **AI 已生成 {label_str}** — 请在下方确认是否写入编辑器。\n\n"
                     + "\n\n".join(code_blocks)
@@ -909,10 +968,20 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
     Handles scripts/3d.gdl etc. + paramlist.xml.
     Returns (script_count, param_count) for notification.
     """
+    _label_map = {
+        "scripts/3d.gdl": "3D",
+        "scripts/2d.gdl": "2D",
+        "scripts/1d.gdl": "Master",
+        "scripts/vl.gdl": "Param",
+        "scripts/ui.gdl": "UI",
+        "scripts/pr.gdl": "Properties",
+    }
     sc = 0
     for stype, fpath, _label in _SCRIPT_MAP:
         if fpath in script_map:
-            proj.set_script(stype, script_map[fpath])
+            _script_label = _label_map.get(fpath, _label)
+            _stamped = _stamp_script_header(proj, _script_label, script_map[fpath])
+            proj.set_script(stype, _stamped)
             sc += 1
     pc = 0
     if "paramlist.xml" in script_map:
@@ -1083,7 +1152,9 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     proj.root = proj.work_dir / proj.name
     st.session_state.project = proj
     st.session_state.pending_diffs = {}
-    st.session_state.pending_gsm_name = proj.name
+    _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
+    st.session_state.pending_gsm_name = _import_gsm_name
+    st.session_state["toolbar_gsm_name"] = _import_gsm_name
     st.session_state.editor_version += 1
     st.session_state.chat_history.append({"role": "assistant", "content": msg})
     return (True, msg)
@@ -1932,6 +2003,13 @@ with col_chat:
         _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
         effective_input = _auto_debug_input or _redo_input or user_input
 
+    # 在用户消息中提取物件名作为 GSM 名称候选（仅当当前为空）
+    if user_input and not (st.session_state.pending_gsm_name or "").strip():
+        _gsm_candidate = _extract_gsm_name_candidate(user_input)
+        if _gsm_candidate:
+            st.session_state.pending_gsm_name = _gsm_candidate
+            st.session_state["toolbar_gsm_name"] = _gsm_candidate
+
     # ── Vision path: image uploaded + "分析图片" button clicked ──────────────────
     if _vision_trigger and _vision_b64:
         _vision_mime = st.session_state.get("_vision_mime", "image/jpeg")
@@ -1952,6 +2030,7 @@ with col_chat:
                 _vproj = HSFProject.create_new(_vname, work_dir=st.session_state.work_dir)
                 st.session_state.project = _vproj
                 st.session_state.pending_gsm_name = _vname
+                st.session_state["toolbar_gsm_name"] = _vname
 
             _proj_v = st.session_state.project
             _has_any_v = any(_proj_v.get_script(s) for s, _, _ in _SCRIPT_MAP)
@@ -2011,6 +2090,7 @@ with col_chat:
                             new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
                             st.session_state.project = new_proj
                             st.session_state.pending_gsm_name = gdl_obj_name
+                            st.session_state["toolbar_gsm_name"] = gdl_obj_name
                             st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                         proj_current = st.session_state.project
