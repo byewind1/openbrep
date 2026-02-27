@@ -909,7 +909,6 @@ def run_agent_generate(
                 st.session_state.editor_version += 1
                 if gsm_name:
                     st.session_state.pending_gsm_name = gsm_name
-                    st.session_state["toolbar_gsm_name"] = gsm_name
                 reply_parts.append(
                     f"✏️ **已写入 {label_str}** — 可直接「🔧 编译」\n\n"
                     + "\n\n".join(code_blocks)
@@ -920,7 +919,6 @@ def run_agent_generate(
                 st.session_state.pending_ai_label = label_str
                 if gsm_name:
                     st.session_state.pending_gsm_name = gsm_name
-                    st.session_state["toolbar_gsm_name"] = gsm_name
                 reply_parts.append(
                     f"🤖 **AI 已生成 {label_str}** — 请在下方确认是否写入编辑器。\n\n"
                     + "\n\n".join(code_blocks)
@@ -1154,7 +1152,6 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     st.session_state.pending_diffs = {}
     _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
     st.session_state.pending_gsm_name = _import_gsm_name
-    st.session_state["toolbar_gsm_name"] = _import_gsm_name
     st.session_state.editor_version += 1
     st.session_state.chat_history.append({"role": "assistant", "content": msg})
     return (True, msg)
@@ -1520,7 +1517,6 @@ with col_editor:
                 "GSM名称", label_visibility="collapsed",
                 value=st.session_state.pending_gsm_name or proj_now.name,
                 placeholder="输出 GSM 名称（不含扩展名）",
-                key="toolbar_gsm_name",
                 help="编译输出文件名",
             )
             st.session_state.pending_gsm_name = gsm_name_input
@@ -2008,7 +2004,6 @@ with col_chat:
         _gsm_candidate = _extract_gsm_name_candidate(user_input)
         if _gsm_candidate:
             st.session_state.pending_gsm_name = _gsm_candidate
-            st.session_state["toolbar_gsm_name"] = _gsm_candidate
 
     # ── Vision path: image uploaded + "分析图片" button clicked ──────────────────
     if _vision_trigger and _vision_b64:
@@ -2030,7 +2025,6 @@ with col_chat:
                 _vproj = HSFProject.create_new(_vname, work_dir=st.session_state.work_dir)
                 st.session_state.project = _vproj
                 st.session_state.pending_gsm_name = _vname
-                st.session_state["toolbar_gsm_name"] = _vname
 
             _proj_v = st.session_state.project
             _has_any_v = any(_proj_v.get_script(s) for s, _, _ in _SCRIPT_MAP)
@@ -2090,7 +2084,6 @@ with col_chat:
                             new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
                             st.session_state.project = new_proj
                             st.session_state.pending_gsm_name = gdl_obj_name
-                            st.session_state["toolbar_gsm_name"] = gdl_obj_name
                             st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                         proj_current = st.session_state.project
