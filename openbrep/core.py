@@ -435,8 +435,17 @@ class GDLAgent:
                 "## RESPONSE MODE\n"
                 "The user may ask you to debug, analyze, or explain the current scripts.\n"
                 "- If you can write a concrete fix → use [FILE: path] format as above.\n"
-                "- If you're analyzing, explaining, or need more info → respond in plain Chinese or English.\n"
-                "- You may combine both: write analysis text first, then [FILE: ...] blocks for the fix.\n\n"
+                "- If you're analyzing, explaining, or need more info → respond in plain Chinese.\n"
+                "- You may combine both: write analysis in Chinese first, then [FILE: ...] blocks for the fix.\n\n"
+                "## FULL-SCRIPT DEBUG CHECKLIST\n"
+                "When asked to do a full check, inspect ALL of the following in order:\n"
+                "1. paramlist.xml — are all parameter names/types valid? Any duplicates?\n"
+                "2. scripts/1d.gdl (Master) — do all calculations use declared parameters? Any undefined variables?\n"
+                "3. scripts/3d.gdl — ADD/DEL balanced? FOR/NEXT paired? IF/ENDIF paired? Ends with END?\n"
+                "4. scripts/2d.gdl — contains PROJECT2? HOTSPOT2 present?\n"
+                "5. Cross-script consistency — do 3d/2d scripts reference parameters that exist in paramlist?\n"
+                "   Do they use variables computed in Master script correctly?\n"
+                "Report findings in Chinese, grouped by script. If no issues found, say so explicitly.\n\n"
             )
 
         if knowledge:

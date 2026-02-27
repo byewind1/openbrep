@@ -1843,29 +1843,21 @@ with col_chat:
                 st.session_state["_debug_mode_active"] = None
                 st.rerun()
 
-        # Debug激活时显示语法检查报告
-        if _cur_dbg == "editor" and _chat_proj:
-            _syntax_issues = []
-            for _stype, _fpath, _slabel in _SCRIPT_MAP:
-                _sc = _chat_proj.get_script(_stype)
-                if not _sc:
-                    continue
-                _sk = _fpath.replace("scripts/", "").replace(".gdl", "")
-                for _iss in check_gdl_script(_sc, _sk):
-                    if not _iss.startswith("✅"):
-                        _syntax_issues.append(f"{_slabel}: {_iss}")
-            if _syntax_issues:
-                _report_str = "\n".join(_syntax_issues)
-                st.warning(f"⚠️ 语法检查报告（将随 debug 发送给 AI）：\n{_report_str}")
-            else:
-                st.success("✅ 语法检查通过，输入 debug 方向后发送")
+        # Debug激活时只显示简洁提示，不跑obr本地语法检查
+        if _cur_dbg == "editor":
+            st.info("🔍 **全脚本 Debug 已激活** — 描述你观察到的问题，或直接发送让 AI 全面检查语法和逻辑")
         elif _cur_dbg == "last":
-            st.info("💬 将对 AI 最近一次生成的代码进行 debug，输入方向后发送")
+            st.info("🔍 **Debug 上条已激活** — 描述问题方向，或直接发送让 AI 检查上一次生成的代码")
 
         # Chat input — immediately below message list / confirmation widget
-        user_input = st.chat_input(
+        _chat_placeholder = (
+            "描述你看到的问题，或直接发送让 AI 全面检查所有脚本…"
+            if _cur_dbg == "editor" else
+            "描述问题方向，或直接发送让 AI 检查上一次生成的代码…"
+            if _cur_dbg == "last" else
             "描述需求、提问，或搭配图片补充说明…"
         )
+        user_input = st.chat_input(_chat_placeholder)
 
 
     # ══════════════════════════════════════════════════════════
@@ -1905,24 +1897,11 @@ with col_chat:
         else:
             st.toast("❌ Archicad 连接失败，请确认 Archicad 正在运行", icon="⚠️")
 
-    # Debug模式：用户发送时附带前缀+语法检查报告
-    if _active_dbg and user_input:
+    # Debug模式：附带前缀发送，空输入默认全面检查，不注入obr本地语法报告
+    if _active_dbg and (user_input or _active_dbg == "editor"):
         _dbg_prefix = f"[DEBUG:{_active_dbg}]"
-        _syntax_report_lines = []
-        _proj_for_check = st.session_state.project
-        if _proj_for_check:
-            for _stype, _fpath, _slabel in _SCRIPT_MAP:
-                _sc = _proj_for_check.get_script(_stype)
-                if not _sc:
-                    continue
-                _sk = _fpath.replace("scripts/", "").replace(".gdl", "")
-                for _iss in check_gdl_script(_sc, _sk):
-                    if not _iss.startswith("✅"):
-                        _syntax_report_lines.append(f"{_slabel}: {_iss}")
-        _syntax_report = ""
-        if _syntax_report_lines:
-            _syntax_report = "\n[SYNTAX CHECK REPORT]\n" + "\n".join(_syntax_report_lines)
-        effective_input = f"{_dbg_prefix} {user_input.strip()}{_syntax_report}"
+        _user_text = user_input.strip() if user_input else "请对当前所有脚本进行全面的语法和逻辑检查，用中文列出发现的问题"
+        effective_input = f"{_dbg_prefix} {_user_text}"
         st.session_state["_debug_mode_active"] = None
     else:
         _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
