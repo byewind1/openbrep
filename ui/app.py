@@ -1229,12 +1229,10 @@ def run_vision_generate(
         else:
             return f"🖼️ **图片分析完成**（未检测到 GDL 代码块，AI 可能只给了文字分析）\n\n{raw_text}"
 
-    except Exception as e:
+    except Exception:
         status_ph.empty()
-        return (
-            f"❌ **图片解析失败**: {str(e)}\n\n"
-            "💡 当前模型可能不支持图片输入，请切换到 **Claude Sonnet / GPT-4o / Gemini** 等多模态模型。"
-        )
+        st.error("图片分析失败，当前模型可能不支持视觉功能，请切换至 glm-4v-plus / gpt-4o / claude-sonnet-4-6")
+        return "❌ 图片分析失败，当前模型可能不支持视觉功能，请切换至 glm-4v-plus / gpt-4o / claude-sonnet-4-6"
 
 
 def check_gdl_script(content: str, script_type: str = "") -> list:
