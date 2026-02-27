@@ -159,6 +159,9 @@ if "model_api_keys" not in st.session_state:
 if "vision_upload_key" not in st.session_state:
     # Increment to reset the file_uploader widget after image is sent
     st.session_state.vision_upload_key = 0
+if "debug_upload_key" not in st.session_state:
+    # Increment to reset debug image uploader after sending/clearing
+    st.session_state.debug_upload_key = 0
 
 
 # ── Load config.toml defaults ──────────────────────────
@@ -808,6 +811,8 @@ def run_agent_generate(
     status_col,
     gsm_name: str = None,
     auto_apply: bool = True,
+    debug_image_b64: str | None = None,
+    debug_image_mime: str = "image/png",
 ) -> str:
     """
     Unified chat+generate entry point.
@@ -871,6 +876,8 @@ def run_agent_generate(
             last_code_context=last_code_context,
             syntax_report=syntax_report,
             history=recent_history,
+            image_b64=debug_image_b64,
+            image_mime=debug_image_mime,
         )
         status_ph.empty()
 
@@ -1937,6 +1944,35 @@ with col_chat:
         elif _cur_dbg == "last":
             st.info("🔍 **Debug 上条已激活** — 描述问题方向，或直接发送让 AI 检查上一次生成的代码")
 
+        # Debug 附图（可选）：上传或粘贴 Archicad 错误截图，让 AI 联合分析
+        _debug_img_b64 = st.session_state.get("_debug_image_b64")
+        _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
+        if _cur_dbg:
+            with st.expander("🧩 Debug 附件（截图）", expanded=False):
+                st.caption("可上传/粘贴 Archicad 报错或视图截图，发送时将与文字一起进入 Debug 分析。")
+                _debug_file = st.file_uploader(
+                    "",
+                    type=["jpg", "jpeg", "png", "webp", "gif"],
+                    key=f"debug_upload_{st.session_state.debug_upload_key}",
+                    label_visibility="collapsed",
+                )
+                if _debug_file is not None:
+                    _db_raw = _debug_file.read()
+                    st.image(_db_raw, width=260)
+                    st.session_state["_debug_image_b64"] = base64.b64encode(_db_raw).decode()
+                    st.session_state["_debug_image_mime"] = _debug_file.type or "image/png"
+                    st.session_state["_debug_image_name"] = _debug_file.name
+                    _debug_img_b64 = st.session_state.get("_debug_image_b64")
+                    _debug_img_mime = st.session_state.get("_debug_image_mime", "image/png")
+                elif st.session_state.get("_debug_image_b64"):
+                    st.caption(f"已附图：{st.session_state.get('_debug_image_name', 'image')}")
+                    if st.button("🗑️ 清除 Debug 图片", key="debug_img_clear_btn", use_container_width=True):
+                        st.session_state.pop("_debug_image_b64", None)
+                        st.session_state.pop("_debug_image_mime", None)
+                        st.session_state.pop("_debug_image_name", None)
+                        st.session_state.debug_upload_key += 1
+                        st.rerun()
+
         # Chat input — immediately below message list / confirmation widget
         _debug_editor_prompt = "请对当前所有脚本进行全面检查，重点检查：1.语法完整性（IF/ENDIF、FOR/NEXT、ADD/DEL配对）2.参数跨脚本一致性 3.脚本末尾完整性。用中文分脚本列出问题，没有问题也要明确说明。"
         _chat_placeholder = (
@@ -2097,6 +2133,8 @@ with col_chat:
                             user_input, proj_current, st.container(),
                             gsm_name=effective_gsm,
                             auto_apply=not _has_any_script,
+                            debug_image_b64=(_debug_img_b64 if _cur_dbg else None),
+                            debug_image_mime=(_debug_img_mime if _cur_dbg else "image/png"),
                         )
                         st.markdown(msg)
 

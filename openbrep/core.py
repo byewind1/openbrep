@@ -210,6 +210,8 @@ class GDLAgent:
         last_code_context: Optional[str] = None,
         syntax_report: str = "",
         history: Optional[list] = None,
+        image_b64: Optional[str] = None,
+        image_mime: str = "image/png",
     ) -> tuple[dict, str]:
         """
         Generate code changes OR plain-text analysis WITHOUT compiling.
@@ -238,7 +240,28 @@ class GDLAgent:
             syntax_report=syntax_report,
         )
 
-        raw = self.llm.generate(messages)
+        if image_b64:
+            # generate_with_image 接口不支持多条历史消息，
+            # 这里将 system 之外的上下文压平成一段文本，保留脚本上下文与历史对话。
+            flattened_parts = []
+            for msg in messages[1:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if content:
+                    flattened_parts.append(f"[{role}]\n{content}")
+
+            image_prompt = "\n\n".join(flattened_parts + [
+                "请结合这张调试截图（Archicad报错/视图）与以上上下文进行分析。"
+            ])
+            raw = self.llm.generate_with_image(
+                text_prompt=image_prompt,
+                image_b64=image_b64,
+                image_mime=image_mime,
+                system_prompt=messages[0]["content"],
+                max_tokens=4096,
+            )
+        else:
+            raw = self.llm.generate(messages)
         response = raw.content if hasattr(raw, "content") else str(raw)
 
         self.on_event("llm_response", {"length": len(response)})
