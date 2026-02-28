@@ -10,6 +10,10 @@ import os
 import time
 import base64
 import asyncio
+import json
+import zipfile
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -185,6 +189,96 @@ if "chat_anchor_focus" not in st.session_state:
     st.session_state.chat_anchor_focus = None
 if "chat_anchor_pending" not in st.session_state:
     st.session_state.chat_anchor_pending = None
+if "pro_unlocked" not in st.session_state:
+    st.session_state.pro_unlocked = False
+if "pro_license_loaded" not in st.session_state:
+    st.session_state.pro_license_loaded = False
+
+
+def _license_file(work_dir: str) -> Path:
+    return Path(work_dir) / ".openbrep" / "license_v1.json"
+
+
+def _load_license(work_dir: str) -> dict:
+    fp = _license_file(work_dir)
+    if not fp.exists():
+        return {"pro_unlocked": False}
+    try:
+        return json.loads(fp.read_text(encoding="utf-8"))
+    except Exception:
+        return {"pro_unlocked": False}
+
+
+def _save_license(work_dir: str, data: dict) -> None:
+    fp = _license_file(work_dir)
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _verify_pro_code(code: str) -> bool:
+    c = (code or "").strip()
+    if not c:
+        return False
+
+    # V1: local allowlist via env / file
+    allowed = set()
+    env_codes = os.environ.get("OPENBREP_PRO_CODES", "")
+    for x in env_codes.split(","):
+        x = x.strip()
+        if x:
+            allowed.add(x)
+
+    f = Path.home() / ".openbrep" / "pro_codes.txt"
+    if f.exists():
+        try:
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    allowed.add(line)
+        except Exception:
+            pass
+
+    return c in allowed
+
+
+def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -> tuple[bool, str]:
+    if not filename.lower().endswith((".zip", ".obrk")):
+        return False, "仅支持 .zip 或 .obrk 知识包"
+
+    target = Path(work_dir) / "pro_knowledge"
+    tmp = Path(work_dir) / ".openbrep" / "tmp_pro_knowledge"
+    try:
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        tmp.mkdir(parents=True, exist_ok=True)
+
+        zpath = tmp / "package.zip"
+        zpath.write_bytes(file_bytes)
+
+        with zipfile.ZipFile(zpath, "r") as zf:
+            zf.extractall(tmp / "unpacked")
+
+        unpacked = tmp / "unpacked"
+        if target.exists():
+            shutil.rmtree(target)
+        target.mkdir(parents=True, exist_ok=True)
+
+        for item in unpacked.iterdir():
+            dest = target / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, dest)
+
+        return True, f"✅ Pro 知识包导入完成：{target}"
+    except Exception as e:
+        return False, f"❌ 导入失败：{e}"
+    finally:
+        if tmp.exists():
+            try:
+                shutil.rmtree(tmp)
+            except Exception:
+                pass
 
 
 # ── Load config.toml defaults ──────────────────────────
@@ -261,6 +355,47 @@ with st.sidebar:
     st.subheader("📁 工作目录")
     work_dir = st.text_input("Work Directory", value=st.session_state.work_dir, label_visibility="collapsed")
     st.session_state.work_dir = work_dir
+
+    # Load persisted license when work_dir is known
+    if not st.session_state.pro_license_loaded:
+        _lic = _load_license(work_dir)
+        st.session_state.pro_unlocked = bool(_lic.get("pro_unlocked", False))
+        st.session_state.pro_license_loaded = True
+
+    st.subheader("🔐 Pro 授权（V1）")
+    if st.session_state.pro_unlocked:
+        st.success("Pro 已解锁")
+    else:
+        st.caption("当前：Free 模式（仅基础知识库）")
+
+    pro_code_input = st.text_input("授权码", type="password", key="pro_code_input")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("解锁 Pro", use_container_width=True):
+            if _verify_pro_code(pro_code_input):
+                st.session_state.pro_unlocked = True
+                _save_license(work_dir, {
+                    "pro_unlocked": True,
+                    "activated_at": datetime.now().isoformat(timespec="seconds"),
+                })
+                st.success("✅ Pro 解锁成功")
+                st.rerun()
+            else:
+                st.error("授权码无效")
+    with c2:
+        if st.button("锁回 Free", use_container_width=True):
+            st.session_state.pro_unlocked = False
+            _save_license(work_dir, {"pro_unlocked": False})
+            st.info("已切回 Free 模式")
+            st.rerun()
+
+    pro_pkg = st.file_uploader("导入 Pro 知识包（.zip/.obrk）", type=["zip", "obrk"], key="pro_pkg_uploader")
+    if pro_pkg is not None:
+        ok, msg = _import_pro_knowledge_zip(pro_pkg.read(), pro_pkg.name, work_dir)
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
 
     st.divider()
     st.subheader("🔧 编译器 / Compiler")
@@ -491,17 +626,25 @@ def get_llm():
     return LLMAdapter(config)
 
 def load_knowledge(task_type: str = "all"):
-    # Always load from project knowledge dir first (contains pro ccgdl_dev_doc)
+    # Always load bundled free knowledge first
     project_kb = Path(__file__).parent.parent / "knowledge"
     kb = KnowledgeBase(str(project_kb))
     kb.load()
 
-    # Merge user's custom knowledge from work_dir (if different & exists)
+    # Merge user's custom free knowledge from work_dir/knowledge
     user_kb_dir = Path(st.session_state.work_dir) / "knowledge"
     if user_kb_dir.exists() and user_kb_dir != project_kb:
         user_kb = KnowledgeBase(str(user_kb_dir))
         user_kb.load()
-        kb._docs.update(user_kb._docs)   # user custom overrides project
+        kb._docs.update(user_kb._docs)
+
+    # Pro knowledge only loads after license unlock
+    if st.session_state.get("pro_unlocked", False):
+        pro_kb_dir = Path(st.session_state.work_dir) / "pro_knowledge"
+        if pro_kb_dir.exists():
+            pro_kb = KnowledgeBase(str(pro_kb_dir))
+            pro_kb.load()
+            kb._docs.update(pro_kb._docs)
 
     return kb.get_by_task_type(task_type)
 
