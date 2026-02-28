@@ -9,6 +9,7 @@ a separate file, so only relevant files are fed to the LLM.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import Callable, Optional
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
 from openbrep.paramlist_builder import validate_paramlist
+from openbrep.validator import GDLValidator
 
 
 class Status(Enum):
@@ -59,6 +61,7 @@ class GDLAgent:
         self.compiler = compiler or MockHSFCompiler()
         self.max_iterations = max_iterations
         self.on_event = on_event or (lambda *a: None)
+        self.validator = GDLValidator()
 
     def run(
         self,
@@ -266,9 +269,49 @@ class GDLAgent:
 
         self.on_event("llm_response", {"length": len(response)})
         changes = self._parse_response(response)
+
+        validation_feedback = ""
+
+        if changes:
+            work_project = deepcopy(project)
+            self._apply_changes(work_project, changes)
+            validation_errors = self.validator.validate_all(work_project)
+            self.on_event("validate", {"errors": validation_errors})
+
+            if validation_errors:
+                rewrite_reason = "上次生成存在以下问题，请修复后重新输出完整脚本：\n" + "\n".join(validation_errors)
+                self.on_event("rewrite", {"reason": rewrite_reason})
+
+                rewrite_messages = self._build_messages(
+                    instruction, context, knowledge, skills,
+                    error=rewrite_reason,
+                    history=history,
+                    chat_mode=chat_mode,
+                    syntax_report=syntax_report,
+                )
+                rewrite_raw = self.llm.generate(rewrite_messages)
+                rewrite_response = rewrite_raw.content if hasattr(rewrite_raw, "content") else str(rewrite_raw)
+                self.on_event("llm_response", {"length": len(rewrite_response), "rewrite": True})
+
+                rewritten_changes = self._parse_response(rewrite_response)
+                if rewritten_changes:
+                    changes = rewritten_changes
+                    response = rewrite_response
+
+                    rewritten_project = deepcopy(project)
+                    self._apply_changes(rewritten_project, changes)
+                    second_errors = self.validator.validate_all(rewritten_project)
+                    self.on_event("validate", {"errors": second_errors})
+                    if second_errors:
+                        validation_feedback = "⚠️ 校验仍有问题：\n- " + "\n- ".join(second_errors)
+                else:
+                    validation_feedback = "⚠️ 自动重写未返回可解析脚本，保留首次生成结果。"
+
         # Plain text = everything BEFORE the first [FILE: ...] block (or full response if none)
         first_file = response.find("[FILE:")
         plain_text = response[:first_file].strip() if first_file > 0 else (response.strip() if not changes else "")
+        if validation_feedback:
+            plain_text = f"{plain_text}\n\n{validation_feedback}".strip()
         return changes, plain_text
 
     # ── Context Building ──────────────────────────────────
