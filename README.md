@@ -1,5 +1,12 @@
 # OpenBrep v0.5
 
+## 快速开始
+
+1. 克隆项目
+2. 运行 `bash install.sh` 安装依赖
+3. 双击 `start.command` 启动
+
+
 [简体中文](README.zh-CN.md) | English
 
 **用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。**
