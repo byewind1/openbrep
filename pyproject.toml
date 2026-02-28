@@ -37,6 +37,9 @@ ui = [
 local = [
     "ollama>=0.2.0",
 ]
+pro = [
+    "cryptography>=41.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/byewind1/openbrep"
