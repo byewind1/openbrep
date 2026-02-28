@@ -19,14 +19,16 @@ from openbrep.hsf_project import HSFProject, GDLParameter, ScriptType
 # ── Section Detection Patterns ────────────────────────────
 
 _SECTION_PATTERNS = [
-    ("master",  re.compile(r"(?:MASTER\s*SCRIPT|主\s*脚本)", re.IGNORECASE)),
-    ("param",   re.compile(r"(?:PARAMETER\s+SCRIPT|参数\s*脚本)", re.IGNORECASE)),
-    ("2d",      re.compile(r"(?:2D\s*SCRIPT|二维\s*脚本|平面\s*脚本)", re.IGNORECASE)),
-    ("3d",      re.compile(r"(?:3D\s*SCRIPT|三维\s*脚本)", re.IGNORECASE)),
-    ("ui",      re.compile(r"(?:UI\s*SCRIPT|界面\s*脚本|INTERFACE\s*SCRIPT)", re.IGNORECASE)),
-    ("pr",      re.compile(r"(?:PROPERT(?:Y|IES)\s*SCRIPT|属性\s*脚本)", re.IGNORECASE)),
-    ("params",  re.compile(r"(?:参数列表|参数\s*[（(]|PARAMETERS?\s*[（(LIST])", re.IGNORECASE)),
+    ("master", re.compile(r"(?:(?:MASTER\s*SCRIPT)|(?:主\s*脚本))(?:\s*[（(].*?[)）])?", re.IGNORECASE)),
+    ("param",  re.compile(r"(?:(?:PARAMETER\s+SCRIPT)|(?:参数\s*脚本))(?:\s*[（(].*?[)）])?", re.IGNORECASE)),
+    ("2d",     re.compile(r"(?:(?:2D\s*SCRIPT)|(?:二维\s*脚本)|(?:平面\s*脚本))(?:\s*[（(].*?[)）])?", re.IGNORECASE)),
+    ("3d",     re.compile(r"(?:(?:3D\s*SCRIPT)|(?:三维\s*脚本))(?:\s*[（(].*?[)）])?", re.IGNORECASE)),
+    ("ui",     re.compile(r"(?:(?:UI\s*SCRIPT)|(?:界面\s*脚本)|(?:INTERFACE\s*SCRIPT))(?:\s*[（(].*?[)）])?", re.IGNORECASE)),
+    ("pr",     re.compile(r"(?:(?:PROPERT(?:Y|IES)\s*SCRIPT)|(?:属性\s*脚本))(?:\s*[（(].*?[)）])?", re.IGNORECASE)),
+    ("params", re.compile(r"(?:(?:PARAMETERS?(?:\s+LIST)?)|(?:参数\s*列表)|(?:参数列表))(?:\s*[（(].*?[)）])?", re.IGNORECASE)),
 ]
+
+_HEADER_DECORATION = re.compile(r'^[=\-_*#\s]+|[=\-_*#\s]+$')
 
 _SECTION_TO_SCRIPT = {
     "master": ScriptType.MASTER,
@@ -149,6 +151,19 @@ def _extract_metadata(project: HSFProject, header_lines: list[str]) -> None:
             continue
 
 
+def _normalize_section_header(line: str) -> str:
+    """Normalize possible section header lines for robust matching."""
+    text = line.strip()
+    if not text:
+        return ""
+    if text.startswith("!"):
+        text = text.lstrip("!").strip()
+    text = _HEADER_DECORATION.sub("", text)
+    text = text.strip("[]【】<>《》:：-_=*# ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def _identify_sections(lines: list[str]) -> dict[str, list[str]]:
     """Split source into named sections based on header comments."""
     sections: dict[str, list[str]] = {}
@@ -156,14 +171,15 @@ def _identify_sections(lines: list[str]) -> dict[str, list[str]]:
     current_lines: list[str] = []
 
     for line in lines:
-        stripped = line.strip()
+        candidate = _normalize_section_header(line)
 
         # Check if this line is a section header
         detected = None
-        for section_name, pattern in _SECTION_PATTERNS:
-            if pattern.search(stripped):
-                detected = section_name
-                break
+        if candidate:
+            for section_name, pattern in _SECTION_PATTERNS:
+                if pattern.fullmatch(candidate):
+                    detected = section_name
+                    break
 
         if detected:
             # Save previous section

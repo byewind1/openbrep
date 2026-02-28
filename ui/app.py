@@ -1250,24 +1250,23 @@ def _sanitize_script_content(raw: str, fpath: str) -> str:
     if _next_header:
         text = text[:_next_header.start()].rstrip()
 
-    # For GDL scripts: drop obvious narrative lines (Chinese prose / markdown headings / bullets)
+    # For GDL scripts: only drop obvious markdown/prose artifacts.
+    # Keep unknown commands and non-ASCII string literals to avoid accidental data loss.
     if fpath.startswith("scripts/"):
         kept = []
-        _gdl_cmd_line = _re.compile(
-            r'^(\s*(!|IF\b|ELSE\b|ELSEIF\b|ENDIF\b|FOR\b|NEXT\b|WHILE\b|ENDWHILE\b|REPEAT\b|UNTIL\b|RETURN\b|END\b|GOSUB\b|CALL\b|ADD\b|ADD2\b|ADDX\b|ADDY\b|ADDZ\b|DEL\b|DEL\s+\d+|MUL\b|MUL2\b|ROTX\b|ROTY\b|ROTZ\b|PROJECT2\b|HOTSPOT2\b|LINE2\b|RECT2\b|POLY2\b|CIRCLE2\b|ARC2\b|TEXT2\b|BLOCK\b|BRICK\b|CYLIND\b|CONE\b|SPHERE\b|PRISM_\b|PRISM\b|TUBE\b|REVOLVE\b|SWEEP\b|RULED\b|MESH\b|EXTRUDE\b|BODY\b|MATERIAL\b|PEN\b|LINE_TYPE\b|FILL\b|DEFINE\b|UI_\w+\b|VALUES\b|LOCK\b|UNLOCK\b|PARAMETERS\b|DIM\b|FRAGMENT2\b|FRAGMENT\b|NTR\b|MIGRATION\b|LIBRARYGLOBAL\b|A\b|B\b|ZZYZX\b|[A-Za-z_][A-Za-z0-9_]*\s*=).*)$',
-            _re.IGNORECASE,
-        )
+        _prose_prefix = _re.compile(r"^(分析|说明|原因|修复|结论|总结)\s*[:：]")
+        _numbered_md = _re.compile(r"^\d+\.\s+")
 
         for ln in text.splitlines():
             s = ln.strip()
             if not s:
                 kept.append(ln)
                 continue
-            if s.startswith(("#", "##", "###", "- ", "* ", ">", "分析", "说明", "原因", "修复", "结论")):
+            if s.startswith(("#", "##", "###", "- ", "* ", ">")):
                 continue
-            if not _gdl_cmd_line.match(s):
+            if _numbered_md.match(s):
                 continue
-            if _re.search(r"[\u4e00-\u9fff]", s) and not s.startswith("!"):
+            if _prose_prefix.match(s):
                 continue
             kept.append(ln)
         text = "\n".join(kept).strip()
