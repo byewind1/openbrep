@@ -35,31 +35,26 @@
 
 ---
 
-## 安装
+## 安装与启动
+
+**方式一：一键安装（推荐新手）**
 
 ```bash
-# GitHub (国际用户)
 git clone https://github.com/byewind1/openbrep.git
-# 或 Gitee (国内用户)
-git clone https://gitee.com/byewind/openbrep.git
-
 cd openbrep
-
-# 安装核心 + Web 界面依赖
-pip install -e ".[ui]"
+bash install.sh
 ```
 
-需要 Python 3.10+。真实编译（.gsm 输出）需要安装 ArchiCAD 28/29。
+然后双击 `start.command` 启动。
 
----
-
-## 启动
+**方式二：命令行（开发者）**
 
 ```bash
+pip install -e ".[ui]"
 streamlit run ui/app.py
 ```
 
-浏览器自动打开。侧边栏配置 LLM 模型和 API Key 后即可使用。
+需要 Python 3.10+。真实编译（.gsm 输出）需要安装 ArchiCAD 28/29。
 
 ---
 
@@ -190,29 +185,6 @@ path = "/Applications/GRAPHISOFT/Archicad 29/..."
 
 ---
 
-
-## 安装包（v0.5.1 起）
-
-为非命令行用户提供预构建安装包：
-
-- **macOS**: `release/OpenBrep-macOS.zip`
-- **Windows**: `release/OpenBrep-Windows.zip`
-
-本地构建：
-
-```bash
-bash scripts/build_macos.sh
-```
-
-Windows（本地或 CI）：
-
-```powershell
-./scripts/build_windows.ps1
-```
-
-GitHub Actions 也会在打 tag（`v*`）或手动触发时自动构建双平台安装包。
-
----
 
 ## 版本历史
 
