@@ -1290,8 +1290,9 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
         "scripts/pr.gdl": "Properties",
     }
 
+    # 命中脚本文件即视为一次脚本更新（即便内容清洗后为空，也属于覆盖写入）
     has_script_update = any(
-        fpath in script_map and _sanitize_script_content(script_map.get(fpath, ""), fpath)
+        fpath in script_map
         for _, fpath, _ in _SCRIPT_MAP
     )
     if has_script_update:
@@ -1302,11 +1303,10 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
     for stype, fpath, _label in _SCRIPT_MAP:
         if fpath in script_map:
             _clean = _sanitize_script_content(script_map[fpath], fpath)
-            if not _clean:
-                continue
             _script_label = _label_map.get(fpath, _label)
-            _stamped = _stamp_script_header(_script_label, _clean, _rev)
-            proj.set_script(stype, _stamped)
+            # 命中文件必须全覆盖写入：清洗后为空则写成真正空脚本
+            _final = _stamp_script_header(_script_label, _clean, _rev) if _clean else ""
+            proj.set_script(stype, _final)
             sc += 1
     pc = 0
     if "paramlist.xml" in script_map:
@@ -2259,7 +2259,7 @@ with col_chat:
         # ── 采用这套：确认弹窗 ─────────────────────────────
         @st.dialog("📥 采用这套代码")
         def _adopt_confirm_dialog(msg_idx):
-            st.warning("将用此套代码覆盖对应脚本/参数，消息中未包含的部分保留不变，确认？")
+            st.warning("将按返回文件覆盖：命中的脚本/参数全覆盖写入，未命中的部分保留不变，确认？")
             _da, _db = st.columns(2)
             with _da:
                 if st.button("✅ 确认覆盖", type="primary", use_container_width=True):
@@ -2300,7 +2300,7 @@ with col_chat:
             _covered_txt = "、".join(_covered) if _covered else "（无）"
             _kept_txt = "、".join(_kept) if _kept else "（无）"
             st.info(
-                f"⬆️ **写入策略：局部覆盖，不全清**\n"
+                f"⬆️ **写入策略：命中文件全覆盖，未命中文件保留**\n"
                 f"覆盖：`{_covered_txt}`\n"
                 f"保留：`{_kept_txt}`"
             )
