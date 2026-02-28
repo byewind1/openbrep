@@ -360,6 +360,7 @@ run_test("CompileResult: error/warning parsing", _test_compile_result_error_pars
 print("\n📄 GDL Parser")
 
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
+from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 
 def _test_parser_basic():
     src = """! A  Length  0.80  宽度
@@ -427,6 +428,95 @@ def _test_parser_bookshelf():
     assert len(proj.parameters) >= 8
     assert ScriptType.SCRIPT_3D in proj.scripts
 run_test("parse real Bookshelf.gdl", _test_parser_bookshelf)
+
+
+# ══════════════════════════════════════════════════════════
+#  GDL Previewer
+# ══════════════════════════════════════════════════════════
+print("\n👁️ GDL Previewer")
+
+
+def _test_preview_2d_basic_geometry():
+    src = """\
+LINE2 0, 0, A, 0
+RECT2 0, 0, A, B
+CIRCLE2 A/2, B/2, 0.1
+ARC2 A/2, B/2, 0.2, 0, 180
+"""
+    res = preview_2d_script(src, parameters={"A": 2, "B": 1})
+    assert len(res.lines) == 1
+    assert len(res.polygons) == 1
+    assert len(res.circles) == 1
+    assert len(res.arcs) == 1
+    p1, p2 = res.lines[0]
+    assert p1 == (0.0, 0.0)
+    assert p2 == (2.0, 0.0)
+run_test("preview 2D: basic geometry", _test_preview_2d_basic_geometry)
+
+
+def _test_preview_3d_basic_geometry():
+    src = """\
+BLOCK A, B, ZZYZX
+CYLIND ZZYZX, A/4
+SPHERE A/6
+"""
+    res = preview_3d_script(src, parameters={"A": 1.2, "B": 0.6, "ZZYZX": 2.4})
+    assert len(res.meshes) >= 3
+    assert any(m.name == "BLOCK" for m in res.meshes)
+run_test("preview 3D: basic geometry", _test_preview_3d_basic_geometry)
+
+
+def _test_preview_transform_stack_add_del():
+    src = """\
+ADD 1, 2, 3
+BLOCK 1, 1, 1
+DEL 1
+BLOCK 1, 1, 1
+"""
+    res = preview_3d_script(src)
+    assert len(res.meshes) == 2
+    m1, m2 = res.meshes[0], res.meshes[1]
+    assert min(m1.x) >= 1.0 and min(m1.y) >= 2.0 and min(m1.z) >= 3.0
+    assert abs(min(m2.x)) < 1e-9 and abs(min(m2.y)) < 1e-9 and abs(min(m2.z)) < 1e-9
+run_test("preview: ADD/DEL transform stack", _test_preview_transform_stack_add_del)
+
+
+def _test_preview_for_next_with_limit_guard():
+    src = """\
+FOR i = 1 TO 1000
+  BLOCK 0.1, 0.1, 0.1
+NEXT i
+"""
+    res = preview_3d_script(src, for_limit=20)
+    assert len(res.meshes) == 20
+    assert any("超过上限" in w for w in res.warnings)
+run_test("preview: FOR/NEXT expansion + limit guard", _test_preview_for_next_with_limit_guard)
+
+
+def _test_preview_unsupported_only_warning():
+    src = """\
+BLOCK 1, 1, 1
+ROTX 90
+BLOCK 1, 1, 1
+"""
+    res = preview_3d_script(src)
+    assert len(res.meshes) == 2
+    assert any("未支持命令 ROTX" in w for w in res.warnings)
+run_test("preview: unsupported command warns not crashes", _test_preview_unsupported_only_warning)
+
+
+def _test_preview_tube_partial_fallback():
+    src = """\
+BLOCK 1, 1, 0.2
+TUBE 2, 1, 2,
+  0, 0, 0, 0,
+  1, 0, 0, 0
+SPHERE 0.2
+"""
+    res = preview_3d_script(src)
+    assert len(res.meshes) >= 2
+    assert any("未支持命令 TUBE" in w for w in res.warnings)
+run_test("preview: TUBE unsupported but partial preview works", _test_preview_tube_partial_fallback)
 
 
 # ══════════════════════════════════════════════════════════

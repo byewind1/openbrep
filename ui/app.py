@@ -8,6 +8,7 @@ import sys
 import re
 import os
 import time
+import math
 import base64
 import asyncio
 import json
@@ -29,11 +30,19 @@ try:
 except ImportError:
     _ACE_AVAILABLE = False
 
+try:
+    import plotly.graph_objects as go
+    _PLOTLY_AVAILABLE = True
+except ImportError:
+    _PLOTLY_AVAILABLE = False
+
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
 from openbrep.paramlist_builder import build_paramlist_xml, validate_paramlist
 from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
 from openbrep.core import GDLAgent, Status
+from openbrep.gdl_previewer import Preview2DResult, Preview3DResult, preview_2d_script, preview_3d_script
+from openbrep.validator import GDLValidator
 from openbrep.knowledge import KnowledgeBase
 try:
     from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, model_to_provider
@@ -197,6 +206,14 @@ if "pro_unlocked" not in st.session_state:
     st.session_state.pro_unlocked = False
 if "pro_license_loaded" not in st.session_state:
     st.session_state.pro_license_loaded = False
+if "preview_2d_data" not in st.session_state:
+    st.session_state.preview_2d_data = None
+if "preview_3d_data" not in st.session_state:
+    st.session_state.preview_3d_data = None
+if "preview_warnings" not in st.session_state:
+    st.session_state.preview_warnings = []
+if "preview_meta" not in st.session_state:
+    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
 
 
 def _license_file(work_dir: str) -> Path:
@@ -624,6 +641,10 @@ with st.sidebar:
             st.session_state.pending_gsm_name = ""
             st.session_state.agent_running    = False
             st.session_state._import_key_done = ""
+            st.session_state.preview_2d_data  = None
+            st.session_state.preview_3d_data  = None
+            st.session_state.preview_warnings = []
+            st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
             st.session_state.editor_version  += 1
             st.session_state.work_dir         = _keep_work_dir
             st.session_state.model_api_keys   = _keep_api_keys
@@ -1313,6 +1334,13 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
         if new_params:
             proj.parameters = new_params
             pc = len(new_params)
+
+    if sc > 0 or pc > 0:
+        st.session_state.preview_2d_data = None
+        st.session_state.preview_3d_data = None
+        st.session_state.preview_warnings = []
+        st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+
     return sc, pc
 
 
@@ -1480,6 +1508,10 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     proj.root = proj.work_dir / proj.name
     st.session_state.project = proj
     st.session_state.pending_diffs = {}
+    st.session_state.preview_2d_data = None
+    st.session_state.preview_3d_data = None
+    st.session_state.preview_warnings = []
+    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
     _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
     st.session_state.pending_gsm_name = _import_gsm_name
     st.session_state.script_revision = 0
@@ -1838,6 +1870,247 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
     return issues
 
 
+def _to_float(raw) -> float | None:
+    s = str(raw).strip()
+    if not s:
+        return None
+    low = s.lower()
+    if low in {"true", "yes", "on"}:
+        return 1.0
+    if low in {"false", "no", "off"}:
+        return 0.0
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _preview_param_values(proj: HSFProject) -> dict[str, float]:
+    vals = {"A": 1.0, "B": 1.0, "ZZYZX": 1.0}
+    for p in proj.parameters:
+        v = _to_float(p.value)
+        if v is None:
+            continue
+        vals[p.name.upper()] = v
+
+    for key in ("A", "B", "ZZYZX"):
+        if key in vals:
+            continue
+        gp = proj.get_parameter(key)
+        if gp is not None:
+            pv = _to_float(gp.value)
+            if pv is not None:
+                vals[key] = pv
+
+    return vals
+
+
+def _dedupe_keep_order(items: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for it in items:
+        if it in seen:
+            continue
+        seen.add(it)
+        out.append(it)
+    return out
+
+
+def _collect_preview_prechecks(proj: HSFProject, target: str) -> list[str]:
+    warns: list[str] = []
+
+    if target in {"2d", "both"}:
+        for msg in check_gdl_script(proj.get_script(ScriptType.SCRIPT_2D), "2d"):
+            if not msg.startswith("✅"):
+                warns.append(f"[check 2D] {msg}")
+    if target in {"3d", "both"}:
+        for msg in check_gdl_script(proj.get_script(ScriptType.SCRIPT_3D), "3d"):
+            if not msg.startswith("✅"):
+                warns.append(f"[check 3D] {msg}")
+
+    try:
+        v_issues = GDLValidator().validate_all(proj)
+        for issue in v_issues:
+            if target == "2d" and not issue.startswith(("2d.gdl", "paramlist.xml")):
+                continue
+            if target == "3d" and not issue.startswith(("3d.gdl", "paramlist.xml")):
+                continue
+            warns.append(f"[validator] {issue}")
+    except Exception as e:
+        warns.append(f"[validator] 执行失败: {e}")
+
+    return _dedupe_keep_order(warns)
+
+
+def _render_preview_2d(data: Preview2DResult) -> None:
+    if not data:
+        st.info("暂无 2D 预览数据。")
+        return
+
+    count = len(data.lines) + len(data.polygons) + len(data.circles) + len(data.arcs)
+    if count == 0:
+        st.info("2D 预览为空（脚本无可渲染几何，或命令未覆盖）。")
+        return
+
+    if not _PLOTLY_AVAILABLE:
+        st.info("未安装 plotly，无法显示 2D 图形。请安装 ui 依赖后重试。")
+        st.caption(f"统计：线段 {len(data.lines)}，多边形 {len(data.polygons)}，圆 {len(data.circles)}，圆弧 {len(data.arcs)}")
+        return
+
+    fig = go.Figure()
+
+    for p1, p2 in data.lines:
+        fig.add_trace(go.Scatter(
+            x=[p1[0], p2[0]],
+            y=[p1[1], p2[1]],
+            mode="lines",
+            line={"width": 2},
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    for poly in data.polygons:
+        if len(poly) < 2:
+            continue
+        xs = [p[0] for p in poly] + [poly[0][0]]
+        ys = [p[1] for p in poly] + [poly[0][1]]
+        fig.add_trace(go.Scatter(
+            x=xs,
+            y=ys,
+            mode="lines",
+            line={"width": 2},
+            fill="toself",
+            fillcolor="rgba(56,189,248,0.15)",
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    for cx, cy, r in data.circles:
+        n = 64
+        xs = [cx + r * math.cos(2.0 * math.pi * i / n) for i in range(n + 1)]
+        ys = [cy + r * math.sin(2.0 * math.pi * i / n) for i in range(n + 1)]
+        fig.add_trace(go.Scatter(
+            x=xs,
+            y=ys,
+            mode="lines",
+            line={"width": 2},
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    for cx, cy, r, a0, a1 in data.arcs:
+        end = a1
+        if end < a0:
+            end += 360.0
+        n = 48
+        xs = [cx + r * math.cos(math.radians(a0 + (end - a0) * i / n)) for i in range(n + 1)]
+        ys = [cy + r * math.sin(math.radians(a0 + (end - a0) * i / n)) for i in range(n + 1)]
+        fig.add_trace(go.Scatter(
+            x=xs,
+            y=ys,
+            mode="lines",
+            line={"width": 2},
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    fig.update_layout(
+        height=420,
+        margin={"l": 8, "r": 8, "t": 8, "b": 8},
+        xaxis={"title": "X"},
+        yaxis={"title": "Y", "scaleanchor": "x", "scaleratio": 1},
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_preview_3d(data: Preview3DResult) -> None:
+    if not data:
+        st.info("暂无 3D 预览数据。")
+        return
+
+    if not data.meshes and not data.wires:
+        st.info("3D 预览为空（脚本无可渲染几何，或命令未覆盖）。")
+        return
+
+    if not _PLOTLY_AVAILABLE:
+        st.info("未安装 plotly，无法显示 3D 图形。请安装 ui 依赖后重试。")
+        st.caption(f"统计：网格 {len(data.meshes)}，线框 {len(data.wires)}")
+        return
+
+    fig = go.Figure()
+
+    for i, mesh in enumerate(data.meshes):
+        hue = (i * 53) % 360
+        fig.add_trace(go.Mesh3d(
+            x=mesh.x,
+            y=mesh.y,
+            z=mesh.z,
+            i=mesh.i,
+            j=mesh.j,
+            k=mesh.k,
+            opacity=0.45,
+            color=f"hsl({hue},70%,55%)",
+            showscale=False,
+            name=f"{mesh.name} #{i + 1}",
+        ))
+
+    for wire in data.wires:
+        if len(wire) < 2:
+            continue
+        fig.add_trace(go.Scatter3d(
+            x=[p[0] for p in wire],
+            y=[p[1] for p in wire],
+            z=[p[2] for p in wire],
+            mode="lines",
+            line={"width": 4, "color": "rgba(15,23,42,0.85)"},
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    fig.update_layout(
+        height=500,
+        margin={"l": 8, "r": 8, "t": 8, "b": 8},
+        scene={
+            "aspectmode": "data",
+            "xaxis": {"title": "X"},
+            "yaxis": {"title": "Y"},
+            "zaxis": {"title": "Z"},
+        },
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
+    params = _preview_param_values(proj)
+    pre_warns = _collect_preview_prechecks(proj, target)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        if target == "2d":
+            res_2d = preview_2d_script(proj.get_script(ScriptType.SCRIPT_2D), parameters=params)
+            st.session_state.preview_2d_data = res_2d
+            st.session_state.preview_warnings = _dedupe_keep_order([*pre_warns, *res_2d.warnings])
+            st.session_state.preview_meta = {"kind": "2D", "timestamp": ts}
+            return True, "✅ 2D 预览已更新"
+
+        if target == "3d":
+            res_3d = preview_3d_script(proj.get_script(ScriptType.SCRIPT_3D), parameters=params)
+            st.session_state.preview_3d_data = res_3d
+            st.session_state.preview_warnings = _dedupe_keep_order([*pre_warns, *res_3d.warnings])
+            st.session_state.preview_meta = {"kind": "3D", "timestamp": ts}
+            return True, "✅ 3D 预览已更新"
+
+        return False, f"❌ 未知预览类型: {target}"
+
+    except Exception as e:
+        st.session_state.preview_warnings = _dedupe_keep_order([
+            *pre_warns,
+            f"[preview] 执行失败: {e}",
+        ])
+        st.session_state.preview_meta = {"kind": target.upper(), "timestamp": ts}
+        return False, f"❌ 预览失败: {e}"
+
+
 # ══════════════════════════════════════════════════════════
 #  Main Layout: Left Chat | Right Editor
 # ══════════════════════════════════════════════════════════
@@ -1961,8 +2234,8 @@ with col_editor:
             else:
                 st.caption("⚪ Archicad 未运行或 Tapir 未安装，跳过实时测试")
 
-        # ── Row 2: 全检查 | 清空 | 日志 ──────────────────────
-        tb_check, tb_clear, tb_log_btn = st.columns([1.2, 1.0, 1.0])
+        # ── Row 2: 全检查 | 预览2D | 预览3D | 清空 | 日志 ───────────
+        tb_check, tb_prev2d, tb_prev3d, tb_clear, tb_log_btn = st.columns([1.2, 1.1, 1.1, 1.0, 1.0])
 
         with tb_check:
             if st.button("🔍 全检查", use_container_width=True):
@@ -1980,6 +2253,22 @@ with col_editor:
                             _check_all_ok = False
                 if _check_all_ok:
                     st.success("✅ 所有脚本语法正常")
+
+        with tb_prev2d:
+            if st.button("👁️ 预览 2D", use_container_width=True, help="运行 2D 子集解释并显示图形"):
+                _ok, _msg = _run_preview(proj_now, "2d")
+                if _ok:
+                    st.toast(_msg, icon="✅")
+                else:
+                    st.error(_msg)
+
+        with tb_prev3d:
+            if st.button("🧊 预览 3D", use_container_width=True, help="运行 3D 子集解释并显示图形"):
+                _ok, _msg = _run_preview(proj_now, "3d")
+                if _ok:
+                    st.toast(_msg, icon="✅")
+                else:
+                    st.error(_msg)
 
         with tb_clear:
             if st.button("🗑️ 清空", use_container_width=True, help="重置项目：脚本、参数、日志全清，保留设置"):
@@ -2028,6 +2317,10 @@ with col_editor:
                     st.session_state.agent_running    = False
                     st.session_state._import_key_done = ""
                     st.session_state.confirm_clear    = False
+                    st.session_state.preview_2d_data  = None
+                    st.session_state.preview_3d_data  = None
+                    st.session_state.preview_warnings = []
+                    st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
                     st.session_state.editor_version  += 1
                     st.session_state.work_dir         = _keep_work_dir
                     st.session_state.model_api_keys   = _keep_api_keys
@@ -2136,9 +2429,31 @@ with col_editor:
 
                 if new_code != current_code:
                     proj_now.set_script(stype, new_code)
+                    st.session_state.preview_2d_data = None
+                    st.session_state.preview_3d_data = None
+                    st.session_state.preview_warnings = []
+                    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
 
-        # Log tab
+        # ── Preview Panel ─────────────────────────────────────
+        st.divider()
+        _pm = st.session_state.get("preview_meta") or {}
+        _pkind = _pm.get("kind", "")
+        _pts = _pm.get("timestamp", "")
+        _p_title = f"最新预览：{_pkind} · {_pts}" if _pkind else "预览面板（2D / 3D）"
+        st.markdown(f"#### {_p_title}")
 
+        _pv_tab_2d, _pv_tab_3d, _pv_tab_warn = st.tabs(["2D", "3D", "Warnings"])
+        with _pv_tab_2d:
+            _render_preview_2d(st.session_state.get("preview_2d_data"))
+        with _pv_tab_3d:
+            _render_preview_3d(st.session_state.get("preview_3d_data"))
+        with _pv_tab_warn:
+            _warns = st.session_state.get("preview_warnings") or []
+            if not _warns:
+                st.caption("暂无 warning。")
+            else:
+                for _w in _warns:
+                    st.warning(_w)
 
 
     # ── Right: AI Chat panel ──────────────────────────────────
