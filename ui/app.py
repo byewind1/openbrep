@@ -11,6 +11,10 @@ import time
 import base64
 import asyncio
 import json
+import csv
+import hashlib
+import hmac
+import string
 import zipfile
 import shutil
 from datetime import datetime
@@ -215,30 +219,100 @@ def _save_license(work_dir: str, data: dict) -> None:
     fp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _verify_pro_code(code: str) -> bool:
-    c = (code or "").strip()
+def _to_base36(num: int) -> str:
+    chars = string.digits + string.ascii_uppercase
+    if num == 0:
+        return "0"
+    out: list[str] = []
+    n = num
+    while n:
+        n, r = divmod(n, 36)
+        out.append(chars[r])
+    return "".join(reversed(out))
+
+
+def _get_license_secret(root: Path) -> bytes:
+    env = os.environ.get("OPENBREP_LICENSE_SECRET", "")
+    if env:
+        return env.encode("utf-8")
+
+    key_file = root / "keys" / "license_secret.key"
+    if key_file.exists():
+        return key_file.read_text(encoding="utf-8").strip().encode("utf-8")
+
+    return b""
+
+
+def _gen_code(secret: bytes, buyer_id: str, expire_date: str, salt: str) -> str:
+    payload = f"{buyer_id}|{expire_date}|{salt}".encode("utf-8")
+    digest = hmac.new(secret, payload, hashlib.sha256).hexdigest()[:12].upper()
+    token = _to_base36(int(digest, 16)).zfill(12)[:12]
+    return f"OBR-{token[0:4]}-{token[4:8]}-{token[8:12]}"
+
+
+def _verify_pro_code(code: str) -> tuple[bool, str]:
+    c = (code or "").strip().upper()
     if not c:
-        return False
+        return False, "请输入授权码"
 
-    # V1: local allowlist via env / file
-    allowed = set()
-    env_codes = os.environ.get("OPENBREP_PRO_CODES", "")
-    for x in env_codes.split(","):
-        x = x.strip()
-        if x:
-            allowed.add(x)
+    root = Path(__file__).parent.parent
+    csv_path = root / "licenses.csv"
+    secret = _get_license_secret(root)
 
-    f = Path.home() / ".openbrep" / "pro_codes.txt"
-    if f.exists():
-        try:
-            for line in f.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    allowed.add(line)
-        except Exception:
-            pass
+    # Backward-compatible fallback: allowlist in env/file
+    if not csv_path.exists() or not secret:
+        allowed = set()
+        env_codes = os.environ.get("OPENBREP_PRO_CODES", "")
+        for x in env_codes.split(","):
+            x = x.strip().upper()
+            if x:
+                allowed.add(x)
 
-    return c in allowed
+        f = Path.home() / ".openbrep" / "pro_codes.txt"
+        if f.exists():
+            try:
+                for line in f.read_text(encoding="utf-8").splitlines():
+                    line = line.strip().upper()
+                    if line and not line.startswith("#"):
+                        allowed.add(line)
+            except Exception:
+                pass
+
+        return (c in allowed, "授权码有效" if c in allowed else "授权码无效")
+
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if (row.get("license_code", "").strip().upper() != c):
+                    continue
+
+                if row.get("status", "active").strip().lower() != "active":
+                    return False, "授权码已失效"
+
+                buyer_id = (row.get("buyer_id") or "").strip()
+                expire_date = (row.get("expire_date") or "").strip()
+                salt = (row.get("salt") or "").strip()
+                if not (buyer_id and expire_date and salt):
+                    return False, "授权数据不完整"
+
+                expected = _gen_code(secret, buyer_id, expire_date, salt)
+                if expected != c:
+                    return False, "授权码校验失败"
+
+                # Expire date check (YYYY-MM-DD)
+                if expire_date:
+                    try:
+                        if datetime.now().date() > datetime.strptime(expire_date, "%Y-%m-%d").date():
+                            return False, "授权码已过期"
+                    except Exception:
+                        pass
+
+                return True, "授权码有效"
+    except Exception as e:
+        return False, f"授权校验失败: {e}"
+
+    return False, "授权码无效"
 
 
 def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -> tuple[bool, str]:
@@ -372,16 +446,18 @@ with st.sidebar:
     c1, c2 = st.columns(2)
     with c1:
         if st.button("解锁 Pro", use_container_width=True):
-            if _verify_pro_code(pro_code_input):
+            ok, msg = _verify_pro_code(pro_code_input)
+            if ok:
                 st.session_state.pro_unlocked = True
                 _save_license(work_dir, {
                     "pro_unlocked": True,
                     "activated_at": datetime.now().isoformat(timespec="seconds"),
+                    "license_code": (pro_code_input or "").strip().upper(),
                 })
                 st.success("✅ Pro 解锁成功")
                 st.rerun()
             else:
-                st.error("授权码无效")
+                st.error(msg)
     with c2:
         if st.button("锁回 Free", use_container_width=True):
             st.session_state.pro_unlocked = False
@@ -389,13 +465,16 @@ with st.sidebar:
             st.info("已切回 Free 模式")
             st.rerun()
 
-    pro_pkg = st.file_uploader("导入 Pro 知识包（.zip/.obrk）", type=["zip", "obrk"], key="pro_pkg_uploader")
-    if pro_pkg is not None:
-        ok, msg = _import_pro_knowledge_zip(pro_pkg.read(), pro_pkg.name, work_dir)
-        if ok:
-            st.success(msg)
-        else:
-            st.error(msg)
+    if st.session_state.pro_unlocked:
+        pro_pkg = st.file_uploader("导入 Pro 知识包（.zip/.obrk）", type=["zip", "obrk"], key="pro_pkg_uploader")
+        if pro_pkg is not None:
+            ok, msg = _import_pro_knowledge_zip(pro_pkg.read(), pro_pkg.name, work_dir)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+    else:
+        st.caption("请先输入有效授权码并解锁后再导入知识包。")
 
     st.divider()
     st.subheader("🔧 编译器 / Compiler")
