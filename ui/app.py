@@ -165,6 +165,26 @@ if "tapir_status" not in st.session_state:
     st.session_state.tapir_status = None  # None | "checking" | "ok" | "no_tapir" | "no_ac"
 if "tapir_test_trigger" not in st.session_state:
     st.session_state.tapir_test_trigger = False
+if "tapir_selection_trigger" not in st.session_state:
+    st.session_state.tapir_selection_trigger = False
+if "tapir_highlight_trigger" not in st.session_state:
+    st.session_state.tapir_highlight_trigger = False
+if "tapir_load_params_trigger" not in st.session_state:
+    st.session_state.tapir_load_params_trigger = False
+if "tapir_apply_params_trigger" not in st.session_state:
+    st.session_state.tapir_apply_params_trigger = False
+if "tapir_selected_guids" not in st.session_state:
+    st.session_state.tapir_selected_guids = []
+if "tapir_selected_details" not in st.session_state:
+    st.session_state.tapir_selected_details = []
+if "tapir_selected_params" not in st.session_state:
+    st.session_state.tapir_selected_params = []
+if "tapir_param_edits" not in st.session_state:
+    st.session_state.tapir_param_edits = {}
+if "tapir_last_error" not in st.session_state:
+    st.session_state.tapir_last_error = ""
+if "tapir_last_sync_at" not in st.session_state:
+    st.session_state.tapir_last_sync_at = ""
 if "adopted_msg_index" not in st.session_state:
     st.session_state.adopted_msg_index = None
 if "_debug_mode_active" not in st.session_state:
@@ -214,6 +234,20 @@ if "preview_warnings" not in st.session_state:
     st.session_state.preview_warnings = []
 if "preview_meta" not in st.session_state:
     st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+
+
+def _reset_tapir_p0_state() -> None:
+    """清理 Tapir P0（Inspector + Workbench）缓存。"""
+    st.session_state.tapir_selection_trigger = False
+    st.session_state.tapir_highlight_trigger = False
+    st.session_state.tapir_load_params_trigger = False
+    st.session_state.tapir_apply_params_trigger = False
+    st.session_state.tapir_selected_guids = []
+    st.session_state.tapir_selected_details = []
+    st.session_state.tapir_selected_params = []
+    st.session_state.tapir_param_edits = {}
+    st.session_state.tapir_last_error = ""
+    st.session_state.tapir_last_sync_at = ""
 
 
 def _license_file(work_dir: str) -> Path:
@@ -645,6 +679,7 @@ with st.sidebar:
             st.session_state.preview_3d_data  = None
             st.session_state.preview_warnings = []
             st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
+            _reset_tapir_p0_state()
             st.session_state.editor_version  += 1
             st.session_state.work_dir         = _keep_work_dir
             st.session_state.model_api_keys   = _keep_api_keys
@@ -672,6 +707,296 @@ def _save_feedback(msg_idx: int, rating: str, content: str, comment: str = "") -
             _f.write(_json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass   # never let feedback save break the UI
+
+
+def _tapir_sync_selection() -> tuple[bool, str]:
+    """同步 Archicad 当前选中对象到本地缓存。"""
+    if not _TAPIR_IMPORT_OK:
+        return False, "Tapir bridge 未导入"
+
+    bridge = get_bridge()
+    if not bridge.is_available():
+        st.session_state.tapir_last_error = "Archicad 未运行或 Tapir 未安装"
+        return False, st.session_state.tapir_last_error
+
+    guids = bridge.get_selected_elements()
+    st.session_state.tapir_selected_guids = guids
+    st.session_state.tapir_last_sync_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if not guids:
+        st.session_state.tapir_selected_details = []
+        st.session_state.tapir_selected_params = []
+        st.session_state.tapir_param_edits = {}
+        st.session_state.tapir_last_error = ""
+        return True, "未选中对象"
+
+    details = bridge.get_details_of_elements(guids)
+    st.session_state.tapir_selected_details = details
+    st.session_state.tapir_last_error = ""
+    return True, f"已同步 {len(guids)} 个对象"
+
+
+def _tapir_highlight_selection() -> tuple[bool, str]:
+    """高亮当前已同步选中对象。"""
+    if not _TAPIR_IMPORT_OK:
+        return False, "Tapir bridge 未导入"
+
+    bridge = get_bridge()
+    if not bridge.is_available():
+        st.session_state.tapir_last_error = "Archicad 未运行或 Tapir 未安装"
+        return False, st.session_state.tapir_last_error
+
+    guids = st.session_state.get("tapir_selected_guids") or []
+    if not guids:
+        return False, "请先同步选中对象"
+
+    ok = bridge.highlight_elements(guids)
+    if not ok:
+        st.session_state.tapir_last_error = "高亮失败"
+        return False, st.session_state.tapir_last_error
+
+    st.session_state.tapir_last_error = ""
+    return True, f"已高亮 {len(guids)} 个对象"
+
+
+def _tapir_load_selected_params() -> tuple[bool, str]:
+    """读取当前选中对象参数到工作台。"""
+    if not _TAPIR_IMPORT_OK:
+        return False, "Tapir bridge 未导入"
+
+    bridge = get_bridge()
+    if not bridge.is_available():
+        st.session_state.tapir_last_error = "Archicad 未运行或 Tapir 未安装"
+        return False, st.session_state.tapir_last_error
+
+    guids = st.session_state.get("tapir_selected_guids") or []
+    if not guids:
+        return False, "请先同步选中对象"
+
+    rows = bridge.get_gdl_parameters_of_elements(guids)
+    if not rows:
+        st.session_state.tapir_selected_params = []
+        st.session_state.tapir_param_edits = {}
+        st.session_state.tapir_last_error = "未读取到可编辑参数（可能包含非 GDL 元素）"
+        return False, st.session_state.tapir_last_error
+
+    selected_params = []
+    edit_map = {}
+    skipped = 0
+
+    for row in rows:
+        if not isinstance(row, dict):
+            skipped += 1
+            continue
+        guid = (row.get("guid") or "").strip()
+        if not guid:
+            element_id = row.get("elementId")
+            if isinstance(element_id, dict):
+                _g = element_id.get("guid")
+                if isinstance(_g, str):
+                    guid = _g.strip()
+        if not guid:
+            skipped += 1
+            continue
+
+        params = row.get("gdlParameters")
+        if not isinstance(params, list):
+            skipped += 1
+            continue
+
+        normalized_params = []
+        for p in params:
+            if not isinstance(p, dict):
+                continue
+            normalized_params.append(dict(p))
+
+        if not normalized_params:
+            skipped += 1
+            continue
+
+        selected_params.append({
+            "guid": guid,
+            "gdlParameters": normalized_params,
+        })
+
+        for p in normalized_params:
+            name = p.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            key = f"{guid}::{name.strip()}"
+            value = p.get("value")
+            edit_map[key] = "" if value is None else str(value)
+
+    st.session_state.tapir_selected_params = selected_params
+    st.session_state.tapir_param_edits = edit_map
+
+    if not selected_params:
+        st.session_state.tapir_last_error = "未读取到可编辑参数（可能全为非 GDL 元素）"
+        return False, st.session_state.tapir_last_error
+
+    if skipped > 0:
+        st.session_state.tapir_last_error = f"已跳过 {skipped} 个不可读取参数的元素"
+        return True, f"已读取 {len(selected_params)} 个对象参数（跳过 {skipped} 个）"
+
+    st.session_state.tapir_last_error = ""
+    return True, f"已读取 {len(selected_params)} 个对象参数"
+
+
+def _tapir_apply_param_edits() -> tuple[bool, str]:
+    """应用工作台参数改动到 Archicad。"""
+    if not _TAPIR_IMPORT_OK:
+        return False, "Tapir bridge 未导入"
+
+    bridge = get_bridge()
+    if not bridge.is_available():
+        st.session_state.tapir_last_error = "Archicad 未运行或 Tapir 未安装"
+        return False, st.session_state.tapir_last_error
+
+    rows = st.session_state.get("tapir_selected_params") or []
+    if not rows:
+        return False, "当前没有可应用的参数，请先读取参数"
+
+    edits = st.session_state.get("tapir_param_edits") or {}
+    payload_rows = []
+    conversion_errors = []
+
+    for row in rows:
+        guid = (row.get("guid") or "").strip()
+        params = row.get("gdlParameters")
+        if not guid or not isinstance(params, list):
+            continue
+
+        out_params = []
+        for p in params:
+            if not isinstance(p, dict):
+                continue
+            name = p.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            key = f"{guid}::{name.strip()}"
+            raw_new = edits.get(key, "")
+            old_val = p.get("value")
+
+            parsed_value = raw_new
+            if isinstance(old_val, bool):
+                txt = str(raw_new).strip().lower()
+                if txt in {"1", "true", "yes", "on"}:
+                    parsed_value = True
+                elif txt in {"0", "false", "no", "off"}:
+                    parsed_value = False
+                else:
+                    conversion_errors.append(f"{guid}::{name}（Boolean）")
+                    continue
+            elif isinstance(old_val, int) and not isinstance(old_val, bool):
+                try:
+                    parsed_value = int(str(raw_new).strip())
+                except Exception:
+                    conversion_errors.append(f"{guid}::{name}（Integer）")
+                    continue
+            elif isinstance(old_val, float):
+                try:
+                    parsed_value = float(str(raw_new).strip())
+                except Exception:
+                    conversion_errors.append(f"{guid}::{name}（RealNum）")
+                    continue
+            else:
+                parsed_value = str(raw_new)
+
+            out_params.append({"name": name.strip(), "value": parsed_value})
+
+        if out_params:
+            payload_rows.append({"guid": guid, "gdlParameters": out_params})
+
+    if not payload_rows:
+        if conversion_errors:
+            st.session_state.tapir_last_error = f"参数转换失败：{', '.join(conversion_errors[:6])}"
+            return False, st.session_state.tapir_last_error
+        return False, "没有可写回的参数"
+
+    result = bridge.set_gdl_parameters_of_elements(payload_rows)
+    execution_results = []
+    if isinstance(result, dict):
+        maybe = result.get("executionResults")
+        if isinstance(maybe, list):
+            execution_results = [r for r in maybe if isinstance(r, dict)]
+
+    if not execution_results:
+        st.session_state.tapir_last_error = "Tapir 未返回执行结果"
+        return False, st.session_state.tapir_last_error
+
+    fail_idx = [i for i, r in enumerate(execution_results) if r.get("success") is not True]
+    if fail_idx:
+        fail_guids = []
+        for idx in fail_idx:
+            if idx < len(payload_rows):
+                fail_guids.append(payload_rows[idx].get("guid", ""))
+        fail_text = ", ".join([g for g in fail_guids if g]) or "未知对象"
+        st.session_state.tapir_last_error = f"部分写回失败：{fail_text}"
+        suffix = f"；参数转换失败 {len(conversion_errors)} 项" if conversion_errors else ""
+        return False, st.session_state.tapir_last_error + suffix
+
+    st.session_state.tapir_last_error = ""
+    suffix = f"（另有 {len(conversion_errors)} 项转换失败已跳过）" if conversion_errors else ""
+    return True, f"参数已应用到 {len(payload_rows)} 个对象{suffix}"
+
+
+def _render_tapir_inspector_panel() -> None:
+    """Inspector 面板：显示选中对象 GUID、详情、同步状态。"""
+    guids = st.session_state.get("tapir_selected_guids") or []
+    details = st.session_state.get("tapir_selected_details") or []
+    last_sync = st.session_state.get("tapir_last_sync_at", "")
+    last_error = st.session_state.get("tapir_last_error", "")
+
+    if last_sync:
+        st.caption(f"最近同步：{last_sync}")
+    if last_error:
+        st.warning(last_error)
+
+    if not guids:
+        st.info("未选中对象。")
+        return
+
+    st.markdown(f"**选中 GUID（{len(guids)}）**")
+    st.code("\n".join(guids), language="text")
+
+    st.markdown("**元素详情**")
+    if details:
+        st.json(details)
+    else:
+        st.caption("暂无元素详情。")
+
+
+def _render_tapir_param_workbench_panel() -> None:
+    """Parameter Workbench：显示并编辑已读取参数。"""
+    rows = st.session_state.get("tapir_selected_params") or []
+    if not rows:
+        st.info("暂无参数数据，请先点击「读取参数」。")
+        return
+
+    edits = st.session_state.get("tapir_param_edits") or {}
+    for row in rows:
+        guid = (row.get("guid") or "").strip()
+        params = row.get("gdlParameters")
+        if not guid or not isinstance(params, list):
+            continue
+
+        with st.expander(f"对象 {guid}", expanded=False):
+            for p in params:
+                if not isinstance(p, dict):
+                    continue
+                name = p.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                key = f"{guid}::{name.strip()}"
+                current_value = edits.get(key, "")
+                p_type = p.get("type", "")
+                label = name.strip()
+                if p_type:
+                    label = f"{label} ({p_type})"
+                new_val = st.text_input(label, value=str(current_value), key=f"tapir_edit::{key}")
+                edits[key] = new_val
+
+    st.session_state.tapir_param_edits = edits
 
 
 # ── Fullscreen editor dialog (Streamlit ≥ 1.36) ───────────
@@ -1515,6 +1840,7 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
     st.session_state.pending_gsm_name = _import_gsm_name
     st.session_state.script_revision = 0
+    _reset_tapir_p0_state()
     st.session_state.editor_version += 1
     st.session_state.chat_history.append({"role": "assistant", "content": msg})
     return (True, msg)
@@ -2231,6 +2557,25 @@ with col_editor:
                         st.rerun()
                 with _ac_col2:
                     st.caption("✅ Archicad + Tapir 已连接")
+
+                _p0_b1, _p0_b2, _p0_b3, _p0_b4 = st.columns(4)
+                with _p0_b1:
+                    if st.button("同步选中", use_container_width=True):
+                        st.session_state.tapir_selection_trigger = True
+                        st.rerun()
+                with _p0_b2:
+                    if st.button("高亮选中", use_container_width=True):
+                        st.session_state.tapir_highlight_trigger = True
+                        st.rerun()
+                with _p0_b3:
+                    if st.button("读取参数", use_container_width=True):
+                        st.session_state.tapir_load_params_trigger = True
+                        st.rerun()
+                with _p0_b4:
+                    _can_apply = bool(st.session_state.get("tapir_selected_params"))
+                    if st.button("应用参数", use_container_width=True, disabled=not _can_apply):
+                        st.session_state.tapir_apply_params_trigger = True
+                        st.rerun()
             else:
                 st.caption("⚪ Archicad 未运行或 Tapir 未安装，跳过实时测试")
 
@@ -2321,6 +2666,7 @@ with col_editor:
                     st.session_state.preview_3d_data  = None
                     st.session_state.preview_warnings = []
                     st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
+                    _reset_tapir_p0_state()
                     st.session_state.editor_version  += 1
                     st.session_state.work_dir         = _keep_work_dir
                     st.session_state.model_api_keys   = _keep_api_keys
@@ -2433,6 +2779,15 @@ with col_editor:
                     st.session_state.preview_3d_data = None
                     st.session_state.preview_warnings = []
                     st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+
+        # ── Tapir P0 Panel ────────────────────────────────────
+        st.divider()
+        st.markdown("#### Tapir P0（Inspector + Parameter Workbench）")
+        _tapir_inspector_tab, _tapir_workbench_tab = st.tabs(["Inspector", "Parameter Workbench"])
+        with _tapir_inspector_tab:
+            _render_tapir_inspector_panel()
+        with _tapir_workbench_tab:
+            _render_tapir_param_workbench_panel()
 
         # ── Preview Panel ─────────────────────────────────────
         st.divider()
@@ -2703,10 +3058,14 @@ with col_chat:
     #  Chat handler (outside columns — session state + rerun)
     # ══════════════════════════════════════════════════════════
 
-    _redo_input      = st.session_state.pop("_redo_input", None)
-    _active_dbg      = st.session_state.get("_debug_mode_active")
-    _tapir_trigger   = st.session_state.pop("tapir_test_trigger", False)
-    _has_image_input = bool(_vision_b64)
+    _redo_input                = st.session_state.pop("_redo_input", None)
+    _active_dbg                = st.session_state.get("_debug_mode_active")
+    _tapir_trigger             = st.session_state.pop("tapir_test_trigger", False)
+    _tapir_selection_trigger   = st.session_state.pop("tapir_selection_trigger", False)
+    _tapir_highlight_trigger   = st.session_state.pop("tapir_highlight_trigger", False)
+    _tapir_load_params_trigger = st.session_state.pop("tapir_load_params_trigger", False)
+    _tapir_apply_params_trigger = st.session_state.pop("tapir_apply_params_trigger", False)
+    _has_image_input           = bool(_vision_b64)
 
     # 历史锚点定位：延迟到页面末尾执行，避免打断当前LLM调用
     _anchor_pending = st.session_state.pop("chat_anchor_pending", None)
@@ -2738,6 +3097,43 @@ with col_chat:
             st.rerun()
         else:
             st.toast("❌ Archicad 连接失败，请确认 Archicad 正在运行", icon="⚠️")
+
+    if _tapir_selection_trigger and _TAPIR_IMPORT_OK:
+        _ok, _msg = _tapir_sync_selection()
+        if _ok:
+            if st.session_state.get("tapir_selected_guids"):
+                st.toast(f"✅ {_msg}", icon="🧭")
+            else:
+                st.warning("未选中对象")
+        else:
+            st.error(f"❌ {_msg}")
+        st.rerun()
+
+    if _tapir_highlight_trigger and _TAPIR_IMPORT_OK:
+        _ok, _msg = _tapir_highlight_selection()
+        if _ok:
+            st.toast(f"✅ {_msg}", icon="🎯")
+        else:
+            st.error(f"❌ {_msg}")
+        st.rerun()
+
+    if _tapir_load_params_trigger and _TAPIR_IMPORT_OK:
+        _ok, _msg = _tapir_load_selected_params()
+        if _ok:
+            if st.session_state.get("tapir_last_error"):
+                st.warning(st.session_state.tapir_last_error)
+            st.toast(f"✅ {_msg}", icon="📥")
+        else:
+            st.error(f"❌ {_msg}")
+        st.rerun()
+
+    if _tapir_apply_params_trigger and _TAPIR_IMPORT_OK:
+        _ok, _msg = _tapir_apply_param_edits()
+        if _ok:
+            st.toast(f"✅ {_msg}", icon="📤")
+        else:
+            st.error(f"❌ {_msg}")
+        st.rerun()
 
     _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
 

@@ -663,6 +663,152 @@ run_test("detect: 'Fix error' → debug", _test_skills_detect_debug)
 
 
 # ══════════════════════════════════════════════════════════
+#  Tapir Bridge
+# ══════════════════════════════════════════════════════════
+print("\n🔌 Tapir Bridge")
+
+from openbrep.tapir_bridge import TapirBridge
+
+class _FakeTapirBridge(TapirBridge):
+    def __init__(self, responses=None):
+        super().__init__()
+        self.calls = []
+        self._responses = responses or {}
+
+    def _tapir_call(self, command_name: str, params: dict):
+        self.calls.append((command_name, params))
+        responder = self._responses.get(command_name)
+        if callable(responder):
+            return responder(params)
+        if command_name in self._responses:
+            return self._responses[command_name]
+        return {"success": True}
+
+
+def _test_tapir_get_selected_elements_wrapper():
+    b = _FakeTapirBridge({
+        "GetSelectedElements": {
+            "elements": [
+                {"elementId": {"guid": "guid-1"}},
+                {"elementId": {"guid": "guid-2"}},
+            ]
+        }
+    })
+    got = b.get_selected_elements()
+    assert got == ["guid-1", "guid-2"]
+    assert b.calls[-1][0] == "GetSelectedElements"
+    assert b.calls[-1][1] == {}
+run_test("tapir: get_selected_elements wrapper", _test_tapir_get_selected_elements_wrapper)
+
+
+def _test_tapir_get_details_elements_payload_shape():
+    b = _FakeTapirBridge({"GetDetailsOfElements": {"detailsOfElements": []}})
+    b.get_details_of_elements(["guid-1", "guid-2", "guid-1", ""])
+    cmd, payload = b.calls[-1]
+    assert cmd == "GetDetailsOfElements"
+    assert "elements" in payload
+    assert payload["elements"] == [
+        {"elementId": {"guid": "guid-1"}},
+        {"elementId": {"guid": "guid-2"}},
+    ]
+run_test("tapir: GetDetailsOfElements uses elements schema", _test_tapir_get_details_elements_payload_shape)
+
+
+def _test_tapir_get_gdl_params_schema_and_normalize():
+    b = _FakeTapirBridge({
+        "GetGDLParametersOfElements": {
+            "gdlParametersOfElements": [
+                {
+                    "elementId": {"guid": "guid-1"},
+                    "gdlParameters": [{"name": "A", "value": 1.2, "type": "Length"}],
+                },
+                {
+                    "gdlParameters": {"B": 0.6},
+                },
+            ]
+        }
+    })
+    rows = b.get_gdl_parameters_of_elements(["guid-1", "guid-2"])
+    cmd, payload = b.calls[-1]
+    assert cmd == "GetGDLParametersOfElements"
+    assert payload["elements"] == [
+        {"elementId": {"guid": "guid-1"}},
+        {"elementId": {"guid": "guid-2"}},
+    ]
+    assert rows[0]["guid"] == "guid-1"
+    assert rows[0]["gdlParameters"][0]["name"] == "A"
+    assert rows[1]["guid"] == "guid-2"  # fallback by request order
+    assert rows[1]["gdlParameters"][0]["name"] == "B"
+run_test("tapir: get params normalize output stable", _test_tapir_get_gdl_params_schema_and_normalize)
+
+
+def _test_tapir_set_gdl_payload_shape():
+    b = _FakeTapirBridge({
+        "SetGDLParametersOfElements": {
+            "executionResults": [{"success": True}, {"success": True}]
+        }
+    })
+    b.set_gdl_parameters_of_elements([
+        {"guid": "guid-1", "gdlParameters": {"A": 1.5, "bVisible": True}},
+        {
+            "elementId": {"guid": "guid-2"},
+            "gdlParameters": [
+                {"name": "B", "value": 0.8},
+                {"index": 3, "value": 2},
+            ],
+        },
+        {"guid": "", "gdlParameters": {"X": 1}},
+    ])
+    cmd, payload = b.calls[-1]
+    assert cmd == "SetGDLParametersOfElements"
+    assert "elementsWithGDLParameters" in payload
+    rows = payload["elementsWithGDLParameters"]
+    assert len(rows) == 2
+    assert rows[0]["elementId"] == {"guid": "guid-1"}
+    assert rows[0]["gdlParameters"][0] == {"name": "A", "value": 1.5}
+    assert rows[1]["elementId"] == {"guid": "guid-2"}
+    assert any("index" in p for p in rows[1]["gdlParameters"])
+run_test("tapir: SetGDLParameters payload uses elementsWithGDLParameters", _test_tapir_set_gdl_payload_shape)
+
+
+def _test_tapir_compat_get_placed_params():
+    b = _FakeTapirBridge({
+        "GetGDLParametersOfElements": {
+            "gdlParametersOfElements": [
+                {
+                    "elementId": {"guid": "guid-1"},
+                    "gdlParameters": [{"name": "A", "value": 1.0}],
+                }
+            ]
+        }
+    })
+    result = b.get_placed_params("guid-1")
+    assert isinstance(result, dict)
+    assert result["gdlParametersOfElements"][0]["guid"] == "guid-1"
+    cmd, payload = b.calls[-1]
+    assert cmd == "GetGDLParametersOfElements"
+    assert payload == {"elements": [{"elementId": {"guid": "guid-1"}}]}
+run_test("tapir: get_placed_params compatibility path", _test_tapir_compat_get_placed_params)
+
+
+def _test_tapir_compat_set_placed_params():
+    b = _FakeTapirBridge({
+        "SetGDLParametersOfElements": {
+            "executionResults": [{"success": True}]
+        }
+    })
+    ok = b.set_placed_params("guid-1", {"A": 1.2, "nShelves": 4})
+    assert ok is True
+    cmd, payload = b.calls[-1]
+    assert cmd == "SetGDLParametersOfElements"
+    rows = payload["elementsWithGDLParameters"]
+    assert len(rows) == 1
+    assert rows[0]["elementId"] == {"guid": "guid-1"}
+    assert {"name": "A", "value": 1.2} in rows[0]["gdlParameters"]
+run_test("tapir: set_placed_params compatibility path", _test_tapir_compat_set_placed_params)
+
+
+# ══════════════════════════════════════════════════════════
 #  Summary
 # ══════════════════════════════════════════════════════════
 print(f"\n{'='*50}")

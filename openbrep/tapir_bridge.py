@@ -9,11 +9,15 @@ tapir_bridge.py — OpenBrep ↔ Archicad 通信桥
     - Tapir Add-On 已安装（Add-On Manager 里可见）
 
 功能：
-    1. reload_libraries()          — 编译后自动刷新 Archicad 库
-    2. capture_errors()            — 捕获 GDL 运行期错误（日志文件监听）
-    3. get_placed_params(guid)     — 读取已放置对象的参数值
-    4. set_placed_params(guid, p)  — 修改已放置对象的参数值（教学模式）
-    5. is_available()              — 检查 Archicad + Tapir 是否可用
+    1. reload_libraries()                    — 编译后自动刷新 Archicad 库
+    2. capture_errors()                      — 捕获 GDL 运行期错误（日志文件监听）
+    3. get_selected_elements()               — 读取 Archicad 当前选中元素
+    4. get_details_of_elements(guids)        — 读取元素详情（类型、楼层、图层等）
+    5. highlight_elements(guids)             — 在 Archicad 中高亮元素
+    6. get_gdl_parameters_of_elements(...)   — 读取已放置对象 GDL 参数
+    7. set_gdl_parameters_of_elements(...)   — 批量写回对象 GDL 参数
+    8. get_placed_params / set_placed_params — 兼容旧调用（薄封装）
+    9. is_available()                        — 检查 Archicad + Tapir 是否可用
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import time
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 
 # ── 可选依赖：没有也不崩溃 ─────────────────────────────────────────────────
 
@@ -296,38 +300,280 @@ class TapirBridge:
 
         return True, errors
 
-    # ── 参数读写（教学模式）─────────────────────────────────────────────
+    # ── 选中对象与参数读写（P0）─────────────────────────────────────────
 
-    def get_placed_params(self, element_guid: str) -> Optional[dict]:
-        """读取已放置对象的 GDL 参数值。"""
+    def get_selected_elements(self) -> list[str]:
+        """读取 Archicad 当前选中元素 GUID 列表。"""
+        try:
+            result = self._tapir_call("GetSelectedElements", {})
+            return self._normalize_selected_elements(result)
+        except Exception as e:
+            print(f"[TapirBridge] GetSelectedElements 失败: {e}")
+            return []
+
+    def get_details_of_elements(self, guids: list[str]) -> list[dict]:
+        """读取元素详情（类型、楼层、图层等）。"""
+        elements = self._build_elements_payload(guids)
+        if not elements:
+            return []
+        try:
+            result = self._tapir_call("GetDetailsOfElements", {"elements": elements})
+            if isinstance(result, dict):
+                details = result.get("detailsOfElements", [])
+                if isinstance(details, list):
+                    return details
+            return []
+        except Exception as e:
+            print(f"[TapirBridge] GetDetailsOfElements 失败: {e}")
+            return []
+
+    def highlight_elements(self, guids: list[str]) -> bool:
+        """高亮指定元素。"""
+        elements = self._build_elements_payload(guids)
+        if not elements:
+            return False
         try:
             result = self._tapir_call(
-                "GetGDLParametersOfElements",
-                {"elementIds": [{"guid": element_guid}]}
+                "HighlightElements",
+                {
+                    "elements": elements,
+                    "highlightedColors": [[255, 196, 0, 255] for _ in elements],
+                },
             )
-            return result
+            return self._all_execution_success(result, expected_count=1)
+        except Exception as e:
+            print(f"[TapirBridge] HighlightElements 失败: {e}")
+            return False
+
+    def get_gdl_parameters_of_elements(self, guids: list[str]) -> list[dict]:
+        """读取多个元素的 GDL 参数，并规范化输出。"""
+        elements = self._build_elements_payload(guids)
+        if not elements:
+            return []
+        try:
+            result = self._tapir_call("GetGDLParametersOfElements", {"elements": elements})
+            return self._normalize_gdl_parameters(result, requested_guids=guids)
         except Exception as e:
             print(f"[TapirBridge] GetGDLParametersOfElements 失败: {e}")
-            return None
+            return []
 
-    def set_placed_params(self, element_guid: str, params: dict) -> bool:
-        """
-        修改已放置对象的 GDL 参数值。
-        教学模式：不重新编译，实时看到参数变化效果。
-        params 格式: {"A": 1.5, "shelfNum": 4}
-        """
+    def set_gdl_parameters_of_elements(self, elements_with_params: list[dict]) -> dict:
+        """按 Tapir schema 批量写回 GDL 参数。"""
+        payload = self._build_set_gdl_payload(elements_with_params)
+        if not payload["elementsWithGDLParameters"]:
+            return {"executionResults": []}
         try:
-            self._tapir_call(
-                "SetGDLParametersOfElements",
-                {
-                    "elementIds": [{"guid": element_guid}],
-                    "gdlParameters": params,
-                }
-            )
-            return True
+            result = self._tapir_call("SetGDLParametersOfElements", payload)
+            if isinstance(result, dict):
+                return result
+            return {"executionResults": []}
         except Exception as e:
             print(f"[TapirBridge] SetGDLParametersOfElements 失败: {e}")
+            return {
+                "executionResults": [
+                    {
+                        "success": False,
+                        "error": {"code": "Exception", "message": str(e)},
+                    }
+                ]
+            }
+
+    # ── 兼容旧接口（薄封装）───────────────────────────────────────────────
+
+    def get_placed_params(self, element_guid: str) -> Optional[dict]:
+        """兼容旧调用：读取单个已放置对象参数。"""
+        normalized = self.get_gdl_parameters_of_elements([element_guid])
+        if not normalized:
+            return None
+        return {"gdlParametersOfElements": normalized}
+
+    def set_placed_params(self, element_guid: str, params: dict) -> bool:
+        """兼容旧调用：写回单个已放置对象参数。"""
+        result = self.set_gdl_parameters_of_elements(
+            [
+                {
+                    "guid": element_guid,
+                    "gdlParameters": params,
+                }
+            ]
+        )
+        return self._all_execution_success(result, expected_count=1)
+
+    # ── payload / normalize helpers ─────────────────────────────────────
+
+    def _build_elements_payload(self, guids: list[str]) -> list[dict]:
+        """统一生成 elements: [{elementId:{guid}}]。"""
+        elements = []
+        seen = set()
+        for guid in guids or []:
+            if not isinstance(guid, str):
+                continue
+            g = guid.strip()
+            if not g or g in seen:
+                continue
+            seen.add(g)
+            elements.append({"elementId": {"guid": g}})
+        return elements
+
+    def _build_set_gdl_payload(self, elements_with_params: list[dict]) -> dict:
+        """统一生成 elementsWithGDLParameters payload。"""
+        rows = []
+        for item in elements_with_params or []:
+            if not isinstance(item, dict):
+                continue
+
+            guid = None
+            element_id = item.get("elementId")
+            if isinstance(element_id, dict):
+                _guid = element_id.get("guid")
+                if isinstance(_guid, str) and _guid.strip():
+                    guid = _guid.strip()
+            if guid is None:
+                _guid = item.get("guid")
+                if isinstance(_guid, str) and _guid.strip():
+                    guid = _guid.strip()
+            if not guid:
+                continue
+
+            raw_params = item.get("gdlParameters")
+            if raw_params is None:
+                raw_params = item.get("params")
+
+            gdl_parameters = []
+            if isinstance(raw_params, dict):
+                for name, value in raw_params.items():
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+                    gdl_parameters.append({"name": name, "value": value})
+            elif isinstance(raw_params, list):
+                for p in raw_params:
+                    if not isinstance(p, dict):
+                        continue
+                    if "name" in p and "value" in p and isinstance(p.get("name"), str) and p["name"].strip():
+                        gdl_parameters.append({"name": p["name"], "value": p["value"]})
+                        continue
+                    idx = p.get("index")
+                    if "value" in p and isinstance(idx, int) and not isinstance(idx, bool):
+                        gdl_parameters.append({"index": idx, "value": p["value"]})
+
+            if not gdl_parameters:
+                continue
+
+            rows.append(
+                {
+                    "elementId": {"guid": guid},
+                    "gdlParameters": gdl_parameters,
+                }
+            )
+
+        return {"elementsWithGDLParameters": rows}
+
+    def _normalize_selected_elements(self, raw_result: Any) -> list[str]:
+        """规范化 GetSelectedElements 输出为 GUID 列表。"""
+        if isinstance(raw_result, dict):
+            items = raw_result.get("elements", [])
+        elif isinstance(raw_result, list):
+            items = raw_result
+        else:
+            items = []
+
+        guids = []
+        seen = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            guid = None
+            element_id = item.get("elementId")
+            if isinstance(element_id, dict):
+                guid = element_id.get("guid")
+            if guid is None:
+                guid = item.get("guid")
+            if isinstance(guid, str):
+                g = guid.strip()
+                if g and g not in seen:
+                    seen.add(g)
+                    guids.append(g)
+        return guids
+
+    def _normalize_gdl_parameters(
+        self,
+        raw_result: Any,
+        requested_guids: Optional[list[str]] = None,
+    ) -> list[dict]:
+        """规范化 GetGDLParametersOfElements 输出，稳定为 guid + gdlParameters 列表。"""
+        if isinstance(raw_result, dict):
+            rows = raw_result.get("gdlParametersOfElements", [])
+        elif isinstance(raw_result, list):
+            rows = raw_result
+        else:
+            rows = []
+
+        normalized = []
+        req = requested_guids or []
+
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+
+            guid = None
+            element_id = row.get("elementId")
+            if isinstance(element_id, dict):
+                _guid = element_id.get("guid")
+                if isinstance(_guid, str) and _guid.strip():
+                    guid = _guid.strip()
+            if guid is None:
+                _guid = row.get("guid")
+                if isinstance(_guid, str) and _guid.strip():
+                    guid = _guid.strip()
+            if guid is None and idx < len(req):
+                _guid = req[idx]
+                if isinstance(_guid, str) and _guid.strip():
+                    guid = _guid.strip()
+
+            raw_params = row.get("gdlParameters")
+            if raw_params is None:
+                raw_params = row.get("parameters")
+
+            gdl_parameters = []
+            if isinstance(raw_params, dict):
+                for name, value in raw_params.items():
+                    if isinstance(name, str) and name.strip():
+                        gdl_parameters.append({"name": name, "value": value})
+            elif isinstance(raw_params, list):
+                for p in raw_params:
+                    if isinstance(p, dict):
+                        gdl_parameters.append(dict(p))
+
+            if not gdl_parameters and "name" in row and "value" in row:
+                gdl_parameters = [dict(row)]
+
+            entry = {
+                "guid": guid or "",
+                "gdlParameters": gdl_parameters,
+            }
+            if guid:
+                entry["elementId"] = {"guid": guid}
+            normalized.append(entry)
+
+        return normalized
+
+    def _normalize_execution_results(self, raw_result: Any) -> list[dict]:
+        """兼容 ExecutionResult / ExecutionResults 两种返回形状。"""
+        if isinstance(raw_result, dict):
+            if isinstance(raw_result.get("executionResults"), list):
+                return [r for r in raw_result["executionResults"] if isinstance(r, dict)]
+            if isinstance(raw_result.get("success"), bool):
+                return [raw_result]
+        return []
+
+    def _all_execution_success(self, raw_result: Any, expected_count: int = 0) -> bool:
+        """判断执行结果是否全部成功。"""
+        results = self._normalize_execution_results(raw_result)
+        if not results:
             return False
+        if expected_count > 0 and len(results) < expected_count:
+            return False
+        return all(r.get("success") is True for r in results)
 
     # ── 内部工具 ────────────────────────────────────────────────────────
 
