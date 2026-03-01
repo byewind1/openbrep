@@ -100,7 +100,7 @@ AI 写的代码不可信——必须通过 LP_XMLConverter 真实编译验证。
 
 ## 开发路线图 / Roadmap
 
-### Phase 1: Foundation ✅ 已完成（v0.1 → v0.4.1）
+### Phase 1: Foundation ✅ 已完成（v0.1 → v0.5.1）
 
 - [x] Agent 核心循环（生成 → 编译 → 重试）
 - [x] Anti-hallucination 机制（参数类型自动纠错、Golden Snippets）
@@ -108,25 +108,27 @@ AI 写的代码不可信——必须通过 LP_XMLConverter 真实编译验证。
 - [x] LP_XMLConverter 真实编译集成
 - [x] GDL 源码解析器（.gdl → HSFProject）
 - [x] paramlist.xml 强类型生成器
-- [x] Streamlit Web UI（5 Tab：AI 对话 / 创建导入 / 编辑 / 编译 / 日志）
-- [x] 多模型支持（Claude / GPT / GLM-4.7 / DeepSeek / Ollama）
-- [x] 47 项自动化测试
+- [x] Streamlit Web UI（统一编辑 + 对话工作流）
+- [x] 多模型支持（Claude / GPT / GLM / DeepSeek / Ollama + 自定义 provider）
+- [x] 59 项自动化测试
 - [x] 真实 .gsm 编译验证通过
 
 ### Phase 2: 可用性提升（v0.5 → v0.6）
 
-- [ ] `config.json` 配置系统（API Key + 编译器路径持久化，不再每次启动填写）
-- [ ] Knowledge 文档自动加载（读取 `docs/GDL_01-07.md` 注入 AI 上下文）
-- [ ] Skills 策略智能匹配（根据用户指令自动选择最相关的策略文档）
+- [x] `config.toml` 配置系统（API Key + 编译器路径持久化，启动自动读取）
+- [x] Knowledge 文档自动加载（内置 knowledge + 用户工作区知识库 + Pro 知识包）
+- [x] Skills 策略匹配（按指令任务类型自动选择策略）
 - [ ] AI 对话结果保存到本地（"保存为 .gdl" 按钮）
-- [ ] GDL 语法高亮编辑器（关键字着色、括号匹配）
-- [ ] GDL 静态检查（IF/ENDIF 配对、未定义变量警告、行号级错误提示）
+- [x] GDL 语法高亮编辑器（streamlit-ace）
+- [x] GDL 静态检查（IF/ENDIF、FOR/NEXT、ADD/DEL、GDLValidator）
 - [ ] 批量参数重命名（改名自动同步到所有脚本）
-- [ ] .gsm 导入（LP_XMLConverter libpart2hsf → HSFProject → 编辑 → 重新编译）
+- [x] .gsm 导入（LP_XMLConverter libpart2hsf → HSFProject → 编辑 → 重新编译）
+- [x] 2D / 3D 预览面板（编辑区内即时预览）
+- [x] Tapir Bridge P0（Archicad 实时测试、选中对象 Inspector + 参数 Workbench）
 
 ### Phase 3: 智能增强（v0.7 → v0.8）
 
-- [ ] 3D 简易预览（BLOCK / PRISM_ / CYLINDER 基本体 → three.js 或 trimesh 渲染）
+- [ ] 3D 交互增强预览（选择/测量/剖切/材质反馈）
 - [ ] 对话历史记忆（跨 session 记住项目上下文）
 - [ ] 多对象项目管理（一个 workspace 管理多个 .gsm）
 - [ ] CALL 宏依赖分析（自动检测和管理宏调用关系）
@@ -153,7 +155,7 @@ AI 写的代码不可信——必须通过 LP_XMLConverter 真实编译验证。
 | AI 接口 | litellm | 一个库接入所有 LLM 厂商 |
 | 编译器 | LP_XMLConverter | ArchiCAD 官方工具，唯一能编译 GDL 的引擎 |
 | 格式 | HSF | ArchiCAD 原生文本格式，Git 友好，AI 友好 |
-| 测试 | pytest / 自定义 runner | 47 项自动化测试，Mock 编译器支持无 ArchiCAD 测试 |
+| 测试 | pytest / 自定义 runner | 59 项自动化测试，Mock 编译器支持无 ArchiCAD 测试 |
 
 ---
 
@@ -191,16 +193,19 @@ openbrep 本身开源免费（MIT License）。可能的商业化方向：
 
 ---
 
-## 当前状态 / Current Status（v0.4.1）
+## 当前状态 / Current Status（v0.5.1+）
 
 - 🟢 HSF 原生架构：稳定
 - 🟢 LP_XMLConverter 编译：通过（ArchiCAD 29 验证）
-- 🟢 47 项自动化测试：全部通过
-- 🟢 Streamlit Web UI：可用
-- 🟡 AI 对话：功能可用，knowledge 上下文待接入
-- 🟡 配置系统：每次启动需手动填写
-- 🔴 3D 预览：未实现
-- 🔴 ArchiCAD API 集成：未实现
+- 🟢 59 项自动化测试：全部通过
+- 🟢 Streamlit Web UI：可用（统一编辑、预览、对话、导入、编译）
+- 🟢 配置系统：`config.toml` 自动读取与持久化
+- 🟢 Knowledge / Skills：已接入（含 Pro 知识包）
+- 🟢 2D / 3D 预览：已实现（编辑区内）
+- 🟢 Tapir Bridge：已接入（P0 闭环：实时测试 + 选中对象调参）
+- 🟡 AI 对话结果文件化导出（保存为 .gdl）：待实现
+- 🟡 批量参数重命名：待实现
+- 🔴 ArchiCAD JSON API 集成：未实现
 
 ---
 
