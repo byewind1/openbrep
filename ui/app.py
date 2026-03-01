@@ -74,13 +74,11 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@300;400;600&display=swap');
-
-.stApp { font-family: 'Noto Sans SC', sans-serif; }
-code, .stCodeBlock { font-family: 'JetBrains Mono', monospace !important; }
+.stApp { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+code, .stCodeBlock { font-family: 'SF Mono', 'Menlo', 'Monaco', monospace !important; }
 
 section[data-testid="stSidebar"] .stMarkdown p.main-header {
-    font-family: 'JetBrains Mono', monospace !important;
+    font-family: 'SF Mono', 'Menlo', 'Courier New', monospace !important;
     font-size: 2.8rem !important;
     font-weight: 900 !important;
     text-align: center !important;
