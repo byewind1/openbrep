@@ -53,6 +53,7 @@ except ImportError:
     REASONING_MODELS = set()
     _MODEL_CONSTANTS_OK = False
 from openbrep.skills_loader import SkillsLoader
+from openbrep import __version__ as OPENBREP_VERSION
 try:
     from openbrep.tapir_bridge import get_bridge, errors_to_chat_message
     _TAPIR_IMPORT_OK = True
@@ -474,7 +475,7 @@ def _key_for_model(model: str) -> str:
 with st.sidebar:
     st.markdown('<p class="main-header">OpenBrep</p>', unsafe_allow_html=True)
     st.markdown('<p class="intro-header">用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">OpenBrep: Code Your Boundaries · v0.5 · HSF-native</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="sub-header">OpenBrep: Code Your Boundaries · v{OPENBREP_VERSION} · HSF-native</p>', unsafe_allow_html=True)
     st.divider()
 
     st.subheader("📁 工作目录")
@@ -3294,7 +3295,7 @@ with col_chat:
     st.divider()
     st.markdown(
         '<p style="text-align:center; color:#64748b; font-size:0.8rem;">'
-        'OpenBrep v0.5 · HSF-native · Code Your Boundaries ·'
+        f'OpenBrep v{OPENBREP_VERSION} · HSF-native · Code Your Boundaries ·'
         '<a href="https://github.com/byewind1/openbrep">GitHub</a>'
         '</p>',
         unsafe_allow_html=True,

@@ -1,4 +1,4 @@
-# OpenBrep v0.5
+# OpenBrep
 
 ## 快速开始
 
@@ -147,7 +147,7 @@ openbrep/
 │   ├── knowledge.py         # 知识库加载
 │   └── skills_loader.py     # 任务策略加载
 ├── ui/
-│   └── app.py               # Streamlit Web 界面（v0.5）
+│   └── app.py               # Streamlit Web 界面
 ├── knowledge/               # GDL 参考文档（可自行扩充）
 ├── skills/                  # 任务策略（可自行扩充）
 ├── docs/
@@ -190,6 +190,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/..."
 
 | 版本 | 主要内容 |
 |---|---|
+| **v0.5.2** | 版本标注与发布归档规范化：UI 版本号统一读取代码版本；README 标题去版本；新增发布说明文档（见 `docs/releases/v0.5.2.md`） |
 | **v0.5.1** | 安装包发布准备：新增 macOS/Windows 打包脚本与 GitHub Actions 构建流程（PyInstaller） |
 | **v0.5** | **OpenBrep 品牌发布** — 项目更名为 OpenBrep；稳定版本发布；Gitee 镜像支持（国内用户快速访问） |
 | v0.5 pre | 统一编辑器 UI；**图片即意图**（上传图片 → AI 生成 GDL）；AI 对话修改脚本；确认写入流程；paramlist.xml 自动注入；GSM 导入（AC29）；streamlit-ace 语法高亮；全屏编辑；多模型支持 |
