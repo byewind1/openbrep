@@ -48,5 +48,5 @@
 
 ## 本地运行（常用）
 
-- 启动对外服务（示例）：`python -m uvicorn ... --port 8502`
+- 启动对外服务（示例）：`python -m uvicorn copilot.server:app --port 8502`
 - 若由 `openbrep-addon` 驱动，确保本项目环境与配置可被其进程访问。
