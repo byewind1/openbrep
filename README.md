@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="200" alt="logo">
+  <img src="assets/logo.png" width="1525" alt="logo">
 </p>
 
 # OpenBrep
