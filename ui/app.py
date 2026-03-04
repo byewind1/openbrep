@@ -567,7 +567,7 @@ with st.sidebar:
 
     # 使用 config.py 里的完整模型列表
     _mo = ALL_MODELS if ALL_MODELS else [
-        "glm-4.7", "glm-4.7-flash", "glm-4.6v", "glm-4-flash",
+        "glm-5", "glm-4-flash", "glm-4-flash-x", "glm-4-air", "glm-4-plus",
         "deepseek-chat", "deepseek-reasoner",
         "gpt-4o", "gpt-4o-mini", "o3-mini",
         "claude-sonnet-4-6", "claude-opus-4-6",
@@ -587,7 +587,7 @@ with st.sidebar:
 
     _mo_labels = [_model_label(m) for m in _mo]
 
-    default_model = _config_defaults.get("llm_model", "glm-4.7")
+    default_model = _config_defaults.get("llm_model", "glm-4-flash")
     default_index = _mo.index(default_model) if default_model in _mo else 0
 
     _selected_label = st.selectbox("模型 / Model", _mo_labels, index=default_index)

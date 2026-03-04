@@ -33,6 +33,7 @@ _AC_VERSIONS = ["29", "28", "27", "26", "25"]
 
 ALL_MODELS = [
     # Zhipu GLM
+    "glm-5",
     "glm-4-flash",
     "glm-4-flash-x",
     "glm-4-air",

@@ -100,7 +100,7 @@ streamlit run ui/app.py
 | 提供商 | 模型 | 说明 |
 |---|---|---|
 | Anthropic | claude-haiku / sonnet / opus | 推荐首选 |
-| 智谱 | glm-4.7 / glm-4.7-flash | 国内可用，性价比高 |
+| 智谱 | glm-5 / glm-4-flash | 国内可用，性价比高 |
 | OpenAI | gpt-4o / gpt-4o-mini / o3-mini | |
 | DeepSeek | deepseek-chat / deepseek-reasoner | |
 | Google | gemini-2.5-flash / pro | |
@@ -175,7 +175,7 @@ openbrep/
 
 ```toml
 [llm]
-model = "glm-4.7"
+model = "glm-4-flash"
 
 [llm.provider_keys]
 zhipu     = "your-zhipu-key"
