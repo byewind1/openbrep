@@ -41,22 +41,27 @@
 
 ## 安装与启动
 
-**方式一：一键安装（推荐新手）**
+### 首次安装
 
 ```bash
-git clone https://github.com/byewind1/openbrep.git
-cd openbrep
+git clone https://github.com/byewind1/gdl-agent.git
+cd gdl-agent
 bash install.sh
+obr
 ```
 
-然后双击 `start.command` 启动。
+> 如果 `obr` 不可用，重开终端或运行 `source ~/.zshrc`
 
-**方式二：命令行（开发者）**
+### 升级
 
 ```bash
-pip install -e ".[ui]"
-streamlit run ui/app.py
+cd gdl-agent
+git pull origin main
+bash install.sh   # 有新依赖时重跑，无害
+obr
 ```
+
+> 个人配置（config.toml / API Key）升级后保持不变，无需重新配置。
 
 需要 Python 3.10+。真实编译（.gsm 输出）需要安装 ArchiCAD 28/29。
 

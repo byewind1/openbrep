@@ -11,4 +11,4 @@ elif [ -f "venv/bin/activate" ]; then
   source venv/bin/activate
 fi
 
-streamlit run ui/app.py
+obr

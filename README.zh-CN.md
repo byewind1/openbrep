@@ -32,18 +32,27 @@
 
 详见 **[安装指南（INSTALL_CN.md）](INSTALL_CN.md)** — 包含 Python 设置、VPN/代理配置（国内用户）、依赖安装、LLM 设置、常见问题排查。
 
-快速开始（已有 Python 3.10+）：
+### 首次安装
 
 ```bash
-# GitHub (国际用户)
-git clone https://github.com/byewind1/openbrep.git
-# 或 Gitee (国内用户，速度更快)
-git clone https://gitee.com/byewind/openbrep.git
-
-cd openbrep
-pip install -e ".[ui]"
-streamlit run ui/app.py
+git clone https://github.com/byewind1/gdl-agent.git
+cd gdl-agent
+bash install.sh
+obr
 ```
+
+> 如果 `obr` 不可用，重开终端或运行 `source ~/.zshrc`
+
+### 升级
+
+```bash
+cd gdl-agent
+git pull origin main
+bash install.sh   # 有新依赖时重跑，无害
+obr
+```
+
+> 个人配置（config.toml / API Key）升级后保持不变，无需重新配置。
 
 真实编译（.gsm 输出）需要 ArchiCAD 28/29。
 
