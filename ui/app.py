@@ -1473,12 +1473,14 @@ def run_agent_generate(
         elif event_type == "validate":
             errors = data.get("errors", [])
             if errors:
-                status_ph.warning(f"⚠️ 校验发现 {len(errors)} 个问题，自动修复中...")
+                status_ph.warning(f"⚠️ 发现 {len(errors)} 个问题，AI 自动修复中...")
             else:
                 status_ph.success("✅ 校验通过")
         elif event_type == "rewrite":
             round_num = data.get("round", 2)
-            status_ph.info(f"🔄 第 {round_num} 轮自动修复中，请稍候...")
+            reason = data.get("reason", "")
+            first_line = reason.splitlines()[0] if reason else ""
+            status_ph.info(f"🔄 第 {round_num} 轮修复中：{first_line[:40]}...")
 
     try:
         llm = get_llm()
