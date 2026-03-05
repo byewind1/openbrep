@@ -302,8 +302,43 @@ class GDLAgent:
                     self._apply_changes(rewritten_project, changes)
                     second_errors = self.validator.validate_all(rewritten_project)
                     self.on_event("validate", {"errors": second_errors})
+
                     if second_errors:
-                        validation_feedback = "⚠️ 校验仍有问题：\n- " + "\n- ".join(second_errors)
+                        # 第三轮：专项修复跨脚本逻辑一致性
+                        cross_script_prompt = (
+                            "请检查并修复以下跨脚本一致性问题，重新输出完整脚本：\n"
+                            "1. 3D 脚本中使用的参数变量，必须在参数表中有对应定义，类型和默认值合理\n"
+                            "2. Master 脚本中的参数赋值逻辑，必须与参数表定义和 3D 脚本使用一致\n"
+                            "3. 参数表中的参数顺序和分组，需符合 GDL 规范\n"
+                            "4. 修复以下校验错误：\n" + "\n".join(second_errors)
+                        )
+                        self.on_event("rewrite", {"reason": cross_script_prompt, "round": 3})
+
+                        third_messages = self._build_messages(
+                            instruction, context, knowledge, skills,
+                            error=cross_script_prompt,
+                            history=history,
+                            chat_mode=chat_mode,
+                            syntax_report=syntax_report,
+                        )
+                        third_raw = self.llm.generate(third_messages)
+                        third_response = third_raw.content if hasattr(third_raw, "content") else str(third_raw)
+                        self.on_event("llm_response", {"length": len(third_response), "rewrite": True})
+
+                        third_changes = self._parse_response(third_response)
+                        if third_changes:
+                            changes = third_changes
+                            response = third_response
+
+                            third_project = deepcopy(project)
+                            self._apply_changes(third_project, changes)
+                            third_errors = self.validator.validate_all(third_project)
+                            self.on_event("validate", {"errors": third_errors})
+                            if third_errors:
+                                validation_feedback = "⚠️ 三轮校验后仍有问题：\n- " + "\n- ".join(third_errors)
+                        else:
+                            validation_feedback = "⚠️ 第三轮重写未返回可解析脚本，保留第二轮结果。"
+                    # 二轮通过则 validation_feedback 保持空字符串
                 else:
                     validation_feedback = "⚠️ 自动重写未返回可解析脚本，保留首次生成结果。"
 

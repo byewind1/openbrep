@@ -1470,6 +1470,15 @@ def run_agent_generate(
             status_ph.info("🧠 调用 AI...")
         elif event_type == "llm_response":
             status_ph.info(f"✏️ 收到 {data['length']} 字符，解析中...")
+        elif event_type == "validate":
+            errors = data.get("errors", [])
+            if errors:
+                status_ph.warning(f"⚠️ 校验发现 {len(errors)} 个问题，自动修复中...")
+            else:
+                status_ph.success("✅ 校验通过")
+        elif event_type == "rewrite":
+            round_num = data.get("round", 2)
+            status_ph.info(f"🔄 第 {round_num} 轮自动修复中，请稍候...")
 
     try:
         llm = get_llm()
