@@ -2374,7 +2374,7 @@ def _render_preview_2d(data: Preview2DResult) -> None:
         xaxis={"title": "X"},
         yaxis={"title": "Y", "scaleanchor": "x", "scaleratio": 1},
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_preview_3d(data: Preview3DResult) -> None:
@@ -2431,7 +2431,7 @@ def _render_preview_3d(data: Preview3DResult) -> None:
             "zaxis": {"title": "Z"},
         },
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
