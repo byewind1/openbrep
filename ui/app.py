@@ -2296,6 +2296,31 @@ def _collect_preview_prechecks(proj: HSFProject, target: str) -> list[str]:
     return _dedupe_keep_order(warns)
 
 
+def _sync_visible_editor_buffers(proj: HSFProject, editor_version: int) -> bool:
+    changed = False
+    for stype, fpath, _label in _SCRIPT_MAP:
+        current_code = proj.get_script(stype) or ""
+        editor_key = f"ace_{fpath}_v{editor_version}" if _ACE_AVAILABLE else f"script_{fpath}_v{editor_version}"
+        if editor_key not in st.session_state:
+            continue
+        raw_value = st.session_state.get(editor_key)
+        if raw_value is None:
+            continue
+        new_code = raw_value or ""
+        if new_code == current_code:
+            continue
+        proj.set_script(stype, new_code)
+        changed = True
+
+    if changed:
+        st.session_state.preview_2d_data = None
+        st.session_state.preview_3d_data = None
+        st.session_state.preview_warnings = []
+        st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+
+    return changed
+
+
 def _render_preview_2d(data: Preview2DResult) -> None:
     if not data:
         st.info("暂无 2D 预览数据。")
@@ -2435,6 +2460,7 @@ def _render_preview_3d(data: Preview3DResult) -> None:
 
 
 def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
+    _sync_visible_editor_buffers(proj, int(st.session_state.get("editor_version", 0)))
     params = _preview_param_values(proj)
     pre_warns = _collect_preview_prechecks(proj, target)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
