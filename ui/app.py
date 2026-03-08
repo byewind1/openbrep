@@ -209,6 +209,8 @@ if "confirm_clear" not in st.session_state:
 if "editor_version" not in st.session_state:
     # Increment on import/clear to force text_area widget recreation (avoids stale Streamlit cache)
     st.session_state.editor_version = 0
+if "_ace_pending_main_editor_keys" not in st.session_state:
+    st.session_state._ace_pending_main_editor_keys = set()
 if "script_revision" not in st.session_state:
     # Script revision for header/file naming; starts from v1 on first write
     st.session_state.script_revision = 0
@@ -696,7 +698,7 @@ with st.sidebar:
             st.session_state.preview_warnings = []
             st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
             _reset_tapir_p0_state()
-            st.session_state.editor_version  += 1
+            _bump_main_editor_version()
             st.session_state.work_dir         = _keep_work_dir
             st.session_state.model_api_keys   = _keep_api_keys
             st.session_state.chat_history     = _keep_chat
@@ -1039,7 +1041,7 @@ if _HAS_DIALOG:
             if st.button("✅ 应用", type="primary", width='stretch'):
                 if st.session_state.project:
                     st.session_state.project.set_script(stype, new_code)
-                    st.session_state.editor_version += 1
+                    _bump_main_editor_version()
                 st.rerun()
         with c2:
             if st.button("❌ 取消", width='stretch'):
@@ -1407,6 +1409,29 @@ _SCRIPT_MAP = [
     (ScriptType.PROPERTIES,"scripts/pr.gdl",  "Properties"),
 ]
 
+
+def _main_editor_state_key(fpath: str, editor_version: int) -> str:
+    prefix = "ace" if _ACE_AVAILABLE else "script"
+    return f"{prefix}_{fpath}_v{editor_version}"
+
+
+
+def _mark_main_ace_editors_pending(editor_version: int) -> None:
+    if not _ACE_AVAILABLE:
+        st.session_state._ace_pending_main_editor_keys = set()
+        return
+    st.session_state._ace_pending_main_editor_keys = {
+        f"ace_{fpath}_v{editor_version}"
+        for _, fpath, _ in _SCRIPT_MAP
+    }
+
+
+def _bump_main_editor_version() -> int:
+    st.session_state.editor_version = int(st.session_state.get("editor_version", 0)) + 1
+    _mark_main_ace_editors_pending(st.session_state.editor_version)
+    return st.session_state.editor_version
+
+
 # ── Run Agent ─────────────────────────────────────────────
 
 # Keywords that signal debug/analysis intent → inject all scripts + allow plain-text reply
@@ -1554,7 +1579,7 @@ def run_agent_generate(
             if auto_apply:
                 # 全新空项目：直接写入，无需确认
                 sc, pc = _apply_scripts_to_project(proj, cleaned)
-                st.session_state.editor_version += 1
+                _bump_main_editor_version()
                 if gsm_name:
                     st.session_state.pending_gsm_name = gsm_name
                 reply_parts.append(
@@ -1869,7 +1894,7 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     st.session_state.pending_gsm_name = _import_gsm_name
     st.session_state.script_revision = 0
     _reset_tapir_p0_state()
-    st.session_state.editor_version += 1
+    _bump_main_editor_version()
     st.session_state.chat_history.append({"role": "assistant", "content": msg})
     return (True, msg)
 
@@ -2102,7 +2127,7 @@ def run_vision_generate(
 
             if auto_apply:
                 _apply_scripts_to_project(proj, extracted)
-                st.session_state.editor_version += 1
+                _bump_main_editor_version()
                 prefix = f"🖼️ **图片解析完成，{label_str} 已写入编辑器** — 可直接「🔧 编译」\n\n"
             else:
                 st.session_state.pending_diffs    = extracted
@@ -2298,19 +2323,25 @@ def _collect_preview_prechecks(proj: HSFProject, target: str) -> list[str]:
 
 def _sync_visible_editor_buffers(proj: HSFProject, editor_version: int) -> bool:
     changed = False
+    pending_keys = st.session_state.get("_ace_pending_main_editor_keys") or set()
     for stype, fpath, _label in _SCRIPT_MAP:
         current_code = proj.get_script(stype) or ""
-        editor_key = f"ace_{fpath}_v{editor_version}" if _ACE_AVAILABLE else f"script_{fpath}_v{editor_version}"
+        editor_key = _main_editor_state_key(fpath, editor_version)
         if editor_key not in st.session_state:
             continue
         raw_value = st.session_state.get(editor_key)
         if raw_value is None:
             continue
         new_code = raw_value or ""
+        if _ACE_AVAILABLE and editor_key in pending_keys and current_code and new_code == "":
+            continue
+        pending_keys.discard(editor_key)
         if new_code == current_code:
             continue
         proj.set_script(stype, new_code)
         changed = True
+
+    st.session_state._ace_pending_main_editor_keys = pending_keys
 
     if changed:
         st.session_state.preview_2d_data = None
@@ -2723,7 +2754,7 @@ with col_editor:
                     st.session_state.preview_warnings = []
                     st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
                     _reset_tapir_p0_state()
-                    st.session_state.editor_version  += 1
+                    _bump_main_editor_version()
                     st.session_state.work_dir         = _keep_work_dir
                     st.session_state.model_api_keys   = _keep_api_keys
                     st.session_state.chat_history     = _keep_chat
@@ -2806,6 +2837,7 @@ with col_editor:
 
                 current_code = proj_now.get_script(stype) or ""
                 skey = fpath.replace("scripts/", "").replace(".gdl", "")
+                editor_key = _main_editor_state_key(fpath, _ev)
 
                 if _ACE_AVAILABLE:
                     _raw_ace = st_ace(
@@ -2818,15 +2850,22 @@ with col_editor:
                         show_gutter=True,
                         show_print_margin=False,
                         wrap=False,
-                        key=f"ace_{fpath}_v{_ev}",
+                        key=editor_key,
                     )
-                    # st_ace returns None on first render (widget not yet initialized).
-                    # NEVER let None → "" silently overwrite real script content.
-                    new_code = _raw_ace if _raw_ace is not None else current_code
+                    # 导入/程序化覆盖后，Ace 可能先回传空字符串，再完成 hydration。
+                    # 在待 hydration 阶段保留 proj 中的非空脚本，避免预览前被错误清空。
+                    pending_keys = st.session_state.get("_ace_pending_main_editor_keys", set())
+                    if editor_key in pending_keys and current_code and _raw_ace in (None, ""):
+                        new_code = current_code
+                    else:
+                        if editor_key in pending_keys and (_raw_ace is not None or not current_code):
+                            pending_keys.discard(editor_key)
+                            st.session_state._ace_pending_main_editor_keys = pending_keys
+                        new_code = _raw_ace if _raw_ace is not None else current_code
                 else:
                     new_code = st.text_area(
                         label, value=current_code, height=280,
-                        key=f"script_{fpath}_v{_ev}", label_visibility="collapsed",
+                        key=editor_key, label_visibility="collapsed",
                     ) or ""  # text_area never returns None; empty string is a valid clear
 
                 if new_code != current_code:
@@ -2994,7 +3033,7 @@ with col_chat:
                         # 只覆盖此消息中实际包含的脚本/参数，其余保留
                         if st.session_state.project:
                             _apply_scripts_to_project(st.session_state.project, extracted)
-                        st.session_state.editor_version += 1
+                        _bump_main_editor_version()
                         st.session_state.adopted_msg_index = msg_idx
                         st.session_state["_pending_adopt_idx"] = None
                         st.toast("✅ 已写入编辑器", icon="📥")
@@ -3039,7 +3078,7 @@ with col_chat:
                         _ok_parts = []
                         if sc: _ok_parts.append(f"{sc} 个脚本")
                         if pc: _ok_parts.append(f"{pc} 个参数")
-                        st.session_state.editor_version += 1
+                        _bump_main_editor_version()
                         st.toast(f"✅ 已写入 {'、'.join(_ok_parts)}", icon="✏️")
                     st.session_state.pending_diffs    = {}
                     st.session_state.pending_ai_label = ""
