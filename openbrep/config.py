@@ -57,6 +57,7 @@ ALL_MODELS = [
     "gpt-4.1",
     "gpt-4.1-mini",
     "gpt-5.4",
+    "gpt-5.2-codex",
     "gpt-4o",
     "gpt-4o-mini",
     "o3",

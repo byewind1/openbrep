@@ -89,3 +89,9 @@ knowledge_dir = "./knowledge"
 templates_dir = "./templates"
 src_dir = "./src"
 output_dir = "./output"
+
+[llm.gpt52codex]
+model = "gpt-5.2-codex"
+api_key = "your-api-key"
+base_url = "your-proxy-base-url/v1"
+# 填入你自己的代理地址和 key
