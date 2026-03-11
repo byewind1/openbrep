@@ -294,6 +294,14 @@ class GDLAgentConfig:
             output_dir=data.get("output_dir", "./output"),
         )
 
+    def get_available_models(self) -> list[str]:
+        custom_models = []
+        for p in self.llm.custom_providers:
+            for m in p.get("models", []) or []:
+                if m not in custom_models:
+                    custom_models.append(m)
+        return custom_models + [m for m in ALL_MODELS if m not in custom_models]
+
     def ensure_dirs(self):
         for d in [self.knowledge_dir, self.templates_dir, self.src_dir, self.output_dir]:
             Path(d).mkdir(parents=True, exist_ok=True)

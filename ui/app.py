@@ -412,7 +412,7 @@ def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -
 
 _config_defaults = {}
 _provider_keys: dict = {}   # {provider: api_key}
-_custom_providers: dict = {}  # {provider: {base_url, model, api_key}}
+_custom_providers: list = []  # [{base_url, models, api_key, protocol, name}]
 
 try:
     from openbrep.config import GDLAgentConfig
@@ -431,15 +431,7 @@ try:
         _provider_keys = _llm_raw.get("provider_keys", {})
 
         # ── 自定义 Provider (config.toml) ──
-        for _pname, _pcfg in _llm_raw.items():
-            if _pname in {"provider_keys", "model", "api_key", "api_base", "temperature", "max_tokens"}:
-                continue
-            if isinstance(_pcfg, dict):
-                _custom_providers[_pname] = {
-                    "base_url": str(_pcfg.get("base_url", "") or ""),
-                    "model": str(_pcfg.get("model", "") or ""),
-                    "api_key": str(_provider_keys.get(_pname, "") or ""),
-                }
+        _custom_providers = _llm_raw.get("custom_providers", []) or []
 
     _config = GDLAgentConfig.load()
     _config_defaults = {
@@ -455,9 +447,10 @@ def _key_for_model(model: str) -> str:
     m = model.lower()
 
     # 自定义 provider 的模型精确匹配
-    for _pcfg in _custom_providers.values():
-        if m == str(_pcfg.get("model", "")).lower():
-            return str(_pcfg.get("api_key", "") or "")
+    for _pcfg in _custom_providers:
+        for _m in _pcfg.get("models", []) or []:
+            if m == str(_m).lower():
+                return str(_pcfg.get("api_key", "") or "")
 
     if "glm" in m:
         return _provider_keys.get("zhipu", "")
@@ -567,19 +560,14 @@ with st.sidebar:
     st.divider()
     st.subheader("🧠 AI 模型 / LLM")
 
-    # 使用 config.py 里的完整模型列表
-    _mo = ALL_MODELS if ALL_MODELS else [
+    # 使用 config.py 里的完整模型列表 + 自定义模型
+    _mo = _config.get_available_models() if _config else (ALL_MODELS if ALL_MODELS else [
         "glm-5", "glm-4-flash", "glm-4-flash-x", "glm-4-air", "glm-4-plus",
         "deepseek-chat", "deepseek-reasoner",
         "gpt-4o", "gpt-4o-mini", "o3-mini",
         "claude-sonnet-4-6", "claude-opus-4-6",
         "gemini/gemini-2.5-flash",
-    ]
-
-    # ── 自定义 Provider (config.toml) ──
-    _custom_models = [str(v.get("model", "") or "") for v in _custom_providers.values() if str(v.get("model", "") or "")]
-    if _custom_models:
-        _mo = list(dict.fromkeys(_custom_models + _mo))
+    ])
     # 下拉显示时加视觉/推理标注
     def _model_label(m: str) -> str:
         tags = []
@@ -602,13 +590,23 @@ with st.sidebar:
         # Auto-fill from config.toml provider_keys
         st.session_state.model_api_keys[model_name] = _key_for_model(model_name)
 
-    api_key = st.text_input(
-        "API Key",
-        value=st.session_state.model_api_keys.get(model_name, ""),
-        type="password",
-        help="Ollama 本地模式不需要 Key",
-        disabled=st.session_state.agent_running,
+    _custom_list = _config.llm.custom_providers if _config else _custom_providers
+    is_custom = any(
+        model_name in (p.get("models", []) or [])
+        for p in _custom_list
     )
+
+    if is_custom:
+        st.info("此模型使用自定义代理，请在 config.toml 的 [[llm.custom_providers]] 中配置 api_key 和 base_url")
+        api_key = st.session_state.model_api_keys.get(model_name, "")
+    else:
+        api_key = st.text_input(
+            "API Key",
+            value=st.session_state.model_api_keys.get(model_name, ""),
+            type="password",
+            help="Ollama 本地模式不需要 Key",
+            disabled=st.session_state.agent_running,
+        )
 
     # Auto-save API Key + 持久化写回 config.toml
     if api_key != st.session_state.model_api_keys.get(model_name, ""):
