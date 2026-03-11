@@ -143,7 +143,7 @@ class LLMConfig:
     temperature: float = 0.2
     max_tokens: int = 4096
     provider_keys: dict[str, str] = field(default_factory=dict)
-    custom_providers: dict[str, dict[str, str]] = field(default_factory=dict)
+    custom_providers: list[dict] = field(default_factory=list)
 
     def resolve_api_key(self) -> Optional[str]:
         if self.api_key:
@@ -167,14 +167,13 @@ class LLMConfig:
                 if key in self.provider_keys:
                     return self.provider_keys[key]
 
-        # Check custom providers by exact configured model name
-        for provider_name, provider_cfg in self.custom_providers.items():
-            if model_lower == str(provider_cfg.get("model", "")).lower():
-                _k = provider_cfg.get("api_key")
+        # Check custom providers by configured models list
+        for provider in self.custom_providers:
+            models = provider.get("models", []) or []
+            if any(model_lower == str(m).lower() for m in models):
+                _k = provider.get("api_key")
                 if _k:
                     return str(_k)
-                if provider_name in self.provider_keys:
-                    return self.provider_keys[provider_name]
 
         # Fallback to environment variables
         for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
@@ -182,6 +181,17 @@ class LLMConfig:
             if val:
                 return val
         return None
+
+    def get_provider_for_model(self, model_name: str) -> dict:
+        for provider in self.custom_providers:
+            if model_name in (provider.get("models", []) or []):
+                return {
+                    "api_key": provider.get("api_key", ""),
+                    "base_url": provider.get("base_url", ""),
+                    "protocol": provider.get("protocol", "openai"),
+                }
+        return {}
+
 
 
 @dataclass
@@ -234,23 +244,16 @@ class GDLAgentConfig:
                 data = tomllib.load(f)
                 llm_data = data.get("llm", {}) if isinstance(data, dict) else {}
                 if isinstance(llm_data, dict):
-                    provider_keys = llm_data.get("provider_keys", {})
-                    for provider_name, provider_cfg in llm_data.items():
-                        if provider_name in {"provider_keys", "model", "api_key", "api_base", "temperature", "max_tokens", "custom_providers"}:
-                            continue
-                        if not isinstance(provider_cfg, dict):
-                            continue
-                        custom_model = str(provider_cfg.get("model", "") or "")
-                        if not custom_model:
-                            continue
-                        if str(llm_data.get("model", "") or "") == custom_model:
-                            custom_base = str(provider_cfg.get("base_url", "") or "")
+                    custom_providers = llm_data.get("custom_providers", []) or []
+                    for provider in custom_providers:
+                        models = provider.get("models", []) or []
+                        if str(llm_data.get("model", "") or "") in models:
+                            custom_base = str(provider.get("base_url", "") or "")
                             if custom_base and not str(llm_data.get("api_base", "") or ""):
                                 llm_data["api_base"] = custom_base
-                            if isinstance(provider_keys, dict):
-                                custom_key = str(provider_keys.get(provider_name, "") or "")
-                                if custom_key and not str(llm_data.get("api_key", "") or ""):
-                                    llm_data["api_key"] = custom_key
+                            custom_key = str(provider.get("api_key", "") or "")
+                            if custom_key and not str(llm_data.get("api_key", "") or ""):
+                                llm_data["api_key"] = custom_key
                             if isinstance(llm_data.get("api_base"), str):
                                 _norm_base = llm_data["api_base"].rstrip("/")
                                 if _norm_base and not _norm_base.endswith("/v1"):
@@ -272,18 +275,11 @@ class GDLAgentConfig:
             return klass(**{k: v for k, v in d.items() if k in klass.__dataclass_fields__})
 
         llm_data = data.get("llm", {})
-        custom_providers: dict[str, dict[str, str]] = {}
-        provider_keys = llm_data.get("provider_keys", {})
+        custom_providers = []
         if isinstance(llm_data, dict):
-            for provider_name, provider_cfg in llm_data.items():
-                if provider_name in {"provider_keys", "model", "api_key", "api_base", "temperature", "max_tokens", "custom_providers"}:
-                    continue
-                if isinstance(provider_cfg, dict):
-                    custom_providers[provider_name] = {
-                        "base_url": str(provider_cfg.get("base_url", "") or ""),
-                        "model": str(provider_cfg.get("model", "") or ""),
-                        "api_key": str(provider_keys.get(provider_name, "") or ""),
-                    }
+            raw_custom = llm_data.get("custom_providers", []) or []
+            if isinstance(raw_custom, list):
+                custom_providers = raw_custom
 
         llm_cfg = pick(LLMConfig, llm_data)
         llm_cfg.custom_providers = custom_providers
