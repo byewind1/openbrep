@@ -245,6 +245,10 @@ class LLMAdapter:
         elif "ollama" in model_lower:
             return model  # Already has ollama/ prefix or will be handled
 
+        for provider in self.config.custom_providers:
+            if provider.get("name") == model and provider.get("protocol") == "openai":
+                return f"openai/{model}"
+
         return model
 
 
