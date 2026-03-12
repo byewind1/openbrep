@@ -148,6 +148,11 @@ class LLMConfig:
     def resolve_api_key(self) -> Optional[str]:
         if self.api_key:
             return self.api_key
+        for provider in self.custom_providers:
+            if provider.get("name") == self.model:
+                _k = provider.get("api_key")
+                if _k:
+                    return str(_k)
         # Check provider_keys first
         model_lower = self.model.lower()
         if "glm" in model_lower:
@@ -180,6 +185,23 @@ class LLMConfig:
             val = os.environ.get(name)
             if val:
                 return val
+        return None
+
+    def resolve_api_base(self) -> Optional[str]:
+        if self.api_base:
+            return self.api_base
+        for provider in self.custom_providers:
+            if provider.get("name") == self.model:
+                base = provider.get("base_url")
+                if base:
+                    return str(base)
+        model_lower = self.model.lower()
+        for provider in self.custom_providers:
+            models = provider.get("models", []) or []
+            if any(model_lower == str(m).lower() for m in models):
+                base = provider.get("base_url")
+                if base:
+                    return str(base)
         return None
 
     def get_provider_for_model(self, model_name: str) -> dict:

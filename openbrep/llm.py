@@ -121,8 +121,9 @@ class LLMAdapter:
         # — they handle endpoints internally. Only pass for openai-compatible custom endpoints.
         native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
         is_native = any(model.startswith(p) for p in native_providers)
-        if self.config.api_base and not is_native:
-            completion_kwargs["api_base"] = self.config.api_base
+        api_base = self.config.resolve_api_base()
+        if api_base and not is_native:
+            completion_kwargs["api_base"] = api_base
 
         completion_kwargs.update(kwargs)
 
@@ -199,8 +200,9 @@ class LLMAdapter:
 
         native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
         is_native = any(model.startswith(p) for p in native_providers)
-        if self.config.api_base and not is_native:
-            completion_kwargs["api_base"] = self.config.api_base
+        api_base = self.config.resolve_api_base()
+        if api_base and not is_native:
+            completion_kwargs["api_base"] = api_base
 
         completion_kwargs.update(kwargs)
 
