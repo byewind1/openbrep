@@ -110,6 +110,70 @@
 - 禁止在没有明确问题时重写全部脚本
 
 
+## 配置系统
+
+### 文件说明
+- config.toml：用户本地配置，不进 git
+- config.example.toml：模板，进 git，key 用占位符
+
+### config.toml 格式（新格式，2026年3月起）
+[llm]
+model = "模型名"
+temperature = 0.2
+max_tokens = 4096
+
+[llm.provider_keys]
+zhipu    = "key"   # glm-* 系列
+deepseek = "key"   # deepseek-* 系列
+aliyun   = "key"   # qwen-* 系列
+kimi     = "key"   # moonshot-* 系列
+
+[[llm.custom_providers]]
+name     = "my-proxy"
+base_url = "https://your-proxy.com/v1"
+api_key  = "your-key"
+models   = ["gpt-5.4", "gpt-5.2-codex"]
+protocol = "openai"   # openai | anthropic
+
+[compiler]
+path    = "/path/to/LP_XMLConverter"
+timeout = 60
+
+### 关键规则
+- custom_providers 是 list[dict]，不是 dict，遍历用 for p in custom_providers
+- compiler 路径字段名是 path，不是 lp_converter_path（旧格式已废弃）
+- 选中 custom_providers 里的模型时，UI 隐藏 API Key 输入框
+- get_provider_for_model() 匹配顺序：custom_providers → provider_keys 前缀匹配
+
+### 前缀匹配规则
+- glm- → zhipu
+- deepseek- → deepseek
+- qwen- / qwq- → aliyun
+- moonshot- → kimi
+- ollama/ → 本地直连，无需 key
+
+## 快速上手
+
+### 启动
+obr                          # 启动 Streamlit UI
+python3 -m py_compile openbrep/config.py  # 语法检查
+
+### 验证预览
+python3 -c "
+from openbrep.gdl_previewer import preview_3d_script
+r = preview_3d_script('BLOCK 1,1,1\nEND')
+print('meshes:', len(r.meshes))
+"
+
+### 验证配置
+python3 -c "
+from openbrep.config import load_config
+c = load_config()
+print('model:', c.llm.model)
+print('custom_providers:', len(c.llm.custom_providers))
+"
+
+
 ## 模型使用建议
 - 精细代码编辑（str_replace、多步骤缩进修改）：必须用 claude 系列模型
 - GLM-4.7 适合：对话、分析、解释、简单生成
