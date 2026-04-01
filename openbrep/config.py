@@ -142,6 +142,7 @@ class LLMConfig:
     api_base: Optional[str] = None
     temperature: float = 0.2
     max_tokens: int = 4096
+    timeout: int = 90
     provider_keys: dict[str, str] = field(default_factory=dict)
     custom_providers: list[dict] = field(default_factory=list)
 

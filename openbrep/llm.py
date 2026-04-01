@@ -9,9 +9,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+import logging
+import time
 from typing import Optional
 
 from openbrep.config import LLMConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -106,6 +111,7 @@ class LLMAdapter:
             "messages": msg_dicts,
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
+            "timeout": self.config.timeout,
         }
 
         model_lower = model.lower()
@@ -127,9 +133,18 @@ class LLMAdapter:
 
         completion_kwargs.update(kwargs)
 
+        start_time = time.perf_counter()
         try:
             response = self._litellm.completion(**completion_kwargs)
         except Exception as exc:
+            elapsed = time.perf_counter() - start_time
+            logger.warning(
+                "LLM text call failed model=%s prompt_messages=%d elapsed=%.2fs error=%s",
+                model,
+                len(msg_dicts),
+                elapsed,
+                exc.__class__.__name__,
+            )
             litellm_exceptions = getattr(self._litellm, "exceptions", None)
             bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
             auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
@@ -138,7 +153,14 @@ class LLMAdapter:
                     "LLM 配置错误：请检查 config.toml 中 model 字段是否填写了正确的模型名称（如 gpt-4o、claude-3-5-sonnet），以及对应的 api_key 是否已配置。"
                 ) from exc
             raise
+        if not response.choices:
             raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
+        logger.info(
+            "LLM text call finished model=%s prompt_messages=%d elapsed=%.2fs",
+            model,
+            len(msg_dicts),
+            time.perf_counter() - start_time,
+        )
         choice = response.choices[0]
         return LLMResponse(
             content=choice.message.content or "",
@@ -195,6 +217,7 @@ class LLMAdapter:
             "messages": messages,
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
+            "timeout": self.config.timeout,
         }
 
         model_lower = model.lower()
@@ -214,9 +237,27 @@ class LLMAdapter:
 
         completion_kwargs.update(kwargs)
 
+        start_time = time.perf_counter()
+        logger.info(
+            "LLM vision call started model=%s image_mime=%s image_b64_len=%d prompt_len=%d",
+            model,
+            image_mime,
+            len(image_b64),
+            len(text_prompt or ""),
+        )
         try:
             response = self._litellm.completion(**completion_kwargs)
         except Exception as exc:
+            elapsed = time.perf_counter() - start_time
+            logger.warning(
+                "LLM vision call failed model=%s image_mime=%s image_b64_len=%d prompt_len=%d elapsed=%.2fs error=%s",
+                model,
+                image_mime,
+                len(image_b64),
+                len(text_prompt or ""),
+                elapsed,
+                exc.__class__.__name__,
+            )
             litellm_exceptions = getattr(self._litellm, "exceptions", None)
             bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
             auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
@@ -227,6 +268,14 @@ class LLMAdapter:
             raise
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
+        logger.info(
+            "LLM vision call finished model=%s image_mime=%s image_b64_len=%d prompt_len=%d elapsed=%.2fs",
+            model,
+            image_mime,
+            len(image_b64),
+            len(text_prompt or ""),
+            time.perf_counter() - start_time,
+        )
         choice = response.choices[0]
         return LLMResponse(
             content=choice.message.content or "",

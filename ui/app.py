@@ -10,7 +10,7 @@ import os
 import time
 import math
 import base64
-import asyncio
+import logging
 import json
 import csv
 import hashlib
@@ -55,6 +55,10 @@ except ImportError:
     _MODEL_CONSTANTS_OK = False
 from openbrep.skills_loader import SkillsLoader
 from openbrep import __version__ as OPENBREP_VERSION
+
+logger = logging.getLogger(__name__)
+MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
+
 try:
     from openbrep.tapir_bridge import get_bridge, errors_to_chat_message
     _TAPIR_IMPORT_OK = True
@@ -1523,13 +1527,19 @@ def run_agent_generate(
         skills_text = load_skills().get_for_task(clean_instruction)
 
         # Pass recent chat history for multi-turn context (last 6 messages, skip heavy code blocks)
-        recent_history = [
+        recent_history = _trim_history_for_image([
             m for m in st.session_state.chat_history[-8:]
             if m["role"] in ("user", "assistant")
-        ]
+        ])
 
         last_code_context = None
 
+        logger.info(
+            "vision debug start route=debug image_name=%s has_project=%s prompt_len=%d",
+            "inline-image",
+            bool(proj),
+            len(clean_instruction or ""),
+        )
         agent = GDLAgent(llm=llm, compiler=get_compiler(), on_event=on_event)
         changes, plain_text = agent.generate_only(
             instruction=clean_instruction, project=proj,
@@ -1993,6 +2003,33 @@ def _build_chat_script_anchors(history: list[dict]) -> list[dict]:
     return anchors
 
 
+def _classify_vision_error(exc: Exception) -> str:
+    msg = str(exc).strip() or exc.__class__.__name__
+    lower_msg = msg.lower()
+    if isinstance(exc, TimeoutError) or "timeout" in lower_msg or "timed out" in lower_msg:
+        return "图片分析超时：请换更小的图片，或检查当前模型服务/代理是否响应正常。"
+    if "配置错误" in msg or "api key" in lower_msg or "authentication" in lower_msg or "unauthorized" in lower_msg:
+        return msg
+    if any(token in lower_msg for token in ["payload", "too large", "413", "context length", "image too large", "request entity too large"]):
+        return "图片过大或请求体过长：请压缩图片，或减少附带说明后重试。"
+    if any(token in lower_msg for token in ["vision", "image_url", "image", "unsupported"]):
+        return f"当前模型或网关不支持图片分析：{msg}"
+    return f"图片分析失败：{msg}"
+
+
+def _validate_chat_image_size(raw_bytes: bytes, image_name: str) -> str | None:
+    if raw_bytes and len(raw_bytes) > MAX_CHAT_IMAGE_BYTES:
+        size_mb = len(raw_bytes) / (1024 * 1024)
+        return f"图片 `{image_name}` 过大（{size_mb:.1f} MB），请压缩到 5 MB 以内再试。"
+    return None
+
+
+def _trim_history_for_image(history: list[dict], limit: int = 4) -> list[dict]:
+    if not history:
+        return []
+    return history[-limit:]
+
+
 def _thumb_image_bytes(image_b64: str) -> bytes | None:
     if not image_b64:
         return None
@@ -2094,6 +2131,12 @@ def run_vision_generate(
     status_ph = status_col.empty()
     try:
         llm = get_llm()
+        logger.info(
+            "vision generate start route=generate image_mime=%s has_project=%s prompt_len=%d",
+            image_mime,
+            bool(proj),
+            len(extra_text or ""),
+        )
         status_ph.info("🖼️ AI 正在解析图片...")
 
         user_text = extra_text.strip() if extra_text else "请分析这张图片，生成对应的 GDL 脚本。"
@@ -2135,10 +2178,12 @@ def run_vision_generate(
         else:
             return f"🖼️ **图片分析完成**（未检测到 GDL 代码块，AI 可能只给了文字分析）\n\n{raw_text}"
 
-    except Exception:
+    except Exception as exc:
         status_ph.empty()
-        st.error("图片分析失败，当前模型可能不支持视觉功能，请切换至 glm-4v-plus / gpt-4o / claude-sonnet-4-6")
-        return "❌ 图片分析失败，当前模型可能不支持视觉功能，请切换至 glm-4v-plus / gpt-4o / claude-sonnet-4-6"
+        logger.warning("vision generate failed error=%s", exc.__class__.__name__)
+        err_msg = _classify_vision_error(exc)
+        st.error(err_msg)
+        return f"❌ {err_msg}"
 
 
 def check_gdl_script(content: str, script_type: str = "") -> list:
@@ -3130,6 +3175,14 @@ with col_right:
                 _img = _chat_files[0]
                 _raw_bytes = _img.read()
                 if _raw_bytes:
+                    _vision_size_error = _validate_chat_image_size(
+                        _raw_bytes,
+                        getattr(_img, "name", "image") or "image",
+                    )
+                    if _vision_size_error:
+                        st.session_state.chat_history.append({"role": "assistant", "content": f"❌ {_vision_size_error}"})
+                        st.error(_vision_size_error)
+                        st.rerun()
                     _vision_b64 = base64.b64encode(_raw_bytes).decode()
                     _vision_mime = getattr(_img, "type", "") or "image/jpeg"
                     _vision_name = getattr(_img, "name", "") or "image"
