@@ -74,6 +74,10 @@ _GDL_BUILTINS: frozenset[str] = frozenset({
     "PEN", "MATERIAL", "DEFINE", "USE", "PARAMETERS",
     "PUT", "GET", "NSP", "IND", "VARDIM1", "VARDIM2",
     "REQUEST", "CALL",
+    # LLM output metadata / paramlist formatting words
+    "FILE", "scripts", "gdl", "paramlist", "xml", "Length", "Integer",
+    "Boolean", "Material", "RealNum", "Angle", "String", "PenColor",
+    "FillPattern", "LineType",
 })
 
 # ArchiCAD reserved single-letter parameters available in every object
@@ -87,6 +91,12 @@ _IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
 
 # Extracts the left-hand side of a simple assignment: "name =" (not "name ==")
 _LOCAL_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)", re.MULTILINE)
+
+GDL_SIGNATURE_WORDS: frozenset[str] = frozenset({
+    "BLOCK", "CYLIND", "SPHERE", "PRISM_", "ADD", "DEL", "ADDX", "ADDY", "ADDZ",
+    "ROT", "MUL", "IF", "FOR", "GOSUB", "END", "PROJECT2", "HOTSPOT2", "RECT2",
+    "LINE2", "CIRCLE2", "MATERIAL", "PEN", "TOLER",
+})
 
 
 @dataclass
@@ -135,11 +145,16 @@ class StaticChecker:
 
     @staticmethod
     def _strip_comments(code: str) -> str:
-        """Remove GDL line comments (! ...) to avoid false matches."""
+        """Remove metadata/comment-only lines and inline GDL comments."""
         lines = []
         for line in code.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("[FILE:") or stripped.startswith("!"):
+                continue
             idx = line.find("!")
-            lines.append(line[:idx] if idx >= 0 else line)
+            clean = line[:idx] if idx >= 0 else line
+            if clean.strip():
+                lines.append(clean)
         return "\n".join(lines)
 
     @staticmethod
@@ -148,6 +163,11 @@ class StaticChecker:
         names = {p.name for p in project.parameters}
         names.update(_RESERVED_PARAMS)
         return frozenset(names)
+
+    @staticmethod
+    def _is_valid_gdl(content: str) -> bool:
+        tokens = set(re.findall(r"[A-Z_][A-Z0-9_]*", content.upper()))
+        return bool(tokens & GDL_SIGNATURE_WORDS)
 
     # ── check 1: undefined_var ────────────────────────────────────────────────
 
@@ -171,6 +191,8 @@ class StaticChecker:
         for gdl_file in ("3d.gdl", "2d.gdl", "1d.gdl"):
             code = self._strip_comments(self._get_script(project, gdl_file))
             if not code.strip():
+                continue
+            if not self._is_valid_gdl(code):
                 continue
 
             file_path = f"scripts/{gdl_file}"
@@ -291,7 +313,7 @@ class StaticChecker:
         errors: list[StaticError] = []
 
         for gdl_file in ("3d.gdl", "2d.gdl", "1d.gdl", "ui.gdl", "vl.gdl"):
-            code = self._get_script(project, gdl_file)
+            code = self._strip_comments(self._get_script(project, gdl_file))
             if not code.strip():
                 continue
 

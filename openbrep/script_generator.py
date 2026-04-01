@@ -67,6 +67,25 @@ _WARN_BUILTINS: frozenset[str] = frozenset({
     "MATERIAL", "PEN", "RESOL", "TOLER", "FILL", "FILTER", "UNID",
 })
 
+_METADATA_WARN_BUILTINS: frozenset[str] = frozenset({
+    "FILE", "scripts", "gdl", "paramlist", "xml", "Length", "Integer",
+    "Boolean", "Material", "RealNum", "Angle", "String", "PenColor",
+    "FillPattern", "LineType",
+})
+
+
+def _filter_cross_script_text(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("[FILE:") or stripped.startswith("!"):
+            continue
+        comment_idx = line.find("!")
+        clean = line[:comment_idx] if comment_idx >= 0 else line
+        if clean.strip():
+            lines.append(clean)
+    return "\n".join(lines)
+
 
 @dataclass
 class ScriptResult:
@@ -293,6 +312,7 @@ class ScriptGenerator:
                 if hsf_st.value == "1d.gdl":
                     master_text = project.get_script(hsf_st) or ""
                     break
+        master_text = _filter_cross_script_text(master_text)
         assigned_in_master: set[str] = {
             m.group(1)
             for m in re.finditer(r'^\s*([A-Za-z_]\w*)\s*=(?!=)', master_text, re.MULTILINE)
@@ -302,13 +322,13 @@ class ScriptGenerator:
         ident_re = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\b')
 
         for gdl_file in ("scripts/3d.gdl", "scripts/2d.gdl"):
-            content = merged.get(gdl_file, "")
+            content = _filter_cross_script_text(merged.get(gdl_file, ""))
             if not content:
                 continue
             warned: set[str] = set()
             for m in ident_re.finditer(content):
                 name = m.group(1)
-                if name in warned or name.upper() in _WARN_BUILTINS:
+                if name in warned or name.upper() in _WARN_BUILTINS or name in _METADATA_WARN_BUILTINS:
                     continue
                 if name.startswith("_") or name.startswith("gs_") or name.startswith("ac_"):
                     continue

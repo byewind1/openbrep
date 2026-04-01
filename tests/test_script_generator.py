@@ -193,6 +193,34 @@ class TestMergeResults(unittest.TestCase):
         warnings_text = " ".join(cm.output)
         self.assertIn("mystery_var", warnings_text)
 
+    def test_merge_cross_script_ignores_file_metadata(self):
+        """[FILE: ...], comments, and blank lines must not create cross-script warnings."""
+        proj = FakeProject(scripts={}, param_names=["Length", "width", "height"])
+        gen = _make_generator()
+        results = [
+            ScriptResult(
+                script_type=ScriptType.SCRIPT_3D,
+                content="[FILE: scripts/3d.gdl]\n\n! generated\nBLOCK width, height, B\nEND",
+                success=True,
+            )
+        ]
+        with self.assertNoLogs("openbrep.script_generator", level="WARNING"):
+            gen.merge_results(results, proj)
+
+    def test_merge_cross_script_allows_boolean_params(self):
+        """Known params like bTest must not trigger cross-script warnings."""
+        proj = FakeProject(scripts={}, param_names=["bTest"])
+        gen = _make_generator()
+        results = [
+            ScriptResult(
+                script_type=ScriptType.SCRIPT_3D,
+                content="IF bTest THEN\n  BLOCK 1,1,1\nENDIF",
+                success=True,
+            )
+        ]
+        with self.assertNoLogs("openbrep.script_generator", level="WARNING"):
+            gen.merge_results(results, proj)
+
 
 # ── GDLAgent._build_script_context ───────────────────────────────────────────
 

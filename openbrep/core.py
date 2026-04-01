@@ -317,6 +317,9 @@ class GDLAgent:
 
         last_code_context: raw content of last assistant message (for [DEBUG:last] mode).
         """
+        if image_b64 and history:
+            history = history[-4:]
+
         affected = project.get_affected_scripts(instruction)
         self.on_event("analyze", {"affected_scripts": [s.value for s in affected]})
         self.on_event("attempt", {"attempt": 1})
