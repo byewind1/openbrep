@@ -17,7 +17,7 @@
 
 > **OpenBrep: Code Your Boundaries**
 
-> 稳定发布版本 v0.5.4 — 核心功能完整，适合建筑师日常 GDL 开发工作。
+> 稳定发布版本 v0.5.6 — 核心功能完整，适合建筑师日常 GDL 开发工作。
 
 ---
 
@@ -199,6 +199,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/..."
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.5.6 | 图片上传不再卡死；cross-script / static checker 误报减少；AI 助手设置支持长期保存并注入系统提示；自定义代理与官方供应商分层选择，并优先显示代理名（见 docs/releases/v0.5.6.md） |
 | v0.5.5 | UI重构为四栏布局：左栏操作+预览、中栏脚本+参数表、右栏AI对话（见 docs/releases/v0.5.5.md） |
 | v0.5.4 | validator 分层重构：error/warning 分开，硬错误白名单收紧；跨脚本检查器；debug 最小改动；生成过程实时显示；生成中禁用 widget（见 docs/releases/v0.5.4.md） |
 | **v0.5.3** | 知识库升级与文档品牌增强：整合拆书增量（含 2D 高级与可编译示例）、新增命令索引与命令级精准路由、README 顶部加入 logo（见 `docs/releases/v0.5.3.md`）。 |
