@@ -6,6 +6,10 @@ from openbrep.hsf_project import ScriptType
 from openbrep.validator import ValidationIssue
 
 
+_IDENT_RE = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\b')
+_ASSIGN_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)', re.MULTILINE)
+
+
 class CrossScriptChecker:
     GDL_BUILTINS = {
         "ADD", "ADDX", "ADDY", "ADDZ", "BLOCK", "BRICK", "CYLIND", "SPHERE",
@@ -21,14 +25,32 @@ class CrossScriptChecker:
         "AND", "OR", "NOT", "MOD", "DIV", "TRUE", "FALSE", "PI",
     }
 
+    @staticmethod
+    def _strip_comments(code: str) -> str:
+        lines = []
+        for line in code.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("[FILE:") or stripped.startswith("!"):
+                continue
+            idx = line.find("!")
+            clean = line[:idx] if idx >= 0 else line
+            if clean.strip():
+                lines.append(clean)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _assigned_names(code: str) -> set[str]:
+        return {m.group(1).upper() for m in _ASSIGN_RE.finditer(code)}
+
     def check(self, project) -> list[ValidationIssue]:
         issues = []
-        script_3d = project.get_script(ScriptType.SCRIPT_3D)
+        script_3d = self._strip_comments(project.get_script(ScriptType.SCRIPT_3D) or "")
         if script_3d and project.parameters:
             param_names = {p.name.upper() for p in project.parameters}
-            used_vars = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', script_3d))
-            used_vars_upper = {v.upper() for v in used_vars}
-            missing = used_vars_upper - param_names - self.GDL_BUILTINS
+            master_script = self._strip_comments(project.get_script(ScriptType.MASTER) or "")
+            known_names = param_names | self.GDL_BUILTINS | self._assigned_names(master_script)
+            used_vars = {m.group(1).upper() for m in _IDENT_RE.finditer(script_3d)}
+            missing = used_vars - known_names
             missing = {v for v in missing if len(v) > 1}
             if missing:
                 issues.append(ValidationIssue(
