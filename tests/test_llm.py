@@ -2,8 +2,17 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from openbrep.config import LLMConfig
+from openbrep.core import GDLAgent
 from openbrep.llm import LLMAdapter
-from ui.app import _detect_image_task_mode, _validate_chat_image_size
+from ui.app import (
+    _build_assistant_settings_prompt,
+    _build_model_options,
+    _build_model_source_state,
+    _detect_image_task_mode,
+    _resolve_selected_model,
+    _should_persist_assistant_settings,
+    _validate_chat_image_size,
+)
 
 
 class TestLLMAdapterVision(unittest.TestCase):
@@ -68,6 +77,146 @@ class TestVisionHelpers(unittest.TestCase):
 
     def test_validate_chat_image_size_accepts_small_file(self):
         self.assertIsNone(_validate_chat_image_size(b"small", "small.png"))
+
+
+class TestAssistantSettingsHelpers(unittest.TestCase):
+    def test_build_assistant_settings_prompt_returns_empty_for_blank(self):
+        self.assertEqual(_build_assistant_settings_prompt("  \n  "), "")
+
+    def test_build_assistant_settings_prompt_wraps_user_preferences(self):
+        prompt = _build_assistant_settings_prompt("我是 GDL 初学者，请先解释再给最小修改。")
+        self.assertIn("AI助手设置", prompt)
+        self.assertIn("GDL 初学者", prompt)
+        self.assertIn("不能覆盖", prompt)
+
+    def test_should_persist_assistant_settings_detects_real_change(self):
+        self.assertTrue(_should_persist_assistant_settings("旧值", "新值"))
+
+    def test_should_persist_assistant_settings_ignores_same_value(self):
+        self.assertFalse(_should_persist_assistant_settings("同一个值", "同一个值"))
+
+    def test_should_persist_assistant_settings_uses_config_value_not_session_value(self):
+        self.assertTrue(_should_persist_assistant_settings("", "用户刚填的内容"))
+
+    def test_build_model_options_keeps_builtin_label(self):
+        options = _build_model_options(["gpt-5.4"], [])
+        self.assertEqual(options[0]["label"], "gpt-5.4")
+        self.assertEqual(options[0]["actual_model"], "gpt-5.4")
+        self.assertFalse(options[0]["is_custom"])
+
+    def test_build_model_options_aliases_custom_models(self):
+        options = _build_model_options(
+            ["foo-model", "bar-model", "gpt-5.4"],
+            [{"models": ["foo-model", "bar-model"]}],
+        )
+        self.assertEqual(options[0]["label"], "自定义1")
+        self.assertEqual(options[1]["label"], "自定义2")
+        self.assertEqual(options[0]["actual_model"], "foo-model")
+        self.assertEqual(options[1]["actual_model"], "bar-model")
+        self.assertTrue(options[0]["is_custom"])
+
+    def test_build_model_options_avoids_exposing_custom_raw_name_when_conflicts_with_builtin(self):
+        options = _build_model_options(
+            ["gpt-5.4", "gpt-5.4"],
+            [{"models": ["gpt-5.4"]}],
+        )
+        labels = [o["label"] for o in options]
+        self.assertEqual(labels, ["自定义1", "自定义2"])
+
+    def test_build_model_source_state_defaults_to_custom_when_custom_providers_exist(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4", "glm-4-flash"],
+            custom_providers=[{"models": ["foo-model", "bar-model"]}],
+            saved_model="",
+        )
+        self.assertEqual(state["default_source"], "自定义")
+        self.assertEqual([o["label"] for o in state["custom_options"]], ["自定义1", "自定义2"])
+        self.assertEqual(state["default_model_label"], "自定义1")
+
+    def test_build_model_source_state_defaults_to_official_without_custom_providers(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4", "glm-4-flash"],
+            custom_providers=[],
+            saved_model="",
+        )
+        self.assertEqual(state["default_source"], "官方供应商")
+        self.assertEqual([o["label"] for o in state["builtin_options"]], ["gpt-5.4", "glm-4-flash"])
+        self.assertEqual(state["default_model_label"], "gpt-5.4")
+
+    def test_build_model_source_state_restores_custom_saved_model(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4", "glm-4-flash"],
+            custom_providers=[{"models": ["foo-model", "bar-model"]}],
+            saved_model="bar-model",
+        )
+        self.assertEqual(state["default_source"], "自定义")
+        self.assertEqual(state["default_model_label"], "自定义2")
+
+    def test_build_model_source_state_restores_official_saved_model(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4", "glm-4-flash"],
+            custom_providers=[{"models": ["foo-model"]}],
+            saved_model="glm-4-flash",
+        )
+        self.assertEqual(state["default_source"], "官方供应商")
+        self.assertEqual(state["default_model_label"], "glm-4-flash")
+
+    def test_build_model_source_state_uses_custom_provider_name_as_label(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4", "glm-4-flash"],
+            custom_providers=[{"name": "ymg", "models": ["gpt-5.4"]}],
+            saved_model="",
+        )
+        self.assertEqual([o["label"] for o in state["custom_options"]], ["ymg"])
+        self.assertEqual(state["default_model_label"], "ymg")
+
+    def test_build_model_source_state_uses_provider_name_with_model_when_provider_has_multiple_models(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4"],
+            custom_providers=[{"name": "ymg", "models": ["gpt-5.4", "gpt-4o"]}],
+            saved_model="gpt-4o",
+        )
+        self.assertEqual([o["label"] for o in state["custom_options"]], ["ymg / gpt-5.4", "ymg / gpt-4o"])
+        self.assertEqual(state["default_model_label"], "ymg / gpt-4o")
+
+    def test_build_model_source_state_falls_back_to_custom_alias_when_name_missing(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4"],
+            custom_providers=[{"models": ["foo-model"]}],
+            saved_model="",
+        )
+        self.assertEqual([o["label"] for o in state["custom_options"]], ["自定义1"])
+
+    def test_build_model_source_state_tolerates_missing_config_object(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4"],
+            custom_providers=[],
+            saved_model="",
+        )
+        self.assertEqual(state["source_options"], ["官方供应商"])
+
+    def test_build_model_source_state_keeps_conflicting_builtin_and_custom_in_separate_buckets(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4", "glm-4-flash"],
+            custom_providers=[{"models": ["gpt-5.4"]}],
+            saved_model="",
+        )
+        self.assertEqual([o["label"] for o in state["custom_options"]], ["自定义1"])
+        self.assertEqual([o["label"] for o in state["builtin_options"]], ["gpt-5.4", "glm-4-flash"])
+
+        agent = GDLAgent(llm=MagicMock(), assistant_settings="我是 GDL 初学者")
+
+        prompt = agent._build_system_prompt("", "", chat_mode=False)
+
+        self.assertIn("AI助手设置", prompt)
+        self.assertIn("我是 GDL 初学者", prompt)
+
+    def test_system_prompt_omits_assistant_settings_when_blank(self):
+        agent = GDLAgent(llm=MagicMock(), assistant_settings="")
+
+        prompt = agent._build_system_prompt("", "", chat_mode=False)
+
+        self.assertNotIn("AI助手设置", prompt)
 
 
 if __name__ == "__main__":

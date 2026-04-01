@@ -145,6 +145,7 @@ class LLMConfig:
     timeout: int = 90
     provider_keys: dict[str, str] = field(default_factory=dict)
     custom_providers: list[dict] = field(default_factory=list)
+    assistant_settings: str = ""
 
     def resolve_api_key(self) -> Optional[str]:
         if self.api_key:
@@ -340,11 +341,23 @@ class GDLAgentConfig:
                 "temperature": self.llm.temperature,
                 "max_tokens": self.llm.max_tokens,
                 "provider_keys": self.llm.provider_keys,
+                "custom_providers": self.llm.custom_providers,
+                "assistant_settings": self.llm.assistant_settings or "",
+            },
+            "agent": {
+                "max_iterations": self.agent.max_iterations,
+                "validate_xml": self.agent.validate_xml,
+                "diff_check": self.agent.diff_check,
+                "auto_version": self.agent.auto_version,
             },
             "compiler": {
                 "path": self.compiler.path or "",
-                "work_dir": self.output_dir,
-            }
+                "timeout": self.compiler.timeout,
+            },
+            "knowledge_dir": self.knowledge_dir,
+            "templates_dir": self.templates_dir,
+            "src_dir": self.src_dir,
+            "output_dir": self.output_dir,
         }
         Path(config_path).write_text(toml.dumps(data), encoding="utf-8")
 
@@ -354,6 +367,10 @@ class GDLAgentConfig:
             "[llm]", f'model = "{self.llm.model}"',
             f'# api_key = "your-key-here"',
         ]
+        if self.llm.assistant_settings:
+            lines.append('assistant_settings = """' + self.llm.assistant_settings + '"""')
+        else:
+            lines.append('# assistant_settings = """告诉我你的使用场景、经验水平，或你希望我怎么协助你"""')
         if self.llm.api_base:
             lines.append(f'api_base = "{self.llm.api_base}"')
         lines += [

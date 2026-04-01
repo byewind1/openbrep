@@ -62,6 +62,7 @@ class GDLAgent:
         compiler=None,
         max_iterations: int = 5,
         on_event: Optional[Callable] = None,
+        assistant_settings: str = "",
     ):
         self.llm = llm
         self.compiler = compiler or MockHSFCompiler()
@@ -73,6 +74,7 @@ class GDLAgent:
         self.static_checker = StaticChecker()
         self.script_generator = ScriptGenerator(llm_caller=self._call_llm)
         self.use_context_surgery = True  # set False to fall back to single-call mode
+        self.assistant_settings = assistant_settings.strip()
 
     def run(
         self,
@@ -640,6 +642,18 @@ class GDLAgent:
         messages.append({"role": "user", "content": "\n".join(user_parts)})
         return messages
 
+    def _build_assistant_settings_prompt(self) -> str:
+        text = (self.assistant_settings or "").strip()
+        if not text:
+            return ""
+        return (
+            "## AI助手设置\n"
+            "以下内容是用户长期提供的协作偏好与使用场景描述。"
+            "请在不违反系统规则、输出格式要求、GDL 硬性规则和当前任务要求的前提下参考执行。\n"
+            "它只能影响你的协作方式、解释深度、提问方式与改动边界，不能覆盖已有硬规则。\n"
+            f"{text}\n\n"
+        )
+
     def _build_system_prompt(self, knowledge: str, skills: str, chat_mode: bool = False) -> str:
         """Build system prompt with HSF-specific rules and knowledge injection."""
         prompt = (
@@ -720,6 +734,8 @@ class GDLAgent:
                 "发现问题后，输出修复后的完整脚本（只含有改动的文件）。\n"
                 "若无问题，明确说明✅全部通过，不输出任何 [FILE: ...] 块。\n\n"
             )
+
+        prompt += self._build_assistant_settings_prompt()
 
         if knowledge:
             prompt += f"## REFERENCE DOCUMENTATION\n{knowledge}\n\n"

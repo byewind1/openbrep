@@ -240,6 +240,8 @@ if "preview_warnings" not in st.session_state:
     st.session_state.preview_warnings = []
 if "preview_meta" not in st.session_state:
     st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+if "assistant_settings" not in st.session_state:
+    st.session_state.assistant_settings = ""
 
 
 def _reset_tapir_p0_state() -> None:
@@ -414,6 +416,7 @@ def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -
 
 # ── Load config.toml defaults ──────────────────────────
 
+_config = None
 _config_defaults = {}
 _provider_keys: dict = {}   # {provider: api_key}
 _custom_providers: list = []  # [{base_url, models, api_key, protocol, name}]
@@ -441,6 +444,7 @@ try:
     _config_defaults = {
         "llm_model": _config.llm.model,
         "compiler_path": _config.compiler.path or "",
+        "assistant_settings": _config.llm.assistant_settings or "",
     }
 except Exception:
     pass
@@ -480,9 +484,134 @@ def _is_archicad_running() -> bool:
         return False
 
 
-# ── Sidebar Config ────────────────────────────────────────
+def _build_assistant_settings_prompt(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    return (
+        "## AI助手设置\n"
+        "以下内容是用户长期提供的协作偏好与使用场景描述。"
+        "请在不违反系统规则、输出格式要求、GDL 硬性规则和当前任务要求的前提下参考执行。\n"
+        "它只能影响你的协作方式、解释深度、提问方式与改动边界，不能覆盖已有硬规则。\n"
+        f"{raw}\n\n"
+    )
+
+
+def _should_persist_assistant_settings(config_value: str, ui_value: str) -> bool:
+    return (config_value or "") != (ui_value or "")
+
+
+def _build_model_options(available_models: list[str], custom_providers: list[dict]) -> list[dict]:
+    custom_model_set: set[str] = set()
+    for provider in custom_providers or []:
+        for model in provider.get("models", []) or []:
+            custom_model_set.add(str(model))
+
+    options: list[dict] = []
+    custom_index = 0
+    for model in available_models or []:
+        model_str = str(model)
+        is_custom = model_str in custom_model_set
+        if is_custom:
+            custom_index += 1
+            label = f"自定义{custom_index}"
+        else:
+            tags = []
+            if model_str in VISION_MODELS:
+                tags.append("👁")
+            if model_str in REASONING_MODELS:
+                tags.append("🧠")
+            label = f"{model_str}  {''.join(tags)}" if tags else model_str
+        options.append({
+            "label": label,
+            "actual_model": model_str,
+            "is_custom": is_custom,
+        })
+    return options
+
+
+def _resolve_selected_model(selected_label: str, options: list[dict]) -> str:
+    for option in options:
+        if option.get("label") == selected_label:
+            return str(option.get("actual_model", ""))
+    return ""
+
+
+def _build_custom_model_options(custom_providers: list[dict]) -> list[dict]:
+    options: list[dict] = []
+    fallback_index = 0
+    for provider in custom_providers or []:
+        provider_name = str(provider.get("name", "") or "").strip()
+        models = provider.get("models", []) or []
+        for model in models:
+            model_str = str(model)
+            if provider_name:
+                label = provider_name if len(models) == 1 else f"{provider_name} / {model_str}"
+            else:
+                fallback_index += 1
+                label = f"自定义{fallback_index}"
+            options.append({
+                "label": label,
+                "actual_model": model_str,
+                "is_custom": True,
+            })
+    return options
+
+
+def _build_model_source_state(
+    builtin_models: list[str],
+    custom_providers: list[dict],
+    saved_model: str,
+) -> dict:
+    custom_models: list[str] = []
+    for provider in custom_providers or []:
+        for model in provider.get("models", []) or []:
+            model_str = str(model)
+            if model_str not in custom_models:
+                custom_models.append(model_str)
+
+    builtin_options = _build_model_options(list(builtin_models or []), [])
+    custom_options = _build_custom_model_options(custom_providers or [])
+
+    source_options = []
+    if custom_options:
+        source_options.append("自定义")
+    if builtin_options:
+        source_options.append("官方供应商")
+
+    saved_model_str = str(saved_model or "")
+    saved_is_custom = saved_model_str in custom_models
+
+    if saved_is_custom:
+        default_source = "自定义"
+    elif saved_model_str and any(opt.get("actual_model") == saved_model_str for opt in builtin_options):
+        default_source = "官方供应商"
+    elif custom_options:
+        default_source = "自定义"
+    elif builtin_options:
+        default_source = "官方供应商"
+    else:
+        default_source = ""
+
+    active_options = custom_options if default_source == "自定义" else builtin_options
+    default_model_label = next(
+        (str(opt.get("label", "")) for opt in active_options if opt.get("actual_model") == saved_model_str),
+        str(active_options[0].get("label", "")) if active_options else "",
+    )
+
+    return {
+        "source_options": source_options,
+        "custom_options": custom_options,
+        "builtin_options": builtin_options,
+        "default_source": default_source,
+        "default_model_label": default_model_label,
+    }
+
+
 
 with st.sidebar:
+    if not st.session_state.assistant_settings:
+        st.session_state.assistant_settings = _config_defaults.get("assistant_settings", "")
     if _TAPIR_IMPORT_OK and not _is_archicad_running():
         st.sidebar.warning("⚠️ Archicad 未运行，编译和实时预览不可用")
 
@@ -564,37 +693,51 @@ with st.sidebar:
     st.divider()
     st.subheader("🧠 AI 模型 / LLM")
 
-    # 使用 config.py 里的完整模型列表 + 自定义模型
-    _mo = _config.get_available_models() if _config else (ALL_MODELS if ALL_MODELS else [
-        "glm-5", "glm-4-flash", "glm-4-flash-x", "glm-4-air", "glm-4-plus",
-        "deepseek-chat", "deepseek-reasoner",
-        "gpt-4o", "gpt-4o-mini", "o3-mini",
-        "claude-sonnet-4-6", "claude-opus-4-6",
-        "gemini/gemini-2.5-flash",
-    ])
-    # 下拉显示时加视觉/推理标注
-    def _model_label(m: str) -> str:
-        tags = []
-        if m in VISION_MODELS:   tags.append("👁")
-        if m in REASONING_MODELS: tags.append("🧠")
-        return f"{m}  {''.join(tags)}" if tags else m
+    _custom_list = _config.llm.custom_providers if _config else _custom_providers
+    _model_state = _build_model_source_state(
+        builtin_models=ALL_MODELS,
+        custom_providers=_custom_list,
+        saved_model=_config_defaults.get("llm_model", "glm-4-flash"),
+    )
 
-    _mo_labels = [_model_label(m) for m in _mo]
+    _source_options = _model_state["source_options"]
+    _default_source = _model_state["default_source"]
+    _default_source_index = _source_options.index(_default_source) if _default_source in _source_options else 0
+    _selected_source = st.selectbox(
+        "来源 / Source",
+        _source_options,
+        index=_default_source_index,
+        disabled=st.session_state.agent_running,
+    )
 
-    default_model = _config_defaults.get("llm_model", "glm-4-flash")
-    default_index = _mo.index(default_model) if default_model in _mo else 0
+    _active_options = _model_state["custom_options"] if _selected_source == "自定义" else _model_state["builtin_options"]
+    _model_labels = [opt["label"] for opt in _active_options]
+    _default_label = _model_state["default_model_label"] if _selected_source == _default_source else ""
+    _default_model_index = _model_labels.index(_default_label) if _default_label in _model_labels else 0
 
-    _selected_label = st.selectbox("模型 / Model", _mo_labels, index=default_index, disabled=st.session_state.agent_running)
-    # 反查真实model string（去掉标注）
-    model_name = _mo[_mo_labels.index(_selected_label)]
+    _selected_label = st.selectbox(
+        "模型 / Model",
+        _model_labels,
+        index=_default_model_index,
+        disabled=st.session_state.agent_running,
+    )
+    model_name = _resolve_selected_model(_selected_label, _active_options)
     st.session_state["current_model"] = model_name  # 供视觉检测使用
+
+    if model_name and model_name != _config_defaults.get("llm_model", ""):
+        try:
+            _save_cfg_model = GDLAgentConfig.load()
+            _save_cfg_model.llm.model = model_name
+            _save_cfg_model.save()
+            _config_defaults["llm_model"] = model_name
+        except Exception as e:
+            st.sidebar.warning(f"配置保存失败：{e}")
 
     # Load or initialize API Key for this specific model
     if model_name not in st.session_state.model_api_keys:
         # Auto-fill from config.toml provider_keys
         st.session_state.model_api_keys[model_name] = _key_for_model(model_name)
 
-    _custom_list = _config.llm.custom_providers if _config else _custom_providers
     is_custom = any(
         model_name in (p.get("models", []) or [])
         for p in _custom_list
@@ -619,7 +762,6 @@ with st.sidebar:
         try:
             from openbrep.config import GDLAgentConfig, model_to_provider
             _save_cfg = GDLAgentConfig.load()
-            _save_cfg.llm.model = model_name
             _provider = model_to_provider(model_name)
             if _provider and api_key:
                 _save_cfg.llm.provider_keys[_provider] = api_key
@@ -677,6 +819,28 @@ with st.sidebar:
     max_retries = st.slider("最大重试次数", 1, 10, 5)
 
     st.divider()
+    st.subheader("AI助手设置")
+    assistant_settings = st.text_area(
+        "长期协作偏好",
+        value=st.session_state.assistant_settings,
+        height=140,
+        placeholder="例如：我是 GDL 初学者，请先解释再给最小修改；我主要改已有对象；赶项目时优先给可运行结果。",
+        help="长期保存。可填写你的 GDL 经验、当前使用场景、沟通方式偏好与修改边界。修改后立即影响后续聊天与生成。",
+        disabled=st.session_state.agent_running,
+    )
+    if _should_persist_assistant_settings(_config_defaults.get("assistant_settings", ""), assistant_settings):
+        st.session_state.assistant_settings = assistant_settings
+        try:
+            _save_cfg3 = GDLAgentConfig.load()
+            _save_cfg3.llm.assistant_settings = assistant_settings
+            _save_cfg3.save()
+            _config_defaults["assistant_settings"] = assistant_settings
+        except Exception as e:
+            st.sidebar.warning(f"配置保存失败：{e}")
+    else:
+        st.session_state.assistant_settings = assistant_settings
+
+    st.divider()
 
     # Project quick reset
     if st.session_state.project:
@@ -684,6 +848,7 @@ with st.sidebar:
             _keep_work_dir  = st.session_state.work_dir
             _keep_api_keys  = st.session_state.model_api_keys
             _keep_chat      = st.session_state.chat_history   # preserve chat
+            _keep_assistant_settings = st.session_state.assistant_settings
             st.session_state.project          = None
             st.session_state.compile_log      = []
             st.session_state.compile_result   = None
@@ -702,6 +867,7 @@ with st.sidebar:
             st.session_state.work_dir         = _keep_work_dir
             st.session_state.model_api_keys   = _keep_api_keys
             st.session_state.chat_history     = _keep_chat
+            st.session_state.assistant_settings = _keep_assistant_settings
             st.rerun()
 
 
@@ -1065,6 +1231,7 @@ def get_llm():
         api_base=api_base,
         temperature=0.2,
         max_tokens=32768,
+        assistant_settings=st.session_state.get("assistant_settings", ""),
     )
     return LLMAdapter(config)
 
@@ -1376,15 +1543,17 @@ def classify_and_extract(text: str, llm, project_loaded: bool = False) -> tuple:
 
 def chat_respond(user_input: str, history: list, llm) -> str:
     """Simple conversational response. Never outputs GDL code — that goes to the editor."""
+    system_content = (
+        "你是 openbrep 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
+        "【重要约束】绝对禁止在回复中输出任何 GDL 代码、代码块或脚本片段。"
+        "如果用户想创建或修改 GDL 对象，告诉他「直接在底部输入框描述需求，AI 会自动生成并填入编辑器」。\n"
+        "不要提及 ArchiCAD 内部操作（如打开 GDL 对象编辑器），因为本工具就是体外的 GDL IDE。\n"
+        "回复简洁，使用中文，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
+    )
+    system_content = _build_assistant_settings_prompt(st.session_state.get("assistant_settings", "")) + system_content
     system_msg = {
         "role": "system",
-        "content": (
-            "你是 openbrep 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
-            "【重要约束】绝对禁止在回复中输出任何 GDL 代码、代码块或脚本片段。"
-            "如果用户想创建或修改 GDL 对象，告诉他「直接在底部输入框描述需求，AI 会自动生成并填入编辑器」。\n"
-            "不要提及 ArchiCAD 内部操作（如打开 GDL 对象编辑器），因为本工具就是体外的 GDL IDE。\n"
-            "回复简洁，使用中文，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
-        ),
+        "content": system_content,
     }
     messages = [system_msg]
     # Include recent history for context (last 6 messages)
@@ -1540,7 +1709,12 @@ def run_agent_generate(
             bool(proj),
             len(clean_instruction or ""),
         )
-        agent = GDLAgent(llm=llm, compiler=get_compiler(), on_event=on_event)
+        agent = GDLAgent(
+            llm=llm,
+            compiler=get_compiler(),
+            on_event=on_event,
+            assistant_settings=st.session_state.get("assistant_settings", ""),
+        )
         changes, plain_text = agent.generate_only(
             instruction=clean_instruction, project=proj,
             knowledge=knowledge, skills=skills_text,

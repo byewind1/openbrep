@@ -35,6 +35,10 @@ model = "glm-4-flash"
 temperature = 0.2
 max_tokens = 4096
 
+# 可选：长期保存的 AI 协作上下文。
+# 可填写你的 GDL 经验、当前使用场景、沟通偏好、改动边界等；修改后会立即影响后续聊天与生成。
+# assistant_settings = "我是 GDL 初学者，请先解释再给最小修改。"
+
 # Provider API Keys — 按 provider 分开存，切换模型自动匹配对应 Key
 [llm.provider_keys]
 zhipu     = "YOUR_ZHIPU_API_KEY"       # glm-*        https://bigmodel.cn/usercenter/apikeys
