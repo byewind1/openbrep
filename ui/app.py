@@ -19,6 +19,7 @@ import string
 import zipfile
 import shutil
 import subprocess
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -41,7 +42,7 @@ from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
 from openbrep.paramlist_builder import build_paramlist_xml, validate_paramlist
 from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
-from openbrep.core import GDLAgent, Status
+from openbrep.core import AgentCancelled, GDLAgent, Status
 from openbrep.gdl_previewer import Preview2DResult, Preview3DResult, preview_2d_script, preview_3d_script
 from openbrep.validator import GDLValidator
 from openbrep.knowledge import KnowledgeBase
@@ -53,6 +54,7 @@ except ImportError:
     VISION_MODELS = set()
     REASONING_MODELS = set()
     _MODEL_CONSTANTS_OK = False
+from openbrep.elicitation_agent import ElicitationAgent, ElicitationState
 from openbrep.skills_loader import SkillsLoader
 from openbrep import __version__ as OPENBREP_VERSION
 
@@ -199,6 +201,12 @@ if "work_dir" not in st.session_state:
     st.session_state.work_dir = str(Path.home() / "openbrep-workspace")
 if "agent_running" not in st.session_state:
     st.session_state.agent_running = False
+if "generation_status" not in st.session_state:
+    st.session_state.generation_status = "idle"
+if "active_generation_id" not in st.session_state:
+    st.session_state.active_generation_id = None
+if "generation_cancel_requested" not in st.session_state:
+    st.session_state.generation_cancel_requested = False
 if "pending_diffs" not in st.session_state:
     # AI-proposed changes awaiting user review.
     # Keys: "scripts/3d.gdl" etc. + "paramlist.xml" for parameters
@@ -242,6 +250,151 @@ if "preview_meta" not in st.session_state:
     st.session_state.preview_meta = {"kind": "", "timestamp": ""}
 if "assistant_settings" not in st.session_state:
     st.session_state.assistant_settings = ""
+if "elicitation_agent" not in st.session_state:
+    st.session_state.elicitation_agent = None
+if "elicitation_state" not in st.session_state:
+    st.session_state.elicitation_state = ElicitationState.IDLE.value
+
+
+
+def _new_generation_id() -> str:
+    return uuid.uuid4().hex
+
+
+
+def _begin_generation_state(state) -> str:
+    generation_id = _new_generation_id()
+    state["active_generation_id"] = generation_id
+    state["generation_status"] = "running"
+    state["generation_cancel_requested"] = False
+    state["agent_running"] = True
+    return generation_id
+
+
+
+def _request_generation_cancel(state, generation_id: str) -> bool:
+    if not generation_id or state.get("active_generation_id") != generation_id:
+        return False
+    state["generation_cancel_requested"] = True
+    state["generation_status"] = "cancelling"
+    state["agent_running"] = True
+    return True
+
+
+
+def _is_generation_locked(state) -> bool:
+    return state.get("generation_status") in {"running", "cancelling"}
+
+
+
+def _is_active_generation(state, generation_id: str) -> bool:
+    return bool(generation_id) and state.get("active_generation_id") == generation_id
+
+
+
+def _should_accept_generation_result(state, generation_id: str) -> bool:
+    return _is_active_generation(state, generation_id) and not state.get("generation_cancel_requested", False)
+
+
+
+def _finish_generation_state(state, generation_id: str, status: str) -> bool:
+    if not _is_active_generation(state, generation_id):
+        return False
+    state["generation_status"] = status
+    state["active_generation_id"] = None
+    state["generation_cancel_requested"] = False
+    state["agent_running"] = False
+    return True
+
+
+
+def _generation_stop_label() -> str:
+    return "停止生成中..." if st.session_state.get("generation_status") == "cancelling" else "停止生成"
+
+
+
+def _render_generation_controls() -> None:
+    if not _is_generation_locked(st.session_state):
+        return
+    generation_id = st.session_state.get("active_generation_id")
+    st.warning("AI 正在生成中。涉及工程状态的操作已临时锁定。")
+    if st.button(_generation_stop_label(), key="stop_generation", width='stretch'):
+        if _request_generation_cancel(st.session_state, generation_id):
+            st.info("已请求停止当前生成，正在等待本轮调用安全结束。")
+            st.rerun()
+
+
+
+def _guarded_event_update(status_ph, generation_id: str, method_name: str, message: str) -> None:
+    if not _is_active_generation(st.session_state, generation_id):
+        return
+    getattr(status_ph, method_name)(message)
+
+
+
+def _generation_cancelled_message() -> str:
+    return "⏹️ 本轮生成已取消，未写入编辑器。"
+
+
+
+def _consume_generation_result(generation_id: str) -> bool:
+    return _should_accept_generation_result(st.session_state, generation_id)
+
+
+
+def _finalize_generation(generation_id: str, status: str) -> bool:
+    return _finish_generation_state(st.session_state, generation_id, status)
+
+
+
+def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | None, auto_apply: bool) -> tuple[str, list[str]]:
+    script_names = ", ".join(
+        p.replace("scripts/", "").replace(".gdl", "").upper()
+        for p in cleaned if p.startswith("scripts/")
+    )
+    has_params = "paramlist.xml" in cleaned
+    param_count_preview = len(_parse_paramlist_text(cleaned.get("paramlist.xml", "")))
+
+    code_blocks = []
+    for fpath, code in cleaned.items():
+        lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
+        code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
+
+    label_parts = []
+    if script_names:
+        label_parts.append(f"脚本 [{script_names}]")
+    if has_params:
+        label_parts.append(f"{param_count_preview} 个参数")
+    label_str = " + ".join(label_parts) if label_parts else "内容"
+
+    if auto_apply:
+        _apply_scripts_to_project(proj, cleaned)
+        _bump_main_editor_version()
+        if gsm_name:
+            st.session_state.pending_gsm_name = gsm_name
+        prefix = f"✏️ **已写入 {label_str}** — 可直接「🔧 编译」\n\n"
+    else:
+        st.session_state.pending_diffs = cleaned
+        st.session_state.pending_ai_label = label_str
+        if gsm_name:
+            st.session_state.pending_gsm_name = gsm_name
+        prefix = f"🤖 **AI 已生成 {label_str}** — 请在下方确认是否写入编辑器。\n\n"
+
+    return prefix, code_blocks
+
+
+
+def _build_generation_reply(plain_text: str, result_prefix: str = "", code_blocks: list[str] | None = None) -> str:
+    reply_parts = []
+    if plain_text:
+        reply_parts.append(plain_text)
+    if result_prefix:
+        joined_blocks = "\n\n".join(code_blocks or [])
+        reply_parts.append(result_prefix + joined_blocks)
+    if reply_parts:
+        return "\n\n---\n\n".join(reply_parts)
+    return "🤔 AI 未返回代码或分析，请换一种描述方式。"
+
 
 
 def _reset_tapir_p0_state() -> None:
@@ -618,10 +771,11 @@ with st.sidebar:
     st.markdown('<p class="main-header">OpenBrep</p>', unsafe_allow_html=True)
     st.markdown('<p class="intro-header">用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。</p>', unsafe_allow_html=True)
     st.markdown(f'<p class="sub-header">OpenBrep: Code Your Boundaries · v{OPENBREP_VERSION} · HSF-native</p>', unsafe_allow_html=True)
+    _render_generation_controls()
     st.divider()
 
     st.subheader("📁 工作目录")
-    work_dir = st.text_input("Work Directory", value=st.session_state.work_dir, label_visibility="collapsed", disabled=st.session_state.agent_running)
+    work_dir = st.text_input("Work Directory", value=st.session_state.work_dir, label_visibility="collapsed", disabled=_is_generation_locked(st.session_state))
     st.session_state.work_dir = work_dir
 
     # Load persisted license when work_dir is known
@@ -707,7 +861,7 @@ with st.sidebar:
         "来源 / Source",
         _source_options,
         index=_default_source_index,
-        disabled=st.session_state.agent_running,
+        disabled=_is_generation_locked(st.session_state),
     )
 
     _active_options = _model_state["custom_options"] if _selected_source == "自定义" else _model_state["builtin_options"]
@@ -719,7 +873,7 @@ with st.sidebar:
         "模型 / Model",
         _model_labels,
         index=_default_model_index,
-        disabled=st.session_state.agent_running,
+        disabled=_is_generation_locked(st.session_state),
     )
     model_name = _resolve_selected_model(_selected_label, _active_options)
     st.session_state["current_model"] = model_name  # 供视觉检测使用
@@ -752,7 +906,7 @@ with st.sidebar:
             value=st.session_state.model_api_keys.get(model_name, ""),
             type="password",
             help="Ollama 本地模式不需要 Key",
-            disabled=st.session_state.agent_running,
+            disabled=_is_generation_locked(st.session_state),
         )
 
     # Auto-save API Key + 持久化写回 config.toml
@@ -826,7 +980,7 @@ with st.sidebar:
         height=140,
         placeholder="例如：我是 GDL 初学者，请先解释再给最小修改；我主要改已有对象；赶项目时优先给可运行结果。",
         help="长期保存。可填写你的 GDL 经验、当前使用场景、沟通方式偏好与修改边界。修改后立即影响后续聊天与生成。",
-        disabled=st.session_state.agent_running,
+        disabled=_is_generation_locked(st.session_state),
     )
     if _should_persist_assistant_settings(_config_defaults.get("assistant_settings", ""), assistant_settings):
         st.session_state.assistant_settings = assistant_settings
@@ -844,7 +998,7 @@ with st.sidebar:
 
     # Project quick reset
     if st.session_state.project:
-        if st.button("🗑️ 清除项目", width='stretch'):
+        if st.button("🗑️ 清除项目", width='stretch', disabled=_is_generation_locked(st.session_state)):
             _keep_work_dir  = st.session_state.work_dir
             _keep_api_keys  = st.session_state.model_api_keys
             _keep_chat      = st.session_state.chat_history   # preserve chat
@@ -1232,6 +1386,7 @@ def get_llm():
         temperature=0.2,
         max_tokens=32768,
         assistant_settings=st.session_state.get("assistant_settings", ""),
+        custom_providers=_custom_providers,
     )
     return LLMAdapter(config)
 
@@ -1579,6 +1734,108 @@ _SCRIPT_MAP = [
 ]
 
 
+def _make_elicitation_llm_caller():
+    llm = get_llm()
+
+    def _caller(messages):
+        raw = llm.generate(messages)
+        return raw.content if hasattr(raw, "content") else str(raw)
+
+    return _caller
+
+
+
+def _ensure_elicitation_agent() -> ElicitationAgent:
+    agent = st.session_state.get("elicitation_agent")
+    if agent is None:
+        agent = ElicitationAgent(llm_caller=_make_elicitation_llm_caller())
+        st.session_state.elicitation_agent = agent
+    elif agent.llm_caller is None:
+        agent.llm_caller = _make_elicitation_llm_caller()
+    st.session_state.elicitation_state = agent.state.value
+    return agent
+
+
+
+def _is_positive_confirmation(text: str) -> bool:
+    low = (text or "").strip().lower()
+    return any(token in low for token in ["确认", "可以", "是", "对", "生成吧", "没问题", "好的", "开始"])
+
+
+
+def _is_negative_confirmation(text: str) -> bool:
+    low = (text or "").strip().lower()
+    return any(token in low for token in ["不是", "不对", "重来", "修改", "不", "错了", "再改"])
+
+
+
+def _should_start_elicitation(user_input: str) -> bool:
+    return any(token in (user_input or "") for token in ["创建", "生成", "新建"])
+
+
+
+def _make_generation_project(gdl_obj_name: str) -> HSFProject:
+    new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
+    st.session_state.project = new_proj
+    st.session_state.pending_gsm_name = gdl_obj_name
+    st.session_state.script_revision = 0
+    return new_proj
+
+
+
+def _handle_elicitation_route(user_input: str, gdl_obj_name: str) -> tuple[str, bool]:
+    ea = _ensure_elicitation_agent()
+
+    if ea.state == ElicitationState.HANDOFF and ea.spec is not None:
+        spec = ea.spec
+        instruction = spec.to_instruction()
+        logging.debug(f"Elicitation handoff instruction: {instruction[:200]}")
+        object_name = spec.object_name
+        ea.reset()
+        st.session_state.elicitation_state = ea.state.value
+        if not st.session_state.project:
+            _make_generation_project(gdl_obj_name or object_name or "elicited_object")
+            st.info(f"📁 已初始化项目 `{st.session_state.pending_gsm_name}`")
+        proj_current = st.session_state.project
+        _has_any_script = any(proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP)
+        effective_gsm = st.session_state.pending_gsm_name or proj_current.name
+        return run_agent_generate(
+            instruction,
+            proj_current,
+            st.container(),
+            gsm_name=effective_gsm,
+            auto_apply=not _has_any_script,
+        ), False
+
+    if ea.state == ElicitationState.SPEC_READY:
+        if _is_positive_confirmation(user_input):
+            spec = ea.confirm(True)
+            st.session_state.elicitation_state = ea.state.value
+            if spec is None:
+                return "❌ 规格确认失败，请重试。", True
+            return _handle_elicitation_route(user_input, spec.object_name)
+        if _is_negative_confirmation(user_input):
+            ea.confirm(False)
+            st.session_state.elicitation_state = ea.state.value
+            reply, _ = ea.respond(user_input)
+            st.session_state.elicitation_state = ea.state.value
+            return reply, True
+        return ea._format_spec_summary(), True
+
+    if ea.state == ElicitationState.ELICITING:
+        reply, _ = ea.respond(user_input)
+        st.session_state.elicitation_state = ea.state.value
+        return reply, True
+
+    if _should_start_elicitation(user_input):
+        reply = ea.start(user_input)
+        st.session_state.elicitation_state = ea.state.value
+        return reply, True
+
+    return "", False
+
+
+
 def _main_editor_state_key(fpath: str, editor_version: int) -> str:
     prefix = "ace" if _ACE_AVAILABLE else "script"
     return f"{prefix}_{fpath}_v{editor_version}"
@@ -1652,31 +1909,37 @@ def run_agent_generate(
     debug_mode (intent-based) controls whether all scripts are injected into LLM context
     and whether LLM is allowed to reply with plain-text analysis in addition to code.
     """
+    logging.debug(f"run_agent_generate called, instruction: {user_input[:100]}")
+    generation_id = _begin_generation_state(st.session_state)
     status_ph = status_col.empty()
     debug_mode = _is_debug_intent(user_input)
     debug_type = _get_debug_mode(user_input)  # 'editor' | 'keyword'
 
     def on_event(event_type, data):
+        if not _is_active_generation(st.session_state, generation_id):
+            return
         if event_type == "analyze":
             scripts = data.get("affected_scripts", [])
             mode_tag = f" [Debug:{debug_type}]" if debug_mode else ""
-            status_ph.info(f"🔍 分析中{mode_tag}... 脚本: {', '.join(scripts)}")
+            _guarded_event_update(status_ph, generation_id, "info", f"🔍 分析中{mode_tag}... 脚本: {', '.join(scripts)}")
         elif event_type == "attempt":
-            status_ph.info("🧠 调用 AI...")
+            _guarded_event_update(status_ph, generation_id, "info", "🧠 调用 AI...")
         elif event_type == "llm_response":
-            status_ph.info(f"✏️ 收到 {data['length']} 字符，解析中...")
+            _guarded_event_update(status_ph, generation_id, "info", f"✏️ 收到 {data['length']} 字符，解析中...")
         elif event_type == "validate":
             errors = data.get("errors", [])
             warnings = data.get("warnings", [])
             if errors:
-                status_ph.error(f"❌ 发现 {len(errors)} 个错误，AI 自动修复中...")
+                _guarded_event_update(status_ph, generation_id, "error", f"❌ 发现 {len(errors)} 个错误，AI 自动修复中...")
             elif warnings:
-                status_ph.warning(f"⚠️ 发现 {len(warnings)} 条建议，已附在结果中")
+                _guarded_event_update(status_ph, generation_id, "warning", f"⚠️ 发现 {len(warnings)} 条建议，已附在结果中")
             else:
-                status_ph.success("✅ 校验通过")
+                _guarded_event_update(status_ph, generation_id, "success", "✅ 校验通过")
         elif event_type == "rewrite":
             round_num = data.get("round", 2)
-            status_ph.info(f"🔄 第 {round_num} 轮修复中...")
+            _guarded_event_update(status_ph, generation_id, "info", f"🔄 第 {round_num} 轮修复中...")
+        elif event_type == "cancelled":
+            _guarded_event_update(status_ph, generation_id, "warning", "⏹️ 正在停止当前生成...")
 
     try:
         llm = get_llm()
@@ -1714,6 +1977,7 @@ def run_agent_generate(
             compiler=get_compiler(),
             on_event=on_event,
             assistant_settings=st.session_state.get("assistant_settings", ""),
+            should_cancel=lambda: not _should_accept_generation_result(st.session_state, generation_id),
         )
         changes, plain_text = agent.generate_only(
             instruction=clean_instruction, project=proj,
@@ -1725,65 +1989,27 @@ def run_agent_generate(
             image_b64=debug_image_b64,
             image_mime=debug_image_mime,
         )
+        if not _consume_generation_result(generation_id):
+            status_ph.empty()
+            _finalize_generation(generation_id, "cancelled")
+            return _generation_cancelled_message()
+
         status_ph.empty()
+        cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
+        result_prefix = ""
+        code_blocks: list[str] = []
+        if cleaned:
+            result_prefix, code_blocks = _apply_generation_result(cleaned, proj, gsm_name, auto_apply)
+        _finalize_generation(generation_id, "completed")
+        return _build_generation_reply(plain_text, result_prefix, code_blocks)
 
-        reply_parts = []
-
-        # Plain-text analysis from LLM (debug/explanation)
-        if plain_text:
-            reply_parts.append(plain_text)
-
-        # Code changes — strip fences, apply or queue for confirmation
-        if changes:
-            cleaned = {k: _strip_md_fences(v) for k, v in changes.items()}
-
-            script_names = ", ".join(
-                p.replace("scripts/", "").replace(".gdl", "").upper()
-                for p in cleaned if p.startswith("scripts/")
-            )
-            has_params = "paramlist.xml" in cleaned
-            param_count_preview = len(_parse_paramlist_text(cleaned.get("paramlist.xml", "")))
-
-            code_blocks = []
-            for fpath, code in cleaned.items():
-                lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
-                code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
-
-            label_parts = []
-            if script_names:
-                label_parts.append(f"脚本 [{script_names}]")
-            if has_params:
-                label_parts.append(f"{param_count_preview} 个参数")
-            label_str = " + ".join(label_parts) if label_parts else "内容"
-
-            if auto_apply:
-                # 全新空项目：直接写入，无需确认
-                sc, pc = _apply_scripts_to_project(proj, cleaned)
-                _bump_main_editor_version()
-                if gsm_name:
-                    st.session_state.pending_gsm_name = gsm_name
-                reply_parts.append(
-                    f"✏️ **已写入 {label_str}** — 可直接「🔧 编译」\n\n"
-                    + "\n\n".join(code_blocks)
-                )
-            else:
-                # 已有项目修改：暂存，聊天栏内显示确认按钮
-                st.session_state.pending_diffs    = cleaned
-                st.session_state.pending_ai_label = label_str
-                if gsm_name:
-                    st.session_state.pending_gsm_name = gsm_name
-                reply_parts.append(
-                    f"🤖 **AI 已生成 {label_str}** — 请在下方确认是否写入编辑器。\n\n"
-                    + "\n\n".join(code_blocks)
-                )
-
-        if reply_parts:
-            return "\n\n---\n\n".join(reply_parts)
-
-        return "🤔 AI 未返回代码或分析，请换一种描述方式。"
-
+    except AgentCancelled:
+        status_ph.empty()
+        _finalize_generation(generation_id, "cancelled")
+        return _generation_cancelled_message()
     except Exception as e:
         status_ph.empty()
+        _finalize_generation(generation_id, "failed")
         return f"❌ **错误**: {str(e)}"
 
 
@@ -2302,6 +2528,7 @@ def run_vision_generate(
     Vision pipeline: image → LLM analysis → GDL extraction → pending_diffs or auto-apply.
     Reuses the same confirmation flow as run_agent_generate.
     """
+    generation_id = _begin_generation_state(st.session_state)
     status_ph = status_col.empty()
     try:
         llm = get_llm()
@@ -2311,7 +2538,7 @@ def run_vision_generate(
             bool(proj),
             len(extra_text or ""),
         )
-        status_ph.info("🖼️ AI 正在解析图片...")
+        _guarded_event_update(status_ph, generation_id, "info", "🖼️ AI 正在解析图片...")
 
         user_text = extra_text.strip() if extra_text else "请分析这张图片，生成对应的 GDL 脚本。"
         resp = llm.generate_with_image(
@@ -2320,40 +2547,26 @@ def run_vision_generate(
             image_mime=image_mime,
             system_prompt=_VISION_SYSTEM_PROMPT,
         )
-        status_ph.empty()
+        if not _consume_generation_result(generation_id):
+            status_ph.empty()
+            _finalize_generation(generation_id, "cancelled")
+            return _generation_cancelled_message()
 
+        status_ph.empty()
         raw_text = resp.content
         extracted = _classify_code_blocks(raw_text)
 
         if extracted:
-            script_names = ", ".join(
-                k.replace("scripts/", "").replace(".gdl", "").upper()
-                for k in extracted if k.startswith("scripts/")
-            )
-            param_count = len(_parse_paramlist_text(extracted.get("paramlist.xml", "")))
-            label_parts = []
-            if script_names:
-                label_parts.append(f"脚本 [{script_names}]")
-            if param_count:
-                label_parts.append(f"{param_count} 个参数")
-            label_str = " + ".join(label_parts) or "内容"
+            result_prefix, _ = _apply_generation_result(extracted, proj, None, auto_apply)
+            _finalize_generation(generation_id, "completed")
+            return result_prefix + raw_text
 
-            if auto_apply:
-                _apply_scripts_to_project(proj, extracted)
-                _bump_main_editor_version()
-                prefix = f"🖼️ **图片解析完成，{label_str} 已写入编辑器** — 可直接「🔧 编译」\n\n"
-            else:
-                st.session_state.pending_diffs    = extracted
-                st.session_state.pending_ai_label = label_str
-                prefix = f"🖼️ **图片解析完成，AI 生成了 {label_str}** — 请在下方确认是否写入\n\n"
-
-            return prefix + raw_text
-
-        else:
-            return f"🖼️ **图片分析完成**（未检测到 GDL 代码块，AI 可能只给了文字分析）\n\n{raw_text}"
+        _finalize_generation(generation_id, "completed")
+        return f"🖼️ **图片分析完成**（未检测到 GDL 代码块，AI 可能只给了文字分析）\n\n{raw_text}"
 
     except Exception as exc:
         status_ph.empty()
+        _finalize_generation(generation_id, "failed")
         logger.warning("vision generate failed error=%s", exc.__class__.__name__)
         err_msg = _classify_vision_error(exc)
         st.error(err_msg)
@@ -2799,7 +3012,7 @@ with col_left:
                 "📂 导入 gdl / txt / gsm", type=["gdl", "txt", "gsm"],
                 key="editor_import",
                 help=".gdl/.txt → 解析脚本  |  .gsm → LP_XMLConverter 解包",
-                disabled=st.session_state.agent_running,
+                disabled=_is_generation_locked(st.session_state),
             )
             if any_upload:
                 # Dedup: skip if this exact file was already processed this session
@@ -3332,7 +3545,7 @@ with col_right:
             key="chat_main_input",
             accept_file=True,
             file_type=["jpg", "jpeg", "png", "webp", "gif"],
-            disabled=st.session_state.agent_running,
+            disabled=_is_generation_locked(st.session_state),
         )
 
         user_input = None
@@ -3569,26 +3782,31 @@ with col_right:
                             )
                             st.markdown(msg)
                         else:
-                            if not st.session_state.project:
-                                new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
-                                st.session_state.project = new_proj
-                                st.session_state.pending_gsm_name = gdl_obj_name
-                                st.session_state.script_revision = 0
-                                st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
+                            elicitation_msg, eliciting = _handle_elicitation_route(user_input, gdl_obj_name)
+                            if eliciting:
+                                msg = elicitation_msg
+                                st.markdown(msg)
+                            else:
+                                if not st.session_state.project:
+                                    new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
+                                    st.session_state.project = new_proj
+                                    st.session_state.pending_gsm_name = gdl_obj_name
+                                    st.session_state.script_revision = 0
+                                    st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
 
-                            proj_current = st.session_state.project
-                            # 只有全新空项目（无任何脚本内容）才自动写入；
-                            # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
-                            _has_any_script = any(
-                                proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
-                            )
-                            effective_gsm = st.session_state.pending_gsm_name or proj_current.name
-                            msg = run_agent_generate(
-                                user_input, proj_current, st.container(),
-                                gsm_name=effective_gsm,
-                                auto_apply=not _has_any_script,
-                            )
-                            st.markdown(msg)
+                                proj_current = st.session_state.project
+                                # 只有全新空项目（无任何脚本内容）才自动写入；
+                                # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
+                                _has_any_script = any(
+                                    proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
+                                )
+                                effective_gsm = st.session_state.pending_gsm_name or proj_current.name
+                                msg = run_agent_generate(
+                                    user_input, proj_current, st.container(),
+                                    gsm_name=effective_gsm,
+                                    auto_apply=not _has_any_script,
+                                )
+                                st.markdown(msg)
 
                 st.session_state.chat_history.append({"role": "assistant", "content": msg})
                 st.rerun()
