@@ -1,0 +1,12 @@
+---
+id: C08
+category: create
+complexity: high
+description: "管道弯头，管道外径参数化，壁厚参数化，弯曲角度参数化（45/90/135度），弯曲半径参数化，用TUBE或REVOLVE实现弯管几何，材质参数"
+success_criteria:
+  compile_pass: true
+  required_params: [pipe_od, pipe_thk, bend_angle, bend_radius, mat_pipe]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "弯管几何正确，壁厚均匀，角度参数驱动"
+expected_difficulty: high
+expected_pass: unlikely

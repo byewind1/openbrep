@@ -1,0 +1,12 @@
+---
+id: C03
+category: create
+complexity: medium
+description: "带门框的单扇门，门宽900mm门高2100mm，门框厚度参数化，门板厚度参数化，有门开启方向参数（左开/右开）"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, frame_w, panel_thk, open_direction]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "门框与门板分离，开启方向影响几何"
+expected_difficulty: medium
+expected_pass: true

@@ -1,0 +1,12 @@
+---
+id: C02
+category: create
+complexity: low_medium
+description: "参数化书架，宽600mm深300mm高1200mm，层板数量可调（默认4层），层板厚度参数化"
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, n_shelves, shelf_thk]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "层板数量参数驱动，FOR循环正确，ADD/DEL配平"
+expected_difficulty: easy_medium
+expected_pass: true

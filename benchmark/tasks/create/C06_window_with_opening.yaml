@@ -1,0 +1,12 @@
+---
+id: C06
+category: create
+complexity: medium_high
+description: "参数化窗户，窗宽1200mm窗高1500mm，窗框厚度参数化，玻璃厚度参数化，有可开启扇（单扇平开），开启扇宽度参数化，2D需要显示开启弧线，材质分区：框/扇/玻璃各独立"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, frame_w, glass_thk, sash_w, mat_frame, mat_glass]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "框/扇/玻璃分层，开启弧线在2D正确"
+expected_difficulty: medium_high
+expected_pass: maybe

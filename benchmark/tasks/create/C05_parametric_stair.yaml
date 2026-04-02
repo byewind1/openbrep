@@ -1,0 +1,12 @@
+---
+id: C05
+category: create
+complexity: medium_high
+description: "参数化直跑楼梯，步数参数化（默认12步），步高参数化，步宽参数化，踏板厚度参数化，有踢面/无踢面可选"
+success_criteria:
+  compile_pass: true
+  required_params: [stair_steps, riser_h, tread_w, tread_thk, has_riser]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "FOR循环驱动步数，总高度 = steps * riser_h，ADD/DEL正确"
+expected_difficulty: medium_high
+expected_pass: maybe

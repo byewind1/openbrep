@@ -1,0 +1,12 @@
+---
+id: C07
+category: create
+complexity: medium_high
+description: "参数化栏杆段，总长度参数化，栏杆间距参数化（自动计算根数），立杆直径参数化，扶手截面参数化（圆管），底部横杆可选（布尔参数），总高度参数化"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, post_spacing, post_d, rail_d, has_bottom_rail]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "立杆数量由间距自动计算，FOR循环正确，CYLIND使用正确"
+expected_difficulty: medium_high
+expected_pass: maybe

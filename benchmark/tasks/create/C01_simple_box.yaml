@@ -1,0 +1,12 @@
+---
+id: C01
+category: create
+complexity: low
+description: "做一个简单的长方体柜子，宽600mm，深400mm，高800mm，无任何附加构件"
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "单一 BLOCK 几何，尺寸与参数对应"
+expected_difficulty: easy
+expected_pass: true

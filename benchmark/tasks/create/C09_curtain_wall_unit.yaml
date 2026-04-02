@@ -1,0 +1,12 @@
+---
+id: C09
+category: create
+complexity: very_high
+description: "幕墙单元格，单元宽度/高度参数化，竖框/横框截面参数化，玻璃嵌入深度参数化，竖向分格数/横向分格数参数化（自动分割），材质分区：框/玻璃，2D需显示分格线"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, mullion_w, mullion_d, glass_thk, v_divs, h_divs]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "嵌套FOR循环分格，竖横框交叉处理，分格数参数联动"
+expected_difficulty: very_high
+expected_pass: unlikely

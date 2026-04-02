@@ -1,0 +1,12 @@
+---
+id: C04
+category: create
+complexity: medium
+description: "L型钢截面构件，翼缘宽度/厚度/腹板高度/厚度全部参数化，长度参数化，材质参数"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, flange_w, flange_t, web_h, web_t, mat_steel]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "L截面几何正确，无穿模，截面参数联动"
+expected_difficulty: medium
+expected_pass: maybe

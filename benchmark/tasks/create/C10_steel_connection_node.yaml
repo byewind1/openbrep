@@ -1,0 +1,12 @@
+---
+id: C10
+category: create
+complexity: very_high
+description: "H型钢柱梁节点，柱截面参数化（H型），梁截面参数化（H型），单侧连接板参数化，螺栓排列参数化（行数/列数/间距），加劲肋可选，所有构件独立材质，节点高度参数化"
+success_criteria:
+  compile_pass: true
+  required_params: [col_hw, col_bf, col_tf, col_tw, beam_hw, beam_bf, bolt_rows, bolt_cols, has_stiff]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "多构件装配，螺栓FOR循环，ADD/DEL配平，无穿模"
+expected_difficulty: very_high
+expected_pass: unlikely
