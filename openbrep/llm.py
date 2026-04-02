@@ -162,23 +162,10 @@ class LLMAdapter:
                 ) from exc
             raise
         if completion_kwargs.get("stream"):
-            content = ""
+            chunks = []
             for chunk in response:
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
-                    content += delta.content
-            logger.info(
-                "LLM text call finished model=%s prompt_messages=%d elapsed=%.2fs",
-                model,
-                len(msg_dicts),
-                time.perf_counter() - start_time,
-            )
-            return LLMResponse(
-                content=content,
-                model=model,
-                usage={},
-                finish_reason="stop",
-            )
+                chunks.append(chunk)
+            response = self._litellm.stream_chunk_builder(chunks)
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
         logger.info(
@@ -292,6 +279,11 @@ class LLMAdapter:
                     "LLM 配置错误：请检查 config.toml 中 model 字段是否填写了正确的模型名称（如 gpt-4o、claude-3-5-sonnet），以及对应的 api_key 是否已配置。"
                 ) from exc
             raise
+        if completion_kwargs.get("stream"):
+            chunks = []
+            for chunk in response:
+                chunks.append(chunk)
+            response = self._litellm.stream_chunk_builder(chunks)
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
         logger.info(
