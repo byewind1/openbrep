@@ -46,6 +46,21 @@ class LLMAdapter:
         self._litellm = None
         self._setup()
 
+    def _is_custom_provider_model(self, model: str | None = None) -> bool:
+        target = (model or self.config.model or "").lower()
+        for provider in self.config.custom_providers:
+            models = provider.get("models", []) or []
+            if any(target == str(candidate).lower() for candidate in models):
+                return True
+        return False
+
+    def _normalize_api_base(self, api_base: str | None, *, custom_provider: bool) -> str | None:
+        if not api_base:
+            return api_base
+        if custom_provider and api_base.endswith("/v1"):
+            return api_base[:-3]
+        return api_base
+
     def _setup(self):
         """Initialize litellm with config."""
         try:
@@ -104,6 +119,7 @@ class LLMAdapter:
 
         # Build model string for litellm
         model = self._resolve_model_string()
+        is_custom_provider = self._is_custom_provider_model()
 
         # Build completion kwargs
         completion_kwargs = {
@@ -115,7 +131,7 @@ class LLMAdapter:
         }
 
         model_lower = model.lower()
-        if "codex" in model_lower or "gpt-5" in model_lower:
+        if ("codex" in model_lower or "gpt-5" in model_lower) and not is_custom_provider:
             completion_kwargs["temperature"] = 1
             completion_kwargs["drop_params"] = True
 
@@ -127,7 +143,10 @@ class LLMAdapter:
         # — they handle endpoints internally. Only pass for openai-compatible custom endpoints.
         native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
         is_native = any(model.startswith(p) for p in native_providers)
-        api_base = self.config.resolve_api_base()
+        api_base = self._normalize_api_base(
+            self.config.resolve_api_base(),
+            custom_provider=is_custom_provider,
+        )
         if api_base and not is_native:
             completion_kwargs["api_base"] = api_base
 
@@ -196,6 +215,7 @@ class LLMAdapter:
             )
 
         model = self._resolve_model_string()
+        is_custom_provider = self._is_custom_provider_model()
 
         messages = []
         if system_prompt:
@@ -221,7 +241,7 @@ class LLMAdapter:
         }
 
         model_lower = model.lower()
-        if "codex" in model_lower or "gpt-5" in model_lower:
+        if ("codex" in model_lower or "gpt-5" in model_lower) and not is_custom_provider:
             completion_kwargs["temperature"] = 1
             completion_kwargs["drop_params"] = True
 
@@ -231,7 +251,10 @@ class LLMAdapter:
 
         native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
         is_native = any(model.startswith(p) for p in native_providers)
-        api_base = self.config.resolve_api_base()
+        api_base = self._normalize_api_base(
+            self.config.resolve_api_base(),
+            custom_provider=is_custom_provider,
+        )
         if api_base and not is_native:
             completion_kwargs["api_base"] = api_base
 
@@ -300,6 +323,8 @@ class LLMAdapter:
 
         # Infer provider from model name
         model_lower = model.lower()
+        if self._is_custom_provider_model(model):
+            return model
         if "glm" in model_lower:
             # 智谱 GLM models: LiteLLM provider prefix is 'zai/' (Z.AI)
             return f"zai/{model}"

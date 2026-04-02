@@ -5,17 +5,32 @@ from openbrep.config import LLMConfig
 from openbrep.core import GDLAgent
 from openbrep.llm import LLMAdapter
 from ui.app import (
+    _begin_generation_state,
     _build_assistant_settings_prompt,
     _build_model_options,
     _build_model_source_state,
     _detect_image_task_mode,
+    _finish_generation_state,
+    _is_generation_locked,
+    _request_generation_cancel,
     _resolve_selected_model,
+    _should_accept_generation_result,
     _should_persist_assistant_settings,
     _validate_chat_image_size,
 )
 
 
 class TestLLMAdapterVision(unittest.TestCase):
+    def _mock_response(self, model_name="openai/gpt-4o"):
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = "ok"
+        mock_choice.finish_reason = "stop"
+        mock_response.choices = [mock_choice]
+        mock_response.model = model_name
+        mock_response.usage = {"prompt_tokens": 1}
+        return mock_response
+
     def test_generate_with_image_passes_timeout_and_api_settings(self):
         config = LLMConfig(
             model="gpt-4o",
@@ -25,14 +40,7 @@ class TestLLMAdapterVision(unittest.TestCase):
         )
         adapter = LLMAdapter(config)
         adapter._litellm = MagicMock()
-        mock_response = MagicMock()
-        mock_choice = MagicMock()
-        mock_choice.message.content = "ok"
-        mock_choice.finish_reason = "stop"
-        mock_response.choices = [mock_choice]
-        mock_response.model = "openai/gpt-4o"
-        mock_response.usage = {"prompt_tokens": 1}
-        adapter._litellm.completion.return_value = mock_response
+        adapter._litellm.completion.return_value = self._mock_response()
 
         result = adapter.generate_with_image(
             text_prompt="describe",
@@ -61,6 +69,58 @@ class TestLLMAdapterVision(unittest.TestCase):
             adapter.generate_with_image("describe", "YWJj")
         self.assertIn("LLM 配置错误", str(cm.exception))
 
+    def test_custom_provider_model_stays_unprefixed(self):
+        config = LLMConfig(
+            model="gpt-5.4",
+            custom_providers=[{"name": "ymg", "models": ["gpt-5.4"], "protocol": "openai"}],
+        )
+        adapter = LLMAdapter(config)
+        self.assertEqual(adapter._resolve_model_string(), "gpt-5.4")
+
+    def test_builtin_gpt5_model_keeps_openai_prefix(self):
+        config = LLMConfig(model="gpt-5.4")
+        adapter = LLMAdapter(config)
+        self.assertEqual(adapter._resolve_model_string(), "openai/gpt-5.4")
+
+    def test_custom_provider_generate_keeps_config_temperature_and_strips_v1(self):
+        config = LLMConfig(
+            model="gpt-5.4",
+            api_key="test-key",
+            api_base="https://api.airsim.eu.cc/v1",
+            temperature=0.2,
+            custom_providers=[{"name": "ymg", "models": ["gpt-5.4"], "protocol": "openai"}],
+        )
+        adapter = LLMAdapter(config)
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = self._mock_response(model_name="gpt-5.4")
+
+        result = adapter.generate([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(result.content, "ok")
+        kwargs = adapter._litellm.completion.call_args.kwargs
+        self.assertEqual(kwargs["model"], "gpt-5.4")
+        self.assertEqual(kwargs["temperature"], 0.2)
+        self.assertEqual(kwargs["api_base"], "https://api.airsim.eu.cc")
+        self.assertNotIn("drop_params", kwargs)
+
+    def test_builtin_gpt5_generate_still_applies_openai_overrides(self):
+        config = LLMConfig(
+            model="gpt-5.4",
+            api_key="test-key",
+            temperature=0.2,
+        )
+        adapter = LLMAdapter(config)
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = self._mock_response(model_name="openai/gpt-5.4")
+
+        result = adapter.generate([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(result.content, "ok")
+        kwargs = adapter._litellm.completion.call_args.kwargs
+        self.assertEqual(kwargs["model"], "openai/gpt-5.4")
+        self.assertEqual(kwargs["temperature"], 1)
+        self.assertTrue(kwargs["drop_params"])
+
 
 class TestVisionHelpers(unittest.TestCase):
     def test_detect_image_task_mode_debug_tokens(self):
@@ -79,8 +139,91 @@ class TestVisionHelpers(unittest.TestCase):
         self.assertIsNone(_validate_chat_image_size(b"small", "small.png"))
 
 
-class TestAssistantSettingsHelpers(unittest.TestCase):
-    def test_build_assistant_settings_prompt_returns_empty_for_blank(self):
+
+
+class TestGenerationStateHelpers(unittest.TestCase):
+    def test_begin_generation_state_creates_running_session(self):
+        state = {}
+
+        generation_id = _begin_generation_state(state)
+
+        self.assertTrue(generation_id)
+        self.assertEqual(state["active_generation_id"], generation_id)
+        self.assertEqual(state["generation_status"], "running")
+        self.assertFalse(state["generation_cancel_requested"])
+        self.assertTrue(state["agent_running"])
+
+    def test_begin_generation_state_replaces_previous_session(self):
+        state = {}
+        first_id = _begin_generation_state(state)
+
+        second_id = _begin_generation_state(state)
+
+        self.assertNotEqual(first_id, second_id)
+        self.assertEqual(state["active_generation_id"], second_id)
+        self.assertEqual(state["generation_status"], "running")
+
+    def test_request_generation_cancel_marks_matching_session(self):
+        state = {}
+        generation_id = _begin_generation_state(state)
+
+        cancelled = _request_generation_cancel(state, generation_id)
+
+        self.assertTrue(cancelled)
+        self.assertTrue(state["generation_cancel_requested"])
+        self.assertEqual(state["generation_status"], "cancelling")
+        self.assertTrue(state["agent_running"])
+
+    def test_request_generation_cancel_ignores_stale_session(self):
+        state = {}
+        _begin_generation_state(state)
+        active_id = _begin_generation_state(state)
+
+        cancelled = _request_generation_cancel(state, "stale-id")
+
+        self.assertFalse(cancelled)
+        self.assertEqual(state["active_generation_id"], active_id)
+        self.assertFalse(state["generation_cancel_requested"])
+        self.assertEqual(state["generation_status"], "running")
+
+    def test_should_accept_generation_result_rejects_cancelled_session(self):
+        state = {}
+        generation_id = _begin_generation_state(state)
+        _request_generation_cancel(state, generation_id)
+
+        self.assertFalse(_should_accept_generation_result(state, generation_id))
+
+    def test_should_accept_generation_result_rejects_stale_session(self):
+        state = {}
+        stale_id = _begin_generation_state(state)
+        _begin_generation_state(state)
+
+        self.assertFalse(_should_accept_generation_result(state, stale_id))
+
+    def test_finish_generation_state_only_active_session_unlocks(self):
+        state = {}
+        stale_id = _begin_generation_state(state)
+        active_id = _begin_generation_state(state)
+
+        stale_finished = _finish_generation_state(state, stale_id, "completed")
+
+        self.assertFalse(stale_finished)
+        self.assertTrue(state["agent_running"])
+        self.assertEqual(state["active_generation_id"], active_id)
+        self.assertEqual(state["generation_status"], "running")
+
+        active_finished = _finish_generation_state(state, active_id, "completed")
+
+        self.assertTrue(active_finished)
+        self.assertFalse(state["agent_running"])
+        self.assertIsNone(state["active_generation_id"])
+        self.assertEqual(state["generation_status"], "completed")
+
+    def test_clear_project_can_call_editor_bump_function(self):
+        from ui.app import _bump_main_editor_version
+
+        self.assertTrue(callable(_bump_main_editor_version))
+
         self.assertEqual(_build_assistant_settings_prompt("  \n  "), "")
 
     def test_build_assistant_settings_prompt_wraps_user_preferences(self):
