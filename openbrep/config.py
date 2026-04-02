@@ -147,6 +147,15 @@ class LLMConfig:
     custom_providers: list[dict] = field(default_factory=list)
     assistant_settings: str = ""
 
+    def _is_custom_provider_model(self, model: str | None = None) -> bool:
+        target = (model or self.model or "")
+        model_bare = target.split("/")[-1] if "/" in target else target
+        for provider in self.custom_providers:
+            models = provider.get("models", []) or []
+            if any(model_bare.lower() == str(candidate).lower().split("/")[-1] for candidate in models):
+                return True
+        return False
+
     def resolve_api_key(self) -> Optional[str]:
         if self.api_key:
             return self.api_key

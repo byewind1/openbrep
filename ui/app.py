@@ -1379,15 +1379,18 @@ def get_compiler():
 def get_llm():
     from openbrep.config import LLMConfig
     from openbrep.llm import LLMAdapter
+    import logging
     config = LLMConfig(
         model=model_name,
         api_key=api_key,
         api_base=api_base,
         temperature=0.2,
-        max_tokens=32768,
+        max_tokens=4096,
         assistant_settings=st.session_state.get("assistant_settings", ""),
         custom_providers=_custom_providers,
     )
+    resolved_base = config.resolve_api_base()
+    resolved_key = config.resolve_api_key()
     return LLMAdapter(config)
 
 def load_knowledge(task_type: str = "all"):

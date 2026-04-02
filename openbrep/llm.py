@@ -54,13 +54,6 @@ class LLMAdapter:
                 return True
         return False
 
-    def _normalize_api_base(self, api_base: str | None, *, custom_provider: bool) -> str | None:
-        if not api_base:
-            return api_base
-        if custom_provider and api_base.endswith("/v1"):
-            return api_base[:-3]
-        return api_base
-
     def _setup(self):
         """Initialize litellm with config."""
         try:
@@ -119,7 +112,6 @@ class LLMAdapter:
 
         # Build model string for litellm
         model = self._resolve_model_string()
-        is_custom_provider = self._is_custom_provider_model()
 
         # Build completion kwargs
         completion_kwargs = {
@@ -128,11 +120,11 @@ class LLMAdapter:
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
             "timeout": self.config.timeout,
+            "stream": True,
         }
 
         model_lower = model.lower()
-        if ("codex" in model_lower or "gpt-5" in model_lower) and not is_custom_provider:
-            completion_kwargs["temperature"] = 1
+        if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
 
         # Pass API key and base URL
@@ -143,10 +135,7 @@ class LLMAdapter:
         # — they handle endpoints internally. Only pass for openai-compatible custom endpoints.
         native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
         is_native = any(model.startswith(p) for p in native_providers)
-        api_base = self._normalize_api_base(
-            self.config.resolve_api_base(),
-            custom_provider=is_custom_provider,
-        )
+        api_base = self.config.resolve_api_base()
         if api_base and not is_native:
             completion_kwargs["api_base"] = api_base
 
@@ -172,6 +161,24 @@ class LLMAdapter:
                     "LLM 配置错误：请检查 config.toml 中 model 字段是否填写了正确的模型名称（如 gpt-4o、claude-3-5-sonnet），以及对应的 api_key 是否已配置。"
                 ) from exc
             raise
+        if completion_kwargs.get("stream"):
+            content = ""
+            for chunk in response:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    content += delta.content
+            logger.info(
+                "LLM text call finished model=%s prompt_messages=%d elapsed=%.2fs",
+                model,
+                len(msg_dicts),
+                time.perf_counter() - start_time,
+            )
+            return LLMResponse(
+                content=content,
+                model=model,
+                usage={},
+                finish_reason="stop",
+            )
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
         logger.info(
@@ -215,7 +222,6 @@ class LLMAdapter:
             )
 
         model = self._resolve_model_string()
-        is_custom_provider = self._is_custom_provider_model()
 
         messages = []
         if system_prompt:
@@ -241,8 +247,7 @@ class LLMAdapter:
         }
 
         model_lower = model.lower()
-        if ("codex" in model_lower or "gpt-5" in model_lower) and not is_custom_provider:
-            completion_kwargs["temperature"] = 1
+        if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
 
         api_key = self.config.resolve_api_key()
@@ -251,10 +256,7 @@ class LLMAdapter:
 
         native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
         is_native = any(model.startswith(p) for p in native_providers)
-        api_base = self._normalize_api_base(
-            self.config.resolve_api_base(),
-            custom_provider=is_custom_provider,
-        )
+        api_base = self.config.resolve_api_base()
         if api_base and not is_native:
             completion_kwargs["api_base"] = api_base
 
@@ -319,12 +321,19 @@ class LLMAdapter:
 
         # Already has a provider prefix
         if "/" in model and not model.startswith("http"):
+            if self._is_custom_provider_model(model):
+                for provider in self.config.custom_providers:
+                    prefix = str(provider.get("name", "") or "") + "/"
+                    if prefix != "/" and model.startswith(prefix):
+                        return model[len(prefix):]
+            return model
+
+        # Custom provider models: use as-is, let api_base handle routing
+        if self._is_custom_provider_model(model):
             return model
 
         # Infer provider from model name
         model_lower = model.lower()
-        if self._is_custom_provider_model(model):
-            return model
         if "glm" in model_lower:
             # 智谱 GLM models: LiteLLM provider prefix is 'zai/' (Z.AI)
             return f"zai/{model}"
@@ -338,10 +347,6 @@ class LLMAdapter:
             return f"gemini/{model}" if "gemini/" not in model else model
         elif "ollama" in model_lower:
             return model  # Already has ollama/ prefix or will be handled
-
-        for provider in self.config.custom_providers:
-            if provider.get("name") == model and provider.get("protocol") == "openai":
-                return f"openai/{model}"
 
         return model
 
