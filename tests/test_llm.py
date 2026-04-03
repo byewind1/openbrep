@@ -7,6 +7,7 @@ from openbrep.config import LLMConfig
 from openbrep.core import GDLAgent
 from openbrep.llm import LLMAdapter
 from ui.app import (
+    _handle_hsf_directory_load,
     _handle_unified_import,
     _begin_generation_state,
     _build_assistant_settings_prompt,
@@ -298,9 +299,82 @@ class TestVisionHelpers(unittest.TestCase):
         self.assertIsNone(_validate_chat_image_size(b"small", "small.png"))
 
 
-
-
 class TestImportFlows(unittest.TestCase):
+    def test_hsf_directory_load_sets_current_project_and_resets_editor_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir) / "Chair"
+            project_dir.mkdir()
+            loaded_proj = MagicMock()
+            loaded_proj.name = "untitled"
+            loaded_proj.parameters = []
+            loaded_proj.scripts = {}
+
+            with patch("ui.app.HSFProject.load_from_disk", return_value=loaded_proj) as load_from_disk:
+                with patch("ui.app._reset_tapir_p0_state") as reset_tapir:
+                    with patch("ui.app._bump_main_editor_version") as bump_editor:
+                        with patch.dict("ui.app.st.session_state", {
+                            "work_dir": tmpdir,
+                            "project": None,
+                            "pending_diffs": {"old": 1},
+                            "chat_history": [],
+                            "preview_2d_data": object(),
+                            "preview_3d_data": object(),
+                            "preview_warnings": ["old"],
+                            "preview_meta": {"kind": "old", "timestamp": "old"},
+                            "pending_gsm_name": "old-name",
+                            "script_revision": 9,
+                        }, clear=False):
+                            ok, msg = _handle_hsf_directory_load(str(project_dir))
+
+            self.assertTrue(ok)
+            self.assertIn("已加载 HSF 项目", msg)
+            load_from_disk.assert_called_once_with(str(project_dir))
+            self.assertEqual(loaded_proj.work_dir, Path(tmpdir))
+            self.assertEqual(loaded_proj.root, Path(tmpdir) / "untitled")
+            self.assertEqual(__import__("ui.app", fromlist=["st"]).st.session_state.pending_diffs, {})
+            self.assertIsNone(__import__("ui.app", fromlist=["st"]).st.session_state.preview_2d_data)
+            self.assertIsNone(__import__("ui.app", fromlist=["st"]).st.session_state.preview_3d_data)
+            self.assertEqual(__import__("ui.app", fromlist=["st"]).st.session_state.preview_warnings, [])
+            self.assertEqual(__import__("ui.app", fromlist=["st"]).st.session_state.preview_meta, {"kind": "", "timestamp": ""})
+            self.assertEqual(__import__("ui.app", fromlist=["st"]).st.session_state.pending_gsm_name, "untitled")
+            self.assertEqual(__import__("ui.app", fromlist=["st"]).st.session_state.script_revision, 0)
+            reset_tapir.assert_called_once_with()
+            bump_editor.assert_called_once_with()
+
+    def test_hsf_directory_load_rejects_missing_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_dir = Path(tmpdir) / "missing"
+
+            with patch("ui.app.HSFProject.load_from_disk") as load_from_disk:
+                with patch.dict("ui.app.st.session_state", {
+                    "work_dir": tmpdir,
+                    "chat_history": [],
+                }, clear=False):
+                    ok, msg = _handle_hsf_directory_load(str(missing_dir))
+
+            self.assertFalse(ok)
+            self.assertIn("目录不存在", msg)
+            load_from_disk.assert_not_called()
+
+    def test_hsf_directory_load_sets_pending_name_from_project_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir) / "Desk"
+            project_dir.mkdir()
+            loaded_proj = MagicMock()
+            loaded_proj.name = "untitled"
+            loaded_proj.parameters = []
+            loaded_proj.scripts = {}
+
+            with patch("ui.app.HSFProject.load_from_disk", return_value=loaded_proj):
+                with patch.dict("ui.app.st.session_state", {
+                    "work_dir": tmpdir,
+                    "chat_history": [],
+                }, clear=False):
+                    ok, _msg = _handle_hsf_directory_load(str(project_dir))
+
+            self.assertTrue(ok)
+            self.assertEqual(__import__("ui.app", fromlist=["st"]).st.session_state.pending_gsm_name, "untitled")
+
     def test_gsm_import_saves_hsf_into_work_dir_immediately(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             uploaded = MagicMock()

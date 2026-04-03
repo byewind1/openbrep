@@ -2267,6 +2267,45 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:
+    raw_path = (project_dir or "").strip()
+    if not raw_path:
+        return (False, "❌ 请输入 HSF 项目目录")
+
+    hsf_dir = Path(raw_path).expanduser()
+    if not hsf_dir.exists():
+        return (False, f"❌ 目录不存在: {hsf_dir}")
+    if not hsf_dir.is_dir():
+        return (False, f"❌ 不是目录: {hsf_dir}")
+
+    try:
+        proj = HSFProject.load_from_disk(str(hsf_dir))
+    except Exception as e:
+        return (False, f"❌ 载入 HSF 项目失败: {e}")
+
+    msg = f"✅ 已加载 HSF 项目 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本"
+    return _finalize_loaded_project(proj, msg, pending_gsm_name=proj.name)
+
+
+
+def _finalize_loaded_project(proj: HSFProject, msg: str, pending_gsm_name: str) -> tuple[bool, str]:
+    proj.work_dir = Path(st.session_state.work_dir)
+    proj.root = proj.work_dir / proj.name
+    st.session_state.project = proj
+    st.session_state.pending_diffs = {}
+    st.session_state.preview_2d_data = None
+    st.session_state.preview_3d_data = None
+    st.session_state.preview_warnings = []
+    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+    st.session_state.pending_gsm_name = pending_gsm_name
+    st.session_state.script_revision = 0
+    _reset_tapir_p0_state()
+    _bump_main_editor_version()
+    st.session_state.chat_history.append({"role": "assistant", "content": msg})
+    return (True, msg)
+
+
+
 def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     """
     Single entry point for importing any GDL-related file.
@@ -2296,23 +2335,10 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
             return (False, f"❌ 导入失败: {e}")
         msg = f"✅ 已导入 GDL `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本"
 
-    proj.work_dir = Path(st.session_state.work_dir)
-    proj.root = proj.work_dir / proj.name
+    _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
     if ext == ".gsm":
         proj.save_to_disk()
-    st.session_state.project = proj
-    st.session_state.pending_diffs = {}
-    st.session_state.preview_2d_data = None
-    st.session_state.preview_3d_data = None
-    st.session_state.preview_warnings = []
-    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-    _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
-    st.session_state.pending_gsm_name = _import_gsm_name
-    st.session_state.script_revision = 0
-    _reset_tapir_p0_state()
-    _bump_main_editor_version()
-    st.session_state.chat_history.append({"role": "assistant", "content": msg})
-    return (True, msg)
+    return _finalize_loaded_project(proj, msg, _import_gsm_name)
 
 
 def _strip_md_fences(code: str) -> str:
@@ -3034,6 +3060,25 @@ with col_left:
                         st.rerun()
                     else:
                         st.error(_imp_msg)
+
+            hsf_dir_input = st.text_input(
+                "HSF 项目目录",
+                value="",
+                placeholder="/path/to/YourHSFProject",
+                key="editor_hsf_dir",
+                disabled=_is_generation_locked(st.session_state),
+            )
+            if st.button(
+                "载入 HSF 项目",
+                key="editor_load_hsf",
+                disabled=_is_generation_locked(st.session_state),
+                use_container_width=True,
+            ):
+                ok, _hsf_msg = _handle_hsf_directory_load(hsf_dir_input)
+                if ok:
+                    st.rerun()
+                else:
+                    st.error(_hsf_msg)
 
         with tb_compile_top:
             # GSM name input + compile button stacked in this column
