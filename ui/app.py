@@ -2243,23 +2243,24 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
                 f"stdout: {result.stdout[:300]}\nstderr: {result.stderr[:300]}"
             )
 
-        # Snapshot directory tree before rmtree wipes it
-        hsf_files = sorted(str(p.relative_to(hsf_dir)) for p in hsf_dir.rglob("*") if p.is_file())
-
-        proj = HSFProject.load_from_disk(str(hsf_dir))
         # AC29 flat layout: hsf_dir == hsf_out → name is "hsf_out", use GSM stem instead
         gsm_stem = Path(filename).stem
-        if proj.name in ("hsf_out", "scripts", ""):
-            proj.name = gsm_stem
-        proj.work_dir = Path(st.session_state.work_dir)
-        proj.root = proj.work_dir / proj.name
+        work_dir = Path(st.session_state.work_dir)
+        project_dir = work_dir / gsm_stem
+        suffix = 1
+        while project_dir.exists():
+            suffix += 1
+            project_dir = work_dir / f"{gsm_stem}_imported_{suffix}"
+        shutil.copytree(hsf_dir, project_dir)
 
-        scripts_found = [s.value for s in proj.scripts]
+        hsf_files = sorted(str(p.relative_to(project_dir)) for p in project_dir.rglob("*") if p.is_file())
+        loaded_proj = HSFProject.load_from_disk(str(project_dir))
+        scripts_found = [s.value for s in loaded_proj.scripts]
         diag = (
             f"\n\n**HSF 文件列表**: `{hsf_files}`"
             f"\n**已识别脚本**: `{scripts_found}`"
         )
-        return (proj, f"✅ 已导入 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本{diag}")
+        return (project_dir, f"✅ 已导入 `{loaded_proj.name}` — {len(loaded_proj.parameters)} 参数，{len(loaded_proj.scripts)} 脚本{diag}")
     except Exception as e:
         return (None, f"❌ HSF 解析失败: {e}")
     finally:
@@ -2279,9 +2280,13 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
 
     if ext == ".gsm":
         with st.spinner("解包 GSM..."):
-            proj, msg = import_gsm(uploaded_file.read(), fname)
-        if not proj:
+            imported_project, msg = import_gsm(uploaded_file.read(), fname)
+        if not imported_project:
             return (False, msg)
+        if isinstance(imported_project, (str, Path)):
+            proj = HSFProject.load_from_disk(str(imported_project))
+        else:
+            proj = imported_project
     else:
         # .gdl / .txt — plain text
         try:
@@ -2293,6 +2298,8 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
 
     proj.work_dir = Path(st.session_state.work_dir)
     proj.root = proj.work_dir / proj.name
+    if ext == ".gsm":
+        proj.save_to_disk()
     st.session_state.project = proj
     st.session_state.pending_diffs = {}
     st.session_state.preview_2d_data = None

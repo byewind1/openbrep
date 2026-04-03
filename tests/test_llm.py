@@ -1,3 +1,5 @@
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -5,6 +7,7 @@ from openbrep.config import LLMConfig
 from openbrep.core import GDLAgent
 from openbrep.llm import LLMAdapter
 from ui.app import (
+    _handle_unified_import,
     _begin_generation_state,
     _build_assistant_settings_prompt,
     _build_model_options,
@@ -132,6 +135,27 @@ class TestLLMAdapterVision(unittest.TestCase):
         kwargs = adapter._litellm.completion.call_args.kwargs
         self.assertTrue(kwargs["stream"])
 
+    def test_builtin_gpt5_generate_uses_stream_chunk_builder(self):
+        config = LLMConfig(
+            model="gpt-5.4",
+            api_key="test-key",
+            temperature=0.2,
+            max_tokens=4096,
+            timeout=33,
+        )
+        adapter = LLMAdapter(config)
+        chunk1 = MagicMock()
+        chunk2 = MagicMock()
+        built_response = self._mock_response(model_name="openai/gpt-5.4")
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = [chunk1, chunk2]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
+
+        result = adapter.generate([{"role": "user", "content": "hi"}])
+
+        self.assertEqual(result.content, "ok")
+        adapter._litellm.stream_chunk_builder.assert_called_once_with([chunk1, chunk2])
+
     def test_builtin_gpt5_generate_streams_and_aggregates_delta_content(self):
         config = LLMConfig(
             model="gpt-5.4",
@@ -184,6 +208,54 @@ class TestLLMAdapterVision(unittest.TestCase):
         self.assertFalse(kwargs["stream"])
         self.assertTrue(kwargs["drop_params"])
 
+    def test_builtin_gpt5_vision_enables_stream_by_default(self):
+        config = LLMConfig(
+            model="gpt-5.4",
+            api_key="test-key",
+            api_base="https://example.com/v1",
+            temperature=0.2,
+            max_tokens=512,
+            timeout=12,
+        )
+        adapter = LLMAdapter(config)
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = self._mock_response(model_name="openai/gpt-5.4")
+
+        adapter.generate_with_image(
+            text_prompt="describe",
+            image_b64="YWJj",
+            image_mime="image/png",
+        )
+
+        kwargs = adapter._litellm.completion.call_args.kwargs
+        self.assertTrue(kwargs["stream"])
+
+    def test_builtin_gpt5_vision_uses_stream_chunk_builder(self):
+        config = LLMConfig(
+            model="gpt-5.4",
+            api_key="test-key",
+            api_base="https://example.com/v1",
+            temperature=0.2,
+            max_tokens=512,
+            timeout=12,
+        )
+        adapter = LLMAdapter(config)
+        chunk1 = MagicMock()
+        chunk2 = MagicMock()
+        built_response = self._mock_response(model_name="openai/gpt-5.4")
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = [chunk1, chunk2]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
+
+        result = adapter.generate_with_image(
+            text_prompt="describe",
+            image_b64="YWJj",
+            image_mime="image/png",
+        )
+
+        self.assertEqual(result.content, "ok")
+        adapter._litellm.stream_chunk_builder.assert_called_once_with([chunk1, chunk2])
+
     def test_builtin_gpt5_vision_sets_drop_params_without_changing_temperature(self):
         config = LLMConfig(
             model="gpt-5.4",
@@ -226,6 +298,155 @@ class TestVisionHelpers(unittest.TestCase):
         self.assertIsNone(_validate_chat_image_size(b"small", "small.png"))
 
 
+
+
+class TestImportFlows(unittest.TestCase):
+    def test_gsm_import_saves_hsf_into_work_dir_immediately(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uploaded = MagicMock()
+            uploaded.name = "chair.gsm"
+            uploaded.read.return_value = b"fake-gsm"
+
+            proj = MagicMock()
+            proj.name = "chair"
+            proj.parameters = []
+            proj.scripts = {}
+
+            with patch("ui.app.import_gsm", return_value=(proj, "ok")):
+                with patch("ui.app.st.spinner") as spinner:
+                    spinner.return_value.__enter__.return_value = None
+                    spinner.return_value.__exit__.return_value = None
+                    with patch.dict("ui.app.st.session_state", {
+                        "work_dir": tmpdir,
+                        "project": None,
+                        "pending_diffs": {"old": 1},
+                        "editor_version": 0,
+                        "pending_gsm_name": "",
+                    }, clear=False):
+                        ok, _msg = _handle_unified_import(uploaded)
+
+            self.assertTrue(ok)
+            self.assertEqual(proj.work_dir, Path(tmpdir))
+            self.assertEqual(proj.root, Path(tmpdir) / "chair")
+            proj.save_to_disk.assert_called_once_with()
+
+    def test_import_gsm_copies_hsf_root_into_work_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_compiler = MagicMock()
+            fake_compiler.is_available = True
+            fake_compiler.converter_path = "/tmp/LP_XMLConverter"
+            fake_compiler.libpart2hsf.return_value = MagicMock(success=True, stdout="", stderr="", exit_code=0)
+
+            created_temp = Path(tmpdir) / "temp-import"
+            created_temp.mkdir()
+
+            def fake_libpart2hsf(_gsm_path, hsf_out_path):
+                hsf_out = Path(hsf_out_path)
+                hsf_root = hsf_out / "Chair"
+                scripts_dir = hsf_root / "scripts"
+                scripts_dir.mkdir(parents=True)
+                (hsf_root / "libpartdata.xml").write_text("<Symbol></Symbol>", encoding="utf-8")
+                (scripts_dir / "3d.gdl").write_text("BLOCK 1,1,1\nEND", encoding="utf-8")
+                return MagicMock(success=True, stdout="", stderr="", exit_code=0)
+
+            fake_compiler.libpart2hsf.side_effect = fake_libpart2hsf
+
+            with patch("ui.app.get_compiler", return_value=fake_compiler):
+                with patch("ui.app.HSFProject.load_from_disk") as load_from_disk:
+                    loaded_proj = MagicMock()
+                    loaded_proj.name = "Chair"
+                    loaded_proj.parameters = []
+                    script = MagicMock()
+                    script.value = "3d.gdl"
+                    loaded_proj.scripts = {script: "BLOCK 1,1,1\nEND"}
+                    load_from_disk.return_value = loaded_proj
+                    with patch("tempfile.mkdtemp", return_value=str(created_temp)):
+                        with patch.dict("ui.app.st.session_state", {"work_dir": tmpdir}, clear=False):
+                            project_dir, msg = __import__("ui.app", fromlist=["import_gsm"]).import_gsm(b"fake", "Chair.gsm")
+
+            self.assertTrue(project_dir, msg)
+            self.assertEqual(Path(project_dir), Path(tmpdir) / "Chair")
+            self.assertTrue((Path(project_dir) / "libpartdata.xml").exists())
+            self.assertTrue((Path(project_dir) / "scripts" / "3d.gdl").exists())
+            self.assertIn("已导入", msg)
+
+    def test_import_gsm_avoids_overwriting_existing_workdir_project(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            existing = Path(tmpdir) / "Chair"
+            existing.mkdir()
+            (existing / "keep.txt").write_text("old", encoding="utf-8")
+
+            fake_compiler = MagicMock()
+            fake_compiler.is_available = True
+            fake_compiler.converter_path = "/tmp/LP_XMLConverter"
+
+            created_temp = Path(tmpdir) / "temp-import"
+            created_temp.mkdir()
+
+            def fake_libpart2hsf(_gsm_path, hsf_out_path):
+                hsf_out = Path(hsf_out_path)
+                hsf_root = hsf_out / "Chair"
+                scripts_dir = hsf_root / "scripts"
+                scripts_dir.mkdir(parents=True)
+                (hsf_root / "libpartdata.xml").write_text("<Symbol></Symbol>", encoding="utf-8")
+                (scripts_dir / "3d.gdl").write_text("BLOCK 1,1,1\nEND", encoding="utf-8")
+                return MagicMock(success=True, stdout="", stderr="", exit_code=0)
+
+            fake_compiler.libpart2hsf.side_effect = fake_libpart2hsf
+
+            with patch("ui.app.get_compiler", return_value=fake_compiler):
+                with patch("ui.app.HSFProject.load_from_disk") as load_from_disk:
+                    loaded_proj = MagicMock()
+                    loaded_proj.name = "Chair"
+                    loaded_proj.parameters = []
+                    script = MagicMock()
+                    script.value = "3d.gdl"
+                    loaded_proj.scripts = {script: "BLOCK 1,1,1\nEND"}
+                    load_from_disk.return_value = loaded_proj
+                    with patch("tempfile.mkdtemp", return_value=str(created_temp)):
+                        with patch.dict("ui.app.st.session_state", {"work_dir": tmpdir}, clear=False):
+                            project_dir, _msg = __import__("ui.app", fromlist=["import_gsm"]).import_gsm(b"fake", "Chair.gsm")
+
+            self.assertEqual(Path(project_dir).name, "Chair_imported_2")
+            self.assertTrue((existing / "keep.txt").exists())
+
+    def test_gsm_import_reloads_project_from_imported_workdir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uploaded = MagicMock()
+            uploaded.name = "chair.gsm"
+            uploaded.read.return_value = b"fake-gsm"
+
+            imported_dir = Path(tmpdir) / "chair-imported"
+            reloaded_proj = MagicMock()
+            reloaded_proj.name = "chair"
+            reloaded_proj.parameters = []
+            reloaded_proj.scripts = {}
+
+            with patch("ui.app.import_gsm", return_value=(imported_dir, "ok")):
+                with patch("ui.app.HSFProject.load_from_disk", return_value=reloaded_proj) as load_from_disk:
+                    with patch("ui.app.st.spinner") as spinner:
+                        spinner.return_value.__enter__.return_value = None
+                        spinner.return_value.__exit__.return_value = None
+                        with patch.dict("ui.app.st.session_state", {
+                            "work_dir": tmpdir,
+                            "project": None,
+                            "pending_diffs": {"old": 1},
+                            "editor_version": 0,
+                            "pending_gsm_name": "",
+                            "chat_history": [],
+                            "preview_2d_data": object(),
+                            "preview_3d_data": object(),
+                            "preview_warnings": ["old"],
+                            "preview_meta": {"kind": "old", "timestamp": "old"},
+                            "script_revision": 7,
+                        }, clear=False):
+                            ok, _msg = _handle_unified_import(uploaded)
+
+            self.assertTrue(ok)
+            load_from_disk.assert_called_once_with(str(imported_dir))
+            self.assertEqual(reloaded_proj.work_dir, Path(tmpdir))
+            self.assertEqual(reloaded_proj.root, Path(tmpdir) / "chair")
+            reloaded_proj.save_to_disk.assert_called_once_with()
 
 
 class TestGenerationStateHelpers(unittest.TestCase):
