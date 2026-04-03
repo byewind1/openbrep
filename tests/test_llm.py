@@ -16,11 +16,15 @@ from ui.app import (
     _detect_image_task_mode,
     _finish_generation_state,
     _is_generation_locked,
+    _is_modify_or_check_intent,
     _request_generation_cancel,
     _resolve_selected_model,
     _should_accept_generation_result,
     _should_persist_assistant_settings,
+    _should_skip_elicitation_for_gdl_request,
+    _should_start_elicitation,
     _validate_chat_image_size,
+    classify_and_extract,
 )
 
 
@@ -297,6 +301,41 @@ class TestVisionHelpers(unittest.TestCase):
 
     def test_validate_chat_image_size_accepts_small_file(self):
         self.assertIsNone(_validate_chat_image_size(b"small", "small.png"))
+
+
+class TestIntentRoutingHelpers(unittest.TestCase):
+    def test_modify_or_check_intent_matches_syntax_check(self):
+        self.assertTrue(_is_modify_or_check_intent("帮我检查这段脚本语法"))
+
+    def test_modify_or_check_intent_matches_fix_request(self):
+        self.assertTrue(_is_modify_or_check_intent("把 3D 脚本改一下"))
+
+    def test_modify_or_check_intent_does_not_match_generation_request(self):
+        self.assertFalse(_is_modify_or_check_intent("创建一个书架"))
+
+    def test_modify_or_check_intent_does_not_match_general_question(self):
+        self.assertFalse(_is_modify_or_check_intent("为什么这个对象要用 GDL"))
+
+
+class TestIntentRoutingFlow(unittest.TestCase):
+    def test_should_skip_elicitation_for_modify_request(self):
+        self.assertTrue(_should_skip_elicitation_for_gdl_request("帮我检查这段脚本语法"))
+
+    def test_should_not_skip_elicitation_for_generate_request(self):
+        self.assertFalse(_should_skip_elicitation_for_gdl_request("创建一个书架"))
+
+
+class TestIntentRoutingGuards(unittest.TestCase):
+    def test_should_start_elicitation_for_generation_text(self):
+        self.assertTrue(_should_start_elicitation("创建一个书架"))
+
+    def test_should_not_start_elicitation_for_modify_text(self):
+        self.assertFalse(_should_start_elicitation("帮我检查这段脚本语法"))
+
+    def test_pure_chat_still_classifies_as_chat(self):
+        llm = MagicMock()
+        intent, _obj_name = classify_and_extract("你能做什么", llm, project_loaded=True)
+        self.assertEqual(intent, "CHAT")
 
 
 class TestImportFlows(unittest.TestCase):

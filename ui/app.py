@@ -1772,6 +1772,18 @@ def _is_negative_confirmation(text: str) -> bool:
 
 
 
+_MODIFY_OR_CHECK_KEYWORDS = {
+    "检查", "语法", "报错", "错误",
+    "修复", "修改", "改一下", "调整",
+}
+
+
+def _is_modify_or_check_intent(text: str) -> bool:
+    low = (text or "").strip().lower()
+    return any(token in low for token in _MODIFY_OR_CHECK_KEYWORDS)
+
+
+
 def _should_start_elicitation(user_input: str) -> bool:
     return any(token in (user_input or "") for token in ["创建", "生成", "新建"])
 
@@ -1783,6 +1795,11 @@ def _make_generation_project(gdl_obj_name: str) -> HSFProject:
     st.session_state.pending_gsm_name = gdl_obj_name
     st.session_state.script_revision = 0
     return new_proj
+
+
+
+def _should_skip_elicitation_for_gdl_request(text: str) -> bool:
+    return _is_modify_or_check_intent(text)
 
 
 
@@ -3837,21 +3854,19 @@ with col_right:
                             )
                             st.markdown(msg)
                         else:
-                            elicitation_msg, eliciting = _handle_elicitation_route(user_input, gdl_obj_name)
-                            if eliciting:
-                                msg = elicitation_msg
-                                st.markdown(msg)
-                            else:
-                                if not st.session_state.project:
-                                    new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
-                                    st.session_state.project = new_proj
-                                    st.session_state.pending_gsm_name = gdl_obj_name
-                                    st.session_state.script_revision = 0
-                                    st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
-
+                            should_skip_elicitation = _should_skip_elicitation_for_gdl_request(user_input)
+                            if should_skip_elicitation:
                                 proj_current = st.session_state.project
-                                # 只有全新空项目（无任何脚本内容）才自动写入；
-                                # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
+                                if not proj_current:
+                                    fallback_name = gdl_obj_name or st.session_state.pending_gsm_name or "untitled"
+                                    proj_current = HSFProject.create_new(
+                                        fallback_name,
+                                        work_dir=st.session_state.work_dir,
+                                    )
+                                    st.session_state.project = proj_current
+                                    st.session_state.pending_gsm_name = fallback_name
+                                    st.session_state.script_revision = 0
+
                                 _has_any_script = any(
                                     proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
                                 )
@@ -3862,6 +3877,32 @@ with col_right:
                                     auto_apply=not _has_any_script,
                                 )
                                 st.markdown(msg)
+                            else:
+                                elicitation_msg, eliciting = _handle_elicitation_route(user_input, gdl_obj_name)
+                                if eliciting:
+                                    msg = elicitation_msg
+                                    st.markdown(msg)
+                                else:
+                                    if not st.session_state.project:
+                                        new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
+                                        st.session_state.project = new_proj
+                                        st.session_state.pending_gsm_name = gdl_obj_name
+                                        st.session_state.script_revision = 0
+                                        st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
+
+                                    proj_current = st.session_state.project
+                                    # 只有全新空项目（无任何脚本内容）才自动写入；
+                                    # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
+                                    _has_any_script = any(
+                                        proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
+                                    )
+                                    effective_gsm = st.session_state.pending_gsm_name or proj_current.name
+                                    msg = run_agent_generate(
+                                        user_input, proj_current, st.container(),
+                                        gsm_name=effective_gsm,
+                                        auto_apply=not _has_any_script,
+                                    )
+                                    st.markdown(msg)
 
                 st.session_state.chat_history.append({"role": "assistant", "content": msg})
                 st.rerun()
