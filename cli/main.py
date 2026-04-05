@@ -97,6 +97,15 @@ def _print_scripts(scripts: dict[str, str]) -> None:
         )
 
 
+def _persist_result_project(result_project, target_path: Path, project_name: Optional[str] = None) -> Path:
+    """Re-root a result project to target_path and save it to disk."""
+    project_name = project_name or target_path.name
+    result_project.name = project_name
+    result_project.work_dir = target_path.parent
+    result_project.root = target_path
+    return result_project.save_to_disk()
+
+
 # ── Commands ──────────────────────────────────────────────
 
 @app.command()
@@ -144,15 +153,7 @@ def create(
 
     # Save HSF project to disk
     if result.project:
-        # Ensure the project is rooted at the requested output path.
-        # HSFProject.root = work_dir / name, so if both match output_path we're fine.
-        # If not (e.g. "untitled" fallback), re-root before saving.
-        proj = result.project
-        if proj.root.resolve() != output_path:
-            proj.name = project_name
-            proj.work_dir = output_path.parent
-            proj.root = output_path
-        saved_path = proj.save_to_disk()
+        saved_path = _persist_result_project(result.project, output_path, project_name)
         console.print(f"[green]📁 项目已保存到 {saved_path}[/green]")
         console.print(f"[dim]结构: {saved_path}/scripts/  +  paramlist.xml  +  libpartdata.xml[/dim]\n")
     else:
@@ -205,6 +206,10 @@ def modify(
         raise typer.Exit(1)
 
     console.print("\n[green]✅ 修改成功[/green]\n")
+
+    if result.project:
+        saved_path = _persist_result_project(result.project, Path(project_dir).resolve(), project.name)
+        console.print(f"[green]📁 已写回项目目录 {saved_path}[/green]\n")
 
     if result.plain_text:
         console.print(Panel(result.plain_text, title="AI 说明", border_style="dim"))

@@ -271,5 +271,75 @@ class TestModifyCompile(unittest.TestCase):
         # (MockHSFCompiler is used since no real compiler in test config)
 
 
+class TestModifyPipelineContext(unittest.TestCase):
+
+    def test_debug_prefix_and_syntax_report_are_forwarded(self):
+        pipeline = _make_pipeline("")
+        captured = {}
+
+        def capture_generate_only(self_agent, **kwargs):
+            captured["instruction"] = kwargs.get("instruction")
+            captured["syntax_report"] = kwargs.get("syntax_report")
+            captured["history"] = kwargs.get("history")
+            return {}, ""
+
+        with patch("openbrep.core.GDLAgent.generate_only", capture_generate_only):
+            pipeline.execute(TaskRequest(
+                user_input="[DEBUG:editor] 修复这段脚本\n[SYNTAX CHECK REPORT]\n缺少 ENDIF",
+                intent="DEBUG",
+                project=_make_project(),
+                work_dir="./workdir",
+                history=[{"role": "user", "content": "上一轮内容"}],
+            ))
+
+        self.assertEqual(captured.get("instruction"), "修复这段脚本")
+        self.assertEqual(captured.get("syntax_report"), "缺少 ENDIF")
+        self.assertEqual(captured.get("history"), [{"role": "user", "content": "上一轮内容"}])
+
+    def test_should_cancel_is_forwarded_to_agent(self):
+        pipeline = _make_pipeline("")
+        captured = {}
+
+        def capture_init(self_agent, *args, **kwargs):
+            captured["should_cancel"] = kwargs.get("should_cancel")
+
+        def capture_generate_only(self_agent, **kwargs):
+            return {}, ""
+
+        with patch("openbrep.runtime.pipeline.GDLAgent.__init__", capture_init):
+            with patch("openbrep.runtime.pipeline.GDLAgent.generate_only", capture_generate_only):
+                pipeline.execute(TaskRequest(
+                    user_input="把书架改窄一点",
+                    intent="MODIFY",
+                    project=_make_project(),
+                    work_dir="./workdir",
+                    should_cancel=lambda: True,
+                ))
+
+        self.assertIsNotNone(captured.get("should_cancel"))
+        self.assertTrue(captured["should_cancel"]())
+
+    def test_preflight_summary_is_appended_to_plain_text(self):
+        pipeline = _make_pipeline("脚本没有问题。")
+        fake_analysis = MagicMock()
+        fake_analysis.feasible = True
+        fake_analysis.blockers = []
+        fake_analysis.warnings = ["Macro \"Foo\" is CALLed but not found in workspace."]
+        fake_analysis.summary = "Complexity: medium | WARNING: Macro missing"
+
+        with patch("openbrep.runtime.pipeline.PreflightAnalyzer") as analyzer_cls:
+            analyzer_cls.return_value.analyze.return_value = fake_analysis
+            result = pipeline.execute(TaskRequest(
+                user_input="检查这个对象",
+                intent="MODIFY",
+                project=_make_project(),
+                work_dir="./workdir",
+            ))
+
+        self.assertTrue(result.success)
+        self.assertIn("Preflight", result.plain_text)
+        self.assertIn("Macro missing", result.plain_text)
+
+
 if __name__ == "__main__":
     unittest.main()

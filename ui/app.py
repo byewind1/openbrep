@@ -57,6 +57,7 @@ except ImportError:
 from openbrep.elicitation_agent import ElicitationAgent, ElicitationState
 from openbrep.skills_loader import SkillsLoader
 from openbrep import __version__ as OPENBREP_VERSION
+from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -347,7 +348,7 @@ def _finalize_generation(generation_id: str, status: str) -> bool:
 
 
 
-def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | None, auto_apply: bool) -> tuple[str, list[str]]:
+def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | None, auto_apply: bool, already_applied: bool = False) -> tuple[str, list[str]]:
     script_names = ", ".join(
         p.replace("scripts/", "").replace(".gdl", "").upper()
         for p in cleaned if p.startswith("scripts/")
@@ -368,7 +369,8 @@ def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | No
     label_str = " + ".join(label_parts) if label_parts else "内容"
 
     if auto_apply:
-        _apply_scripts_to_project(proj, cleaned)
+        if not already_applied:
+            _apply_scripts_to_project(proj, cleaned)
         _bump_main_editor_version()
         if gsm_name:
             st.session_state.pending_gsm_name = gsm_name
@@ -1960,68 +1962,78 @@ def run_agent_generate(
             _guarded_event_update(status_ph, generation_id, "info", f"🔄 第 {round_num} 轮修复中...")
         elif event_type == "cancelled":
             _guarded_event_update(status_ph, generation_id, "warning", "⏹️ 正在停止当前生成...")
+        elif event_type == "compile_result":
+            if data.get("success"):
+                _guarded_event_update(status_ph, generation_id, "success", "✅ 编译验证通过")
+            elif data.get("error"):
+                _guarded_event_update(status_ph, generation_id, "warning", "⚠️ 编译验证失败，已附在结果中")
 
     try:
-        llm = get_llm()
-        knowledge = load_knowledge()
-        # Strip debug prefix and extract syntax report
-        clean_instruction = user_input
-        syntax_report = ""
-        if user_input.startswith("[DEBUG:editor]"):
-            _after_prefix = user_input.split("]", 1)[-1].strip()
-            if "[SYNTAX CHECK REPORT]" in _after_prefix:
-                _parts = _after_prefix.split("[SYNTAX CHECK REPORT]", 1)
-                clean_instruction = _parts[0].strip()
-                syntax_report = _parts[1].strip()
-            else:
-                clean_instruction = _after_prefix
-
-        skills_text = load_skills().get_for_task(clean_instruction)
-
         # Pass recent chat history for multi-turn context (last 6 messages, skip heavy code blocks)
         recent_history = _trim_history_for_image([
             m for m in st.session_state.chat_history[-8:]
             if m["role"] in ("user", "assistant")
         ])
 
-        last_code_context = None
+        pipeline_project = proj if auto_apply else deepcopy(proj)
+        if debug_mode:
+            intent = "DEBUG"
+        elif any(pipeline_project.get_script(st) for st in ScriptType):
+            intent = "MODIFY"
+        else:
+            intent = "CREATE"
 
         logger.info(
-            "vision debug start route=debug image_name=%s has_project=%s prompt_len=%d",
-            "inline-image",
+            "pipeline generate route=%s image_name=%s has_project=%s prompt_len=%d",
+            intent.lower(),
+            "inline-image" if debug_image_b64 else "none",
             bool(proj),
-            len(clean_instruction or ""),
+            len(user_input or ""),
         )
-        agent = GDLAgent(
-            llm=llm,
-            compiler=get_compiler(),
-            on_event=on_event,
+
+        pipeline = TaskPipeline(trace_dir="./traces")
+        pipeline.config = GDLAgentConfig.load()
+        request = TaskRequest(
+            user_input=user_input,
+            intent=intent,
+            project=pipeline_project,
+            work_dir=st.session_state.work_dir,
+            gsm_name=gsm_name or pipeline_project.name,
+            output_dir=str(Path(st.session_state.work_dir) / "output"),
             assistant_settings=st.session_state.get("assistant_settings", ""),
-            should_cancel=lambda: not _should_accept_generation_result(st.session_state, generation_id),
-        )
-        changes, plain_text = agent.generate_only(
-            instruction=clean_instruction, project=proj,
-            knowledge=knowledge, skills=skills_text,
-            include_all_scripts=(debug_mode and debug_type != "last"),
-            last_code_context=last_code_context,
-            syntax_report=syntax_report,
+            on_event=on_event,
             history=recent_history,
+            last_code_context=None,
+            should_cancel=lambda: not _should_accept_generation_result(st.session_state, generation_id),
             image_b64=debug_image_b64,
             image_mime=debug_image_mime,
         )
+
+        result = pipeline.execute(request)
+        if not result.success:
+            status_ph.empty()
+            _finalize_generation(generation_id, "failed")
+            return f"❌ **错误**: {result.error}"
+
         if not _consume_generation_result(generation_id):
             status_ph.empty()
             _finalize_generation(generation_id, "cancelled")
             return _generation_cancelled_message()
 
         status_ph.empty()
-        cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
+        cleaned = result.scripts or {}
         result_prefix = ""
         code_blocks: list[str] = []
         if cleaned:
-            result_prefix, code_blocks = _apply_generation_result(cleaned, proj, gsm_name, auto_apply)
+            if auto_apply and result.project is not None:
+                if proj is not result.project:
+                    st.session_state.project = result.project
+                    proj = result.project
+                result_prefix, code_blocks = _apply_generation_result(cleaned, proj, gsm_name, auto_apply, already_applied=True)
+            else:
+                result_prefix, code_blocks = _apply_generation_result(cleaned, proj, gsm_name, auto_apply, already_applied=False)
         _finalize_generation(generation_id, "completed")
-        return _build_generation_reply(plain_text, result_prefix, code_blocks)
+        return _build_generation_reply(result.plain_text, result_prefix, code_blocks)
 
     except AgentCancelled:
         status_ph.empty()

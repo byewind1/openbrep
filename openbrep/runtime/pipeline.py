@@ -33,6 +33,7 @@ from openbrep.llm import LLMAdapter
 from openbrep.skills_loader import SkillsLoader
 from openbrep.runtime.router import IntentRouter
 from openbrep.runtime.tracer import Tracer
+from openbrep.preflight import PreflightAnalyzer
 
 
 # ── Modify-specific skill instructions ───────────────────
@@ -67,6 +68,12 @@ class TaskRequest:
     output_dir: str = "./output"
     gsm_name: Optional[str] = None         # output .gsm filename stem
     image_path: Optional[str] = None       # path to image for vision tasks
+    history: Optional[list[dict]] = None   # recent conversation history
+    syntax_report: str = ""                # debug syntax checker output
+    last_code_context: Optional[str] = None
+    should_cancel: Optional[Callable[[], bool]] = None
+    image_b64: Optional[str] = None
+    image_mime: str = "image/png"
     assistant_settings: str = ""           # injected into GDL system prompt
     on_event: Optional[Callable] = None    # progress callback (event_type, data) -> None
 
@@ -199,9 +206,9 @@ class TaskPipeline:
             )
 
         # Load image if provided
-        image_b64: Optional[str] = None
-        image_mime = "image/png"
-        if request.image_path:
+        image_b64: Optional[str] = request.image_b64
+        image_mime = request.image_mime or "image/png"
+        if request.image_path and not image_b64:
             import base64
             img_path = Path(request.image_path)
             if img_path.exists():
@@ -217,6 +224,7 @@ class TaskPipeline:
             compiler=compiler,
             on_event=on_event,
             assistant_settings=request.assistant_settings,
+            should_cancel=request.should_cancel,
         )
 
         changes, plain_text = agent.generate_only(
@@ -225,6 +233,9 @@ class TaskPipeline:
             knowledge=knowledge,
             skills=skills_text,
             include_all_scripts=debug_mode,
+            last_code_context=request.last_code_context,
+            syntax_report=request.syntax_report,
+            history=request.history,
             image_b64=image_b64,
             image_mime=image_mime,
         )
@@ -252,13 +263,14 @@ class TaskPipeline:
         - include_all_scripts=True  → injects ALL scripts into LLM context
         - Prepends _MODIFY_SKILLS_PROMPT to reinforce minimal-change discipline
         - Snapshots project state before changes for diff summary
-        - Runs StaticChecker after applying changes
+        - Runs preflight and StaticChecker after applying changes
         - Attempts compile validation (real or mock)
         """
         llm = self._make_llm(request)
         compiler = self._make_compiler()
         knowledge = self._load_knowledge()
-        skills_text = _MODIFY_SKILLS_PROMPT + "\n\n" + self._load_skills(request.user_input)
+        clean_instruction, syntax_report = _normalize_modify_request(request)
+        skills_text = _MODIFY_SKILLS_PROMPT + "\n\n" + self._load_skills(clean_instruction)
 
         # Prepare project — create empty one if none provided
         project = request.project
@@ -276,16 +288,22 @@ class TaskPipeline:
             compiler=compiler,
             on_event=on_event,
             assistant_settings=request.assistant_settings,
+            should_cancel=request.should_cancel,
         )
 
         # Key: include_all_scripts=True injects every non-empty script,
         # which also enables chat_mode (debug-style minimal-change prompt).
         changes, plain_text = agent.generate_only(
-            instruction=request.user_input,
+            instruction=clean_instruction,
             project=project,
             knowledge=knowledge,
             skills=skills_text,
             include_all_scripts=True,
+            history=request.history,
+            syntax_report=syntax_report,
+            last_code_context=request.last_code_context,
+            image_b64=request.image_b64,
+            image_mime=request.image_mime,
         )
 
         cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
@@ -293,6 +311,8 @@ class TaskPipeline:
         # Apply changes to project in-place
         if cleaned:
             agent._apply_changes(project, cleaned)
+
+        preflight_summary = _run_modify_preflight(clean_instruction, project)
 
         # Static check
         from openbrep.static_checker import StaticChecker
@@ -314,13 +334,15 @@ class TaskPipeline:
         except Exception as exc:
             logger.warning("Compile step failed: %s", exc)
 
-        # Build output text: LLM analysis + diff summary + static/compile status
+        # Build output text: LLM analysis + diff summary + preflight/static/compile status
         diff_summary = _build_diff_summary(before_scripts, cleaned)
         output_parts: list[str] = []
         if plain_text:
             output_parts.append(plain_text)
         if diff_summary:
             output_parts.append(diff_summary)
+        if preflight_summary:
+            output_parts.append(preflight_summary)
         if not static_result.passed:
             warnings = "\n".join(f"  ⚠️  {e.detail}" for e in static_result.errors)
             output_parts.append(f"**静态检查发现问题：**\n{warnings}")
@@ -392,7 +414,41 @@ class TaskPipeline:
         return self._skills_loader.get_for_task(instruction)
 
 
-# ── Utilities ─────────────────────────────────────────────
+def _normalize_modify_request(request: TaskRequest) -> tuple[str, str]:
+    """Strip debug prefixes and merge syntax report from request/user input."""
+    clean_instruction = request.user_input or ""
+    syntax_report = request.syntax_report or ""
+
+    if clean_instruction.startswith("[DEBUG:editor]"):
+        after_prefix = clean_instruction.split("]", 1)[-1].strip()
+        if "[SYNTAX CHECK REPORT]" in after_prefix:
+            parts = after_prefix.split("[SYNTAX CHECK REPORT]", 1)
+            clean_instruction = parts[0].strip()
+            if not syntax_report:
+                syntax_report = parts[1].strip()
+        else:
+            clean_instruction = after_prefix
+
+    return clean_instruction, syntax_report
+
+
+def _run_modify_preflight(instruction: str, project: HSFProject) -> str:
+    """Run lightweight, non-blocking preflight analysis for modify/debug tasks."""
+    xml_like_context = []
+    for stype in ScriptType:
+        content = project.get_script(stype)
+        if content:
+            xml_like_context.append(f"<!-- {stype.value} -->\n{content}")
+    xml_content = "\n".join(xml_like_context)
+
+    analysis = PreflightAnalyzer().analyze(instruction=instruction, xml_content=xml_content)
+    parts: list[str] = []
+    if analysis.summary:
+        parts.append(f"**Preflight：** {analysis.summary}")
+    if analysis.blockers:
+        parts.append("\n".join(f"- {item}" for item in analysis.blockers))
+    return "\n".join(parts).strip()
+
 
 def _strip_md_fences(code: str) -> str:
     """Remove markdown code fences (```gdl / ```) that LLMs sometimes include."""
