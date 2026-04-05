@@ -7,6 +7,7 @@ from openbrep.config import LLMConfig
 from openbrep.core import GDLAgent
 from openbrep.llm import LLMAdapter
 from ui.app import (
+    _apply_generation_result,
     _handle_hsf_directory_load,
     _handle_unified_import,
     _begin_generation_state,
@@ -24,6 +25,8 @@ from ui.app import (
     _should_skip_elicitation_for_gdl_request,
     _should_start_elicitation,
     _validate_chat_image_size,
+    _capture_last_project_snapshot,
+    _restore_last_project_snapshot,
     _route_main_input,
     classify_and_extract,
 )
@@ -344,6 +347,109 @@ class TestIntentRoutingHelpers(unittest.TestCase):
         llm = MagicMock()
         intent, _obj_name = classify_and_extract("你能做什么", llm, project_loaded=True)
         self.assertEqual(intent, "CHAT")
+
+
+class TestUndoLastAIWrite(unittest.TestCase):
+    def test_restore_last_project_snapshot_returns_error_when_missing(self):
+        with patch.dict("ui.app.st.session_state", {
+            "last_project_snapshot": None,
+            "last_project_snapshot_meta": {},
+            "last_project_snapshot_label": "",
+        }, clear=False):
+            ok, msg = _restore_last_project_snapshot()
+
+        self.assertFalse(ok)
+        self.assertIn("没有可恢复的上一次 AI 写入", msg)
+
+    def test_apply_generation_result_auto_apply_captures_snapshot_before_write(self):
+        proj = MagicMock()
+        cleaned = {"scripts/3d.gdl": "BLOCK 1,1,1\nEND"}
+        calls = []
+
+        with patch("ui.app._parse_paramlist_text", return_value=[]):
+            with patch("ui.app._capture_last_project_snapshot", side_effect=lambda label: calls.append(("capture", label))):
+                with patch("ui.app._apply_scripts_to_project", side_effect=lambda proj_arg, cleaned_arg: calls.append(("apply", cleaned_arg))):
+                    with patch("ui.app._bump_main_editor_version"):
+                        with patch.dict("ui.app.st.session_state", {
+                            "pending_gsm_name": "",
+                        }, clear=False):
+                            _apply_generation_result(cleaned, proj, "chair", auto_apply=True, already_applied=False)
+
+        self.assertEqual(calls[0], ("capture", "AI 自动写入"))
+        self.assertEqual(calls[1], ("apply", cleaned))
+
+    def test_capture_and_restore_last_project_snapshot(self):
+        original = MagicMock()
+        original.name = "chair"
+        original.parameters = []
+        original.scripts = {"scripts/3d.gdl": "OLD"}
+
+        current = MagicMock()
+        current.name = "chair"
+        current.parameters = []
+        current.scripts = {"scripts/3d.gdl": "NEW"}
+
+        with patch("ui.app.deepcopy", side_effect=lambda x: x):
+            with patch("ui.app._bump_main_editor_version") as bump_editor:
+                with patch.dict("ui.app.st.session_state", {
+                    "project": original,
+                    "pending_gsm_name": "chair",
+                    "script_revision": 3,
+                    "pending_diffs": {"scripts/3d.gdl": "NEW"},
+                    "pending_ai_label": "脚本 [3D]",
+                    "preview_2d_data": object(),
+                    "preview_3d_data": object(),
+                    "preview_warnings": ["old"],
+                    "preview_meta": {"kind": "old", "timestamp": "old"},
+                    "last_project_snapshot": None,
+                    "last_project_snapshot_meta": {},
+                    "last_project_snapshot_label": "",
+                }, clear=False):
+                    _capture_last_project_snapshot("AI 确认写入")
+                    __import__("ui.app", fromlist=["st"]).st.session_state.project = current
+                    ok, msg = _restore_last_project_snapshot()
+                    state = __import__("ui.app", fromlist=["st"]).st.session_state
+
+                    self.assertTrue(ok)
+                    self.assertIn("已撤销上次", msg)
+                    self.assertIn("AI 确认写入", msg)
+                    self.assertIs(state.project, original)
+                    self.assertEqual(state.pending_gsm_name, "chair")
+                    self.assertEqual(state.script_revision, 3)
+                    self.assertEqual(state.pending_diffs, {})
+                    self.assertEqual(state.pending_ai_label, "")
+                    self.assertIsNone(state.preview_2d_data)
+                    self.assertIsNone(state.preview_3d_data)
+                    self.assertEqual(state.preview_warnings, [])
+                    self.assertEqual(state.preview_meta, {"kind": "", "timestamp": ""})
+                    self.assertIsNone(state.last_project_snapshot)
+                    self.assertEqual(state.last_project_snapshot_meta, {})
+                    self.assertEqual(state.last_project_snapshot_label, "")
+                    bump_editor.assert_called_once_with()
+
+    def test_restore_last_project_snapshot_uses_label_in_success_message(self):
+        project = MagicMock()
+        project.name = "chair"
+        project.parameters = []
+        project.scripts = {"scripts/3d.gdl": "OLD"}
+
+        with patch("ui.app.deepcopy", side_effect=lambda x: x):
+            with patch("ui.app._bump_main_editor_version"):
+                with patch.dict("ui.app.st.session_state", {
+                    "last_project_snapshot": {
+                        "project": project,
+                        "pending_gsm_name": "chair",
+                        "script_revision": 1,
+                    },
+                    "last_project_snapshot_meta": {"label": "AI 自动写入"},
+                    "last_project_snapshot_label": "AI 自动写入",
+                    "pending_diffs": {},
+                    "pending_ai_label": "",
+                }, clear=False):
+                    ok, msg = _restore_last_project_snapshot()
+
+        self.assertTrue(ok)
+        self.assertIn("AI 自动写入", msg)
 
 
 class TestImportFlows(unittest.TestCase):

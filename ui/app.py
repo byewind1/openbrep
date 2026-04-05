@@ -229,6 +229,12 @@ if "_ace_pending_main_editor_keys" not in st.session_state:
 if "script_revision" not in st.session_state:
     # Script revision for header/file naming; starts from v1 on first write
     st.session_state.script_revision = 0
+if "last_project_snapshot" not in st.session_state:
+    st.session_state.last_project_snapshot = None
+if "last_project_snapshot_meta" not in st.session_state:
+    st.session_state.last_project_snapshot_meta = {}
+if "last_project_snapshot_label" not in st.session_state:
+    st.session_state.last_project_snapshot_label = ""
 if "model_api_keys" not in st.session_state:
     # Per-model API Key storage — pre-fill from config.toml provider_keys
     st.session_state.model_api_keys = {}
@@ -345,6 +351,44 @@ def _consume_generation_result(generation_id: str) -> bool:
 
 
 
+def _capture_last_project_snapshot(label: str) -> None:
+    proj = st.session_state.get("project")
+    if proj is None:
+        return
+    st.session_state.last_project_snapshot = {
+        "project": deepcopy(proj),
+        "pending_gsm_name": st.session_state.get("pending_gsm_name", ""),
+        "script_revision": int(st.session_state.get("script_revision", 0)),
+    }
+    st.session_state.last_project_snapshot_label = label
+    st.session_state.last_project_snapshot_meta = {
+        "label": label,
+        "captured_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _restore_last_project_snapshot() -> tuple[bool, str]:
+    snap = st.session_state.get("last_project_snapshot")
+    if not snap:
+        return (False, "❌ 没有可恢复的上一次 AI 写入")
+
+    st.session_state.project = deepcopy(snap["project"])
+    st.session_state.pending_gsm_name = snap.get("pending_gsm_name", "")
+    st.session_state.script_revision = int(snap.get("script_revision", 0))
+    st.session_state.pending_diffs = {}
+    st.session_state.pending_ai_label = ""
+    st.session_state.preview_2d_data = None
+    st.session_state.preview_3d_data = None
+    st.session_state.preview_warnings = []
+    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+    _bump_main_editor_version()
+    label = st.session_state.get("last_project_snapshot_label") or "AI 写入"
+    st.session_state.last_project_snapshot = None
+    st.session_state.last_project_snapshot_meta = {}
+    st.session_state.last_project_snapshot_label = ""
+    return (True, f"✅ 已撤销上次 {label}")
+
+
 def _finalize_generation(generation_id: str, status: str) -> bool:
     return _finish_generation_state(st.session_state, generation_id, status)
 
@@ -372,6 +416,7 @@ def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | No
 
     if auto_apply:
         if not already_applied:
+            _capture_last_project_snapshot("AI 自动写入")
             _apply_scripts_to_project(proj, cleaned)
         _bump_main_editor_version()
         if gsm_name:
@@ -3510,6 +3555,7 @@ with col_right:
                     if extracted:
                         # 只覆盖此消息中实际包含的脚本/参数，其余保留
                         if st.session_state.project:
+                            _capture_last_project_snapshot("聊天代码采纳")
                             _apply_scripts_to_project(st.session_state.project, extracted)
                         _bump_main_editor_version()
                         st.session_state.adopted_msg_index = msg_idx
@@ -3545,12 +3591,13 @@ with col_right:
                 f"覆盖：`{_covered_txt}`\n"
                 f"保留：`{_kept_txt}`"
             )
-            _pac1, _pac2, _pac3 = st.columns([1.2, 1, 5])
+            _pac1, _pac2, _pac3 = st.columns([1.2, 1, 1.6])
             with _pac1:
                 if st.button("✅ 写入", type="primary", width='stretch',
                              key="chat_pending_apply"):
                     _proj = st.session_state.project
                     if _proj:
+                        _capture_last_project_snapshot("AI 确认写入")
                         sc, pc = _apply_scripts_to_project(_proj, _pd)
                         _ok_parts = []
                         if sc: _ok_parts.append(f"{sc} 个脚本")
@@ -3560,11 +3607,14 @@ with col_right:
                     st.session_state.pending_diffs    = {}
                     st.session_state.pending_ai_label = ""
                     st.rerun()
-            with _pac2:
-                if st.button("❌ 忽略", width='stretch',
-                             key="chat_pending_discard"):
-                    st.session_state.pending_diffs    = {}
-                    st.session_state.pending_ai_label = ""
+            with _pac3:
+                _undo_disabled = not bool(st.session_state.get("last_project_snapshot"))
+                if st.button("↩ 撤销上次 AI 写入", width='stretch', key="chat_last_ai_undo", disabled=_undo_disabled):
+                    ok, msg = _restore_last_project_snapshot()
+                    if ok:
+                        st.toast(msg, icon="↩")
+                    else:
+                        st.error(msg)
                     st.rerun()
 
         # Live agent output placeholder (anchored inside this column)
