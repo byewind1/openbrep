@@ -102,28 +102,34 @@ def _print_scripts(scripts: dict[str, str]) -> None:
 @app.command()
 def create(
     prompt: str = typer.Argument(..., help="自然语言描述，例如：\"做一个宽600mm的书架\""),
-    output: str = typer.Option("./workdir", "--output", "-o", help="工作目录"),
+    output: str = typer.Option("./output", "--output", "-o", help="HSF 项目目录，如 ./my_shelf"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="覆盖 config.toml 中的模型"),
     no_progress: bool = typer.Option(False, "--no-progress", help="不显示进度信息"),
     trace_dir: str = typer.Option("./traces", "--trace-dir", help="Trace 输出目录"),
 ):
-    """从自然语言描述创建 GDL 对象"""
+    """从自然语言描述创建 GDL 对象，并将 HSF 项目写入磁盘"""
     from openbrep.runtime.pipeline import TaskRequest
 
+    # --output ./test_shelf  →  work_dir="."  project_name="test_shelf"
+    output_path = Path(output).resolve()
+    work_dir = str(output_path.parent)
+    project_name = output_path.name
+
     console.print(f"\n[bold]OpenBrep[/bold] — 创建 GDL 对象")
-    console.print(f"指令: [cyan]{prompt}[/cyan]\n")
+    console.print(f"指令: [cyan]{prompt}[/cyan]")
+    console.print(f"输出: [dim]{output_path}[/dim]\n")
 
-    pipeline = _load_pipeline(work_dir=output, trace_dir=trace_dir)
+    pipeline = _load_pipeline(work_dir=work_dir, trace_dir=trace_dir)
 
-    # Optional model override
     if model:
         pipeline.config.llm.model = model
 
     request = TaskRequest(
         user_input=prompt,
         intent="CREATE",
-        work_dir=output,
-        gsm_name=None,   # pipeline will derive from prompt
+        work_dir=work_dir,
+        gsm_name=project_name,
+        output_dir=str(output_path.parent / "output"),
         on_event=_make_on_event(not no_progress),
     )
 
@@ -135,6 +141,22 @@ def create(
         raise typer.Exit(1)
 
     console.print("\n[green]✅ 生成成功[/green]\n")
+
+    # Save HSF project to disk
+    if result.project:
+        # Ensure the project is rooted at the requested output path.
+        # HSFProject.root = work_dir / name, so if both match output_path we're fine.
+        # If not (e.g. "untitled" fallback), re-root before saving.
+        proj = result.project
+        if proj.root.resolve() != output_path:
+            proj.name = project_name
+            proj.work_dir = output_path.parent
+            proj.root = output_path
+        saved_path = proj.save_to_disk()
+        console.print(f"[green]📁 项目已保存到 {saved_path}[/green]")
+        console.print(f"[dim]结构: {saved_path}/scripts/  +  paramlist.xml  +  libpartdata.xml[/dim]\n")
+    else:
+        err_console.print("[yellow]⚠️  无项目对象，跳过写入磁盘。[/yellow]")
 
     if result.plain_text:
         console.print(Panel(result.plain_text, title="AI 说明", border_style="dim"))
