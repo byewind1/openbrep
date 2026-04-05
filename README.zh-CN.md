@@ -68,6 +68,24 @@ streamlit run ui/app.py
 
 ---
 
+## CLI 模式（v0.5.7 新增）
+
+面向 GDL 开发者的终端工作流。
+```bash
+pip install -e "."
+
+# 创建对象
+openbrep create "做一个宽600mm深400mm的书架，4个层板" --output ./my_shelf
+
+# 修改对象（基于磁盘上的 HSF 项目目录）
+openbrep modify ./my_shelf "把层板改成6个，间距均匀分布"
+
+# 查看帮助
+openbrep --help
+```
+
+每次修改都读取完整项目状态，精确修改而非重写，自动编译验证。
+
 ## 功能一览
 
 ### 编辑器栏（左侧）
