@@ -45,6 +45,10 @@ class AgentResult:
     history: list[dict] = field(default_factory=list)
 
 
+class AgentCancelled(Exception):
+    """Raised when the current generation is cooperatively cancelled."""
+
+
 class GDLAgent:
     """
     HSF-native GDL Agent.
@@ -63,6 +67,7 @@ class GDLAgent:
         max_iterations: int = 5,
         on_event: Optional[Callable] = None,
         assistant_settings: str = "",
+        should_cancel: Optional[Callable[[], bool]] = None,
     ):
         self.llm = llm
         self.compiler = compiler or MockHSFCompiler()
@@ -75,6 +80,12 @@ class GDLAgent:
         self.script_generator = ScriptGenerator(llm_caller=self._call_llm)
         self.use_context_surgery = True  # set False to fall back to single-call mode
         self.assistant_settings = assistant_settings.strip()
+        self.should_cancel = should_cancel or (lambda: False)
+
+    def _raise_if_cancelled(self) -> None:
+        if self.should_cancel():
+            self.on_event("cancelled", {})
+            raise AgentCancelled("generation cancelled")
 
     def run(
         self,
@@ -322,10 +333,12 @@ class GDLAgent:
         if image_b64 and history:
             history = history[-4:]
 
+        self._raise_if_cancelled()
         affected = project.get_affected_scripts(instruction)
         self.on_event("analyze", {"affected_scripts": [s.value for s in affected]})
         self.on_event("attempt", {"attempt": 1})
 
+        self._raise_if_cancelled()
         context = self._build_context(
             project, affected,
             include_all=include_all_scripts,
@@ -361,6 +374,7 @@ class GDLAgent:
             )
         else:
             raw = self.llm.generate(messages)
+        self._raise_if_cancelled()
         response = raw.content if hasattr(raw, "content") else str(raw)
 
         self.on_event("llm_response", {"length": len(response)})
@@ -379,10 +393,12 @@ class GDLAgent:
                 "errors": validation_errors,
                 "warnings": validation_warnings,
             })
+            self._raise_if_cancelled()
 
             if validation_errors and self.auto_rewrite:
                 rewrite_reason = "上次生成存在以下问题，请修复后重新输出完整脚本：\n" + "\n".join(validation_errors)
                 self.on_event("rewrite", {"reason": rewrite_reason})
+                self._raise_if_cancelled()
 
                 rewrite_messages = self._build_messages(
                     instruction, context, knowledge, skills,
@@ -392,6 +408,7 @@ class GDLAgent:
                     syntax_report=syntax_report,
                 )
                 rewrite_raw = self.llm.generate(rewrite_messages)
+                self._raise_if_cancelled()
                 rewrite_response = rewrite_raw.content if hasattr(rewrite_raw, "content") else str(rewrite_raw)
                 self.on_event("llm_response", {"length": len(rewrite_response), "rewrite": True})
 
@@ -420,6 +437,7 @@ class GDLAgent:
                             "4. 修复以下校验错误：\n" + "\n".join(second_errors)
                         )
                         self.on_event("rewrite", {"reason": cross_script_prompt, "round": 3})
+                        self._raise_if_cancelled()
 
                         third_messages = self._build_messages(
                             instruction, context, knowledge, skills,
@@ -429,6 +447,7 @@ class GDLAgent:
                             syntax_report=syntax_report,
                         )
                         third_raw = self.llm.generate(third_messages)
+                        self._raise_if_cancelled()
                         third_response = third_raw.content if hasattr(third_raw, "content") else str(third_raw)
                         self.on_event("llm_response", {"length": len(third_response), "rewrite": True})
 

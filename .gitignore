@@ -33,3 +33,7 @@ docs/pro_*.md
 generation_quality_report.md
 traces/
 workdir/
+benchmark/results/
+docs/superpowers/
+test_shelf/
+.claude/
