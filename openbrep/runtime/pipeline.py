@@ -219,11 +219,24 @@ class TaskPipeline:
     # ── Initialization Helpers ────────────────────────────
 
     def _make_llm(self, request: TaskRequest) -> LLMAdapter:
-        """Build LLMAdapter, optionally injecting assistant_settings from request."""
+        """
+        Build LLMAdapter with the correct API key for the current model.
+
+        Mirrors app.py's _key_for_model() logic: provider_keys lookup by
+        model prefix takes priority over the generic [llm] api_key field.
+        This ensures deepseek-* uses provider_keys.deepseek, not a generic key.
+        """
         import dataclasses
         cfg = self.config.llm
+
+        # Prefer provider_keys / custom_providers key over generic api_key
+        resolved = _key_for_model(cfg.model, cfg.provider_keys, cfg.custom_providers)
+        if resolved:
+            cfg = dataclasses.replace(cfg, api_key=resolved)
+
         if request.assistant_settings and not cfg.assistant_settings:
             cfg = dataclasses.replace(cfg, assistant_settings=request.assistant_settings)
+
         return LLMAdapter(cfg)
 
     def _make_compiler(self):
@@ -262,3 +275,40 @@ def _strip_md_fences(code: str) -> str:
     code = re.sub(r'^```[a-zA-Z]*\s*\n?', '', code.strip(), flags=re.MULTILINE)
     code = re.sub(r'\n?```\s*$', '', code.strip(), flags=re.MULTILINE)
     return code.strip()
+
+
+def _key_for_model(model: str, provider_keys: dict, custom_providers: list) -> str:
+    """
+    Resolve the correct API key for a given model.
+
+    Mirrors app.py's _key_for_model() logic:
+    1. Custom providers (exact model match in their models list)
+    2. Known provider prefix mapping via provider_keys
+    """
+    m = (model or "").lower()
+
+    # 1. Custom providers — exact model match
+    for pcfg in custom_providers or []:
+        for cm in pcfg.get("models", []) or []:
+            if m == str(cm).lower():
+                key = str(pcfg.get("api_key", "") or "")
+                if key:
+                    return key
+
+    # 2. Known provider prefixes
+    if "glm" in m:
+        return provider_keys.get("zhipu", "")
+    if "deepseek" in m and "ollama" not in m:
+        return provider_keys.get("deepseek", "")
+    if "claude" in m:
+        return provider_keys.get("anthropic", "")
+    if "gpt" in m or "o3" in m or "o1" in m or "o4" in m:
+        return provider_keys.get("openai", "")
+    if "gemini" in m:
+        return provider_keys.get("google", "")
+    if "qwen" in m or "qwq" in m:
+        return provider_keys.get("aliyun", "")
+    if "moonshot" in m:
+        return provider_keys.get("kimi", "")
+
+    return ""
