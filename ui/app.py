@@ -20,6 +20,7 @@ import zipfile
 import shutil
 import subprocess
 import uuid
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -2263,8 +2264,15 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _normalize_pasted_path(raw_path: str) -> str:
+    cleaned = (raw_path or "").strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
+
+
 def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:
-    raw_path = (project_dir or "").strip()
+    raw_path = _normalize_pasted_path(project_dir)
     if not raw_path:
         return (False, "❌ 请输入 HSF 项目目录")
 

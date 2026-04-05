@@ -403,6 +403,25 @@ class TestImportFlows(unittest.TestCase):
             self.assertIn("目录不存在", msg)
             load_from_disk.assert_not_called()
 
+    def test_hsf_directory_load_accepts_single_quoted_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir) / "Quoted Chair"
+            project_dir.mkdir()
+            loaded_proj = MagicMock()
+            loaded_proj.name = "quoted-chair"
+            loaded_proj.parameters = []
+            loaded_proj.scripts = {}
+
+            with patch("ui.app.HSFProject.load_from_disk", return_value=loaded_proj) as load_from_disk:
+                with patch.dict("ui.app.st.session_state", {
+                    "work_dir": tmpdir,
+                    "chat_history": [],
+                }, clear=False):
+                    ok, _msg = _handle_hsf_directory_load(f"'{project_dir}'")
+
+            self.assertTrue(ok)
+            load_from_disk.assert_called_once_with(str(project_dir))
+
     def test_hsf_directory_load_sets_pending_name_from_project_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir) / "Desk"
