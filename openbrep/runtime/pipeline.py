@@ -5,12 +5,21 @@ Phase 1: thin wrapper around GDLAgent.generate_only().
 - No Streamlit dependencies
 - Usable from CLI, tests, and future API server
 - app.py continues to use GDLAgent directly for now (Strangler Fig)
+
+Intent dispatch:
+  CREATE  → _handle_gdl()     (inject affected scripts, standard prompt)
+  MODIFY  → _handle_modify()  (inject ALL scripts, minimal-change prompt, static check, compile)
+  DEBUG   → _handle_modify()  (same as MODIFY but framed as error analysis)
+  IMAGE   → _handle_gdl()     (vision mode, inject all scripts)
+  CHAT    → _handle_chat()
 """
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -18,12 +27,29 @@ from typing import Callable, Optional
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
-from openbrep.hsf_project import HSFProject
+from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
 from openbrep.llm import LLMAdapter
 from openbrep.skills_loader import SkillsLoader
 from openbrep.runtime.router import IntentRouter
 from openbrep.runtime.tracer import Tracer
+
+
+# ── Modify-specific skill instructions ───────────────────
+# These are prepended to skills_text for MODIFY/DEBUG tasks.
+# They ride in the ## TASK STRATEGY section of the system prompt.
+
+_MODIFY_SKILLS_PROMPT = """\
+## 修改任务规则（必须遵守）
+你正在修改一个已有的 GDL 对象。严格遵守以下规则：
+1. 只修改需要修改的部分，不要重写整个脚本（除非整个脚本都需要变）
+2. 保留原有的注释、代码风格和命名规范，不要"顺手优化"无关代码
+3. 先用中文简要说明：做了什么修改、改了哪个文件、为什么
+4. 如果修改了 3D 脚本中的参数引用，检查 paramlist.xml 是否需要同步修改
+5. 如果新增了参数，必须同时输出更新后的 paramlist.xml
+6. 不需要修改的文件不要输出
+7. 用 [FILE: path] 格式输出每个改动文件的完整修改后内容
+"""
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +137,8 @@ class TaskPipeline:
         try:
             if request.intent == "CHAT":
                 result = self._handle_chat(request)
+            elif request.intent in ("MODIFY", "DEBUG"):
+                result = self._handle_modify(request)
             else:
                 result = self._handle_gdl(request)
         except Exception as exc:
@@ -216,6 +244,102 @@ class TaskPipeline:
             project=project,
         )
 
+    def _handle_modify(self, request: TaskRequest) -> TaskResult:
+        """
+        Modify an existing GDL project.
+
+        Differences from _handle_gdl (CREATE):
+        - include_all_scripts=True  → injects ALL scripts into LLM context
+        - Prepends _MODIFY_SKILLS_PROMPT to reinforce minimal-change discipline
+        - Snapshots project state before changes for diff summary
+        - Runs StaticChecker after applying changes
+        - Attempts compile validation (real or mock)
+        """
+        llm = self._make_llm(request)
+        compiler = self._make_compiler()
+        knowledge = self._load_knowledge()
+        skills_text = _MODIFY_SKILLS_PROMPT + "\n\n" + self._load_skills(request.user_input)
+
+        # Prepare project — create empty one if none provided
+        project = request.project
+        if project is None:
+            gsm_name = request.gsm_name or "untitled"
+            project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
+
+        # Snapshot BEFORE state for diff
+        before_scripts = _snapshot_scripts(project)
+
+        on_event = request.on_event or (lambda *_: None)
+
+        agent = GDLAgent(
+            llm=llm,
+            compiler=compiler,
+            on_event=on_event,
+            assistant_settings=request.assistant_settings,
+        )
+
+        # Key: include_all_scripts=True injects every non-empty script,
+        # which also enables chat_mode (debug-style minimal-change prompt).
+        changes, plain_text = agent.generate_only(
+            instruction=request.user_input,
+            project=project,
+            knowledge=knowledge,
+            skills=skills_text,
+            include_all_scripts=True,
+        )
+
+        cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
+
+        # Apply changes to project in-place
+        if cleaned:
+            agent._apply_changes(project, cleaned)
+
+        # Static check
+        from openbrep.static_checker import StaticChecker
+        static_result = StaticChecker().check(project)
+
+        # Compile validation
+        compile_result: Optional[CompileResult] = None
+        gsm_name = request.gsm_name or project.name
+        try:
+            out_dir = Path(request.output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            gsm_path = str(out_dir / f"{gsm_name}.gsm")
+            hsf_dir = project.save_to_disk()
+            compile_result = compiler.hsf2libpart(str(hsf_dir), gsm_path)
+            on_event("compile_result", {
+                "success": compile_result.success,
+                "error": compile_result.stderr if not compile_result.success else "",
+            })
+        except Exception as exc:
+            logger.warning("Compile step failed: %s", exc)
+
+        # Build output text: LLM analysis + diff summary + static/compile status
+        diff_summary = _build_diff_summary(before_scripts, cleaned)
+        output_parts: list[str] = []
+        if plain_text:
+            output_parts.append(plain_text)
+        if diff_summary:
+            output_parts.append(diff_summary)
+        if not static_result.passed:
+            warnings = "\n".join(f"  ⚠️  {e.detail}" for e in static_result.errors)
+            output_parts.append(f"**静态检查发现问题：**\n{warnings}")
+        if compile_result is not None:
+            if compile_result.success:
+                output_parts.append("✅ 编译通过")
+            else:
+                short_err = compile_result.stderr[:400].strip()
+                output_parts.append(f"❌ 编译失败：\n```\n{short_err}\n```")
+
+        return TaskResult(
+            success=True,
+            intent=request.intent or "MODIFY",
+            scripts=cleaned,
+            plain_text="\n\n".join(output_parts),
+            project=project,
+            compile_result=compile_result,
+        )
+
     # ── Initialization Helpers ────────────────────────────
 
     def _make_llm(self, request: TaskRequest) -> LLMAdapter:
@@ -275,6 +399,65 @@ def _strip_md_fences(code: str) -> str:
     code = re.sub(r'^```[a-zA-Z]*\s*\n?', '', code.strip(), flags=re.MULTILINE)
     code = re.sub(r'\n?```\s*$', '', code.strip(), flags=re.MULTILINE)
     return code.strip()
+
+
+def _snapshot_scripts(project: HSFProject) -> dict[str, str]:
+    """
+    Capture current project scripts as {file_path: content}.
+
+    Uses the same path keys as GDLAgent._apply_changes() output
+    (e.g. "scripts/3d.gdl", "paramlist.xml") so diffs are easy to compute.
+    """
+    snap: dict[str, str] = {}
+    for stype in ScriptType:
+        content = project.get_script(stype)
+        if content:
+            snap[f"scripts/{stype.value}"] = content
+    # Represent paramlist as plain-text parameter lines for readable diff
+    if project.parameters:
+        lines = [
+            f"{p.type_tag} {p.name} = {p.value}  ! {p.description}"
+            + (" [FIXED]" if p.is_fixed else "")
+            for p in project.parameters
+        ]
+        snap["paramlist.xml"] = "\n".join(lines)
+    return snap
+
+
+def _build_diff_summary(before: dict[str, str], changed_files: dict[str, str]) -> str:
+    """
+    Generate a human-readable line-count diff summary.
+
+    Args:
+        before:        snapshot from _snapshot_scripts() before apply
+        changed_files: {file_path: new_content} dict from LLM output
+
+    Returns:
+        Markdown string like "**变更摘要：**\n  3D: +12行 / -5行\n  PARAMLIST: +2行 / -0行"
+        or empty string if nothing changed.
+    """
+    if not changed_files:
+        return ""
+
+    parts = ["**变更摘要：**"]
+    for fpath, new_content in changed_files.items():
+        label = fpath.replace("scripts/", "").replace(".gdl", "").upper()
+        if "paramlist" in fpath:
+            label = "PARAMLIST"
+
+        old_content = before.get(fpath, "")
+        old_lines = old_content.splitlines() if old_content else []
+        new_lines = new_content.splitlines() if new_content else []
+
+        diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=""))
+        if diff:
+            added = sum(1 for ln in diff if ln.startswith("+") and not ln.startswith("+++"))
+            removed = sum(1 for ln in diff if ln.startswith("-") and not ln.startswith("---"))
+            parts.append(f"  {label}: +{added} 行 / -{removed} 行")
+        else:
+            parts.append(f"  {label}: 内容未变化")
+
+    return "\n".join(parts)
 
 
 def _key_for_model(model: str, provider_keys: dict, custom_providers: list) -> str:
