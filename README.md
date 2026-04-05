@@ -70,11 +70,10 @@ obr
 ## CLI 模式（v0.6 新增）
 
 面向 GDL 开发者的终端工作流。
-
 ```bash
 pip install -e "."
 
-# 创建对象，脚本直接写入 HSF 项目目录
+# 创建对象
 openbrep create "做一个宽600mm深400mm的书架，4个层板" --output ./my_shelf
 
 # 修改对象（基于磁盘上的 HSF 项目目录）
