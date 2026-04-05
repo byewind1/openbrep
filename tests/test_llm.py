@@ -24,9 +24,9 @@ from ui.app import (
     _should_skip_elicitation_for_gdl_request,
     _should_start_elicitation,
     _validate_chat_image_size,
+    _route_main_input,
     classify_and_extract,
 )
-
 
 class TestLLMAdapterVision(unittest.TestCase):
     def _mock_response(self, model_name="openai/gpt-4o"):
@@ -317,15 +317,23 @@ class TestIntentRoutingHelpers(unittest.TestCase):
         self.assertFalse(_is_modify_or_check_intent("为什么这个对象要用 GDL"))
 
 
-class TestIntentRoutingFlow(unittest.TestCase):
+    def test_route_main_input_returns_debug_for_error_text(self):
+        intent, _obj_name = _route_main_input("Error in 3D script, line 12", project_loaded=True)
+        self.assertEqual(intent, "DEBUG")
+
+    def test_route_main_input_returns_modify_for_loaded_project(self):
+        intent, _obj_name = _route_main_input("把层板改成 6 个", project_loaded=True)
+        self.assertEqual(intent, "MODIFY")
+
     def test_should_skip_elicitation_for_modify_request(self):
-        self.assertTrue(_should_skip_elicitation_for_gdl_request("帮我检查这段脚本语法"))
+        self.assertTrue(_should_skip_elicitation_for_gdl_request("帮我检查这段脚本语法", "MODIFY"))
+
+    def test_should_skip_elicitation_for_debug_request(self):
+        self.assertTrue(_should_skip_elicitation_for_gdl_request("Error in 3D script, line 12", "DEBUG"))
 
     def test_should_not_skip_elicitation_for_generate_request(self):
-        self.assertFalse(_should_skip_elicitation_for_gdl_request("创建一个书架"))
+        self.assertFalse(_should_skip_elicitation_for_gdl_request("创建一个书架", "CREATE"))
 
-
-class TestIntentRoutingGuards(unittest.TestCase):
     def test_should_start_elicitation_for_generation_text(self):
         self.assertTrue(_should_start_elicitation("创建一个书架"))
 

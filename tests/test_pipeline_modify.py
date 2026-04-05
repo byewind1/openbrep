@@ -319,27 +319,23 @@ class TestModifyPipelineContext(unittest.TestCase):
         self.assertIsNotNone(captured.get("should_cancel"))
         self.assertTrue(captured["should_cancel"]())
 
-    def test_preflight_summary_is_appended_to_plain_text(self):
-        pipeline = _make_pipeline("脚本没有问题。")
-        fake_analysis = MagicMock()
-        fake_analysis.feasible = True
-        fake_analysis.blockers = []
-        fake_analysis.warnings = ["Macro \"Foo\" is CALLed but not found in workspace."]
-        fake_analysis.summary = "Complexity: medium | WARNING: Macro missing"
+    def test_repair_error_log_is_appended_to_instruction(self):
+        pipeline = _make_pipeline("")
+        captured = {}
 
-        with patch("openbrep.runtime.pipeline.PreflightAnalyzer") as analyzer_cls:
-            analyzer_cls.return_value.analyze.return_value = fake_analysis
-            result = pipeline.execute(TaskRequest(
-                user_input="检查这个对象",
-                intent="MODIFY",
+        def capture_generate_only(self_agent, **kwargs):
+            captured["instruction"] = kwargs.get("instruction")
+            return {}, ""
+
+        with patch("openbrep.core.GDLAgent.generate_only", capture_generate_only):
+            pipeline.execute(TaskRequest(
+                user_input="修复脚本中的编译错误",
+                intent="DEBUG",
                 project=_make_project(),
                 work_dir="./workdir",
+                error_log="Error in 3D script, line 12: Missing END",
             ))
 
-        self.assertTrue(result.success)
-        self.assertIn("Preflight", result.plain_text)
-        self.assertIn("Macro missing", result.plain_text)
+        self.assertIn("错误日志", captured.get("instruction", ""))
+        self.assertIn("Missing END", captured.get("instruction", ""))
 
-
-if __name__ == "__main__":
-    unittest.main()

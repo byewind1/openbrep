@@ -71,6 +71,7 @@ class TaskRequest:
     history: Optional[list[dict]] = None   # recent conversation history
     syntax_report: str = ""                # debug syntax checker output
     last_code_context: Optional[str] = None
+    error_log: str = ""                    # structured compile/runtime error text for repair
     should_cancel: Optional[Callable[[], bool]] = None
     image_b64: Optional[str] = None
     image_mime: str = "image/png"
@@ -176,11 +177,13 @@ class TaskPipeline:
             "如果用户想创建或修改 GDL 对象，告诉他直接描述需求，AI 会自动生成。\n"
             "回复简洁，使用中文，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
         )
+        system_content = _build_assistant_settings_prompt(request.assistant_settings) + system_content
+        history = _trim_history(request.history, limit=6)
+        messages = [{"role": "system", "content": system_content}]
+        messages.extend({"role": item.get("role", "user"), "content": item.get("content", "")} for item in history)
+        messages.append({"role": "user", "content": request.user_input})
         try:
-            resp = llm.generate([
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": request.user_input},
-            ])
+            resp = llm.generate(messages)
             return TaskResult(
                 success=True,
                 intent="CHAT",
@@ -415,7 +418,7 @@ class TaskPipeline:
 
 
 def _normalize_modify_request(request: TaskRequest) -> tuple[str, str]:
-    """Strip debug prefixes and merge syntax report from request/user input."""
+    """Strip debug prefixes and merge structured repair/debug context."""
     clean_instruction = request.user_input or ""
     syntax_report = request.syntax_report or ""
 
@@ -428,6 +431,11 @@ def _normalize_modify_request(request: TaskRequest) -> tuple[str, str]:
                 syntax_report = parts[1].strip()
         else:
             clean_instruction = after_prefix
+
+    if request.error_log:
+        error_block = f"错误日志：\n{request.error_log.strip()}"
+        if error_block not in clean_instruction:
+            clean_instruction = f"{clean_instruction.strip()}\n\n{error_block}".strip()
 
     return clean_instruction, syntax_report
 
@@ -448,6 +456,24 @@ def _run_modify_preflight(instruction: str, project: HSFProject) -> str:
     if analysis.blockers:
         parts.append("\n".join(f"- {item}" for item in analysis.blockers))
     return "\n".join(parts).strip()
+
+
+def _build_assistant_settings_prompt(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    return (
+        "## AI助手设置\n"
+        "以下内容是用户长期提供的协作偏好与使用场景描述。"
+        "请在不违反系统规则、输出格式要求、GDL 硬性规则和当前任务要求的前提下参考执行。\n"
+        f"{raw}\n\n"
+    )
+
+
+def _trim_history(history: Optional[list[dict]], limit: int = 6) -> list[dict]:
+    if not history:
+        return []
+    return history[-limit:]
 
 
 def _strip_md_fences(code: str) -> str:

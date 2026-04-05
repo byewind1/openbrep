@@ -278,17 +278,14 @@ def repair(
         err_console.print(f"[red]❌ 无法加载项目：{exc}[/red]")
         raise typer.Exit(1)
 
-    instruction = "修复脚本中的编译错误"
-    if error_log:
-        instruction = f"[DEBUG:editor]{instruction}\n\n错误日志：\n{error_log}"
-
     console.print(f"\n修复项目: [cyan]{project.name}[/cyan]\n")
 
     request = TaskRequest(
-        user_input=instruction,
+        user_input="修复脚本中的编译错误",
         intent="DEBUG",
         project=project,
         work_dir=str(Path(project_dir).parent),
+        error_log=error_log or "",
         on_event=_make_on_event(not no_progress),
     )
 
@@ -300,6 +297,10 @@ def repair(
         raise typer.Exit(1)
 
     console.print("\n[green]✅ 修复完成[/green]\n")
+
+    if result.project:
+        saved_path = _persist_result_project(result.project, Path(project_dir).resolve(), project.name)
+        console.print(f"[green]📁 已写回项目目录 {saved_path}[/green]\n")
 
     if result.plain_text:
         console.print(Panel(result.plain_text, title="AI 分析", border_style="dim"))
@@ -322,6 +323,7 @@ def chat(
         raise typer.Exit(1)
 
     pipeline = TaskPipeline(config=config)
+    history: list[dict[str, str]] = []
 
     project = None
     if project_dir:
@@ -345,10 +347,13 @@ def chat(
             console.print("[dim]再见[/dim]")
             break
 
+        history.append({"role": "user", "content": user_input})
         request = TaskRequest(
             user_input=user_input,
             project=project,
             work_dir="./workdir",
+            history=history[-6:],
+            assistant_settings=config.llm.assistant_settings,
         )
 
         with console.status(""):
@@ -360,6 +365,7 @@ def chat(
 
         if result.plain_text:
             console.print(Panel(result.plain_text, border_style="dim"))
+            history.append({"role": "assistant", "content": result.plain_text})
 
         if result.scripts:
             _print_scripts(result.scripts)

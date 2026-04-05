@@ -58,6 +58,7 @@ from openbrep.elicitation_agent import ElicitationAgent, ElicitationState
 from openbrep.skills_loader import SkillsLoader
 from openbrep import __version__ as OPENBREP_VERSION
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+from openbrep.runtime.router import IntentRouter
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -1657,75 +1658,36 @@ def _is_gdl_intent(text: str) -> bool:
 def _is_pure_chat(text: str) -> bool:
     return any(re.search(p, text.strip(), re.IGNORECASE) for p in _CHAT_ONLY_PATTERNS)
 
-def classify_and_extract(text: str, llm, project_loaded: bool = False) -> tuple:
-    """
-    Returns: (intent, obj_name)
-    When project is already loaded, default to GDL for anything ambiguous.
-    """
+def _route_main_input(text: str, project_loaded: bool = False, has_image: bool = False) -> tuple[str, str]:
+    """Return pipeline intent plus extracted object name for the main chat box."""
     obj_name = _extract_object_name(text)
+    intent = IntentRouter().classify(
+        text,
+        has_project=project_loaded,
+        has_image=has_image,
+    )
+    return intent, obj_name
 
-    # Pure greetings / meta questions always → CHAT regardless of project state
-    if _is_pure_chat(text):
-        return ("CHAT", obj_name)
 
-    # Keyword fast-path
-    if _is_gdl_intent(text):
-        return ("GDL", obj_name)
-
-    # Project loaded: assume user wants to edit — treat ambiguous as GDL
-    if project_loaded:
-        print(f"[classify] project loaded → default GDL for: '{text[:40]}'")
-        return ("GDL", obj_name)
-
-    # No project, ambiguous → ask LLM (one word)
-    try:
-        resp = llm.generate([
-            {
-                "role": "system",
-                "content": (
-                    "你是意图分类器。判断用户是否想创建或修改 ArchiCAD GDL 构件。\n"
-                    "只回复一个词：GDL 或 CHAT\n"
-                    "GDL = 要创建/修改/编译构件\n"
-                    "CHAT = 闲聊/打招呼/问用法"
-                ),
-            },
-            {"role": "user", "content": text},
-        ], max_tokens=10, temperature=0.1)
-
-        raw = resp.content.strip().upper()
-        print(f"[classify] LLM intent: '{raw}'")
-        return ("GDL" if "GDL" in raw else "CHAT", obj_name)
-
-    except Exception as e:
-        print(f"[classify] exception: {e}")
-        return ("CHAT", obj_name)
+def classify_and_extract(text: str, llm, project_loaded: bool = False) -> tuple:
+    """Compatibility wrapper for older tests/callers."""
+    intent, obj_name = _route_main_input(text, project_loaded=project_loaded, has_image=False)
+    return (("CHAT" if intent == "CHAT" else "GDL"), obj_name)
 
 
 def chat_respond(user_input: str, history: list, llm) -> str:
-    """Simple conversational response. Never outputs GDL code — that goes to the editor."""
-    system_content = (
-        "你是 openbrep 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
-        "【重要约束】绝对禁止在回复中输出任何 GDL 代码、代码块或脚本片段。"
-        "如果用户想创建或修改 GDL 对象，告诉他「直接在底部输入框描述需求，AI 会自动生成并填入编辑器」。\n"
-        "不要提及 ArchiCAD 内部操作（如打开 GDL 对象编辑器），因为本工具就是体外的 GDL IDE。\n"
-        "回复简洁，使用中文，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
-    )
-    system_content = _build_assistant_settings_prompt(st.session_state.get("assistant_settings", "")) + system_content
-    system_msg = {
-        "role": "system",
-        "content": system_content,
-    }
-    messages = [system_msg]
-    # Include recent history for context (last 6 messages)
-    for msg in history[-6:]:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": user_input})
-
-    try:
-        resp = llm.generate(messages)
-        return resp.content
-    except Exception as e:
-        return f"❌ {str(e)}"
+    """Deprecated compatibility wrapper; main chat path should use TaskPipeline."""
+    pipeline = TaskPipeline(trace_dir="./traces")
+    pipeline.config = GDLAgentConfig.load()
+    result = pipeline.execute(TaskRequest(
+        user_input=user_input,
+        intent="CHAT",
+        project=st.session_state.get("project"),
+        work_dir=st.session_state.get("work_dir", "./workdir"),
+        history=_trim_history_for_image(history, limit=6),
+        assistant_settings=st.session_state.get("assistant_settings", ""),
+    ))
+    return result.plain_text if result.success else f"❌ {result.error}"
 
 
 # ── Script Map (module-level, shared by agent + editor) ───
@@ -1800,8 +1762,13 @@ def _make_generation_project(gdl_obj_name: str) -> HSFProject:
 
 
 
-def _should_skip_elicitation_for_gdl_request(text: str) -> bool:
-    return _is_modify_or_check_intent(text)
+def _should_skip_elicitation_for_gdl_request(text: str, intent: str | None = None) -> bool:
+    effective_intent = intent or _route_main_input(
+        text,
+        project_loaded=bool(st.session_state.get("project")),
+        has_image=False,
+    )[0]
+    return effective_intent in ("MODIFY", "DEBUG")
 
 
 
@@ -3849,10 +3816,10 @@ with col_right:
         else:
             try:
                 st.session_state.agent_running = True
-                llm_for_classify = get_llm()
-                intent, gdl_obj_name = classify_and_extract(
-                    user_input, llm_for_classify,
+                intent, gdl_obj_name = _route_main_input(
+                    user_input,
                     project_loaded=bool(st.session_state.project),
+                    has_image=False,
                 )
 
                 with live_output.container():
@@ -3862,11 +3829,11 @@ with col_right:
                             msg = chat_respond(
                                 user_input,
                                 st.session_state.chat_history[:-1],
-                                llm_for_classify,
+                                None,
                             )
                             st.markdown(msg)
                         else:
-                            should_skip_elicitation = _should_skip_elicitation_for_gdl_request(user_input)
+                            should_skip_elicitation = _should_skip_elicitation_for_gdl_request(user_input, intent)
                             if should_skip_elicitation:
                                 proj_current = st.session_state.project
                                 if not proj_current:
