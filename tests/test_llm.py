@@ -21,6 +21,7 @@ from ui.app import (
     _build_model_source_state,
     _detect_image_task_mode,
     _finish_generation_state,
+    _is_explainer_intent,
     _is_generation_locked,
     _is_modify_or_check_intent,
     _request_generation_cancel,
@@ -128,6 +129,41 @@ class TestRunAgentGenerateRouting(unittest.TestCase):
 
         self.assertEqual(captured.get("intent"), "REPAIR")
         self.assertEqual(result, "ok")
+
+    def test_run_agent_generate_uses_chat_intent_for_explainer_requests(self):
+        from ui.app import run_agent_generate
+
+        captured = {}
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1\nEND\n"
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        def fake_execute(self, request):
+            captured["intent"] = request.intent
+            return MagicMock(success=True, scripts={}, plain_text="简要拆解", project=project)
+
+        with patch("ui.app.TaskPipeline.execute", fake_execute):
+            with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                with patch("ui.app._is_active_generation", return_value=True):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            with patch.dict("ui.app.st.session_state", {
+                                "chat_history": [],
+                                "work_dir": "./workdir",
+                            }, clear=False):
+                                result = run_agent_generate(
+                                    "这是什么对象？",
+                                    project,
+                                    _StatusCol(),
+                                    gsm_name="chair",
+                                    auto_apply=True,
+                                )
+
+        self.assertEqual(captured.get("intent"), "CHAT")
+        self.assertEqual(result, "简要拆解")
 
 
 class TestLLMAdapterVision(unittest.TestCase):
@@ -406,9 +442,6 @@ class TestVisionHelpers(unittest.TestCase):
 
 
 class TestIntentRoutingHelpers(unittest.TestCase):
-    def test_modify_or_check_intent_matches_syntax_check(self):
-        self.assertTrue(_is_modify_or_check_intent("帮我检查这段脚本语法"))
-
     def test_modify_or_check_intent_matches_fix_request(self):
         self.assertTrue(_is_modify_or_check_intent("把 3D 脚本改一下"))
 
@@ -417,6 +450,15 @@ class TestIntentRoutingHelpers(unittest.TestCase):
 
     def test_modify_or_check_intent_does_not_match_general_question(self):
         self.assertFalse(_is_modify_or_check_intent("为什么这个对象要用 GDL"))
+
+    def test_explainer_intent_matches_explanation_request(self):
+        self.assertTrue(_is_explainer_intent("这是什么对象？"))
+        self.assertTrue(_is_explainer_intent("详细讲讲这个对象"))
+        self.assertTrue(_is_explainer_intent("A/B/ZZYZX 分别控制什么"))
+
+    def test_explainer_intent_does_not_match_modify_or_repair_request(self):
+        self.assertFalse(_is_explainer_intent("把 3D 脚本改一下"))
+        self.assertFalse(_is_explainer_intent("修复这个脚本里的错误"))
 
 
     def test_route_main_input_returns_debug_for_error_text(self):

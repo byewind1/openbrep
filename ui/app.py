@@ -1896,16 +1896,36 @@ def _is_negative_confirmation(text: str) -> bool:
     return any(token in low for token in ["不是", "不对", "重来", "修改", "不", "错了", "再改"])
 
 
+def _is_modify_or_check_intent(text: str) -> bool:
+    raw = (text or "").strip().lower()
+    if not raw:
+        return False
+    if _is_debug_intent(raw):
+        return False
+    if any(token in raw for token in ("检查", "校验", "语法", "语义")):
+        return True
+    modify_tokens = (
+        "改", "修改", "调整", "更新", "优化", "重写", "补充", "添加", "删除", "修正",
+    )
+    return any(token in raw for token in modify_tokens)
 
-_MODIFY_OR_CHECK_KEYWORDS = {
-    "检查", "语法", "报错", "错误",
-    "修复", "修改", "改一下", "调整",
+
+_EXPLAINER_KEYWORDS = {
+    "这是什么对象", "解释一下", "详细讲讲", "详细说说", "展开说说",
+    "全面分析", "具体一点", "代码分析", "逻辑分析", "命令分析",
+    "分析脚本", "3d 和 2d", "各负责什么", "分别控制什么",
 }
 
 
-def _is_modify_or_check_intent(text: str) -> bool:
-    low = (text or "").strip().lower()
-    return any(token in low for token in _MODIFY_OR_CHECK_KEYWORDS)
+def _is_explainer_intent(text: str) -> bool:
+    raw = (text or "").strip().lower()
+    if not raw:
+        return False
+    if _is_modify_or_check_intent(raw) or _is_debug_intent(raw):
+        return False
+    if any(token in raw for token in ("代码分析", "逻辑分析", "命令分析")):
+        return True
+    return any(token in raw for token in _EXPLAINER_KEYWORDS)
 
 
 
@@ -2013,8 +2033,8 @@ def _bump_main_editor_version() -> int:
 # Keywords that signal debug/analysis intent → inject all scripts + allow plain-text reply
 _DEBUG_KEYWORDS = {
     "debug", "fix", "error", "bug", "wrong", "issue", "broken", "fail", "crash",
-    "问题", "错误", "调试", "检查", "分析", "为什么", "帮我看", "看看", "出错",
-    "不对", "不行", "哪里", "原因", "解释", "explain", "why", "what", "how",
+    "问题", "错误", "调试", "为什么", "帮我看", "看看", "出错",
+    "不对", "不行", "哪里", "原因", "explain", "why", "what", "how",
     "review", "看一下", "看下", "告诉我", "这段", "这个脚本",
 }
 
@@ -2106,6 +2126,8 @@ def run_agent_generate(
         pipeline_project = proj if auto_apply else deepcopy(proj)
         if debug_mode:
             intent = "REPAIR"
+        elif _is_explainer_intent(user_input):
+            intent = "CHAT"
         elif any(pipeline_project.get_script(st) for st in ScriptType):
             intent = "MODIFY"
         else:

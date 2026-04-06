@@ -25,6 +25,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from openbrep.explainer.chat_adapter import build_chat_explanation_reply
+from openbrep.explainer.context_builder import build_project_context
+from openbrep.explainer.service import explain_project_context
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
@@ -185,6 +188,15 @@ class TaskPipeline:
 
     def _handle_chat(self, request: TaskRequest) -> TaskResult:
         """Simple conversational reply — no GDL code output."""
+        if request.project is not None:
+            explanation = explain_project_context(build_project_context(request.project))
+            reply = build_chat_explanation_reply(explanation, user_input=request.user_input)
+            return TaskResult(
+                success=True,
+                intent="CHAT",
+                plain_text=reply,
+            )
+
         llm = self._make_llm(request)
         system_content = (
             "你是 openbrep 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
@@ -481,6 +493,31 @@ def _run_modify_preflight(instruction: str, project: HSFProject) -> str:
     if analysis.blockers:
         parts.append("\n".join(f"- {item}" for item in analysis.blockers))
     return "\n".join(parts).strip()
+
+
+def _build_chat_project_context(project: HSFProject) -> str:
+    parameter_lines = [
+        f"- {param.name}: type={param.type_tag}, value={param.value}, desc={param.description or '无'}, fixed={'yes' if param.is_fixed else 'no'}"
+        for param in project.parameters
+    ] or ["- 无参数"]
+
+    script_lines = []
+    for script_type in ScriptType:
+        content = project.get_script(script_type)
+        if not content:
+            continue
+        snippet_lines = [line.strip() for line in content.splitlines() if line.strip()]
+        snippet = "\n".join(snippet_lines[:6])
+        script_lines.append(f"### scripts/{script_type.value}\n{snippet}")
+
+    scripts_text = "\n\n".join(script_lines) if script_lines else "无脚本内容"
+    return (
+        "## 当前工程解释上下文\n"
+        "以下是当前 HSF/GDL 工程的只读摘要，仅用于解释，不用于修改。\n"
+        f"构件名：{project.name}\n"
+        f"参数：\n" + "\n".join(parameter_lines) + "\n\n"
+        f"脚本摘要：\n{scripts_text}"
+    )
 
 
 def _build_assistant_settings_prompt(text: str) -> str:
