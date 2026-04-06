@@ -37,3 +37,4 @@ benchmark/results/
 docs/superpowers/
 test_shelf/
 .claude/
+.worktrees/
