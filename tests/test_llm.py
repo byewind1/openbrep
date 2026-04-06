@@ -1,7 +1,12 @@
 from pathlib import Path
 import tempfile
 import unittest
+import base64
+import json
 from unittest.mock import MagicMock, patch
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from openbrep.config import LLMConfig
 from openbrep.core import GDLAgent
@@ -28,6 +33,9 @@ from ui.app import (
     _capture_last_project_snapshot,
     _restore_last_project_snapshot,
     _route_main_input,
+    _verify_pro_code,
+    _license_record_is_active,
+    _import_pro_knowledge_zip,
     classify_and_extract,
 )
 
@@ -347,6 +355,241 @@ class TestIntentRoutingHelpers(unittest.TestCase):
         llm = MagicMock()
         intent, _obj_name = classify_and_extract("你能做什么", llm, project_loaded=True)
         self.assertEqual(intent, "CHAT")
+
+
+def _build_signed_license_code(payload: dict) -> str:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    canonical_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    signature = private_key.sign(
+        canonical_payload,
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+    record = {
+        "payload": payload,
+        "signature": base64.urlsafe_b64encode(signature).decode("utf-8").rstrip("="),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).decode("utf-8").rstrip("=")
+    return public_pem.decode("utf-8"), f"OBRLIC-{encoded}"
+
+
+class TestProLicenseVerification(unittest.TestCase):
+    def test_verify_pro_code_accepts_valid_signed_code(self):
+        payload = {
+            "buyer_id": "buyer-001",
+            "email": "buyer@example.com",
+            "plan": "annual",
+            "issued_at": "2026-04-06T12:00:00",
+            "expire_date": "2099-12-31",
+        }
+        public_pem, code = _build_signed_license_code(payload)
+
+        with patch("ui.app._load_pro_public_key") as load_key:
+            load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
+            ok, msg, record = _verify_pro_code(code)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, "授权码有效")
+        self.assertIsNotNone(record)
+        self.assertTrue(record["pro_unlocked"])
+        self.assertEqual(record["buyer_id"], "buyer-001")
+        self.assertEqual(record["plan"], "annual")
+
+    def test_verify_pro_code_rejects_tampered_payload(self):
+        payload = {
+            "buyer_id": "buyer-001",
+            "email": "buyer@example.com",
+            "plan": "annual",
+            "issued_at": "2026-04-06T12:00:00",
+            "expire_date": "2099-12-31",
+        }
+        public_pem, code = _build_signed_license_code(payload)
+        raw = code[len("OBRLIC-"):]
+        record = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8"))
+        record["payload"]["plan"] = "lifetime"
+        tampered = "OBRLIC-" + base64.urlsafe_b64encode(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).decode("utf-8").rstrip("=")
+
+        with patch("ui.app._load_pro_public_key") as load_key:
+            load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
+            ok, msg, record = _verify_pro_code(tampered)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, "授权签名无效")
+        self.assertIsNone(record)
+
+    def test_verify_pro_code_rejects_expired_license(self):
+        payload = {
+            "buyer_id": "buyer-001",
+            "email": "buyer@example.com",
+            "plan": "annual",
+            "product": "openbrep-pro",
+            "version": "0.6",
+            "issued_at": "2026-04-06T12:00:00",
+            "expire_date": "2020-01-01",
+        }
+        public_pem, code = _build_signed_license_code(payload)
+
+        with patch("ui.app._load_pro_public_key") as load_key:
+            load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
+            ok, msg, record = _verify_pro_code(code)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, "授权码已过期")
+        self.assertIsNone(record)
+
+    def test_license_record_is_active_revalidates_saved_record(self):
+        payload = {
+            "buyer_id": "buyer-001",
+            "email": "buyer@example.com",
+            "plan": "annual",
+            "issued_at": "2026-04-06T12:00:00",
+            "expire_date": "2099-12-31",
+        }
+        public_pem, code = _build_signed_license_code(payload)
+        raw = code[len("OBRLIC-"):]
+        record_blob = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8"))
+        saved = {
+            "pro_unlocked": True,
+            "license_payload": record_blob["payload"],
+            "license_signature": record_blob["signature"],
+        }
+
+        with patch("ui.app._load_pro_public_key") as load_key:
+            load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
+            ok, msg, record = _license_record_is_active(saved)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, "授权码有效")
+        self.assertIsNotNone(record)
+        self.assertEqual(record["buyer_id"], "buyer-001")
+
+
+class TestProKnowledgePackageVerification(unittest.TestCase):
+    def _build_signed_package_bytes(self, manifest: dict, tamper_signature: bool = False) -> bytes:
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_pem = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        manifest_bytes = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8")
+        signature = private_key.sign(
+            manifest_bytes,
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+        if tamper_signature:
+            signature = signature[:-1] + bytes([signature[-1] ^ 0x01])
+
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("manifest.json", manifest_bytes)
+            zf.writestr("signature.sig", signature)
+            zf.writestr("docs/test.md", "# test\n")
+        return public_pem, buf.getvalue()
+
+    def test_import_pro_knowledge_zip_accepts_signed_obrk(self):
+        manifest = {
+            "buyer_id": "buyer-001",
+            "email": "buyer@example.com",
+            "plan": "annual",
+            "issued_at": "2026-04-06T12:00:00",
+            "expire_date": "2099-12-31",
+        }
+        public_pem, package_bytes = self._build_signed_package_bytes(manifest)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            license_record = {
+                "pro_unlocked": True,
+                "buyer_id": "buyer-001",
+                "license_payload": manifest,
+                "license_signature": "dummy-signature",
+            }
+            normalized_license = dict(license_record)
+            with patch("ui.app._load_pro_public_key") as load_key:
+                with patch("ui.app._load_license", return_value=license_record):
+                    with patch("ui.app._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
+                        with patch("ui.app._save_license"):
+                            load_key.return_value = serialization.load_pem_public_key(public_pem)
+                            ok, msg = _import_pro_knowledge_zip(package_bytes, "demo.obrk", tmpdir)
+
+            self.assertTrue(ok)
+            self.assertIn("导入完成", msg)
+            self.assertTrue((Path(tmpdir) / "pro_knowledge" / "test.md").exists())
+
+    def test_import_pro_knowledge_zip_rejects_invalid_signature(self):
+        manifest = {
+            "buyer_id": "buyer-001",
+            "email": "buyer@example.com",
+            "plan": "annual",
+            "issued_at": "2026-04-06T12:00:00",
+            "expire_date": "2099-12-31",
+        }
+        public_pem, package_bytes = self._build_signed_package_bytes(manifest, tamper_signature=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            license_record = {
+                "pro_unlocked": True,
+                "buyer_id": "buyer-001",
+                "license_payload": manifest,
+                "license_signature": "dummy-signature",
+            }
+            normalized_license = dict(license_record)
+            with patch("ui.app._load_pro_public_key") as load_key:
+                with patch("ui.app._load_license", return_value=license_record):
+                    with patch("ui.app._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
+                        with patch("ui.app._save_license"):
+                            load_key.return_value = serialization.load_pem_public_key(public_pem)
+                            ok, msg = _import_pro_knowledge_zip(package_bytes, "demo.obrk", tmpdir)
+
+            self.assertFalse(ok)
+            self.assertIn("知识包签名无效", msg)
+            self.assertFalse((Path(tmpdir) / "pro_knowledge").exists())
+
+    def test_import_pro_knowledge_zip_rejects_mismatched_buyer(self):
+        manifest = {
+            "buyer_id": "buyer-002",
+            "email": "buyer@example.com",
+            "plan": "annual",
+            "issued_at": "2026-04-06T12:00:00",
+            "expire_date": "2099-12-31",
+        }
+        public_pem, package_bytes = self._build_signed_package_bytes(manifest)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            license_record = {
+                "pro_unlocked": True,
+                "buyer_id": "buyer-001",
+                "license_payload": {
+                    "buyer_id": "buyer-001",
+                    "email": "buyer@example.com",
+                    "plan": "annual",
+                    "issued_at": "2026-04-06T12:00:00",
+                    "expire_date": "2099-12-31",
+                },
+                "license_signature": "dummy-signature",
+            }
+            normalized_license = dict(license_record)
+            with patch("ui.app._load_pro_public_key") as load_key:
+                with patch("ui.app._load_license", return_value=license_record):
+                    with patch("ui.app._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
+                        with patch("ui.app._save_license"):
+                            load_key.return_value = serialization.load_pem_public_key(public_pem)
+                            ok, msg = _import_pro_knowledge_zip(package_bytes, "demo.obrk", tmpdir)
+
+            self.assertFalse(ok)
+            self.assertIn("知识包不属于当前授权用户", msg)
+            self.assertFalse((Path(tmpdir) / "pro_knowledge").exists())
 
 
 class TestUndoLastAIWrite(unittest.TestCase):

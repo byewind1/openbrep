@@ -20,6 +20,7 @@ import zipfile
 import shutil
 import subprocess
 import uuid
+import binascii
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,10 @@ try:
     _PLOTLY_AVAILABLE = True
 except ImportError:
     _PLOTLY_AVAILABLE = False
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
@@ -464,14 +469,24 @@ def _license_file(work_dir: str) -> Path:
     return Path(work_dir) / ".openbrep" / "license_v1.json"
 
 
+def _empty_license_record() -> dict:
+    return {
+        "status": "free",
+        "pro_unlocked": False,
+    }
+
+
 def _load_license(work_dir: str) -> dict:
     fp = _license_file(work_dir)
     if not fp.exists():
-        return {"pro_unlocked": False}
+        return _empty_license_record()
     try:
-        return json.loads(fp.read_text(encoding="utf-8"))
+        data = json.loads(fp.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
     except Exception:
-        return {"pro_unlocked": False}
+        pass
+    return _empty_license_record()
 
 
 def _save_license(work_dir: str, data: dict) -> None:
@@ -480,105 +495,192 @@ def _save_license(work_dir: str, data: dict) -> None:
     fp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _to_base36(num: int) -> str:
-    chars = string.digits + string.ascii_uppercase
-    if num == 0:
-        return "0"
-    out: list[str] = []
-    n = num
-    while n:
-        n, r = divmod(n, 36)
-        out.append(chars[r])
-    return "".join(reversed(out))
+def _load_pro_public_key(root: Path):
+    key_file = root / "openbrep" / "public_keys" / "pro_public.pem"
+    if not key_file.exists():
+        raise FileNotFoundError(f"缺少公钥文件：{key_file}")
+    return serialization.load_pem_public_key(key_file.read_bytes())
 
 
-def _get_license_secret(root: Path) -> bytes:
-    env = os.environ.get("OPENBREP_LICENSE_SECRET", "")
-    if env:
-        return env.encode("utf-8")
-
-    key_file = root / "keys" / "license_secret.key"
-    if key_file.exists():
-        return key_file.read_text(encoding="utf-8").strip().encode("utf-8")
-
-    return b""
+def _urlsafe_b64decode(data: str) -> bytes:
+    padded = data + "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(padded.encode("utf-8"))
 
 
-def _gen_code(secret: bytes, buyer_id: str, expire_date: str, salt: str) -> str:
-    payload = f"{buyer_id}|{expire_date}|{salt}".encode("utf-8")
-    digest = hmac.new(secret, payload, hashlib.sha256).hexdigest()[:12].upper()
-    token = _to_base36(int(digest, 16)).zfill(12)[:12]
-    return f"OBR-{token[0:4]}-{token[4:8]}-{token[8:12]}"
+def _urlsafe_b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
 
 
-def _verify_pro_code(code: str) -> tuple[bool, str]:
-    c = (code or "").strip().upper()
-    if not c:
-        return False, "请输入授权码"
+def _canonical_license_payload(payload: dict) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
-    root = Path(__file__).parent.parent
-    csv_path = root / "licenses.csv"
-    secret = _get_license_secret(root)
 
-    # Backward-compatible fallback: allowlist in env/file
-    if not csv_path.exists() or not secret:
-        allowed = set()
-        env_codes = os.environ.get("OPENBREP_PRO_CODES", "")
-        for x in env_codes.split(","):
-            x = x.strip().upper()
-            if x:
-                allowed.add(x)
+def _normalize_license_record(payload: dict, signature_b64: str) -> dict:
+    fingerprint = hashlib.sha256(_canonical_license_payload(payload)).hexdigest()[:16]
+    return {
+        "status": "active",
+        "pro_unlocked": True,
+        "buyer_id": str(payload.get("buyer_id", "")).strip(),
+        "email": str(payload.get("email", "")).strip(),
+        "plan": str(payload.get("plan", "")).strip(),
+        "issued_at": str(payload.get("issued_at", "")).strip(),
+        "expire_date": str(payload.get("expire_date", "")).strip(),
+        "activated_at": datetime.now().isoformat(timespec="seconds"),
+        "fingerprint": fingerprint,
+        "license_payload": payload,
+        "license_signature": signature_b64,
+    }
 
-        f = Path.home() / ".openbrep" / "pro_codes.txt"
-        if f.exists():
-            try:
-                for line in f.read_text(encoding="utf-8").splitlines():
-                    line = line.strip().upper()
-                    if line and not line.startswith("#"):
-                        allowed.add(line)
-            except Exception:
-                pass
 
-        return (c in allowed, "授权码有效" if c in allowed else "授权码无效")
+def _verify_license_payload(payload: dict, signature_b64: str) -> tuple[bool, str, dict | None]:
+    expire_date = str(payload.get("expire_date", "")).strip()
+    if expire_date:
+        try:
+            if datetime.now().date() > datetime.strptime(expire_date, "%Y-%m-%d").date():
+                return False, "授权码已过期", None
+        except ValueError:
+            return False, "授权日期格式无效", None
 
     try:
-        with csv_path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if (row.get("license_code", "").strip().upper() != c):
-                    continue
-
-                if row.get("status", "active").strip().lower() != "active":
-                    return False, "授权码已失效"
-
-                buyer_id = (row.get("buyer_id") or "").strip()
-                expire_date = (row.get("expire_date") or "").strip()
-                salt = (row.get("salt") or "").strip()
-                if not (buyer_id and expire_date and salt):
-                    return False, "授权数据不完整"
-
-                expected = _gen_code(secret, buyer_id, expire_date, salt)
-                if expected != c:
-                    return False, "授权码校验失败"
-
-                # Expire date check (YYYY-MM-DD)
-                if expire_date:
-                    try:
-                        if datetime.now().date() > datetime.strptime(expire_date, "%Y-%m-%d").date():
-                            return False, "授权码已过期"
-                    except Exception:
-                        pass
-
-                return True, "授权码有效"
+        public_key = _load_pro_public_key(Path(__file__).parent.parent)
+        signature = _urlsafe_b64decode(signature_b64)
+        public_key.verify(
+            signature,
+            _canonical_license_payload(payload),
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+    except FileNotFoundError as e:
+        return False, str(e), None
+    except (ValueError, binascii.Error):
+        return False, "授权码格式错误", None
+    except InvalidSignature:
+        return False, "授权签名无效", None
     except Exception as e:
-        return False, f"授权校验失败: {e}"
+        return False, f"授权校验失败: {e}", None
 
-    return False, "授权码无效"
+    return True, "授权码有效", _normalize_license_record(payload, signature_b64)
+
+
+def _decode_signed_license_code(code: str) -> tuple[bool, str, dict | None]:
+    raw = (code or "").strip()
+    if not raw:
+        return False, "请输入授权码", None
+
+    if not raw.startswith("OBRLIC-"):
+        return False, "授权码格式错误", None
+
+    token = raw[len("OBRLIC-"):].strip()
+    try:
+        decoded = _urlsafe_b64decode(token)
+        record = json.loads(decoded.decode("utf-8"))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError, binascii.Error):
+        return False, "授权码格式错误", None
+
+    if not isinstance(record, dict):
+        return False, "授权码格式错误", None
+
+    payload = record.get("payload")
+    signature_b64 = str(record.get("signature", "")).strip()
+    if not isinstance(payload, dict) or not signature_b64:
+        return False, "授权码格式错误", None
+
+    required_fields = ["buyer_id", "plan", "issued_at"]
+    missing = [field for field in required_fields if not str(payload.get(field, "")).strip()]
+    if missing:
+        return False, f"授权数据缺少字段：{', '.join(missing)}", None
+
+    return _verify_license_payload(payload, signature_b64)
+
+
+def _verify_pro_code(code: str) -> tuple[bool, str, dict | None]:
+    return _decode_signed_license_code(code)
+
+
+def _license_record_is_active(data: dict) -> tuple[bool, str, dict | None]:
+    payload = data.get("license_payload")
+    signature_b64 = str(data.get("license_signature", "")).strip()
+    if not isinstance(payload, dict) or not signature_b64:
+        return False, "本地授权记录缺失", None
+    return _verify_license_payload(payload, signature_b64)
+
+
+def _verify_pro_package(unpacked_dir: Path) -> tuple[bool, str, dict | None]:
+    manifest_path = unpacked_dir / "manifest.json"
+    signature_path = unpacked_dir / "signature.sig"
+    docs_dir = unpacked_dir / "docs"
+
+    if not manifest_path.exists() or not signature_path.exists():
+        return False, "知识包缺少 manifest.json 或 signature.sig", None
+    if not docs_dir.exists() or not docs_dir.is_dir():
+        return False, "知识包缺少 docs 目录", None
+
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except Exception:
+        return False, "知识包 manifest 无法解析", None
+
+    if not isinstance(manifest, dict):
+        return False, "知识包 manifest 格式错误", None
+
+    required_fields = ["buyer_id", "plan", "issued_at"]
+    missing = [field for field in required_fields if not str(manifest.get(field, "")).strip()]
+    if missing:
+        return False, f"知识包 manifest 缺少字段：{', '.join(missing)}", None
+
+    try:
+        public_key = _load_pro_public_key(Path(__file__).parent.parent)
+        public_key.verify(
+            signature_path.read_bytes(),
+            manifest_bytes,
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+    except FileNotFoundError as e:
+        return False, str(e), None
+    except InvalidSignature:
+        return False, "知识包签名无效", None
+    except Exception as e:
+        return False, f"知识包验签失败：{e}", None
+
+    expire_date = str(manifest.get("expire_date", "")).strip()
+    if expire_date:
+        try:
+            if datetime.now().date() > datetime.strptime(expire_date, "%Y-%m-%d").date():
+                return False, "知识包已过期", None
+        except ValueError:
+            return False, "知识包日期格式无效", None
+
+    return True, "知识包验签通过", manifest
+
+
+def _license_matches_package(license_record: dict, package_manifest: dict) -> tuple[bool, str]:
+    license_buyer = str(license_record.get("buyer_id", "")).strip()
+    package_buyer = str(package_manifest.get("buyer_id", "")).strip()
+    if not license_buyer:
+        return False, "本地授权缺少 buyer_id"
+    if not package_buyer:
+        return False, "知识包缺少 buyer_id"
+    if license_buyer != package_buyer:
+        return False, f"知识包不属于当前授权用户（当前: {license_buyer}, 知识包: {package_buyer}）"
+    return True, "buyer_id 匹配"
 
 
 def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -> tuple[bool, str]:
     if not filename.lower().endswith((".zip", ".obrk")):
         return False, "仅支持 .zip 或 .obrk 知识包"
+
+    license_record = _load_license(work_dir)
+    if not bool(license_record.get("pro_unlocked", False)):
+        return False, "请先激活 Pro 后再导入知识包"
+
+    ok, msg, normalized_license = _license_record_is_active(license_record)
+    if not ok or normalized_license is None:
+        _save_license(work_dir, _empty_license_record())
+        return False, f"请先重新激活 Pro：{msg}"
+
+    _save_license(work_dir, normalized_license)
 
     target = Path(work_dir) / "pro_knowledge"
     tmp = Path(work_dir) / ".openbrep" / "tmp_pro_knowledge"
@@ -594,11 +696,20 @@ def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -
             zf.extractall(tmp / "unpacked")
 
         unpacked = tmp / "unpacked"
+        ok, msg, manifest = _verify_pro_package(unpacked)
+        if not ok or manifest is None:
+            return False, f"❌ 导入失败：{msg}"
+
+        ok, msg = _license_matches_package(normalized_license, manifest)
+        if not ok:
+            return False, f"❌ 导入失败：{msg}"
+
+        docs_dir = unpacked / "docs"
         if target.exists():
             shutil.rmtree(target)
         target.mkdir(parents=True, exist_ok=True)
 
-        for item in unpacked.iterdir():
+        for item in docs_dir.iterdir():
             dest = target / item.name
             if item.is_dir():
                 shutil.copytree(item, dest, dirs_exist_ok=True)
@@ -830,7 +941,16 @@ with st.sidebar:
     # Load persisted license when work_dir is known
     if not st.session_state.pro_license_loaded:
         _lic = _load_license(work_dir)
-        st.session_state.pro_unlocked = bool(_lic.get("pro_unlocked", False))
+        if bool(_lic.get("pro_unlocked", False)):
+            ok, _msg, normalized = _license_record_is_active(_lic)
+            if ok and normalized is not None:
+                st.session_state.pro_unlocked = True
+                _save_license(work_dir, normalized)
+            else:
+                st.session_state.pro_unlocked = False
+                _save_license(work_dir, _empty_license_record())
+        else:
+            st.session_state.pro_unlocked = False
         st.session_state.pro_license_loaded = True
 
     st.subheader("🔐 Pro 授权（V1）")
@@ -843,14 +963,10 @@ with st.sidebar:
     c1, c2 = st.columns(2)
     with c1:
         if st.button("解锁 Pro", width='stretch'):
-            ok, msg = _verify_pro_code(pro_code_input)
-            if ok:
+            ok, msg, record = _verify_pro_code(pro_code_input)
+            if ok and record is not None:
                 st.session_state.pro_unlocked = True
-                _save_license(work_dir, {
-                    "pro_unlocked": True,
-                    "activated_at": datetime.now().isoformat(timespec="seconds"),
-                    "license_code": (pro_code_input or "").strip().upper(),
-                })
+                _save_license(work_dir, record)
                 st.success("✅ Pro 解锁成功")
                 st.rerun()
             else:
@@ -858,7 +974,7 @@ with st.sidebar:
     with c2:
         if st.button("锁回 Free", width='stretch'):
             st.session_state.pro_unlocked = False
-            _save_license(work_dir, {"pro_unlocked": False})
+            _save_license(work_dir, _empty_license_record())
             st.info("已切回 Free 模式")
             st.rerun()
 
