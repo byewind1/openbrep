@@ -48,7 +48,6 @@ from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
 from openbrep.paramlist_builder import build_paramlist_xml, validate_paramlist
 from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
-from openbrep.core import AgentCancelled, GDLAgent, Status
 from openbrep.gdl_previewer import Preview2DResult, Preview3DResult, preview_2d_script, preview_3d_script
 from openbrep.validator import GDLValidator
 from openbrep.knowledge import KnowledgeBase
@@ -63,7 +62,7 @@ except ImportError:
 from openbrep.elicitation_agent import ElicitationAgent, ElicitationState
 from openbrep.skills_loader import SkillsLoader
 from openbrep import __version__ as OPENBREP_VERSION
-from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, build_generation_result_plan
 from openbrep.runtime.router import IntentRouter
 
 logger = logging.getLogger(__name__)
@@ -399,42 +398,42 @@ def _finalize_generation(generation_id: str, status: str) -> bool:
 
 
 
-def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | None, auto_apply: bool, already_applied: bool = False) -> tuple[str, list[str]]:
-    script_names = ", ".join(
-        p.replace("scripts/", "").replace(".gdl", "").upper()
-        for p in cleaned if p.startswith("scripts/")
-    )
-    has_params = "paramlist.xml" in cleaned
-    param_count_preview = len(_parse_paramlist_text(cleaned.get("paramlist.xml", "")))
+def _apply_generation_plan(plan, proj: HSFProject, gsm_name: str | None, already_applied: bool = False) -> tuple[str, list[str]]:
+    if plan.mode == "plain_text_only":
+        return "", []
 
-    code_blocks = []
-    for fpath, code in cleaned.items():
-        lbl = fpath.replace("scripts/", "").replace(".gdl", "").upper()
-        code_blocks.append(f"**{lbl}**\n```gdl\n{code}\n```")
-
-    label_parts = []
-    if script_names:
-        label_parts.append(f"脚本 [{script_names}]")
-    if has_params:
-        label_parts.append(f"{param_count_preview} 个参数")
-    label_str = " + ".join(label_parts) if label_parts else "内容"
-
-    if auto_apply:
+    script_map = {block["path"]: block["content"] for block in plan.code_blocks}
+    if plan.mode == "auto_apply":
         if not already_applied:
             _capture_last_project_snapshot("AI 自动写入")
-            _apply_scripts_to_project(proj, cleaned)
+            _apply_scripts_to_project(proj, script_map)
         _bump_main_editor_version()
         if gsm_name:
             st.session_state.pending_gsm_name = gsm_name
-        prefix = f"✏️ **已写入 {label_str}** — 可直接「🔧 编译」\n\n"
-    else:
-        st.session_state.pending_diffs = cleaned
-        st.session_state.pending_ai_label = label_str
+    elif plan.mode == "pending_review":
+        st.session_state.pending_diffs = script_map
+        st.session_state.pending_ai_label = plan.label
         if gsm_name:
             st.session_state.pending_gsm_name = gsm_name
-        prefix = f"🤖 **AI 已生成 {label_str}** — 请在下方确认是否写入编辑器。\n\n"
 
-    return prefix, code_blocks
+    code_blocks = []
+    for block in plan.code_blocks:
+        code_blocks.append(
+            f"**{block['label']}**\n```{block['language']}\n{block['content']}\n```"
+        )
+
+    return plan.reply_prefix, code_blocks
+
+
+def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | None, auto_apply: bool, already_applied: bool = False) -> tuple[str, list[str]]:
+    from openbrep.runtime.pipeline import TaskResult
+
+    plan = build_generation_result_plan(
+        TaskResult(success=True, scripts=cleaned),
+        auto_apply=auto_apply,
+        gsm_name=gsm_name,
+    )
+    return _apply_generation_plan(plan, proj, gsm_name, already_applied=already_applied)
 
 
 
@@ -2106,7 +2105,7 @@ def run_agent_generate(
 
         pipeline_project = proj if auto_apply else deepcopy(proj)
         if debug_mode:
-            intent = "DEBUG"
+            intent = "REPAIR"
         elif any(pipeline_project.get_script(st) for st in ScriptType):
             intent = "MODIFY"
         else:
@@ -2150,24 +2149,20 @@ def run_agent_generate(
             return _generation_cancelled_message()
 
         status_ph.empty()
-        cleaned = result.scripts or {}
         result_prefix = ""
         code_blocks: list[str] = []
-        if cleaned:
+        plan = build_generation_result_plan(result, auto_apply=auto_apply, gsm_name=gsm_name)
+        if plan.has_changes:
             if auto_apply and result.project is not None:
                 if proj is not result.project:
                     st.session_state.project = result.project
                     proj = result.project
-                result_prefix, code_blocks = _apply_generation_result(cleaned, proj, gsm_name, auto_apply, already_applied=True)
+                result_prefix, code_blocks = _apply_generation_plan(plan, proj, gsm_name, already_applied=True)
             else:
-                result_prefix, code_blocks = _apply_generation_result(cleaned, proj, gsm_name, auto_apply, already_applied=False)
+                result_prefix, code_blocks = _apply_generation_plan(plan, proj, gsm_name, already_applied=False)
         _finalize_generation(generation_id, "completed")
         return _build_generation_reply(result.plain_text, result_prefix, code_blocks)
 
-    except AgentCancelled:
-        status_ph.empty()
-        _finalize_generation(generation_id, "cancelled")
-        return _generation_cancelled_message()
     except Exception as e:
         status_ph.empty()
         _finalize_generation(generation_id, "failed")

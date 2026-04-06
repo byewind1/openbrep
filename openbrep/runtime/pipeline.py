@@ -10,6 +10,7 @@ Intent dispatch:
   CREATE  → _handle_gdl()     (inject affected scripts, standard prompt)
   MODIFY  → _handle_modify()  (inject ALL scripts, minimal-change prompt, static check, compile)
   DEBUG   → _handle_modify()  (same as MODIFY but framed as error analysis)
+  REPAIR  → _handle_repair()  (compile/runtime repair with error-log context)
   IMAGE   → _handle_gdl()     (vision mode, inject all scripts)
   CHAT    → _handle_chat()
 """
@@ -93,6 +94,18 @@ class TaskResult:
     error: Optional[str] = None
 
 
+@dataclass
+class GenerationResultPlan:
+    """UI-facing plan for how to present a generation result."""
+
+    has_changes: bool
+    changed_files: list[str] = field(default_factory=list)
+    label: str = ""
+    mode: str = "plain_text_only"
+    code_blocks: list[dict[str, str]] = field(default_factory=list)
+    reply_prefix: str = ""
+
+
 # ── Pipeline ──────────────────────────────────────────────
 
 class TaskPipeline:
@@ -145,6 +158,8 @@ class TaskPipeline:
         try:
             if request.intent == "CHAT":
                 result = self._handle_chat(request)
+            elif request.intent == "REPAIR":
+                result = self._handle_repair(request)
             elif request.intent in ("MODIFY", "DEBUG"):
                 result = self._handle_modify(request)
             else:
@@ -269,6 +284,16 @@ class TaskPipeline:
         - Runs preflight and StaticChecker after applying changes
         - Attempts compile validation (real or mock)
         """
+        return self._handle_script_update(request)
+
+    def _handle_repair(self, request: TaskRequest) -> TaskResult:
+        """Repair an existing GDL project using compile/runtime error context."""
+        repair_request = deepcopy(request)
+        repair_request.intent = "REPAIR"
+        return self._handle_script_update(repair_request)
+
+    def _handle_script_update(self, request: TaskRequest) -> TaskResult:
+        """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
         llm = self._make_llm(request)
         compiler = self._make_compiler()
         knowledge = self._load_knowledge()
@@ -441,7 +466,7 @@ def _normalize_modify_request(request: TaskRequest) -> tuple[str, str]:
 
 
 def _run_modify_preflight(instruction: str, project: HSFProject) -> str:
-    """Run lightweight, non-blocking preflight analysis for modify/debug tasks."""
+    """Run lightweight, non-blocking preflight analysis for modify/debug/repair tasks."""
     xml_like_context = []
     for stype in ScriptType:
         content = project.get_script(stype)
@@ -474,6 +499,78 @@ def _trim_history(history: Optional[list[dict]], limit: int = 6) -> list[dict]:
     if not history:
         return []
     return history[-limit:]
+
+
+def _code_block_language(path: str) -> str:
+    if path.startswith("scripts/"):
+        return "gdl"
+    if path.endswith(".xml"):
+        return "xml"
+    return "text"
+
+
+def _code_block_label(path: str) -> str:
+    if path.startswith("scripts/"):
+        return path.replace("scripts/", "").replace(".gdl", "").upper()
+    if "paramlist" in path:
+        return "PARAMLIST"
+    return path
+
+
+def _build_generation_label(changed_files: list[str], scripts: dict[str, str]) -> str:
+    script_names = [
+        _code_block_label(path)
+        for path in changed_files
+        if path.startswith("scripts/")
+    ]
+    label_parts = []
+    if script_names:
+        label_parts.append(f"脚本 [{', '.join(script_names)}]")
+    if "paramlist.xml" in scripts:
+        param_text = scripts.get("paramlist.xml", "")
+        param_lines = [
+            line for line in str(param_text).splitlines()
+            if line.strip() and not line.strip().startswith(("!", "#", "<", "</"))
+        ]
+        param_count = len(param_lines)
+        label_parts.append(f"{param_count} 个参数")
+    return " + ".join(label_parts) if label_parts else "内容"
+
+
+def build_generation_result_plan(
+    result: TaskResult,
+    auto_apply: bool,
+    gsm_name: Optional[str],
+) -> GenerationResultPlan:
+    changed_files = list((result.scripts or {}).keys())
+    if not changed_files:
+        return GenerationResultPlan(has_changes=False)
+
+    label = _build_generation_label(changed_files, result.scripts)
+    code_blocks = [
+        {
+            "path": path,
+            "label": _code_block_label(path),
+            "language": _code_block_language(path),
+            "content": content,
+        }
+        for path, content in result.scripts.items()
+    ]
+    if auto_apply:
+        reply_prefix = f"✏️ **已写入 {label}** — 可直接「🔧 编译」\n\n"
+        mode = "auto_apply"
+    else:
+        reply_prefix = f"🤖 **AI 已生成 {label}** — 请在下方确认是否写入编辑器。\n\n"
+        mode = "pending_review"
+
+    return GenerationResultPlan(
+        has_changes=True,
+        changed_files=changed_files,
+        label=label,
+        mode=mode,
+        code_blocks=code_blocks,
+        reply_prefix=reply_prefix,
+    )
 
 
 def _strip_md_fences(code: str) -> str:

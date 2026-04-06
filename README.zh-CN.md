@@ -6,7 +6,7 @@
 
 > **OpenBrep: Code Your Boundaries**
 
-> 稳定发布版本 v0.5.7 — 核心功能完整，适合建筑师日常 GDL 开发工作。
+> 稳定发布版本 v0.6.0 — Runtime 主骨架已统一，适合受控上线与继续内测验证。
 
 ---
 
@@ -68,7 +68,7 @@ streamlit run ui/app.py
 
 ---
 
-## CLI 模式（v0.5.7 新增）
+## CLI 模式
 
 面向 GDL 开发者的终端工作流。
 ```bash
@@ -218,6 +218,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/..."
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.0 | Runtime 主骨架收尾：统一 create / modify / repair / chat 主链路；repair 独立 intent 闭合；UI/runtime 边界继续收口；适合受控上线（见 docs/releases/v0.6.0.md） |
 | v0.5.7 | CLI 模式正式可用（create/modify 命令）；生成过程支持用户取消；pipeline 改进解决越改越差问题；参数路由修复（见 docs/releases/v0.5.7.md） |
 | v0.5.6 | 图片上传不再卡死；cross-script / static checker 误报减少；AI 助手设置支持长期保存并注入系统提示；自定义代理与官方供应商分层选择，并优先显示代理名（见 docs/releases/v0.5.6.md） |
 | v0.5.5 | UI重构为四栏布局：左栏操作+预览、中栏脚本+参数表、右栏AI对话（见 docs/releases/v0.5.5.md） |

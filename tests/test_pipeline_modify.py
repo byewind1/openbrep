@@ -15,6 +15,10 @@ Covers:
 import unittest
 from unittest.mock import MagicMock, patch
 from copy import deepcopy
+import tempfile
+from pathlib import Path
+
+import typer
 
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import LLMResponse
@@ -61,7 +65,7 @@ def _make_pipeline(llm_content: str) -> TaskPipeline:
 # ── Tests: routing ────────────────────────────────────────
 
 class TestModifyRouting(unittest.TestCase):
-    """MODIFY and DEBUG intents must dispatch to _handle_modify."""
+    """MODIFY / DEBUG / REPAIR intents must dispatch to the correct handler."""
 
     def test_modify_intent_dispatches_to_handle_modify(self):
         pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")
@@ -84,6 +88,18 @@ class TestModifyRouting(unittest.TestCase):
                 work_dir="./workdir",
             ))
             mock_m.assert_called_once()
+
+    def test_repair_intent_dispatches_to_handle_repair(self):
+        pipeline = _make_pipeline("分析完毕，没有问题。")
+        with patch.object(pipeline, "_handle_repair", wraps=pipeline._handle_repair) as mock_r:
+            pipeline.execute(TaskRequest(
+                user_input="修复脚本中的编译错误",
+                intent="REPAIR",
+                project=_make_project(),
+                work_dir="./workdir",
+                error_log="Error in 3D script, line 12: Missing END",
+            ))
+            mock_r.assert_called_once()
 
     def test_create_intent_does_not_dispatch_to_handle_modify(self):
         pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")
@@ -330,7 +346,7 @@ class TestModifyPipelineContext(unittest.TestCase):
         with patch("openbrep.core.GDLAgent.generate_only", capture_generate_only):
             pipeline.execute(TaskRequest(
                 user_input="修复脚本中的编译错误",
-                intent="DEBUG",
+                intent="REPAIR",
                 project=_make_project(),
                 work_dir="./workdir",
                 error_log="Error in 3D script, line 12: Missing END",
@@ -338,4 +354,133 @@ class TestModifyPipelineContext(unittest.TestCase):
 
         self.assertIn("错误日志", captured.get("instruction", ""))
         self.assertIn("Missing END", captured.get("instruction", ""))
+
+
+class TestCliRepairIntent(unittest.TestCase):
+
+    def test_cli_repair_uses_repair_intent(self):
+        from cli.main import repair
+
+        captured = {}
+        fake_project = MagicMock(name="chair")
+
+        class FakePipeline:
+            def execute(self, request):
+                captured["intent"] = request.intent
+                return MagicMock(success=True, project=None, plain_text="", scripts={})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir) / "chair"
+            project_dir.mkdir()
+            with patch("cli.main._load_pipeline", return_value=FakePipeline()):
+                with patch("openbrep.hsf_project.HSFProject.load_from_disk", return_value=fake_project):
+                    with patch("cli.main.console.print"):
+                        with patch("cli.main._print_scripts"):
+                            repair(str(project_dir), error_log="boom", no_progress=True, trace_dir="./traces")
+
+        self.assertEqual(captured.get("intent"), "REPAIR")
+
+
+class TestGenerationResultPlan(unittest.TestCase):
+
+    def test_auto_apply_plan_for_changed_scripts(self):
+        from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+
+        result = TaskResult(
+            success=True,
+            intent="MODIFY",
+            scripts={
+                "scripts/3d.gdl": "BLOCK 1,1,1\nEND\n",
+                "scripts/2d.gdl": "PROJECT2 3, 270, 2\n",
+            },
+            plain_text="已完成修改",
+        )
+
+        plan = build_generation_result_plan(result, auto_apply=True, gsm_name="chair")
+
+        self.assertTrue(plan.has_changes)
+        self.assertEqual(plan.mode, "auto_apply")
+        self.assertEqual(plan.changed_files, ["scripts/3d.gdl", "scripts/2d.gdl"])
+        self.assertIn("脚本 [3D, 2D]", plan.label)
+        self.assertTrue(plan.reply_prefix.startswith("✏️"))
+
+    def test_pending_review_plan_when_auto_apply_false(self):
+        from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+
+        result = TaskResult(
+            success=True,
+            intent="MODIFY",
+            scripts={"scripts/3d.gdl": "BLOCK 1,1,1\nEND\n"},
+            plain_text="已完成修改",
+        )
+
+        plan = build_generation_result_plan(result, auto_apply=False, gsm_name="chair")
+
+        self.assertTrue(plan.has_changes)
+        self.assertEqual(plan.mode, "pending_review")
+        self.assertIn("脚本 [3D]", plan.label)
+        self.assertTrue(plan.reply_prefix.startswith("🤖"))
+
+    def test_paramlist_plan_counts_parameters(self):
+        from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+
+        result = TaskResult(
+            success=True,
+            intent="MODIFY",
+            scripts={
+                "paramlist.xml": "Length A = 100 ! Width\nLength B = 50 ! Depth",
+            },
+            plain_text="参数已更新",
+        )
+
+        plan = build_generation_result_plan(result, auto_apply=False, gsm_name="chair")
+
+        self.assertTrue(plan.has_changes)
+        self.assertIn("2 个参数", plan.label)
+
+    def test_plain_text_only_plan_when_no_changes(self):
+        from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+
+        result = TaskResult(
+            success=True,
+            intent="CHAT",
+            scripts={},
+            plain_text="这里只返回解释文本",
+        )
+
+        plan = build_generation_result_plan(result, auto_apply=True, gsm_name=None)
+
+        self.assertFalse(plan.has_changes)
+        self.assertEqual(plan.mode, "plain_text_only")
+        self.assertEqual(plan.code_blocks, [])
+        self.assertEqual(plan.reply_prefix, "")
+
+    def test_plan_builds_code_block_metadata(self):
+        from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+
+        result = TaskResult(
+            success=True,
+            intent="MODIFY",
+            scripts={"scripts/3d.gdl": "BLOCK 1,1,1\nEND\n"},
+            plain_text="ok",
+        )
+
+        plan = build_generation_result_plan(result, auto_apply=True, gsm_name="chair")
+
+        self.assertEqual(len(plan.code_blocks), 1)
+        self.assertEqual(plan.code_blocks[0]["path"], "scripts/3d.gdl")
+        self.assertEqual(plan.code_blocks[0]["label"], "3D")
+        self.assertEqual(plan.code_blocks[0]["language"], "gdl")
+        self.assertIn("BLOCK 1,1,1", plan.code_blocks[0]["content"])
+
+
+class TestReleaseDocs(unittest.TestCase):
+
+    def test_readme_mentions_v060_release_note(self):
+        readme = Path("README.md").read_text(encoding="utf-8")
+        self.assertIn("v0.6.0", readme)
+        self.assertIn("docs/releases/v0.6.0.md", readme)
+
+    def test_v060_release_note_exists(self):
+        self.assertTrue(Path("docs/releases/v0.6.0.md").exists())
 

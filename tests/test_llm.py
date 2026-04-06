@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from openbrep.config import LLMConfig
-from openbrep.core import GDLAgent
+from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import LLMAdapter
 from ui.app import (
     _apply_generation_result,
@@ -38,6 +38,97 @@ from ui.app import (
     _import_pro_knowledge_zip,
     classify_and_extract,
 )
+
+class TestRunAgentGenerateResultPlan(unittest.TestCase):
+    def test_run_agent_generate_consumes_runtime_generation_plan(self):
+        from ui.app import run_agent_generate
+
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1\nEND\n"
+
+        fake_result = MagicMock(
+            success=True,
+            intent="MODIFY",
+            scripts={"scripts/3d.gdl": "BLOCK 2,2,2\nEND\n"},
+            plain_text="修改完成",
+            project=project,
+        )
+        fake_plan = MagicMock(
+            has_changes=True,
+            mode="pending_review",
+            label="脚本 [3D]",
+            reply_prefix="🤖 **AI 已生成 脚本 [3D]** — 请在下方确认是否写入编辑器。\n\n",
+            code_blocks=[{
+                "path": "scripts/3d.gdl",
+                "label": "3D",
+                "language": "gdl",
+                "content": "BLOCK 2,2,2\nEND\n",
+            }],
+        )
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        with patch("ui.app.TaskPipeline.execute", return_value=fake_result):
+            with patch("ui.app.build_generation_result_plan", return_value=fake_plan) as mock_build_plan:
+                with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                    with patch("ui.app._is_active_generation", return_value=True):
+                        with patch("ui.app._consume_generation_result", return_value=True):
+                            with patch("ui.app._finalize_generation"):
+                                with patch.dict("ui.app.st.session_state", {
+                                    "chat_history": [],
+                                    "work_dir": "./workdir",
+                                }, clear=False):
+                                    reply = run_agent_generate(
+                                        "把它改宽一点",
+                                        project,
+                                        _StatusCol(),
+                                        gsm_name="chair",
+                                        auto_apply=False,
+                                    )
+
+        mock_build_plan.assert_called_once()
+        self.assertIn("AI 已生成", reply)
+        self.assertIn("```gdl", reply)
+
+
+class TestRunAgentGenerateRouting(unittest.TestCase):
+    def test_run_agent_generate_uses_repair_intent_for_debug_requests(self):
+        from ui.app import run_agent_generate
+
+        captured = {}
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1\nEND\n"
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        def fake_execute(self, request):
+            captured["intent"] = request.intent
+            return MagicMock(success=True, scripts={}, plain_text="ok", project=project)
+
+        with patch("ui.app.TaskPipeline.execute", fake_execute):
+            with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                with patch("ui.app._is_active_generation", return_value=True):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            with patch.dict("ui.app.st.session_state", {
+                                "chat_history": [],
+                                "work_dir": "./workdir",
+                            }, clear=False):
+                                result = run_agent_generate(
+                                    "修复这个脚本里的错误",
+                                    project,
+                                    _StatusCol(),
+                                    gsm_name="chair",
+                                    auto_apply=True,
+                                )
+
+        self.assertEqual(captured.get("intent"), "REPAIR")
+        self.assertEqual(result, "ok")
+
 
 class TestLLMAdapterVision(unittest.TestCase):
     def _mock_response(self, model_name="openai/gpt-4o"):
