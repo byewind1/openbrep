@@ -282,7 +282,7 @@ def repair(
 
     request = TaskRequest(
         user_input="修复脚本中的编译错误",
-        intent="DEBUG",
+        intent="REPAIR",
         project=project,
         work_dir=str(Path(project_dir).parent),
         error_log=error_log or "",

@@ -13,6 +13,7 @@ from typing import Optional
 import click
 
 from openbrep.config import GDLAgentConfig
+from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 
 
 # ── Rich console helpers ──────────────────────────────────────────────
@@ -204,22 +205,29 @@ def run(instruction, file, output, model, config_path, max_retries, mock):
         overrides["agent.max_iterations"] = max_retries
 
     config = GDLAgentConfig.load(config_path, **overrides)
+    pipeline = TaskPipeline(config=config)
+    project = None
+    if file:
+        from openbrep.hsf_project import HSFProject
+        project = HSFProject.load_from_disk(file)
 
-    # Resolve paths
-    source = file or str(Path(config.src_dir) / "current.xml")
-    out = output or str(Path(config.output_dir) / (Path(source).stem + ".gsm"))
+    gsm_name = Path(output).stem if output else (project.name if project else "current")
+    request = TaskRequest(
+        user_input=instruction,
+        project=project,
+        work_dir=str(Path(config.src_dir).parent if config.src_dir else "."),
+        output_dir=config.output_dir,
+        gsm_name=gsm_name,
+    )
+    result = pipeline.execute(request)
 
-    # Create components
-    llm = _create_llm(config)
-    compiler = _create_compiler(config, mock=mock)
-    knowledge = _create_knowledge(config)
+    if result.project and output:
+        result.project.save_to_disk(output)
 
-    # Run agent
-    from openbrep.core import GDLAgent
-    agent = GDLAgent(config, llm, compiler, knowledge, on_event=_cli_event_handler)
-    result = agent.run(instruction, source, out)
-
-    _print_result(result)
+    if result.plain_text:
+        _print(result.plain_text)
+    if result.error:
+        _print(result.error, style="red")
     sys.exit(0 if result.success else 1)
 
 
@@ -234,14 +242,12 @@ def chat(model, config_path, mock):
         overrides["llm.model"] = model
 
     config = GDLAgentConfig.load(config_path, **overrides)
-    llm = _create_llm(config)
-    compiler = _create_compiler(config, mock=mock)
-    knowledge = _create_knowledge(config)
+    pipeline = TaskPipeline(config=config)
+    project = None
+    history: list[dict[str, str]] = []
 
     _print("\n[bold cyan]🤖 GDL Agent Interactive Mode[/]")
     _print("[dim]Type your instructions. Use 'quit' or Ctrl+C to exit.[/]\n")
-
-    from openbrep.core import GDLAgent
 
     while True:
         try:
@@ -256,13 +262,24 @@ def chat(model, config_path, mock):
         if not instruction.strip():
             continue
 
-        # Determine source file (allow specifying with --file prefix)
-        source = str(Path(config.src_dir) / "current.xml")
-        out = str(Path(config.output_dir) / "current.gsm")
+        history.append({"role": "user", "content": instruction})
+        request = TaskRequest(
+            user_input=instruction,
+            project=project,
+            work_dir=str(Path(config.src_dir).parent if config.src_dir else "."),
+            output_dir=config.output_dir,
+            history=history[-6:],
+            assistant_settings=config.llm.assistant_settings,
+        )
+        result = pipeline.execute(request)
 
-        agent = GDLAgent(config, llm, compiler, knowledge, on_event=_cli_event_handler)
-        result = agent.run(instruction, source, out)
-        _print_result(result)
+        if result.plain_text:
+            _print(result.plain_text)
+            history.append({"role": "assistant", "content": result.plain_text})
+        if not result.success and result.error:
+            _print(result.error, style="red")
+        if result.project is not None:
+            project = result.project
         _print("")
 
 
