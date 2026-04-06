@@ -476,6 +476,34 @@ class TestGenerationResultPlan(unittest.TestCase):
 
 class TestReleaseDocs(unittest.TestCase):
 
+    def test_package_version_is_v060(self):
+        from openbrep import __version__
+        self.assertEqual(__version__, "0.6.0")
+
+    def test_ui_reads_version_from_package(self):
+        app_text = Path("ui/app.py").read_text(encoding="utf-8")
+        self.assertIn("from openbrep import __version__ as OPENBREP_VERSION", app_text)
+        self.assertIn("v{OPENBREP_VERSION}", app_text)
+
+    def test_install_cn_title_mentions_v060(self):
+        install_cn = Path("INSTALL_CN.md").read_text(encoding="utf-8")
+        self.assertIn("# openbrep v0.6.0 安装指南（中文）", install_cn)
+
+    def test_readme_release_wording_is_formal(self):
+        readme = Path("README.md").read_text(encoding="utf-8")
+        readme_zh = Path("README.zh-CN.md").read_text(encoding="utf-8")
+        self.assertIn("正式发布版本 v0.6.0", readme)
+        self.assertIn("正式发布版本 v0.6.0", readme_zh)
+        self.assertIn("作为正式版本成立", readme)
+        self.assertIn("作为正式版本成立", readme_zh)
+
+    def test_v060_release_note_uses_formal_release_wording(self):
+        release_note = Path("docs/releases/v0.6.0.md").read_text(encoding="utf-8")
+        self.assertIn("正式发布收尾版", release_note)
+        self.assertIn("正式版本成立", release_note)
+        self.assertNotIn("不建议对外宣称", release_note)
+        self.assertNotIn("继续真实场景验证 / 内测 / 小范围生产验证", release_note)
+
     def test_readme_mentions_v060_release_note(self):
         readme = Path("README.md").read_text(encoding="utf-8")
         self.assertIn("v0.6.0", readme)
