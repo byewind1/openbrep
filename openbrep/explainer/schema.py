@@ -25,6 +25,21 @@ class ScriptExplanation:
 
 
 @dataclass
+class ParameterExplanation:
+    name: str
+    type_tag: str = ""
+    default_value: str = ""
+    description: str = ""
+    is_fixed: bool = False
+    used_in_scripts: list[str] = field(default_factory=list)
+    usage_summaries: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class ProjectExplanation:
     overall_goal: str
     parameters_summary: list[str] = field(default_factory=list)

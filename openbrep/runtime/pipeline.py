@@ -26,8 +26,14 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from openbrep.explainer.chat_adapter import build_chat_explanation_reply
-from openbrep.explainer.context_builder import build_project_context
-from openbrep.explainer.service import explain_project_context
+from openbrep.explainer.context_builder import (
+    build_project_context,
+    build_project_parameter_context,
+    build_project_script_context,
+    resolve_parameter_targets,
+    resolve_script_target,
+)
+from openbrep.explainer.service import explain_parameter_context, explain_project_context, explain_script_context
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
@@ -189,6 +195,38 @@ class TaskPipeline:
     def _handle_chat(self, request: TaskRequest) -> TaskResult:
         """Simple conversational reply — no GDL code output."""
         if request.project is not None:
+            script_target = resolve_script_target(request.user_input)
+            if script_target is not None:
+                script_context = build_project_script_context(request.project, script_target)
+                if script_context is not None:
+                    explanation = explain_script_context(script_context)
+                    reply = build_chat_explanation_reply(explanation, user_input=request.user_input)
+                    return TaskResult(
+                        success=True,
+                        intent="CHAT",
+                        plain_text=reply,
+                    )
+
+            parameter_targets = resolve_parameter_targets(request.project, request.user_input)
+            if parameter_targets:
+                explanations = []
+                for param_name in parameter_targets:
+                    param_context = build_project_parameter_context(request.project, param_name)
+                    if param_context is None:
+                        continue
+                    explanations.append(
+                        build_chat_explanation_reply(
+                            explain_parameter_context(param_context),
+                            user_input=request.user_input,
+                        )
+                    )
+                if explanations:
+                    return TaskResult(
+                        success=True,
+                        intent="CHAT",
+                        plain_text="\n\n".join(explanations),
+                    )
+
             explanation = explain_project_context(build_project_context(request.project))
             reply = build_chat_explanation_reply(explanation, user_input=request.user_input)
             return TaskResult(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openbrep.explainer.schema import ProjectExplanation, ScriptExplanation
+from openbrep.explainer.schema import ParameterExplanation, ProjectExplanation, ScriptExplanation
 
 
 _CODE_ANALYSIS_KEYWORDS = (
@@ -35,13 +35,15 @@ def detect_explanation_detail_level(user_input: str) -> str:
 
 
 def build_chat_explanation_reply(
-    explanation: ProjectExplanation | ScriptExplanation,
+    explanation: ProjectExplanation | ScriptExplanation | ParameterExplanation,
     detail_level: str | None = None,
     user_input: str = "",
 ) -> str:
     level = detail_level or detect_explanation_detail_level(user_input)
     if isinstance(explanation, ScriptExplanation):
         return _format_script_reply(explanation, level)
+    if isinstance(explanation, ParameterExplanation):
+        return _format_parameter_reply(explanation, level)
     return _format_project_reply(explanation, level)
 
 
@@ -70,6 +72,34 @@ def _format_script_reply(explanation: ScriptExplanation, detail_level: str) -> s
         f"脚本类型：{explanation.script_type}",
         f"关键命令：{', '.join(explanation.key_commands[:3]) or '无'}",
         f"核心逻辑：主要用于{explanation.goal.replace('解释 ', '').replace(' 脚本的主要作用', '') or '实现当前脚本目标'}。",
+    ])
+
+
+def _format_parameter_reply(explanation: ParameterExplanation, detail_level: str) -> str:
+    if detail_level == "code":
+        return "\n".join([
+            f"参数：{explanation.name}",
+            f"类型/默认值：{explanation.type_tag or '未知'} / {explanation.default_value or '空'}",
+            f"命中脚本：{', '.join(explanation.used_in_scripts) or '未命中'}",
+            f"代码线索：{'；'.join(explanation.usage_summaries) or '暂无命中代码片段'}",
+            f"注意点：{', '.join(explanation.risks) or '暂无明显风险'}",
+        ])
+
+    if detail_level == "detailed":
+        return "\n".join([
+            f"参数：{explanation.name}",
+            f"含义：{explanation.description or '暂无描述'}",
+            f"类型：{explanation.type_tag or '未知'}",
+            f"默认值：{explanation.default_value or '空'}",
+            f"主要影响脚本：{', '.join(explanation.used_in_scripts) or '未命中'}",
+            f"使用线索：{'；'.join(explanation.usage_summaries) or '暂无命中代码片段'}",
+            f"风险点：{', '.join(explanation.risks) or '无'}",
+        ])
+
+    return "\n".join([
+        f"参数：{explanation.name}",
+        f"主要影响：{', '.join(explanation.used_in_scripts) or '暂未命中脚本'}",
+        f"核心逻辑：{(explanation.usage_summaries[0] if explanation.usage_summaries else '当前只能确认它参与了局部尺寸或控制逻辑')}。",
     ])
 
 

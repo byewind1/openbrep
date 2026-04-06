@@ -19,8 +19,11 @@ from ui.app import (
     _build_assistant_settings_prompt,
     _build_model_options,
     _build_model_source_state,
+    _build_modify_bridge_prompt,
+    _build_assistant_chat_message,
     _detect_image_task_mode,
     _finish_generation_state,
+    _is_bridgeable_explainer_message,
     _is_explainer_intent,
     _is_generation_locked,
     _is_modify_or_check_intent,
@@ -165,6 +168,130 @@ class TestRunAgentGenerateRouting(unittest.TestCase):
         self.assertEqual(captured.get("intent"), "CHAT")
         self.assertEqual(result, "简要拆解")
 
+    def test_run_agent_generate_uses_chat_intent_for_targeted_explainer_requests(self):
+        from ui.app import run_agent_generate
+
+        captured = {}
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\nEND\n"
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        def fake_execute(self, request):
+            captured["intent"] = request.intent
+            return MagicMock(success=True, scripts={}, plain_text="A 参数拆解", project=project)
+
+        with patch("ui.app.TaskPipeline.execute", fake_execute):
+            with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                with patch("ui.app._is_active_generation", return_value=True):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            with patch.dict("ui.app.st.session_state", {
+                                "chat_history": [],
+                                "work_dir": "./workdir",
+                            }, clear=False):
+                                result = run_agent_generate(
+                                    "A/B/ZZYZX 分别控制什么",
+                                    project,
+                                    _StatusCol(),
+                                    gsm_name="chair",
+                                    auto_apply=True,
+                                )
+
+        self.assertEqual(captured.get("intent"), "CHAT")
+        self.assertEqual(result, "A 参数拆解")
+
+    def test_run_agent_generate_uses_chat_intent_for_script_analysis_request(self):
+        from ui.app import run_agent_generate
+
+        captured = {}
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\nEND\n"
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        def fake_execute(self, request):
+            captured["intent"] = request.intent
+            return MagicMock(success=True, scripts={}, plain_text="3D 拆解", project=project)
+
+        with patch("ui.app.TaskPipeline.execute", fake_execute):
+            with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                with patch("ui.app._is_active_generation", return_value=True):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            with patch.dict("ui.app.st.session_state", {
+                                "chat_history": [],
+                                "work_dir": "./workdir",
+                            }, clear=False):
+                                result = run_agent_generate(
+                                    "分析这段 3D 代码逻辑",
+                                    project,
+                                    _StatusCol(),
+                                    gsm_name="chair",
+                                    auto_apply=True,
+                                )
+
+        self.assertEqual(captured.get("intent"), "CHAT")
+        self.assertEqual(result, "3D 拆解")
+
+
+class TestExplainerModifyBridgeHelpers(unittest.TestCase):
+    def test_bridgeable_explainer_message_requires_metadata(self):
+        self.assertTrue(_is_bridgeable_explainer_message({
+            "role": "assistant",
+            "content": "简要拆解",
+            "bridgeable_action": "modify_from_explainer",
+        }))
+        self.assertFalse(_is_bridgeable_explainer_message({
+            "role": "assistant",
+            "content": "普通回复",
+        }))
+        self.assertFalse(_is_bridgeable_explainer_message({
+            "role": "user",
+            "content": "简要拆解",
+            "bridgeable_action": "modify_from_explainer",
+        }))
+
+    def test_build_modify_bridge_prompt_includes_source_request(self):
+        prompt = _build_modify_bridge_prompt({
+            "role": "assistant",
+            "content": "3D 脚本主要负责主体几何。",
+            "bridge_source_user_input": "解释一下 3D 脚本",
+        })
+        self.assertIn("原解释问题：解释一下 3D 脚本", prompt)
+        self.assertIn("解释结论：3D 脚本主要负责主体几何。", prompt)
+        self.assertIn("用户修改要求：请按上面的解释做最小必要修改。", prompt)
+
+    def test_build_assistant_chat_message_marks_only_project_chat_as_bridgeable(self):
+        bridgeable = _build_assistant_chat_message(
+            content="简要拆解",
+            intent="CHAT",
+            has_project=True,
+            source_user_input="解释一下 3D 脚本",
+        )
+        plain_chat = _build_assistant_chat_message(
+            content="普通闲聊",
+            intent="CHAT",
+            has_project=False,
+            source_user_input="你是谁",
+        )
+        modify_reply = _build_assistant_chat_message(
+            content="修改完成",
+            intent="MODIFY",
+            has_project=True,
+            source_user_input="把它改宽一点",
+        )
+
+        self.assertEqual(bridgeable["bridgeable_action"], "modify_from_explainer")
+        self.assertEqual(bridgeable["bridge_source_user_input"], "解释一下 3D 脚本")
+        self.assertNotIn("bridgeable_action", plain_chat)
+        self.assertNotIn("bridge_source_user_input", plain_chat)
+        self.assertNotIn("bridgeable_action", modify_reply)
+        self.assertNotIn("bridge_source_user_input", modify_reply)
 
 class TestLLMAdapterVision(unittest.TestCase):
     def _mock_response(self, model_name="openai/gpt-4o"):
@@ -455,6 +582,8 @@ class TestIntentRoutingHelpers(unittest.TestCase):
         self.assertTrue(_is_explainer_intent("这是什么对象？"))
         self.assertTrue(_is_explainer_intent("详细讲讲这个对象"))
         self.assertTrue(_is_explainer_intent("A/B/ZZYZX 分别控制什么"))
+        self.assertTrue(_is_explainer_intent("3D 脚本负责什么"))
+        self.assertTrue(_is_explainer_intent("分析这段 3D 代码逻辑"))
 
     def test_explainer_intent_does_not_match_modify_or_repair_request(self):
         self.assertFalse(_is_explainer_intent("把 3D 脚本改一下"))

@@ -1914,6 +1914,7 @@ _EXPLAINER_KEYWORDS = {
     "这是什么对象", "解释一下", "详细讲讲", "详细说说", "展开说说",
     "全面分析", "具体一点", "代码分析", "逻辑分析", "命令分析",
     "分析脚本", "3d 和 2d", "各负责什么", "分别控制什么",
+    "控制什么", "负责什么", "有什么作用", "起什么作用", "什么意思",
 }
 
 
@@ -1921,10 +1922,21 @@ def _is_explainer_intent(text: str) -> bool:
     raw = (text or "").strip().lower()
     if not raw:
         return False
-    if _is_modify_or_check_intent(raw) or _is_debug_intent(raw):
+    if _is_debug_intent(raw):
+        explainer_overrides = (
+            "解释", "拆解", "分析", "代码分析", "逻辑分析", "命令分析",
+            "负责什么", "控制什么", "作用", "什么意思",
+        )
+        if not any(token in raw for token in explainer_overrides):
+            return False
+    if _is_modify_or_check_intent(raw):
         return False
     if any(token in raw for token in ("代码分析", "逻辑分析", "命令分析")):
         return True
+    if re.search(r"\b(?:1d|2d|3d|param|ui|properties|property|master)\b", raw):
+        script_question_tokens = ("解释", "分析", "负责什么", "作用", "逻辑", "命令", "脚本")
+        if any(token in raw for token in script_question_tokens):
+            return True
     return any(token in raw for token in _EXPLAINER_KEYWORDS)
 
 
@@ -2082,7 +2094,7 @@ def run_agent_generate(
     logging.debug(f"run_agent_generate called, instruction: {user_input[:100]}")
     generation_id = _begin_generation_state(st.session_state)
     status_ph = status_col.empty()
-    debug_mode = _is_debug_intent(user_input)
+    debug_mode = _is_debug_intent(user_input) and not _is_explainer_intent(user_input)
     debug_type = _get_debug_mode(user_input)  # 'editor' | 'keyword'
 
     def on_event(event_type, data):
@@ -2577,6 +2589,40 @@ def _classify_code_blocks(text: str) -> dict:
 def _extract_gdl_from_text(text: str) -> dict:
     """Extract GDL code blocks from a single message string."""
     return _classify_code_blocks(text)
+
+
+def _is_bridgeable_explainer_message(message: dict) -> bool:
+    return (
+        (message or {}).get("role") == "assistant"
+        and (message or {}).get("bridgeable_action") == "modify_from_explainer"
+        and bool((message or {}).get("content", "").strip())
+    )
+
+
+def _build_modify_bridge_prompt(message: dict, fallback_request: str = "") -> str:
+    explanation = (message or {}).get("content", "").strip()
+    source_request = (message or {}).get("bridge_source_user_input", "").strip()
+    target_request = (fallback_request or "").strip() or "请按上面的解释做最小必要修改。"
+    if source_request:
+        return (
+            "基于刚才的解释，按下面理解做最小修改：\n"
+            f"原解释问题：{source_request}\n"
+            f"解释结论：{explanation}\n"
+            f"用户修改要求：{target_request}"
+        )
+    return (
+        "基于刚才的解释，按下面理解做最小修改：\n"
+        f"解释结论：{explanation}\n"
+        f"用户修改要求：{target_request}"
+    )
+
+
+def _build_assistant_chat_message(content: str, intent: str, has_project: bool, source_user_input: str) -> dict:
+    message = {"role": "assistant", "content": content}
+    if intent == "CHAT" and has_project:
+        message["bridgeable_action"] = "modify_from_explainer"
+        message["bridge_source_user_input"] = source_user_input
+    return message
 
 
 def _extract_gdl_from_chat() -> dict:
@@ -3663,6 +3709,7 @@ with col_right:
                             st.rerun()
                     with _ce:
                         _has_code = "```" in _msg.get("content", "")
+                        _is_bridgeable = _is_bridgeable_explainer_message(_msg)
                         if _has_code:
                             _msg_raw = _msg.get("content", "")
                             _has_full_suite = (
@@ -3674,6 +3721,10 @@ with col_right:
                                 _adopt_label = "✅ 已采用" if _is_adopted else "📥 采用这套"
                                 if st.button(_adopt_label, key=f"adopt_{_i}", width='stretch'):
                                     st.session_state["_pending_adopt_idx"] = _i
+                        elif _is_bridgeable:
+                            if st.button("🪄 按此说明修改", key=f"bridge_modify_{_i}", width='stretch'):
+                                st.session_state["_pending_bridge_idx"] = _i
+                                st.rerun()
             if st.session_state.get(f"_showcopy_{_i}", False):
                 st.code(_msg["content"], language="text")
 
@@ -3821,6 +3872,7 @@ with col_right:
     # ══════════════════════════════════════════════════════════
 
     _redo_input                = st.session_state.pop("_redo_input", None)
+    _pending_bridge_idx        = st.session_state.pop("_pending_bridge_idx", None)
     _active_dbg                = st.session_state.get("_debug_mode_active")
     _tapir_trigger             = st.session_state.pop("tapir_test_trigger", False)
     _tapir_selection_trigger   = st.session_state.pop("tapir_selection_trigger", False)
@@ -3898,6 +3950,10 @@ with col_right:
         st.rerun()
 
     _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
+    _bridge_input = None
+    if _pending_bridge_idx is not None:
+        _bridge_msg = st.session_state.chat_history[_pending_bridge_idx]
+        _bridge_input = _build_modify_bridge_prompt(_bridge_msg)
 
     # Debug模式：仅用户主动发送时触发，不自动构造空输入消息
     if _active_dbg and user_input:
@@ -3906,9 +3962,9 @@ with col_right:
         st.session_state["_debug_mode_active"] = None
     elif _active_dbg and user_input == "" and not _has_image_input:
         st.toast("请输入问题描述后再发送，或直接描述你看到的现象", icon="💬")
-        effective_input = _auto_debug_input or _redo_input
+        effective_input = _auto_debug_input or _bridge_input or _redo_input
     else:
-        effective_input = _auto_debug_input or _redo_input or user_input
+        effective_input = _auto_debug_input or _bridge_input or _redo_input or user_input
 
     # 在用户消息中提取物件名作为 GSM 名称候选（仅当当前为空）
     if user_input and not (st.session_state.pending_gsm_name or "").strip():
@@ -3996,7 +4052,7 @@ with col_right:
     # ── Normal text path ─────────────────────────────────────────────────────────
     elif effective_input:
         # Redo: user msg already in history; new: append it
-        if not _redo_input:
+        if not (_redo_input or _bridge_input):
             st.session_state.chat_history.append({"role": "user", "content": effective_input})
         user_input = effective_input   # alias for rest of handler
 
@@ -4074,7 +4130,14 @@ with col_right:
                                     )
                                     st.markdown(msg)
 
-                st.session_state.chat_history.append({"role": "assistant", "content": msg})
+                st.session_state.chat_history.append(
+                    _build_assistant_chat_message(
+                        content=msg,
+                        intent=intent,
+                        has_project=bool(st.session_state.get("project")),
+                        source_user_input=user_input,
+                    )
+                )
                 st.rerun()
             finally:
                 st.session_state.agent_running = False

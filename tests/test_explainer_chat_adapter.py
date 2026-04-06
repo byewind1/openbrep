@@ -4,7 +4,7 @@ from openbrep.explainer.chat_adapter import (
     build_chat_explanation_reply,
     detect_explanation_detail_level,
 )
-from openbrep.explainer.schema import ExplanationSection, ProjectExplanation, ScriptExplanation
+from openbrep.explainer.schema import ExplanationSection, ParameterExplanation, ProjectExplanation, ScriptExplanation
 
 
 class TestExplainerChatAdapter(unittest.TestCase):
@@ -71,6 +71,40 @@ class TestExplainerChatAdapter(unittest.TestCase):
         self.assertIn("关键命令", reply)
         self.assertIn("BLOCK", reply)
         self.assertIn("逻辑", reply)
+
+    def test_build_chat_explanation_reply_supports_parameter_brief_mode(self):
+        explanation = ParameterExplanation(
+            name="A",
+            type_tag="Length",
+            default_value="1.00",
+            description="Width",
+            used_in_scripts=["3D", "PARAM"],
+            usage_summaries=["3D: BLOCK A, B, ZZYZX"],
+        )
+
+        reply = build_chat_explanation_reply(explanation)
+
+        self.assertIn("参数：A", reply)
+        self.assertIn("主要影响：3D, PARAM", reply)
+        self.assertIn("核心逻辑", reply)
+
+    def test_build_chat_explanation_reply_supports_parameter_detailed_mode(self):
+        explanation = ParameterExplanation(
+            name="ZZYZX",
+            type_tag="Length",
+            default_value="1.00",
+            description="Height",
+            is_fixed=True,
+            used_in_scripts=["3D"],
+            usage_summaries=["3D: BLOCK A, B, ZZYZX"],
+            risks=["该参数为固定参数，修改时要注意与构件整体尺寸联动"],
+        )
+
+        reply = build_chat_explanation_reply(explanation, detail_level="detailed")
+
+        self.assertIn("含义：Height", reply)
+        self.assertIn("主要影响脚本：3D", reply)
+        self.assertIn("风险点", reply)
 
     def test_build_chat_explanation_reply_can_auto_detect_detail_level(self):
         explanation = ScriptExplanation(

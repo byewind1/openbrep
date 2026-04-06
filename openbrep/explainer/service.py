@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openbrep.explainer.schema import ExplanationSection, ProjectExplanation, ScriptExplanation
+from openbrep.explainer.schema import ExplanationSection, ParameterExplanation, ProjectExplanation, ScriptExplanation
 
 
 def explain_script_context(context: dict) -> ScriptExplanation:
@@ -12,6 +12,36 @@ def explain_script_context(context: dict) -> ScriptExplanation:
         key_commands=_extract_key_commands(context.get("script_text", "")),
         parameters=parameters,
         risks=_detect_basic_risks(context.get("script_text", ""), parameters),
+    )
+
+
+def explain_parameter_context(context: dict) -> ParameterExplanation:
+    usage_hits = list(context.get("usage_hits", []))
+    used_in_scripts = [item.get("script", "") for item in usage_hits if item.get("script")]
+    usage_summaries = []
+    for item in usage_hits:
+        script = item.get("script", "未知脚本")
+        lines = item.get("lines", [])
+        if lines:
+            usage_summaries.append(f"{script}: {lines[0]}")
+        else:
+            usage_summaries.append(f"{script}: 命中参数引用")
+
+    risks = []
+    if not usage_hits:
+        risks.append("暂未在脚本中命中该参数，可能尚未接入几何或控制逻辑")
+    if context.get("is_fixed"):
+        risks.append("该参数为固定参数，修改时要注意与构件整体尺寸联动")
+
+    return ParameterExplanation(
+        name=context.get("name", ""),
+        type_tag=context.get("type_tag", ""),
+        default_value=context.get("default_value", ""),
+        description=context.get("description", ""),
+        is_fixed=bool(context.get("is_fixed")),
+        used_in_scripts=used_in_scripts,
+        usage_summaries=usage_summaries,
+        risks=risks,
     )
 
 
