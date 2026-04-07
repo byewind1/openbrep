@@ -1011,6 +1011,20 @@ class TestIntentRoutingHelpers(unittest.TestCase):
     def test_repair_intent_still_skips_clarification(self):
         self.assertFalse(_should_clarify_intent("修复这个脚本里的错误", True, []))
 
+    def test_non_numeric_followup_clears_pending_and_does_not_retrigger_clarification(self):
+        """非数字补充句既不被消费，也不会再次触发澄清，确保新输入能直接进入正常路由。"""
+        pending = {
+            "original_user_input": "看看这个",
+            "recommended_option": "2",
+            "options": {"1": "explain", "2": "check", "3": "suggest", "4": "review_summary"},
+        }
+        followup = "我想先看 3D 脚本结构"
+
+        # 非数字 → 不消费 pending，主流程应清除旧 pending
+        self.assertIsNone(_consume_intent_clarification_choice(followup, pending))
+        # 新输入本身属于高置信 explainer，不会再触发澄清
+        self.assertFalse(_should_clarify_intent(followup, has_project=True, history=[]))
+
 
 def _build_signed_license_code(payload: dict) -> str:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
