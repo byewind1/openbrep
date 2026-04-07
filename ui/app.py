@@ -1910,6 +1910,13 @@ def _is_modify_or_check_intent(text: str) -> bool:
     return any(token in raw for token in modify_tokens)
 
 
+_INTENT_CLARIFY_ACTION_LABELS = {
+    "1": "先快速解释脚本结构",
+    "2": "先检查明显错误/风险",
+    "3": "先给修改建议",
+    "4": "按顺序都做，但先给简版总检",
+}
+
 _EXPLAINER_KEYWORDS = {
     "这是什么对象", "解释一下", "详细讲讲", "详细说说", "展开说说",
     "全面分析", "具体一点", "代码分析", "逻辑分析", "命令分析",
@@ -1922,6 +1929,8 @@ def _is_explainer_intent(text: str) -> bool:
     raw = (text or "").strip().lower()
     if not raw:
         return False
+    if _is_post_clarification_prompt(raw):
+        return "本次确认目标：先快速解释脚本结构" in text
     if _is_debug_intent(raw):
         explainer_overrides = (
             "解释", "拆解", "分析", "代码分析", "逻辑分析", "命令分析",
@@ -1938,6 +1947,87 @@ def _is_explainer_intent(text: str) -> bool:
         if any(token in raw for token in script_question_tokens):
             return True
     return any(token in raw for token in _EXPLAINER_KEYWORDS)
+
+
+
+def _should_clarify_intent(text: str, has_project: bool, history: list[dict]) -> bool:
+    raw = (text or "").strip()
+    if not raw or not has_project:
+        return False
+    if _is_modify_bridge_prompt(raw):
+        return False
+    if _maybe_build_followup_bridge_input(raw, history, has_project):
+        return False
+    if _is_post_clarification_prompt(raw):
+        return False
+    mixed_tokens = ("解释", "检查", "修改意见")
+    if sum(token in raw for token in mixed_tokens) >= 2:
+        return True
+    if raw in {"看看这个", "这个怎么处理", "这个有问题吗"}:
+        return True
+    if _is_debug_intent(raw) or _is_explainer_intent(raw):
+        return False
+    if re.search(r"改成\s*\d+", raw):
+        return False
+    return False
+
+
+
+def _build_intent_clarification_message(recommended_option: str) -> str:
+    recommendation = _INTENT_CLARIFY_ACTION_LABELS.get(
+        recommended_option,
+        _INTENT_CLARIFY_ACTION_LABELS["2"],
+    )
+    return (
+        f"我猜你现在更像是想{recommendation}。\n"
+        "你也可以选：\n"
+        "1. 先快速解释脚本结构\n"
+        "2. 先检查明显错误/风险\n"
+        "3. 先给修改建议\n"
+        "4. 按顺序都做，但先给简版总检\n"
+        "回复数字就行，我再继续。"
+    )
+
+
+
+def _maybe_build_intent_clarification(user_input: str, has_project: bool, history: list[dict]) -> dict | None:
+    if not _should_clarify_intent(user_input, has_project, history):
+        return None
+    recommended_option = "2"
+    return {
+        "original_user_input": user_input,
+        "recommended_option": recommended_option,
+        "options": {
+            "1": "explain",
+            "2": "check",
+            "3": "suggest",
+            "4": "review_summary",
+        },
+        "message": _build_intent_clarification_message(recommended_option),
+    }
+
+
+
+def _build_post_clarification_input(original_user_input: str, option: str) -> str:
+    label = _INTENT_CLARIFY_ACTION_LABELS[option]
+    return (
+        "基于刚才的用户确认，按下面目标继续处理：\n"
+        f"用户原始请求：{(original_user_input or '').strip()}\n"
+        f"本次确认目标：{label}"
+    )
+
+
+
+def _consume_intent_clarification_choice(user_input: str, pending: dict | None) -> str | None:
+    normalized = (user_input or "").strip()
+    if not pending or normalized not in (pending.get("options") or {}):
+        return None
+    return _build_post_clarification_input(pending.get("original_user_input", ""), normalized)
+
+
+
+def _clear_pending_intent_clarification() -> None:
+    st.session_state["pending_intent_clarification"] = None
 
 
 
@@ -2094,7 +2184,11 @@ def run_agent_generate(
     logging.debug(f"run_agent_generate called, instruction: {user_input[:100]}")
     generation_id = _begin_generation_state(st.session_state)
     status_ph = status_col.empty()
-    debug_mode = _is_debug_intent(user_input) and not _is_explainer_intent(user_input)
+    debug_mode = (
+        _is_debug_intent(user_input)
+        and not _is_explainer_intent(user_input)
+        and not _is_post_clarification_prompt(user_input)
+    )
     debug_type = _get_debug_mode(user_input)  # 'editor' | 'keyword'
 
     def on_event(event_type, data):
@@ -2138,6 +2232,13 @@ def run_agent_generate(
         pipeline_project = proj if auto_apply else deepcopy(proj)
         if debug_mode:
             intent = "REPAIR"
+        elif _is_modify_bridge_prompt(user_input):
+            intent = "MODIFY"
+        elif _is_post_clarification_prompt(user_input):
+            if "本次确认目标：先快速解释脚本结构" in user_input:
+                intent = "CHAT"
+            else:
+                intent = "MODIFY"
         elif _is_explainer_intent(user_input):
             intent = "CHAT"
         elif any(pipeline_project.get_script(st) for st in ScriptType):
@@ -2599,6 +2700,29 @@ def _is_bridgeable_explainer_message(message: dict) -> bool:
     )
 
 
+_EXPLAINER_FOLLOWUP_MODIFY_PATTERNS = (
+    re.compile(r"^按你刚才说的改[吧啊呀]?$"),
+    re.compile(r"^按这个思路改[吧啊呀]?$"),
+    re.compile(r"^那就改吧$"),
+    re.compile(r"^就按这个改$"),
+    re.compile(r"^按这个修改$"),
+)
+
+
+def _is_explainer_followup_modify_request(text: str) -> bool:
+    normalized = re.sub(r"\s+", "", (text or "").strip())
+    if not normalized:
+        return False
+    return any(pattern.match(normalized) for pattern in _EXPLAINER_FOLLOWUP_MODIFY_PATTERNS)
+
+
+def _find_latest_bridgeable_explainer_message(history: list[dict]) -> dict | None:
+    for message in reversed(history or []):
+        if _is_bridgeable_explainer_message(message):
+            return message
+    return None
+
+
 def _build_modify_bridge_prompt(message: dict, fallback_request: str = "") -> str:
     explanation = (message or {}).get("content", "").strip()
     source_request = (message or {}).get("bridge_source_user_input", "").strip()
@@ -2615,6 +2739,25 @@ def _build_modify_bridge_prompt(message: dict, fallback_request: str = "") -> st
         f"解释结论：{explanation}\n"
         f"用户修改要求：{target_request}"
     )
+
+
+def _maybe_build_followup_bridge_input(user_input: str, history: list[dict], has_project: bool) -> str | None:
+    if not has_project or not _is_explainer_followup_modify_request(user_input):
+        return None
+    bridge_message = _find_latest_bridgeable_explainer_message(history)
+    if not bridge_message:
+        return None
+    return _build_modify_bridge_prompt(bridge_message, fallback_request=user_input)
+
+
+def _is_modify_bridge_prompt(text: str) -> bool:
+    normalized = (text or "").strip()
+    return normalized.startswith("基于刚才的解释，按下面理解做最小修改：")
+
+
+def _is_post_clarification_prompt(text: str) -> bool:
+    normalized = (text or "").strip()
+    return normalized.startswith("基于刚才的用户确认，按下面目标继续处理：")
 
 
 def _build_assistant_chat_message(content: str, intent: str, has_project: bool, source_user_input: str) -> dict:
@@ -3954,6 +4097,12 @@ with col_right:
     if _pending_bridge_idx is not None:
         _bridge_msg = st.session_state.chat_history[_pending_bridge_idx]
         _bridge_input = _build_modify_bridge_prompt(_bridge_msg)
+    elif user_input:
+        _bridge_input = _maybe_build_followup_bridge_input(
+            user_input=user_input,
+            history=st.session_state.get("chat_history", []),
+            has_project=bool(st.session_state.get("project")),
+        )
 
     # Debug模式：仅用户主动发送时触发，不自动构造空输入消息
     if _active_dbg and user_input:

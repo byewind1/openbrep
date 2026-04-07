@@ -17,19 +17,30 @@ from ui.app import (
     _handle_unified_import,
     _begin_generation_state,
     _build_assistant_settings_prompt,
+    _build_intent_clarification_message,
     _build_model_options,
     _build_model_source_state,
     _build_modify_bridge_prompt,
+    _build_post_clarification_input,
     _build_assistant_chat_message,
+    _clear_pending_intent_clarification,
+    _consume_intent_clarification_choice,
     _detect_image_task_mode,
     _finish_generation_state,
+    _find_latest_bridgeable_explainer_message,
     _is_bridgeable_explainer_message,
+    _is_explainer_followup_modify_request,
     _is_explainer_intent,
     _is_generation_locked,
+    _is_modify_bridge_prompt,
     _is_modify_or_check_intent,
+    _is_post_clarification_prompt,
+    _maybe_build_followup_bridge_input,
+    _maybe_build_intent_clarification,
     _request_generation_cancel,
     _resolve_selected_model,
     _should_accept_generation_result,
+    _should_clarify_intent,
     _should_persist_assistant_settings,
     _should_skip_elicitation_for_gdl_request,
     _should_start_elicitation,
@@ -238,6 +249,125 @@ class TestRunAgentGenerateRouting(unittest.TestCase):
         self.assertEqual(captured.get("intent"), "CHAT")
         self.assertEqual(result, "3D 拆解")
 
+    def test_followup_bridge_uses_modify_intent_via_existing_generate_path(self):
+        from ui.app import run_agent_generate
+
+        captured = {}
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1\nEND\n"
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        def fake_execute(self, request):
+            captured["intent"] = request.intent
+            captured["user_input"] = request.user_input
+            return MagicMock(success=True, scripts={}, plain_text="修改完成", project=project)
+
+        with patch("ui.app.TaskPipeline.execute", fake_execute):
+            with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                with patch("ui.app._is_active_generation", return_value=True):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            prompt = _maybe_build_followup_bridge_input(
+                                user_input="按你刚才说的改",
+                                history=[
+                                    _build_assistant_chat_message(
+                                        content="3D 脚本主要负责主体几何。",
+                                        intent="CHAT",
+                                        has_project=True,
+                                        source_user_input="解释一下 3D 脚本",
+                                    )
+                                ],
+                                has_project=True,
+                            )
+                            result = run_agent_generate(
+                                prompt,
+                                project,
+                                _StatusCol(),
+                                gsm_name="chair",
+                                auto_apply=True,
+                            )
+
+        self.assertEqual(captured.get("intent"), "MODIFY")
+        self.assertIn("用户修改要求：按你刚才说的改", captured.get("user_input", ""))
+        self.assertEqual(result, "修改完成")
+
+    def test_clarification_confirmation_routes_to_chat_for_explain_choice(self):
+        from ui.app import run_agent_generate
+
+        captured = {}
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1\nEND\n"
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        def fake_execute(self, request):
+            captured["intent"] = request.intent
+            captured["user_input"] = request.user_input
+            return MagicMock(success=True, scripts={}, plain_text="简要拆解", project=project)
+
+        with patch("ui.app.TaskPipeline.execute", fake_execute):
+            with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                with patch("ui.app._is_active_generation", return_value=True):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            clarified = _build_post_clarification_input(
+                                "解释一下导入的自动扶梯脚本，并检查错误，提出修改意见",
+                                "1",
+                            )
+                            result = run_agent_generate(
+                                clarified,
+                                project,
+                                _StatusCol(),
+                                gsm_name="chair",
+                                auto_apply=True,
+                            )
+
+        self.assertEqual(captured.get("intent"), "CHAT")
+        self.assertIn("本次确认目标：先快速解释脚本结构", captured.get("user_input", ""))
+        self.assertEqual(result, "简要拆解")
+
+    def test_clarification_confirmation_routes_to_modify_for_check_choice(self):
+        from ui.app import run_agent_generate
+
+        captured = {}
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1\nEND\n"
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        def fake_execute(self, request):
+            captured["intent"] = request.intent
+            captured["user_input"] = request.user_input
+            return MagicMock(success=True, scripts={}, plain_text="检查完成", project=project)
+
+        with patch("ui.app.TaskPipeline.execute", fake_execute):
+            with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                with patch("ui.app._is_active_generation", return_value=True):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            clarified = _build_post_clarification_input(
+                                "解释一下导入的自动扶梯脚本，并检查错误，提出修改意见",
+                                "2",
+                            )
+                            result = run_agent_generate(
+                                clarified,
+                                project,
+                                _StatusCol(),
+                                gsm_name="chair",
+                                auto_apply=True,
+                            )
+
+        self.assertEqual(captured.get("intent"), "MODIFY")
+        self.assertIn("本次确认目标：先检查明显错误/风险", captured.get("user_input", ""))
+        self.assertEqual(result, "检查完成")
+
 
 class TestExplainerModifyBridgeHelpers(unittest.TestCase):
     def test_bridgeable_explainer_message_requires_metadata(self):
@@ -256,6 +386,43 @@ class TestExplainerModifyBridgeHelpers(unittest.TestCase):
             "bridgeable_action": "modify_from_explainer",
         }))
 
+    def test_explainer_followup_modify_request_matches_high_confidence_phrases(self):
+        self.assertTrue(_is_explainer_followup_modify_request("按你刚才说的改"))
+        self.assertTrue(_is_explainer_followup_modify_request("按这个思路改"))
+        self.assertTrue(_is_explainer_followup_modify_request("那就改吧"))
+        self.assertTrue(_is_explainer_followup_modify_request("就按这个改"))
+        self.assertTrue(_is_explainer_followup_modify_request("按这个修改"))
+
+    def test_explainer_followup_modify_request_rejects_normal_chat(self):
+        self.assertFalse(_is_explainer_followup_modify_request("解释得不错"))
+        self.assertFalse(_is_explainer_followup_modify_request("再详细讲讲"))
+        self.assertFalse(_is_explainer_followup_modify_request("为什么这么改"))
+        self.assertFalse(_is_explainer_followup_modify_request("把宽度改成 1200"))
+
+    def test_find_latest_bridgeable_explainer_message_returns_latest_assistant_match(self):
+        history = [
+            {"role": "assistant", "content": "普通回复"},
+            _build_assistant_chat_message(
+                content="先前解释",
+                intent="CHAT",
+                has_project=True,
+                source_user_input="解释一下 3D",
+            ),
+            {"role": "user", "content": "收到"},
+            _build_assistant_chat_message(
+                content="最近解释",
+                intent="CHAT",
+                has_project=True,
+                source_user_input="解释一下参数",
+            ),
+        ]
+
+        message = _find_latest_bridgeable_explainer_message(history)
+
+        self.assertIsNotNone(message)
+        self.assertEqual(message["content"], "最近解释")
+        self.assertEqual(message["bridge_source_user_input"], "解释一下参数")
+
     def test_build_modify_bridge_prompt_includes_source_request(self):
         prompt = _build_modify_bridge_prompt({
             "role": "assistant",
@@ -265,6 +432,104 @@ class TestExplainerModifyBridgeHelpers(unittest.TestCase):
         self.assertIn("原解释问题：解释一下 3D 脚本", prompt)
         self.assertIn("解释结论：3D 脚本主要负责主体几何。", prompt)
         self.assertIn("用户修改要求：请按上面的解释做最小必要修改。", prompt)
+
+    def test_maybe_build_followup_bridge_input_returns_prompt_for_whitelist_match(self):
+        history = [
+            _build_assistant_chat_message(
+                content="3D 脚本主要负责主体几何。",
+                intent="CHAT",
+                has_project=True,
+                source_user_input="解释一下 3D 脚本",
+            )
+        ]
+
+        prompt = _maybe_build_followup_bridge_input(
+            user_input="按你刚才说的改",
+            history=history,
+            has_project=True,
+        )
+
+        self.assertIn("原解释问题：解释一下 3D 脚本", prompt)
+        self.assertIn("解释结论：3D 脚本主要负责主体几何。", prompt)
+        self.assertIn("用户修改要求：按你刚才说的改", prompt)
+
+    def test_maybe_build_followup_bridge_input_returns_none_without_bridgeable_message(self):
+        prompt = _maybe_build_followup_bridge_input(
+            user_input="按你刚才说的改",
+            history=[{"role": "assistant", "content": "普通聊天"}],
+            has_project=True,
+        )
+
+        self.assertIsNone(prompt)
+
+    def test_maybe_build_followup_bridge_input_returns_none_without_project(self):
+        history = [
+            _build_assistant_chat_message(
+                content="3D 脚本主要负责主体几何。",
+                intent="CHAT",
+                has_project=True,
+                source_user_input="解释一下 3D 脚本",
+            )
+        ]
+
+        prompt = _maybe_build_followup_bridge_input(
+            user_input="按你刚才说的改",
+            history=history,
+            has_project=False,
+        )
+
+        self.assertIsNone(prompt)
+
+    def test_maybe_build_followup_bridge_input_uses_latest_bridgeable_message_only(self):
+        history = [
+            _build_assistant_chat_message(
+                content="旧解释",
+                intent="CHAT",
+                has_project=True,
+                source_user_input="解释一下旧脚本",
+            ),
+            {"role": "assistant", "content": "普通回复"},
+            _build_assistant_chat_message(
+                content="新解释",
+                intent="CHAT",
+                has_project=True,
+                source_user_input="解释一下新脚本",
+            ),
+        ]
+
+        prompt = _maybe_build_followup_bridge_input(
+            user_input="就按这个改",
+            history=history,
+            has_project=True,
+        )
+
+        self.assertIn("原解释问题：解释一下新脚本", prompt)
+        self.assertIn("解释结论：新解释", prompt)
+        self.assertNotIn("旧解释", prompt)
+
+    def test_button_bridge_prompt_still_uses_default_fallback_request(self):
+        prompt = _build_modify_bridge_prompt({
+            "role": "assistant",
+            "content": "3D 脚本主要负责主体几何。",
+            "bridgeable_action": "modify_from_explainer",
+            "bridge_source_user_input": "解释一下 3D 脚本",
+        })
+
+        self.assertIn("用户修改要求：请按上面的解释做最小必要修改。", prompt)
+
+    def test_modify_bridge_prompt_is_detected_as_modify(self):
+        prompt = _build_modify_bridge_prompt({
+            "role": "assistant",
+            "content": "3D 脚本主要负责主体几何。",
+            "bridgeable_action": "modify_from_explainer",
+            "bridge_source_user_input": "解释一下 3D 脚本",
+        }, fallback_request="按你刚才说的改")
+
+        self.assertTrue(_is_modify_bridge_prompt(prompt))
+        self.assertFalse(_is_modify_bridge_prompt("解释一下 3D 脚本"))
+
+    def test_followup_bridge_does_not_change_repair_routing(self):
+        self.assertFalse(_is_explainer_followup_modify_request("修复这个脚本里的错误"))
 
     def test_build_assistant_chat_message_marks_only_project_chat_as_bridgeable(self):
         bridgeable = _build_assistant_chat_message(
@@ -589,6 +854,115 @@ class TestIntentRoutingHelpers(unittest.TestCase):
         self.assertFalse(_is_explainer_intent("把 3D 脚本改一下"))
         self.assertFalse(_is_explainer_intent("修复这个脚本里的错误"))
 
+    def test_should_clarify_intent_matches_mixed_request(self):
+        self.assertTrue(_should_clarify_intent(
+            "解释一下导入的自动扶梯脚本，并检查错误，提出修改意见",
+            has_project=True,
+            history=[],
+        ))
+
+    def test_should_clarify_intent_matches_ambiguous_short_request(self):
+        self.assertTrue(_should_clarify_intent(
+            "看看这个",
+            has_project=True,
+            history=[],
+        ))
+
+    def test_should_clarify_intent_skips_high_confidence_explainer(self):
+        self.assertFalse(_should_clarify_intent(
+            "解释一下 3D 脚本",
+            has_project=True,
+            history=[],
+        ))
+
+    def test_should_clarify_intent_skips_high_confidence_modify(self):
+        self.assertFalse(_should_clarify_intent(
+            "把宽度改成 1200",
+            has_project=True,
+            history=[],
+        ))
+
+    def test_should_clarify_intent_skips_followup_bridge_phrase(self):
+        history = [
+            _build_assistant_chat_message(
+                content="3D 脚本主要负责主体几何。",
+                intent="CHAT",
+                has_project=True,
+                source_user_input="解释一下 3D 脚本",
+            )
+        ]
+        self.assertFalse(_should_clarify_intent(
+            "按你刚才说的改",
+            has_project=True,
+            history=history,
+        ))
+
+    def test_maybe_build_intent_clarification_returns_payload_for_mixed_request(self):
+        payload = _maybe_build_intent_clarification(
+            user_input="解释一下导入的自动扶梯脚本，并检查错误，提出修改意见",
+            has_project=True,
+            history=[],
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["recommended_option"], "2")
+        self.assertIn("我猜你现在更像是想先检查", payload["message"])
+        self.assertIn("1. 先快速解释脚本结构", payload["message"])
+        self.assertIn("2. 先检查明显错误/风险", payload["message"])
+        self.assertIn("回复数字就行", payload["message"])
+
+    def test_maybe_build_intent_clarification_returns_none_for_clear_request(self):
+        payload = _maybe_build_intent_clarification(
+            user_input="修复这个脚本里的错误",
+            has_project=True,
+            history=[],
+        )
+        self.assertIsNone(payload)
+
+    def test_consume_intent_clarification_choice_returns_none_without_pending_state(self):
+        self.assertIsNone(_consume_intent_clarification_choice("2", None))
+
+    def test_consume_intent_clarification_choice_returns_prompt_for_numeric_reply(self):
+        pending = {
+            "original_user_input": "解释一下导入的自动扶梯脚本，并检查错误，提出修改意见",
+            "recommended_option": "2",
+            "options": {
+                "1": "explain",
+                "2": "check",
+                "3": "suggest",
+                "4": "review_summary",
+            },
+        }
+
+        clarified = _consume_intent_clarification_choice("2", pending)
+
+        self.assertIsNotNone(clarified)
+        self.assertIn("用户原始请求：解释一下导入的自动扶梯脚本，并检查错误，提出修改意见", clarified)
+        self.assertIn("本次确认目标：先检查明显错误/风险", clarified)
+
+    def test_consume_intent_clarification_choice_returns_none_for_non_numeric_reply(self):
+        pending = {
+            "original_user_input": "看看这个",
+            "recommended_option": "2",
+            "options": {"1": "explain", "2": "check"},
+        }
+        self.assertIsNone(_consume_intent_clarification_choice("先看 3D", pending))
+
+    def test_build_intent_clarification_message_uses_numbered_choices(self):
+        message = _build_intent_clarification_message("2")
+        self.assertIn("1. 先快速解释脚本结构", message)
+        self.assertIn("2. 先检查明显错误/风险", message)
+        self.assertIn("3. 先给修改建议", message)
+        self.assertIn("4. 按顺序都做，但先给简版总检", message)
+
+    def test_build_post_clarification_input_contains_original_request(self):
+        prompt = _build_post_clarification_input(
+            "看看这个",
+            "2",
+        )
+        self.assertIn("用户原始请求：看看这个", prompt)
+        self.assertIn("本次确认目标：先检查明显错误/风险", prompt)
+
 
     def test_route_main_input_returns_debug_for_error_text(self):
         intent, _obj_name = _route_main_input("Error in 3D script, line 12", project_loaded=True)
@@ -617,6 +991,25 @@ class TestIntentRoutingHelpers(unittest.TestCase):
         llm = MagicMock()
         intent, _obj_name = classify_and_extract("你能做什么", llm, project_loaded=True)
         self.assertEqual(intent, "CHAT")
+
+    def test_post_clarification_prompt_is_detected(self):
+        prompt = _build_post_clarification_input(
+            "解释一下导入的自动扶梯脚本，并检查错误，提出修改意见",
+            "2",
+        )
+        self.assertTrue(_is_post_clarification_prompt(prompt))
+        self.assertFalse(_is_post_clarification_prompt("解释一下 3D 脚本"))
+
+    def test_clear_pending_intent_clarification_resets_session_state(self):
+        with patch.dict("ui.app.st.session_state", {"pending_intent_clarification": {"original_user_input": "看看这个"}}, clear=False):
+            _clear_pending_intent_clarification()
+            self.assertIsNone(__import__("ui.app", fromlist=["st"]).st.session_state["pending_intent_clarification"])
+
+    def test_explainer_intent_still_skips_clarification(self):
+        self.assertFalse(_should_clarify_intent("分析这段 3D 代码逻辑", True, []))
+
+    def test_repair_intent_still_skips_clarification(self):
+        self.assertFalse(_should_clarify_intent("修复这个脚本里的错误", True, []))
 
 
 def _build_signed_license_code(payload: dict) -> str:
