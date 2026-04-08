@@ -417,6 +417,7 @@ class TaskPipeline:
         # Compile validation
         compile_result: Optional[CompileResult] = None
         gsm_name = request.gsm_name or project.name
+        gsm_path: Optional[str] = None
         try:
             out_dir = Path(request.output_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -430,6 +431,56 @@ class TaskPipeline:
         except Exception as exc:
             logger.warning("Compile step failed: %s", exc)
 
+        # Auto-repair on compile failure (1 attempt)
+        auto_repair_info: str = ""
+        if compile_result is not None and not compile_result.success and gsm_path is not None:
+            error_parts = [
+                p.strip()
+                for p in [compile_result.stderr or "", compile_result.stdout or ""]
+                if p.strip()
+            ]
+            error_log = "\n".join(error_parts)
+            on_event("status", {"message": "🔧 编译失败，正在自动修复…"})
+            logger.info("Compile failed; triggering auto-repair. error_log=%d chars", len(error_log))
+
+            repair_instruction = (
+                f"{clean_instruction}\n\n"
+                f"编译失败，请基于当前脚本进行最小改动修复以下错误：\n"
+                f"```\n{error_log[:800]}\n```"
+            )
+            try:
+                repair_changes, _repair_plain = agent.generate_only(
+                    instruction=repair_instruction,
+                    project=project,
+                    knowledge=knowledge,
+                    skills=skills_text,
+                    include_all_scripts=True,
+                    history=request.history,
+                )
+                repair_cleaned = (
+                    {k: _strip_md_fences(v) for k, v in repair_changes.items()}
+                    if repair_changes else {}
+                )
+                if repair_cleaned:
+                    agent._apply_changes(project, repair_cleaned)
+                    cleaned.update(repair_cleaned)
+
+                # Re-compile after repair
+                hsf_dir2 = project.save_to_disk()
+                compile_result = compiler.hsf2libpart(str(hsf_dir2), gsm_path)
+                on_event("compile_result", {
+                    "success": compile_result.success,
+                    "error": compile_result.stderr if not compile_result.success else "",
+                })
+                if compile_result.success:
+                    auto_repair_info = "🔧 自动修复后编译通过"
+                else:
+                    short_err = compile_result.stderr[:300].strip()
+                    auto_repair_info = f"🔧 自动修复后仍编译失败：\n```\n{short_err}\n```"
+            except Exception as exc:
+                logger.warning("Auto-repair attempt failed: %s", exc)
+                auto_repair_info = f"🔧 自动修复尝试失败：{exc}"
+
         # Build output text: LLM analysis + diff summary + preflight/static/compile status
         diff_summary = _build_diff_summary(before_scripts, cleaned)
         output_parts: list[str] = []
@@ -442,7 +493,10 @@ class TaskPipeline:
         if not static_result.passed:
             warnings = "\n".join(f"  ⚠️  {e.detail}" for e in static_result.errors)
             output_parts.append(f"**静态检查发现问题：**\n{warnings}")
-        if compile_result is not None:
+        if auto_repair_info:
+            # auto_repair_info already contains the final compile status after repair
+            output_parts.append(auto_repair_info)
+        elif compile_result is not None:
             if compile_result.success:
                 output_parts.append("✅ 编译通过")
             else:

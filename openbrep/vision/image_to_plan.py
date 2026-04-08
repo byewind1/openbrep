@@ -30,6 +30,7 @@ _SYSTEM_PROMPT = """\
 - 不要生成任何 GDL 代码
 - 只做结构分析，不做几何计算
 - 尺寸给估算范围即可，不要精确数值
+- fix_as_ratio 每一项必须是单一推荐值（如 0.35），不要写范围（不要写 0.30 - 0.40）
 - 如果图片不清晰，优先描述能看清的部分
 
 输出严格按以下 JSON 格式（不加任何 markdown 包裹）：
@@ -160,6 +161,28 @@ def visual_structure_to_gdl_hint(vs: VisualStructure) -> str:
 
 # ── 解析辅助 ──────────────────────────────────────────────
 
+def _fix_json_newlines(s: str) -> str:
+    """把 JSON 字符串值里的裸换行替换为空格（LLM 有时会在 description 里换行）。"""
+    result = []
+    in_string = False
+    escaped = False
+    for ch in s:
+        if escaped:
+            result.append(ch)
+            escaped = False
+        elif ch == "\\" and in_string:
+            result.append(ch)
+            escaped = True
+        elif ch == '"':
+            result.append(ch)
+            in_string = not in_string
+        elif ch == "\n" and in_string:
+            result.append(" ")
+        else:
+            result.append(ch)
+    return "".join(result)
+
+
 def _parse_response(raw: str) -> VisualStructure:
     """
     解析 LLM 返回的 JSON，构建 VisualStructure。
@@ -177,7 +200,7 @@ def _parse_response(raw: str) -> VisualStructure:
         )
 
     try:
-        data = json.loads(raw[start:end])
+        data = json.loads(_fix_json_newlines(raw[start:end]))
     except json.JSONDecodeError as exc:
         logger.warning("JSON parse failed: %s | raw: %s", exc, raw[:200])
         return VisualStructure(
