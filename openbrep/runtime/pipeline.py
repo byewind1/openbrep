@@ -102,6 +102,7 @@ class TaskResult:
     compile_result: Optional[CompileResult] = None
     trace_path: Optional[str] = None
     error: Optional[str] = None
+    lint_summary: str = ""
 
 
 @dataclass
@@ -328,6 +329,7 @@ class TaskPipeline:
 
         # Strip markdown fences the LLM sometimes leaks into scripts
         cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
+        cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
 
         # Apply changes to the project in-place
         if cleaned:
@@ -372,12 +374,19 @@ class TaskPipeline:
                 logger.warning("Static-check repair failed: %s", exc)
         # ─────────────────────────────────────────────────────────────────────
 
+        create_text_parts = []
+        if plain_text:
+            create_text_parts.append(plain_text)
+        if lint_summary:
+            create_text_parts.append(lint_summary)
+
         return TaskResult(
             success=True,
             intent=request.intent or "CREATE",
             scripts=cleaned,
-            plain_text=plain_text or "",
+            plain_text="\n\n".join(create_text_parts),
             project=project,
+            lint_summary=lint_summary,
         )
 
     def _handle_modify(self, request: TaskRequest) -> TaskResult:
@@ -442,6 +451,7 @@ class TaskPipeline:
         )
 
         cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
+        cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
 
         # Apply changes to project in-place
         if cleaned:
@@ -525,6 +535,8 @@ class TaskPipeline:
         output_parts: list[str] = []
         if plain_text:
             output_parts.append(plain_text)
+        if lint_summary:
+            output_parts.append(lint_summary)
         if diff_summary:
             output_parts.append(diff_summary)
         if preflight_summary:
@@ -549,6 +561,7 @@ class TaskPipeline:
             plain_text="\n\n".join(output_parts),
             project=project,
             compile_result=compile_result,
+            lint_summary=lint_summary,
         )
 
     # ── Initialization Helpers ────────────────────────────
@@ -601,6 +614,46 @@ class TaskPipeline:
             self._skills_loader = SkillsLoader(str(sk_dir))
             self._skills_loader.load()
         return self._skills_loader.get_for_task(instruction)
+
+
+_SCRIPT_TYPE_MAP: dict[str, str] = {
+    "scripts/3d.gdl": "3D",
+    "scripts/2d.gdl": "2D",
+    "scripts/1d.gdl": "Master",
+    "scripts/vl.gdl": "Properties",
+    "scripts/ui.gdl": "UI",
+}
+
+
+def _run_gdl_linter(cleaned: dict[str, str], on_event: Callable | None = None) -> tuple[dict[str, str], str]:
+    """Run deterministic linter on generated scripts and return updated scripts + summary."""
+    if not cleaned:
+        return cleaned, ""
+
+    from openbrep.gdl_linter import GDLLinter
+
+    fixed_total = 0
+    summary_lines: list[str] = []
+    updated = dict(cleaned)
+    for path, code in cleaned.items():
+        if not path.startswith("scripts/"):
+            continue
+        script_type = _SCRIPT_TYPE_MAP.get(path, "3D")
+        result = GDLLinter(script_type=script_type).fix(code)
+        if result.fix_count > 0:
+            updated[path] = result.fixed_code
+            fixed_total += result.fix_count
+            rules = sorted({issue.rule for issue in result.issues if issue.fixed})
+            summary_lines.append(f"- {path}: 修复 {result.fix_count} 处（{', '.join(rules)}）")
+
+    if fixed_total and on_event:
+        on_event("status", {"message": f"🔧 Linter 自动修复了 {fixed_total} 个问题"})
+
+    if not fixed_total:
+        return updated, ""
+
+    summary = "🔧 Linter 修复了以下问题：\n" + "\n".join(summary_lines)
+    return updated, summary
 
 
 def _normalize_modify_request(request: TaskRequest) -> tuple[str, str]:

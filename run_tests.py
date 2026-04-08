@@ -674,6 +674,29 @@ run_test("detect: 'Fix error' → debug", _test_skills_detect_debug)
 
 
 # ══════════════════════════════════════════════════════════
+#  GDL Linter
+# ══════════════════════════════════════════════════════════
+print("\n🧹 GDL Linter")
+
+import unittest
+from tests import test_gdl_linter
+
+
+def _test_gdl_linter_suite():
+    suite = unittest.defaultTestLoader.loadTestsFromModule(test_gdl_linter)
+    result = unittest.TestResult()
+    suite.run(result)
+    if result.failures or result.errors:
+        msgs = []
+        for case, tb in result.failures + result.errors:
+            msgs.append(f"{case.id()}: {tb.splitlines()[-1]}")
+        raise AssertionError("; ".join(msgs))
+
+
+run_test("gdl linter suite", _test_gdl_linter_suite)
+
+
+# ══════════════════════════════════════════════════════════
 #  Tapir Bridge
 # ══════════════════════════════════════════════════════════
 print("\n🔌 Tapir Bridge")
