@@ -214,8 +214,8 @@ Over time, your skills become a curated knowledge base of "how to make LLMs writ
 
 ## Notes / 备注
 
-- Skills files are **not included** in the open-source distribution. The project ships with this README and skeleton templates only.
-- Users are expected to develop their own skills based on their ArchiCAD version, coding standards, and observed LLM behavior.
+- Skills files are **included** in the open-source distribution and are a core part of what makes GDL generation reliable.
+- You are encouraged to add your own skill files to extend or override the built-in strategies.
 - The quality of skills has a **multiplicative effect** on output quality — a well-written skill can turn a mediocre model into a reliable GDL generator.
 
-Skills 文件**不包含在开源发行版中**。项目只附带本 README 和骨架模板。用户需要根据自己的 ArchiCAD 版本、编码规范和观察到的 LLM 行为来开发自己的 skills。
+Skills 文件**包含在开源发行版中**，是保证 GDL 生成质量的核心组成部分。你可以在此目录添加自己的 skill 文件来扩展或覆盖内置策略。

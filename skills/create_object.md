@@ -48,6 +48,45 @@ Master 只做三件事：
 2. 派生变量计算
 3. 调试输出开关（可选）
 
+### 2.0 Master 变量来源约束【核心规则，违反必出运行错误】
+
+**1d.gdl 只允许引用两类名称：**
+- `paramlist.xml` 中声明的参数（拼写完全一致）
+- 本脚本中已赋值的 `_` 前缀派生变量（必须先赋值再用）
+
+**禁止使用语义别名替代保留参数：**
+
+| 错误写法（未初始化变量） | 正确写法 |
+|---|---|
+| `width`、`w`、`len` | `A`（对象宽度） |
+| `height`、`h`、`ht` | `ZZYZX`（对象高度） |
+| `depth`、`d`、`dep` | `B`（对象深度） |
+| 未在 paramlist 声明的任意名称 | 先加入 paramlist.xml |
+
+**派生变量必须先赋值再使用（顺序敏感）：**
+
+```gdl
+! ❌ 错误：_inner_h 还没赋值就用了
+_panel_h = _inner_h + top_thk   ! → ArchiCAD 报 "使用了未初始化变量"
+_inner_h = ZZYZX * 0.8
+
+! ✅ 正确：先赋值再使用
+_inner_h = ZZYZX * 0.8
+_panel_h = _inner_h + top_thk
+```
+
+**fix_as_ratio 里的变量名必须与 paramlist 一致：**
+
+```gdl
+! ❌ 错误：'width' 不是 GDL 参数名
+_slot_w = width * 0.34
+
+! ✅ 正确：用实际参数名
+_slot_w = A * 0.34           ! 如果槽宽按总宽比例
+! 或者
+_slot_w = slot_width * 0.34  ! slot_width 必须在 paramlist 中声明
+```
+
 ### 2.1 推荐写法
 
 ```gdl
@@ -70,7 +109,9 @@ IF _panel_h < 0.02 THEN _panel_h = 0.02
 ### 2.3 Master 阶段检查
 
 - [ ] 所有除法分母已防 0
-- [ ] 派生变量在 3D/2D 使用前都已定义
+- [ ] 每个变量名都能在 paramlist.xml 中找到（含完全相同拼写）
+- [ ] 派生变量（`_` 前缀）在 3D/2D 使用前都已在 1d.gdl 赋值
+- [ ] 派生变量在 1d.gdl 内部也是先赋值再使用（顺序正确）
 - [ ] 没有拼写漂移（如 `panel_h` vs `_panel_h`）
 
 ---
