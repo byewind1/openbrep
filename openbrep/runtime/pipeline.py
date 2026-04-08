@@ -333,6 +333,45 @@ class TaskPipeline:
         if cleaned:
             agent._apply_changes(project, cleaned)
 
+        # ── Static check: catch undefined_var / forward_decl before returning ──
+        # Only trigger repair for these two checks (uninitialized variable errors).
+        # stack_imbalance / block_mismatch are left for the user to fix manually.
+        from openbrep.static_checker import StaticChecker
+        static_result = StaticChecker().check(project)
+        undef_errors = [
+            e for e in static_result.errors
+            if e.check_type in ("undefined_var", "forward_decl")
+        ]
+        if undef_errors:
+            error_detail = "\n".join(f"  - [{e.file}] {e.detail}" for e in undef_errors)
+            on_event("status", {"message": f"🔍 发现 {len(undef_errors)} 个变量问题，自动修复中…"})
+            logger.info("Static check found %d undefined/forward-decl errors; triggering repair", len(undef_errors))
+            repair_instruction = (
+                f"{enriched_instruction}\n\n"
+                f"生成后静态检查发现以下变量问题，请修正脚本（只修这些问题，不改其他）：\n"
+                f"{error_detail}"
+            )
+            try:
+                repair_changes, _repair_plain = agent.generate_only(
+                    instruction=repair_instruction,
+                    project=project,
+                    knowledge=knowledge,
+                    skills=skills_text,
+                    include_all_scripts=True,
+                    history=request.history,
+                    # 不重传图片，repair 只需文字上下文
+                )
+                repair_cleaned = (
+                    {k: _strip_md_fences(v) for k, v in repair_changes.items()}
+                    if repair_changes else {}
+                )
+                if repair_cleaned:
+                    agent._apply_changes(project, repair_cleaned)
+                    cleaned.update(repair_cleaned)
+            except Exception as exc:
+                logger.warning("Static-check repair failed: %s", exc)
+        # ─────────────────────────────────────────────────────────────────────
+
         return TaskResult(
             success=True,
             intent=request.intent or "CREATE",
