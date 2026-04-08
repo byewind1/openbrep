@@ -122,9 +122,6 @@ class IntentRouter:
         Returns:
             One of "CREATE", "MODIFY", "DEBUG", "IMAGE", "CHAT".
         """
-        if has_image:
-            return "IMAGE"
-
         if _is_pure_chat(user_input):
             return "CHAT"
 
@@ -143,6 +140,10 @@ class IntentRouter:
         # Generic GDL keyword without clearer signal
         if _is_gdl_intent(user_input):
             return "MODIFY" if has_project else "CREATE"
+
+        # Image present but text intent unclear → assume reference modeling (CREATE)
+        if has_image:
+            return "IMAGE"
 
         # Project loaded → default to modify for ambiguous input
         if has_project:

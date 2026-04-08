@@ -1,0 +1,186 @@
+! ============================================================================
+! 对象名称：斗 (Dou)
+! 文件：dou.gdl
+! 版本：1.0.0
+! 作者：Claude
+! 描述：中国传统木构斗拱构件——斗。矩形块体顶部开十字槽，
+!        槽口用于承接横向拱（Gong）构件。
+!        几何：底部实心块 + 顶部四角耳，十字槽自然留空。
+! ArchiCAD 版本：25+
+! ============================================================================
+
+! ============================================================================
+! 参数列表（PARAMETERS）
+! ============================================================================
+! A         Length    0.60    斗宽（X 方向）
+! B         Length    0.60    斗深（Y 方向）
+! ZZYZX     Length    0.15    斗高（Z 方向）
+! slot_w    Length    0.22    X 方向槽宽（承接 Y 向拱的槽）
+! slot_d    Length    0.22    Y 方向槽宽（承接 X 向拱的槽）
+! slot_h    Length    0.06    槽深（垂直方向）
+! mat_dou   Material  0       斗的材质
+
+! ============================================================================
+! MASTER SCRIPT
+! ============================================================================
+
+! --- 参数保护 ---
+IF A <= 0 THEN A = 0.60
+IF B <= 0 THEN B = 0.60
+IF ZZYZX <= 0 THEN ZZYZX = 0.15
+
+IF slot_w <= 0 THEN slot_w = 0.22
+IF slot_d <= 0 THEN slot_d = 0.22
+IF slot_h <= 0 THEN slot_h = 0.06
+
+! 槽不能超过斗本身尺寸的 70%
+IF slot_w > A * 0.70 THEN slot_w = A * 0.70
+IF slot_d > B * 0.70 THEN slot_d = B * 0.70
+! 槽深不能超过斗高的 60%
+IF slot_h > ZZYZX * 0.60 THEN slot_h = ZZYZX * 0.60
+
+! --- 派生计算 ---
+_ear_x  = (A - slot_w) / 2     ! 单侧角耳 X 宽度
+_ear_y  = (B - slot_d) / 2     ! 单侧角耳 Y 深度
+_base_h = ZZYZX - slot_h       ! 底部实心段高度
+
+! ============================================================================
+! PARAMETER SCRIPT
+! ============================================================================
+
+VALUES "A"      RANGE [0.20, 2.00]
+VALUES "B"      RANGE [0.20, 2.00]
+VALUES "ZZYZX"  RANGE [0.08, 0.60]
+VALUES "slot_w" RANGE [0.05, 1.00]
+VALUES "slot_d" RANGE [0.05, 1.00]
+VALUES "slot_h" RANGE [0.02, 0.30]
+
+! ============================================================================
+! 2D SCRIPT
+! ============================================================================
+
+PROJECT2 3, 270, 2
+
+PEN 1
+
+! --- 外轮廓 ---
+RECT2 0, 0, A, -B
+
+! --- 十字槽示意线（虚线）---
+PEN 3
+! X 方向槽（Y 向两条竖线）
+LINE2 _ear_x,     0, _ear_x,     -B
+LINE2 A - _ear_x, 0, A - _ear_x, -B
+! Y 方向槽（X 向两条横线）
+LINE2 0, -_ear_y,     A, -_ear_y
+LINE2 0, -(B - _ear_y), A, -(B - _ear_y)
+
+! --- 热点 ---
+PEN 1
+HOTSPOT2 0,   0,    1
+HOTSPOT2 A,   0,    2
+HOTSPOT2 A,   -B,   3
+HOTSPOT2 0,   -B,   4
+HOTSPOT2 A/2, -B/2, 5
+
+! ============================================================================
+! 3D SCRIPT
+! ============================================================================
+
+TOLER 0.001
+
+MATERIAL mat_dou
+
+! --- 3D 固定比例重建（参考图纸轮廓，优先做像）---
+_base_h = ZZYZX * 0.40
+_waist_h = ZZYZX * 0.10
+_top_h   = ZZYZX - _base_h - _waist_h
+IF _base_h < 0.03 THEN _base_h = 0.03
+IF _waist_h < 0.01 THEN _waist_h = 0.01
+IF _top_h < 0.03 THEN _top_h = 0.03
+
+! 台座底边内收，形成收分
+_base_in_x = A * 0.12
+_base_in_y = B * 0.12
+IF _base_in_x < 0.02 THEN _base_in_x = 0.02
+IF _base_in_y < 0.02 THEN _base_in_y = 0.02
+
+! 十字槽固定比例
+_cross_w = A * 0.34
+_cross_d = B * 0.34
+IF _cross_w < 0.08 THEN _cross_w = 0.08
+IF _cross_d < 0.08 THEN _cross_d = 0.08
+_side_w = (A - _cross_w) / 2
+_side_d = (B - _cross_d) / 2
+IF _side_w < 0.04 THEN _side_w = 0.04
+IF _side_d < 0.04 THEN _side_d = 0.04
+
+! 中段贴耳
+_lug_w = A * 0.06
+_lug_d = B * 0.18
+_lug_h = _top_h * 0.28
+_lug_y = (B - _lug_d) / 2
+IF _lug_w < 0.015 THEN _lug_w = 0.015
+IF _lug_d < 0.03 THEN _lug_d = 0.03
+IF _lug_h < 0.012 THEN _lug_h = 0.012
+
+! --- 第 1 层：收分台座（按知识库规范使用 PRISM_）---
+PRISM_ 4, _base_h,
+    _base_in_x, _base_in_y, 15,
+    A - _base_in_x, _base_in_y, 15,
+    A, B, 15,
+    0, B, -1
+
+! --- 第 2 层：短腰 ---
+ADD 0, 0, _base_h
+BLOCK A, B, _waist_h
+DEL 1
+
+! --- 第 3 层：斗口主体（十字槽剩余实体）---
+ADD 0, 0, _base_h + _waist_h
+BLOCK _side_w, B, _top_h
+DEL 1
+
+ADD A - _side_w, 0, _base_h + _waist_h
+BLOCK _side_w, B, _top_h
+DEL 1
+
+ADD _side_w, 0, _base_h + _waist_h
+BLOCK _cross_w, _side_d, _top_h
+DEL 1
+
+ADD _side_w, B - _side_d, _base_h + _waist_h
+BLOCK _cross_w, _side_d, _top_h
+DEL 1
+
+! --- 左右贴耳 ---
+ADD -_lug_w, _lug_y, _base_h + _waist_h + _top_h * 0.18
+BLOCK _lug_w, _lug_d, _lug_h
+DEL 1
+
+ADD A, _lug_y, _base_h + _waist_h + _top_h * 0.18
+BLOCK _lug_w, _lug_d, _lug_h
+DEL 1
+
+END
+
+! ============================================================================
+! 常见错误记录
+! ============================================================================
+! 0. 3D 预览为空 → Master 段的派生变量（_ear_x 等）在预览器里不可用
+!    修复：3D 脚本必须自包含，在脚本顶部重算所有需要的变量
+!
+! 1. 几何太像“十字槽盒子”而不像斗 → 主要是比例错，不只是结构缺件
+!    修复：3D 改成按图近似固定比例重建，先保证轮廓正确
+!
+! 2. slot_w / slot_d 自由度过高 → 一调就偏离图纸比例
+!    修复：当前 3D 先弱化 slot_* 自由度，斗口宽度改为固定比例
+!
+! 3. PRISM_ 台座点序或状态值错 → 预览几何翻折或异常
+!    检查：四点顺时针，点后补 15
+!
+! 3. ADD/DEL 不配平 → 后续构件坐标系偏移
+!    检查：每个 ADD 后都有对应 DEL 1
+!
+! 4. BLOCK 底部实心块没有 ADD/DEL → 正确，直接绘制在原点
+!    注意：如果斗需要定位偏移，在最外层加 ADD/DEL 包裹整体

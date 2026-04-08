@@ -2221,6 +2221,12 @@ def run_agent_generate(
                 _guarded_event_update(status_ph, generation_id, "success", "✅ 编译验证通过")
             elif data.get("error"):
                 _guarded_event_update(status_ph, generation_id, "warning", "⚠️ 编译验证失败，已附在结果中")
+        elif event_type == "status":
+            _guarded_event_update(status_ph, generation_id, "info", data.get("message", ""))
+        elif event_type == "vision_analysis_done":
+            component = data.get("component_type", "")
+            label = f"「{component}」" if component and component != "未知构件" else ""
+            _guarded_event_update(status_ph, generation_id, "info", f"🖼️ 图像分析完成{label}，正在生成 GDL…")
 
     try:
         # Pass recent chat history for multi-turn context (last 6 messages, skip heavy code blocks)

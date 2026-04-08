@@ -44,6 +44,7 @@ from openbrep.skills_loader import SkillsLoader
 from openbrep.runtime.router import IntentRouter
 from openbrep.runtime.tracer import Tracer
 from openbrep.preflight import PreflightAnalyzer
+from openbrep.vision.image_to_plan import analyze_reference_image, visual_structure_to_gdl_hint
 
 
 # ── Modify-specific skill instructions ───────────────────
@@ -287,6 +288,23 @@ class TaskPipeline:
         on_event = request.on_event or (lambda *_: None)
         debug_mode = request.intent == "DEBUG"
 
+        # ── Phase 1 Vision Pre-analysis ──────────────────────────────────────
+        # 有图 + 生成类意图（CREATE / IMAGE）→ 先结构化再生成
+        # MODIFY / DEBUG 有图时直接传图作上下文，不跑结构化分析
+        enriched_instruction = request.user_input
+        if image_b64 and request.intent in ("CREATE", "IMAGE"):
+            try:
+                on_event("status", {"message": "正在分析参考图结构…"})
+                vs = analyze_reference_image(image_b64, image_mime, request.user_input, llm)
+                gdl_hint = visual_structure_to_gdl_hint(vs)
+                enriched_instruction = f"{request.user_input}\n\n{gdl_hint}"
+                on_event("vision_analysis_done", {"component_type": vs.component_type})
+                logger.info("Vision pre-analysis done: %s", vs.component_type)
+            except Exception as exc:
+                logger.warning("Vision pre-analysis failed, falling back to direct vision: %s", exc)
+                # fallback: 原始 instruction + image，行为与 Phase 1 之前一致
+        # ─────────────────────────────────────────────────────────────────────
+
         agent = GDLAgent(
             llm=llm,
             compiler=compiler,
@@ -296,7 +314,7 @@ class TaskPipeline:
         )
 
         changes, plain_text = agent.generate_only(
-            instruction=request.user_input,
+            instruction=enriched_instruction,
             project=project,
             knowledge=knowledge,
             skills=skills_text,
