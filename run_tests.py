@@ -679,11 +679,11 @@ run_test("detect: 'Fix error' → debug", _test_skills_detect_debug)
 print("\n🧹 GDL Linter")
 
 import unittest
-from tests import test_gdl_linter
+from tests import test_cli_configure, test_cli_main, test_gdl_linter
 
 
-def _test_gdl_linter_suite():
-    suite = unittest.defaultTestLoader.loadTestsFromModule(test_gdl_linter)
+def _run_unittest_module(module):
+    suite = unittest.defaultTestLoader.loadTestsFromModule(module)
     result = unittest.TestResult()
     suite.run(result)
     if result.failures or result.errors:
@@ -693,6 +693,20 @@ def _test_gdl_linter_suite():
         raise AssertionError("; ".join(msgs))
 
 
+def _test_cli_configure_suite():
+    _run_unittest_module(test_cli_configure)
+
+
+def _test_cli_main_suite():
+    _run_unittest_module(test_cli_main)
+
+
+def _test_gdl_linter_suite():
+    _run_unittest_module(test_gdl_linter)
+
+
+run_test("cli configure suite", _test_cli_configure_suite)
+run_test("cli main suite", _test_cli_main_suite)
 run_test("gdl linter suite", _test_gdl_linter_suite)
 
 

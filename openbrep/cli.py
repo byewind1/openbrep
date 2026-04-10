@@ -6,14 +6,39 @@ Provides: init, run, chat, decompile, config subcommands.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 import click
+import typer
 
-from openbrep.config import GDLAgentConfig
+from openbrep.config import GDLAgentConfig, _auto_detect_converter
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+
+
+@lru_cache(maxsize=1)
+def _load_main_cli_module():
+    root_dir = Path(__file__).resolve().parent.parent
+    main_cli_path = root_dir / "cli" / "main.py"
+    spec = importlib.util.spec_from_file_location("openbrep_main_cli", main_cli_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load main CLI module from {main_cli_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def main_app_entry():
+    module = _load_main_cli_module()
+    module.app()
+
+
+def main_obrcli_entry():
+    module = _load_main_cli_module()
+    module.obrcli_entry()
 
 
 # ── Rich console helpers ──────────────────────────────────────────────
@@ -281,6 +306,28 @@ def chat(model, config_path, mock):
         if result.project is not None:
             project = result.project
         _print("")
+
+
+@cli.command()
+@click.option("--config", "config_path", default=None, help="Config file path")
+def configure(config_path):
+    """Interactive configuration wizard."""
+    module = _load_main_cli_module()
+    try:
+        module.configure(config=config_path)
+    except typer.Exit as exc:
+        raise SystemExit(exc.exit_code) from exc
+
+
+@cli.command()
+@click.option("--config", "config_path", default=None, help="Config file path")
+def doctor(config_path):
+    """Diagnose current configuration."""
+    module = _load_main_cli_module()
+    try:
+        module.doctor(config=config_path)
+    except typer.Exit as exc:
+        raise SystemExit(exc.exit_code) from exc
 
 
 @cli.command()

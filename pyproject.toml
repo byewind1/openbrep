@@ -49,8 +49,9 @@ Repository = "https://github.com/byewind1/openbrep"
 Issues = "https://github.com/byewind1/openbrep/issues"
 
 [project.scripts]
-obr = "openbrep.cli:cli"
-openbrep = "cli.main:app"
+obr = "openbrep.cli:main_app_entry"
+openbrep = "openbrep.cli:main_app_entry"
+obrcli = "openbrep.cli:main_obrcli_entry"
 
 [tool.ruff]
 target-version = "py310"
