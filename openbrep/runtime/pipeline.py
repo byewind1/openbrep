@@ -66,6 +66,18 @@ _MODIFY_SKILLS_PROMPT = """\
 logger = logging.getLogger(__name__)
 
 
+_GREETING_ONLY_PATTERNS = (
+    r"^(你好|您好|hello|hi|hey|嗨|哈喽|bonjour|hola|ciao|こんにちは|안녕)[!！。.\s]*$",
+)
+
+
+def _is_greeting_only(text: str) -> bool:
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    return any(re.search(pattern, raw, re.IGNORECASE) for pattern in _GREETING_ONLY_PATTERNS)
+
+
 # ── Data Contracts ────────────────────────────────────────
 
 @dataclass
@@ -162,7 +174,7 @@ class TaskPipeline:
             request.intent = self.router.classify(
                 request.user_input,
                 has_project=request.project is not None,
-                has_image=request.image_path is not None,
+                has_image=bool(request.image_path or request.image_b64),
             )
 
         # 2. Execute
@@ -196,7 +208,8 @@ class TaskPipeline:
 
     def _handle_chat(self, request: TaskRequest) -> TaskResult:
         """Simple conversational reply — no GDL code output."""
-        if request.project is not None:
+        is_greeting = _is_greeting_only(request.user_input)
+        if request.project is not None and not is_greeting:
             script_target = resolve_script_target(request.user_input)
             if script_target is not None:
                 script_context = build_project_script_context(request.project, script_target)
@@ -242,7 +255,9 @@ class TaskPipeline:
             "你是 openbrep 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
             "【重要约束】绝对禁止在回复中输出任何 GDL 代码、代码块或脚本片段。"
             "如果用户想创建或修改 GDL 对象，告诉他直接描述需求，AI 会自动生成。\n"
-            "回复简洁，使用中文，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
+            "当用户是问候语时，先做一句简短自我介绍，再问“我可以帮你做什么？”。"
+            "回复语言必须与用户输入语言一致（中文就中文，英文就英文）。"
+            "回复简洁，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
         )
         system_content = _build_assistant_settings_prompt(request.assistant_settings) + system_content
         history = _trim_history(request.history, limit=6)
@@ -367,9 +382,12 @@ class TaskPipeline:
                     {k: _strip_md_fences(v) for k, v in repair_changes.items()}
                     if repair_changes else {}
                 )
+                repair_cleaned, repair_lint_summary = _run_gdl_linter(repair_cleaned, on_event=on_event)
                 if repair_cleaned:
                     agent._apply_changes(project, repair_cleaned)
                     cleaned.update(repair_cleaned)
+                if repair_lint_summary:
+                    lint_summary = "\n\n".join(part for part in [lint_summary, repair_lint_summary] if part)
             except Exception as exc:
                 logger.warning("Static-check repair failed: %s", exc)
         # ─────────────────────────────────────────────────────────────────────
@@ -510,9 +528,12 @@ class TaskPipeline:
                     {k: _strip_md_fences(v) for k, v in repair_changes.items()}
                     if repair_changes else {}
                 )
+                repair_cleaned, repair_lint_summary = _run_gdl_linter(repair_cleaned, on_event=on_event)
                 if repair_cleaned:
                     agent._apply_changes(project, repair_cleaned)
                     cleaned.update(repair_cleaned)
+                if repair_lint_summary:
+                    lint_summary = "\n\n".join(part for part in [lint_summary, repair_lint_summary] if part)
 
                 # Re-compile after repair
                 hsf_dir2 = project.save_to_disk()

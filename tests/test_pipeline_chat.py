@@ -121,18 +121,20 @@ class TestPipelineChat(unittest.TestCase):
         mock_explain.assert_called_once_with({"name": "A"})
         mock_reply.assert_called_once_with(fake_explanation, user_input="A 控制什么")
 
-    def test_chat_with_project_does_not_call_raw_llm(self):
-        pipeline = self._make_pipeline("ok")
+    def test_chat_with_project_greeting_calls_raw_llm(self):
+        pipeline = self._make_pipeline("你好，我是 OpenBrep 的 GDL 助手。我可以帮你做什么？")
         project = HSFProject.create_new("chair", work_dir="./workdir")
 
-        with patch("openbrep.runtime.pipeline.resolve_script_target", return_value=None):
-            with patch("openbrep.runtime.pipeline.resolve_parameter_targets", return_value=[]):
-                with patch("openbrep.runtime.pipeline.build_project_context", return_value={"gsm_name": "chair"}):
-                    with patch("openbrep.runtime.pipeline.explain_project_context", return_value=ProjectExplanation(overall_goal="chair")):
-                        with patch("openbrep.runtime.pipeline.build_chat_explanation_reply", return_value="简要拆解"):
-                            pipeline.execute(TaskRequest(user_input="解释一下", intent="CHAT", project=project))
+        with patch("openbrep.runtime.pipeline.resolve_script_target") as mock_script_target:
+            with patch("openbrep.runtime.pipeline.resolve_parameter_targets") as mock_param_targets:
+                result = pipeline.execute(TaskRequest(user_input="你好", intent="CHAT", project=project))
 
-        self.assertIsNone(pipeline._make_llm(TaskRequest(user_input="x")).generate.call_args)
+        self.assertTrue(result.success)
+        self.assertIn("GDL", result.plain_text)
+        self.assertIn("可以帮", result.plain_text)
+        mock_script_target.assert_not_called()
+        mock_param_targets.assert_not_called()
+        self.assertIsNotNone(pipeline._make_llm(TaskRequest(user_input="x")).generate.call_args)
 
     def test_chat_with_project_adds_explainer_constraint(self):
         pipeline = self._make_pipeline("ok")

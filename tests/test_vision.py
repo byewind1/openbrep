@@ -244,6 +244,16 @@ _FAKE_VS = VisualStructure(
 
 class TestPipelineVisionPreAnalysis(unittest.TestCase):
 
+    def test_auto_intent_with_image_b64_routes_to_image_path(self):
+        pipeline = _make_pipeline()
+        request = TaskRequest(user_input="", image_b64="fake_base64")
+
+        with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS) as mock_vision:
+            result = pipeline.execute(request)
+
+        self.assertEqual(result.intent, "IMAGE")
+        mock_vision.assert_called_once()
+
     def test_image_intent_runs_vision_analysis(self):
         """IMAGE intent + image_b64 → analyze_reference_image 被调用"""
         pipeline = _make_pipeline()
