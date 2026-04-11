@@ -87,6 +87,8 @@ openbrep --help
 
 每次修改都读取完整项目状态，精确修改而非重写，自动编译验证。
 
+> 开发者说明：如果你当前使用的是 `pip install -e "."` / `pip install -e ".[ui]"` 的 editable install，修改仓库源码后通常会立即生效，不需要重新安装；只有在变更 `pyproject.toml`、依赖、命令入口（如 `obr` / `obrcli`）或打包规则时，才建议重新安装一次。
+
 ---
 
 ## 功能一览
