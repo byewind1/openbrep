@@ -513,39 +513,44 @@ class TestGenerationResultPlan(unittest.TestCase):
 
 class TestReleaseDocs(unittest.TestCase):
 
-    def test_package_version_is_v060(self):
+    def test_package_version_is_v061(self):
         from openbrep import __version__
-        self.assertEqual(__version__, "0.6.0")
+        self.assertEqual(__version__, "0.6.1")
+
+    def test_pyproject_version_matches_package_version(self):
+        from openbrep import __version__
+        pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn(f'version = "{__version__}"', pyproject_text)
 
     def test_ui_reads_version_from_package(self):
         app_text = Path("ui/app.py").read_text(encoding="utf-8")
         self.assertIn("from openbrep import __version__ as OPENBREP_VERSION", app_text)
         self.assertIn("v{OPENBREP_VERSION}", app_text)
 
-    def test_install_cn_title_mentions_v060(self):
+    def test_install_cn_title_mentions_v061(self):
         install_cn = Path("INSTALL_CN.md").read_text(encoding="utf-8")
-        self.assertIn("# openbrep v0.6.0 安装指南（中文）", install_cn)
+        self.assertIn("# openbrep v0.6.1 安装指南（中文）", install_cn)
+        self.assertIn("当前正式版本：v0.6.1", install_cn)
 
     def test_readme_release_wording_is_formal(self):
         readme = Path("README.md").read_text(encoding="utf-8")
         readme_zh = Path("README.zh-CN.md").read_text(encoding="utf-8")
-        self.assertIn("正式发布版本 v0.6.0", readme)
-        self.assertIn("正式发布版本 v0.6.0", readme_zh)
-        self.assertIn("作为正式版本成立", readme)
-        self.assertIn("作为正式版本成立", readme_zh)
+        self.assertIn("正式发布版本 v0.6.1", readme)
+        self.assertIn("正式发布版本 v0.6.1", readme_zh)
+        self.assertIn("保持统一", readme)
+        self.assertIn("保持统一", readme_zh)
 
-    def test_v060_release_note_uses_formal_release_wording(self):
-        release_note = Path("docs/releases/v0.6.0.md").read_text(encoding="utf-8")
-        self.assertIn("正式发布收尾版", release_note)
-        self.assertIn("正式版本成立", release_note)
-        self.assertNotIn("不建议对外宣称", release_note)
-        self.assertNotIn("继续真实场景验证 / 内测 / 小范围生产验证", release_note)
+    def test_v061_release_note_uses_patch_release_wording(self):
+        release_note = Path("docs/releases/v0.6.1.md").read_text(encoding="utf-8")
+        self.assertIn("稳定性补丁版本", release_note)
+        self.assertIn("正式 patch release", release_note)
+        self.assertIn("v0.6.0", release_note)
 
-    def test_readme_mentions_v060_release_note(self):
+    def test_readme_mentions_v061_release_note(self):
         readme = Path("README.md").read_text(encoding="utf-8")
-        self.assertIn("v0.6.0", readme)
-        self.assertIn("docs/releases/v0.6.0.md", readme)
+        self.assertIn("v0.6.1", readme)
+        self.assertIn("docs/releases/v0.6.1.md", readme)
 
-    def test_v060_release_note_exists(self):
-        self.assertTrue(Path("docs/releases/v0.6.0.md").exists())
+    def test_v061_release_note_exists(self):
+        self.assertTrue(Path("docs/releases/v0.6.1.md").exists())
 

@@ -17,7 +17,7 @@
 
 > **OpenBrep: Code Your Boundaries**
 
-> 正式发布版本 v0.6.0 — Runtime Phase 1 主骨架已经完成收口，代码、UI、说明文档与发布说明现已统一，可作为正式版本成立。
+> 正式发布版本 v0.6.1 — 在 v0.6.0 基础上完成 CLI 安装体验、静态检查与 chat / vision 链路补强，代码、UI、说明文档与发布说明继续保持统一。
 
 ---
 
@@ -219,6 +219,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/..."
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.1 | CLI 可用性与安装体验提升；新增/完善 GDL 静态检查与自动 repair；补强 chat / explainer / 图片链路与参考图生成；修复 obr 在非项目目录无法启动 UI（见 docs/releases/v0.6.1.md） |
 | v0.6.0 | Runtime Phase 1 主骨架正式发布收尾：统一 create / modify / repair / chat 主链路；repair 独立 intent 闭合；CLI/UI/runtime 版本与发布口径统一（见 docs/releases/v0.6.0.md） |
 | v0.5.7 | CLI 模式正式可用（create/modify 命令）；生成过程支持用户取消；pipeline 改进解决越改越差问题；参数路由修复（见 docs/releases/v0.5.7.md） |
 | v0.5.6 | 图片上传不再卡死；cross-script / static checker 误报减少；AI 助手设置支持长期保存并注入系统提示；自定义代理与官方供应商分层选择，并优先显示代理名（见 docs/releases/v0.5.6.md） |
