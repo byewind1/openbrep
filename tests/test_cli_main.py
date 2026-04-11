@@ -137,6 +137,8 @@ class TestCliMainCommands(unittest.TestCase):
                 result = self.runner.invoke(app, [])
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertIn("OpenBrep UI 已启动：http://localhost:8501", result.output)
+        self.assertIn("已关闭自动打开浏览器", result.output)
         cmd = call.call_args.args[0]
         self.assertEqual(cmd[1:3], ["-m", "streamlit"])
         self.assertEqual(cmd[3], "run")
@@ -144,6 +146,7 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertTrue(ui_app_path.is_absolute())
         self.assertEqual(ui_app_path.name, "app.py")
         self.assertEqual(ui_app_path.parent.name, "ui")
+        self.assertEqual(cmd[5:], ["--server.headless", "true"])
 
     def test_cli_subcommand_enters_repl(self):
         with patch("cli.main._run_chat_repl") as repl:

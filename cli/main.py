@@ -496,7 +496,17 @@ def _launch_ui() -> int:
         err_console.print(f"[red]❌ 未找到 UI 入口文件：{ui_app_path}[/red]")
         return 1
 
-    cmd = [sys.executable, "-m", "streamlit", "run", str(ui_app_path)]
+    console.print("[dim]OpenBrep UI 已启动：http://localhost:8501[/dim]")
+    console.print("[dim]已关闭自动打开浏览器，请在常用浏览器中手动访问或使用已收藏地址。[/dim]")
+    cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(ui_app_path),
+        "--server.headless",
+        "true",
+    ]
     return subprocess.call(cmd)
 
 
