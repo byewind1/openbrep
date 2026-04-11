@@ -133,8 +133,9 @@ class TestCliMainCommands(unittest.TestCase):
 
     def test_launch_ui_uses_absolute_app_path(self):
         with patch("cli.main._has_streamlit", return_value=True):
-            with patch("cli.main.subprocess.call", return_value=0) as call:
-                result = self.runner.invoke(app, [])
+            with patch("cli.main._is_tcp_port_available", return_value=True):
+                with patch("cli.main.subprocess.call", return_value=0) as call:
+                    result = self.runner.invoke(app, [])
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertIn("OpenBrep UI 已启动：http://localhost:8501", result.output)
@@ -146,7 +147,18 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertTrue(ui_app_path.is_absolute())
         self.assertEqual(ui_app_path.name, "app.py")
         self.assertEqual(ui_app_path.parent.name, "ui")
-        self.assertEqual(cmd[5:], ["--server.headless", "true"])
+        self.assertEqual(cmd[5:], ["--server.headless", "true", "--server.port", "8501"])
+
+    def test_launch_ui_fails_when_default_port_is_occupied(self):
+        with patch("cli.main._has_streamlit", return_value=True):
+            with patch("cli.main._is_tcp_port_available", return_value=False):
+                with patch("cli.main.subprocess.call") as call:
+                    result = self.runner.invoke(app, [])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("默认端口 8501 已被占用", result.output)
+        self.assertIn("请先关闭旧的 Streamlit/obr 进程", result.output)
+        call.assert_not_called()
 
     def test_cli_subcommand_enters_repl(self):
         with patch("cli.main._run_chat_repl") as repl:

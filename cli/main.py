@@ -13,6 +13,7 @@ import logging
 import mimetypes
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from datetime import datetime
@@ -485,6 +486,13 @@ def _resolve_ui_app_path() -> Path:
 
 
 
+def _is_tcp_port_available(port: int, host: str = "127.0.0.1") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return sock.connect_ex((host, port)) != 0
+
+
+
 def _launch_ui() -> int:
     if not _has_streamlit():
         err_console.print("[red]❌ 未安装 UI 依赖 streamlit。[/red]")
@@ -496,7 +504,13 @@ def _launch_ui() -> int:
         err_console.print(f"[red]❌ 未找到 UI 入口文件：{ui_app_path}[/red]")
         return 1
 
-    console.print("[dim]OpenBrep UI 已启动：http://localhost:8501[/dim]")
+    port = 8501
+    if not _is_tcp_port_available(port):
+        err_console.print(f"[red]❌ OpenBrep UI 默认端口 {port} 已被占用。[/red]")
+        err_console.print("请先关闭旧的 Streamlit/obr 进程，再重新运行 obr。")
+        return 1
+
+    console.print(f"[dim]OpenBrep UI 已启动：http://localhost:{port}[/dim]")
     console.print("[dim]已关闭自动打开浏览器，请在常用浏览器中手动访问或使用已收藏地址。[/dim]")
     cmd = [
         sys.executable,
@@ -506,6 +520,8 @@ def _launch_ui() -> int:
         str(ui_app_path),
         "--server.headless",
         "true",
+        "--server.port",
+        str(port),
     ]
     return subprocess.call(cmd)
 
