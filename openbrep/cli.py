@@ -38,7 +38,7 @@ def main_app_entry():
 
 def main_obrcli_entry():
     module = _load_main_cli_module()
-    module.obrcli_entry()
+    module.obrcli_entry(sys.argv[1:])
 
 
 # ── Rich console helpers ──────────────────────────────────────────────

@@ -8,6 +8,7 @@ Usage:
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import mimetypes
 import re
@@ -474,7 +475,17 @@ def _collect_config_issues(config) -> list[str]:
     return issues
 
 
+def _has_streamlit() -> bool:
+    return importlib.util.find_spec("streamlit") is not None
+
+
+
 def _launch_ui() -> int:
+    if not _has_streamlit():
+        err_console.print("[red]❌ 未安装 UI 依赖 streamlit。[/red]")
+        err_console.print("请先安装： pip install openbrep[ui]", markup=False)
+        return 1
+
     cmd = [sys.executable, "-m", "streamlit", "run", "ui/app.py"]
     return subprocess.call(cmd)
 
@@ -571,8 +582,12 @@ def _run_chat_repl(project_dir: Optional[str] = None) -> None:
                 project = result.project
 
 
-def obrcli_entry() -> None:
-    _run_chat_repl(None)
+def obrcli_entry(argv: Optional[list[str]] = None) -> None:
+    forwarded = list(argv or [])
+    if not forwarded:
+        _run_chat_repl(None)
+        return
+    app(prog_name="obrcli", args=["cli", *forwarded])
 
 
 # ── Commands ──────────────────────────────────────────────

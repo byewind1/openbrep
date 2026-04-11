@@ -123,6 +123,14 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         launch.assert_called_once()
 
+    def test_launch_ui_prints_install_hint_when_streamlit_missing(self):
+        with patch("cli.main._has_streamlit", return_value=False):
+            result = self.runner.invoke(app, [])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("未安装 UI 依赖 streamlit", result.output)
+        self.assertIn("pip install openbrep[ui]", result.output)
+
     def test_cli_subcommand_enters_repl(self):
         with patch("cli.main._run_chat_repl") as repl:
             result = self.runner.invoke(app, ["cli"])
@@ -152,6 +160,11 @@ class TestCliMainCommands(unittest.TestCase):
         with patch("cli.main._run_chat_repl") as repl:
             obrcli_entry()
         repl.assert_called_once_with(None)
+
+    def test_obrcli_entry_forwards_extra_args(self):
+        with patch("cli.main.app") as app_mock:
+            obrcli_entry(["--help"])
+        app_mock.assert_called_once_with(prog_name="obrcli", args=["cli", "--help"])
 
     def test_create_prints_final_directory_and_alias(self):
         with tempfile.TemporaryDirectory() as tmpdir:
