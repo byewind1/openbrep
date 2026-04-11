@@ -10,7 +10,9 @@ build/
 temp/
 *.gsm
 .env
+.env.*
 config.toml
+*.local.toml
 output/
 src/
 .qoder/
@@ -38,7 +40,7 @@ test_shelf/
 .claude/
 .worktrees/
 
-# local signing/pack scripts (never commit)
+# local signing/pack scripts
 scripts/gen_keys.py
 scripts/gen_license.py
 scripts/pack_pro.py
