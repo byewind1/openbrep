@@ -186,14 +186,14 @@ openbrep 需要调用 AI（如 Claude、GPT-4）。
 在 openbrep 文件夹内，运行：
 
 ```bash
-streamlit run ui/app.py
+obr
 ```
 
 **会发生什么：**
 
-1. 终端显示 `You can now view your Streamlit app in your browser`
-2. 自动打开浏览器，显示 openbrep 的界面
-3. 侧边栏会让你选择模型和填 API Key
+1. 终端显示 `OpenBrep UI 已启动：http://localhost:8501`
+2. 不会自动打开浏览器
+3. 请在你的常用浏览器中手动访问 `http://localhost:8501`（或直接使用已收藏地址）
 
 **如果浏览器没自动打开，手动访问：**
 
@@ -233,6 +233,23 @@ http://localhost:8501
 ---
 
 ## 常见问题排查
+
+### Q：启动时报错 "OpenBrep UI 默认端口 8501 已被占用"
+
+**A：** 说明有旧的 `obr` / `streamlit` 进程还在占着端口。先检查：
+
+```bash
+lsof -iTCP:8501 -sTCP:LISTEN
+```
+
+找到 PID 后关闭旧进程，再重新运行：
+
+```bash
+kill <PID>
+obr
+```
+
+---
 
 ### Q：启动时报错 "ModuleNotFoundError: No module named 'streamlit'"
 

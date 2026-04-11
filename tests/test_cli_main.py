@@ -147,7 +147,10 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertTrue(ui_app_path.is_absolute())
         self.assertEqual(ui_app_path.name, "app.py")
         self.assertEqual(ui_app_path.parent.name, "ui")
-        self.assertEqual(cmd[5:], ["--server.headless", "true", "--server.port", "8501"])
+        self.assertEqual(
+            cmd[5:],
+            ["--server.headless", "true", "--server.address", "127.0.0.1", "--server.port", "8501"],
+        )
 
     def test_launch_ui_fails_when_default_port_is_occupied(self):
         with patch("cli.main._has_streamlit", return_value=True):

@@ -520,6 +520,8 @@ def _launch_ui() -> int:
         str(ui_app_path),
         "--server.headless",
         "true",
+        "--server.address",
+        "127.0.0.1",
         "--server.port",
         str(port),
     ]
