@@ -111,3 +111,20 @@ VALUES "bHasBack" 0, 1          ! Discrete values
 - Range definition goes in **Parameter Script** (Values)
 - All parameters must be declared before any script uses them
 - Boolean parameters must be 0 (FALSE) or 1 (TRUE)
+
+## UNIT SYSTEM — CRITICAL
+GDL scripts use METERS (m) as the internal unit. This is fixed and cannot be changed.
+
+Rules:
+- User says "600mm wide" → write A = 0.600 in paramlist, use A in script
+- User says "12mm thick" → write thk = 0.012
+- User says "1200mm height" → write ZZYZX = 1.200
+- NEVER write values like 600, 1200, 450 as default lengths — these would mean 600m, 1200m
+- NEVER write "mm" as a variable name or comment variable
+
+Common reference values (meters):
+- Door width: 0.900 | Door height: 2.100
+- Column: 0.300~0.500 | Beam height: 0.400~0.600
+- Wall thickness: 0.200~0.300 | Floor slab: 0.120~0.200
+- Bolt diameter: 0.016~0.024 | Plate thickness: 0.010~0.020
+- Furniture height: 0.750~0.900 | Stair riser: 0.150~0.180
