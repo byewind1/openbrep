@@ -27,7 +27,8 @@ _GDL_BUILTINS: frozenset[str] = frozenset({
     # control flow
     "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "STEP", "NEXT",
     "WHILE", "ENDWHILE", "REPEAT", "UNTIL", "GOTO", "GOSUB", "RETURN",
-    "EXIT", "END", "GROUP", "ENDGROUP",
+    "EXIT", "END", "GROUP", "ENDGROUP", "SUBGROUP", "PLACEGROUP", "KILLGROUP",
+    "GROUP_OPERATION",
     # geometry
     "BLOCK", "SPHERE", "CONE", "CYLINDER", "CYLIND", "CYLIND_",
     "PRISM", "PRISM_", "BPRISM_",
@@ -67,7 +68,7 @@ _GDL_BUILTINS: frozenset[str] = frozenset({
     "LINE", "LINE2", "LINE_TYPE", "RECT", "RECT2", "ARC", "ARC2",
     "CIRCLE", "CIRCLE2", "SPLINE", "SPLINE2", "TEXT", "TEXT2", "RICHTEXT2",
     "HOTSPOT", "HOTSPOT2", "HOTLINE", "HOTLINE2", "HOTARC", "HOTARC2",
-    "FILL", "FILTER",
+    "FILL", "FILTER", "PROJECT2", "FRAGMENT2", "PICTURE2",
     # misc commands / keywords
     "RESOL", "TOLER", "MODEL", "WIRE", "SURFACE", "SOLID", "BODY",
     "CUTPLANE", "CUTFORM", "CUTPOLYA", "CUTPOLYX",
@@ -145,7 +146,7 @@ class StaticChecker:
 
     @staticmethod
     def _strip_comments(code: str) -> str:
-        """Remove metadata/comment-only lines and inline GDL comments."""
+        """Remove metadata/comment-only lines, inline comments, and quoted string literals."""
         lines = []
         for line in code.splitlines():
             stripped = line.strip()
@@ -153,6 +154,7 @@ class StaticChecker:
                 continue
             idx = line.find("!")
             clean = line[:idx] if idx >= 0 else line
+            clean = re.sub(r'"[^"]*"', '""', clean)
             if clean.strip():
                 lines.append(clean)
         return "\n".join(lines)
@@ -271,7 +273,7 @@ class StaticChecker:
 
     # Tokens that push a transformation layer (each occurrence = 1 push)
     _PUSH_RE = re.compile(
-        r"\b(ADD[XYZ]?|ADD2|MUL2?|ROT[XYZ]?|ROT2)\b",
+        r"\b(ADD(?:[XYZ])?|ADD2|MUL2?|ROT[XYZ]?|ROT2)\b",
         re.IGNORECASE,
     )
     # DEL N pops N layers; DEL alone pops 1

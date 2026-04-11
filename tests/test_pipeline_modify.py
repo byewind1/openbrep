@@ -31,6 +31,7 @@ from openbrep.runtime.pipeline import (
     _build_diff_summary,
     _snapshot_scripts,
 )
+from openbrep.static_checker import StaticError, StaticCheckResult
 from openbrep.config import GDLAgentConfig
 
 
@@ -170,6 +171,42 @@ class TestModifyFullContext(unittest.TestCase):
 
 class TestModifyApply(unittest.TestCase):
     """Changes from LLM must be applied to the project."""
+
+    def test_create_static_repair_is_re_linted(self):
+        pipeline = _make_pipeline("unused")
+        proj = _make_project()
+        calls = {"count": 0}
+
+        def fake_generate_only(self_agent, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return {"scripts/3d.gdl": "BLOCK A, B, ZZYZX\nEND\n"}, "first pass"
+            return {"scripts/2d.gdl": "CIRCLE2 0, 0, 1"}, "repair pass"
+
+        static_result = StaticCheckResult(
+            passed=False,
+            errors=[
+                StaticError(
+                    check_type="undefined_var",
+                    file="scripts/1d.gdl",
+                    detail="变量 height 未定义",
+                )
+            ],
+        )
+
+        with patch("openbrep.core.GDLAgent.generate_only", fake_generate_only):
+            with patch("openbrep.static_checker.StaticChecker.check", return_value=static_result):
+                result = pipeline.execute(TaskRequest(
+                    user_input="做一个书架",
+                    intent="CREATE",
+                    project=proj,
+                    work_dir="./workdir",
+                ))
+
+        self.assertTrue(result.success)
+        self.assertIn("scripts/2d.gdl", result.scripts)
+        self.assertIn("ARC2 0, 0, 1, 0, 360", result.scripts["scripts/2d.gdl"])
+        self.assertIn("RULE-002", result.lint_summary)
 
     def test_changes_applied_to_project(self):
         new_script = "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK 0.1, 0.1, 0.1\nDEL 1\nEND"

@@ -1,0 +1,11 @@
+﻿! Circular flower pot - 300mm diameter, 200mm height
+
+TOLER 0.001
+RESOL 36
+
+PEN 1
+
+! tapered pot body
+CONE ZZYZX, _r_bottom, _r_top, 90, 90
+
+END

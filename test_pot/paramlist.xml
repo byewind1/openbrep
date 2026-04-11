@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<ParamSection>
+	<ParamSectHeader>
+		<AutoHotspots>false</AutoHotspots>
+		<StatBits>
+			<STBit_FixSize/>
+		</StatBits>
+		<WDLeftFrame>0</WDLeftFrame>
+		<WDRightFrame>0</WDRightFrame>
+		<WDTopFrame>0</WDTopFrame>
+		<WDBotFrame>0</WDBotFrame>
+		<LayFlags>65535</LayFlags>
+		<WDMirrorThickness>0</WDMirrorThickness>
+		<WDWallInset>0</WDWallInset>
+	</ParamSectHeader>
+	<Parameters SectVersion="27" SectionFlags="0" SubIdent="0">
+		<Length Name="A">
+			<Description><![CDATA["Pot diameter"]]></Description>
+			<Fix/>
+			<Value>0.3</Value>
+		</Length>
+		<Length Name="B">
+			<Description><![CDATA["Pot diameter"]]></Description>
+			<Fix/>
+			<Value>0.3</Value>
+		</Length>
+		<Length Name="ZZYZX">
+			<Description><![CDATA["Pot height"]]></Description>
+			<Fix/>
+			<Value>0.2</Value>
+		</Length>
+	</Parameters>
+</ParamSection>

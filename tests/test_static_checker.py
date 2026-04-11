@@ -95,6 +95,47 @@ class TestUndefinedVar(unittest.TestCase):
         undef = [e for e in result.errors if e.check_type == "undefined_var"]
         self.assertEqual(undef, [], msg=f"Unexpected: {undef}")
 
+    def test_group_commands_and_names_not_flagged(self):
+        """GROUP family commands and quoted group names must not be flagged as undefined."""
+        proj = FakeProject(
+            scripts={
+                "3d.gdl": (
+                    'GROUP "outerPot"\n'
+                    'BLOCK A, B, ZZYZX\n'
+                    'ENDGROUP\n'
+                    'PLACEGROUP "outerPot"\n'
+                    'SUBGROUP "outerPot"\n'
+                    'END\n'
+                )
+            },
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        undef = [e for e in result.errors if e.check_type == "undefined_var"]
+        self.assertEqual(undef, [], msg=f"Unexpected: {undef}")
+
+    def test_values_and_lock_string_param_names_not_flagged(self):
+        """Quoted parameter names in VALUES/LOCK should not be parsed as variables."""
+        proj = FakeProject(
+            scripts={
+                "vl.gdl": 'VALUES "wall_thk" RANGE [0.01, 0.05]\nLOCK "wall_thk"\n'
+            },
+            param_names=["wall_thk"],
+        )
+        result = StaticChecker().check(proj)
+        undef = [e for e in result.errors if e.check_type == "undefined_var"]
+        self.assertEqual(undef, [], msg=f"Unexpected: {undef}")
+
+    def test_project2_not_flagged(self):
+        """PROJECT2 in 2d.gdl is a built-in command and must not trigger undefined_var."""
+        proj = FakeProject(
+            scripts={"2d.gdl": "PROJECT2 3, 270, 2\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        undef = [e for e in result.errors if e.check_type == "undefined_var"]
+        self.assertEqual(undef, [], msg=f"Unexpected: {undef}")
+
 
 class TestForwardDecl(unittest.TestCase):
 
@@ -169,6 +210,26 @@ class TestStackImbalance(unittest.TestCase):
         """ADDX + ADDY + 2×DEL → balanced."""
         proj = FakeProject(
             scripts={"3d.gdl": "ADDX 1\nADDY 2\nBLOCK 1,1,1\nDEL 2\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        si = [e for e in result.errors if e.check_type == "stack_imbalance"]
+        self.assertEqual(si, [])
+
+    def test_plain_add_counts_as_push(self):
+        """Three-argument ADD must count as one push."""
+        proj = FakeProject(
+            scripts={"3d.gdl": "ADD 1, 2, 3\nBLOCK 1,1,1\nDEL 1\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        si = [e for e in result.errors if e.check_type == "stack_imbalance"]
+        self.assertEqual(si, [])
+
+    def test_plain_add_and_addz_balance_two_dels(self):
+        """ADD + ADDZ + DEL 1 + DEL 1 should be treated as balanced."""
+        proj = FakeProject(
+            scripts={"3d.gdl": "ADD 1, 2, 0\nADDZ 3\nBLOCK 1,1,1\nDEL 1\nDEL 1\nEND\n"},
             param_names=[],
         )
         result = StaticChecker().check(proj)

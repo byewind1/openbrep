@@ -37,3 +37,8 @@ docs/superpowers/
 test_shelf/
 .claude/
 .worktrees/
+
+# local signing/pack scripts (never commit)
+scripts/gen_keys.py
+scripts/gen_license.py
+scripts/pack_pro.py

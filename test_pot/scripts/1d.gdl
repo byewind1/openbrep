@@ -1,0 +1,14 @@
+﻿! Circular flower pot - Master Script
+
+IF A <= 0 THEN A = 0.30
+IF B <= 0 THEN B = 0.30
+IF ZZYZX <= 0 THEN ZZYZX = 0.20
+
+! keep plan dimensions circular
+B = A
+
+_r = A / 2
+_r_top = _r
+_r_bottom = _r * 0.82
+
+IF _r_bottom < 0.01 THEN _r_bottom = 0.01
