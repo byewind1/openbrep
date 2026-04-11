@@ -131,6 +131,20 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertIn("未安装 UI 依赖 streamlit", result.output)
         self.assertIn("pip install openbrep[ui]", result.output)
 
+    def test_launch_ui_uses_absolute_app_path(self):
+        with patch("cli.main._has_streamlit", return_value=True):
+            with patch("cli.main.subprocess.call", return_value=0) as call:
+                result = self.runner.invoke(app, [])
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        cmd = call.call_args.args[0]
+        self.assertEqual(cmd[1:3], ["-m", "streamlit"])
+        self.assertEqual(cmd[3], "run")
+        ui_app_path = Path(cmd[4])
+        self.assertTrue(ui_app_path.is_absolute())
+        self.assertEqual(ui_app_path.name, "app.py")
+        self.assertEqual(ui_app_path.parent.name, "ui")
+
     def test_cli_subcommand_enters_repl(self):
         with patch("cli.main._run_chat_repl") as repl:
             result = self.runner.invoke(app, ["cli"])

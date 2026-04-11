@@ -480,13 +480,23 @@ def _has_streamlit() -> bool:
 
 
 
+def _resolve_ui_app_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "ui" / "app.py"
+
+
+
 def _launch_ui() -> int:
     if not _has_streamlit():
         err_console.print("[red]❌ 未安装 UI 依赖 streamlit。[/red]")
         err_console.print("请先安装： pip install openbrep[ui]", markup=False)
         return 1
 
-    cmd = [sys.executable, "-m", "streamlit", "run", "ui/app.py"]
+    ui_app_path = _resolve_ui_app_path()
+    if not ui_app_path.is_file():
+        err_console.print(f"[red]❌ 未找到 UI 入口文件：{ui_app_path}[/red]")
+        return 1
+
+    cmd = [sys.executable, "-m", "streamlit", "run", str(ui_app_path)]
     return subprocess.call(cmd)
 
 
