@@ -102,6 +102,14 @@
 - 每个版本在 `docs/releases/vX.X.X.md` 记录发布说明
 - README 版本历史统一用表格，不用标题+列表混排
 
+## GDL生成质量标准
+
+- 编译通过 ≠ 任务完成，语义正确是唯一标准
+- C01–C10 benchmark是回归基准，任何修改不得降低已通过数量
+- ADD/DEL stack操作必须逐行追踪，禁止假设嵌套深度
+- 生成失败时输出根因分析，禁止盲目retry
+- 单次生成目标：结构完整、参数有意义、几何可渲染，而非仅能编译
+
 ## 禁止事项
 - 禁止提交 `config.toml`（含真实 API Key 和代理地址）
 - 禁止提交 `.obsidian/`
@@ -207,11 +215,6 @@ print('custom_providers:', len(c.llm.custom_providers))
 "
 
 
-## 模型使用建议
-- 精细代码编辑（str_replace、多步骤缩进修改）：必须用 claude 系列模型
-- GLM-4.7 适合：对话、分析、解释、简单生成
-- GLM-4.7 不适合：复杂代码手术、多文件联动修改、缩进敏感的 Python 编辑
-
 ## 测试策略
 - **测试目录与命名**：新测试统一放在 `tests/` 下，文件命名 `test_*.py`，测试用例命名 `test_*`。
 - **最小回归集**：每次修改核心流程（`openbrep/core.py`、`openbrep/llm.py`、`openbrep/config.py`、`ui/app.py`）至少跑：
@@ -243,16 +246,6 @@ print('custom_providers:', len(c.llm.custom_providers))
 - **示例**：
   - 预览失败时显示：`st.error("预览失败：{e}")`
   - 编译成功时显示：`st.toast("✅ 编译成功")`
-
-## CI/CD
-- **必过检查**：
-  - `python3 -m py_compile openbrep/config.py openbrep/llm.py ui/app.py`
-  - `python3 run_tests.py`
-- **失败处理**：
-  - 如果 CI 失败，先在本地复现，再修复，禁止直接跳过。
-- **建议工作流**：
-  - PR 前先运行：`python3 run_tests.py`
-  - 合并前确保无未提交变更：`git status -s`
 
 ## 安全合规
 - **敏感信息**：
