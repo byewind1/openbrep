@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import re
@@ -156,6 +157,61 @@ def normalize_license_record(payload: dict, signature_b64: str) -> dict:
         "license_payload": payload,
         "license_signature": signature_b64,
     }
+
+
+def decode_signed_license_code(code: str, *, verify_license_payload: Callable[[dict, str], tuple[bool, str, dict | None]]) -> tuple[bool, str, dict | None]:
+    raw = (code or "").strip()
+    if not raw:
+        return False, "请输入授权码", None
+
+    if not raw.startswith("OBRLIC-"):
+        return False, "授权码格式错误", None
+
+    token = raw[len("OBRLIC-"):].strip()
+    try:
+        decoded = urlsafe_b64decode(token)
+        record = json.loads(decoded.decode("utf-8"))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError, binascii.Error):
+        return False, "授权码格式错误", None
+
+    if not isinstance(record, dict):
+        return False, "授权码格式错误", None
+
+    payload = record.get("payload")
+    signature_b64 = str(record.get("signature", "")).strip()
+    if not isinstance(payload, dict) or not signature_b64:
+        return False, "授权码格式错误", None
+
+    required_fields = ["buyer_id", "plan", "issued_at"]
+    missing = [field for field in required_fields if not str(payload.get(field, "")).strip()]
+    if missing:
+        return False, f"授权数据缺少字段：{', '.join(missing)}", None
+
+    return verify_license_payload(payload, signature_b64)
+
+
+def verify_pro_code(code: str, *, decode_signed_license_code_fn: Callable[[str], tuple[bool, str, dict | None]]) -> tuple[bool, str, dict | None]:
+    return decode_signed_license_code_fn(code)
+
+
+def license_record_is_active(data: dict, *, verify_license_payload: Callable[[dict, str], tuple[bool, str, dict | None]]) -> tuple[bool, str, dict | None]:
+    payload = data.get("license_payload")
+    signature_b64 = str(data.get("license_signature", "")).strip()
+    if not isinstance(payload, dict) or not signature_b64:
+        return False, "本地授权记录缺失", None
+    return verify_license_payload(payload, signature_b64)
+
+
+def license_matches_package(license_record: dict, package_manifest: dict) -> tuple[bool, str]:
+    license_buyer = str(license_record.get("buyer_id", "")).strip()
+    package_buyer = str(package_manifest.get("buyer_id", "")).strip()
+    if not license_buyer:
+        return False, "本地授权缺少 buyer_id"
+    if not package_buyer:
+        return False, "知识包缺少 buyer_id"
+    if license_buyer != package_buyer:
+        return False, f"知识包不属于当前授权用户（当前: {license_buyer}, 知识包: {package_buyer}）"
+    return True, "buyer_id 匹配"
 
 
 def to_float(raw) -> float | None:
