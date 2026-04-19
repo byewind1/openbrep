@@ -1819,37 +1819,17 @@ def show_welcome():
 
 # ── Intent Classification ─────────────────────────────────
 
-_GDL_KEYWORDS = [
-    # 动作
-    "创建", "生成", "制作", "做一个", "建一个", "写一个", "写个", "写一",
-    "做个", "建个", "来个", "整个", "出一个", "出个",
-    "修改", "更新", "添加", "删除", "调整", "优化", "重写", "补充",
-    # 建筑/家具对象（中文）
-    "书架", "柜子", "衣柜", "橱柜", "储物柜", "鞋柜", "电视柜",
-    "桌子", "桌", "椅子", "椅", "沙发", "床", "茶几", "柜",
-    "窗", "门", "墙", "楼梯", "柱", "梁", "板", "扶手", "栏杆",
-    "屋顶", "天花", "地板", "灯", "管道",
-    # 技术词
-    "参数", "parameter", "script", "gdl", "gsm", "hsf",
-    "compile", "编译", "build", "create", "make", "add",
-    "3d", "2d", "prism", "block", "sphere", "prism_", "body",
-    "project2", "rect2", "poly2",
-]
+_GDL_KEYWORDS = ui_view_models.GDL_KEYWORDS
 
-# Pure chat patterns — greeting / meta questions only
-_CHAT_ONLY_PATTERNS = [
-    r"^(你好|hello|hi|hey|嗨|哈喽)[!！。\s]*$",
-    r"^(谢谢|感谢|thanks)[!！。\s]*$",
-    r"^你(是谁|能做什么|有什么功能)",
-    r"^(怎么|如何|什么是).*(gdl|archicad|hsf|构件)",
-]
+_CHAT_ONLY_PATTERNS = ui_view_models.CHAT_ONLY_PATTERNS
+
 
 def _is_gdl_intent(text: str) -> bool:
-    t = text.lower()
-    return any(kw in t for kw in _GDL_KEYWORDS)
+    return ui_view_models.is_gdl_intent(text)
+
 
 def _is_pure_chat(text: str) -> bool:
-    return any(re.search(p, text.strip(), re.IGNORECASE) for p in _CHAT_ONLY_PATTERNS)
+    return ui_view_models.is_pure_chat(text)
 
 def _route_main_input(text: str, project_loaded: bool = False, has_image: bool = False) -> tuple[str, str]:
     """Return pipeline intent plus extracted object name for the main chat box."""
