@@ -2115,6 +2115,39 @@ def _run_normal_text_path(effective_input: str, redo_input, bridge_input, live_o
 
 
 
+def _run_vision_path(has_image_input: bool, vision_mime: str | None, vision_name: str | None, user_input: str | None, active_debug_mode, vision_b64: str, live_output, api_key: str, model_name: str) -> tuple[bool, bool, str | None]:
+    return ui_chat_controller.run_vision_path(
+        has_image_input=has_image_input,
+        vision_mime=vision_mime,
+        vision_name=vision_name,
+        user_input=user_input,
+        active_debug_mode=active_debug_mode,
+        vision_b64=vision_b64,
+        session_state=st.session_state,
+        api_key=api_key,
+        model_name=model_name,
+        resolve_image_route_mode_fn=_resolve_image_route_mode,
+        build_image_user_display_fn=_build_image_user_display,
+        live_output=live_output,
+        create_project_fn=lambda name: HSFProject.create_new(name, work_dir=st.session_state.work_dir),
+        has_any_script_content_fn=lambda proj: ui_actions.has_any_script_content(proj, _SCRIPT_MAP),
+        thumb_image_bytes_fn=_thumb_image_bytes,
+        image_fn=st.image,
+        markdown_fn=st.markdown,
+        run_vision_generate_fn=run_vision_generate,
+        run_agent_generate_with_debug_image_fn=lambda req, proj, status_col, gsm_name, auto_apply, image_b64, image_mime: run_agent_generate(
+            req,
+            proj,
+            status_col,
+            gsm_name=gsm_name,
+            auto_apply=auto_apply,
+            debug_image_b64=image_b64,
+            debug_image_mime=image_mime,
+        ),
+    )
+
+
+
 def _build_assistant_chat_message(content: str, intent: str, has_project: bool, source_user_input: str) -> dict:
     return ui_view_models.build_assistant_chat_message(content, intent, has_project, source_user_input)
 
@@ -3344,79 +3377,21 @@ with col_right:
 
     # ── Vision path: attachment on chat_input ────────────────────────────────────
     if _has_image_input:
-        _vision_mime = _vision_mime or "image/jpeg"
-        _vision_name = _vision_name or "image"
-        _extra_text = (user_input or "").strip()
-        _joined_text = _extra_text
-
-        _route_pick = st.session_state.get("chat_image_route_mode", "自动")
-        _route_mode = _resolve_image_route_mode(
-            route_pick=_route_pick,
-            active_debug_mode=_active_dbg,
-            joined_text=_joined_text,
-            vision_name=_vision_name,
+        _handled, _should_rerun, _err_msg = _run_vision_path(
+            _has_image_input,
+            _vision_mime,
+            _vision_name,
+            user_input,
+            _active_dbg,
+            _vision_b64,
+            live_output,
+            api_key,
+            model_name,
         )
-        _user_display = _build_image_user_display(_vision_name, _route_mode, _joined_text)
-        st.session_state.chat_history.append({
-            "role": "user",
-            "content": _user_display,
-            "image_b64": _vision_b64,
-            "image_mime": _vision_mime,
-            "image_name": _vision_name,
-        })
-
-        if not api_key and "ollama" not in model_name:
-            err = "❌ 请在左侧边栏填入 API Key 后再试。"
-            st.session_state.chat_history.append({"role": "assistant", "content": err})
+        if _err_msg:
+            st.error(_err_msg)
+        if _handled and _should_rerun:
             st.rerun()
-        else:
-            try:
-                st.session_state.agent_running = True
-                # Ensure project exists
-                if not st.session_state.project:
-                    _vname = Path(_vision_name).stem or "vision_object"
-                    _vproj = HSFProject.create_new(_vname, work_dir=st.session_state.work_dir)
-                    st.session_state.project = _vproj
-                    st.session_state.pending_gsm_name = _vname
-                    st.session_state.script_revision = 0
-
-                _proj_v = st.session_state.project
-                _has_any_v = ui_actions.has_any_script_content(_proj_v, _SCRIPT_MAP)
-
-                with live_output.container():
-                    st.chat_message("user").markdown(_user_display)
-                    _img_bytes = _thumb_image_bytes(_vision_b64)
-                    if _img_bytes:
-                        st.image(_img_bytes, width=240)
-                    with st.chat_message("assistant"):
-                        if _route_mode == "generate":
-                            msg = run_vision_generate(
-                                image_b64=_vision_b64,
-                                image_mime=_vision_mime,
-                                extra_text=_joined_text,
-                                proj=_proj_v,
-                                status_col=st.container(),
-                                auto_apply=not _has_any_v,
-                            )
-                        else:
-                            _debug_req = _joined_text or "请根据这张截图定位并修复当前项目中的问题。"
-                            if not _debug_req.startswith("[DEBUG:"):
-                                _debug_req = f"[DEBUG:editor] {_debug_req}"
-                            msg = run_agent_generate(
-                                _debug_req,
-                                _proj_v,
-                                st.container(),
-                                gsm_name=(st.session_state.pending_gsm_name or _proj_v.name),
-                                auto_apply=not _has_any_v,
-                                debug_image_b64=_vision_b64,
-                                debug_image_mime=_vision_mime,
-                            )
-                        st.markdown(msg)
-
-                st.session_state.chat_history.append({"role": "assistant", "content": msg})
-                st.rerun()
-            finally:
-                st.session_state.agent_running = False
 
     # ── Normal text path ─────────────────────────────────────────────────────────
     elif effective_input:
