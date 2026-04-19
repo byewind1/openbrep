@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import re
+from datetime import date
+from pathlib import Path
 from typing import Callable
 
 
@@ -69,6 +71,52 @@ def build_chat_respond_request_kwargs(
         "history": trimmed_history,
         "assistant_settings": assistant_settings,
     }
+
+
+def derive_gsm_name_from_filename(filename: str) -> str:
+    stem = Path(filename).stem.strip()
+    if not stem:
+        return ""
+
+    name = stem
+    for _ in range(3):
+        before = name
+        name = re.sub(r'(?i)[\s._-]*v\d+(?:\.\d+)*$', '', name).strip(" _-.")
+        name = re.sub(r'[\s._-]*\d+$', '', name).strip(" _-.")
+        if name == before:
+            break
+
+    return name or stem.strip(" _-.")
+
+
+def extract_gsm_name_candidate(text: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+
+    if t.startswith("[DEBUG:") and "]" in t:
+        t = t.split("]", 1)[1].strip()
+
+    patterns = [
+        r'(?:生成|创建|制作|做一个|做个|建一个|建个)\s*(?:一个|个)?\s*([A-Za-z0-9_\-\u4e00-\u9fff]{1,40})',
+        r'(?:生成|创建|制作)\s*([A-Za-z0-9_\-\u4e00-\u9fff]{1,40})',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, t)
+        if match:
+            return match.group(1).strip(" _-.")
+    return ""
+
+
+def stamp_script_header(script_label: str, content: str, revision: int) -> str:
+    body = content or ""
+    header = f"! v{revision} {date.today().isoformat()} {script_label} Script"
+
+    lines = body.splitlines()
+    if lines and re.match(r'^\!\s*v\d+\s+\d{4}-\d{2}-\d{2}\s+.+\s+Script\s*$', lines[0].strip(), re.IGNORECASE):
+        lines[0] = header
+        return "\n".join(lines)
+    return f"{header}\n{body}" if body else header
 
 
 

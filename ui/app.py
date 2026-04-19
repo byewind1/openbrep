@@ -1671,60 +1671,17 @@ def _safe_compile_revision(proj_name: str, work_dir: str, requested_revision: in
 
 
 def _derive_gsm_name_from_filename(filename: str) -> str:
-    """Derive clean GSM name from imported filename.
+    return ui_view_models.derive_gsm_name_from_filename(filename)
 
-    Rules:
-    - remove extension
-    - remove trailing version suffix like v1 / v2.1 / _v1 / -v2
-    - remove trailing numeric suffix like _001 / -002 / 123
-    """
-    stem = Path(filename).stem.strip()
-    if not stem:
-        return ""
-
-    name = stem
-    for _ in range(3):
-        before = name
-        name = re.sub(r'(?i)[\s._-]*v\d+(?:\.\d+)*$', '', name).strip(" _-.")
-        name = re.sub(r'[\s._-]*\d+$', '', name).strip(" _-.")
-        if name == before:
-            break
-
-    return name or stem.strip(" _-.")
 
 
 def _extract_gsm_name_candidate(text: str) -> str:
-    """Extract object name candidate from prompt with simple regex."""
-    t = (text or "").strip()
-    if not t:
-        return ""
+    return ui_view_models.extract_gsm_name_candidate(text)
 
-    # Strip debug prefix if present
-    if t.startswith("[DEBUG:") and "]" in t:
-        t = t.split("]", 1)[1].strip()
-
-    pats = [
-        r'(?:生成|创建|制作|做一个|做个|建一个|建个)\s*(?:一个|个)?\s*([A-Za-z0-9_\-\u4e00-\u9fff]{1,40})',
-        r'(?:生成|创建|制作)\s*([A-Za-z0-9_\-\u4e00-\u9fff]{1,40})',
-    ]
-    for p in pats:
-        m = re.search(p, t)
-        if m:
-            return m.group(1).strip(" _-.")
-    return ""
 
 
 def _stamp_script_header(script_label: str, content: str, revision: int) -> str:
-    """Inject/refresh first-line script version header with unified revision."""
-    body = content or ""
-    today = _datetime.date.today().isoformat()
-    header = f"! v{revision} {today} {script_label} Script"
-
-    lines = body.splitlines()
-    if lines and re.match(r'^\!\s*v\d+\s+\d{4}-\d{2}-\d{2}\s+.+\s+Script\s*$', lines[0].strip(), re.IGNORECASE):
-        lines[0] = header
-        return "\n".join(lines)
-    return f"{header}\n{body}" if body else header
+    return ui_view_models.stamp_script_header(script_label, content, revision)
 
 
 # ── Object Name Extraction (dictionary + regex, no LLM) ──
