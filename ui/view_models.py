@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 
 
@@ -133,3 +134,66 @@ def build_assistant_chat_message(content: str, intent: str, has_project: bool, s
         message["bridgeable_action"] = "modify_from_explainer"
         message["bridge_source_user_input"] = source_user_input
     return message
+
+
+def classify_vision_error(exc: Exception) -> str:
+    msg = str(exc).strip() or exc.__class__.__name__
+    lower_msg = msg.lower()
+    if isinstance(exc, TimeoutError) or "timeout" in lower_msg or "timed out" in lower_msg:
+        return "图片分析超时：请换更小的图片，或检查当前模型服务/代理是否响应正常。"
+    if "配置错误" in msg or "api key" in lower_msg or "authentication" in lower_msg or "unauthorized" in lower_msg:
+        return msg
+    if any(token in lower_msg for token in ["payload", "too large", "413", "context length", "image too large", "request entity too large"]):
+        return "图片过大或请求体过长：请压缩图片，或减少附带说明后重试。"
+    if any(token in lower_msg for token in ["vision", "image_url", "image", "unsupported"]):
+        return f"当前模型或网关不支持图片分析：{msg}"
+    return f"图片分析失败：{msg}"
+
+
+def validate_chat_image_size(raw_bytes: bytes, image_name: str, max_chat_image_bytes: int) -> str | None:
+    if raw_bytes and len(raw_bytes) > max_chat_image_bytes:
+        size_mb = len(raw_bytes) / (1024 * 1024)
+        return f"图片 `{image_name}` 过大（{size_mb:.1f} MB），请压缩到 5 MB 以内再试。"
+    return None
+
+
+def trim_history_for_image(history: list[dict], limit: int = 4) -> list[dict]:
+    if not history:
+        return []
+    return history[-limit:]
+
+
+def thumb_image_bytes(image_b64: str) -> bytes | None:
+    if not image_b64:
+        return None
+    try:
+        return base64.b64decode(image_b64)
+    except Exception:
+        return None
+
+
+def detect_image_task_mode(user_text: str, image_name: str = "", has_project: bool = False) -> str:
+    t = (user_text or "").lower()
+    n = (image_name or "").lower()
+
+    debug_tokens = [
+        "debug", "error", "报错", "错误", "失败", "修复", "定位", "排查", "warning", "line ", "script",
+        "screenshot", "截图", "log", "trace", "崩溃", "不显示", "异常",
+    ]
+    gen_tokens = [
+        "生成", "创建", "建模", "构件", "参考", "外观", "照片", "photo", "reference", "design",
+    ]
+
+    if any(k in t for k in debug_tokens):
+        return "debug"
+    if any(k in t for k in gen_tokens):
+        return "generate"
+
+    if any(k in n for k in ["screenshot", "screen", "截屏", "截图", "error", "debug", "log"]):
+        return "debug"
+    if any(k in n for k in ["photo", "img", "image", "参考", "模型", "design"]):
+        return "generate"
+
+    if has_project:
+        return "debug"
+    return "generate"
