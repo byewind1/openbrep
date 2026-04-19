@@ -17,6 +17,7 @@ from openbrep.config import LLMConfig
 
 
 logger = logging.getLogger(__name__)
+_NATIVE_PROVIDERS = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/", "openai/")
 
 
 @dataclass
@@ -53,6 +54,76 @@ class LLMAdapter:
             if any(target == str(candidate).lower() for candidate in models):
                 return True
         return False
+
+    def _get_custom_provider_config(self, model: str | None = None) -> Optional[dict]:
+        target = (model or self.config.model or "").lower()
+        for provider in self.config.custom_providers:
+            if target == str(provider.get("name", "") or "").lower():
+                return provider
+            models = provider.get("models", []) or []
+            if any(target == str(candidate).lower() for candidate in models):
+                return provider
+        return None
+
+    def _is_native_provider_model(self, model: str) -> bool:
+        return any(model.startswith(prefix) for prefix in _NATIVE_PROVIDERS)
+
+    def _build_config_error_message(self, exc: Exception, model: str) -> str:
+        configured_model = self.config.model or model
+        resolved_api_key = self.config.resolve_api_key()
+        resolved_api_base = self.config.resolve_api_base()
+        custom_provider = self._get_custom_provider_config(configured_model)
+        provider_name = str(custom_provider.get("name", "") or "") if custom_provider else ""
+        exc_text = str(exc).strip() or exc.__class__.__name__
+
+        litellm_exceptions = getattr(self._litellm, "exceptions", None)
+        bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
+        auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
+
+        if auth_error and isinstance(exc, auth_error):
+            if not resolved_api_key:
+                summary = (
+                    f"LLM 配置错误：当前模型 `{configured_model}` 未找到可用 API Key。"
+                    "请检查 config.toml 中 [llm.provider_keys] 或对应 [[llm.custom_providers]] 的 api_key。"
+                )
+            else:
+                summary = (
+                    f"LLM 认证失败：模型 `{configured_model}` 的 API Key 可能无效、已过期，"
+                    "或与当前 provider 不匹配。"
+                )
+        elif bad_request and isinstance(exc, bad_request):
+            if custom_provider and not resolved_api_base:
+                summary = (
+                    f"LLM 配置错误：自定义 provider `{provider_name or configured_model}` 缺少 base_url，"
+                    "无法请求当前模型。请检查 [[llm.custom_providers]] 配置。"
+                )
+            elif custom_provider:
+                summary = (
+                    f"LLM 请求被拒绝：模型 `{configured_model}` 所属自定义 provider `{provider_name or configured_model}` "
+                    "可能不兼容当前协议、base_url 或模型名配置。"
+                )
+            else:
+                summary = (
+                    f"LLM 配置错误：模型 `{configured_model}` 可能未被当前官方 provider 支持，"
+                    "或 model 名称填写不正确。"
+                )
+        else:
+            summary = f"LLM 调用失败：模型 `{configured_model}` 的配置或请求参数可能有误。"
+
+        details = [summary, f"底层错误：{exc_text}"]
+        if custom_provider:
+            details.insert(1, f"provider={provider_name or '(未命名自定义 provider)' }")
+        if resolved_api_base:
+            details.append(f"api_base={resolved_api_base}")
+        details.append(f"resolved_model={model}")
+        return " ".join(details)
+
+    def _raise_config_error_if_needed(self, exc: Exception, model: str) -> None:
+        litellm_exceptions = getattr(self._litellm, "exceptions", None)
+        bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
+        auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
+        if (bad_request and isinstance(exc, bad_request)) or (auth_error and isinstance(exc, auth_error)):
+            raise RuntimeError(self._build_config_error_message(exc, model)) from exc
 
     def _setup(self):
         """Initialize litellm with config."""
@@ -133,8 +204,7 @@ class LLMAdapter:
             completion_kwargs["api_key"] = api_key
         # Skip api_base for native LiteLLM providers (zai/, deepseek/, etc.)
         # — they handle endpoints internally. Only pass for openai-compatible custom endpoints.
-        native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
-        is_native = any(model.startswith(p) for p in native_providers)
+        is_native = self._is_native_provider_model(model)
         api_base = self.config.resolve_api_base()
         if api_base and not is_native:
             completion_kwargs["api_base"] = api_base
@@ -153,13 +223,7 @@ class LLMAdapter:
                 elapsed,
                 exc.__class__.__name__,
             )
-            litellm_exceptions = getattr(self._litellm, "exceptions", None)
-            bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
-            auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
-            if (bad_request and isinstance(exc, bad_request)) or (auth_error and isinstance(exc, auth_error)):
-                raise RuntimeError(
-                    "LLM 配置错误：请检查 config.toml 中 model 字段是否填写了正确的模型名称（如 gpt-4o、claude-3-5-sonnet），以及对应的 api_key 是否已配置。"
-                ) from exc
+            self._raise_config_error_if_needed(exc, model)
             raise
         if completion_kwargs.get("stream"):
             chunks = []
@@ -242,8 +306,7 @@ class LLMAdapter:
         if api_key:
             completion_kwargs["api_key"] = api_key
 
-        native_providers = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/")
-        is_native = any(model.startswith(p) for p in native_providers)
+        is_native = self._is_native_provider_model(model)
         api_base = self.config.resolve_api_base()
         if api_base and not is_native:
             completion_kwargs["api_base"] = api_base
@@ -271,13 +334,7 @@ class LLMAdapter:
                 elapsed,
                 exc.__class__.__name__,
             )
-            litellm_exceptions = getattr(self._litellm, "exceptions", None)
-            bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
-            auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
-            if (bad_request and isinstance(exc, bad_request)) or (auth_error and isinstance(exc, auth_error)):
-                raise RuntimeError(
-                    "LLM 配置错误：请检查 config.toml 中 model 字段是否填写了正确的模型名称（如 gpt-4o、claude-3-5-sonnet），以及对应的 api_key 是否已配置。"
-                ) from exc
+            self._raise_config_error_if_needed(exc, model)
             raise
         if completion_kwargs.get("stream"):
             chunks = []

@@ -52,7 +52,7 @@ from openbrep.gdl_previewer import Preview2DResult, Preview3DResult, preview_2d_
 from openbrep.validator import GDLValidator
 from openbrep.knowledge import KnowledgeBase
 try:
-    from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, model_to_provider
+    from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, model_to_provider, GDLAgentConfig
     _MODEL_CONSTANTS_OK = True
 except ImportError:
     ALL_MODELS = []
@@ -733,14 +733,40 @@ _config_defaults = {}
 _provider_keys: dict = {}   # {provider: api_key}
 _custom_providers: list = []  # [{base_url, models, api_key, protocol, name}]
 
-try:
+
+def _get_reloadable_model_list() -> list[str]:
+    models: list[str] = []
+    if _config is not None:
+        return [str(model) for model in _config.get_available_models()]
+
+    for provider in _custom_providers:
+        for model in provider.get("models", []) or []:
+            model_str = str(model)
+            if model_str not in models:
+                models.append(model_str)
+
+    for model in ALL_MODELS:
+        model_str = str(model)
+        if model_str not in models:
+            models.append(model_str)
+
+    return models
+
+
+def _reload_config_globals(update_session_state: bool = False) -> None:
+    global _config, _config_defaults, _provider_keys, _custom_providers
+
     from openbrep.config import GDLAgentConfig
     import sys as _sys, os as _os
-    # Load raw TOML to get provider_keys nested table
     if _sys.version_info >= (3, 11):
         import tomllib as _tomllib
     else:
         import tomli as _tomllib   # type: ignore
+
+    _config = None
+    _config_defaults = {}
+    _provider_keys = {}
+    _custom_providers = []
 
     _toml_path = _os.path.join(_os.path.dirname(__file__), "..", "config.toml")
     if _os.path.exists(_toml_path):
@@ -748,16 +774,34 @@ try:
             _raw = _tomllib.load(_f)
         _llm_raw = _raw.get("llm", {})
         _provider_keys = _llm_raw.get("provider_keys", {})
-
-        # ── 自定义 Provider (config.toml) ──
         _custom_providers = _llm_raw.get("custom_providers", []) or []
 
     _config = GDLAgentConfig.load()
+    _provider_keys = dict(_config.llm.provider_keys or _provider_keys)
+    _custom_providers = list(_config.llm.custom_providers or _custom_providers)
     _config_defaults = {
         "llm_model": _config.llm.model,
         "compiler_path": _config.compiler.path or "",
         "assistant_settings": _config.llm.assistant_settings or "",
     }
+
+    if not update_session_state:
+        return
+
+    existing_model_keys = dict(st.session_state.get("model_api_keys", {}))
+    refreshed_model_keys = dict(existing_model_keys)
+    for model in _get_reloadable_model_list():
+        refreshed_model_keys[model] = _key_for_model(model) or refreshed_model_keys.get(model, "")
+
+    st.session_state.model_api_keys = refreshed_model_keys
+    st.session_state.assistant_settings = _config_defaults.get(
+        "assistant_settings",
+        st.session_state.get("assistant_settings", ""),
+    )
+
+
+try:
+    _reload_config_globals()
 except Exception:
     pass
 
@@ -1010,6 +1054,21 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🧠 AI 模型 / LLM")
+
+    _reload_col, _status_col = st.columns([1, 2])
+    with _reload_col:
+        if st.button("重新加载配置", width='stretch', disabled=_is_generation_locked(st.session_state)):
+            try:
+                _reload_config_globals(update_session_state=True)
+                st.session_state["current_model"] = _config_defaults.get("llm_model", "")
+                st.session_state["reload_config_notice"] = "✅ 已从磁盘重新加载 config.toml"
+                st.rerun()
+            except Exception as e:
+                st.warning(f"配置重载失败：{e}")
+    with _status_col:
+        _reload_notice = st.session_state.pop("reload_config_notice", "")
+        if _reload_notice:
+            st.caption(_reload_notice)
 
     _custom_list = _config.llm.custom_providers if _config else _custom_providers
     _model_state = _build_model_source_state(

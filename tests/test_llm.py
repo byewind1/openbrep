@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from openbrep.config import LLMConfig
+from openbrep.core import GDLAgent
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import LLMAdapter
 from ui.app import (
@@ -577,8 +578,10 @@ class TestLLMAdapterVision(unittest.TestCase):
             timeout=12,
         )
         adapter = LLMAdapter(config)
+        built_response = self._mock_response()
         adapter._litellm = MagicMock()
-        adapter._litellm.completion.return_value = self._mock_response()
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
 
         result = adapter.generate_with_image(
             text_prompt="describe",
@@ -590,7 +593,7 @@ class TestLLMAdapterVision(unittest.TestCase):
         kwargs = adapter._litellm.completion.call_args.kwargs
         self.assertEqual(kwargs["timeout"], 12)
         self.assertEqual(kwargs["api_key"], "test-key")
-        self.assertEqual(kwargs["api_base"], "https://example.com/v1")
+        self.assertNotIn("api_base", kwargs)
 
     def test_generate_with_image_wraps_auth_error(self):
         config = LLMConfig(model="gpt-4o", timeout=10)
@@ -605,7 +608,81 @@ class TestLLMAdapterVision(unittest.TestCase):
 
         with self.assertRaises(RuntimeError) as cm:
             adapter.generate_with_image("describe", "YWJj")
-        self.assertIn("LLM 配置错误", str(cm.exception))
+        message = str(cm.exception)
+        self.assertIn("API Key", message)
+        self.assertIn("LLM 认证失败", message)
+        self.assertIn("无效、已过期", message)
+        self.assertIn("底层错误：bad key", message)
+        self.assertIn("resolved_model=openai/gpt-4o", message)
+
+    def test_generate_wraps_auth_error_with_invalid_key_hint(self):
+        config = LLMConfig(model="gpt-4o", api_key="test-key", timeout=10)
+        adapter = LLMAdapter(config)
+
+        class FakeAuthError(Exception):
+            pass
+
+        adapter._litellm = MagicMock()
+        adapter._litellm.exceptions = MagicMock(AuthenticationError=FakeAuthError, BadRequestError=ValueError)
+        adapter._litellm.completion.side_effect = FakeAuthError("invalid api key")
+
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("LLM 认证失败", message)
+        self.assertIn("无效、已过期", message)
+        self.assertIn("resolved_model=openai/gpt-4o", message)
+
+    def test_generate_wraps_bad_request_for_builtin_model_with_model_hint(self):
+        config = LLMConfig(model="gpt-bad-name", api_key="test-key", timeout=10)
+        adapter = LLMAdapter(config)
+
+        class FakeBadRequestError(Exception):
+            pass
+
+        adapter._litellm = MagicMock()
+        adapter._litellm.exceptions = MagicMock(AuthenticationError=PermissionError, BadRequestError=FakeBadRequestError)
+        adapter._litellm.completion.side_effect = FakeBadRequestError("model_not_found")
+
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("模型 `gpt-bad-name`", message)
+        self.assertIn("model 名称填写不正确", message)
+        self.assertIn("底层错误：model_not_found", message)
+        self.assertIn("resolved_model=openai/gpt-bad-name", message)
+
+    def test_generate_wraps_bad_request_for_custom_provider_with_provider_hint(self):
+        config = LLMConfig(
+            model="glm-5.1",
+            timeout=10,
+            custom_providers=[
+                {
+                    "name": "ymg",
+                    "base_url": "https://api.airsim.eu.cc/v1",
+                    "api_key": "test-key",
+                    "models": ["glm-5.1"],
+                    "protocol": "openai",
+                }
+            ],
+        )
+        adapter = LLMAdapter(config)
+
+        class FakeBadRequestError(Exception):
+            pass
+
+        adapter._litellm = MagicMock()
+        adapter._litellm.exceptions = MagicMock(AuthenticationError=PermissionError, BadRequestError=FakeBadRequestError)
+        adapter._litellm.completion.side_effect = FakeBadRequestError("unsupported model")
+
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("自定义 provider `ymg`", message)
+        self.assertIn("协议、base_url 或模型名配置", message)
+        self.assertIn("provider=ymg", message)
+        self.assertIn("api_base=https://api.airsim.eu.cc/v1", message)
+        self.assertIn("resolved_model=glm-5.1", message)
 
     def test_gpt5_custom_provider_model_stays_unprefixed(self):
         config = LLMConfig(
@@ -639,8 +716,10 @@ class TestLLMAdapterVision(unittest.TestCase):
             custom_providers=[{"name": "ymg", "models": ["ymg-chat"], "protocol": "openai"}],
         )
         adapter = LLMAdapter(config)
+        built_response = self._mock_response(model_name="ymg-chat")
         adapter._litellm = MagicMock()
-        adapter._litellm.completion.return_value = self._mock_response(model_name="ymg-chat")
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
 
         result = adapter.generate([{"role": "user", "content": "hi"}])
 
@@ -706,14 +785,17 @@ class TestLLMAdapterVision(unittest.TestCase):
         chunk2.choices = [MagicMock(delta=MagicMock(content=" world"))]
         chunk3 = MagicMock()
         chunk3.choices = [MagicMock(delta=MagicMock(content=None))]
+        built_response = self._mock_response(model_name="openai/gpt-5.4")
+        built_response.choices[0].message.content = "hello world"
         adapter._litellm = MagicMock()
         adapter._litellm.completion.return_value = [chunk1, chunk2, chunk3]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
 
         result = adapter.generate([{"role": "user", "content": "hi"}])
 
         self.assertEqual(result.content, "hello world")
         self.assertEqual(result.model, "openai/gpt-5.4")
-        self.assertEqual(result.usage, {})
+        self.assertEqual(result.usage, {"prompt_tokens": 1})
         self.assertEqual(result.finish_reason, "stop")
         kwargs = adapter._litellm.completion.call_args.kwargs
         self.assertEqual(kwargs["model"], "openai/gpt-5.4")
@@ -801,8 +883,10 @@ class TestLLMAdapterVision(unittest.TestCase):
             timeout=12,
         )
         adapter = LLMAdapter(config)
+        built_response = self._mock_response(model_name="openai/gpt-5.4")
         adapter._litellm = MagicMock()
-        adapter._litellm.completion.return_value = self._mock_response(model_name="openai/gpt-5.4")
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
 
         result = adapter.generate_with_image(
             text_prompt="describe",

@@ -85,3 +85,47 @@ timeout = 60
             self.assertEqual(config.llm.custom_providers[0]["name"], "ymg")
             self.assertEqual(config.llm.custom_providers[0]["models"], ["gpt-5.4"])
 
+    def test_load_reflects_disk_changes_on_reload(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                '''
+[llm]
+model = "deepseek-chat"
+
+[llm.provider_keys]
+deepseek = "deepseek-key"
+'''.strip(),
+                encoding="utf-8",
+            )
+
+            first = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(first.llm.model, "deepseek-chat")
+            self.assertEqual(first.llm.provider_keys["deepseek"], "deepseek-key")
+            self.assertEqual(first.llm.custom_providers, [])
+
+            config_path.write_text(
+                '''
+[llm]
+model = "glm-5.1"
+assistant_settings = "重新加载后的配置"
+
+[[llm.custom_providers]]
+name = "ymg"
+base_url = "https://api.airsim.eu.cc/v1"
+api_key = "custom-key"
+models = ["glm-5.1"]
+protocol = "openai"
+'''.strip(),
+                encoding="utf-8",
+            )
+
+            second = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(second.llm.model, "glm-5.1")
+            self.assertEqual(second.llm.assistant_settings, "重新加载后的配置")
+            self.assertEqual(len(second.llm.custom_providers), 1)
+            self.assertEqual(second.llm.custom_providers[0]["name"], "ymg")
+            self.assertEqual(second.llm.custom_providers[0]["models"], ["glm-5.1"])
+            self.assertEqual(second.llm.api_base, "https://api.airsim.eu.cc/v1")
+            self.assertEqual(second.llm.api_key, "custom-key")
+
