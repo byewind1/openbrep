@@ -380,3 +380,11 @@ def maybe_build_intent_clarification(
         },
         "message": build_intent_clarification_message(recommended_option),
     }
+
+
+def should_start_elicitation(user_input: str) -> bool:
+    return any(token in (user_input or "") for token in ["创建", "生成", "新建"])
+
+
+def should_skip_elicitation_for_gdl_request(effective_intent: str) -> bool:
+    return effective_intent in ("MODIFY", "DEBUG")

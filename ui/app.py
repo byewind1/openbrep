@@ -1994,8 +1994,7 @@ def _clear_pending_intent_clarification() -> None:
 
 
 def _should_start_elicitation(user_input: str) -> bool:
-    return any(token in (user_input or "") for token in ["创建", "生成", "新建"])
-
+    return ui_view_models.should_start_elicitation(user_input)
 
 
 def _make_generation_project(gdl_obj_name: str) -> HSFProject:
@@ -2013,7 +2012,7 @@ def _should_skip_elicitation_for_gdl_request(text: str, intent: str | None = Non
         project_loaded=bool(st.session_state.get("project")),
         has_image=False,
     )[0]
-    return effective_intent in ("MODIFY", "DEBUG")
+    return ui_view_models.should_skip_elicitation_for_gdl_request(effective_intent)
 
 
 
