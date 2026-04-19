@@ -16,6 +16,80 @@ def build_generation_reply(plain_text: str, result_prefix: str = "", code_blocks
     return "🤔 AI 未返回代码或分析，请换一种描述方式。"
 
 
+
+_PARAM_TYPE_RE = re.compile(
+    r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
+    r'\s+\w+\s*=',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_md_fences(code: str) -> str:
+    cleaned = re.sub(r'^```[a-zA-Z]*\s*\n?', '', (code or '').strip(), flags=re.MULTILINE)
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned.strip(), flags=re.MULTILINE)
+    return cleaned.strip()
+
+
+def classify_code_blocks(text: str) -> dict[str, str]:
+    collected: dict[str, str] = {}
+    code_block_pat = re.compile(r"```[a-zA-Z]*[ \t]*\n(.*?)```", re.DOTALL)
+    for match in code_block_pat.finditer(text or ""):
+        block = match.group(1).strip()
+        if not block:
+            continue
+        block_up = block.upper()
+        if len(_PARAM_TYPE_RE.findall(block)) >= 2:
+            path = "paramlist.xml"
+        elif re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
+            path = "scripts/2d.gdl"
+        elif re.search(r'\bVALUES\b|\bLOCK\b', block_up) and not re.search(r'\bBLOCK\b', block_up):
+            path = "scripts/vl.gdl"
+        elif re.search(r'\bGLOB_\w+\b', block_up):
+            path = "scripts/1d.gdl"
+        elif re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b|\bUI_DIALOG\b|\bUI_PAGE\b|\bUI_INFIELD\b|\bUI_OUTFIELD\b|\bUI_BUTTON\b|\bUI_GROUPBOX\b|\bUI_LISTFIELD\b|\bUI_SEPARATOR\b', block_up):
+            path = "scripts/ui.gdl"
+        else:
+            path = "scripts/3d.gdl"
+        collected[path] = block
+    return collected
+
+
+def extract_gdl_from_text(text: str) -> dict[str, str]:
+    return classify_code_blocks(text)
+
+
+def build_chat_script_anchors(history: list[dict]) -> list[dict]:
+    anchors: list[dict] = []
+    rev = 1
+    for i, message in enumerate(history or []):
+        if message.get("role") != "assistant":
+            continue
+        extracted = classify_code_blocks(message.get("content", ""))
+        if not extracted:
+            continue
+        script_keys = [
+            path.replace("scripts/", "").replace(".gdl", "").upper()
+            for path in extracted.keys()
+            if path.startswith("scripts/")
+        ]
+        parts = []
+        if script_keys:
+            parts.append("/".join(script_keys))
+        if "paramlist.xml" in extracted:
+            parts.append("PARAM")
+        scope = " + ".join(parts) if parts else "CODE"
+        anchors.append(
+            {
+                "rev": rev,
+                "msg_idx": i,
+                "label": f"r{rev} · {scope}",
+                "paths": sorted(extracted.keys()),
+            }
+        )
+        rev += 1
+    return anchors
+
+
 _INTENT_CLARIFY_ACTION_LABELS = {
     "1": "先快速解释脚本结构",
     "2": "先检查明显错误/风险",

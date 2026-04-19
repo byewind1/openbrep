@@ -2644,59 +2644,15 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
 
 
 def _strip_md_fences(code: str) -> str:
-    """Remove markdown code fences (```gdl / ```) that AI sometimes leaks into scripts."""
-    import re as _re
-    # Remove opening fence (```gdl, ```GDL, ```)
-    code = _re.sub(r'^```[a-zA-Z]*\s*\n?', '', code.strip(), flags=_re.MULTILINE)
-    # Remove closing fence
-    code = _re.sub(r'\n?```\s*$', '', code.strip(), flags=_re.MULTILINE)
-    return code.strip()
+    return ui_view_models.strip_md_fences(code)
 
 
 def _classify_code_blocks(text: str) -> dict:
-    """
-    Extract and classify GDL/paramlist code blocks from raw text.
-    Returns {script_path_or_"paramlist.xml": code}.  Last block wins per type.
-
-    Classification priority (same as _extract_gdl_from_chat):
-      1. paramlist.xml  — ≥2 lines 'Type Name = Value'
-      2. scripts/2d.gdl — PROJECT2 / RECT2 / POLY2
-      3. scripts/vl.gdl — VALUES or LOCK (no BLOCK)
-      4. scripts/1d.gdl — GLOB_ variable
-      5. scripts/ui.gdl — UI_CURRENT or DEFINE STYLE
-      6. scripts/3d.gdl — default
-    """
-    import re as _re
-    collected: dict[str, str] = {}
-    code_block_pat = _re.compile(r"```[a-zA-Z]*[ \t]*\n(.*?)```", _re.DOTALL)
-    _PARAM_TYPE_RE = _re.compile(
-        r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
-        r'\s+\w+\s*=', _re.IGNORECASE | _re.MULTILINE
-    )
-    for m in code_block_pat.finditer(text):
-        block = m.group(1).strip()
-        if not block:
-            continue
-        block_up = block.upper()
-        if len(_PARAM_TYPE_RE.findall(block)) >= 2:
-            path = "paramlist.xml"
-        elif _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
-            path = "scripts/2d.gdl"
-        elif _re.search(r'\bVALUES\b|\bLOCK\b', block_up) and not _re.search(r'\bBLOCK\b', block_up):
-            path = "scripts/vl.gdl"
-        elif _re.search(r'\bGLOB_\w+\b', block_up):
-            path = "scripts/1d.gdl"
-        elif _re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b|\bUI_DIALOG\b|\bUI_PAGE\b|\bUI_INFIELD\b|\bUI_OUTFIELD\b|\bUI_BUTTON\b|\bUI_GROUPBOX\b|\bUI_LISTFIELD\b|\bUI_SEPARATOR\b', block_up):
-            path = "scripts/ui.gdl"
-        else:
-            path = "scripts/3d.gdl"
-        collected[path] = block
-    return collected
+    return ui_view_models.classify_code_blocks(text)
 
 
 def _extract_gdl_from_text(text: str) -> dict:
-    """Extract GDL code blocks from a single message string."""
-    return _classify_code_blocks(text)
+    return ui_view_models.extract_gdl_from_text(text)
 
 
 _EXPLAINER_FOLLOWUP_MODIFY_PATTERNS = ui_view_models._EXPLAINER_FOLLOWUP_MODIFY_PATTERNS
@@ -2753,34 +2709,7 @@ def _extract_gdl_from_chat() -> dict:
 
 
 def _build_chat_script_anchors(history: list[dict]) -> list[dict]:
-    """Build script anchors from assistant messages containing code blocks."""
-    anchors: list[dict] = []
-    rev = 1
-    for i, msg in enumerate(history):
-        if msg.get("role") != "assistant":
-            continue
-        extracted = _classify_code_blocks(msg.get("content", ""))
-        if not extracted:
-            continue
-        script_keys = [
-            p.replace("scripts/", "").replace(".gdl", "").upper()
-            for p in extracted.keys()
-            if p.startswith("scripts/")
-        ]
-        parts = []
-        if script_keys:
-            parts.append("/".join(script_keys))
-        if "paramlist.xml" in extracted:
-            parts.append("PARAM")
-        scope = " + ".join(parts) if parts else "CODE"
-        anchors.append({
-            "rev": rev,
-            "msg_idx": i,
-            "label": f"r{rev} · {scope}",
-            "paths": sorted(extracted.keys()),
-        })
-        rev += 1
-    return anchors
+    return ui_view_models.build_chat_script_anchors(history)
 
 
 def _classify_vision_error(exc: Exception) -> str:
