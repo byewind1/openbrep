@@ -1970,20 +1970,11 @@ def _build_intent_clarification_message(recommended_option: str) -> str:
 
 
 def _maybe_build_intent_clarification(user_input: str, has_project: bool, history: list[dict]) -> dict | None:
-    if not _should_clarify_intent(user_input, has_project, history):
-        return None
-    recommended_option = "2"
-    return {
-        "original_user_input": user_input,
-        "recommended_option": recommended_option,
-        "options": {
-            "1": "explain",
-            "2": "check",
-            "3": "suggest",
-            "4": "review_summary",
-        },
-        "message": _build_intent_clarification_message(recommended_option),
-    }
+    return ui_view_models.maybe_build_intent_clarification(
+        user_input,
+        should_clarify_intent=lambda text: _should_clarify_intent(text, has_project, history),
+        build_intent_clarification_message=_build_intent_clarification_message,
+    )
 
 
 

@@ -358,3 +358,25 @@ def should_clarify_intent(
     if re.search(r"改成\s*\d+", raw):
         return False
     return False
+
+
+def maybe_build_intent_clarification(
+    user_input: str,
+    *,
+    should_clarify_intent: Callable[[str], bool],
+    build_intent_clarification_message: Callable[[str], str],
+) -> dict | None:
+    if not should_clarify_intent(user_input):
+        return None
+    recommended_option = "2"
+    return {
+        "original_user_input": user_input,
+        "recommended_option": recommended_option,
+        "options": {
+            "1": "explain",
+            "2": "check",
+            "3": "suggest",
+            "4": "review_summary",
+        },
+        "message": build_intent_clarification_message(recommended_option),
+    }
