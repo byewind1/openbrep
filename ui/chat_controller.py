@@ -67,3 +67,116 @@ def resolve_image_route_mode(
 def build_image_user_display(vision_name: str, route_mode: str, joined_text: str) -> str:
     route_tag = "🧩 Debug" if route_mode == "debug" else "🧱 生成"
     return f"🖼️ `{vision_name}` · {route_tag}" + (f"  \n{joined_text}" if joined_text else "")
+
+
+def run_normal_text_path(
+    *,
+    effective_input: str,
+    redo_input,
+    bridge_input,
+    session_state,
+    api_key: str,
+    model_name: str,
+    route_main_input_fn: Callable[[str, bool, bool], tuple[str, str]],
+    live_output,
+    chat_respond_fn: Callable[[str, list, object], str],
+    should_skip_elicitation_fn: Callable[[str, str | None], bool],
+    create_project_fn: Callable[[str], object],
+    has_any_script_content_fn: Callable[[object], bool],
+    run_agent_generate_fn: Callable[[str, object, object, str, bool], str],
+    handle_elicitation_route_fn: Callable[[str, str], tuple[str, bool]],
+    markdown_fn: Callable[[str], None],
+    info_fn: Callable[[str], None],
+    build_assistant_chat_message_fn: Callable[[str, str, bool, str], dict],
+) -> tuple[bool, bool, str | None]:
+    if not effective_input:
+        return False, False, None
+
+    if not (redo_input or bridge_input):
+        session_state.chat_history.append({"role": "user", "content": effective_input})
+    user_input = effective_input
+
+    if not api_key and "ollama" not in model_name:
+        err = "❌ 请在左侧边栏填入 API Key 后再试。"
+        session_state.chat_history.append({"role": "assistant", "content": err})
+        return True, True, None
+
+    msg = None
+    intent = "CHAT"
+    session_state.agent_running = True
+    try:
+        intent, gdl_obj_name = route_main_input_fn(
+            user_input,
+            project_loaded=bool(session_state.project),
+            has_image=False,
+        )
+
+        with live_output.container():
+            import streamlit as st
+
+            st.chat_message("user").markdown(user_input)
+            with st.chat_message("assistant"):
+                if intent == "CHAT":
+                    msg = chat_respond_fn(
+                        user_input,
+                        session_state.chat_history[:-1],
+                        None,
+                    )
+                    markdown_fn(msg)
+                else:
+                    should_skip_elicitation = should_skip_elicitation_fn(user_input, intent)
+                    if should_skip_elicitation:
+                        proj_current = session_state.project
+                        if not proj_current:
+                            fallback_name = gdl_obj_name or session_state.pending_gsm_name or "untitled"
+                            proj_current = create_project_fn(fallback_name)
+                            session_state.project = proj_current
+                            session_state.pending_gsm_name = fallback_name
+                            session_state.script_revision = 0
+
+                        has_any_script = has_any_script_content_fn(proj_current)
+                        effective_gsm = session_state.pending_gsm_name or proj_current.name
+                        msg = run_agent_generate_fn(
+                            user_input,
+                            proj_current,
+                            st.container(),
+                            effective_gsm,
+                            not has_any_script,
+                        )
+                        markdown_fn(msg)
+                    else:
+                        elicitation_msg, eliciting = handle_elicitation_route_fn(user_input, gdl_obj_name)
+                        if eliciting:
+                            msg = elicitation_msg
+                            markdown_fn(msg)
+                        else:
+                            if not session_state.project:
+                                new_proj = create_project_fn(gdl_obj_name)
+                                session_state.project = new_proj
+                                session_state.pending_gsm_name = gdl_obj_name
+                                session_state.script_revision = 0
+                                info_fn(f"📁 已初始化项目 `{gdl_obj_name}`")
+
+                            proj_current = session_state.project
+                            has_any_script = has_any_script_content_fn(proj_current)
+                            effective_gsm = session_state.pending_gsm_name or proj_current.name
+                            msg = run_agent_generate_fn(
+                                user_input,
+                                proj_current,
+                                st.container(),
+                                effective_gsm,
+                                not has_any_script,
+                            )
+                            markdown_fn(msg)
+
+        session_state.chat_history.append(
+            build_assistant_chat_message_fn(
+                content=msg,
+                intent=intent,
+                has_project=bool(session_state.get("project")),
+                source_user_input=user_input,
+            )
+        )
+        return True, True, None
+    finally:
+        session_state.agent_running = False

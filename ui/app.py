@@ -2092,6 +2092,29 @@ def _build_image_user_display(vision_name: str, route_mode: str, joined_text: st
 
 
 
+def _run_normal_text_path(effective_input: str, redo_input, bridge_input, live_output, api_key: str, model_name: str) -> tuple[bool, bool, str | None]:
+    return ui_chat_controller.run_normal_text_path(
+        effective_input=effective_input,
+        redo_input=redo_input,
+        bridge_input=bridge_input,
+        session_state=st.session_state,
+        api_key=api_key,
+        model_name=model_name,
+        route_main_input_fn=_route_main_input,
+        live_output=live_output,
+        chat_respond_fn=chat_respond,
+        should_skip_elicitation_fn=_should_skip_elicitation_for_gdl_request,
+        create_project_fn=lambda name: HSFProject.create_new(name, work_dir=st.session_state.work_dir),
+        has_any_script_content_fn=lambda proj: ui_actions.has_any_script_content(proj, _SCRIPT_MAP),
+        run_agent_generate_fn=run_agent_generate,
+        handle_elicitation_route_fn=_handle_elicitation_route,
+        markdown_fn=st.markdown,
+        info_fn=st.info,
+        build_assistant_chat_message_fn=_build_assistant_chat_message,
+    )
+
+
+
 def _build_assistant_chat_message(content: str, intent: str, has_project: bool, source_user_input: str) -> dict:
     return ui_view_models.build_assistant_chat_message(content, intent, has_project, source_user_input)
 
@@ -3397,96 +3420,18 @@ with col_right:
 
     # ── Normal text path ─────────────────────────────────────────────────────────
     elif effective_input:
-        # Redo: user msg already in history; new: append it
-        if not (_redo_input or _bridge_input):
-            st.session_state.chat_history.append({"role": "user", "content": effective_input})
-        user_input = effective_input   # alias for rest of handler
-
-        if not api_key and "ollama" not in model_name:
-            err = "❌ 请在左侧边栏填入 API Key 后再试。"
-            st.session_state.chat_history.append({"role": "assistant", "content": err})
+        _handled, _should_rerun, _err_msg = _run_normal_text_path(
+            effective_input,
+            _redo_input,
+            _bridge_input,
+            live_output,
+            api_key,
+            model_name,
+        )
+        if _err_msg:
+            st.error(_err_msg)
+        if _handled and _should_rerun:
             st.rerun()
-        else:
-            try:
-                st.session_state.agent_running = True
-                intent, gdl_obj_name = _route_main_input(
-                    user_input,
-                    project_loaded=bool(st.session_state.project),
-                    has_image=False,
-                )
-
-                with live_output.container():
-                    st.chat_message("user").markdown(user_input)
-                    with st.chat_message("assistant"):
-                        if intent == "CHAT":
-                            msg = chat_respond(
-                                user_input,
-                                st.session_state.chat_history[:-1],
-                                None,
-                            )
-                            st.markdown(msg)
-                        else:
-                            should_skip_elicitation = _should_skip_elicitation_for_gdl_request(user_input, intent)
-                            if should_skip_elicitation:
-                                proj_current = st.session_state.project
-                                if not proj_current:
-                                    fallback_name = gdl_obj_name or st.session_state.pending_gsm_name or "untitled"
-                                    proj_current = HSFProject.create_new(
-                                        fallback_name,
-                                        work_dir=st.session_state.work_dir,
-                                    )
-                                    st.session_state.project = proj_current
-                                    st.session_state.pending_gsm_name = fallback_name
-                                    st.session_state.script_revision = 0
-
-                                _has_any_script = ui_actions.has_any_script_content(
-                                    proj_current, _SCRIPT_MAP
-                                )
-                                effective_gsm = st.session_state.pending_gsm_name or proj_current.name
-                                msg = run_agent_generate(
-                                    user_input, proj_current, st.container(),
-                                    gsm_name=effective_gsm,
-                                    auto_apply=not _has_any_script,
-                                )
-                                st.markdown(msg)
-                            else:
-                                elicitation_msg, eliciting = _handle_elicitation_route(user_input, gdl_obj_name)
-                                if eliciting:
-                                    msg = elicitation_msg
-                                    st.markdown(msg)
-                                else:
-                                    if not st.session_state.project:
-                                        new_proj = HSFProject.create_new(gdl_obj_name, work_dir=st.session_state.work_dir)
-                                        st.session_state.project = new_proj
-                                        st.session_state.pending_gsm_name = gdl_obj_name
-                                        st.session_state.script_revision = 0
-                                        st.info(f"📁 已初始化项目 `{gdl_obj_name}`")
-
-                                    proj_current = st.session_state.project
-                                    # 只有全新空项目（无任何脚本内容）才自动写入；
-                                    # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
-                                    _has_any_script = ui_actions.has_any_script_content(
-                                        proj_current, _SCRIPT_MAP
-                                    )
-                                    effective_gsm = st.session_state.pending_gsm_name or proj_current.name
-                                    msg = run_agent_generate(
-                                        user_input, proj_current, st.container(),
-                                        gsm_name=effective_gsm,
-                                        auto_apply=not _has_any_script,
-                                    )
-                                    st.markdown(msg)
-
-                st.session_state.chat_history.append(
-                    _build_assistant_chat_message(
-                        content=msg,
-                        intent=intent,
-                        has_project=bool(st.session_state.get("project")),
-                        source_user_input=user_input,
-                    )
-                )
-                st.rerun()
-            finally:
-                st.session_state.agent_running = False
 
 
     # 锚点定位在页面末尾触发 rerun，尽量不打断当前生成流程
