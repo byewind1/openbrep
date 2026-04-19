@@ -16,6 +16,7 @@ config.toml
 output/
 src/
 .qoder/
+.qwen/
 knowledge/ccgdl_dev_doc/
 ui/app.py.backup_*
 
