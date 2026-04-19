@@ -1852,14 +1852,14 @@ def chat_respond(user_input: str, history: list, llm) -> str:
     """Deprecated compatibility wrapper; main chat path should use TaskPipeline."""
     pipeline = TaskPipeline(trace_dir="./traces")
     pipeline.config = GDLAgentConfig.load()
-    result = pipeline.execute(TaskRequest(
-        user_input=user_input,
-        intent="CHAT",
+    request_kwargs = ui_view_models.build_chat_respond_request_kwargs(
+        user_input,
         project=st.session_state.get("project"),
         work_dir=st.session_state.get("work_dir", "./workdir"),
-        history=_trim_history_for_image(history, limit=6),
+        trimmed_history=_trim_history_for_image(history, limit=6),
         assistant_settings=st.session_state.get("assistant_settings", ""),
-    ))
+    )
+    result = pipeline.execute(TaskRequest(**request_kwargs))
     return result.plain_text if result.success else f"❌ {result.error}"
 
 

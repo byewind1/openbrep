@@ -53,6 +53,24 @@ def classify_and_extract_result(intent: str, obj_name: str) -> tuple[str, str]:
     return (("CHAT" if intent == "CHAT" else "GDL"), obj_name)
 
 
+def build_chat_respond_request_kwargs(
+    user_input: str,
+    *,
+    project,
+    work_dir: str,
+    trimmed_history: list,
+    assistant_settings: str,
+) -> dict:
+    return {
+        "user_input": user_input,
+        "intent": "CHAT",
+        "project": project,
+        "work_dir": work_dir,
+        "history": trimmed_history,
+        "assistant_settings": assistant_settings,
+    }
+
+
 
 _PARAM_TYPE_RE = re.compile(
     r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
