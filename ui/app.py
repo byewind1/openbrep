@@ -2836,49 +2836,17 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
 
 
 def _to_float(raw) -> float | None:
-    s = str(raw).strip()
-    if not s:
-        return None
-    low = s.lower()
-    if low in {"true", "yes", "on"}:
-        return 1.0
-    if low in {"false", "no", "off"}:
-        return 0.0
-    try:
-        return float(s)
-    except Exception:
-        return None
+    return ui_view_models.to_float(raw)
+
 
 
 def _preview_param_values(proj: HSFProject) -> dict[str, float]:
-    vals = {"A": 1.0, "B": 1.0, "ZZYZX": 1.0}
-    for p in proj.parameters:
-        v = _to_float(p.value)
-        if v is None:
-            continue
-        vals[p.name.upper()] = v
+    return ui_view_models.preview_param_values(proj)
 
-    for key in ("A", "B", "ZZYZX"):
-        if key in vals:
-            continue
-        gp = proj.get_parameter(key)
-        if gp is not None:
-            pv = _to_float(gp.value)
-            if pv is not None:
-                vals[key] = pv
-
-    return vals
 
 
 def _dedupe_keep_order(items: list[str]) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for it in items:
-        if it in seen:
-            continue
-        seen.add(it)
-        out.append(it)
-    return out
+    return ui_view_models.dedupe_keep_order(items)
 
 
 def _collect_preview_prechecks(proj: HSFProject, target: str) -> list[str]:

@@ -119,6 +119,52 @@ def stamp_script_header(script_label: str, content: str, revision: int) -> str:
     return f"{header}\n{body}" if body else header
 
 
+def to_float(raw) -> float | None:
+    s = str(raw).strip()
+    if not s:
+        return None
+    low = s.lower()
+    if low in {"true", "yes", "on"}:
+        return 1.0
+    if low in {"false", "no", "off"}:
+        return 0.0
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def preview_param_values(proj) -> dict[str, float]:
+    vals = {"A": 1.0, "B": 1.0, "ZZYZX": 1.0}
+    for p in proj.parameters:
+        v = to_float(p.value)
+        if v is None:
+            continue
+        vals[p.name.upper()] = v
+
+    for key in ("A", "B", "ZZYZX"):
+        if key in vals:
+            continue
+        gp = proj.get_parameter(key)
+        if gp is not None:
+            pv = to_float(gp.value)
+            if pv is not None:
+                vals[key] = pv
+
+    return vals
+
+
+def dedupe_keep_order(items: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for it in items:
+        if it in seen:
+            continue
+        seen.add(it)
+        out.append(it)
+    return out
+
+
 
 _PARAM_TYPE_RE = re.compile(
     r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
