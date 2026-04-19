@@ -69,6 +69,7 @@ from ui import state as ui_state
 from ui import view_models as ui_view_models
 from ui import preview_controller as ui_preview_controller
 from ui import project_io as ui_project_io
+from ui import chat_controller as ui_chat_controller
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -2275,6 +2276,17 @@ def _maybe_build_followup_bridge_input(user_input: str, history: list[dict], has
     return ui_view_models.maybe_build_followup_bridge_input(user_input, history, has_project)
 
 
+def _resolve_bridge_input(pending_bridge_idx, user_input: str | None, history: list[dict], has_project: bool) -> str | None:
+    return ui_chat_controller.resolve_bridge_input(
+        pending_bridge_idx=pending_bridge_idx,
+        user_input=user_input,
+        history=history,
+        has_project=has_project,
+        build_modify_bridge_prompt_fn=_build_modify_bridge_prompt,
+        maybe_build_followup_bridge_input_fn=_maybe_build_followup_bridge_input,
+    )
+
+
 
 def _is_modify_bridge_prompt(text: str) -> bool:
     return ui_view_models.is_modify_bridge_prompt(text)
@@ -2283,6 +2295,34 @@ def _is_modify_bridge_prompt(text: str) -> bool:
 
 def _is_post_clarification_prompt(text: str) -> bool:
     return ui_view_models.is_post_clarification_prompt(text)
+
+
+
+def _resolve_effective_input(active_debug_mode, user_input: str | None, has_image_input: bool, auto_debug_input: str | None, bridge_input: str | None, redo_input: str | None) -> tuple[str | None, bool, bool]:
+    return ui_chat_controller.resolve_effective_input(
+        active_debug_mode=active_debug_mode,
+        user_input=user_input,
+        has_image_input=has_image_input,
+        auto_debug_input=auto_debug_input,
+        bridge_input=bridge_input,
+        redo_input=redo_input,
+    )
+
+
+
+def _resolve_image_route_mode(route_pick: str, active_debug_mode, joined_text: str, vision_name: str) -> str:
+    return ui_chat_controller.resolve_image_route_mode(
+        route_pick=route_pick,
+        active_debug_mode=active_debug_mode,
+        joined_text=joined_text,
+        vision_name=vision_name,
+        detect_image_task_mode_fn=_detect_image_task_mode,
+    )
+
+
+
+def _build_image_user_display(vision_name: str, route_mode: str, joined_text: str) -> str:
+    return ui_chat_controller.build_image_user_display(vision_name, route_mode, joined_text)
 
 
 
@@ -3486,27 +3526,26 @@ with col_right:
         st.rerun()
 
     _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
-    _bridge_input = None
-    if _pending_bridge_idx is not None:
-        _bridge_msg = st.session_state.chat_history[_pending_bridge_idx]
-        _bridge_input = _build_modify_bridge_prompt(_bridge_msg)
-    elif user_input:
-        _bridge_input = _maybe_build_followup_bridge_input(
-            user_input=user_input,
-            history=st.session_state.get("chat_history", []),
-            has_project=bool(st.session_state.get("project")),
-        )
+    _bridge_input = _resolve_bridge_input(
+        pending_bridge_idx=_pending_bridge_idx,
+        user_input=user_input,
+        history=st.session_state.get("chat_history", []),
+        has_project=bool(st.session_state.get("project")),
+    )
 
     # Debug模式：仅用户主动发送时触发，不自动构造空输入消息
-    if _active_dbg and user_input:
-        _dbg_prefix = f"[DEBUG:{_active_dbg}]"
-        effective_input = f"{_dbg_prefix} {user_input.strip()}"
+    effective_input, _clear_debug_mode, _toast_missing_debug_text = _resolve_effective_input(
+        active_debug_mode=_active_dbg,
+        user_input=user_input,
+        has_image_input=_has_image_input,
+        auto_debug_input=_auto_debug_input,
+        bridge_input=_bridge_input,
+        redo_input=_redo_input,
+    )
+    if _clear_debug_mode:
         st.session_state["_debug_mode_active"] = None
-    elif _active_dbg and user_input == "" and not _has_image_input:
+    if _toast_missing_debug_text:
         st.toast("请输入问题描述后再发送，或直接描述你看到的现象", icon="💬")
-        effective_input = _auto_debug_input or _bridge_input or _redo_input
-    else:
-        effective_input = _auto_debug_input or _bridge_input or _redo_input or user_input
 
     # 在用户消息中提取物件名作为 GSM 名称候选（仅当当前为空）
     if user_input and not (st.session_state.pending_gsm_name or "").strip():
@@ -3522,14 +3561,13 @@ with col_right:
         _joined_text = _extra_text
 
         _route_pick = st.session_state.get("chat_image_route_mode", "自动")
-        if _route_pick == "强制调试":
-            _route_mode = "debug"
-        elif _route_pick == "强制生成":
-            _route_mode = "generate"
-        else:
-            _route_mode = "debug" if _active_dbg else _detect_image_task_mode(_joined_text, _vision_name)
-        _route_tag = "🧩 Debug" if _route_mode == "debug" else "🧱 生成"
-        _user_display = f"🖼️ `{_vision_name}` · {_route_tag}" + (f"  \n{_joined_text}" if _joined_text else "")
+        _route_mode = _resolve_image_route_mode(
+            route_pick=_route_pick,
+            active_debug_mode=_active_dbg,
+            joined_text=_joined_text,
+            vision_name=_vision_name,
+        )
+        _user_display = _build_image_user_display(_vision_name, _route_mode, _joined_text)
         st.session_state.chat_history.append({
             "role": "user",
             "content": _user_display,
