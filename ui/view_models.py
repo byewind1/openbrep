@@ -225,6 +225,135 @@ def safe_compile_revision(proj_name: str, work_dir: str, requested_revision: int
     return max(int(requested_revision or 1), max_existing + 1)
 
 
+def build_model_options(
+    available_models: list[str],
+    custom_providers: list[dict],
+    *,
+    vision_models: set[str],
+    reasoning_models: set[str],
+) -> list[dict]:
+    custom_model_set: set[str] = set()
+    for provider in custom_providers or []:
+        for model in provider.get("models", []) or []:
+            custom_model_set.add(str(model))
+
+    options: list[dict] = []
+    custom_index = 0
+    for model in available_models or []:
+        model_str = str(model)
+        is_custom = model_str in custom_model_set
+        if is_custom:
+            custom_index += 1
+            label = f"自定义{custom_index}"
+        else:
+            tags = []
+            if model_str in vision_models:
+                tags.append("👁")
+            if model_str in reasoning_models:
+                tags.append("🧠")
+            label = f"{model_str}  {''.join(tags)}" if tags else model_str
+        options.append({
+            "label": label,
+            "actual_model": model_str,
+            "is_custom": is_custom,
+        })
+    return options
+
+
+def resolve_selected_model(selected_label: str, options: list[dict]) -> str:
+    for option in options:
+        if option.get("label") == selected_label:
+            return str(option.get("actual_model", ""))
+    return ""
+
+
+def collect_custom_model_aliases(custom_providers: list[dict], *, iter_entries: Callable[[dict], list[dict]]) -> list[str]:
+    aliases: list[str] = []
+    for provider in custom_providers or []:
+        for entry in iter_entries(provider):
+            alias = str(entry.get("alias", "") or "").strip()
+            if alias and alias not in aliases:
+                aliases.append(alias)
+    return aliases
+
+
+def build_custom_model_options(custom_providers: list[dict], *, iter_entries: Callable[[dict], list[dict]]) -> list[dict]:
+    options: list[dict] = []
+    fallback_index = 0
+    for provider in custom_providers or []:
+        provider_name = str(provider.get("name", "") or "").strip()
+        entries = iter_entries(provider)
+        for entry in entries:
+            alias = str(entry.get("alias", "") or "").strip()
+            if not alias:
+                continue
+            if provider_name:
+                label = provider_name if len(entries) == 1 else f"{provider_name} / {alias}"
+            else:
+                fallback_index += 1
+                label = f"自定义{fallback_index}"
+            options.append({
+                "label": label,
+                "actual_model": alias,
+                "is_custom": True,
+            })
+    return options
+
+
+def build_model_source_state(
+    builtin_models: list[str],
+    custom_providers: list[dict],
+    saved_model: str,
+    *,
+    iter_entries: Callable[[dict], list[dict]],
+    vision_models: set[str],
+    reasoning_models: set[str],
+) -> dict:
+    custom_models = collect_custom_model_aliases(custom_providers or [], iter_entries=iter_entries)
+
+    builtin_options = build_model_options(
+        list(builtin_models or []),
+        [],
+        vision_models=vision_models,
+        reasoning_models=reasoning_models,
+    )
+    custom_options = build_custom_model_options(custom_providers or [], iter_entries=iter_entries)
+
+    source_options = []
+    if custom_options:
+        source_options.append("自定义")
+    if builtin_options:
+        source_options.append("官方供应商")
+
+    saved_model_str = str(saved_model or "")
+    saved_is_custom = saved_model_str in custom_models
+
+    if saved_is_custom:
+        default_source = "自定义"
+    elif saved_model_str and any(opt.get("actual_model") == saved_model_str for opt in builtin_options):
+        default_source = "官方供应商"
+    elif custom_options:
+        default_source = "自定义"
+    elif builtin_options:
+        default_source = "官方供应商"
+    else:
+        default_source = ""
+
+    active_options = custom_options if default_source == "自定义" else builtin_options
+    default_model_label = next(
+        (str(opt.get("label", "")) for opt in active_options if opt.get("actual_model") == saved_model_str),
+        str(active_options[0].get("label", "")) if active_options else "",
+    )
+
+    return {
+        "source_options": source_options,
+        "custom_options": custom_options,
+        "builtin_options": builtin_options,
+        "default_source": default_source,
+        "default_model_label": default_model_label,
+    }
+
+
 _PARAM_TYPE_RE = re.compile(
     r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
     r'\s+\w+\s*=',

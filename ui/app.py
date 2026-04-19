@@ -819,72 +819,34 @@ def _should_persist_assistant_settings(config_value: str, ui_value: str) -> bool
 
 
 def _build_model_options(available_models: list[str], custom_providers: list[dict]) -> list[dict]:
-    custom_model_set: set[str] = set()
-    for provider in custom_providers or []:
-        for model in provider.get("models", []) or []:
-            custom_model_set.add(str(model))
+    return ui_view_models.build_model_options(
+        available_models,
+        custom_providers,
+        vision_models=VISION_MODELS,
+        reasoning_models=REASONING_MODELS,
+    )
 
-    options: list[dict] = []
-    custom_index = 0
-    for model in available_models or []:
-        model_str = str(model)
-        is_custom = model_str in custom_model_set
-        if is_custom:
-            custom_index += 1
-            label = f"自定义{custom_index}"
-        else:
-            tags = []
-            if model_str in VISION_MODELS:
-                tags.append("👁")
-            if model_str in REASONING_MODELS:
-                tags.append("🧠")
-            label = f"{model_str}  {''.join(tags)}" if tags else model_str
-        options.append({
-            "label": label,
-            "actual_model": model_str,
-            "is_custom": is_custom,
-        })
-    return options
 
 
 def _resolve_selected_model(selected_label: str, options: list[dict]) -> str:
-    for option in options:
-        if option.get("label") == selected_label:
-            return str(option.get("actual_model", ""))
-    return ""
+    return ui_view_models.resolve_selected_model(selected_label, options)
+
 
 
 def _collect_custom_model_aliases(custom_providers: list[dict]) -> list[str]:
-    aliases: list[str] = []
-    for provider in custom_providers or []:
-        for entry in iter_custom_provider_model_entries(provider):
-            alias = str(entry.get("alias", "") or "").strip()
-            if alias and alias not in aliases:
-                aliases.append(alias)
-    return aliases
+    return ui_view_models.collect_custom_model_aliases(
+        custom_providers,
+        iter_entries=iter_custom_provider_model_entries,
+    )
+
 
 
 def _build_custom_model_options(custom_providers: list[dict]) -> list[dict]:
-    options: list[dict] = []
-    fallback_index = 0
-    for provider in custom_providers or []:
-        provider_name = str(provider.get("name", "") or "").strip()
-        entries = iter_custom_provider_model_entries(provider)
-        for entry in entries:
-            alias = str(entry.get("alias", "") or "").strip()
-            if not alias:
-                continue
-            if provider_name:
-                label = provider_name if len(entries) == 1 else f"{provider_name} / {alias}"
-            else:
-                fallback_index += 1
-                label = f"自定义{fallback_index}"
-            options.append({
-                "label": label,
-                "actual_model": alias,
-                "is_custom": True,
-            })
-    return options
+    return ui_view_models.build_custom_model_options(
+        custom_providers,
+        iter_entries=iter_custom_provider_model_entries,
+    )
+
 
 
 def _build_model_source_state(
@@ -892,44 +854,14 @@ def _build_model_source_state(
     custom_providers: list[dict],
     saved_model: str,
 ) -> dict:
-    custom_models = _collect_custom_model_aliases(custom_providers or [])
-
-    builtin_options = _build_model_options(list(builtin_models or []), [])
-    custom_options = _build_custom_model_options(custom_providers or [])
-
-    source_options = []
-    if custom_options:
-        source_options.append("自定义")
-    if builtin_options:
-        source_options.append("官方供应商")
-
-    saved_model_str = str(saved_model or "")
-    saved_is_custom = saved_model_str in custom_models
-
-    if saved_is_custom:
-        default_source = "自定义"
-    elif saved_model_str and any(opt.get("actual_model") == saved_model_str for opt in builtin_options):
-        default_source = "官方供应商"
-    elif custom_options:
-        default_source = "自定义"
-    elif builtin_options:
-        default_source = "官方供应商"
-    else:
-        default_source = ""
-
-    active_options = custom_options if default_source == "自定义" else builtin_options
-    default_model_label = next(
-        (str(opt.get("label", "")) for opt in active_options if opt.get("actual_model") == saved_model_str),
-        str(active_options[0].get("label", "")) if active_options else "",
+    return ui_view_models.build_model_source_state(
+        builtin_models,
+        custom_providers,
+        saved_model,
+        iter_entries=iter_custom_provider_model_entries,
+        vision_models=VISION_MODELS,
+        reasoning_models=REASONING_MODELS,
     )
-
-    return {
-        "source_options": source_options,
-        "custom_options": custom_options,
-        "builtin_options": builtin_options,
-        "default_source": default_source,
-        "default_model_label": default_model_label,
-    }
 
 
 
