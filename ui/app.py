@@ -438,10 +438,7 @@ def _license_file(work_dir: str) -> Path:
 
 
 def _empty_license_record() -> dict:
-    return {
-        "status": "free",
-        "pro_unlocked": False,
-    }
+    return ui_view_models.empty_license_record()
 
 
 def _load_license(work_dir: str) -> dict:
@@ -471,33 +468,22 @@ def _load_pro_public_key(root: Path):
 
 
 def _urlsafe_b64decode(data: str) -> bytes:
-    padded = data + "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(padded.encode("utf-8"))
+    return ui_view_models.urlsafe_b64decode(data)
+
 
 
 def _urlsafe_b64encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+    return ui_view_models.urlsafe_b64encode(data)
+
 
 
 def _canonical_license_payload(payload: dict) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return ui_view_models.canonical_license_payload(payload)
+
 
 
 def _normalize_license_record(payload: dict, signature_b64: str) -> dict:
-    fingerprint = hashlib.sha256(_canonical_license_payload(payload)).hexdigest()[:16]
-    return {
-        "status": "active",
-        "pro_unlocked": True,
-        "buyer_id": str(payload.get("buyer_id", "")).strip(),
-        "email": str(payload.get("email", "")).strip(),
-        "plan": str(payload.get("plan", "")).strip(),
-        "issued_at": str(payload.get("issued_at", "")).strip(),
-        "expire_date": str(payload.get("expire_date", "")).strip(),
-        "activated_at": datetime.now().isoformat(timespec="seconds"),
-        "fingerprint": fingerprint,
-        "license_payload": payload,
-        "license_signature": signature_b64,
-    }
+    return ui_view_models.normalize_license_record(payload, signature_b64)
 
 
 def _verify_license_payload(payload: dict, signature_b64: str) -> tuple[bool, str, dict | None]:

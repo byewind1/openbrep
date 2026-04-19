@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
@@ -117,6 +119,43 @@ def stamp_script_header(script_label: str, content: str, revision: int) -> str:
         lines[0] = header
         return "\n".join(lines)
     return f"{header}\n{body}" if body else header
+
+
+def empty_license_record() -> dict:
+    return {
+        "status": "free",
+        "pro_unlocked": False,
+    }
+
+
+def urlsafe_b64decode(data: str) -> bytes:
+    padded = data + "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(padded.encode("utf-8"))
+
+
+def urlsafe_b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def canonical_license_payload(payload: dict) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def normalize_license_record(payload: dict, signature_b64: str) -> dict:
+    fingerprint = hashlib.sha256(canonical_license_payload(payload)).hexdigest()[:16]
+    return {
+        "status": "active",
+        "pro_unlocked": True,
+        "buyer_id": str(payload.get("buyer_id", "")).strip(),
+        "email": str(payload.get("email", "")).strip(),
+        "plan": str(payload.get("plan", "")).strip(),
+        "issued_at": str(payload.get("issued_at", "")).strip(),
+        "expire_date": str(payload.get("expire_date", "")).strip(),
+        "activated_at": datetime.now().isoformat(timespec="seconds"),
+        "fingerprint": fingerprint,
+        "license_payload": payload,
+        "license_signature": signature_b64,
+    }
 
 
 def to_float(raw) -> float | None:
