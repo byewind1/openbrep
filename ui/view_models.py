@@ -271,3 +271,27 @@ def detect_image_task_mode(user_text: str, image_name: str = "", has_project: bo
     if has_project:
         return "debug"
     return "generate"
+
+
+def is_positive_confirmation(text: str) -> bool:
+    low = (text or "").strip().lower()
+    return any(token in low for token in ["确认", "可以", "是", "对", "生成吧", "没问题", "好的", "开始"])
+
+
+def is_negative_confirmation(text: str) -> bool:
+    low = (text or "").strip().lower()
+    return any(token in low for token in ["不是", "不对", "重来", "修改", "不", "错了", "再改"])
+
+
+def is_modify_or_check_intent(text: str, is_debug_intent: bool = False) -> bool:
+    raw = (text or "").strip().lower()
+    if not raw:
+        return False
+    if is_debug_intent:
+        return False
+    if any(token in raw for token in ("检查", "校验", "语法", "语义")):
+        return True
+    modify_tokens = (
+        "改", "修改", "调整", "更新", "优化", "重写", "补充", "添加", "删除", "修正",
+    )
+    return any(token in raw for token in modify_tokens)
