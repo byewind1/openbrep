@@ -15,6 +15,50 @@ def build_generation_reply(plain_text: str, result_prefix: str = "", code_blocks
     return "🤔 AI 未返回代码或分析，请换一种描述方式。"
 
 
+_INTENT_CLARIFY_ACTION_LABELS = {
+    "1": "先快速解释脚本结构",
+    "2": "先检查明显错误/风险",
+    "3": "先给修改建议",
+    "4": "按顺序都做，但先给简版总检",
+}
+
+
+def build_intent_clarification_message(recommended_option: str) -> str:
+    recommendation = _INTENT_CLARIFY_ACTION_LABELS.get(
+        recommended_option,
+        _INTENT_CLARIFY_ACTION_LABELS["2"],
+    )
+    return (
+        f"我猜你现在更像是想{recommendation}。\n"
+        "你也可以选：\n"
+        "1. 先快速解释脚本结构\n"
+        "2. 先检查明显错误/风险\n"
+        "3. 先给修改建议\n"
+        "4. 按顺序都做，但先给简版总检\n"
+        "回复数字就行，我再继续。"
+    )
+
+
+def build_post_clarification_input(original_user_input: str, option: str) -> str:
+    label = _INTENT_CLARIFY_ACTION_LABELS[option]
+    return (
+        "基于刚才的用户确认，按下面目标继续处理：\n"
+        f"用户原始请求：{(original_user_input or '').strip()}\n"
+        f"本次确认目标：{label}"
+    )
+
+
+def consume_intent_clarification_choice(user_input: str, pending: dict | None) -> str | None:
+    normalized = (user_input or "").strip()
+    if not pending or normalized not in (pending.get("options") or {}):
+        return None
+    return build_post_clarification_input(pending.get("original_user_input", ""), normalized)
+
+
+def clear_pending_intent_clarification(session_state) -> None:
+    session_state["pending_intent_clarification"] = None
+
+
 _EXPLAINER_FOLLOWUP_MODIFY_PATTERNS = (
     re.compile(r"^按你刚才说的改[吧啊呀]?$"),
     re.compile(r"^按这个思路改[吧啊呀]?$"),

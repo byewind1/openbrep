@@ -1942,12 +1942,7 @@ def _is_modify_or_check_intent(text: str) -> bool:
     return any(token in raw for token in modify_tokens)
 
 
-_INTENT_CLARIFY_ACTION_LABELS = {
-    "1": "先快速解释脚本结构",
-    "2": "先检查明显错误/风险",
-    "3": "先给修改建议",
-    "4": "按顺序都做，但先给简版总检",
-}
+_INTENT_CLARIFY_ACTION_LABELS = ui_view_models._INTENT_CLARIFY_ACTION_LABELS
 
 _EXPLAINER_KEYWORDS = {
     "这是什么对象", "解释一下", "详细讲讲", "详细说说", "展开说说",
@@ -2006,19 +2001,7 @@ def _should_clarify_intent(text: str, has_project: bool, history: list[dict]) ->
 
 
 def _build_intent_clarification_message(recommended_option: str) -> str:
-    recommendation = _INTENT_CLARIFY_ACTION_LABELS.get(
-        recommended_option,
-        _INTENT_CLARIFY_ACTION_LABELS["2"],
-    )
-    return (
-        f"我猜你现在更像是想{recommendation}。\n"
-        "你也可以选：\n"
-        "1. 先快速解释脚本结构\n"
-        "2. 先检查明显错误/风险\n"
-        "3. 先给修改建议\n"
-        "4. 按顺序都做，但先给简版总检\n"
-        "回复数字就行，我再继续。"
-    )
+    return ui_view_models.build_intent_clarification_message(recommended_option)
 
 
 
@@ -2041,25 +2024,17 @@ def _maybe_build_intent_clarification(user_input: str, has_project: bool, histor
 
 
 def _build_post_clarification_input(original_user_input: str, option: str) -> str:
-    label = _INTENT_CLARIFY_ACTION_LABELS[option]
-    return (
-        "基于刚才的用户确认，按下面目标继续处理：\n"
-        f"用户原始请求：{(original_user_input or '').strip()}\n"
-        f"本次确认目标：{label}"
-    )
+    return ui_view_models.build_post_clarification_input(original_user_input, option)
 
 
 
 def _consume_intent_clarification_choice(user_input: str, pending: dict | None) -> str | None:
-    normalized = (user_input or "").strip()
-    if not pending or normalized not in (pending.get("options") or {}):
-        return None
-    return _build_post_clarification_input(pending.get("original_user_input", ""), normalized)
+    return ui_view_models.consume_intent_clarification_choice(user_input, pending)
 
 
 
 def _clear_pending_intent_clarification() -> None:
-    st.session_state["pending_intent_clarification"] = None
+    ui_view_models.clear_pending_intent_clarification(st.session_state)
 
 
 
