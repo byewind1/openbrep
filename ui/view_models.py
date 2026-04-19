@@ -49,6 +49,10 @@ def is_pure_chat(text: str) -> bool:
     return any(re.search(pattern, (text or "").strip(), re.IGNORECASE) for pattern in CHAT_ONLY_PATTERNS)
 
 
+def classify_and_extract_result(intent: str, obj_name: str) -> tuple[str, str]:
+    return (("CHAT" if intent == "CHAT" else "GDL"), obj_name)
+
+
 
 _PARAM_TYPE_RE = re.compile(
     r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'

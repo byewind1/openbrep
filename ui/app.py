@@ -1845,7 +1845,7 @@ def _route_main_input(text: str, project_loaded: bool = False, has_image: bool =
 def classify_and_extract(text: str, llm, project_loaded: bool = False) -> tuple:
     """Compatibility wrapper for older tests/callers."""
     intent, obj_name = _route_main_input(text, project_loaded=project_loaded, has_image=False)
-    return (("CHAT" if intent == "CHAT" else "GDL"), obj_name)
+    return ui_view_models.classify_and_extract_result(intent, obj_name)
 
 
 def chat_respond(user_input: str, history: list, llm) -> str:
