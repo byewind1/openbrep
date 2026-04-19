@@ -2091,6 +2091,64 @@ def _build_image_user_display(vision_name: str, route_mode: str, joined_text: st
     return ui_chat_controller.build_image_user_display(vision_name, route_mode, joined_text)
 
 
+def _pop_chat_runtime_state(has_image_input: bool) -> dict:
+    return ui_chat_controller.pop_chat_runtime_state(
+        session_state=st.session_state,
+        has_image_input=has_image_input,
+    )
+
+
+def _handle_tapir_test_trigger(tapir_trigger: bool) -> tuple[bool, bool]:
+    return ui_chat_controller.handle_tapir_test_trigger(
+        tapir_trigger=tapir_trigger,
+        tapir_import_ok=_TAPIR_IMPORT_OK,
+        get_bridge_fn=get_bridge,
+        errors_to_chat_message_fn=errors_to_chat_message,
+        session_state=st.session_state,
+    )
+
+
+def _handle_tapir_selection_trigger(tapir_selection_trigger: bool) -> tuple[bool, bool]:
+    return ui_chat_controller.handle_tapir_selection_trigger(
+        tapir_selection_trigger=tapir_selection_trigger,
+        tapir_import_ok=_TAPIR_IMPORT_OK,
+        tapir_sync_selection_fn=_tapir_sync_selection,
+        session_state=st.session_state,
+    )
+
+
+def _handle_tapir_highlight_trigger(tapir_highlight_trigger: bool) -> tuple[bool, bool]:
+    return ui_chat_controller.handle_tapir_highlight_trigger(
+        tapir_highlight_trigger=tapir_highlight_trigger,
+        tapir_import_ok=_TAPIR_IMPORT_OK,
+        tapir_highlight_selection_fn=_tapir_highlight_selection,
+    )
+
+
+def _handle_tapir_load_params_trigger(tapir_load_params_trigger: bool) -> tuple[bool, bool]:
+    return ui_chat_controller.handle_tapir_load_params_trigger(
+        tapir_load_params_trigger=tapir_load_params_trigger,
+        tapir_import_ok=_TAPIR_IMPORT_OK,
+        tapir_load_selected_params_fn=_tapir_load_selected_params,
+        session_state=st.session_state,
+    )
+
+
+def _handle_tapir_apply_params_trigger(tapir_apply_params_trigger: bool) -> tuple[bool, bool]:
+    return ui_chat_controller.handle_tapir_apply_params_trigger(
+        tapir_apply_params_trigger=tapir_apply_params_trigger,
+        tapir_import_ok=_TAPIR_IMPORT_OK,
+        tapir_apply_param_edits_fn=_tapir_apply_param_edits,
+    )
+
+
+def _apply_chat_anchor_pending(anchor_pending) -> bool:
+    return ui_chat_controller.apply_chat_anchor_pending(
+        anchor_pending=anchor_pending,
+        session_state=st.session_state,
+        rerun_fn=st.rerun,
+    )
+
 
 def _run_normal_text_path(effective_input: str, redo_input, bridge_input, live_output, api_key: str, model_name: str) -> tuple[bool, bool, str | None]:
     return ui_chat_controller.run_normal_text_path(
@@ -3269,82 +3327,40 @@ with col_right:
     #  Chat handler (outside columns — session state + rerun)
     # ══════════════════════════════════════════════════════════
 
-    _redo_input                = st.session_state.pop("_redo_input", None)
-    _pending_bridge_idx        = st.session_state.pop("_pending_bridge_idx", None)
-    _active_dbg                = st.session_state.get("_debug_mode_active")
-    _tapir_trigger             = st.session_state.pop("tapir_test_trigger", False)
-    _tapir_selection_trigger   = st.session_state.pop("tapir_selection_trigger", False)
-    _tapir_highlight_trigger   = st.session_state.pop("tapir_highlight_trigger", False)
-    _tapir_load_params_trigger = st.session_state.pop("tapir_load_params_trigger", False)
-    _tapir_apply_params_trigger = st.session_state.pop("tapir_apply_params_trigger", False)
-    _has_image_input           = bool(_vision_b64)
+    _runtime = _pop_chat_runtime_state(_vision_b64 is not None)
+    _redo_input = _runtime["redo_input"]
+    _pending_bridge_idx = _runtime["pending_bridge_idx"]
+    _active_dbg = _runtime["active_debug_mode"]
+    _tapir_trigger = _runtime["tapir_trigger"]
+    _tapir_selection_trigger = _runtime["tapir_selection_trigger"]
+    _tapir_highlight_trigger = _runtime["tapir_highlight_trigger"]
+    _tapir_load_params_trigger = _runtime["tapir_load_params_trigger"]
+    _tapir_apply_params_trigger = _runtime["tapir_apply_params_trigger"]
+    _has_image_input = _runtime["has_image_input"]
 
     # 历史锚点定位：延迟到页面末尾执行，避免打断当前LLM调用
-    _anchor_pending = st.session_state.pop("chat_anchor_pending", None)
+    _anchor_pending = _runtime["anchor_pending"]
 
 
     # ── Archicad 测试：ReloadLibraries + 捕获错误注入 chat ──
-    if _tapir_trigger and _TAPIR_IMPORT_OK:
-        _bridge = get_bridge()
-        _proj_for_tapir = st.session_state.project
-        with st.spinner("🏗️ 触发 Archicad 重新加载库，等待渲染..."):
-            _reload_ok, _gdl_errors = _bridge.reload_and_capture(
-                timeout=6.0,
-                project=_proj_for_tapir,
-            )
-        if _reload_ok:
-            _error_msg = errors_to_chat_message(_gdl_errors)
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": _error_msg,
-            })
-            if _gdl_errors:
-                # 自动触发debug：把错误作为context发给LLM
-                _auto_debug = f"[DEBUG:editor] 请根据以上 Archicad 报错修复脚本"
-                st.session_state.chat_history.append({
-                    "role": "user",
-                    "content": _auto_debug,
-                })
-                st.session_state["_auto_debug_input"] = _auto_debug
-            st.rerun()
-        else:
-            st.toast("❌ Archicad 连接失败，请确认 Archicad 正在运行", icon="⚠️")
-
-    if _tapir_selection_trigger and _TAPIR_IMPORT_OK:
-        _ok, _msg = _tapir_sync_selection()
-        if _ok:
-            if st.session_state.get("tapir_selected_guids"):
-                st.toast(f"✅ {_msg}", icon="🧭")
-            else:
-                st.warning("未选中对象")
-        else:
-            st.error(f"❌ {_msg}")
+    _handled, _should_rerun = _handle_tapir_test_trigger(_tapir_trigger)
+    if _handled and _should_rerun:
         st.rerun()
 
-    if _tapir_highlight_trigger and _TAPIR_IMPORT_OK:
-        _ok, _msg = _tapir_highlight_selection()
-        if _ok:
-            st.toast(f"✅ {_msg}", icon="🎯")
-        else:
-            st.error(f"❌ {_msg}")
+    _handled, _should_rerun = _handle_tapir_selection_trigger(_tapir_selection_trigger)
+    if _handled and _should_rerun:
         st.rerun()
 
-    if _tapir_load_params_trigger and _TAPIR_IMPORT_OK:
-        _ok, _msg = _tapir_load_selected_params()
-        if _ok:
-            if st.session_state.get("tapir_last_error"):
-                st.warning(st.session_state.tapir_last_error)
-            st.toast(f"✅ {_msg}", icon="📥")
-        else:
-            st.error(f"❌ {_msg}")
+    _handled, _should_rerun = _handle_tapir_highlight_trigger(_tapir_highlight_trigger)
+    if _handled and _should_rerun:
         st.rerun()
 
-    if _tapir_apply_params_trigger and _TAPIR_IMPORT_OK:
-        _ok, _msg = _tapir_apply_param_edits()
-        if _ok:
-            st.toast(f"✅ {_msg}", icon="📤")
-        else:
-            st.error(f"❌ {_msg}")
+    _handled, _should_rerun = _handle_tapir_load_params_trigger(_tapir_load_params_trigger)
+    if _handled and _should_rerun:
+        st.rerun()
+
+    _handled, _should_rerun = _handle_tapir_apply_params_trigger(_tapir_apply_params_trigger)
+    if _handled and _should_rerun:
         st.rerun()
 
     _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
@@ -3410,13 +3426,7 @@ with col_right:
 
 
     # 锚点定位在页面末尾触发 rerun，尽量不打断当前生成流程
-    if _anchor_pending is not None:
-        st.session_state.chat_anchor_focus = _anchor_pending
-        try:
-            _loop = asyncio.get_running_loop()
-            _loop.call_soon(st.rerun)
-        except RuntimeError:
-            st.rerun()
+    _apply_chat_anchor_pending(_anchor_pending)
 
     # ── Footer ────────────────────────────────────────────────
     st.divider()
