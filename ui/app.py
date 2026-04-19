@@ -67,6 +67,7 @@ from openbrep.runtime.router import IntentRouter
 from ui import actions as ui_actions
 from ui import state as ui_state
 from ui import view_models as ui_view_models
+from ui import preview_controller as ui_preview_controller
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -2684,29 +2685,15 @@ def _dedupe_keep_order(items: list[str]) -> list[str]:
 
 
 def _collect_preview_prechecks(proj: HSFProject, target: str) -> list[str]:
-    warns: list[str] = []
-
-    if target in {"2d", "both"}:
-        for msg in check_gdl_script(proj.get_script(ScriptType.SCRIPT_2D), "2d"):
-            if not msg.startswith("✅"):
-                warns.append(f"[check 2D] {msg}")
-    if target in {"3d", "both"}:
-        for msg in check_gdl_script(proj.get_script(ScriptType.SCRIPT_3D), "3d"):
-            if not msg.startswith("✅"):
-                warns.append(f"[check 3D] {msg}")
-
-    try:
-        v_issues = GDLValidator().validate_all(proj)
-        for issue in v_issues:
-            if target == "2d" and not issue.startswith(("2d.gdl", "paramlist.xml")):
-                continue
-            if target == "3d" and not issue.startswith(("3d.gdl", "paramlist.xml")):
-                continue
-            warns.append(f"[validator] {issue}")
-    except Exception as e:
-        warns.append(f"[validator] 执行失败: {e}")
-
-    return _dedupe_keep_order(warns)
+    return ui_preview_controller.collect_preview_prechecks(
+        proj,
+        target,
+        check_gdl_script_fn=check_gdl_script,
+        validator_factory=GDLValidator,
+        dedupe_keep_order_fn=_dedupe_keep_order,
+        script_type_2d=ScriptType.SCRIPT_2D,
+        script_type_3d=ScriptType.SCRIPT_3D,
+    )
 
 
 def _sync_visible_editor_buffers(proj: HSFProject, editor_version: int) -> bool:
@@ -2879,35 +2866,21 @@ def _render_preview_3d(data: Preview3DResult) -> None:
 
 
 def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
-    _sync_visible_editor_buffers(proj, int(st.session_state.get("editor_version", 0)))
-    params = _preview_param_values(proj)
-    pre_warns = _collect_preview_prechecks(proj, target)
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    try:
-        if target == "2d":
-            res_2d = preview_2d_script(proj.get_script(ScriptType.SCRIPT_2D), parameters=params)
-            st.session_state.preview_2d_data = res_2d
-            st.session_state.preview_warnings = _dedupe_keep_order([*pre_warns, *res_2d.warnings])
-            st.session_state.preview_meta = {"kind": "2D", "timestamp": ts}
-            return True, "✅ 2D 预览已更新"
-
-        if target == "3d":
-            res_3d = preview_3d_script(proj.get_script(ScriptType.SCRIPT_3D), parameters=params)
-            st.session_state.preview_3d_data = res_3d
-            st.session_state.preview_warnings = _dedupe_keep_order([*pre_warns, *res_3d.warnings])
-            st.session_state.preview_meta = {"kind": "3D", "timestamp": ts}
-            return True, "✅ 3D 预览已更新"
-
-        return False, f"❌ 未知预览类型: {target}"
-
-    except Exception as e:
-        st.session_state.preview_warnings = _dedupe_keep_order([
-            *pre_warns,
-            f"[preview] 执行失败: {e}",
-        ])
-        st.session_state.preview_meta = {"kind": target.upper(), "timestamp": ts}
-        return False, f"❌ 预览失败: {e}"
+    return ui_preview_controller.run_preview(
+        proj,
+        target,
+        sync_visible_editor_buffers_fn=_sync_visible_editor_buffers,
+        editor_version=int(st.session_state.get("editor_version", 0)),
+        preview_param_values_fn=_preview_param_values,
+        collect_preview_prechecks_fn=_collect_preview_prechecks,
+        dedupe_keep_order_fn=_dedupe_keep_order,
+        set_preview_2d_data_fn=lambda data: st.session_state.__setitem__("preview_2d_data", data),
+        set_preview_3d_data_fn=lambda data: st.session_state.__setitem__("preview_3d_data", data),
+        set_preview_warnings_fn=lambda warns: st.session_state.__setitem__("preview_warnings", warns),
+        set_preview_meta_fn=lambda meta: st.session_state.__setitem__("preview_meta", meta),
+        script_type_2d=ScriptType.SCRIPT_2D,
+        script_type_3d=ScriptType.SCRIPT_3D,
+    )
 
 
 # ══════════════════════════════════════════════════════════
