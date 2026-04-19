@@ -1884,34 +1884,18 @@ def _bump_main_editor_version() -> int:
 # ── Run Agent ─────────────────────────────────────────────
 
 # Keywords that signal debug/analysis intent → inject all scripts + allow plain-text reply
-_DEBUG_KEYWORDS = {
-    "debug", "fix", "error", "bug", "wrong", "issue", "broken", "fail", "crash",
-    "问题", "错误", "调试", "为什么", "帮我看", "看看", "出错",
-    "不对", "不行", "哪里", "原因", "explain", "why", "what", "how",
-    "review", "看一下", "看下", "告诉我", "这段", "这个脚本",
-}
+_DEBUG_KEYWORDS = ui_view_models.DEBUG_KEYWORDS
 
 # Archicad GDL 错误格式特征
-import re as _re
-_ARCHICAD_ERROR_PATTERN = _re.compile(
-    r"(error|warning)\s+in\s+\w[\w\s]*script[,\s]+line\s+\d+",
-    _re.IGNORECASE
-)
+_ARCHICAD_ERROR_PATTERN = ui_view_models._DEBUG_INTENT_ARCHICAD_ERROR_PATTERN
+
 
 def _is_debug_intent(text: str) -> bool:
-    if text.startswith("[DEBUG:editor]"):
-        return True
-    # 自动识别粘贴进来的 Archicad 错误报告
-    if _ARCHICAD_ERROR_PATTERN.search(text):
-        return True
-    t = text.lower()
-    return any(kw in t for kw in _DEBUG_KEYWORDS)
+    return ui_view_models.is_debug_intent(text)
+
 
 def _get_debug_mode(text: str) -> str:
-    """Returns 'editor' or 'keyword' (fallback)."""
-    if text.startswith("[DEBUG:editor]"):
-        return "editor"
-    return "keyword"
+    return ui_view_models.get_debug_mode(text)
 
 
 def run_agent_generate(

@@ -705,6 +705,34 @@ def detect_image_task_mode(user_text: str, image_name: str = "", has_project: bo
     return "generate"
 
 
+_DEBUG_INTENT_ARCHICAD_ERROR_PATTERN = re.compile(
+    r"(error|warning)\s+in\s+\w[\w\s]*script[,\s]+line\s+\d+",
+    re.IGNORECASE,
+)
+
+
+DEBUG_KEYWORDS = {
+    "debug", "fix", "error", "bug", "wrong", "issue", "broken", "fail", "crash",
+    "问题", "错误", "调试", "为什么", "帮我看", "看看", "出错",
+    "不对", "不行", "哪里", "原因", "explain", "why", "what", "how",
+    "review", "看一下", "看下", "告诉我", "这段", "这个脚本",
+}
+
+
+def is_debug_intent(text: str) -> bool:
+    raw = text or ""
+    if raw.startswith("[DEBUG:editor]"):
+        return True
+    if _DEBUG_INTENT_ARCHICAD_ERROR_PATTERN.search(raw):
+        return True
+    lowered = raw.lower()
+    return any(keyword in lowered for keyword in DEBUG_KEYWORDS)
+
+
+def get_debug_mode(text: str) -> str:
+    return "editor" if (text or "").startswith("[DEBUG:editor]") else "keyword"
+
+
 def is_positive_confirmation(text: str) -> bool:
     low = (text or "").strip().lower()
     return any(token in low for token in ["确认", "可以", "是", "对", "生成吧", "没问题", "好的", "开始"])
