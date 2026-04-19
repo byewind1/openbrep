@@ -64,6 +64,9 @@ from openbrep.skills_loader import SkillsLoader
 from openbrep import __version__ as OPENBREP_VERSION
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, build_generation_result_plan
 from openbrep.runtime.router import IntentRouter
+from ui import actions as ui_actions
+from ui import state as ui_state
+from ui import view_models as ui_view_models
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -271,53 +274,37 @@ if "elicitation_state" not in st.session_state:
 
 
 def _new_generation_id() -> str:
-    return uuid.uuid4().hex
+    return ui_state.new_generation_id()
 
 
 
 def _begin_generation_state(state) -> str:
-    generation_id = _new_generation_id()
-    state["active_generation_id"] = generation_id
-    state["generation_status"] = "running"
-    state["generation_cancel_requested"] = False
-    state["agent_running"] = True
-    return generation_id
+    return ui_state.begin_generation_state(state)
 
 
 
 def _request_generation_cancel(state, generation_id: str) -> bool:
-    if not generation_id or state.get("active_generation_id") != generation_id:
-        return False
-    state["generation_cancel_requested"] = True
-    state["generation_status"] = "cancelling"
-    state["agent_running"] = True
-    return True
+    return ui_state.request_generation_cancel(state, generation_id)
 
 
 
 def _is_generation_locked(state) -> bool:
-    return state.get("generation_status") in {"running", "cancelling"}
+    return ui_state.is_generation_locked(state)
 
 
 
 def _is_active_generation(state, generation_id: str) -> bool:
-    return bool(generation_id) and state.get("active_generation_id") == generation_id
+    return ui_state.is_active_generation(state, generation_id)
 
 
 
 def _should_accept_generation_result(state, generation_id: str) -> bool:
-    return _is_active_generation(state, generation_id) and not state.get("generation_cancel_requested", False)
+    return ui_state.should_accept_generation_result(state, generation_id)
 
 
 
 def _finish_generation_state(state, generation_id: str, status: str) -> bool:
-    if not _is_active_generation(state, generation_id):
-        return False
-    state["generation_status"] = status
-    state["active_generation_id"] = None
-    state["generation_cancel_requested"] = False
-    state["agent_running"] = False
-    return True
+    return ui_state.finish_generation_state(state, generation_id, status)
 
 
 
@@ -399,54 +386,36 @@ def _finalize_generation(generation_id: str, status: str) -> bool:
 
 
 def _apply_generation_plan(plan, proj: HSFProject, gsm_name: str | None, already_applied: bool = False) -> tuple[str, list[str]]:
-    if plan.mode == "plain_text_only":
-        return "", []
+    return ui_actions.apply_generation_plan(
+        plan,
+        proj,
+        gsm_name,
+        st.session_state,
+        _capture_last_project_snapshot,
+        _apply_scripts_to_project,
+        _bump_main_editor_version,
+        already_applied=already_applied,
+    )
 
-    script_map = {block["path"]: block["content"] for block in plan.code_blocks}
-    if plan.mode == "auto_apply":
-        if not already_applied:
-            _capture_last_project_snapshot("AI 自动写入")
-            _apply_scripts_to_project(proj, script_map)
-        _bump_main_editor_version()
-        if gsm_name:
-            st.session_state.pending_gsm_name = gsm_name
-    elif plan.mode == "pending_review":
-        st.session_state.pending_diffs = script_map
-        st.session_state.pending_ai_label = plan.label
-        if gsm_name:
-            st.session_state.pending_gsm_name = gsm_name
-
-    code_blocks = []
-    for block in plan.code_blocks:
-        code_blocks.append(
-            f"**{block['label']}**\n```{block['language']}\n{block['content']}\n```"
-        )
-
-    return plan.reply_prefix, code_blocks
 
 
 def _apply_generation_result(cleaned: dict, proj: HSFProject, gsm_name: str | None, auto_apply: bool, already_applied: bool = False) -> tuple[str, list[str]]:
-    from openbrep.runtime.pipeline import TaskResult
-
-    plan = build_generation_result_plan(
-        TaskResult(success=True, scripts=cleaned),
-        auto_apply=auto_apply,
-        gsm_name=gsm_name,
+    return ui_actions.apply_generation_result(
+        cleaned,
+        proj,
+        gsm_name,
+        auto_apply,
+        st.session_state,
+        _capture_last_project_snapshot,
+        _apply_scripts_to_project,
+        _bump_main_editor_version,
+        already_applied=already_applied,
     )
-    return _apply_generation_plan(plan, proj, gsm_name, already_applied=already_applied)
 
 
 
 def _build_generation_reply(plain_text: str, result_prefix: str = "", code_blocks: list[str] | None = None) -> str:
-    reply_parts = []
-    if plain_text:
-        reply_parts.append(plain_text)
-    if result_prefix:
-        joined_blocks = "\n\n".join(code_blocks or [])
-        reply_parts.append(result_prefix + joined_blocks)
-    if reply_parts:
-        return "\n\n---\n\n".join(reply_parts)
-    return "🤔 AI 未返回代码或分析，请换一种描述方式。"
+    return ui_view_models.build_generation_reply(plain_text, result_prefix, code_blocks)
 
 
 
@@ -2653,20 +2622,14 @@ def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:
 
 
 def _finalize_loaded_project(proj: HSFProject, msg: str, pending_gsm_name: str) -> tuple[bool, str]:
-    proj.work_dir = Path(st.session_state.work_dir)
-    proj.root = proj.work_dir / proj.name
-    st.session_state.project = proj
-    st.session_state.pending_diffs = {}
-    st.session_state.preview_2d_data = None
-    st.session_state.preview_3d_data = None
-    st.session_state.preview_warnings = []
-    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-    st.session_state.pending_gsm_name = pending_gsm_name
-    st.session_state.script_revision = 0
-    _reset_tapir_p0_state()
-    _bump_main_editor_version()
-    st.session_state.chat_history.append({"role": "assistant", "content": msg})
-    return (True, msg)
+    return ui_actions.finalize_loaded_project(
+        proj,
+        msg,
+        pending_gsm_name,
+        st.session_state,
+        _reset_tapir_p0_state,
+        _bump_main_editor_version,
+    )
 
 
 
@@ -4230,7 +4193,7 @@ with col_right:
                     st.session_state.script_revision = 0
 
                 _proj_v = st.session_state.project
-                _has_any_v = any(_proj_v.get_script(s) for s, _, _ in _SCRIPT_MAP)
+                _has_any_v = ui_actions.has_any_script_content(_proj_v, _SCRIPT_MAP)
 
                 with live_output.container():
                     st.chat_message("user").markdown(_user_display)
@@ -4311,8 +4274,8 @@ with col_right:
                                     st.session_state.pending_gsm_name = fallback_name
                                     st.session_state.script_revision = 0
 
-                                _has_any_script = any(
-                                    proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
+                                _has_any_script = ui_actions.has_any_script_content(
+                                    proj_current, _SCRIPT_MAP
                                 )
                                 effective_gsm = st.session_state.pending_gsm_name or proj_current.name
                                 msg = run_agent_generate(
@@ -4337,8 +4300,8 @@ with col_right:
                                     proj_current = st.session_state.project
                                     # 只有全新空项目（无任何脚本内容）才自动写入；
                                     # 已有脚本的项目修改时显示确认按钮，防止意外覆盖。
-                                    _has_any_script = any(
-                                        proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP
+                                    _has_any_script = ui_actions.has_any_script_content(
+                                        proj_current, _SCRIPT_MAP
                                     )
                                     effective_gsm = st.session_state.pending_gsm_name or proj_current.name
                                     msg = run_agent_generate(

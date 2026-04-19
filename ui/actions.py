@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from openbrep.hsf_project import HSFProject
+from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+
+
+def has_any_script_content(proj: HSFProject, script_map: list[tuple[str, str, str]]) -> bool:
+    return any(proj.get_script(script_type) for script_type, _, _ in script_map)
+
+
+def apply_generation_plan(
+    plan,
+    proj: HSFProject,
+    gsm_name: str | None,
+    session_state,
+    capture_last_project_snapshot,
+    apply_scripts_to_project,
+    bump_main_editor_version,
+    *,
+    already_applied: bool = False,
+) -> tuple[str, list[str]]:
+    if plan.mode == "plain_text_only":
+        return "", []
+
+    script_map = {block["path"]: block["content"] for block in plan.code_blocks}
+    if plan.mode == "auto_apply":
+        if not already_applied:
+            capture_last_project_snapshot("AI 自动写入")
+            apply_scripts_to_project(proj, script_map)
+        bump_main_editor_version()
+        if gsm_name:
+            session_state.pending_gsm_name = gsm_name
+    elif plan.mode == "pending_review":
+        session_state.pending_diffs = script_map
+        session_state.pending_ai_label = plan.label
+        if gsm_name:
+            session_state.pending_gsm_name = gsm_name
+
+    code_blocks = []
+    for block in plan.code_blocks:
+        code_blocks.append(
+            f"**{block['label']}**\n```{block['language']}\n{block['content']}\n```"
+        )
+
+    return plan.reply_prefix, code_blocks
+
+
+def apply_generation_result(
+    cleaned: dict,
+    proj: HSFProject,
+    gsm_name: str | None,
+    auto_apply: bool,
+    session_state,
+    capture_last_project_snapshot,
+    apply_scripts_to_project,
+    bump_main_editor_version,
+    *,
+    already_applied: bool = False,
+) -> tuple[str, list[str]]:
+    plan = build_generation_result_plan(
+        TaskResult(success=True, scripts=cleaned),
+        auto_apply=auto_apply,
+        gsm_name=gsm_name,
+    )
+    return apply_generation_plan(
+        plan,
+        proj,
+        gsm_name,
+        session_state,
+        capture_last_project_snapshot,
+        apply_scripts_to_project,
+        bump_main_editor_version,
+        already_applied=already_applied,
+    )
+
+
+def finalize_loaded_project(
+    proj: HSFProject,
+    msg: str,
+    pending_gsm_name: str,
+    session_state,
+    reset_tapir_p0_state,
+    bump_main_editor_version,
+) -> tuple[bool, str]:
+    proj.work_dir = Path(session_state.work_dir)
+    proj.root = proj.work_dir / proj.name
+    session_state.project = proj
+    session_state.pending_diffs = {}
+    session_state.preview_2d_data = None
+    session_state.preview_3d_data = None
+    session_state.preview_warnings = []
+    session_state.preview_meta = {"kind": "", "timestamp": ""}
+    session_state.pending_gsm_name = pending_gsm_name
+    session_state.script_revision = 0
+    reset_tapir_p0_state()
+    bump_main_editor_version()
+    session_state.chat_history.append({"role": "assistant", "content": msg})
+    return (True, msg)
