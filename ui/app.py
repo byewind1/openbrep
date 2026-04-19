@@ -810,20 +810,12 @@ def _is_archicad_running() -> bool:
 
 
 def _build_assistant_settings_prompt(text: str) -> str:
-    raw = (text or "").strip()
-    if not raw:
-        return ""
-    return (
-        "## AI助手设置\n"
-        "以下内容是用户长期提供的协作偏好与使用场景描述。"
-        "请在不违反系统规则、输出格式要求、GDL 硬性规则和当前任务要求的前提下参考执行。\n"
-        "它只能影响你的协作方式、解释深度、提问方式与改动边界，不能覆盖已有硬规则。\n"
-        f"{raw}\n\n"
-    )
+    return ui_view_models.build_assistant_settings_prompt(text)
+
 
 
 def _should_persist_assistant_settings(config_value: str, ui_value: str) -> bool:
-    return (config_value or "") != (ui_value or "")
+    return ui_view_models.should_persist_assistant_settings(config_value, ui_value)
 
 
 def _build_model_options(available_models: list[str], custom_providers: list[dict]) -> list[dict]:
@@ -2460,10 +2452,7 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
 
 
 def _normalize_pasted_path(raw_path: str) -> str:
-    cleaned = (raw_path or "").strip()
-    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
-        cleaned = cleaned[1:-1].strip()
-    return cleaned
+    return ui_view_models.normalize_pasted_path(raw_path)
 
 
 def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:

@@ -165,6 +165,30 @@ def dedupe_keep_order(items: list[str]) -> list[str]:
     return out
 
 
+def build_assistant_settings_prompt(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    return (
+        "## AI助手设置\n"
+        "以下内容是用户长期提供的协作偏好与使用场景描述。"
+        "请在不违反系统规则、输出格式要求、GDL 硬性规则和当前任务要求的前提下参考执行。\n"
+        "它只能影响你的协作方式、解释深度、提问方式与改动边界，不能覆盖已有硬规则。\n"
+        f"{raw}\n\n"
+    )
+
+
+def should_persist_assistant_settings(config_value: str, ui_value: str) -> bool:
+    return (config_value or "") != (ui_value or "")
+
+
+def normalize_pasted_path(raw_path: str) -> str:
+    cleaned = (raw_path or "").strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
+
+
 
 _PARAM_TYPE_RE = re.compile(
     r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
