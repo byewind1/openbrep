@@ -189,6 +189,41 @@ def normalize_pasted_path(raw_path: str) -> str:
     return cleaned
 
 
+def versioned_gsm_path(proj_name: str, work_dir: str, revision: int | None = None) -> str:
+    out_dir = Path(work_dir) / "output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if revision is not None:
+        return str(out_dir / f"{proj_name}_v{revision}.gsm")
+
+    v = 1
+    while (out_dir / f"{proj_name}_v{v}.gsm").exists():
+        v += 1
+    return str(out_dir / f"{proj_name}_v{v}.gsm")
+
+
+def max_existing_gsm_revision(proj_name: str, work_dir: str) -> int:
+    out_dir = Path(work_dir) / "output"
+    if not out_dir.exists():
+        return 0
+
+    pattern = re.compile(rf"^{re.escape(proj_name)}_v(\d+)\.gsm$", re.IGNORECASE)
+    max_rev = 0
+    for path in out_dir.glob(f"{proj_name}_v*.gsm"):
+        match = pattern.match(path.name)
+        if not match:
+            continue
+        try:
+            max_rev = max(max_rev, int(match.group(1)))
+        except ValueError:
+            continue
+    return max_rev
+
+
+def safe_compile_revision(proj_name: str, work_dir: str, requested_revision: int) -> int:
+    max_existing = max_existing_gsm_revision(proj_name, work_dir)
+    return max(int(requested_revision or 1), max_existing + 1)
+
 
 _PARAM_TYPE_RE = re.compile(
     r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
