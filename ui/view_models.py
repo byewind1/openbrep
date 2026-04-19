@@ -386,5 +386,17 @@ def should_start_elicitation(user_input: str) -> bool:
     return any(token in (user_input or "") for token in ["创建", "生成", "新建"])
 
 
+def resolve_skip_elicitation_intent(
+    text: str,
+    *,
+    intent: str | None,
+    project_loaded: bool,
+    route_main_input: Callable[[str, bool, bool], tuple[str, str]],
+) -> str:
+    if intent:
+        return intent
+    return route_main_input(text, project_loaded, False)[0]
+
+
 def should_skip_elicitation_for_gdl_request(effective_intent: str) -> bool:
     return effective_intent in ("MODIFY", "DEBUG")
