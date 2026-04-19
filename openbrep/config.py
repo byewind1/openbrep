@@ -135,6 +135,75 @@ def _auto_detect_converter() -> Optional[str]:
     return None
 
 
+def _normalize_custom_model_entry(entry) -> Optional[dict[str, str]]:
+    if isinstance(entry, dict):
+        alias = str(entry.get("alias", "") or entry.get("name", "") or entry.get("model", "") or "").strip()
+        model = str(entry.get("model", "") or entry.get("alias", "") or "").strip()
+        if not alias and not model:
+            return None
+        return {
+            "alias": alias or model,
+            "model": model or alias,
+        }
+
+    value = str(entry or "").strip()
+    if not value:
+        return None
+    return {
+        "alias": value,
+        "model": value,
+    }
+
+
+def iter_custom_provider_model_entries(provider: dict | None) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    models = (provider or {}).get("models", []) or []
+    for entry in models:
+        normalized = _normalize_custom_model_entry(entry)
+        if normalized:
+            entries.append(normalized)
+    return entries
+
+
+def find_custom_provider_match(
+    custom_providers: list[dict] | None,
+    target_model: str | None,
+    *,
+    include_provider_name: bool = True,
+) -> Optional[dict]:
+    target = str(target_model or "").strip().lower()
+    if not target:
+        return None
+
+    for provider in custom_providers or []:
+        provider_name = str(provider.get("name", "") or "").strip()
+        if include_provider_name and provider_name and provider_name.lower() == target:
+            entries = iter_custom_provider_model_entries(provider)
+            first = entries[0] if entries else {"alias": provider_name, "model": provider_name}
+            return {
+                "provider": provider,
+                "provider_name": provider_name,
+                "alias": first["alias"],
+                "model": first["model"],
+                "protocol": str(provider.get("protocol", "openai") or "openai"),
+                "api_key": str(provider.get("api_key", "") or ""),
+                "base_url": str(provider.get("base_url", "") or ""),
+            }
+
+        for entry in iter_custom_provider_model_entries(provider):
+            if target in {entry["alias"].lower(), entry["model"].lower()}:
+                return {
+                    "provider": provider,
+                    "provider_name": provider_name,
+                    "alias": entry["alias"],
+                    "model": entry["model"],
+                    "protocol": str(provider.get("protocol", "openai") or "openai"),
+                    "api_key": str(provider.get("api_key", "") or ""),
+                    "base_url": str(provider.get("base_url", "") or ""),
+                }
+    return None
+
+
 @dataclass
 class LLMConfig:
     model: str = "glm-4-flash"
@@ -147,22 +216,24 @@ class LLMConfig:
     custom_providers: list[dict] = field(default_factory=list)
     assistant_settings: str = ""
 
+    def _find_custom_provider_match(self, model: str | None = None, *, include_provider_name: bool = True) -> Optional[dict]:
+        return find_custom_provider_match(
+            self.custom_providers,
+            model or self.model,
+            include_provider_name=include_provider_name,
+        )
+
     def _is_custom_provider_model(self, model: str | None = None) -> bool:
-        target = (model or self.model or "")
-        for provider in self.custom_providers:
-            models = provider.get("models", []) or []
-            if any(target.lower() == str(candidate).lower() for candidate in models):
-                return True
-        return False
+        return self._find_custom_provider_match(model) is not None
 
     def resolve_api_key(self) -> Optional[str]:
         if self.api_key:
             return self.api_key
-        for provider in self.custom_providers:
-            if provider.get("name") == self.model:
-                _k = provider.get("api_key")
-                if _k:
-                    return str(_k)
+
+        custom_match = self._find_custom_provider_match()
+        if custom_match and custom_match.get("api_key"):
+            return str(custom_match["api_key"])
+
         # Check provider_keys first
         model_lower = self.model.lower()
         if "glm" in model_lower:
@@ -182,14 +253,6 @@ class LLMConfig:
                 if key in self.provider_keys:
                     return self.provider_keys[key]
 
-        # Check custom providers by configured models list
-        for provider in self.custom_providers:
-            models = provider.get("models", []) or []
-            if any(model_lower == str(m).lower() for m in models):
-                _k = provider.get("api_key")
-                if _k:
-                    return str(_k)
-
         # Fallback to environment variables
         for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
             val = os.environ.get(name)
@@ -200,28 +263,23 @@ class LLMConfig:
     def resolve_api_base(self) -> Optional[str]:
         if self.api_base:
             return self.api_base
-        for provider in self.custom_providers:
-            if provider.get("name") == self.model:
-                base = provider.get("base_url")
-                if base:
-                    return str(base)
-        model_lower = self.model.lower()
-        for provider in self.custom_providers:
-            models = provider.get("models", []) or []
-            if any(model_lower == str(m).lower() for m in models):
-                base = provider.get("base_url")
-                if base:
-                    return str(base)
+
+        custom_match = self._find_custom_provider_match()
+        if custom_match and custom_match.get("base_url"):
+            return str(custom_match["base_url"])
         return None
 
     def get_provider_for_model(self, model_name: str) -> dict:
-        for provider in self.custom_providers:
-            if model_name in (provider.get("models", []) or []):
-                return {
-                    "api_key": provider.get("api_key", ""),
-                    "base_url": provider.get("base_url", ""),
-                    "protocol": provider.get("protocol", "openai"),
-                }
+        custom_match = self._find_custom_provider_match(model_name)
+        if custom_match:
+            return {
+                "api_key": custom_match.get("api_key", ""),
+                "base_url": custom_match.get("base_url", ""),
+                "protocol": custom_match.get("protocol", "openai"),
+                "provider_name": custom_match.get("provider_name", ""),
+                "alias": custom_match.get("alias", model_name),
+                "model": custom_match.get("model", model_name),
+            }
         return {}
 
 
@@ -276,21 +334,23 @@ class GDLAgentConfig:
                 data = tomllib.load(f)
                 llm_data = data.get("llm", {}) if isinstance(data, dict) else {}
                 if isinstance(llm_data, dict):
-                    custom_providers = llm_data.get("custom_providers", []) or []
-                    for provider in custom_providers:
-                        models = provider.get("models", []) or []
-                        if str(llm_data.get("model", "") or "") in models:
-                            custom_base = str(provider.get("base_url", "") or "")
-                            if custom_base and not str(llm_data.get("api_base", "") or ""):
-                                llm_data["api_base"] = custom_base
-                            custom_key = str(provider.get("api_key", "") or "")
-                            if custom_key and not str(llm_data.get("api_key", "") or ""):
-                                llm_data["api_key"] = custom_key
-                            if isinstance(llm_data.get("api_base"), str):
-                                _norm_base = llm_data["api_base"].rstrip("/")
-                                if _norm_base and not _norm_base.endswith("/v1"):
-                                    llm_data["api_base"] = _norm_base + "/v1"
-                            break
+                    raw_custom = llm_data.get("custom_providers", []) or []
+                    custom_providers = raw_custom if isinstance(raw_custom, list) else []
+                    custom_match = find_custom_provider_match(
+                        custom_providers,
+                        str(llm_data.get("model", "") or ""),
+                    )
+                    if custom_match:
+                        custom_base = str(custom_match.get("base_url", "") or "")
+                        if custom_base and not str(llm_data.get("api_base", "") or ""):
+                            llm_data["api_base"] = custom_base
+                        custom_key = str(custom_match.get("api_key", "") or "")
+                        if custom_key and not str(llm_data.get("api_key", "") or ""):
+                            llm_data["api_key"] = custom_key
+                        if isinstance(llm_data.get("api_base"), str):
+                            _norm_base = llm_data["api_base"].rstrip("/")
+                            if _norm_base and not _norm_base.endswith("/v1"):
+                                llm_data["api_base"] = _norm_base + "/v1"
         for key, val in overrides.items():
             if val is not None:
                 _nested_set(data, key, val)
@@ -329,9 +389,10 @@ class GDLAgentConfig:
     def get_available_models(self) -> list[str]:
         custom_models = []
         for p in self.llm.custom_providers:
-            for m in p.get("models", []) or []:
-                if m not in custom_models:
-                    custom_models.append(m)
+            for entry in iter_custom_provider_model_entries(p):
+                alias = entry["alias"]
+                if alias not in custom_models:
+                    custom_models.append(alias)
         return custom_models + [m for m in ALL_MODELS if m not in custom_models]
 
     def ensure_dirs(self):

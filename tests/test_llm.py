@@ -682,30 +682,30 @@ class TestLLMAdapterVision(unittest.TestCase):
         self.assertIn("协议、base_url 或模型名配置", message)
         self.assertIn("provider=ymg", message)
         self.assertIn("api_base=https://api.airsim.eu.cc/v1", message)
-        self.assertIn("resolved_model=glm-5.1", message)
+        self.assertIn("resolved_model=openai/glm-5.1", message)
 
-    def test_gpt5_custom_provider_model_stays_unprefixed(self):
+    def test_gpt5_custom_provider_model_resolves_with_protocol_prefix(self):
         config = LLMConfig(
             model="gpt-5.4",
             custom_providers=[{"name": "ymg", "models": ["gpt-5.4"], "protocol": "openai"}],
         )
         adapter = LLMAdapter(config)
-        self.assertEqual(adapter._resolve_model_string(), "gpt-5.4")
+        self.assertEqual(adapter._resolve_model_string(), "openai/gpt-5.4")
 
-    def test_non_gpt_custom_model_stays_unprefixed(self):
+    def test_non_gpt_custom_model_resolves_with_protocol_prefix(self):
         config = LLMConfig(
             model="ymg-chat",
             custom_providers=[{"name": "ymg", "models": ["ymg-chat"], "protocol": "openai"}],
         )
         adapter = LLMAdapter(config)
-        self.assertEqual(adapter._resolve_model_string(), "ymg-chat")
+        self.assertEqual(adapter._resolve_model_string(), "openai/ymg-chat")
 
     def test_builtin_gpt5_model_keeps_openai_prefix(self):
         config = LLMConfig(model="gpt-5.4")
         adapter = LLMAdapter(config)
         self.assertEqual(adapter._resolve_model_string(), "openai/gpt-5.4")
 
-    def test_generate_with_non_gpt_custom_model_uses_plain_kwargs(self):
+    def test_generate_with_non_gpt_custom_model_uses_prefixed_model_and_keeps_api_base(self):
         config = LLMConfig(
             model="ymg-chat",
             api_key="test-key",
@@ -716,7 +716,7 @@ class TestLLMAdapterVision(unittest.TestCase):
             custom_providers=[{"name": "ymg", "models": ["ymg-chat"], "protocol": "openai"}],
         )
         adapter = LLMAdapter(config)
-        built_response = self._mock_response(model_name="ymg-chat")
+        built_response = self._mock_response(model_name="openai/ymg-chat")
         adapter._litellm = MagicMock()
         adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
         adapter._litellm.stream_chunk_builder.return_value = built_response
@@ -725,7 +725,7 @@ class TestLLMAdapterVision(unittest.TestCase):
 
         self.assertEqual(result.content, "ok")
         kwargs = adapter._litellm.completion.call_args.kwargs
-        self.assertEqual(kwargs["model"], "ymg-chat")
+        self.assertEqual(kwargs["model"], "openai/ymg-chat")
         self.assertEqual(kwargs["temperature"], 0.2)
         self.assertEqual(kwargs["max_tokens"], 9999)
         self.assertEqual(kwargs["timeout"], 22)
@@ -1879,6 +1879,16 @@ class TestGenerationStateHelpers(unittest.TestCase):
             saved_model="",
         )
         self.assertEqual([o["label"] for o in state["custom_options"]], ["自定义1"])
+
+    def test_build_model_source_state_uses_alias_for_custom_object_entries(self):
+        state = _build_model_source_state(
+            builtin_models=["gpt-5.4"],
+            custom_providers=[{"name": "ymg", "models": [{"alias": "ymg-glm-5.4", "model": "glm-5.4"}]}],
+            saved_model="ymg-glm-5.4",
+        )
+        self.assertEqual([o["label"] for o in state["custom_options"]], ["ymg"])
+        self.assertEqual(state["default_source"], "自定义")
+        self.assertEqual(state["default_model_label"], "ymg")
 
     def test_build_model_source_state_tolerates_missing_config_object(self):
         state = _build_model_source_state(

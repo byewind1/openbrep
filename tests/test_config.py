@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openbrep.config import GDLAgentConfig
+from openbrep.config import GDLAgentConfig, LLMConfig
 
 
 class TestConfigAssistantSettings(unittest.TestCase):
@@ -84,6 +84,35 @@ timeout = 60
             self.assertEqual(len(config.llm.custom_providers), 1)
             self.assertEqual(config.llm.custom_providers[0]["name"], "ymg")
             self.assertEqual(config.llm.custom_providers[0]["models"], ["gpt-5.4"])
+
+    def test_load_supports_custom_model_object_entry_and_resolves_key_base(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                '''
+[llm]
+model = "ymg-glm-5.4"
+
+[[llm.custom_providers]]
+name = "ymg"
+base_url = "https://api.airsim.eu.cc/v1"
+api_key = "custom-key"
+models = [{ alias = "ymg-glm-5.4", model = "glm-5.4" }]
+protocol = "openai"
+'''.strip(),
+                encoding="utf-8",
+            )
+
+            loaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(loaded.llm.model, "ymg-glm-5.4")
+            self.assertEqual(loaded.llm.api_base, "https://api.airsim.eu.cc/v1")
+            self.assertEqual(loaded.llm.api_key, "custom-key")
+
+            provider = loaded.llm.get_provider_for_model("ymg-glm-5.4")
+            self.assertEqual(provider.get("provider_name"), "ymg")
+            self.assertEqual(provider.get("alias"), "ymg-glm-5.4")
+            self.assertEqual(provider.get("model"), "glm-5.4")
+            self.assertEqual(provider.get("protocol"), "openai")
 
     def test_load_reflects_disk_changes_on_reload(self):
         with tempfile.TemporaryDirectory() as tmpdir:

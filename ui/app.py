@@ -52,7 +52,7 @@ from openbrep.gdl_previewer import Preview2DResult, Preview3DResult, preview_2d_
 from openbrep.validator import GDLValidator
 from openbrep.knowledge import KnowledgeBase
 try:
-    from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, model_to_provider, GDLAgentConfig
+    from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, model_to_provider, GDLAgentConfig, iter_custom_provider_model_entries
     _MODEL_CONSTANTS_OK = True
 except ImportError:
     ALL_MODELS = []
@@ -893,22 +893,34 @@ def _resolve_selected_model(selected_label: str, options: list[dict]) -> str:
     return ""
 
 
+def _collect_custom_model_aliases(custom_providers: list[dict]) -> list[str]:
+    aliases: list[str] = []
+    for provider in custom_providers or []:
+        for entry in iter_custom_provider_model_entries(provider):
+            alias = str(entry.get("alias", "") or "").strip()
+            if alias and alias not in aliases:
+                aliases.append(alias)
+    return aliases
+
+
 def _build_custom_model_options(custom_providers: list[dict]) -> list[dict]:
     options: list[dict] = []
     fallback_index = 0
     for provider in custom_providers or []:
         provider_name = str(provider.get("name", "") or "").strip()
-        models = provider.get("models", []) or []
-        for model in models:
-            model_str = str(model)
+        entries = iter_custom_provider_model_entries(provider)
+        for entry in entries:
+            alias = str(entry.get("alias", "") or "").strip()
+            if not alias:
+                continue
             if provider_name:
-                label = provider_name if len(models) == 1 else f"{provider_name} / {model_str}"
+                label = provider_name if len(entries) == 1 else f"{provider_name} / {alias}"
             else:
                 fallback_index += 1
                 label = f"自定义{fallback_index}"
             options.append({
                 "label": label,
-                "actual_model": model_str,
+                "actual_model": alias,
                 "is_custom": True,
             })
     return options
@@ -919,12 +931,7 @@ def _build_model_source_state(
     custom_providers: list[dict],
     saved_model: str,
 ) -> dict:
-    custom_models: list[str] = []
-    for provider in custom_providers or []:
-        for model in provider.get("models", []) or []:
-            model_str = str(model)
-            if model_str not in custom_models:
-                custom_models.append(model_str)
+    custom_models = _collect_custom_model_aliases(custom_providers or [])
 
     builtin_options = _build_model_options(list(builtin_models or []), [])
     custom_options = _build_custom_model_options(custom_providers or [])
@@ -1115,10 +1122,7 @@ with st.sidebar:
         # Auto-fill from config.toml provider_keys
         st.session_state.model_api_keys[model_name] = _key_for_model(model_name)
 
-    is_custom = any(
-        model_name in (p.get("models", []) or [])
-        for p in _custom_list
-    )
+    is_custom = model_name in _collect_custom_model_aliases(_custom_list)
 
     if is_custom:
         st.info("此模型使用自定义代理，请在 config.toml 的 [[llm.custom_providers]] 中配置 api_key 和 base_url")
@@ -1178,9 +1182,9 @@ with st.sidebar:
 
         # 自定义 provider 的模型精确匹配
         for _pcfg in _custom_providers:
-            for _m in _pcfg.get("models", []) or []:
-                if m == str(_m).lower():
-                    return str(_pcfg.get("base_url", "") or "")
+            aliases = {str(e.get("alias", "") or "").lower() for e in iter_custom_provider_model_entries(_pcfg)}
+            if m in aliases:
+                return str(_pcfg.get("base_url", "") or "")
 
         if "ollama" in m:
             return "http://localhost:11434"

@@ -21,6 +21,16 @@ _NATIVE_PROVIDERS = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "o
 
 
 @dataclass
+class _ResolvedModelTarget:
+    configured_model: str
+    litellm_model: str
+    is_custom_provider_request: bool
+    provider_name: str = ""
+    protocol: str = ""
+    target_model: str = ""
+
+
+@dataclass
 class Message:
     role: str  # "system" | "user" | "assistant"
     content: str
@@ -48,32 +58,23 @@ class LLMAdapter:
         self._setup()
 
     def _is_custom_provider_model(self, model: str | None = None) -> bool:
-        target = (model or self.config.model or "").lower()
-        for provider in self.config.custom_providers:
-            models = provider.get("models", []) or []
-            if any(target == str(candidate).lower() for candidate in models):
-                return True
-        return False
+        return self.config._is_custom_provider_model(model)
 
     def _get_custom_provider_config(self, model: str | None = None) -> Optional[dict]:
-        target = (model or self.config.model or "").lower()
-        for provider in self.config.custom_providers:
-            if target == str(provider.get("name", "") or "").lower():
-                return provider
-            models = provider.get("models", []) or []
-            if any(target == str(candidate).lower() for candidate in models):
-                return provider
-        return None
+        custom_match = self.config._find_custom_provider_match(model)
+        return custom_match.get("provider") if custom_match else None
+
+    def _get_custom_provider_match(self, model: str | None = None) -> Optional[dict]:
+        return self.config._find_custom_provider_match(model)
 
     def _is_native_provider_model(self, model: str) -> bool:
         return any(model.startswith(prefix) for prefix in _NATIVE_PROVIDERS)
 
-    def _build_config_error_message(self, exc: Exception, model: str) -> str:
-        configured_model = self.config.model or model
+    def _build_config_error_message(self, exc: Exception, resolved: _ResolvedModelTarget) -> str:
+        configured_model = resolved.configured_model or self.config.model or resolved.litellm_model
         resolved_api_key = self.config.resolve_api_key()
         resolved_api_base = self.config.resolve_api_base()
-        custom_provider = self._get_custom_provider_config(configured_model)
-        provider_name = str(custom_provider.get("name", "") or "") if custom_provider else ""
+        provider_name = resolved.provider_name
         exc_text = str(exc).strip() or exc.__class__.__name__
 
         litellm_exceptions = getattr(self._litellm, "exceptions", None)
@@ -92,12 +93,12 @@ class LLMAdapter:
                     "或与当前 provider 不匹配。"
                 )
         elif bad_request and isinstance(exc, bad_request):
-            if custom_provider and not resolved_api_base:
+            if resolved.is_custom_provider_request and not resolved_api_base:
                 summary = (
                     f"LLM 配置错误：自定义 provider `{provider_name or configured_model}` 缺少 base_url，"
                     "无法请求当前模型。请检查 [[llm.custom_providers]] 配置。"
                 )
-            elif custom_provider:
+            elif resolved.is_custom_provider_request:
                 summary = (
                     f"LLM 请求被拒绝：模型 `{configured_model}` 所属自定义 provider `{provider_name or configured_model}` "
                     "可能不兼容当前协议、base_url 或模型名配置。"
@@ -111,19 +112,23 @@ class LLMAdapter:
             summary = f"LLM 调用失败：模型 `{configured_model}` 的配置或请求参数可能有误。"
 
         details = [summary, f"底层错误：{exc_text}"]
-        if custom_provider:
+        if resolved.is_custom_provider_request:
             details.insert(1, f"provider={provider_name or '(未命名自定义 provider)' }")
+            if resolved.protocol:
+                details.append(f"protocol={resolved.protocol}")
+            if resolved.target_model:
+                details.append(f"target_model={resolved.target_model}")
         if resolved_api_base:
             details.append(f"api_base={resolved_api_base}")
-        details.append(f"resolved_model={model}")
+        details.append(f"resolved_model={resolved.litellm_model}")
         return " ".join(details)
 
-    def _raise_config_error_if_needed(self, exc: Exception, model: str) -> None:
+    def _raise_config_error_if_needed(self, exc: Exception, resolved: _ResolvedModelTarget) -> None:
         litellm_exceptions = getattr(self._litellm, "exceptions", None)
         bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
         auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
         if (bad_request and isinstance(exc, bad_request)) or (auth_error and isinstance(exc, auth_error)):
-            raise RuntimeError(self._build_config_error_message(exc, model)) from exc
+            raise RuntimeError(self._build_config_error_message(exc, resolved)) from exc
 
     def _setup(self):
         """Initialize litellm with config."""
@@ -181,8 +186,8 @@ class LLMAdapter:
                 "litellm is not installed. Install it with: pip install litellm"
             )
 
-        # Build model string for litellm
-        model = self._resolve_model_string()
+        resolved = self._resolve_model_target()
+        model = resolved.litellm_model
 
         # Build completion kwargs
         completion_kwargs = {
@@ -206,7 +211,7 @@ class LLMAdapter:
         # — they handle endpoints internally. Only pass for openai-compatible custom endpoints.
         is_native = self._is_native_provider_model(model)
         api_base = self.config.resolve_api_base()
-        if api_base and not is_native:
+        if api_base and (resolved.is_custom_provider_request or not is_native):
             completion_kwargs["api_base"] = api_base
 
         completion_kwargs.update(kwargs)
@@ -223,7 +228,7 @@ class LLMAdapter:
                 elapsed,
                 exc.__class__.__name__,
             )
-            self._raise_config_error_if_needed(exc, model)
+            self._raise_config_error_if_needed(exc, resolved)
             raise
         if completion_kwargs.get("stream"):
             chunks = []
@@ -272,7 +277,8 @@ class LLMAdapter:
                 "litellm is not installed. Install it with: pip install litellm"
             )
 
-        model = self._resolve_model_string()
+        resolved = self._resolve_model_target()
+        model = resolved.litellm_model
 
         messages = []
         if system_prompt:
@@ -308,7 +314,7 @@ class LLMAdapter:
 
         is_native = self._is_native_provider_model(model)
         api_base = self.config.resolve_api_base()
-        if api_base and not is_native:
+        if api_base and (resolved.is_custom_provider_request or not is_native):
             completion_kwargs["api_base"] = api_base
 
         completion_kwargs.update(kwargs)
@@ -334,7 +340,7 @@ class LLMAdapter:
                 elapsed,
                 exc.__class__.__name__,
             )
-            self._raise_config_error_if_needed(exc, model)
+            self._raise_config_error_if_needed(exc, resolved)
             raise
         if completion_kwargs.get("stream"):
             chunks = []
@@ -359,6 +365,67 @@ class LLMAdapter:
             finish_reason=choice.finish_reason or "",
         )
 
+    def _resolve_model_target(self, model: str | None = None) -> _ResolvedModelTarget:
+        configured_model = str(model or self.config.model or "").strip()
+
+        custom_match = self._get_custom_provider_match(configured_model)
+        if custom_match:
+            provider_name = str(custom_match.get("provider_name", "") or "").strip()
+            protocol = str(custom_match.get("protocol", "openai") or "openai").strip().lower()
+            target_model = str(custom_match.get("model", configured_model) or configured_model).strip()
+
+            if "/" in target_model and not target_model.startswith("http"):
+                litellm_model = target_model
+            else:
+                protocol_prefix = {
+                    "openai": "openai",
+                    "anthropic": "anthropic",
+                    "claude": "claude",
+                    "gemini": "gemini",
+                    "zai": "zai",
+                    "deepseek": "deepseek",
+                    "ollama": "ollama",
+                }.get(protocol, "openai")
+                litellm_model = f"{protocol_prefix}/{target_model}"
+
+            return _ResolvedModelTarget(
+                configured_model=configured_model,
+                litellm_model=litellm_model,
+                is_custom_provider_request=True,
+                provider_name=provider_name,
+                protocol=protocol,
+                target_model=target_model,
+            )
+
+        if "/" in configured_model and not configured_model.startswith("http"):
+            return _ResolvedModelTarget(
+                configured_model=configured_model,
+                litellm_model=configured_model,
+                is_custom_provider_request=False,
+            )
+
+        model_lower = configured_model.lower()
+        if "glm" in model_lower:
+            litellm_model = f"zai/{configured_model}"
+        elif "claude" in model_lower:
+            litellm_model = f"claude/{configured_model}" if "claude/" not in configured_model else configured_model
+        elif "deepseek" in model_lower:
+            litellm_model = f"deepseek/{configured_model}"
+        elif "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower:
+            litellm_model = f"openai/{configured_model}"
+        elif "gemini" in model_lower:
+            litellm_model = f"gemini/{configured_model}" if "gemini/" not in configured_model else configured_model
+        elif "ollama" in model_lower:
+            litellm_model = configured_model
+        else:
+            litellm_model = configured_model
+
+        return _ResolvedModelTarget(
+            configured_model=configured_model,
+            litellm_model=litellm_model,
+            is_custom_provider_request=False,
+        )
+
     def _resolve_model_string(self) -> str:
         """
         Resolve the model string for litellm.
@@ -367,33 +434,8 @@ class LLMAdapter:
         If the user already provided a prefixed model, use it as-is.
         Otherwise, try to infer the provider from the model name.
         """
-        model = self.config.model
+        return self._resolve_model_target().litellm_model
 
-        # Already has a provider prefix
-        if "/" in model and not model.startswith("http"):
-            return model
-
-        # Custom provider models: use as-is, let api_base handle routing
-        if self._is_custom_provider_model(model):
-            return model
-
-        # Infer provider from model name
-        model_lower = model.lower()
-        if "glm" in model_lower:
-            # 智谱 GLM models: LiteLLM provider prefix is 'zai/' (Z.AI)
-            return f"zai/{model}"
-        elif "claude" in model_lower:
-            return f"claude/{model}" if "claude/" not in model else model
-        elif "deepseek" in model_lower:
-            return f"deepseek/{model}"
-        elif "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower:
-            return f"openai/{model}"
-        elif "gemini" in model_lower:
-            return f"gemini/{model}" if "gemini/" not in model else model
-        elif "ollama" in model_lower:
-            return model  # Already has ollama/ prefix or will be handled
-
-        return model
 
 
 class MockLLM:
