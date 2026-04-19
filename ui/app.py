@@ -2007,13 +2007,12 @@ def _make_generation_project(gdl_obj_name: str) -> HSFProject:
 
 
 def _should_skip_elicitation_for_gdl_request(text: str, intent: str | None = None) -> bool:
-    effective_intent = ui_view_models.resolve_skip_elicitation_intent(
+    return ui_view_models.should_skip_elicitation_for_gdl_request_from_text(
         text,
         intent=intent,
         project_loaded=bool(st.session_state.get("project")),
         route_main_input=_route_main_input,
     )
-    return ui_view_models.should_skip_elicitation_for_gdl_request(effective_intent)
 
 
 

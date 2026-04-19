@@ -400,3 +400,19 @@ def resolve_skip_elicitation_intent(
 
 def should_skip_elicitation_for_gdl_request(effective_intent: str) -> bool:
     return effective_intent in ("MODIFY", "DEBUG")
+
+
+def should_skip_elicitation_for_gdl_request_from_text(
+    text: str,
+    *,
+    intent: str | None,
+    project_loaded: bool,
+    route_main_input: Callable[[str, bool, bool], tuple[str, str]],
+) -> bool:
+    effective_intent = resolve_skip_elicitation_intent(
+        text,
+        intent=intent,
+        project_loaded=project_loaded,
+        route_main_input=route_main_input,
+    )
+    return should_skip_elicitation_for_gdl_request(effective_intent)
