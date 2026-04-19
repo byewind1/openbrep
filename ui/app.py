@@ -1941,50 +1941,26 @@ _EXPLAINER_KEYWORDS = {
 
 
 def _is_explainer_intent(text: str) -> bool:
-    raw = (text or "").strip().lower()
-    if not raw:
-        return False
-    if _is_post_clarification_prompt(raw):
-        return "本次确认目标：先快速解释脚本结构" in text
-    if _is_debug_intent(raw):
-        explainer_overrides = (
-            "解释", "拆解", "分析", "代码分析", "逻辑分析", "命令分析",
-            "负责什么", "控制什么", "作用", "什么意思",
-        )
-        if not any(token in raw for token in explainer_overrides):
-            return False
-    if _is_modify_or_check_intent(raw):
-        return False
-    if any(token in raw for token in ("代码分析", "逻辑分析", "命令分析")):
-        return True
-    if re.search(r"\b(?:1d|2d|3d|param|ui|properties|property|master)\b", raw):
-        script_question_tokens = ("解释", "分析", "负责什么", "作用", "逻辑", "命令", "脚本")
-        if any(token in raw for token in script_question_tokens):
-            return True
-    return any(token in raw for token in _EXPLAINER_KEYWORDS)
-
+    return ui_view_models.is_explainer_intent(
+        text,
+        is_post_clarification_prompt=_is_post_clarification_prompt,
+        is_debug_intent=_is_debug_intent,
+        is_modify_or_check_intent=_is_modify_or_check_intent,
+        explainer_keywords=_EXPLAINER_KEYWORDS,
+    )
 
 
 def _should_clarify_intent(text: str, has_project: bool, history: list[dict]) -> bool:
     raw = (text or "").strip()
-    if not raw or not has_project:
-        return False
-    if _is_modify_bridge_prompt(raw):
-        return False
-    if _maybe_build_followup_bridge_input(raw, history, has_project):
-        return False
-    if _is_post_clarification_prompt(raw):
-        return False
-    mixed_tokens = ("解释", "检查", "修改意见")
-    if sum(token in raw for token in mixed_tokens) >= 2:
-        return True
-    if raw in {"看看这个", "这个怎么处理", "这个有问题吗"}:
-        return True
-    if _is_debug_intent(raw) or _is_explainer_intent(raw):
-        return False
-    if re.search(r"改成\s*\d+", raw):
-        return False
-    return False
+    return ui_view_models.should_clarify_intent(
+        raw,
+        has_project=has_project,
+        is_modify_bridge_prompt=_is_modify_bridge_prompt,
+        has_followup_bridge=bool(_maybe_build_followup_bridge_input(raw, history, has_project)),
+        is_post_clarification_prompt=_is_post_clarification_prompt,
+        is_debug_intent=_is_debug_intent,
+        is_explainer_intent=_is_explainer_intent,
+    )
 
 
 

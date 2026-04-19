@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import re
+from typing import Callable
 
 
 def build_generation_reply(plain_text: str, result_prefix: str = "", code_blocks: list[str] | None = None) -> str:
@@ -295,3 +296,65 @@ def is_modify_or_check_intent(text: str, is_debug_intent: bool = False) -> bool:
         "改", "修改", "调整", "更新", "优化", "重写", "补充", "添加", "删除", "修正",
     )
     return any(token in raw for token in modify_tokens)
+
+
+def is_explainer_intent(
+    text: str,
+    *,
+    is_post_clarification_prompt: Callable[[str], bool],
+    is_debug_intent: Callable[[str], bool],
+    is_modify_or_check_intent: Callable[[str], bool],
+    explainer_keywords: set[str],
+) -> bool:
+    raw = (text or "").strip().lower()
+    if not raw:
+        return False
+    if is_post_clarification_prompt(raw):
+        return "本次确认目标：先快速解释脚本结构" in text
+    if is_debug_intent(raw):
+        explainer_overrides = (
+            "解释", "拆解", "分析", "代码分析", "逻辑分析", "命令分析",
+            "负责什么", "控制什么", "作用", "什么意思",
+        )
+        if not any(token in raw for token in explainer_overrides):
+            return False
+    if is_modify_or_check_intent(raw):
+        return False
+    if any(token in raw for token in ("代码分析", "逻辑分析", "命令分析")):
+        return True
+    if re.search(r"\b(?:1d|2d|3d|param|ui|properties|property|master)\b", raw):
+        script_question_tokens = ("解释", "分析", "负责什么", "作用", "逻辑", "命令", "脚本")
+        if any(token in raw for token in script_question_tokens):
+            return True
+    return any(token in raw for token in explainer_keywords)
+
+
+def should_clarify_intent(
+    text: str,
+    *,
+    has_project: bool,
+    is_modify_bridge_prompt: Callable[[str], bool],
+    has_followup_bridge: bool,
+    is_post_clarification_prompt: Callable[[str], bool],
+    is_debug_intent: Callable[[str], bool],
+    is_explainer_intent: Callable[[str], bool],
+) -> bool:
+    raw = (text or "").strip()
+    if not raw or not has_project:
+        return False
+    if is_modify_bridge_prompt(raw):
+        return False
+    if has_followup_bridge:
+        return False
+    if is_post_clarification_prompt(raw):
+        return False
+    mixed_tokens = ("解释", "检查", "修改意见")
+    if sum(token in raw for token in mixed_tokens) >= 2:
+        return True
+    if raw in {"看看这个", "这个怎么处理", "这个有问题吗"}:
+        return True
+    if is_debug_intent(raw) or is_explainer_intent(raw):
+        return False
+    if re.search(r"改成\s*\d+", raw):
+        return False
+    return False
