@@ -68,6 +68,7 @@ from ui import actions as ui_actions
 from ui import state as ui_state
 from ui import view_models as ui_view_models
 from ui import preview_controller as ui_preview_controller
+from ui import project_io as ui_project_io
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -2166,33 +2167,16 @@ def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
     Compile current project state → versioned GSM.
     Returns (success: bool, message: str).
     """
-    try:
-        _requested_rev = int(st.session_state.get("script_revision", 0)) or 1
-        _compile_rev = _safe_compile_revision(gsm_name or proj.name, st.session_state.work_dir, _requested_rev)
-        if _compile_rev != _requested_rev:
-            st.session_state.script_revision = _compile_rev
-        output_gsm = _versioned_gsm_path(gsm_name or proj.name, st.session_state.work_dir, revision=_compile_rev)
-        hsf_dir = proj.save_to_disk()
-        result = get_compiler().hsf2libpart(str(hsf_dir), output_gsm)
-        mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
-
-        if result.success:
-            st.session_state.compile_log.append({
-                "project": proj.name, "instruction": instruction,
-                "success": True, "attempts": 1, "message": "Success",
-            })
-            msg = f"✅ **编译成功{mock_tag}**\n\n📦 `{output_gsm}`"
-            if compiler_mode.startswith("Mock"):
-                msg += "\n\n⚠️ Mock 模式不生成真实 .gsm，切换 LP_XMLConverter 进行真实编译。"
-            return (True, msg)
-        else:
-            st.session_state.compile_log.append({
-                "project": proj.name, "instruction": instruction,
-                "success": False, "attempts": 1, "message": result.stderr,
-            })
-            return (False, f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```")
-    except Exception as e:
-        return (False, f"❌ **错误**: {str(e)}")
+    return ui_project_io.do_compile(
+        proj,
+        gsm_name,
+        instruction,
+        session_state=st.session_state,
+        safe_compile_revision_fn=_safe_compile_revision,
+        versioned_gsm_path_fn=_versioned_gsm_path,
+        get_compiler_fn=get_compiler,
+        compiler_mode=compiler_mode,
+    )
 
 
 def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
@@ -2200,101 +2184,13 @@ def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
     Decompile GSM → HSF → HSFProject via LP_XMLConverter libpart2hsf.
     Returns (project | None, message).
     """
-    import tempfile, shutil
-    compiler = get_compiler()
-
-    # Guard: must have a real compiler
-    if isinstance(compiler, MockHSFCompiler):
-        return (None, "❌ GSM 导入需要 LP_XMLConverter，Mock 模式不支持。请在侧边栏选择 LP 模式并指定路径。")
-
-    # Diagnostic: report which binary will be used
-    bin_path = compiler.converter_path or "(未检测到)"
-    if not compiler.is_available:
-        return (
-            None,
-            f"❌ LP_XMLConverter 未找到\n\n"
-            f"检测路径: `{bin_path}`\n\n"
-            f"macOS 正确路径示例:\n"
-            f"`/Applications/GRAPHISOFT/ArchiCAD 28/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter`\n\n"
-            f"请在侧边栏手动填写正确路径。"
-        )
-
-    tmp = Path(tempfile.mkdtemp())
-    gsm_path = tmp / filename
-    gsm_path.write_bytes(gsm_bytes)
-    hsf_out = tmp / "hsf_out"
-    hsf_out.mkdir()
-
-    result = compiler.libpart2hsf(str(gsm_path), str(hsf_out))
-
-    if not result.success:
-        # Show full diagnostics so user can debug
-        diag = result.stderr or result.stdout or "(无输出)"
-        shutil.rmtree(tmp, ignore_errors=True)
-        return (
-            None,
-            f"❌ GSM 解包失败 (exit={result.exit_code})\n\n"
-            f"**Binary**: `{bin_path}`\n\n"
-            f"**输出**:\n```\n{diag[:800]}\n```"
-        )
-
-    try:
-        # Locate true HSF root — LP_XMLConverter output layout varies by AC version:
-        #   AC 27/28 (standard): hsf_out/<LIBPARTNAME>/libpartdata.xml + scripts/
-        #   AC 29 (flat):        hsf_out/libpartdata.xml + scripts/  (no named subdir)
-        def _find_hsf_root(base: Path) -> Path:
-            # 1. base itself has libpartdata.xml → it IS the HSF root
-            if (base / "libpartdata.xml").exists():
-                return base
-            # 2. base itself has a scripts/ subdir → treat base as root
-            if (base / "scripts").is_dir():
-                return base
-            # 3. one named subdir with libpartdata.xml → standard layout
-            for d in sorted(base.iterdir()):
-                if d.is_dir() and (d / "libpartdata.xml").exists():
-                    return d
-            # 4. one named subdir with scripts/ → standard layout without metadata
-            for d in sorted(base.iterdir()):
-                if d.is_dir() and (d / "scripts").is_dir():
-                    return d
-            # 5. last resort: first subdir (or base itself)
-            subdirs = [d for d in base.iterdir() if d.is_dir()]
-            return subdirs[0] if subdirs else base
-
-        hsf_dir = _find_hsf_root(hsf_out)
-
-        if not hsf_dir.exists():
-            contents = list(hsf_out.iterdir())
-            shutil.rmtree(tmp, ignore_errors=True)
-            return (
-                None,
-                f"❌ 无法定位 HSF 根目录\n\n"
-                f"hsf_out 内容: `{[str(c.name) for c in contents]}`\n\n"
-                f"stdout: {result.stdout[:300]}\nstderr: {result.stderr[:300]}"
-            )
-
-        # AC29 flat layout: hsf_dir == hsf_out → name is "hsf_out", use GSM stem instead
-        gsm_stem = Path(filename).stem
-        work_dir = Path(st.session_state.work_dir)
-        project_dir = work_dir / gsm_stem
-        suffix = 1
-        while project_dir.exists():
-            suffix += 1
-            project_dir = work_dir / f"{gsm_stem}_imported_{suffix}"
-        shutil.copytree(hsf_dir, project_dir)
-
-        hsf_files = sorted(str(p.relative_to(project_dir)) for p in project_dir.rglob("*") if p.is_file())
-        loaded_proj = HSFProject.load_from_disk(str(project_dir))
-        scripts_found = [s.value for s in loaded_proj.scripts]
-        diag = (
-            f"\n\n**HSF 文件列表**: `{hsf_files}`"
-            f"\n**已识别脚本**: `{scripts_found}`"
-        )
-        return (project_dir, f"✅ 已导入 `{loaded_proj.name}` — {len(loaded_proj.parameters)} 参数，{len(loaded_proj.scripts)} 脚本{diag}")
-    except Exception as e:
-        return (None, f"❌ HSF 解析失败: {e}")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    return ui_project_io.import_gsm(
+        gsm_bytes,
+        filename,
+        get_compiler_fn=get_compiler,
+        mock_compiler_class=MockHSFCompiler,
+        work_dir=st.session_state.work_dir,
+    )
 
 
 def _normalize_pasted_path(raw_path: str) -> str:
@@ -2302,23 +2198,12 @@ def _normalize_pasted_path(raw_path: str) -> str:
 
 
 def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:
-    raw_path = _normalize_pasted_path(project_dir)
-    if not raw_path:
-        return (False, "❌ 请输入 HSF 项目目录")
-
-    hsf_dir = Path(raw_path).expanduser()
-    if not hsf_dir.exists():
-        return (False, f"❌ 目录不存在: {hsf_dir}")
-    if not hsf_dir.is_dir():
-        return (False, f"❌ 不是目录: {hsf_dir}")
-
-    try:
-        proj = HSFProject.load_from_disk(str(hsf_dir))
-    except Exception as e:
-        return (False, f"❌ 载入 HSF 项目失败: {e}")
-
-    msg = f"✅ 已加载 HSF 项目 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本"
-    return _finalize_loaded_project(proj, msg, pending_gsm_name=proj.name)
+    return ui_project_io.handle_hsf_directory_load(
+        project_dir,
+        normalize_pasted_path_fn=_normalize_pasted_path,
+        load_project_from_disk_fn=lambda path: HSFProject.load_from_disk(path),
+        finalize_loaded_project_fn=_finalize_loaded_project,
+    )
 
 
 
@@ -2342,31 +2227,13 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     Updates session_state.project, pending_gsm_name, editor_version.
     Returns (success, message).
     """
-    fname = uploaded_file.name
-    ext   = Path(fname).suffix.lower()
-
-    if ext == ".gsm":
-        with st.spinner("解包 GSM..."):
-            imported_project, msg = import_gsm(uploaded_file.read(), fname)
-        if not imported_project:
-            return (False, msg)
-        if isinstance(imported_project, (str, Path)):
-            proj = HSFProject.load_from_disk(str(imported_project))
-        else:
-            proj = imported_project
-    else:
-        # .gdl / .txt — plain text
-        try:
-            content = uploaded_file.read().decode("utf-8", errors="replace")
-            proj = parse_gdl_source(content, Path(fname).stem)
-        except Exception as e:
-            return (False, f"❌ 导入失败: {e}")
-        msg = f"✅ 已导入 GDL `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本"
-
-    _import_gsm_name = _derive_gsm_name_from_filename(fname) or proj.name
-    if ext == ".gsm":
-        proj.save_to_disk()
-    return _finalize_loaded_project(proj, msg, _import_gsm_name)
+    return ui_project_io.handle_unified_import(
+        uploaded_file,
+        import_gsm_fn=import_gsm,
+        parse_gdl_source_fn=parse_gdl_source,
+        derive_gsm_name_from_filename_fn=_derive_gsm_name_from_filename,
+        finalize_loaded_project_fn=_finalize_loaded_project,
+    )
 
 
 def _strip_md_fences(code: str) -> str:
