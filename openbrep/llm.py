@@ -12,12 +12,19 @@ from dataclasses import dataclass, field
 import logging
 import time
 from typing import Optional
+import warnings
 
 from openbrep.config import LLMConfig
 
 
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/", "openai/")
+
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=r"(?s).*Pydantic serializer warnings:.*ResponseAPIUsage.*field_name='usage'.*",
+)
 
 
 @dataclass
@@ -72,8 +79,8 @@ class LLMAdapter:
 
     def _build_config_error_message(self, exc: Exception, resolved: _ResolvedModelTarget) -> str:
         configured_model = resolved.configured_model or self.config.model or resolved.litellm_model
-        resolved_api_key = self.config.resolve_api_key()
-        resolved_api_base = self.config.resolve_api_base()
+        resolved_api_key = self.config.resolve_api_key(configured_model)
+        resolved_api_base = self.config.resolve_api_base(configured_model)
         provider_name = resolved.provider_name
         exc_text = str(exc).strip() or exc.__class__.__name__
 
@@ -186,7 +193,8 @@ class LLMAdapter:
                 "litellm is not installed. Install it with: pip install litellm"
             )
 
-        resolved = self._resolve_model_target()
+        requested_model = kwargs.pop("model", None)
+        resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 
         # Build completion kwargs
@@ -204,13 +212,13 @@ class LLMAdapter:
             completion_kwargs["drop_params"] = True
 
         # Pass API key and base URL
-        api_key = self.config.resolve_api_key()
+        api_key = self.config.resolve_api_key(resolved.configured_model)
         if api_key:
             completion_kwargs["api_key"] = api_key
         # Skip api_base for native LiteLLM providers (zai/, deepseek/, etc.)
         # — they handle endpoints internally. Only pass for openai-compatible custom endpoints.
         is_native = self._is_native_provider_model(model)
-        api_base = self.config.resolve_api_base()
+        api_base = self.config.resolve_api_base(resolved.configured_model)
         if api_base and (resolved.is_custom_provider_request or not is_native):
             completion_kwargs["api_base"] = api_base
 
@@ -277,7 +285,8 @@ class LLMAdapter:
                 "litellm is not installed. Install it with: pip install litellm"
             )
 
-        resolved = self._resolve_model_target()
+        requested_model = kwargs.pop("model", None)
+        resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 
         messages = []
@@ -308,12 +317,12 @@ class LLMAdapter:
         if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
 
-        api_key = self.config.resolve_api_key()
+        api_key = self.config.resolve_api_key(resolved.configured_model)
         if api_key:
             completion_kwargs["api_key"] = api_key
 
         is_native = self._is_native_provider_model(model)
-        api_base = self.config.resolve_api_base()
+        api_base = self.config.resolve_api_base(resolved.configured_model)
         if api_base and (resolved.is_custom_provider_request or not is_native):
             completion_kwargs["api_base"] = api_base
 
@@ -373,6 +382,22 @@ class LLMAdapter:
             provider_name = str(custom_match.get("provider_name", "") or "").strip()
             protocol = str(custom_match.get("protocol", "openai") or "openai").strip().lower()
             target_model = str(custom_match.get("model", configured_model) or configured_model).strip()
+            if provider_name:
+                provider_prefix = f"{provider_name.strip()}-"
+                remainder = ""
+                if (
+                    target_model.lower() == configured_model.lower()
+                    and configured_model.lower().startswith(provider_prefix.lower())
+                ):
+                    remainder = configured_model[len(provider_prefix):].strip()
+                remainder_lower = remainder.lower()
+                if remainder and (
+                    remainder_lower.startswith("gpt-")
+                    or remainder_lower.startswith("o1")
+                    or remainder_lower.startswith("o3")
+                    or remainder_lower.startswith("o4")
+                ):
+                    target_model = remainder
 
             if "/" in target_model and not target_model.startswith("http"):
                 litellm_model = target_model

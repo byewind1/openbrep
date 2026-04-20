@@ -6,6 +6,25 @@ from openbrep.config import GDLAgentConfig, LLMConfig
 
 
 class TestConfigAssistantSettings(unittest.TestCase):
+    def test_custom_model_prefers_custom_provider_credentials_over_top_level_llm_fields(self):
+        cfg = LLMConfig(
+            model="ymg-gpt-5.3-codex",
+            api_key="top-level-key",
+            api_base="https://integrate.api.nvidia.com/v1",
+            custom_providers=[
+                {
+                    "name": "ymg",
+                    "base_url": "https://api.ymg.com/v1",
+                    "api_key": "ymg-key",
+                    "models": [{"alias": "ymg-gpt-5.3-codex", "model": "gpt-5.3-codex"}],
+                    "protocol": "openai",
+                }
+            ],
+        )
+
+        self.assertEqual(cfg.resolve_api_base(), "https://api.ymg.com/v1")
+        self.assertEqual(cfg.resolve_api_key(), "ymg-key")
+
     def test_assistant_settings_defaults_empty_when_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"
@@ -105,8 +124,10 @@ protocol = "openai"
 
             loaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(loaded.llm.model, "ymg-glm-5.4")
-            self.assertEqual(loaded.llm.api_base, "https://api.airsim.eu.cc/v1")
-            self.assertEqual(loaded.llm.api_key, "custom-key")
+            self.assertIsNone(loaded.llm.api_base)
+            self.assertIsNone(loaded.llm.api_key)
+            self.assertEqual(loaded.llm.resolve_api_base(), "https://api.airsim.eu.cc/v1")
+            self.assertEqual(loaded.llm.resolve_api_key(), "custom-key")
 
             provider = loaded.llm.get_provider_for_model("ymg-glm-5.4")
             self.assertEqual(provider.get("provider_name"), "ymg")
@@ -155,6 +176,8 @@ protocol = "openai"
             self.assertEqual(len(second.llm.custom_providers), 1)
             self.assertEqual(second.llm.custom_providers[0]["name"], "ymg")
             self.assertEqual(second.llm.custom_providers[0]["models"], ["glm-5.1"])
-            self.assertEqual(second.llm.api_base, "https://api.airsim.eu.cc/v1")
-            self.assertEqual(second.llm.api_key, "custom-key")
+            self.assertIsNone(second.llm.api_base)
+            self.assertIsNone(second.llm.api_key)
+            self.assertEqual(second.llm.resolve_api_base(), "https://api.airsim.eu.cc/v1")
+            self.assertEqual(second.llm.resolve_api_key(), "custom-key")
 

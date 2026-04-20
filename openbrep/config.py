@@ -226,16 +226,17 @@ class LLMConfig:
     def _is_custom_provider_model(self, model: str | None = None) -> bool:
         return self._find_custom_provider_match(model) is not None
 
-    def resolve_api_key(self) -> Optional[str]:
-        if self.api_key:
-            return self.api_key
-
-        custom_match = self._find_custom_provider_match()
+    def resolve_api_key(self, model: str | None = None) -> Optional[str]:
+        target_model = model or self.model
+        custom_match = self._find_custom_provider_match(target_model)
         if custom_match and custom_match.get("api_key"):
             return str(custom_match["api_key"])
 
+        if self.api_key:
+            return self.api_key
+
         # Check provider_keys first
-        model_lower = self.model.lower()
+        model_lower = str(target_model or "").lower()
         if "glm" in model_lower:
             for key in ["zhipu", "zai", "zai_api_key"]:
                 if key in self.provider_keys:
@@ -260,13 +261,14 @@ class LLMConfig:
                 return val
         return None
 
-    def resolve_api_base(self) -> Optional[str]:
-        if self.api_base:
-            return self.api_base
-
-        custom_match = self._find_custom_provider_match()
+    def resolve_api_base(self, model: str | None = None) -> Optional[str]:
+        target_model = model or self.model
+        custom_match = self._find_custom_provider_match(target_model)
         if custom_match and custom_match.get("base_url"):
             return str(custom_match["base_url"])
+
+        if self.api_base:
+            return self.api_base
         return None
 
     def get_provider_for_model(self, model_name: str) -> dict:
@@ -333,24 +335,10 @@ class GDLAgentConfig:
             with open(path, "rb") as f:
                 data = tomllib.load(f)
                 llm_data = data.get("llm", {}) if isinstance(data, dict) else {}
-                if isinstance(llm_data, dict):
-                    raw_custom = llm_data.get("custom_providers", []) or []
-                    custom_providers = raw_custom if isinstance(raw_custom, list) else []
-                    custom_match = find_custom_provider_match(
-                        custom_providers,
-                        str(llm_data.get("model", "") or ""),
-                    )
-                    if custom_match:
-                        custom_base = str(custom_match.get("base_url", "") or "")
-                        if custom_base and not str(llm_data.get("api_base", "") or ""):
-                            llm_data["api_base"] = custom_base
-                        custom_key = str(custom_match.get("api_key", "") or "")
-                        if custom_key and not str(llm_data.get("api_key", "") or ""):
-                            llm_data["api_key"] = custom_key
-                        if isinstance(llm_data.get("api_base"), str):
-                            _norm_base = llm_data["api_base"].rstrip("/")
-                            if _norm_base and not _norm_base.endswith("/v1"):
-                                llm_data["api_base"] = _norm_base + "/v1"
+                if isinstance(llm_data, dict) and isinstance(llm_data.get("api_base"), str):
+                    _norm_base = llm_data["api_base"].rstrip("/")
+                    if _norm_base and not _norm_base.endswith("/v1"):
+                        llm_data["api_base"] = _norm_base + "/v1"
         for key, val in overrides.items():
             if val is not None:
                 _nested_set(data, key, val)

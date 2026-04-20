@@ -3,12 +3,13 @@ import tempfile
 import unittest
 import base64
 import json
+import warnings
 from unittest.mock import MagicMock, patch
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from openbrep.config import LLMConfig
+from openbrep.config import LLMConfig, GDLAgentConfig
 from openbrep.core import GDLAgent
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import LLMAdapter
@@ -21,6 +22,7 @@ from ui.app import (
     _build_intent_clarification_message,
     _build_model_options,
     _build_model_source_state,
+    _key_for_model,
     _build_modify_bridge_prompt,
     _build_post_clarification_input,
     _build_assistant_chat_message,
@@ -52,6 +54,7 @@ from ui.app import (
     _verify_pro_code,
     _license_record_is_active,
     _import_pro_knowledge_zip,
+    _sync_llm_top_level_fields_for_model,
     classify_and_extract,
 )
 
@@ -700,6 +703,30 @@ class TestLLMAdapterVision(unittest.TestCase):
         adapter = LLMAdapter(config)
         self.assertEqual(adapter._resolve_model_string(), "openai/ymg-chat")
 
+    def test_custom_alias_with_provider_prefix_resolves_to_underlying_model(self):
+        config = LLMConfig(
+            model="ymg-gpt-5.3-codex",
+            custom_providers=[{"name": "ymg", "models": ["ymg-gpt-5.3-codex"], "protocol": "openai"}],
+        )
+        adapter = LLMAdapter(config)
+        self.assertEqual(adapter._resolve_model_string(), "openai/gpt-5.3-codex")
+
+    def test_adapter_registers_response_api_usage_warning_filter(self):
+        LLMAdapter(LLMConfig(model="gpt-5.4", api_key="test-key"))
+        self.assertTrue(
+            any(
+                f[0] == "ignore"
+                and f[2] is UserWarning
+                and "ResponseAPIUsage" in str(f[1])
+                for f in warnings.filters
+            )
+        )
+
+    def test_adapter_does_not_suppress_unrelated_user_warning(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.warn("other-warning", UserWarning)
+        self.assertEqual(len(caught), 1)
+
     def test_builtin_gpt5_model_keeps_openai_prefix(self):
         config = LLMConfig(model="gpt-5.4")
         adapter = LLMAdapter(config)
@@ -731,6 +758,46 @@ class TestLLMAdapterVision(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 22)
         self.assertEqual(kwargs["api_base"], "https://api.airsim.eu.cc/v1")
         self.assertNotIn("drop_params", kwargs)
+
+    def test_generate_with_model_override_keeps_provider_fields_consistent(self):
+        config = LLMConfig(
+            model="ymg-gpt-5.3-codex",
+            api_key="top-level-key",
+            api_base="https://integrate.api.nvidia.com/v1",
+            temperature=0.2,
+            max_tokens=512,
+            timeout=12,
+            custom_providers=[
+                {
+                    "name": "ymg",
+                    "base_url": "https://api.ymg.com/v1",
+                    "api_key": "ymg-key",
+                    "models": [{"alias": "ymg-gpt-5.3-codex", "model": "gpt-5.3-codex"}],
+                    "protocol": "openai",
+                },
+                {
+                    "name": "nvidia",
+                    "base_url": "https://integrate.api.nvidia.com/v1",
+                    "api_key": "nvidia-key",
+                    "models": [{"alias": "moonshotai/kimi-k2.5", "model": "openai/moonshotai/kimi-k2.5"}],
+                    "protocol": "openai",
+                },
+            ],
+        )
+        adapter = LLMAdapter(config)
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = self._mock_response(model_name="openai/moonshotai/kimi-k2.5")
+
+        adapter.generate(
+            [{"role": "user", "content": "hi"}],
+            stream=False,
+            model="moonshotai/kimi-k2.5",
+        )
+
+        kwargs = adapter._litellm.completion.call_args.kwargs
+        self.assertEqual(kwargs["model"], "openai/moonshotai/kimi-k2.5")
+        self.assertEqual(kwargs["api_base"], "https://integrate.api.nvidia.com/v1")
+        self.assertEqual(kwargs["api_key"], "nvidia-key")
 
     def test_builtin_gpt5_generate_enables_stream_by_default(self):
         config = LLMConfig(
@@ -1906,6 +1973,50 @@ class TestGenerationStateHelpers(unittest.TestCase):
         )
         self.assertEqual([o["label"] for o in state["custom_options"]], ["自定义1"])
         self.assertEqual([o["label"] for o in state["builtin_options"]], ["gpt-5.4", "glm-4-flash"])
+
+    def test_sync_llm_top_level_fields_for_custom_model_updates_api_key_and_base(self):
+        cfg = GDLAgentConfig(
+            llm=LLMConfig(
+                model="ymg-gpt-5.3-codex",
+                api_key="top-level-old",
+                api_base="https://old-base/v1",
+                custom_providers=[
+                    {
+                        "name": "ymg",
+                        "base_url": "https://api.ymg.com/v1",
+                        "api_key": "ymg-key",
+                        "models": [{"alias": "ymg-gpt-5.3-codex", "model": "gpt-5.3-codex"}],
+                        "protocol": "openai",
+                    }
+                ],
+            )
+        )
+
+        changed = _sync_llm_top_level_fields_for_model(cfg, "ymg-gpt-5.3-codex")
+
+        self.assertTrue(changed)
+        self.assertEqual(cfg.llm.api_key, "ymg-key")
+        self.assertEqual(cfg.llm.api_base, "https://api.ymg.com/v1")
+
+    def test_key_for_model_matches_custom_alias_object_entry(self):
+        with patch("ui.app._custom_providers", [{
+            "name": "nvidia",
+            "api_key": "nv-key",
+            "models": [{"alias": "moonshotai/kimi-k2.5", "model": "openai/moonshotai/kimi-k2.5"}],
+        }]), patch("ui.app._provider_keys", {}):
+            self.assertEqual(_key_for_model("moonshotai/kimi-k2.5"), "nv-key")
+
+    def test_key_for_model_matches_custom_model_object_entry(self):
+        with patch("ui.app._custom_providers", [{
+            "name": "nvidia",
+            "api_key": "nv-key",
+            "models": [{"alias": "moonshotai/kimi-k2.5", "model": "openai/moonshotai/kimi-k2.5"}],
+        }]), patch("ui.app._provider_keys", {}):
+            self.assertEqual(_key_for_model("openai/moonshotai/kimi-k2.5"), "nv-key")
+
+    def test_key_for_model_keeps_builtin_provider_fallback(self):
+        with patch("ui.app._custom_providers", []), patch("ui.app._provider_keys", {"openai": "openai-key"}):
+            self.assertEqual(_key_for_model("gpt-5.4"), "openai-key")
 
         agent = GDLAgent(llm=MagicMock(), assistant_settings="我是 GDL 初学者")
 

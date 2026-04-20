@@ -742,10 +742,12 @@ def _key_for_model(model: str) -> str:
     """Pick the right API Key from provider_keys based on model name."""
     m = model.lower()
 
-    # 自定义 provider 的模型精确匹配
+    # 自定义 provider 的模型匹配（兼容字符串与 {alias, model}）
     for _pcfg in _custom_providers:
-        for _m in _pcfg.get("models", []) or []:
-            if m == str(_m).lower():
+        for _entry in iter_custom_provider_model_entries(_pcfg):
+            _alias = str(_entry.get("alias", "") or "").lower()
+            _model = str(_entry.get("model", "") or "").lower()
+            if m and m in {_alias, _model}:
                 return str(_pcfg.get("api_key", "") or "")
 
     if "glm" in m:
@@ -759,6 +761,33 @@ def _key_for_model(model: str) -> str:
     elif "gemini" in m:
         return _provider_keys.get("google", "")
     return ""
+
+
+def _sync_llm_top_level_fields_for_model(cfg: GDLAgentConfig, model: str) -> bool:
+    if not cfg or not model:
+        return False
+
+    changed = False
+    model_name = str(model).strip()
+    if not model_name:
+        return False
+
+    if cfg.llm.model != model_name:
+        cfg.llm.model = model_name
+        changed = True
+
+    provider = cfg.llm.get_provider_for_model(model_name)
+    if provider:
+        target_key = str(provider.get("api_key", "") or "")
+        target_base = str(provider.get("base_url", "") or "")
+        if cfg.llm.api_key != target_key:
+            cfg.llm.api_key = target_key
+            changed = True
+        if cfg.llm.api_base != target_base:
+            cfg.llm.api_base = target_base
+            changed = True
+
+    return changed
 
 
 def _is_archicad_running() -> bool:
@@ -967,8 +996,8 @@ with st.sidebar:
     if model_name and model_name != _config_defaults.get("llm_model", ""):
         try:
             _save_cfg_model = GDLAgentConfig.load()
-            _save_cfg_model.llm.model = model_name
-            _save_cfg_model.save()
+            if _sync_llm_top_level_fields_for_model(_save_cfg_model, model_name):
+                _save_cfg_model.save()
             _config_defaults["llm_model"] = model_name
         except Exception as e:
             st.sidebar.warning(f"配置保存失败：{e}")

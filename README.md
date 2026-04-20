@@ -194,20 +194,75 @@ openbrep/
 
 ## 配置
 
-复制 `config.example.toml` 为 `config.toml`（已 .gitignore），按需填写：
+复制 `config.example.toml` 为 `config.toml`（已 .gitignore），按需填写。
+
+### 1) 官方 provider（`provider_keys`）
 
 ```toml
 [llm]
 model = "glm-4-flash"
+temperature = 0.2
+max_tokens = 4096
 
 [llm.provider_keys]
 zhipu     = "your-zhipu-key"
 anthropic = "your-claude-key"
 openai    = "your-openai-key"
 deepseek  = "your-deepseek-key"
+google    = "your-gemini-key"
+aliyun    = "your-qwen-key"
+kimi      = "your-kimi-key"
+```
 
+前缀匹配规则：
+- `glm-` → `zhipu`
+- `deepseek-` → `deepseek`
+- `claude-` → `anthropic`
+- `gemini-` → `google`
+- `qwen-` / `qwq-` → `aliyun`
+- `moonshot-` → `kimi`
+- `gpt-` / `o1` / `o3` / `o4` → `openai`
+- `ollama/` → 本地模式，不需要 API Key
+
+### 2) 自定义 provider（推荐对象写法）
+
+```toml
+[llm]
+model = "ymg-gpt-5.3-codex"
+api_key = "YOUR_YMG_KEY"
+api_base = "https://api.ymg.com/v1"
+
+[[llm.custom_providers]]
+name = "ymg"
+protocol = "openai"  # openai | anthropic
+base_url = "https://api.ymg.com/v1"
+api_key = "YOUR_YMG_KEY"
+
+[[llm.custom_providers.models]]
+alias = "ymg-gpt-5.3-codex"   # UI 里选择的名字
+model = "gpt-5.3-codex"       # 实际请求给 provider 的模型名
+```
+
+### 3) 路由优先级（重要）
+
+请求时模型与凭据的解析顺序：
+1. `custom_providers`（先按 alias/model 命中）
+2. `provider_keys`（按模型前缀匹配）
+3. `[llm]` 顶层 `api_key` / `api_base`（兜底）
+
+也就是说：命中 custom provider 时，会优先使用该 provider 的 `api_key/base_url/protocol`。
+
+### 4) 常见坑
+
+- 只写 `models = ["ymg-gpt-5.3-codex"]`，不写 `{alias, model}` 对象，容易造成 alias 与真实模型名混淆。
+- `base_url` 不是 OpenAI 兼容入口（常见是缺 `/v1`）。
+- 切换模型后未确认 `[llm].model/api_key/api_base` 是否与当前 provider 成组一致。
+
+### 5) 编译器
+
+```toml
 [compiler]
-path = "/Applications/GRAPHISOFT/Archicad 29/..."
+path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 ```
 
 ---
