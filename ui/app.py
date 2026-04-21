@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
+import streamlit.components.v1 as components
 try:
     from streamlit_ace import st_ace
     _ACE_AVAILABLE = True
@@ -776,17 +777,6 @@ def _sync_llm_top_level_fields_for_model(cfg: GDLAgentConfig, model: str) -> boo
         cfg.llm.model = model_name
         changed = True
 
-    provider = cfg.llm.get_provider_for_model(model_name)
-    if provider:
-        target_key = str(provider.get("api_key", "") or "")
-        target_base = str(provider.get("base_url", "") or "")
-        if cfg.llm.api_key != target_key:
-            cfg.llm.api_key = target_key
-            changed = True
-        if cfg.llm.api_base != target_base:
-            cfg.llm.api_base = target_base
-            changed = True
-
     return changed
 
 
@@ -855,6 +845,13 @@ def _build_model_source_state(
         reasoning_models=REASONING_MODELS,
     )
 
+
+
+def _normalize_converter_path(raw_path: str) -> str:
+    cleaned = (raw_path or "").strip().strip('"').strip("'")
+    if sys.platform.startswith("win"):
+        return cleaned
+    return cleaned.replace("\\\\", "/").replace("\\", "/")
 
 
 with st.sidebar:
@@ -942,7 +939,7 @@ with st.sidebar:
             help="macOS/Linux 用正斜杠 /，Windows 用反斜杠 粘贴后自动转换",
         )
         # 自动转换 Windows 反斜杠，去除首尾空格和引号
-        converter_path = _raw_path.strip().strip('"').strip("'").replace("\\\\", "/").replace("\\", "/")
+        converter_path = _normalize_converter_path(_raw_path)
 
     st.divider()
     st.subheader("🧠 AI 模型 / LLM")
@@ -2270,6 +2267,40 @@ def _thumb_image_bytes(image_b64: str) -> bytes | None:
     return ui_view_models.thumb_image_bytes(image_b64)
 
 
+def _should_show_copyable_chat_content(message: dict) -> bool:
+    return message.get("role") == "assistant" and bool((message.get("content") or "").strip())
+
+
+def _copyable_chat_text(message: dict) -> str:
+    if not _should_show_copyable_chat_content(message):
+        return ""
+    return str(message.get("content") or "")
+
+
+def _copy_text_to_system_clipboard(text: str) -> tuple[bool, str]:
+    payload = (text or "").strip()
+    if not payload:
+        return False, "当前消息无可复制内容"
+
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=payload, text=True, check=True, timeout=2)
+            return True, "已复制本条回复"
+        if sys.platform.startswith("linux"):
+            subprocess.run(["xclip", "-selection", "clipboard"], input=payload, text=True, check=True, timeout=2)
+            return True, "已复制本条回复"
+        if sys.platform.startswith("win"):
+            subprocess.run(["clip"], input=payload, text=True, check=True, timeout=2)
+            return True, "已复制本条回复"
+        return False, "当前系统暂不支持自动复制"
+    except Exception:
+        return False, "复制失败，请重试"
+
+
+def _copy_to_clipboard(text: str, key: str) -> None:
+    _ = key
+
+
 def _detect_image_task_mode(user_text: str, image_name: str = "") -> str:
     return ui_view_models.detect_image_task_mode(
         user_text,
@@ -3178,9 +3209,13 @@ with col_right:
                                     st.session_state[f"_show_dislike_{_i}"] = False
                                     st.rerun()
                     with _cc:
-                        if st.button("📋", key=f"copy_{_i}", help="展开可复制内容"):
-                            _flag = f"_showcopy_{_i}"
-                            st.session_state[_flag] = not st.session_state.get(_flag, False)
+                        if st.button("📋", key=f"copy_{_i}", help="复制本条回复"):
+                            _copy_text = _copyable_chat_text(_msg)
+                            _ok, _copy_msg = _copy_text_to_system_clipboard(_copy_text)
+                            if _ok:
+                                st.toast(_copy_msg, icon="✅")
+                            else:
+                                st.warning(_copy_msg)
                     with _cd:
                         _prev_user = next(
                             (st.session_state.chat_history[j]["content"]
@@ -3210,8 +3245,7 @@ with col_right:
                             if st.button("🪄 按此说明修改", key=f"bridge_modify_{_i}", width='stretch'):
                                 st.session_state["_pending_bridge_idx"] = _i
                                 st.rerun()
-            if st.session_state.get(f"_showcopy_{_i}", False):
-                st.code(_msg["content"], language="text")
+
 
         @st.dialog("📥 采用这套代码")
         def _adopt_confirm_dialog(msg_idx):

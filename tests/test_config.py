@@ -25,6 +25,50 @@ class TestConfigAssistantSettings(unittest.TestCase):
         self.assertEqual(cfg.resolve_api_base(), "https://api.ymg.com/v1")
         self.assertEqual(cfg.resolve_api_key(), "ymg-key")
 
+    def test_custom_model_does_not_fallback_to_top_level_api_key_when_custom_key_missing(self):
+        cfg = LLMConfig(
+            model="ymg-gpt-5.3-codex",
+            api_key="top-level-key",
+            custom_providers=[
+                {
+                    "name": "ymg",
+                    "base_url": "https://api.ymg.com/v1",
+                    "api_key": "",
+                    "models": [{"alias": "ymg-gpt-5.3-codex", "model": "gpt-5.3-codex"}],
+                    "protocol": "openai",
+                }
+            ],
+            provider_keys={"openai": "official-openai-key"},
+        )
+
+        self.assertIsNone(cfg.resolve_api_key())
+
+    def test_custom_model_does_not_fallback_to_top_level_api_base_when_custom_base_missing(self):
+        cfg = LLMConfig(
+            model="ymg-gpt-5.3-codex",
+            api_base="https://top-level-base/v1",
+            custom_providers=[
+                {
+                    "name": "ymg",
+                    "base_url": "",
+                    "api_key": "ymg-key",
+                    "models": [{"alias": "ymg-gpt-5.3-codex", "model": "gpt-5.3-codex"}],
+                    "protocol": "openai",
+                }
+            ],
+        )
+
+        self.assertIsNone(cfg.resolve_api_base())
+
+    def test_official_openai_model_prefers_provider_keys_over_top_level(self):
+        cfg = LLMConfig(
+            model="gpt-5.4",
+            api_key="top-level-key",
+            provider_keys={"openai": "official-openai-key"},
+        )
+
+        self.assertEqual(cfg.resolve_api_key(), "official-openai-key")
+
     def test_assistant_settings_defaults_empty_when_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"

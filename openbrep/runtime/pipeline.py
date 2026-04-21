@@ -589,17 +589,15 @@ class TaskPipeline:
 
     def _make_llm(self, request: TaskRequest) -> LLMAdapter:
         """
-        Build LLMAdapter with the correct API key for the current model.
+        Build LLMAdapter with config-level key resolution.
 
-        Mirrors app.py's _key_for_model() logic: provider_keys lookup by
-        model prefix takes priority over the generic [llm] api_key field.
-        This ensures deepseek-* uses provider_keys.deepseek, not a generic key.
+        Key/base selection is centralized in LLMConfig.resolve_api_key/
+        resolve_api_base to avoid diverging UI/runtime routing behavior.
         """
         import dataclasses
         cfg = self.config.llm
 
-        # Prefer provider_keys / custom_providers key over generic api_key
-        resolved = _key_for_model(cfg.model, cfg.provider_keys, cfg.custom_providers)
+        resolved = cfg.resolve_api_key(cfg.model)
         if resolved:
             cfg = dataclasses.replace(cfg, api_key=resolved)
 

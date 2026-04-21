@@ -229,30 +229,34 @@ class LLMConfig:
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
-        if custom_match and custom_match.get("api_key"):
-            return str(custom_match["api_key"])
+        if custom_match is not None:
+            custom_key = str(custom_match.get("api_key", "") or "").strip()
+            return custom_key or None
 
-        if self.api_key:
-            return self.api_key
-
-        # Check provider_keys first
         model_lower = str(target_model or "").lower()
         if "glm" in model_lower:
             for key in ["zhipu", "zai", "zai_api_key"]:
-                if key in self.provider_keys:
+                if key in self.provider_keys and self.provider_keys[key]:
                     return self.provider_keys[key]
         elif "deepseek" in model_lower:
             for key in ["deepseek", "deepseek_api_key"]:
-                if key in self.provider_keys:
+                if key in self.provider_keys and self.provider_keys[key]:
                     return self.provider_keys[key]
         elif "claude" in model_lower:
             for key in ["anthropic", "claude", "anthropic_api_key"]:
-                if key in self.provider_keys:
+                if key in self.provider_keys and self.provider_keys[key]:
                     return self.provider_keys[key]
         elif "gemini" in model_lower:
             for key in ["google", "gemini", "gemini_api_key"]:
-                if key in self.provider_keys:
+                if key in self.provider_keys and self.provider_keys[key]:
                     return self.provider_keys[key]
+        elif "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower or "o4" in model_lower:
+            for key in ["openai", "openai_api_key"]:
+                if key in self.provider_keys and self.provider_keys[key]:
+                    return self.provider_keys[key]
+
+        if self.api_key:
+            return self.api_key
 
         # Fallback to environment variables
         for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
@@ -264,8 +268,9 @@ class LLMConfig:
     def resolve_api_base(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
-        if custom_match and custom_match.get("base_url"):
-            return str(custom_match["base_url"])
+        if custom_match is not None:
+            custom_base = str(custom_match.get("base_url", "") or "").strip()
+            return custom_base or None
 
         if self.api_base:
             return self.api_base

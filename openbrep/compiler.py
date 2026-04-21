@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from openbrep.config import _auto_detect_converter
+
 
 @dataclass
 class CompileResult:
@@ -121,16 +123,15 @@ class HSFCompiler:
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
                 timeout=self.timeout,
-                encoding="utf-8",
-                errors="replace",
             )
+            stdout = self._decode_process_output(proc.stdout)
+            stderr = self._decode_process_output(proc.stderr)
 
             return CompileResult(
                 success=(proc.returncode == 0),
-                stdout=proc.stdout,
-                stderr=proc.stderr,
+                stdout=stdout,
+                stderr=stderr,
                 exit_code=proc.returncode,
                 output_path=dest if proc.returncode == 0 else "",
             )
@@ -152,51 +153,22 @@ class HSFCompiler:
             )
 
     @staticmethod
+    def _decode_process_output(raw: bytes | str | None) -> str:
+        if raw is None:
+            return ""
+        if isinstance(raw, str):
+            return raw
+        for enc in ("utf-8", "gbk", "cp936", "latin-1"):
+            try:
+                return raw.decode(enc)
+            except Exception:
+                continue
+        return raw.decode("utf-8", errors="replace")
+
+    @staticmethod
     def _detect_converter() -> Optional[str]:
         """Auto-detect LP_XMLConverter path."""
-        system = platform.system()
-
-        if system == "Darwin":  # macOS
-            # Search common ArchiCAD install locations
-            base = Path("/Applications/GRAPHISOFT")
-            if base.exists():
-                for ac_dir in sorted(base.iterdir(), reverse=True):
-                    # AC 29+: LP_XMLConverter is bundled INSIDE Archicad.app
-                    # e.g. Archicad 29.app/Contents/MacOS/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter
-                    for app_bundle in sorted(ac_dir.glob("*.app"), reverse=True):
-                        converter = app_bundle / "Contents" / "MacOS" / "LP_XMLConverter.app" / "Contents" / "MacOS" / "LP_XMLConverter"
-                        if converter.exists():
-                            return str(converter)
-                    # Older layout: sibling .app bundle at ac_dir level
-                    converter = ac_dir / "LP_XMLConverter.app" / "Contents" / "MacOS" / "LP_XMLConverter"
-                    if converter.exists():
-                        return str(converter)
-                    # Fallback: plain binary
-                    converter = ac_dir / "LP_XMLConverter"
-                    if converter.exists():
-                        return str(converter)
-            # Also check PATH
-            result = shutil.which("LP_XMLConverter")
-            if result:
-                return result
-
-        elif system == "Windows":
-            # Common Windows install paths
-            for drive in ("C:", "D:"):
-                base = Path(f"{drive}/Program Files/GRAPHISOFT")
-                if base.exists():
-                    for ac_dir in sorted(base.iterdir(), reverse=True):
-                        converter = ac_dir / "LP_XMLConverter.exe"
-                        if converter.exists():
-                            return str(converter)
-            result = shutil.which("LP_XMLConverter")
-            if result:
-                return result
-
-        else:  # Linux
-            return shutil.which("LP_XMLConverter")
-
-        return None
+        return _auto_detect_converter()
 
     @property
     def is_available(self) -> bool:

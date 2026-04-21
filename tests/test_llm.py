@@ -55,6 +55,10 @@ from ui.app import (
     _license_record_is_active,
     _import_pro_knowledge_zip,
     _sync_llm_top_level_fields_for_model,
+    _should_show_copyable_chat_content,
+    _copyable_chat_text,
+    _copy_text_to_system_clipboard,
+    _normalize_converter_path,
     classify_and_extract,
 )
 
@@ -1974,10 +1978,51 @@ class TestGenerationStateHelpers(unittest.TestCase):
         self.assertEqual([o["label"] for o in state["custom_options"]], ["自定义1"])
         self.assertEqual([o["label"] for o in state["builtin_options"]], ["gpt-5.4", "glm-4-flash"])
 
-    def test_sync_llm_top_level_fields_for_custom_model_updates_api_key_and_base(self):
+    def test_assistant_message_is_directly_copyable(self):
+        self.assertTrue(_should_show_copyable_chat_content({"role": "assistant", "content": "hello"}))
+
+    def test_user_message_is_not_directly_copyable(self):
+        self.assertFalse(_should_show_copyable_chat_content({"role": "user", "content": "hi"}))
+
+    def test_copyable_chat_text_returns_assistant_content(self):
+        self.assertEqual(_copyable_chat_text({"role": "assistant", "content": "hello"}), "hello")
+
+    def test_copyable_chat_text_returns_empty_for_user_message(self):
+        self.assertEqual(_copyable_chat_text({"role": "user", "content": "hi"}), "")
+
+    def test_normalize_converter_path_preserves_backslashes_on_windows(self):
+        with patch("ui.app.sys.platform", "win32"):
+            normalized = _normalize_converter_path(r'"C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe"')
+        self.assertEqual(normalized, r"C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe")
+
+    def test_normalize_converter_path_normalizes_slashes_on_macos(self):
+        with patch("ui.app.sys.platform", "darwin"):
+            normalized = _normalize_converter_path(r'"C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe"')
+        self.assertEqual(normalized, "C:/Program Files/GRAPHISOFT/ArchiCAD 29/LP_XMLConverter.exe")
+
+    def test_copy_text_to_system_clipboard_uses_pbcopy_on_macos(self):
+        with patch("ui.app.sys.platform", "darwin"), patch("ui.app.subprocess.run") as run:
+            run.return_value = MagicMock()
+            ok, msg = _copy_text_to_system_clipboard("hello")
+        self.assertTrue(ok)
+        self.assertIn("已复制", msg)
+        run.assert_called_once_with(
+            ["pbcopy"],
+            input="hello",
+            text=True,
+            check=True,
+            timeout=2,
+        )
+
+    def test_copy_text_to_system_clipboard_rejects_empty_text(self):
+        ok, msg = _copy_text_to_system_clipboard("")
+        self.assertFalse(ok)
+        self.assertIn("无可复制", msg)
+
+    def test_sync_llm_top_level_fields_for_custom_model_only_updates_model(self):
         cfg = GDLAgentConfig(
             llm=LLMConfig(
-                model="ymg-gpt-5.3-codex",
+                model="old-model",
                 api_key="top-level-old",
                 api_base="https://old-base/v1",
                 custom_providers=[
@@ -1995,8 +2040,9 @@ class TestGenerationStateHelpers(unittest.TestCase):
         changed = _sync_llm_top_level_fields_for_model(cfg, "ymg-gpt-5.3-codex")
 
         self.assertTrue(changed)
-        self.assertEqual(cfg.llm.api_key, "ymg-key")
-        self.assertEqual(cfg.llm.api_base, "https://api.ymg.com/v1")
+        self.assertEqual(cfg.llm.model, "ymg-gpt-5.3-codex")
+        self.assertEqual(cfg.llm.api_key, "top-level-old")
+        self.assertEqual(cfg.llm.api_base, "https://old-base/v1")
 
     def test_key_for_model_matches_custom_alias_object_entry(self):
         with patch("ui.app._custom_providers", [{
