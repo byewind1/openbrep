@@ -86,11 +86,21 @@ def import_gsm(
     if not result.success:
         diag = result.stderr or result.stdout or "(无输出)"
         shutil.rmtree(tmp, ignore_errors=True)
+        # 附加 Windows 特有诊断
+        extra = ""
+        import platform
+        if platform.system() == "Windows":
+            extra = (
+                f"\n\n**Windows 诊断**:\n"
+                f"- 路径是否存在: {Path(compiler.converter_path).exists() if compiler.converter_path else False}\n"
+                f"- 是否为文件: {Path(compiler.converter_path).is_file() if compiler.converter_path else False}\n"
+                f"- 扩展名: {Path(compiler.converter_path).suffix if compiler.converter_path else ''}\n"
+            )
         return (
             None,
             f"❌ GSM 解包失败 (exit={result.exit_code})\n\n"
             f"**Binary**: `{bin_path}`\n\n"
-            f"**输出**:\n```\n{diag[:800]}\n```",
+            f"**输出**:\n```\n{diag[:800]}\n```{extra}",
         )
 
     try:

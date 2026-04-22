@@ -61,8 +61,23 @@ class HSFCompiler:
     """
 
     def __init__(self, converter_path: Optional[str] = None, timeout: int = 60):
-        self.converter_path = converter_path or self._detect_converter()
+        raw = converter_path or self._detect_converter()
+        self.converter_path = self._clean_converter_path(raw) if raw else None
         self.timeout = timeout
+
+    @staticmethod
+    def _clean_converter_path(path: str) -> str:
+        """Remove surrounding quotes and whitespace from converter path."""
+        if not path:
+            return path
+        # Strip whitespace
+        cleaned = path.strip()
+        # Remove surrounding quotes (both single and double)
+        if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith("'") and cleaned.endswith("'")):
+            cleaned = cleaned[1:-1]
+        # Convert forward slashes to backslashes on Windows? Keep as is.
+        # Return cleaned path
+        return cleaned
 
     def hsf2libpart(self, hsf_dir: str, output_gsm: str) -> CompileResult:
         """
@@ -116,6 +131,21 @@ class HSFCompiler:
                 success=False, exit_code=127,
                 stderr="LP_XMLConverter not found. Install ArchiCAD or set path in config."
             )
+
+        converter = Path(self.converter_path)
+        if platform.system() == "Windows":
+            if converter.is_dir() or not converter.is_file():
+                return CompileResult(
+                    success=False,
+                    exit_code=1,
+                    stderr=f"LP_XMLConverter path is not an executable file: {self.converter_path}",
+                )
+            if converter.suffix.lower() != ".exe":
+                return CompileResult(
+                    success=False,
+                    exit_code=1,
+                    stderr=f"LP_XMLConverter path must end with .exe on Windows: {self.converter_path}",
+                )
 
         cmd = [self.converter_path, command, source, dest]
 
@@ -173,7 +203,17 @@ class HSFCompiler:
     @property
     def is_available(self) -> bool:
         """Check if LP_XMLConverter is available."""
-        return self.converter_path is not None and Path(self.converter_path).exists()
+        if self.converter_path is None:
+            return False
+        converter = Path(self.converter_path)
+        if not converter.exists():
+            return False
+        if platform.system() == "Windows":
+            if converter.is_dir() or not converter.is_file():
+                return False
+            if converter.suffix.lower() != ".exe":
+                return False
+        return True
 
 
 class MockHSFCompiler:

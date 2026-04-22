@@ -34,5 +34,27 @@ class TestCompilerAutoDetect(unittest.TestCase):
         self.assertIsNone(detected)
 
 
+class TestCompilerWindowsPathValidation(unittest.TestCase):
+    def test_run_converter_rejects_directory_path_on_windows(self):
+        compiler = HSFCompiler(converter_path=r"C:\Program Files\GRAPHISOFT\ArchiCAD 26")
+        with patch("openbrep.compiler.platform.system", return_value="Windows"), \
+             patch("openbrep.compiler.Path.is_dir", return_value=True), \
+             patch("openbrep.compiler.Path.is_file", return_value=False):
+            result = compiler._run_converter("libpart2hsf", "in.gsm", "out")
+        self.assertFalse(result.success)
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("not an executable file", result.stderr)
+
+    def test_run_converter_rejects_non_exe_path_on_windows(self):
+        compiler = HSFCompiler(converter_path=r"C:\Program Files\GRAPHISOFT\ArchiCAD 26\LP_XMLConverter")
+        with patch("openbrep.compiler.platform.system", return_value="Windows"), \
+             patch("openbrep.compiler.Path.is_dir", return_value=False), \
+             patch("openbrep.compiler.Path.is_file", return_value=True):
+            result = compiler._run_converter("libpart2hsf", "in.gsm", "out")
+        self.assertFalse(result.success)
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("must end with .exe", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
