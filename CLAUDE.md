@@ -201,6 +201,32 @@ timeout = 60
 - moonshot- → kimi
 - ollama/ → 本地直连，无需 key
 
+## Windows 故障排除
+
+### GSM 解包失败
+- **路径验证**：确保 `config.toml` 中 `compiler.path` 指向正确的 `.exe` 文件（例如 `C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe`）。
+- **引号与空格**：路径中的空格无需引号，配置中不要额外添加引号。若路径包含空格，直接写入即可（例如 `C:\Program Files\...`）。
+- **扩展名检查**：Windows 要求路径以 `.exe` 结尾，且必须是文件而非目录。
+- **错误诊断**：解包失败时，错误信息会显示二进制路径、退出码及输出。若输出为空，请检查：
+  - ArchiCAD 版本是否匹配（GSM 文件可能由更高版本创建）。
+  - 临时目录权限（通常位于 `%TEMP%`）。
+  - 防病毒软件可能拦截子进程。
+
+### 配置示例（Windows）
+```toml
+[compiler]
+path = "C:/Program Files/GRAPHISOFT/ArchiCAD 29/LP_XMLConverter.exe"
+timeout = 60
+```
+建议使用正斜杠 `/` 避免转义问题，Windows 也接受。
+
+### 手动测试 LP_XMLConverter
+打开命令提示符，执行：
+```cmd
+"C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe" libpart2hsf "input.gsm" "output_dir"
+```
+确认能否成功解包。若命令失败，请检查 ArchiCAD 安装或依赖项。
+
 ## 快速上手
 
 ### 启动
