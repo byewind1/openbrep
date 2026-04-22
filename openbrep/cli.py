@@ -32,6 +32,12 @@ def _load_main_cli_module():
 
 
 def main_app_entry():
+    import sys
+    # 如果只有程序名（无参数），直接启动 UI
+    if len(sys.argv) == 1:
+        module = _load_main_cli_module()
+        raise SystemExit(module._launch_ui())
+    # 否则交给 Typer 处理（包括 --help, --version, 子命令等）
     module = _load_main_cli_module()
     module.app()
 
