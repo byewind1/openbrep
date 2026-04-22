@@ -830,6 +830,23 @@ class GDLAgent:
     def _parse_param_text(self, text: str) -> list[GDLParameter]:
         """Parse simplified parameter text format from LLM output."""
         import re
+
+        def _normalize_length_value(raw: str) -> str:
+            token = str(raw or "").strip().lower()
+            if token.endswith("mm"):
+                num = token[:-2].strip()
+                try:
+                    return f"{float(num) / 1000.0:.6g}"
+                except ValueError:
+                    return raw
+            try:
+                value = float(token)
+            except ValueError:
+                return raw
+            if abs(value) >= 20:
+                return f"{value / 1000.0:.6g}"
+            return f"{value:.6g}"
+
         params = []
         pattern = re.compile(
             r'^(Length|Angle|RealNum|Integer|Boolean|String|Material|'
@@ -849,6 +866,8 @@ class GDLAgent:
                 type_tag = match.group(1)
                 name = match.group(2)
                 value = match.group(3).strip('"')
+                if type_tag.lower() == "length":
+                    value = _normalize_length_value(value)
                 desc = (match.group(4) or "").strip()
                 is_fixed = name in ("A", "B", "ZZYZX")
 

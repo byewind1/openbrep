@@ -2077,6 +2077,20 @@ class TestGenerationStateHelpers(unittest.TestCase):
         prompt = agent._build_system_prompt("", "", chat_mode=False)
 
         self.assertNotIn("AI助手设置", prompt)
+class TestLengthUnitNormalization(unittest.TestCase):
+    def test_parse_param_text_converts_mm_suffix_to_meters(self):
+        agent = GDLAgent(llm=MagicMock())
+        params = agent._parse_param_text("Length A = 600mm ! width")
+        self.assertEqual(len(params), 1)
+        self.assertEqual(params[0].name, "A")
+        self.assertEqual(params[0].value, "0.6")
+
+    def test_parse_param_text_converts_large_length_number_as_mm(self):
+        agent = GDLAgent(llm=MagicMock())
+        params = agent._parse_param_text("Length B = 1200 ! depth")
+        self.assertEqual(len(params), 1)
+        self.assertEqual(params[0].name, "B")
+        self.assertEqual(params[0].value, "1.2")
 
 
 if __name__ == "__main__":
