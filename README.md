@@ -17,7 +17,7 @@
 
 > **OpenBrep: Code Your Boundaries**
 
-> 正式发布版本 v0.6.1 — 在 v0.6.0 基础上完成 CLI 安装体验、静态检查与 chat / vision 链路补强，代码、UI、说明文档与发布说明继续保持统一。
+> 正式发布版本 v0.6.2 — 在 v0.6.1 基础上新增 wiki 知识检索、用户自定义 flat 知识库与 skill creator 对话式创建流程，补齐相关测试并修复关键路由细节。
 
 ---
 
@@ -278,6 +278,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.2 | 新增 wiki 知识检索与问答链路；新增用户自定义 flat 知识库接入；新增 skill creator 对话式创建与列表路由；补齐 pipeline/knowledge/skill 相关测试并修复 chat 关键路由细节（见 docs/releases/v0.6.2.md） |
 | v0.6.1 | CLI 可用性与安装体验提升；新增/完善 GDL 静态检查与自动 repair；补强 chat / explainer / 图片链路与参考图生成；修复 obr 在非项目目录无法启动 UI（见 docs/releases/v0.6.1.md） |
 | v0.6.0 | Runtime Phase 1 主骨架正式发布收尾：统一 create / modify / repair / chat 主链路；repair 独立 intent 闭合；CLI/UI/runtime 版本与发布口径统一（见 docs/releases/v0.6.0.md） |
 | v0.5.7 | CLI 模式正式可用（create/modify 命令）；生成过程支持用户取消；pipeline 改进解决越改越差问题；参数路由修复（见 docs/releases/v0.5.7.md） |
