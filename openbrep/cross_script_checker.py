@@ -3,27 +3,24 @@ from __future__ import annotations
 import re
 
 from openbrep.hsf_project import ScriptType
+from openbrep.static_checker import GDL_BUILTINS as _SHARED_GDL_BUILTINS, GLOBAL_PREFIXES as _SHARED_GLOBAL_PREFIXES
 from openbrep.validator import ValidationIssue
 
 
 _IDENT_RE = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\b')
 _ASSIGN_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)', re.MULTILINE)
 
+# Additional GDL identifiers used in low-level mesh/body construction
+# not covered by static_checker.GDL_BUILTINS.
+_MESH_BUILTINS: frozenset[str] = frozenset({
+    "BODY", "EDGE", "PGON", "VERT", "VECT",
+    "XFORM", "XFORMR",
+    "HIDDENBODYEDGE", "HIDDENPROFILEEDGE", "SMOOTHBODYEDGE",
+})
+
 
 class CrossScriptChecker:
-    GDL_BUILTINS = {
-        "ADD", "ADDX", "ADDY", "ADDZ", "BLOCK", "BRICK", "CYLIND", "SPHERE",
-        "CONE", "ELLIPS", "PRISM", "PRISM_", "TUBE", "SWEEP", "RULED", "COONS",
-        "FOR", "NEXT", "IF", "THEN", "ELSE", "ENDIF", "WHILE", "ENDWHILE",
-        "GOTO", "GOSUB", "RETURN", "END", "DEL", "ROT", "ROTX", "ROTY", "ROTZ",
-        "MUL", "MULX", "MULY", "MULZ", "PEN", "MATERIAL", "MODEL", "RESOL",
-        "TOLER", "HOTSPOT", "HOTSPOT2", "LINE", "LINE2", "RECT", "RECT2",
-        "POLY", "POLY2", "POLY2_", "ARC", "ARC2", "CIRCLE", "CIRCLE2",
-        "TEXT", "TEXT2", "RICHTEXT2", "PROJECT2", "FRAGMENT2", "PICTURE2",
-        "PRINT", "VARDIM1", "VARDIM2", "REQUEST", "IND", "INT", "ABS", "SQR",
-        "SQRT", "SIN", "COS", "TAN", "ATN", "EXP", "LOG", "A", "B", "ZZYZX",
-        "AND", "OR", "NOT", "MOD", "DIV", "TRUE", "FALSE", "PI",
-    }
+    GDL_BUILTINS = _SHARED_GDL_BUILTINS | _MESH_BUILTINS
 
     @staticmethod
     def _strip_comments(code: str) -> str:
@@ -52,6 +49,10 @@ class CrossScriptChecker:
             used_vars = {m.group(1).upper() for m in _IDENT_RE.finditer(script_3d)}
             missing = used_vars - known_names
             missing = {v for v in missing if len(v) > 1}
+            # Filter out GDL global/system variable prefixes (gs_, ac_, GLOB_, SYMB_)
+            missing = {v for v in missing
+                       if not any(v.upper().startswith(p.upper().rstrip("_"))
+                                  for p in _SHARED_GLOBAL_PREFIXES)}
             if missing:
                 issues.append(ValidationIssue(
                     level="warning",

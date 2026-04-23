@@ -22,8 +22,9 @@ if TYPE_CHECKING:
 
 
 # ── GDL built-in keywords to exclude from undefined_var check ────────────────
+# Public (no leading _) so cross_script_checker etc. can import without drift.
 
-_GDL_BUILTINS: frozenset[str] = frozenset({
+GDL_BUILTINS: frozenset[str] = frozenset({
     # control flow
     "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "STEP", "NEXT",
     "WHILE", "ENDWHILE", "REPEAT", "UNTIL", "GOTO", "GOSUB", "RETURN",
@@ -45,9 +46,11 @@ _GDL_BUILTINS: frozenset[str] = frozenset({
     "SIN", "COS", "TAN", "ATN", "ACS", "ASN", "SQR", "ABS", "INT",
     "SGN", "EXP", "LOG", "LN", "NOT", "AND", "OR", "MOD", "DIV",
     "MIN", "MAX", "RND", "ROUND", "FRAC", "FIX",
+    "TAB", "VAL",
     # string
     "STR", "STR2", "SPLIT", "STRLEN", "STRSPN", "STRSUB", "STRSTR",
     "UPCASE", "DOWNCASE", "INFIX", "SUFFIX", "PREFIX",
+    "CHR", "NUM",
     # built-in vars / system vars / constants
     "A", "B", "ZZYZX", "PI", "pi", "EPS", "TRUE", "FALSE",
     "GLOB_SCALE", "GLOB_CH_SCALE", "GLOB_PAPER_SCALE",
@@ -62,6 +65,7 @@ _GDL_BUILTINS: frozenset[str] = frozenset({
     "SYMB_PEN", "SYMB_SECT_PEN", "SYMB_FRGROUND_PEN",
     "SYMB_LIN_PEN", "SYMB_FILL_PEN",
     "AC_SHOW_AREA", "AC_SHOW_VOLUME",
+    "APPLICATION", "VERSION",
     # object-instance built-in
     "unID",
     # 2D drawing commands
@@ -69,23 +73,30 @@ _GDL_BUILTINS: frozenset[str] = frozenset({
     "CIRCLE", "CIRCLE2", "SPLINE", "SPLINE2", "TEXT", "TEXT2", "RICHTEXT2",
     "HOTSPOT", "HOTSPOT2", "HOTLINE", "HOTLINE2", "HOTARC", "HOTARC2",
     "FILL", "FILTER", "PROJECT2", "FRAGMENT2", "PICTURE2",
+    "MARKER", "MARKER2",
     # misc commands / keywords
     "RESOL", "TOLER", "MODEL", "WIRE", "SURFACE", "SOLID", "BODY",
     "CUTPLANE", "CUTFORM", "CUTPOLYA", "CUTPOLYX",
     "PEN", "MATERIAL", "DEFINE", "USE", "PARAMETERS",
     "PUT", "GET", "NSP", "IND", "VARDIM1", "VARDIM2",
     "REQUEST", "CALL",
+    # type conversion
+    "INCH", "MM", "CM", "M",
     # LLM output metadata / paramlist formatting words
     "FILE", "scripts", "gdl", "paramlist", "xml", "Length", "Integer",
     "Boolean", "Material", "RealNum", "Angle", "String", "PenColor",
     "FillPattern", "LineType",
+    # low-level mesh body / edge / polygon commands & attributes (GDL reference)
+    "BODY", "EDGE", "PGON", "VERT", "VECT",
+    "XFORM", "XFORMR",
+    "HIDDENBODYEDGE", "HIDDENPROFILEEDGE", "SMOOTHBODYEDGE",
 })
 
 # ArchiCAD reserved single-letter parameters available in every object
-_RESERVED_PARAMS: frozenset[str] = frozenset({"A", "B", "ZZYZX"})
+RESERVED_PARAMS: frozenset[str] = frozenset({"A", "B", "ZZYZX"})
 
 # Prefixes that identify GDL global/system variables — always safe to skip
-_GLOBAL_PREFIXES: tuple[str, ...] = ("gs_", "ac_", "GLOB_", "SYMB_")
+GLOBAL_PREFIXES: tuple[str, ...] = ("gs_", "ac_", "GLOB_", "SYMB_")
 
 # Regex to extract bare identifiers (word chars, not purely numeric)
 _IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
@@ -163,7 +174,7 @@ class StaticChecker:
     def _declared_param_names(project: "HSFProject") -> frozenset[str]:
         """Names declared in paramlist.xml, plus ArchiCAD reserved params."""
         names = {p.name for p in project.parameters}
-        names.update(_RESERVED_PARAMS)
+        names.update(RESERVED_PARAMS)
         return frozenset(names)
 
     @staticmethod
@@ -205,13 +216,13 @@ class StaticChecker:
                 if name in seen_undefined:
                     continue
                 # GDL built-in (case-insensitive lookup)
-                if name.upper() in _GDL_BUILTINS or name in _GDL_BUILTINS:
+                if name.upper() in GDL_BUILTINS or name in GDL_BUILTINS:
                     continue
                 # _ prefix: handled by forward_decl check
                 if name.startswith("_"):
                     continue
                 # Global/system variable prefix (gs_, ac_, GLOB_, SYMB_)
-                if any(name.lower().startswith(p.lower()) for p in _GLOBAL_PREFIXES):
+                if any(name.lower().startswith(p.lower()) for p in GLOBAL_PREFIXES):
                     continue
                 # Declared in paramlist.xml or reserved (A/B/ZZYZX)
                 if name in declared:
@@ -276,12 +287,17 @@ class StaticChecker:
         r"\b(ADD(?:[XYZ])?|ADD2|MUL2?|ROT[XYZ]?|ROT2)\b",
         re.IGNORECASE,
     )
-    # DEL N pops N layers; DEL alone pops 1
+    # DEL N pops N layers; DEL alone pops 1; DELALL pops all (can't statically verify)
     _POP_RE = re.compile(r"\bDEL\s*(\d+)?\b", re.IGNORECASE)
+    _DELALL_RE = re.compile(r"\bDELALL\b", re.IGNORECASE)
 
     def _check_stack_imbalance(self, project: "HSFProject") -> list[StaticError]:
         code = self._strip_comments(self._get_script(project, "3d.gdl"))
         if not code.strip():
+            return []
+
+        # DELALL pops all layers — can't statically determine depth, skip check
+        if self._DELALL_RE.search(code):
             return []
 
         push_count = len(self._PUSH_RE.findall(code))

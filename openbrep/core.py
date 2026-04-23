@@ -237,16 +237,24 @@ class GDLAgent:
 
             # 3. STATIC CHECK — fast pre-compile analysis (no disk write needed)
             static_result = self.static_checker.check(project)
-            if not static_result.passed:
+            blocking_errors = [
+                e for e in static_result.errors
+                if e.check_type in ("undefined_var", "forward_decl")
+            ]
+            if blocking_errors:
                 hint = "\n".join(
                     f"[{e.check_type}] {e.file}: {e.detail}"
-                    for e in static_result.errors
+                    for e in blocking_errors
                 )
-                logger.debug(f"StaticCheck: {static_result.errors}")
-                self.on_event("static_check_error", {"errors": [e.detail for e in static_result.errors]})
+                logger.debug(f"StaticCheck blocking: {blocking_errors}")
+                self.on_event("static_check_error", {"errors": [e.detail for e in blocking_errors]})
                 history.append({"attempt": attempt, "stage": "static_check", "error": hint})
                 prev_error = hint
                 continue
+            if not static_result.passed:
+                # Non-blocking checks (stack_imbalance, block_mismatch) — log only
+                for e in static_result.errors:
+                    logger.info("StaticCheck info: [%s] %s: %s", e.check_type, e.file, e.detail)
 
             # 4. COMPILE — Write to disk and compile
             hsf_dir = project.save_to_disk()

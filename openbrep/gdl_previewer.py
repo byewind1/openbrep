@@ -141,6 +141,23 @@ class _PreviewRuntime:
                 idx += 1
                 continue
 
+            # IF/ENDIF block — skip without evaluating condition
+            if re.match(r"^IF\b", line, re.IGNORECASE):
+                endif_idx = self._find_matching_endif(lines, idx, end)
+                if endif_idx is None:
+                    self._warn(line_no, "IF 缺少匹配 ENDIF，已跳过")
+                    idx += 1
+                    continue
+                idx = endif_idx + 1
+                continue
+
+            if re.match(r"^(ENDIF|ELSE|ELSIF)\b", line, re.IGNORECASE):
+                # Consumed by IF matching above — warn if stray
+                if _extract_command(line) == "ENDIF":
+                    self._warn(line_no, "遇到游离 ENDIF，已忽略")
+                idx += 1
+                continue
+
             # Assignment (except FOR header)
             if not re.match(r"^FOR\b", line, re.IGNORECASE):
                 m_assign = self._ASSIGN_RE.match(line)
@@ -178,6 +195,14 @@ class _PreviewRuntime:
 
             # No-op commands in preview
             if re.match(r"^(END|RETURN)\b", line, re.IGNORECASE):
+                idx += 1
+                continue
+
+            # Recognized but non-renderable commands — suppress "未支持命令" warning
+            if re.match(
+                r"^(RESOL|MATERIAL|PEN|BODY|EDGE|PGON|VERT|VECT|XFORM)\b",
+                line, re.IGNORECASE,
+            ):
                 idx += 1
                 continue
 
@@ -255,6 +280,25 @@ class _PreviewRuntime:
             if re.match(r"^FOR\b", line, re.IGNORECASE):
                 depth += 1
             elif re.match(r"^NEXT\b", line, re.IGNORECASE):
+                depth -= 1
+                if depth == 0:
+                    return i
+        return None
+
+    def _find_matching_endif(
+        self,
+        lines: list[tuple[int, str]],
+        if_idx: int,
+        end: int,
+    ) -> int | None:
+        """Find ENDIF matching the IF at if_idx (handles nesting). Returns line index or None."""
+        depth = 1
+        for i in range(if_idx + 1, end):
+            _, line = lines[i]
+            cmd = _extract_command(line)
+            if cmd == "IF":
+                depth += 1
+            elif cmd == "ENDIF":
                 depth -= 1
                 if depth == 0:
                     return i
