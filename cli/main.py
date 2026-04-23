@@ -497,24 +497,38 @@ def _is_tcp_port_available(port: int, host: str = "127.0.0.1") -> bool:
 def _kill_process_on_port(port: int, host: str = "127.0.0.1") -> bool:
     """Kill any process listening on the given TCP port. Returns True if killed."""
     import signal
+    killed = False
+    # Try lsof with correct syntax: -ti :port (NOT host:port — lsof parses that wrong)
     try:
         result = subprocess.run(
-            ["lsof", "-ti", f"{host}:{port}"],
+            ["lsof", "-ti", f":{port}"],
             capture_output=True, text=True, timeout=5,
         )
-        if result.returncode != 0 or not result.stdout.strip():
-            return False
-        pids = [int(pid) for pid in result.stdout.strip().splitlines()]
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                continue
-        # Wait briefly for processes to exit
-        time.sleep(0.5)
-        return True
+        if result.returncode == 0 and result.stdout.strip():
+            pids = sorted({int(pid) for pid in result.stdout.strip().splitlines()},
+                          reverse=True)
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    killed = True
+                except ProcessLookupError:
+                    continue
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+        pass
+
+    # Fallback: pkill -f streamlit (catches rebundled/child processes)
+    try:
+        subprocess.run(
+            ["pkill", "-f", "streamlit run"],
+            capture_output=True, timeout=5,
+        )
+        killed = True
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    if killed:
+        time.sleep(1.0)
+    return killed
 
 
 
