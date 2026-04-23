@@ -11,11 +11,13 @@ from __future__ import annotations
 import importlib.util
 import logging
 import mimetypes
+import os
 import re
 import shutil
 import socket
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -492,6 +494,29 @@ def _is_tcp_port_available(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) != 0
 
 
+def _kill_process_on_port(port: int, host: str = "127.0.0.1") -> bool:
+    """Kill any process listening on the given TCP port. Returns True if killed."""
+    import signal
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f"{host}:{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return False
+        pids = [int(pid) for pid in result.stdout.strip().splitlines()]
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+        # Wait briefly for processes to exit
+        time.sleep(0.5)
+        return True
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
 
 def _launch_ui() -> int:
     if not _has_streamlit():
@@ -506,9 +531,13 @@ def _launch_ui() -> int:
 
     port = 8501
     if not _is_tcp_port_available(port):
-        err_console.print(f"[red]❌ OpenBrep UI 默认端口 {port} 已被占用。[/red]")
-        err_console.print("请先关闭旧的 Streamlit/obr 进程，再重新运行 obr。")
-        return 1
+        console.print("[dim]旧进程占用端口 8501，正在清理...[/dim]")
+        if _kill_process_on_port(port):
+            time.sleep(0.5)
+        if not _is_tcp_port_available(port):
+            err_console.print(f"[red]❌ OpenBrep UI 默认端口 {port} 已被占用。[/red]")
+            err_console.print("请先关闭旧的 Streamlit/obr 进程，再重新运行 obr。")
+            return 1
 
     console.print(f"[dim]OpenBrep UI 已启动：http://localhost:{port}[/dim]")
     console.print("[dim]已关闭自动打开浏览器，请在常用浏览器中手动访问或使用已收藏地址。[/dim]")
