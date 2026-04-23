@@ -269,8 +269,15 @@ class LLMConfig:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
+            provider = custom_match.get("provider") or {}
+            has_explicit_base = isinstance(provider, dict) and "base_url" in provider
             custom_base = str(custom_match.get("base_url", "") or "").strip()
-            return custom_base or None
+            if custom_base:
+                return custom_base
+            # Explicitly configured but empty base_url means "do not fallback"
+            if has_explicit_base:
+                return None
+            # If base_url key is absent in custom provider, allow top-level fallback
 
         if self.api_base:
             return self.api_base
@@ -311,6 +318,7 @@ class GDLAgentConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
     compiler: CompilerConfig = field(default_factory=CompilerConfig)
     knowledge_dir: str = "./knowledge"
+    user_knowledge_dir: str = "./user_knowledge"
     templates_dir: str = "./templates"
     src_dir: str = "./src"
     output_dir: str = "./output"
@@ -374,6 +382,7 @@ class GDLAgentConfig:
             agent=pick(AgentConfig, data.get("agent", {})),
             compiler=pick(CompilerConfig, data.get("compiler", {})),
             knowledge_dir=data.get("knowledge_dir", "./knowledge"),
+            user_knowledge_dir=data.get("user_knowledge_dir", "./user_knowledge"),
             templates_dir=data.get("templates_dir", "./templates"),
             src_dir=data.get("src_dir", "./src"),
             output_dir=data.get("output_dir", "./output"),
@@ -389,7 +398,7 @@ class GDLAgentConfig:
         return custom_models + [m for m in ALL_MODELS if m not in custom_models]
 
     def ensure_dirs(self):
-        for d in [self.knowledge_dir, self.templates_dir, self.src_dir, self.output_dir]:
+        for d in [self.knowledge_dir, self.user_knowledge_dir, self.templates_dir, self.src_dir, self.output_dir]:
             Path(d).mkdir(parents=True, exist_ok=True)
 
     def save(self, config_path: str = "config.toml") -> None:
@@ -417,6 +426,7 @@ class GDLAgentConfig:
                 "timeout": self.compiler.timeout,
             },
             "knowledge_dir": self.knowledge_dir,
+            "user_knowledge_dir": self.user_knowledge_dir,
             "templates_dir": self.templates_dir,
             "src_dir": self.src_dir,
             "output_dir": self.output_dir,
@@ -449,7 +459,9 @@ class GDLAgentConfig:
             lines.append('# path = "/path/to/LP_XMLConverter"')
         lines += [
             f"timeout = {self.compiler.timeout}", "",
-            f'knowledge_dir = "{self.knowledge_dir}"', f'templates_dir = "{self.templates_dir}"',
+            f'knowledge_dir = "{self.knowledge_dir}"',
+            f'user_knowledge_dir = "{self.user_knowledge_dir}"',
+            f'templates_dir = "{self.templates_dir}"',
             f'src_dir = "{self.src_dir}"', f'output_dir = "{self.output_dir}"',
         ]
         return "\n".join(lines) + "\n"

@@ -116,6 +116,12 @@ class _PreviewRuntime:
         self._ty = 0.0
         self._tz = 0.0
 
+        # Mesh topology state (VERT/VECT/EDGE/PGON/BODY)
+        self._verts: list[Point3D] = []
+        self._vects: list[Point3D] = []
+        self._edges: list[tuple[int, int]] = []  # (p1, p2) 0-based vertex indices
+        self._pgons: list[list[int]] = []  # each is a list of signed edge IDs
+
         self.result_2d = Preview2DResult()
         self.result_3d = Preview3DResult()
         self._warnings: list[str] = []
@@ -200,7 +206,7 @@ class _PreviewRuntime:
 
             # Recognized but non-renderable commands — suppress "未支持命令" warning
             if re.match(
-                r"^(RESOL|MATERIAL|PEN|BODY|EDGE|PGON|VERT|VECT|XFORM)\b",
+                r"^(RESOL|MATERIAL|PEN|XFORM)\b",
                 line, re.IGNORECASE,
             ):
                 idx += 1
@@ -522,6 +528,59 @@ class _PreviewRuntime:
             self.result_3d.wires.extend(wires)
             return True
 
+        # ── low-level mesh: VERT / VECT / EDGE / PGON / BODY ──────────────
+        if cmd == "VERT":
+            vals = self._eval_args(args_raw, line_no)
+            if vals is not None and len(vals) >= 3:
+                ox, oy, oz = self._offset()
+                self._verts.append((ox + float(vals[0]), oy + float(vals[1]), oz + float(vals[2])))
+            return True
+
+        if cmd == "VECT":
+            vals = self._eval_args(args_raw, line_no)
+            if vals is not None and len(vals) >= 3:
+                self._vects.append((float(vals[0]), float(vals[1]), float(vals[2])))
+            return True
+
+        if cmd == "EDGE":
+            vals = self._eval_args(args_raw, line_no)
+            if vals is not None and len(vals) >= 2:
+                p1 = int(round(float(vals[0]))) - 1  # GDL is 1-based
+                p2 = int(round(float(vals[1]))) - 1
+                if 0 <= p1 < len(self._verts) and 0 <= p2 < len(self._verts):
+                    self._edges.append((p1, p2))
+                else:
+                    self._warn(line_no, f"EDGE 顶点索引越界，已忽略")
+            return True
+
+        if cmd == "PGON":
+            vals = self._eval_args(args_raw, line_no)
+            if vals is not None and len(vals) >= 3:
+                n_edges = int(round(float(vals[0])))
+                if n_edges >= 3 and n_edges <= len(vals) - 2:
+                    edge_ids: list[int] = []
+                    for i in range(n_edges):
+                        eid = int(round(float(vals[2 + i])))
+                        if abs(eid) - 1 < len(self._edges):
+                            edge_ids.append(eid)
+                        else:
+                            edge_ids.clear()
+                            break
+                    if edge_ids:
+                        self._pgons.append(edge_ids)
+            return True
+
+        if cmd == "BODY":
+            mesh = self._build_mesh_from_topology(line_no)
+            if mesh is not None:
+                self.result_3d.meshes.append(mesh)
+            # Clear topology for next BODY (a script can have multiple bodies)
+            self._verts.clear()
+            self._vects.clear()
+            self._edges.clear()
+            self._pgons.clear()
+            return True
+
         if cmd == "PRISM_":
             vals = self._eval_args(args_raw, line_no)
             if vals is None or len(vals) < 4:
@@ -575,6 +634,65 @@ class _PreviewRuntime:
 
     def _p2(self, x: float, y: float) -> Point2D:
         return (float(x) + self._tx, float(y) + self._ty)
+
+    # ── low-level mesh topology helpers ──────────────────────────────────
+
+    def _resolve_vertex_chain(self, edge_ids: list[int]) -> list[int] | None:
+        """Resolve signed edge IDs to an ordered chain of 0-based vertex indices."""
+        segments: list[tuple[int, int]] = []
+        for eid in edge_ids:
+            idx = abs(eid) - 1
+            if idx < 0 or idx >= len(self._edges):
+                return None
+            p1, p2 = self._edges[idx]
+            segments.append((p2, p1) if eid < 0 else (p1, p2))
+
+        chain = list(segments[0])
+        used = {0}
+        while len(chain) < len(segments) + 1:
+            last = chain[-1]
+            found = False
+            for i, (s1, s2) in enumerate(segments):
+                if i in used:
+                    continue
+                if s1 == last:
+                    chain.append(s2)
+                    used.add(i)
+                    found = True
+                    break
+                if s2 == last:
+                    chain.append(s1)
+                    used.add(i)
+                    found = True
+                    break
+            if not found:
+                return None  # broken chain
+        # A closed polygon chain ends where it starts — strip the repeated first vertex
+        if len(chain) > 1 and chain[0] == chain[-1]:
+            chain.pop()
+        return chain
+
+    def _build_mesh_from_topology(self, line_no: int) -> PreviewMesh3D | None:
+        """Assemble a PreviewMesh3D from accumulated VERT/EDGE/PGON data."""
+        if not self._verts or not self._pgons:
+            return None
+
+        faces: list[tuple[int, int, int]] = []
+        skipped = 0
+        for edge_ids in self._pgons:
+            chain = self._resolve_vertex_chain(edge_ids)
+            if chain is None or len(chain) < 3:
+                skipped += 1
+                continue
+            # Fan triangulation from vertex 0
+            for i in range(1, len(chain) - 1):
+                faces.append((chain[0], chain[i], chain[i + 1]))
+
+        if not faces:
+            self._warn(line_no, f"BODY: {skipped} 个面跳过，无有效三角面")
+            return None
+
+        return _build_mesh("MESH", self._verts, faces)
 
     def _warn(self, line_no: int, msg: str) -> None:
         if line_no > 0:

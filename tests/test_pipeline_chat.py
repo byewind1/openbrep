@@ -153,8 +153,12 @@ class TestPipelineChat(unittest.TestCase):
                         with patch("openbrep.runtime.pipeline.build_chat_explanation_reply", return_value="简要拆解"):
                             pipeline.execute(request)
 
-        messages = pipeline._make_llm(request).generate.call_args
-        self.assertIsNone(messages)
+        call_args = pipeline._make_llm(request).generate.call_args
+        self.assertIsNotNone(call_args)
+        # LLM is called for skill intent classification before explainer shortcut
+        msg_list = call_args.args[0] if call_args.args else []
+        self.assertGreater(len(msg_list), 0)
+        self.assertIn("分类器", str(msg_list[0]))
 
 
 if __name__ == "__main__":

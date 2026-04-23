@@ -74,7 +74,7 @@ class KnowledgeBase:
                 continue
 
         # Pro tier: ccgdl_dev_doc/docs/*.md  (gitignored — only present locally)
-        pro_dir = self.knowledge_dir / "ccgdl_dev_doc" / "docs"
+        pro_dir = self.knowledge_dir / "raw" / "ccgdl_dev_doc" / "docs"
         if pro_dir.exists():
             for md_file in sorted(pro_dir.glob("*.md")):
                 if md_file.stem in _skip:

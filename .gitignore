@@ -17,7 +17,7 @@ output/
 src/
 .qoder/
 .qwen/
-knowledge/ccgdl_dev_doc/
+knowledge/raw/ccgdl_dev_doc/
 ui/app.py.backup_*
 
 # build artifacts

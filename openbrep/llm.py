@@ -20,13 +20,6 @@ from openbrep.config import LLMConfig
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/", "openai/")
 
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    message=r"(?s).*Pydantic serializer warnings:.*ResponseAPIUsage.*field_name='usage'.*",
-)
-
-
 @dataclass
 class _ResolvedModelTarget:
     configured_model: str
@@ -62,6 +55,12 @@ class LLMAdapter:
     def __init__(self, config: LLMConfig):
         self.config = config
         self._litellm = None
+        # Re-register warning filter here so it survives pytest's filter reset
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message=r"(?s).*Pydantic serializer warnings:.*ResponseAPIUsage.*field_name='usage'.*",
+        )
         self._setup()
 
     def _is_custom_provider_model(self, model: str | None = None) -> bool:

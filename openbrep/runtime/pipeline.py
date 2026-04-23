@@ -40,6 +40,9 @@ from openbrep.core import GDLAgent
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
 from openbrep.llm import LLMAdapter
+from openbrep.skill_creator import SkillCreator
+from openbrep.user_knowledge import load_user_knowledge
+from openbrep.wiki_knowledge import WikiKnowledge
 from openbrep.skills_loader import SkillsLoader
 from openbrep.runtime.router import IntentRouter
 from openbrep.runtime.tracer import Tracer
@@ -156,6 +159,7 @@ class TaskPipeline:
         # Cached after first load (knowledge can be large)
         self._knowledge_text: Optional[str] = None
         self._skills_loader: Optional[SkillsLoader] = None
+        self._skill_creator: Optional[SkillCreator] = None
 
     # ── Public API ────────────────────────────────────────
 
@@ -209,6 +213,28 @@ class TaskPipeline:
     def _handle_chat(self, request: TaskRequest) -> TaskResult:
         """Simple conversational reply — no GDL code output."""
         is_greeting = _is_greeting_only(request.user_input)
+
+        # ── Skill creator: active session takes priority ──
+        if self._skill_creator is not None:
+            reply = self._skill_creator.process_turn(request.user_input)
+            # Reset session if skill was just generated
+            if self._skill_creator._ready_to_generate:
+                self._skill_creator = None
+            return TaskResult(success=True, intent="CHAT", plain_text=reply)
+
+        # ── Skill intent detection ──
+        if not is_greeting:
+            creator = self._get_skill_creator(request)
+            skill_intent = creator.classify_intent(request.user_input)
+            if skill_intent == "CREATE_SKILL":
+                reply = creator.start_conversation(request.user_input)
+                self._skill_creator = creator
+                return TaskResult(success=True, intent="CHAT", plain_text=reply)
+            elif skill_intent == "LIST_SKILLS":
+                reply = creator.list_skills()
+                return TaskResult(success=True, intent="CHAT", plain_text=reply)
+
+        # ── Existing: project context explanation ──
         if request.project is not None and not is_greeting:
             script_target = resolve_script_target(request.user_input)
             if script_target is not None:
@@ -249,6 +275,11 @@ class TaskPipeline:
                 intent="CHAT",
                 plain_text=reply,
             )
+
+        # Check if this is a GDL knowledge question → answer from wiki
+        wiki_result = self._handle_wiki_knowledge(request)
+        if wiki_result is not None:
+            return wiki_result
 
         llm = self._make_llm(request)
         system_content = (
@@ -622,7 +653,16 @@ class TaskPipeline:
             kb_dir = project_root / "knowledge"
             kb = KnowledgeBase(str(kb_dir))
             kb.load()
-            self._knowledge_text = kb.get_by_task_type("all")
+            builtin = kb.get_by_task_type("all")
+
+            # Append user knowledge if configured
+            user_dir = self.config.user_knowledge_dir
+            if user_dir:
+                user_text = load_user_knowledge(user_dir)
+                if user_text:
+                    builtin = builtin + "\n\n---\n\n" + user_text if builtin else user_text
+
+            self._knowledge_text = builtin
         return self._knowledge_text
 
     def _load_skills(self, instruction: str) -> str:
@@ -633,6 +673,100 @@ class TaskPipeline:
             self._skills_loader = SkillsLoader(str(sk_dir))
             self._skills_loader.load()
         return self._skills_loader.get_for_task(instruction)
+
+    # ── Skill creator ────────────────────────────────────
+
+    def _get_skill_creator(self, request: TaskRequest) -> SkillCreator:
+        """Get a SkillCreator instance (fresh per call, no caching across conversations)."""
+        llm = self._make_llm(request)
+        project_root = Path(__file__).parent.parent.parent
+        skills_dir = str(project_root / "skills")
+        return SkillCreator(llm, skills_dir=skills_dir)
+
+    # ── Wiki knowledge ───────────────────────────────────
+
+    def _load_wiki_knowledge(self) -> WikiKnowledge:
+        """Load wiki knowledge base (cached)."""
+        if self._wiki_knowledge is None:
+            project_root = Path(__file__).parent.parent.parent
+            wiki_dir = project_root / "knowledge" / "wiki"
+            wk = WikiKnowledge(str(wiki_dir))
+            wk.load()
+            self._wiki_knowledge = wk
+        return self._wiki_knowledge
+
+    _wiki_knowledge: WikiKnowledge | None = None
+
+    _GDL_KNOWLEDGE_KEYWORDS: set[str] = {
+        "gdl", "命令", "语法", "syntax", "command",
+        "参数", "parameter", "paramlist",
+        "3d", "2d", "脚本", "script",
+        "prism", "block", "body", "edge", "pgon",
+        "hotspot", "project", "add", "del", "rot",
+        "if", "endif", "for", "next", "elsif",
+        "编译", "compile", "error", "错误",
+        "材质", "material", "attribute",
+    }
+
+    @staticmethod
+    def _has_gdl_keyword(text: str) -> bool:
+        """Quick heuristic: check for GDL-related keywords."""
+        lower = text.lower()
+        for kw in TaskPipeline._GDL_KNOWLEDGE_KEYWORDS:
+            if kw in lower:
+                return True
+        return False
+
+    def _classify_gdl_knowledge_question(self, request: TaskRequest) -> bool:
+        """LLM-based classification: is this a GDL knowledge question?"""
+        llm = self._make_llm(request)
+        prompt = (
+            "你是一个分类器。判断用户问题是否涉及 GDL 知识（语法、命令、参数、概念、编写技巧、调试等）。\n"
+            "只需回复 YES 或 NO。\n\n"
+            f"用户问题：{request.user_input}"
+        )
+        try:
+            resp = llm.generate([{"role": "user", "content": prompt}])
+            return resp.content.strip().upper().startswith("YES")
+        except Exception:
+            return False
+
+    def _handle_wiki_knowledge(self, request: TaskRequest) -> TaskResult | None:
+        """Try to answer from wiki knowledge. Returns None if not a knowledge question."""
+        user_input = request.user_input
+
+        # Phase 1: quick heuristic
+        if not self._has_gdl_keyword(user_input):
+            # Phase 2: LLM classification for ambiguous cases
+            if not self._classify_gdl_knowledge_question(request):
+                return None
+
+        # Retrieve relevant wiki pages
+        wk = self._load_wiki_knowledge()
+        wiki_context = wk.format_relevant_context(user_input, max_pages=3)
+        if not wiki_context:
+            return None
+
+        # Synthesize answer
+        llm = self._make_llm(request)
+        system_content = _build_assistant_settings_prompt(request.assistant_settings) + (
+            "你是 openbrep 的 GDL 知识助手。使用以下 wiki 内容回答用户的 GDL 知识问题。\n"
+            "如果 wiki 内容不足以回答，可以结合你的知识补充，但不要编造 GDL 命令语法。\n"
+            "回复简洁准确，使用用户输入的语言。必要时可以给出代码示例。\n\n"
+            f"Wiki 参考资料：\n{wiki_context}"
+        )
+        history = _trim_history(request.history, limit=6)
+        messages = [{"role": "system", "content": system_content}]
+        messages.extend(
+            {"role": item.get("role", "user"), "content": item.get("content", "")}
+            for item in history
+        )
+        messages.append({"role": "user", "content": user_input})
+        try:
+            resp = llm.generate(messages)
+            return TaskResult(success=True, intent="CHAT", plain_text=resp.content)
+        except Exception as exc:
+            return None
 
 
 _SCRIPT_TYPE_MAP: dict[str, str] = {

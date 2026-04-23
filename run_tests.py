@@ -679,7 +679,7 @@ run_test("detect: 'Fix error' → debug", _test_skills_detect_debug)
 print("\n🧹 GDL Linter")
 
 import unittest
-from tests import test_cli_configure, test_cli_main, test_gdl_linter
+from tests import test_cli_configure, test_cli_main, test_gdl_linter, test_pipeline_skill_creator
 
 
 def _run_unittest_module(module):
@@ -708,6 +708,13 @@ def _test_gdl_linter_suite():
 run_test("cli configure suite", _test_cli_configure_suite)
 run_test("cli main suite", _test_cli_main_suite)
 run_test("gdl linter suite", _test_gdl_linter_suite)
+
+
+def _test_pipeline_skill_creator_suite():
+    _run_unittest_module(test_pipeline_skill_creator)
+
+
+run_test("pipeline skill creator suite", _test_pipeline_skill_creator_suite)
 
 
 # ══════════════════════════════════════════════════════════
