@@ -497,37 +497,45 @@ def _is_tcp_port_available(port: int, host: str = "127.0.0.1") -> bool:
 def _kill_process_on_port(port: int, host: str = "127.0.0.1") -> bool:
     """Kill any process listening on the given TCP port. Returns True if killed."""
     import signal
+
+    def _pids_on_port() -> set[int]:
+        try:
+            r = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return {int(pid) for pid in r.stdout.strip().splitlines()}
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        return set()
+
+    def _send_signal(pid: int, sig: int) -> bool:
+        try:
+            os.kill(pid, sig)
+            return True
+        except ProcessLookupError:
+            return False
+
     killed = False
-    # Try lsof with correct syntax: -ti :port (NOT host:port — lsof parses that wrong)
-    try:
-        result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            pids = sorted({int(pid) for pid in result.stdout.strip().splitlines()},
-                          reverse=True)
-            for pid in pids:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    killed = True
-                except ProcessLookupError:
-                    continue
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+    before = _pids_on_port()
 
-    # Fallback: pkill -f streamlit (catches rebundled/child processes)
-    try:
-        subprocess.run(
-            ["pkill", "-f", "streamlit run"],
-            capture_output=True, timeout=5,
-        )
-        killed = True
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+    # Try SIGTERM first (graceful)
+    for pid in before:
+        if _send_signal(pid, signal.SIGTERM):
+            killed = True
+    time.sleep(0.5)
 
-    if killed:
-        time.sleep(1.0)
+    # Escalate to SIGKILL for survivors (Streamlit ignores SIGTERM)
+    survivors = _pids_on_port() & before
+    for pid in survivors:
+        if _send_signal(pid, signal.SIGKILL):
+            killed = True
+    time.sleep(0.5)
+
+    # Final lsof check
+    if _pids_on_port():
+        return False  # still alive despite everything
     return killed
 
 
