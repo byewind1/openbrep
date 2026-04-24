@@ -37,12 +37,22 @@ class PreviewMesh3D:
 
 
 @dataclass
+class PreviewWarning:
+    line: int
+    command: str
+    message: str
+    level: str = "warning"
+    code: str = "PREVIEW_WARN"
+
+
+@dataclass
 class Preview2DResult:
     lines: list[tuple[Point2D, Point2D]] = field(default_factory=list)
     polygons: list[list[Point2D]] = field(default_factory=list)
     circles: list[tuple[float, float, float]] = field(default_factory=list)  # cx, cy, r
     arcs: list[tuple[float, float, float, float, float]] = field(default_factory=list)  # cx, cy, r, a0, a1
     warnings: list[str] = field(default_factory=list)
+    warnings_structured: list[PreviewWarning] = field(default_factory=list)
 
 
 @dataclass
@@ -50,6 +60,7 @@ class Preview3DResult:
     meshes: list[PreviewMesh3D] = field(default_factory=list)
     wires: list[list[Point3D]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    warnings_structured: list[PreviewWarning] = field(default_factory=list)
 
 
 @dataclass
@@ -63,9 +74,18 @@ def preview_2d_script(
     script_2d: str,
     parameters: dict[str, Any] | None = None,
     for_limit: int = DEFAULT_FOR_LIMIT,
+    strict: bool = False,
+    unknown_command_policy: str = "warn",
+    quality: str = "fast",
 ) -> Preview2DResult:
     """Preview a 2D GDL script using MVP command subset."""
-    runtime = _PreviewRuntime(parameters=parameters, for_limit=for_limit)
+    runtime = _PreviewRuntime(
+        parameters=parameters,
+        for_limit=for_limit,
+        strict=strict,
+        unknown_command_policy=unknown_command_policy,
+        quality=quality,
+    )
     runtime.execute(script_2d or "", mode="2d")
     runtime.finish()
     return runtime.result_2d
@@ -75,9 +95,18 @@ def preview_3d_script(
     script_3d: str,
     parameters: dict[str, Any] | None = None,
     for_limit: int = DEFAULT_FOR_LIMIT,
+    strict: bool = False,
+    unknown_command_policy: str = "warn",
+    quality: str = "fast",
 ) -> Preview3DResult:
     """Preview a 3D GDL script using MVP command subset."""
-    runtime = _PreviewRuntime(parameters=parameters, for_limit=for_limit)
+    runtime = _PreviewRuntime(
+        parameters=parameters,
+        for_limit=for_limit,
+        strict=strict,
+        unknown_command_policy=unknown_command_policy,
+        quality=quality,
+    )
     runtime.execute(script_3d or "", mode="3d")
     runtime.finish()
     return runtime.result_3d
@@ -88,10 +117,27 @@ def preview_scripts(
     script_3d: str,
     parameters: dict[str, Any] | None = None,
     for_limit: int = DEFAULT_FOR_LIMIT,
+    strict: bool = False,
+    unknown_command_policy: str = "warn",
+    quality: str = "fast",
 ) -> PreviewResult:
     """Preview both 2D and 3D scripts and merge warnings."""
-    p2d = preview_2d_script(script_2d, parameters=parameters, for_limit=for_limit)
-    p3d = preview_3d_script(script_3d, parameters=parameters, for_limit=for_limit)
+    p2d = preview_2d_script(
+        script_2d,
+        parameters=parameters,
+        for_limit=for_limit,
+        strict=strict,
+        unknown_command_policy=unknown_command_policy,
+        quality=quality,
+    )
+    p3d = preview_3d_script(
+        script_3d,
+        parameters=parameters,
+        for_limit=for_limit,
+        strict=strict,
+        unknown_command_policy=unknown_command_policy,
+        quality=quality,
+    )
     return PreviewResult(
         preview_2d=p2d,
         preview_3d=p3d,
@@ -106,15 +152,28 @@ class _PreviewRuntime:
         re.IGNORECASE,
     )
 
-    def __init__(self, parameters: dict[str, Any] | None, for_limit: int):
+    def __init__(
+        self,
+        parameters: dict[str, Any] | None,
+        for_limit: int,
+        strict: bool = False,
+        unknown_command_policy: str = "warn",
+        quality: str = "fast",
+    ):
         self.env = _normalize_parameters(parameters or {})
         self.for_limit = max(1, int(for_limit))
         self.loop_iterations = 0
+        self.strict = bool(strict)
+        self.unknown_command_policy = (unknown_command_policy or "warn").strip().lower()
+        if self.unknown_command_policy not in {"warn", "ignore", "error"}:
+            self.unknown_command_policy = "warn"
+        self.quality = (quality or "fast").strip().lower()
+        if self.quality not in {"fast", "accurate"}:
+            self.quality = "fast"
 
-        self._add_stack: list[Point3D] = []
-        self._tx = 0.0
-        self._ty = 0.0
-        self._tz = 0.0
+        self._transform_stack: list[tuple[tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]], tuple[float, float, float]]] = []
+        self._A = _identity3()
+        self._t = (0.0, 0.0, 0.0)
 
         # Mesh topology state (VERT/VECT/EDGE/PGON/BODY)
         self._verts: list[Point3D] = []
@@ -125,19 +184,23 @@ class _PreviewRuntime:
         self.result_2d = Preview2DResult()
         self.result_3d = Preview3DResult()
         self._warnings: list[str] = []
+        self._warnings_structured: list[PreviewWarning] = []
 
     def execute(self, script: str, mode: str) -> None:
         lines = _logical_lines(script)
         self._exec_block(lines, 0, len(lines), mode=mode)
 
     def finish(self) -> None:
-        if self._add_stack:
-            self._warn(0, f"ADD/DEL 栈未平衡，自动收敛 DEL {len(self._add_stack)}")
-            self._add_stack.clear()
-            self._tx = self._ty = self._tz = 0.0
+        if self._transform_stack:
+            self._warn(0, f"ADD/DEL 栈未平衡，自动收敛 DEL {len(self._transform_stack)}")
+            self._transform_stack.clear()
+            self._A = _identity3()
+            self._t = (0.0, 0.0, 0.0)
 
         self.result_2d.warnings.extend(self._warnings)
         self.result_3d.warnings.extend(self._warnings)
+        self.result_2d.warnings_structured.extend(self._warnings_structured)
+        self.result_3d.warnings_structured.extend(self._warnings_structured)
 
     def _exec_block(self, lines: list[tuple[int, str]], start: int, end: int, mode: str) -> None:
         idx = start
@@ -222,9 +285,9 @@ class _PreviewRuntime:
             if not handled:
                 cmd = _extract_command(line)
                 if cmd:
-                    self._warn(line_no, f"未支持命令 {cmd}，已跳过")
+                    self._handle_unknown_command(line_no, cmd)
                 else:
-                    self._warn(line_no, "无法解析语句，已跳过")
+                    self._warn(line_no, "无法解析语句，已跳过", command="", code="PARSE_FAIL")
 
             idx += 1
 
@@ -317,10 +380,10 @@ class _PreviewRuntime:
 
         cmd = m.group(1).upper()
         arg_text = (m.group(2) or "").strip()
+        args = _split_args(arg_text)
+        vals = [self._eval_expr(a, line_no) for a in args] if args else []
 
         if cmd in {"ADD", "ADDX", "ADDY", "ADDZ"}:
-            args = _split_args(arg_text)
-            vals = [self._eval_expr(a, line_no) for a in args] if args else []
             if any(v is None for v in vals):
                 self._warn(line_no, f"{cmd} 参数解析失败，已跳过")
                 return True
@@ -349,14 +412,62 @@ class _PreviewRuntime:
                     return True
                 dz = float(vals[0] or 0.0)
 
-            self._add_stack.append((dx, dy, dz))
-            self._tx += dx
-            self._ty += dy
-            self._tz += dz
+            v = (dx, dy, dz)
+            next_t = _v_add(_m_mul_v(self._A, v), self._t)
+            self._push_transform(self._A, next_t)
+            return True
+
+        if cmd in {"ROTX", "ROTY", "ROTZ", "ROT"}:
+            if not vals:
+                self._warn(line_no, f"{cmd} 缺少角度参数，已跳过")
+                return True
+            deg = float(vals[0] or 0.0)
+            if cmd == "ROTX":
+                M = _rot_x_deg(deg)
+            elif cmd == "ROTY":
+                M = _rot_y_deg(deg)
+            else:
+                M = _rot_z_deg(deg)
+            self._push_transform(_m_mul(M, self._A), self._t)
+            return True
+
+        if cmd in {"MUL", "MULX", "MULY", "MULZ"}:
+            if any(v is None for v in vals):
+                self._warn(line_no, f"{cmd} 参数解析失败，已跳过")
+                return True
+
+            sx = sy = sz = 1.0
+            if cmd == "MUL":
+                if len(vals) == 1:
+                    sx = sy = sz = float(vals[0] or 1.0)
+                elif len(vals) >= 3:
+                    sx = float(vals[0] or 1.0)
+                    sy = float(vals[1] or 1.0)
+                    sz = float(vals[2] or 1.0)
+                else:
+                    self._warn(line_no, "MUL 参数需 1 或 3 个，已跳过")
+                    return True
+            elif cmd == "MULX":
+                if not vals:
+                    self._warn(line_no, "MULX 缺少参数，已跳过")
+                    return True
+                sx = float(vals[0] or 1.0)
+            elif cmd == "MULY":
+                if not vals:
+                    self._warn(line_no, "MULY 缺少参数，已跳过")
+                    return True
+                sy = float(vals[0] or 1.0)
+            elif cmd == "MULZ":
+                if not vals:
+                    self._warn(line_no, "MULZ 缺少参数，已跳过")
+                    return True
+                sz = float(vals[0] or 1.0)
+
+            M = ((sx, 0.0, 0.0), (0.0, sy, 0.0), (0.0, 0.0, sz))
+            self._push_transform(_m_mul(M, self._A), self._t)
             return True
 
         if cmd == "DEL":
-            args = _split_args(arg_text)
             if not args:
                 del_count = 1
             else:
@@ -367,18 +478,17 @@ class _PreviewRuntime:
                 else:
                     del_count = max(1, int(round(float(val))))
 
-            if del_count > len(self._add_stack):
+            if del_count > len(self._transform_stack):
                 self._warn(
                     line_no,
-                    f"DEL {del_count} 超过栈深 {len(self._add_stack)}，已自动清空",
+                    f"DEL {del_count} 超过栈深 {len(self._transform_stack)}，已自动清空",
                 )
-                del_count = len(self._add_stack)
+                del_count = len(self._transform_stack)
 
             for _ in range(del_count):
-                dx, dy, dz = self._add_stack.pop()
-                self._tx -= dx
-                self._ty -= dy
-                self._tz -= dz
+                prev_A, prev_t = self._transform_stack.pop()
+                self._A = prev_A
+                self._t = prev_t
             return True
 
         return False
@@ -478,7 +588,13 @@ class _PreviewRuntime:
             if vals is None or len(vals) < 3:
                 self._warn(line_no, f"{cmd} 参数不足或解析失败")
                 return True
-            mesh, wires = _make_box_mesh(vals[0], vals[1], vals[2], self._offset())
+            mesh, wires = _make_box_mesh(
+                vals[0],
+                vals[1],
+                vals[2],
+                self._offset(),
+                transform=self._A,
+            )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
             return True
@@ -493,7 +609,15 @@ class _PreviewRuntime:
             if r <= 1e-9 or abs(h) <= 1e-9:
                 self._warn(line_no, "CYLIND 半径或高度为 0，已跳过")
                 return True
-            mesh, wires = _make_frustum_mesh(h, r, r, self._offset(), name="CYLIND")
+            mesh, wires = _make_frustum_mesh(
+                h,
+                r,
+                r,
+                self._offset(),
+                name="CYLIND",
+                seg=_quality_frustum_seg(self.quality),
+                transform=self._A,
+            )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
             return True
@@ -509,7 +633,15 @@ class _PreviewRuntime:
             if abs(h) <= 1e-9 or (r1 <= 1e-9 and r2 <= 1e-9):
                 self._warn(line_no, "CONE 几何退化，已跳过")
                 return True
-            mesh, wires = _make_frustum_mesh(h, r1, r2, self._offset(), name="CONE")
+            mesh, wires = _make_frustum_mesh(
+                h,
+                r1,
+                r2,
+                self._offset(),
+                name="CONE",
+                seg=_quality_frustum_seg(self.quality),
+                transform=self._A,
+            )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
             return True
@@ -523,7 +655,13 @@ class _PreviewRuntime:
             if r <= 1e-9:
                 self._warn(line_no, "SPHERE 半径为 0，已跳过")
                 return True
-            mesh, wires = _make_sphere_mesh(r, self._offset())
+            mesh, wires = _make_sphere_mesh(
+                r,
+                self._offset(),
+                lat_steps=_quality_sphere_steps(self.quality)[0],
+                lon_steps=_quality_sphere_steps(self.quality)[1],
+                transform=self._A,
+            )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
             return True
@@ -598,7 +736,7 @@ class _PreviewRuntime:
                 self._warn(line_no, "PRISM_ 顶点数据不足，已跳过")
                 return True
 
-            mesh, wires = _make_prism_mesh(pts, h, self._offset())
+            mesh, wires = _make_prism_mesh(pts, h, self._offset(), transform=self._A)
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
             return True
@@ -630,10 +768,20 @@ class _PreviewRuntime:
             return None
 
     def _offset(self) -> Point3D:
-        return (self._tx, self._ty, self._tz)
+        return self._t
 
     def _p2(self, x: float, y: float) -> Point2D:
-        return (float(x) + self._tx, float(y) + self._ty)
+        ox, oy, _ = self._t
+        return (float(x) + ox, float(y) + oy)
+
+    def _push_transform(
+        self,
+        next_A: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+        next_t: tuple[float, float, float],
+    ) -> None:
+        self._transform_stack.append((self._A, self._t))
+        self._A = next_A
+        self._t = next_t
 
     # ── low-level mesh topology helpers ──────────────────────────────────
 
@@ -694,11 +842,34 @@ class _PreviewRuntime:
 
         return _build_mesh("MESH", self._verts, faces)
 
-    def _warn(self, line_no: int, msg: str) -> None:
+    def _warn(
+        self,
+        line_no: int,
+        msg: str,
+        *,
+        command: str = "",
+        level: str = "warning",
+        code: str = "PREVIEW_WARN",
+    ) -> None:
+        cmd = (command or "").upper()
+        self._warnings_structured.append(
+            PreviewWarning(line=line_no, command=cmd, message=msg, level=level, code=code)
+        )
         if line_no > 0:
             self._warnings.append(f"line {line_no}: {msg}")
         else:
             self._warnings.append(msg)
+
+    def _handle_unknown_command(self, line_no: int, command: str) -> None:
+        cmd = (command or "").upper()
+        if self.unknown_command_policy == "ignore":
+            return
+
+        msg = f"未支持命令 {cmd}，已跳过"
+        if self.unknown_command_policy == "error":
+            raise ValueError(f"line {line_no}: 未支持命令 {cmd}")
+
+        self._warn(line_no, msg, command=cmd, code="UNKNOWN_COMMAND")
 
 
 def _normalize_parameters(parameters: dict[str, Any]) -> dict[str, float]:
@@ -799,6 +970,95 @@ def _extract_points_2d(values: list[float], n: int) -> list[Point2D] | None:
     return None
 
 
+def _quality_profile(quality: str) -> dict[str, Any]:
+    if quality == "accurate":
+        return {
+            "frustum_seg": 48,
+            "sphere_steps": (20, 40),
+        }
+    return {
+        "frustum_seg": 24,
+        "sphere_steps": (10, 20),
+    }
+
+
+def _quality_frustum_seg(quality: str) -> int:
+    return int(_quality_profile(quality)["frustum_seg"])
+
+
+def _quality_sphere_steps(quality: str) -> tuple[int, int]:
+    return tuple(_quality_profile(quality)["sphere_steps"])
+
+
+def _identity3() -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    return ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+
+def _m_mul(
+    a: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    b: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    return (
+        (
+            a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0],
+            a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1],
+            a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2] * b[2][2],
+        ),
+        (
+            a[1][0] * b[0][0] + a[1][1] * b[1][0] + a[1][2] * b[2][0],
+            a[1][0] * b[0][1] + a[1][1] * b[1][1] + a[1][2] * b[2][1],
+            a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2] * b[2][2],
+        ),
+        (
+            a[2][0] * b[0][0] + a[2][1] * b[1][0] + a[2][2] * b[2][0],
+            a[2][0] * b[0][1] + a[2][1] * b[1][1] + a[2][2] * b[2][1],
+            a[2][0] * b[0][2] + a[2][1] * b[1][2] + a[2][2] * b[2][2],
+        ),
+    )
+
+
+def _m_mul_v(
+    m: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    v: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+    )
+
+
+def _v_add(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def _rot_x_deg(deg: float) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    r = math.radians(deg)
+    c, s = math.cos(r), math.sin(r)
+    return ((1.0, 0.0, 0.0), (0.0, c, -s), (0.0, s, c))
+
+
+def _rot_y_deg(deg: float) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    r = math.radians(deg)
+    c, s = math.cos(r), math.sin(r)
+    return ((c, 0.0, s), (0.0, 1.0, 0.0), (-s, 0.0, c))
+
+
+def _rot_z_deg(deg: float) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    r = math.radians(deg)
+    c, s = math.cos(r), math.sin(r)
+    return ((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0))
+
+
+def _apply_affine(
+    p: Point3D,
+    A: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    t: Point3D,
+) -> Point3D:
+    x, y, z = _m_mul_v(A, p)
+    return (x + t[0], y + t[1], z + t[2])
+
+
 def _build_mesh(name: str, vertices: list[Point3D], faces: list[tuple[int, int, int]]) -> PreviewMesh3D:
     return PreviewMesh3D(
         name=name,
@@ -811,20 +1071,26 @@ def _build_mesh(name: str, vertices: list[Point3D], faces: list[tuple[int, int, 
     )
 
 
-def _make_box_mesh(dx: float, dy: float, dz: float, offset: Point3D) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
-    x0, y0, z0 = offset
-    x1, y1, z1 = x0 + dx, y0 + dy, z0 + dz
+def _make_box_mesh(
+    dx: float,
+    dy: float,
+    dz: float,
+    offset: Point3D,
+    transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
+    A = transform or _identity3()
 
-    verts: list[Point3D] = [
-        (x0, y0, z0),
-        (x1, y0, z0),
-        (x1, y1, z0),
-        (x0, y1, z0),
-        (x0, y0, z1),
-        (x1, y0, z1),
-        (x1, y1, z1),
-        (x0, y1, z1),
+    verts_local: list[Point3D] = [
+        (0.0, 0.0, 0.0),
+        (dx, 0.0, 0.0),
+        (dx, dy, 0.0),
+        (0.0, dy, 0.0),
+        (0.0, 0.0, dz),
+        (dx, 0.0, dz),
+        (dx, dy, dz),
+        (0.0, dy, dz),
     ]
+    verts = [_apply_affine(p, A, offset) for p in verts_local]
 
     faces = [
         (0, 1, 2), (0, 2, 3),
@@ -852,21 +1118,24 @@ def _make_frustum_mesh(
     offset: Point3D,
     name: str,
     seg: int = 24,
+    transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
-    x0, y0, z0 = offset
+    A = transform or _identity3()
 
-    verts: list[Point3D] = []
+    verts_local: list[Point3D] = []
     for t in range(seg):
         a = 2.0 * math.pi * t / seg
-        verts.append((x0 + r1 * math.cos(a), y0 + r1 * math.sin(a), z0))
+        verts_local.append((r1 * math.cos(a), r1 * math.sin(a), 0.0))
     for t in range(seg):
         a = 2.0 * math.pi * t / seg
-        verts.append((x0 + r2 * math.cos(a), y0 + r2 * math.sin(a), z0 + h))
+        verts_local.append((r2 * math.cos(a), r2 * math.sin(a), h))
 
-    base_center_idx = len(verts)
-    verts.append((x0, y0, z0))
-    top_center_idx = len(verts)
-    verts.append((x0, y0, z0 + h))
+    base_center_idx = len(verts_local)
+    verts_local.append((0.0, 0.0, 0.0))
+    top_center_idx = len(verts_local)
+    verts_local.append((0.0, 0.0, h))
+
+    verts = [_apply_affine(p, A, offset) for p in verts_local]
 
     faces: list[tuple[int, int, int]] = []
 
@@ -904,8 +1173,9 @@ def _make_sphere_mesh(
     offset: Point3D,
     lat_steps: int = 10,
     lon_steps: int = 20,
+    transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
-    x0, y0, z0 = offset
+    A = transform or _identity3()
     verts: list[Point3D] = []
 
     for la in range(lat_steps + 1):
@@ -914,11 +1184,7 @@ def _make_sphere_mesh(
         sp = math.sin(phi)
         for lo in range(lon_steps):
             th = 2.0 * math.pi * lo / lon_steps
-            verts.append((
-                x0 + r * cp * math.cos(th),
-                y0 + r * cp * math.sin(th),
-                z0 + r * sp,
-            ))
+            verts.append(_apply_affine((r * cp * math.cos(th), r * cp * math.sin(th), r * sp), A, offset))
 
     def vid(la: int, lo: int) -> int:
         return la * lon_steps + (lo % lon_steps)
@@ -935,9 +1201,11 @@ def _make_sphere_mesh(
 
     wires: list[list[Point3D]] = []
     equator = [
-        (x0 + r * math.cos(2 * math.pi * t / lon_steps),
-         y0 + r * math.sin(2 * math.pi * t / lon_steps),
-         z0)
+        _apply_affine(
+            (r * math.cos(2 * math.pi * t / lon_steps), r * math.sin(2 * math.pi * t / lon_steps), 0.0),
+            A,
+            offset,
+        )
         for t in range(lon_steps)
     ]
     wires.append(equator + [equator[0]])
@@ -949,12 +1217,13 @@ def _make_prism_mesh(
     points: list[Point2D],
     h: float,
     offset: Point3D,
+    transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
-    x0, y0, z0 = offset
+    A = transform or _identity3()
     n = len(points)
 
-    base: list[Point3D] = [(x0 + x, y0 + y, z0) for x, y in points]
-    top: list[Point3D] = [(x0 + x, y0 + y, z0 + h) for x, y in points]
+    base: list[Point3D] = [_apply_affine((x, y, 0.0), A, offset) for x, y in points]
+    top: list[Point3D] = [_apply_affine((x, y, h), A, offset) for x, y in points]
     verts = [*base, *top]
 
     faces: list[tuple[int, int, int]] = []

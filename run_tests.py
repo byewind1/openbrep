@@ -496,12 +496,12 @@ run_test("preview: FOR/NEXT expansion + limit guard", _test_preview_for_next_wit
 def _test_preview_unsupported_only_warning():
     src = """\
 BLOCK 1, 1, 1
-ROTX 90
+FOO_CMD 1
 BLOCK 1, 1, 1
 """
     res = preview_3d_script(src)
     assert len(res.meshes) == 2
-    assert any("未支持命令 ROTX" in w for w in res.warnings)
+    assert any("未支持命令 FOO_CMD" in w for w in res.warnings)
 run_test("preview: unsupported command warns not crashes", _test_preview_unsupported_only_warning)
 
 
@@ -679,7 +679,7 @@ run_test("detect: 'Fix error' → debug", _test_skills_detect_debug)
 print("\n🧹 GDL Linter")
 
 import unittest
-from tests import test_cli_configure, test_cli_main, test_gdl_linter, test_pipeline_skill_creator
+from tests import test_cli_configure, test_cli_main, test_gdl_linter, test_pipeline_skill_creator, test_preview_controller, test_gdl_previewer
 
 
 def _run_unittest_module(module):
@@ -714,7 +714,17 @@ def _test_pipeline_skill_creator_suite():
     _run_unittest_module(test_pipeline_skill_creator)
 
 
+def _test_preview_controller_suite():
+    _run_unittest_module(test_preview_controller)
+
+
+def _test_gdl_previewer_suite():
+    _run_unittest_module(test_gdl_previewer)
+
+
 run_test("pipeline skill creator suite", _test_pipeline_skill_creator_suite)
+run_test("preview controller suite", _test_preview_controller_suite)
+run_test("gdl previewer suite", _test_gdl_previewer_suite)
 
 
 # ══════════════════════════════════════════════════════════

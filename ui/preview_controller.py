@@ -56,6 +56,9 @@ def run_preview(
     set_preview_meta_fn: Callable[[dict], None],
     script_type_2d,
     script_type_3d,
+    strict: bool = False,
+    unknown_command_policy: str = "warn",
+    quality: str = "fast",
 ) -> tuple[bool, str]:
     sync_visible_editor_buffers_fn(proj, editor_version)
     params = preview_param_values_fn(proj)
@@ -64,14 +67,26 @@ def run_preview(
 
     try:
         if target == "2d":
-            res_2d = preview_2d_script(proj.get_script(script_type_2d), parameters=params)
+            res_2d = preview_2d_script(
+                proj.get_script(script_type_2d),
+                parameters=params,
+                strict=strict,
+                unknown_command_policy=unknown_command_policy,
+                quality=quality,
+            )
             set_preview_2d_data_fn(res_2d)
             set_preview_warnings_fn(dedupe_keep_order_fn([*pre_warns, *res_2d.warnings]))
             set_preview_meta_fn({"kind": "2D", "timestamp": ts})
             return True, "✅ 2D 预览已更新"
 
         if target == "3d":
-            res_3d = preview_3d_script(proj.get_script(script_type_3d), parameters=params)
+            res_3d = preview_3d_script(
+                proj.get_script(script_type_3d),
+                parameters=params,
+                strict=strict,
+                unknown_command_policy=unknown_command_policy,
+                quality=quality,
+            )
             set_preview_3d_data_fn(res_3d)
             set_preview_warnings_fn(dedupe_keep_order_fn([*pre_warns, *res_3d.warnings]))
             set_preview_meta_fn({"kind": "3D", "timestamp": ts})

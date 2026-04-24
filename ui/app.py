@@ -270,6 +270,12 @@ if "preview_warnings" not in st.session_state:
     st.session_state.preview_warnings = []
 if "preview_meta" not in st.session_state:
     st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+if "preview_strict" not in st.session_state:
+    st.session_state.preview_strict = False
+if "preview_unknown_command_policy" not in st.session_state:
+    st.session_state.preview_unknown_command_policy = "warn"
+if "preview_quality" not in st.session_state:
+    st.session_state.preview_quality = "fast"
 if "assistant_settings" not in st.session_state:
     st.session_state.assistant_settings = ""
 if "elicitation_agent" not in st.session_state:
@@ -2727,6 +2733,9 @@ def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
         set_preview_meta_fn=lambda meta: st.session_state.__setitem__("preview_meta", meta),
         script_type_2d=ScriptType.SCRIPT_2D,
         script_type_3d=ScriptType.SCRIPT_3D,
+        strict=bool(st.session_state.get("preview_strict", False)),
+        unknown_command_policy=str(st.session_state.get("preview_unknown_command_policy", "warn") or "warn"),
+        quality=str(st.session_state.get("preview_quality", "fast") or "fast"),
     )
 
 
@@ -2933,6 +2942,28 @@ with col_left:
                 else:
                     st.error(_msg)
 
+        _pv_opt_c1, _pv_opt_c2, _pv_opt_c3 = st.columns([1.0, 1.2, 1.0])
+        with _pv_opt_c1:
+            st.checkbox(
+                "Strict",
+                key="preview_strict",
+                help="开启后遇到策略=error 的未知命令会直接报错停止",
+            )
+        with _pv_opt_c2:
+            st.selectbox(
+                "Unknown policy",
+                options=["warn", "ignore", "error"],
+                key="preview_unknown_command_policy",
+                help="未知命令处理策略：告警/忽略/报错",
+            )
+        with _pv_opt_c3:
+            st.selectbox(
+                "Quality",
+                options=["fast", "accurate"],
+                key="preview_quality",
+                help="fast 更快；accurate 细分更高",
+            )
+
         @st.dialog("📋 编译日志")
         def _show_log_dialog():
             if not st.session_state.compile_log:
@@ -3004,7 +3035,9 @@ with col_left:
                 st.caption("暂无 warning。")
             else:
                 for _w in _warns:
-                    st.warning(_w)
+                    _txt = str(_w)
+                    _txt = re.sub(r"^line\s+(\d+):", r"3d.gdl:L\1", _txt)
+                    st.warning(_txt)
 
 with col_mid:
     with st.container(height=820, border=False):
