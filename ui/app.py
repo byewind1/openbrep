@@ -449,6 +449,16 @@ def _license_file(work_dir: str) -> Path:
     return Path(work_dir) / ".openbrep" / "license_v1.json"
 
 
+def _has_streamlit_runtime_context() -> bool:
+    """Return True only when the app is running under `streamlit run`."""
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
+
+
 def _empty_license_record() -> dict:
     return ui_view_models.empty_license_record()
 
@@ -467,6 +477,8 @@ def _load_license(work_dir: str) -> dict:
 
 
 def _save_license(work_dir: str, data: dict) -> None:
+    if not _has_streamlit_runtime_context():
+        return
     fp = _license_file(work_dir)
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -877,7 +889,7 @@ with st.sidebar:
     st.session_state.work_dir = work_dir
 
     # Load persisted license when work_dir is known
-    if not st.session_state.pro_license_loaded:
+    if not st.session_state.pro_license_loaded and _has_streamlit_runtime_context():
         _lic = _load_license(work_dir)
         if bool(_lic.get("pro_unlocked", False)):
             ok, _msg, normalized = _license_record_is_active(_lic)

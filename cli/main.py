@@ -514,7 +514,7 @@ def _kill_process_on_port(port: int, host: str = "127.0.0.1") -> bool:
         try:
             os.kill(pid, sig)
             return True
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError, OSError):
             return False
 
     killed = False

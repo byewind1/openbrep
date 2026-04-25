@@ -17,6 +17,20 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
 
+from openbrep.gdl_keywords import (
+    GDL_BUILTINS,
+    GDL_BUILTINS_CASEFOLD,
+    GLOBAL_PREFIXES,
+)
+
+__all__ = [
+    "GDL_BUILTINS",
+    "GLOBAL_PREFIXES",
+    "StaticChecker",
+    "StaticCheckResult",
+    "StaticError",
+]
+
 if TYPE_CHECKING:
     from openbrep.hsf_project import HSFProject, ScriptType
 
@@ -24,79 +38,8 @@ if TYPE_CHECKING:
 # ── GDL built-in keywords to exclude from undefined_var check ────────────────
 # Public (no leading _) so cross_script_checker etc. can import without drift.
 
-GDL_BUILTINS: frozenset[str] = frozenset({
-    # control flow
-    "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "STEP", "NEXT",
-    "WHILE", "ENDWHILE", "REPEAT", "UNTIL", "GOTO", "GOSUB", "RETURN",
-    "EXIT", "END", "GROUP", "ENDGROUP", "SUBGROUP", "PLACEGROUP", "KILLGROUP",
-    "GROUP_OPERATION",
-    # geometry
-    "BLOCK", "SPHERE", "CONE", "CYLINDER", "CYLIND", "CYLIND_",
-    "PRISM", "PRISM_", "BPRISM_",
-    "PYRAMID", "REVOLVE", "REVOLVE_", "EXTRUDE", "EXTRUDE_", "RULED_",
-    "MESH", "COONS", "TUBE", "TUBEA", "TUBEB", "PLANE", "PLANE_",
-    "PGON", "PGON_", "POLY", "POLY_", "POLY2_", "POLY2_B", "POLYROOF_", "MASS_",
-    "XFORMR", "XFORM",
-    # transformation
-    "ADD", "ADDX", "ADDY", "ADDZ", "ADD2", "MUL", "MUL2",
-    "ROT", "ROTX", "ROTY", "ROTZ", "ROT2", "DEL", "DELN", "DELALL",
-    # output
-    "PRINT", "ASSERT", "CALL", "MACRO",
-    # built-in functions (common)
-    "SIN", "COS", "TAN", "ATN", "ACS", "ASN", "SQR", "ABS", "INT",
-    "SGN", "EXP", "LOG", "LN", "NOT", "AND", "OR", "MOD", "DIV",
-    "MIN", "MAX", "RND", "ROUND", "FRAC", "FIX",
-    "TAB", "VAL",
-    # string
-    "STR", "STR2", "SPLIT", "STRLEN", "STRSPN", "STRSUB", "STRSTR",
-    "UPCASE", "DOWNCASE", "INFIX", "SUFFIX", "PREFIX",
-    "CHR", "NUM",
-    # built-in vars / system vars / constants
-    "A", "B", "ZZYZX", "PI", "pi", "EPS", "TRUE", "FALSE",
-    "GLOB_SCALE", "GLOB_CH_SCALE", "GLOB_PAPER_SCALE",
-    "GLOB_NORTH_DIR", "GLOB_ELEVATION", "GLOB_CONTEXT",
-    "GLOB_FRAME_NR", "GLOB_CUTPLANE_H", "GLOB_CUTPLANE_T",
-    "GLOB_CUTPLANES_INFO", "GLOB_CUTPLANES_INFO2",
-    "GLOB_WORLD_ORIGO_OFFSET_X", "GLOB_WORLD_ORIGO_OFFSET_Y",
-    "GLOB_MERIDIAN_CONVERGENCE", "GLOB_HSTORY_HEIGHT",
-    "GLOB_HSTORY_ELEV", "GLOB_HSTORY_NR",
-    "SYMB_LINETYPE", "SYMB_FILL", "SYMB_FILL_BG",
-    "SYMB_SECT_FILL", "SYMB_SECT_FILL_BG",
-    "SYMB_PEN", "SYMB_SECT_PEN", "SYMB_FRGROUND_PEN",
-    "SYMB_LIN_PEN", "SYMB_FILL_PEN",
-    "AC_SHOW_AREA", "AC_SHOW_VOLUME",
-    "APPLICATION", "VERSION",
-    # object-instance built-in
-    "unID",
-    # 2D drawing commands
-    "LINE", "LINE2", "LINE_TYPE", "RECT", "RECT2", "ARC", "ARC2",
-    "CIRCLE", "CIRCLE2", "SPLINE", "SPLINE2", "TEXT", "TEXT2", "RICHTEXT2",
-    "HOTSPOT", "HOTSPOT2", "HOTLINE", "HOTLINE2", "HOTARC", "HOTARC2",
-    "FILL", "FILTER", "PROJECT2", "FRAGMENT2", "PICTURE2",
-    "MARKER", "MARKER2",
-    # misc commands / keywords
-    "RESOL", "TOLER", "MODEL", "WIRE", "SURFACE", "SOLID", "BODY",
-    "CUTPLANE", "CUTFORM", "CUTPOLYA", "CUTPOLYX",
-    "PEN", "MATERIAL", "DEFINE", "USE", "PARAMETERS",
-    "PUT", "GET", "NSP", "IND", "VARDIM1", "VARDIM2",
-    "REQUEST", "CALL",
-    # type conversion
-    "INCH", "MM", "CM", "M",
-    # LLM output metadata / paramlist formatting words
-    "FILE", "scripts", "gdl", "paramlist", "xml", "Length", "Integer",
-    "Boolean", "Material", "RealNum", "Angle", "String", "PenColor",
-    "FillPattern", "LineType",
-    # low-level mesh body / edge / polygon commands & attributes (GDL reference)
-    "BODY", "EDGE", "PGON", "VERT", "VECT",
-    "XFORM", "XFORMR",
-    "HIDDENBODYEDGE", "HIDDENPROFILEEDGE", "SMOOTHBODYEDGE",
-})
-
 # ArchiCAD reserved single-letter parameters available in every object
 RESERVED_PARAMS: frozenset[str] = frozenset({"A", "B", "ZZYZX"})
-
-# Prefixes that identify GDL global/system variables — always safe to skip
-GLOBAL_PREFIXES: tuple[str, ...] = ("gs_", "ac_", "GLOB_", "SYMB_")
 
 # Regex to extract bare identifiers (word chars, not purely numeric)
 _IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
@@ -216,7 +159,7 @@ class StaticChecker:
                 if name in seen_undefined:
                     continue
                 # GDL built-in (case-insensitive lookup)
-                if name.upper() in GDL_BUILTINS or name in GDL_BUILTINS:
+                if name.upper() in GDL_BUILTINS_CASEFOLD or name in GDL_BUILTINS:
                     continue
                 # _ prefix: handled by forward_decl check
                 if name.startswith("_"):

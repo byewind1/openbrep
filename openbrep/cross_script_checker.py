@@ -2,25 +2,16 @@ from __future__ import annotations
 
 import re
 
+from openbrep.gdl_keywords import GDL_BUILTINS as SHARED_GDL_BUILTINS, GLOBAL_PREFIXES
 from openbrep.hsf_project import ScriptType
-from openbrep.static_checker import GDL_BUILTINS as _SHARED_GDL_BUILTINS, GLOBAL_PREFIXES as _SHARED_GLOBAL_PREFIXES
 from openbrep.validator import ValidationIssue
 
 
 _IDENT_RE = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\b')
 _ASSIGN_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)', re.MULTILINE)
 
-# Additional GDL identifiers used in low-level mesh/body construction
-# not covered by static_checker.GDL_BUILTINS.
-_MESH_BUILTINS: frozenset[str] = frozenset({
-    "BODY", "EDGE", "PGON", "VERT", "VECT",
-    "XFORM", "XFORMR",
-    "HIDDENBODYEDGE", "HIDDENPROFILEEDGE", "SMOOTHBODYEDGE",
-})
-
-
 class CrossScriptChecker:
-    GDL_BUILTINS = _SHARED_GDL_BUILTINS | _MESH_BUILTINS
+    GDL_BUILTINS = SHARED_GDL_BUILTINS
 
     @staticmethod
     def _strip_comments(code: str) -> str:
@@ -52,7 +43,7 @@ class CrossScriptChecker:
             # Filter out GDL global/system variable prefixes (gs_, ac_, GLOB_, SYMB_)
             missing = {v for v in missing
                        if not any(v.upper().startswith(p.upper().rstrip("_"))
-                                  for p in _SHARED_GLOBAL_PREFIXES)}
+                                  for p in GLOBAL_PREFIXES)}
             if missing:
                 issues.append(ValidationIssue(
                     level="warning",

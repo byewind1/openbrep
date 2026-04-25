@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, TYPE_CHECKING
 
+from openbrep.gdl_keywords import GDL_BUILTINS_CASEFOLD, GLOBAL_PREFIXES, OUTPUT_METADATA_WORDS
+
 if TYPE_CHECKING:
     from openbrep.hsf_project import HSFProject
 
@@ -56,23 +58,6 @@ _FILE_BLOCK_RE = re.compile(
 )
 # Strip markdown fences
 _FENCE_RE = re.compile(r'^```[a-z]*\n?|\n?```$', re.MULTILINE)
-
-# Minimal set of GDL built-ins for cross-script warning (kept small on purpose)
-_WARN_BUILTINS: frozenset[str] = frozenset({
-    "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "NEXT", "WHILE", "ENDWHILE",
-    "REPEAT", "UNTIL", "RETURN", "END", "BLOCK", "ADD", "ADDX", "ADDY", "ADDZ",
-    "DEL", "ROT", "MUL", "A", "B", "ZZYZX", "PI", "EPS", "SIN", "COS", "MAX",
-    "MIN", "ABS", "INT", "SQR", "TRUE", "FALSE", "AND", "OR", "NOT",
-    "LINE", "RECT", "ARC", "CIRCLE", "TEXT", "HOTSPOT2", "PROJECT2",
-    "MATERIAL", "PEN", "RESOL", "TOLER", "FILL", "FILTER", "UNID",
-})
-
-_METADATA_WARN_BUILTINS: frozenset[str] = frozenset({
-    "FILE", "scripts", "gdl", "paramlist", "xml", "Length", "Integer",
-    "Boolean", "Material", "RealNum", "Angle", "String", "PenColor",
-    "FillPattern", "LineType",
-})
-
 
 def _filter_cross_script_text(text: str) -> str:
     lines = []
@@ -328,9 +313,13 @@ class ScriptGenerator:
             warned: set[str] = set()
             for m in ident_re.finditer(content):
                 name = m.group(1)
-                if name in warned or name.upper() in _WARN_BUILTINS or name in _METADATA_WARN_BUILTINS:
+                if name in warned or name.upper() in GDL_BUILTINS_CASEFOLD:
                     continue
-                if name.startswith("_") or name.startswith("gs_") or name.startswith("ac_"):
+                if name.upper() in OUTPUT_METADATA_WORDS:
+                    continue
+                if name.startswith("_") or any(
+                    name.lower().startswith(prefix.lower()) for prefix in GLOBAL_PREFIXES
+                ):
                     continue
                 if len(name) == 1:
                     continue

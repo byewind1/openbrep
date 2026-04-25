@@ -513,9 +513,9 @@ class TestGenerationResultPlan(unittest.TestCase):
 
 class TestReleaseDocs(unittest.TestCase):
 
-    def test_package_version_is_v061(self):
+    def test_package_version_is_current_release(self):
         from openbrep import __version__
-        self.assertEqual(__version__, "0.6.1")
+        self.assertEqual(__version__, "0.6.2")
 
     def test_pyproject_version_matches_package_version(self):
         from openbrep import __version__
@@ -527,18 +527,18 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn("from openbrep import __version__ as OPENBREP_VERSION", app_text)
         self.assertIn("v{OPENBREP_VERSION}", app_text)
 
-    def test_install_cn_title_mentions_v061(self):
+    def test_install_cn_title_mentions_current_release(self):
+        from openbrep import __version__
         install_cn = Path("INSTALL_CN.md").read_text(encoding="utf-8")
-        self.assertIn("# openbrep v0.6.1 安装指南（中文）", install_cn)
-        self.assertIn("当前正式版本：v0.6.1", install_cn)
+        self.assertIn(f"# openbrep v{__version__} 安装指南（中文）", install_cn)
+        self.assertIn(f"当前正式版本：v{__version__}", install_cn)
 
     def test_readme_release_wording_is_formal(self):
+        from openbrep import __version__
         readme = Path("README.md").read_text(encoding="utf-8")
         readme_zh = Path("README.zh-CN.md").read_text(encoding="utf-8")
-        self.assertIn("正式发布版本 v0.6.1", readme)
-        self.assertIn("正式发布版本 v0.6.1", readme_zh)
-        self.assertIn("保持统一", readme)
-        self.assertIn("保持统一", readme_zh)
+        self.assertIn(f"正式发布版本 v{__version__}", readme)
+        self.assertIn(f"正式发布版本 v{__version__}", readme_zh)
 
     def test_v061_release_note_uses_patch_release_wording(self):
         release_note = Path("docs/releases/v0.6.1.md").read_text(encoding="utf-8")
@@ -546,11 +546,12 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn("正式 patch release", release_note)
         self.assertIn("v0.6.0", release_note)
 
-    def test_readme_mentions_v061_release_note(self):
+    def test_readme_mentions_current_release_note(self):
+        from openbrep import __version__
         readme = Path("README.md").read_text(encoding="utf-8")
-        self.assertIn("v0.6.1", readme)
-        self.assertIn("docs/releases/v0.6.1.md", readme)
+        self.assertIn(f"v{__version__}", readme)
+        self.assertIn(f"docs/releases/v{__version__}.md", readme)
 
-    def test_v061_release_note_exists(self):
-        self.assertTrue(Path("docs/releases/v0.6.1.md").exists())
-
+    def test_current_release_note_exists(self):
+        from openbrep import __version__
+        self.assertTrue(Path(f"docs/releases/v{__version__}.md").exists())
