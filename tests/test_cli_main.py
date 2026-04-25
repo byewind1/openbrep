@@ -260,6 +260,40 @@ class TestCliMainCommands(unittest.TestCase):
             self.assertEqual((output_root / "Planter-2.gsm").read_text(encoding="utf-8"), "compiled")
             self.assertEqual((output_root / "Planter.gsm").read_text(encoding="utf-8"), "existing")
 
+    def test_revision_commands_save_list_and_restore_project_snapshots(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Chair"
+            scripts = project / "scripts"
+            scripts.mkdir(parents=True)
+            (project / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+            (project / "paramlist.xml").write_text("<ParamList />\n", encoding="utf-8")
+            (scripts / "3d.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            save_result = self.runner.invoke(
+                app,
+                ["revision", "save", str(project), "--message", "initial"],
+            )
+            self.assertEqual(save_result.exit_code, 0, msg=save_result.output)
+            self.assertIn("已保存版本 r0001", save_result.output)
+
+            (scripts / "3d.gdl").write_text("CYLIND 1, 1\n", encoding="utf-8")
+            save_result = self.runner.invoke(
+                app,
+                ["revision", "save", str(project), "--message", "cylinder"],
+            )
+            self.assertEqual(save_result.exit_code, 0, msg=save_result.output)
+
+            list_result = self.runner.invoke(app, ["revision", "list", str(project)])
+            self.assertEqual(list_result.exit_code, 0, msg=list_result.output)
+            self.assertIn("r0001", list_result.output)
+            self.assertIn("r0002", list_result.output)
+            self.assertIn("cylinder", list_result.output)
+
+            restore_result = self.runner.invoke(app, ["revision", "restore", str(project), "r0001"])
+            self.assertEqual(restore_result.exit_code, 0, msg=restore_result.output)
+            self.assertIn("当前最新版本：r0003", restore_result.output)
+            self.assertEqual((scripts / "3d.gdl").read_text(encoding="utf-8"), "BLOCK A, B, ZZYZX\n")
+
     def test_configure_writes_builtin_provider_key_and_backup(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"

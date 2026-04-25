@@ -33,6 +33,11 @@ app = typer.Typer(
     help="OpenBrep: AI-driven GDL development CLI",
     add_completion=False,
 )
+revision_app = typer.Typer(
+    name="revision",
+    help="管理 HSF 项目的本地版本快照",
+    add_completion=False,
+)
 console = Console()
 err_console = Console(stderr=True)
 
@@ -848,6 +853,79 @@ def compile(
         raise typer.Exit(1)
 
 
+@revision_app.command("save")
+def revision_save(
+    project_dir: str = typer.Argument(..., help="HSF 项目目录路径"),
+    message: str = typer.Option("", "--message", "-m", help="版本说明"),
+):
+    """保存当前 HSF 项目源文件快照"""
+    from openbrep.revisions import create_revision
+
+    try:
+        revision = create_revision(project_dir, message)
+    except Exception as exc:
+        err_console.print(f"[red]❌ 保存版本失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✅ 已保存版本 {revision.revision_id}[/green]")
+    console.print(f"[green]📁 项目：{revision.project_name}[/green]")
+    if revision.message:
+        console.print(f"[dim]说明：{revision.message}[/dim]")
+
+
+@revision_app.command("list")
+def revision_list(
+    project_dir: str = typer.Argument(..., help="HSF 项目目录路径"),
+):
+    """列出 HSF 项目版本快照"""
+    from openbrep.revisions import get_latest_revision_id, list_revisions
+
+    try:
+        revisions = list_revisions(project_dir)
+        latest = get_latest_revision_id(project_dir)
+    except Exception as exc:
+        err_console.print(f"[red]❌ 读取版本失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    if not revisions:
+        console.print("[yellow]暂无版本快照。[/yellow]")
+        return
+
+    table = Table(title="OpenBrep 项目版本", show_header=True, header_style="bold cyan")
+    table.add_column("版本", style="green")
+    table.add_column("时间")
+    table.add_column("说明")
+    table.add_column("文件数", justify="right")
+    for revision in revisions:
+        marker = " *" if revision.revision_id == latest else ""
+        table.add_row(
+            f"{revision.revision_id}{marker}",
+            revision.created_at,
+            revision.message,
+            str(len(revision.files)),
+        )
+    console.print(table)
+
+
+@revision_app.command("restore")
+def revision_restore(
+    project_dir: str = typer.Argument(..., help="HSF 项目目录路径"),
+    revision_id: str = typer.Argument(..., help="要恢复的版本号，例如 r0001"),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="恢复后新版本的说明"),
+):
+    """恢复指定快照，并将恢复结果保存为新的最新版本"""
+    from openbrep.revisions import restore_revision
+
+    try:
+        revision = restore_revision(project_dir, revision_id, message)
+    except Exception as exc:
+        err_console.print(f"[red]❌ 恢复版本失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✅ 已恢复 {revision_id}[/green]")
+    console.print(f"[green]📌 当前最新版本：{revision.revision_id}[/green]")
+
+
 @app.command()
 def configure(
     config: Optional[str] = typer.Option(None, "--config", help="Config file path"),
@@ -1013,6 +1091,9 @@ def help():
     table.add_row("obr create <prompt>", "从描述生成对象项目")
     table.add_row("obr modify <project_dir> <prompt>", "修改现有项目")
     table.add_row("obr compile <project_dir>", "编译为 .gsm")
+    table.add_row("obr revision save <project_dir>", "保存项目版本快照")
+    table.add_row("obr revision list <project_dir>", "查看项目版本快照")
+    table.add_row("obr revision restore <project_dir> <rev>", "恢复版本并生成新快照")
     table.add_row("obr repair <project_dir>", "按错误日志修复脚本")
     table.add_row("obr chat", "交互式聊天（可选带 --project）")
     table.add_row("obr --help", "查看完整参数帮助")
@@ -1036,6 +1117,9 @@ def benchmark(
     """运行 benchmark 测试套件"""
     console.print(f"[yellow]benchmark 命令暂未实现（suite={suite}）[/yellow]")
     console.print("请直接运行 tests/ 目录下的测试文件。")
+
+
+app.add_typer(revision_app, name="revision")
 
 
 if __name__ == "__main__":
