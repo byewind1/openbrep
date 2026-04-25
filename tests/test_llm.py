@@ -51,6 +51,8 @@ from ui.app import (
     _capture_last_project_snapshot,
     _restore_last_project_snapshot,
     _route_main_input,
+    _restore_project_revision,
+    _save_current_project_revision,
     _verify_pro_code,
     _license_record_is_active,
     _import_pro_knowledge_zip,
@@ -1520,6 +1522,65 @@ class TestUndoLastAIWrite(unittest.TestCase):
 
 
 class TestImportFlows(unittest.TestCase):
+    def test_save_current_project_revision_persists_hsf_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nEND\n")
+
+            ok, msg = _save_current_project_revision(project, "initial")
+
+            self.assertTrue(ok, msg)
+            self.assertIn("r0001", msg)
+            self.assertTrue((Path(tmpdir) / "Chair" / ".openbrep" / "revisions" / "r0001").exists())
+
+    def test_restore_project_revision_reloads_project_and_resets_editor_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nEND\n")
+            ok, _msg = _save_current_project_revision(project, "initial")
+            self.assertTrue(ok)
+
+            project.set_script(ScriptType.SCRIPT_3D, "CYLIND 1, 1\nEND\n")
+            project.save_to_disk()
+
+            with patch("ui.app._reset_tapir_p0_state") as reset_tapir:
+                with patch("ui.app._bump_main_editor_version") as bump_editor:
+                    with patch.dict("ui.app.st.session_state", {
+                        "project": project,
+                        "pending_diffs": {"old": 1},
+                        "pending_ai_label": "old",
+                        "compile_result": (True, "old"),
+                        "preview_2d_data": object(),
+                        "preview_3d_data": object(),
+                        "preview_warnings": ["old"],
+                        "preview_meta": {"kind": "old", "timestamp": "old"},
+                    }, clear=False):
+                        ok, msg = _restore_project_revision(project, "r0001")
+                        state = __import__("ui.app", fromlist=["st"]).st.session_state
+                        restored_script = state.project.get_script(ScriptType.SCRIPT_3D)
+                        pending_gsm_name = state.pending_gsm_name
+                        pending_diffs = dict(state.pending_diffs)
+                        pending_ai_label = state.pending_ai_label
+                        compile_result = state.compile_result
+                        preview_2d_data = state.preview_2d_data
+                        preview_3d_data = state.preview_3d_data
+                        preview_warnings = list(state.preview_warnings)
+                        preview_meta = dict(state.preview_meta)
+
+            self.assertTrue(ok, msg)
+            self.assertIn("r0002", msg)
+            self.assertEqual(restored_script, "BLOCK A, B, ZZYZX\nEND\n")
+            self.assertEqual(pending_gsm_name, "Chair")
+            self.assertEqual(pending_diffs, {})
+            self.assertEqual(pending_ai_label, "")
+            self.assertIsNone(compile_result)
+            self.assertIsNone(preview_2d_data)
+            self.assertIsNone(preview_3d_data)
+            self.assertEqual(preview_warnings, [])
+            self.assertEqual(preview_meta, {"kind": "", "timestamp": ""})
+            reset_tapir.assert_called_once_with()
+            bump_editor.assert_called_once_with()
+
     def test_hsf_directory_load_sets_current_project_and_resets_editor_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir) / "Chair"

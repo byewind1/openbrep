@@ -282,6 +282,10 @@ if "elicitation_agent" not in st.session_state:
     st.session_state.elicitation_agent = None
 if "elicitation_state" not in st.session_state:
     st.session_state.elicitation_state = ElicitationState.IDLE.value
+if "revision_auto_snapshot" not in st.session_state:
+    st.session_state.revision_auto_snapshot = True
+if "revision_notice" not in st.session_state:
+    st.session_state.revision_notice = ""
 
 
 
@@ -1990,6 +1994,47 @@ def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
     )
 
 
+def _save_current_project_revision(proj: HSFProject, message: str = "") -> tuple[bool, str]:
+    if proj is None:
+        return False, "❌ 当前没有项目"
+    try:
+        proj.save_to_disk()
+        from openbrep.revisions import create_revision
+
+        revision = create_revision(proj.root, message.strip())
+        return True, f"✅ 已保存版本 `{revision.revision_id}`"
+    except Exception as exc:
+        return False, f"❌ 保存版本失败：{exc}"
+
+
+def _restore_project_revision(proj: HSFProject, revision_id: str, message: str | None = None) -> tuple[bool, str]:
+    if proj is None:
+        return False, "❌ 当前没有项目"
+    revision_id = (revision_id or "").strip()
+    if not revision_id:
+        return False, "❌ 请选择要恢复的版本"
+
+    try:
+        from openbrep.revisions import restore_revision
+
+        restored = restore_revision(proj.root, revision_id, message)
+        reloaded = HSFProject.load_from_disk(str(proj.root))
+        st.session_state.project = reloaded
+        st.session_state.pending_gsm_name = reloaded.name
+        st.session_state.pending_diffs = {}
+        st.session_state.pending_ai_label = ""
+        st.session_state.compile_result = None
+        st.session_state.preview_2d_data = None
+        st.session_state.preview_3d_data = None
+        st.session_state.preview_warnings = []
+        st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+        _reset_tapir_p0_state()
+        _bump_main_editor_version()
+        return True, f"✅ 已恢复 `{revision_id}`，当前最新版本为 `{restored.revision_id}`"
+    except Exception as exc:
+        return False, f"❌ 恢复版本失败：{exc}"
+
+
 def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
     """
     Decompile GSM → HSF → HSFProject via LP_XMLConverter libpart2hsf.
@@ -2865,6 +2910,12 @@ with col_left:
                     )
                 st.session_state.compile_result = (success, result_msg)
                 if success:
+                    if st.session_state.get("revision_auto_snapshot", True):
+                        _rev_ok, _rev_msg = _save_current_project_revision(
+                            proj_now,
+                            f"Compile {gsm_name_input or proj_now.name}",
+                        )
+                        st.session_state.revision_notice = _rev_msg
                     st.toast("✅ 编译成功", icon="🏗️")
                 st.rerun()
 
@@ -2874,6 +2925,86 @@ with col_left:
                 st.success(_c_msg)
             else:
                 st.error(_c_msg)
+
+        with st.expander("🕘 版本管理", expanded=True):
+            _project_root_text = str(getattr(proj_now, "root", "") or "")
+            st.caption(f"当前项目目录：`{_project_root_text}`")
+            st.checkbox(
+                "编译成功后自动保存版本",
+                key="revision_auto_snapshot",
+                help="保存 HSF 源文件快照，不保存 .gsm 编译产物",
+            )
+            _revision_message = st.text_input(
+                "版本说明",
+                value="",
+                placeholder="例如：调整层板厚度 / 编译前稳定版本",
+                key="revision_message_input",
+                disabled=_is_generation_locked(st.session_state),
+            )
+            _rev_col_save, _rev_col_refresh = st.columns([1.2, 1.0])
+            with _rev_col_save:
+                if st.button(
+                    "保存版本",
+                    key="revision_save_button",
+                    width='stretch',
+                    disabled=_is_generation_locked(st.session_state),
+                ):
+                    _ok, _msg = _save_current_project_revision(proj_now, _revision_message)
+                    st.session_state.revision_notice = _msg
+                    if _ok:
+                        st.toast("已保存版本", icon="✅")
+                    st.rerun()
+            with _rev_col_refresh:
+                if st.button("刷新历史", key="revision_refresh_button", width='stretch'):
+                    st.rerun()
+
+            _notice = st.session_state.get("revision_notice", "")
+            if _notice:
+                if _notice.startswith("✅"):
+                    st.success(_notice)
+                else:
+                    st.error(_notice)
+
+            try:
+                from openbrep.revisions import get_latest_revision_id, list_revisions
+
+                _revisions = list_revisions(proj_now.root)
+                _latest_revision = get_latest_revision_id(proj_now.root)
+            except Exception as _rev_exc:
+                _revisions = []
+                _latest_revision = None
+                st.caption(f"暂无可读取版本：{_rev_exc}")
+
+            if _revisions:
+                _revision_options = [r.revision_id for r in reversed(_revisions)]
+                _selected_revision = st.selectbox(
+                    "版本历史",
+                    options=_revision_options,
+                    key="revision_restore_select",
+                    help="选择一个版本查看说明或恢复",
+                )
+                _selected_meta = next((r for r in _revisions if r.revision_id == _selected_revision), None)
+                if _selected_meta:
+                    _latest_mark = " · 最新" if _selected_meta.revision_id == _latest_revision else ""
+                    st.caption(
+                        f"{_selected_meta.created_at}{_latest_mark} · "
+                        f"{len(_selected_meta.files)} 个源文件"
+                    )
+                    if _selected_meta.message:
+                        st.caption(f"说明：{_selected_meta.message}")
+                if st.button(
+                    "恢复此版本",
+                    key="revision_restore_button",
+                    width='stretch',
+                    disabled=_is_generation_locked(st.session_state),
+                ):
+                    _ok, _msg = _restore_project_revision(proj_now, _selected_revision)
+                    st.session_state.revision_notice = _msg
+                    if _ok:
+                        st.toast("已恢复版本", icon="✅")
+                    st.rerun()
+            else:
+                st.caption("还没有版本。点击“保存版本”后，这里会显示历史。")
 
         if _TAPIR_IMPORT_OK:
             _bridge = get_bridge()
