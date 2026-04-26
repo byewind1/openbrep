@@ -2761,9 +2761,9 @@ def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
 
 
 # ══════════════════════════════════════════════════════════
-#  Main Layout: Left Chat | Right Editor
+#  Main Layout: Project tools | Editor | AI assistant
 # ══════════════════════════════════════════════════════════
-#  Layout: Editor (left/main) | AI Chat (right sidebar)
+#  Layout: Project tools (left) | Editor (main) | AI assistant (right)
 # ══════════════════════════════════════════════════════════
 
 col_left, col_mid, col_right = st.columns([22, 48, 30], gap="small")
@@ -2833,8 +2833,8 @@ with col_mid:
         st.divider()
         ui_parameter_panel.render_parameter_panel(st, proj_now)
         st.divider()
-        st.markdown("#### Tapir P0（Inspector + Parameter Workbench）")
-        _tapir_inspector_tab, _tapir_workbench_tab = st.tabs(["Inspector", "Parameter Workbench"])
+        st.markdown("#### Archicad 参数工作台")
+        _tapir_inspector_tab, _tapir_workbench_tab = st.tabs(["对象检查", "参数写回"])
         with _tapir_inspector_tab:
             _render_tapir_inspector_panel()
         with _tapir_workbench_tab:

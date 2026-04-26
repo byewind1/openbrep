@@ -20,7 +20,7 @@ def render_workspace_tools_panel(
     reset_tapir_p0_state_fn: Callable[[], None],
     bump_main_editor_version_fn: Callable[[], int],
 ) -> None:
-    _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
+    st.markdown("### 验证与联动")
     _render_project_action_buttons(
         st,
         proj,
@@ -28,17 +28,21 @@ def render_workspace_tools_panel(
         check_gdl_script_fn=check_gdl_script_fn,
         run_preview_fn=run_preview_fn,
     )
+    _render_preview_panel(st, render_preview_2d_fn=render_preview_2d_fn, render_preview_3d_fn=render_preview_3d_fn)
+    _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
     _render_log_dialog(st)
     _render_clear_confirmation(
         st,
         reset_tapir_p0_state_fn=reset_tapir_p0_state_fn,
         bump_main_editor_version_fn=bump_main_editor_version_fn,
     )
-    _render_preview_panel(st, render_preview_2d_fn=render_preview_2d_fn, render_preview_3d_fn=render_preview_3d_fn)
 
 
 def _render_tapir_controls(st, *, tapir_import_ok: bool, get_bridge_fn: Callable[[], object]) -> None:
+    st.divider()
+    st.markdown("#### Archicad 实机联动")
     if not tapir_import_ok:
+        st.caption("未安装 Tapir Python 依赖，实机联动不可用。")
         return
 
     bridge = get_bridge_fn()
@@ -61,20 +65,20 @@ def _render_tapir_controls(st, *, tapir_import_ok: bool, get_bridge_fn: Callable
 
     p0_b1, p0_b2, p0_b3, p0_b4 = st.columns(4)
     with p0_b1:
-        if st.button("同步选中", width="stretch"):
+        if st.button("读取选中", width="stretch", help="同步 Archicad 当前选中的库对象"):
             st.session_state.tapir_selection_trigger = True
             st.rerun()
     with p0_b2:
-        if st.button("高亮选中", width="stretch"):
+        if st.button("高亮对象", width="stretch", help="在 Archicad 中高亮当前对象"):
             st.session_state.tapir_highlight_trigger = True
             st.rerun()
     with p0_b3:
-        if st.button("读取参数", width="stretch"):
+        if st.button("读参数", width="stretch", help="从 Archicad 读取当前对象参数"):
             st.session_state.tapir_load_params_trigger = True
             st.rerun()
     with p0_b4:
         can_apply = bool(st.session_state.get("tapir_selected_params"))
-        if st.button("应用参数", width="stretch", disabled=not can_apply):
+        if st.button("写参数", width="stretch", disabled=not can_apply, help="把参数工作台中的值写回 Archicad"):
             st.session_state.tapir_apply_params_trigger = True
             st.rerun()
 
@@ -87,10 +91,11 @@ def _render_project_action_buttons(
     check_gdl_script_fn: Callable[[str, str], list[str]],
     run_preview_fn: Callable[[HSFProject, str], tuple[bool, str]],
 ) -> None:
+    st.markdown("#### 本地验证")
     meta_1, meta_2, meta_3 = st.columns([1.2, 1.0, 1.0])
 
     with meta_1:
-        if st.button("🔍 全检查", width="stretch"):
+        if st.button("🔍 脚本检查", width="stretch", help="检查当前所有 GDL 脚本的常见语法问题"):
             check_all_ok = True
             for script_type, fpath, label in script_map:
                 content = proj.get_script(script_type)
@@ -107,13 +112,14 @@ def _render_project_action_buttons(
                 st.success("✅ 所有脚本语法正常")
 
     with meta_2:
-        if st.button("🗑️ 清空", width="stretch", help="重置项目：脚本、参数、日志全清，保留设置"):
+        if st.button("🗑️ 重置项目", width="stretch", help="重置项目：脚本、参数、日志全清，保留设置"):
             st.session_state.confirm_clear = True
 
     with meta_3:
-        if st.button("📋 日志", width="stretch"):
+        if st.button("📋 编译日志", width="stretch"):
             st.session_state["_show_log_dialog"] = True
 
+    st.markdown("#### 预览")
     preview_2d, preview_3d = st.columns(2)
     with preview_2d:
         if st.button("👁️ 预览 2D", width="stretch", help="运行 2D 子集解释并显示图形"):
@@ -131,27 +137,28 @@ def _render_project_action_buttons(
             else:
                 st.error(msg)
 
-    opt_1, opt_2, opt_3 = st.columns([1.0, 1.2, 1.0])
-    with opt_1:
-        st.checkbox(
-            "Strict",
-            key="preview_strict",
-            help="开启后遇到策略=error 的未知命令会直接报错停止",
-        )
-    with opt_2:
-        st.selectbox(
-            "Unknown policy",
-            options=["warn", "ignore", "error"],
-            key="preview_unknown_command_policy",
-            help="未知命令处理策略：告警/忽略/报错",
-        )
-    with opt_3:
-        st.selectbox(
-            "Quality",
-            options=["fast", "accurate"],
-            key="preview_quality",
-            help="fast 更快；accurate 细分更高",
-        )
+    with st.expander("预览设置"):
+        opt_1, opt_2, opt_3 = st.columns([1.0, 1.2, 1.0])
+        with opt_1:
+            st.checkbox(
+                "严格模式",
+                key="preview_strict",
+                help="开启后遇到策略=error 的未知命令会直接报错停止",
+            )
+        with opt_2:
+            st.selectbox(
+                "未知命令",
+                options=["warn", "ignore", "error"],
+                key="preview_unknown_command_policy",
+                help="未知命令处理策略：告警/忽略/报错",
+            )
+        with opt_3:
+            st.selectbox(
+                "质量",
+                options=["fast", "accurate"],
+                key="preview_quality",
+                help="fast 更快；accurate 细分更高",
+            )
 
 
 def _render_log_dialog(st) -> None:
@@ -224,23 +231,27 @@ def _render_preview_panel(
     render_preview_2d_fn: Callable[[object], None],
     render_preview_3d_fn: Callable[[object], None],
 ) -> None:
-    st.divider()
     preview_meta = st.session_state.get("preview_meta") or {}
     preview_kind = preview_meta.get("kind", "")
     preview_time = preview_meta.get("timestamp", "")
     title = f"最新预览：{preview_kind} · {preview_time}" if preview_kind else "预览面板（2D / 3D）"
-    st.markdown(f"#### {title}")
+    has_preview = bool(
+        st.session_state.get("preview_2d_data")
+        or st.session_state.get("preview_3d_data")
+        or st.session_state.get("preview_warnings")
+    )
 
-    tab_2d, tab_3d, tab_warn = st.tabs(["2D", "3D", "Warnings"])
-    with tab_2d:
-        render_preview_2d_fn(st.session_state.get("preview_2d_data"))
-    with tab_3d:
-        render_preview_3d_fn(st.session_state.get("preview_3d_data"))
-    with tab_warn:
-        warnings = st.session_state.get("preview_warnings") or []
-        if not warnings:
-            st.caption("暂无 warning。")
-        else:
-            for warning in warnings:
-                text = re.sub(r"^line\s+(\d+):", r"3d.gdl:L\1", str(warning))
-                st.warning(text)
+    with st.expander(title, expanded=has_preview):
+        tab_2d, tab_3d, tab_warn = st.tabs(["2D", "3D", "Warnings"])
+        with tab_2d:
+            render_preview_2d_fn(st.session_state.get("preview_2d_data"))
+        with tab_3d:
+            render_preview_3d_fn(st.session_state.get("preview_3d_data"))
+        with tab_warn:
+            warnings = st.session_state.get("preview_warnings") or []
+            if not warnings:
+                st.caption("暂无 warning。")
+            else:
+                for warning in warnings:
+                    text = re.sub(r"^line\s+(\d+):", r"3d.gdl:L\1", str(warning))
+                    st.warning(text)

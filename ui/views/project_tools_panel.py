@@ -17,9 +17,37 @@ def render_project_tools_panel(
     save_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
     restore_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
 ) -> None:
-    import_col, compile_col = st.columns([1.8, 2.2])
+    st.markdown("### 项目与输出")
+    _render_project_input_section(
+        st,
+        is_generation_locked_fn=is_generation_locked_fn,
+        handle_unified_import_fn=handle_unified_import_fn,
+        handle_hsf_directory_load_fn=handle_hsf_directory_load_fn,
+    )
+    _render_compile_section(
+        st,
+        proj,
+        do_compile_fn=do_compile_fn,
+        save_revision_fn=save_revision_fn,
+    )
 
-    with import_col:
+    revision_panel.render_revision_panel(
+        st,
+        proj,
+        is_generation_locked_fn=is_generation_locked_fn,
+        save_revision_fn=save_revision_fn,
+        restore_revision_fn=restore_revision_fn,
+    )
+
+
+def _render_project_input_section(
+    st,
+    *,
+    is_generation_locked_fn: Callable[[], bool],
+    handle_unified_import_fn: Callable[[object], tuple[bool, str]],
+    handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
+) -> None:
+    with st.expander("1. 导入 / 打开 HSF 项目", expanded=True):
         uploaded = st.file_uploader(
             "📂 导入 gdl / txt / gsm",
             type=["gdl", "txt", "gsm"],
@@ -56,10 +84,17 @@ def render_project_tools_panel(
             else:
                 st.error(msg)
 
-    with compile_col:
+
+def _render_compile_section(
+    st,
+    proj: HSFProject,
+    *,
+    do_compile_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
+    save_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
+) -> None:
+    with st.expander("2. 编译 GSM 输出", expanded=True):
         gsm_name_input = st.text_input(
-            "GSM名称",
-            label_visibility="collapsed",
+            "GSM 输出名称",
             value=st.session_state.pending_gsm_name or proj.name,
             placeholder="输出 GSM 名称（不含扩展名）",
             help="编译输出文件名",
@@ -86,17 +121,9 @@ def render_project_tools_panel(
                 st.toast("✅ 编译成功", icon="🏗️")
             st.rerun()
 
-    if st.session_state.compile_result is not None:
-        ok, msg = st.session_state.compile_result
-        if ok:
-            st.success(msg)
-        else:
-            st.error(msg)
-
-    revision_panel.render_revision_panel(
-        st,
-        proj,
-        is_generation_locked_fn=is_generation_locked_fn,
-        save_revision_fn=save_revision_fn,
-        restore_revision_fn=restore_revision_fn,
-    )
+        if st.session_state.compile_result is not None:
+            ok, msg = st.session_state.compile_result
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
