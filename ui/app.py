@@ -47,7 +47,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
-from openbrep.paramlist_builder import build_paramlist_xml, validate_paramlist
+from openbrep.paramlist_builder import build_paramlist_xml
 from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
 from openbrep.gdl_previewer import Preview2DResult, Preview3DResult, preview_2d_script, preview_3d_script
 from openbrep.validator import GDLValidator
@@ -74,6 +74,8 @@ from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
 from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
+from ui.views import editor_panel as ui_editor_panel
+from ui.views import parameter_panel as ui_parameter_panel
 from ui.views import project_tools_panel as ui_project_tools_panel
 from ui.views import workspace_tools_panel as ui_workspace_tools_panel
 
@@ -2767,40 +2769,7 @@ def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
 col_left, col_mid, col_right = st.columns([22, 48, 30], gap="small")
 
 
-# ── Left: Code Editor (always visible) ───────────────────
-
-_SCRIPT_HELP = {
-    "scripts/3d.gdl": (
-        "**3D 脚本** — 三维几何体定义，ArchiCAD 3D 窗口中显示的实体。\n\n"
-        "- 使用 `PRISM_`、`BLOCK`、`SPHERE`、`CONE`、`REVOLVE` 等命令建模\n"
-        "- `ADD` / `DEL` 管理坐标系变换，必须成对出现\n"
-        "- `FOR` / `NEXT` 循环用于重复构件（如格栅、层板）\n"
-        "- **最后一行必须是 `END`**，否则编译失败"
-    ),
-    "scripts/2d.gdl": (
-        "**2D 脚本** — 平面图符号，ArchiCAD 楼层平面图中显示的线条。\n\n"
-        "- **必须包含** `PROJECT2 3, 270, 2`（最简投影）或自定义 2D 线条\n"
-        "- 不写或留空会导致平面图中对象不可见"
-    ),
-    "scripts/1d.gdl": (
-        "**Master 脚本** — 主控脚本，所有脚本执行前最先运行。\n\n"
-        "- 全局变量初始化、参数联动逻辑\n"
-        "- 简单对象通常不需要此脚本"
-    ),
-    "scripts/vl.gdl": (
-        "**Param 脚本** — 参数验证脚本，参数值变化时触发。\n\n"
-        "- 参数范围约束、派生参数计算\n"
-        "- 简单对象通常不需要此脚本"
-    ),
-    "scripts/ui.gdl": (
-        "**UI 脚本** — 自定义参数界面，ArchiCAD 对象设置对话框控件布局。\n\n"
-        "- 不写则 ArchiCAD 自动生成默认参数列表界面"
-    ),
-    "scripts/pr.gdl": (
-        "**Properties 脚本** — BIM 属性输出，定义 IFC 属性集和构件属性。\n\n"
-        "- 不做 BIM 数据输出可留空"
-    ),
-}
+# ── Main workspace columns ────────────────────────────────
 
 # ── Shared project/editor state ───────────────────────────
 if not st.session_state.project:
@@ -2851,112 +2820,18 @@ with col_left:
 
 with col_mid:
     with st.container(height=820, border=False):
-        st.markdown("### GDL 脚本编辑")
-
-        script_tabs = st.tabs([lbl for _, _, lbl in _SCRIPT_MAP])
-
-        for tab, (stype, fpath, label) in zip(script_tabs, _SCRIPT_MAP):
-            with tab:
-                _tab_help_col, _tab_fs_col = st.columns([6, 1])
-                with _tab_help_col:
-                    with st.expander(f"ℹ️ {label} 脚本说明"):
-                        st.markdown(_SCRIPT_HELP.get(fpath, ""))
-                with _tab_fs_col:
-                    if st.button("⛶", key=f"fs_{fpath}_v{_ev}",
-                                 help="全屏编辑", width='stretch'):
-                        _fullscreen_editor_dialog(stype, fpath, label)
-
-                current_code = proj_now.get_script(stype) or ""
-                skey = fpath.replace("scripts/", "").replace(".gdl", "")
-                editor_key = _main_editor_state_key(fpath, _ev)
-
-                if _ACE_AVAILABLE:
-                    _raw_ace = st_ace(
-                        value=current_code,
-                        language="fortran",   # closest built-in: `!` comments + keyword structure
-                        theme="monokai",
-                        height=280,
-                        font_size=13,
-                        tab_size=2,
-                        show_gutter=True,
-                        show_print_margin=False,
-                        wrap=False,
-                        key=editor_key,
-                    )
-                    # 导入/程序化覆盖后，Ace 可能先回传空字符串，再完成 hydration。
-                    # 在待 hydration 阶段保留 proj 中的非空脚本，避免预览前被错误清空。
-                    pending_keys = st.session_state.get("_ace_pending_main_editor_keys", set())
-                    if editor_key in pending_keys and current_code and _raw_ace in (None, ""):
-                        new_code = current_code
-                    else:
-                        if editor_key in pending_keys and (_raw_ace is not None or not current_code):
-                            pending_keys.discard(editor_key)
-                            st.session_state._ace_pending_main_editor_keys = pending_keys
-                        new_code = _raw_ace if _raw_ace is not None else current_code
-                else:
-                    new_code = st.text_area(
-                        label, value=current_code, height=280,
-                        key=editor_key, label_visibility="collapsed",
-                    ) or ""  # text_area never returns None; empty string is a valid clear
-
-                if new_code != current_code:
-                    proj_now.set_script(stype, new_code)
-                    st.session_state.preview_2d_data = None
-                    st.session_state.preview_3d_data = None
-                    st.session_state.preview_warnings = []
-                    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-
+        ui_editor_panel.render_script_editor_panel(
+            st,
+            proj_now,
+            script_map=_SCRIPT_MAP,
+            editor_version=_ev,
+            ace_available=_ACE_AVAILABLE,
+            st_ace_fn=st_ace if _ACE_AVAILABLE else None,
+            main_editor_state_key_fn=_main_editor_state_key,
+            fullscreen_editor_dialog_fn=_fullscreen_editor_dialog,
+        )
         st.divider()
-
-        with st.expander("ℹ️ 参数说明"):
-            st.markdown(
-                "**参数列表** — GDL 对象的可调参数。\n\n"
-                "- **Type**: `Length` / `Integer` / `Boolean` / `Material` / `String`\n"
-                "- **Name**: 代码中引用的变量名（camelCase，如 `iShelves`）\n"
-                "- **Value**: 默认值\n"
-                "- **Fixed**: 勾选后用户无法在 ArchiCAD 中修改"
-            )
-        param_data = [
-            {"Type": p.type_tag, "Name": p.name, "Value": p.value,
-             "Description": p.description, "Fixed": "✓" if p.is_fixed else ""}
-            for p in proj_now.parameters
-        ]
-        if param_data:
-            st.dataframe(param_data, width='stretch', hide_index=True)
-        else:
-            st.caption("暂无参数，通过 AI 对话添加，或手动添加。")
-
-        with st.expander("➕ 手动添加参数"):
-            pc1, pc2, pc3, pc4 = st.columns(4)
-            with pc1:
-                p_type = st.selectbox("Type", [
-                    "Length", "Integer", "Boolean", "RealNum", "Angle",
-                    "String", "Material", "FillPattern", "LineType", "PenColor",
-                ])
-            with pc2:
-                p_name = st.text_input("Name", value="bNewParam")
-            with pc3:
-                p_value = st.text_input("Value", value="0")
-            with pc4:
-                p_desc = st.text_input("Description")
-            if st.button("添加参数"):
-                try:
-                    proj_now.add_parameter(GDLParameter(p_name, p_type, p_desc, p_value))
-                    st.success(f"✅ {p_type} {p_name}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(str(e))
-
-        if st.button("🔍 验证参数"):
-            issues = validate_paramlist(proj_now.parameters)
-            for i in issues:
-                st.warning(i)
-            if not issues:
-                st.success("✅ 参数验证通过")
-
-        with st.expander("paramlist.xml 预览"):
-            st.code(build_paramlist_xml(proj_now.parameters), language="xml")
-
+        ui_parameter_panel.render_parameter_panel(st, proj_now)
         st.divider()
         st.markdown("#### Tapir P0（Inspector + Parameter Workbench）")
         _tapir_inspector_tab, _tapir_workbench_tab = st.tabs(["Inspector", "Parameter Workbench"])
