@@ -70,6 +70,7 @@ from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
 from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
+from ui import vision_controller as ui_vision_controller
 from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
 from ui.views import parameter_panel as ui_parameter_panel
@@ -2095,51 +2096,6 @@ def _detect_image_task_mode(user_text: str, image_name: str = "") -> str:
     )
 
 
-# ── Vision prompt ─────────────────────────────────────────────────────────────
-
-_VISION_SYSTEM_PROMPT = """\
-你是专业 GDL 建筑师，精通 ArchiCAD GDL scripting（GDL Reference v26 标准）。
-用户上传了一张建筑构件/家具/设施图片，请按以下结构输出：
-
-## 构件识别
-- 类型：（书架 / 桌椅 / 门窗 / 楼梯 / 柱 / 墙面板 / 灯具 / ...）
-- 几何形态：（主体形状、结构层次、细部特征，2-4句）
-- 材料/表面：（可见材质，用于 Material 参数默认值）
-
-## 参数化分析
-以 GDL paramlist 格式列出所有可参数化维度，给出合理默认值（长度单位 mm，转为 m 除以 1000）：
-
-```
-Length w  = 0.9     ! 总宽度（m）
-Length h  = 2.1     ! 总高度（m）
-Length d  = 0.3     ! 总深度（m）
-Integer n = 4       ! 重复单元数量
-Material mat = "Wood"  ! 主体材质
-```
-
-## GDL 3D Script
-
-```gdl
-! [构件名称] — AI 从图片生成
-! 参数：w h d n mat
-
-MATERIAL mat
-
-! 主体
-BLOCK w, d, h
-
-END
-```
-
-规则：
-- paramlist 代码块内必须有 ≥2 行 `Type Name = value  ! 注释` 格式
-- 3D Script 最后一行必须是 `END`（单独一行）
-- 所有尺寸由参数驱动，禁止硬编码数字
-- GDL 命令必须全大写（BLOCK / CYLIND / LINE3 / ADD / DEL / FOR / NEXT 等）
-- 如有重复元素（层板/格栅/百叶）用 FOR/NEXT 循环
-"""
-
-
 # ── Vision generate ───────────────────────────────────────────────────────────
 
 def run_vision_generate(
@@ -2150,53 +2106,26 @@ def run_vision_generate(
     status_col,
     auto_apply: bool = True,
 ) -> str:
-    """
-    Vision pipeline: image → LLM analysis → GDL extraction → pending_diffs or auto-apply.
-    Reuses the same confirmation flow as run_agent_generate.
-    """
-    generation_id = _begin_generation_state(st.session_state)
-    status_ph = status_col.empty()
-    try:
-        llm = get_llm()
-        logger.info(
-            "vision generate start route=generate image_mime=%s has_project=%s prompt_len=%d",
-            image_mime,
-            bool(proj),
-            len(extra_text or ""),
-        )
-        _guarded_event_update(status_ph, generation_id, "info", "🖼️ AI 正在解析图片...")
-
-        user_text = extra_text.strip() if extra_text else "请分析这张图片，生成对应的 GDL 脚本。"
-        resp = llm.generate_with_image(
-            text_prompt=user_text,
-            image_b64=image_b64,
-            image_mime=image_mime,
-            system_prompt=_VISION_SYSTEM_PROMPT,
-        )
-        if not _consume_generation_result(generation_id):
-            status_ph.empty()
-            _finalize_generation(generation_id, "cancelled")
-            return _generation_cancelled_message()
-
-        status_ph.empty()
-        raw_text = resp.content
-        extracted = _classify_code_blocks(raw_text)
-
-        if extracted:
-            result_prefix, _ = _apply_generation_result(extracted, proj, None, auto_apply)
-            _finalize_generation(generation_id, "completed")
-            return result_prefix + raw_text
-
-        _finalize_generation(generation_id, "completed")
-        return f"🖼️ **图片分析完成**（未检测到 GDL 代码块，AI 可能只给了文字分析）\n\n{raw_text}"
-
-    except Exception as exc:
-        status_ph.empty()
-        _finalize_generation(generation_id, "failed")
-        logger.warning("vision generate failed error=%s", exc.__class__.__name__)
-        err_msg = _classify_vision_error(exc)
-        st.error(err_msg)
-        return f"❌ {err_msg}"
+    return ui_vision_controller.run_vision_generate(
+        image_b64=image_b64,
+        image_mime=image_mime,
+        extra_text=extra_text,
+        proj=proj,
+        status_col=status_col,
+        auto_apply=auto_apply,
+        session_state=st.session_state,
+        logger=logger,
+        get_llm_fn=get_llm,
+        begin_generation_state_fn=_begin_generation_state,
+        guarded_event_update_fn=_guarded_event_update,
+        consume_generation_result_fn=_consume_generation_result,
+        finalize_generation_fn=_finalize_generation,
+        generation_cancelled_message_fn=_generation_cancelled_message,
+        classify_code_blocks_fn=_classify_code_blocks,
+        apply_generation_result_fn=_apply_generation_result,
+        classify_vision_error_fn=_classify_vision_error,
+        error_fn=st.error,
+    )
 
 
 def check_gdl_script(content: str, script_type: str = "") -> list:
