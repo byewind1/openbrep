@@ -49,8 +49,6 @@ def render_sidebar(
     )
     render_generation_controls_fn()
     st.divider()
-
-    st.divider()
     _render_assistant_settings(
         st,
         config_defaults=config_defaults,

@@ -331,8 +331,27 @@ def _render_empty_assistant_placeholder(st) -> None:
     has_assistant_message = any(msg.get("role") == "assistant" for msg in st.session_state.chat_history)
     if has_assistant_message:
         return
-    st.caption("AI 助手")
-    st.info("你可以直接提问、描述需求，或上传图片让助手开始分析。")
+    st.markdown(
+        """
+<div style="
+    min-height: 280px;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #0b1220 0%, #111827 100%);
+    padding: 14px 16px;
+    margin: 6px 0 12px 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+">
+  <div style="font-size: 0.86rem; color: #64748b; margin-bottom: 8px;">AI 助手</div>
+  <div style="font-size: 0.92rem; color: #cbd5e1; line-height: 1.6;">
+    你好，我已就绪。你可以直接描述需求、提问，或上传图片让我开始分析。
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_debug_and_route_controls(st) -> str | None:
