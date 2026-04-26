@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from openbrep.elicitation_agent import ElicitationState
+
+
+def ensure_session_defaults(session_state, *, work_dir_default: str | None = None) -> None:
+    defaults = {
+        "project": None,
+        "_import_key_done": "",
+        "compile_log": [],
+        "compile_result": None,
+        "tapir_status": None,
+        "tapir_test_trigger": False,
+        "tapir_selection_trigger": False,
+        "tapir_highlight_trigger": False,
+        "tapir_load_params_trigger": False,
+        "tapir_apply_params_trigger": False,
+        "tapir_selected_guids": [],
+        "tapir_selected_details": [],
+        "tapir_selected_params": [],
+        "tapir_param_edits": {},
+        "tapir_last_error": "",
+        "tapir_last_sync_at": "",
+        "adopted_msg_index": None,
+        "_debug_mode_active": None,
+        "chat_history": [],
+        "work_dir": work_dir_default or str(Path.home() / "openbrep-workspace"),
+        "agent_running": False,
+        "generation_status": "idle",
+        "active_generation_id": None,
+        "generation_cancel_requested": False,
+        "pending_diffs": {},
+        "pending_ai_label": "",
+        "pending_gsm_name": "",
+        "confirm_clear": False,
+        "editor_version": 0,
+        "_ace_pending_main_editor_keys": set(),
+        "script_revision": 0,
+        "last_project_snapshot": None,
+        "last_project_snapshot_meta": {},
+        "last_project_snapshot_label": "",
+        "model_api_keys": {},
+        "chat_image_route_mode": "自动",
+        "chat_anchor_focus": None,
+        "chat_anchor_pending": None,
+        "pro_unlocked": False,
+        "pro_license_loaded": False,
+        "preview_2d_data": None,
+        "preview_3d_data": None,
+        "preview_warnings": [],
+        "preview_meta": {"kind": "", "timestamp": ""},
+        "preview_strict": False,
+        "preview_unknown_command_policy": "warn",
+        "preview_quality": "fast",
+        "assistant_settings": "",
+        "elicitation_agent": None,
+        "elicitation_state": ElicitationState.IDLE.value,
+        "revision_auto_snapshot": True,
+        "revision_notice": "",
+    }
+    for key, value in defaults.items():
+        if key not in session_state:
+            session_state[key] = value

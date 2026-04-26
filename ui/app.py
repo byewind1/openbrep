@@ -64,6 +64,7 @@ from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
 from ui import vision_controller as ui_vision_controller
 from ui import gdl_checks as ui_gdl_checks
+from ui import session_defaults as ui_session_defaults
 from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
 from ui.views import parameter_panel as ui_parameter_panel
@@ -174,117 +175,10 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child {
 
 # ── Session State ─────────────────────────────────────────
 
-if "project" not in st.session_state:
-    st.session_state.project = None
-if "_import_key_done" not in st.session_state:
-    st.session_state._import_key_done = ""   # dedup: skip re-processing same file
-if "compile_log" not in st.session_state:
-    st.session_state.compile_log = []
-if "compile_result" not in st.session_state:
-    st.session_state.compile_result = None
-if "tapir_status" not in st.session_state:
-    st.session_state.tapir_status = None  # None | "checking" | "ok" | "no_tapir" | "no_ac"
-if "tapir_test_trigger" not in st.session_state:
-    st.session_state.tapir_test_trigger = False
-if "tapir_selection_trigger" not in st.session_state:
-    st.session_state.tapir_selection_trigger = False
-if "tapir_highlight_trigger" not in st.session_state:
-    st.session_state.tapir_highlight_trigger = False
-if "tapir_load_params_trigger" not in st.session_state:
-    st.session_state.tapir_load_params_trigger = False
-if "tapir_apply_params_trigger" not in st.session_state:
-    st.session_state.tapir_apply_params_trigger = False
-if "tapir_selected_guids" not in st.session_state:
-    st.session_state.tapir_selected_guids = []
-if "tapir_selected_details" not in st.session_state:
-    st.session_state.tapir_selected_details = []
-if "tapir_selected_params" not in st.session_state:
-    st.session_state.tapir_selected_params = []
-if "tapir_param_edits" not in st.session_state:
-    st.session_state.tapir_param_edits = {}
-if "tapir_last_error" not in st.session_state:
-    st.session_state.tapir_last_error = ""
-if "tapir_last_sync_at" not in st.session_state:
-    st.session_state.tapir_last_sync_at = ""
-if "adopted_msg_index" not in st.session_state:
-    st.session_state.adopted_msg_index = None
-if "_debug_mode_active" not in st.session_state:
-    st.session_state["_debug_mode_active"] = None  # None | "editor"
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "work_dir" not in st.session_state:
-    st.session_state.work_dir = str(Path.home() / "openbrep-workspace")
-if "agent_running" not in st.session_state:
-    st.session_state.agent_running = False
-if "generation_status" not in st.session_state:
-    st.session_state.generation_status = "idle"
-if "active_generation_id" not in st.session_state:
-    st.session_state.active_generation_id = None
-if "generation_cancel_requested" not in st.session_state:
-    st.session_state.generation_cancel_requested = False
-if "pending_diffs" not in st.session_state:
-    # AI-proposed changes awaiting user review.
-    # Keys: "scripts/3d.gdl" etc. + "paramlist.xml" for parameters
-    st.session_state.pending_diffs = {}
-if "pending_ai_label" not in st.session_state:
-    # Human-readable label shown in the confirmation banner
-    st.session_state.pending_ai_label = ""
-if "pending_gsm_name" not in st.session_state:
-    st.session_state.pending_gsm_name = ""
-if "confirm_clear" not in st.session_state:
-    st.session_state.confirm_clear = False
-if "editor_version" not in st.session_state:
-    # Increment on import/clear to force text_area widget recreation (avoids stale Streamlit cache)
-    st.session_state.editor_version = 0
-if "_ace_pending_main_editor_keys" not in st.session_state:
-    st.session_state._ace_pending_main_editor_keys = set()
-if "script_revision" not in st.session_state:
-    # Script revision for header/file naming; starts from v1 on first write
-    st.session_state.script_revision = 0
-if "last_project_snapshot" not in st.session_state:
-    st.session_state.last_project_snapshot = None
-if "last_project_snapshot_meta" not in st.session_state:
-    st.session_state.last_project_snapshot_meta = {}
-if "last_project_snapshot_label" not in st.session_state:
-    st.session_state.last_project_snapshot_label = ""
-if "model_api_keys" not in st.session_state:
-    # Per-model API Key storage — pre-fill from config.toml provider_keys
-    st.session_state.model_api_keys = {}
-if "chat_image_route_mode" not in st.session_state:
-    # 图片模式：自动 / 强制生成 / 强制调试
-    st.session_state.chat_image_route_mode = "自动"
-if "chat_anchor_focus" not in st.session_state:
-    st.session_state.chat_anchor_focus = None
-if "chat_anchor_pending" not in st.session_state:
-    st.session_state.chat_anchor_pending = None
-if "pro_unlocked" not in st.session_state:
-    st.session_state.pro_unlocked = False
-if "pro_license_loaded" not in st.session_state:
-    st.session_state.pro_license_loaded = False
-if "preview_2d_data" not in st.session_state:
-    st.session_state.preview_2d_data = None
-if "preview_3d_data" not in st.session_state:
-    st.session_state.preview_3d_data = None
-if "preview_warnings" not in st.session_state:
-    st.session_state.preview_warnings = []
-if "preview_meta" not in st.session_state:
-    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-if "preview_strict" not in st.session_state:
-    st.session_state.preview_strict = False
-if "preview_unknown_command_policy" not in st.session_state:
-    st.session_state.preview_unknown_command_policy = "warn"
-if "preview_quality" not in st.session_state:
-    st.session_state.preview_quality = "fast"
-if "assistant_settings" not in st.session_state:
-    st.session_state.assistant_settings = ""
-if "elicitation_agent" not in st.session_state:
-    st.session_state.elicitation_agent = None
-if "elicitation_state" not in st.session_state:
-    st.session_state.elicitation_state = ElicitationState.IDLE.value
-if "revision_auto_snapshot" not in st.session_state:
-    st.session_state.revision_auto_snapshot = True
-if "revision_notice" not in st.session_state:
-    st.session_state.revision_notice = ""
+ui_session_defaults.ensure_session_defaults(
+    st.session_state,
+    work_dir_default=str(Path.home() / "openbrep-workspace"),
+)
 
 
 
