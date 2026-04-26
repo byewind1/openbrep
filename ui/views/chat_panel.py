@@ -50,7 +50,6 @@ def render_chat_panel(
         bump_main_editor_version_fn=bump_main_editor_version_fn,
         restore_last_project_snapshot_fn=restore_last_project_snapshot_fn,
     )
-    _render_empty_assistant_placeholder(st)
     live_output = st.empty()
     active_debug_mode = _render_debug_and_route_controls(st)
     payload = _read_chat_input(st, is_generation_locked_fn=is_generation_locked_fn)
