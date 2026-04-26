@@ -57,7 +57,7 @@ from ui import actions as ui_actions
 from ui import state as ui_state
 from ui import view_models as ui_view_models
 from ui import preview_controller as ui_preview_controller
-from ui import project_io as ui_project_io
+from ui import project_service as ui_project_service
 from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
 from ui import tapir_controller as ui_tapir_controller
@@ -813,25 +813,6 @@ def load_skills():
 
     return sl
 
-def _versioned_gsm_path(proj_name: str, work_dir: str, revision: int | None = None) -> str:
-    return ui_view_models.versioned_gsm_path(proj_name, work_dir, revision=revision)
-
-
-
-def _max_existing_gsm_revision(proj_name: str, work_dir: str) -> int:
-    return ui_view_models.max_existing_gsm_revision(proj_name, work_dir)
-
-
-
-def _safe_compile_revision(proj_name: str, work_dir: str, requested_revision: int) -> int:
-    return ui_view_models.safe_compile_revision(proj_name, work_dir, requested_revision)
-
-
-def _derive_gsm_name_from_filename(filename: str) -> str:
-    return ui_view_models.derive_gsm_name_from_filename(filename)
-
-
-
 def _extract_gsm_name_candidate(text: str) -> str:
     return ui_view_models.extract_gsm_name_candidate(text)
 
@@ -1464,78 +1445,40 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
     return sc, pc
 
 
-def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
-    """
-    Compile current project state → versioned GSM.
-    Returns (success: bool, message: str).
-    """
-    return ui_project_io.do_compile(
-        proj,
-        gsm_name,
-        instruction,
+def _project_service() -> ui_project_service.ProjectService:
+    return ui_project_service.ProjectService(
         session_state=st.session_state,
-        safe_compile_revision_fn=_safe_compile_revision,
-        versioned_gsm_path_fn=_versioned_gsm_path,
-        get_compiler_fn=get_compiler,
         compiler_mode=compiler_mode,
+        get_compiler_fn=get_compiler,
+        mock_compiler_class=MockHSFCompiler,
+        parse_gdl_source_fn=parse_gdl_source,
+        load_project_from_disk_fn=lambda path: HSFProject.load_from_disk(path),
+        reset_tapir_p0_state_fn=_reset_tapir_p0_state,
+        bump_main_editor_version_fn=_bump_main_editor_version,
+        import_gsm_override_fn=import_gsm,
     )
+
+
+def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
+    return _project_service().do_compile(proj, gsm_name, instruction)
 
 
 def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
-    """
-    Decompile GSM → HSF → HSFProject via LP_XMLConverter libpart2hsf.
-    Returns (project | None, message).
-    """
-    return ui_project_io.import_gsm(
-        gsm_bytes,
-        filename,
-        get_compiler_fn=get_compiler,
-        mock_compiler_class=MockHSFCompiler,
-        work_dir=st.session_state.work_dir,
-    )
-
-
-def _normalize_pasted_path(raw_path: str) -> str:
-    return ui_view_models.normalize_pasted_path(raw_path)
+    return _project_service().import_gsm(gsm_bytes, filename)
 
 
 def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:
-    return ui_project_io.handle_hsf_directory_load(
-        project_dir,
-        normalize_pasted_path_fn=_normalize_pasted_path,
-        load_project_from_disk_fn=lambda path: HSFProject.load_from_disk(path),
-        finalize_loaded_project_fn=_finalize_loaded_project,
-    )
+    return _project_service().handle_hsf_directory_load(project_dir)
 
 
 
 def _finalize_loaded_project(proj: HSFProject, msg: str, pending_gsm_name: str) -> tuple[bool, str]:
-    return ui_actions.finalize_loaded_project(
-        proj,
-        msg,
-        pending_gsm_name,
-        st.session_state,
-        _reset_tapir_p0_state,
-        _bump_main_editor_version,
-    )
+    return _project_service().finalize_loaded_project(proj, msg, pending_gsm_name)
 
 
 
 def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
-    """
-    Single entry point for importing any GDL-related file.
-    - .gsm           → LP_XMLConverter decompile → HSFProject
-    - .gdl / .txt    → parse_gdl_source text parse → HSFProject
-    Updates session_state.project, pending_gsm_name, editor_version.
-    Returns (success, message).
-    """
-    return ui_project_io.handle_unified_import(
-        uploaded_file,
-        import_gsm_fn=import_gsm,
-        parse_gdl_source_fn=parse_gdl_source,
-        derive_gsm_name_from_filename_fn=_derive_gsm_name_from_filename,
-        finalize_loaded_project_fn=_finalize_loaded_project,
-    )
+    return _project_service().handle_unified_import(uploaded_file)
 
 
 def _strip_md_fences(code: str) -> str:
