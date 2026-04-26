@@ -2831,14 +2831,12 @@ with col_mid:
             fullscreen_editor_dialog_fn=_fullscreen_editor_dialog,
         )
         st.divider()
-        ui_parameter_panel.render_parameter_panel(st, proj_now)
-        st.divider()
-        st.markdown("#### Archicad 参数工作台")
-        _tapir_inspector_tab, _tapir_workbench_tab = st.tabs(["对象检查", "参数写回"])
-        with _tapir_inspector_tab:
-            _render_tapir_inspector_panel()
-        with _tapir_workbench_tab:
-            _render_tapir_param_workbench_panel()
+        ui_parameter_panel.render_parameter_panel(
+            st,
+            proj_now,
+            render_tapir_inspector_fn=_render_tapir_inspector_panel,
+            render_tapir_param_workbench_fn=_render_tapir_param_workbench_panel,
+        )
 
 
 # ── Right: AI Chat panel ──────────────────────────────────

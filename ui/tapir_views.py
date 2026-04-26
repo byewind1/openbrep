@@ -15,13 +15,13 @@ def render_tapir_inspector_panel(*, session_state, caption_fn: Callable[[str], N
         warning_fn(last_error)
 
     if not guids:
-        info_fn("未选中对象。")
+        info_fn("未读取到 Archicad 选中对象。请先在左侧「Archicad 实机联动」中点击「读取选中」。")
         return
 
-    markdown_fn(f"**选中 GUID（{len(guids)}）**")
+    markdown_fn(f"**已读取 {len(guids)} 个选中对象**")
     code_fn("\n".join(guids), "text")
 
-    markdown_fn("**元素详情**")
+    markdown_fn("**对象详情**")
     if details:
         json_fn(details)
     else:
@@ -31,17 +31,24 @@ def render_tapir_inspector_panel(*, session_state, caption_fn: Callable[[str], N
 def render_tapir_param_workbench_panel(*, session_state, info_fn: Callable[[str], None], expander_fn: Callable[..., object], text_input_fn: Callable[..., str]) -> None:
     rows = session_state.get("tapir_selected_params") or []
     if not rows:
-        info_fn("暂无参数数据，请先点击「读取参数」。")
+        info_fn("暂无可写回参数。请先在左侧「Archicad 实机联动」中点击「读参数」。")
         return
 
     edits = session_state.get("tapir_param_edits") or {}
+    object_count = len(rows)
+    param_count = sum(
+        len(row.get("gdlParameters") or [])
+        for row in rows
+        if isinstance(row.get("gdlParameters"), list)
+    )
+    info_fn(f"已读取 {object_count} 个对象、{param_count} 个参数。修改后点击左侧「写参数」写回 Archicad。")
     for row in rows:
         guid = (row.get("guid") or "").strip()
         params = row.get("gdlParameters")
         if not guid or not isinstance(params, list):
             continue
 
-        with expander_fn(f"对象 {guid}", expanded=False):
+        with expander_fn(f"对象 {guid} · {len(params)} 个参数", expanded=object_count == 1):
             for p in params:
                 if not isinstance(p, dict):
                     continue
