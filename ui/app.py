@@ -9,7 +9,6 @@ import re
 import os
 import time
 import math
-import base64
 import logging
 import json
 import csv
@@ -74,6 +73,7 @@ from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
 from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
+from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
 from ui.views import parameter_panel as ui_parameter_panel
 from ui.views import project_tools_panel as ui_project_tools_panel
@@ -2845,264 +2845,29 @@ with col_mid:
 
 with col_right:
     with st.container(height=820, border=False):
-        st.markdown("### AI 助手（生成与调试）")
-
-        _chat_title_col, _chat_clear_col = st.columns([3, 1])
-        with _chat_title_col:
-            st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
-        with _chat_clear_col:
-            if st.button("🗑️ 清空对话", width='stretch', help="清空聊天记录，不影响脚本和参数"):
-                st.session_state.chat_history = []
-                st.session_state.adopted_msg_index = None
-                st.session_state.chat_anchor_focus = None
-                st.rerun()
-
-        _anchors = _build_chat_script_anchors(st.session_state.chat_history)
-        if _anchors:
-            st.caption("🧭 历史锚点（点击快速定位）")
-            _anchor_cols = st.columns([1.8, 4.2, 1.2])
-            with _anchor_cols[0]:
-                _opts = [a["label"] for a in _anchors]
-                _default_idx = 0
-                _focus = st.session_state.get("chat_anchor_focus")
-                if isinstance(_focus, int):
-                    for idx, a in enumerate(_anchors):
-                        if a["msg_idx"] == _focus:
-                            _default_idx = idx
-                            break
-                _sel = st.selectbox(
-                    "历史锚点",
-                    _opts,
-                    index=_default_idx,
-                    label_visibility="collapsed",
-                    key="chat_anchor_select",
-                )
-            _picked = next((a for a in _anchors if a["label"] == _sel), _anchors[-1])
-            with _anchor_cols[1]:
-                st.caption(f"范围: {', '.join(_picked['paths'])}")
-            with _anchor_cols[2]:
-                if st.button("📍 定位", width='stretch', key="chat_anchor_go"):
-                    st.session_state.chat_anchor_pending = _picked["msg_idx"]
-
-        # Chat history with action bar on each assistant message
-        for _i, _msg in enumerate(st.session_state.chat_history):
-            _is_focus = st.session_state.get("chat_anchor_focus") == _i
-            if _is_focus:
-                st.markdown("<div style='border-top:1px dashed #38bdf8;margin:0.4rem 0;'></div>", unsafe_allow_html=True)
-                st.caption("📍 当前锚点")
-            with st.chat_message(_msg["role"]):
-                st.markdown(_msg["content"])
-                if _msg.get("image_b64"):
-                    _img_bytes = _thumb_image_bytes(_msg.get("image_b64", ""))
-                    if _img_bytes:
-                        st.image(_img_bytes, width=240)
-                if _msg["role"] == "assistant":
-                    _ca, _cb, _cc, _cd, _ce = st.columns([1, 1, 1, 1, 8])
-                    with _ca:
-                        if st.button("👍", key=f"like_{_i}", help="有帮助"):
-                            _save_feedback(_i, "positive", _msg["content"])
-                            st.toast("已记录 👍", icon="✅")
-                    with _cb:
-                        if st.button("👎", key=f"dislike_{_i}", help="需改进"):
-                            st.session_state[f"_show_dislike_{_i}"] = True
-                    # 差评描述框
-                    if st.session_state.get(f"_show_dislike_{_i}"):
-                        with st.container():
-                            _fb_text = st.text_area(
-                                "描述问题（可选）",
-                                key=f"dislike_text_{_i}",
-                                placeholder="哪里不对？期望的结果是什么？",
-                                height=80,
-                                label_visibility="collapsed",
-                            )
-                            _fb_c1, _fb_c2 = st.columns([1, 1])
-                            with _fb_c1:
-                                if st.button("📤 提交", key=f"dislike_submit_{_i}", type="primary", width='stretch'):
-                                    _save_feedback(_i, "negative", _msg["content"], comment=_fb_text)
-                                    st.session_state[f"_show_dislike_{_i}"] = False
-                                    st.toast("已记录 👎，感谢反馈", icon="📝")
-                                    st.rerun()
-                            with _fb_c2:
-                                if st.button("取消", key=f"dislike_cancel_{_i}", width='stretch'):
-                                    st.session_state[f"_show_dislike_{_i}"] = False
-                                    st.rerun()
-                    with _cc:
-                        if st.button("📋", key=f"copy_{_i}", help="复制本条回复"):
-                            _copy_text = _copyable_chat_text(_msg)
-                            _ok, _copy_msg = _copy_text_to_system_clipboard(_copy_text)
-                            if _ok:
-                                st.toast(_copy_msg, icon="✅")
-                            else:
-                                st.warning(_copy_msg)
-                    with _cd:
-                        _prev_user = next(
-                            (st.session_state.chat_history[j]["content"]
-                             for j in range(_i - 1, -1, -1)
-                             if st.session_state.chat_history[j]["role"] == "user"),
-                            None,
-                        )
-                        if _prev_user and st.button("🔄", key=f"redo_{_i}", help="重新生成"):
-                            st.session_state.chat_history = st.session_state.chat_history[:_i]
-                            st.session_state["_redo_input"] = _prev_user
-                            st.rerun()
-                    with _ce:
-                        _has_code = "```" in _msg.get("content", "")
-                        _is_bridgeable = _is_bridgeable_explainer_message(_msg)
-                        if _has_code:
-                            _msg_raw = _msg.get("content", "")
-                            _has_full_suite = (
-                                "scripts/3d.gdl" in _msg_raw
-                                and "paramlist.xml" in _msg_raw
-                            )
-                            if _has_full_suite:
-                                _is_adopted = st.session_state.adopted_msg_index == _i
-                                _adopt_label = "✅ 已采用" if _is_adopted else "📥 采用这套"
-                                if st.button(_adopt_label, key=f"adopt_{_i}", width='stretch'):
-                                    st.session_state["_pending_adopt_idx"] = _i
-                        elif _is_bridgeable:
-                            if st.button("🪄 按此说明修改", key=f"bridge_modify_{_i}", width='stretch'):
-                                st.session_state["_pending_bridge_idx"] = _i
-                                st.rerun()
-
-
-        @st.dialog("📥 采用这套代码")
-        def _adopt_confirm_dialog(msg_idx):
-            st.warning("将按返回文件覆盖：命中的脚本/参数全覆盖写入，未命中的部分保留不变，确认？")
-            _da, _db = st.columns(2)
-            with _da:
-                if st.button("✅ 确认覆盖", type="primary", width='stretch'):
-                    _msg_content = st.session_state.chat_history[msg_idx]["content"]
-                    extracted = _extract_gdl_from_text(_msg_content)
-                    if extracted:
-                        # 只覆盖此消息中实际包含的脚本/参数，其余保留
-                        if st.session_state.project:
-                            _capture_last_project_snapshot("聊天代码采纳")
-                            _apply_scripts_to_project(st.session_state.project, extracted)
-                        _bump_main_editor_version()
-                        st.session_state.adopted_msg_index = msg_idx
-                        st.session_state["_pending_adopt_idx"] = None
-                        st.toast("✅ 已写入编辑器", icon="📥")
-                        st.rerun()
-                    else:
-                        st.error("未找到可提取的代码块")
-            with _db:
-                if st.button("❌ 取消", width='stretch'):
-                    st.session_state["_pending_adopt_idx"] = None
-                    st.rerun()
-
-        if st.session_state.get("_pending_adopt_idx") is not None:
-            _adopt_confirm_dialog(st.session_state["_pending_adopt_idx"])
-
-        if st.session_state.pending_diffs:
-            _pd = st.session_state.pending_diffs
-            _pn_s = sum(1 for k in _pd if k.startswith("scripts/"))
-            _pn_p = len(_parse_paramlist_text(_pd.get("paramlist.xml", "")))
-            _pd_parts = []
-            if _pn_s: _pd_parts.append(f"{_pn_s} 个脚本")
-            if _pn_p: _pd_parts.append(f"{_pn_p} 个参数")
-            _pd_label = "、".join(_pd_parts) or st.session_state.pending_ai_label or "新内容"
-
-            _covered = sorted([k for k in _pd.keys() if k.startswith("scripts/") or k == "paramlist.xml"])
-            _all_targets = [p for _, p, _ in _SCRIPT_MAP] + ["paramlist.xml"]
-            _kept = [p for p in _all_targets if p not in _covered]
-            _covered_txt = "、".join(_covered) if _covered else "（无）"
-            _kept_txt = "、".join(_kept) if _kept else "（无）"
-            st.info(
-                f"⬆️ **写入策略：命中文件全覆盖，未命中文件保留**\n"
-                f"覆盖：`{_covered_txt}`\n"
-                f"保留：`{_kept_txt}`"
-            )
-            _pac1, _pac2, _pac3 = st.columns([1.2, 1, 1.6])
-            with _pac1:
-                if st.button("✅ 写入", type="primary", width='stretch',
-                             key="chat_pending_apply"):
-                    _proj = st.session_state.project
-                    if _proj:
-                        _capture_last_project_snapshot("AI 确认写入")
-                        sc, pc = _apply_scripts_to_project(_proj, _pd)
-                        _ok_parts = []
-                        if sc: _ok_parts.append(f"{sc} 个脚本")
-                        if pc: _ok_parts.append(f"{pc} 个参数")
-                        _bump_main_editor_version()
-                        st.toast(f"✅ 已写入 {'、'.join(_ok_parts)}", icon="✏️")
-                    st.session_state.pending_diffs    = {}
-                    st.session_state.pending_ai_label = ""
-                    st.rerun()
-            with _pac3:
-                _undo_disabled = not bool(st.session_state.get("last_project_snapshot"))
-                if st.button("↩ 撤销上次 AI 写入", width='stretch', key="chat_last_ai_undo", disabled=_undo_disabled):
-                    ok, msg = _restore_last_project_snapshot()
-                    if ok:
-                        st.toast(msg, icon="↩")
-                    else:
-                        st.error(msg)
-                    st.rerun()
-
-        # Live agent output placeholder (anchored inside this column)
-        live_output = st.empty()
-
-        _dbg_active = st.session_state.get("_debug_mode_active") == "editor"
-        _dbg_label = "✖ 退出 Debug" if _dbg_active else "🔍 开启 Debug 编辑器"
-        if st.button(
-            _dbg_label,
-            width='stretch',
-            type=("primary" if _dbg_active else "secondary"),
-            key="debug_editor_toggle_btn",
-            help="开启后：下次发送将附带编辑器全部脚本+参数+语法检查报告",
-        ):
-            _dbg_active = not _dbg_active
-            st.session_state["_debug_mode_active"] = "editor" if _dbg_active else None
-
-        _cur_dbg = "editor" if _dbg_active else None
-
-        if _cur_dbg == "editor":
-            st.info("🔍 **全脚本 Debug 已激活** — 描述你观察到的问题，或直接发送让 AI 全面检查语法和逻辑")
-
-        st.caption("📎 图片路由（仅附图消息生效）")
-        st.radio(
-            "图片路由",
-            ["自动", "强制生成", "强制调试"],
-            horizontal=True,
-            key="chat_image_route_mode",
-            label_visibility="collapsed",
+        _chat_panel_payload = ui_chat_panel.render_chat_panel(
+            st,
+            script_map=_SCRIPT_MAP,
+            is_generation_locked_fn=_is_generation_locked,
+            build_chat_script_anchors_fn=_build_chat_script_anchors,
+            thumb_image_bytes_fn=_thumb_image_bytes,
+            save_feedback_fn=_save_feedback,
+            copyable_chat_text_fn=_copyable_chat_text,
+            copy_text_to_system_clipboard_fn=_copy_text_to_system_clipboard,
+            is_bridgeable_explainer_message_fn=_is_bridgeable_explainer_message,
+            extract_gdl_from_text_fn=_extract_gdl_from_text,
+            capture_last_project_snapshot_fn=_capture_last_project_snapshot,
+            apply_scripts_to_project_fn=_apply_scripts_to_project,
+            bump_main_editor_version_fn=_bump_main_editor_version,
+            parse_paramlist_text_fn=_parse_paramlist_text,
+            restore_last_project_snapshot_fn=_restore_last_project_snapshot,
+            validate_chat_image_size_fn=_validate_chat_image_size,
         )
-
-        _chat_placeholder = "描述需求、提问，或搭配图片补充说明…"
-        if st.session_state.agent_running:
-            st.info("⏳ AI 生成中，请稍候...")
-        _chat_payload = st.chat_input(
-            _chat_placeholder,
-            key="chat_main_input",
-            accept_file=True,
-            file_type=["jpg", "jpeg", "png", "webp", "gif"],
-            disabled=_is_generation_locked(st.session_state),
-        )
-
-        user_input = None
-        _vision_b64 = None
-        _vision_mime = None
-        _vision_name = None
-
-        if isinstance(_chat_payload, str):
-            user_input = _chat_payload
-        elif _chat_payload is not None:
-            user_input = _chat_payload.get("text", "") or ""
-            _chat_files = _chat_payload.get("files", []) or []
-            if _chat_files:
-                _img = _chat_files[0]
-                _raw_bytes = _img.read()
-                if _raw_bytes:
-                    _vision_size_error = _validate_chat_image_size(
-                        _raw_bytes,
-                        getattr(_img, "name", "image") or "image",
-                    )
-                    if _vision_size_error:
-                        st.session_state.chat_history.append({"role": "assistant", "content": f"❌ {_vision_size_error}"})
-                        st.error(_vision_size_error)
-                        st.rerun()
-                    _vision_b64 = base64.b64encode(_raw_bytes).decode()
-                    _vision_mime = getattr(_img, "type", "") or "image/jpeg"
-                    _vision_name = getattr(_img, "name", "") or "image"
+        live_output = _chat_panel_payload["live_output"]
+        user_input = _chat_panel_payload["user_input"]
+        _vision_b64 = _chat_panel_payload["vision_b64"]
+        _vision_mime = _chat_panel_payload["vision_mime"]
+        _vision_name = _chat_panel_payload["vision_name"]
 
     # ══════════════════════════════════════════════════════════
     #  Chat handler (outside columns — session state + rerun)
