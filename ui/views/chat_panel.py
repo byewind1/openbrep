@@ -50,6 +50,7 @@ def render_chat_panel(
         bump_main_editor_version_fn=bump_main_editor_version_fn,
         restore_last_project_snapshot_fn=restore_last_project_snapshot_fn,
     )
+    _render_empty_assistant_placeholder(st)
     live_output = st.empty()
     active_debug_mode = _render_debug_and_route_controls(st)
     payload = _read_chat_input(st, is_generation_locked_fn=is_generation_locked_fn)
@@ -324,6 +325,14 @@ def _render_pending_diffs(
             else:
                 st.error(msg)
             st.rerun()
+
+
+def _render_empty_assistant_placeholder(st) -> None:
+    has_assistant_message = any(msg.get("role") == "assistant" for msg in st.session_state.chat_history)
+    if has_assistant_message:
+        return
+    st.caption("AI 助手")
+    st.info("你可以直接提问、描述需求，或上传图片让助手开始分析。")
 
 
 def _render_debug_and_route_controls(st) -> str | None:

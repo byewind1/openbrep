@@ -50,6 +50,13 @@ def render_sidebar(
     render_generation_controls_fn()
     st.divider()
 
+    st.divider()
+    _render_assistant_settings(
+        st,
+        config_defaults=config_defaults,
+        should_persist_assistant_settings_fn=should_persist_assistant_settings_fn,
+    )
+
     work_dir = _render_work_dir(st, is_generation_locked_fn=is_generation_locked_fn)
     _render_pro_section(
         st,
@@ -88,13 +95,6 @@ def render_sidebar(
     )
 
     _persist_converter_path(st, converter_path=converter_path, config_defaults=config_defaults)
-
-    st.divider()
-    _render_assistant_settings(
-        st,
-        config_defaults=config_defaults,
-        should_persist_assistant_settings_fn=should_persist_assistant_settings_fn,
-    )
 
     st.divider()
     _render_project_reset(
