@@ -71,6 +71,7 @@ from ui import chat_controller as ui_chat_controller
 from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
 from ui import vision_controller as ui_vision_controller
+from ui import gdl_checks as ui_gdl_checks
 from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
 from ui.views import parameter_panel as ui_parameter_panel
@@ -2129,107 +2130,7 @@ def run_vision_generate(
 
 
 def check_gdl_script(content: str, script_type: str = "") -> list:
-    """
-    Basic GDL syntax check. Returns list of warning strings (empty = OK).
-    Checks: IF/ENDIF, FOR/NEXT, ADD/DEL balance, END in 3D, PROJECT2 in 2D.
-    """
-    import re as _re
-    issues = []
-    if not content.strip():
-        if script_type == "2d":
-            issues.append("⚠️ 2D 脚本为空，必须至少包含 PROJECT2 3, 270, 2")
-        return issues
-
-    lines = content.splitlines()
-
-    # IF/ENDIF balance (only multi-line IF: IF ... THEN at end of line)
-    if_multi = sum(
-        1 for l in lines
-        if _re.search(r'\bIF\b', l, _re.I)
-        and _re.search(r'\bTHEN\s*$', l.strip(), _re.I)
-    )
-    endif_count = sum(1 for l in lines if _re.match(r'\s*ENDIF\b', l, _re.I))
-    if if_multi != endif_count:
-        issues.append(f"⚠️ IF/ENDIF 不匹配：{if_multi} 个多行 IF，{endif_count} 个 ENDIF")
-
-    # FOR/NEXT balance
-    for_count = sum(1 for l in lines if _re.match(r'\s*FOR\b', l, _re.I))
-    next_count = sum(1 for l in lines if _re.match(r'\s*NEXT\b', l, _re.I))
-    if for_count != next_count:
-        issues.append(f"⚠️ FOR/NEXT 不匹配：{for_count} 个 FOR，{next_count} 个 NEXT")
-
-    # ADD/DEL balance — ADDX/ADDY/ADDZ are single-axis variants, count equally
-    add_count = sum(1 for l in lines if _re.match(r'\s*ADD(X|Y|Z)?\b', l, _re.I))
-    del_count = sum(1 for l in lines if _re.match(r'\s*DEL\b', l, _re.I))
-    if add_count != del_count:
-        issues.append(f"⚠️ ADD/DEL 不匹配：{add_count} 个 ADD/ADDX/ADDY/ADDZ，{del_count} 个 DEL")
-
-    # Markdown fence leak — common when AI generates code in chat
-    if any(l.strip().startswith("```") for l in lines):
-        issues.append("⚠️ 脚本含有 ``` 标记 — AI 格式化残留，请删除所有反引号行")
-
-    # 3D: END / subroutine RETURN check
-    if script_type == "3d":
-        # Detect subroutine labels:  "SubName":
-        sub_label_pat = _re.compile(r'^\s*"[^"]+"\s*:')
-        has_subs = any(sub_label_pat.match(l) for l in lines)
-
-        if has_subs:
-            # Main body = lines before first subroutine label
-            main_body = []
-            for l in lines:
-                if sub_label_pat.match(l):
-                    break
-                main_body.append(l)
-            last_main = next((l.strip() for l in reversed(main_body) if l.strip()), "")
-            if not _re.match(r'^END\s*$', last_main, _re.I):
-                issues.append("⚠️ 3D 主体部分（第一个子程序之前）最后一行必须是 END")
-
-            # Each subroutine should end with RETURN (not END)
-            current_sub = None
-            sub_lines: list[str] = []
-            for l in lines:
-                if sub_label_pat.match(l):
-                    if current_sub and sub_lines:
-                        last_sub = next((s.strip() for s in reversed(sub_lines) if s.strip()), "")
-                        if not _re.match(r'^RETURN\s*$', last_sub, _re.I):
-                            issues.append(f"⚠️ 子程序 {current_sub} 末尾应为 RETURN，不是 END")
-                    current_sub = l.strip()
-                    sub_lines = []
-                else:
-                    sub_lines.append(l)
-            # Check last subroutine
-            if current_sub and sub_lines:
-                last_sub = next((s.strip() for s in reversed(sub_lines) if s.strip()), "")
-                if not _re.match(r'^RETURN\s*$', last_sub, _re.I):
-                    issues.append(f"⚠️ 子程序 {current_sub} 末尾应为 RETURN")
-        else:
-            last_non_empty = next((l.strip() for l in reversed(lines) if l.strip()), "")
-            if not _re.match(r'^END\s*$', last_non_empty, _re.I):
-                issues.append("⚠️ 3D 脚本最后一行必须是 END")
-
-    # 2D: must have projection
-    if script_type == "2d":
-        has_proj = any(
-            _re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', l, _re.I)
-            for l in lines
-        )
-        if not has_proj:
-            issues.append("⚠️ 2D 脚本缺少平面投影语句（PROJECT2 / RECT2）")
-
-    # _var 未在本脚本内赋值的中间变量（可能需在 Master 脚本中定义）
-    assigned = set(_re.findall(r'\b(_[A-Za-z]\w*)\s*=', content))
-    used     = set(_re.findall(r'\b(_[A-Za-z]\w*)\b', content))
-    undefined = used - assigned
-    if undefined:
-        issues.append(
-            f"ℹ️ 变量 {', '.join(sorted(undefined))} 在本脚本未赋值 — "
-            "若已在 Master 脚本中定义可忽略，否则会导致 ArchiCAD 运行时不显示"
-        )
-
-    if not issues:
-        issues = ["✅ 检查通过"]
-    return issues
+    return ui_gdl_checks.check_gdl_script(content, script_type)
 
 
 def _to_float(raw) -> float | None:
