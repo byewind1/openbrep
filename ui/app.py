@@ -14,11 +14,8 @@ import csv
 import hashlib
 import hmac
 import string
-import zipfile
-import shutil
 import subprocess
 import uuid
-import binascii
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -38,16 +35,11 @@ try:
 except ImportError:
     _PLOTLY_AVAILABLE = False
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
 from openbrep.paramlist_builder import build_paramlist_xml
 from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
 from openbrep.validator import GDLValidator
-from openbrep.knowledge import KnowledgeBase
 try:
     from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, model_to_provider, GDLAgentConfig, iter_custom_provider_model_entries
     _MODEL_CONSTANTS_OK = True
@@ -79,6 +71,7 @@ from ui.views import preview_views as ui_preview_views
 from ui.views import project_tools_panel as ui_project_tools_panel
 from ui.views import sidebar_panel as ui_sidebar_panel
 from ui.views import workspace_tools_panel as ui_workspace_tools_panel
+from ui import knowledge_access as ui_knowledge_access
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -456,7 +449,7 @@ def _reset_tapir_p0_state() -> None:
 
 
 def _license_file(work_dir: str) -> Path:
-    return Path(work_dir) / ".openbrep" / "license_v1.json"
+    return ui_knowledge_access._license_file(work_dir)
 
 
 def _has_streamlit_runtime_context() -> bool:
@@ -470,221 +463,70 @@ def _has_streamlit_runtime_context() -> bool:
 
 
 def _empty_license_record() -> dict:
-    return ui_view_models.empty_license_record()
+    return ui_knowledge_access._empty_license_record()
 
 
 def _load_license(work_dir: str) -> dict:
-    fp = _license_file(work_dir)
-    if not fp.exists():
-        return _empty_license_record()
-    try:
-        data = json.loads(fp.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-    return _empty_license_record()
+    return ui_knowledge_access._load_license(work_dir)
 
 
 def _save_license(work_dir: str, data: dict) -> None:
     if not _has_streamlit_runtime_context():
         return
-    fp = _license_file(work_dir)
-    fp.parent.mkdir(parents=True, exist_ok=True)
-    fp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    ui_knowledge_access._save_license(work_dir, data)
 
 
 def _load_pro_public_key(root: Path):
-    key_file = root / "openbrep" / "public_keys" / "pro_public.pem"
-    if not key_file.exists():
-        raise FileNotFoundError(f"缺少公钥文件：{key_file}")
-    return serialization.load_pem_public_key(key_file.read_bytes())
+    return ui_knowledge_access._load_pro_public_key(root)
 
 
 def _urlsafe_b64decode(data: str) -> bytes:
-    return ui_view_models.urlsafe_b64decode(data)
-
+    return ui_knowledge_access._urlsafe_b64decode(data)
 
 
 def _urlsafe_b64encode(data: bytes) -> str:
-    return ui_view_models.urlsafe_b64encode(data)
-
+    return ui_knowledge_access._urlsafe_b64encode(data)
 
 
 def _canonical_license_payload(payload: dict) -> bytes:
-    return ui_view_models.canonical_license_payload(payload)
-
+    return ui_knowledge_access._canonical_license_payload(payload)
 
 
 def _normalize_license_record(payload: dict, signature_b64: str) -> dict:
-    return ui_view_models.normalize_license_record(payload, signature_b64)
+    return ui_knowledge_access._normalize_license_record(payload, signature_b64)
 
 
 def _verify_license_payload(payload: dict, signature_b64: str) -> tuple[bool, str, dict | None]:
-    expire_date = str(payload.get("expire_date", "")).strip()
-    if expire_date:
-        try:
-            if datetime.now().date() > datetime.strptime(expire_date, "%Y-%m-%d").date():
-                return False, "授权码已过期", None
-        except ValueError:
-            return False, "授权日期格式无效", None
-
-    try:
-        public_key = _load_pro_public_key(Path(__file__).parent.parent)
-        signature = _urlsafe_b64decode(signature_b64)
-        public_key.verify(
-            signature,
-            _canonical_license_payload(payload),
-            padding.PKCS1v15(),
-            hashes.SHA256(),
-        )
-    except FileNotFoundError as e:
-        return False, str(e), None
-    except (ValueError, binascii.Error):
-        return False, "授权码格式错误", None
-    except InvalidSignature:
-        return False, "授权签名无效", None
-    except Exception as e:
-        return False, f"授权校验失败: {e}", None
-
-    return True, "授权码有效", _normalize_license_record(payload, signature_b64)
+    return ui_knowledge_access._verify_license_payload(payload, signature_b64, root=Path(__file__).parent.parent)
 
 
 def _decode_signed_license_code(code: str) -> tuple[bool, str, dict | None]:
-    return ui_view_models.decode_signed_license_code(
-        code,
-        verify_license_payload=_verify_license_payload,
-    )
-
+    return ui_knowledge_access._decode_signed_license_code(code, root=Path(__file__).parent.parent)
 
 
 def _verify_pro_code(code: str) -> tuple[bool, str, dict | None]:
-    return ui_view_models.verify_pro_code(
-        code,
-        decode_signed_license_code_fn=_decode_signed_license_code,
-    )
-
+    return ui_knowledge_access._verify_pro_code(code, root=Path(__file__).parent.parent)
 
 
 def _license_record_is_active(data: dict) -> tuple[bool, str, dict | None]:
-    return ui_view_models.license_record_is_active(
-        data,
-        verify_license_payload=_verify_license_payload,
-    )
+    return ui_knowledge_access._license_record_is_active(data, root=Path(__file__).parent.parent)
 
 
 def _verify_pro_package(unpacked_dir: Path) -> tuple[bool, str, dict | None]:
-    manifest_path = unpacked_dir / "manifest.json"
-    signature_path = unpacked_dir / "signature.sig"
-    docs_dir = unpacked_dir / "docs"
-
-    if not manifest_path.exists() or not signature_path.exists():
-        return False, "知识包缺少 manifest.json 或 signature.sig", None
-    if not docs_dir.exists() or not docs_dir.is_dir():
-        return False, "知识包缺少 docs 目录", None
-
-    try:
-        manifest_bytes = manifest_path.read_bytes()
-        manifest = json.loads(manifest_bytes.decode("utf-8"))
-    except Exception:
-        return False, "知识包 manifest 无法解析", None
-
-    if not isinstance(manifest, dict):
-        return False, "知识包 manifest 格式错误", None
-
-    required_fields = ["buyer_id", "plan", "issued_at"]
-    missing = [field for field in required_fields if not str(manifest.get(field, "")).strip()]
-    if missing:
-        return False, f"知识包 manifest 缺少字段：{', '.join(missing)}", None
-
-    try:
-        public_key = _load_pro_public_key(Path(__file__).parent.parent)
-        public_key.verify(
-            signature_path.read_bytes(),
-            manifest_bytes,
-            padding.PKCS1v15(),
-            hashes.SHA256(),
-        )
-    except FileNotFoundError as e:
-        return False, str(e), None
-    except InvalidSignature:
-        return False, "知识包签名无效", None
-    except Exception as e:
-        return False, f"知识包验签失败：{e}", None
-
-    expire_date = str(manifest.get("expire_date", "")).strip()
-    if expire_date:
-        try:
-            if datetime.now().date() > datetime.strptime(expire_date, "%Y-%m-%d").date():
-                return False, "知识包已过期", None
-        except ValueError:
-            return False, "知识包日期格式无效", None
-
-    return True, "知识包验签通过", manifest
+    return ui_knowledge_access._verify_pro_package(unpacked_dir, root=Path(__file__).parent.parent)
 
 
 def _license_matches_package(license_record: dict, package_manifest: dict) -> tuple[bool, str]:
-    return ui_view_models.license_matches_package(license_record, package_manifest)
+    return ui_knowledge_access._license_matches_package(license_record, package_manifest)
 
 
 def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -> tuple[bool, str]:
-    if not filename.lower().endswith((".zip", ".obrk")):
-        return False, "仅支持 .zip 或 .obrk 知识包"
-
-    license_record = _load_license(work_dir)
-    if not bool(license_record.get("pro_unlocked", False)):
-        return False, "请先激活 Pro 后再导入知识包"
-
-    ok, msg, normalized_license = _license_record_is_active(license_record)
-    if not ok or normalized_license is None:
-        _save_license(work_dir, _empty_license_record())
-        return False, f"请先重新激活 Pro：{msg}"
-
-    _save_license(work_dir, normalized_license)
-
-    target = Path(work_dir) / "pro_knowledge"
-    tmp = Path(work_dir) / ".openbrep" / "tmp_pro_knowledge"
-    try:
-        if tmp.exists():
-            shutil.rmtree(tmp)
-        tmp.mkdir(parents=True, exist_ok=True)
-
-        zpath = tmp / "package.zip"
-        zpath.write_bytes(file_bytes)
-
-        with zipfile.ZipFile(zpath, "r") as zf:
-            zf.extractall(tmp / "unpacked")
-
-        unpacked = tmp / "unpacked"
-        ok, msg, manifest = _verify_pro_package(unpacked)
-        if not ok or manifest is None:
-            return False, f"❌ 导入失败：{msg}"
-
-        ok, msg = _license_matches_package(normalized_license, manifest)
-        if not ok:
-            return False, f"❌ 导入失败：{msg}"
-
-        docs_dir = unpacked / "docs"
-        if target.exists():
-            shutil.rmtree(target)
-        target.mkdir(parents=True, exist_ok=True)
-
-        for item in docs_dir.iterdir():
-            dest = target / item.name
-            if item.is_dir():
-                shutil.copytree(item, dest, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, dest)
-
-        return True, f"✅ Pro 知识包导入完成：{target}"
-    except Exception as e:
-        return False, f"❌ 导入失败：{e}"
-    finally:
-        if tmp.exists():
-            try:
-                shutil.rmtree(tmp)
-            except Exception:
-                pass
+    return ui_knowledge_access._import_pro_knowledge_zip(
+        file_bytes,
+        filename,
+        work_dir,
+        root=Path(__file__).parent.parent,
+    )
 
 
 # ── Load config.toml defaults ──────────────────────────
@@ -1055,27 +897,12 @@ def get_llm():
     return LLMAdapter(config)
 
 def load_knowledge(task_type: str = "all"):
-    # Always load bundled free knowledge first
-    project_kb = Path(__file__).parent.parent / "knowledge"
-    kb = KnowledgeBase(str(project_kb))
-    kb.load()
-
-    # Merge user's custom free knowledge from work_dir/knowledge
-    user_kb_dir = Path(st.session_state.work_dir) / "knowledge"
-    if user_kb_dir.exists() and user_kb_dir != project_kb:
-        user_kb = KnowledgeBase(str(user_kb_dir))
-        user_kb.load()
-        kb._docs.update(user_kb._docs)
-
-    # Pro knowledge only loads after license unlock
-    if st.session_state.get("pro_unlocked", False):
-        pro_kb_dir = Path(st.session_state.work_dir) / "pro_knowledge"
-        if pro_kb_dir.exists():
-            pro_kb = KnowledgeBase(str(pro_kb_dir))
-            pro_kb.load()
-            kb._docs.update(pro_kb._docs)
-
-    return kb.get_by_task_type(task_type)
+    return ui_knowledge_access.load_knowledge(
+        task_type,
+        work_dir=st.session_state.work_dir,
+        pro_unlocked=st.session_state.get("pro_unlocked", False),
+        project_root=Path(__file__).parent.parent,
+    )
 
 def load_skills():
     # Always load from project skills dir first

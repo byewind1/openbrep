@@ -5,6 +5,17 @@ import tempfile
 from pathlib import Path
 
 
+def _format_compile_result(*, result, output_gsm: str, compiler_mode: str) -> tuple[bool, str]:
+    mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
+    if result.success:
+        msg = f"✅ **编译成功{mock_tag}**\n\n📦 `{output_gsm}`"
+        if compiler_mode.startswith("Mock"):
+            msg += "\n\n⚠️ Mock 模式不生成真实 .gsm，切换 LP_XMLConverter 进行真实编译。"
+        return True, msg
+
+    return False, f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```"
+
+
 def do_compile(
     proj,
     gsm_name: str,
@@ -15,7 +26,9 @@ def do_compile(
     versioned_gsm_path_fn,
     get_compiler_fn,
     compiler_mode: str,
+    format_compile_result_fn=None,
 ) -> tuple:
+    format_compile_result_fn = format_compile_result_fn or _format_compile_result
     try:
         requested_rev = int(session_state.get("script_revision", 0)) or 1
         compile_rev = safe_compile_revision_fn(gsm_name or proj.name, session_state.work_dir, requested_rev)
@@ -24,29 +37,16 @@ def do_compile(
         output_gsm = versioned_gsm_path_fn(gsm_name or proj.name, session_state.work_dir, revision=compile_rev)
         hsf_dir = proj.save_to_disk()
         result = get_compiler_fn().hsf2libpart(str(hsf_dir), output_gsm)
-        mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
 
-        if result.success:
-            session_state.compile_log.append({
-                "project": proj.name,
-                "instruction": instruction,
-                "success": True,
-                "attempts": 1,
-                "message": "Success",
-            })
-            msg = f"✅ **编译成功{mock_tag}**\n\n📦 `{output_gsm}`"
-            if compiler_mode.startswith("Mock"):
-                msg += "\n\n⚠️ Mock 模式不生成真实 .gsm，切换 LP_XMLConverter 进行真实编译。"
-            return True, msg
-
+        ok, msg = format_compile_result_fn(result=result, output_gsm=output_gsm, compiler_mode=compiler_mode)
         session_state.compile_log.append({
             "project": proj.name,
             "instruction": instruction,
-            "success": False,
+            "success": bool(result.success),
             "attempts": 1,
-            "message": result.stderr,
+            "message": "Success" if result.success else result.stderr,
         })
-        return False, f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```"
+        return ok, msg
     except Exception as e:
         return False, f"❌ **错误**: {str(e)}"
 
@@ -197,7 +197,10 @@ def handle_unified_import(
     if ext == ".gsm":
         imported_project, msg = import_gsm_fn(uploaded_file.read(), fname)
         if not imported_project:
-            return False, msg
+            detail = str(msg or "GSM 导入失败")
+            if detail.startswith("❌"):
+                return False, f"❌ [IMPORT_GSM] {detail[1:].strip()}"
+            return False, f"❌ [IMPORT_GSM] {detail}"
         if isinstance(imported_project, (str, Path)):
             from openbrep.hsf_project import HSFProject
 

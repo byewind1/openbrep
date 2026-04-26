@@ -1218,7 +1218,7 @@ class TestProLicenseVerification(unittest.TestCase):
         }
         public_pem, code = _build_signed_license_code(payload)
 
-        with patch("ui.app._load_pro_public_key") as load_key:
+        with patch("ui.knowledge_access._load_pro_public_key") as load_key:
             load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
             ok, msg, record = _verify_pro_code(code)
 
@@ -1245,7 +1245,7 @@ class TestProLicenseVerification(unittest.TestCase):
             json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         ).decode("utf-8").rstrip("=")
 
-        with patch("ui.app._load_pro_public_key") as load_key:
+        with patch("ui.knowledge_access._load_pro_public_key") as load_key:
             load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
             ok, msg, record = _verify_pro_code(tampered)
 
@@ -1265,7 +1265,7 @@ class TestProLicenseVerification(unittest.TestCase):
         }
         public_pem, code = _build_signed_license_code(payload)
 
-        with patch("ui.app._load_pro_public_key") as load_key:
+        with patch("ui.knowledge_access._load_pro_public_key") as load_key:
             load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
             ok, msg, record = _verify_pro_code(code)
 
@@ -1290,7 +1290,7 @@ class TestProLicenseVerification(unittest.TestCase):
             "license_signature": record_blob["signature"],
         }
 
-        with patch("ui.app._load_pro_public_key") as load_key:
+        with patch("ui.knowledge_access._load_pro_public_key") as load_key:
             load_key.return_value = serialization.load_pem_public_key(public_pem.encode("utf-8"))
             ok, msg, record = _license_record_is_active(saved)
 
@@ -1344,10 +1344,10 @@ class TestProKnowledgePackageVerification(unittest.TestCase):
                 "license_signature": "dummy-signature",
             }
             normalized_license = dict(license_record)
-            with patch("ui.app._load_pro_public_key") as load_key:
-                with patch("ui.app._load_license", return_value=license_record):
-                    with patch("ui.app._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
-                        with patch("ui.app._save_license"):
+            with patch("ui.knowledge_access._load_pro_public_key") as load_key:
+                with patch("ui.knowledge_access._load_license", return_value=license_record):
+                    with patch("ui.knowledge_access._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
+                        with patch("ui.knowledge_access._save_license"):
                             load_key.return_value = serialization.load_pem_public_key(public_pem)
                             ok, msg = _import_pro_knowledge_zip(package_bytes, "demo.obrk", tmpdir)
 
@@ -1373,10 +1373,10 @@ class TestProKnowledgePackageVerification(unittest.TestCase):
                 "license_signature": "dummy-signature",
             }
             normalized_license = dict(license_record)
-            with patch("ui.app._load_pro_public_key") as load_key:
-                with patch("ui.app._load_license", return_value=license_record):
-                    with patch("ui.app._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
-                        with patch("ui.app._save_license"):
+            with patch("ui.knowledge_access._load_pro_public_key") as load_key:
+                with patch("ui.knowledge_access._load_license", return_value=license_record):
+                    with patch("ui.knowledge_access._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
+                        with patch("ui.knowledge_access._save_license"):
                             load_key.return_value = serialization.load_pem_public_key(public_pem)
                             ok, msg = _import_pro_knowledge_zip(package_bytes, "demo.obrk", tmpdir)
 
@@ -1408,10 +1408,10 @@ class TestProKnowledgePackageVerification(unittest.TestCase):
                 "license_signature": "dummy-signature",
             }
             normalized_license = dict(license_record)
-            with patch("ui.app._load_pro_public_key") as load_key:
-                with patch("ui.app._load_license", return_value=license_record):
-                    with patch("ui.app._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
-                        with patch("ui.app._save_license"):
+            with patch("ui.knowledge_access._load_pro_public_key") as load_key:
+                with patch("ui.knowledge_access._load_license", return_value=license_record):
+                    with patch("ui.knowledge_access._license_record_is_active", return_value=(True, "授权码有效", normalized_license)):
+                        with patch("ui.knowledge_access._save_license"):
                             load_key.return_value = serialization.load_pem_public_key(public_pem)
                             ok, msg = _import_pro_knowledge_zip(package_bytes, "demo.obrk", tmpdir)
 
