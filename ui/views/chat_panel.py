@@ -117,13 +117,30 @@ def _render_chat_history(
         if is_focus:
             st.markdown("<div style='border-top:1px dashed #38bdf8;margin:0.4rem 0;'></div>", unsafe_allow_html=True)
             st.caption("📍 当前锚点")
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+
+        role = msg.get("role", "assistant")
+        is_user = role == "user"
+        left, right = st.columns([1, 5]) if is_user else st.columns([5, 1])
+        target = right if is_user else left
+
+        with target:
+            if is_user:
+                content_html = (msg.get("content", "") or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+                st.markdown(
+                    f"""
+<div style=\"text-align:right;background:#23324a;border:1px solid #334155;border-radius:10px;padding:10px 12px;margin:6px 0;\">{content_html}</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(msg.get("content", ""))
+
             if msg.get("image_b64"):
                 img_bytes = thumb_image_bytes_fn(msg.get("image_b64", ""))
                 if img_bytes:
                     st.image(img_bytes, width=240)
-            if msg["role"] == "assistant":
+
+            if role == "assistant":
                 _render_assistant_message_actions(
                     st,
                     idx,
