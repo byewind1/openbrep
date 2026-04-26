@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from ui.chat_render import render_assistant_block, render_user_bubble
+
 
 def pop_chat_runtime_state(
     *,
@@ -231,16 +233,6 @@ def build_image_user_display(vision_name: str, route_mode: str, joined_text: str
     return f"🖼️ `{vision_name}` · {route_tag}" + (f"  \n{joined_text}" if joined_text else "")
 
 
-def _render_user_bubble(markdown_fn: Callable[[str], None], text: str) -> None:
-    content_html = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-    markdown_fn(
-        f"""
-<div style=\"text-align:right;background:#23324a;border:1px solid #334155;border-radius:10px;padding:10px 12px;margin:6px 0;\">{content_html}</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def run_normal_text_path(
     *,
     effective_input: str,
@@ -286,14 +278,14 @@ def run_normal_text_path(
         with live_output.container():
             import streamlit as st
 
-            _render_user_bubble(markdown_fn, user_input)
+            render_user_bubble(st, user_input)
             if intent == "CHAT":
                 msg = chat_respond_fn(
                     user_input,
                     session_state.chat_history[:-1],
                     None,
                 )
-                markdown_fn(msg)
+                render_assistant_block(st, msg)
             else:
                 should_skip_elicitation = should_skip_elicitation_fn(user_input, intent)
                 if should_skip_elicitation:
@@ -314,12 +306,12 @@ def run_normal_text_path(
                         effective_gsm,
                         not has_any_script,
                     )
-                    markdown_fn(msg)
+                    render_assistant_block(st, msg)
                 else:
                     elicitation_msg, eliciting = handle_elicitation_route_fn(user_input, gdl_obj_name)
                     if eliciting:
                         msg = elicitation_msg
-                        markdown_fn(msg)
+                        render_assistant_block(st, msg)
                     else:
                         if not session_state.project:
                             new_proj = create_project_fn(gdl_obj_name)
@@ -338,7 +330,7 @@ def run_normal_text_path(
                             effective_gsm,
                             not has_any_script,
                         )
-                        markdown_fn(msg)
+                        render_assistant_block(st, msg)
 
         session_state.chat_history.append(
             build_assistant_chat_message_fn(
@@ -413,10 +405,8 @@ def run_vision_path(
         with live_output.container():
             import streamlit as st
 
-            _render_user_bubble(markdown_fn, user_display)
             img_bytes = thumb_image_bytes_fn(vision_b64)
-            if img_bytes:
-                image_fn(img_bytes, width=240)
+            render_user_bubble(st, user_display, image_bytes=img_bytes)
             if route_mode == "generate":
                 msg = run_vision_generate_fn(
                     vision_b64,
@@ -439,7 +429,7 @@ def run_vision_path(
                     vision_b64,
                     final_mime,
                 )
-            markdown_fn(msg)
+            render_assistant_block(st, msg)
 
         session_state.chat_history.append({"role": "assistant", "content": msg})
         return True, True, None

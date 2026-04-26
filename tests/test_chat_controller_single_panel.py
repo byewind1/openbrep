@@ -40,7 +40,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         )
         live_output = _DummyContainer()
 
-        with patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
+        with patch("ui.chat_controller.render_user_bubble") as render_user, patch("ui.chat_controller.render_assistant_block") as render_assistant, patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
             ok, should_rerun, _ = run_normal_text_path(
                 effective_input="你好",
                 redo_input=None,
@@ -64,6 +64,8 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(should_rerun)
         self.assertEqual([m["role"] for m in session_state["chat_history"]], ["user", "assistant"])
+        self.assertTrue(render_user.called)
+        self.assertTrue(render_assistant.called)
 
     def test_run_vision_path_does_not_use_streamlit_chat_message(self):
         session_state = _State(
@@ -75,7 +77,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         )
         live_output = _DummyContainer()
 
-        with patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
+        with patch("ui.chat_controller.render_user_bubble") as render_user, patch("ui.chat_controller.render_assistant_block") as render_assistant, patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
             ok, should_rerun, _ = run_vision_path(
                 has_image_input=True,
                 vision_mime="image/png",
@@ -101,6 +103,8 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(should_rerun)
         self.assertEqual([m["role"] for m in session_state["chat_history"]], ["user", "assistant"])
+        self.assertTrue(render_user.called)
+        self.assertTrue(render_assistant.called)
 
 
 if __name__ == "__main__":
