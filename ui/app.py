@@ -77,6 +77,7 @@ from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
 from ui.views import parameter_panel as ui_parameter_panel
 from ui.views import project_tools_panel as ui_project_tools_panel
+from ui.views import sidebar_panel as ui_sidebar_panel
 from ui.views import workspace_tools_panel as ui_workspace_tools_panel
 
 logger = logging.getLogger(__name__)
@@ -882,283 +883,43 @@ def _normalize_converter_path(raw_path: str) -> str:
 
 
 with st.sidebar:
-    if not st.session_state.assistant_settings:
-        st.session_state.assistant_settings = _config_defaults.get("assistant_settings", "")
-    if _TAPIR_IMPORT_OK and not _is_archicad_running():
-        st.sidebar.warning("⚠️ Archicad 未运行，编译和实时预览不可用")
-
-    st.markdown('<p class="main-header">OpenBrep</p>', unsafe_allow_html=True)
-    st.markdown('<p class="intro-header">用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。</p>', unsafe_allow_html=True)
-    st.markdown(f'<p class="sub-header">OpenBrep: Code Your Boundaries · v{OPENBREP_VERSION} · HSF-native</p>', unsafe_allow_html=True)
-    _render_generation_controls()
-    st.divider()
-
-    st.subheader("📁 工作目录")
-    work_dir = st.text_input("Work Directory", value=st.session_state.work_dir, label_visibility="collapsed", disabled=_is_generation_locked(st.session_state))
-    st.session_state.work_dir = work_dir
-
-    # Load persisted license when work_dir is known
-    if not st.session_state.pro_license_loaded and _has_streamlit_runtime_context():
-        _lic = _load_license(work_dir)
-        if bool(_lic.get("pro_unlocked", False)):
-            ok, _msg, normalized = _license_record_is_active(_lic)
-            if ok and normalized is not None:
-                st.session_state.pro_unlocked = True
-                _save_license(work_dir, normalized)
-            else:
-                st.session_state.pro_unlocked = False
-                _save_license(work_dir, _empty_license_record())
-        else:
-            st.session_state.pro_unlocked = False
-        st.session_state.pro_license_loaded = True
-
-    st.subheader("🔐 Pro 授权（V1）")
-    if st.session_state.pro_unlocked:
-        st.success("Pro 已解锁")
-    else:
-        st.caption("当前：Free 模式（仅基础知识库）")
-
-    pro_code_input = st.text_input("授权码", type="password", key="pro_code_input")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("解锁 Pro", width='stretch'):
-            ok, msg, record = _verify_pro_code(pro_code_input)
-            if ok and record is not None:
-                st.session_state.pro_unlocked = True
-                _save_license(work_dir, record)
-                st.success("✅ Pro 解锁成功")
-                st.rerun()
-            else:
-                st.error(msg)
-    with c2:
-        if st.button("锁回 Free", width='stretch'):
-            st.session_state.pro_unlocked = False
-            _save_license(work_dir, _empty_license_record())
-            st.info("已切回 Free 模式")
-            st.rerun()
-
-    if st.session_state.pro_unlocked:
-        pro_pkg = st.file_uploader("导入 Pro 知识包（.zip/.obrk）", type=["zip", "obrk"], key="pro_pkg_uploader")
-        if pro_pkg is not None:
-            ok, msg = _import_pro_knowledge_zip(pro_pkg.read(), pro_pkg.name, work_dir)
-            if ok:
-                st.success(msg)
-            else:
-                st.error(msg)
-    else:
-        st.caption("请先输入有效授权码并解锁后再导入知识包。")
-
-    st.divider()
-    st.subheader("🔧 编译器 / Compiler")
-
-    compiler_mode = st.radio(
-        "编译模式",
-        ["Mock (无需 ArchiCAD)", "LP_XMLConverter (真实编译)"],
-        index=1 if _config_defaults.get("compiler_path") else 0,
+    _sidebar_payload = ui_sidebar_panel.render_sidebar(
+        st,
+        openbrep_version=OPENBREP_VERSION,
+        tapir_import_ok=_TAPIR_IMPORT_OK,
+        all_models=ALL_MODELS,
+        config=_config,
+        config_defaults=_config_defaults,
+        custom_providers=_custom_providers,
+        iter_custom_provider_model_entries_fn=iter_custom_provider_model_entries,
+        is_generation_locked_fn=_is_generation_locked,
+        is_archicad_running_fn=_is_archicad_running,
+        render_generation_controls_fn=_render_generation_controls,
+        has_streamlit_runtime_context_fn=_has_streamlit_runtime_context,
+        load_license_fn=_load_license,
+        license_record_is_active_fn=_license_record_is_active,
+        save_license_fn=_save_license,
+        empty_license_record_fn=_empty_license_record,
+        verify_pro_code_fn=_verify_pro_code,
+        import_pro_knowledge_zip_fn=_import_pro_knowledge_zip,
+        normalize_converter_path_fn=_normalize_converter_path,
+        reload_config_globals_fn=_reload_config_globals,
+        build_model_source_state_fn=_build_model_source_state,
+        resolve_selected_model_fn=_resolve_selected_model,
+        sync_llm_top_level_fields_for_model_fn=_sync_llm_top_level_fields_for_model,
+        key_for_model_fn=_key_for_model,
+        collect_custom_model_aliases_fn=_collect_custom_model_aliases,
+        should_persist_assistant_settings_fn=_should_persist_assistant_settings,
+        reset_tapir_p0_state_fn=_reset_tapir_p0_state,
+        bump_main_editor_version_fn=lambda: _bump_main_editor_version(),
     )
-
-    converter_path = ""
-    if compiler_mode.startswith("LP"):
-        _raw_path = st.text_input(
-            "LP_XMLConverter 路径",
-            value=_config_defaults.get("compiler_path", ""),
-            placeholder="/Applications/GRAPHISOFT/ArchiCAD 28/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter",
-            help="macOS/Linux 用正斜杠 /，Windows 用反斜杠 粘贴后自动转换",
-        )
-        # 自动转换 Windows 反斜杠，去除首尾空格和引号
-        converter_path = _normalize_converter_path(_raw_path)
-
-    st.divider()
-    st.subheader("🧠 AI 模型 / LLM")
-
-    _reload_col, _status_col = st.columns([1, 2])
-    with _reload_col:
-        if st.button("重新加载配置", width='stretch', disabled=_is_generation_locked(st.session_state)):
-            try:
-                _reload_config_globals(update_session_state=True)
-                st.session_state["current_model"] = _config_defaults.get("llm_model", "")
-                st.session_state["reload_config_notice"] = "✅ 已从磁盘重新加载 config.toml"
-                st.rerun()
-            except Exception as e:
-                st.warning(f"配置重载失败：{e}")
-    with _status_col:
-        _reload_notice = st.session_state.pop("reload_config_notice", "")
-        if _reload_notice:
-            st.caption(_reload_notice)
-
-    _custom_list = _config.llm.custom_providers if _config else _custom_providers
-    _model_state = _build_model_source_state(
-        builtin_models=ALL_MODELS,
-        custom_providers=_custom_list,
-        saved_model=_config_defaults.get("llm_model", "glm-4-flash"),
-    )
-
-    _source_options = _model_state["source_options"]
-    _default_source = _model_state["default_source"]
-    _default_source_index = _source_options.index(_default_source) if _default_source in _source_options else 0
-    _selected_source = st.selectbox(
-        "来源 / Source",
-        _source_options,
-        index=_default_source_index,
-        disabled=_is_generation_locked(st.session_state),
-    )
-
-    _active_options = _model_state["custom_options"] if _selected_source == "自定义" else _model_state["builtin_options"]
-    _model_labels = [opt["label"] for opt in _active_options]
-    _default_label = _model_state["default_model_label"] if _selected_source == _default_source else ""
-    _default_model_index = _model_labels.index(_default_label) if _default_label in _model_labels else 0
-
-    _selected_label = st.selectbox(
-        "模型 / Model",
-        _model_labels,
-        index=_default_model_index,
-        disabled=_is_generation_locked(st.session_state),
-    )
-    model_name = _resolve_selected_model(_selected_label, _active_options)
-    st.session_state["current_model"] = model_name  # 供视觉检测使用
-
-    if model_name and model_name != _config_defaults.get("llm_model", ""):
-        try:
-            _save_cfg_model = GDLAgentConfig.load()
-            if _sync_llm_top_level_fields_for_model(_save_cfg_model, model_name):
-                _save_cfg_model.save()
-            _config_defaults["llm_model"] = model_name
-        except Exception as e:
-            st.sidebar.warning(f"配置保存失败：{e}")
-
-    # Load or initialize API Key for this specific model
-    if model_name not in st.session_state.model_api_keys:
-        # Auto-fill from config.toml provider_keys
-        st.session_state.model_api_keys[model_name] = _key_for_model(model_name)
-
-    is_custom = model_name in _collect_custom_model_aliases(_custom_list)
-
-    if is_custom:
-        st.info("此模型使用自定义代理，请在 config.toml 的 [[llm.custom_providers]] 中配置 api_key 和 base_url")
-        api_key = st.session_state.model_api_keys.get(model_name, "")
-    else:
-        api_key = st.text_input(
-            "API Key",
-            value=st.session_state.model_api_keys.get(model_name, ""),
-            type="password",
-            help="Ollama 本地模式不需要 Key",
-            disabled=_is_generation_locked(st.session_state),
-        )
-
-    # Auto-save API Key + 持久化写回 config.toml
-    if api_key != st.session_state.model_api_keys.get(model_name, ""):
-        st.session_state.model_api_keys[model_name] = api_key
-        # 写回 config.toml
-        try:
-            from openbrep.config import GDLAgentConfig, model_to_provider
-            _save_cfg = GDLAgentConfig.load()
-            _provider = model_to_provider(model_name)
-            if _provider and api_key:
-                _save_cfg.llm.provider_keys[_provider] = api_key
-            _save_cfg.save()
-        except Exception as e:
-            st.sidebar.warning(f"配置保存失败：{e}")
-
-    # LP_XMLConverter 路径变更时持久化写回 config.toml
-    if converter_path and converter_path != _config_defaults.get("compiler_path", ""):
-        try:
-            from openbrep.config import GDLAgentConfig
-            _save_cfg2 = GDLAgentConfig.load()
-            _save_cfg2.compiler.path = converter_path
-            _save_cfg2.save()
-            _config_defaults["compiler_path"] = converter_path
-        except Exception as e:
-            st.sidebar.warning(f"配置保存失败：{e}")
-
-    if "claude" in model_name:
-        st.caption("🔑 [获取 Claude API Key →](https://console.anthropic.com/settings/keys)")
-        st.caption("⚠️ API Key 需单独充值，与 Claude Pro 订阅额度无关")
-    elif "glm" in model_name:
-        st.caption("🔑 [获取智谱 API Key →](https://bigmodel.cn/usercenter/apikeys)")
-    elif "gpt" in model_name or "o3" in model_name:
-        st.caption("🔑 [获取 OpenAI API Key →](https://platform.openai.com/api-keys)")
-    elif "deepseek" in model_name and "ollama" not in model_name:
-        st.caption("🔑 [获取 DeepSeek API Key →](https://platform.deepseek.com/api_keys)")
-    elif "gemini" in model_name:
-        st.caption("🔑 [获取 Gemini API Key →](https://aistudio.google.com/apikey)")
-    elif "ollama" in model_name:
-        st.caption("🖥️ 本地运行，无需 Key。确保 Ollama 已启动。")
-
-    # API Base URL — only needed for OpenAI-compatible custom endpoints
-    # zai/ (GLM), deepseek/, anthropic/ are native LiteLLM providers, no api_base needed
-    def _get_default_api_base(model: str) -> str:
-        m = model.lower()
-
-        # 自定义 provider 的模型精确匹配
-        for _pcfg in _custom_providers:
-            aliases = {str(e.get("alias", "") or "").lower() for e in iter_custom_provider_model_entries(_pcfg)}
-            if m in aliases:
-                return str(_pcfg.get("base_url", "") or "")
-
-        if "ollama" in m:
-            return "http://localhost:11434"
-        # GLM uses zai/ native provider — no api_base
-        # DeepSeek uses deepseek/ native provider — no api_base
-        return ""
-
-    default_api_base = _get_default_api_base(model_name)
-    api_base = ""
-    if default_api_base:
-        api_base = st.text_input("API Base URL", value=default_api_base)
-
-    max_retries = st.slider("最大重试次数", 1, 10, 5)
-
-    st.divider()
-    st.subheader("AI助手设置")
-    assistant_settings = st.text_area(
-        "长期协作偏好",
-        value=st.session_state.assistant_settings,
-        height=140,
-        placeholder="例如：我是 GDL 初学者，请先解释再给最小修改；我主要改已有对象；赶项目时优先给可运行结果。",
-        help="长期保存。可填写你的 GDL 经验、当前使用场景、沟通方式偏好与修改边界。修改后立即影响后续聊天与生成。",
-        disabled=_is_generation_locked(st.session_state),
-    )
-    if _should_persist_assistant_settings(_config_defaults.get("assistant_settings", ""), assistant_settings):
-        st.session_state.assistant_settings = assistant_settings
-        try:
-            _save_cfg3 = GDLAgentConfig.load()
-            _save_cfg3.llm.assistant_settings = assistant_settings
-            _save_cfg3.save()
-            _config_defaults["assistant_settings"] = assistant_settings
-        except Exception as e:
-            st.sidebar.warning(f"配置保存失败：{e}")
-    else:
-        st.session_state.assistant_settings = assistant_settings
-
-    st.divider()
-
-    # Project quick reset
-    if st.session_state.project:
-        if st.button("🗑️ 清除项目", width='stretch', disabled=_is_generation_locked(st.session_state)):
-            _keep_work_dir  = st.session_state.work_dir
-            _keep_api_keys  = st.session_state.model_api_keys
-            _keep_chat      = st.session_state.chat_history   # preserve chat
-            _keep_assistant_settings = st.session_state.assistant_settings
-            st.session_state.project          = None
-            st.session_state.compile_log      = []
-            st.session_state.compile_result   = None
-            st.session_state.adopted_msg_index = None
-            st.session_state.pending_diffs    = {}
-            st.session_state.pending_ai_label = ""
-            st.session_state.pending_gsm_name = ""
-            st.session_state.agent_running    = False
-            st.session_state._import_key_done = ""
-            st.session_state.preview_2d_data  = None
-            st.session_state.preview_3d_data  = None
-            st.session_state.preview_warnings = []
-            st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
-            _reset_tapir_p0_state()
-            _bump_main_editor_version()
-            st.session_state.work_dir         = _keep_work_dir
-            st.session_state.model_api_keys   = _keep_api_keys
-            st.session_state.chat_history     = _keep_chat
-            st.session_state.assistant_settings = _keep_assistant_settings
-            st.rerun()
+    work_dir = _sidebar_payload["work_dir"]
+    compiler_mode = _sidebar_payload["compiler_mode"]
+    converter_path = _sidebar_payload["converter_path"]
+    model_name = _sidebar_payload["model_name"]
+    api_key = _sidebar_payload["api_key"]
+    api_base = _sidebar_payload["api_base"]
+    max_retries = _sidebar_payload["max_retries"]
 
 
 # ── Helper Functions ──────────────────────────────────────
