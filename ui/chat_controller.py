@@ -435,3 +435,108 @@ def run_vision_path(
         return True, True, None
     finally:
         session_state.agent_running = False
+
+
+def process_chat_turn(
+    *,
+    st,
+    session_state,
+    chat_payload: dict,
+    api_key: str,
+    model_name: str,
+    resolve_bridge_input_fn: Callable[[object, str | None, list[dict], bool], str | None],
+    resolve_effective_input_fn: Callable[[object, str | None, bool, str | None, str | None, str | None], tuple[str | None, bool, bool]],
+    detect_gsm_name_candidate_fn: Callable[[str], str | None],
+    handle_tapir_test_trigger_fn: Callable[[bool], tuple[bool, bool]],
+    handle_tapir_selection_trigger_fn: Callable[[bool], tuple[bool, bool]],
+    handle_tapir_highlight_trigger_fn: Callable[[bool], tuple[bool, bool]],
+    handle_tapir_load_params_trigger_fn: Callable[[bool], tuple[bool, bool]],
+    handle_tapir_apply_params_trigger_fn: Callable[[bool], tuple[bool, bool]],
+    run_vision_path_fn: Callable[..., tuple[bool, bool, str | None]],
+    run_normal_text_path_fn: Callable[..., tuple[bool, bool, str | None]],
+    apply_chat_anchor_pending_fn: Callable[..., bool],
+) -> None:
+    runtime = pop_chat_runtime_state(session_state=session_state, has_image_input=bool(chat_payload.get("vision_b64")))
+    user_input = chat_payload.get("user_input")
+    live_output = chat_payload["live_output"]
+
+    _handled, _should_rerun = handle_tapir_test_trigger_fn(runtime["tapir_trigger"])
+    if _handled and _should_rerun:
+        st.rerun()
+
+    _handled, _should_rerun = handle_tapir_selection_trigger_fn(runtime["tapir_selection_trigger"])
+    if _handled and _should_rerun:
+        st.rerun()
+
+    _handled, _should_rerun = handle_tapir_highlight_trigger_fn(runtime["tapir_highlight_trigger"])
+    if _handled and _should_rerun:
+        st.rerun()
+
+    _handled, _should_rerun = handle_tapir_load_params_trigger_fn(runtime["tapir_load_params_trigger"])
+    if _handled and _should_rerun:
+        st.rerun()
+
+    _handled, _should_rerun = handle_tapir_apply_params_trigger_fn(runtime["tapir_apply_params_trigger"])
+    if _handled and _should_rerun:
+        st.rerun()
+
+    auto_debug_input = session_state.pop("_auto_debug_input", None)
+    bridge_input = resolve_bridge_input_fn(
+        runtime["pending_bridge_idx"],
+        user_input,
+        session_state.get("chat_history", []),
+        bool(session_state.get("project")),
+    )
+    effective_input, clear_debug_mode, toast_missing_debug_text = resolve_effective_input_fn(
+        runtime["active_debug_mode"],
+        user_input,
+        runtime["has_image_input"],
+        auto_debug_input,
+        bridge_input,
+        runtime["redo_input"],
+    )
+    if clear_debug_mode:
+        session_state["_debug_mode_active"] = None
+    if toast_missing_debug_text:
+        st.toast("请输入问题描述后再发送，或直接描述你看到的现象", icon="💬")
+
+    if user_input and not (session_state.pending_gsm_name or "").strip():
+        gsm_candidate = detect_gsm_name_candidate_fn(user_input)
+        if gsm_candidate:
+            session_state.pending_gsm_name = gsm_candidate
+
+    if runtime["has_image_input"]:
+        handled, should_rerun, err_msg = run_vision_path_fn(
+            runtime["has_image_input"],
+            chat_payload["vision_mime"],
+            chat_payload["vision_name"],
+            user_input,
+            runtime["active_debug_mode"],
+            chat_payload["vision_b64"],
+            live_output,
+            api_key,
+            model_name,
+        )
+        if err_msg:
+            st.error(err_msg)
+        if handled and should_rerun:
+            st.rerun()
+    elif effective_input:
+        handled, should_rerun, err_msg = run_normal_text_path_fn(
+            effective_input,
+            runtime["redo_input"],
+            bridge_input,
+            live_output,
+            api_key,
+            model_name,
+        )
+        if err_msg:
+            st.error(err_msg)
+        if handled and should_rerun:
+            st.rerun()
+
+    apply_chat_anchor_pending_fn(
+        anchor_pending=runtime["anchor_pending"],
+        session_state=session_state,
+        rerun_fn=st.rerun,
+    )

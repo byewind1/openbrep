@@ -1677,11 +1677,11 @@ def _handle_tapir_apply_params_trigger(tapir_apply_params_trigger: bool) -> tupl
     )
 
 
-def _apply_chat_anchor_pending(anchor_pending) -> bool:
+def _apply_chat_anchor_pending(anchor_pending, session_state=None, rerun_fn=None) -> bool:
     return ui_chat_controller.apply_chat_anchor_pending(
         anchor_pending=anchor_pending,
-        session_state=st.session_state,
-        rerun_fn=st.rerun,
+        session_state=session_state or st.session_state,
+        rerun_fn=rerun_fn or st.rerun,
     )
 
 
@@ -2041,116 +2041,25 @@ with col_right:
             restore_last_project_snapshot_fn=_restore_last_project_snapshot,
             validate_chat_image_size_fn=_validate_chat_image_size,
         )
-        live_output = _chat_panel_payload["live_output"]
-        user_input = _chat_panel_payload["user_input"]
-        _vision_b64 = _chat_panel_payload["vision_b64"]
-        _vision_mime = _chat_panel_payload["vision_mime"]
-        _vision_name = _chat_panel_payload["vision_name"]
-
-    # ══════════════════════════════════════════════════════════
-    #  Chat handler (outside columns — session state + rerun)
-    # ══════════════════════════════════════════════════════════
-
-    _runtime = _pop_chat_runtime_state(_vision_b64 is not None)
-    _redo_input = _runtime["redo_input"]
-    _pending_bridge_idx = _runtime["pending_bridge_idx"]
-    _active_dbg = _runtime["active_debug_mode"]
-    _tapir_trigger = _runtime["tapir_trigger"]
-    _tapir_selection_trigger = _runtime["tapir_selection_trigger"]
-    _tapir_highlight_trigger = _runtime["tapir_highlight_trigger"]
-    _tapir_load_params_trigger = _runtime["tapir_load_params_trigger"]
-    _tapir_apply_params_trigger = _runtime["tapir_apply_params_trigger"]
-    _has_image_input = _runtime["has_image_input"]
-
-    # 历史锚点定位：延迟到页面末尾执行，避免打断当前LLM调用
-    _anchor_pending = _runtime["anchor_pending"]
-
-
-    # ── Archicad 测试：ReloadLibraries + 捕获错误注入 chat ──
-    _handled, _should_rerun = _handle_tapir_test_trigger(_tapir_trigger)
-    if _handled and _should_rerun:
-        st.rerun()
-
-    _handled, _should_rerun = _handle_tapir_selection_trigger(_tapir_selection_trigger)
-    if _handled and _should_rerun:
-        st.rerun()
-
-    _handled, _should_rerun = _handle_tapir_highlight_trigger(_tapir_highlight_trigger)
-    if _handled and _should_rerun:
-        st.rerun()
-
-    _handled, _should_rerun = _handle_tapir_load_params_trigger(_tapir_load_params_trigger)
-    if _handled and _should_rerun:
-        st.rerun()
-
-    _handled, _should_rerun = _handle_tapir_apply_params_trigger(_tapir_apply_params_trigger)
-    if _handled and _should_rerun:
-        st.rerun()
-
-    _auto_debug_input = st.session_state.pop("_auto_debug_input", None)
-    _bridge_input = _resolve_bridge_input(
-        pending_bridge_idx=_pending_bridge_idx,
-        user_input=user_input,
-        history=st.session_state.get("chat_history", []),
-        has_project=bool(st.session_state.get("project")),
+    # 聊天编排下沉到 controller，app 只负责把依赖接进去
+    ui_chat_controller.process_chat_turn(
+        st=st,
+        session_state=st.session_state,
+        chat_payload=_chat_panel_payload,
+        api_key=api_key,
+        model_name=model_name,
+        resolve_bridge_input_fn=_resolve_bridge_input,
+        resolve_effective_input_fn=_resolve_effective_input,
+        detect_gsm_name_candidate_fn=_extract_gsm_name_candidate,
+        handle_tapir_test_trigger_fn=_handle_tapir_test_trigger,
+        handle_tapir_selection_trigger_fn=_handle_tapir_selection_trigger,
+        handle_tapir_highlight_trigger_fn=_handle_tapir_highlight_trigger,
+        handle_tapir_load_params_trigger_fn=_handle_tapir_load_params_trigger,
+        handle_tapir_apply_params_trigger_fn=_handle_tapir_apply_params_trigger,
+        run_vision_path_fn=_run_vision_path,
+        run_normal_text_path_fn=_run_normal_text_path,
+        apply_chat_anchor_pending_fn=_apply_chat_anchor_pending,
     )
-
-    # Debug模式：仅用户主动发送时触发，不自动构造空输入消息
-    effective_input, _clear_debug_mode, _toast_missing_debug_text = _resolve_effective_input(
-        active_debug_mode=_active_dbg,
-        user_input=user_input,
-        has_image_input=_has_image_input,
-        auto_debug_input=_auto_debug_input,
-        bridge_input=_bridge_input,
-        redo_input=_redo_input,
-    )
-    if _clear_debug_mode:
-        st.session_state["_debug_mode_active"] = None
-    if _toast_missing_debug_text:
-        st.toast("请输入问题描述后再发送，或直接描述你看到的现象", icon="💬")
-
-    # 在用户消息中提取物件名作为 GSM 名称候选（仅当当前为空）
-    if user_input and not (st.session_state.pending_gsm_name or "").strip():
-        _gsm_candidate = _extract_gsm_name_candidate(user_input)
-        if _gsm_candidate:
-            st.session_state.pending_gsm_name = _gsm_candidate
-
-    # ── Vision path: attachment on chat_input ────────────────────────────────────
-    if _has_image_input:
-        _handled, _should_rerun, _err_msg = _run_vision_path(
-            _has_image_input,
-            _vision_mime,
-            _vision_name,
-            user_input,
-            _active_dbg,
-            _vision_b64,
-            live_output,
-            api_key,
-            model_name,
-        )
-        if _err_msg:
-            st.error(_err_msg)
-        if _handled and _should_rerun:
-            st.rerun()
-
-    # ── Normal text path ─────────────────────────────────────────────────────────
-    elif effective_input:
-        _handled, _should_rerun, _err_msg = _run_normal_text_path(
-            effective_input,
-            _redo_input,
-            _bridge_input,
-            live_output,
-            api_key,
-            model_name,
-        )
-        if _err_msg:
-            st.error(_err_msg)
-        if _handled and _should_rerun:
-            st.rerun()
-
-
-    # 锚点定位在页面末尾触发 rerun，尽量不打断当前生成流程
-    _apply_chat_anchor_pending(_anchor_pending)
 
     # ── Footer ────────────────────────────────────────────────
     st.divider()
