@@ -231,6 +231,16 @@ def build_image_user_display(vision_name: str, route_mode: str, joined_text: str
     return f"🖼️ `{vision_name}` · {route_tag}" + (f"  \n{joined_text}" if joined_text else "")
 
 
+def _render_user_bubble(markdown_fn: Callable[[str], None], text: str) -> None:
+    content_html = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    markdown_fn(
+        f"""
+<div style=\"text-align:right;background:#23324a;border:1px solid #334155;border-radius:10px;padding:10px 12px;margin:6px 0;\">{content_html}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def run_normal_text_path(
     *,
     effective_input: str,
@@ -276,26 +286,49 @@ def run_normal_text_path(
         with live_output.container():
             import streamlit as st
 
-            st.chat_message("user").markdown(user_input)
-            with st.chat_message("assistant"):
-                if intent == "CHAT":
-                    msg = chat_respond_fn(
+            _render_user_bubble(markdown_fn, user_input)
+            if intent == "CHAT":
+                msg = chat_respond_fn(
+                    user_input,
+                    session_state.chat_history[:-1],
+                    None,
+                )
+                markdown_fn(msg)
+            else:
+                should_skip_elicitation = should_skip_elicitation_fn(user_input, intent)
+                if should_skip_elicitation:
+                    proj_current = session_state.project
+                    if not proj_current:
+                        fallback_name = gdl_obj_name or session_state.pending_gsm_name or "untitled"
+                        proj_current = create_project_fn(fallback_name)
+                        session_state.project = proj_current
+                        session_state.pending_gsm_name = fallback_name
+                        session_state.script_revision = 0
+
+                    has_any_script = has_any_script_content_fn(proj_current)
+                    effective_gsm = session_state.pending_gsm_name or proj_current.name
+                    msg = run_agent_generate_fn(
                         user_input,
-                        session_state.chat_history[:-1],
-                        None,
+                        proj_current,
+                        st.container(),
+                        effective_gsm,
+                        not has_any_script,
                     )
                     markdown_fn(msg)
                 else:
-                    should_skip_elicitation = should_skip_elicitation_fn(user_input, intent)
-                    if should_skip_elicitation:
-                        proj_current = session_state.project
-                        if not proj_current:
-                            fallback_name = gdl_obj_name or session_state.pending_gsm_name or "untitled"
-                            proj_current = create_project_fn(fallback_name)
-                            session_state.project = proj_current
-                            session_state.pending_gsm_name = fallback_name
+                    elicitation_msg, eliciting = handle_elicitation_route_fn(user_input, gdl_obj_name)
+                    if eliciting:
+                        msg = elicitation_msg
+                        markdown_fn(msg)
+                    else:
+                        if not session_state.project:
+                            new_proj = create_project_fn(gdl_obj_name)
+                            session_state.project = new_proj
+                            session_state.pending_gsm_name = gdl_obj_name
                             session_state.script_revision = 0
+                            info_fn(f"📁 已初始化项目 `{gdl_obj_name}`")
 
+                        proj_current = session_state.project
                         has_any_script = has_any_script_content_fn(proj_current)
                         effective_gsm = session_state.pending_gsm_name or proj_current.name
                         msg = run_agent_generate_fn(
@@ -306,30 +339,6 @@ def run_normal_text_path(
                             not has_any_script,
                         )
                         markdown_fn(msg)
-                    else:
-                        elicitation_msg, eliciting = handle_elicitation_route_fn(user_input, gdl_obj_name)
-                        if eliciting:
-                            msg = elicitation_msg
-                            markdown_fn(msg)
-                        else:
-                            if not session_state.project:
-                                new_proj = create_project_fn(gdl_obj_name)
-                                session_state.project = new_proj
-                                session_state.pending_gsm_name = gdl_obj_name
-                                session_state.script_revision = 0
-                                info_fn(f"📁 已初始化项目 `{gdl_obj_name}`")
-
-                            proj_current = session_state.project
-                            has_any_script = has_any_script_content_fn(proj_current)
-                            effective_gsm = session_state.pending_gsm_name or proj_current.name
-                            msg = run_agent_generate_fn(
-                                user_input,
-                                proj_current,
-                                st.container(),
-                                effective_gsm,
-                                not has_any_script,
-                            )
-                            markdown_fn(msg)
 
         session_state.chat_history.append(
             build_assistant_chat_message_fn(
@@ -404,34 +413,33 @@ def run_vision_path(
         with live_output.container():
             import streamlit as st
 
-            st.chat_message("user").markdown(user_display)
+            _render_user_bubble(markdown_fn, user_display)
             img_bytes = thumb_image_bytes_fn(vision_b64)
             if img_bytes:
                 image_fn(img_bytes, width=240)
-            with st.chat_message("assistant"):
-                if route_mode == "generate":
-                    msg = run_vision_generate_fn(
-                        vision_b64,
-                        final_mime,
-                        joined_text,
-                        proj_v,
-                        st.container(),
-                        not has_any_v,
-                    )
-                else:
-                    debug_req = joined_text or "请根据这张截图定位并修复当前项目中的问题。"
-                    if not debug_req.startswith("[DEBUG:"):
-                        debug_req = f"[DEBUG:editor] {debug_req}"
-                    msg = run_agent_generate_with_debug_image_fn(
-                        debug_req,
-                        proj_v,
-                        st.container(),
-                        session_state.pending_gsm_name or proj_v.name,
-                        not has_any_v,
-                        vision_b64,
-                        final_mime,
-                    )
-                markdown_fn(msg)
+            if route_mode == "generate":
+                msg = run_vision_generate_fn(
+                    vision_b64,
+                    final_mime,
+                    joined_text,
+                    proj_v,
+                    st.container(),
+                    not has_any_v,
+                )
+            else:
+                debug_req = joined_text or "请根据这张截图定位并修复当前项目中的问题。"
+                if not debug_req.startswith("[DEBUG:"):
+                    debug_req = f"[DEBUG:editor] {debug_req}"
+                msg = run_agent_generate_with_debug_image_fn(
+                    debug_req,
+                    proj_v,
+                    st.container(),
+                    session_state.pending_gsm_name or proj_v.name,
+                    not has_any_v,
+                    vision_b64,
+                    final_mime,
+                )
+            markdown_fn(msg)
 
         session_state.chat_history.append({"role": "assistant", "content": msg})
         return True, True, None
