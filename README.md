@@ -13,9 +13,9 @@
 
 [简体中文](README.zh-CN.md) | English
 
-**用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。**
+**OpenBrep — 面向 ArchiCAD 高阶用户和 GDL 开发者的 AI 工作台。编译验证、知识驱动、资产可追溯。**
 
-> **OpenBrep: Code Your Boundaries**
+> **Code Your Boundaries**
 
 > 正式发布版本 v0.6.2 — 在 v0.6.1 基础上新增 wiki 知识检索、用户自定义 flat 知识库与 skill creator 对话式创建流程，补齐相关测试并修复关键路由细节。
 
