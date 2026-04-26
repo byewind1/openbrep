@@ -70,9 +70,11 @@ from ui import state as ui_state
 from ui import view_models as ui_view_models
 from ui import preview_controller as ui_preview_controller
 from ui import project_io as ui_project_io
+from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
 from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
+from ui.views import project_tools_panel as ui_project_tools_panel
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -1994,47 +1996,6 @@ def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:
     )
 
 
-def _save_current_project_revision(proj: HSFProject, message: str = "") -> tuple[bool, str]:
-    if proj is None:
-        return False, "❌ 当前没有项目"
-    try:
-        proj.save_to_disk()
-        from openbrep.revisions import create_revision
-
-        revision = create_revision(proj.root, message.strip())
-        return True, f"✅ 已保存版本 `{revision.revision_id}`"
-    except Exception as exc:
-        return False, f"❌ 保存版本失败：{exc}"
-
-
-def _restore_project_revision(proj: HSFProject, revision_id: str, message: str | None = None) -> tuple[bool, str]:
-    if proj is None:
-        return False, "❌ 当前没有项目"
-    revision_id = (revision_id or "").strip()
-    if not revision_id:
-        return False, "❌ 请选择要恢复的版本"
-
-    try:
-        from openbrep.revisions import restore_revision
-
-        restored = restore_revision(proj.root, revision_id, message)
-        reloaded = HSFProject.load_from_disk(str(proj.root))
-        st.session_state.project = reloaded
-        st.session_state.pending_gsm_name = reloaded.name
-        st.session_state.pending_diffs = {}
-        st.session_state.pending_ai_label = ""
-        st.session_state.compile_result = None
-        st.session_state.preview_2d_data = None
-        st.session_state.preview_3d_data = None
-        st.session_state.preview_warnings = []
-        st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-        _reset_tapir_p0_state()
-        _bump_main_editor_version()
-        return True, f"✅ 已恢复 `{revision_id}`，当前最新版本为 `{restored.revision_id}`"
-    except Exception as exc:
-        return False, f"❌ 恢复版本失败：{exc}"
-
-
 def import_gsm(gsm_bytes: bytes, filename: str) -> tuple:
     """
     Decompile GSM → HSF → HSFProject via LP_XMLConverter libpart2hsf.
@@ -2851,160 +2812,27 @@ _ev      = st.session_state.editor_version
 
 with col_left:
     with st.container(height=820, border=False):
-        tb_import, tb_compile_top = st.columns([1.8, 2.2])
-
-        with tb_import:
-            any_upload = st.file_uploader(
-                "📂 导入 gdl / txt / gsm", type=["gdl", "txt", "gsm"],
-                key="editor_import",
-                help=".gdl/.txt → 解析脚本  |  .gsm → LP_XMLConverter 解包",
-                disabled=_is_generation_locked(st.session_state),
-            )
-            if any_upload:
-                # Dedup: skip if this exact file was already processed this session
-                _fkey = f"{any_upload.name}_{any_upload.size}"
-                if st.session_state._import_key_done != _fkey:
-                    ok, _imp_msg = _handle_unified_import(any_upload)
-                    if ok:
-                        st.session_state._import_key_done = _fkey
-                        st.rerun()
-                    else:
-                        st.error(_imp_msg)
-
-            hsf_dir_input = st.text_input(
-                "HSF 项目目录",
-                value="",
-                placeholder="/path/to/YourHSFProject",
-                key="editor_hsf_dir",
-                disabled=_is_generation_locked(st.session_state),
-            )
-            if st.button(
-                "载入 HSF 项目",
-                key="editor_load_hsf",
-                disabled=_is_generation_locked(st.session_state),
-                use_container_width=True,
-            ):
-                ok, _hsf_msg = _handle_hsf_directory_load(hsf_dir_input)
-                if ok:
-                    st.rerun()
-                else:
-                    st.error(_hsf_msg)
-
-        with tb_compile_top:
-            # GSM name input + compile button stacked in this column
-            gsm_name_input = st.text_input(
-                "GSM名称", label_visibility="collapsed",
-                value=st.session_state.pending_gsm_name or proj_now.name,
-                placeholder="输出 GSM 名称（不含扩展名）",
-                help="编译输出文件名",
-            )
-            st.session_state.pending_gsm_name = gsm_name_input
-            if st.button("🔧  编  译  GSM", type="primary", width='stretch',
-                         help="将当前所有脚本编译为 ArchiCAD .gsm 对象",
-                         disabled=st.session_state.agent_running):
-                with st.spinner("编译中..."):
-                    success, result_msg = do_compile(
-                        proj_now,
-                        gsm_name=gsm_name_input or proj_now.name,
-                        instruction="(toolbar compile)",
-                    )
-                st.session_state.compile_result = (success, result_msg)
-                if success:
-                    if st.session_state.get("revision_auto_snapshot", True):
-                        _rev_ok, _rev_msg = _save_current_project_revision(
-                            proj_now,
-                            f"Compile {gsm_name_input or proj_now.name}",
-                        )
-                        st.session_state.revision_notice = _rev_msg
-                    st.toast("✅ 编译成功", icon="🏗️")
-                st.rerun()
-
-        if st.session_state.compile_result is not None:
-            _c_ok, _c_msg = st.session_state.compile_result
-            if _c_ok:
-                st.success(_c_msg)
-            else:
-                st.error(_c_msg)
-
-        with st.expander("🕘 版本管理", expanded=True):
-            _project_root_text = str(getattr(proj_now, "root", "") or "")
-            st.caption(f"当前项目目录：`{_project_root_text}`")
-            st.checkbox(
-                "编译成功后自动保存版本",
-                key="revision_auto_snapshot",
-                help="保存 HSF 源文件快照，不保存 .gsm 编译产物",
-            )
-            _revision_message = st.text_input(
-                "版本说明",
-                value="",
-                placeholder="例如：调整层板厚度 / 编译前稳定版本",
-                key="revision_message_input",
-                disabled=_is_generation_locked(st.session_state),
-            )
-            _rev_col_save, _rev_col_refresh = st.columns([1.2, 1.0])
-            with _rev_col_save:
-                if st.button(
-                    "保存版本",
-                    key="revision_save_button",
-                    width='stretch',
-                    disabled=_is_generation_locked(st.session_state),
-                ):
-                    _ok, _msg = _save_current_project_revision(proj_now, _revision_message)
-                    st.session_state.revision_notice = _msg
-                    if _ok:
-                        st.toast("已保存版本", icon="✅")
-                    st.rerun()
-            with _rev_col_refresh:
-                if st.button("刷新历史", key="revision_refresh_button", width='stretch'):
-                    st.rerun()
-
-            _notice = st.session_state.get("revision_notice", "")
-            if _notice:
-                if _notice.startswith("✅"):
-                    st.success(_notice)
-                else:
-                    st.error(_notice)
-
-            try:
-                from openbrep.revisions import get_latest_revision_id, list_revisions
-
-                _revisions = list_revisions(proj_now.root)
-                _latest_revision = get_latest_revision_id(proj_now.root)
-            except Exception as _rev_exc:
-                _revisions = []
-                _latest_revision = None
-                st.caption(f"暂无可读取版本：{_rev_exc}")
-
-            if _revisions:
-                _revision_options = [r.revision_id for r in reversed(_revisions)]
-                _selected_revision = st.selectbox(
-                    "版本历史",
-                    options=_revision_options,
-                    key="revision_restore_select",
-                    help="选择一个版本查看说明或恢复",
-                )
-                _selected_meta = next((r for r in _revisions if r.revision_id == _selected_revision), None)
-                if _selected_meta:
-                    _latest_mark = " · 最新" if _selected_meta.revision_id == _latest_revision else ""
-                    st.caption(
-                        f"{_selected_meta.created_at}{_latest_mark} · "
-                        f"{len(_selected_meta.files)} 个源文件"
-                    )
-                    if _selected_meta.message:
-                        st.caption(f"说明：{_selected_meta.message}")
-                if st.button(
-                    "恢复此版本",
-                    key="revision_restore_button",
-                    width='stretch',
-                    disabled=_is_generation_locked(st.session_state),
-                ):
-                    _ok, _msg = _restore_project_revision(proj_now, _selected_revision)
-                    st.session_state.revision_notice = _msg
-                    if _ok:
-                        st.toast("已恢复版本", icon="✅")
-                    st.rerun()
-            else:
-                st.caption("还没有版本。点击“保存版本”后，这里会显示历史。")
+        ui_project_tools_panel.render_project_tools_panel(
+            st,
+            proj_now,
+            is_generation_locked_fn=lambda: _is_generation_locked(st.session_state),
+            handle_unified_import_fn=_handle_unified_import,
+            handle_hsf_directory_load_fn=_handle_hsf_directory_load,
+            do_compile_fn=lambda project, gsm_name, instruction: do_compile(
+                project,
+                gsm_name=gsm_name,
+                instruction=instruction,
+            ),
+            save_revision_fn=ui_revision_controller.save_current_project_revision,
+            restore_revision_fn=lambda project, revision_id: ui_revision_controller.restore_project_revision(
+                project,
+                revision_id,
+                session_state=st.session_state,
+                load_project_from_disk_fn=HSFProject.load_from_disk,
+                reset_tapir_p0_state_fn=_reset_tapir_p0_state,
+                bump_main_editor_version_fn=_bump_main_editor_version,
+            ),
+        )
 
         if _TAPIR_IMPORT_OK:
             _bridge = get_bridge()

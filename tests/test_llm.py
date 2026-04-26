@@ -51,8 +51,6 @@ from ui.app import (
     _capture_last_project_snapshot,
     _restore_last_project_snapshot,
     _route_main_input,
-    _restore_project_revision,
-    _save_current_project_revision,
     _verify_pro_code,
     _license_record_is_active,
     _import_pro_knowledge_zip,
@@ -62,6 +60,10 @@ from ui.app import (
     _copy_text_to_system_clipboard,
     _normalize_converter_path,
     classify_and_extract,
+)
+from ui.revision_controller import (
+    restore_project_revision,
+    save_current_project_revision,
 )
 
 class TestRunAgentGenerateResultPlan(unittest.TestCase):
@@ -1527,7 +1529,7 @@ class TestImportFlows(unittest.TestCase):
             project = HSFProject.create_new("Chair", work_dir=tmpdir)
             project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nEND\n")
 
-            ok, msg = _save_current_project_revision(project, "initial")
+            ok, msg = save_current_project_revision(project, "initial")
 
             self.assertTrue(ok, msg)
             self.assertIn("r0001", msg)
@@ -1537,7 +1539,7 @@ class TestImportFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = HSFProject.create_new("Chair", work_dir=tmpdir)
             project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nEND\n")
-            ok, _msg = _save_current_project_revision(project, "initial")
+            ok, _msg = save_current_project_revision(project, "initial")
             self.assertTrue(ok)
 
             project.set_script(ScriptType.SCRIPT_3D, "CYLIND 1, 1\nEND\n")
@@ -1555,7 +1557,14 @@ class TestImportFlows(unittest.TestCase):
                         "preview_warnings": ["old"],
                         "preview_meta": {"kind": "old", "timestamp": "old"},
                     }, clear=False):
-                        ok, msg = _restore_project_revision(project, "r0001")
+                        ok, msg = restore_project_revision(
+                            project,
+                            "r0001",
+                            session_state=__import__("ui.app", fromlist=["st"]).st.session_state,
+                            load_project_from_disk_fn=HSFProject.load_from_disk,
+                            reset_tapir_p0_state_fn=reset_tapir,
+                            bump_main_editor_version_fn=bump_editor,
+                        )
                         state = __import__("ui.app", fromlist=["st"]).st.session_state
                         restored_script = state.project.get_script(ScriptType.SCRIPT_3D)
                         pending_gsm_name = state.pending_gsm_name
