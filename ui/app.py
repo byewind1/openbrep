@@ -75,6 +75,7 @@ from ui import chat_controller as ui_chat_controller
 from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
 from ui.views import project_tools_panel as ui_project_tools_panel
+from ui.views import workspace_tools_panel as ui_workspace_tools_panel
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
@@ -2834,181 +2835,19 @@ with col_left:
             ),
         )
 
-        if _TAPIR_IMPORT_OK:
-            _bridge = get_bridge()
-            _tapir_ok = _bridge.is_available()
-            if _tapir_ok:
-                _ac_col1, _ac_col2 = st.columns([2, 3])
-                with _ac_col1:
-                    if st.button("🏗️ 在 Archicad 中测试", width='stretch',
-                                 help="触发 Archicad 重新加载库，捕获 GDL 运行期错误回传到 chat"):
-                        st.session_state.tapir_test_trigger = True
-                        st.rerun()
-                with _ac_col2:
-                    st.caption("✅ Archicad + Tapir 已连接")
-
-                _p0_b1, _p0_b2, _p0_b3, _p0_b4 = st.columns(4)
-                with _p0_b1:
-                    if st.button("同步选中", width='stretch'):
-                        st.session_state.tapir_selection_trigger = True
-                        st.rerun()
-                with _p0_b2:
-                    if st.button("高亮选中", width='stretch'):
-                        st.session_state.tapir_highlight_trigger = True
-                        st.rerun()
-                with _p0_b3:
-                    if st.button("读取参数", width='stretch'):
-                        st.session_state.tapir_load_params_trigger = True
-                        st.rerun()
-                with _p0_b4:
-                    _can_apply = bool(st.session_state.get("tapir_selected_params"))
-                    if st.button("应用参数", width='stretch', disabled=not _can_apply):
-                        st.session_state.tapir_apply_params_trigger = True
-                        st.rerun()
-            else:
-                st.caption("⚪ Archicad 未运行或 Tapir 未安装，跳过实时测试")
-
-        _tb_meta_1, _tb_meta_2, _tb_meta_3 = st.columns([1.2, 1.0, 1.0])
-
-        with _tb_meta_1:
-            if st.button("🔍 全检查", width='stretch'):
-                _check_all_ok = True
-                for _stype, _fpath, _label in _SCRIPT_MAP:
-                    _chk_content = proj_now.get_script(_stype)
-                    if not _chk_content:
-                        continue
-                    _skey = _fpath.replace("scripts/", "").replace(".gdl", "")
-                    for _iss in check_gdl_script(_chk_content, _skey):
-                        if _iss.startswith("✅"):
-                            st.success(f"{_label}: {_iss}")
-                        else:
-                            st.warning(f"{_label}: {_iss}")
-                            _check_all_ok = False
-                if _check_all_ok:
-                    st.success("✅ 所有脚本语法正常")
-
-        with _tb_meta_2:
-            if st.button("🗑️ 清空", width='stretch', help="重置项目：脚本、参数、日志全清，保留设置"):
-                st.session_state.confirm_clear = True
-
-        with _tb_meta_3:
-            if st.button("📋 日志", width='stretch'):
-                st.session_state["_show_log_dialog"] = True
-
-        _tb_prev2d, _tb_prev3d = st.columns(2)
-
-        with _tb_prev2d:
-            if st.button("👁️ 预览 2D", width='stretch', help="运行 2D 子集解释并显示图形"):
-                _ok, _msg = _run_preview(proj_now, "2d")
-                if _ok:
-                    st.toast(_msg, icon="✅")
-                else:
-                    st.error(_msg)
-
-        with _tb_prev3d:
-            if st.button("🧊 预览 3D", width='stretch', help="运行 3D 子集解释并显示图形"):
-                _ok, _msg = _run_preview(proj_now, "3d")
-                if _ok:
-                    st.toast(_msg, icon="✅")
-                else:
-                    st.error(_msg)
-
-        _pv_opt_c1, _pv_opt_c2, _pv_opt_c3 = st.columns([1.0, 1.2, 1.0])
-        with _pv_opt_c1:
-            st.checkbox(
-                "Strict",
-                key="preview_strict",
-                help="开启后遇到策略=error 的未知命令会直接报错停止",
-            )
-        with _pv_opt_c2:
-            st.selectbox(
-                "Unknown policy",
-                options=["warn", "ignore", "error"],
-                key="preview_unknown_command_policy",
-                help="未知命令处理策略：告警/忽略/报错",
-            )
-        with _pv_opt_c3:
-            st.selectbox(
-                "Quality",
-                options=["fast", "accurate"],
-                key="preview_quality",
-                help="fast 更快；accurate 细分更高",
-            )
-
-        @st.dialog("📋 编译日志")
-        def _show_log_dialog():
-            if not st.session_state.compile_log:
-                st.info("暂无编译记录")
-            else:
-                for _entry in reversed(st.session_state.compile_log):
-                    _icon = "✅" if _entry["success"] else "❌"
-                    st.markdown(f"**{_icon} {_entry['project']}** — {_entry.get('instruction','')}")
-                    st.code(_entry["message"], language="text")
-                    st.divider()
-            if st.button("清除日志"):
-                st.session_state.compile_log = []
-                st.session_state.compile_result = None
-                st.rerun()
-
-        if st.session_state.get("_show_log_dialog"):
-            st.session_state["_show_log_dialog"] = False
-            _show_log_dialog()
-
-        if st.session_state.get("confirm_clear"):
-            st.warning("⚠️ 将重置项目（脚本、参数、编译日志），聊天记录保留。确认继续？")
-            cc1, cc2, _ = st.columns([1, 1, 4])
-            with cc1:
-                if st.button("✅ 确认清空", type="primary"):
-                    _keep_work_dir = st.session_state.work_dir
-                    _keep_api_keys = st.session_state.model_api_keys
-                    _keep_chat     = st.session_state.chat_history   # preserve chat
-                    st.session_state.project          = None
-                    st.session_state.compile_log      = []
-                    st.session_state.compile_result   = None
-                    st.session_state.pending_diffs    = {}
-                    st.session_state.pending_ai_label = ""
-                    st.session_state.pending_gsm_name = ""
-                    st.session_state.script_revision  = 0
-                    st.session_state.agent_running    = False
-                    st.session_state._import_key_done = ""
-                    st.session_state.confirm_clear    = False
-                    st.session_state.preview_2d_data  = None
-                    st.session_state.preview_3d_data  = None
-                    st.session_state.preview_warnings = []
-                    st.session_state.preview_meta     = {"kind": "", "timestamp": ""}
-                    _reset_tapir_p0_state()
-                    _bump_main_editor_version()
-                    st.session_state.work_dir         = _keep_work_dir
-                    st.session_state.model_api_keys   = _keep_api_keys
-                    st.session_state.chat_history     = _keep_chat
-                    st.toast("🗑️ 已重置项目（脚本、参数、日志），聊天记录保留", icon="✅")
-                    st.rerun()
-            with cc2:
-                if st.button("❌ 取消"):
-                    st.session_state.confirm_clear = False
-                    st.rerun()
-
-        st.divider()
-        _pm = st.session_state.get("preview_meta") or {}
-        _pkind = _pm.get("kind", "")
-        _pts = _pm.get("timestamp", "")
-        _p_title = f"最新预览：{_pkind} · {_pts}" if _pkind else "预览面板（2D / 3D）"
-        st.markdown(f"#### {_p_title}")
-
-        _pv_tab_2d, _pv_tab_3d, _pv_tab_warn = st.tabs(["2D", "3D", "Warnings"])
-        with _pv_tab_2d:
-            _render_preview_2d(st.session_state.get("preview_2d_data"))
-        with _pv_tab_3d:
-            _render_preview_3d(st.session_state.get("preview_3d_data"))
-        with _pv_tab_warn:
-            _warns = st.session_state.get("preview_warnings") or []
-            if not _warns:
-                st.caption("暂无 warning。")
-            else:
-                for _w in _warns:
-                    _txt = str(_w)
-                    _txt = re.sub(r"^line\s+(\d+):", r"3d.gdl:L\1", _txt)
-                    st.warning(_txt)
+        ui_workspace_tools_panel.render_workspace_tools_panel(
+            st,
+            proj_now,
+            tapir_import_ok=_TAPIR_IMPORT_OK,
+            get_bridge_fn=get_bridge,
+            script_map=_SCRIPT_MAP,
+            check_gdl_script_fn=check_gdl_script,
+            run_preview_fn=_run_preview,
+            render_preview_2d_fn=_render_preview_2d,
+            render_preview_3d_fn=_render_preview_3d,
+            reset_tapir_p0_state_fn=_reset_tapir_p0_state,
+            bump_main_editor_version_fn=_bump_main_editor_version,
+        )
 
 with col_mid:
     with st.container(height=820, border=False):
