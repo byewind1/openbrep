@@ -137,6 +137,23 @@ def get_latest_revision_id(project_dir: str | Path) -> str | None:
     return value or None
 
 
+def copy_project_metadata(source_project_dir: str | Path, target_project_dir: str | Path) -> bool:
+    """Copy project-level OpenBrep metadata, including revisions, between HSF roots."""
+    source_root = Path(source_project_dir).expanduser().resolve()
+    target_root = Path(target_project_dir).expanduser().resolve()
+    if source_root == target_root:
+        return False
+
+    source_meta = source_root / OPENBREP_DIR
+    if not source_meta.exists() or not source_meta.is_dir():
+        return False
+
+    target_meta = target_root / OPENBREP_DIR
+    target_meta.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_meta, target_meta, dirs_exist_ok=True)
+    return True
+
+
 def is_hsf_project_dir(project_dir: str | Path) -> bool:
     """Return True when a directory looks like an HSF project root."""
     root = Path(project_dir)

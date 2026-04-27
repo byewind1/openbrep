@@ -19,6 +19,7 @@ class ProjectService:
     reset_tapir_p0_state_fn: Callable[[], None]
     bump_main_editor_version_fn: Callable[[], None]
     import_gsm_override_fn: Callable[[bytes, str], tuple] | None = None
+    reset_revision_ui_state_fn: Callable[[object], None] | None = None
 
     def do_compile(self, proj, gsm_name: str, instruction: str = "") -> tuple[bool, str]:
         return project_io.do_compile(
@@ -60,7 +61,7 @@ class ProjectService:
         )
 
     def finalize_loaded_project(self, proj, msg: str, pending_gsm_name: str) -> tuple[bool, str]:
-        return ui_actions.finalize_loaded_project(
+        result = ui_actions.finalize_loaded_project(
             proj,
             msg,
             pending_gsm_name,
@@ -68,3 +69,6 @@ class ProjectService:
             self.reset_tapir_p0_state_fn,
             self.bump_main_editor_version_fn,
         )
+        if self.reset_revision_ui_state_fn is not None:
+            self.reset_revision_ui_state_fn(self.session_state)
+        return result

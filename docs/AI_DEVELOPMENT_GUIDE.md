@@ -84,7 +84,7 @@ As of 2026-04-27:
 ```text
 main should be clean and pushed before new work starts
 ui/app.py: 1588 lines
-test baseline: 472 passed, 6 subtests passed
+test baseline: 473 passed, 6 subtests passed
 ```
 
 Core refactor boundaries already merged:

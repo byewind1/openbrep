@@ -1029,6 +1029,7 @@ def _project_service() -> ui_project_service.ProjectService:
         reset_tapir_p0_state_fn=_reset_tapir_p0_state,
         bump_main_editor_version_fn=_bump_main_editor_version,
         import_gsm_override_fn=import_gsm,
+        reset_revision_ui_state_fn=ui_revision_controller.reset_revision_ui_state,
     )
 
 

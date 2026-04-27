@@ -214,6 +214,11 @@ workspace/
 This is different from the existing workspace-level `.openbrep/` used for
 license and temporary Pro package extraction.
 
+When an existing HSF project is loaded or imported into the active workspace,
+its project-level `.openbrep/` directory should be copied with the HSF source.
+This keeps revision history attached to the GDL project instead of leaking or
+resetting through the OpenBrep UI session.
+
 Use this distinction:
 
 ```text
@@ -323,4 +328,3 @@ Recommended v0.7 answers:
 - Manual editor changes create a revision when the user clicks compile or
   explicitly saves a snapshot.
 - Keep workspace-level `output/` for compatibility.
-

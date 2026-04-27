@@ -4,6 +4,20 @@ from openbrep.hsf_project import HSFProject
 from openbrep.revisions import create_revision, restore_revision
 
 
+REVISION_SESSION_KEYS = {
+    "revision_notice",
+    "revision_message_input",
+    "revision_restore_select",
+}
+
+
+def reset_revision_ui_state(session_state) -> None:
+    """Clear revision panel state when the active HSF project changes."""
+    for key in list(session_state.keys()):
+        if key in REVISION_SESSION_KEYS or str(key).startswith("revision_project_"):
+            session_state.pop(key, None)
+
+
 def save_current_project_revision(proj: HSFProject | None, message: str = "") -> tuple[bool, str]:
     if proj is None:
         return False, "❌ 当前没有项目"

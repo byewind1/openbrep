@@ -86,13 +86,20 @@ class TestProjectService(unittest.TestCase):
                 work_dir=tmp,
                 chat_history=[],
                 pending_diffs={"x": "y"},
+                revision_notice="old revision",
+                revision_project_old_notice="old project revision",
                 preview_2d_data={"old": True},
                 preview_3d_data={"old": True},
                 preview_warnings=["old"],
                 preview_meta={"kind": "old"},
             )
             calls = {"reset": 0, "bump": 0}
-            proj = SimpleNamespace(name="Chair", parameters=[1, 2], scripts={"3d": "BLOCK 1,1,1"})
+            proj = SimpleNamespace(
+                name="Chair",
+                root=hsf_dir,
+                parameters=[1, 2],
+                scripts={"3d": "BLOCK 1,1,1"},
+            )
 
             service = ProjectService(
                 session_state=session_state,
@@ -103,6 +110,11 @@ class TestProjectService(unittest.TestCase):
                 load_project_from_disk_fn=lambda _path: proj,
                 reset_tapir_p0_state_fn=lambda: calls.__setitem__("reset", calls["reset"] + 1),
                 bump_main_editor_version_fn=lambda: calls.__setitem__("bump", calls["bump"] + 1),
+                reset_revision_ui_state_fn=lambda state: [
+                    state.pop(key, None)
+                    for key in list(state.keys())
+                    if str(key).startswith("revision")
+                ],
             )
 
             ok, msg = service.handle_hsf_directory_load(str(hsf_dir))
@@ -112,6 +124,8 @@ class TestProjectService(unittest.TestCase):
             self.assertIs(session_state.project, proj)
             self.assertEqual(session_state.pending_gsm_name, "Chair")
             self.assertEqual(session_state.pending_diffs, {})
+            self.assertNotIn("revision_notice", session_state)
+            self.assertNotIn("revision_project_old_notice", session_state)
             self.assertIsNone(session_state.preview_2d_data)
             self.assertIsNone(session_state.preview_3d_data)
             self.assertEqual(calls, {"reset": 1, "bump": 1})

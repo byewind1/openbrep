@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from openbrep.revisions import (
+    copy_project_metadata,
     create_revision,
     get_latest_revision_id,
     list_revisions,
@@ -96,6 +97,21 @@ class TestProjectRevisions(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 create_revision(plain_dir, "no source")
+
+    def test_copy_project_metadata_imports_existing_revision_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = self._make_project(tmpdir)
+            create_revision(source, "initial")
+
+            target = Path(tmpdir) / "ImportedChair"
+            target.mkdir()
+            (target / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+
+            copied = copy_project_metadata(source, target)
+
+            self.assertTrue(copied)
+            self.assertEqual(get_latest_revision_id(target), "r0001")
+            self.assertEqual([r.message for r in list_revisions(target)], ["initial"])
 
 
 if __name__ == "__main__":

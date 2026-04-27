@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Callable
 
 from openbrep.hsf_project import HSFProject
@@ -16,6 +17,8 @@ def render_revision_panel(
 ) -> None:
     with st.expander("🕘 版本管理", expanded=True):
         project_root_text = str(getattr(proj, "root", "") or "")
+        project_key = hashlib.sha1(project_root_text.encode("utf-8")).hexdigest()[:10]
+        notice_key = f"revision_project_{project_key}_notice"
         st.caption(f"当前项目目录：`{project_root_text}`")
         st.checkbox(
             "编译成功后自动保存版本",
@@ -26,7 +29,7 @@ def render_revision_panel(
             "版本说明",
             value="",
             placeholder="例如：调整层板厚度 / 编译前稳定版本",
-            key="revision_message_input",
+            key=f"revision_project_{project_key}_message_input",
             disabled=is_generation_locked_fn(),
         )
 
@@ -39,7 +42,7 @@ def render_revision_panel(
                 disabled=is_generation_locked_fn(),
             ):
                 ok, msg = save_revision_fn(proj, revision_message)
-                st.session_state.revision_notice = msg
+                st.session_state[notice_key] = msg
                 if ok:
                     st.toast("已保存版本", icon="✅")
                 st.rerun()
@@ -47,7 +50,7 @@ def render_revision_panel(
             if st.button("刷新历史", key="revision_refresh_button", width="stretch"):
                 st.rerun()
 
-        notice = st.session_state.get("revision_notice", "")
+        notice = st.session_state.get(notice_key, "")
         if notice:
             if notice.startswith("✅"):
                 st.success(notice)
@@ -70,7 +73,7 @@ def render_revision_panel(
         selected_revision = st.selectbox(
             "版本历史",
             options=revision_options,
-            key="revision_restore_select",
+            key=f"revision_project_{project_key}_restore_select",
             help="选择一个版本查看说明或恢复",
         )
         selected_meta = next((r for r in revisions if r.revision_id == selected_revision), None)
@@ -90,7 +93,7 @@ def render_revision_panel(
             disabled=is_generation_locked_fn(),
         ):
             ok, msg = restore_revision_fn(proj, selected_revision)
-            st.session_state.revision_notice = msg
+            st.session_state[notice_key] = msg
             if ok:
                 st.toast("已恢复版本", icon="✅")
             st.rerun()
