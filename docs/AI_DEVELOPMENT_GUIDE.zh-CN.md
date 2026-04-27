@@ -319,6 +319,24 @@ python -m pytest tests/ -q
 git push
 ```
 
+默认收尾动作：
+
+除非用户明确要求不要提交或不要 push，否则完成的代码或文档工作默认以
+commit、push、同步 main 收尾。直接在 `main` 工作时：
+
+```bash
+python -m pytest tests/ -q
+git add ...
+git commit -m "type: concise summary"
+git push
+git status --short --branch
+git rev-parse main
+git rev-parse origin/main
+```
+
+如果在分支工作，先 push 分支，再 merge 回 `main`，跑全量测试，push `main`，
+最后确认 `main` 与 `origin/main` 指向同一提交。
+
 ## AI 变更审查清单
 
 提交前回答这些问题：

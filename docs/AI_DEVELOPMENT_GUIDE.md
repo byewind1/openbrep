@@ -327,6 +327,24 @@ python -m pytest tests/ -q
 git push
 ```
 
+Default finish sequence:
+
+Unless the user explicitly asks not to commit or push, completed work should end
+with commit, push, and main/origin synchronization. For direct `main` work:
+
+```bash
+python -m pytest tests/ -q
+git add ...
+git commit -m "type: concise summary"
+git push
+git status --short --branch
+git rev-parse main
+git rev-parse origin/main
+```
+
+For branch work, push the branch first, then merge to `main`, run full tests,
+push `main`, and verify `main` equals `origin/main`.
+
 ## Review Checklist For AI Changes
 
 Before finalizing a change, answer these:

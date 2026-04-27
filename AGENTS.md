@@ -129,6 +129,37 @@ ui/session_defaults.py
 ui/views/*
 ```
 
+## Default Finish Sequence
+
+Unless the user explicitly asks not to commit or push, finish completed code or
+documentation work with this sequence:
+
+```bash
+python -m pytest tests/ -q
+git add ...
+git commit -m "type: concise summary"
+git push
+```
+
+If work was done on a branch, merge it back to `main` after tests pass:
+
+```bash
+git switch main
+git merge --no-ff branch-name -m "merge branch-name"
+python -m pytest tests/ -q
+git push
+git status --short --branch
+git rev-parse main
+git rev-parse origin/main
+```
+
+The final state should normally be:
+
+```text
+main and origin/main point to the same commit
+working tree is clean
+```
+
 ## Manual Risk
 
 Unit tests do not fully cover Streamlit UI behavior or real Archicad/Tapir
