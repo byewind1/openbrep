@@ -64,6 +64,7 @@ from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
 from ui import vision_controller as ui_vision_controller
 from ui import gdl_checks as ui_gdl_checks
+from ui import generation_service as ui_generation_service
 from ui import session_defaults as ui_session_defaults
 from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
@@ -1201,133 +1202,35 @@ def run_agent_generate(
     debug_mode (intent-based) controls whether all scripts are injected into LLM context
     and whether LLM is allowed to reply with plain-text analysis in addition to code.
     """
-    logging.debug(f"run_agent_generate called, instruction: {user_input[:100]}")
-    generation_id = _begin_generation_state(st.session_state)
-    status_ph = status_col.empty()
-    debug_mode = (
-        _is_debug_intent(user_input)
-        and not _is_explainer_intent(user_input)
-        and not _is_post_clarification_prompt(user_input)
+    service = ui_generation_service.GenerationService(
+        session_state=st.session_state,
+        pipeline_class=TaskPipeline,
+        config_loader_fn=GDLAgentConfig.load,
+        build_generation_result_plan_fn=build_generation_result_plan,
+        begin_generation_state_fn=_begin_generation_state,
+        is_active_generation_fn=_is_active_generation,
+        should_accept_generation_result_fn=lambda _state, generation_id: _consume_generation_result(generation_id),
+        finish_generation_state_fn=lambda _state, generation_id, status: _finalize_generation(generation_id, status),
+        generation_cancelled_message_fn=_generation_cancelled_message,
+        trim_history_fn=lambda history: _trim_history_for_image(history, limit=4),
+        is_debug_intent_fn=_is_debug_intent,
+        get_debug_mode_fn=_get_debug_mode,
+        is_explainer_intent_fn=_is_explainer_intent,
+        is_modify_bridge_prompt_fn=_is_modify_bridge_prompt,
+        is_post_clarification_prompt_fn=_is_post_clarification_prompt,
+        apply_generation_plan_fn=_apply_generation_plan,
+        build_generation_reply_fn=_build_generation_reply,
+        logger=logger,
     )
-    debug_type = _get_debug_mode(user_input)  # 'editor' | 'keyword'
-
-    def on_event(event_type, data):
-        if not _is_active_generation(st.session_state, generation_id):
-            return
-        if event_type == "analyze":
-            scripts = data.get("affected_scripts", [])
-            mode_tag = f" [Debug:{debug_type}]" if debug_mode else ""
-            _guarded_event_update(status_ph, generation_id, "info", f"🔍 分析中{mode_tag}... 脚本: {', '.join(scripts)}")
-        elif event_type == "attempt":
-            _guarded_event_update(status_ph, generation_id, "info", "🧠 调用 AI...")
-        elif event_type == "llm_response":
-            _guarded_event_update(status_ph, generation_id, "info", f"✏️ 收到 {data['length']} 字符，解析中...")
-        elif event_type == "validate":
-            errors = data.get("errors", [])
-            warnings = data.get("warnings", [])
-            if errors:
-                _guarded_event_update(status_ph, generation_id, "error", f"❌ 发现 {len(errors)} 个错误，AI 自动修复中...")
-            elif warnings:
-                _guarded_event_update(status_ph, generation_id, "warning", f"⚠️ 发现 {len(warnings)} 条建议，已附在结果中")
-            else:
-                _guarded_event_update(status_ph, generation_id, "success", "✅ 校验通过")
-        elif event_type == "rewrite":
-            round_num = data.get("round", 2)
-            _guarded_event_update(status_ph, generation_id, "info", f"🔄 第 {round_num} 轮修复中...")
-        elif event_type == "cancelled":
-            _guarded_event_update(status_ph, generation_id, "warning", "⏹️ 正在停止当前生成...")
-        elif event_type == "compile_result":
-            if data.get("success"):
-                _guarded_event_update(status_ph, generation_id, "success", "✅ 编译验证通过")
-            elif data.get("error"):
-                _guarded_event_update(status_ph, generation_id, "warning", "⚠️ 编译验证失败，已附在结果中")
-        elif event_type == "status":
-            _guarded_event_update(status_ph, generation_id, "info", data.get("message", ""))
-        elif event_type == "vision_analysis_done":
-            component = data.get("component_type", "")
-            label = f"「{component}」" if component and component != "未知构件" else ""
-            _guarded_event_update(status_ph, generation_id, "info", f"🖼️ 图像分析完成{label}，正在生成 GDL…")
-
-    try:
-        # Pass recent chat history for multi-turn context (last 6 messages, skip heavy code blocks)
-        recent_history = _trim_history_for_image([
-            m for m in st.session_state.chat_history[-8:]
-            if m["role"] in ("user", "assistant")
-        ])
-
-        pipeline_project = proj if auto_apply else deepcopy(proj)
-        if debug_mode:
-            intent = "REPAIR"
-        elif _is_modify_bridge_prompt(user_input):
-            intent = "MODIFY"
-        elif _is_post_clarification_prompt(user_input):
-            if "本次确认目标：先快速解释脚本结构" in user_input:
-                intent = "CHAT"
-            else:
-                intent = "MODIFY"
-        elif _is_explainer_intent(user_input):
-            intent = "CHAT"
-        elif any(pipeline_project.get_script(st) for st in ScriptType):
-            intent = "MODIFY"
-        else:
-            intent = "CREATE"
-
-        logger.info(
-            "pipeline generate route=%s image_name=%s has_project=%s prompt_len=%d",
-            intent.lower(),
-            "inline-image" if debug_image_b64 else "none",
-            bool(proj),
-            len(user_input or ""),
-        )
-
-        pipeline = TaskPipeline(trace_dir="./traces")
-        pipeline.config = GDLAgentConfig.load()
-        request = TaskRequest(
-            user_input=user_input,
-            intent=intent,
-            project=pipeline_project,
-            work_dir=st.session_state.work_dir,
-            gsm_name=gsm_name or pipeline_project.name,
-            output_dir=str(Path(st.session_state.work_dir) / "output"),
-            assistant_settings=st.session_state.get("assistant_settings", ""),
-            on_event=on_event,
-            history=recent_history,
-            last_code_context=None,
-            should_cancel=lambda: not _should_accept_generation_result(st.session_state, generation_id),
-            image_b64=debug_image_b64,
-            image_mime=debug_image_mime,
-        )
-
-        result = pipeline.execute(request)
-        if not result.success:
-            status_ph.empty()
-            _finalize_generation(generation_id, "failed")
-            return f"❌ **错误**: {result.error}"
-
-        if not _consume_generation_result(generation_id):
-            status_ph.empty()
-            _finalize_generation(generation_id, "cancelled")
-            return _generation_cancelled_message()
-
-        status_ph.empty()
-        result_prefix = ""
-        code_blocks: list[str] = []
-        plan = build_generation_result_plan(result, auto_apply=auto_apply, gsm_name=gsm_name)
-        if plan.has_changes:
-            if auto_apply and result.project is not None:
-                if proj is not result.project:
-                    st.session_state.project = result.project
-                    proj = result.project
-                result_prefix, code_blocks = _apply_generation_plan(plan, proj, gsm_name, already_applied=True)
-            else:
-                result_prefix, code_blocks = _apply_generation_plan(plan, proj, gsm_name, already_applied=False)
-        _finalize_generation(generation_id, "completed")
-        return _build_generation_reply(result.plain_text, result_prefix, code_blocks)
-
-    except Exception as e:
-        status_ph.empty()
-        _finalize_generation(generation_id, "failed")
-        return f"❌ **错误**: {str(e)}"
+    return service.run_agent_generate(
+        user_input,
+        proj,
+        status_col,
+        gsm_name=gsm_name,
+        auto_apply=auto_apply,
+        debug_image_b64=debug_image_b64,
+        debug_image_mime=debug_image_mime,
+    )
 
 
 def _parse_paramlist_text(text: str) -> list:
