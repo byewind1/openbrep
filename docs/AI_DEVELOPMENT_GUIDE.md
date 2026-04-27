@@ -366,12 +366,10 @@ Does the final answer mention untested manual risks?
 High-value next steps:
 
 ```text
-1. Move license and Pro knowledge import out of ui/app.py.
-2. Move config/model source handling out of ui/app.py.
-3. Split tests/test_llm.py into focused modules.
-4. Add docs/MANUAL_TEST_CHECKLIST.md for release validation.
-5. Add ADR files for HSF-as-source and generation-service boundaries.
-6. Continue reducing ui/app.py toward 1400-1600 lines without deleting wrappers prematurely.
+1. Move config/model source handling out of ui/app.py.
+2. Split tests/test_llm.py into focused modules.
+3. Add ADR files for HSF-as-source and generation-service boundaries.
+4. Continue reducing ui/app.py toward 1400-1600 lines without deleting wrappers prematurely.
 ```
 
 ## Product Direction Reminder

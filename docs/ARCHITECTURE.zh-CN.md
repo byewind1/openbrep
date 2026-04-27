@@ -528,12 +528,10 @@ Phase 3: app shell boundary
 剩余高价值工作：
 
 ```text
-1. 将 license / Pro knowledge import 移出 app.py。
-2. 将 config/model source management 移出 app.py。
-3. 拆分 tests/test_llm.py 为聚焦测试模块。
-4. 增加 docs/MANUAL_TEST_CHECKLIST.md。
-5. 为关键架构决策增加 ADR。
-6. 在不破坏 wrapper 的前提下继续把 app.py 降到 1400-1600 行。
+1. 将 config/model source management 移出 app.py。
+2. 拆分 tests/test_llm.py 为聚焦测试模块。
+3. 为关键架构决策增加 ADR。
+4. 在不破坏 wrapper 的前提下继续把 app.py 降到 1400-1600 行。
 ```
 
 ## 手工发布检查

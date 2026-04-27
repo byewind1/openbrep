@@ -556,12 +556,10 @@ Phase 3: app shell boundary
 Remaining high-value work:
 
 ```text
-1. Move license / Pro knowledge import out of app.py.
-2. Move config/model source management out of app.py.
-3. Split tests/test_llm.py into focused test modules.
-4. Add manual Archicad/Tapir verification checklist.
-5. Add architecture decision records for major workflow choices.
-6. Continue reducing app.py toward 1400-1600 lines without breaking wrappers.
+1. Move config/model source management out of app.py.
+2. Split tests/test_llm.py into focused test modules.
+3. Add architecture decision records for major workflow choices.
+4. Continue reducing app.py toward 1400-1600 lines without breaking wrappers.
 ```
 
 ## Manual Release Checklist
