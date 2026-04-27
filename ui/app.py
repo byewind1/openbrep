@@ -23,18 +23,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
-try:
-    from streamlit_ace import st_ace
-    _ACE_AVAILABLE = True
-except ImportError:
-    _ACE_AVAILABLE = False
-
-try:
-    import plotly.graph_objects as go
-    _PLOTLY_AVAILABLE = True
-except ImportError:
-    _PLOTLY_AVAILABLE = False
-
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
 from openbrep.paramlist_builder import build_paramlist_xml
@@ -65,6 +53,7 @@ from ui import tapir_views as ui_tapir_views
 from ui import vision_controller as ui_vision_controller
 from ui import gdl_checks as ui_gdl_checks
 from ui import generation_service as ui_generation_service
+from ui import app_shell as ui_app_shell
 from ui import session_defaults as ui_session_defaults
 from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
@@ -77,101 +66,13 @@ from ui import knowledge_access as ui_knowledge_access
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
+st_ace, _ACE_AVAILABLE = ui_app_shell.load_streamlit_ace()
+go, _PLOTLY_AVAILABLE = ui_app_shell.load_plotly_graph_objects()
 
-try:
-    from openbrep.tapir_bridge import get_bridge, errors_to_chat_message
-    _TAPIR_IMPORT_OK = True
-except ImportError:
-    _TAPIR_IMPORT_OK = False
+get_bridge, errors_to_chat_message, _TAPIR_IMPORT_OK = ui_app_shell.load_tapir_bridge()
 
 
-# ── Page Config ───────────────────────────────────────────
-
-st.set_page_config(
-    page_title="openbrep",
-    page_icon="🏗️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ── Custom CSS ────────────────────────────────────────────
-
-st.markdown("""
-<style>
-.stApp { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; }
-code, .stCodeBlock { font-family: 'SF Mono', 'Menlo', 'Monaco', monospace !important; }
-
-section[data-testid="stSidebar"] .stMarkdown p.main-header {
-    font-family: 'SF Mono', 'Menlo', 'Courier New', monospace !important;
-    font-size: 2.8rem !important;
-    font-weight: 900 !important;
-    text-align: center !important;
-    display: block !important;
-    width: 100% !important;
-    white-space: nowrap;
-    background: linear-gradient(135deg, #22d3ee, #34d399);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin: 0 0 0.12rem 0 !important;
-    line-height: 0.95 !important;
-}
-.intro-header {
-    color: #cbd5e1;
-    font-size: 0.92rem;
-    margin-top: 0.15rem;
-    margin-bottom: 0.25rem;
-    line-height: 1.45;
-}
-.sub-header {
-    color: #94a3b8;
-    font-size: 0.86rem;
-    margin-top: 0;
-    margin-bottom: 1.2rem;
-}
-
-.welcome-card {
-    background: linear-gradient(135deg, #0f172a, #1e293b);
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 2rem;
-    margin: 1rem 0;
-}
-.step-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: #1e293b;
-    border-radius: 8px;
-    border-left: 3px solid #22d3ee;
-}
-.diff-current { border-left: 3px solid #475569; padding-left: 0.5rem; }
-.diff-ai      { border-left: 3px solid #f59e0b; padding-left: 0.5rem; }
-.diff-badge {
-    display: inline-block;
-    background: #f59e0b22;
-    color: #f59e0b;
-    border: 1px solid #f59e0b55;
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 0.78rem;
-    font-family: 'JetBrains Mono', monospace;
-    margin-bottom: 4px;
-}
-
-/* ── Column gap tighten ─────────────────────────────────── */
-/* Streamlit "small" gap still has padding; pull columns closer */
-div[data-testid="stHorizontalBlock"] {
-    gap: 1rem !important;
-}
-/* Subtle divider between editor and chat */
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child {
-    border-left: 1px solid #1e293b;
-    padding-left: 0.75rem;
-}
-</style>
-""", unsafe_allow_html=True)
+ui_app_shell.configure_page(st)
 
 
 # ── Session State ─────────────────────────────────────────
@@ -546,14 +447,7 @@ def _sync_llm_top_level_fields_for_model(cfg: GDLAgentConfig, model: str) -> boo
 
 
 def _is_archicad_running() -> bool:
-    try:
-        result = subprocess.run(
-            ["pgrep", "-x", "Archicad"],
-            capture_output=True, timeout=1
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+    return ui_app_shell.is_archicad_running()
 
 
 def _build_assistant_settings_prompt(text: str) -> str:
