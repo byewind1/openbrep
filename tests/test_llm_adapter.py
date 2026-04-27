@@ -130,6 +130,37 @@ class TestLLMAdapterVision(unittest.TestCase):
         self.assertIn("api_base=https://api.airsim.eu.cc/v1", message)
         self.assertIn("resolved_model=openai/glm-5.1", message)
 
+    def test_generate_wraps_insufficient_balance_with_quota_hint(self):
+        config = LLMConfig(
+            model="DeepSeek-V4-Pro",
+            timeout=10,
+            custom_providers=[
+                {
+                    "name": "scnet",
+                    "base_url": "https://api.scnet.cn/api/llm/v1",
+                    "api_key": "test-key",
+                    "models": ["DeepSeek-V4-Pro"],
+                    "protocol": "openai",
+                }
+            ],
+        )
+        adapter = LLMAdapter(config)
+
+        class FakeBadRequestError(Exception):
+            pass
+
+        adapter._litellm = MagicMock()
+        adapter._litellm.exceptions = MagicMock(AuthenticationError=PermissionError, BadRequestError=FakeBadRequestError)
+        adapter._litellm.completion.side_effect = FakeBadRequestError("OpenAIException - Insufficient Balance")
+
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("LLM 账户余额或额度不足", message)
+        self.assertIn("provider `scnet`", message)
+        self.assertIn("provider=scnet", message)
+        self.assertIn("resolved_model=openai/DeepSeek-V4-Pro", message)
+
     def test_gpt5_custom_provider_model_resolves_with_protocol_prefix(self):
         config = LLMConfig(
             model="gpt-5.4",
@@ -408,5 +439,4 @@ class TestLLMAdapterVision(unittest.TestCase):
         kwargs = adapter._litellm.completion.call_args.kwargs
         self.assertEqual(kwargs["temperature"], 0.2)
         self.assertTrue(kwargs["drop_params"])
-
 

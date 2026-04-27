@@ -86,8 +86,14 @@ class LLMAdapter:
         litellm_exceptions = getattr(self._litellm, "exceptions", None)
         bad_request = getattr(litellm_exceptions, "BadRequestError", None) if litellm_exceptions else None
         auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
+        exc_text_lower = exc_text.lower()
 
-        if auth_error and isinstance(exc, auth_error):
+        if "insufficient balance" in exc_text_lower or "code\":\"402" in exc_text_lower or "code='402'" in exc_text_lower:
+            summary = (
+                f"LLM 账户余额或额度不足：模型 `{configured_model}` 所属 provider "
+                f"`{provider_name or configured_model}` 返回余额不足，请充值或切换到有额度的模型/provider。"
+            )
+        elif auth_error and isinstance(exc, auth_error):
             if not resolved_api_key:
                 summary = (
                     f"LLM 配置错误：当前模型 `{configured_model}` 未找到可用 API Key。"
