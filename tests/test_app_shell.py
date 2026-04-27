@@ -32,6 +32,14 @@ class TestAppShell(unittest.TestCase):
         with patch("ui.app_shell.subprocess.run", side_effect=OSError("no pgrep")):
             self.assertFalse(app_shell.is_archicad_running())
 
+    def test_is_archicad_running_uses_pgrep_return_code(self):
+        with patch("ui.app_shell.subprocess.run") as run:
+            run.return_value.returncode = 0
+            self.assertTrue(app_shell.is_archicad_running())
+
+            run.return_value.returncode = 1
+            self.assertFalse(app_shell.is_archicad_running())
+
     def test_missing_tapir_bridge_returns_disabled_capability(self):
         with patch("builtins.__import__", side_effect=ImportError("missing")):
             _get_bridge, errors_to_chat_message, ok = app_shell.load_tapir_bridge()
