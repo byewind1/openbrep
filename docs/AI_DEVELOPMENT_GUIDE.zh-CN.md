@@ -6,6 +6,12 @@
 
 这是 AI 工具参与 OpenBrep 开发时必须遵守的操作契约。请和 [ARCHITECTURE.zh-CN.md](ARCHITECTURE.zh-CN.md) 一起阅读。
 
+涉及源格式、生成边界或 Skill 机制时，还应阅读：
+
+- [ADR 0001: HSF 项目目录是 OpenBrep 的源格式](adr/0001-hsf-as-source.zh-CN.md)
+- [ADR 0002: AI 生成写入由 generation service 边界承接](adr/0002-generation-service-boundary.zh-CN.md)
+- [ADR 0003: 自定义 Skill 是用户经验的可追溯输入](adr/0003-custom-skill-workflow.zh-CN.md)
+
 ## 项目使命
 
 OpenBrep 不是通用聊天机器人。它是面向 Archicad 用户和 GDL 开发者的专业 GDL 代码工作台。
@@ -66,8 +72,8 @@ python -m pytest tests/ -q
 
 ```text
 新工作开始前 main 应保持干净且已 push
-ui/app.py: 1773 行
-测试基线：452 passed, 6 subtests passed
+ui/app.py: 1588 行
+测试基线：469 passed, 6 subtests passed
 ```
 
 已经合入的核心重构边界：
@@ -204,7 +210,7 @@ otherwise                     → CREATE
 生成相关改动至少跑：
 
 ```bash
-python -m pytest tests/test_generation_service.py tests/test_llm.py -q
+python -m pytest tests/test_generation_service.py tests/test_llm.py tests/test_llm_adapter.py tests/test_config_service.py -q
 python -m pytest tests/ -q
 ```
 
@@ -381,13 +387,13 @@ merge 前是否跑了全量测试？
 
 ## 已知技术债
 
-高价值后续工作：
+已完成的治理里程碑：
 
 ```text
-1. 将 config/model source 处理移出 ui/app.py。
-2. 拆分 tests/test_llm.py 为多个聚焦测试模块。
-3. 为 HSF-as-source 和 generation-service 边界补 ADR。
-4. 在不提前删除 wrapper 的前提下，把 ui/app.py 继续降到 1400-1600 行。
+1. config/model source 处理已下沉到 ui/config_service.py。
+2. tests/test_llm.py 已拆出 LLM adapter 与 config service 聚焦测试。
+3. HSF-as-source、generation-service、custom Skill 已补 ADR。
+4. ui/app.py 已降到 1400-1600 行目标区间。
 ```
 
 ## 产品方向提醒

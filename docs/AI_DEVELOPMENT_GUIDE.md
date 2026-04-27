@@ -8,6 +8,13 @@ maintainers using AI-assisted development tools.
 This guide is the operational contract for AI agents working on OpenBrep. Read
 it together with [ARCHITECTURE.md](ARCHITECTURE.md).
 
+When touching source format, generation boundaries, or custom Skill behavior,
+also read the Chinese architecture decision records:
+
+- [ADR 0001: HSF 项目目录是 OpenBrep 的源格式](adr/0001-hsf-as-source.zh-CN.md)
+- [ADR 0002: AI 生成写入由 generation service 边界承接](adr/0002-generation-service-boundary.zh-CN.md)
+- [ADR 0003: 自定义 Skill 是用户经验的可追溯输入](adr/0003-custom-skill-workflow.zh-CN.md)
+
 ## Mission
 
 OpenBrep is not a generic chatbot. It is a professional GDL code workbench for
@@ -76,8 +83,8 @@ As of 2026-04-27:
 
 ```text
 main should be clean and pushed before new work starts
-ui/app.py: 1773 lines
-test baseline: 452 passed, 6 subtests passed
+ui/app.py: 1588 lines
+test baseline: 469 passed, 6 subtests passed
 ```
 
 Core refactor boundaries already merged:
@@ -217,7 +224,7 @@ otherwise                     → CREATE
 Tests to run for generation changes:
 
 ```bash
-python -m pytest tests/test_generation_service.py tests/test_llm.py -q
+python -m pytest tests/test_generation_service.py tests/test_llm.py tests/test_llm_adapter.py tests/test_config_service.py -q
 python -m pytest tests/ -q
 ```
 
@@ -393,15 +400,15 @@ Could this break Streamlit UI manually even if unit tests pass?
 Does the final answer mention untested manual risks?
 ```
 
-## Known Technical Debt
+## Latest Cleanup Milestone
 
-High-value next steps:
+Completed:
 
 ```text
-1. Move config/model source handling out of ui/app.py.
-2. Split tests/test_llm.py into focused modules.
-3. Add ADR files for HSF-as-source and generation-service boundaries.
-4. Continue reducing ui/app.py toward 1400-1600 lines without deleting wrappers prematurely.
+1. Config/model source handling moved to ui/config_service.py.
+2. tests/test_llm.py split into focused LLM adapter and config service tests.
+3. ADRs added for HSF-as-source, generation-service, and custom Skill workflow.
+4. ui/app.py reduced into the 1400-1600 line target range without deleting wrappers.
 ```
 
 ## Product Direction Reminder

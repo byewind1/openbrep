@@ -18,13 +18,19 @@ OpenBrep 是面向 Archicad 高阶用户和 GDL 开发者的 AI GDL 工作台。
 
 这份文档定义当前架构、模块边界、开发规则和交接规范。人类维护者和 AI 开发工具都应优先阅读。
 
+关键架构决策记录：
+
+- [ADR 0001: HSF 项目目录是 OpenBrep 的源格式](adr/0001-hsf-as-source.zh-CN.md)
+- [ADR 0002: AI 生成写入由 generation service 边界承接](adr/0002-generation-service-boundary.zh-CN.md)
+- [ADR 0003: 自定义 Skill 是用户经验的可追溯输入](adr/0003-custom-skill-workflow.zh-CN.md)
+
 ## 当前状态
 
 早期 Streamlit UI 主要集中在 `ui/app.py`。当前 `main` 已经完成第一轮架构治理，核心逻辑被拆入明确边界：
 
 ```text
-ui/app.py: 1773 行
-测试基线：452 passed, 6 subtests passed
+ui/app.py: 1588 行
+测试基线：469 passed, 6 subtests passed
 ```
 
 `ui/app.py` 仍然偏大，但它不再是新功能堆放处。它现在应该被视为应用装配入口和兼容 wrapper 容器。
@@ -403,7 +409,7 @@ assistant_settings
 
 ```text
 python -m pytest tests/ -q
-452 passed, 6 subtests passed
+469 passed, 6 subtests passed
 ```
 
 按变更类型选择测试：
@@ -527,13 +533,13 @@ Phase 2: generation service boundary
 Phase 3: app shell boundary
 ```
 
-剩余高价值工作：
+最新治理已完成：
 
 ```text
-1. 将 config/model source management 移出 app.py。
-2. 拆分 tests/test_llm.py 为聚焦测试模块。
-3. 为关键架构决策增加 ADR。
-4. 在不破坏 wrapper 的前提下继续把 app.py 降到 1400-1600 行。
+1. config/model source 处理已下沉到 ui/config_service.py。
+2. tests/test_llm.py 已拆出 LLM adapter 与 config service 聚焦测试。
+3. HSF-as-source、generation-service、custom Skill 已补 ADR。
+4. ui/app.py 已在保留 wrapper 的前提下降到 1400-1600 行目标区间。
 ```
 
 ## 手工发布检查

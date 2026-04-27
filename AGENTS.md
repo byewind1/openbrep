@@ -132,7 +132,7 @@ python -m pytest tests/ -q
 Common targeted sets:
 
 ```bash
-python -m pytest tests/test_generation_service.py tests/test_llm.py -q
+python -m pytest tests/test_generation_service.py tests/test_llm.py tests/test_llm_adapter.py tests/test_config_service.py -q
 python -m pytest tests/test_project_service.py tests/test_project_io.py tests/test_project_io_compile.py -q
 python -m pytest tests/test_chat_flow.py tests/test_chat_controller_single_panel.py -q
 python -m pytest tests/test_app_shell.py tests/test_session_defaults.py -q
@@ -143,8 +143,8 @@ python -m pytest tests/test_app_shell.py tests/test_session_defaults.py -q
 As of 2026-04-27:
 
 ```text
-ui/app.py: 1773 lines
-test baseline: 452 passed, 6 subtests passed
+ui/app.py: 1588 lines
+test baseline: 469 passed, 6 subtests passed
 ```
 
 Important architecture boundaries already exist:

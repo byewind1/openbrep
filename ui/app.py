@@ -5,7 +5,6 @@ Run: streamlit run ui/app.py
 """
 
 import sys
-import re
 import os
 import time
 import logging
@@ -26,10 +25,10 @@ import streamlit as st
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
 from openbrep.paramlist_builder import build_paramlist_xml
-from openbrep.compiler import MockHSFCompiler, HSFCompiler, CompileResult
+from openbrep.compiler import CompileResult, MockHSFCompiler
 from openbrep.validator import GDLValidator
 try:
-    from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, model_to_provider, GDLAgentConfig, iter_custom_provider_model_entries
+    from openbrep.config import ALL_MODELS, VISION_MODELS, REASONING_MODELS, GDLAgentConfig, iter_custom_provider_model_entries
     _MODEL_CONSTANTS_OK = True
 except ImportError:
     ALL_MODELS = []
@@ -37,7 +36,6 @@ except ImportError:
     REASONING_MODELS = set()
     _MODEL_CONSTANTS_OK = False
 from openbrep.elicitation_agent import ElicitationAgent, ElicitationState
-from openbrep.skills_loader import SkillsLoader
 from openbrep import __version__ as OPENBREP_VERSION
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, build_generation_result_plan
 from openbrep.runtime.router import IntentRouter
@@ -54,7 +52,11 @@ from ui import vision_controller as ui_vision_controller
 from ui import gdl_checks as ui_gdl_checks
 from ui import generation_service as ui_generation_service
 from ui import app_shell as ui_app_shell
+from ui import config_service as ui_config_service
+from ui import feedback_service as ui_feedback_service
 from ui import license_service as ui_license_service
+from ui import object_naming as ui_object_naming
+from ui import runtime_service as ui_runtime_service
 from ui import session_defaults as ui_session_defaults
 from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
@@ -62,6 +64,7 @@ from ui.views import parameter_panel as ui_parameter_panel
 from ui.views import preview_views as ui_preview_views
 from ui.views import project_tools_panel as ui_project_tools_panel
 from ui.views import sidebar_panel as ui_sidebar_panel
+from ui.views import welcome_panel as ui_welcome_panel
 from ui.views import workspace_tools_panel as ui_workspace_tools_panel
 from ui import knowledge_access as ui_knowledge_access
 
@@ -295,68 +298,28 @@ _custom_providers: list = []  # [{base_url, models, api_key, protocol, name}]
 
 
 def _get_reloadable_model_list() -> list[str]:
-    models: list[str] = []
-    if _config is not None:
-        return [str(model) for model in _config.get_available_models()]
-
-    for provider in _custom_providers:
-        for model in provider.get("models", []) or []:
-            model_str = str(model)
-            if model_str not in models:
-                models.append(model_str)
-
-    for model in ALL_MODELS:
-        model_str = str(model)
-        if model_str not in models:
-            models.append(model_str)
-
-    return models
+    return ui_config_service.available_models(_config, _custom_providers, ALL_MODELS)
 
 
 def _reload_config_globals(update_session_state: bool = False) -> None:
     global _config, _config_defaults, _provider_keys, _custom_providers
 
-    from openbrep.config import GDLAgentConfig
-    import sys as _sys, os as _os
-    if _sys.version_info >= (3, 11):
-        import tomllib as _tomllib
-    else:
-        import tomli as _tomllib   # type: ignore
-
-    _config = None
-    _config_defaults = {}
-    _provider_keys = {}
-    _custom_providers = []
-
-    _toml_path = _os.path.join(_os.path.dirname(__file__), "..", "config.toml")
-    if _os.path.exists(_toml_path):
-        with open(_toml_path, "rb") as _f:
-            _raw = _tomllib.load(_f)
-        _llm_raw = _raw.get("llm", {})
-        _provider_keys = _llm_raw.get("provider_keys", {})
-        _custom_providers = _llm_raw.get("custom_providers", []) or []
-
-    _config = GDLAgentConfig.load()
-    _provider_keys = dict(_config.llm.provider_keys or _provider_keys)
-    _custom_providers = list(_config.llm.custom_providers or _custom_providers)
-    _config_defaults = {
-        "llm_model": _config.llm.model,
-        "compiler_path": _config.compiler.path or "",
-        "assistant_settings": _config.llm.assistant_settings or "",
-    }
+    state = ui_config_service.load_runtime_config(Path(__file__).parent.parent)
+    _config = state.config
+    _config_defaults = state.defaults
+    _provider_keys = state.provider_keys
+    _custom_providers = state.custom_providers
 
     if not update_session_state:
         return
 
-    existing_model_keys = dict(st.session_state.get("model_api_keys", {}))
-    refreshed_model_keys = dict(existing_model_keys)
-    for model in _get_reloadable_model_list():
-        refreshed_model_keys[model] = _key_for_model(model) or refreshed_model_keys.get(model, "")
-
-    st.session_state.model_api_keys = refreshed_model_keys
-    st.session_state.assistant_settings = _config_defaults.get(
-        "assistant_settings",
-        st.session_state.get("assistant_settings", ""),
+    ui_config_service.refresh_session_model_keys(
+        st.session_state,
+        config=_config,
+        defaults=_config_defaults,
+        provider_keys=_provider_keys,
+        custom_providers=_custom_providers,
+        builtin_models=ALL_MODELS,
     )
 
 
@@ -367,44 +330,11 @@ except Exception:
 
 
 def _key_for_model(model: str) -> str:
-    """Pick the right API Key from provider_keys based on model name."""
-    m = model.lower()
-
-    # 自定义 provider 的模型匹配（兼容字符串与 {alias, model}）
-    for _pcfg in _custom_providers:
-        for _entry in iter_custom_provider_model_entries(_pcfg):
-            _alias = str(_entry.get("alias", "") or "").lower()
-            _model = str(_entry.get("model", "") or "").lower()
-            if m and m in {_alias, _model}:
-                return str(_pcfg.get("api_key", "") or "")
-
-    if "glm" in m:
-        return _provider_keys.get("zhipu", "")
-    elif "deepseek" in m and "ollama" not in m:
-        return _provider_keys.get("deepseek", "")
-    elif "claude" in m:
-        return _provider_keys.get("anthropic", "")
-    elif "gpt" in m or "o3" in m or "o1" in m:
-        return _provider_keys.get("openai", "")
-    elif "gemini" in m:
-        return _provider_keys.get("google", "")
-    return ""
+    return ui_config_service.key_for_model(model, _provider_keys, _custom_providers)
 
 
 def _sync_llm_top_level_fields_for_model(cfg: GDLAgentConfig, model: str) -> bool:
-    if not cfg or not model:
-        return False
-
-    changed = False
-    model_name = str(model).strip()
-    if not model_name:
-        return False
-
-    if cfg.llm.model != model_name:
-        cfg.llm.model = model_name
-        changed = True
-
-    return changed
+    return ui_config_service.sync_llm_top_level_fields_for_model(cfg, model)
 
 
 def _is_archicad_running() -> bool:
@@ -516,24 +446,8 @@ with st.sidebar:
 
 # ── Helper Functions ──────────────────────────────────────
 
-import json as _json, datetime as _datetime
-
 def _save_feedback(msg_idx: int, rating: str, content: str, comment: str = "") -> None:
-    """Save 👍/👎 feedback to work_dir/feedback.jsonl (local only, not sent anywhere)."""
-    try:
-        feedback_path = Path(st.session_state.work_dir) / "feedback.jsonl"
-        feedback_path.parent.mkdir(parents=True, exist_ok=True)
-        record = {
-            "ts": _datetime.datetime.now().isoformat(),
-            "rating": rating,           # "positive" | "negative"
-            "msg_idx": msg_idx,
-            "preview": content[:300],
-            "comment": comment.strip(),
-        }
-        with open(feedback_path, "a", encoding="utf-8") as _f:
-            _f.write(_json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception:
-        pass   # never let feedback save break the UI
+    ui_feedback_service.save_feedback(st.session_state.work_dir, msg_idx, rating, content, comment)
 
 
 def _tapir_sync_selection() -> tuple[bool, str]:
@@ -625,26 +539,16 @@ else:
 
 
 def get_compiler():
-    if compiler_mode.startswith("Mock"):
-        return MockHSFCompiler()
-    return HSFCompiler(converter_path or None)
+    return ui_runtime_service.build_compiler(compiler_mode, converter_path)
 
 def get_llm():
-    from openbrep.config import LLMConfig
-    from openbrep.llm import LLMAdapter
-    import logging
-    config = LLMConfig(
-        model=model_name,
+    return ui_runtime_service.build_llm(
+        model_name=model_name,
         api_key=api_key,
         api_base=api_base,
-        temperature=0.2,
-        max_tokens=4096,
         assistant_settings=st.session_state.get("assistant_settings", ""),
         custom_providers=_custom_providers,
     )
-    resolved_base = config.resolve_api_base()
-    resolved_key = config.resolve_api_key()
-    return LLMAdapter(config)
 
 def load_knowledge(task_type: str = "all"):
     return ui_knowledge_access.load_knowledge(
@@ -655,19 +559,10 @@ def load_knowledge(task_type: str = "all"):
     )
 
 def load_skills():
-    # Always load from project skills dir first
-    project_sk = Path(__file__).parent.parent / "skills"
-    sl = SkillsLoader(str(project_sk))
-    sl.load()
-
-    # Merge user's custom skills from work_dir
-    user_sk_dir = Path(st.session_state.work_dir) / "skills"
-    if user_sk_dir.exists() and user_sk_dir != project_sk:
-        user_sl = SkillsLoader(str(user_sk_dir))
-        user_sl.load()
-        sl._skills.update(user_sl._skills)   # user custom overrides project
-
-    return sl
+    return ui_runtime_service.load_skills(
+        project_root=Path(__file__).parent.parent,
+        work_dir=st.session_state.work_dir,
+    )
 
 def _extract_gsm_name_candidate(text: str) -> str:
     return ui_view_models.extract_gsm_name_candidate(text)
@@ -678,94 +573,14 @@ def _stamp_script_header(script_label: str, content: str, revision: int) -> str:
     return ui_view_models.stamp_script_header(script_label, content, revision)
 
 
-# ── Object Name Extraction (dictionary + regex, no LLM) ──
-
-_CN_TO_NAME = {
-    # 家具
-    "书架": "Bookshelf", "书柜": "Bookcase", "柜子": "Cabinet",
-    "衣柜": "Wardrobe", "橱柜": "Kitchen Cabinet", "储物柜": "StorageUnit",
-    "桌子": "Table", "桌": "Table", "书桌": "Desk", "餐桌": "DiningTable",
-    "椅子": "Chair", "椅": "Chair", "沙发": "Sofa", "床": "Bed",
-    "茶几": "CoffeeTable", "电视柜": "TVStand", "鞋柜": "ShoeRack",
-    # 建筑构件
-    "窗": "Window", "窗框": "WindowFrame", "窗户": "Window", "百叶窗": "Louver",
-    "门": "Door", "门框": "DoorFrame", "推拉门": "SlidingDoor", "旋转门": "RevolvingDoor",
-    "墙": "Wall", "墙板": "WallPanel", "隔墙": "Partition", "幕墙": "CurtainWall",
-    "楼梯": "Staircase", "台阶": "StairStep", "扶手": "Handrail", "栏杆": "Railing",
-    "柱": "Column", "柱子": "Column", "梁": "Beam", "板": "Slab",
-    "屋顶": "Roof", "天花": "Ceiling", "地板": "Floor",
-    # 设备
-    "灯": "Light", "灯具": "LightFixture", "管道": "Pipe", "风管": "Duct",
-    "开关": "Switch", "插座": "Outlet", "空调": "AirConditioner",
-    # 景观
-    "花盆": "Planter", "树": "Tree", "围栏": "Fence", "长凳": "Bench",
-}
-
 def _extract_object_name(text: str) -> str:
-    """
-    Extract GDL object name from user input.
-    Priority: explicit English name > Chinese keyword dict > fallback.
-    Zero LLM calls — instant and 100% reliable.
-    """
-    # 1. Check for explicit English name: "named MyShelf", "叫 MyShelf"
-    for pat in [
-        r'named?\s+([A-Za-z][A-Za-z0-9]{2,30})',
-        r'called\s+([A-Za-z][A-Za-z0-9]{2,30})',
-        r'名为\s*([A-Za-z][A-Za-z0-9]{2,30})',
-        r'叫\s*([A-Za-z][A-Za-z0-9]{2,30})',
-    ]:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            return m.group(1)
-
-    # 2. Chinese keyword → English CamelCase (longest match first)
-    for cn, en in sorted(_CN_TO_NAME.items(), key=lambda x: len(x[0]), reverse=True):
-        if cn in text:
-            print(f"[name] '{cn}' → {en}")
-            return en
-
-    # 3. Pick first CamelCase English word in text (skip short junk like UI, AI, GDL)
-    for word in re.findall(r'[A-Z][a-z]{2,}[A-Za-z0-9]*', text):
-        if word not in {"The", "For", "And", "Not", "But", "With"}:
-            return word
-
-    return "MyObject"
+    return ui_object_naming.extract_object_name(text)
 
 
 # ── Welcome / Onboarding Panel ────────────────────────────
 
 def show_welcome():
-    st.markdown("""
-<div class="welcome-card">
-<h2 style="color:#22d3ee; margin-top:0; font-family:'JetBrains Mono';">欢迎使用 OpenBrep 🏗️</h2>
-<p style="color:#94a3b8;">用自然语言驱动 ArchiCAD GDL 对象的创建与编译。无需了解 GDL 语法，直接描述需求即可。</p>
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown("#### 三步快速开始")
-
-    st.info("**① 配置 API Key**  \n在左侧边栏选择 AI 模型，填入对应 API Key。免费的智谱 GLM 可直接使用。")
-    st.info("**② 开始对话**  \n在底部输入框描述你想创建的 GDL 对象，例如：  \n「创建一个宽 600mm、深 400mm 的书架，带 iShelves 参数控制层数」")
-    st.info("**③ 编译输出**  \nAI 生成代码后自动触发编译。真实编译需在侧边栏配置 LP_XMLConverter 路径。Mock 模式可验证结构，无需安装 ArchiCAD。")
-
-    st.divider()
-
-    st.markdown("#### 或者：导入已有文件")
-    uploaded_file = st.file_uploader(
-        "拖入 .gdl / .txt / .gsm 文件",
-        type=["gdl", "txt", "gsm"],
-        help=".gdl / .txt 直接解析脚本；.gsm 需侧边栏切换为 LP 模式",
-        key="welcome_upload",
-    )
-    if uploaded_file:
-        ok, msg = _handle_unified_import(uploaded_file)
-        if not ok:
-            st.error(msg)
-        else:
-            st.rerun()
-
-    st.divider()
-    st.caption("💡 提示：第一条消息无需创建项目，直接描述需求，AI 会自动初始化。")
+    ui_welcome_panel.render_welcome(st, handle_unified_import_fn=_handle_unified_import)
 
 
 # ── Intent Classification ─────────────────────────────────

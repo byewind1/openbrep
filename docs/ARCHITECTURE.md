@@ -18,14 +18,20 @@ Natural language or imported library object
 This document defines the current architecture, ownership boundaries, and
 development rules. It is written for human maintainers and AI development tools.
 
+Architecture decision records currently live in Chinese:
+
+- [ADR 0001: HSF 项目目录是 OpenBrep 的源格式](adr/0001-hsf-as-source.zh-CN.md)
+- [ADR 0002: AI 生成写入由 generation service 边界承接](adr/0002-generation-service-boundary.zh-CN.md)
+- [ADR 0003: 自定义 Skill 是用户经验的可追溯输入](adr/0003-custom-skill-workflow.zh-CN.md)
+
 ## Current State
 
 The Streamlit UI was previously concentrated in `ui/app.py`. The current main
 branch has moved the application into explicit boundaries:
 
 ```text
-ui/app.py: 1773 lines
-tests: 452 passed, 6 subtests passed
+ui/app.py: 1588 lines
+tests: 469 passed, 6 subtests passed
 ```
 
 `ui/app.py` is still larger than ideal, but it is no longer the place where new
@@ -425,7 +431,7 @@ The current baseline is:
 
 ```text
 python -m pytest tests/ -q
-452 passed, 6 subtests passed
+469 passed, 6 subtests passed
 ```
 
 Required test scope by change type:
@@ -559,13 +565,13 @@ Phase 2: generation service boundary
 Phase 3: app shell boundary
 ```
 
-Remaining high-value work:
+Completed in the latest cleanup:
 
 ```text
-1. Move config/model source management out of app.py.
-2. Split tests/test_llm.py into focused test modules.
-3. Add architecture decision records for major workflow choices.
-4. Continue reducing app.py toward 1400-1600 lines without breaking wrappers.
+1. Config/model source management moved to ui/config_service.py.
+2. tests/test_llm.py split into focused LLM adapter and config service tests.
+3. ADRs added for HSF-as-source, generation-service, and custom Skill workflow.
+4. ui/app.py reduced into the 1400-1600 line target range without removing wrappers.
 ```
 
 ## Manual Release Checklist
