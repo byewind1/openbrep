@@ -23,6 +23,38 @@ asset and revision traceability
 efficient expert UI for repeated daily use
 ```
 
+## Goal-Oriented Agent Contract
+
+OpenBrep expects AI development tools to work from success criteria, not only
+from step-by-step instructions. Operational rules in this guide are guardrails
+for quality and architecture; they are not a substitute for delivering the
+requested outcome.
+
+Before making a change, define a concise done condition for the current request.
+A good done condition says:
+
+- What user-visible behavior, document, or engineering outcome must exist.
+- Which architecture boundary must be preserved.
+- Which tests or manual checks prove the result.
+- Whether the work must be committed, pushed, and synced with `origin/main`.
+
+After that, run an autonomous loop:
+
+```text
+inspect context
+define success criteria
+make the smallest coherent change
+run targeted checks
+fix failures
+run the required final checks
+commit, push, and verify sync when applicable
+report outcome, verification, and residual risk
+```
+
+Do not stop at planning when the requested work is implementable in the current
+session. Ask the human only when missing information blocks success or a
+reasonable assumption would create product or data risk.
+
 ## First Actions For Any AI Agent
 
 Before editing:
@@ -43,9 +75,9 @@ Do not start by rewriting large files. Understand the current boundary first.
 As of 2026-04-27:
 
 ```text
-main is clean and pushed
-ui/app.py: 1812 lines
-test baseline: 447 passed, 6 subtests passed
+main should be clean and pushed before new work starts
+ui/app.py: 1773 lines
+test baseline: 452 passed, 6 subtests passed
 ```
 
 Core refactor boundaries already merged:

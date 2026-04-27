@@ -24,8 +24,8 @@ The Streamlit UI was previously concentrated in `ui/app.py`. The current main
 branch has moved the application into explicit boundaries:
 
 ```text
-ui/app.py: 1812 lines
-tests: 447 passed, 6 subtests passed
+ui/app.py: 1773 lines
+tests: 452 passed, 6 subtests passed
 ```
 
 `ui/app.py` is still larger than ideal, but it is no longer the place where new
@@ -425,7 +425,7 @@ The current baseline is:
 
 ```text
 python -m pytest tests/ -q
-447 passed, 6 subtests passed
+452 passed, 6 subtests passed
 ```
 
 Required test scope by change type:
@@ -507,6 +507,12 @@ has many shared state paths, so stale branches become expensive quickly.
 ## Rules For AI Coding Agents
 
 When an AI coding tool works on this repository, it must follow these rules:
+
+Start from the requested outcome and define success criteria before choosing
+steps. Architecture rules are guardrails for that loop: inspect the current
+boundary, make the smallest coherent change, test, fix, retest, and only finish
+when the requested outcome is verified. Do not stop at a plan when the change is
+implementable in the current session.
 
 1. Read this document before changing architecture.
 2. Check `git status --short --branch` before editing.

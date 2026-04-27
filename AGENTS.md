@@ -26,6 +26,36 @@ compile-verified GSM output
 traceable project and asset lifecycle
 ```
 
+## Goal-Oriented Execution
+
+Treat user requests as outcomes to deliver, not scripts to mechanically follow.
+Before editing, infer the smallest useful success criteria for the current
+request.
+
+Default success criteria:
+
+- The requested behavior, documentation, or product decision is actually
+  delivered.
+- Existing architecture boundaries remain intact.
+- Relevant tests pass, and full tests pass before merge or push unless the user
+  explicitly narrows scope.
+- Completed work is committed, pushed, and verified against `origin/main`
+  unless the user says otherwise.
+- The final answer states what changed, how it was verified, and any remaining
+  risk.
+
+Then loop until done:
+
+```text
+inspect -> define success criteria -> change -> test -> fix -> retest -> finish
+```
+
+The rules in this file are guardrails. They do not replace the outcome. If a
+user gives a goal, choose the implementation path yourself. If a user gives
+specific steps, follow them while still verifying the final result against the
+goal. Ask questions only when missing information blocks completion or a
+reasonable assumption would be risky.
+
 ## Before Editing
 
 Run:
@@ -113,8 +143,8 @@ python -m pytest tests/test_app_shell.py tests/test_session_defaults.py -q
 As of 2026-04-27:
 
 ```text
-ui/app.py: 1812 lines
-test baseline: 447 passed, 6 subtests passed
+ui/app.py: 1773 lines
+test baseline: 452 passed, 6 subtests passed
 ```
 
 Important architecture boundaries already exist:
