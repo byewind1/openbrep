@@ -358,12 +358,10 @@ merge 前是否跑了全量测试？
 高价值后续工作：
 
 ```text
-1. 将 license 和 Pro knowledge import 移出 ui/app.py。
-2. 将 config/model source 处理移出 ui/app.py。
-3. 拆分 tests/test_llm.py 为多个聚焦测试模块。
-4. 增加 docs/MANUAL_TEST_CHECKLIST.md。
-5. 为 HSF-as-source 和 generation-service 边界补 ADR。
-6. 在不提前删除 wrapper 的前提下，把 ui/app.py 继续降到 1400-1600 行。
+1. 将 config/model source 处理移出 ui/app.py。
+2. 拆分 tests/test_llm.py 为多个聚焦测试模块。
+3. 为 HSF-as-source 和 generation-service 边界补 ADR。
+4. 在不提前删除 wrapper 的前提下，把 ui/app.py 继续降到 1400-1600 行。
 ```
 
 ## 产品方向提醒

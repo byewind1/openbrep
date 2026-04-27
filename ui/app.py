@@ -54,6 +54,7 @@ from ui import vision_controller as ui_vision_controller
 from ui import gdl_checks as ui_gdl_checks
 from ui import generation_service as ui_generation_service
 from ui import app_shell as ui_app_shell
+from ui import license_service as ui_license_service
 from ui import session_defaults as ui_session_defaults
 from ui.views import chat_panel as ui_chat_panel
 from ui.views import editor_panel as ui_editor_panel
@@ -244,10 +245,6 @@ def _reset_tapir_p0_state() -> None:
     st.session_state.tapir_last_sync_at = ""
 
 
-def _license_file(work_dir: str) -> Path:
-    return ui_knowledge_access._license_file(work_dir)
-
-
 def _has_streamlit_runtime_context() -> bool:
     """Return True only when the app is running under `streamlit run`."""
     try:
@@ -258,71 +255,35 @@ def _has_streamlit_runtime_context() -> bool:
         return False
 
 
+def _license_service() -> ui_license_service.LicenseService:
+    return ui_license_service.LicenseService(
+        root=Path(__file__).parent.parent,
+        has_runtime_context_fn=_has_streamlit_runtime_context,
+    )
+
+
 def _empty_license_record() -> dict:
-    return ui_knowledge_access._empty_license_record()
+    return _license_service().empty_record()
 
 
 def _load_license(work_dir: str) -> dict:
-    return ui_knowledge_access._load_license(work_dir)
+    return _license_service().load(work_dir)
 
 
 def _save_license(work_dir: str, data: dict) -> None:
-    if not _has_streamlit_runtime_context():
-        return
-    ui_knowledge_access._save_license(work_dir, data)
-
-
-def _load_pro_public_key(root: Path):
-    return ui_knowledge_access._load_pro_public_key(root)
-
-
-def _urlsafe_b64decode(data: str) -> bytes:
-    return ui_knowledge_access._urlsafe_b64decode(data)
-
-
-def _urlsafe_b64encode(data: bytes) -> str:
-    return ui_knowledge_access._urlsafe_b64encode(data)
-
-
-def _canonical_license_payload(payload: dict) -> bytes:
-    return ui_knowledge_access._canonical_license_payload(payload)
-
-
-def _normalize_license_record(payload: dict, signature_b64: str) -> dict:
-    return ui_knowledge_access._normalize_license_record(payload, signature_b64)
-
-
-def _verify_license_payload(payload: dict, signature_b64: str) -> tuple[bool, str, dict | None]:
-    return ui_knowledge_access._verify_license_payload(payload, signature_b64, root=Path(__file__).parent.parent)
-
-
-def _decode_signed_license_code(code: str) -> tuple[bool, str, dict | None]:
-    return ui_knowledge_access._decode_signed_license_code(code, root=Path(__file__).parent.parent)
+    _license_service().save(work_dir, data)
 
 
 def _verify_pro_code(code: str) -> tuple[bool, str, dict | None]:
-    return ui_knowledge_access._verify_pro_code(code, root=Path(__file__).parent.parent)
+    return _license_service().verify_pro_code(code)
 
 
 def _license_record_is_active(data: dict) -> tuple[bool, str, dict | None]:
-    return ui_knowledge_access._license_record_is_active(data, root=Path(__file__).parent.parent)
-
-
-def _verify_pro_package(unpacked_dir: Path) -> tuple[bool, str, dict | None]:
-    return ui_knowledge_access._verify_pro_package(unpacked_dir, root=Path(__file__).parent.parent)
-
-
-def _license_matches_package(license_record: dict, package_manifest: dict) -> tuple[bool, str]:
-    return ui_knowledge_access._license_matches_package(license_record, package_manifest)
+    return _license_service().record_is_active(data)
 
 
 def _import_pro_knowledge_zip(file_bytes: bytes, filename: str, work_dir: str) -> tuple[bool, str]:
-    return ui_knowledge_access._import_pro_knowledge_zip(
-        file_bytes,
-        filename,
-        work_dir,
-        root=Path(__file__).parent.parent,
-    )
+    return _license_service().import_pro_knowledge_zip(file_bytes, filename, work_dir)
 
 
 # ── Load config.toml defaults ──────────────────────────
