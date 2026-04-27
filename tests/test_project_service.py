@@ -50,6 +50,34 @@ class TestProjectService(unittest.TestCase):
             self.assertEqual(len(session_state.compile_log), 1)
             self.assertTrue(session_state.compile_log[0]["success"])
 
+    def test_do_compile_records_failed_compile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session_state = _SessionState(
+                work_dir=tmp,
+                compile_log=[],
+                script_revision=1,
+            )
+            compiler_result = SimpleNamespace(success=False, stderr="compile failed", stdout="", exit_code=1)
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: SimpleNamespace(hsf2libpart=lambda _hsf, _out: compiler_result),
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+            )
+            proj = SimpleNamespace(name="Chair", save_to_disk=lambda: Path(tmp) / "Chair")
+
+            ok, msg = service.do_compile(proj, "Chair", "compile instruction")
+
+            self.assertFalse(ok)
+            self.assertIn("编译失败", msg)
+            self.assertEqual(len(session_state.compile_log), 1)
+            self.assertFalse(session_state.compile_log[0]["success"])
+            self.assertIn("compile failed", session_state.compile_log[0]["message"])
+
     def test_handle_hsf_directory_load_finalizes_project_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             hsf_dir = Path(tmp) / "Chair"

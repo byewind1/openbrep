@@ -42,6 +42,12 @@ class _Pipeline:
         return SimpleNamespace(success=True, scripts={}, plain_text="ok", project=request.project)
 
 
+class _FailingPipeline(_Pipeline):
+    def execute(self, request):
+        _Pipeline.captured_request = request
+        return SimpleNamespace(success=False, error="pipeline failed")
+
+
 def _service(session_state, *, should_accept=True):
     return GenerationService(
         session_state=session_state,
@@ -62,6 +68,12 @@ def _service(session_state, *, should_accept=True):
         apply_generation_plan_fn=lambda *_args, **_kwargs: ("", []),
         build_generation_reply_fn=lambda plain_text, _prefix, _blocks: plain_text,
     )
+
+
+def _service_with_pipeline(session_state, pipeline_class):
+    service = _service(session_state)
+    service.pipeline_class = pipeline_class
+    return service
 
 
 class TestGenerationService(unittest.TestCase):
@@ -93,6 +105,21 @@ class TestGenerationService(unittest.TestCase):
 
         self.assertEqual(result, "cancelled")
         self.assertEqual(state.finished, "cancelled")
+
+    def test_returns_error_when_pipeline_fails(self):
+        state = _State(chat_history=[], work_dir="./workdir")
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+
+        result = _service_with_pipeline(state, _FailingPipeline).run_agent_generate(
+            "生成椅子",
+            project,
+            _Status(),
+            gsm_name="chair",
+        )
+
+        self.assertIn("错误", result)
+        self.assertIn("pipeline failed", result)
+        self.assertEqual(state.finished, "failed")
 
 
 if __name__ == "__main__":
