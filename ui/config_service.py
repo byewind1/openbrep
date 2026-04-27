@@ -91,11 +91,26 @@ def sync_llm_top_level_fields_for_model(cfg: GDLAgentConfig, model: str) -> bool
         return False
 
     model_name = str(model).strip()
-    if not model_name or cfg.llm.model == model_name:
+    if not model_name:
         return False
 
-    cfg.llm.model = model_name
-    return True
+    changed = False
+    if cfg.llm.model != model_name:
+        cfg.llm.model = model_name
+        changed = True
+
+    provider = cfg.llm.get_provider_for_model(model_name)
+    if provider:
+        desired_api_key = str(provider.get("api_key", "") or "")
+        desired_api_base = str(provider.get("base_url", "") or "")
+        if (cfg.llm.api_key or "") != desired_api_key:
+            cfg.llm.api_key = desired_api_key
+            changed = True
+        if (cfg.llm.api_base or "") != desired_api_base:
+            cfg.llm.api_base = desired_api_base
+            changed = True
+
+    return changed
 
 
 def refresh_session_model_keys(

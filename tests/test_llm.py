@@ -1682,7 +1682,7 @@ class TestGenerationStateHelpers(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("无可复制", msg)
 
-    def test_sync_llm_top_level_fields_for_custom_model_only_updates_model(self):
+    def test_sync_llm_top_level_fields_for_custom_model_updates_runtime_fields(self):
         cfg = GDLAgentConfig(
             llm=LLMConfig(
                 model="old-model",
@@ -1704,8 +1704,8 @@ class TestGenerationStateHelpers(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(cfg.llm.model, "ymg-gpt-5.3-codex")
-        self.assertEqual(cfg.llm.api_key, "top-level-old")
-        self.assertEqual(cfg.llm.api_base, "https://old-base/v1")
+        self.assertEqual(cfg.llm.api_key, "ymg-key")
+        self.assertEqual(cfg.llm.api_base, "https://api.ymg.com/v1")
 
     def test_key_for_model_matches_custom_alias_object_entry(self):
         with patch("ui.app._custom_providers", [{
