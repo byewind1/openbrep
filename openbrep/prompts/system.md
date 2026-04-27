@@ -45,6 +45,7 @@ Rules:
 - User says "1200mm height" → write ZZYZX = 1.200
 - NEVER write values like 600, 1200, 450 as default lengths — these would mean 600m, 1200m
 - NEVER write "mm" as a variable name or comment variable
+- Do not put units in parameter names or parameter descriptions. Use `w`, not `w_mm`; use `! Total width`, not `! Total width (mm)`.
 
 Common reference values (meters):
 - Door width: 0.900 | Door height: 2.100

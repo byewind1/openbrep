@@ -49,11 +49,12 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
 
     for param in parameters:
         tag = param.type_tag
+        description = clean_parameter_description(param.description, tag)
 
         # Title and Separator have no value
         if tag == "Title":
             lines.append(f'\t\t<Title Name="{_escape_attr(param.name)}">')
-            lines.append(f'\t\t\t<Description><![CDATA["{param.description}"]]></Description>')
+            lines.append(f'\t\t\t<Description><![CDATA["{description}"]]></Description>')
             lines.append(f'\t\t</Title>')
             continue
 
@@ -63,7 +64,7 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
 
         # Standard parameter
         lines.append(f'\t\t<{tag} Name="{_escape_attr(param.name)}">')
-        lines.append(f'\t\t\t<Description><![CDATA["{param.description}"]]></Description>')
+        lines.append(f'\t\t\t<Description><![CDATA["{description}"]]></Description>')
 
         if param.is_fixed:
             lines.append(f'\t\t\t<Fix/>')
@@ -209,6 +210,13 @@ def validate_paramlist(parameters: list[GDLParameter]) -> list[str]:
                     f"'{param.value}'"
                 )
 
+        if param.type_tag == "Length":
+            if _has_unit_marker(param.name):
+                issues.append(
+                    f"Length parameter '{param.name}' should not include unit markers "
+                    "like mm/m in the variable name; GDL Length values are stored in meters."
+                )
+
         # Reserved parameter checks
         if param.name in ("A", "B", "ZZYZX"):
             if param.type_tag != "Length":
@@ -233,6 +241,28 @@ def _escape_attr(s: str) -> str:
             .replace('"', "&quot;")
             .replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+_UNIT_MARKER_RE = re.compile(
+    r"(?i)(?:\s*[\(（]\s*(?:mm|m|毫米|米)\s*[\)）]\s*|(?:^|[_\-\s])(?:mm|m|毫米|米)(?:$|[_\-\s]))"
+)
+
+
+def _has_unit_marker(text: str) -> bool:
+    return bool(_UNIT_MARKER_RE.search(str(text or "")))
+
+
+def clean_parameter_description(description: str, type_tag: str = "") -> str:
+    """Remove UI-facing unit markers from Length parameter descriptions.
+
+    Archicad/GDL stores Length values in meters, while architectural users often
+    think in millimeters. The numeric value handles that conversion; the
+    parameter label should not advertise a conflicting unit.
+    """
+    text = str(description or "").strip()
+    if type_tag != "Length" or not text:
+        return text
+    return re.sub(r"\s*[\(（]\s*(?:mm|m|毫米|米)\s*[\)）]\s*", "", text, flags=re.IGNORECASE).strip()
 
 
 def _format_value(type_tag: str, value: str) -> str:

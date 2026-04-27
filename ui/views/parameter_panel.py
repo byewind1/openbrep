@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from openbrep.hsf_project import GDLParameter, HSFProject
-from openbrep.paramlist_builder import build_paramlist_xml, validate_paramlist
+from openbrep.paramlist_builder import build_paramlist_xml, clean_parameter_description, validate_paramlist
 
 
 def render_parameter_panel(
@@ -49,7 +49,7 @@ def _render_project_parameters(st, proj: HSFProject) -> None:
             "类型": param.type_tag,
             "变量名": param.name,
             "默认值": param.value,
-            "说明": param.description,
+            "说明": clean_parameter_description(param.description, param.type_tag),
             "固定": "是" if param.is_fixed else "",
         }
         for param in proj.parameters

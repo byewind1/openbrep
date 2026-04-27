@@ -144,7 +144,7 @@ As of 2026-04-27:
 
 ```text
 ui/app.py: 1588 lines
-test baseline: 469 passed, 6 subtests passed
+test baseline: 472 passed, 6 subtests passed
 ```
 
 Important architecture boundaries already exist:

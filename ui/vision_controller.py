@@ -13,12 +13,12 @@ VISION_SYSTEM_PROMPT = """\
 - 材料/表面：（可见材质，用于 Material 参数默认值）
 
 ## 参数化分析
-以 GDL paramlist 格式列出所有可参数化维度，给出合理默认值（长度单位 mm，转为 m 除以 1000）：
+以 GDL paramlist 格式列出所有可参数化维度。建筑尺寸可按 mm 估算，但写入 paramlist 时必须换算为 m：
 
 ```
-Length w  = 0.9     ! 总宽度（m）
-Length h  = 2.1     ! 总高度（m）
-Length d  = 0.3     ! 总深度（m）
+Length w  = 0.9     ! 总宽度
+Length h  = 2.1     ! 总高度
+Length d  = 0.3     ! 总深度
 Integer n = 4       ! 重复单元数量
 Material mat = "Wood"  ! 主体材质
 ```
@@ -39,6 +39,7 @@ END
 
 规则：
 - paramlist 代码块内必须有 ≥2 行 `Type Name = value  ! 注释` 格式
+- Length 参数值使用 m，参数名和注释不要写 mm/m/米/毫米等单位标注
 - 3D Script 最后一行必须是 `END`（单独一行）
 - 所有尺寸由参数驱动，禁止硬编码数字
 - GDL 命令必须全大写（BLOCK / CYLIND / LINE3 / ADD / DEL / FOR / NEXT 等）

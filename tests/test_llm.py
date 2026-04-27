@@ -1743,10 +1743,11 @@ class TestGenerationStateHelpers(unittest.TestCase):
 class TestLengthUnitNormalization(unittest.TestCase):
     def test_parse_param_text_converts_mm_suffix_to_meters(self):
         agent = GDLAgent(llm=MagicMock())
-        params = agent._parse_param_text("Length A = 600mm ! width")
+        params = agent._parse_param_text("Length A = 600mm ! width (mm)")
         self.assertEqual(len(params), 1)
         self.assertEqual(params[0].name, "A")
         self.assertEqual(params[0].value, "0.6")
+        self.assertEqual(params[0].description, "width")
 
     def test_parse_param_text_converts_large_length_number_as_mm(self):
         agent = GDLAgent(llm=MagicMock())

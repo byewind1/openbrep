@@ -18,7 +18,7 @@ from typing import Callable, Optional
 
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
-from openbrep.paramlist_builder import validate_paramlist
+from openbrep.paramlist_builder import clean_parameter_description, validate_paramlist
 from openbrep.validator import GDLValidator
 from openbrep.error_classifier import ErrorCategory, ErrorClassifier
 from openbrep.static_checker import StaticChecker
@@ -876,7 +876,7 @@ class GDLAgent:
                 value = match.group(3).strip('"')
                 if type_tag.lower() == "length":
                     value = _normalize_length_value(value)
-                desc = (match.group(4) or "").strip()
+                desc = clean_parameter_description((match.group(4) or "").strip(), "Length" if type_tag.lower() == "length" else type_tag)
                 is_fixed = name in ("A", "B", "ZZYZX")
 
                 params.append(GDLParameter(

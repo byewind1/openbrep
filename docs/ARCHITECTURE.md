@@ -31,7 +31,7 @@ branch has moved the application into explicit boundaries:
 
 ```text
 ui/app.py: 1588 lines
-tests: 469 passed, 6 subtests passed
+tests: 472 passed, 6 subtests passed
 ```
 
 `ui/app.py` is still larger than ideal, but it is no longer the place where new
@@ -431,7 +431,7 @@ The current baseline is:
 
 ```text
 python -m pytest tests/ -q
-469 passed, 6 subtests passed
+472 passed, 6 subtests passed
 ```
 
 Required test scope by change type:
