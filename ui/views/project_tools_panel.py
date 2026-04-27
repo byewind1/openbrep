@@ -14,7 +14,7 @@ def render_project_tools_panel(
     handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
     do_compile_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
-    save_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
+    save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
     restore_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
 ) -> None:
     st.markdown("### 项目与输出")
@@ -90,7 +90,7 @@ def _render_compile_section(
     proj: HSFProject,
     *,
     do_compile_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
-    save_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
+    save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
 ) -> None:
     with st.expander("2. 编译 GSM 输出", expanded=True):
         gsm_name_input = st.text_input(
@@ -116,7 +116,11 @@ def _render_compile_section(
             st.session_state.compile_result = (success, result_msg)
             if success:
                 if st.session_state.get("revision_auto_snapshot", True):
-                    _ok, msg = save_revision_fn(proj, f"Compile {gsm_name_input or proj.name}")
+                    _ok, msg = save_revision_fn(
+                        proj,
+                        f"Compile {gsm_name_input or proj.name}",
+                        gsm_name_input or proj.name,
+                    )
                     st.session_state.revision_notice = msg
                 st.toast("✅ 编译成功", icon="🏗️")
             st.rerun()

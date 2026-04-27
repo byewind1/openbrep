@@ -73,7 +73,7 @@ python -m pytest tests/ -q
 ```text
 新工作开始前 main 应保持干净且已 push
 ui/app.py: 1588 行
-测试基线：473 passed, 6 subtests passed
+测试基线：474 passed, 6 subtests passed
 ```
 
 已经合入的核心重构边界：

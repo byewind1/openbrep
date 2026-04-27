@@ -22,6 +22,7 @@ class Revision:
 
     revision_id: str
     project_name: str
+    gsm_name: str
     created_at: str
     message: str
     files: list[str]
@@ -31,6 +32,7 @@ class Revision:
 def create_revision(
     project_dir: str | Path,
     message: str = "",
+    gsm_name: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> Revision:
     """Create a new snapshot under ``<project>/.openbrep/revisions``."""
@@ -58,6 +60,7 @@ def create_revision(
         "schema_version": REVISION_SCHEMA_VERSION,
         "revision_id": revision_id,
         "project_name": root.name,
+        "gsm_name": (gsm_name or root.name),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "message": message,
         "source_format": "hsf-project",
@@ -123,6 +126,7 @@ def restore_revision(
     return create_revision(
         root,
         message=restore_message,
+        gsm_name=str(manifest.get("gsm_name") or root.name),
         metadata={"restored_from": revision_id},
     )
 
@@ -227,6 +231,7 @@ def _revision_from_manifest(revision_dir: Path, manifest: dict[str, Any]) -> Rev
     return Revision(
         revision_id=str(manifest["revision_id"]),
         project_name=str(manifest.get("project_name") or revision_dir.parent.parent.name),
+        gsm_name=str(manifest.get("gsm_name") or manifest.get("project_name") or revision_dir.parent.parent.name),
         created_at=str(manifest.get("created_at") or ""),
         message=str(manifest.get("message") or ""),
         files=list(manifest.get("files") or []),

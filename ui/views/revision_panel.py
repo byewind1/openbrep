@@ -12,7 +12,7 @@ def render_revision_panel(
     proj: HSFProject,
     *,
     is_generation_locked_fn: Callable[[], bool],
-    save_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
+    save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
     restore_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
 ) -> None:
     with st.expander("🕘 版本管理", expanded=True):
@@ -41,7 +41,11 @@ def render_revision_panel(
                 width="stretch",
                 disabled=is_generation_locked_fn(),
             ):
-                ok, msg = save_revision_fn(proj, revision_message)
+                ok, msg = save_revision_fn(
+                    proj,
+                    revision_message,
+                    st.session_state.get("pending_gsm_name") or proj.name,
+                )
                 st.session_state[notice_key] = msg
                 if ok:
                     st.toast("已保存版本", icon="✅")
@@ -50,7 +54,7 @@ def render_revision_panel(
             if st.button("刷新历史", key="revision_refresh_button", width="stretch"):
                 st.rerun()
 
-        notice = st.session_state.get(notice_key, "")
+        notice = st.session_state.get(notice_key, "") or st.session_state.pop("revision_notice", "")
         if notice:
             if notice.startswith("✅"):
                 st.success(notice)
@@ -69,17 +73,21 @@ def render_revision_panel(
             st.caption("还没有版本。点击“保存版本”后，这里会显示历史。")
             return
 
-        revision_options = [r.revision_id for r in reversed(revisions)]
+        revision_by_label = {
+            _format_revision_option(revision): revision
+            for revision in reversed(revisions)
+        }
         selected_revision = st.selectbox(
             "版本历史",
-            options=revision_options,
+            options=list(revision_by_label.keys()),
             key=f"revision_project_{project_key}_restore_select",
             help="选择一个版本查看说明或恢复",
         )
-        selected_meta = next((r for r in revisions if r.revision_id == selected_revision), None)
+        selected_meta = revision_by_label.get(selected_revision)
         if selected_meta:
             latest_mark = " · 最新" if selected_meta.revision_id == latest_revision else ""
             st.caption(
+                f"{selected_meta.project_name} / {selected_meta.gsm_name} · "
                 f"{selected_meta.created_at}{latest_mark} · "
                 f"{len(selected_meta.files)} 个源文件"
             )
@@ -92,8 +100,13 @@ def render_revision_panel(
             width="stretch",
             disabled=is_generation_locked_fn(),
         ):
-            ok, msg = restore_revision_fn(proj, selected_revision)
+            revision_id = selected_meta.revision_id if selected_meta else ""
+            ok, msg = restore_revision_fn(proj, revision_id)
             st.session_state[notice_key] = msg
             if ok:
                 st.toast("已恢复版本", icon="✅")
             st.rerun()
+
+
+def _format_revision_option(revision) -> str:
+    return f"{revision.revision_id} · {revision.gsm_name}"

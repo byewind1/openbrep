@@ -18,13 +18,17 @@ def reset_revision_ui_state(session_state) -> None:
             session_state.pop(key, None)
 
 
-def save_current_project_revision(proj: HSFProject | None, message: str = "") -> tuple[bool, str]:
+def save_current_project_revision(
+    proj: HSFProject | None,
+    message: str = "",
+    gsm_name: str | None = None,
+) -> tuple[bool, str]:
     if proj is None:
         return False, "❌ 当前没有项目"
     try:
         proj.save_to_disk()
-        revision = create_revision(proj.root, message.strip())
-        return True, f"✅ 已保存版本 `{revision.revision_id}`"
+        revision = create_revision(proj.root, message.strip(), gsm_name=gsm_name or proj.name)
+        return True, f"✅ 已保存版本 `{revision.revision_id}`（{revision.gsm_name}）"
     except Exception as exc:
         return False, f"❌ 保存版本失败：{exc}"
 

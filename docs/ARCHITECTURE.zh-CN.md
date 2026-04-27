@@ -30,7 +30,7 @@ OpenBrep 是面向 Archicad 高阶用户和 GDL 开发者的 AI GDL 工作台。
 
 ```text
 ui/app.py: 1588 行
-测试基线：473 passed, 6 subtests passed
+测试基线：474 passed, 6 subtests passed
 ```
 
 `ui/app.py` 仍然偏大，但它不再是新功能堆放处。它现在应该被视为应用装配入口和兼容 wrapper 容器。
@@ -409,7 +409,7 @@ assistant_settings
 
 ```text
 python -m pytest tests/ -q
-473 passed, 6 subtests passed
+474 passed, 6 subtests passed
 ```
 
 按变更类型选择测试：

@@ -30,6 +30,7 @@ class TestProjectRevisions(unittest.TestCase):
 
             self.assertEqual(revision.revision_id, "r0001")
             self.assertEqual(revision.project_name, "Chair")
+            self.assertEqual(revision.gsm_name, "Chair")
             self.assertEqual(revision.message, "initial")
             self.assertEqual(get_latest_revision_id(project), "r0001")
             self.assertTrue((project / ".openbrep" / "revisions" / "r0001" / "paramlist.xml").exists())
@@ -42,8 +43,19 @@ class TestProjectRevisions(unittest.TestCase):
             )
             self.assertEqual(manifest["schema_version"], 1)
             self.assertEqual(manifest["source_format"], "hsf-project")
+            self.assertEqual(manifest["gsm_name"], "Chair")
             self.assertIn("paramlist.xml", manifest["files"])
             self.assertIn("scripts/3d.gdl", manifest["files"])
+
+    def test_create_revision_records_compile_gsm_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            revision = create_revision(project, "compile stable", gsm_name="Chair_For_Client")
+
+            self.assertEqual(revision.gsm_name, "Chair_For_Client")
+            manifest = json.loads((revision.path / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["gsm_name"], "Chair_For_Client")
 
     def test_list_revisions_returns_manifest_data_in_order(self):
         with tempfile.TemporaryDirectory() as tmpdir:

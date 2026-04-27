@@ -239,6 +239,8 @@ The revision manifest should record:
 ```json
 {
   "revision_id": "r0004",
+  "project_name": "Bookshelf",
+  "gsm_name": "Bookshelf",
   "compile": {
     "status": "passed",
     "gsm_path": "../output/Bookshelf_v4.gsm"
