@@ -28,6 +28,8 @@ _TASK_SKILL_MAP: dict[str, list[str]] = {
     "ui":       ["create_ui_panel"],
 }
 
+_DEFAULT_SKILL_NAMES = {name for names in _TASK_SKILL_MAP.values() for name in names}
+
 # Keywords that trigger specific task types
 _TASK_KEYWORDS: dict[str, list[str]] = {
     "create":   ["create", "new", "build", "generate", "从零", "新建", "创建", "生成"],
@@ -123,6 +125,9 @@ class SkillsLoader:
                 if word not in skill_names:
                     skill_names.append(word)
 
+        for name in self._match_custom_skills(instruction, set(skill_names)):
+            skill_names.append(name)
+
         # Load and concatenate
         parts = []
         seen = set()
@@ -132,6 +137,21 @@ class SkillsLoader:
                 seen.add(name)
 
         return "\n\n---\n\n".join(parts)
+
+    def _match_custom_skills(self, instruction: str, selected: set[str], *, limit: int = 2) -> list[str]:
+        instruction_lower = instruction.lower()
+        instruction_tokens = set(_tokenize(instruction_lower))
+        matches: list[tuple[int, str]] = []
+
+        for name, content in self._skills.items():
+            if name in selected or name in _DEFAULT_SKILL_NAMES:
+                continue
+            score = _score_custom_skill_match(name, content, instruction_lower, instruction_tokens)
+            if score >= 1:
+                matches.append((score, name))
+
+        matches.sort(key=lambda item: (-item[0], item[1]))
+        return [name for _, name in matches[:limit]]
 
     def get_by_name(self, name: str) -> Optional[str]:
         """Get a specific skill by filename (without extension)."""
@@ -150,3 +170,57 @@ class SkillsLoader:
         if not self._loaded:
             self.load()
         return list(self._skills.keys())
+
+
+def _tokenize(text: str) -> list[str]:
+    return [token for token in re.split(r"[^a-z0-9_一-鿿]+", text.lower()) if len(token) >= 2]
+
+
+def _score_custom_skill_match(name: str, content: str, instruction_lower: str, instruction_tokens: set[str]) -> int:
+    score = 0
+    name_tokens = set(_tokenize(name.replace("_", " ").replace("-", " ")))
+    score += 2 * len(name_tokens & instruction_tokens)
+
+    activation_text = _extract_activation_text(content).lower()
+    activation_terms = _activation_terms(activation_text)
+    for term in activation_terms:
+        if term and term in instruction_lower:
+            score += 3
+
+    body = content[:3000].lower()
+    for token in instruction_tokens:
+        if token in body:
+            score += 1
+    for token in set(_tokenize(body)):
+        if token in instruction_lower:
+            score += 1
+
+    return score
+
+
+def _extract_activation_text(content: str) -> str:
+    lines = content.splitlines()
+    chunks: list[str] = []
+    collecting = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            lower = stripped.lower()
+            collecting = any(marker in lower for marker in ("触发关键词", "activation keywords", "适用场景", "when to use"))
+            continue
+        if collecting:
+            if stripped.startswith("#"):
+                collecting = False
+            elif stripped:
+                chunks.append(stripped)
+    return "\n".join(chunks)
+
+
+def _activation_terms(text: str) -> list[str]:
+    terms: list[str] = []
+    for line in text.splitlines():
+        cleaned = line.strip().lstrip("-*").strip()
+        if cleaned:
+            terms.append(cleaned)
+            terms.extend(_tokenize(cleaned))
+    return terms

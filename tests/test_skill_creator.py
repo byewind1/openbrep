@@ -96,6 +96,31 @@ class TestSkillCreator:
         assert isinstance(reply, str)
         assert len(reply) > 0
 
+    def test_conversation_initializes_as_list(self, mock_llm, skills_dir):
+        creator = SkillCreator(mock_llm, str(skills_dir))
+        assert creator.conversation == []
+
+    def test_generation_prompt_requests_activation_metadata(self, mock_llm, skills_dir):
+        calls = []
+
+        def generate(messages):
+            calls.append(messages)
+            resp = MagicMock()
+            resp.content = "FILENAME: test_skill.md\n---\n# Test Skill"
+            return resp
+
+        mock_llm.generate = generate
+        creator = SkillCreator(mock_llm, str(skills_dir))
+        creator.conversation = [{"role": "user", "content": "门窗项目"}]
+        creator._ready_to_generate = True
+
+        creator.finalize()
+
+        prompt = calls[-1][-1]["content"]
+        assert "Activation Keywords" in prompt
+        assert "触发关键词" in prompt
+        assert "When to Use" in prompt
+
     def test_process_turn_generate(self, mock_llm, skills_dir):
         creator = SkillCreator(mock_llm, str(skills_dir))
         creator.start_conversation("门窗项目")

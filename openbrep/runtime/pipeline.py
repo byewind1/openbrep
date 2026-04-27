@@ -161,6 +161,10 @@ class TaskPipeline:
         self._skills_loader: Optional[SkillsLoader] = None
         self._skill_creator: Optional[SkillCreator] = None
 
+    def _resolve_skills_dir(self) -> Path:
+        project_root = Path(__file__).parent.parent.parent
+        return project_root / "skills"
+
     # ── Public API ────────────────────────────────────────
 
     def execute(self, request: TaskRequest) -> TaskResult:
@@ -219,6 +223,7 @@ class TaskPipeline:
             reply = self._skill_creator.process_turn(request.user_input)
             # Reset session if skill was just generated
             if self._skill_creator._ready_to_generate:
+                self._skills_loader = None
                 self._skill_creator = None
             return TaskResult(success=True, intent="CHAT", plain_text=reply)
 
@@ -668,8 +673,7 @@ class TaskPipeline:
     def _load_skills(self, instruction: str) -> str:
         """Load skills relevant to instruction (loader cached)."""
         if self._skills_loader is None:
-            project_root = Path(__file__).parent.parent.parent
-            sk_dir = project_root / "skills"
+            sk_dir = self._resolve_skills_dir()
             self._skills_loader = SkillsLoader(str(sk_dir))
             self._skills_loader.load()
         return self._skills_loader.get_for_task(instruction)
@@ -679,8 +683,7 @@ class TaskPipeline:
     def _get_skill_creator(self, request: TaskRequest) -> SkillCreator:
         """Get a SkillCreator instance (fresh per call, no caching across conversations)."""
         llm = self._make_llm(request)
-        project_root = Path(__file__).parent.parent.parent
-        skills_dir = str(project_root / "skills")
+        skills_dir = str(self._resolve_skills_dir())
         return SkillCreator(llm, skills_dir=skills_dir)
 
     # ── Wiki knowledge ───────────────────────────────────

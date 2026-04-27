@@ -59,6 +59,51 @@ class TestPipelineSkillCreator(unittest.TestCase):
         self.assertIsNone(pipeline._skill_creator)
         mock_creator.process_turn.assert_called_once_with("生成")
 
+    def test_active_session_clears_skills_loader_cache_on_generate(self):
+        pipeline = self._make_pipeline()
+        mock_creator = MagicMock()
+        mock_creator.process_turn.return_value = "技能已生成"
+        mock_creator._ready_to_generate = True
+        pipeline._skill_creator = mock_creator
+        pipeline._skills_loader = MagicMock()
+
+        pipeline.execute(TaskRequest(user_input="生成", intent="CHAT"))
+
+        self.assertIsNone(pipeline._skills_loader)
+
+    def test_next_generation_loads_new_custom_skill_without_filename(self):
+        pipeline = self._make_pipeline()
+        captured = {}
+
+        skills_dir = self.enterContext(__import__("tempfile").TemporaryDirectory())
+        from pathlib import Path
+        skill_root = Path(skills_dir)
+        (skill_root / "project_style.md").write_text(
+            "# 门窗项目规范\n\n"
+            "## 触发关键词 / Activation Keywords\n"
+            "- 窗户\n"
+            "- 门窗\n\n"
+            "## 常用模式\n"
+            "铝合金窗框统一使用 frame_width 参数。\n",
+            encoding="utf-8",
+        )
+        pipeline._resolve_skills_dir = lambda: skill_root
+        pipeline._load_knowledge = lambda: ""
+
+        with patch("openbrep.runtime.pipeline.GDLAgent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.generate_only.return_value = ({}, "ok")
+            mock_agent_cls.return_value = mock_agent
+            result = pipeline.execute(TaskRequest(
+                user_input="生成一个铝合金窗户",
+                intent="CREATE",
+            ))
+            captured["skills"] = mock_agent.generate_only.call_args.kwargs["skills"]
+
+        self.assertTrue(result.success)
+        self.assertIn("project_style", captured["skills"])
+        self.assertIn("铝合金窗框", captured["skills"])
+
     # ── CREATE_SKILL intent ────────────────────────────────
 
     def test_create_skill_starts_conversation(self):

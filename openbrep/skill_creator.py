@@ -47,6 +47,12 @@ _GENERATE_PROMPT = (
     "格式要求：\n"
     "```markdown\n"
     "# {{Skill Name}}\n\n"
+    "## 适用场景 / When to Use\n"
+    "{{natural-language requests that should activate this skill}}\n\n"
+    "## 触发关键词 / Activation Keywords\n"
+    "- {{keyword 1}}\n"
+    "- {{keyword 2}}\n"
+    "- {{keyword 3}}\n\n"
     "## 项目描述\n"
     "{{description}}\n\n"
     "## 代码规范\n"
@@ -98,7 +104,7 @@ class SkillCreator:
     ):
         self.llm = llm
         self.skills_dir = Path(skills_dir)
-        self.conversation: list[dict] = field(default_factory=list)
+        self.conversation: list[dict] = []
         self._ready_to_generate = False
         self._suggested_name: str = ""
 
