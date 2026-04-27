@@ -3,6 +3,7 @@
 Date: 2026-04-27  
 Audience: Codex, Claude Code, Qwen Code, Cursor, Copilot agents, and human
 maintainers using AI-assisted development tools.
+中文版本：[AI_DEVELOPMENT_GUIDE.zh-CN.md](AI_DEVELOPMENT_GUIDE.zh-CN.md)
 
 This guide is the operational contract for AI agents working on OpenBrep. Read
 it together with [ARCHITECTURE.md](ARCHITECTURE.md).

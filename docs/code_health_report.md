@@ -2,7 +2,7 @@
 生成时间：2026-03-16 22:50:46
 
 > 注意：这是 2026-03-16 的历史健康度快照，保留用于对比早期技术债。
-> 当前架构与行数请以 `docs/ARCHITECTURE.md` 和 `docs/AI_DEVELOPMENT_GUIDE.md` 为准。
+> 当前架构与行数请以 `docs/ARCHITECTURE.zh-CN.md` 和 `docs/AI_DEVELOPMENT_GUIDE.zh-CN.md` 为准。
 > 截至 2026-04-27，`ui/app.py` 已从本报告中的 3389 行治理到 1812 行，并拆出
 > `project_service`、`generation_service`、`app_shell`、`chat_controller`、`views/*`
 > 等边界。

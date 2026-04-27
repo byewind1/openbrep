@@ -172,6 +172,7 @@ openbrep 以 HSF 为原生格式，每个脚本独立处理，AI 只读取与当
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/AI_DEVELOPMENT_GUIDE.md](docs/AI_DEVELOPMENT_GUIDE.md)
+- 中文版：[docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md)、[docs/AI_DEVELOPMENT_GUIDE.zh-CN.md](docs/AI_DEVELOPMENT_GUIDE.zh-CN.md)
 
 ```
 openbrep/

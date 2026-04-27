@@ -2,6 +2,7 @@
 
 Date: 2026-04-27  
 Status: Active architecture guide for maintainers and AI coding agents
+中文版本：[ARCHITECTURE.zh-CN.md](ARCHITECTURE.zh-CN.md)
 
 OpenBrep is an AI-assisted GDL workbench for Archicad power users and GDL
 developers. Its core product promise is:
