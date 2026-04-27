@@ -168,6 +168,11 @@ openbrep 以 HSF 为原生格式，每个脚本独立处理，AI 只读取与当
 
 ## 项目结构
 
+面向维护者和 AI 开发工具的架构规范见：
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/AI_DEVELOPMENT_GUIDE.md](docs/AI_DEVELOPMENT_GUIDE.md)
+
 ```
 openbrep/
 ├── openbrep/
