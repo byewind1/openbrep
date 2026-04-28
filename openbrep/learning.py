@@ -18,6 +18,7 @@ from typing import Any
 
 LEARNINGS_DIR = ".openbrep/learnings"
 ERROR_LESSONS_FILE = "error_lessons.jsonl"
+_SEED_FIRST_SEEN = "2026-04-28T00:00:00"
 
 
 @dataclass
@@ -90,24 +91,32 @@ class ErrorLearningStore:
         self._write_lessons(lessons)
         return lesson
 
-    def list_error_lessons(self) -> list[ErrorLesson]:
+    def list_error_lessons(self, *, include_seed: bool = False) -> list[ErrorLesson]:
+        lessons: list[ErrorLesson] = seed_error_lessons() if include_seed else []
         if not self.error_lessons_path.exists():
-            return []
+            return lessons
 
-        lessons: list[ErrorLesson] = []
         try:
             for line in self.error_lessons_path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
-                data = json.loads(line)
-                lessons.append(_lesson_from_dict(data))
+                lesson = _lesson_from_dict(json.loads(line))
+                existing = next((item for item in lessons if item.fingerprint == lesson.fingerprint), None)
+                if existing:
+                    existing.count += lesson.count
+                    existing.last_seen = max(existing.last_seen, lesson.last_seen)
+                    existing.source = lesson.source or existing.source
+                    existing.project_name = lesson.project_name or existing.project_name
+                    existing.raw_excerpt = lesson.raw_excerpt or existing.raw_excerpt
+                else:
+                    lessons.append(lesson)
         except Exception:
             return lessons
         return lessons
 
     def build_skill_prompt(self, *, project_name: str = "", limit: int = 8) -> str:
         return build_error_learning_skill(
-            self.list_error_lessons(),
+            self.list_error_lessons(include_seed=True),
             project_name=project_name,
             limit=limit,
         )
@@ -160,6 +169,31 @@ def build_error_learning_skill(
         "- 不要为了修一个错误大面积重写无关脚本。",
     ])
     return "\n".join(lines)
+
+
+def seed_error_lessons() -> list[ErrorLesson]:
+    """Built-in first lesson for OpenBrep's self-improving GDL behavior."""
+    return [
+        ErrorLesson(
+            fingerprint="missing_call_keyword:seed-000001",
+            category="missing_call_keyword",
+            summary=(
+                "内置第一条错题：GDL Copilot/Archicad 检查发现 3D 与 Master 脚本中"
+                "标签式调用存在“缺少 CALL 关键字(不推荐写法)”问题。"
+            ),
+            guidance=guidance_for_category("missing_call_keyword"),
+            example="文件《钢结构节点_v4.gsm》3D脚本与Master脚本多行出现“缺少CALL关键字(不推荐写法)”。",
+            count=1,
+            first_seen=_SEED_FIRST_SEEN,
+            last_seen=_SEED_FIRST_SEEN,
+            source="openbrep_seed_lesson",
+            project_name="",
+            raw_excerpt=(
+                "文件《钢结构节点_v4.gsm》存在两类问题:3D脚本第75、80、85、90行出现"
+                "“缺少CALL关键字(不推荐写法)”;Master脚本第4、5、6、8、9、10、12、13、14、16、28行出现类似问题"
+            ),
+        )
+    ]
 
 
 def classify_error(raw_error: str) -> str:

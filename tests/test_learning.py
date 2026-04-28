@@ -6,6 +6,7 @@ from openbrep.learning import (
     classify_error,
     error_fingerprint,
     looks_like_error_report,
+    seed_error_lessons,
 )
 
 
@@ -49,6 +50,25 @@ class TestErrorLearning(unittest.TestCase):
             self.assertIn("learned_gdl_error_avoidance", prompt)
             self.assertIn("出现 2 次", prompt)
             self.assertIn("变量", prompt)
+
+    def test_seed_call_keyword_lesson_is_injected_without_local_records(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ErrorLearningStore(tmpdir)
+
+            self.assertEqual(store.list_error_lessons(), [])
+            prompt = store.build_skill_prompt()
+
+            self.assertIn("learned_gdl_error_avoidance", prompt)
+            self.assertIn("内置第一条错题", prompt)
+            self.assertIn("缺少 CALL", prompt)
+            self.assertIn("显式使用 CALL", prompt)
+
+    def test_seed_lessons_are_available_as_first_self_improvement_constraint(self):
+        lessons = seed_error_lessons()
+
+        self.assertEqual(len(lessons), 1)
+        self.assertEqual(lessons[0].category, "missing_call_keyword")
+        self.assertEqual(lessons[0].source, "openbrep_seed_lesson")
 
     def test_looks_like_error_report_detects_tapir_message(self):
         self.assertTrue(looks_like_error_report("## 🔴 Archicad GDL 错误报告\nError in 3D script, line 1"))
