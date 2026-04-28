@@ -14,9 +14,7 @@ import hashlib
 import hmac
 import string
 import subprocess
-import uuid
 from copy import deepcopy
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -51,11 +49,13 @@ from ui import tapir_views as ui_tapir_views
 from ui import vision_controller as ui_vision_controller
 from ui import gdl_checks as ui_gdl_checks
 from ui import generation_service as ui_generation_service
+from ui import generation_controls as ui_generation_controls
 from ui import app_shell as ui_app_shell
 from ui import config_service as ui_config_service
 from ui import feedback_service as ui_feedback_service
 from ui import license_service as ui_license_service
 from ui import object_naming as ui_object_naming
+from ui import project_snapshot as ui_project_snapshot
 from ui import runtime_service as ui_runtime_service
 from ui import session_defaults as ui_session_defaults
 from ui.views import chat_panel as ui_chat_panel
@@ -124,79 +124,54 @@ def _finish_generation_state(state, generation_id: str, status: str) -> bool:
 
 
 def _generation_stop_label() -> str:
-    return "停止生成中..." if st.session_state.get("generation_status") == "cancelling" else "停止生成"
+    return ui_generation_controls.generation_stop_label(st.session_state)
 
 
 
 def _render_generation_controls() -> None:
-    if not _is_generation_locked(st.session_state):
-        return
-    generation_id = st.session_state.get("active_generation_id")
-    st.warning("AI 正在生成中。涉及工程状态的操作已临时锁定。")
-    if st.button(_generation_stop_label(), key="stop_generation", width='stretch'):
-        if _request_generation_cancel(st.session_state, generation_id):
-            st.info("已请求停止当前生成，正在等待本轮调用安全结束。")
-            st.rerun()
+    ui_generation_controls.render_generation_controls(st, st.session_state)
 
 
 
 def _guarded_event_update(status_ph, generation_id: str, method_name: str, message: str) -> None:
-    if not _is_active_generation(st.session_state, generation_id):
-        return
-    getattr(status_ph, method_name)(message)
+    ui_generation_controls.guarded_event_update(
+        st.session_state,
+        status_ph,
+        generation_id,
+        method_name,
+        message,
+    )
 
 
 
 def _generation_cancelled_message() -> str:
-    return "⏹️ 本轮生成已取消，未写入编辑器。"
+    return ui_generation_controls.generation_cancelled_message()
 
 
 
 def _consume_generation_result(generation_id: str) -> bool:
-    return _should_accept_generation_result(st.session_state, generation_id)
+    return ui_generation_controls.consume_generation_result(st.session_state, generation_id)
 
 
 
 def _capture_last_project_snapshot(label: str) -> None:
-    proj = st.session_state.get("project")
-    if proj is None:
-        return
-    st.session_state.last_project_snapshot = {
-        "project": deepcopy(proj),
-        "pending_gsm_name": st.session_state.get("pending_gsm_name", ""),
-        "script_revision": int(st.session_state.get("script_revision", 0)),
-    }
-    st.session_state.last_project_snapshot_label = label
-    st.session_state.last_project_snapshot_meta = {
-        "label": label,
-        "captured_at": datetime.now().isoformat(timespec="seconds"),
-    }
+    ui_project_snapshot.capture_last_project_snapshot(
+        st.session_state,
+        label,
+        deepcopy_fn=deepcopy,
+    )
 
 
 def _restore_last_project_snapshot() -> tuple[bool, str]:
-    snap = st.session_state.get("last_project_snapshot")
-    if not snap:
-        return (False, "❌ 没有可恢复的上一次 AI 写入")
-
-    st.session_state.project = deepcopy(snap["project"])
-    st.session_state.pending_gsm_name = snap.get("pending_gsm_name", "")
-    st.session_state.script_revision = int(snap.get("script_revision", 0))
-    st.session_state.pending_diffs = {}
-    st.session_state.pending_ai_label = ""
-    st.session_state.preview_2d_data = None
-    st.session_state.preview_3d_data = None
-    st.session_state.preview_warnings = []
-    st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-    _bump_main_editor_version()
-    label = st.session_state.get("last_project_snapshot_label") or "AI 写入"
-    st.session_state.last_project_snapshot = None
-    st.session_state.last_project_snapshot_meta = {}
-    st.session_state.last_project_snapshot_label = ""
-    return (True, f"✅ 已撤销上次 {label}")
+    return ui_project_snapshot.restore_last_project_snapshot(
+        st.session_state,
+        bump_main_editor_version_fn=_bump_main_editor_version,
+        deepcopy_fn=deepcopy,
+    )
 
 
 def _finalize_generation(generation_id: str, status: str) -> bool:
-    return _finish_generation_state(st.session_state, generation_id, status)
+    return ui_generation_controls.finalize_generation(st.session_state, generation_id, status)
 
 
 
