@@ -1005,6 +1005,10 @@ def _project_service() -> ui_project_service.ProjectService:
         bump_main_editor_version_fn=_bump_main_editor_version,
         import_gsm_override_fn=import_gsm,
         reset_revision_ui_state_fn=ui_revision_controller.reset_revision_ui_state,
+        reload_libraries_after_compile_fn=lambda: ui_tapir_controller.reload_libraries_after_compile(
+            tapir_import_ok=_TAPIR_IMPORT_OK,
+            get_bridge_fn=get_bridge,
+        ),
     )
 
 

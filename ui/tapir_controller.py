@@ -3,6 +3,21 @@ from __future__ import annotations
 from typing import Callable
 
 
+def reload_libraries_after_compile(*, tapir_import_ok: bool, get_bridge_fn: Callable[[], object]) -> tuple[bool, str] | None:
+    """Reload Archicad libraries after a successful real GSM compile."""
+    if not tapir_import_ok:
+        return None
+
+    bridge = get_bridge_fn()
+    if not bridge.is_available():
+        return False, "⚪ Archicad 未运行或 Tapir 未安装，未自动重载图库。"
+
+    if bridge.reload_libraries():
+        return True, "🔄 已通知 Archicad 重载图库，可直接切换到 Archicad 打开刚编译的 GSM。"
+
+    return False, "⚠️ 已编译成功，但 Tapir 重载 Archicad 图库失败；请在 Archicad 中手动重载图库。"
+
+
 def tapir_sync_selection(*, tapir_import_ok: bool, get_bridge_fn: Callable[[], object], session_state, now_text_fn: Callable[[], str]) -> tuple[bool, str]:
     if not tapir_import_ok:
         return False, "Tapir bridge 未导入"

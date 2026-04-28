@@ -20,9 +20,10 @@ class ProjectService:
     bump_main_editor_version_fn: Callable[[], None]
     import_gsm_override_fn: Callable[[bytes, str], tuple] | None = None
     reset_revision_ui_state_fn: Callable[[object], None] | None = None
+    reload_libraries_after_compile_fn: Callable[[], tuple[bool, str] | None] | None = None
 
     def do_compile(self, proj, gsm_name: str, instruction: str = "") -> tuple[bool, str]:
-        return project_io.do_compile(
+        ok, msg = project_io.do_compile(
             proj,
             gsm_name,
             instruction,
@@ -32,6 +33,13 @@ class ProjectService:
             get_compiler_fn=self.get_compiler_fn,
             compiler_mode=self.compiler_mode,
         )
+        if ok and not self.compiler_mode.startswith("Mock") and self.reload_libraries_after_compile_fn:
+            reload_result = self.reload_libraries_after_compile_fn()
+            if reload_result is not None:
+                _reload_ok, reload_msg = reload_result
+                if reload_msg:
+                    msg += f"\n\n{reload_msg}"
+        return ok, msg
 
     def import_gsm(self, gsm_bytes: bytes, filename: str) -> tuple:
         return project_io.import_gsm(

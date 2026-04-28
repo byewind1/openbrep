@@ -50,6 +50,71 @@ class TestProjectService(unittest.TestCase):
             self.assertEqual(len(session_state.compile_log), 1)
             self.assertTrue(session_state.compile_log[0]["success"])
 
+    def test_do_compile_reloads_archicad_libraries_after_real_compile_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session_state = _SessionState(
+                work_dir=tmp,
+                compile_log=[],
+                script_revision=1,
+            )
+            compiler_result = SimpleNamespace(success=True, stderr="", stdout="", exit_code=0)
+            calls = {"reload": 0}
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP_XMLConverter (真实编译)",
+                get_compiler_fn=lambda: SimpleNamespace(
+                    hsf2libpart=lambda _hsf, _out: compiler_result
+                ),
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+                reload_libraries_after_compile_fn=lambda: (
+                    calls.__setitem__("reload", calls["reload"] + 1) or True,
+                    "🔄 已通知 Archicad 重载图库",
+                ),
+            )
+            proj = SimpleNamespace(name="Chair", save_to_disk=lambda: Path(tmp) / "Chair")
+
+            ok, msg = service.do_compile(proj, "Chair", "compile instruction")
+
+            self.assertTrue(ok)
+            self.assertEqual(calls["reload"], 1)
+            self.assertIn("已通知 Archicad 重载图库", msg)
+
+    def test_do_compile_skips_archicad_reload_for_mock_compile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session_state = _SessionState(
+                work_dir=tmp,
+                compile_log=[],
+                script_revision=1,
+            )
+            compiler_result = SimpleNamespace(success=True, stderr="", stdout="", exit_code=0)
+            calls = {"reload": 0}
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="Mock (无需 ArchiCAD)",
+                get_compiler_fn=lambda: SimpleNamespace(
+                    hsf2libpart=lambda _hsf, _out: compiler_result
+                ),
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+                reload_libraries_after_compile_fn=lambda: calls.__setitem__("reload", 1),
+            )
+            proj = SimpleNamespace(name="Chair", save_to_disk=lambda: Path(tmp) / "Chair")
+
+            ok, msg = service.do_compile(proj, "Chair", "compile instruction")
+
+            self.assertTrue(ok)
+            self.assertEqual(calls["reload"], 0)
+            self.assertNotIn("重载图库", msg)
+
     def test_do_compile_records_failed_compile(self):
         with tempfile.TemporaryDirectory() as tmp:
             session_state = _SessionState(
