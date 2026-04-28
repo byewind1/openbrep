@@ -50,6 +50,7 @@ from ui import vision_controller as ui_vision_controller
 from ui import gdl_checks as ui_gdl_checks
 from ui import generation_service as ui_generation_service
 from ui import generation_controls as ui_generation_controls
+from ui import chat_helpers as ui_chat_helpers
 from ui import app_shell as ui_app_shell
 from ui import config_service as ui_config_service
 from ui import feedback_service as ui_feedback_service
@@ -1034,43 +1035,19 @@ def _handle_unified_import(uploaded_file) -> tuple[bool, str]:
     return _project_service().handle_unified_import(uploaded_file)
 
 
-def _strip_md_fences(code: str) -> str:
-    return ui_view_models.strip_md_fences(code)
-
-
-def _classify_code_blocks(text: str) -> dict:
-    return ui_view_models.classify_code_blocks(text)
-
-
-def _extract_gdl_from_text(text: str) -> dict:
-    return ui_view_models.extract_gdl_from_text(text)
+_strip_md_fences = ui_view_models.strip_md_fences
+_classify_code_blocks = ui_view_models.classify_code_blocks
+_extract_gdl_from_text = ui_view_models.extract_gdl_from_text
 
 
 _EXPLAINER_FOLLOWUP_MODIFY_PATTERNS = ui_view_models._EXPLAINER_FOLLOWUP_MODIFY_PATTERNS
 
 
-def _is_bridgeable_explainer_message(message: dict) -> bool:
-    return ui_view_models.is_bridgeable_explainer_message(message)
-
-
-
-def _is_explainer_followup_modify_request(text: str) -> bool:
-    return ui_view_models.is_explainer_followup_modify_request(text)
-
-
-
-def _find_latest_bridgeable_explainer_message(history: list[dict]) -> dict | None:
-    return ui_view_models.find_latest_bridgeable_explainer_message(history)
-
-
-
-def _build_modify_bridge_prompt(message: dict, fallback_request: str = "") -> str:
-    return ui_view_models.build_modify_bridge_prompt(message, fallback_request=fallback_request)
-
-
-
-def _maybe_build_followup_bridge_input(user_input: str, history: list[dict], has_project: bool) -> str | None:
-    return ui_view_models.maybe_build_followup_bridge_input(user_input, history, has_project)
+_is_bridgeable_explainer_message = ui_view_models.is_bridgeable_explainer_message
+_is_explainer_followup_modify_request = ui_view_models.is_explainer_followup_modify_request
+_find_latest_bridgeable_explainer_message = ui_view_models.find_latest_bridgeable_explainer_message
+_build_modify_bridge_prompt = ui_view_models.build_modify_bridge_prompt
+_maybe_build_followup_bridge_input = ui_view_models.maybe_build_followup_bridge_input
 
 
 def _resolve_bridge_input(pending_bridge_idx, user_input: str | None, history: list[dict], has_project: bool) -> str | None:
@@ -1085,13 +1062,8 @@ def _resolve_bridge_input(pending_bridge_idx, user_input: str | None, history: l
 
 
 
-def _is_modify_bridge_prompt(text: str) -> bool:
-    return ui_view_models.is_modify_bridge_prompt(text)
-
-
-
-def _is_post_clarification_prompt(text: str) -> bool:
-    return ui_view_models.is_post_clarification_prompt(text)
+_is_modify_bridge_prompt = ui_view_models.is_modify_bridge_prompt
+_is_post_clarification_prompt = ui_view_models.is_post_clarification_prompt
 
 
 
@@ -1237,69 +1209,33 @@ def _run_vision_path(has_image_input: bool, vision_mime: str | None, vision_name
 
 
 
-def _build_assistant_chat_message(content: str, intent: str, has_project: bool, source_user_input: str) -> dict:
-    return ui_view_models.build_assistant_chat_message(content, intent, has_project, source_user_input)
+_build_assistant_chat_message = ui_view_models.build_assistant_chat_message
 
 
 def _extract_gdl_from_chat() -> dict:
-    """Scan all assistant messages in chat history; last block per type wins."""
-    collected: dict[str, str] = {}
-    for msg in st.session_state.get("chat_history", []):
-        if msg.get("role") != "assistant":
-            continue
-        for path, block in _classify_code_blocks(msg.get("content", "")).items():
-            collected[path] = block
-    return collected
+    return ui_chat_helpers.extract_gdl_from_chat(st.session_state, _classify_code_blocks)
 
 
-def _build_chat_script_anchors(history: list[dict]) -> list[dict]:
-    return ui_view_models.build_chat_script_anchors(history)
-
-
-def _classify_vision_error(exc: Exception) -> str:
-    return ui_view_models.classify_vision_error(exc)
+_build_chat_script_anchors = ui_view_models.build_chat_script_anchors
+_classify_vision_error = ui_view_models.classify_vision_error
 
 
 def _validate_chat_image_size(raw_bytes: bytes, image_name: str) -> str | None:
     return ui_view_models.validate_chat_image_size(raw_bytes, image_name, MAX_CHAT_IMAGE_BYTES)
 
 
-def _trim_history_for_image(history: list[dict], limit: int = 4) -> list[dict]:
-    return ui_view_models.trim_history_for_image(history, limit=limit)
-
-
-def _thumb_image_bytes(image_b64: str) -> bytes | None:
-    return ui_view_models.thumb_image_bytes(image_b64)
-
-
-def _should_show_copyable_chat_content(message: dict) -> bool:
-    return message.get("role") == "assistant" and bool((message.get("content") or "").strip())
-
-
-def _copyable_chat_text(message: dict) -> str:
-    if not _should_show_copyable_chat_content(message):
-        return ""
-    return str(message.get("content") or "")
+_trim_history_for_image = ui_view_models.trim_history_for_image
+_thumb_image_bytes = ui_view_models.thumb_image_bytes
+_should_show_copyable_chat_content = ui_chat_helpers.should_show_copyable_chat_content
+_copyable_chat_text = ui_chat_helpers.copyable_chat_text
 
 
 def _copy_text_to_system_clipboard(text: str) -> tuple[bool, str]:
-    payload = (text or "").strip()
-    if not payload:
-        return False, "当前消息无可复制内容"
-
-    try:
-        if sys.platform == "darwin":
-            subprocess.run(["pbcopy"], input=payload, text=True, check=True, timeout=2)
-            return True, "已复制本条回复"
-        if sys.platform.startswith("linux"):
-            subprocess.run(["xclip", "-selection", "clipboard"], input=payload, text=True, check=True, timeout=2)
-            return True, "已复制本条回复"
-        if sys.platform.startswith("win"):
-            subprocess.run(["clip"], input=payload, text=True, check=True, timeout=2)
-            return True, "已复制本条回复"
-        return False, "当前系统暂不支持自动复制"
-    except Exception:
-        return False, "复制失败，请重试"
+    return ui_chat_helpers.copy_text_to_system_clipboard(
+        text,
+        platform=sys.platform,
+        run_fn=subprocess.run,
+    )
 
 
 def _copy_to_clipboard(text: str, key: str) -> None:
