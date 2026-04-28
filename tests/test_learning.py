@@ -51,6 +51,7 @@ class TestErrorLearning(unittest.TestCase):
             self.assertIn("developer_gdl_error_baseline", prompt)
             self.assertIn("出现 2 次", prompt)
             self.assertIn("变量", prompt)
+            self.assertNotIn("line 44", prompt)
 
     def test_seed_call_keyword_lesson_is_injected_without_local_records(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -89,6 +90,7 @@ class TestErrorLearning(unittest.TestCase):
             self.assertIn("learned_gdl_error_avoidance_compacted", compacted)
             self.assertIn("missing_call_keyword", compacted)
             self.assertIn("variable_mapping", compacted)
+            self.assertNotIn("line 12", compacted)
 
             prompt = store.build_skill_prompt(project_name="Chair")
             self.assertIn("learned_gdl_error_avoidance_compacted", prompt)
@@ -174,11 +176,15 @@ class TestErrorLearning(unittest.TestCase):
             self.assertEqual(len(lessons), 1)
             self.assertEqual(lessons[0].category, "missing_call_keyword")
             self.assertIn("钢结构节点_v4.gsm", lessons[0].summary)
+            self.assertNotIn("第75", lessons[0].summary)
+            self.assertNotIn("第80", lessons[0].summary)
             self.assertIn("CALL", lessons[0].guidance)
 
             prompt = store.build_skill_prompt(project_name="钢结构节点")
             self.assertIn("缺少 CALL", prompt)
             self.assertIn("显式使用 CALL", prompt)
+            self.assertNotIn("第75", prompt)
+            self.assertNotIn("第80", prompt)
 
 
 if __name__ == "__main__":

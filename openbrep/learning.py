@@ -302,11 +302,13 @@ def build_error_learning_skill(
         "### Recurring Lessons",
     ]
     for idx, lesson in enumerate(selected, 1):
-        lines.append(f"{idx}. **{lesson.category}**（出现 {lesson.count} 次）: {lesson.summary}")
+        summary = _sanitize_learning_text(lesson.summary)
+        lines.append(f"{idx}. **{lesson.category}**（出现 {lesson.count} 次）: {summary}")
         lines.append(f"   - 约束: {lesson.guidance}")
         if lesson.raw_excerpt:
-            excerpt = lesson.raw_excerpt.replace("\n", " ")[:220]
-            lines.append(f"   - 最近错误摘录: `{excerpt}`")
+            excerpt = _sanitize_learning_text(lesson.raw_excerpt)[:220]
+            if excerpt:
+                lines.append(f"   - 错误模式摘录: `{excerpt}`")
 
     lines.extend([
         "",
@@ -356,10 +358,11 @@ def build_compacted_learning_skill(
         "## Representative Lessons",
     ])
     for idx, lesson in enumerate(selected, 1):
-        lines.append(f"{idx}. {lesson.summary}")
+        lines.append(f"{idx}. {_sanitize_learning_text(lesson.summary)}")
         if lesson.raw_excerpt:
-            excerpt = lesson.raw_excerpt.replace("\n", " ")[:260]
-            lines.append(f"   - Evidence: `{excerpt}`")
+            excerpt = _sanitize_learning_text(lesson.raw_excerpt)[:260]
+            if excerpt:
+                lines.append(f"   - Error pattern: `{excerpt}`")
 
     return "\n".join(lines)
 
@@ -417,8 +420,8 @@ def developer_error_lessons() -> list[ErrorLesson]:
             source="openbrep_developer_baseline",
             project_name="",
             raw_excerpt=(
-                "文件《钢结构节点_v4.gsm》存在两类问题:3D脚本第75、80、85、90行出现"
-                "“缺少CALL关键字(不推荐写法)”;Master脚本第4、5、6、8、9、10、12、13、14、16、28行出现类似问题"
+                "文件《钢结构节点_v4.gsm》存在两类问题:3D脚本出现"
+                "“缺少CALL关键字(不推荐写法)”;Master脚本出现类似问题"
             ),
         )
     ]
@@ -460,7 +463,7 @@ def summarize_error(raw_error: str, category: str) -> str:
         return summarized
     first_line = next((line.strip() for line in raw_error.splitlines() if line.strip()), "")
     if first_line:
-        return first_line[:180]
+        return _sanitize_learning_text(first_line)[:180]
     return category.replace("_", " ")
 
 
@@ -474,7 +477,7 @@ def guidance_for_category(category: str) -> str:
         "transform_balance": "每个 ADD/ROT/MUL 变换块必须有匹配 DEL，嵌套变换按栈成对关闭。",
         "2d_symbol": "2D 脚本至少提供 PROJECT2 或基础绘图/热点，且不要依赖 3D 中未定义的局部变量。",
         "missing_call_keyword": "出现子程序、宏或标签式调用时显式使用 CALL/规范调用形式；不要让脚本依赖 Archicad 可编译但不推荐的省略写法。",
-        "user_summarized_archicad_issue": "用户总结的真实 Archicad 检查结果视为高优先级约束；抽取文件、脚本、行号和错误短语，生成前逐条自检。",
+        "user_summarized_archicad_issue": "用户总结的真实 Archicad 检查结果视为高优先级约束；抽取错误类型、脚本范围和错误短语，生成前逐条自检。",
         "general_compile_error": "先定位文件和行号，做最小修复，再回归检查参数、结构闭合和变换平衡。",
     }
     return guidance.get(category, guidance["general_compile_error"])
@@ -515,6 +518,19 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+\n", "\n", str(text or "").strip())
 
 
+def _sanitize_learning_text(text: str) -> str:
+    """Remove volatile source locations before text is injected into prompts."""
+    cleaned = str(text or "").replace("\n", " ")
+    cleaned = re.sub(r"第[\d、,，\s]+行", "", cleaned)
+    cleaned = re.sub(r"\bat\s+line\s+\d+\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bline\s+\d+\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*,\s*in\s+the\s+", " in the ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.replace("脚本出现", "脚本出现")
+    cleaned = re.sub(r"脚本\s*[:：,，;；]\s*", "脚本: ", cleaned)
+    return cleaned.strip(" ;；,，")
+
+
 def _looks_like_user_summary(raw: str) -> bool:
     return bool(
         re.search(r"文件《[^》]+\.gsm》存在", raw)
@@ -552,23 +568,27 @@ def _summarize_user_error_report(raw: str, category: str) -> str:
 
     file_match = re.search(r"文件《([^》]+)》", raw)
     file_part = f"{file_match.group(1)}: " if file_match else ""
-    script_matches = re.findall(r"((?:3D|2D|Master|参数|UI)\s*脚本)第([\d、,，\s]+)行", raw, flags=re.IGNORECASE)
+    script_matches = re.findall(
+        r"((?:3D|2D|Master|参数|UI)\s*脚本)第[\d、,，\s]+行",
+        raw,
+        flags=re.IGNORECASE,
+    )
     phrase_match = re.search(r"“([^”]+)”", raw)
     phrase = phrase_match.group(1) if phrase_match else ""
 
-    locations = []
-    for script_name, lines in script_matches[:3]:
-        normalized_lines = re.sub(r"\s+", "", lines)
-        locations.append(f"{script_name}第{normalized_lines}行")
+    script_names = []
+    for script_name in script_matches[:3]:
+        normalized_script = re.sub(r"\s+", "", script_name)
+        if normalized_script not in script_names:
+            script_names.append(normalized_script)
 
     category_text = {
         "missing_call_keyword": "缺少 CALL 关键字/不推荐调用写法",
         "user_summarized_archicad_issue": "用户总结的 Archicad 检查问题",
     }.get(category, "用户总结的 Archicad 检查问题")
     detail = f"；错误短语：{phrase}" if phrase else ""
-    where = "；".join(locations)
-    where_text = f"；位置：{where}" if where else ""
-    return f"{file_part}{category_text}{where_text}{detail}"[:220]
+    script_text = f"；脚本范围：{'、'.join(script_names)}" if script_names else ""
+    return _sanitize_learning_text(f"{file_part}{category_text}{script_text}{detail}")[:220]
 
 
 def _lesson_from_dict(data: dict[str, Any]) -> ErrorLesson:
