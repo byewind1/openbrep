@@ -73,7 +73,13 @@ class TestErrorLearning(unittest.TestCase):
     def test_looks_like_error_report_detects_tapir_message(self):
         self.assertTrue(looks_like_error_report("## 🔴 Archicad GDL 错误报告\nError in 3D script, line 1"))
         self.assertTrue(looks_like_error_report("文件《钢结构节点_v4.gsm》存在两类问题:3D脚本第75、80行出现“缺少CALL关键字(不推荐写法)”"))
+        self.assertTrue(looks_like_error_report("3d 脚本有错误提示：Not enough parameters\nat line 27 in the 3D script of file 钢结构旋转楼梯_v1.gsm"))
         self.assertFalse(looks_like_error_report("把椅子做得宽一点"))
+
+    def test_script_error_fragment_is_classified_as_command_arguments(self):
+        raw = "3d 脚本有错误提示：Not enough parameters\nat line 27 in the 3D script of file 钢结构旋转楼梯_v1.gsm"
+
+        self.assertEqual(classify_error(raw), "command_arguments")
 
     def test_user_summarized_gdl_copilot_report_becomes_strong_prompt_constraint(self):
         with tempfile.TemporaryDirectory() as tmpdir:

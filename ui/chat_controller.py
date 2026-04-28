@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from openbrep.learning import ErrorLearningStore, looks_like_error_report
+
 from ui.chat_render import render_assistant_block, render_user_bubble
 
 
@@ -233,6 +235,25 @@ def build_image_user_display(vision_name: str, route_mode: str, joined_text: str
     return f"🖼️ `{vision_name}` · {route_tag}" + (f"  \n{joined_text}" if joined_text else "")
 
 
+def maybe_record_conversation_error_learning(session_state, text: str | None) -> bool:
+    if not text or not looks_like_error_report(text):
+        return False
+    try:
+        project = session_state.get("project")
+        project_name = getattr(project, "name", "") if project is not None else ""
+        work_dir = session_state.get("work_dir", "./workdir")
+        ErrorLearningStore(work_dir).record_error(
+            text,
+            source="conversation_error_fragment",
+            project_name=project_name,
+            instruction="用户在聊天中提供的脚本错误提示，后续生成需避免同类问题。",
+        )
+        session_state["learning_notice"] = "已加入错题本"
+        return True
+    except Exception:
+        return False
+
+
 def run_normal_text_path(
     *,
     effective_input: str,
@@ -459,6 +480,7 @@ def process_chat_turn(
     runtime = pop_chat_runtime_state(session_state=session_state, has_image_input=bool(chat_payload.get("vision_b64")))
     user_input = chat_payload.get("user_input")
     live_output = chat_payload["live_output"]
+    maybe_record_conversation_error_learning(session_state, user_input)
 
     _handled, _should_rerun = handle_tapir_test_trigger_fn(runtime["tapir_trigger"])
     if _handled and _should_rerun:

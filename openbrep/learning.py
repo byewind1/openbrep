@@ -202,6 +202,8 @@ def classify_error(raw_error: str) -> str:
         if "call" in text and ("缺少" in raw_error or "不推荐写法" in raw_error):
             return "missing_call_keyword"
         return "user_summarized_archicad_issue"
+    if any(term in text for term in ("not enough parameters", "too few parameters")):
+        return "command_arguments"
     if any(term in text for term in ("endif", "end if", "next expected", "end expected", "unexpected end")):
         return "control_flow_closure"
     if any(term in text for term in ("wrong number of", "missing parameter", "too few parameters", "too many parameters", "argument")):
@@ -260,6 +262,7 @@ def looks_like_error_report(text: str) -> bool:
         or _looks_like_user_summary(raw)
         or "compile failed" in lower
         or "lp_xmlconverter" in lower
+        or _looks_like_script_error_fragment(raw)
         or bool(re.search(r"(error|warning)\s+in\s+\w[\w\s]*script[,\s]+line\s+\d+", raw, re.IGNORECASE))
     )
 
@@ -287,6 +290,27 @@ def _looks_like_user_summary(raw: str) -> bool:
             and any(marker in raw for marker in ("出现", "存在", "缺少", "错误", "不推荐写法"))
         )
     )
+
+
+def _looks_like_script_error_fragment(raw: str) -> bool:
+    text = raw or ""
+    lower = text.lower()
+    has_script = bool(re.search(r"\b(3d|2d|master|ui)\s*(script|脚本)\b", lower, re.IGNORECASE))
+    has_line = bool(re.search(r"\bline\s+\d+\b|第[\d、,，\s]+行", text, re.IGNORECASE))
+    has_error = any(term in lower for term in (
+        "error",
+        "not enough parameters",
+        "wrong number of",
+        "undefined variable",
+        "warning",
+        "错误",
+        "报错",
+        "缺少",
+        "未定义",
+        "未初始化",
+    ))
+    has_gsm = ".gsm" in lower
+    return has_error and has_script and (has_line or has_gsm)
 
 
 def _summarize_user_error_report(raw: str, category: str) -> str:
