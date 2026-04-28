@@ -772,6 +772,10 @@ def _main_editor_state_key(fpath: str, editor_version: int) -> str:
 
 
 def _mark_main_ace_editors_pending(editor_version: int) -> None:
+    ui_preview_controller.clear_script_editor_widget_state(
+        st.session_state,
+        script_map=_SCRIPT_MAP,
+    )
     if not _ACE_AVAILABLE:
         st.session_state._ace_pending_main_editor_keys = set()
         return

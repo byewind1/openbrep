@@ -3,7 +3,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from openbrep.hsf_project import HSFProject, ScriptType
-from ui.preview_controller import run_preview, sync_visible_editor_buffers
+from ui.preview_controller import (
+    clear_script_editor_widget_state,
+    run_preview,
+    sync_visible_editor_buffers,
+)
 
 
 class _State(dict):
@@ -107,6 +111,26 @@ class TestPreviewControllerPhase1(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(proj.get_script(ScriptType.SCRIPT_3D), "BLOCK 1,1,1")
         self.assertEqual(state._ace_pending_main_editor_keys, {"editor_scripts_1_3d"})
+
+    def test_clear_script_editor_widget_state_removes_stale_editor_keys(self):
+        state = _State(
+            {
+                "ace_scripts/3d.gdl_v1": "old",
+                "ace_scripts/3d.gdl_v2": "newer",
+                "script_scripts/2d.gdl_v1": "old 2d",
+                "other": "keep",
+            }
+        )
+
+        clear_script_editor_widget_state(
+            state,
+            script_map=[
+                (ScriptType.SCRIPT_3D, "scripts/3d.gdl", "3D"),
+                (ScriptType.SCRIPT_2D, "scripts/2d.gdl", "2D"),
+            ],
+        )
+
+        self.assertEqual(state, {"other": "keep"})
 
 
 if __name__ == "__main__":

@@ -45,6 +45,19 @@ def sync_visible_editor_buffers(
     return changed
 
 
+def clear_script_editor_widget_state(
+    session_state,
+    *,
+    script_map: list[tuple[object, str, str]],
+) -> None:
+    """Drop stale Streamlit editor widget values so project scripts can repopulate editors."""
+    for _stype, fpath, _label in script_map:
+        prefixes = (f"ace_{fpath}_v", f"script_{fpath}_v")
+        for key in list(session_state.keys()):
+            if any(str(key).startswith(prefix) for prefix in prefixes):
+                session_state.pop(key, None)
+
+
 def collect_preview_prechecks(
     proj,
     target: str,
