@@ -973,7 +973,7 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
 
 
 def _project_service() -> ui_project_service.ProjectService:
-    return ui_project_service.ProjectService(
+    service = ui_project_service.ProjectService(
         session_state=st.session_state,
         compiler_mode=compiler_mode,
         get_compiler_fn=get_compiler,
@@ -988,11 +988,12 @@ def _project_service() -> ui_project_service.ProjectService:
             tapir_import_ok=_TAPIR_IMPORT_OK,
             get_bridge_fn=get_bridge,
         ),
-        sync_visible_editor_buffers_fn=lambda project: _sync_visible_editor_buffers(
-            project,
-            int(st.session_state.get("editor_version", 0)),
-        ),
     )
+    service.sync_visible_editor_buffers_fn = lambda project: _sync_visible_editor_buffers(
+        project,
+        int(st.session_state.get("editor_version", 0)),
+    )
+    return service
 
 
 def do_compile(proj: HSFProject, gsm_name: str, instruction: str = "") -> tuple:

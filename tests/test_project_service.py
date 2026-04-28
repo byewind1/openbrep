@@ -107,8 +107,8 @@ class TestProjectService(unittest.TestCase):
                 load_project_from_disk_fn=lambda _path: None,
                 reset_tapir_p0_state_fn=lambda: None,
                 bump_main_editor_version_fn=lambda: None,
-                sync_visible_editor_buffers_fn=lambda _proj: calls.append("sync") or True,
             )
+            service.sync_visible_editor_buffers_fn = lambda _proj: calls.append("sync") or True
             proj = SimpleNamespace(name="Chair", save_to_disk=lambda: Path(tmp) / "Chair")
 
             ok, _msg = service.do_compile(proj, "Chair", "compile instruction")
