@@ -42,7 +42,11 @@ def render_sidebar(
         st.sidebar.warning("⚠️ Archicad 未运行，编译和实时预览不可用")
 
     st.markdown('<p class="main-header">OpenBrep</p>', unsafe_allow_html=True)
-    st.markdown('<p class="intro-header">用自然语言驱动 ArchiCAD GDL 库对象的创建、修改与编译。</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="intro-header">面向 ArchiCAD 高阶用户和 GDL 开发者的 AI 工作台。'
+        "编译验证、知识驱动、资产可追溯。</p>",
+        unsafe_allow_html=True,
+    )
     st.markdown(
         f'<p class="sub-header">OpenBrep: Code Your Boundaries · v{openbrep_version} · HSF-native</p>',
         unsafe_allow_html=True,
