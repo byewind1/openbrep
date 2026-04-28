@@ -164,6 +164,10 @@ def build_error_learning_skill(
 
 def classify_error(raw_error: str) -> str:
     text = raw_error.lower()
+    if _looks_like_user_summary(raw_error):
+        if "call" in text and ("缺少" in raw_error or "不推荐写法" in raw_error):
+            return "missing_call_keyword"
+        return "user_summarized_archicad_issue"
     if any(term in text for term in ("endif", "end if", "next expected", "end expected", "unexpected end")):
         return "control_flow_closure"
     if any(term in text for term in ("wrong number of", "missing parameter", "too few parameters", "too many parameters", "argument")):
@@ -182,6 +186,9 @@ def classify_error(raw_error: str) -> str:
 
 
 def summarize_error(raw_error: str, category: str) -> str:
+    summarized = _summarize_user_error_report(raw_error, category)
+    if summarized:
+        return summarized
     first_line = next((line.strip() for line in raw_error.splitlines() if line.strip()), "")
     if first_line:
         return first_line[:180]
@@ -197,6 +204,8 @@ def guidance_for_category(category: str) -> str:
         "parameter_xml": "参数名、类型和值必须与脚本一致；XML 只用结构化生成，不手写破坏标签。",
         "transform_balance": "每个 ADD/ROT/MUL 变换块必须有匹配 DEL，嵌套变换按栈成对关闭。",
         "2d_symbol": "2D 脚本至少提供 PROJECT2 或基础绘图/热点，且不要依赖 3D 中未定义的局部变量。",
+        "missing_call_keyword": "出现子程序、宏或标签式调用时显式使用 CALL/规范调用形式；不要让脚本依赖 Archicad 可编译但不推荐的省略写法。",
+        "user_summarized_archicad_issue": "用户总结的真实 Archicad 检查结果视为高优先级约束；抽取文件、脚本、行号和错误短语，生成前逐条自检。",
         "general_compile_error": "先定位文件和行号，做最小修复，再回归检查参数、结构闭合和变换平衡。",
     }
     return guidance.get(category, guidance["general_compile_error"])
@@ -214,6 +223,7 @@ def looks_like_error_report(text: str) -> bool:
     return (
         "archicad gdl 错误报告" in raw
         or "错误日志" in raw
+        or _looks_like_user_summary(raw)
         or "compile failed" in lower
         or "lp_xmlconverter" in lower
         or bool(re.search(r"(error|warning)\s+in\s+\w[\w\s]*script[,\s]+line\s+\d+", raw, re.IGNORECASE))
@@ -222,6 +232,8 @@ def looks_like_error_report(text: str) -> bool:
 
 def _normalize_for_fingerprint(raw: str) -> str:
     text = raw.lower()
+    text = re.sub(r"《[^》]+\.gsm》", "《<gsm>》", text)
+    text = re.sub(r"第[\d、,，\s]+行", "第<n>行", text)
     text = re.sub(r"/[\w./\- ]+", "<path>", text)
     text = re.sub(r"\bline\s+\d+\b", "line <n>", text)
     text = re.sub(r"\b\d+\b", "<n>", text)
@@ -231,6 +243,41 @@ def _normalize_for_fingerprint(raw: str) -> str:
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+\n", "\n", str(text or "").strip())
+
+
+def _looks_like_user_summary(raw: str) -> bool:
+    return bool(
+        re.search(r"文件《[^》]+\.gsm》存在", raw)
+        or (
+            re.search(r"(3D|2D|Master|参数|UI)\s*脚本第[\d、,，\s]+行", raw, re.IGNORECASE)
+            and any(marker in raw for marker in ("出现", "存在", "缺少", "错误", "不推荐写法"))
+        )
+    )
+
+
+def _summarize_user_error_report(raw: str, category: str) -> str:
+    if not _looks_like_user_summary(raw):
+        return ""
+
+    file_match = re.search(r"文件《([^》]+)》", raw)
+    file_part = f"{file_match.group(1)}: " if file_match else ""
+    script_matches = re.findall(r"((?:3D|2D|Master|参数|UI)\s*脚本)第([\d、,，\s]+)行", raw, flags=re.IGNORECASE)
+    phrase_match = re.search(r"“([^”]+)”", raw)
+    phrase = phrase_match.group(1) if phrase_match else ""
+
+    locations = []
+    for script_name, lines in script_matches[:3]:
+        normalized_lines = re.sub(r"\s+", "", lines)
+        locations.append(f"{script_name}第{normalized_lines}行")
+
+    category_text = {
+        "missing_call_keyword": "缺少 CALL 关键字/不推荐调用写法",
+        "user_summarized_archicad_issue": "用户总结的 Archicad 检查问题",
+    }.get(category, "用户总结的 Archicad 检查问题")
+    detail = f"；错误短语：{phrase}" if phrase else ""
+    where = "；".join(locations)
+    where_text = f"；位置：{where}" if where else ""
+    return f"{file_part}{category_text}{where_text}{detail}"[:220]
 
 
 def _lesson_from_dict(data: dict[str, Any]) -> ErrorLesson:
