@@ -33,6 +33,7 @@ from openbrep.runtime.pipeline import (
 )
 from openbrep.static_checker import StaticError, StaticCheckResult
 from openbrep.config import GDLAgentConfig
+from openbrep.learning import ErrorLearningStore
 
 
 # ── Test helpers ──────────────────────────────────────────
@@ -391,6 +392,52 @@ class TestModifyPipelineContext(unittest.TestCase):
 
         self.assertIn("错误日志", captured.get("instruction", ""))
         self.assertIn("Missing END", captured.get("instruction", ""))
+
+    def test_user_error_log_is_recorded_as_project_learning(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline = _make_pipeline("")
+
+            def capture_generate_only(self_agent, **kwargs):
+                return {}, ""
+
+            with patch("openbrep.core.GDLAgent.generate_only", capture_generate_only):
+                pipeline.execute(TaskRequest(
+                    user_input="修复脚本中的编译错误",
+                    intent="REPAIR",
+                    project=_make_project("Chair"),
+                    work_dir=tmpdir,
+                    error_log="Error in 3D script, line 12: Undefined variable width",
+                ))
+
+            lessons = ErrorLearningStore(tmpdir).list_error_lessons()
+            self.assertEqual(len(lessons), 1)
+            self.assertEqual(lessons[0].category, "variable_mapping")
+            self.assertEqual(lessons[0].project_name, "Chair")
+
+    def test_learned_error_skill_is_injected_into_modify_prompt(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ErrorLearningStore(tmpdir).record_error(
+                "Error in 3D script, line 12: Wrong number of arguments in PRISM_",
+                source="compile_result",
+                project_name="Chair",
+            )
+            pipeline = _make_pipeline("")
+            captured = {}
+
+            def capture_generate_only(self_agent, **kwargs):
+                captured["skills"] = kwargs.get("skills")
+                return {}, ""
+
+            with patch("openbrep.core.GDLAgent.generate_only", capture_generate_only):
+                pipeline.execute(TaskRequest(
+                    user_input="把椅子改宽一点",
+                    intent="MODIFY",
+                    project=_make_project("Chair"),
+                    work_dir=tmpdir,
+                ))
+
+            self.assertIn("learned_gdl_error_avoidance", captured.get("skills", ""))
+            self.assertIn("PRISM_", captured.get("skills", ""))
 
 
 class TestCliRepairIntent(unittest.TestCase):

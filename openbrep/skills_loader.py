@@ -22,7 +22,7 @@ from typing import Optional
 _TASK_SKILL_MAP: dict[str, list[str]] = {
     "create":   ["create_object"],
     "modify":   ["modify_parameter"],
-    "debug":    ["fix_compile_error"],
+    "debug":    ["fix_compile_error", "learn_from_errors"],
     "optimize": ["optimize_geometry"],
     "2d":       ["create_2d_symbol"],
     "ui":       ["create_ui_panel"],

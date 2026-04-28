@@ -39,6 +39,7 @@ from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
+from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
 from openbrep.skill_creator import SkillCreator
 from openbrep.user_knowledge import load_user_knowledge
@@ -315,7 +316,6 @@ class TaskPipeline:
         llm = self._make_llm(request)
         compiler = self._make_compiler()
         knowledge = self._load_knowledge()
-        skills_text = self._load_skills(request.user_input)
 
         # Ensure project exists
         project = request.project
@@ -325,6 +325,11 @@ class TaskPipeline:
                 gsm_name,
                 work_dir=request.work_dir,
             )
+        skills_text = self._with_learned_error_skill(
+            self._load_skills(request.user_input),
+            work_dir=request.work_dir,
+            project_name=project.name,
+        )
 
         # Load image if provided
         image_b64: Optional[str] = request.image_b64
@@ -468,13 +473,18 @@ class TaskPipeline:
         compiler = self._make_compiler()
         knowledge = self._load_knowledge()
         clean_instruction, syntax_report = _normalize_modify_request(request)
-        skills_text = _MODIFY_SKILLS_PROMPT + "\n\n" + self._load_skills(clean_instruction)
 
         # Prepare project — create empty one if none provided
         project = request.project
         if project is None:
             gsm_name = request.gsm_name or "untitled"
             project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
+        self._record_user_error_learning(request, project, clean_instruction)
+        skills_text = _MODIFY_SKILLS_PROMPT + "\n\n" + self._with_learned_error_skill(
+            self._load_skills(clean_instruction),
+            work_dir=request.work_dir,
+            project_name=project.name,
+        )
 
         # Snapshot BEFORE state for diff
         before_scripts = _snapshot_scripts(project)
@@ -543,6 +553,13 @@ class TaskPipeline:
                 if p.strip()
             ]
             error_log = "\n".join(error_parts)
+            self._record_error_learning(
+                request.work_dir,
+                error_log,
+                source="compile_result",
+                project_name=project.name,
+                instruction=clean_instruction,
+            )
             on_event("status", {"message": "🔧 编译失败，正在自动修复…"})
             logger.info("Compile failed; triggering auto-repair. error_log=%d chars", len(error_log))
 
@@ -677,6 +694,50 @@ class TaskPipeline:
             self._skills_loader = SkillsLoader(str(sk_dir))
             self._skills_loader.load()
         return self._skills_loader.get_for_task(instruction)
+
+    def _with_learned_error_skill(self, skills_text: str, *, work_dir: str = "", project_name: str = "") -> str:
+        learned_skill = ""
+        if work_dir:
+            try:
+                learned_skill = ErrorLearningStore(work_dir).build_skill_prompt(project_name=project_name)
+            except Exception:
+                learned_skill = ""
+        return "\n\n---\n\n".join(part for part in [skills_text, learned_skill] if part)
+
+    def _record_user_error_learning(self, request: TaskRequest, project: HSFProject, instruction: str) -> None:
+        raw_error = request.error_log.strip() if request.error_log else ""
+        source = "user_error_log"
+        if not raw_error and looks_like_error_report(request.user_input):
+            raw_error = request.user_input
+            source = "user_or_tapir_error_report"
+        if not raw_error:
+            return
+        self._record_error_learning(
+            request.work_dir,
+            raw_error,
+            source=source,
+            project_name=project.name,
+            instruction=instruction,
+        )
+
+    def _record_error_learning(
+        self,
+        work_dir: str,
+        raw_error: str,
+        *,
+        source: str,
+        project_name: str,
+        instruction: str = "",
+    ) -> None:
+        try:
+            ErrorLearningStore(work_dir).record_error(
+                raw_error,
+                source=source,
+                project_name=project_name,
+                instruction=instruction,
+            )
+        except Exception:
+            logger.debug("Failed to record GDL error learning", exc_info=True)
 
     # ── Skill creator ────────────────────────────────────
 
