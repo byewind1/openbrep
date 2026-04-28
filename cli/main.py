@@ -38,6 +38,11 @@ revision_app = typer.Typer(
     help="管理 HSF 项目的本地版本快照",
     add_completion=False,
 )
+memory_app = typer.Typer(
+    name="memory",
+    help="查看、导出或清除工作区学习记忆",
+    add_completion=False,
+)
 console = Console()
 err_console = Console(stderr=True)
 
@@ -926,6 +931,78 @@ def revision_restore(
     console.print(f"[green]📌 当前最新版本：{revision.revision_id}[/green]")
 
 
+@memory_app.command("status")
+def memory_status(
+    work_dir: str = typer.Option("./workdir", "--work-dir", "-w", help="OpenBrep 工作区目录"),
+):
+    """显示当前工作区持久化记忆概况"""
+    from openbrep.learning import ErrorLearningStore
+
+    status = ErrorLearningStore(work_dir).memory_status()
+    table = Table(title="OpenBrep 工作区记忆", show_header=True, header_style="bold cyan")
+    table.add_column("项目")
+    table.add_column("值", style="green")
+    table.add_row("路径", str(status.memory_root))
+    table.add_row("聊天记录", str(status.chat_count))
+    table.add_row("错题记录", str(status.lesson_count))
+    table.add_row("整理后 Skill", "是" if status.has_learned_skill else "否")
+    table.add_row("占用空间", str(status.total_bytes))
+    console.print(table)
+
+
+@memory_app.command("export")
+def memory_export(
+    target_dir: str = typer.Argument(..., help="导出目标目录"),
+    work_dir: str = typer.Option("./workdir", "--work-dir", "-w", help="OpenBrep 工作区目录"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="覆盖已存在的导出目录"),
+):
+    """导出当前工作区记忆，便于审查、备份或迁移"""
+    from openbrep.learning import ErrorLearningStore
+
+    try:
+        exported = ErrorLearningStore(work_dir).export_memory(target_dir, overwrite=overwrite)
+    except FileExistsError as exc:
+        err_console.print(f"[red]❌ 导出失败：{exc}[/red]")
+        err_console.print("请换一个目录，或使用 --overwrite。")
+        raise typer.Exit(1)
+    except Exception as exc:
+        err_console.print(f"[red]❌ 导出失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✅ 已导出记忆：{exported}[/green]")
+
+
+@memory_app.command("clear")
+def memory_clear(
+    work_dir: str = typer.Option("./workdir", "--work-dir", "-w", help="OpenBrep 工作区目录"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认"),
+):
+    """清除当前工作区记忆，不删除 HSF 项目或版本快照"""
+    from openbrep.learning import ErrorLearningStore
+
+    store = ErrorLearningStore(work_dir)
+    status = store.memory_status()
+    has_no_memory = (
+        status.total_bytes == 0
+        and status.chat_count == 0
+        and status.lesson_count == 0
+        and not status.has_learned_skill
+    )
+    if has_no_memory:
+        console.print("[yellow]当前工作区没有可清除的记忆。[/yellow]")
+        return
+
+    if not yes and not typer.confirm("确认清除当前工作区聊天记录、错题本和整理后的 Skill？", default=False):
+        console.print("[yellow]已取消，未清除任何文件。[/yellow]")
+        return
+
+    before = store.clear_memory()
+    console.print(
+        "[green]✅ 已清除工作区记忆[/green] "
+        f"[dim]聊天 {before.chat_count} 条，错题 {before.lesson_count} 条，{before.total_bytes} bytes[/dim]"
+    )
+
+
 @app.command()
 def configure(
     config: Optional[str] = typer.Option(None, "--config", help="Config file path"),
@@ -1094,6 +1171,9 @@ def help():
     table.add_row("obr revision save <project_dir>", "保存项目版本快照")
     table.add_row("obr revision list <project_dir>", "查看项目版本快照")
     table.add_row("obr revision restore <project_dir> <rev>", "恢复版本并生成新快照")
+    table.add_row("obr memory status", "查看工作区记忆")
+    table.add_row("obr memory export <dir>", "导出工作区记忆")
+    table.add_row("obr memory clear", "清除工作区记忆")
     table.add_row("obr repair <project_dir>", "按错误日志修复脚本")
     table.add_row("obr chat", "交互式聊天（可选带 --project）")
     table.add_row("obr --help", "查看完整参数帮助")
@@ -1120,6 +1200,7 @@ def benchmark(
 
 
 app.add_typer(revision_app, name="revision")
+app.add_typer(memory_app, name="memory")
 
 
 if __name__ == "__main__":

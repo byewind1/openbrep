@@ -31,6 +31,7 @@ def render_workspace_tools_panel(
     )
     _render_preview_panel(st, render_preview_2d_fn=render_preview_2d_fn, render_preview_3d_fn=render_preview_3d_fn)
     _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
+    _render_memory_privacy_panel(st)
     _render_log_dialog(st)
     _render_clear_confirmation(
         st,
@@ -239,6 +240,57 @@ def _render_clear_confirmation(
         if st.button("❌ 取消"):
             st.session_state.confirm_clear = False
             st.rerun()
+
+
+def _render_memory_privacy_panel(st) -> None:
+    st.divider()
+    st.markdown("#### 记忆与隐私")
+
+    store = ErrorLearningStore(st.session_state.work_dir)
+    status = store.memory_status()
+    st.caption(
+        "OpenBrep 会把聊天记录、错题本和整理后的 Skill 保存在当前工作区，"
+        "用于后续生成时避开已发生过的问题。"
+    )
+    st.caption(f"保存位置：`{status.memory_root}`")
+
+    metric_1, metric_2, metric_3 = st.columns(3)
+    metric_1.metric("聊天", status.chat_count)
+    metric_2.metric("错题", status.lesson_count)
+    metric_3.metric("Skill", "已生成" if status.has_learned_skill else "未生成")
+
+    if st.session_state.get("confirm_clear_memory"):
+        st.warning("确认清除当前工作区记忆？HSF 项目、编译产物和版本快照不会删除。")
+        ok_col, cancel_col, _ = st.columns([1, 1, 3])
+        with ok_col:
+            if st.button("确认清除记忆", type="primary", key="clear_memory_confirm_button"):
+                before = store.clear_memory()
+                st.session_state.confirm_clear_memory = False
+                st.toast(
+                    f"已清除记忆：聊天 {before.chat_count} 条，错题 {before.lesson_count} 条",
+                    icon="✅",
+                )
+                st.rerun()
+        with cancel_col:
+            if st.button("取消", key="clear_memory_cancel_button"):
+                st.session_state.confirm_clear_memory = False
+                st.rerun()
+        return
+
+    disabled = (
+        status.chat_count == 0
+        and status.lesson_count == 0
+        and not status.has_learned_skill
+        and status.total_bytes == 0
+    )
+    if st.button(
+        "清除工作区记忆",
+        width="stretch",
+        disabled=disabled,
+        help="删除当前工作区的持久化聊天、错题本和整理后的 Skill，不影响项目源文件。",
+    ):
+        st.session_state.confirm_clear_memory = True
+        st.rerun()
 
 
 def _render_preview_panel(

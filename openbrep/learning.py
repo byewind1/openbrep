@@ -13,6 +13,7 @@ import datetime as _dt
 import hashlib
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,15 @@ class ChatTranscriptEntry:
     timestamp: str
     source: str = ""
     project_name: str = ""
+
+
+@dataclass(frozen=True)
+class MemoryStatus:
+    memory_root: Path
+    chat_count: int
+    lesson_count: int
+    has_learned_skill: bool
+    total_bytes: int
 
 
 class ErrorLearningStore:
@@ -223,6 +233,62 @@ class ErrorLearningStore:
         except Exception:
             return entries
         return entries
+
+    def memory_status(self) -> MemoryStatus:
+        """Return a privacy-facing summary of persisted workspace memory."""
+        return MemoryStatus(
+            memory_root=self.memory_root,
+            chat_count=len(self.list_chat_transcript()),
+            lesson_count=len(self.list_error_lessons(include_seed=False)),
+            has_learned_skill=bool(self.load_learned_skill()),
+            total_bytes=_directory_size(self.memory_root) + _directory_size(self.legacy_root),
+        )
+
+    def export_memory(self, target_dir: str | Path, *, overwrite: bool = False) -> Path:
+        """Copy persisted workspace memory to ``target_dir`` for user review or backup."""
+        target = Path(target_dir)
+        if target.exists():
+            if not overwrite:
+                raise FileExistsError(f"Target already exists: {target}")
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+
+        target.mkdir(parents=True, exist_ok=True)
+        copied = False
+        if self.memory_root.exists():
+            _copy_tree_contents(self.memory_root, target)
+            copied = True
+        if self.legacy_root.exists():
+            legacy_target = target / "legacy_learnings"
+            _copy_tree_contents(self.legacy_root, legacy_target)
+            copied = True
+
+        status = self.memory_status()
+        manifest = {
+            "schema_version": 1,
+            "source_work_dir": str(self.work_dir),
+            "memory_root": str(self.memory_root),
+            "chat_count": status.chat_count,
+            "lesson_count": status.lesson_count,
+            "has_learned_skill": status.has_learned_skill,
+            "exported_at": _dt.datetime.now().isoformat(timespec="seconds"),
+            "copied_files": copied,
+        }
+        (target / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return target
+
+    def clear_memory(self) -> MemoryStatus:
+        """Remove persisted workspace learning memory while preserving projects and revisions."""
+        before = self.memory_status()
+        for root in (self.memory_root, self.legacy_root):
+            if root.exists():
+                shutil.rmtree(root)
+        return before
 
     def learn_from_chat_transcript(self, *, project_name: str = "") -> int:
         learned = 0
@@ -400,6 +466,30 @@ def _current_then_legacy_paths(current: Path, legacy: Path) -> list[Path]:
     if legacy.exists() and legacy != current:
         return [legacy]
     return []
+
+
+def _directory_size(root: Path) -> int:
+    if not root.exists():
+        return 0
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_file():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _copy_tree_contents(source: Path, target: Path) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    for child in source.iterdir():
+        destination = target / child.name
+        if child.is_dir():
+            shutil.copytree(child, destination, dirs_exist_ok=True)
+        elif child.is_file():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(child, destination)
 
 
 def developer_error_lessons() -> list[ErrorLesson]:

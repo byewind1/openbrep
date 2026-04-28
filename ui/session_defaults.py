@@ -35,6 +35,7 @@ def ensure_session_defaults(session_state, *, work_dir_default: str | None = Non
         "pending_ai_label": "",
         "pending_gsm_name": "",
         "confirm_clear": False,
+        "confirm_clear_memory": False,
         "editor_version": 0,
         "_ace_pending_main_editor_keys": set(),
         "script_revision": 0,

@@ -294,6 +294,40 @@ class TestCliMainCommands(unittest.TestCase):
             self.assertIn("当前最新版本：r0003", restore_result.output)
             self.assertEqual((scripts / "3d.gdl").read_text(encoding="utf-8"), "BLOCK A, B, ZZYZX\n")
 
+    def test_memory_commands_status_export_and_clear_workspace_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from openbrep.learning import ErrorLearningStore
+
+            work_dir = Path(tmpdir) / "workspace"
+            store = ErrorLearningStore(work_dir)
+            store.append_chat_messages([{"role": "user", "content": "compile failed"}])
+            store.record_error(
+                "Error in 3D script, line 12: Undefined variable width",
+                source="compile",
+            )
+
+            status_result = self.runner.invoke(app, ["memory", "status", "--work-dir", str(work_dir)])
+            self.assertEqual(status_result.exit_code, 0, msg=status_result.output)
+            self.assertIn("OpenBrep 工作区记忆", status_result.output)
+            self.assertIn("聊天记录", status_result.output)
+            self.assertIn("错题记录", status_result.output)
+
+            export_dir = Path(tmpdir) / "memory-export"
+            export_result = self.runner.invoke(
+                app,
+                ["memory", "export", str(export_dir), "--work-dir", str(work_dir)],
+            )
+            self.assertEqual(export_result.exit_code, 0, msg=export_result.output)
+            self.assertTrue((export_dir / "manifest.json").exists())
+
+            clear_result = self.runner.invoke(
+                app,
+                ["memory", "clear", "--work-dir", str(work_dir), "--yes"],
+            )
+            self.assertEqual(clear_result.exit_code, 0, msg=clear_result.output)
+            self.assertIn("已清除工作区记忆", clear_result.output)
+            self.assertEqual(store.memory_status().chat_count, 0)
+
     def test_configure_writes_builtin_provider_key_and_backup(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"

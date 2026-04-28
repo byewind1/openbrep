@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from pathlib import Path
 
 from openbrep.learning import (
     ErrorLearningStore,
@@ -126,6 +127,41 @@ class TestErrorLearning(unittest.TestCase):
             lessons = store.list_error_lessons()
             self.assertEqual(len(lessons), 1)
             self.assertEqual(lessons[0].category, "command_arguments")
+
+    def test_memory_status_export_and_clear_cover_workspace_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ErrorLearningStore(tmpdir)
+            store.append_chat_messages(
+                [{"role": "user", "content": "3D script line 27 error: Not enough parameters"}],
+                project_name="Chair",
+            )
+            store.record_error(
+                "Error in 3D script, line 12: Undefined variable width",
+                source="compile",
+                project_name="Chair",
+            )
+            store.summarize_to_skill(project_name="Chair", scan_chat=False)
+
+            status = store.memory_status()
+            self.assertEqual(status.chat_count, 1)
+            self.assertEqual(status.lesson_count, 1)
+            self.assertTrue(status.has_learned_skill)
+            self.assertGreater(status.total_bytes, 0)
+
+            export_dir = Path(tmpdir) / "memory-export"
+            exported = store.export_memory(export_dir)
+            self.assertEqual(exported, export_dir)
+            self.assertTrue((export_dir / "manifest.json").exists())
+            self.assertTrue((export_dir / "chats" / "chat_transcript.jsonl").exists())
+            self.assertTrue((export_dir / "learnings" / "error_lessons.jsonl").exists())
+            self.assertTrue((export_dir / "skills" / "learned_skill.md").exists())
+
+            before = store.clear_memory()
+            self.assertEqual(before.chat_count, 1)
+            cleared = store.memory_status()
+            self.assertEqual(cleared.chat_count, 0)
+            self.assertEqual(cleared.lesson_count, 0)
+            self.assertFalse(cleared.has_learned_skill)
 
     def test_legacy_learning_path_is_read_only_until_new_memory_path_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
