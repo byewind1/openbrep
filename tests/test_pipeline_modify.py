@@ -436,7 +436,8 @@ class TestModifyPipelineContext(unittest.TestCase):
                     work_dir=tmpdir,
                 ))
 
-            self.assertIn("learned_gdl_error_avoidance", captured.get("skills", ""))
+            self.assertIn("workspace_gdl_error_avoidance", captured.get("skills", ""))
+            self.assertIn("developer_gdl_error_baseline", captured.get("skills", ""))
             self.assertIn("PRISM_", captured.get("skills", ""))
 
 

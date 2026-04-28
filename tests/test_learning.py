@@ -47,7 +47,8 @@ class TestErrorLearning(unittest.TestCase):
             self.assertEqual(lessons[0].category, "variable_mapping")
 
             prompt = store.build_skill_prompt(project_name="Chair")
-            self.assertIn("learned_gdl_error_avoidance", prompt)
+            self.assertIn("workspace_gdl_error_avoidance", prompt)
+            self.assertIn("developer_gdl_error_baseline", prompt)
             self.assertIn("出现 2 次", prompt)
             self.assertIn("变量", prompt)
 
@@ -58,8 +59,8 @@ class TestErrorLearning(unittest.TestCase):
             self.assertEqual(store.list_error_lessons(), [])
             prompt = store.build_skill_prompt()
 
-            self.assertIn("learned_gdl_error_avoidance", prompt)
-            self.assertIn("内置第一条错题", prompt)
+            self.assertIn("developer_gdl_error_baseline", prompt)
+            self.assertIn("开发者基线错题", prompt)
             self.assertIn("缺少 CALL", prompt)
             self.assertIn("显式使用 CALL", prompt)
 
@@ -68,7 +69,7 @@ class TestErrorLearning(unittest.TestCase):
 
         self.assertEqual(len(lessons), 1)
         self.assertEqual(lessons[0].category, "missing_call_keyword")
-        self.assertEqual(lessons[0].source, "openbrep_seed_lesson")
+        self.assertEqual(lessons[0].source, "openbrep_developer_baseline")
 
     def test_summarize_to_skill_writes_compacted_skill_for_prompt_injection(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -93,8 +94,9 @@ class TestErrorLearning(unittest.TestCase):
             self.assertIn("learned_gdl_error_avoidance_compacted", prompt)
             self.assertLess(
                 prompt.index("learned_gdl_error_avoidance_compacted"),
-                prompt.index("## Skill: learned_gdl_error_avoidance"),
+                prompt.index("## Skill: workspace_gdl_error_avoidance"),
             )
+            self.assertIn(".openbrep/memory/skills", str(store.learned_skill_path))
 
     def test_summarize_to_skill_scans_persisted_chat_transcript(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -118,9 +120,35 @@ class TestErrorLearning(unittest.TestCase):
             self.assertEqual(stored, 2)
             self.assertTrue(result.ok)
             self.assertIn("扫描聊天命中 1 条", result.message)
+            self.assertIn(".openbrep/memory/chats", str(store.chat_transcript_path))
             lessons = store.list_error_lessons()
             self.assertEqual(len(lessons), 1)
             self.assertEqual(lessons[0].category, "command_arguments")
+
+    def test_legacy_learning_path_is_read_only_until_new_memory_path_exists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ErrorLearningStore(tmpdir)
+            store.legacy_root.mkdir(parents=True, exist_ok=True)
+            store.legacy_error_lessons_path.write_text(
+                '{"category":"variable_mapping","count":1,'
+                '"example":"","fingerprint":"variable_mapping:legacy",'
+                '"first_seen":"2026-04-28T00:00:00",'
+                '"guidance":"legacy guidance","last_seen":"2026-04-28T00:00:00",'
+                '"project_name":"Chair","raw_excerpt":"legacy",'
+                '"source":"legacy","summary":"legacy summary"}\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(len(store.list_error_lessons()), 1)
+            store.record_error(
+                "Error in 3D script, line 12: Undefined variable width",
+                source="tapir",
+                project_name="Chair",
+            )
+
+            lessons = store.list_error_lessons()
+            self.assertEqual(len(lessons), 2)
+            self.assertTrue(store.error_lessons_path.exists())
 
     def test_looks_like_error_report_detects_tapir_message(self):
         self.assertTrue(looks_like_error_report("## 🔴 Archicad GDL 错误报告\nError in 3D script, line 1"))

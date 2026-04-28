@@ -1,8 +1,10 @@
-"""Project-level learning memory for recurring GDL errors.
+"""Workspace-level learning memory for recurring GDL errors.
 
-This module stores raw compile/runtime failures as structured lessons under
-``<work_dir>/.openbrep/learnings`` and turns the most relevant lessons into a
-small dynamic skill section for prompt injection.
+This module separates two layers:
+
+- workspace memory: user chats, learned lessons and compacted skills under
+  ``<work_dir>/.openbrep/memory``;
+- developer baseline: built-in lessons shipped with source code.
 """
 
 from __future__ import annotations
@@ -16,7 +18,11 @@ from pathlib import Path
 from typing import Any
 
 
-LEARNINGS_DIR = ".openbrep/learnings"
+MEMORY_DIR = ".openbrep/memory"
+LEARNINGS_DIR = f"{MEMORY_DIR}/learnings"
+CHATS_DIR = f"{MEMORY_DIR}/chats"
+SKILLS_DIR = f"{MEMORY_DIR}/skills"
+LEGACY_LEARNINGS_DIR = ".openbrep/learnings"
 ERROR_LESSONS_FILE = "error_lessons.jsonl"
 CHAT_TRANSCRIPT_FILE = "chat_transcript.jsonl"
 LEARNED_SKILL_FILE = "learned_skill.md"
@@ -56,14 +62,21 @@ class ChatTranscriptEntry:
 
 
 class ErrorLearningStore:
-    """Append/update recurring GDL error lessons for a workspace."""
+    """Append/update recurring GDL error lessons for a personal workspace."""
 
     def __init__(self, work_dir: str | Path):
         self.work_dir = Path(work_dir)
+        self.memory_root = self.work_dir / MEMORY_DIR
         self.root = self.work_dir / LEARNINGS_DIR
+        self.chats_root = self.work_dir / CHATS_DIR
+        self.skills_root = self.work_dir / SKILLS_DIR
+        self.legacy_root = self.work_dir / LEGACY_LEARNINGS_DIR
         self.error_lessons_path = self.root / ERROR_LESSONS_FILE
-        self.chat_transcript_path = self.root / CHAT_TRANSCRIPT_FILE
-        self.learned_skill_path = self.root / LEARNED_SKILL_FILE
+        self.legacy_error_lessons_path = self.legacy_root / ERROR_LESSONS_FILE
+        self.chat_transcript_path = self.chats_root / CHAT_TRANSCRIPT_FILE
+        self.legacy_chat_transcript_path = self.legacy_root / CHAT_TRANSCRIPT_FILE
+        self.learned_skill_path = self.skills_root / LEARNED_SKILL_FILE
+        self.legacy_learned_skill_path = self.legacy_root / LEARNED_SKILL_FILE
 
     def record_error(
         self,
@@ -113,44 +126,53 @@ class ErrorLearningStore:
         return lesson
 
     def list_error_lessons(self, *, include_seed: bool = False) -> list[ErrorLesson]:
-        lessons: list[ErrorLesson] = seed_error_lessons() if include_seed else []
-        if not self.error_lessons_path.exists():
+        lessons: list[ErrorLesson] = developer_error_lessons() if include_seed else []
+        paths = _current_then_legacy_paths(
+            self.error_lessons_path,
+            self.legacy_error_lessons_path,
+        )
+        if not paths:
             return lessons
 
         try:
-            for line in self.error_lessons_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                lesson = _lesson_from_dict(json.loads(line))
-                existing = next((item for item in lessons if item.fingerprint == lesson.fingerprint), None)
-                if existing:
-                    existing.count += lesson.count
-                    existing.last_seen = max(existing.last_seen, lesson.last_seen)
-                    existing.source = lesson.source or existing.source
-                    existing.project_name = lesson.project_name or existing.project_name
-                    existing.raw_excerpt = lesson.raw_excerpt or existing.raw_excerpt
-                else:
-                    lessons.append(lesson)
+            for path in paths:
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    _merge_lesson(lessons, _lesson_from_dict(json.loads(line)))
         except Exception:
             return lessons
         return lessons
 
     def build_skill_prompt(self, *, project_name: str = "", limit: int = 8) -> str:
         compacted = self.load_learned_skill()
-        recent = build_error_learning_skill(
-            self.list_error_lessons(include_seed=True),
+        workspace_recent = build_error_learning_skill(
+            self.list_error_lessons(include_seed=False),
             project_name=project_name,
             limit=limit,
+            layer_name="workspace_gdl_error_avoidance",
+            layer_description="这些规则来自当前 OpenBrep 个人工作空间的真实聊天、编译和纠错记录。",
         )
-        return "\n\n---\n\n".join(part for part in (compacted, recent) if part)
+        developer_baseline = build_error_learning_skill(
+            developer_error_lessons(),
+            project_name="",
+            limit=limit,
+            layer_name="developer_gdl_error_baseline",
+            layer_description="这些规则来自 OpenBrep 源码随附的开发者基线经验，作为所有用户的兜底约束。",
+        )
+        return "\n\n---\n\n".join(
+            part for part in (compacted, workspace_recent, developer_baseline) if part
+        )
 
     def load_learned_skill(self) -> str:
-        if not self.learned_skill_path.exists():
-            return ""
-        try:
-            return self.learned_skill_path.read_text(encoding="utf-8").strip()
-        except Exception:
-            return ""
+        for path in (self.learned_skill_path, self.legacy_learned_skill_path):
+            if not path.exists():
+                continue
+            try:
+                return path.read_text(encoding="utf-8").strip()
+            except Exception:
+                return ""
+        return ""
 
     def append_chat_messages(
         self,
@@ -177,7 +199,7 @@ class ErrorLearningStore:
         if not entries:
             return 0
 
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.chats_root.mkdir(parents=True, exist_ok=True)
         with self.chat_transcript_path.open("a", encoding="utf-8") as fh:
             for entry in entries:
                 fh.write(json.dumps(_chat_entry_to_dict(entry), ensure_ascii=False, sort_keys=True))
@@ -185,14 +207,19 @@ class ErrorLearningStore:
         return len(entries)
 
     def list_chat_transcript(self) -> list[ChatTranscriptEntry]:
-        if not self.chat_transcript_path.exists():
-            return []
         entries: list[ChatTranscriptEntry] = []
+        paths = _current_then_legacy_paths(
+            self.chat_transcript_path,
+            self.legacy_chat_transcript_path,
+        )
+        if not paths:
+            return entries
         try:
-            for line in self.chat_transcript_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                entries.append(_chat_entry_from_dict(json.loads(line)))
+            for path in paths:
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    entries.append(_chat_entry_from_dict(json.loads(line)))
         except Exception:
             return entries
         return entries
@@ -232,7 +259,7 @@ class ErrorLearningStore:
                 message="暂无可整理的错题记录",
             )
 
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.skills_root.mkdir(parents=True, exist_ok=True)
         self.learned_skill_path.write_text(skill + "\n", encoding="utf-8")
         selected_count = min(
             len(_select_relevant_lessons(lessons, project_name=project_name)),
@@ -256,6 +283,8 @@ def build_error_learning_skill(
     *,
     project_name: str = "",
     limit: int = 8,
+    layer_name: str = "learned_gdl_error_avoidance",
+    layer_description: str = "这些规则来自本机真实 Archicad/LP_XMLConverter 错误与用户纠错记录。",
 ) -> str:
     if not lessons:
         return ""
@@ -265,9 +294,9 @@ def build_error_learning_skill(
         return ""
 
     lines = [
-        "## Skill: learned_gdl_error_avoidance",
+        f"## Skill: {layer_name}",
         "",
-        "这些规则来自本机真实 Archicad/LP_XMLConverter 错误与用户纠错记录。",
+        layer_description,
         "生成或修复 GDL 时必须优先规避这些已发生过的问题。",
         "",
         "### Recurring Lessons",
@@ -349,14 +378,35 @@ def _select_relevant_lessons(
     return relevant
 
 
-def seed_error_lessons() -> list[ErrorLesson]:
-    """Built-in first lesson for OpenBrep's self-improving GDL behavior."""
+def _merge_lesson(lessons: list[ErrorLesson], lesson: ErrorLesson) -> None:
+    existing = next((item for item in lessons if item.fingerprint == lesson.fingerprint), None)
+    if existing:
+        existing.count += lesson.count
+        existing.last_seen = max(existing.last_seen, lesson.last_seen)
+        existing.source = lesson.source or existing.source
+        existing.project_name = lesson.project_name or existing.project_name
+        existing.raw_excerpt = lesson.raw_excerpt or existing.raw_excerpt
+        existing.example = lesson.example or existing.example
+        return
+    lessons.append(lesson)
+
+
+def _current_then_legacy_paths(current: Path, legacy: Path) -> list[Path]:
+    if current.exists():
+        return [current]
+    if legacy.exists() and legacy != current:
+        return [legacy]
+    return []
+
+
+def developer_error_lessons() -> list[ErrorLesson]:
+    """Built-in developer baseline lessons shipped with OpenBrep source code."""
     return [
         ErrorLesson(
-            fingerprint="missing_call_keyword:seed-000001",
+            fingerprint="missing_call_keyword:developer-000001",
             category="missing_call_keyword",
             summary=(
-                "内置第一条错题：GDL Copilot/Archicad 检查发现 3D 与 Master 脚本中"
+                "开发者基线错题：GDL Copilot/Archicad 检查发现 3D 与 Master 脚本中"
                 "标签式调用存在“缺少 CALL 关键字(不推荐写法)”问题。"
             ),
             guidance=guidance_for_category("missing_call_keyword"),
@@ -364,7 +414,7 @@ def seed_error_lessons() -> list[ErrorLesson]:
             count=1,
             first_seen=_SEED_FIRST_SEEN,
             last_seen=_SEED_FIRST_SEEN,
-            source="openbrep_seed_lesson",
+            source="openbrep_developer_baseline",
             project_name="",
             raw_excerpt=(
                 "文件《钢结构节点_v4.gsm》存在两类问题:3D脚本第75、80、85、90行出现"
@@ -372,6 +422,11 @@ def seed_error_lessons() -> list[ErrorLesson]:
             ),
         )
     ]
+
+
+def seed_error_lessons() -> list[ErrorLesson]:
+    """Backward-compatible name for developer baseline lessons."""
+    return developer_error_lessons()
 
 
 def classify_error(raw_error: str) -> str:
