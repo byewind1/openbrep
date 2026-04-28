@@ -6,6 +6,45 @@ from typing import Callable
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 
 
+def sync_visible_editor_buffers(
+    proj,
+    editor_version: int,
+    *,
+    session_state,
+    script_map: list[tuple[object, str, str]],
+    main_editor_state_key_fn: Callable[[str, int], str],
+    ace_available: bool,
+) -> bool:
+    changed = False
+    pending_keys = session_state.get("_ace_pending_main_editor_keys") or set()
+    for stype, fpath, _label in script_map:
+        current_code = proj.get_script(stype) or ""
+        editor_key = main_editor_state_key_fn(fpath, editor_version)
+        if editor_key not in session_state:
+            continue
+        raw_value = session_state.get(editor_key)
+        if raw_value is None:
+            continue
+        new_code = raw_value or ""
+        if ace_available and editor_key in pending_keys and current_code and new_code == "":
+            continue
+        pending_keys.discard(editor_key)
+        if new_code == current_code:
+            continue
+        proj.set_script(stype, new_code)
+        changed = True
+
+    session_state._ace_pending_main_editor_keys = pending_keys
+
+    if changed:
+        session_state.preview_2d_data = None
+        session_state.preview_3d_data = None
+        session_state.preview_warnings = []
+        session_state.preview_meta = {"kind": "", "timestamp": ""}
+
+    return changed
+
+
 def collect_preview_prechecks(
     proj,
     target: str,

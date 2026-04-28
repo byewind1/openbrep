@@ -1260,18 +1260,9 @@ def check_gdl_script(content: str, script_type: str = "") -> list:
     return ui_gdl_checks.check_gdl_script(content, script_type)
 
 
-def _to_float(raw) -> float | None:
-    return ui_view_models.to_float(raw)
-
-
-
-def _preview_param_values(proj: HSFProject) -> dict[str, float]:
-    return ui_view_models.preview_param_values(proj)
-
-
-
-def _dedupe_keep_order(items: list[str]) -> list[str]:
-    return ui_view_models.dedupe_keep_order(items)
+_to_float = ui_view_models.to_float
+_preview_param_values = ui_view_models.preview_param_values
+_dedupe_keep_order = ui_view_models.dedupe_keep_order
 
 
 def _collect_preview_prechecks(proj: HSFProject, target: str) -> list[str]:
@@ -1287,34 +1278,14 @@ def _collect_preview_prechecks(proj: HSFProject, target: str) -> list[str]:
 
 
 def _sync_visible_editor_buffers(proj: HSFProject, editor_version: int) -> bool:
-    changed = False
-    pending_keys = st.session_state.get("_ace_pending_main_editor_keys") or set()
-    for stype, fpath, _label in _SCRIPT_MAP:
-        current_code = proj.get_script(stype) or ""
-        editor_key = _main_editor_state_key(fpath, editor_version)
-        if editor_key not in st.session_state:
-            continue
-        raw_value = st.session_state.get(editor_key)
-        if raw_value is None:
-            continue
-        new_code = raw_value or ""
-        if _ACE_AVAILABLE and editor_key in pending_keys and current_code and new_code == "":
-            continue
-        pending_keys.discard(editor_key)
-        if new_code == current_code:
-            continue
-        proj.set_script(stype, new_code)
-        changed = True
-
-    st.session_state._ace_pending_main_editor_keys = pending_keys
-
-    if changed:
-        st.session_state.preview_2d_data = None
-        st.session_state.preview_3d_data = None
-        st.session_state.preview_warnings = []
-        st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-
-    return changed
+    return ui_preview_controller.sync_visible_editor_buffers(
+        proj,
+        editor_version,
+        session_state=st.session_state,
+        script_map=_SCRIPT_MAP,
+        main_editor_state_key_fn=_main_editor_state_key,
+        ace_available=_ACE_AVAILABLE,
+    )
 
 
 def _render_preview_2d(data) -> None:
