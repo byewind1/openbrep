@@ -70,6 +70,32 @@ class TestErrorLearning(unittest.TestCase):
         self.assertEqual(lessons[0].category, "missing_call_keyword")
         self.assertEqual(lessons[0].source, "openbrep_seed_lesson")
 
+    def test_summarize_to_skill_writes_compacted_skill_for_prompt_injection(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ErrorLearningStore(tmpdir)
+            store.record_error(
+                "Error in 3D script, line 12: Undefined variable width",
+                source="conversation_error_fragment",
+                project_name="Chair",
+            )
+
+            result = store.summarize_to_skill(project_name="Chair")
+
+            self.assertTrue(result.ok)
+            self.assertEqual(result.lesson_count, 2)
+            self.assertTrue(store.learned_skill_path.exists())
+            compacted = store.learned_skill_path.read_text(encoding="utf-8")
+            self.assertIn("learned_gdl_error_avoidance_compacted", compacted)
+            self.assertIn("missing_call_keyword", compacted)
+            self.assertIn("variable_mapping", compacted)
+
+            prompt = store.build_skill_prompt(project_name="Chair")
+            self.assertIn("learned_gdl_error_avoidance_compacted", prompt)
+            self.assertLess(
+                prompt.index("learned_gdl_error_avoidance_compacted"),
+                prompt.index("## Skill: learned_gdl_error_avoidance"),
+            )
+
     def test_looks_like_error_report_detects_tapir_message(self):
         self.assertTrue(looks_like_error_report("## 🔴 Archicad GDL 错误报告\nError in 3D script, line 1"))
         self.assertTrue(looks_like_error_report("文件《钢结构节点_v4.gsm》存在两类问题:3D脚本第75、80行出现“缺少CALL关键字(不推荐写法)”"))

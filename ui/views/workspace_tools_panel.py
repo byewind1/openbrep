@@ -4,6 +4,7 @@ import re
 from typing import Callable
 
 from openbrep.hsf_project import HSFProject
+from openbrep.learning import ErrorLearningStore
 
 
 def render_workspace_tools_panel(
@@ -92,7 +93,7 @@ def _render_project_action_buttons(
     run_preview_fn: Callable[[HSFProject, str], tuple[bool, str]],
 ) -> None:
     st.markdown("#### 本地验证")
-    meta_1, meta_2, meta_3 = st.columns([1.2, 1.0, 1.0])
+    meta_1, meta_2, meta_3, meta_4 = st.columns([1.2, 1.0, 1.0, 1.0])
 
     with meta_1:
         if st.button("🔍 脚本检查", width="stretch", help="检查当前所有 GDL 脚本的常见语法问题"):
@@ -118,6 +119,21 @@ def _render_project_action_buttons(
     with meta_3:
         if st.button("📋 编译日志", width="stretch"):
             st.session_state["_show_log_dialog"] = True
+
+    with meta_4:
+        if st.button(
+            "🧠 整理错题本",
+            width="stretch",
+            help="把当前工作区错题记录整理成后续生成会注入的自我提示",
+        ):
+            result = ErrorLearningStore(st.session_state.work_dir).summarize_to_skill(
+                project_name=proj.name,
+            )
+            if result.ok:
+                st.success(result.message)
+                st.caption(str(result.path))
+            else:
+                st.info(result.message)
 
     st.markdown("#### 预览")
     preview_2d, preview_3d = st.columns(2)

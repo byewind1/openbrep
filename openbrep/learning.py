@@ -18,6 +18,7 @@ from typing import Any
 
 LEARNINGS_DIR = ".openbrep/learnings"
 ERROR_LESSONS_FILE = "error_lessons.jsonl"
+LEARNED_SKILL_FILE = "learned_skill.md"
 _SEED_FIRST_SEEN = "2026-04-28T00:00:00"
 
 
@@ -36,6 +37,14 @@ class ErrorLesson:
     raw_excerpt: str = ""
 
 
+@dataclass(frozen=True)
+class LearningSummary:
+    ok: bool
+    lesson_count: int
+    path: Path
+    message: str
+
+
 class ErrorLearningStore:
     """Append/update recurring GDL error lessons for a workspace."""
 
@@ -43,6 +52,7 @@ class ErrorLearningStore:
         self.work_dir = Path(work_dir)
         self.root = self.work_dir / LEARNINGS_DIR
         self.error_lessons_path = self.root / ERROR_LESSONS_FILE
+        self.learned_skill_path = self.root / LEARNED_SKILL_FILE
 
     def record_error(
         self,
@@ -115,10 +125,44 @@ class ErrorLearningStore:
         return lessons
 
     def build_skill_prompt(self, *, project_name: str = "", limit: int = 8) -> str:
-        return build_error_learning_skill(
+        compacted = self.load_learned_skill()
+        recent = build_error_learning_skill(
             self.list_error_lessons(include_seed=True),
             project_name=project_name,
             limit=limit,
+        )
+        return "\n\n---\n\n".join(part for part in (compacted, recent) if part)
+
+    def load_learned_skill(self) -> str:
+        if not self.learned_skill_path.exists():
+            return ""
+        try:
+            return self.learned_skill_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+
+    def summarize_to_skill(self, *, project_name: str = "", limit: int = 12) -> LearningSummary:
+        lessons = self.list_error_lessons(include_seed=True)
+        skill = build_compacted_learning_skill(lessons, project_name=project_name, limit=limit)
+        if not skill:
+            return LearningSummary(
+                ok=False,
+                lesson_count=0,
+                path=self.learned_skill_path,
+                message="暂无可整理的错题记录",
+            )
+
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.learned_skill_path.write_text(skill + "\n", encoding="utf-8")
+        selected_count = min(
+            len(_select_relevant_lessons(lessons, project_name=project_name)),
+            limit,
+        )
+        return LearningSummary(
+            ok=True,
+            lesson_count=selected_count,
+            path=self.learned_skill_path,
+            message=f"已整理 {selected_count} 条错题约束",
         )
 
     def _write_lessons(self, lessons: list[ErrorLesson]) -> None:
@@ -136,13 +180,7 @@ def build_error_learning_skill(
     if not lessons:
         return ""
 
-    relevant = [
-        lesson
-        for lesson in lessons
-        if not project_name or not lesson.project_name or lesson.project_name == project_name
-    ]
-    relevant.sort(key=lambda item: (-item.count, item.last_seen, item.category))
-    selected = relevant[:limit]
+    selected = _select_relevant_lessons(lessons, project_name=project_name)[:limit]
     if not selected:
         return ""
 
@@ -169,6 +207,66 @@ def build_error_learning_skill(
         "- 不要为了修一个错误大面积重写无关脚本。",
     ])
     return "\n".join(lines)
+
+
+def build_compacted_learning_skill(
+    lessons: list[ErrorLesson],
+    *,
+    project_name: str = "",
+    limit: int = 12,
+) -> str:
+    selected = _select_relevant_lessons(lessons, project_name=project_name)[:limit]
+    if not selected:
+        return ""
+
+    generated_at = _dt.datetime.now().isoformat(timespec="seconds")
+    categories = sorted({lesson.category for lesson in selected})
+    lines = [
+        "# Skill: learned_gdl_error_avoidance_compacted",
+        "",
+        f"- Generated: {generated_at}",
+        f"- Project: {project_name or 'workspace'}",
+        f"- Source lessons: {len(selected)}",
+        f"- Categories: {', '.join(categories)}",
+        "",
+        "## Success Criteria",
+        "",
+        "- 生成、修改或修复 GDL 前，必须先按本 skill 做一次错题自检。",
+        "- 遇到用户粘贴的 Archicad/GDL Copilot 真实错误，"
+        "优先抽象成可复用约束，而不是只修当前行。",
+        "- 修复策略以最小变更为主，"
+        "避免为单个错误重写无关脚本、参数或项目结构。",
+        "",
+        "## Hard Constraints",
+    ]
+    for lesson in selected:
+        lines.append(f"- **{lesson.category}**（{lesson.count} 次）: {lesson.guidance}")
+
+    lines.extend([
+        "",
+        "## Representative Lessons",
+    ])
+    for idx, lesson in enumerate(selected, 1):
+        lines.append(f"{idx}. {lesson.summary}")
+        if lesson.raw_excerpt:
+            excerpt = lesson.raw_excerpt.replace("\n", " ")[:260]
+            lines.append(f"   - Evidence: `{excerpt}`")
+
+    return "\n".join(lines)
+
+
+def _select_relevant_lessons(
+    lessons: list[ErrorLesson],
+    *,
+    project_name: str = "",
+) -> list[ErrorLesson]:
+    relevant = [
+        lesson
+        for lesson in lessons
+        if not project_name or not lesson.project_name or lesson.project_name == project_name
+    ]
+    relevant.sort(key=lambda item: (-item.count, item.last_seen, item.category))
+    return relevant
 
 
 def seed_error_lessons() -> list[ErrorLesson]:
