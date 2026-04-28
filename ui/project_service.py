@@ -21,8 +21,15 @@ class ProjectService:
     import_gsm_override_fn: Callable[[bytes, str], tuple] | None = None
     reset_revision_ui_state_fn: Callable[[object], None] | None = None
     reload_libraries_after_compile_fn: Callable[[], tuple[bool, str] | None] | None = None
+    sync_visible_editor_buffers_fn: Callable[[object], bool] | None = None
 
     def do_compile(self, proj, gsm_name: str, instruction: str = "") -> tuple[bool, str]:
+        if self.sync_visible_editor_buffers_fn is not None:
+            try:
+                self.sync_visible_editor_buffers_fn(proj)
+            except Exception as exc:
+                return False, f"❌ **错误**: 同步编辑器内容失败：{exc}"
+
         ok, msg = project_io.do_compile(
             proj,
             gsm_name,

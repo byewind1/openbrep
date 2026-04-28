@@ -988,6 +988,10 @@ def _project_service() -> ui_project_service.ProjectService:
             tapir_import_ok=_TAPIR_IMPORT_OK,
             get_bridge_fn=get_bridge,
         ),
+        sync_visible_editor_buffers_fn=lambda project: _sync_visible_editor_buffers(
+            project,
+            int(st.session_state.get("editor_version", 0)),
+        ),
     )
 
 

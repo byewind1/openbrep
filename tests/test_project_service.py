@@ -84,6 +84,38 @@ class TestProjectService(unittest.TestCase):
             self.assertEqual(calls["reload"], 1)
             self.assertIn("已通知 Archicad 重载图库", msg)
 
+    def test_do_compile_syncs_visible_editor_buffers_before_compile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session_state = _SessionState(
+                work_dir=tmp,
+                compile_log=[],
+                script_revision=1,
+            )
+            compiler_result = SimpleNamespace(success=True, stderr="", stdout="", exit_code=0)
+            calls = []
+
+            def _hsf2libpart(_hsf_dir, _output_gsm):
+                calls.append("compile")
+                return compiler_result
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: SimpleNamespace(hsf2libpart=_hsf2libpart),
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+                sync_visible_editor_buffers_fn=lambda _proj: calls.append("sync") or True,
+            )
+            proj = SimpleNamespace(name="Chair", save_to_disk=lambda: Path(tmp) / "Chair")
+
+            ok, _msg = service.do_compile(proj, "Chair", "compile instruction")
+
+            self.assertTrue(ok)
+            self.assertEqual(calls, ["sync", "compile"])
+
     def test_do_compile_skips_archicad_reload_for_mock_compile(self):
         with tempfile.TemporaryDirectory() as tmp:
             session_state = _SessionState(
