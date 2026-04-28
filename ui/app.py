@@ -317,13 +317,8 @@ def _is_archicad_running() -> bool:
     return ui_app_shell.is_archicad_running()
 
 
-def _build_assistant_settings_prompt(text: str) -> str:
-    return ui_view_models.build_assistant_settings_prompt(text)
-
-
-
-def _should_persist_assistant_settings(config_value: str, ui_value: str) -> bool:
-    return ui_view_models.should_persist_assistant_settings(config_value, ui_value)
+_build_assistant_settings_prompt = ui_view_models.build_assistant_settings_prompt
+_should_persist_assistant_settings = ui_view_models.should_persist_assistant_settings
 
 
 def _build_model_options(available_models: list[str], custom_providers: list[dict]) -> list[dict]:
@@ -336,8 +331,7 @@ def _build_model_options(available_models: list[str], custom_providers: list[dic
 
 
 
-def _resolve_selected_model(selected_label: str, options: list[dict]) -> str:
-    return ui_view_models.resolve_selected_model(selected_label, options)
+_resolve_selected_model = ui_view_models.resolve_selected_model
 
 
 
@@ -540,13 +534,8 @@ def load_skills():
         work_dir=st.session_state.work_dir,
     )
 
-def _extract_gsm_name_candidate(text: str) -> str:
-    return ui_view_models.extract_gsm_name_candidate(text)
-
-
-
-def _stamp_script_header(script_label: str, content: str, revision: int) -> str:
-    return ui_view_models.stamp_script_header(script_label, content, revision)
+_extract_gsm_name_candidate = ui_view_models.extract_gsm_name_candidate
+_stamp_script_header = ui_view_models.stamp_script_header
 
 
 def _extract_object_name(text: str) -> str:
@@ -566,12 +555,8 @@ _GDL_KEYWORDS = ui_view_models.GDL_KEYWORDS
 _CHAT_ONLY_PATTERNS = ui_view_models.CHAT_ONLY_PATTERNS
 
 
-def _is_gdl_intent(text: str) -> bool:
-    return ui_view_models.is_gdl_intent(text)
-
-
-def _is_pure_chat(text: str) -> bool:
-    return ui_view_models.is_pure_chat(text)
+_is_gdl_intent = ui_view_models.is_gdl_intent
+_is_pure_chat = ui_view_models.is_pure_chat
 
 def _route_main_input(text: str, project_loaded: bool = False, has_image: bool = False) -> tuple[str, str]:
     """Return pipeline intent plus extracted object name for the main chat box."""
@@ -639,12 +624,8 @@ def _ensure_elicitation_agent() -> ElicitationAgent:
 
 
 
-def _is_positive_confirmation(text: str) -> bool:
-    return ui_view_models.is_positive_confirmation(text)
-
-
-def _is_negative_confirmation(text: str) -> bool:
-    return ui_view_models.is_negative_confirmation(text)
+_is_positive_confirmation = ui_view_models.is_positive_confirmation
+_is_negative_confirmation = ui_view_models.is_negative_confirmation
 
 
 def _is_modify_or_check_intent(text: str) -> bool:
@@ -686,8 +667,7 @@ def _should_clarify_intent(text: str, has_project: bool, history: list[dict]) ->
 
 
 
-def _build_intent_clarification_message(recommended_option: str) -> str:
-    return ui_view_models.build_intent_clarification_message(recommended_option)
+_build_intent_clarification_message = ui_view_models.build_intent_clarification_message
 
 
 
@@ -700,13 +680,8 @@ def _maybe_build_intent_clarification(user_input: str, has_project: bool, histor
 
 
 
-def _build_post_clarification_input(original_user_input: str, option: str) -> str:
-    return ui_view_models.build_post_clarification_input(original_user_input, option)
-
-
-
-def _consume_intent_clarification_choice(user_input: str, pending: dict | None) -> str | None:
-    return ui_view_models.consume_intent_clarification_choice(user_input, pending)
+_build_post_clarification_input = ui_view_models.build_post_clarification_input
+_consume_intent_clarification_choice = ui_view_models.consume_intent_clarification_choice
 
 
 
@@ -715,8 +690,7 @@ def _clear_pending_intent_clarification() -> None:
 
 
 
-def _should_start_elicitation(user_input: str) -> bool:
-    return ui_view_models.should_start_elicitation(user_input)
+_should_start_elicitation = ui_view_models.should_start_elicitation
 
 
 def _make_generation_project(gdl_obj_name: str) -> HSFProject:
