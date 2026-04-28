@@ -254,6 +254,23 @@ def maybe_record_conversation_error_learning(session_state, text: str | None) ->
         return False
 
 
+def persist_new_chat_messages(session_state, start_index: int) -> int:
+    try:
+        messages = list(session_state.get("chat_history", []))[start_index:]
+        if not messages:
+            return 0
+        project = session_state.get("project")
+        project_name = getattr(project, "name", "") if project is not None else ""
+        work_dir = session_state.get("work_dir", "./workdir")
+        return ErrorLearningStore(work_dir).append_chat_messages(
+            messages,
+            project_name=project_name,
+            source="ui_chat",
+        )
+    except Exception:
+        return 0
+
+
 def run_normal_text_path(
     *,
     effective_input: str,
@@ -480,6 +497,7 @@ def process_chat_turn(
     runtime = pop_chat_runtime_state(session_state=session_state, has_image_input=bool(chat_payload.get("vision_b64")))
     user_input = chat_payload.get("user_input")
     live_output = chat_payload["live_output"]
+    chat_start_index = len(session_state.get("chat_history", []))
     maybe_record_conversation_error_learning(session_state, user_input)
 
     _handled, _should_rerun = handle_tapir_test_trigger_fn(runtime["tapir_trigger"])
@@ -541,6 +559,7 @@ def process_chat_turn(
         )
         if err_msg:
             st.error(err_msg)
+        persist_new_chat_messages(session_state, chat_start_index)
         if handled and should_rerun:
             st.rerun()
     elif effective_input:
@@ -554,6 +573,7 @@ def process_chat_turn(
         )
         if err_msg:
             st.error(err_msg)
+        persist_new_chat_messages(session_state, chat_start_index)
         if handled and should_rerun:
             st.rerun()
 

@@ -96,6 +96,32 @@ class TestErrorLearning(unittest.TestCase):
                 prompt.index("## Skill: learned_gdl_error_avoidance"),
             )
 
+    def test_summarize_to_skill_scans_persisted_chat_transcript(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ErrorLearningStore(tmpdir)
+            stored = store.append_chat_messages(
+                [
+                    {"role": "user", "content": "把楼梯宽一点"},
+                    {
+                        "role": "user",
+                        "content": (
+                            "3d 脚本有错误提示：Not enough parameters\n"
+                            "at line 27 in the 3D script of file 钢结构旋转楼梯_v1.gsm"
+                        ),
+                    },
+                ],
+                project_name="钢结构旋转楼梯",
+            )
+
+            result = store.summarize_to_skill(project_name="钢结构旋转楼梯")
+
+            self.assertEqual(stored, 2)
+            self.assertTrue(result.ok)
+            self.assertIn("扫描聊天命中 1 条", result.message)
+            lessons = store.list_error_lessons()
+            self.assertEqual(len(lessons), 1)
+            self.assertEqual(lessons[0].category, "command_arguments")
+
     def test_looks_like_error_report_detects_tapir_message(self):
         self.assertTrue(looks_like_error_report("## 🔴 Archicad GDL 错误报告\nError in 3D script, line 1"))
         self.assertTrue(looks_like_error_report("文件《钢结构节点_v4.gsm》存在两类问题:3D脚本第75、80行出现“缺少CALL关键字(不推荐写法)”"))

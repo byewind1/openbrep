@@ -124,6 +124,51 @@ class TestChatFlowDispatch(unittest.TestCase):
             self.assertEqual(lessons[0].project_name, "钢结构旋转楼梯")
             self.assertEqual(session_state.learning_notice, "已加入错题本")
 
+    def test_process_chat_turn_persists_new_chat_messages(self):
+        st = _DummyStreamlit()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_state = _State(
+                chat_history=[],
+                project=type("Project", (), {"name": "Demo"})(),
+                pending_gsm_name="",
+                agent_running=False,
+                work_dir=tmpdir,
+            )
+
+            def run_normal_text_path_fn(*args, **kwargs):
+                session_state.chat_history.append({"role": "user", "content": "请生成楼梯"})
+                session_state.chat_history.append({"role": "assistant", "content": "已生成"})
+                return True, True, None
+
+            process_chat_turn(
+                st=st,
+                session_state=session_state,
+                chat_payload={
+                    "user_input": "请生成楼梯",
+                    "live_output": object(),
+                    "vision_b64": None,
+                    "vision_mime": None,
+                    "vision_name": None,
+                },
+                api_key="k",
+                model_name="glm-4-flash",
+                resolve_bridge_input_fn=lambda *_args, **_kwargs: None,
+                resolve_effective_input_fn=lambda *args, **kwargs: ("请生成楼梯", False, False),
+                detect_gsm_name_candidate_fn=lambda _text: None,
+                handle_tapir_test_trigger_fn=lambda *_args: (False, False),
+                handle_tapir_selection_trigger_fn=lambda *_args: (False, False),
+                handle_tapir_highlight_trigger_fn=lambda *_args: (False, False),
+                handle_tapir_load_params_trigger_fn=lambda *_args: (False, False),
+                handle_tapir_apply_params_trigger_fn=lambda *_args: (False, False),
+                run_vision_path_fn=lambda *args, **kwargs: (False, False, None),
+                run_normal_text_path_fn=run_normal_text_path_fn,
+                apply_chat_anchor_pending_fn=lambda **_kwargs: False,
+            )
+
+            transcript = ErrorLearningStore(tmpdir).list_chat_transcript()
+            self.assertEqual([entry.role for entry in transcript], ["user", "assistant"])
+            self.assertEqual(transcript[0].project_name, "Demo")
+
     def test_process_chat_turn_routes_image_input(self):
         st = _DummyStreamlit()
         session_state = _State(

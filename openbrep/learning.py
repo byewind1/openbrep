@@ -18,6 +18,7 @@ from typing import Any
 
 LEARNINGS_DIR = ".openbrep/learnings"
 ERROR_LESSONS_FILE = "error_lessons.jsonl"
+CHAT_TRANSCRIPT_FILE = "chat_transcript.jsonl"
 LEARNED_SKILL_FILE = "learned_skill.md"
 _SEED_FIRST_SEEN = "2026-04-28T00:00:00"
 
@@ -45,6 +46,15 @@ class LearningSummary:
     message: str
 
 
+@dataclass(frozen=True)
+class ChatTranscriptEntry:
+    role: str
+    content: str
+    timestamp: str
+    source: str = ""
+    project_name: str = ""
+
+
 class ErrorLearningStore:
     """Append/update recurring GDL error lessons for a workspace."""
 
@@ -52,6 +62,7 @@ class ErrorLearningStore:
         self.work_dir = Path(work_dir)
         self.root = self.work_dir / LEARNINGS_DIR
         self.error_lessons_path = self.root / ERROR_LESSONS_FILE
+        self.chat_transcript_path = self.root / CHAT_TRANSCRIPT_FILE
         self.learned_skill_path = self.root / LEARNED_SKILL_FILE
 
     def record_error(
@@ -141,7 +152,76 @@ class ErrorLearningStore:
         except Exception:
             return ""
 
-    def summarize_to_skill(self, *, project_name: str = "", limit: int = 12) -> LearningSummary:
+    def append_chat_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        project_name: str = "",
+        source: str = "ui_chat",
+    ) -> int:
+        entries: list[ChatTranscriptEntry] = []
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        for message in messages:
+            content = _message_content_to_text(message.get("content", ""))
+            if not content:
+                continue
+            entries.append(
+                ChatTranscriptEntry(
+                    role=str(message.get("role", "")),
+                    content=content,
+                    timestamp=now,
+                    source=source,
+                    project_name=project_name,
+                )
+            )
+        if not entries:
+            return 0
+
+        self.root.mkdir(parents=True, exist_ok=True)
+        with self.chat_transcript_path.open("a", encoding="utf-8") as fh:
+            for entry in entries:
+                fh.write(json.dumps(_chat_entry_to_dict(entry), ensure_ascii=False, sort_keys=True))
+                fh.write("\n")
+        return len(entries)
+
+    def list_chat_transcript(self) -> list[ChatTranscriptEntry]:
+        if not self.chat_transcript_path.exists():
+            return []
+        entries: list[ChatTranscriptEntry] = []
+        try:
+            for line in self.chat_transcript_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                entries.append(_chat_entry_from_dict(json.loads(line)))
+        except Exception:
+            return entries
+        return entries
+
+    def learn_from_chat_transcript(self, *, project_name: str = "") -> int:
+        learned = 0
+        for entry in self.list_chat_transcript():
+            if project_name and entry.project_name and entry.project_name != project_name:
+                continue
+            if not looks_like_error_report(entry.content):
+                continue
+            lesson = self.record_error(
+                entry.content,
+                source="chat_transcript_scan",
+                project_name=entry.project_name or project_name,
+                instruction="从持久化聊天记录中整理出的脚本错误线索。",
+            )
+            if lesson is not None:
+                learned += 1
+        return learned
+
+    def summarize_to_skill(
+        self,
+        *,
+        project_name: str = "",
+        limit: int = 12,
+        scan_chat: bool = True,
+    ) -> LearningSummary:
+        scanned_count = self.learn_from_chat_transcript(project_name=project_name) if scan_chat else 0
         lessons = self.list_error_lessons(include_seed=True)
         skill = build_compacted_learning_skill(lessons, project_name=project_name, limit=limit)
         if not skill:
@@ -162,7 +242,7 @@ class ErrorLearningStore:
             ok=True,
             lesson_count=selected_count,
             path=self.learned_skill_path,
-            message=f"已整理 {selected_count} 条错题约束",
+            message=f"已整理 {selected_count} 条错题约束，扫描聊天命中 {scanned_count} 条",
         )
 
     def _write_lessons(self, lessons: list[ErrorLesson]) -> None:
@@ -466,3 +546,41 @@ def _lesson_to_dict(lesson: ErrorLesson) -> dict[str, Any]:
         "project_name": lesson.project_name,
         "raw_excerpt": lesson.raw_excerpt,
     }
+
+
+def _chat_entry_from_dict(data: dict[str, Any]) -> ChatTranscriptEntry:
+    return ChatTranscriptEntry(
+        role=str(data.get("role", "")),
+        content=str(data.get("content", "")),
+        timestamp=str(data.get("timestamp", "")),
+        source=str(data.get("source", "")),
+        project_name=str(data.get("project_name", "")),
+    )
+
+
+def _chat_entry_to_dict(entry: ChatTranscriptEntry) -> dict[str, str]:
+    return {
+        "role": entry.role,
+        "content": entry.content,
+        "timestamp": entry.timestamp,
+        "source": entry.source,
+        "project_name": entry.project_name,
+    }
+
+
+def _message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return _clean(content)
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                value = item.get("text") or item.get("content") or item.get("caption") or ""
+                if value:
+                    parts.append(str(value))
+            elif item:
+                parts.append(str(item))
+        return _clean("\n".join(parts))
+    if content is None:
+        return ""
+    return _clean(str(content))
