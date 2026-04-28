@@ -5,15 +5,30 @@ import tempfile
 from pathlib import Path
 
 
-def _format_compile_result(*, result, output_gsm: str, compiler_mode: str) -> tuple[bool, str]:
+def _format_compile_result(*, result, output_gsm: str, compiler_mode: str, hsf_dir: str | Path | None = None) -> tuple[bool, str]:
     mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
     if result.success:
-        msg = f"✅ **编译成功{mock_tag}**\n\n📦 `{output_gsm}`"
+        msg = f"✅ **编译成功{mock_tag}**\n\n📦 GSM: `{output_gsm}`"
+        if hsf_dir:
+            msg += f"\n\n📁 HSF 源目录: `{hsf_dir}`"
         if compiler_mode.startswith("Mock"):
             msg += "\n\n⚠️ Mock 模式不生成真实 .gsm，切换 LP_XMLConverter 进行真实编译。"
         return True, msg
 
     return False, f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```"
+
+
+def _prepare_project_for_compile(proj, gsm_name: str, work_dir: str) -> None:
+    project_name = str(getattr(proj, "name", "") or "").strip()
+    output_name = str(gsm_name or "").strip()
+    if (not project_name or project_name == "untitled") and output_name:
+        proj.name = output_name
+        project_name = output_name
+
+    if hasattr(proj, "work_dir"):
+        proj.work_dir = Path(work_dir)
+    if hasattr(proj, "root") and project_name:
+        proj.root = Path(work_dir) / project_name
 
 
 def do_compile(
@@ -30,15 +45,24 @@ def do_compile(
 ) -> tuple:
     format_compile_result_fn = format_compile_result_fn or _format_compile_result
     try:
+        work_dir = str(session_state.work_dir)
+        _prepare_project_for_compile(proj, gsm_name, work_dir)
+        compile_name = gsm_name or proj.name
+
         requested_rev = int(session_state.get("script_revision", 0)) or 1
-        compile_rev = safe_compile_revision_fn(gsm_name or proj.name, session_state.work_dir, requested_rev)
+        compile_rev = safe_compile_revision_fn(compile_name, work_dir, requested_rev)
         if compile_rev != requested_rev:
             session_state.script_revision = compile_rev
-        output_gsm = versioned_gsm_path_fn(gsm_name or proj.name, session_state.work_dir, revision=compile_rev)
+        output_gsm = versioned_gsm_path_fn(compile_name, work_dir, revision=compile_rev)
         hsf_dir = proj.save_to_disk()
         result = get_compiler_fn().hsf2libpart(str(hsf_dir), output_gsm)
 
-        ok, msg = format_compile_result_fn(result=result, output_gsm=output_gsm, compiler_mode=compiler_mode)
+        ok, msg = format_compile_result_fn(
+            result=result,
+            output_gsm=output_gsm,
+            compiler_mode=compiler_mode,
+            hsf_dir=hsf_dir,
+        )
         session_state.compile_log.append({
             "project": proj.name,
             "instruction": instruction,
