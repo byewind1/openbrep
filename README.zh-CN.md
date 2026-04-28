@@ -6,7 +6,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.6.2 — 在 v0.6.1 基础上新增 wiki 知识检索、用户自定义 flat 知识库与 skill creator 对话式创建流程，补齐相关测试并修复关键路由细节。
+> 正式发布版本 v0.6.3 — 在 v0.6.2 基础上新增个人工作空间记忆、GDL 错题本自我提升、HSF 工作区持久化与项目版本治理，并完成一轮 UI / 架构文档治理。
 
 ---
 
@@ -283,6 +283,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.3 | 新增个人工作空间记忆：持久化聊天记录、GDL 错题本、用户触发整理后的自我提升 skill；LLM 注入分层为用户工作空间记忆与源码开发者基线；优化 HSF 项目目录持久化、编译版本识别、自定义 provider 配置同步、参数单位文案与 UI 架构治理（见 docs/releases/v0.6.3.md） |
 | v0.6.2 | 新增 wiki 知识检索与问答链路；新增用户自定义 flat 知识库接入；新增 skill creator 对话式创建与列表路由；补齐 pipeline/knowledge/skill 相关测试并修复 chat 关键路由细节（见 docs/releases/v0.6.2.md） |
 | v0.6.1 | CLI 可用性与安装体验提升；新增/完善 GDL 静态检查与自动 repair；补强 chat / explainer / 图片链路与参考图生成；修复 obr 在非项目目录无法启动 UI（见 docs/releases/v0.6.1.md） |
 | v0.6.0 | Runtime Phase 1 主骨架正式发布收尾：统一 create / modify / repair / chat 主链路；repair 独立 intent 闭合；CLI/UI/runtime 版本与发布口径统一（见 docs/releases/v0.6.0.md） |
