@@ -335,14 +335,13 @@ def run_normal_text_path(
                         session_state.pending_gsm_name = fallback_name
                         session_state.script_revision = 0
 
-                    has_any_script = has_any_script_content_fn(proj_current)
                     effective_gsm = session_state.pending_gsm_name or proj_current.name
                     msg = run_agent_generate_fn(
                         user_input,
                         proj_current,
                         st.container(),
                         effective_gsm,
-                        not has_any_script,
+                        False,
                     )
                     render_assistant_block(st, msg)
                 else:
@@ -359,14 +358,13 @@ def run_normal_text_path(
                             info_fn(f"📁 已初始化项目 `{gdl_obj_name}`")
 
                         proj_current = session_state.project
-                        has_any_script = has_any_script_content_fn(proj_current)
                         effective_gsm = session_state.pending_gsm_name or proj_current.name
                         msg = run_agent_generate_fn(
                             user_input,
                             proj_current,
                             st.container(),
                             effective_gsm,
-                            not has_any_script,
+                            False,
                         )
                         render_assistant_block(st, msg)
 
@@ -438,7 +436,6 @@ def run_vision_path(
             session_state.script_revision = 0
 
         proj_v = session_state.project
-        has_any_v = has_any_script_content_fn(proj_v)
 
         with live_output.container():
             import streamlit as st
@@ -452,7 +449,7 @@ def run_vision_path(
                     joined_text,
                     proj_v,
                     st.container(),
-                    not has_any_v,
+                    False,
                 )
             else:
                 debug_req = joined_text or "请根据这张截图定位并修复当前项目中的问题。"
@@ -463,7 +460,7 @@ def run_vision_path(
                     proj_v,
                     st.container(),
                     session_state.pending_gsm_name or proj_v.name,
-                    not has_any_v,
+                    False,
                     vision_b64,
                     final_mime,
                 )

@@ -728,14 +728,13 @@ def _handle_elicitation_route(user_input: str, gdl_obj_name: str) -> tuple[str, 
             _make_generation_project(gdl_obj_name or object_name or "elicited_object")
             st.info(f"📁 已初始化项目 `{st.session_state.pending_gsm_name}`")
         proj_current = st.session_state.project
-        _has_any_script = any(proj_current.get_script(s) for s, _, _ in _SCRIPT_MAP)
         effective_gsm = st.session_state.pending_gsm_name or proj_current.name
         return run_agent_generate(
             instruction,
             proj_current,
             st.container(),
             gsm_name=effective_gsm,
-            auto_apply=not _has_any_script,
+            auto_apply=False,
         ), False
 
     if ea.state == ElicitationState.SPEC_READY:
@@ -822,7 +821,7 @@ def run_agent_generate(
     """
     Unified chat+generate entry point.
 
-    auto_apply=True  → immediately write changes to project (first creation of empty project).
+    auto_apply=True  → immediately write changes to project.
     auto_apply=False → queue changes in pending_diffs; UI shows confirmation banner in chat column.
 
     debug_mode (intent-based) controls whether all scripts are injected into LLM context
