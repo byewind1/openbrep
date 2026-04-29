@@ -827,6 +827,15 @@ def run_agent_generate(
     debug_mode (intent-based) controls whether all scripts are injected into LLM context
     and whether LLM is allowed to reply with plain-text analysis in addition to code.
     """
+    try:
+        _sync_visible_editor_buffers(
+            proj,
+            int(st.session_state.get("editor_version", 0)),
+        )
+        proj.save_to_disk()
+    except Exception as exc:
+        return f"❌ **错误**: 同步 HSF 项目失败：{exc}"
+
     service = ui_generation_service.GenerationService(
         session_state=st.session_state,
         pipeline_class=TaskPipeline,
@@ -969,6 +978,7 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
         st.session_state.preview_3d_data = None
         st.session_state.preview_warnings = []
         st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+        proj.save_to_disk()
 
     return sc, pc
 

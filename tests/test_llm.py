@@ -65,6 +65,52 @@ from ui.revision_controller import (
 )
 
 class TestRunAgentGenerateResultPlan(unittest.TestCase):
+    def test_run_agent_generate_syncs_editor_and_saves_before_pipeline(self):
+        from ui.app import run_agent_generate
+
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1\nEND\n"
+        calls = []
+
+        fake_result = MagicMock(
+            success=True,
+            intent="CHAT",
+            scripts={},
+            plain_text="ok",
+            project=project,
+        )
+
+        class _StatusCol:
+            def empty(self):
+                return MagicMock()
+
+        project.save_to_disk = MagicMock(side_effect=lambda: calls.append("save"))
+
+        def _execute(_self, request):
+            calls.append("pipeline")
+            return fake_result
+
+        with patch("ui.app.TaskPipeline.execute", _execute):
+            with patch("ui.app._sync_visible_editor_buffers", side_effect=lambda *_args: calls.append("sync") or True):
+                with patch("ui.app._begin_generation_state", return_value="gen-1"):
+                    with patch("ui.app._consume_generation_result", return_value=True):
+                        with patch("ui.app._finalize_generation"):
+                            with patch.dict("ui.app.st.session_state", {
+                                "chat_history": [],
+                                "work_dir": "./workdir",
+                                "editor_version": 7,
+                            }, clear=False):
+                                reply = run_agent_generate(
+                                    "请调试",
+                                    project,
+                                    _StatusCol(),
+                                    gsm_name="chair",
+                                    auto_apply=False,
+                                )
+
+        self.assertEqual(calls[:3], ["sync", "save", "pipeline"])
+        self.assertIn("ok", reply)
+
     def test_run_agent_generate_consumes_runtime_generation_plan(self):
         from ui.app import run_agent_generate
 
@@ -1041,6 +1087,7 @@ class TestUndoLastAIWrite(unittest.TestCase):
 
         self.assertEqual(calls[0], ("capture", "AI 自动写入"))
         self.assertEqual(calls[1], ("apply", cleaned))
+        proj.save_to_disk.assert_called_once_with()
 
     def test_capture_and_restore_last_project_snapshot(self):
         original = MagicMock()

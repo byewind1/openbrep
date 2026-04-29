@@ -32,6 +32,7 @@ def apply_generation_plan(
             capture_last_project_snapshot("AI 自动写入")
             apply_scripts_to_project(proj, script_map)
         bump_main_editor_version()
+        proj.save_to_disk()
         if gsm_name:
             session_state.pending_gsm_name = gsm_name
     elif plan.mode == "pending_review":
