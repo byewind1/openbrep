@@ -1234,8 +1234,10 @@ class TestImportFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir) / "Chair"
             project_dir.mkdir()
+            (project_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
             loaded_proj = MagicMock()
             loaded_proj.name = "untitled"
+            loaded_proj.root = project_dir
             loaded_proj.parameters = []
             loaded_proj.scripts = {}
 
@@ -1259,8 +1261,8 @@ class TestImportFlows(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIn("已加载 HSF 项目", msg)
             load_from_disk.assert_called_once_with(str(project_dir))
-            self.assertEqual(loaded_proj.work_dir, Path(tmpdir))
-            self.assertEqual(loaded_proj.root, Path(tmpdir) / "untitled")
+            self.assertEqual(loaded_proj.work_dir, project_dir.resolve().parent)
+            self.assertEqual(loaded_proj.root, project_dir.resolve())
             self.assertEqual(__import__("ui.app", fromlist=["st"]).st.session_state.pending_diffs, {})
             self.assertIsNone(__import__("ui.app", fromlist=["st"]).st.session_state.preview_2d_data)
             self.assertIsNone(__import__("ui.app", fromlist=["st"]).st.session_state.preview_3d_data)
@@ -1290,8 +1292,10 @@ class TestImportFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir) / "Quoted Chair"
             project_dir.mkdir()
+            (project_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
             loaded_proj = MagicMock()
             loaded_proj.name = "quoted-chair"
+            loaded_proj.root = project_dir
             loaded_proj.parameters = []
             loaded_proj.scripts = {}
 
@@ -1309,8 +1313,10 @@ class TestImportFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir) / "Desk"
             project_dir.mkdir()
+            (project_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
             loaded_proj = MagicMock()
             loaded_proj.name = "untitled"
+            loaded_proj.root = project_dir
             loaded_proj.parameters = []
             loaded_proj.scripts = {}
 

@@ -179,6 +179,7 @@ class TestProjectService(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             hsf_dir = Path(tmp) / "Chair"
             hsf_dir.mkdir()
+            (hsf_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
             session_state = _SessionState(
                 work_dir=tmp,
                 chat_history=[],
@@ -218,7 +219,10 @@ class TestProjectService(unittest.TestCase):
 
             self.assertTrue(ok)
             self.assertIn("已加载 HSF 项目", msg)
+            self.assertIn("源目录", msg)
             self.assertIs(session_state.project, proj)
+            self.assertEqual(proj.root, hsf_dir.resolve())
+            self.assertEqual(proj.work_dir, hsf_dir.resolve().parent)
             self.assertEqual(session_state.pending_gsm_name, "Chair")
             self.assertEqual(session_state.pending_diffs, {})
             self.assertNotIn("revision_notice", session_state)
@@ -226,6 +230,173 @@ class TestProjectService(unittest.TestCase):
             self.assertIsNone(session_state.preview_2d_data)
             self.assertIsNone(session_state.preview_3d_data)
             self.assertEqual(calls, {"reset": 1, "bump": 1})
+
+    def test_handle_hsf_directory_load_accepts_parent_with_single_hsf_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            hsf_dir = work_dir / "Chair"
+            hsf_dir.mkdir()
+            (hsf_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
+            captured = {}
+            session_state = _SessionState(
+                work_dir=str(work_dir / "default-workspace"),
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            proj = SimpleNamespace(name="Chair", root=hsf_dir, parameters=[], scripts={})
+
+            def _load_project(path):
+                captured["path"] = path
+                return proj
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=_load_project,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+            )
+
+            ok, _msg = service.handle_hsf_directory_load(str(work_dir))
+
+            self.assertTrue(ok)
+            self.assertEqual(Path(captured["path"]), hsf_dir)
+            self.assertEqual(proj.root, hsf_dir.resolve())
+
+    def test_browse_and_load_hsf_directory_loads_selected_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hsf_dir = Path(tmp) / "Chair"
+            hsf_dir.mkdir()
+            (hsf_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
+            session_state = _SessionState(
+                work_dir=tmp,
+                editor_hsf_dir="",
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            proj = SimpleNamespace(name="Chair", root=hsf_dir, parameters=[], scripts={})
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: proj,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+                choose_directory_fn=lambda _initial: str(hsf_dir),
+            )
+
+            ok, msg = service.browse_and_load_hsf_directory()
+
+            self.assertTrue(ok)
+            self.assertIn("已加载 HSF 项目", msg)
+            self.assertEqual(session_state.editor_hsf_dir, str(hsf_dir))
+            self.assertEqual(proj.root, hsf_dir.resolve())
+
+    def test_browse_and_load_hsf_directory_reports_unsupported_without_chooser(self):
+        session_state = _SessionState(
+            work_dir="/tmp/workspace",
+            editor_hsf_dir="",
+            chat_history=[],
+            pending_diffs={},
+            preview_2d_data=None,
+            preview_3d_data=None,
+            preview_warnings=[],
+            preview_meta={},
+        )
+        service = ProjectService(
+            session_state=session_state,
+            compiler_mode="LP",
+            get_compiler_fn=lambda: None,
+            mock_compiler_class=object,
+            parse_gdl_source_fn=lambda *_args: None,
+            load_project_from_disk_fn=lambda _path: None,
+            reset_tapir_p0_state_fn=lambda: None,
+            bump_main_editor_version_fn=lambda: None,
+        )
+
+        ok, msg = service.browse_and_load_hsf_directory()
+
+        self.assertFalse(ok)
+        self.assertIn("不支持本地目录选择", msg)
+
+    def test_browse_and_load_hsf_directory_returns_cancel_message_without_mutating_input(self):
+        session_state = _SessionState(
+            work_dir="/tmp/workspace",
+            editor_hsf_dir="/existing/path",
+            chat_history=[],
+            pending_diffs={},
+            preview_2d_data=None,
+            preview_3d_data=None,
+            preview_warnings=[],
+            preview_meta={},
+        )
+        captured = {}
+        service = ProjectService(
+            session_state=session_state,
+            compiler_mode="LP",
+            get_compiler_fn=lambda: None,
+            mock_compiler_class=object,
+            parse_gdl_source_fn=lambda *_args: None,
+            load_project_from_disk_fn=lambda _path: None,
+            reset_tapir_p0_state_fn=lambda: None,
+            bump_main_editor_version_fn=lambda: None,
+            choose_directory_fn=lambda initial: captured.setdefault("initial", initial) and None,
+        )
+
+        ok, msg = service.browse_and_load_hsf_directory()
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, "已取消选择 HSF 项目目录")
+        self.assertEqual(captured["initial"], "/existing/path")
+        self.assertEqual(session_state.editor_hsf_dir, "/existing/path")
+
+    def test_handle_hsf_directory_load_rejects_parent_with_multiple_hsf_projects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            for name in ("Chair", "Desk"):
+                hsf_dir = work_dir / name
+                hsf_dir.mkdir()
+                (hsf_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
+            session_state = _SessionState(
+                work_dir=str(work_dir / "default-workspace"),
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+            )
+
+            ok, msg = service.handle_hsf_directory_load(str(work_dir))
+
+            self.assertFalse(ok)
+            self.assertIn("多个 HSF 项目", msg)
+            self.assertIn("Chair", msg)
+            self.assertIn("Desk", msg)
 
     def test_handle_unified_import_accepts_import_gsm_override(self):
         with tempfile.TemporaryDirectory() as tmp:

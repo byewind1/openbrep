@@ -192,19 +192,53 @@ def handle_hsf_directory_load(
     if not raw_path:
         return False, "❌ 请输入 HSF 项目目录"
 
-    hsf_dir = Path(raw_path).expanduser()
+    input_dir = Path(raw_path).expanduser()
+    hsf_dir = _resolve_hsf_project_dir(input_dir)
     if not hsf_dir.exists():
         return False, f"❌ 目录不存在: {hsf_dir}"
     if not hsf_dir.is_dir():
         return False, f"❌ 不是目录: {hsf_dir}"
+    if not _looks_like_hsf_project(hsf_dir):
+        candidates = _find_hsf_project_candidates(input_dir)
+        if candidates:
+            names = ", ".join(candidate.name for candidate in candidates[:8])
+            suffix = "..." if len(candidates) > 8 else ""
+            return False, f"❌ 目录下有多个 HSF 项目，请选择其中一个: {names}{suffix}"
+        return False, f"❌ 不是有效 HSF 项目目录: {hsf_dir}"
 
     try:
         proj = load_project_from_disk_fn(str(hsf_dir))
     except Exception as e:
         return False, f"❌ 载入 HSF 项目失败: {e}"
 
-    msg = f"✅ 已加载 HSF 项目 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本"
-    return finalize_loaded_project_fn(proj, msg, pending_gsm_name=proj.name)
+    msg = (
+        f"✅ 已加载 HSF 项目 `{proj.name}` — {len(proj.parameters)} 参数，{len(proj.scripts)} 脚本"
+        f"\n\n源目录: `{hsf_dir}`"
+    )
+    return finalize_loaded_project_fn(proj, msg, pending_gsm_name=proj.name, preserve_project_root=True)
+
+
+def _resolve_hsf_project_dir(path: Path) -> Path:
+    """Accept either an HSF root or a parent folder containing one HSF project."""
+    if _looks_like_hsf_project(path):
+        return path
+    if not path.is_dir():
+        return path
+
+    candidates = _find_hsf_project_candidates(path)
+    if len(candidates) == 1:
+        return candidates[0]
+    return path
+
+
+def _find_hsf_project_candidates(path: Path) -> list[Path]:
+    if not path.is_dir():
+        return []
+    return [child for child in sorted(path.iterdir()) if _looks_like_hsf_project(child)]
+
+
+def _looks_like_hsf_project(path: Path) -> bool:
+    return path.is_dir() and ((path / "libpartdata.xml").exists() or (path / "scripts").is_dir())
 
 
 def handle_unified_import(

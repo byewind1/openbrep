@@ -86,13 +86,19 @@ def finalize_loaded_project(
     session_state,
     reset_tapir_p0_state,
     bump_main_editor_version,
+    *,
+    preserve_project_root: bool = False,
 ) -> tuple[bool, str]:
-    source_root_raw = getattr(proj, "root", None)
-    source_root = Path(source_root_raw) if source_root_raw else None
-    proj.work_dir = Path(session_state.work_dir)
-    proj.root = proj.work_dir / proj.name
-    if source_root is not None:
-        copy_project_metadata(source_root, proj.root)
+    if preserve_project_root:
+        proj.root = Path(proj.root).expanduser().resolve()
+        proj.work_dir = proj.root.parent
+    else:
+        source_root_raw = getattr(proj, "root", None)
+        source_root = Path(source_root_raw) if source_root_raw else None
+        proj.work_dir = Path(session_state.work_dir)
+        proj.root = proj.work_dir / proj.name
+        if source_root is not None:
+            copy_project_metadata(source_root, proj.root)
     session_state.project = proj
     session_state.pending_diffs = {}
     session_state.preview_2d_data = None

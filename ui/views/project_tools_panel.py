@@ -13,6 +13,7 @@ def render_project_tools_panel(
     is_generation_locked_fn: Callable[[], bool],
     handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
+    browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
     do_compile_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
     save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
     restore_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
@@ -23,6 +24,7 @@ def render_project_tools_panel(
         is_generation_locked_fn=is_generation_locked_fn,
         handle_unified_import_fn=handle_unified_import_fn,
         handle_hsf_directory_load_fn=handle_hsf_directory_load_fn,
+        browse_and_load_hsf_directory_fn=browse_and_load_hsf_directory_fn,
     )
     _render_compile_section(
         st,
@@ -46,6 +48,7 @@ def _render_project_input_section(
     is_generation_locked_fn: Callable[[], bool],
     handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
+    browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
 ) -> None:
     with st.expander("1. 导入 / 打开 HSF 项目", expanded=True):
         uploaded = st.file_uploader(
@@ -65,9 +68,23 @@ def _render_project_input_section(
                 else:
                     st.error(msg)
 
+        if st.button(
+            "浏览并载入 HSF 项目目录",
+            key="editor_browse_load_hsf",
+            disabled=is_generation_locked_fn(),
+            use_container_width=True,
+            help="打开系统目录选择器，选中 HSF 根目录或包含单个 HSF 项目的工作目录后直接载入",
+        ):
+            ok, msg = browse_and_load_hsf_directory_fn()
+            if ok:
+                st.rerun()
+            elif msg.startswith("❌"):
+                st.error(msg)
+            else:
+                st.info(msg)
+
         hsf_dir_input = st.text_input(
-            "HSF 项目目录",
-            value="",
+            "HSF 项目目录（可手动粘贴）",
             placeholder="/path/to/YourHSFProject",
             key="editor_hsf_dir",
             disabled=is_generation_locked_fn(),

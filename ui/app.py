@@ -56,6 +56,7 @@ from ui import app_shell as ui_app_shell
 from ui import config_service as ui_config_service
 from ui import feedback_service as ui_feedback_service
 from ui import license_service as ui_license_service
+from ui import local_file_dialog as ui_local_file_dialog
 from ui import object_naming as ui_object_naming
 from ui import project_snapshot as ui_project_snapshot
 from ui import runtime_service as ui_runtime_service
@@ -999,6 +1000,10 @@ def _project_service() -> ui_project_service.ProjectService:
             tapir_import_ok=_TAPIR_IMPORT_OK,
             get_bridge_fn=get_bridge,
         ),
+        choose_directory_fn=lambda initial_dir=None: ui_local_file_dialog.choose_directory(
+            title="选择 HSF 项目目录",
+            initial_dir=initial_dir,
+        ),
     )
     service.sync_visible_editor_buffers_fn = lambda project: _sync_visible_editor_buffers(
         project,
@@ -1019,9 +1024,24 @@ def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:
     return _project_service().handle_hsf_directory_load(project_dir)
 
 
+def _browse_and_load_hsf_directory() -> tuple[bool, str]:
+    return _project_service().browse_and_load_hsf_directory()
 
-def _finalize_loaded_project(proj: HSFProject, msg: str, pending_gsm_name: str) -> tuple[bool, str]:
-    return _project_service().finalize_loaded_project(proj, msg, pending_gsm_name)
+
+
+def _finalize_loaded_project(
+    proj: HSFProject,
+    msg: str,
+    pending_gsm_name: str,
+    *,
+    preserve_project_root: bool = False,
+) -> tuple[bool, str]:
+    return _project_service().finalize_loaded_project(
+        proj,
+        msg,
+        pending_gsm_name,
+        preserve_project_root=preserve_project_root,
+    )
 
 
 
@@ -1365,6 +1385,7 @@ with col_left:
             is_generation_locked_fn=lambda: _is_generation_locked(st.session_state),
             handle_unified_import_fn=_handle_unified_import,
             handle_hsf_directory_load_fn=_handle_hsf_directory_load,
+            browse_and_load_hsf_directory_fn=_browse_and_load_hsf_directory,
             do_compile_fn=lambda project, gsm_name, instruction: do_compile(
                 project,
                 gsm_name=gsm_name,

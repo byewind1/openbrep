@@ -21,6 +21,7 @@ class ProjectService:
     import_gsm_override_fn: Callable[[bytes, str], tuple] | None = None
     reset_revision_ui_state_fn: Callable[[object], None] | None = None
     reload_libraries_after_compile_fn: Callable[[], tuple[bool, str] | None] | None = None
+    choose_directory_fn: Callable[[str | None], str | None] | None = None
 
     def do_compile(self, proj, gsm_name: str, instruction: str = "") -> tuple[bool, str]:
         sync_visible_editor_buffers_fn = getattr(self, "sync_visible_editor_buffers_fn", None)
@@ -65,6 +66,21 @@ class ProjectService:
             finalize_loaded_project_fn=self.finalize_loaded_project,
         )
 
+    def browse_and_load_hsf_directory(self) -> tuple[bool, str]:
+        if self.choose_directory_fn is None:
+            return False, "❌ 当前运行环境不支持本地目录选择，请手动粘贴 HSF 项目目录"
+
+        if hasattr(self.session_state, "get"):
+            initial_dir = self.session_state.get("editor_hsf_dir", "")
+        else:
+            initial_dir = getattr(self.session_state, "editor_hsf_dir", "")
+        selected = self.choose_directory_fn(initial_dir or None)
+        if not selected:
+            return False, "已取消选择 HSF 项目目录"
+
+        self.session_state.editor_hsf_dir = selected
+        return self.handle_hsf_directory_load(selected)
+
     def handle_unified_import(self, uploaded_file) -> tuple[bool, str]:
         import_gsm_fn = self.import_gsm_override_fn or self.import_gsm
         return project_io.handle_unified_import(
@@ -75,7 +91,14 @@ class ProjectService:
             finalize_loaded_project_fn=self.finalize_loaded_project,
         )
 
-    def finalize_loaded_project(self, proj, msg: str, pending_gsm_name: str) -> tuple[bool, str]:
+    def finalize_loaded_project(
+        self,
+        proj,
+        msg: str,
+        pending_gsm_name: str,
+        *,
+        preserve_project_root: bool = False,
+    ) -> tuple[bool, str]:
         result = ui_actions.finalize_loaded_project(
             proj,
             msg,
@@ -83,6 +106,7 @@ class ProjectService:
             self.session_state,
             self.reset_tapir_p0_state_fn,
             self.bump_main_editor_version_fn,
+            preserve_project_root=preserve_project_root,
         )
         if self.reset_revision_ui_state_fn is not None:
             self.reset_revision_ui_state_fn(self.session_state)
