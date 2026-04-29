@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import streamlit.components.v1 as components
 
 from openbrep.gdl_previewer import Preview2DResult, Preview3DResult
+from ui.three_preview import render_three_preview_html
 
 
 def render_preview_2d(st, data: Preview2DResult, *, plotly_available: bool, go) -> None:
@@ -95,11 +97,16 @@ def render_preview_3d(st, data: Preview3DResult, *, plotly_available: bool, go) 
         st.info("3D 预览为空（脚本无可渲染几何，或命令未覆盖）。")
         return
 
-    if not plotly_available:
-        st.info("未安装 plotly，无法显示 3D 图形。请安装 ui 依赖后重试。")
-        st.caption(f"统计：网格 {len(data.meshes)}，线框 {len(data.wires)}")
-        return
+    components.html(render_three_preview_html(data, height=500), height=510)
 
+    if plotly_available:
+        with st.expander("Plotly fallback", expanded=False):
+            _render_preview_3d_plotly(st, data, go=go)
+    else:
+        st.caption(f"统计：网格 {len(data.meshes)}，线框 {len(data.wires)}")
+
+
+def _render_preview_3d_plotly(st, data: Preview3DResult, *, go) -> None:
     fig = go.Figure()
 
     for i, mesh in enumerate(data.meshes):

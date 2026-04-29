@@ -310,16 +310,24 @@ def _render_preview_panel(
     )
 
     with st.expander(title, expanded=has_preview):
-        tab_2d, tab_3d, tab_warn = st.tabs(["2D", "3D", "Warnings"])
-        with tab_2d:
+        tab_specs = ["2D", "3D", "Warnings"]
+        if str(preview_kind).upper() == "3D":
+            tab_specs = ["3D", "2D", "Warnings"]
+        tabs = dict(zip(tab_specs, st.tabs(tab_specs)))
+        with tabs["2D"]:
             render_preview_2d_fn(st.session_state.get("preview_2d_data"))
-        with tab_3d:
+        with tabs["3D"]:
             render_preview_3d_fn(st.session_state.get("preview_3d_data"))
-        with tab_warn:
-            warnings = st.session_state.get("preview_warnings") or []
-            if not warnings:
-                st.caption("暂无 warning。")
-            else:
-                for warning in warnings:
-                    text = re.sub(r"^line\s+(\d+):", r"3d.gdl:L\1", str(warning))
-                    st.warning(text)
+        with tabs["Warnings"]:
+            _render_preview_warnings(st)
+
+
+def _render_preview_warnings(st) -> None:
+    warnings = st.session_state.get("preview_warnings") or []
+    if not warnings:
+        st.caption("暂无 warning。")
+        return
+
+    for warning in warnings:
+        text = re.sub(r"^line\s+(\d+):", r"3d.gdl:L\1", str(warning))
+        st.warning(text)

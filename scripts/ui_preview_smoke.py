@@ -4,7 +4,7 @@
 What it verifies:
 1) Import .gdl via uploader
 2) Trigger 3D / 2D preview buttons
-3) Detect Plotly render container
+3) Detect Three.js render canvas
 4) Confirm unsupported TUBE emits warning (but app keeps working)
 5) Save screenshots + JSON summary
 
@@ -46,7 +46,13 @@ def _click_tab(page, name: str, prefer_last: bool = False, prefer_index: int | N
     tabs = page.get_by_role("tab", name=name)
     count = tabs.count()
     if count <= 0:
-        return False
+        fallback = page.locator(f'text="{name}"')
+        fallback_count = fallback.count()
+        if fallback_count <= 0:
+            return False
+        fallback.nth(fallback_count - 1 if prefer_last else 0).click()
+        page.wait_for_timeout(700)
+        return True
 
     if prefer_last:
         idx = count - 1
@@ -74,6 +80,43 @@ def _collect_ace_text(page) -> str:
     return "\n\n".join(parts)
 
 
+def _detect_three_canvas(page) -> dict:
+    result = {"detected": False, "nonblank": False, "status": "", "pixels": 0}
+    for frame in page.frames:
+        try:
+            if frame.locator("#viewer canvas").count() <= 0:
+                continue
+            status = frame.locator("#status").inner_text(timeout=1000)
+            pixels = frame.evaluate(
+                """() => {
+                  const canvas = document.querySelector("#viewer canvas");
+                  const probe = document.createElement("canvas");
+                  probe.width = Math.min(canvas.width, 160);
+                  probe.height = Math.min(canvas.height, 120);
+                  const ctx = probe.getContext("2d");
+                  ctx.drawImage(canvas, 0, 0, probe.width, probe.height);
+                  const data = ctx.getImageData(0, 0, probe.width, probe.height).data;
+                  let nonBlank = 0;
+                  for (let i = 0; i < data.length; i += 4) {
+                    if (data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245) {
+                      nonBlank += 1;
+                    }
+                  }
+                  return nonBlank;
+                }"""
+            )
+            result = {
+                "detected": True,
+                "nonblank": pixels > 0,
+                "status": status,
+                "pixels": pixels,
+            }
+            break
+        except Exception:
+            continue
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run browser smoke test for OBR preview UI")
     parser.add_argument("--url", default="http://localhost:8501", help="Streamlit URL")
@@ -99,6 +142,9 @@ def main() -> int:
         "preview2d_clicked": False,
         "preview_header_3d_seen": False,
         "preview_header_2d_seen": False,
+        "three_canvas_detected": False,
+        "three_canvas_nonblank": False,
+        "three_canvas_status": "",
         "plotly_canvas_detected": False,
         "warnings_contains_tube": False,
         "warning_texts": [],
@@ -136,6 +182,11 @@ def main() -> int:
                 page.wait_for_timeout(1800)
                 summary["preview3d_clicked"] = True
                 summary["preview_header_3d_seen"] = page.locator("text=最新预览：3D").count() > 0
+                _click_tab(page, "3D", prefer_last=True)
+                three_canvas = _detect_three_canvas(page)
+                summary["three_canvas_detected"] = three_canvas["detected"]
+                summary["three_canvas_nonblank"] = three_canvas["nonblank"]
+                summary["three_canvas_status"] = three_canvas["status"]
 
                 # Read warning tab.
                 _click_tab(page, "Warnings", prefer_last=True)
@@ -190,7 +241,8 @@ def main() -> int:
         "preview2d_clicked",
         "preview_header_3d_seen",
         "preview_header_2d_seen",
-        "plotly_canvas_detected",
+        "three_canvas_detected",
+        "three_canvas_nonblank",
         "warnings_contains_tube",
     ]
     failed = [k for k in required_true if not summary.get(k)]
