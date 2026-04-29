@@ -9,6 +9,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
+from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
+
 
 GDL_KEYWORDS = [
     "创建", "生成", "制作", "做一个", "建一个", "写一个", "写个", "写一",
@@ -456,12 +458,6 @@ _PARAM_TYPE_RE = re.compile(
 )
 
 
-def strip_md_fences(code: str) -> str:
-    cleaned = re.sub(r'^```[a-zA-Z]*\s*\n?', '', (code or '').strip(), flags=re.MULTILINE)
-    cleaned = re.sub(r'\n?```\s*$', '', cleaned.strip(), flags=re.MULTILINE)
-    return cleaned.strip()
-
-
 def classify_code_blocks(text: str) -> dict[str, str]:
     collected: dict[str, str] = {}
     code_block_pat = re.compile(r"```[a-zA-Z]*[ \t]*\n(.*?)```", re.DOTALL)
@@ -469,21 +465,41 @@ def classify_code_blocks(text: str) -> dict[str, str]:
         block = match.group(1).strip()
         if not block:
             continue
-        block_up = block.upper()
-        if len(_PARAM_TYPE_RE.findall(block)) >= 2:
-            path = "paramlist.xml"
-        elif re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
-            path = "scripts/2d.gdl"
-        elif re.search(r'\bVALUES\b|\bLOCK\b', block_up) and not re.search(r'\bBLOCK\b', block_up):
-            path = "scripts/vl.gdl"
-        elif re.search(r'\bGLOB_\w+\b', block_up):
-            path = "scripts/1d.gdl"
-        elif re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b|\bUI_DIALOG\b|\bUI_PAGE\b|\bUI_INFIELD\b|\bUI_OUTFIELD\b|\bUI_BUTTON\b|\bUI_GROUPBOX\b|\bUI_LISTFIELD\b|\bUI_SEPARATOR\b', block_up):
-            path = "scripts/ui.gdl"
-        else:
-            path = "scripts/3d.gdl"
-        collected[path] = block
+        path = infer_code_block_path(block)
+        collected[path] = sanitize_llm_script_output(block, path)
+
+    if not collected:
+        path = infer_code_block_path(text or "")
+        candidate = sanitize_llm_script_output(text or "", path)
+        if _looks_like_gdl_script(candidate):
+            collected[path] = candidate
     return collected
+
+
+def infer_code_block_path(block: str) -> str:
+    block_up = (block or "").upper()
+    if len(_PARAM_TYPE_RE.findall(block or "")) >= 2:
+        return "paramlist.xml"
+    if re.search(r'\bPROJECT2\b|\bRECT2\b|\bPOLY2\b', block_up):
+        return "scripts/2d.gdl"
+    if re.search(r'\bVALUES\b|\bLOCK\b', block_up) and not re.search(r'\bBLOCK\b', block_up):
+        return "scripts/vl.gdl"
+    if re.search(r'\bGLOB_\w+\b', block_up):
+        return "scripts/1d.gdl"
+    if re.search(r'\bUI_CURRENT\b|\bDEFINE\s+STYLE\b|\bUI_DIALOG\b|\bUI_PAGE\b|\bUI_INFIELD\b|\bUI_OUTFIELD\b|\bUI_BUTTON\b|\bUI_GROUPBOX\b|\bUI_LISTFIELD\b|\bUI_SEPARATOR\b', block_up):
+        return "scripts/ui.gdl"
+    return "scripts/3d.gdl"
+
+
+def _looks_like_gdl_script(text: str) -> bool:
+    if not (text or "").strip():
+        return False
+    up = text.upper()
+    command_hits = len(re.findall(
+        r"(?m)^\s*(BLOCK|ADD|DEL|MATERIAL|FOR|NEXT|IF|ENDIF|END|PROJECT2|RECT2|POLY2|VALUES|PARAMETERS|TOLER)\b",
+        up,
+    ))
+    return command_hits >= 3 and bool(re.search(r"(?m)^\s*END\s*$", up))
 
 
 def extract_gdl_from_text(text: str) -> dict[str, str]:

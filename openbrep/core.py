@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
+from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
 from openbrep.paramlist_builder import clean_parameter_description, validate_paramlist
@@ -801,7 +802,10 @@ class GDLAgent:
             if file_match:
                 # Save previous file
                 if current_file and current_lines:
-                    changes[current_file] = "\n".join(current_lines).strip()
+                    changes[current_file] = sanitize_llm_script_output(
+                        "\n".join(current_lines),
+                        current_file,
+                    )
                 current_file = file_match.group(1).strip()
                 current_lines = []
                 continue
@@ -815,7 +819,10 @@ class GDLAgent:
 
         # Save last file
         if current_file and current_lines:
-            changes[current_file] = "\n".join(current_lines).strip()
+            changes[current_file] = sanitize_llm_script_output(
+                "\n".join(current_lines),
+                current_file,
+            )
 
         return changes
 

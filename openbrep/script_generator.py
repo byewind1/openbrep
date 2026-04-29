@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, TYPE_CHECKING
 
+from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.gdl_keywords import GDL_BUILTINS_CASEFOLD, GLOBAL_PREFIXES, OUTPUT_METADATA_WORDS
 
 if TYPE_CHECKING:
@@ -280,7 +281,10 @@ class ScriptGenerator:
             path = m.group(1).strip()
             if (path.lower() == script_type.value.lower()
                     or path.lower().endswith(target_filename.lower())):
-                content = _FENCE_RE.sub("", m.group(2)).strip()
+                content = sanitize_llm_script_output(
+                    _FENCE_RE.sub("", m.group(2)),
+                    script_type.value,
+                )
                 return content
         return None
 

@@ -37,6 +37,7 @@ from openbrep.explainer.service import explain_parameter_context, explain_projec
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
+from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
@@ -384,7 +385,7 @@ class TaskPipeline:
         )
 
         # Strip markdown fences the LLM sometimes leaks into scripts
-        cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
+        cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}
         cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
 
         # Apply changes to the project in-place
@@ -420,7 +421,7 @@ class TaskPipeline:
                     # 不重传图片，repair 只需文字上下文
                 )
                 repair_cleaned = (
-                    {k: _strip_md_fences(v) for k, v in repair_changes.items()}
+                    {k: sanitize_llm_script_output(v, k) for k, v in repair_changes.items()}
                     if repair_changes else {}
                 )
                 repair_cleaned, repair_lint_summary = _run_gdl_linter(repair_cleaned, on_event=on_event)
@@ -514,7 +515,7 @@ class TaskPipeline:
             image_mime=request.image_mime,
         )
 
-        cleaned = {k: _strip_md_fences(v) for k, v in changes.items()} if changes else {}
+        cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}
         cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
 
         # Apply changes to project in-place
@@ -578,7 +579,7 @@ class TaskPipeline:
                     history=request.history,
                 )
                 repair_cleaned = (
-                    {k: _strip_md_fences(v) for k, v in repair_changes.items()}
+                    {k: sanitize_llm_script_output(v, k) for k, v in repair_changes.items()}
                     if repair_changes else {}
                 )
                 repair_cleaned, repair_lint_summary = _run_gdl_linter(repair_cleaned, on_event=on_event)
@@ -1031,9 +1032,7 @@ def build_generation_result_plan(
 
 def _strip_md_fences(code: str) -> str:
     """Remove markdown code fences (```gdl / ```) that LLMs sometimes include."""
-    code = re.sub(r'^```[a-zA-Z]*\s*\n?', '', code.strip(), flags=re.MULTILINE)
-    code = re.sub(r'\n?```\s*$', '', code.strip(), flags=re.MULTILINE)
-    return code.strip()
+    return strip_md_fences(code)
 
 
 def _snapshot_scripts(project: HSFProject) -> dict[str, str]:

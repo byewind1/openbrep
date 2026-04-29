@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import streamlit as st
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.gdl_parser import parse_gdl_source, parse_gdl_file
+from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.paramlist_builder import build_paramlist_xml
 from openbrep.compiler import CompileResult, MockHSFCompiler
 from openbrep.validator import GDLValidator
@@ -891,8 +892,8 @@ def _sanitize_script_content(raw: str, fpath: str) -> str:
     if not text:
         return ""
 
-    # Remove fenced blocks if model leaked markdown wrappers
-    text = _strip_md_fences(text)
+    # Remove fenced blocks and trailing markdown prose leaked into script content.
+    text = sanitize_llm_script_output(text, fpath)
 
     # If model accidentally included nested [FILE:] in content, keep only before next header
     _next_header = _re.search(r"(?m)^\s*\[FILE:\s*.+?\]\s*$", text)
