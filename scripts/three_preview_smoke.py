@@ -76,6 +76,24 @@ DEL 1
                       };
                     }"""
                 )
+                before_height = pixels["height"]
+                page.locator("#fullscreen").click()
+                page.wait_for_timeout(600)
+                fullscreen_pixels = page.evaluate(
+                    """() => {
+                      const viewer = document.querySelector("#viewer");
+                      const canvas = document.querySelector("canvas");
+                      const rect = viewer.getBoundingClientRect();
+                      return {
+                        viewerWidth: Math.round(rect.width),
+                        viewerHeight: Math.round(rect.height),
+                        canvasWidth: canvas.width,
+                        canvasHeight: canvas.height,
+                        fullscreenElement: document.fullscreenElement === viewer,
+                        embeddedFullscreen: viewer.classList.contains("embedded-fullscreen")
+                      };
+                    }"""
+                )
                 screenshot = out_dir / f"{viewport['name']}.png"
                 page.screenshot(path=str(screenshot), full_page=True)
                 summary["viewports"].append(
@@ -83,11 +101,19 @@ DEL 1
                         **viewport,
                         "status": status_text,
                         "canvas": pixels,
+                        "fullscreen": fullscreen_pixels,
                         "screenshot": str(screenshot),
                     }
                 )
                 if pixels["nonBlank"] <= 0:
                     summary["errors"].append(f"{viewport['name']}: canvas appears blank")
+                if not (
+                    fullscreen_pixels["fullscreenElement"]
+                    or fullscreen_pixels["embeddedFullscreen"]
+                ):
+                    summary["errors"].append(f"{viewport['name']}: fullscreen did not activate")
+                if fullscreen_pixels["canvasHeight"] <= before_height:
+                    summary["errors"].append(f"{viewport['name']}: fullscreen canvas did not grow")
             except Exception as exc:
                 summary["errors"].append(f"{viewport['name']}: {exc}")
             finally:

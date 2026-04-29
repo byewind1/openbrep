@@ -63,6 +63,21 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
       border-radius: 8px;
       background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
     }}
+    #viewer.embedded-fullscreen {{
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 999999;
+      border: 0;
+      border-radius: 0;
+    }}
+    #viewer:fullscreen {{
+      width: 100vw;
+      height: 100vh;
+      border: 0;
+      border-radius: 0;
+    }}
     #toolbar {{
       position: absolute;
       top: 10px;
@@ -106,6 +121,7 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
     <div id="toolbar">
       <button id="mode" title="Toggle solid and wire display">S</button>
       <button id="reset" title="Reset camera">R</button>
+      <button id="fullscreen" title="Fullscreen preview">⛶</button>
     </div>
     <div id="status"></div>
   </div>
@@ -115,6 +131,7 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
     const status = document.getElementById("status");
     const modeButton = document.getElementById("mode");
     const resetButton = document.getElementById("reset");
+    const fullscreenButton = document.getElementById("fullscreen");
 
     try {{
       const THREE = await import("three");
@@ -212,11 +229,47 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
       }}
 
       function resize() {{
-        const width = Math.max(viewer.clientWidth, 1);
-        const h = Math.max(viewer.clientHeight, 1);
+        const bounds = viewer.getBoundingClientRect();
+        const width = Math.max(Math.floor(bounds.width), 1);
+        const h = Math.max(Math.floor(bounds.height), 1);
         renderer.setSize(width, h);
         camera.aspect = width / h;
         camera.updateProjectionMatrix();
+      }}
+
+      function isEmbeddedFullscreen() {{
+        return viewer.classList.contains("embedded-fullscreen");
+      }}
+
+      function setEmbeddedFullscreen(enabled) {{
+        viewer.classList.toggle("embedded-fullscreen", enabled);
+        fullscreenButton.classList.toggle("active", enabled);
+        fullscreenButton.textContent = enabled ? "×" : "⛶";
+        setTimeout(resize, 0);
+        setTimeout(resize, 120);
+      }}
+
+      async function toggleFullscreen() {{
+        if (document.fullscreenElement) {{
+          await document.exitFullscreen();
+          return;
+        }}
+
+        if (isEmbeddedFullscreen()) {{
+          setEmbeddedFullscreen(false);
+          return;
+        }}
+
+        if (viewer.requestFullscreen) {{
+          try {{
+            await viewer.requestFullscreen();
+            return;
+          }} catch (_error) {{
+            setEmbeddedFullscreen(true);
+            return;
+          }}
+        }}
+        setEmbeddedFullscreen(true);
       }}
 
       let solidsVisible = true;
@@ -227,6 +280,18 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
         modeButton.classList.toggle("active", solidsVisible);
       }});
       resetButton.addEventListener("click", resetCamera);
+      fullscreenButton.addEventListener("click", toggleFullscreen);
+      document.addEventListener("fullscreenchange", () => {{
+        const active = document.fullscreenElement === viewer;
+        fullscreenButton.classList.toggle("active", active);
+        fullscreenButton.textContent = active ? "×" : "⛶";
+        setTimeout(resize, 0);
+      }});
+      window.addEventListener("keydown", (event) => {{
+        if (event.key === "Escape" && isEmbeddedFullscreen()) {{
+          setEmbeddedFullscreen(false);
+        }}
+      }});
       window.addEventListener("resize", resize);
 
       resetCamera();

@@ -49,6 +49,8 @@ class TestThreePreview(unittest.TestCase):
         self.assertIn("OrbitControls.js", html)
         self.assertIn('"name":"mesh-with-quote"', html)
         self.assertIn("new THREE.WebGLRenderer", html)
+        self.assertIn("requestFullscreen", html)
+        self.assertIn("embedded-fullscreen", html)
 
 
 if __name__ == "__main__":
