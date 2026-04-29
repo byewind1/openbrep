@@ -36,10 +36,16 @@ class CrossScriptChecker:
         if script_3d and project.parameters:
             param_names = {p.name.upper() for p in project.parameters}
             master_script = self._strip_comments(project.get_script(ScriptType.MASTER) or "")
-            known_names = param_names | self.GDL_BUILTINS | self._assigned_names(master_script)
+            known_names = (
+                param_names
+                | self.GDL_BUILTINS
+                | self._assigned_names(master_script)
+                | self._assigned_names(script_3d)
+            )
             used_vars = {m.group(1).upper() for m in _IDENT_RE.finditer(script_3d)}
             missing = used_vars - known_names
             missing = {v for v in missing if len(v) > 1}
+            missing = {v for v in missing if not v.startswith("_")}
             # Filter out GDL global/system variable prefixes (gs_, ac_, GLOB_, SYMB_)
             missing = {v for v in missing
                        if not any(v.upper().startswith(p.upper().rstrip("_"))

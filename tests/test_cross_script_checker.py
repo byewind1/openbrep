@@ -57,6 +57,24 @@ class TestCrossScriptChecker(unittest.TestCase):
 
         self.assertEqual(issues, [])
 
+    def test_3d_local_assigned_names_are_not_reported(self):
+        project = self._make_project(
+            script_3d=(
+                "_x_pos = width + 1\n"
+                "_z_pos = height + 1\n"
+                "localDepth = depth\n"
+                "ADD _X_POS, 0, _Z_POS\n"
+                "BLOCK width, localDepth, height\n"
+                "DEL 1\n"
+                "END\n"
+            ),
+            param_names=["width", "depth", "height"],
+        )
+
+        issues = CrossScriptChecker().check(project)
+
+        self.assertEqual(issues, [])
+
     def test_unknown_name_still_reported_as_cross_script_warning(self):
         project = self._make_project(
             script_3d="BLOCK width, depth, missingHeight\nEND\n",
