@@ -26,7 +26,10 @@ class TestTapirControllerCompileReload(unittest.TestCase):
             get_bridge_fn=lambda: bridge,
         )
 
-        self.assertIsNone(result)
+        self.assertIsNotNone(result)
+        ok, msg = result
+        self.assertFalse(ok)
+        self.assertIn("未自动重载", msg)
         self.assertEqual(bridge.reload_calls, 0)
 
     def test_reload_after_compile_calls_bridge_when_available(self):

@@ -6,7 +6,7 @@ from typing import Callable
 def reload_libraries_after_compile(*, tapir_import_ok: bool, get_bridge_fn: Callable[[], object]) -> tuple[bool, str] | None:
     """Reload Archicad libraries after a successful real GSM compile."""
     if not tapir_import_ok:
-        return None
+        return False, "⚪ Tapir bridge 未导入，编译成功但未自动重载 Archicad 图库。"
 
     bridge = get_bridge_fn()
     if not bridge.is_available():
