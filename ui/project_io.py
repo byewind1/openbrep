@@ -5,6 +5,18 @@ import tempfile
 from pathlib import Path
 
 
+def _existing_hsf_root(proj) -> Path | None:
+    raw_root = getattr(proj, "root", None)
+    if not raw_root:
+        return None
+    root = Path(raw_root).expanduser().resolve()
+    if not root.is_dir():
+        return None
+    if (root / "libpartdata.xml").exists() or (root / "scripts").is_dir():
+        return root
+    return None
+
+
 def _format_compile_result(*, result, output_gsm: str, compiler_mode: str, hsf_dir: str | Path | None = None) -> tuple[bool, str]:
     mock_tag = " [Mock]" if compiler_mode.startswith("Mock") else ""
     if result.success:
@@ -21,14 +33,24 @@ def _format_compile_result(*, result, output_gsm: str, compiler_mode: str, hsf_d
 def _prepare_project_for_compile(proj, gsm_name: str, work_dir: str) -> None:
     project_name = str(getattr(proj, "name", "") or "").strip()
     output_name = str(gsm_name or "").strip()
+    existing_root = _existing_hsf_root(proj)
+
     if (not project_name or project_name == "untitled") and output_name:
         proj.name = output_name
         project_name = output_name
 
+    if existing_root is not None:
+        if hasattr(proj, "work_dir"):
+            proj.work_dir = existing_root.parent
+        if hasattr(proj, "root"):
+            proj.root = existing_root
+        return
+
+    compile_work_dir = Path(work_dir)
     if hasattr(proj, "work_dir"):
-        proj.work_dir = Path(work_dir)
+        proj.work_dir = compile_work_dir
     if hasattr(proj, "root") and project_name:
-        proj.root = Path(work_dir) / project_name
+        proj.root = compile_work_dir / project_name
 
 
 def do_compile(
