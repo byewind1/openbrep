@@ -24,6 +24,9 @@ def render_chat_panel(
     parse_paramlist_text_fn: Callable[[str], list],
     restore_last_project_snapshot_fn: Callable[[], tuple[bool, str]],
     validate_chat_image_size_fn: Callable[[bytes, str], str | None],
+    check_gdl_script_fn: Callable[[str, str], list[str]] | None = None,
+    do_compile_fn: Callable[[object, str, str], tuple[bool, str]] | None = None,
+    save_revision_fn: Callable[[object, str, str | None], tuple[bool, str]] | None = None,
 ) -> dict:
     st.markdown("### AI 助手（生成与调试）")
     _render_header(st)
@@ -47,10 +50,13 @@ def render_chat_panel(
         st,
         script_map=script_map,
         parse_paramlist_text_fn=parse_paramlist_text_fn,
+        check_gdl_script_fn=check_gdl_script_fn,
         capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
         apply_scripts_to_project_fn=apply_scripts_to_project_fn,
         bump_main_editor_version_fn=bump_main_editor_version_fn,
         restore_last_project_snapshot_fn=restore_last_project_snapshot_fn,
+        do_compile_fn=do_compile_fn,
+        save_revision_fn=save_revision_fn,
     )
     live_output = st.empty()
     active_debug_mode = _render_debug_and_route_controls(st)
@@ -283,10 +289,13 @@ def _render_pending_diffs(
     *,
     script_map: list[tuple[object, str, str]],
     parse_paramlist_text_fn: Callable[[str], list],
+    check_gdl_script_fn: Callable[[str, str], list[str]] | None,
     capture_last_project_snapshot_fn: Callable[[str], None],
     apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
     bump_main_editor_version_fn: Callable[[], int],
     restore_last_project_snapshot_fn: Callable[[], tuple[bool, str]],
+    do_compile_fn: Callable[[object, str, str], tuple[bool, str]] | None,
+    save_revision_fn: Callable[[object, str, str | None], tuple[bool, str]] | None,
 ) -> None:
     if not st.session_state.pending_diffs:
         return
@@ -299,33 +308,89 @@ def _render_pending_diffs(
     kept = [path for path in all_targets if path not in covered]
     covered_txt = "、".join(covered) if covered else "（无）"
     kept_txt = "、".join(kept) if kept else "（无）"
+
     st.info(
-        f"⬆️ **写入策略：命中文件全覆盖，未命中文件保留**\n"
+        f"⬆️ **Review：AI 提议写入 {script_count} 个脚本、{param_count} 个参数**\n"
         f"覆盖：`{covered_txt}`\n"
         f"保留：`{kept_txt}`"
     )
-    apply_col, _, undo_col = st.columns([1.2, 1, 1.6])
-    with apply_col:
-        if st.button("✅ 写入", type="primary", width="stretch", key="chat_pending_apply"):
-            project = st.session_state.project
-            if project:
-                capture_last_project_snapshot_fn("AI 确认写入")
-                sc, pc = apply_scripts_to_project_fn(project, pending_diffs)
-                ok_parts = []
-                if sc:
-                    ok_parts.append(f"{sc} 个脚本")
-                if pc:
-                    ok_parts.append(f"{pc} 个参数")
-                if not ok_parts:
-                    if script_count:
-                        ok_parts.append(f"{script_count} 个脚本")
-                    if param_count:
-                        ok_parts.append(f"{param_count} 个参数")
-                bump_main_editor_version_fn()
-                st.toast(f"✅ 已写入 {'、'.join(ok_parts)}", icon="✏️")
-            st.session_state.pending_diffs = {}
-            st.session_state.pending_ai_label = ""
+
+    static_issues = _pending_static_issues(
+        pending_diffs,
+        script_map=script_map,
+        check_gdl_script_fn=check_gdl_script_fn,
+    )
+    status_col_1, status_col_2, status_col_3 = st.columns(3)
+    with status_col_1:
+        st.caption("Draft：待写入")
+    with status_col_2:
+        if static_issues:
+            st.caption(f"Static：{len(static_issues)} 条提示")
+        else:
+            st.caption("Static：通过")
+    with status_col_3:
+        if st.session_state.compile_result is None:
+            st.caption("Compile：未运行")
+        else:
+            compile_ok, _ = st.session_state.compile_result
+            st.caption("Compile：通过" if compile_ok else "Compile：失败")
+    if static_issues:
+        st.warning("；".join(static_issues[:3]))
+
+    can_promote = do_compile_fn is not None
+    draft_col, compile_col, promote_col = st.columns([1.0, 1.1, 1.4])
+    with draft_col:
+        if st.button("写入草稿", type="primary", width="stretch", key="chat_pending_apply"):
+            _apply_pending_review_changes(
+                st,
+                pending_diffs=pending_diffs,
+                script_count=script_count,
+                param_count=param_count,
+                capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+                apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+                bump_main_editor_version_fn=bump_main_editor_version_fn,
+            )
             st.rerun()
+    with compile_col:
+        if st.button(
+            "写入并编译",
+            width="stretch",
+            key="chat_pending_apply_compile",
+            disabled=not can_promote,
+        ):
+            _apply_compile_and_maybe_snapshot(
+                st,
+                pending_diffs=pending_diffs,
+                script_count=script_count,
+                param_count=param_count,
+                capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+                apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+                bump_main_editor_version_fn=bump_main_editor_version_fn,
+                do_compile_fn=do_compile_fn,
+                save_revision_fn=None,
+            )
+            st.rerun()
+    with promote_col:
+        if st.button(
+            "写入+编译+保存版本",
+            width="stretch",
+            key="chat_pending_apply_compile_snapshot",
+            disabled=not (can_promote and save_revision_fn is not None),
+        ):
+            _apply_compile_and_maybe_snapshot(
+                st,
+                pending_diffs=pending_diffs,
+                script_count=script_count,
+                param_count=param_count,
+                capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+                apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+                bump_main_editor_version_fn=bump_main_editor_version_fn,
+                do_compile_fn=do_compile_fn,
+                save_revision_fn=save_revision_fn,
+            )
+            st.rerun()
+
+    undo_col, _ = st.columns([1.6, 1.0])
     with undo_col:
         undo_disabled = not bool(st.session_state.get("last_project_snapshot"))
         if st.button("↩ 撤销上次 AI 写入", width="stretch", key="chat_last_ai_undo", disabled=undo_disabled):
@@ -335,6 +400,105 @@ def _render_pending_diffs(
             else:
                 st.error(msg)
             st.rerun()
+
+
+def _pending_static_issues(
+    pending_diffs: dict,
+    *,
+    script_map: list[tuple[object, str, str]],
+    check_gdl_script_fn: Callable[[str, str], list[str]] | None,
+) -> list[str]:
+    if check_gdl_script_fn is None:
+        return []
+
+    issues: list[str] = []
+    for _script_type, fpath, label in script_map:
+        if fpath not in pending_diffs:
+            continue
+        script_key = fpath.replace("scripts/", "").replace(".gdl", "")
+        for issue in check_gdl_script_fn(pending_diffs[fpath], script_key):
+            if issue.startswith("✅"):
+                continue
+            issues.append(f"{label}: {issue}")
+    return issues
+
+
+def _apply_pending_review_changes(
+    st,
+    *,
+    pending_diffs: dict,
+    script_count: int,
+    param_count: int,
+    capture_last_project_snapshot_fn: Callable[[str], None],
+    apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
+    bump_main_editor_version_fn: Callable[[], int],
+) -> tuple[int, int]:
+    project = st.session_state.project
+    if not project:
+        st.error("当前没有项目，无法写入 AI 改动。")
+        return 0, 0
+
+    capture_last_project_snapshot_fn("AI 确认写入")
+    sc, pc = apply_scripts_to_project_fn(project, pending_diffs)
+    bump_main_editor_version_fn()
+    st.session_state.pending_diffs = {}
+    st.session_state.pending_ai_label = ""
+    st.session_state.compile_result = None
+
+    ok_parts = []
+    if sc:
+        ok_parts.append(f"{sc} 个脚本")
+    if pc:
+        ok_parts.append(f"{pc} 个参数")
+    if not ok_parts:
+        if script_count:
+            ok_parts.append(f"{script_count} 个脚本")
+        if param_count:
+            ok_parts.append(f"{param_count} 个参数")
+    st.toast(f"✅ 已写入 {'、'.join(ok_parts) if ok_parts else 'AI 改动'}", icon="✏️")
+    return sc, pc
+
+
+def _apply_compile_and_maybe_snapshot(
+    st,
+    *,
+    pending_diffs: dict,
+    script_count: int,
+    param_count: int,
+    capture_last_project_snapshot_fn: Callable[[str], None],
+    apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
+    bump_main_editor_version_fn: Callable[[], int],
+    do_compile_fn: Callable[[object, str, str], tuple[bool, str]] | None,
+    save_revision_fn: Callable[[object, str, str | None], tuple[bool, str]] | None,
+) -> None:
+    project = st.session_state.project
+    if project is None or do_compile_fn is None:
+        st.error("当前无法编译 AI 改动。")
+        return
+
+    _apply_pending_review_changes(
+        st,
+        pending_diffs=pending_diffs,
+        script_count=script_count,
+        param_count=param_count,
+        capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+        apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+        bump_main_editor_version_fn=bump_main_editor_version_fn,
+    )
+    gsm_name = st.session_state.get("pending_gsm_name") or getattr(project, "name", "")
+    success, result_msg = do_compile_fn(project, gsm_name, "(review promote)")
+    st.session_state.compile_result = (success, result_msg)
+    if success:
+        st.toast("✅ 编译成功", icon="🏗️")
+        if save_revision_fn is not None:
+            ok, msg = save_revision_fn(project, f"AI review promote {gsm_name}", gsm_name)
+            st.session_state.revision_notice = msg
+            if ok:
+                st.toast("已保存版本", icon="✅")
+            else:
+                st.error(msg)
+    else:
+        st.error(result_msg)
 
 
 def _render_debug_and_route_controls(st) -> str | None:

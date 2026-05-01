@@ -1457,6 +1457,13 @@ with col_right:
             parse_paramlist_text_fn=_parse_paramlist_text,
             restore_last_project_snapshot_fn=_restore_last_project_snapshot,
             validate_chat_image_size_fn=_validate_chat_image_size,
+            check_gdl_script_fn=check_gdl_script,
+            do_compile_fn=lambda project, gsm_name, instruction: do_compile(
+                project,
+                gsm_name=gsm_name,
+                instruction=instruction,
+            ),
+            save_revision_fn=ui_revision_controller.save_current_project_revision,
         )
     # 聊天编排下沉到 controller，app 只负责把依赖接进去
     ui_chat_controller.process_chat_turn(

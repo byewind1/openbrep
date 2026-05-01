@@ -38,6 +38,7 @@ def apply_generation_plan(
     elif plan.mode == "pending_review":
         session_state.pending_diffs = script_map
         session_state.pending_ai_label = plan.label
+        session_state.compile_result = None
         if gsm_name:
             session_state.pending_gsm_name = gsm_name
 
