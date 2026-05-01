@@ -110,6 +110,7 @@ def run_preview(
     set_preview_meta_fn: Callable[[dict], None],
     script_type_2d,
     script_type_3d,
+    script_type_master=None,
     strict: bool = False,
     unknown_command_policy: str = "warn",
     quality: str = "fast",
@@ -117,6 +118,9 @@ def run_preview(
     sync_visible_editor_buffers_fn(proj, editor_version)
     params = preview_param_values_fn(proj)
     pre_warns = collect_preview_prechecks_fn(proj, target)
+    if script_type_master is None:
+        script_type_master = getattr(getattr(script_type_3d, "__class__", object), "MASTER", None)
+    setup_script = proj.get_script(script_type_master) if script_type_master is not None else ""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
@@ -124,6 +128,7 @@ def run_preview(
             res_2d = preview_2d_script(
                 proj.get_script(script_type_2d),
                 parameters=params,
+                setup_script=setup_script,
                 strict=strict,
                 unknown_command_policy=unknown_command_policy,
                 quality=quality,
@@ -137,6 +142,7 @@ def run_preview(
             res_3d = preview_3d_script(
                 proj.get_script(script_type_3d),
                 parameters=params,
+                setup_script=setup_script,
                 strict=strict,
                 unknown_command_policy=unknown_command_policy,
                 quality=quality,

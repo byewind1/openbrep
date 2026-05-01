@@ -82,6 +82,7 @@ class PreviewResult:
 def preview_2d_script(
     script_2d: str,
     parameters: dict[str, Any] | None = None,
+    setup_script: str = "",
     for_limit: int = DEFAULT_FOR_LIMIT,
     strict: bool = False,
     unknown_command_policy: str = "warn",
@@ -95,6 +96,8 @@ def preview_2d_script(
         unknown_command_policy=unknown_command_policy,
         quality=quality,
     )
+    if setup_script:
+        runtime.execute(setup_script or "", mode="setup")
     runtime.execute(script_2d or "", mode="2d")
     runtime.finish()
     return runtime.result_2d
@@ -103,6 +106,7 @@ def preview_2d_script(
 def preview_3d_script(
     script_3d: str,
     parameters: dict[str, Any] | None = None,
+    setup_script: str = "",
     for_limit: int = DEFAULT_FOR_LIMIT,
     strict: bool = False,
     unknown_command_policy: str = "warn",
@@ -116,6 +120,8 @@ def preview_3d_script(
         unknown_command_policy=unknown_command_policy,
         quality=quality,
     )
+    if setup_script:
+        runtime.execute(setup_script or "", mode="setup")
     runtime.execute(script_3d or "", mode="3d")
     runtime.finish()
     return runtime.result_3d
@@ -125,6 +131,7 @@ def preview_scripts(
     script_2d: str,
     script_3d: str,
     parameters: dict[str, Any] | None = None,
+    setup_script: str = "",
     for_limit: int = DEFAULT_FOR_LIMIT,
     strict: bool = False,
     unknown_command_policy: str = "warn",
@@ -134,6 +141,7 @@ def preview_scripts(
     p2d = preview_2d_script(
         script_2d,
         parameters=parameters,
+        setup_script=setup_script,
         for_limit=for_limit,
         strict=strict,
         unknown_command_policy=unknown_command_policy,
@@ -142,6 +150,7 @@ def preview_scripts(
     p3d = preview_3d_script(
         script_3d,
         parameters=parameters,
+        setup_script=setup_script,
         for_limit=for_limit,
         strict=strict,
         unknown_command_policy=unknown_command_policy,
@@ -219,13 +228,27 @@ class _PreviewRuntime:
                 idx += 1
                 continue
 
-            # IF/ENDIF block — skip without evaluating condition
+            # IF/ENDIF block
             if re.match(r"^IF\b", line, re.IGNORECASE):
-                endif_idx = self._find_matching_endif(lines, idx, end)
+                else_idx, endif_idx = self._find_matching_if_bounds(lines, idx, end)
                 if endif_idx is None:
                     self._warn(line_no, "IF 缺少匹配 ENDIF，已跳过")
                     idx += 1
                     continue
+                condition = _extract_if_condition(line)
+                if condition is None:
+                    self._warn(line_no, "IF 条件无法解析，已跳过")
+                    idx = endif_idx + 1
+                    continue
+                should_run = self._eval_condition(condition, line_no)
+                if should_run is None:
+                    idx = endif_idx + 1
+                    continue
+                if should_run:
+                    body_end = else_idx if else_idx is not None else endif_idx
+                    self._exec_block(lines, idx + 1, body_end, mode=mode)
+                elif else_idx is not None:
+                    self._exec_block(lines, else_idx + 1, endif_idx, mode=mode)
                 idx = endif_idx + 1
                 continue
 
@@ -278,9 +301,13 @@ class _PreviewRuntime:
 
             # Recognized but non-renderable commands — suppress "未支持命令" warning
             if re.match(
-                r"^(RESOL|MATERIAL|PEN|XFORM)\b",
+                r"^(RESOL|TOLER|MATERIAL|PEN|XFORM)\b",
                 line, re.IGNORECASE,
             ):
+                idx += 1
+                continue
+
+            if mode == "setup":
                 idx += 1
                 continue
 
@@ -382,6 +409,35 @@ class _PreviewRuntime:
                     return i
         return None
 
+    def _find_matching_if_bounds(
+        self,
+        lines: list[tuple[int, str]],
+        if_idx: int,
+        end: int,
+    ) -> tuple[int | None, int | None]:
+        """Find ELSE/ENDIF matching IF at if_idx. Returns (else_idx, endif_idx)."""
+        depth = 1
+        else_idx: int | None = None
+        for i in range(if_idx + 1, end):
+            _, line = lines[i]
+            cmd = _extract_command(line)
+            if cmd == "IF":
+                depth += 1
+            elif cmd == "ENDIF":
+                depth -= 1
+                if depth == 0:
+                    return else_idx, i
+            elif cmd == "ELSE" and depth == 1 and else_idx is None:
+                else_idx = i
+        return else_idx, None
+
+    def _eval_condition(self, condition: str, line_no: int) -> bool | None:
+        try:
+            return _safe_eval_condition(condition, self.env)
+        except Exception as exc:
+            self._warn(line_no, f"IF 条件解析失败 `{condition}`: {exc}")
+            return None
+
     def _handle_transform(self, line: str, line_no: int) -> bool:
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\b\s*(.*)$", line)
         if not m:
@@ -390,9 +446,9 @@ class _PreviewRuntime:
         cmd = m.group(1).upper()
         arg_text = (m.group(2) or "").strip()
         args = _split_args(arg_text)
-        vals = [self._eval_expr(a, line_no) for a in args] if args else []
 
         if cmd in {"ADD", "ADDX", "ADDY", "ADDZ"}:
+            vals = [self._eval_expr(a, line_no) for a in args] if args else []
             if any(v is None for v in vals):
                 self._warn(line_no, f"{cmd} 参数解析失败，已跳过")
                 return True
@@ -427,6 +483,7 @@ class _PreviewRuntime:
             return True
 
         if cmd in {"ROTX", "ROTY", "ROTZ", "ROT"}:
+            vals = [self._eval_expr(a, line_no) for a in args] if args else []
             if not vals:
                 self._warn(line_no, f"{cmd} 缺少角度参数，已跳过")
                 return True
@@ -441,6 +498,7 @@ class _PreviewRuntime:
             return True
 
         if cmd in {"MUL", "MULX", "MULY", "MULZ"}:
+            vals = [self._eval_expr(a, line_no) for a in args] if args else []
             if any(v is None for v in vals):
                 self._warn(line_no, f"{cmd} 参数解析失败，已跳过")
                 return True
@@ -946,6 +1004,14 @@ def _extract_command(line: str) -> str:
     return m.group(1).upper() if m else ""
 
 
+def _extract_if_condition(line: str) -> str | None:
+    m = re.match(r"^IF\s+(.+?)(?:\s+THEN\b.*)?$", line, re.IGNORECASE)
+    if not m:
+        return None
+    condition = (m.group(1) or "").strip()
+    return condition or None
+
+
 def _split_args(text: str) -> list[str]:
     if not text:
         return []
@@ -1312,6 +1378,41 @@ def _safe_eval_expr(expr: str, env: dict[str, float]) -> float:
     text = expr.strip().replace("^", "**")
     node = ast.parse(text, mode="eval")
     return float(_eval_ast(node.body, env))
+
+
+def _safe_eval_condition(condition: str, env: dict[str, float]) -> bool:
+    text = (condition or "").strip()
+    if not text:
+        raise ValueError("空条件")
+
+    # GDL commonly uses numeric boolean expressions. Support simple logical
+    # composition without attempting to emulate the full language.
+    for op in (" OR ", " AND "):
+        parts = re.split(rf"\b{op.strip()}\b", text, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            values = [_safe_eval_condition(part, env) for part in parts]
+            return any(values) if op.strip() == "OR" else all(values)
+
+    m = re.match(r"^(.+?)\s*(<=|>=|<>|#|=|<|>)\s*(.+)$", text)
+    if not m:
+        return abs(_safe_eval_expr(text, env)) > 1e-12
+
+    left = _safe_eval_expr(m.group(1), env)
+    right = _safe_eval_expr(m.group(3), env)
+    op = m.group(2)
+    if op == "=":
+        return abs(left - right) <= 1e-9
+    if op in {"<>", "#"}:
+        return abs(left - right) > 1e-9
+    if op == "<":
+        return left < right
+    if op == ">":
+        return left > right
+    if op == "<=":
+        return left <= right + 1e-9
+    if op == ">=":
+        return left >= right - 1e-9
+    raise ValueError(f"条件运算符不支持: {op}")
 
 
 def _eval_ast(node: ast.AST, env: dict[str, float]) -> float:

@@ -110,6 +110,37 @@ class TestProposedPreviewController(unittest.TestCase):
         self.assertEqual(state["summary"]["target"], "3D")
         self.assertEqual(state["summary"]["proposed_status"], "ok")
 
+    def test_run_pending_preview_uses_master_setup_for_proposed_project(self):
+        proj = HSFProject.create_new("Demo")
+        proj.set_script(ScriptType.MASTER, "_inner_w = A - 2 * frame_thk\n")
+        state = {}
+
+        ok, _msg = run_pending_preview(
+            proj,
+            {"scripts/3d.gdl": "BLOCK _inner_w, B, ZZYZX"},
+            "3d",
+            script_map=[
+                *self.script_map,
+                (ScriptType.MASTER, "scripts/1d.gdl", "Master"),
+            ],
+            parse_paramlist_text_fn=lambda _text: [],
+            preview_param_values_fn=lambda _proj: {"A": 2, "B": 1, "ZZYZX": 1, "FRAME_THK": 0.1},
+            collect_preview_prechecks_fn=lambda _proj, _target: [],
+            dedupe_keep_order_fn=lambda items: items,
+            set_pending_preview_2d_data_fn=lambda data: state.__setitem__("p2d", data),
+            set_pending_preview_3d_data_fn=lambda data: state.__setitem__("p3d", data),
+            set_pending_preview_warnings_fn=lambda warns: state.__setitem__("warnings", warns),
+            set_pending_preview_meta_fn=lambda meta: state.__setitem__("meta", meta),
+            set_pending_current_preview_3d_data_fn=lambda data: state.__setitem__("current_3d", data),
+            set_pending_preview_diff_summary_fn=lambda summary: state.__setitem__("summary", summary),
+            script_type_2d=ScriptType.SCRIPT_2D,
+            script_type_3d=ScriptType.SCRIPT_3D,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(len(state["p3d"].meshes), 1)
+        self.assertEqual(state["warnings"], [])
+
     def test_run_pending_preview_summary_marks_empty_and_warn_states(self):
         proj = HSFProject.create_new("Demo")
         state = {}

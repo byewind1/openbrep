@@ -60,6 +60,7 @@ def run_pending_preview(
     deepcopy_fn=deepcopy,
     script_type_2d=None,
     script_type_3d=None,
+    script_type_master=None,
     strict: bool = False,
     unknown_command_policy: str = "warn",
     quality: str = "fast",
@@ -82,12 +83,17 @@ def run_pending_preview(
     proposed_pre_warns = collect_preview_prechecks_fn(proposed, target)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     changed_paths = _changed_paths(pending_diffs)
+    if script_type_master is None:
+        script_type_master = getattr(getattr(script_type_3d, "__class__", object), "MASTER", None)
+    current_setup_script = proj.get_script(script_type_master) if script_type_master is not None else ""
+    proposed_setup_script = proposed.get_script(script_type_master) if script_type_master is not None else ""
 
     try:
         if target == "2d":
             current_2d = preview_2d_script(
                 proj.get_script(script_type_2d),
                 parameters=current_params,
+                setup_script=current_setup_script,
                 strict=strict,
                 unknown_command_policy=unknown_command_policy,
                 quality=quality,
@@ -95,6 +101,7 @@ def run_pending_preview(
             res_2d = preview_2d_script(
                 proposed.get_script(script_type_2d),
                 parameters=proposed_params,
+                setup_script=proposed_setup_script,
                 strict=strict,
                 unknown_command_policy=unknown_command_policy,
                 quality=quality,
@@ -120,6 +127,7 @@ def run_pending_preview(
             current_3d = preview_3d_script(
                 proj.get_script(script_type_3d),
                 parameters=current_params,
+                setup_script=current_setup_script,
                 strict=strict,
                 unknown_command_policy=unknown_command_policy,
                 quality=quality,
@@ -127,6 +135,7 @@ def run_pending_preview(
             res_3d = preview_3d_script(
                 proposed.get_script(script_type_3d),
                 parameters=proposed_params,
+                setup_script=proposed_setup_script,
                 strict=strict,
                 unknown_command_policy=unknown_command_policy,
                 quality=quality,

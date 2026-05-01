@@ -98,6 +98,75 @@ PRISM_ 3, 1, 0,0, 1,0, 0,1
         self.assertEqual([m.source_ref.command for m in res.meshes], ["CYLIND", "SPHERE", "PRISM", "PRISM_"])
         self.assertEqual([m.source_ref.line for m in res.meshes], [1, 2, 3, 4])
 
+    def test_if_block_executes_true_branch_and_skips_false_branch(self):
+        script = """\
+IF has_back_panel = 1 THEN
+    BLOCK 1, 1, 1
+ENDIF
+IF has_back_panel = 0 THEN
+    BLOCK 9, 9, 9
+ENDIF
+"""
+        res = preview_3d_script(script, {"has_back_panel": 1})
+
+        self.assertEqual(len(res.meshes), 1)
+        self.assertEqual(res.meshes[0].source_ref.line, 2)
+        self.assertFalse(any("IF 条件解析失败" in w for w in res.warnings))
+
+    def test_setup_script_supports_bookshelf_derived_variables(self):
+        script = """\
+TOLER 0.001
+MATERIAL mat_frame
+BLOCK frame_thk, B, ZZYZX
+ADDX A - frame_thk
+BLOCK frame_thk, B, ZZYZX
+DEL 1
+MATERIAL mat_shelf
+ADDX frame_thk
+BLOCK _inner_w, B, shelf_thickness
+DEL 1
+ADDX frame_thk
+ADDZ ZZYZX - shelf_thickness
+BLOCK _inner_w, B, shelf_thickness
+DEL 2
+FOR i = 1 TO shelf_count - 2
+    _z = shelf_thickness + i * _shelf_gap
+    ADDX frame_thk
+    ADDZ _z
+    BLOCK _inner_w, B, shelf_thickness
+    DEL 2
+NEXT i
+IF has_back_panel = 1 THEN
+    MATERIAL mat_frame
+    ADDY B - back_thk
+    BLOCK A, back_thk, ZZYZX
+    DEL 1
+ENDIF
+END
+"""
+        setup = """\
+_inner_w = A - 2 * frame_thk
+_shelf_gap = (ZZYZX - shelf_thickness * shelf_count) / (shelf_count - 1)
+"""
+        params = {
+            "A": 2,
+            "B": 0.4,
+            "ZZYZX": 2,
+            "frame_thk": 0.05,
+            "shelf_thickness": 0.04,
+            "shelf_count": 5,
+            "has_back_panel": 1,
+            "back_thk": 0.02,
+        }
+
+        res = preview_3d_script(script, params, setup_script=setup)
+
+        self.assertEqual(len(res.meshes), 8)
+        self.assertEqual([m.source_ref.line for m in res.meshes], [3, 5, 9, 13, 19, 19, 19, 25])
+        self.assertFalse(any("未定义变量 _inner_w" in w for w in res.warnings))
+        self.assertFalse(any("未支持命令 TOLER" in w for w in res.warnings))
+        self.assertFalse(any("mat_frame" in w or "mat_shelf" in w for w in res.warnings))
+
 
 
 if __name__ == "__main__":

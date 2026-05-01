@@ -30,6 +30,7 @@ class TestPreviewControllerPhase1(unittest.TestCase):
 
     def test_run_preview_passes_preview_options_to_3d(self):
         proj = self._make_project()
+        proj.set_script(ScriptType.MASTER, "_inner_w = A - 2\n")
         calls = {}
 
         def _capture(*args, **kwargs):
@@ -60,6 +61,7 @@ class TestPreviewControllerPhase1(unittest.TestCase):
         self.assertTrue(calls.get("strict"))
         self.assertEqual(calls.get("unknown_command_policy"), "error")
         self.assertEqual(calls.get("quality"), "accurate")
+        self.assertEqual(calls.get("setup_script"), "_inner_w = A - 2\n")
 
     def test_sync_visible_editor_buffers_updates_project_and_clears_preview(self):
         proj = self._make_project()
