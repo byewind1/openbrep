@@ -75,6 +75,10 @@ class TestProposedPreviewController(unittest.TestCase):
         self.assertEqual(state["summary"]["proposed"]["mesh"], 1)
         self.assertEqual(state["summary"]["delta"]["mesh"], 0)
         self.assertEqual(state["summary"]["changed_paths"], ["scripts/3d.gdl"])
+        self.assertEqual(state["summary"]["current_status"], "ok")
+        self.assertEqual(state["summary"]["proposed_status"], "ok")
+        self.assertEqual(state["summary"]["proposed_facts"]["total_primitives"], 13)
+        self.assertFalse(state["summary"]["proposed_facts"]["is_empty"])
 
     def test_run_pending_preview_summary_reports_mesh_delta(self):
         proj = HSFProject.create_new("Demo")
@@ -104,6 +108,36 @@ class TestProposedPreviewController(unittest.TestCase):
         self.assertEqual(state["summary"]["proposed"]["mesh"], 2)
         self.assertEqual(state["summary"]["delta"]["mesh"], 1)
         self.assertEqual(state["summary"]["target"], "3D")
+        self.assertEqual(state["summary"]["proposed_status"], "ok")
+
+    def test_run_pending_preview_summary_marks_empty_and_warn_states(self):
+        proj = HSFProject.create_new("Demo")
+        state = {}
+
+        ok, _msg = run_pending_preview(
+            proj,
+            {"scripts/3d.gdl": "HOTSPOT 0,0,0"},
+            "3d",
+            script_map=self.script_map,
+            parse_paramlist_text_fn=lambda _text: [],
+            preview_param_values_fn=lambda _proj: {"A": 1, "B": 1, "ZZYZX": 1},
+            collect_preview_prechecks_fn=lambda _proj, _target: ["preview warning"],
+            dedupe_keep_order_fn=lambda items: items,
+            set_pending_preview_2d_data_fn=lambda data: state.__setitem__("p2d", data),
+            set_pending_preview_3d_data_fn=lambda data: state.__setitem__("p3d", data),
+            set_pending_preview_warnings_fn=lambda warns: state.__setitem__("warnings", warns),
+            set_pending_preview_meta_fn=lambda meta: state.__setitem__("meta", meta),
+            set_pending_current_preview_3d_data_fn=lambda data: state.__setitem__("current_3d", data),
+            set_pending_preview_diff_summary_fn=lambda summary: state.__setitem__("summary", summary),
+            script_type_2d=ScriptType.SCRIPT_2D,
+            script_type_3d=ScriptType.SCRIPT_3D,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(state["summary"]["current_status"], "warn")
+        self.assertEqual(state["summary"]["proposed_status"], "empty")
+        self.assertTrue(state["summary"]["proposed_facts"]["is_empty"])
+        self.assertEqual(state["summary"]["proposed_facts"]["warning_count"], 2)
 
     def test_run_pending_preview_failure_is_isolated_to_pending_state(self):
         proj = HSFProject.create_new("Demo")

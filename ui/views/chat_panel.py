@@ -631,6 +631,24 @@ def _render_pending_preview_summary(st, summary: dict) -> None:
     warning_text = f"warnings {warning_delta:+d}" if isinstance(warning_delta, int) else "warnings ?"
     paths_text = "、".join(changed_paths) if changed_paths else "（无）"
     st.caption(f"Diff：{delta_text}；{warning_text}；变更：{paths_text}")
+    st.caption(
+        "Verify："
+        f"current {_preview_status_text(summary.get('current_status'), summary.get('current_facts'))} / "
+        f"proposed {_preview_status_text(summary.get('proposed_status'), summary.get('proposed_facts'))}"
+    )
+
+
+def _preview_status_text(status: str | None, facts: dict | None) -> str:
+    facts = facts or {}
+    status_label = {
+        "ok": "OK",
+        "warn": "WARN",
+        "empty": "EMPTY",
+        "error": "ERROR",
+    }.get(status or "", status or "?")
+    total = facts.get("total_primitives", "?")
+    warnings = facts.get("warning_count", "?")
+    return f"{status_label} ({total} items, {warnings} warnings)"
 
 
 def _apply_compile_and_maybe_snapshot(

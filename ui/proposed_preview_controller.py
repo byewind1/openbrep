@@ -182,6 +182,8 @@ def _preview_diff_summary(
 ) -> dict:
     current_counts = _preview_counts(current_data)
     proposed_counts = _preview_counts(proposed_data)
+    current_facts = _preview_facts(current_counts, current_warnings)
+    proposed_facts = _preview_facts(proposed_counts, proposed_warnings)
     deltas = {
         key: proposed_counts.get(key, 0) - current_counts.get(key, 0)
         for key in sorted(set(current_counts) | set(proposed_counts))
@@ -191,6 +193,10 @@ def _preview_diff_summary(
         "current": current_counts,
         "proposed": proposed_counts,
         "delta": deltas,
+        "current_facts": current_facts,
+        "proposed_facts": proposed_facts,
+        "current_status": _preview_status(current_facts),
+        "proposed_status": _preview_status(proposed_facts),
         "current_warning_count": len(current_warnings),
         "proposed_warning_count": len(proposed_warnings),
         "warning_delta": len(proposed_warnings) - len(current_warnings),
@@ -210,3 +216,21 @@ def _preview_counts(data) -> dict[str, int]:
         "circle": len(getattr(data, "circles", []) or []),
         "arc": len(getattr(data, "arcs", []) or []),
     }
+
+
+def _preview_facts(counts: dict[str, int], warnings: list[str]) -> dict:
+    total_primitives = sum(value for value in counts.values() if isinstance(value, int))
+    return {
+        "counts": counts,
+        "total_primitives": total_primitives,
+        "is_empty": total_primitives == 0,
+        "warning_count": len(warnings),
+    }
+
+
+def _preview_status(facts: dict) -> str:
+    if facts.get("is_empty"):
+        return "empty"
+    if int(facts.get("warning_count") or 0) > 0:
+        return "warn"
+    return "ok"
