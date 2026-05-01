@@ -77,6 +77,6 @@ jobs:
               --repo "$GH_REPO" \
               --verify-tag \
               --title "OpenBrep $TAG_NAME" \
-              --notes-from-tag \
+              --generate-notes \
               --latest
           fi

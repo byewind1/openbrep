@@ -63,6 +63,13 @@ creates or updates the matching GitHub Release for `v*` tags.
 
 ### v0.6.5
 
+- Patch the GitHub Release publishing command after the v0.6.4 tag exposed a
+  GitHub CLI compatibility issue: `--notes-from-tag` cannot be used together
+  with `--repo`.
+- Keep release tags immutable; publish v0.6.5 instead of rewriting v0.6.4.
+
+### v0.6.6
+
 - Add PyPI publishing via Trusted Publishing.
 - Verify:
   - `pipx install "openbrep[ui]"`
@@ -85,4 +92,3 @@ creates or updates the matching GitHub Release for `v*` tags.
 - uv tools documentation: https://docs.astral.sh/uv/concepts/tools/
 - Python entry points: https://packaging.python.org/en/latest/specifications/entry-points/
 - npm package `bin` field: https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bin
-
