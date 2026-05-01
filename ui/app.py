@@ -1458,15 +1458,20 @@ with col_left:
             get_bridge_fn=get_bridge,
             script_map=_SCRIPT_MAP,
             check_gdl_script_fn=check_gdl_script,
-            run_preview_fn=_run_preview,
-            render_preview_2d_fn=_render_preview_2d,
-            render_preview_3d_fn=_render_preview_3d,
             reset_tapir_p0_state_fn=_reset_tapir_p0_state,
             bump_main_editor_version_fn=_bump_main_editor_version,
         )
 
 with col_mid:
     with st.container(height=820, border=False):
+        ui_workspace_tools_panel.render_preview_workbench(
+            st,
+            proj_now,
+            run_preview_fn=_run_preview,
+            render_preview_2d_fn=_render_preview_2d,
+            render_preview_3d_fn=_render_preview_3d,
+        )
+        st.divider()
         ui_editor_panel.render_script_editor_panel(
             st,
             proj_now,

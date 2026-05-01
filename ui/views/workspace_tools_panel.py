@@ -16,9 +16,6 @@ def render_workspace_tools_panel(
     get_bridge_fn: Callable[[], object],
     script_map: list[tuple[object, str, str]],
     check_gdl_script_fn: Callable[[str, str], list[str]],
-    run_preview_fn: Callable[[HSFProject, str], tuple[bool, str]],
-    render_preview_2d_fn: Callable[[object], None],
-    render_preview_3d_fn: Callable[[object], None],
     reset_tapir_p0_state_fn: Callable[[], None],
     bump_main_editor_version_fn: Callable[[], int],
 ) -> None:
@@ -28,9 +25,7 @@ def render_workspace_tools_panel(
         proj,
         script_map=script_map,
         check_gdl_script_fn=check_gdl_script_fn,
-        run_preview_fn=run_preview_fn,
     )
-    _render_preview_panel(st, render_preview_2d_fn=render_preview_2d_fn, render_preview_3d_fn=render_preview_3d_fn)
     _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
     _render_memory_privacy_panel(st)
     _render_log_dialog(st)
@@ -39,6 +34,58 @@ def render_workspace_tools_panel(
         reset_tapir_p0_state_fn=reset_tapir_p0_state_fn,
         bump_main_editor_version_fn=bump_main_editor_version_fn,
     )
+
+
+def render_preview_workbench(
+    st,
+    proj: HSFProject,
+    *,
+    run_preview_fn: Callable[[HSFProject, str], tuple[bool, str]],
+    render_preview_2d_fn: Callable[[object], None],
+    render_preview_3d_fn: Callable[[object], None],
+) -> None:
+    st.markdown("### 预览")
+    preview_2d, preview_3d = st.columns(2)
+    with preview_2d:
+        if st.button("👁️ 预览 2D", width="stretch", help="运行 2D 子集解释并显示图形"):
+            ok, msg = run_preview_fn(proj, "2d")
+            if ok:
+                st.toast(msg, icon="✅")
+            else:
+                st.error(msg)
+
+    with preview_3d:
+        if st.button("🧊 预览 3D", width="stretch", help="运行 3D 子集解释并显示图形"):
+            ok, msg = run_preview_fn(proj, "3d")
+            if ok:
+                st.toast(msg, icon="✅")
+            else:
+                st.error(msg)
+
+    with st.expander("预览设置"):
+        opt_1, opt_2, opt_3 = st.columns([1.0, 1.2, 1.0])
+        with opt_1:
+            st.checkbox(
+                "严格模式",
+                key="preview_strict",
+                help="开启后遇到策略=error 的未知命令会直接报错停止",
+            )
+        with opt_2:
+            st.selectbox(
+                "未知命令",
+                options=["warn", "ignore", "error"],
+                key="preview_unknown_command_policy",
+                help="未知命令处理策略：告警/忽略/报错",
+            )
+        with opt_3:
+            st.selectbox(
+                "质量",
+                options=["fast", "accurate"],
+                key="preview_quality",
+                help="fast 更快；accurate 细分更高",
+            )
+
+    _render_preview_panel(st, render_preview_2d_fn=render_preview_2d_fn, render_preview_3d_fn=render_preview_3d_fn)
 
 
 def _render_tapir_controls(st, *, tapir_import_ok: bool, get_bridge_fn: Callable[[], object]) -> None:
@@ -92,7 +139,6 @@ def _render_project_action_buttons(
     *,
     script_map: list[tuple[object, str, str]],
     check_gdl_script_fn: Callable[[str, str], list[str]],
-    run_preview_fn: Callable[[HSFProject, str], tuple[bool, str]],
 ) -> None:
     st.markdown("#### 本地验证")
     meta_1, meta_2, meta_3, meta_4 = st.columns([1.2, 1.0, 1.0, 1.0])
@@ -136,47 +182,6 @@ def _render_project_action_buttons(
                 st.caption(str(result.path))
             else:
                 st.info(result.message)
-
-    st.markdown("#### 预览")
-    preview_2d, preview_3d = st.columns(2)
-    with preview_2d:
-        if st.button("👁️ 预览 2D", width="stretch", help="运行 2D 子集解释并显示图形"):
-            ok, msg = run_preview_fn(proj, "2d")
-            if ok:
-                st.toast(msg, icon="✅")
-            else:
-                st.error(msg)
-
-    with preview_3d:
-        if st.button("🧊 预览 3D", width="stretch", help="运行 3D 子集解释并显示图形"):
-            ok, msg = run_preview_fn(proj, "3d")
-            if ok:
-                st.toast(msg, icon="✅")
-            else:
-                st.error(msg)
-
-    with st.expander("预览设置"):
-        opt_1, opt_2, opt_3 = st.columns([1.0, 1.2, 1.0])
-        with opt_1:
-            st.checkbox(
-                "严格模式",
-                key="preview_strict",
-                help="开启后遇到策略=error 的未知命令会直接报错停止",
-            )
-        with opt_2:
-            st.selectbox(
-                "未知命令",
-                options=["warn", "ignore", "error"],
-                key="preview_unknown_command_policy",
-                help="未知命令处理策略：告警/忽略/报错",
-            )
-        with opt_3:
-            st.selectbox(
-                "质量",
-                options=["fast", "accurate"],
-                key="preview_quality",
-                help="fast 更快；accurate 细分更高",
-            )
 
 
 def _render_log_dialog(st) -> None:
