@@ -60,6 +60,8 @@ def ensure_session_defaults(session_state, *, work_dir_default: str | None = Non
         "pending_preview_warnings": [],
         "pending_preview_meta": {"kind": "", "timestamp": "", "source": ""},
         "pending_preview_diff_summary": {},
+        "pending_compile_result": None,
+        "pending_compile_meta": {},
         "preview_strict": False,
         "preview_unknown_command_policy": "warn",
         "preview_quality": "fast",

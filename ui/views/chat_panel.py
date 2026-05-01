@@ -27,6 +27,7 @@ def render_chat_panel(
     validate_chat_image_size_fn: Callable[[bytes, str], str | None],
     check_gdl_script_fn: Callable[[str, str], list[str]] | None = None,
     run_pending_preview_fn: Callable[[object, str], tuple[bool, str]] | None = None,
+    run_pending_compile_fn: Callable[[object], tuple[bool, str]] | None = None,
     render_preview_2d_fn: Callable[[object], None] | None = None,
     render_preview_3d_fn: Callable[[object], None] | None = None,
     do_compile_fn: Callable[[object, str, str], tuple[bool, str]] | None = None,
@@ -60,6 +61,7 @@ def render_chat_panel(
         bump_main_editor_version_fn=bump_main_editor_version_fn,
         restore_last_project_snapshot_fn=restore_last_project_snapshot_fn,
         run_pending_preview_fn=run_pending_preview_fn,
+        run_pending_compile_fn=run_pending_compile_fn,
         render_preview_2d_fn=render_preview_2d_fn,
         render_preview_3d_fn=render_preview_3d_fn,
         do_compile_fn=do_compile_fn,
@@ -302,6 +304,7 @@ def _render_pending_diffs(
     bump_main_editor_version_fn: Callable[[], int],
     restore_last_project_snapshot_fn: Callable[[], tuple[bool, str]],
     run_pending_preview_fn: Callable[[object, str], tuple[bool, str]] | None,
+    run_pending_compile_fn: Callable[[object], tuple[bool, str]] | None,
     render_preview_2d_fn: Callable[[object], None] | None,
     render_preview_3d_fn: Callable[[object], None] | None,
     do_compile_fn: Callable[[object, str, str], tuple[bool, str]] | None,
@@ -330,7 +333,7 @@ def _render_pending_diffs(
         script_map=script_map,
         check_gdl_script_fn=check_gdl_script_fn,
     )
-    status_col_1, status_col_2, status_col_3, status_col_4 = st.columns(4)
+    status_col_1, status_col_2, status_col_3, status_col_4, status_col_5 = st.columns(5)
     with status_col_1:
         st.caption("Draft：待写入")
     with status_col_2:
@@ -348,6 +351,13 @@ def _render_pending_diffs(
         else:
             st.caption("Preview：未运行")
     with status_col_4:
+        pending_compile_result = st.session_state.get("pending_compile_result")
+        if pending_compile_result is None:
+            st.caption("Preflight：未运行")
+        else:
+            preflight_ok, _ = pending_compile_result
+            st.caption("Preflight：通过" if preflight_ok else "Preflight：失败")
+    with status_col_5:
         if st.session_state.compile_result is None:
             st.caption("Compile：未运行")
         else:
@@ -359,6 +369,7 @@ def _render_pending_diffs(
     _render_pending_preview_controls(
         st,
         run_pending_preview_fn=run_pending_preview_fn,
+        run_pending_compile_fn=run_pending_compile_fn,
         render_preview_2d_fn=render_preview_2d_fn,
         render_preview_3d_fn=render_preview_3d_fn,
     )
@@ -490,15 +501,21 @@ def _render_pending_preview_controls(
     st,
     *,
     run_pending_preview_fn: Callable[[object, str], tuple[bool, str]] | None,
+    run_pending_compile_fn: Callable[[object], tuple[bool, str]] | None,
     render_preview_2d_fn: Callable[[object], None] | None,
     render_preview_3d_fn: Callable[[object], None] | None,
 ) -> None:
-    if run_pending_preview_fn is None:
+    if run_pending_preview_fn is None and run_pending_compile_fn is None:
         return
 
-    preview_col_3d, preview_col_2d, clear_col = st.columns([1.2, 1.2, 1.0])
+    preview_col_3d, preview_col_2d, compile_col, clear_col = st.columns([1.2, 1.2, 1.2, 1.0])
     with preview_col_3d:
-        if st.button("预览提案 3D", width="stretch", key="chat_pending_preview_3d"):
+        if st.button(
+            "预览提案 3D",
+            width="stretch",
+            key="chat_pending_preview_3d",
+            disabled=run_pending_preview_fn is None,
+        ):
             ok, msg = run_pending_preview_fn(st.session_state.project, "3d")
             if ok:
                 st.toast(msg, icon="🧊")
@@ -506,10 +523,28 @@ def _render_pending_preview_controls(
                 st.error(msg)
             st.rerun()
     with preview_col_2d:
-        if st.button("预览提案 2D", width="stretch", key="chat_pending_preview_2d"):
+        if st.button(
+            "预览提案 2D",
+            width="stretch",
+            key="chat_pending_preview_2d",
+            disabled=run_pending_preview_fn is None,
+        ):
             ok, msg = run_pending_preview_fn(st.session_state.project, "2d")
             if ok:
                 st.toast(msg, icon="👁️")
+            else:
+                st.error(msg)
+            st.rerun()
+    with compile_col:
+        if st.button(
+            "验证提案编译",
+            width="stretch",
+            key="chat_pending_compile_preflight",
+            disabled=run_pending_compile_fn is None,
+        ):
+            ok, msg = run_pending_compile_fn(st.session_state.project)
+            if ok:
+                st.toast("✅ 提案编译预检通过", icon="🏗️")
             else:
                 st.error(msg)
             st.rerun()
@@ -521,6 +556,7 @@ def _render_pending_preview_controls(
             or st.session_state.get("pending_current_preview_3d_data")
             or st.session_state.get("pending_preview_warnings")
             or st.session_state.get("pending_preview_diff_summary")
+            or st.session_state.get("pending_compile_result")
         )
         if st.button(
             "清除预览",
@@ -531,6 +567,7 @@ def _render_pending_preview_controls(
             clear_pending_preview_state(st.session_state)
             st.rerun()
 
+    _render_pending_compile_result(st)
     _render_pending_preview_panel(
         st,
         render_preview_2d_fn=render_preview_2d_fn,
@@ -649,6 +686,21 @@ def _preview_status_text(status: str | None, facts: dict | None) -> str:
     total = facts.get("total_primitives", "?")
     warnings = facts.get("warning_count", "?")
     return f"{status_label} ({total} items, {warnings} warnings)"
+
+
+def _render_pending_compile_result(st) -> None:
+    result = st.session_state.get("pending_compile_result")
+    if result is None:
+        return
+    ok, msg = result
+    meta = st.session_state.get("pending_compile_meta") or {}
+    compiler_mode = meta.get("compiler_mode", "")
+    exit_code = meta.get("exit_code", "")
+    caption = f"Preflight：{compiler_mode} · exit={exit_code}"
+    if ok:
+        st.success(f"{caption}\n\n{msg}")
+    else:
+        st.error(f"{caption}\n\n{msg}")
 
 
 def _apply_compile_and_maybe_snapshot(

@@ -43,6 +43,7 @@ from ui import state as ui_state
 from ui import view_models as ui_view_models
 from ui import preview_controller as ui_preview_controller
 from ui import proposed_preview_controller as ui_proposed_preview_controller
+from ui import pending_compile_controller as ui_pending_compile_controller
 from ui import project_service as ui_project_service
 from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
@@ -1386,6 +1387,23 @@ def _run_pending_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
     )
 
 
+def _run_pending_compile_preflight(proj: HSFProject) -> tuple[bool, str]:
+    if proj is not None:
+        _sync_visible_editor_buffers(proj, int(st.session_state.get("editor_version", 0)))
+    return ui_pending_compile_controller.run_pending_compile_preflight(
+        proj,
+        st.session_state.get("pending_diffs") or {},
+        gsm_name=st.session_state.get("pending_gsm_name") or getattr(proj, "name", None),
+        script_map=_SCRIPT_MAP,
+        parse_paramlist_text_fn=_parse_paramlist_text,
+        get_compiler_fn=get_compiler,
+        compiler_mode=compiler_mode,
+        set_pending_compile_result_fn=lambda result: st.session_state.__setitem__("pending_compile_result", result),
+        set_pending_compile_meta_fn=lambda meta: st.session_state.__setitem__("pending_compile_meta", meta),
+        deepcopy_fn=deepcopy,
+    )
+
+
 # ══════════════════════════════════════════════════════════
 #  Main Layout: Project tools | Editor | AI assistant
 # ══════════════════════════════════════════════════════════
@@ -1489,6 +1507,7 @@ with col_right:
             validate_chat_image_size_fn=_validate_chat_image_size,
             check_gdl_script_fn=check_gdl_script,
             run_pending_preview_fn=_run_pending_preview,
+            run_pending_compile_fn=_run_pending_compile_preflight,
             render_preview_2d_fn=_render_preview_2d,
             render_preview_3d_fn=_render_preview_3d,
             do_compile_fn=lambda project, gsm_name, instruction: do_compile(

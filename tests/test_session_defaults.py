@@ -33,6 +33,8 @@ class TestSessionDefaults(unittest.TestCase):
         self.assertEqual(state.pending_preview_warnings, [])
         self.assertEqual(state.pending_preview_meta, {"kind": "", "timestamp": "", "source": ""})
         self.assertEqual(state.pending_preview_diff_summary, {})
+        self.assertIsNone(state.pending_compile_result)
+        self.assertEqual(state.pending_compile_meta, {})
         self.assertEqual(state.elicitation_state, "idle")
 
     def test_ensure_session_defaults_keeps_existing_values(self):

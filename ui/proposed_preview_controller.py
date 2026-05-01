@@ -15,6 +15,8 @@ def clear_pending_preview_state(session_state) -> None:
     session_state.pending_preview_warnings = []
     session_state.pending_preview_meta = {"kind": "", "timestamp": "", "source": ""}
     session_state.pending_preview_diff_summary = {}
+    session_state.pending_compile_result = None
+    session_state.pending_compile_meta = {}
 
 
 def build_project_with_pending_diffs(

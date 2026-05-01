@@ -33,6 +33,8 @@ class _DummyStreamlit:
             pending_preview_warnings=["old preview warning"],
             pending_preview_meta={"kind": "3D", "timestamp": "old", "source": "pending"},
             pending_preview_diff_summary={"delta": {"mesh": 1}},
+            pending_compile_result=(True, "old preflight"),
+            pending_compile_meta={"compiler_mode": "Mock"},
         )
         self.errors = []
         self.toasts = []
@@ -100,6 +102,8 @@ class TestChatPanelReviewWorkflow(unittest.TestCase):
         self.assertEqual(st.session_state.pending_preview_warnings, [])
         self.assertEqual(st.session_state.pending_preview_meta, {"kind": "", "timestamp": "", "source": ""})
         self.assertEqual(st.session_state.pending_preview_diff_summary, {})
+        self.assertIsNone(st.session_state.pending_compile_result)
+        self.assertEqual(st.session_state.pending_compile_meta, {})
         self.assertEqual(
             [call[0] for call in calls],
             ["capture", "apply", "bump", "compile", "save"],
