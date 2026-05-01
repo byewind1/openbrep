@@ -1,6 +1,6 @@
 import unittest
 
-from openbrep.gdl_previewer import Preview3DResult, PreviewMesh3D
+from openbrep.gdl_previewer import Preview3DResult, PreviewMesh3D, PreviewSourceRef
 from ui.three_preview import preview_3d_to_three_payload, render_three_preview_html
 
 
@@ -16,6 +16,12 @@ class TestThreePreview(unittest.TestCase):
                     i=[0, 0],
                     j=[1, 2],
                     k=[2, 9],
+                    source_ref=PreviewSourceRef(
+                        script_type="3d",
+                        line=7,
+                        command="BLOCK",
+                        label="3D line 7 BLOCK",
+                    ),
                 )
             ],
             wires=[[(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)]],
@@ -26,6 +32,10 @@ class TestThreePreview(unittest.TestCase):
         self.assertEqual(payload["meshes"][0]["name"], "block")
         self.assertEqual(len(payload["meshes"][0]["vertices"]), 3)
         self.assertEqual(payload["meshes"][0]["faces"], [[0, 1, 2]])
+        self.assertEqual(
+            payload["meshes"][0]["source_ref"],
+            {"script_type": "3d", "line": 7, "command": "BLOCK", "label": "3D line 7 BLOCK"},
+        )
         self.assertEqual(payload["wires"], [[[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]])
 
     def test_html_contains_three_imports_and_payload(self):

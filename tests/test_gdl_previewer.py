@@ -70,6 +70,34 @@ BLOCK 1, 1, 1
         self.assertEqual(len(fast.meshes[0].x), len(bad.meshes[0].x))
         self.assertEqual(len(fast.meshes[0].i), len(bad.meshes[0].i))
 
+    def test_mesh_source_ref_tracks_command_and_line(self):
+        script = """\
+! comment
+ADDZ 1
+BLOCK 1, 2, 3
+"""
+        res = preview_3d_script(script)
+
+        self.assertEqual(len(res.meshes), 1)
+        ref = res.meshes[0].source_ref
+        self.assertIsNotNone(ref)
+        self.assertEqual(ref.script_type, "3d")
+        self.assertEqual(ref.line, 3)
+        self.assertEqual(ref.command, "BLOCK")
+        self.assertEqual(ref.label, "3D line 3 BLOCK")
+
+    def test_basic_3d_mesh_commands_include_source_ref(self):
+        script = """\
+CYLIND 1, 0.5
+SPHERE 0.25
+PRISM 3, 1, 0,0, 1,0, 0,1
+PRISM_ 3, 1, 0,0, 1,0, 0,1
+"""
+        res = preview_3d_script(script)
+
+        self.assertEqual([m.source_ref.command for m in res.meshes], ["CYLIND", "SPHERE", "PRISM", "PRISM_"])
+        self.assertEqual([m.source_ref.line for m in res.meshes], [1, 2, 3, 4])
+
 
 
 if __name__ == "__main__":

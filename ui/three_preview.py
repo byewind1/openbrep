@@ -19,7 +19,15 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
             for idx in range(index_count)
             if _valid_face(mesh.i[idx], mesh.j[idx], mesh.k[idx], vertex_count)
         ]
-        meshes.append({"name": mesh.name, "vertices": vertices, "faces": faces})
+        item = {"name": mesh.name, "vertices": vertices, "faces": faces}
+        if mesh.source_ref is not None:
+            item["source_ref"] = {
+                "script_type": mesh.source_ref.script_type,
+                "line": mesh.source_ref.line,
+                "command": mesh.source_ref.command,
+                "label": mesh.source_ref.label,
+            }
+        meshes.append(item)
 
     wires = []
     for wire in data.wires:
@@ -189,6 +197,7 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
         }});
         const solid = new THREE.Mesh(geometry, material);
         solid.name = mesh.name || `mesh-${{index + 1}}`;
+        solid.userData.sourceRef = mesh.source_ref || null;
         root.add(solid);
         solidObjects.push(solid);
 
@@ -196,6 +205,7 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
           new THREE.EdgesGeometry(geometry, 1),
           new THREE.LineBasicMaterial({{ color: 0x0f172a, transparent: true, opacity: 0.7 }})
         );
+        edges.userData.sourceRef = mesh.source_ref || null;
         root.add(edges);
         edgeObjects.push(edges);
       }});

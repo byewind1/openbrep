@@ -26,6 +26,14 @@ Point3D = tuple[float, float, float]
 
 
 @dataclass
+class PreviewSourceRef:
+    script_type: str
+    line: int
+    command: str
+    label: str
+
+
+@dataclass
 class PreviewMesh3D:
     name: str
     x: list[float]
@@ -34,6 +42,7 @@ class PreviewMesh3D:
     i: list[int]
     j: list[int]
     k: list[int]
+    source_ref: PreviewSourceRef | None = None
 
 
 @dataclass
@@ -594,6 +603,7 @@ class _PreviewRuntime:
                 vals[2],
                 self._offset(),
                 transform=self._A,
+                source_ref=_source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -617,6 +627,7 @@ class _PreviewRuntime:
                 name="CYLIND",
                 seg=_quality_frustum_seg(self.quality),
                 transform=self._A,
+                source_ref=_source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -641,6 +652,7 @@ class _PreviewRuntime:
                 name="CONE",
                 seg=_quality_frustum_seg(self.quality),
                 transform=self._A,
+                source_ref=_source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -661,6 +673,7 @@ class _PreviewRuntime:
                 lat_steps=_quality_sphere_steps(self.quality)[0],
                 lon_steps=_quality_sphere_steps(self.quality)[1],
                 transform=self._A,
+                source_ref=_source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -719,24 +732,31 @@ class _PreviewRuntime:
             self._pgons.clear()
             return True
 
-        if cmd == "PRISM_":
+        if cmd in {"PRISM", "PRISM_"}:
             vals = self._eval_args(args_raw, line_no)
             if vals is None or len(vals) < 4:
-                self._warn(line_no, "PRISM_ 参数不足或解析失败")
+                self._warn(line_no, f"{cmd} 参数不足或解析失败")
                 return True
 
             n = int(round(vals[0]))
             h = float(vals[1])
             if n <= 2:
-                self._warn(line_no, "PRISM_ 顶点数必须 >= 3")
+                self._warn(line_no, f"{cmd} 顶点数必须 >= 3")
                 return True
 
             pts = _extract_points_2d(vals[2:], n)
             if not pts:
-                self._warn(line_no, "PRISM_ 顶点数据不足，已跳过")
+                self._warn(line_no, f"{cmd} 顶点数据不足，已跳过")
                 return True
 
-            mesh, wires = _make_prism_mesh(pts, h, self._offset(), transform=self._A)
+            mesh, wires = _make_prism_mesh(
+                pts,
+                h,
+                self._offset(),
+                transform=self._A,
+                name=cmd,
+                source_ref=_source_ref_3d(line_no, cmd),
+            )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
             return True
@@ -1059,7 +1079,22 @@ def _apply_affine(
     return (x + t[0], y + t[1], z + t[2])
 
 
-def _build_mesh(name: str, vertices: list[Point3D], faces: list[tuple[int, int, int]]) -> PreviewMesh3D:
+def _source_ref_3d(line_no: int, command: str) -> PreviewSourceRef:
+    cmd = (command or "").upper()
+    return PreviewSourceRef(
+        script_type="3d",
+        line=int(line_no),
+        command=cmd,
+        label=f"3D line {int(line_no)} {cmd}",
+    )
+
+
+def _build_mesh(
+    name: str,
+    vertices: list[Point3D],
+    faces: list[tuple[int, int, int]],
+    source_ref: PreviewSourceRef | None = None,
+) -> PreviewMesh3D:
     return PreviewMesh3D(
         name=name,
         x=[v[0] for v in vertices],
@@ -1068,6 +1103,7 @@ def _build_mesh(name: str, vertices: list[Point3D], faces: list[tuple[int, int, 
         i=[f[0] for f in faces],
         j=[f[1] for f in faces],
         k=[f[2] for f in faces],
+        source_ref=source_ref,
     )
 
 
@@ -1077,6 +1113,7 @@ def _make_box_mesh(
     dz: float,
     offset: Point3D,
     transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+    source_ref: PreviewSourceRef | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
     A = transform or _identity3()
 
@@ -1108,7 +1145,7 @@ def _make_box_mesh(
     ]
     wires = [[verts[a], verts[b]] for a, b in edges]
 
-    return _build_mesh("BLOCK", verts, faces), wires
+    return _build_mesh("BLOCK", verts, faces, source_ref=source_ref), wires
 
 
 def _make_frustum_mesh(
@@ -1119,6 +1156,7 @@ def _make_frustum_mesh(
     name: str,
     seg: int = 24,
     transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+    source_ref: PreviewSourceRef | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
     A = transform or _identity3()
 
@@ -1165,7 +1203,7 @@ def _make_frustum_mesh(
     for t in range(0, seg, max(1, seg // 8)):
         wires.append([verts[t], verts[seg + t]])
 
-    return _build_mesh(name, verts, faces), wires
+    return _build_mesh(name, verts, faces, source_ref=source_ref), wires
 
 
 def _make_sphere_mesh(
@@ -1174,6 +1212,7 @@ def _make_sphere_mesh(
     lat_steps: int = 10,
     lon_steps: int = 20,
     transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+    source_ref: PreviewSourceRef | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
     A = transform or _identity3()
     verts: list[Point3D] = []
@@ -1210,7 +1249,7 @@ def _make_sphere_mesh(
     ]
     wires.append(equator + [equator[0]])
 
-    return _build_mesh("SPHERE", verts, faces), wires
+    return _build_mesh("SPHERE", verts, faces, source_ref=source_ref), wires
 
 
 def _make_prism_mesh(
@@ -1218,6 +1257,8 @@ def _make_prism_mesh(
     h: float,
     offset: Point3D,
     transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+    name: str = "PRISM_",
+    source_ref: PreviewSourceRef | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
     A = transform or _identity3()
     n = len(points)
@@ -1250,7 +1291,7 @@ def _make_prism_mesh(
     for i in range(n):
         wires.append([base[i], top[i]])
 
-    return _build_mesh("PRISM_", verts, faces), wires
+    return _build_mesh(name, verts, faces, source_ref=source_ref), wires
 
 
 _ALLOWED_FUNCS = {
