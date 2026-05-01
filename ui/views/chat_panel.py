@@ -517,7 +517,10 @@ def _render_pending_preview_controls(
         has_pending_preview = bool(
             st.session_state.get("pending_preview_2d_data")
             or st.session_state.get("pending_preview_3d_data")
+            or st.session_state.get("pending_current_preview_2d_data")
+            or st.session_state.get("pending_current_preview_3d_data")
             or st.session_state.get("pending_preview_warnings")
+            or st.session_state.get("pending_preview_diff_summary")
         )
         if st.button(
             "清除预览",
@@ -545,27 +548,89 @@ def _render_pending_preview_panel(
     kind = meta.get("kind", "")
     timestamp = meta.get("timestamp", "")
     warnings = st.session_state.get("pending_preview_warnings") or []
+    summary = st.session_state.get("pending_preview_diff_summary") or {}
     has_preview = bool(
         st.session_state.get("pending_preview_2d_data")
         or st.session_state.get("pending_preview_3d_data")
+        or st.session_state.get("pending_current_preview_2d_data")
+        or st.session_state.get("pending_current_preview_3d_data")
         or warnings
+        or summary
     )
     if not has_preview:
         return
 
     title = f"AI 提案预览：{kind} · {timestamp}" if kind else "AI 提案预览"
     with st.expander(title, expanded=True):
-        if str(kind).upper() == "3D" and render_preview_3d_fn is not None:
-            render_preview_3d_fn(st.session_state.get("pending_preview_3d_data"))
-        elif str(kind).upper() == "2D" and render_preview_2d_fn is not None:
-            render_preview_2d_fn(st.session_state.get("pending_preview_2d_data"))
-        elif render_preview_3d_fn is not None and st.session_state.get("pending_preview_3d_data"):
-            render_preview_3d_fn(st.session_state.get("pending_preview_3d_data"))
-        elif render_preview_2d_fn is not None and st.session_state.get("pending_preview_2d_data"):
-            render_preview_2d_fn(st.session_state.get("pending_preview_2d_data"))
+        _render_pending_preview_summary(st, summary)
+        current_col, proposed_col = st.columns(2)
+        with current_col:
+            st.caption("Current")
+            _render_pending_preview_data(
+                st,
+                kind=kind,
+                data_2d=st.session_state.get("pending_current_preview_2d_data"),
+                data_3d=st.session_state.get("pending_current_preview_3d_data"),
+                render_preview_2d_fn=render_preview_2d_fn,
+                render_preview_3d_fn=render_preview_3d_fn,
+            )
+        with proposed_col:
+            st.caption("Proposed")
+            _render_pending_preview_data(
+                st,
+                kind=kind,
+                data_2d=st.session_state.get("pending_preview_2d_data"),
+                data_3d=st.session_state.get("pending_preview_3d_data"),
+                render_preview_2d_fn=render_preview_2d_fn,
+                render_preview_3d_fn=render_preview_3d_fn,
+            )
 
         if warnings:
             st.warning("；".join(warnings[:6]))
+
+
+def _render_pending_preview_data(
+    st,
+    *,
+    kind: str,
+    data_2d,
+    data_3d,
+    render_preview_2d_fn: Callable[[object], None] | None,
+    render_preview_3d_fn: Callable[[object], None] | None,
+) -> None:
+    if str(kind).upper() == "3D" and render_preview_3d_fn is not None:
+        render_preview_3d_fn(data_3d)
+        return
+    if str(kind).upper() == "2D" and render_preview_2d_fn is not None:
+        render_preview_2d_fn(data_2d)
+        return
+    if data_3d is not None and render_preview_3d_fn is not None:
+        render_preview_3d_fn(data_3d)
+        return
+    if data_2d is not None and render_preview_2d_fn is not None:
+        render_preview_2d_fn(data_2d)
+        return
+    st.info("暂无预览数据。")
+
+
+def _render_pending_preview_summary(st, summary: dict) -> None:
+    if not summary:
+        return
+    if summary.get("error"):
+        st.caption(f"Diff：预览失败 · {summary.get('error')}")
+        return
+
+    changed_paths = summary.get("changed_paths") or []
+    delta = summary.get("delta") or {}
+    delta_text = "，".join(
+        f"{key} {value:+d}"
+        for key, value in delta.items()
+        if isinstance(value, int) and value != 0
+    ) or "几何数量无变化"
+    warning_delta = summary.get("warning_delta", 0)
+    warning_text = f"warnings {warning_delta:+d}" if isinstance(warning_delta, int) else "warnings ?"
+    paths_text = "、".join(changed_paths) if changed_paths else "（无）"
+    st.caption(f"Diff：{delta_text}；{warning_text}；变更：{paths_text}")
 
 
 def _apply_compile_and_maybe_snapshot(

@@ -28,8 +28,11 @@ class _DummyStreamlit:
             revision_notice="",
             pending_preview_2d_data=object(),
             pending_preview_3d_data=object(),
+            pending_current_preview_2d_data=object(),
+            pending_current_preview_3d_data=object(),
             pending_preview_warnings=["old preview warning"],
             pending_preview_meta={"kind": "3D", "timestamp": "old", "source": "pending"},
+            pending_preview_diff_summary={"delta": {"mesh": 1}},
         )
         self.errors = []
         self.toasts = []
@@ -92,8 +95,11 @@ class TestChatPanelReviewWorkflow(unittest.TestCase):
         self.assertEqual(st.session_state.revision_notice, "✅ saved")
         self.assertIsNone(st.session_state.pending_preview_2d_data)
         self.assertIsNone(st.session_state.pending_preview_3d_data)
+        self.assertIsNone(st.session_state.pending_current_preview_2d_data)
+        self.assertIsNone(st.session_state.pending_current_preview_3d_data)
         self.assertEqual(st.session_state.pending_preview_warnings, [])
         self.assertEqual(st.session_state.pending_preview_meta, {"kind": "", "timestamp": "", "source": ""})
+        self.assertEqual(st.session_state.pending_preview_diff_summary, {})
         self.assertEqual(
             [call[0] for call in calls],
             ["capture", "apply", "bump", "compile", "save"],
