@@ -6,7 +6,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.6.3 — 在 v0.6.2 基础上新增个人工作空间记忆、GDL 错题本自我提升、HSF 工作区持久化与项目版本治理，并完成一轮 UI / 架构文档治理。
+> 正式发布版本 v0.6.4 — 安装体验小版本：将 GitHub Release 安装包作为普通用户首选入口，修正自动发布安装包链路，并保留 pipx / uv / git clone 三层安装路径。
 
 ---
 
@@ -30,13 +30,38 @@
 
 ## 安装
 
-详见 **[安装指南（INSTALL_CN.md）](INSTALL_CN.md)** — 包含 Python 设置、VPN/代理配置（国内用户）、依赖安装、LLM 设置、常见问题排查。
+详见 **[安装指南（INSTALL_CN.md）](INSTALL_CN.md)** — 推荐普通用户优先下载 GitHub Release 桌面包；命令行用户可选 pipx / uv；开发者再使用源码安装。
 
-### 首次安装
+### 推荐：下载桌面包（普通用户）
+
+访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的压缩包：
+
+- macOS：`OpenBrep-free-macOS.zip`
+- Windows：`OpenBrep-free-Windows.zip`
+
+解压后运行 `OpenBrep`。这种方式不要求用户先学会 `git clone`、`git pull` 或手动安装 Python 依赖。
+
+### 命令行安装（高级用户）
+
+正式发布到 PyPI 后，推荐用隔离工具安装：
 
 ```bash
-git clone https://github.com/byewind1/gdl-agent.git
-cd gdl-agent
+pipx install "openbrep[ui]"
+obr
+```
+
+或使用 uv：
+
+```bash
+uv tool install "openbrep[ui]"
+obr
+```
+
+### 源码安装（开发者）
+
+```bash
+git clone https://github.com/byewind1/openbrep.git
+cd openbrep
 bash install.sh
 obr
 ```
@@ -45,10 +70,10 @@ obr
 > 
 > `obr` 默认仅在本机 `http://localhost:8501` 启动 UI，不会自动打开浏览器；请用你的常用浏览器手动访问或直接使用已收藏地址。
 
-### 升级
+### 源码升级
 
 ```bash
-cd gdl-agent
+cd openbrep
 git pull origin main
 bash install.sh   # 有新依赖时重跑，无害
 obr
@@ -283,6 +308,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.4 | 安装体验小版本：普通用户首选 GitHub Release 桌面包；修正 macOS/Windows installer workflow 产物路径并在 tag 构建后自动创建/更新 GitHub Release；补充 pipx / uv / git clone 分层安装说明（见 docs/releases/v0.6.4.md） |
 | v0.6.3 | 新增个人工作空间记忆：持久化聊天记录、GDL 错题本、用户触发整理后的自我提升 skill；LLM 注入分层为用户工作空间记忆与源码开发者基线；优化 HSF 项目目录持久化、编译版本识别、自定义 provider 配置同步、参数单位文案与 UI 架构治理（见 docs/releases/v0.6.3.md） |
 | v0.6.2 | 新增 wiki 知识检索与问答链路；新增用户自定义 flat 知识库接入；新增 skill creator 对话式创建与列表路由；补齐 pipeline/knowledge/skill 相关测试并修复 chat 关键路由细节（见 docs/releases/v0.6.2.md） |
 | v0.6.1 | CLI 可用性与安装体验提升；新增/完善 GDL 静态检查与自动 repair；补强 chat / explainer / 图片链路与参考图生成；修复 obr 在非项目目录无法启动 UI（见 docs/releases/v0.6.1.md） |

@@ -52,7 +52,12 @@ git push origin vX.Y.Z
 ```
 
 The two `rev-parse` commands must print the same commit hash. The tag push will
-trigger the installer build workflow.
+trigger the installer build workflow. For `v*` tags, that workflow should:
+
+1. Build macOS and Windows installer zip files.
+2. Upload them as workflow artifacts.
+3. Create or update the matching GitHub Release.
+4. Attach `OpenBrep-*-macOS.zip` and `OpenBrep-*-Windows.zip` as release assets.
 
 ## Postflight
 
@@ -61,6 +66,7 @@ git status --short --branch
 git rev-parse main
 git rev-parse origin/main
 git rev-parse 'vX.Y.Z^{}'
+gh release view vX.Y.Z
 ```
 
 Record the commit hash in the release notes.

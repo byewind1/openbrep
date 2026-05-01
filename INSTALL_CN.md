@@ -1,12 +1,69 @@
-# openbrep v0.6.3 安装指南（中文）
+# openbrep v0.6.4 安装指南（中文）
 
 > 针对设计师用户的分步骤安装教程
-> 当前正式版本：v0.6.3
+> 当前正式版本：v0.6.4
 > 难度：⭐️ 小白可用
 
 ---
 
+## 先选安装方式
+
+OpenBrep 现在按用户类型分三条安装路径。普通用户不要从 `git clone` 开始。
+
+| 用户类型 | 推荐方式 | 适合原因 |
+|---|---|---|
+| 建筑师 / 设计师 | 下载 GitHub Release 桌面包 | 不需要先学 Git、Python、pip |
+| 命令行用户 | `pipx` / `uv tool` | 隔离依赖，升级清晰 |
+| 开发者 / 贡献者 | `git clone` + `bash install.sh` | 方便改源码、跑测试、提交 PR |
+
+### 推荐方式：GitHub Release 桌面包
+
+访问：
+
+```text
+https://github.com/byewind1/openbrep/releases/latest
+```
+
+下载对应系统的压缩包：
+
+- macOS：`OpenBrep-free-macOS.zip`
+- Windows：`OpenBrep-free-Windows.zip`
+
+解压后运行 `OpenBrep`。这种方式最接近普通软件安装，不需要用户执行 `git pull` 或手动安装 Python 依赖。
+
+### 命令行方式：pipx / uv
+
+正式发布到 PyPI 后，推荐：
+
+```bash
+pipx install "openbrep[ui]"
+obr
+```
+
+或：
+
+```bash
+uv tool install "openbrep[ui]"
+obr
+```
+
+升级：
+
+```bash
+pipx upgrade openbrep
+# 或
+uv tool upgrade openbrep
+```
+
+### 开发者方式：源码安装
+
+如果你需要修改 OpenBrep 本身、跑测试、提交 PR，再使用后文的源码安装方式。
+
+---
+
 ## 前置准备：你需要什么
+
+如果你使用 GitHub Release 桌面包，可以先跳过 Python / Git 相关准备；如果桌面包启动失败，再回来看本节排查。
 
 ### 1. Python 3.10+ 环境
 
@@ -85,7 +142,7 @@ cd openbrep
 
 ---
 
-## 分步安装
+## 源码分步安装（开发者 / 备用方案）
 
 ### Step 1：获取代码（3 种方法选 1）
 
@@ -123,7 +180,7 @@ cd ~/Documents/openbrep
 在 openbrep 文件夹内，运行：
 
 ```bash
-pip install -e ".[ui]"
+bash install.sh
 ```
 
 **会发生什么：**
