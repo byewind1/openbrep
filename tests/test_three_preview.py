@@ -49,6 +49,12 @@ class TestThreePreview(unittest.TestCase):
                     i=[0],
                     j=[1],
                     k=[2],
+                    source_ref=PreviewSourceRef(
+                        script_type="3d",
+                        line=11,
+                        command="BLOCK",
+                        label="3D line 11 BLOCK",
+                    ),
                 )
             ],
         )
@@ -61,6 +67,12 @@ class TestThreePreview(unittest.TestCase):
         self.assertIn("new THREE.WebGLRenderer", html)
         self.assertIn("requestFullscreen", html)
         self.assertIn("embedded-fullscreen", html)
+        self.assertIn('id="inspector"', html)
+        self.assertIn("new THREE.Raycaster", html)
+        self.assertIn("pickSolid", html)
+        self.assertIn("sourceRefText", html)
+        self.assertIn("solid.userData.sourceRef", html)
+        self.assertIn('"source_ref":{"script_type":"3d","line":11,"command":"BLOCK","label":"3D line 11 BLOCK"}', html)
 
 
 if __name__ == "__main__":

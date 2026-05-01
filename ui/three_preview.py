@@ -119,6 +119,25 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
       font-size: 12px;
       pointer-events: none;
     }}
+    #inspector {{
+      position: absolute;
+      left: 12px;
+      top: 10px;
+      z-index: 2;
+      max-width: min(420px, calc(100% - 96px));
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #0f172a;
+      font-size: 12px;
+      line-height: 1.35;
+      pointer-events: none;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    }}
+    #inspector[data-empty="true"] {{
+      color: #64748b;
+    }}
     canvas {{
       display: block;
     }}
@@ -131,12 +150,14 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
       <button id="reset" title="Reset camera">R</button>
       <button id="fullscreen" title="Fullscreen preview">⛶</button>
     </div>
+    <div id="inspector" data-empty="true">Click geometry to inspect source</div>
     <div id="status"></div>
   </div>
   <script type="module">
     const payload = {payload_json};
     const viewer = document.getElementById("viewer");
     const status = document.getElementById("status");
+    const inspector = document.getElementById("inspector");
     const modeButton = document.getElementById("mode");
     const resetButton = document.getElementById("reset");
     const fullscreenButton = document.getElementById("fullscreen");
@@ -177,6 +198,10 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
       const palette = [0x0ea5e9, 0x22c55e, 0xf97316, 0x8b5cf6, 0xef4444, 0x14b8a6];
       const edgeObjects = [];
       const solidObjects = [];
+      const raycaster = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
+      let selectedSolid = null;
+      let pointerDown = null;
 
       payload.meshes.forEach((mesh, index) => {{
         if (!mesh.vertices.length || !mesh.faces.length) return;
@@ -198,6 +223,7 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
         const solid = new THREE.Mesh(geometry, material);
         solid.name = mesh.name || `mesh-${{index + 1}}`;
         solid.userData.sourceRef = mesh.source_ref || null;
+        solid.userData.baseColor = material.color.getHex();
         root.add(solid);
         solidObjects.push(solid);
 
@@ -206,6 +232,8 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
           new THREE.LineBasicMaterial({{ color: 0x0f172a, transparent: true, opacity: 0.7 }})
         );
         edges.userData.sourceRef = mesh.source_ref || null;
+        edges.userData.baseColor = 0x0f172a;
+        solid.userData.edgeObject = edges;
         root.add(edges);
         edgeObjects.push(edges);
       }});
@@ -259,6 +287,62 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
         setTimeout(resize, 120);
       }}
 
+      function setInspectorEmpty(message) {{
+        inspector.dataset.empty = "true";
+        inspector.textContent = message;
+      }}
+
+      function sourceRefText(sourceRef, fallbackName) {{
+        if (!sourceRef) return `${{fallbackName || "Geometry"}} · no source metadata`;
+        const script = sourceRef.script_type ? sourceRef.script_type.toUpperCase() : "?";
+        const line = sourceRef.line ? `line ${{sourceRef.line}}` : "line ?";
+        const command = sourceRef.command || "?";
+        const label = sourceRef.label || `${{script}} ${{line}} ${{command}}`;
+        return `${{label}} · ${{script}} ${{line}} · ${{command}}`;
+      }}
+
+      function clearSelection() {{
+        if (!selectedSolid) return;
+        selectedSolid.material.color.setHex(selectedSolid.userData.baseColor);
+        selectedSolid.material.emissive.setHex(0x000000);
+        selectedSolid.material.opacity = 0.78;
+        const selectedEdge = selectedSolid.userData.edgeObject;
+        if (selectedEdge && selectedEdge.material) {{
+          selectedEdge.material.color.setHex(selectedEdge.userData.baseColor || 0x0f172a);
+          selectedEdge.material.opacity = 0.7;
+        }}
+        selectedSolid = null;
+      }}
+
+      function selectSolid(solid) {{
+        clearSelection();
+        selectedSolid = solid;
+        selectedSolid.material.color.setHex(0xf59e0b);
+        selectedSolid.material.emissive.setHex(0x7c2d12);
+        selectedSolid.material.opacity = 0.92;
+        const selectedEdge = selectedSolid.userData.edgeObject;
+        if (selectedEdge && selectedEdge.material) {{
+          selectedEdge.material.color.setHex(0x7c2d12);
+          selectedEdge.material.opacity = 0.95;
+        }}
+        inspector.dataset.empty = "false";
+        inspector.textContent = sourceRefText(selectedSolid.userData.sourceRef, selectedSolid.name);
+      }}
+
+      function pickSolid(event) {{
+        const bounds = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+        pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObjects(solidObjects.filter((object) => object.visible), false);
+        if (!hits.length) {{
+          clearSelection();
+          setInspectorEmpty("Click geometry to inspect source");
+          return;
+        }}
+        selectSolid(hits[0].object);
+      }}
+
       async function toggleFullscreen() {{
         if (document.fullscreenElement) {{
           await document.exitFullscreen();
@@ -291,6 +375,17 @@ def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> st
       }});
       resetButton.addEventListener("click", resetCamera);
       fullscreenButton.addEventListener("click", toggleFullscreen);
+      renderer.domElement.addEventListener("pointerdown", (event) => {{
+        pointerDown = {{ x: event.clientX, y: event.clientY }};
+      }});
+      renderer.domElement.addEventListener("pointerup", (event) => {{
+        if (!pointerDown) return;
+        const dx = Math.abs(event.clientX - pointerDown.x);
+        const dy = Math.abs(event.clientY - pointerDown.y);
+        pointerDown = null;
+        if (dx > 4 || dy > 4) return;
+        pickSolid(event);
+      }});
       document.addEventListener("fullscreenchange", () => {{
         const active = document.fullscreenElement === viewer;
         fullscreenButton.classList.toggle("active", active);
