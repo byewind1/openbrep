@@ -6,6 +6,7 @@ from typing import Any
 from openbrep.hsf_project import HSFProject
 from openbrep.revisions import copy_project_metadata
 from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+from ui.proposed_preview_controller import clear_pending_preview_state
 
 
 def has_any_script_content(proj: HSFProject, script_map: list[tuple[str, str, str]]) -> bool:
@@ -33,12 +34,14 @@ def apply_generation_plan(
             apply_scripts_to_project(proj, script_map)
         bump_main_editor_version()
         proj.save_to_disk()
+        clear_pending_preview_state(session_state)
         if gsm_name:
             session_state.pending_gsm_name = gsm_name
     elif plan.mode == "pending_review":
         session_state.pending_diffs = script_map
         session_state.pending_ai_label = plan.label
         session_state.compile_result = None
+        clear_pending_preview_state(session_state)
         if gsm_name:
             session_state.pending_gsm_name = gsm_name
 
@@ -106,6 +109,7 @@ def finalize_loaded_project(
     session_state.preview_3d_data = None
     session_state.preview_warnings = []
     session_state.preview_meta = {"kind": "", "timestamp": ""}
+    clear_pending_preview_state(session_state)
     session_state.pending_gsm_name = pending_gsm_name
     session_state.script_revision = 0
     reset_tapir_p0_state()

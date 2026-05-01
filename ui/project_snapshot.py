@@ -4,6 +4,8 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Callable
 
+from ui.proposed_preview_controller import clear_pending_preview_state
+
 
 def capture_last_project_snapshot(session_state, label: str, *, deepcopy_fn=deepcopy) -> None:
     proj = session_state.get("project")
@@ -40,6 +42,7 @@ def restore_last_project_snapshot(
     session_state.preview_3d_data = None
     session_state.preview_warnings = []
     session_state.preview_meta = {"kind": "", "timestamp": ""}
+    clear_pending_preview_state(session_state)
     bump_main_editor_version_fn()
     label = session_state.get("last_project_snapshot_label") or "AI 写入"
     session_state.last_project_snapshot = None

@@ -26,6 +26,10 @@ class TestSessionDefaults(unittest.TestCase):
         self.assertFalse(state.confirm_clear_memory)
         self.assertEqual(state.editor_hsf_dir, "")
         self.assertEqual(state.preview_quality, "fast")
+        self.assertIsNone(state.pending_preview_2d_data)
+        self.assertIsNone(state.pending_preview_3d_data)
+        self.assertEqual(state.pending_preview_warnings, [])
+        self.assertEqual(state.pending_preview_meta, {"kind": "", "timestamp": "", "source": ""})
         self.assertEqual(state.elicitation_state, "idle")
 
     def test_ensure_session_defaults_keeps_existing_values(self):

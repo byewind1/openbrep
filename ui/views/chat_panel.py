@@ -4,6 +4,7 @@ import base64
 from typing import Callable
 
 from ui.chat_render import render_assistant_block, render_user_bubble
+from ui.proposed_preview_controller import clear_pending_preview_state
 
 
 def render_chat_panel(
@@ -25,6 +26,9 @@ def render_chat_panel(
     restore_last_project_snapshot_fn: Callable[[], tuple[bool, str]],
     validate_chat_image_size_fn: Callable[[bytes, str], str | None],
     check_gdl_script_fn: Callable[[str, str], list[str]] | None = None,
+    run_pending_preview_fn: Callable[[object, str], tuple[bool, str]] | None = None,
+    render_preview_2d_fn: Callable[[object], None] | None = None,
+    render_preview_3d_fn: Callable[[object], None] | None = None,
     do_compile_fn: Callable[[object, str, str], tuple[bool, str]] | None = None,
     save_revision_fn: Callable[[object, str, str | None], tuple[bool, str]] | None = None,
 ) -> dict:
@@ -55,6 +59,9 @@ def render_chat_panel(
         apply_scripts_to_project_fn=apply_scripts_to_project_fn,
         bump_main_editor_version_fn=bump_main_editor_version_fn,
         restore_last_project_snapshot_fn=restore_last_project_snapshot_fn,
+        run_pending_preview_fn=run_pending_preview_fn,
+        render_preview_2d_fn=render_preview_2d_fn,
+        render_preview_3d_fn=render_preview_3d_fn,
         do_compile_fn=do_compile_fn,
         save_revision_fn=save_revision_fn,
     )
@@ -294,6 +301,9 @@ def _render_pending_diffs(
     apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
     bump_main_editor_version_fn: Callable[[], int],
     restore_last_project_snapshot_fn: Callable[[], tuple[bool, str]],
+    run_pending_preview_fn: Callable[[object, str], tuple[bool, str]] | None,
+    render_preview_2d_fn: Callable[[object], None] | None,
+    render_preview_3d_fn: Callable[[object], None] | None,
     do_compile_fn: Callable[[object, str, str], tuple[bool, str]] | None,
     save_revision_fn: Callable[[object, str, str | None], tuple[bool, str]] | None,
 ) -> None:
@@ -320,7 +330,7 @@ def _render_pending_diffs(
         script_map=script_map,
         check_gdl_script_fn=check_gdl_script_fn,
     )
-    status_col_1, status_col_2, status_col_3 = st.columns(3)
+    status_col_1, status_col_2, status_col_3, status_col_4 = st.columns(4)
     with status_col_1:
         st.caption("Draft：待写入")
     with status_col_2:
@@ -329,6 +339,15 @@ def _render_pending_diffs(
         else:
             st.caption("Static：通过")
     with status_col_3:
+        pending_preview_meta = st.session_state.get("pending_preview_meta") or {}
+        pending_preview_kind = pending_preview_meta.get("kind", "")
+        if pending_preview_kind:
+            warn_count = len(st.session_state.get("pending_preview_warnings") or [])
+            suffix = f"，{warn_count} 条提示" if warn_count else ""
+            st.caption(f"Preview：{pending_preview_kind}{suffix}")
+        else:
+            st.caption("Preview：未运行")
+    with status_col_4:
         if st.session_state.compile_result is None:
             st.caption("Compile：未运行")
         else:
@@ -336,6 +355,13 @@ def _render_pending_diffs(
             st.caption("Compile：通过" if compile_ok else "Compile：失败")
     if static_issues:
         st.warning("；".join(static_issues[:3]))
+
+    _render_pending_preview_controls(
+        st,
+        run_pending_preview_fn=run_pending_preview_fn,
+        render_preview_2d_fn=render_preview_2d_fn,
+        render_preview_3d_fn=render_preview_3d_fn,
+    )
 
     can_promote = do_compile_fn is not None
     draft_col, compile_col, promote_col = st.columns([1.0, 1.1, 1.4])
@@ -444,6 +470,7 @@ def _apply_pending_review_changes(
     st.session_state.pending_diffs = {}
     st.session_state.pending_ai_label = ""
     st.session_state.compile_result = None
+    clear_pending_preview_state(st.session_state)
 
     ok_parts = []
     if sc:
@@ -457,6 +484,88 @@ def _apply_pending_review_changes(
             ok_parts.append(f"{param_count} 个参数")
     st.toast(f"✅ 已写入 {'、'.join(ok_parts) if ok_parts else 'AI 改动'}", icon="✏️")
     return sc, pc
+
+
+def _render_pending_preview_controls(
+    st,
+    *,
+    run_pending_preview_fn: Callable[[object, str], tuple[bool, str]] | None,
+    render_preview_2d_fn: Callable[[object], None] | None,
+    render_preview_3d_fn: Callable[[object], None] | None,
+) -> None:
+    if run_pending_preview_fn is None:
+        return
+
+    preview_col_3d, preview_col_2d, clear_col = st.columns([1.2, 1.2, 1.0])
+    with preview_col_3d:
+        if st.button("预览提案 3D", width="stretch", key="chat_pending_preview_3d"):
+            ok, msg = run_pending_preview_fn(st.session_state.project, "3d")
+            if ok:
+                st.toast(msg, icon="🧊")
+            else:
+                st.error(msg)
+            st.rerun()
+    with preview_col_2d:
+        if st.button("预览提案 2D", width="stretch", key="chat_pending_preview_2d"):
+            ok, msg = run_pending_preview_fn(st.session_state.project, "2d")
+            if ok:
+                st.toast(msg, icon="👁️")
+            else:
+                st.error(msg)
+            st.rerun()
+    with clear_col:
+        has_pending_preview = bool(
+            st.session_state.get("pending_preview_2d_data")
+            or st.session_state.get("pending_preview_3d_data")
+            or st.session_state.get("pending_preview_warnings")
+        )
+        if st.button(
+            "清除预览",
+            width="stretch",
+            key="chat_pending_preview_clear",
+            disabled=not has_pending_preview,
+        ):
+            clear_pending_preview_state(st.session_state)
+            st.rerun()
+
+    _render_pending_preview_panel(
+        st,
+        render_preview_2d_fn=render_preview_2d_fn,
+        render_preview_3d_fn=render_preview_3d_fn,
+    )
+
+
+def _render_pending_preview_panel(
+    st,
+    *,
+    render_preview_2d_fn: Callable[[object], None] | None,
+    render_preview_3d_fn: Callable[[object], None] | None,
+) -> None:
+    meta = st.session_state.get("pending_preview_meta") or {}
+    kind = meta.get("kind", "")
+    timestamp = meta.get("timestamp", "")
+    warnings = st.session_state.get("pending_preview_warnings") or []
+    has_preview = bool(
+        st.session_state.get("pending_preview_2d_data")
+        or st.session_state.get("pending_preview_3d_data")
+        or warnings
+    )
+    if not has_preview:
+        return
+
+    title = f"AI 提案预览：{kind} · {timestamp}" if kind else "AI 提案预览"
+    with st.expander(title, expanded=True):
+        if str(kind).upper() == "3D" and render_preview_3d_fn is not None:
+            render_preview_3d_fn(st.session_state.get("pending_preview_3d_data"))
+        elif str(kind).upper() == "2D" and render_preview_2d_fn is not None:
+            render_preview_2d_fn(st.session_state.get("pending_preview_2d_data"))
+        elif render_preview_3d_fn is not None and st.session_state.get("pending_preview_3d_data"):
+            render_preview_3d_fn(st.session_state.get("pending_preview_3d_data"))
+        elif render_preview_2d_fn is not None and st.session_state.get("pending_preview_2d_data"):
+            render_preview_2d_fn(st.session_state.get("pending_preview_2d_data"))
+
+        if warnings:
+            st.warning("；".join(warnings[:6]))
 
 
 def _apply_compile_and_maybe_snapshot(

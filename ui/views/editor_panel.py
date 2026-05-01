@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from ui.proposed_preview_controller import clear_pending_preview_state
+
 from openbrep.hsf_project import HSFProject
 
 
@@ -106,3 +108,4 @@ def _clear_preview_state(session_state) -> None:
     session_state.preview_3d_data = None
     session_state.preview_warnings = []
     session_state.preview_meta = {"kind": "", "timestamp": ""}
+    clear_pending_preview_state(session_state)

@@ -42,6 +42,7 @@ from ui import actions as ui_actions
 from ui import state as ui_state
 from ui import view_models as ui_view_models
 from ui import preview_controller as ui_preview_controller
+from ui import proposed_preview_controller as ui_proposed_preview_controller
 from ui import project_service as ui_project_service
 from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
@@ -978,6 +979,7 @@ def _apply_scripts_to_project(proj: HSFProject, script_map: dict) -> tuple[int, 
         st.session_state.preview_3d_data = None
         st.session_state.preview_warnings = []
         st.session_state.preview_meta = {"kind": "", "timestamp": ""}
+        ui_proposed_preview_controller.clear_pending_preview_state(st.session_state)
         proj.save_to_disk()
 
     return sc, pc
@@ -1356,6 +1358,31 @@ def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
     )
 
 
+def _run_pending_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
+    if proj is not None:
+        _sync_visible_editor_buffers(proj, int(st.session_state.get("editor_version", 0)))
+    return ui_proposed_preview_controller.run_pending_preview(
+        proj,
+        st.session_state.get("pending_diffs") or {},
+        target,
+        script_map=_SCRIPT_MAP,
+        parse_paramlist_text_fn=_parse_paramlist_text,
+        preview_param_values_fn=_preview_param_values,
+        collect_preview_prechecks_fn=_collect_preview_prechecks,
+        dedupe_keep_order_fn=_dedupe_keep_order,
+        set_pending_preview_2d_data_fn=lambda data: st.session_state.__setitem__("pending_preview_2d_data", data),
+        set_pending_preview_3d_data_fn=lambda data: st.session_state.__setitem__("pending_preview_3d_data", data),
+        set_pending_preview_warnings_fn=lambda warns: st.session_state.__setitem__("pending_preview_warnings", warns),
+        set_pending_preview_meta_fn=lambda meta: st.session_state.__setitem__("pending_preview_meta", meta),
+        deepcopy_fn=deepcopy,
+        script_type_2d=ScriptType.SCRIPT_2D,
+        script_type_3d=ScriptType.SCRIPT_3D,
+        strict=bool(st.session_state.get("preview_strict", False)),
+        unknown_command_policy=str(st.session_state.get("preview_unknown_command_policy", "warn") or "warn"),
+        quality=str(st.session_state.get("preview_quality", "fast") or "fast"),
+    )
+
+
 # ══════════════════════════════════════════════════════════
 #  Main Layout: Project tools | Editor | AI assistant
 # ══════════════════════════════════════════════════════════
@@ -1458,6 +1485,9 @@ with col_right:
             restore_last_project_snapshot_fn=_restore_last_project_snapshot,
             validate_chat_image_size_fn=_validate_chat_image_size,
             check_gdl_script_fn=check_gdl_script,
+            run_pending_preview_fn=_run_pending_preview,
+            render_preview_2d_fn=_render_preview_2d,
+            render_preview_3d_fn=_render_preview_3d,
             do_compile_fn=lambda project, gsm_name, instruction: do_compile(
                 project,
                 gsm_name=gsm_name,

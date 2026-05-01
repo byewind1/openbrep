@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Callable
 
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
+from ui.proposed_preview_controller import clear_pending_preview_state
 
 
 def sync_visible_editor_buffers(
@@ -41,6 +42,7 @@ def sync_visible_editor_buffers(
         session_state.preview_3d_data = None
         session_state.preview_warnings = []
         session_state.preview_meta = {"kind": "", "timestamp": ""}
+        clear_pending_preview_state(session_state)
 
     return changed
 

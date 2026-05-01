@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from openbrep.hsf_project import HSFProject
 from openbrep.revisions import create_revision, restore_revision
+from ui.proposed_preview_controller import clear_pending_preview_state
 
 
 REVISION_SESSION_KEYS = {
@@ -61,6 +62,7 @@ def restore_project_revision(
         session_state.preview_3d_data = None
         session_state.preview_warnings = []
         session_state.preview_meta = {"kind": "", "timestamp": ""}
+        clear_pending_preview_state(session_state)
         reset_tapir_p0_state_fn()
         bump_main_editor_version_fn()
         return True, f"✅ 已恢复 `{revision_id}`，当前最新版本为 `{restored.revision_id}`"
