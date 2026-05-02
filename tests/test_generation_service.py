@@ -88,6 +88,16 @@ class TestGenerationService(unittest.TestCase):
         self.assertEqual(_Pipeline.captured_request.intent, "REPAIR")
         self.assertEqual(state.finished, "completed")
 
+    def test_force_generate_prefix_suppresses_debug_and_is_not_sent_to_pipeline(self):
+        state = _State(chat_history=[], work_dir="./workdir")
+        project = HSFProject.create_new("chair", work_dir="./workdir")
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1,1,1"
+
+        _service(state).run_agent_generate("[GENERATE] 请修复错误", project, _Status(), gsm_name="chair")
+
+        self.assertEqual(_Pipeline.captured_request.intent, "MODIFY")
+        self.assertEqual(_Pipeline.captured_request.user_input, "请修复错误")
+
     def test_routes_explainer_request_to_chat(self):
         state = _State(chat_history=[], work_dir="./workdir")
         project = HSFProject.create_new("chair", work_dir="./workdir")

@@ -5,6 +5,12 @@ from typing import Callable
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 
 from ui.chat_render import render_assistant_block, render_user_bubble
+from ui.generation_service import FORCE_GENERATE_PREFIX
+
+
+CHAT_ROUTE_AUTO = "自动"
+CHAT_ROUTE_FORCE_GENERATE = "强制生成"
+CHAT_ROUTE_FORCE_DEBUG = "强制调试"
 
 
 def pop_chat_runtime_state(
@@ -297,6 +303,8 @@ def run_normal_text_path(
     if not (redo_input or bridge_input):
         session_state.chat_history.append({"role": "user", "content": effective_input})
     user_input = effective_input
+    generation_input = user_input
+    route_pick = _chat_route_mode(session_state)
 
     if not api_key and "ollama" not in model_name:
         err = "❌ 请在左侧边栏填入 API Key 后再试。"
@@ -312,6 +320,13 @@ def run_normal_text_path(
             project_loaded=bool(session_state.project),
             has_image=False,
         )
+        if route_pick == CHAT_ROUTE_FORCE_DEBUG:
+            intent = "DEBUG"
+            if not generation_input.startswith("[DEBUG:"):
+                generation_input = f"[DEBUG:editor] {generation_input}"
+        elif route_pick == CHAT_ROUTE_FORCE_GENERATE and intent in ("CHAT", "DEBUG"):
+            intent = "MODIFY" if session_state.project else "CREATE"
+            generation_input = f"{FORCE_GENERATE_PREFIX} {generation_input}"
 
         with live_output.container():
             import streamlit as st
@@ -337,7 +352,7 @@ def run_normal_text_path(
 
                     effective_gsm = session_state.pending_gsm_name or proj_current.name
                     msg = run_agent_generate_fn(
-                        user_input,
+                        generation_input,
                         proj_current,
                         st.container(),
                         effective_gsm,
@@ -360,7 +375,7 @@ def run_normal_text_path(
                         proj_current = session_state.project
                         effective_gsm = session_state.pending_gsm_name or proj_current.name
                         msg = run_agent_generate_fn(
-                            user_input,
+                            generation_input,
                             proj_current,
                             st.container(),
                             effective_gsm,
@@ -409,7 +424,7 @@ def run_vision_path(
     final_mime = vision_mime or "image/jpeg"
     final_name = vision_name or "image"
     joined_text = (user_input or "").strip()
-    route_pick = session_state.get("chat_image_route_mode", "自动")
+    route_pick = _chat_route_mode(session_state)
     route_mode = resolve_image_route_mode_fn(route_pick, active_debug_mode, joined_text, final_name)
     user_display = build_image_user_display_fn(final_name, route_mode, joined_text)
 
@@ -470,6 +485,10 @@ def run_vision_path(
         return True, True, None
     finally:
         session_state.agent_running = False
+
+
+def _chat_route_mode(session_state) -> str:
+    return session_state.get("chat_route_mode") or session_state.get("chat_image_route_mode", CHAT_ROUTE_AUTO)
 
 
 def process_chat_turn(

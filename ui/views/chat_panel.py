@@ -69,7 +69,7 @@ def render_chat_panel(
         save_revision_fn=save_revision_fn,
     )
     live_output = st.empty()
-    active_debug_mode = _render_debug_and_route_controls(st)
+    active_debug_mode = _render_route_controls(st)
     payload = _read_chat_input(st, is_generation_locked_fn=is_generation_locked_fn)
     payload["live_output"] = live_output
     payload["active_debug_mode"] = active_debug_mode
@@ -78,15 +78,7 @@ def render_chat_panel(
 
 
 def _render_header(st) -> None:
-    title_col, clear_col = st.columns([3, 1])
-    with title_col:
-        st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
-    with clear_col:
-        if st.button("🗑️ 清空对话", width="stretch", help="清空聊天记录，不影响脚本和参数"):
-            st.session_state.chat_history = []
-            st.session_state.adopted_msg_index = None
-            st.session_state.chat_anchor_focus = None
-            st.rerun()
+    st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
 
 
 def _render_history_anchors(st, *, build_chat_script_anchors_fn: Callable[[list[dict]], list[dict]]) -> None:
@@ -749,32 +741,15 @@ def _apply_compile_and_maybe_snapshot(
         st.error(result_msg)
 
 
-def _render_debug_and_route_controls(st) -> str | None:
-    debug_active = st.session_state.get("_debug_mode_active") == "editor"
-    debug_label = "✖ 退出 Debug" if debug_active else "🔍 开启 Debug 编辑器"
-    if st.button(
-        debug_label,
-        width="stretch",
-        type=("primary" if debug_active else "secondary"),
-        key="debug_editor_toggle_btn",
-        help="开启后：下次发送将附带编辑器全部脚本+参数+语法检查报告",
-    ):
-        debug_active = not debug_active
-        st.session_state["_debug_mode_active"] = "editor" if debug_active else None
-
-    current_debug = "editor" if debug_active else None
-    if current_debug == "editor":
-        st.info("🔍 **全脚本 Debug 已激活** — 描述你观察到的问题，或直接发送让 AI 全面检查语法和逻辑")
-
-    st.caption("📎 图片路由（仅附图消息生效）")
+def _render_route_controls(st) -> str | None:
+    st.session_state["_debug_mode_active"] = None
     st.radio(
-        "图片路由",
+        "AI 模式",
         ["自动", "强制生成", "强制调试"],
         horizontal=True,
-        key="chat_image_route_mode",
-        label_visibility="collapsed",
+        key="chat_route_mode",
     )
-    return current_debug
+    return None
 
 
 def _read_chat_input(st, *, is_generation_locked_fn: Callable[[object], bool]) -> dict:

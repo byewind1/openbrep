@@ -103,6 +103,80 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         self.assertTrue(should_rerun)
         self.assertFalse(captured["auto_apply"])
 
+    def test_run_normal_text_path_force_debug_prefixes_generation_input(self):
+        session_state = _State(
+            chat_history=[],
+            project=object(),
+            pending_gsm_name="demo",
+            agent_running=False,
+            chat_route_mode="强制调试",
+        )
+        live_output = _DummyContainer()
+        captured = {}
+
+        with patch("ui.chat_controller.render_user_bubble"), patch("ui.chat_controller.render_assistant_block"):
+            ok, should_rerun, _ = run_normal_text_path(
+                effective_input="看看这个",
+                redo_input=None,
+                bridge_input=None,
+                session_state=session_state,
+                api_key="k",
+                model_name="glm-4-flash",
+                route_main_input_fn=lambda _u, **_k: ("CHAT", "demo"),
+                live_output=live_output,
+                chat_respond_fn=lambda *_a, **_k: "助手回复",
+                should_skip_elicitation_fn=lambda _text, intent: intent in ("DEBUG", "MODIFY"),
+                create_project_fn=lambda _n: object(),
+                has_any_script_content_fn=lambda _p: True,
+                run_agent_generate_fn=lambda text, *_a, **_k: captured.setdefault("input", text) or "GEN",
+                handle_elicitation_route_fn=lambda *_a, **_k: ("", False),
+                markdown_fn=lambda *_a, **_k: None,
+                info_fn=lambda *_a, **_k: None,
+                build_assistant_chat_message_fn=lambda **kwargs: {"role": "assistant", "content": kwargs["content"]},
+            )
+
+        self.assertTrue(ok)
+        self.assertTrue(should_rerun)
+        self.assertTrue(captured["input"].startswith("[DEBUG:editor]"))
+        self.assertEqual(session_state.chat_history[0]["content"], "看看这个")
+
+    def test_run_normal_text_path_force_generate_suppresses_debug_route(self):
+        session_state = _State(
+            chat_history=[],
+            project=object(),
+            pending_gsm_name="demo",
+            agent_running=False,
+            chat_route_mode="强制生成",
+        )
+        live_output = _DummyContainer()
+        captured = {}
+
+        with patch("ui.chat_controller.render_user_bubble"), patch("ui.chat_controller.render_assistant_block"):
+            ok, should_rerun, _ = run_normal_text_path(
+                effective_input="Error in 3D script, line 12",
+                redo_input=None,
+                bridge_input=None,
+                session_state=session_state,
+                api_key="k",
+                model_name="glm-4-flash",
+                route_main_input_fn=lambda _u, **_k: ("DEBUG", "demo"),
+                live_output=live_output,
+                chat_respond_fn=lambda *_a, **_k: "助手回复",
+                should_skip_elicitation_fn=lambda _text, intent: intent in ("DEBUG", "MODIFY"),
+                create_project_fn=lambda _n: object(),
+                has_any_script_content_fn=lambda _p: True,
+                run_agent_generate_fn=lambda text, *_a, **_k: captured.setdefault("input", text) or "GEN",
+                handle_elicitation_route_fn=lambda *_a, **_k: ("", False),
+                markdown_fn=lambda *_a, **_k: None,
+                info_fn=lambda *_a, **_k: None,
+                build_assistant_chat_message_fn=lambda **kwargs: {"role": "assistant", "content": kwargs["content"]},
+            )
+
+        self.assertTrue(ok)
+        self.assertTrue(should_rerun)
+        self.assertTrue(captured["input"].startswith("[GENERATE]"))
+        self.assertEqual(session_state.chat_history[0]["content"], "Error in 3D script, line 12")
+
     def test_run_vision_path_does_not_use_streamlit_chat_message(self):
         session_state = _State(
             chat_history=[],

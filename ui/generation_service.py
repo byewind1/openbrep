@@ -10,6 +10,9 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.runtime.pipeline import TaskRequest
 
 
+FORCE_GENERATE_PREFIX = "[GENERATE]"
+
+
 @dataclass
 class GenerationService:
     session_state: object
@@ -42,14 +45,16 @@ class GenerationService:
         debug_image_mime: str = "image/png",
     ) -> str:
         self.logger.debug("run_agent_generate called, instruction: %s", user_input[:100])
+        request_input, force_generate = _strip_force_generate_prefix(user_input)
         generation_id = self.begin_generation_state_fn(self.session_state)
         status_ph = status_col.empty()
         debug_mode = (
-            self.is_debug_intent_fn(user_input)
-            and not self.is_explainer_intent_fn(user_input)
-            and not self.is_post_clarification_prompt_fn(user_input)
+            not force_generate
+            and self.is_debug_intent_fn(request_input)
+            and not self.is_explainer_intent_fn(request_input)
+            and not self.is_post_clarification_prompt_fn(request_input)
         )
-        debug_type = self.get_debug_mode_fn(user_input)
+        debug_type = self.get_debug_mode_fn(request_input)
 
         def on_event(event_type, data):
             self._handle_generation_event(
@@ -68,20 +73,20 @@ class GenerationService:
             ])
 
             pipeline_project = proj if auto_apply else deepcopy(proj)
-            intent = self._resolve_generation_intent(user_input, pipeline_project, debug_mode)
+            intent = self._resolve_generation_intent(request_input, pipeline_project, debug_mode)
 
             self.logger.info(
                 "pipeline generate route=%s image_name=%s has_project=%s prompt_len=%d",
                 intent.lower(),
                 "inline-image" if debug_image_b64 else "none",
                 bool(proj),
-                len(user_input or ""),
+                len(request_input or ""),
             )
 
             pipeline = self.pipeline_class(trace_dir="./traces")
             pipeline.config = self.config_loader_fn()
             request = TaskRequest(
-                user_input=user_input,
+                user_input=request_input,
                 intent=intent,
                 project=pipeline_project,
                 work_dir=self.session_state.work_dir,
@@ -202,3 +207,10 @@ class GenerationService:
             component = data.get("component_type", "")
             label = f"「{component}」" if component and component != "未知构件" else ""
             self._guarded_event_update(status_ph, generation_id, "info", f"🖼️ 图像分析完成{label}，正在生成 GDL…")
+
+
+def _strip_force_generate_prefix(user_input: str) -> tuple[str, bool]:
+    text = user_input or ""
+    if not text.startswith(FORCE_GENERATE_PREFIX):
+        return text, False
+    return text[len(FORCE_GENERATE_PREFIX):].lstrip(), True

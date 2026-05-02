@@ -45,6 +45,7 @@ def ensure_session_defaults(session_state, *, work_dir_default: str | None = Non
         "last_project_snapshot_meta": {},
         "last_project_snapshot_label": "",
         "model_api_keys": {},
+        "chat_route_mode": "自动",
         "chat_image_route_mode": "自动",
         "chat_anchor_focus": None,
         "chat_anchor_pending": None,
