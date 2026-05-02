@@ -7,6 +7,9 @@ from ui.chat_render import render_assistant_block, render_user_bubble
 from ui.proposed_preview_controller import clear_pending_preview_state
 
 
+IMPORT_STATUS_MAX_HEIGHT = 180
+
+
 def render_chat_panel(
     st,
     *,
@@ -146,7 +149,7 @@ def _render_chat_history(
                     img_bytes = thumb_image_bytes_fn(msg.get("image_b64", ""))
                 render_user_bubble(st, msg.get("content", ""), image_bytes=img_bytes)
             else:
-                render_assistant_block(st, msg.get("content", ""))
+                _render_assistant_history_content(st, msg.get("content", ""))
 
             if role == "assistant":
                 _render_assistant_message_actions(
@@ -158,6 +161,23 @@ def _render_chat_history(
                     copy_text_to_system_clipboard_fn=copy_text_to_system_clipboard_fn,
                     is_bridgeable_explainer_message_fn=is_bridgeable_explainer_message_fn,
                 )
+
+
+def _render_assistant_history_content(st, content: str) -> None:
+    if _is_project_import_status_message(content):
+        with st.container(height=IMPORT_STATUS_MAX_HEIGHT, border=True):
+            st.caption("项目导入 / 加载记录")
+            render_assistant_block(st, content)
+        return
+
+    render_assistant_block(st, content)
+
+
+def _is_project_import_status_message(content: str) -> bool:
+    text = str(content or "").lstrip()
+    if text.startswith(("✅ 已导入", "✅ 已加载 HSF 项目", "❌ [IMPORT_GSM]")):
+        return True
+    return "HSF 文件列表" in text or "源目录:" in text
 
 
 def _render_assistant_message_actions(

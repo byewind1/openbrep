@@ -25,6 +25,13 @@ class _DummySt:
                 self[key] = value
 
         self.session_state = _State(chat_history=chat_history)
+        self.container_calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
     def columns(self, _spec):
         count = len(_spec) if hasattr(_spec, "__len__") else int(_spec)
@@ -39,7 +46,8 @@ class _DummySt:
     def button(self, *args, **kwargs):
         return False
 
-    def container(self):
+    def container(self, **kwargs):
+        self.container_calls.append(kwargs)
         return self
 
     def text_area(self, *args, **kwargs):
@@ -67,6 +75,27 @@ class TestChatPanelRender(unittest.TestCase):
 
         self.assertTrue(render_user.called)
         self.assertTrue(render_assistant.called)
+
+    def test_import_status_message_renders_in_fixed_height_container(self):
+        st = _DummySt(
+            [
+                {
+                    "role": "assistant",
+                    "content": "✅ 已导入 `Chair` — 12 参数，6 脚本\n\n**HSF 文件列表**: `['a', 'b']`",
+                },
+            ]
+        )
+
+        _render_chat_history(
+            st,
+            thumb_image_bytes_fn=lambda _b64: None,
+            save_feedback_fn=lambda *_a, **_k: None,
+            copyable_chat_text_fn=lambda _msg: "",
+            copy_text_to_system_clipboard_fn=lambda _text: (True, "ok"),
+            is_bridgeable_explainer_message_fn=lambda _msg: False,
+        )
+
+        self.assertIn({"height": 180, "border": True}, st.container_calls)
 
 
 if __name__ == "__main__":
