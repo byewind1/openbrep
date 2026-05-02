@@ -68,7 +68,7 @@ class ProjectService:
 
     def browse_and_load_hsf_directory(self) -> tuple[bool, str]:
         if self.choose_directory_fn is None:
-            return False, "❌ 当前运行环境不支持本地目录选择，请手动粘贴 HSF 项目目录"
+            return False, "❌ 当前运行环境不支持本地目录选择，请使用支持系统目录选择器的桌面环境"
 
         if hasattr(self.session_state, "get"):
             initial_dir = self.session_state.get("editor_hsf_dir", "")

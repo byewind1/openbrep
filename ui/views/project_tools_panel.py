@@ -47,7 +47,7 @@ def _render_project_input_section(
     *,
     is_generation_locked_fn: Callable[[], bool],
     handle_unified_import_fn: Callable[[object], tuple[bool, str]],
-    handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
+    handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],  # kept for app/test compatibility
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
 ) -> None:
     with st.expander("1. 导入 / 打开 HSF 项目", expanded=True):
@@ -82,24 +82,6 @@ def _render_project_input_section(
                 st.error(msg)
             else:
                 st.info(msg)
-
-        hsf_dir_input = st.text_input(
-            "HSF 项目目录（可手动粘贴）",
-            placeholder="/path/to/YourHSFProject",
-            key="editor_hsf_dir",
-            disabled=is_generation_locked_fn(),
-        )
-        if st.button(
-            "载入 HSF 项目",
-            key="editor_load_hsf",
-            disabled=is_generation_locked_fn(),
-            use_container_width=True,
-        ):
-            ok, msg = handle_hsf_directory_load_fn(hsf_dir_input)
-            if ok:
-                st.rerun()
-            else:
-                st.error(msg)
 
 
 def _render_compile_section(
