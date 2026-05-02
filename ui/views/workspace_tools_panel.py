@@ -5,7 +5,6 @@ from typing import Callable
 
 from openbrep.hsf_project import HSFProject
 from openbrep.learning import ErrorLearningStore
-from ui.proposed_preview_controller import clear_pending_preview_state
 
 
 def render_workspace_tools_panel(
@@ -14,26 +13,11 @@ def render_workspace_tools_panel(
     *,
     tapir_import_ok: bool,
     get_bridge_fn: Callable[[], object],
-    script_map: list[tuple[object, str, str]],
-    check_gdl_script_fn: Callable[[str, str], list[str]],
-    reset_tapir_p0_state_fn: Callable[[], None],
-    bump_main_editor_version_fn: Callable[[], int],
 ) -> None:
     st.markdown("### 验证与联动")
-    _render_project_action_buttons(
-        st,
-        proj,
-        script_map=script_map,
-        check_gdl_script_fn=check_gdl_script_fn,
-    )
+    _render_project_action_buttons(st, proj)
     _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
     _render_memory_privacy_panel(st)
-    _render_log_dialog(st)
-    _render_clear_confirmation(
-        st,
-        reset_tapir_p0_state_fn=reset_tapir_p0_state_fn,
-        bump_main_editor_version_fn=bump_main_editor_version_fn,
-    )
 
 
 def render_preview_workbench(
@@ -110,120 +94,21 @@ def _render_tapir_controls(st, *, tapir_import_ok: bool, get_bridge_fn: Callable
             st.rerun()
 
 
-def _render_project_action_buttons(
-    st,
-    proj: HSFProject,
-    *,
-    script_map: list[tuple[object, str, str]],
-    check_gdl_script_fn: Callable[[str, str], list[str]],
-) -> None:
-    st.markdown("#### 本地验证")
-    meta_1, meta_2, meta_3, meta_4 = st.columns([1.2, 1.0, 1.0, 1.0])
-
-    with meta_1:
-        if st.button("🔍 脚本检查", width="stretch", help="检查当前所有 GDL 脚本的常见语法问题"):
-            check_all_ok = True
-            for script_type, fpath, label in script_map:
-                content = proj.get_script(script_type)
-                if not content:
-                    continue
-                script_key = fpath.replace("scripts/", "").replace(".gdl", "")
-                for issue in check_gdl_script_fn(content, script_key):
-                    if issue.startswith("✅"):
-                        st.success(f"{label}: {issue}")
-                    else:
-                        st.warning(f"{label}: {issue}")
-                        check_all_ok = False
-            if check_all_ok:
-                st.success("✅ 所有脚本语法正常")
-
-    with meta_2:
-        if st.button("🗑️ 重置项目", width="stretch", help="重置项目：脚本、参数、日志全清，保留设置"):
-            st.session_state.confirm_clear = True
-
-    with meta_3:
-        if st.button("📋 编译日志", width="stretch"):
-            st.session_state["_show_log_dialog"] = True
-
-    with meta_4:
-        if st.button(
-            "🧠 整理错题本",
-            width="stretch",
-            help="把当前工作区错题记录整理成后续生成会注入的自我提示",
-        ):
-            result = ErrorLearningStore(st.session_state.work_dir).summarize_to_skill(
-                project_name=proj.name,
-            )
-            if result.ok:
-                st.success(result.message)
-                st.caption(str(result.path))
-            else:
-                st.info(result.message)
-
-
-def _render_log_dialog(st) -> None:
-    @st.dialog("📋 编译日志")
-    def show_log_dialog():
-        if not st.session_state.compile_log:
-            st.info("暂无编译记录")
+def _render_project_action_buttons(st, proj: HSFProject) -> None:
+    st.markdown("#### 错题本")
+    if st.button(
+        "🧠 整理错题本",
+        width="stretch",
+        help="把当前工作区错题记录整理成后续生成会注入的自我提示",
+    ):
+        result = ErrorLearningStore(st.session_state.work_dir).summarize_to_skill(
+            project_name=proj.name,
+        )
+        if result.ok:
+            st.success(result.message)
+            st.caption(str(result.path))
         else:
-            for entry in reversed(st.session_state.compile_log):
-                icon = "✅" if entry["success"] else "❌"
-                st.markdown(f"**{icon} {entry['project']}** — {entry.get('instruction','')}")
-                st.code(entry["message"], language="text")
-                st.divider()
-        if st.button("清除日志"):
-            st.session_state.compile_log = []
-            st.session_state.compile_result = None
-            st.rerun()
-
-    if st.session_state.get("_show_log_dialog"):
-        st.session_state["_show_log_dialog"] = False
-        show_log_dialog()
-
-
-def _render_clear_confirmation(
-    st,
-    *,
-    reset_tapir_p0_state_fn: Callable[[], None],
-    bump_main_editor_version_fn: Callable[[], int],
-) -> None:
-    if not st.session_state.get("confirm_clear"):
-        return
-
-    st.warning("⚠️ 将重置项目（脚本、参数、编译日志），聊天记录保留。确认继续？")
-    confirm_col, cancel_col, _ = st.columns([1, 1, 4])
-    with confirm_col:
-        if st.button("✅ 确认清空", type="primary"):
-            keep_work_dir = st.session_state.work_dir
-            keep_api_keys = st.session_state.model_api_keys
-            keep_chat = st.session_state.chat_history
-            st.session_state.project = None
-            st.session_state.compile_log = []
-            st.session_state.compile_result = None
-            st.session_state.pending_diffs = {}
-            st.session_state.pending_ai_label = ""
-            st.session_state.pending_gsm_name = ""
-            st.session_state.script_revision = 0
-            st.session_state.agent_running = False
-            st.session_state._import_key_done = ""
-            st.session_state.confirm_clear = False
-            st.session_state.preview_2d_data = None
-            st.session_state.preview_3d_data = None
-            st.session_state.preview_warnings = []
-            st.session_state.preview_meta = {"kind": "", "timestamp": ""}
-            clear_pending_preview_state(st.session_state)
-            reset_tapir_p0_state_fn()
-            bump_main_editor_version_fn()
-            st.session_state.work_dir = keep_work_dir
-            st.session_state.model_api_keys = keep_api_keys
-            st.session_state.chat_history = keep_chat
-            st.toast("🗑️ 已重置项目（脚本、参数、日志），聊天记录保留", icon="✅")
-            st.rerun()
-    with cancel_col:
-        if st.button("❌ 取消"):
-            st.session_state.confirm_clear = False
-            st.rerun()
+            st.info(result.message)
 
 
 def _render_memory_privacy_panel(st) -> None:

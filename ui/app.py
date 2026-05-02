@@ -1436,10 +1436,6 @@ with col_left:
             proj_now,
             tapir_import_ok=_TAPIR_IMPORT_OK,
             get_bridge_fn=get_bridge,
-            script_map=_SCRIPT_MAP,
-            check_gdl_script_fn=check_gdl_script,
-            reset_tapir_p0_state_fn=_reset_tapir_p0_state,
-            bump_main_editor_version_fn=_bump_main_editor_version,
         )
 
 with col_mid:
