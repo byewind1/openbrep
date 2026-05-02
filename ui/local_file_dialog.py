@@ -36,13 +36,7 @@ def choose_directory(*, title: str = "选择 HSF 项目目录", initial_dir: str
 
 
 def _choose_directory_macos(*, title: str, initial_dir: str | None = None) -> str | None:
-    script = f'POSIX path of (choose folder with prompt "{_escape_applescript(title)}"'
-    if initial_dir:
-        initial_path = Path(initial_dir).expanduser()
-        if initial_path.exists():
-            default_location = initial_path if initial_path.is_dir() else initial_path.parent
-            script += f' default location POSIX file "{_escape_applescript(str(default_location))}"'
-    script += ")"
+    script = _choose_directory_macos_script(title=title, initial_dir=initial_dir)
 
     try:
         result = subprocess.run(
@@ -59,6 +53,21 @@ def _choose_directory_macos(*, title: str, initial_dir: str | None = None) -> st
         return None
     selected = result.stdout.strip()
     return selected or None
+
+
+def _choose_directory_macos_script(*, title: str, initial_dir: str | None = None) -> str:
+    default_location_arg = ""
+    if initial_dir:
+        initial_path = Path(initial_dir).expanduser()
+        if initial_path.exists():
+            default_location = initial_path if initial_path.is_dir() else initial_path.parent
+            default_location_arg = f' default location POSIX file "{_escape_applescript(str(default_location))}"'
+
+    return (
+        "use scripting additions\n"
+        "activate\n"
+        f'return POSIX path of (choose folder with prompt "{_escape_applescript(title)}"{default_location_arg})'
+    )
 
 
 def _choose_file_macos(*, title: str, initial_dir: str | None = None) -> str | None:
@@ -91,6 +100,7 @@ def _choose_file_macos_script(*, title: str, initial_dir: str | None = None) -> 
 
     return (
         "use scripting additions\n"
+        "activate\n"
         f'return POSIX path of (choose file with prompt "{_escape_applescript(title)}"{default_location_arg})'
     )
 
@@ -104,6 +114,7 @@ def _choose_directory_tk(*, title: str, initial_dir: str | None = None) -> str |
 
     root = tk.Tk()
     root.withdraw()
+    _raise_tk_dialog_root(root)
     try:
         selected = filedialog.askdirectory(
             title=title,
@@ -124,6 +135,7 @@ def _choose_file_tk(*, title: str, initial_dir: str | None = None) -> str | None
 
     root = tk.Tk()
     root.withdraw()
+    _raise_tk_dialog_root(root)
     try:
         selected = filedialog.askopenfilename(
             title=title,
@@ -139,6 +151,16 @@ def _choose_file_tk(*, title: str, initial_dir: str | None = None) -> str | None
     finally:
         root.destroy()
     return selected or None
+
+
+def _raise_tk_dialog_root(root) -> None:
+    try:
+        root.lift()
+        root.attributes("-topmost", True)
+        root.after_idle(root.attributes, "-topmost", False)
+        root.update()
+    except Exception:
+        pass
 
 
 def _escape_applescript(value: str) -> str:
