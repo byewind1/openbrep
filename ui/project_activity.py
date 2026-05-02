@@ -22,3 +22,14 @@ def record_project_activity(session_state, message: str) -> None:
         }
     )
     session_state.project_activity_log = entries[-MAX_PROJECT_ACTIVITY_LOG:]
+
+
+def project_activity_entries(session_state) -> list[dict]:
+    entries = list(session_state.get("project_activity_log") or [])
+    legacy_messages = [
+        {"timestamp": "", "message": str(msg.get("content", ""))}
+        for msg in session_state.get("chat_history", [])
+        if msg.get("role", "assistant") == "assistant"
+        and is_project_activity_message(msg.get("content", ""))
+    ]
+    return (legacy_messages + entries)[-MAX_PROJECT_ACTIVITY_LOG:]

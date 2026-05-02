@@ -5,11 +5,7 @@ from typing import Callable
 
 from openbrep.hsf_project import HSFProject
 from openbrep.learning import ErrorLearningStore
-from ui.project_activity import is_project_activity_message
 from ui.proposed_preview_controller import clear_pending_preview_state
-
-
-PROJECT_ACTIVITY_MAX_HEIGHT = 180
 
 
 def render_workspace_tools_panel(
@@ -67,7 +63,6 @@ def render_preview_workbench(
                 st.error(msg)
 
     _render_preview_panel(st, render_preview_2d_fn=render_preview_2d_fn, render_preview_3d_fn=render_preview_3d_fn)
-    _render_project_activity_log(st)
 
 
 def _render_tapir_controls(st, *, tapir_import_ok: bool, get_bridge_fn: Callable[[], object]) -> None:
@@ -320,31 +315,3 @@ def _render_preview_warnings(st) -> None:
     for warning in warnings:
         text = re.sub(r"^line\s+(\d+):", r"3d.gdl:L\1", str(warning))
         st.warning(text)
-
-
-def _render_project_activity_log(st) -> None:
-    entries = _project_activity_entries(st.session_state)
-    if not entries:
-        return
-
-    with st.container(height=PROJECT_ACTIVITY_MAX_HEIGHT, border=True):
-        st.caption("项目导入 / 加载记录")
-        for idx, entry in enumerate(reversed(entries)):
-            timestamp = str(entry.get("timestamp", "")).strip()
-            message = str(entry.get("message", "")).strip()
-            if timestamp:
-                st.caption(timestamp)
-            st.markdown(message)
-            if idx < len(entries) - 1:
-                st.divider()
-
-
-def _project_activity_entries(session_state) -> list[dict]:
-    entries = list(session_state.get("project_activity_log") or [])
-    legacy_messages = [
-        {"timestamp": "", "message": str(msg.get("content", ""))}
-        for msg in session_state.get("chat_history", [])
-        if msg.get("role", "assistant") == "assistant"
-        and is_project_activity_message(msg.get("content", ""))
-    ]
-    return (legacy_messages + entries)[-20:]

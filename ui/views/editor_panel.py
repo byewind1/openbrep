@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from typing import Callable
 
+from ui.project_activity import project_activity_entries
 from ui.proposed_preview_controller import clear_pending_preview_state
 
 from openbrep.hsf_project import HSFProject
+
+
+PROJECT_ACTIVITY_MAX_HEIGHT = 180
 
 
 SCRIPT_HELP = {
@@ -103,6 +107,8 @@ def render_script_editor_panel(
                 proj.set_script(script_type, new_code)
                 _clear_preview_state(st.session_state)
 
+    _render_project_activity_log(st)
+
 
 def _clear_preview_state(session_state) -> None:
     session_state.preview_2d_data = None
@@ -110,3 +116,21 @@ def _clear_preview_state(session_state) -> None:
     session_state.preview_warnings = []
     session_state.preview_meta = {"kind": "", "timestamp": ""}
     clear_pending_preview_state(session_state)
+
+
+def _render_project_activity_log(st) -> None:
+    entries = project_activity_entries(st.session_state)
+    if not entries:
+        return
+
+    st.divider()
+    with st.expander(f"导入 / 加载记录（{len(entries)}）", expanded=False):
+        with st.container(height=PROJECT_ACTIVITY_MAX_HEIGHT, border=True):
+            for idx, entry in enumerate(reversed(entries)):
+                timestamp = str(entry.get("timestamp", "")).strip()
+                message = str(entry.get("message", "")).strip()
+                if timestamp:
+                    st.caption(timestamp)
+                st.markdown(message)
+                if idx < len(entries) - 1:
+                    st.divider()
