@@ -13,7 +13,6 @@ def render_chat_panel(
     is_generation_locked_fn: Callable[[object], bool],
     build_chat_script_anchors_fn: Callable[[list[dict]], list[dict]],
     thumb_image_bytes_fn: Callable[[str], bytes | None],
-    save_feedback_fn: Callable[[int, str, str, str], None],
     copyable_chat_text_fn: Callable[[dict], str],
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
     is_bridgeable_explainer_message_fn: Callable[[dict], bool],
@@ -29,7 +28,6 @@ def render_chat_panel(
     _render_chat_history(
         st,
         thumb_image_bytes_fn=thumb_image_bytes_fn,
-        save_feedback_fn=save_feedback_fn,
         copyable_chat_text_fn=copyable_chat_text_fn,
         copy_text_to_system_clipboard_fn=copy_text_to_system_clipboard_fn,
         is_bridgeable_explainer_message_fn=is_bridgeable_explainer_message_fn,
@@ -89,7 +87,6 @@ def _render_chat_history(
     st,
     *,
     thumb_image_bytes_fn: Callable[[str], bytes | None],
-    save_feedback_fn: Callable[[int, str, str, str], None],
     copyable_chat_text_fn: Callable[[dict], str],
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
     is_bridgeable_explainer_message_fn: Callable[[dict], bool],
@@ -122,7 +119,6 @@ def _render_chat_history(
                     st,
                     idx,
                     msg,
-                    save_feedback_fn=save_feedback_fn,
                     copyable_chat_text_fn=copyable_chat_text_fn,
                     copy_text_to_system_clipboard_fn=copy_text_to_system_clipboard_fn,
                     is_bridgeable_explainer_message_fn=is_bridgeable_explainer_message_fn,
@@ -134,20 +130,11 @@ def _render_assistant_message_actions(
     idx: int,
     msg: dict,
     *,
-    save_feedback_fn: Callable[[int, str, str, str], None],
     copyable_chat_text_fn: Callable[[dict], str],
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
     is_bridgeable_explainer_message_fn: Callable[[dict], bool],
 ) -> None:
-    like_col, dislike_col, copy_col, redo_col, action_col = st.columns([1, 1, 1, 1, 8])
-    with like_col:
-        if st.button("👍", key=f"like_{idx}", help="有帮助"):
-            save_feedback_fn(idx, "positive", msg["content"], "")
-            st.toast("已记录 👍", icon="✅")
-    with dislike_col:
-        if st.button("👎", key=f"dislike_{idx}", help="需改进"):
-            st.session_state[f"_show_dislike_{idx}"] = True
-    _render_dislike_form(st, idx, msg, save_feedback_fn=save_feedback_fn)
+    copy_col, redo_col, action_col = st.columns([1, 1, 10])
     with copy_col:
         if st.button("📋", key=f"copy_{idx}", help="复制本条回复"):
             copy_text = copyable_chat_text_fn(msg)
@@ -176,31 +163,6 @@ def _render_assistant_message_actions(
             msg,
             is_bridgeable_explainer_message_fn=is_bridgeable_explainer_message_fn,
         )
-
-
-def _render_dislike_form(st, idx: int, msg: dict, *, save_feedback_fn: Callable[[int, str, str, str], None]) -> None:
-    if not st.session_state.get(f"_show_dislike_{idx}"):
-        return
-
-    with st.container():
-        feedback_text = st.text_area(
-            "描述问题（可选）",
-            key=f"dislike_text_{idx}",
-            placeholder="哪里不对？期望的结果是什么？",
-            height=80,
-            label_visibility="collapsed",
-        )
-        submit_col, cancel_col = st.columns([1, 1])
-        with submit_col:
-            if st.button("📤 提交", key=f"dislike_submit_{idx}", type="primary", width="stretch"):
-                save_feedback_fn(idx, "negative", msg["content"], feedback_text)
-                st.session_state[f"_show_dislike_{idx}"] = False
-                st.toast("已记录 👎，感谢反馈", icon="📝")
-                st.rerun()
-        with cancel_col:
-            if st.button("取消", key=f"dislike_cancel_{idx}", width="stretch"):
-                st.session_state[f"_show_dislike_{idx}"] = False
-                st.rerun()
 
 
 def _render_assistant_primary_action(

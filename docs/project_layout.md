@@ -12,7 +12,7 @@ explicit enough:
 - Importing a `.gsm` creates an HSF directory.
 - Compiling creates a versioned `.gsm`, but does not create a new HSF directory.
 - UI `work_dir` also contains output files, local knowledge, Pro knowledge,
-  license data, feedback, and future project metadata.
+  license data, and future project metadata.
 
 Before implementing revision management, the project/source/output lifecycle
 needs a clear rule set.
@@ -56,7 +56,6 @@ workspace/
   .openbrep/                 # workspace-level metadata
     license_v1.json
     tmp_pro_knowledge/
-  feedback.jsonl
 ```
 
 This is the current compatibility target. v0.7 should not require moving

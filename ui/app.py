@@ -55,7 +55,6 @@ from ui import generation_controls as ui_generation_controls
 from ui import chat_helpers as ui_chat_helpers
 from ui import app_shell as ui_app_shell
 from ui import config_service as ui_config_service
-from ui import feedback_service as ui_feedback_service
 from ui import license_service as ui_license_service
 from ui import local_file_dialog as ui_local_file_dialog
 from ui import object_naming as ui_object_naming
@@ -418,10 +417,6 @@ with st.sidebar:
 
 
 # ── Helper Functions ──────────────────────────────────────
-
-def _save_feedback(msg_idx: int, rating: str, content: str, comment: str = "") -> None:
-    ui_feedback_service.save_feedback(st.session_state.work_dir, msg_idx, rating, content, comment)
-
 
 def _tapir_sync_selection() -> tuple[bool, str]:
     return ui_tapir_controller.tapir_sync_selection(
@@ -1452,7 +1447,6 @@ with col_right:
             is_generation_locked_fn=_is_generation_locked,
             build_chat_script_anchors_fn=_build_chat_script_anchors,
             thumb_image_bytes_fn=_thumb_image_bytes,
-            save_feedback_fn=_save_feedback,
             copyable_chat_text_fn=_copyable_chat_text,
             copy_text_to_system_clipboard_fn=_copy_text_to_system_clipboard,
             is_bridgeable_explainer_message_fn=_is_bridgeable_explainer_message,

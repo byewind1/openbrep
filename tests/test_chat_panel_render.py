@@ -67,7 +67,6 @@ class TestChatPanelRender(unittest.TestCase):
             _render_chat_history(
                 st,
                 thumb_image_bytes_fn=lambda _b64: b"img",
-                save_feedback_fn=lambda *_a, **_k: None,
                 copyable_chat_text_fn=lambda _msg: "",
                 copy_text_to_system_clipboard_fn=lambda _text: (True, "ok"),
                 is_bridgeable_explainer_message_fn=lambda _msg: False,
@@ -90,7 +89,6 @@ class TestChatPanelRender(unittest.TestCase):
             _render_chat_history(
                 st,
                 thumb_image_bytes_fn=lambda _b64: None,
-                save_feedback_fn=lambda *_a, **_k: None,
                 copyable_chat_text_fn=lambda _msg: "",
                 copy_text_to_system_clipboard_fn=lambda _text: (True, "ok"),
                 is_bridgeable_explainer_message_fn=lambda _msg: False,
