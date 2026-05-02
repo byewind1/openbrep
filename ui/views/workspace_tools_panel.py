@@ -14,7 +14,6 @@ def render_workspace_tools_panel(
     tapir_import_ok: bool,
     get_bridge_fn: Callable[[], object],
 ) -> None:
-    st.markdown("### 验证与联动")
     _render_project_action_buttons(st, proj)
     _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
     _render_memory_privacy_panel(st)
@@ -95,7 +94,6 @@ def _render_tapir_controls(st, *, tapir_import_ok: bool, get_bridge_fn: Callable
 
 
 def _render_project_action_buttons(st, proj: HSFProject) -> None:
-    st.markdown("#### 错题本")
     if st.button(
         "🧠 整理错题本",
         width="stretch",
