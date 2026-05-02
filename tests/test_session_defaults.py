@@ -26,7 +26,6 @@ class TestSessionDefaults(unittest.TestCase):
         self.assertEqual(state.project_activity_log, [])
         self.assertFalse(state.confirm_clear_memory)
         self.assertEqual(state.editor_hsf_dir, "")
-        self.assertEqual(state.preview_quality, "fast")
         self.assertIsNone(state.pending_preview_2d_data)
         self.assertIsNone(state.pending_preview_3d_data)
         self.assertIsNone(state.pending_current_preview_2d_data)

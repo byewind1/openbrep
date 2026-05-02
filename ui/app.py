@@ -1354,9 +1354,6 @@ def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
         script_type_2d=ScriptType.SCRIPT_2D,
         script_type_3d=ScriptType.SCRIPT_3D,
         script_type_master=ScriptType.MASTER,
-        strict=bool(st.session_state.get("preview_strict", False)),
-        unknown_command_policy=str(st.session_state.get("preview_unknown_command_policy", "warn") or "warn"),
-        quality=str(st.session_state.get("preview_quality", "fast") or "fast"),
     )
 
 
@@ -1383,9 +1380,6 @@ def _run_pending_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
         script_type_2d=ScriptType.SCRIPT_2D,
         script_type_3d=ScriptType.SCRIPT_3D,
         script_type_master=ScriptType.MASTER,
-        strict=bool(st.session_state.get("preview_strict", False)),
-        unknown_command_policy=str(st.session_state.get("preview_unknown_command_policy", "warn") or "warn"),
-        quality=str(st.session_state.get("preview_quality", "fast") or "fast"),
     )
 
 

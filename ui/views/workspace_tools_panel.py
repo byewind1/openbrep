@@ -66,29 +66,6 @@ def render_preview_workbench(
             else:
                 st.error(msg)
 
-    with st.expander("预览设置"):
-        opt_1, opt_2, opt_3 = st.columns([1.0, 1.2, 1.0])
-        with opt_1:
-            st.checkbox(
-                "严格模式",
-                key="preview_strict",
-                help="开启后遇到策略=error 的未知命令会直接报错停止",
-            )
-        with opt_2:
-            st.selectbox(
-                "未知命令",
-                options=["warn", "ignore", "error"],
-                key="preview_unknown_command_policy",
-                help="未知命令处理策略：告警/忽略/报错",
-            )
-        with opt_3:
-            st.selectbox(
-                "质量",
-                options=["fast", "accurate"],
-                key="preview_quality",
-                help="fast 更快；accurate 细分更高",
-            )
-
     _render_preview_panel(st, render_preview_2d_fn=render_preview_2d_fn, render_preview_3d_fn=render_preview_3d_fn)
     _render_project_activity_log(st)
 
