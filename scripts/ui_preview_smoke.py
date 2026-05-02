@@ -163,7 +163,11 @@ def main() -> int:
                 page.goto(args.url, wait_until="networkidle", timeout=args.timeout_ms)
                 page.wait_for_timeout(1500)
 
-                uploader = page.locator('[data-testid="stFileUploader"]').filter(has_text="📂 导入 gdl / txt / gsm")
+                fallback = page.locator("text=浏览器上传文件（备用）")
+                if fallback.count() > 0:
+                    fallback.first.click()
+                    page.wait_for_timeout(300)
+                uploader = page.locator('[data-testid="stFileUploader"]').filter(has_text="上传 .gdl / .txt / .gsm")
                 uploader.locator('input[type="file"]').set_input_files(str(sample_path))
                 summary["upload_attempted"] = True
                 page.wait_for_timeout(2000)

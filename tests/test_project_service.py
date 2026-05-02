@@ -367,6 +367,108 @@ class TestProjectService(unittest.TestCase):
         self.assertEqual(captured["initial"], "/existing/path")
         self.assertEqual(session_state.editor_hsf_dir, "/existing/path")
 
+    def test_browse_and_open_project_source_loads_selected_hsf_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hsf_dir = Path(tmp) / "Chair"
+            hsf_dir.mkdir()
+            (hsf_dir / "libpartdata.xml").write_text("<LibraryPart/>", encoding="utf-8")
+            session_state = _SessionState(
+                work_dir=tmp,
+                editor_open_path="",
+                editor_hsf_dir="",
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            proj = SimpleNamespace(name="Chair", root=hsf_dir, parameters=[], scripts={})
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: proj,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+                choose_path_fn=lambda _initial: str(hsf_dir),
+            )
+
+            ok, msg = service.browse_and_open_project_source()
+
+            self.assertTrue(ok)
+            self.assertIn("已加载 HSF 项目", msg)
+            self.assertEqual(session_state.editor_open_path, str(hsf_dir))
+            self.assertEqual(session_state.editor_hsf_dir, str(hsf_dir))
+            self.assertEqual(proj.root, hsf_dir.resolve())
+
+    def test_open_project_source_path_imports_supported_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gdl_file = Path(tmp) / "chair.gdl"
+            gdl_file.write_text("BLOCK 1, 1, 1\n", encoding="utf-8")
+            session_state = _SessionState(
+                work_dir=tmp,
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            proj = SimpleNamespace(name="chair", parameters=[], scripts={"3d": "BLOCK 1,1,1"})
+            captured = {}
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda content, name: captured.setdefault("input", (content, name)) and proj,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+            )
+
+            ok, msg = service.open_project_source_path(str(gdl_file))
+
+            self.assertTrue(ok)
+            self.assertIn("已导入 GDL", msg)
+            self.assertEqual(captured["input"], ("BLOCK 1, 1, 1\n", "chair"))
+            self.assertIs(session_state.project, proj)
+            self.assertEqual(session_state.pending_gsm_name, "chair")
+
+    def test_open_project_source_path_rejects_non_hsf_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "not-hsf"
+            folder.mkdir()
+            session_state = _SessionState(
+                work_dir=tmp,
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+            )
+
+            ok, msg = service.open_project_source_path(str(folder))
+
+            self.assertFalse(ok)
+            self.assertIn("不是有效 HSF 项目目录", msg)
+
     def test_handle_hsf_directory_load_rejects_parent_with_multiple_hsf_projects(self):
         with tempfile.TemporaryDirectory() as tmp:
             work_dir = Path(tmp)

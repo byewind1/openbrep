@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Callable
 
 
-def render_welcome(st, *, handle_unified_import_fn: Callable[[object], tuple[bool, str]]) -> None:
+def render_welcome(
+    st,
+    *,
+    handle_unified_import_fn: Callable[[object], tuple[bool, str]],
+    browse_and_open_project_source_fn: Callable[[], tuple[bool, str]] | None = None,
+) -> None:
     st.markdown(
         """
 <div class="welcome-card">
@@ -20,19 +25,35 @@ def render_welcome(st, *, handle_unified_import_fn: Callable[[object], tuple[boo
     st.info("**③ 编译输出**  \nAI 生成代码后自动触发编译。真实编译需在侧边栏配置 LP_XMLConverter 路径。Mock 模式可验证结构，无需安装 ArchiCAD。")
 
     st.divider()
-    st.markdown("#### 或者：导入已有文件")
-    uploaded_file = st.file_uploader(
-        "拖入 .gdl / .txt / .gsm 文件",
-        type=["gdl", "txt", "gsm"],
-        help=".gdl / .txt 直接解析脚本；.gsm 需侧边栏切换为 LP 模式",
-        key="welcome_upload",
-    )
-    if uploaded_file:
-        ok, msg = handle_unified_import_fn(uploaded_file)
-        if not ok:
-            st.error(msg)
-        else:
-            st.rerun()
+    st.markdown("#### 或者：打开已有项目/文件")
+    if browse_and_open_project_source_fn is not None:
+        if st.button(
+            "📂 打开文件或 HSF 文件夹",
+            key="welcome_open_project_source",
+            width="stretch",
+            help="支持 .gdl / .txt / .gsm 文件；选择文件夹时会判断是否为 HSF 项目目录",
+        ):
+            ok, msg = browse_and_open_project_source_fn()
+            if ok:
+                st.rerun()
+            elif msg.startswith("❌"):
+                st.error(msg)
+            else:
+                st.info(msg)
+
+    with st.expander("浏览器上传文件（备用）", expanded=False):
+        uploaded_file = st.file_uploader(
+            "上传 .gdl / .txt / .gsm",
+            type=["gdl", "txt", "gsm"],
+            help=".gdl / .txt 直接解析脚本；.gsm 需侧边栏切换为 LP 模式。浏览器上传无法选择文件夹。",
+            key="welcome_upload",
+        )
+        if uploaded_file:
+            ok, msg = handle_unified_import_fn(uploaded_file)
+            if not ok:
+                st.error(msg)
+            else:
+                st.rerun()
 
     st.divider()
     st.caption("💡 提示：第一条消息无需创建项目，直接描述需求，AI 会自动初始化。")

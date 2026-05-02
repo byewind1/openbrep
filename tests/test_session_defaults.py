@@ -25,6 +25,7 @@ class TestSessionDefaults(unittest.TestCase):
         self.assertEqual(state.chat_history, [])
         self.assertEqual(state.project_activity_log, [])
         self.assertFalse(state.confirm_clear_memory)
+        self.assertEqual(state.editor_open_path, "")
         self.assertEqual(state.editor_hsf_dir, "")
         self.assertIsNone(state.pending_preview_2d_data)
         self.assertIsNone(state.pending_preview_3d_data)

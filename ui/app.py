@@ -543,7 +543,11 @@ def _extract_object_name(text: str) -> str:
 # ── Welcome / Onboarding Panel ────────────────────────────
 
 def show_welcome():
-    ui_welcome_panel.render_welcome(st, handle_unified_import_fn=_handle_unified_import)
+    ui_welcome_panel.render_welcome(
+        st,
+        handle_unified_import_fn=_handle_unified_import,
+        browse_and_open_project_source_fn=_browse_and_open_project_source,
+    )
 
 
 # ── Intent Classification ─────────────────────────────────
@@ -1000,6 +1004,10 @@ def _project_service() -> ui_project_service.ProjectService:
             title="选择 HSF 项目目录",
             initial_dir=initial_dir,
         ),
+        choose_path_fn=lambda initial_dir=None: ui_local_file_dialog.choose_path(
+            title="打开 GDL / GSM 文件或 HSF 项目目录",
+            initial_dir=initial_dir,
+        ),
     )
     service.sync_visible_editor_buffers_fn = lambda project: _sync_visible_editor_buffers(
         project,
@@ -1022,6 +1030,10 @@ def _handle_hsf_directory_load(project_dir: str) -> tuple[bool, str]:
 
 def _browse_and_load_hsf_directory() -> tuple[bool, str]:
     return _project_service().browse_and_load_hsf_directory()
+
+
+def _browse_and_open_project_source() -> tuple[bool, str]:
+    return _project_service().browse_and_open_project_source()
 
 
 
@@ -1379,6 +1391,7 @@ with col_left:
             is_generation_locked_fn=lambda: _is_generation_locked(st.session_state),
             handle_unified_import_fn=_handle_unified_import,
             handle_hsf_directory_load_fn=_handle_hsf_directory_load,
+            browse_and_open_project_source_fn=_browse_and_open_project_source,
             browse_and_load_hsf_directory_fn=_browse_and_load_hsf_directory,
             do_compile_fn=lambda project, gsm_name, instruction: do_compile(
                 project,

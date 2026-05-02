@@ -5,6 +5,16 @@ import tempfile
 from pathlib import Path
 
 
+class _LocalPathUpload:
+    def __init__(self, path: Path):
+        self.path = path
+        self.name = path.name
+        self.size = path.stat().st_size
+
+    def read(self) -> bytes:
+        return self.path.read_bytes()
+
+
 def _existing_hsf_root(proj) -> Path | None:
     raw_root = getattr(proj, "root", None)
     if not raw_root:
@@ -299,3 +309,45 @@ def handle_unified_import(
     if ext == ".gsm":
         proj.save_to_disk()
     return finalize_loaded_project_fn(proj, msg, import_gsm_name)
+
+
+def handle_open_path(
+    source_path: str,
+    *,
+    normalize_pasted_path_fn,
+    load_project_from_disk_fn,
+    import_gsm_fn,
+    parse_gdl_source_fn,
+    derive_gsm_name_from_filename_fn,
+    finalize_loaded_project_fn,
+) -> tuple[bool, str]:
+    raw_path = normalize_pasted_path_fn(source_path)
+    if not raw_path:
+        return False, "❌ 请选择要打开的文件或 HSF 项目目录"
+
+    path = Path(raw_path).expanduser()
+    if not path.exists():
+        return False, f"❌ 路径不存在: {path}"
+
+    if path.is_dir():
+        return handle_hsf_directory_load(
+            str(path),
+            normalize_pasted_path_fn=normalize_pasted_path_fn,
+            load_project_from_disk_fn=load_project_from_disk_fn,
+            finalize_loaded_project_fn=finalize_loaded_project_fn,
+        )
+
+    if not path.is_file():
+        return False, f"❌ 不支持的路径类型: {path}"
+
+    ext = path.suffix.lower()
+    if ext not in {".gdl", ".txt", ".gsm"}:
+        return False, f"❌ 不支持的文件类型: {path.name}。请选择 .gdl、.txt、.gsm 文件，或 HSF 项目目录。"
+
+    return handle_unified_import(
+        _LocalPathUpload(path),
+        import_gsm_fn=import_gsm_fn,
+        parse_gdl_source_fn=parse_gdl_source_fn,
+        derive_gsm_name_from_filename_fn=derive_gsm_name_from_filename_fn,
+        finalize_loaded_project_fn=finalize_loaded_project_fn,
+    )

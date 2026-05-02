@@ -13,6 +13,7 @@ def render_project_tools_panel(
     is_generation_locked_fn: Callable[[], bool],
     handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
+    browse_and_open_project_source_fn: Callable[[], tuple[bool, str]],
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
     do_compile_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
     save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
@@ -24,6 +25,7 @@ def render_project_tools_panel(
         is_generation_locked_fn=is_generation_locked_fn,
         handle_unified_import_fn=handle_unified_import_fn,
         handle_hsf_directory_load_fn=handle_hsf_directory_load_fn,
+        browse_and_open_project_source_fn=browse_and_open_project_source_fn,
         browse_and_load_hsf_directory_fn=browse_and_load_hsf_directory_fn,
     )
     _render_compile_section(
@@ -48,40 +50,42 @@ def _render_project_input_section(
     is_generation_locked_fn: Callable[[], bool],
     handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],  # kept for app/test compatibility
+    browse_and_open_project_source_fn: Callable[[], tuple[bool, str]],
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
 ) -> None:
-    with st.expander("1. 导入 / 打开 HSF 项目", expanded=True):
-        uploaded = st.file_uploader(
-            "📂 导入 gdl / txt / gsm",
-            type=["gdl", "txt", "gsm"],
-            key="editor_import",
-            help=".gdl/.txt → 解析脚本  |  .gsm → LP_XMLConverter 解包",
-            disabled=is_generation_locked_fn(),
-        )
-        if uploaded:
-            file_key = f"{uploaded.name}_{uploaded.size}"
-            if st.session_state._import_key_done != file_key:
-                ok, msg = handle_unified_import_fn(uploaded)
-                if ok:
-                    st.session_state._import_key_done = file_key
-                    st.rerun()
-                else:
-                    st.error(msg)
-
+    with st.expander("1. 打开项目或文件", expanded=True):
         if st.button(
-            "浏览并载入 HSF 项目目录",
-            key="editor_browse_load_hsf",
+            "📂 打开文件或 HSF 文件夹",
+            key="editor_open_project_source",
             disabled=is_generation_locked_fn(),
-            use_container_width=True,
-            help="打开系统目录选择器，选中 HSF 根目录或包含单个 HSF 项目的工作目录后直接载入",
+            width="stretch",
+            help="支持 .gdl / .txt / .gsm 文件；选择文件夹时会判断是否为 HSF 项目目录",
         ):
-            ok, msg = browse_and_load_hsf_directory_fn()
+            ok, msg = browse_and_open_project_source_fn()
             if ok:
                 st.rerun()
             elif msg.startswith("❌"):
                 st.error(msg)
             else:
                 st.info(msg)
+
+        with st.expander("浏览器上传文件（备用）", expanded=False):
+            uploaded = st.file_uploader(
+                "上传 .gdl / .txt / .gsm",
+                type=["gdl", "txt", "gsm"],
+                key="editor_import",
+                help="远程运行或系统选择器不可用时使用；浏览器上传无法选择本地文件夹",
+                disabled=is_generation_locked_fn(),
+            )
+            if uploaded:
+                file_key = f"{uploaded.name}_{uploaded.size}"
+                if st.session_state._import_key_done != file_key:
+                    ok, msg = handle_unified_import_fn(uploaded)
+                    if ok:
+                        st.session_state._import_key_done = file_key
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
 
 def _render_compile_section(

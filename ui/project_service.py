@@ -22,6 +22,7 @@ class ProjectService:
     reset_revision_ui_state_fn: Callable[[object], None] | None = None
     reload_libraries_after_compile_fn: Callable[[], tuple[bool, str] | None] | None = None
     choose_directory_fn: Callable[[str | None], str | None] | None = None
+    choose_path_fn: Callable[[str | None], str | None] | None = None
 
     def do_compile(self, proj, gsm_name: str, instruction: str = "") -> tuple[bool, str]:
         sync_visible_editor_buffers_fn = getattr(self, "sync_visible_editor_buffers_fn", None)
@@ -80,6 +81,44 @@ class ProjectService:
 
         self.session_state.editor_hsf_dir = selected
         return self.handle_hsf_directory_load(selected)
+
+    def open_project_source_path(self, source_path: str) -> tuple[bool, str]:
+        import_gsm_fn = self.import_gsm_override_fn or self.import_gsm
+        return project_io.handle_open_path(
+            source_path,
+            normalize_pasted_path_fn=view_models.normalize_pasted_path,
+            load_project_from_disk_fn=self.load_project_from_disk_fn,
+            import_gsm_fn=import_gsm_fn,
+            parse_gdl_source_fn=self.parse_gdl_source_fn,
+            derive_gsm_name_from_filename_fn=view_models.derive_gsm_name_from_filename,
+            finalize_loaded_project_fn=self.finalize_loaded_project,
+        )
+
+    def browse_and_open_project_source(self) -> tuple[bool, str]:
+        chooser = self.choose_path_fn or self.choose_directory_fn
+        if chooser is None:
+            return False, "❌ 当前运行环境不支持本地文件/目录选择，请使用下方浏览器上传文件入口"
+
+        initial_dir = ""
+        if hasattr(self.session_state, "get"):
+            initial_dir = (
+                self.session_state.get("editor_open_path", "")
+                or self.session_state.get("editor_hsf_dir", "")
+                or self.session_state.get("work_dir", "")
+            )
+        else:
+            initial_dir = (
+                getattr(self.session_state, "editor_open_path", "")
+                or getattr(self.session_state, "editor_hsf_dir", "")
+                or getattr(self.session_state, "work_dir", "")
+            )
+        selected = chooser(initial_dir or None)
+        if not selected:
+            return False, "已取消打开"
+
+        self.session_state.editor_open_path = selected
+        self.session_state.editor_hsf_dir = selected
+        return self.open_project_source_path(selected)
 
     def handle_unified_import(self, uploaded_file) -> tuple[bool, str]:
         import_gsm_fn = self.import_gsm_override_fn or self.import_gsm
