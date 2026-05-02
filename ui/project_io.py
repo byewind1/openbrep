@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -40,6 +41,30 @@ def _format_compile_result(*, result, output_gsm: str, compiler_mode: str, hsf_d
     return False, f"❌ **编译失败**\n\n```\n{result.stderr[:500]}\n```"
 
 
+def _max_existing_gsm_revision_in_dir(proj_name: str, output_dir: str | Path) -> int:
+    out_dir = Path(output_dir).expanduser()
+    if not out_dir.exists():
+        return 0
+
+    pattern = re.compile(rf"^{re.escape(proj_name)}_v(\d+)\.gsm$", re.IGNORECASE)
+    max_rev = 0
+    for path in out_dir.glob(f"{proj_name}_v*.gsm"):
+        match = pattern.match(path.name)
+        if not match:
+            continue
+        try:
+            max_rev = max(max_rev, int(match.group(1)))
+        except ValueError:
+            continue
+    return max_rev
+
+
+def _versioned_gsm_path_in_dir(proj_name: str, output_dir: str | Path, revision: int) -> str:
+    out_dir = Path(output_dir).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return str(out_dir / f"{proj_name}_v{revision}.gsm")
+
+
 def _prepare_project_for_compile(proj, gsm_name: str, work_dir: str) -> None:
     project_name = str(getattr(proj, "name", "") or "").strip()
     output_name = str(gsm_name or "").strip()
@@ -73,6 +98,7 @@ def do_compile(
     versioned_gsm_path_fn,
     get_compiler_fn,
     compiler_mode: str,
+    output_dir: str | None = None,
     format_compile_result_fn=None,
 ) -> tuple:
     format_compile_result_fn = format_compile_result_fn or _format_compile_result
@@ -82,10 +108,19 @@ def do_compile(
         compile_name = gsm_name or proj.name
 
         requested_rev = int(session_state.get("script_revision", 0)) or 1
-        compile_rev = safe_compile_revision_fn(compile_name, work_dir, requested_rev)
+        if output_dir:
+            compile_rev = max(
+                requested_rev,
+                _max_existing_gsm_revision_in_dir(compile_name, output_dir) + 1,
+            )
+        else:
+            compile_rev = safe_compile_revision_fn(compile_name, work_dir, requested_rev)
         if compile_rev != requested_rev:
             session_state.script_revision = compile_rev
-        output_gsm = versioned_gsm_path_fn(compile_name, work_dir, revision=compile_rev)
+        if output_dir:
+            output_gsm = _versioned_gsm_path_in_dir(compile_name, output_dir, compile_rev)
+        else:
+            output_gsm = versioned_gsm_path_fn(compile_name, work_dir, revision=compile_rev)
         hsf_dir = proj.save_to_disk()
         result = get_compiler_fn().hsf2libpart(str(hsf_dir), output_gsm)
 

@@ -23,10 +23,11 @@ class ProjectService:
     reset_revision_ui_state_fn: Callable[[object], None] | None = None
     reload_libraries_after_compile_fn: Callable[[], tuple[bool, str] | None] | None = None
     choose_directory_fn: Callable[[str | None], str | None] | None = None
+    choose_output_directory_fn: Callable[[str | None], str | None] | None = None
     choose_file_fn: Callable[[str | None], str | None] | None = None
     choose_path_fn: Callable[[str | None], str | None] | None = None
 
-    def do_compile(self, proj, gsm_name: str, instruction: str = "") -> tuple[bool, str]:
+    def do_compile(self, proj, gsm_name: str, instruction: str = "", output_dir: str | None = None) -> tuple[bool, str]:
         sync_visible_editor_buffers_fn = getattr(self, "sync_visible_editor_buffers_fn", None)
         if sync_visible_editor_buffers_fn is not None:
             try:
@@ -43,6 +44,7 @@ class ProjectService:
             versioned_gsm_path_fn=view_models.versioned_gsm_path,
             get_compiler_fn=self.get_compiler_fn,
             compiler_mode=self.compiler_mode,
+            output_dir=output_dir,
         )
         if ok and not self.compiler_mode.startswith("Mock") and self.reload_libraries_after_compile_fn:
             reload_result = self.reload_libraries_after_compile_fn()
@@ -148,6 +150,13 @@ class ProjectService:
         selected_path = Path(selected).expanduser()
         self.session_state.editor_hsf_dir = str(selected_path.parent)
         return self.open_project_source_path(selected)
+
+    def choose_compile_output_dir(self) -> str | None:
+        if self.choose_output_directory_fn is None:
+            return None
+
+        default_output_dir = str(Path(self.session_state.work_dir).expanduser() / "output")
+        return self.choose_output_directory_fn(default_output_dir) or None
 
     def handle_unified_import(self, uploaded_file) -> tuple[bool, str]:
         import_gsm_fn = self.import_gsm_override_fn or self.import_gsm

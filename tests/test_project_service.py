@@ -50,6 +50,38 @@ class TestProjectService(unittest.TestCase):
             self.assertEqual(len(session_state.compile_log), 1)
             self.assertTrue(session_state.compile_log[0]["success"])
 
+    def test_do_compile_uses_selected_output_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "gsm-out"
+            session_state = _SessionState(
+                work_dir=tmp,
+                compile_log=[],
+                script_revision=1,
+            )
+            compiler_result = SimpleNamespace(success=True, stderr="", stdout="", exit_code=0)
+            captured = {}
+
+            def _hsf2libpart(_hsf_dir, output_gsm):
+                captured["output_gsm"] = output_gsm
+                return compiler_result
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: SimpleNamespace(hsf2libpart=_hsf2libpart),
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+            )
+            proj = SimpleNamespace(name="Chair", save_to_disk=lambda: Path(tmp) / "Chair")
+
+            ok, _msg = service.do_compile(proj, "Chair", "compile instruction", output_dir=str(output_dir))
+
+            self.assertTrue(ok)
+            self.assertEqual(captured["output_gsm"], str(output_dir / "Chair_v1.gsm"))
+
     def test_do_compile_reloads_archicad_libraries_after_real_compile_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             session_state = _SessionState(

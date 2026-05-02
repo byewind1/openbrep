@@ -123,6 +123,43 @@ class TestProjectIOCompile(unittest.TestCase):
             self.assertEqual(captured["output_gsm"], str(workspace_dir / "Chair_Client_v1.gsm"))
             self.assertIn(f"HSF 源目录: `{hsf_root.resolve()}`", msg)
 
+    def test_do_compile_can_write_to_selected_output_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace_dir = Path(tmp) / "workspace"
+            custom_output_dir = Path(tmp) / "selected-output"
+            custom_output_dir.mkdir()
+            (custom_output_dir / "Chair_v1.gsm").write_text("existing", encoding="utf-8")
+            session_state = _SessionState(
+                work_dir=str(workspace_dir),
+                compile_log=[],
+                script_revision=1,
+            )
+            proj = HSFProject.create_new("Chair", work_dir=str(workspace_dir))
+            compiler_result = SimpleNamespace(success=True, stderr="", stdout="", exit_code=0)
+            captured = {}
+
+            def _hsf2libpart(hsf_dir, output_gsm):
+                captured["hsf_dir"] = hsf_dir
+                captured["output_gsm"] = output_gsm
+                return compiler_result
+
+            ok, msg = project_io.do_compile(
+                proj,
+                "Chair",
+                "manual compile",
+                session_state=session_state,
+                safe_compile_revision_fn=lambda name, work, req: req,
+                versioned_gsm_path_fn=lambda name, work, revision: str(Path(work) / "output" / f"{name}_v{revision}.gsm"),
+                get_compiler_fn=lambda: SimpleNamespace(hsf2libpart=_hsf2libpart),
+                compiler_mode="LP",
+                output_dir=str(custom_output_dir),
+            )
+
+            self.assertTrue(ok)
+            self.assertEqual(captured["output_gsm"], str(custom_output_dir / "Chair_v2.gsm"))
+            self.assertEqual(session_state.script_revision, 2)
+            self.assertIn(str(custom_output_dir / "Chair_v2.gsm"), msg)
+
 
 if __name__ == "__main__":
     unittest.main()
