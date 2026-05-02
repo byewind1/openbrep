@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
@@ -824,7 +825,9 @@ class GDLAgent:
                 current_file,
             )
 
-        return changes
+        if changes:
+            return changes
+        return _parse_unlabeled_code_response(response)
 
     def _apply_changes(self, project: HSFProject, changes: dict[str, str]) -> None:
         """Apply parsed changes to HSFProject."""
@@ -898,6 +901,69 @@ class GDLAgent:
 
 
 # Regex for [FILE: path] headers
-_FILE_HEADER_RE = __import__("re").compile(
-    r'^\[FILE:\s*(.+?)\]\s*$', __import__("re").IGNORECASE
+_FILE_HEADER_RE = re.compile(r'^\[FILE:\s*(.+?)\]\s*$', re.IGNORECASE)
+
+
+_PARAM_TYPE_RE = re.compile(
+    r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
+    r'\s+\w+\s*=',
+    re.IGNORECASE | re.MULTILINE,
 )
+
+
+def _parse_unlabeled_code_response(response: str) -> dict[str, str]:
+    """Fallback for LLM replies that contain code fences but omit [FILE: ...]."""
+    changes: dict[str, str] = {}
+    code_block_re = re.compile(r"```[a-zA-Z]*[ \t]*\n(.*?)```", re.DOTALL)
+    for match in code_block_re.finditer(response or ""):
+        block = match.group(1).strip()
+        if not block:
+            continue
+        path = _infer_unlabeled_code_path(block)
+        if _looks_like_supported_code(block, path):
+            changes[path] = sanitize_llm_script_output(block, path)
+
+    if changes:
+        return changes
+
+    candidate = (response or "").strip()
+    path = _infer_unlabeled_code_path(candidate)
+    if _looks_like_supported_code(candidate, path):
+        return {path: sanitize_llm_script_output(candidate, path)}
+    return {}
+
+
+def _infer_unlabeled_code_path(block: str) -> str:
+    block_up = (block or "").upper()
+    if len(_PARAM_TYPE_RE.findall(block or "")) >= 2:
+        return "paramlist.xml"
+    if re.search(r"\bPROJECT2\b|\bRECT2\b|\bPOLY2\b", block_up):
+        return "scripts/2d.gdl"
+    if re.search(r"\bVALUES\b|\bLOCK\b", block_up) and not re.search(r"\bBLOCK\b", block_up):
+        return "scripts/vl.gdl"
+    if re.search(r"\bGLOB_\w+\b", block_up):
+        return "scripts/1d.gdl"
+    if re.search(
+        r"\bUI_CURRENT\b|\bDEFINE\s+STYLE\b|\bUI_DIALOG\b|\bUI_PAGE\b|\bUI_INFIELD\b|"
+        r"\bUI_OUTFIELD\b|\bUI_BUTTON\b|\bUI_GROUPBOX\b|\bUI_LISTFIELD\b|\bUI_SEPARATOR\b",
+        block_up,
+    ):
+        return "scripts/ui.gdl"
+    return "scripts/3d.gdl"
+
+
+def _looks_like_supported_code(block: str, path: str) -> bool:
+    if not (block or "").strip():
+        return False
+    if path == "paramlist.xml":
+        return len(_PARAM_TYPE_RE.findall(block or "")) >= 2
+    return _looks_like_gdl_script(block)
+
+
+def _looks_like_gdl_script(text: str) -> bool:
+    up = (text or "").upper()
+    command_hits = len(re.findall(
+        r"(?m)^\s*(BLOCK|ADD|DEL|MATERIAL|FOR|NEXT|IF|ENDIF|END|PROJECT2|RECT2|POLY2|VALUES|PARAMETERS|TOLER)\b",
+        up,
+    ))
+    return command_hits >= 3 and bool(re.search(r"(?m)^\s*END\s*$", up))

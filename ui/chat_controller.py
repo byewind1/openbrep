@@ -356,7 +356,7 @@ def run_normal_text_path(
                         proj_current,
                         st.container(),
                         effective_gsm,
-                        False,
+                        True,
                     )
                     render_assistant_block(st, msg)
                 else:
@@ -379,7 +379,7 @@ def run_normal_text_path(
                             proj_current,
                             st.container(),
                             effective_gsm,
-                            False,
+                            True,
                         )
                         render_assistant_block(st, msg)
 
@@ -464,7 +464,7 @@ def run_vision_path(
                     joined_text,
                     proj_v,
                     st.container(),
-                    False,
+                    True,
                 )
             else:
                 debug_req = joined_text or "请根据这张截图定位并修复当前项目中的问题。"
@@ -475,7 +475,7 @@ def run_vision_path(
                     proj_v,
                     st.container(),
                     session_state.pending_gsm_name or proj_v.name,
-                    False,
+                    True,
                     vision_b64,
                     final_mime,
                 )

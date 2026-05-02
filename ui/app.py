@@ -736,7 +736,7 @@ def _handle_elicitation_route(user_input: str, gdl_obj_name: str) -> tuple[str, 
             proj_current,
             st.container(),
             gsm_name=effective_gsm,
-            auto_apply=False,
+            auto_apply=True,
         ), False
 
     if ea.state == ElicitationState.SPEC_READY:

@@ -67,7 +67,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         self.assertTrue(render_user.called)
         self.assertTrue(render_assistant.called)
 
-    def test_run_normal_text_path_stages_gdl_changes_even_for_first_create(self):
+    def test_run_normal_text_path_auto_applies_gdl_changes_for_first_create(self):
         session_state = _State(
             chat_history=[],
             project=None,
@@ -101,7 +101,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertTrue(should_rerun)
-        self.assertFalse(captured["auto_apply"])
+        self.assertTrue(captured["auto_apply"])
 
     def test_run_normal_text_path_force_debug_prefixes_generation_input(self):
         session_state = _State(
@@ -216,7 +216,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         self.assertTrue(render_user.called)
         self.assertTrue(render_assistant.called)
 
-    def test_run_vision_path_stages_generated_changes_even_for_first_image_create(self):
+    def test_run_vision_path_auto_applies_generated_changes_for_first_image_create(self):
         session_state = _State(
             chat_history=[],
             project=None,
@@ -253,7 +253,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertTrue(should_rerun)
-        self.assertFalse(captured["auto_apply"])
+        self.assertTrue(captured["auto_apply"])
 
 
 if __name__ == "__main__":
