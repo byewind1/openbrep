@@ -15,8 +15,8 @@ def render_workspace_tools_panel(
     get_bridge_fn: Callable[[], object],
 ) -> None:
     _render_project_action_buttons(st, proj)
-    _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
     _render_memory_privacy_panel(st)
+    _render_tapir_controls(st, tapir_import_ok=tapir_import_ok, get_bridge_fn=get_bridge_fn)
 
 
 def render_preview_workbench(
