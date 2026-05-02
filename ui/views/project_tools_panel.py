@@ -63,7 +63,7 @@ def _render_project_input_section(
             st.rerun()
         elif msg.startswith("❌"):
             st.error(msg)
-        else:
+        elif msg:
             st.info(msg)
 
     if st.button(
@@ -78,7 +78,7 @@ def _render_project_input_section(
             st.rerun()
         elif msg.startswith("❌"):
             st.error(msg)
-        else:
+        elif msg:
             st.info(msg)
 
 

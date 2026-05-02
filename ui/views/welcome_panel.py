@@ -38,7 +38,7 @@ def render_welcome(
                 st.rerun()
             elif msg.startswith("❌"):
                 st.error(msg)
-            else:
+            elif msg:
                 st.info(msg)
 
     if browse_and_load_hsf_directory_fn is not None:
@@ -53,7 +53,7 @@ def render_welcome(
                 st.rerun()
             elif msg.startswith("❌"):
                 st.error(msg)
-            else:
+            elif msg:
                 st.info(msg)
 
     st.divider()

@@ -79,7 +79,7 @@ class ProjectService:
             initial_dir = getattr(self.session_state, "editor_hsf_dir", "")
         selected = self.choose_directory_fn(initial_dir or None)
         if not selected:
-            return False, "已取消选择 HSF 项目目录"
+            return False, ""
 
         self.session_state.editor_hsf_dir = selected
         return self.handle_hsf_directory_load(selected)
@@ -116,7 +116,7 @@ class ProjectService:
             )
         selected = chooser(initial_dir or None)
         if not selected:
-            return False, "已取消打开"
+            return False, ""
 
         self.session_state.editor_open_path = selected
         self.session_state.editor_hsf_dir = selected
@@ -142,7 +142,7 @@ class ProjectService:
             )
         selected = chooser(initial_dir or None)
         if not selected:
-            return False, "已取消打开文件"
+            return False, ""
 
         self.session_state.editor_open_path = selected
         selected_path = Path(selected).expanduser()

@@ -336,7 +336,7 @@ class TestProjectService(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("不支持本地目录选择", msg)
 
-    def test_browse_and_load_hsf_directory_returns_cancel_message_without_mutating_input(self):
+    def test_browse_and_load_hsf_directory_returns_empty_message_without_mutating_input(self):
         session_state = _SessionState(
             work_dir="/tmp/workspace",
             editor_hsf_dir="/existing/path",
@@ -363,7 +363,7 @@ class TestProjectService(unittest.TestCase):
         ok, msg = service.browse_and_load_hsf_directory()
 
         self.assertFalse(ok)
-        self.assertEqual(msg, "已取消选择 HSF 项目目录")
+        self.assertEqual(msg, "")
         self.assertEqual(captured["initial"], "/existing/path")
         self.assertEqual(session_state.editor_hsf_dir, "/existing/path")
 
