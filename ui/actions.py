@@ -6,6 +6,7 @@ from typing import Any
 from openbrep.hsf_project import HSFProject
 from openbrep.revisions import copy_project_metadata
 from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
+from ui.project_activity import record_project_activity
 from ui.proposed_preview_controller import clear_pending_preview_state
 
 
@@ -114,5 +115,5 @@ def finalize_loaded_project(
     session_state.script_revision = 0
     reset_tapir_p0_state()
     bump_main_editor_version()
-    session_state.chat_history.append({"role": "assistant", "content": msg})
+    record_project_activity(session_state, msg)
     return (True, msg)

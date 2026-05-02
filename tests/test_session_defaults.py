@@ -23,6 +23,7 @@ class TestSessionDefaults(unittest.TestCase):
         self.assertEqual(state.project, None)
         self.assertEqual(state.work_dir, "/tmp/openbrep-workspace")
         self.assertEqual(state.chat_history, [])
+        self.assertEqual(state.project_activity_log, [])
         self.assertFalse(state.confirm_clear_memory)
         self.assertEqual(state.editor_hsf_dir, "")
         self.assertEqual(state.preview_quality, "fast")

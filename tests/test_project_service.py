@@ -225,6 +225,9 @@ class TestProjectService(unittest.TestCase):
             self.assertEqual(proj.work_dir, hsf_dir.resolve().parent)
             self.assertEqual(session_state.pending_gsm_name, "Chair")
             self.assertEqual(session_state.pending_diffs, {})
+            self.assertEqual(session_state.chat_history, [])
+            self.assertEqual(len(session_state.project_activity_log), 1)
+            self.assertIn("已加载 HSF 项目", session_state.project_activity_log[0]["message"])
             self.assertNotIn("revision_notice", session_state)
             self.assertNotIn("revision_project_old_notice", session_state)
             self.assertIsNone(session_state.preview_2d_data)
@@ -433,6 +436,9 @@ class TestProjectService(unittest.TestCase):
 
             self.assertTrue(ok)
             self.assertIs(session_state.project, proj)
+            self.assertEqual(session_state.chat_history, [])
+            self.assertEqual(len(session_state.project_activity_log), 1)
+            self.assertIn("ok", session_state.project_activity_log[0]["message"])
 
 
 if __name__ == "__main__":

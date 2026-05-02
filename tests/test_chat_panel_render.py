@@ -76,7 +76,7 @@ class TestChatPanelRender(unittest.TestCase):
         self.assertTrue(render_user.called)
         self.assertTrue(render_assistant.called)
 
-    def test_import_status_message_renders_in_fixed_height_container(self):
+    def test_import_status_message_is_omitted_from_chat_history(self):
         st = _DummySt(
             [
                 {
@@ -86,16 +86,17 @@ class TestChatPanelRender(unittest.TestCase):
             ]
         )
 
-        _render_chat_history(
-            st,
-            thumb_image_bytes_fn=lambda _b64: None,
-            save_feedback_fn=lambda *_a, **_k: None,
-            copyable_chat_text_fn=lambda _msg: "",
-            copy_text_to_system_clipboard_fn=lambda _text: (True, "ok"),
-            is_bridgeable_explainer_message_fn=lambda _msg: False,
-        )
+        with patch("ui.views.chat_panel.render_assistant_block") as render_assistant:
+            _render_chat_history(
+                st,
+                thumb_image_bytes_fn=lambda _b64: None,
+                save_feedback_fn=lambda *_a, **_k: None,
+                copyable_chat_text_fn=lambda _msg: "",
+                copy_text_to_system_clipboard_fn=lambda _text: (True, "ok"),
+                is_bridgeable_explainer_message_fn=lambda _msg: False,
+            )
 
-        self.assertIn({"height": 180, "border": True}, st.container_calls)
+        self.assertFalse(render_assistant.called)
 
 
 if __name__ == "__main__":

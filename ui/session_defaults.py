@@ -26,6 +26,7 @@ def ensure_session_defaults(session_state, *, work_dir_default: str | None = Non
         "adopted_msg_index": None,
         "_debug_mode_active": None,
         "chat_history": [],
+        "project_activity_log": [],
         "work_dir": work_dir_default or str(Path.home() / "openbrep-workspace"),
         "agent_running": False,
         "generation_status": "idle",
