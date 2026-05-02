@@ -52,7 +52,6 @@ def _render_project_input_section(
     browse_and_open_project_file_fn: Callable[[], tuple[bool, str]],
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
 ) -> None:
-    st.markdown("#### 1. 打开")
     if st.button(
         "📄 打开文件",
         key="editor_open_project_file",
@@ -124,7 +123,5 @@ def _render_compile_section(
 
     if st.session_state.compile_result is not None:
         ok, msg = st.session_state.compile_result
-        if ok:
-            st.success(msg)
-        else:
+        if not ok:
             st.error(msg)
