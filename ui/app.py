@@ -545,7 +545,8 @@ def _extract_object_name(text: str) -> str:
 def show_welcome():
     ui_welcome_panel.render_welcome(
         st,
-        browse_and_open_project_source_fn=_browse_and_open_project_source,
+        browse_and_open_project_file_fn=_browse_and_open_project_file,
+        browse_and_load_hsf_directory_fn=_browse_and_load_hsf_directory,
     )
 
 
@@ -1003,8 +1004,12 @@ def _project_service() -> ui_project_service.ProjectService:
             title="选择 HSF 项目目录",
             initial_dir=initial_dir,
         ),
+        choose_file_fn=lambda initial_dir=None: ui_local_file_dialog.choose_file(
+            title="打开 GDL / GSM 文件",
+            initial_dir=initial_dir,
+        ),
         choose_path_fn=lambda initial_dir=None: ui_local_file_dialog.choose_path(
-            title="打开 GDL / GSM 文件或 HSF 项目目录",
+            title="打开 GDL / GSM 文件",
             initial_dir=initial_dir,
         ),
     )
@@ -1033,6 +1038,10 @@ def _browse_and_load_hsf_directory() -> tuple[bool, str]:
 
 def _browse_and_open_project_source() -> tuple[bool, str]:
     return _project_service().browse_and_open_project_source()
+
+
+def _browse_and_open_project_file() -> tuple[bool, str]:
+    return _project_service().browse_and_open_project_file()
 
 
 
@@ -1389,7 +1398,7 @@ with col_left:
             proj_now,
             is_generation_locked_fn=lambda: _is_generation_locked(st.session_state),
             handle_hsf_directory_load_fn=_handle_hsf_directory_load,
-            browse_and_open_project_source_fn=_browse_and_open_project_source,
+            browse_and_open_project_file_fn=_browse_and_open_project_file,
             browse_and_load_hsf_directory_fn=_browse_and_load_hsf_directory,
             do_compile_fn=lambda project, gsm_name, instruction: do_compile(
                 project,

@@ -169,7 +169,9 @@ def main() -> int:
                 uploader = page.locator('[data-testid="stFileUploader"]').filter(has_text="上传 .gdl / .txt / .gsm")
                 summary["uploader_present"] = uploader.count() > 0
                 if not summary["uploader_present"]:
-                    summary["native_open_present"] = page.get_by_role("button", name="📂 打开文件或 HSF 文件夹").count() > 0
+                    has_file_open = page.get_by_role("button", name="📄 打开文件").count() > 0
+                    has_hsf_open = page.get_by_role("button", name="📂 打开 HSF 项目").count() > 0
+                    summary["native_open_present"] = has_file_open and has_hsf_open
                     summary["import_flow_skipped"] = bool(summary["native_open_present"])
                     page.screenshot(path=str(out_dir / "native-open.png"), full_page=True)
                 else:

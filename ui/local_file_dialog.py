@@ -5,16 +5,21 @@ import subprocess
 from pathlib import Path
 
 
-def choose_path(*, title: str = "打开文件或 HSF 项目目录", initial_dir: str | None = None) -> str | None:
+def choose_file(*, title: str = "打开 GDL / GSM 文件", initial_dir: str | None = None) -> str | None:
     """
-    Open a native chooser that can return either a file path or a folder path.
+    Open a native file chooser for local Streamlit sessions.
 
     This is intended for local OpenBrep sessions where the Streamlit process
     runs on the same machine as the browser.
     """
     if platform.system() == "Darwin":
-        return _choose_path_macos(title=title, initial_dir=initial_dir)
-    return _choose_path_tk(title=title, initial_dir=initial_dir)
+        return _choose_file_macos(title=title, initial_dir=initial_dir)
+    return _choose_file_tk(title=title, initial_dir=initial_dir)
+
+
+def choose_path(*, title: str = "打开 GDL / GSM 文件", initial_dir: str | None = None) -> str | None:
+    """Compatibility wrapper for older callers that opened project source files."""
+    return choose_file(title=title, initial_dir=initial_dir)
 
 
 def choose_directory(*, title: str = "选择 HSF 项目目录", initial_dir: str | None = None) -> str | None:
@@ -35,7 +40,8 @@ def _choose_directory_macos(*, title: str, initial_dir: str | None = None) -> st
     if initial_dir:
         initial_path = Path(initial_dir).expanduser()
         if initial_path.exists():
-            script += f' default location POSIX file "{_escape_applescript(str(initial_path))}"'
+            default_location = initial_path if initial_path.is_dir() else initial_path.parent
+            script += f' default location POSIX file "{_escape_applescript(str(default_location))}"'
     script += ")"
 
     try:
@@ -55,8 +61,8 @@ def _choose_directory_macos(*, title: str, initial_dir: str | None = None) -> st
     return selected or None
 
 
-def _choose_path_macos(*, title: str, initial_dir: str | None = None) -> str | None:
-    script = _choose_path_macos_script(title=title, initial_dir=initial_dir)
+def _choose_file_macos(*, title: str, initial_dir: str | None = None) -> str | None:
+    script = _choose_file_macos_script(title=title, initial_dir=initial_dir)
 
     try:
         result = subprocess.run(
@@ -75,7 +81,7 @@ def _choose_path_macos(*, title: str, initial_dir: str | None = None) -> str | N
     return selected or None
 
 
-def _choose_path_macos_script(*, title: str, initial_dir: str | None = None) -> str:
+def _choose_file_macos_script(*, title: str, initial_dir: str | None = None) -> str:
     default_location_arg = ""
     if initial_dir:
         initial_path = Path(initial_dir).expanduser()
@@ -83,18 +89,10 @@ def _choose_path_macos_script(*, title: str, initial_dir: str | None = None) -> 
             default_location = initial_path if initial_path.is_dir() else initial_path.parent
             default_location_arg = f' default location POSIX file "{_escape_applescript(str(default_location))}"'
 
-    lines = [
-        "use scripting additions",
-        f'set sourceKind to button returned of (display dialog "{_escape_applescript(title)}" '
-        'buttons {"取消", "HSF 文件夹", "文件"} default button "文件" cancel button "取消")',
-        'if sourceKind is "文件" then',
-        f'    return POSIX path of (choose file with prompt "{_escape_applescript(title)}"{default_location_arg})',
-        'else if sourceKind is "HSF 文件夹" then',
-        f'    return POSIX path of (choose folder with prompt "{_escape_applescript(title)}"{default_location_arg})',
-        "end if",
-        'return ""',
-    ]
-    return "\n".join(lines)
+    return (
+        "use scripting additions\n"
+        f'return POSIX path of (choose file with prompt "{_escape_applescript(title)}"{default_location_arg})'
+    )
 
 
 def _choose_directory_tk(*, title: str, initial_dir: str | None = None) -> str | None:
@@ -117,7 +115,7 @@ def _choose_directory_tk(*, title: str, initial_dir: str | None = None) -> str |
     return selected or None
 
 
-def _choose_path_tk(*, title: str, initial_dir: str | None = None) -> str | None:
+def _choose_file_tk(*, title: str, initial_dir: str | None = None) -> str | None:
     try:
         import tkinter as tk
         from tkinter import filedialog

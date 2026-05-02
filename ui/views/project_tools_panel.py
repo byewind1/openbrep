@@ -12,7 +12,7 @@ def render_project_tools_panel(
     *,
     is_generation_locked_fn: Callable[[], bool],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
-    browse_and_open_project_source_fn: Callable[[], tuple[bool, str]],
+    browse_and_open_project_file_fn: Callable[[], tuple[bool, str]],
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
     do_compile_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
     save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
@@ -23,7 +23,7 @@ def render_project_tools_panel(
         st,
         is_generation_locked_fn=is_generation_locked_fn,
         handle_hsf_directory_load_fn=handle_hsf_directory_load_fn,
-        browse_and_open_project_source_fn=browse_and_open_project_source_fn,
+        browse_and_open_project_file_fn=browse_and_open_project_file_fn,
         browse_and_load_hsf_directory_fn=browse_and_load_hsf_directory_fn,
     )
     _render_compile_section(
@@ -47,24 +47,39 @@ def _render_project_input_section(
     *,
     is_generation_locked_fn: Callable[[], bool],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],  # kept for app/test compatibility
-    browse_and_open_project_source_fn: Callable[[], tuple[bool, str]],
+    browse_and_open_project_file_fn: Callable[[], tuple[bool, str]],
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
 ) -> None:
-    with st.expander("1. 打开项目或文件", expanded=True):
-        if st.button(
-            "📂 打开文件或 HSF 文件夹",
-            key="editor_open_project_source",
-            disabled=is_generation_locked_fn(),
-            width="stretch",
-            help="支持 .gdl / .txt / .gsm 文件；选择文件夹时会判断是否为 HSF 项目目录",
-        ):
-            ok, msg = browse_and_open_project_source_fn()
-            if ok:
-                st.rerun()
-            elif msg.startswith("❌"):
-                st.error(msg)
-            else:
-                st.info(msg)
+    st.markdown("#### 1. 打开")
+    if st.button(
+        "📄 打开文件",
+        key="editor_open_project_file",
+        disabled=is_generation_locked_fn(),
+        width="stretch",
+        help="支持 .gdl / .txt / .gsm 文件",
+    ):
+        ok, msg = browse_and_open_project_file_fn()
+        if ok:
+            st.rerun()
+        elif msg.startswith("❌"):
+            st.error(msg)
+        else:
+            st.info(msg)
+
+    if st.button(
+        "📂 打开 HSF 项目",
+        key="editor_open_hsf_project",
+        disabled=is_generation_locked_fn(),
+        width="stretch",
+        help="选择 HSF 项目目录",
+    ):
+        ok, msg = browse_and_load_hsf_directory_fn()
+        if ok:
+            st.rerun()
+        elif msg.startswith("❌"):
+            st.error(msg)
+        else:
+            st.info(msg)
 
 
 def _render_compile_section(

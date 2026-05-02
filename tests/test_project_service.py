@@ -405,6 +405,42 @@ class TestProjectService(unittest.TestCase):
             self.assertEqual(session_state.editor_hsf_dir, str(hsf_dir))
             self.assertEqual(proj.root, hsf_dir.resolve())
 
+    def test_browse_and_open_project_file_imports_selected_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gdl_file = Path(tmp) / "chair.gdl"
+            gdl_file.write_text("BLOCK 1, 1, 1\n", encoding="utf-8")
+            session_state = _SessionState(
+                work_dir=tmp,
+                editor_open_path="",
+                editor_hsf_dir="",
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            proj = SimpleNamespace(name="chair", parameters=[], scripts={"3d": "BLOCK 1,1,1"})
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: proj,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+                choose_file_fn=lambda _initial: str(gdl_file),
+            )
+
+            ok, msg = service.browse_and_open_project_file()
+
+            self.assertTrue(ok)
+            self.assertIn("已导入 GDL", msg)
+            self.assertEqual(session_state.editor_open_path, str(gdl_file))
+            self.assertEqual(session_state.editor_hsf_dir, str(gdl_file.parent))
+
     def test_open_project_source_path_imports_supported_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             gdl_file = Path(tmp) / "chair.gdl"

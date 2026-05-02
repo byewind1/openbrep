@@ -6,7 +6,8 @@ from typing import Callable
 def render_welcome(
     st,
     *,
-    browse_and_open_project_source_fn: Callable[[], tuple[bool, str]] | None = None,
+    browse_and_open_project_file_fn: Callable[[], tuple[bool, str]] | None = None,
+    browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]] | None = None,
 ) -> None:
     st.markdown(
         """
@@ -25,14 +26,29 @@ def render_welcome(
 
     st.divider()
     st.markdown("#### 或者：打开已有项目/文件")
-    if browse_and_open_project_source_fn is not None:
+    if browse_and_open_project_file_fn is not None:
         if st.button(
-            "📂 打开文件或 HSF 文件夹",
-            key="welcome_open_project_source",
+            "📄 打开文件",
+            key="welcome_open_project_file",
             width="stretch",
-            help="支持 .gdl / .txt / .gsm 文件；选择文件夹时会判断是否为 HSF 项目目录",
+            help="支持 .gdl / .txt / .gsm 文件",
         ):
-            ok, msg = browse_and_open_project_source_fn()
+            ok, msg = browse_and_open_project_file_fn()
+            if ok:
+                st.rerun()
+            elif msg.startswith("❌"):
+                st.error(msg)
+            else:
+                st.info(msg)
+
+    if browse_and_load_hsf_directory_fn is not None:
+        if st.button(
+            "📂 打开 HSF 项目",
+            key="welcome_open_hsf_project",
+            width="stretch",
+            help="选择 HSF 项目目录",
+        ):
+            ok, msg = browse_and_load_hsf_directory_fn()
             if ok:
                 st.rerun()
             elif msg.startswith("❌"):
