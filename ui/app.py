@@ -43,7 +43,6 @@ from ui import state as ui_state
 from ui import view_models as ui_view_models
 from ui import preview_controller as ui_preview_controller
 from ui import proposed_preview_controller as ui_proposed_preview_controller
-from ui import pending_compile_controller as ui_pending_compile_controller
 from ui import project_service as ui_project_service
 from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
@@ -823,8 +822,8 @@ def run_agent_generate(
     """
     Unified chat+generate entry point.
 
-    auto_apply=True  → immediately write changes to project.
-    auto_apply=False → queue changes in pending_diffs; UI shows confirmation banner in chat column.
+    auto_apply is kept for compatibility; generation results are applied directly
+    to the current HSF project and reflected in the editor.
 
     debug_mode (intent-based) controls whether all scripts are injected into LLM context
     and whether LLM is allowed to reply with plain-text analysis in addition to code.
@@ -1357,49 +1356,6 @@ def _run_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
     )
 
 
-def _run_pending_preview(proj: HSFProject, target: str) -> tuple[bool, str]:
-    if proj is not None:
-        _sync_visible_editor_buffers(proj, int(st.session_state.get("editor_version", 0)))
-    return ui_proposed_preview_controller.run_pending_preview(
-        proj,
-        st.session_state.get("pending_diffs") or {},
-        target,
-        script_map=_SCRIPT_MAP,
-        parse_paramlist_text_fn=_parse_paramlist_text,
-        preview_param_values_fn=_preview_param_values,
-        collect_preview_prechecks_fn=_collect_preview_prechecks,
-        dedupe_keep_order_fn=_dedupe_keep_order,
-        set_pending_preview_2d_data_fn=lambda data: st.session_state.__setitem__("pending_preview_2d_data", data),
-        set_pending_preview_3d_data_fn=lambda data: st.session_state.__setitem__("pending_preview_3d_data", data),
-        set_pending_preview_warnings_fn=lambda warns: st.session_state.__setitem__("pending_preview_warnings", warns),
-        set_pending_preview_meta_fn=lambda meta: st.session_state.__setitem__("pending_preview_meta", meta),
-        set_pending_current_preview_2d_data_fn=lambda data: st.session_state.__setitem__("pending_current_preview_2d_data", data),
-        set_pending_current_preview_3d_data_fn=lambda data: st.session_state.__setitem__("pending_current_preview_3d_data", data),
-        set_pending_preview_diff_summary_fn=lambda summary: st.session_state.__setitem__("pending_preview_diff_summary", summary),
-        deepcopy_fn=deepcopy,
-        script_type_2d=ScriptType.SCRIPT_2D,
-        script_type_3d=ScriptType.SCRIPT_3D,
-        script_type_master=ScriptType.MASTER,
-    )
-
-
-def _run_pending_compile_preflight(proj: HSFProject) -> tuple[bool, str]:
-    if proj is not None:
-        _sync_visible_editor_buffers(proj, int(st.session_state.get("editor_version", 0)))
-    return ui_pending_compile_controller.run_pending_compile_preflight(
-        proj,
-        st.session_state.get("pending_diffs") or {},
-        gsm_name=st.session_state.get("pending_gsm_name") or getattr(proj, "name", None),
-        script_map=_SCRIPT_MAP,
-        parse_paramlist_text_fn=_parse_paramlist_text,
-        get_compiler_fn=get_compiler,
-        compiler_mode=compiler_mode,
-        set_pending_compile_result_fn=lambda result: st.session_state.__setitem__("pending_compile_result", result),
-        set_pending_compile_meta_fn=lambda meta: st.session_state.__setitem__("pending_compile_meta", meta),
-        deepcopy_fn=deepcopy,
-    )
-
-
 # ══════════════════════════════════════════════════════════
 #  Main Layout: Project tools | Editor | AI assistant
 # ══════════════════════════════════════════════════════════
@@ -1493,7 +1449,6 @@ with col_right:
     with st.container(height=820, border=False):
         _chat_panel_payload = ui_chat_panel.render_chat_panel(
             st,
-            script_map=_SCRIPT_MAP,
             is_generation_locked_fn=_is_generation_locked,
             build_chat_script_anchors_fn=_build_chat_script_anchors,
             thumb_image_bytes_fn=_thumb_image_bytes,
@@ -1505,20 +1460,7 @@ with col_right:
             capture_last_project_snapshot_fn=_capture_last_project_snapshot,
             apply_scripts_to_project_fn=_apply_scripts_to_project,
             bump_main_editor_version_fn=_bump_main_editor_version,
-            parse_paramlist_text_fn=_parse_paramlist_text,
-            restore_last_project_snapshot_fn=_restore_last_project_snapshot,
             validate_chat_image_size_fn=_validate_chat_image_size,
-            check_gdl_script_fn=check_gdl_script,
-            run_pending_preview_fn=_run_pending_preview,
-            run_pending_compile_fn=_run_pending_compile_preflight,
-            render_preview_2d_fn=_render_preview_2d,
-            render_preview_3d_fn=_render_preview_3d,
-            do_compile_fn=lambda project, gsm_name, instruction: do_compile(
-                project,
-                gsm_name=gsm_name,
-                instruction=instruction,
-            ),
-            save_revision_fn=ui_revision_controller.save_current_project_revision,
         )
     # 聊天编排下沉到 controller，app 只负责把依赖接进去
     ui_chat_controller.process_chat_turn(

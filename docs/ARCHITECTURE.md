@@ -106,7 +106,6 @@ Domain core
 
 Output
   ├─ editable HSF project directory
-  ├─ pending diffs for human confirmation
   ├─ revision metadata
   └─ compiled .gsm in workspace/output/
 ```
@@ -139,8 +138,8 @@ Rules:
 - `paramlist.xml` and `scripts/*.gdl` must be treated as one source unit.
 - Compiling must not create a new source directory.
 - Importing `.gsm` may create a new stable HSF project directory.
-- Modifying an object updates the current HSF project directory or produces
-  pending diffs for review.
+- Modifying an object updates the current HSF project directory directly, with
+  revision metadata providing traceability.
 
 See also: [project_layout.md](project_layout.md)
 
@@ -293,7 +292,7 @@ Owns:
 - Vision route setup.
 - Vision generation lifecycle integration.
 - Image error classification.
-- Applying generated scripts or pending diffs.
+- Applying generated scripts.
 
 Do not merge this back into `generation_service.py` until the image path has
 dedicated tests for real-world UI behavior.
@@ -339,15 +338,14 @@ If the name exists, current behavior creates an imported copy suffix.
 
 ### Modify
 
-Modification updates the current HSF project or produces pending diffs:
+Modification updates the current HSF project:
 
 ```text
 auto_apply=True
   → write scripts/params immediately
 
 auto_apply=False
-  → session_state.pending_diffs
-  → user confirms write
+  → legacy-compatible call path; generation plans still apply directly
 ```
 
 ### Compile
@@ -384,7 +382,7 @@ Generation result handling:
 
 - `TaskPipeline.execute()` returns a task result.
 - `build_generation_result_plan()` converts result to an application plan.
-- `ui/actions.py` applies the plan to current project or pending review state.
+- `ui/actions.py` applies the plan to current project.
 - `ui/view_models.py` formats replies for the chat surface.
 
 ## Session State Contract
@@ -397,8 +395,6 @@ Important keys:
 project
 work_dir
 chat_history
-pending_diffs
-pending_ai_label
 pending_gsm_name
 script_revision
 editor_version

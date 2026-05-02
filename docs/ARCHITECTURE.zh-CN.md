@@ -100,7 +100,6 @@ Domain Core
 
 输出
   ├─ 可编辑 HSF 项目目录
-  ├─ 等待人工确认的 pending diffs
   ├─ revision 元数据
   └─ workspace/output/ 下的编译 GSM
 ```
@@ -133,7 +132,7 @@ workspace/
 - `paramlist.xml` 与 `scripts/*.gdl` 必须作为同一个源单元处理。
 - 编译不能创建新的 HSF 源目录。
 - 导入 `.gsm` 可以创建新的稳定 HSF 项目目录。
-- 修改对象时，要么更新当前 HSF 项目，要么生成 pending diffs 等待确认。
+- 修改对象时直接更新当前 HSF 项目，并通过 revision 元数据保留可追溯性。
 
 相关文档：[project_layout.md](project_layout.md)
 
@@ -277,7 +276,7 @@ workspace/
 - Vision 路由准备。
 - Vision 生成生命周期接入。
 - 图片错误分类。
-- 应用生成脚本或 pending diffs。
+- 应用生成脚本。
 
 在图片路径有更完整真实 UI 测试前，不要急着把它合并进 `generation_service.py`。
 
@@ -319,15 +318,14 @@ workspace/ObjectName/
 
 ### 修改
 
-修改会更新当前 HSF 项目或生成 pending diffs：
+修改会更新当前 HSF 项目：
 
 ```text
 auto_apply=True
   → 立即写入 scripts/params
 
 auto_apply=False
-  → session_state.pending_diffs
-  → 用户确认写入
+  → 兼容旧调用，但生成计划仍按直接写入处理
 ```
 
 ### 编译
@@ -362,7 +360,7 @@ otherwise                     → CREATE
 
 - `TaskPipeline.execute()` 返回 task result。
 - `build_generation_result_plan()` 将结果转成应用计划。
-- `ui/actions.py` 将计划应用到当前项目或 pending review。
+- `ui/actions.py` 将计划应用到当前项目。
 - `ui/view_models.py` 格式化聊天回复。
 
 ## Session State 合约
@@ -375,8 +373,6 @@ UI 是有状态应用。`session_state` 应视为公开应用合约。
 project
 work_dir
 chat_history
-pending_diffs
-pending_ai_label
 pending_gsm_name
 script_revision
 editor_version

@@ -38,13 +38,6 @@ def apply_generation_plan(
         clear_pending_preview_state(session_state)
         if gsm_name:
             session_state.pending_gsm_name = gsm_name
-    elif plan.mode == "pending_review":
-        session_state.pending_diffs = script_map
-        session_state.pending_ai_label = plan.label
-        session_state.compile_result = None
-        clear_pending_preview_state(session_state)
-        if gsm_name:
-            session_state.pending_gsm_name = gsm_name
 
     code_blocks = []
     for block in plan.code_blocks:

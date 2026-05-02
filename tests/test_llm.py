@@ -126,9 +126,9 @@ class TestRunAgentGenerateResultPlan(unittest.TestCase):
         )
         fake_plan = MagicMock(
             has_changes=True,
-            mode="pending_review",
+            mode="auto_apply",
             label="脚本 [3D]",
-            reply_prefix="🤖 **AI 已生成 脚本 [3D]** — 请在下方确认是否写入编辑器。\n\n",
+            reply_prefix="✏️ **已写入 脚本 [3D]** — 可直接「🔧 编译」\n\n",
             code_blocks=[{
                 "path": "scripts/3d.gdl",
                 "label": "3D",
@@ -160,7 +160,7 @@ class TestRunAgentGenerateResultPlan(unittest.TestCase):
                                     )
 
         mock_build_plan.assert_called_once()
-        self.assertIn("AI 已生成", reply)
+        self.assertIn("已写入", reply)
         self.assertIn("```gdl", reply)
 
 

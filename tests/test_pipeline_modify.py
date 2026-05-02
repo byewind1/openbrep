@@ -489,7 +489,7 @@ class TestGenerationResultPlan(unittest.TestCase):
         self.assertIn("脚本 [3D, 2D]", plan.label)
         self.assertTrue(plan.reply_prefix.startswith("✏️"))
 
-    def test_pending_review_plan_when_auto_apply_false(self):
+    def test_generation_plan_for_legacy_auto_apply_false_still_writes_directly(self):
         from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan
 
         result = TaskResult(
@@ -502,9 +502,9 @@ class TestGenerationResultPlan(unittest.TestCase):
         plan = build_generation_result_plan(result, auto_apply=False, gsm_name="chair")
 
         self.assertTrue(plan.has_changes)
-        self.assertEqual(plan.mode, "pending_review")
+        self.assertEqual(plan.mode, "auto_apply")
         self.assertIn("脚本 [3D]", plan.label)
-        self.assertTrue(plan.reply_prefix.startswith("🤖"))
+        self.assertTrue(plan.reply_prefix.startswith("✏️"))
 
     def test_paramlist_plan_counts_parameters(self):
         from openbrep.runtime.pipeline import TaskResult, build_generation_result_plan

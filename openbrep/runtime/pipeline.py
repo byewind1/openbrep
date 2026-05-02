@@ -1013,18 +1013,13 @@ def build_generation_result_plan(
         }
         for path, content in result.scripts.items()
     ]
-    if auto_apply:
-        reply_prefix = f"✏️ **已写入 {label}** — 可直接「🔧 编译」\n\n"
-        mode = "auto_apply"
-    else:
-        reply_prefix = f"🤖 **AI 已生成 {label}** — 请在下方确认是否写入编辑器。\n\n"
-        mode = "pending_review"
+    reply_prefix = f"✏️ **已写入 {label}** — 可直接「🔧 编译」\n\n"
 
     return GenerationResultPlan(
         has_changes=True,
         changed_files=changed_files,
         label=label,
-        mode=mode,
+        mode="auto_apply",
         code_blocks=code_blocks,
         reply_prefix=reply_prefix,
     )
