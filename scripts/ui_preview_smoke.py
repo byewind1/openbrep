@@ -147,6 +147,9 @@ def main() -> int:
         "three_canvas_status": "",
         "plotly_canvas_detected": False,
         "warnings_contains_tube": False,
+        "native_open_present": False,
+        "uploader_present": False,
+        "import_flow_skipped": False,
         "warning_texts": [],
         "errors": [],
     }
@@ -163,64 +166,66 @@ def main() -> int:
                 page.goto(args.url, wait_until="networkidle", timeout=args.timeout_ms)
                 page.wait_for_timeout(1500)
 
-                fallback = page.locator("text=浏览器上传文件（备用）")
-                if fallback.count() > 0:
-                    fallback.first.click()
-                    page.wait_for_timeout(300)
                 uploader = page.locator('[data-testid="stFileUploader"]').filter(has_text="上传 .gdl / .txt / .gsm")
-                uploader.locator('input[type="file"]').set_input_files(str(sample_path))
-                summary["upload_attempted"] = True
-                page.wait_for_timeout(2000)
+                summary["uploader_present"] = uploader.count() > 0
+                if not summary["uploader_present"]:
+                    summary["native_open_present"] = page.get_by_role("button", name="📂 打开文件或 HSF 文件夹").count() > 0
+                    summary["import_flow_skipped"] = bool(summary["native_open_present"])
+                    page.screenshot(path=str(out_dir / "native-open.png"), full_page=True)
+                else:
+                    uploader.locator('input[type="file"]').set_input_files(str(sample_path))
+                    summary["upload_attempted"] = True
+                    page.wait_for_timeout(2000)
 
-                if page.locator("text=已导入").count() > 0 or page.locator("text=导入成功").count() > 0:
-                    summary["import_success_seen"] = True
+                    if page.locator("text=已导入").count() > 0 or page.locator("text=导入成功").count() > 0:
+                        summary["import_success_seen"] = True
 
-                # Ensure imported script actually reached editor.
-                _click_tab(page, "3D", prefer_index=0)
-                editor_text = _collect_ace_text(page)
-                if "TUBE" in editor_text.upper() and "BLOCK" in editor_text.upper():
-                    summary["tube_in_editor"] = True
+                    # Ensure imported script actually reached editor.
+                    _click_tab(page, "3D", prefer_index=0)
+                    editor_text = _collect_ace_text(page)
+                    if "TUBE" in editor_text.upper() and "BLOCK" in editor_text.upper():
+                        summary["tube_in_editor"] = True
 
-                # Trigger 3D preview.
-                page.get_by_role("button", name="🧊 预览 3D").first.click()
-                page.wait_for_timeout(1800)
-                summary["preview3d_clicked"] = True
-                summary["preview_header_3d_seen"] = page.locator("text=最新预览：3D").count() > 0
-                _click_tab(page, "3D", prefer_last=True)
-                three_canvas = _detect_three_canvas(page)
-                summary["three_canvas_detected"] = three_canvas["detected"]
-                summary["three_canvas_nonblank"] = three_canvas["nonblank"]
-                summary["three_canvas_status"] = three_canvas["status"]
+                    # Trigger 3D preview.
+                    page.get_by_role("button", name="🧊 预览 3D").first.click()
+                    page.wait_for_timeout(1800)
+                    summary["preview3d_clicked"] = True
+                    summary["preview_header_3d_seen"] = page.locator("text=最新预览：3D").count() > 0
+                    _click_tab(page, "3D", prefer_last=True)
+                    three_canvas = _detect_three_canvas(page)
+                    summary["three_canvas_detected"] = three_canvas["detected"]
+                    summary["three_canvas_nonblank"] = three_canvas["nonblank"]
+                    summary["three_canvas_status"] = three_canvas["status"]
 
-                # Read warning tab.
-                _click_tab(page, "Warnings", prefer_last=True)
-                warnings: list[str] = []
-                alert_blocks = page.locator('[data-testid="stAlertContainer"]')
-                for i in range(min(30, alert_blocks.count())):
-                    txt = alert_blocks.nth(i).inner_text().strip()
-                    if txt:
-                        warnings.append(txt)
-                summary["warning_texts"] = warnings
-                summary["warnings_contains_tube"] = any("TUBE" in w.upper() for w in warnings)
+                    # Read warning tab.
+                    _click_tab(page, "Warnings", prefer_last=True)
+                    warnings: list[str] = []
+                    alert_blocks = page.locator('[data-testid="stAlertContainer"]')
+                    for i in range(min(30, alert_blocks.count())):
+                        txt = alert_blocks.nth(i).inner_text().strip()
+                        if txt:
+                            warnings.append(txt)
+                    summary["warning_texts"] = warnings
+                    summary["warnings_contains_tube"] = any("TUBE" in w.upper() for w in warnings)
 
-                # Trigger 2D preview.
-                page.get_by_role("button", name="👁️ 预览 2D").first.click()
-                page.wait_for_timeout(1800)
-                summary["preview2d_clicked"] = True
-                summary["preview_header_2d_seen"] = page.locator("text=最新预览：2D").count() > 0
+                    # Trigger 2D preview.
+                    page.get_by_role("button", name="👁️ 预览 2D").first.click()
+                    page.wait_for_timeout(1800)
+                    summary["preview2d_clicked"] = True
+                    summary["preview_header_2d_seen"] = page.locator("text=最新预览：2D").count() > 0
 
-                # Open preview 3D tab (second group usually index=1) and detect plotly.
-                _click_tab(page, "3D", prefer_index=1)
-                summary["plotly_canvas_detected"] = page.locator(".js-plotly-plot").count() > 0
+                    # Open preview 3D tab (second group usually index=1) and detect plotly.
+                    _click_tab(page, "3D", prefer_index=1)
+                    summary["plotly_canvas_detected"] = page.locator(".js-plotly-plot").count() > 0
 
-                # Artifacts
-                page.screenshot(path=str(out_dir / "full.png"), full_page=True)
-                if _click_tab(page, "2D", prefer_index=1):
-                    page.screenshot(path=str(out_dir / "preview2d.png"), full_page=True)
-                if _click_tab(page, "3D", prefer_index=1):
-                    page.screenshot(path=str(out_dir / "preview3d.png"), full_page=True)
-                if _click_tab(page, "Warnings", prefer_last=True):
-                    page.screenshot(path=str(out_dir / "warnings.png"), full_page=True)
+                    # Artifacts
+                    page.screenshot(path=str(out_dir / "full.png"), full_page=True)
+                    if _click_tab(page, "2D", prefer_index=1):
+                        page.screenshot(path=str(out_dir / "preview2d.png"), full_page=True)
+                    if _click_tab(page, "3D", prefer_index=1):
+                        page.screenshot(path=str(out_dir / "preview3d.png"), full_page=True)
+                    if _click_tab(page, "Warnings", prefer_last=True):
+                        page.screenshot(path=str(out_dir / "warnings.png"), full_page=True)
 
             except Exception as exc:
                 summary["errors"].append(str(exc))
@@ -238,17 +243,20 @@ def main() -> int:
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"Artifacts: {out_dir}")
 
-    required_true = [
-        "upload_attempted",
-        "tube_in_editor",
-        "preview3d_clicked",
-        "preview2d_clicked",
-        "preview_header_3d_seen",
-        "preview_header_2d_seen",
-        "three_canvas_detected",
-        "three_canvas_nonblank",
-        "warnings_contains_tube",
-    ]
+    if summary.get("import_flow_skipped"):
+        required_true = ["native_open_present"]
+    else:
+        required_true = [
+            "upload_attempted",
+            "tube_in_editor",
+            "preview3d_clicked",
+            "preview2d_clicked",
+            "preview_header_3d_seen",
+            "preview_header_2d_seen",
+            "three_canvas_detected",
+            "three_canvas_nonblank",
+            "warnings_contains_tube",
+        ]
     failed = [k for k in required_true if not summary.get(k)]
     if summary.get("errors") or failed:
         if failed:

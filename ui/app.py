@@ -545,7 +545,6 @@ def _extract_object_name(text: str) -> str:
 def show_welcome():
     ui_welcome_panel.render_welcome(
         st,
-        handle_unified_import_fn=_handle_unified_import,
         browse_and_open_project_source_fn=_browse_and_open_project_source,
     )
 
@@ -1389,7 +1388,6 @@ with col_left:
             st,
             proj_now,
             is_generation_locked_fn=lambda: _is_generation_locked(st.session_state),
-            handle_unified_import_fn=_handle_unified_import,
             handle_hsf_directory_load_fn=_handle_hsf_directory_load,
             browse_and_open_project_source_fn=_browse_and_open_project_source,
             browse_and_load_hsf_directory_fn=_browse_and_load_hsf_directory,

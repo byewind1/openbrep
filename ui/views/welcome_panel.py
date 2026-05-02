@@ -6,7 +6,6 @@ from typing import Callable
 def render_welcome(
     st,
     *,
-    handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     browse_and_open_project_source_fn: Callable[[], tuple[bool, str]] | None = None,
 ) -> None:
     st.markdown(
@@ -40,20 +39,6 @@ def render_welcome(
                 st.error(msg)
             else:
                 st.info(msg)
-
-    with st.expander("浏览器上传文件（备用）", expanded=False):
-        uploaded_file = st.file_uploader(
-            "上传 .gdl / .txt / .gsm",
-            type=["gdl", "txt", "gsm"],
-            help=".gdl / .txt 直接解析脚本；.gsm 需侧边栏切换为 LP 模式。浏览器上传无法选择文件夹。",
-            key="welcome_upload",
-        )
-        if uploaded_file:
-            ok, msg = handle_unified_import_fn(uploaded_file)
-            if not ok:
-                st.error(msg)
-            else:
-                st.rerun()
 
     st.divider()
     st.caption("💡 提示：第一条消息无需创建项目，直接描述需求，AI 会自动初始化。")

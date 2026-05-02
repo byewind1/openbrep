@@ -11,7 +11,6 @@ def render_project_tools_panel(
     proj: HSFProject,
     *,
     is_generation_locked_fn: Callable[[], bool],
-    handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],
     browse_and_open_project_source_fn: Callable[[], tuple[bool, str]],
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
@@ -23,7 +22,6 @@ def render_project_tools_panel(
     _render_project_input_section(
         st,
         is_generation_locked_fn=is_generation_locked_fn,
-        handle_unified_import_fn=handle_unified_import_fn,
         handle_hsf_directory_load_fn=handle_hsf_directory_load_fn,
         browse_and_open_project_source_fn=browse_and_open_project_source_fn,
         browse_and_load_hsf_directory_fn=browse_and_load_hsf_directory_fn,
@@ -48,7 +46,6 @@ def _render_project_input_section(
     st,
     *,
     is_generation_locked_fn: Callable[[], bool],
-    handle_unified_import_fn: Callable[[object], tuple[bool, str]],
     handle_hsf_directory_load_fn: Callable[[str], tuple[bool, str]],  # kept for app/test compatibility
     browse_and_open_project_source_fn: Callable[[], tuple[bool, str]],
     browse_and_load_hsf_directory_fn: Callable[[], tuple[bool, str]],
@@ -68,24 +65,6 @@ def _render_project_input_section(
                 st.error(msg)
             else:
                 st.info(msg)
-
-        with st.expander("浏览器上传文件（备用）", expanded=False):
-            uploaded = st.file_uploader(
-                "上传 .gdl / .txt / .gsm",
-                type=["gdl", "txt", "gsm"],
-                key="editor_import",
-                help="远程运行或系统选择器不可用时使用；浏览器上传无法选择本地文件夹",
-                disabled=is_generation_locked_fn(),
-            )
-            if uploaded:
-                file_key = f"{uploaded.name}_{uploaded.size}"
-                if st.session_state._import_key_done != file_key:
-                    ok, msg = handle_unified_import_fn(uploaded)
-                    if ok:
-                        st.session_state._import_key_done = file_key
-                        st.rerun()
-                    else:
-                        st.error(msg)
 
 
 def _render_compile_section(

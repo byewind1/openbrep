@@ -97,7 +97,7 @@ class ProjectService:
     def browse_and_open_project_source(self) -> tuple[bool, str]:
         chooser = self.choose_path_fn or self.choose_directory_fn
         if chooser is None:
-            return False, "❌ 当前运行环境不支持本地文件/目录选择，请使用下方浏览器上传文件入口"
+            return False, "❌ 当前运行环境不支持本地文件/目录选择，请在本机桌面环境运行 OpenBrep"
 
         initial_dir = ""
         if hasattr(self.session_state, "get"):

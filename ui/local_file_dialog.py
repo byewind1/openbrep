@@ -56,13 +56,7 @@ def _choose_directory_macos(*, title: str, initial_dir: str | None = None) -> st
 
 
 def _choose_path_macos(*, title: str, initial_dir: str | None = None) -> str | None:
-    script = f'POSIX path of (choose file or folder with prompt "{_escape_applescript(title)}"'
-    if initial_dir:
-        initial_path = Path(initial_dir).expanduser()
-        if initial_path.exists():
-            default_location = initial_path if initial_path.is_dir() else initial_path.parent
-            script += f' default location POSIX file "{_escape_applescript(str(default_location))}"'
-    script += ")"
+    script = _choose_path_macos_script(title=title, initial_dir=initial_dir)
 
     try:
         result = subprocess.run(
@@ -79,6 +73,41 @@ def _choose_path_macos(*, title: str, initial_dir: str | None = None) -> str | N
         return None
     selected = result.stdout.strip()
     return selected or None
+
+
+def _choose_path_macos_script(*, title: str, initial_dir: str | None = None) -> str:
+    initial_path_line = ""
+    if initial_dir:
+        initial_path = Path(initial_dir).expanduser()
+        if initial_path.exists():
+            default_location = initial_path if initial_path.is_dir() else initial_path.parent
+            initial_path_line = (
+                f'setDirectoryURL:(current application\'s NSURL\'s fileURLWithPath:"'
+                f'{_escape_applescript(str(default_location))}")'
+            )
+
+    lines = [
+        'use framework "AppKit"',
+        'use framework "Foundation"',
+        "use scripting additions",
+        "set panel to current application's NSOpenPanel's openPanel()",
+        "panel's setCanChooseFiles:true",
+        "panel's setCanChooseDirectories:true",
+        "panel's setAllowsMultipleSelection:false",
+        f'panel\'s setMessage:"{_escape_applescript(title)}"',
+        'panel\'s setPrompt:"打开"',
+    ]
+    if initial_path_line:
+        lines.append(f"panel's {initial_path_line}")
+    lines.extend([
+        "set resultCode to panel's runModal()",
+        "if resultCode = (current application's NSModalResponseOK) then",
+        "    set selectedURL to panel's URLs()'s firstObject()",
+        "    return (selectedURL's |path|()) as text",
+        "end if",
+        'return ""',
+    ])
+    return "\n".join(lines)
 
 
 def _choose_directory_tk(*, title: str, initial_dir: str | None = None) -> str | None:
