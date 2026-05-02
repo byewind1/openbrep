@@ -76,37 +76,24 @@ def _choose_path_macos(*, title: str, initial_dir: str | None = None) -> str | N
 
 
 def _choose_path_macos_script(*, title: str, initial_dir: str | None = None) -> str:
-    initial_path_line = ""
+    default_location_arg = ""
     if initial_dir:
         initial_path = Path(initial_dir).expanduser()
         if initial_path.exists():
             default_location = initial_path if initial_path.is_dir() else initial_path.parent
-            initial_path_line = (
-                f'setDirectoryURL:(current application\'s NSURL\'s fileURLWithPath:"'
-                f'{_escape_applescript(str(default_location))}")'
-            )
+            default_location_arg = f' default location POSIX file "{_escape_applescript(str(default_location))}"'
 
     lines = [
-        'use framework "AppKit"',
-        'use framework "Foundation"',
         "use scripting additions",
-        "set panel to current application's NSOpenPanel's openPanel()",
-        "panel's setCanChooseFiles:true",
-        "panel's setCanChooseDirectories:true",
-        "panel's setAllowsMultipleSelection:false",
-        f'panel\'s setMessage:"{_escape_applescript(title)}"',
-        'panel\'s setPrompt:"打开"',
-    ]
-    if initial_path_line:
-        lines.append(f"panel's {initial_path_line}")
-    lines.extend([
-        "set resultCode to panel's runModal()",
-        "if resultCode = (current application's NSModalResponseOK) then",
-        "    set selectedURL to panel's URLs()'s firstObject()",
-        "    return (selectedURL's |path|()) as text",
+        f'set sourceKind to button returned of (display dialog "{_escape_applescript(title)}" '
+        'buttons {"取消", "HSF 文件夹", "文件"} default button "文件" cancel button "取消")',
+        'if sourceKind is "文件" then',
+        f'    return POSIX path of (choose file with prompt "{_escape_applescript(title)}"{default_location_arg})',
+        'else if sourceKind is "HSF 文件夹" then',
+        f'    return POSIX path of (choose folder with prompt "{_escape_applescript(title)}"{default_location_arg})',
         "end if",
         'return ""',
-    ])
+    ]
     return "\n".join(lines)
 
 
