@@ -1466,23 +1466,25 @@ with col_mid:
             render_preview_3d_fn=_render_preview_3d,
         )
         st.divider()
-        ui_editor_panel.render_script_editor_panel(
-            st,
-            proj_now,
-            script_map=_SCRIPT_MAP,
-            editor_version=_ev,
-            ace_available=_ACE_AVAILABLE,
-            st_ace_fn=st_ace if _ACE_AVAILABLE else None,
-            main_editor_state_key_fn=_main_editor_state_key,
-            fullscreen_editor_dialog_fn=_fullscreen_editor_dialog,
-        )
-        st.divider()
-        ui_parameter_panel.render_parameter_panel(
-            st,
-            proj_now,
-            render_tapir_inspector_fn=_render_tapir_inspector_panel,
-            render_tapir_param_workbench_fn=_render_tapir_param_workbench_panel,
-        )
+        workbench_tab_script, workbench_tab_params = st.tabs(["脚本编辑", "对象参数"])
+        with workbench_tab_script:
+            ui_editor_panel.render_script_editor_panel(
+                st,
+                proj_now,
+                script_map=_SCRIPT_MAP,
+                editor_version=_ev,
+                ace_available=_ACE_AVAILABLE,
+                st_ace_fn=st_ace if _ACE_AVAILABLE else None,
+                main_editor_state_key_fn=_main_editor_state_key,
+                fullscreen_editor_dialog_fn=_fullscreen_editor_dialog,
+            )
+        with workbench_tab_params:
+            ui_parameter_panel.render_parameter_panel(
+                st,
+                proj_now,
+                render_tapir_inspector_fn=_render_tapir_inspector_panel,
+                render_tapir_param_workbench_fn=_render_tapir_param_workbench_panel,
+            )
 
 
 # ── Right: AI Chat panel ──────────────────────────────────

@@ -51,6 +51,7 @@ def render_script_editor_panel(
     st_ace_fn,
     main_editor_state_key_fn: Callable[[str, int], str],
     fullscreen_editor_dialog_fn: Callable[[object, str, str], None],
+    editor_height: int = 420,
 ) -> None:
     st.markdown("### GDL 脚本编辑")
     script_tabs = st.tabs([label for _, _, label in script_map])
@@ -73,7 +74,7 @@ def render_script_editor_panel(
                     value=current_code,
                     language="fortran",
                     theme="monokai",
-                    height=280,
+                    height=editor_height,
                     font_size=13,
                     tab_size=2,
                     show_gutter=True,
@@ -93,7 +94,7 @@ def render_script_editor_panel(
                 new_code = st.text_area(
                     label,
                     value=current_code,
-                    height=280,
+                    height=editor_height,
                     key=editor_key,
                     label_visibility="collapsed",
                 ) or ""
