@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from ui.views.project_tools_panel import _render_hsf_save_section
+from ui.views.project_tools_panel import _render_compile_section, _render_hsf_save_section
 
 
 class _State(dict):
@@ -29,6 +29,7 @@ class _FakeStreamlit:
         self.toasts = []
         self.errors = []
         self.dialog_titles = []
+        self.rerun_called = False
 
     def subheader(self, *_args, **_kwargs):
         return None
@@ -61,7 +62,16 @@ class _FakeStreamlit:
         self.errors.append(msg)
 
     def rerun(self):
-        return None
+        self.rerun_called = True
+
+    def spinner(self, *_args, **_kwargs):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 class TestProjectToolsPanel(unittest.TestCase):
@@ -120,6 +130,33 @@ class TestProjectToolsPanel(unittest.TestCase):
             self.assertEqual(st.session_state.hsf_save_parent_dir, tmp)
             self.assertEqual(st.session_state.hsf_save_name, "DraftChair")
             self.assertEqual(st.dialog_titles, ["📂 另存为 HSF"])
+
+    def test_compile_success_does_not_save_hidden_revision_snapshot(self):
+        state = {
+            "pending_gsm_name": "Chair",
+            "agent_running": False,
+            "compile_result": None,
+            "revision_auto_snapshot": True,
+            "revision_notice": "",
+        }
+        st = _FakeStreamlit(clicked_label="🔧 编译 GSM", state=state)
+        calls = []
+
+        _render_compile_section(
+            st,
+            SimpleNamespace(name="Chair"),
+            choose_compile_output_dir_fn=lambda: None,
+            do_compile_fn=lambda project, gsm_name, instruction, output_dir: calls.append(
+                (project.name, gsm_name, instruction, output_dir)
+            )
+            or (True, "compiled"),
+        )
+
+        self.assertEqual(calls, [("Chair", "Chair", "(toolbar compile)", None)])
+        self.assertEqual(st.session_state.compile_result, (True, "compiled"))
+        self.assertEqual(st.session_state.revision_notice, "")
+        self.assertEqual(st.toasts, ["✅ 编译成功"])
+        self.assertTrue(st.rerun_called)
 
 
 if __name__ == "__main__":

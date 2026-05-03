@@ -1428,15 +1428,6 @@ with col_left:
                 instruction=instruction,
                 output_dir=output_dir,
             ),
-            save_revision_fn=ui_revision_controller.save_current_project_revision,
-            restore_revision_fn=lambda project, revision_id: ui_revision_controller.restore_project_revision(
-                project,
-                revision_id,
-                session_state=st.session_state,
-                load_project_from_disk_fn=HSFProject.load_from_disk,
-                reset_tapir_p0_state_fn=_reset_tapir_p0_state,
-                bump_main_editor_version_fn=_bump_main_editor_version,
-            ),
         )
 
         ui_workspace_tools_panel.render_workspace_tools_panel(

@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Callable
 
 from openbrep.hsf_project import HSFProject
-from ui.views import revision_panel
 
 
 def render_project_tools_panel(
@@ -19,8 +18,6 @@ def render_project_tools_panel(
     save_hsf_project_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
     choose_compile_output_dir_fn: Callable[[], str | None] | None,
     do_compile_fn: Callable[[HSFProject, str, str, str | None], tuple[bool, str]],
-    save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
-    restore_revision_fn: Callable[[HSFProject, str], tuple[bool, str]],
 ) -> None:
     st.markdown("### 项目与输出")
     _render_project_input_section(
@@ -38,15 +35,6 @@ def render_project_tools_panel(
         proj,
         choose_compile_output_dir_fn=choose_compile_output_dir_fn,
         do_compile_fn=do_compile_fn,
-        save_revision_fn=save_revision_fn,
-    )
-
-    revision_panel.render_revision_panel(
-        st,
-        proj,
-        is_generation_locked_fn=is_generation_locked_fn,
-        save_revision_fn=save_revision_fn,
-        restore_revision_fn=restore_revision_fn,
     )
 
 
@@ -239,7 +227,6 @@ def _render_compile_section(
     *,
     choose_compile_output_dir_fn: Callable[[], str | None] | None,
     do_compile_fn: Callable[[HSFProject, str, str, str | None], tuple[bool, str]],
-    save_revision_fn: Callable[[HSFProject, str, str | None], tuple[bool, str]],
 ) -> None:
     compile_name = st.session_state.pending_gsm_name or proj.name
     if compile_name and not st.session_state.pending_gsm_name:
@@ -258,16 +245,9 @@ def _render_compile_section(
                 compile_name,
                 "(toolbar compile)",
                 output_dir,
-            )
+        )
         st.session_state.compile_result = (success, result_msg)
         if success:
-            if st.session_state.get("revision_auto_snapshot", True):
-                _ok, msg = save_revision_fn(
-                    proj,
-                    f"Compile {compile_name}",
-                    compile_name,
-                )
-                st.session_state.revision_notice = msg
             st.toast("✅ 编译成功", icon="🏗️")
         st.rerun()
 

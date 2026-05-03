@@ -42,6 +42,7 @@ class TestSessionDefaults(unittest.TestCase):
         self.assertIsNone(state.pending_compile_result)
         self.assertEqual(state.pending_compile_meta, {})
         self.assertEqual(state.elicitation_state, "idle")
+        self.assertFalse(state.revision_auto_snapshot)
 
     def test_ensure_session_defaults_keeps_existing_values(self):
         state = _State(work_dir="/custom", chat_history=[{"role": "user", "content": "hi"}])

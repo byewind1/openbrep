@@ -77,7 +77,7 @@ def ensure_session_defaults(session_state, *, work_dir_default: str | None = Non
         "assistant_settings": "",
         "elicitation_agent": None,
         "elicitation_state": ElicitationState.IDLE.value,
-        "revision_auto_snapshot": True,
+        "revision_auto_snapshot": False,
         "revision_notice": "",
     }
     for key, value in defaults.items():
