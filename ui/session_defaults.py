@@ -31,6 +31,7 @@ def ensure_session_defaults(session_state, *, work_dir_default: str | None = Non
         "chat_record_history_loaded_work_dir": "",
         "chat_record_browser_open": False,
         "chat_record_open_idx": None,
+        "chat_record_delete_idx": None,
         "project_activity_log": [],
         "work_dir": work_dir_default or str(Path.home() / "openbrep-workspace"),
         "agent_running": False,

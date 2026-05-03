@@ -139,3 +139,37 @@ def hydrate_chat_history_from_workspace_memory(
     session_state.chat_record_history = messages
     session_state.chat_record_history_loaded_work_dir = workspace
     return len(messages)
+
+
+def delete_chat_record_entry(
+    session_state,
+    index: int,
+    work_dir: str,
+    *,
+    store_factory: Callable[[str | Path], ErrorLearningStore] = ErrorLearningStore,
+) -> tuple[bool, str]:
+    history = list(session_state.get("chat_record_history") or [])
+    if not (0 <= index < len(history)):
+        return False, "聊天记录不存在或已被删除"
+
+    remaining = history[:index] + history[index + 1:]
+    session_state.chat_record_history = remaining
+    session_state.chat_record_open_idx = None
+    session_state.chat_record_delete_idx = None
+
+    workspace = str(work_dir or "").strip()
+    if not workspace:
+        return True, "已从当前列表删除"
+
+    project = session_state.get("project")
+    project_name = getattr(project, "name", "") if project is not None else ""
+    try:
+        store_factory(workspace).rewrite_chat_transcript(
+            remaining,
+            project_name=project_name,
+            source="ui_chat",
+        )
+        session_state.chat_record_history_loaded_work_dir = workspace
+    except Exception as exc:
+        return False, f"删除记录失败：{exc}"
+    return True, "已删除聊天记录"

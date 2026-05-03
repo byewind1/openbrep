@@ -6,6 +6,7 @@ from typing import Callable
 from ui.chat_render import render_assistant_block, render_user_bubble
 from ui.chat_history_actions import (
     build_chat_record_entries,
+    delete_chat_record_entry,
     sanitize_hsf_name,
     suggest_hsf_name_from_chat_record,
 )
@@ -154,6 +155,7 @@ def _render_chat_record_dialog(
     if not entries:
         st.session_state.chat_record_browser_open = False
         st.session_state.chat_record_open_idx = None
+        st.session_state.chat_record_delete_idx = None
         return
 
     if idx is not None and not (0 <= idx < len(history)):
@@ -162,24 +164,38 @@ def _render_chat_record_dialog(
 
     @st.dialog("📚 聊天记录")
     def _dialog() -> None:
+        delete_idx = st.session_state.get("chat_record_delete_idx")
+        if delete_idx is not None:
+            _render_chat_record_delete_confirm(
+                st,
+                delete_idx=delete_idx,
+                history=history,
+            )
+            return
+
         selected_idx = st.session_state.get("chat_record_open_idx")
         if selected_idx is None:
             st.caption("浏览并打开任一聊天记录，可复制、注入编辑器或保存为 HSF。")
             with st.container(height=420, border=True):
                 for entry in reversed(entries):
                     row_idx = entry["index"]
-                    cols = st.columns([5, 1])
+                    cols = st.columns([5, 1, 1])
                     with cols[0]:
                         st.caption(f"{entry['role_label']} · {entry['summary']}")
                     with cols[1]:
                         if st.button("打开", key=f"chat_record_browser_open_{row_idx}", width="stretch"):
                             st.session_state.chat_record_open_idx = row_idx
                             st.rerun()
+                    with cols[2]:
+                        if st.button("删除", key=f"chat_record_browser_delete_{row_idx}", width="stretch"):
+                            st.session_state.chat_record_delete_idx = row_idx
+                            st.rerun()
                     if row_idx > 0:
                         st.divider()
             if st.button("关闭", width="stretch"):
                 st.session_state.chat_record_browser_open = False
                 st.session_state.chat_record_open_idx = None
+                st.session_state.chat_record_delete_idx = None
                 st.rerun()
             return
 
@@ -223,7 +239,7 @@ def _render_chat_record_dialog(
         else:
             st.info("这条记录里没有可识别的代码块")
 
-        action_cols = st.columns([1, 1, 1])
+        action_cols = st.columns([1, 1, 1, 1])
         with action_cols[0]:
             if st.button("📋 复制全文", width="stretch"):
                 ok, copy_msg = copy_text_to_system_clipboard_fn(edited_text)
@@ -267,13 +283,47 @@ def _render_chat_record_dialog(
                     st.rerun()
                 else:
                     st.error(msg_text)
+        with action_cols[3]:
+            if st.button("删除", width="stretch"):
+                st.session_state.chat_record_delete_idx = selected_idx
+                st.rerun()
 
         if st.button("关闭", width="stretch"):
             st.session_state.chat_record_browser_open = False
             st.session_state.chat_record_open_idx = None
+            st.session_state.chat_record_delete_idx = None
             st.rerun()
 
     _dialog()
+
+
+def _render_chat_record_delete_confirm(st, *, delete_idx: int, history: list[dict]) -> None:
+    if not (0 <= delete_idx < len(history)):
+        st.warning("这条聊天记录已不存在。")
+        if st.button("返回", width="stretch"):
+            st.session_state.chat_record_delete_idx = None
+            st.rerun()
+        return
+
+    entry = build_chat_record_entries(history)[delete_idx]
+    st.warning(f"确认删除这条聊天记录？\n\n{entry['role_label']} · {entry['summary']}")
+    confirm_col, cancel_col = st.columns(2)
+    with confirm_col:
+        if st.button("确认删除", type="primary", width="stretch"):
+            ok, msg = delete_chat_record_entry(
+                st.session_state,
+                delete_idx,
+                st.session_state.get("work_dir", ""),
+            )
+            if ok:
+                st.toast(msg, icon="🗑️")
+                st.rerun()
+            else:
+                st.error(msg)
+    with cancel_col:
+        if st.button("取消", width="stretch"):
+            st.session_state.chat_record_delete_idx = None
+            st.rerun()
 
 
 def _render_chat_history(

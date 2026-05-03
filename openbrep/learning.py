@@ -216,6 +216,47 @@ class ErrorLearningStore:
                 fh.write("\n")
         return len(entries)
 
+    def rewrite_chat_transcript(
+        self,
+        messages: list[dict[str, Any]] | list[ChatTranscriptEntry],
+        *,
+        project_name: str = "",
+        source: str = "ui_chat",
+    ) -> int:
+        entries: list[ChatTranscriptEntry] = []
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        for message in messages or []:
+            if isinstance(message, ChatTranscriptEntry):
+                content = _message_content_to_text(message.content)
+                role = message.role
+                timestamp = message.timestamp or now
+                entry_source = message.source or source
+                entry_project = message.project_name or project_name
+            else:
+                content = _message_content_to_text(message.get("content", ""))
+                role = str(message.get("role", ""))
+                timestamp = now
+                entry_source = source
+                entry_project = project_name
+            if not content:
+                continue
+            entries.append(
+                ChatTranscriptEntry(
+                    role=role,
+                    content=content,
+                    timestamp=timestamp,
+                    source=entry_source,
+                    project_name=entry_project,
+                )
+            )
+
+        self.chats_root.mkdir(parents=True, exist_ok=True)
+        with self.chat_transcript_path.open("w", encoding="utf-8") as fh:
+            for entry in entries:
+                fh.write(json.dumps(_chat_entry_to_dict(entry), ensure_ascii=False, sort_keys=True))
+                fh.write("\n")
+        return len(entries)
+
     def list_chat_transcript(self) -> list[ChatTranscriptEntry]:
         entries: list[ChatTranscriptEntry] = []
         paths = _current_then_legacy_paths(
