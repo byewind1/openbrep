@@ -121,7 +121,7 @@ def _render_hsf_save_section(
             width="stretch",
             disabled=is_generation_locked_fn(),
         ):
-            _open_hsf_save_dialog(st, proj, mode="save")
+            _save_or_open_hsf_save_as(st, proj, save_hsf_project_fn=save_hsf_project_fn)
     with save_as_col:
         if st.button(
             "另存为 HSF",
@@ -137,6 +137,27 @@ def _render_hsf_save_section(
         choose_hsf_save_parent_dir_fn=choose_hsf_save_parent_dir_fn,
         save_hsf_project_fn=save_hsf_project_fn,
     )
+
+
+def _save_or_open_hsf_save_as(
+    st,
+    proj: HSFProject,
+    *,
+    save_hsf_project_fn: Callable[[HSFProject, str, str], tuple[bool, str]],
+) -> None:
+    active_source_dir = str(st.session_state.get("active_hsf_source_dir", "") or "").strip()
+    if not active_source_dir:
+        _open_hsf_save_dialog(st, proj, mode="save_as")
+        return
+
+    hsf_root = Path(active_source_dir).expanduser()
+    ok, msg = save_hsf_project_fn(proj, str(hsf_root.parent), hsf_root.name)
+    if ok:
+        st.session_state.hsf_save_dialog_open = False
+        st.session_state.hsf_save_dialog_mode = ""
+        st.toast(msg, icon="💾")
+    else:
+        st.error(msg)
 
 
 def _open_hsf_save_dialog(st, proj: HSFProject, *, mode: str) -> None:

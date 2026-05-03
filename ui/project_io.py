@@ -109,13 +109,14 @@ def save_project_to_hsf_dir(
     raw_root = getattr(proj, "root", None)
     if raw_root:
         current_root = Path(raw_root).expanduser().resolve()
+    previous_source = Path(source_root).expanduser().resolve() if source_root else None
 
-    if target_root.exists() and target_root != current_root:
+    allowed_existing_roots = {root for root in (current_root, previous_source) if root is not None}
+    if target_root.exists() and target_root not in allowed_existing_roots:
         has_contents = any(target_root.iterdir())
         if has_contents:
             return False, f"❌ 目标 HSF 目录已存在且不为空：{target_root}", None
 
-    previous_source = Path(source_root).expanduser().resolve() if source_root else None
     proj.name = project_name
     proj.work_dir = parent
     proj.root = target_root
