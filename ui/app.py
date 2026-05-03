@@ -53,6 +53,7 @@ from ui import gdl_checks as ui_gdl_checks
 from ui import generation_service as ui_generation_service
 from ui import generation_controls as ui_generation_controls
 from ui import chat_helpers as ui_chat_helpers
+from ui import chat_history_actions as ui_chat_history_actions
 from ui import app_shell as ui_app_shell
 from ui import config_service as ui_config_service
 from ui import license_service as ui_license_service
@@ -414,6 +415,12 @@ with st.sidebar:
     api_key = _sidebar_payload["api_key"]
     api_base = _sidebar_payload["api_base"]
     max_retries = _sidebar_payload["max_retries"]
+
+
+ui_chat_history_actions.hydrate_chat_history_from_workspace_memory(
+    st.session_state,
+    work_dir,
+)
 
 
 # ── Helper Functions ──────────────────────────────────────
@@ -1477,6 +1484,7 @@ with col_right:
             st,
             is_generation_locked_fn=_is_generation_locked,
             build_chat_script_anchors_fn=_build_chat_script_anchors,
+            extract_gsm_name_candidate_fn=_extract_gsm_name_candidate,
             thumb_image_bytes_fn=_thumb_image_bytes,
             copyable_chat_text_fn=_copyable_chat_text,
             copy_text_to_system_clipboard_fn=_copy_text_to_system_clipboard,
@@ -1485,6 +1493,7 @@ with col_right:
             capture_last_project_snapshot_fn=_capture_last_project_snapshot,
             apply_scripts_to_project_fn=_apply_scripts_to_project,
             bump_main_editor_version_fn=_bump_main_editor_version,
+            create_project_fn=lambda name: HSFProject.create_new(name, work_dir=st.session_state.work_dir),
             validate_chat_image_size_fn=_validate_chat_image_size,
         )
     # 聊天编排下沉到 controller，app 只负责把依赖接进去

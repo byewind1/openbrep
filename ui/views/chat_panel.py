@@ -4,6 +4,11 @@ import base64
 from typing import Callable
 
 from ui.chat_render import render_assistant_block, render_user_bubble
+from ui.chat_history_actions import (
+    build_chat_record_entries,
+    sanitize_hsf_name,
+    suggest_hsf_name_from_chat_record,
+)
 from ui.project_activity import is_project_activity_message
 
 
@@ -12,6 +17,7 @@ def render_chat_panel(
     *,
     is_generation_locked_fn: Callable[[object], bool],
     build_chat_script_anchors_fn: Callable[[list[dict]], list[dict]],
+    extract_gsm_name_candidate_fn: Callable[[str], str | None],
     thumb_image_bytes_fn: Callable[[str], bytes | None],
     copyable_chat_text_fn: Callable[[dict], str],
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
@@ -20,10 +26,21 @@ def render_chat_panel(
     capture_last_project_snapshot_fn: Callable[[str], None],
     apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
     bump_main_editor_version_fn: Callable[[], int],
+    create_project_fn: Callable[[str], object],
     validate_chat_image_size_fn: Callable[[bytes, str], str | None],
 ) -> dict:
     st.markdown("### AI 助手（生成与调试）")
     _render_header(st)
+    _render_chat_record_browser(
+        st,
+        extract_gdl_from_text_fn=extract_gdl_from_text_fn,
+        extract_gsm_name_candidate_fn=extract_gsm_name_candidate_fn,
+        capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+        apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+        bump_main_editor_version_fn=bump_main_editor_version_fn,
+        create_project_fn=create_project_fn,
+        copy_text_to_system_clipboard_fn=copy_text_to_system_clipboard_fn,
+    )
     _render_history_anchors(st, build_chat_script_anchors_fn=build_chat_script_anchors_fn)
     _render_chat_history(
         st,
@@ -50,6 +67,198 @@ def render_chat_panel(
 
 def _render_header(st) -> None:
     st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
+
+
+def _render_chat_record_browser(
+    st,
+    *,
+    extract_gdl_from_text_fn: Callable[[str], dict],
+    extract_gsm_name_candidate_fn: Callable[[str], str | None],
+    capture_last_project_snapshot_fn: Callable[[str], None],
+    apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
+    bump_main_editor_version_fn: Callable[[], int],
+    create_project_fn: Callable[[str], object],
+    copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
+) -> None:
+    entries = build_chat_record_entries(st.session_state.chat_history, classify_code_blocks_fn=extract_gdl_from_text_fn)
+    if not entries:
+        return
+
+    with st.expander(f"聊天记录（{len(entries)}）", expanded=False):
+        with st.container(height=220, border=True):
+            for entry in reversed(entries):
+                idx = entry["index"]
+                summary = entry["summary"]
+                role_label = entry["role_label"]
+                cols = st.columns([5, 1])
+                with cols[0]:
+                    st.caption(f"{role_label} · {summary}")
+                with cols[1]:
+                    if st.button("打开", key=f"chat_record_open_{idx}", width="stretch"):
+                        st.session_state.chat_record_open_idx = idx
+                if idx > 0:
+                    st.divider()
+
+    if st.session_state.get("chat_record_open_idx") is not None:
+        _render_chat_record_dialog(
+            st,
+            extract_gdl_from_text_fn=extract_gdl_from_text_fn,
+            extract_gsm_name_candidate_fn=extract_gsm_name_candidate_fn,
+            capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+            apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+            bump_main_editor_version_fn=bump_main_editor_version_fn,
+            create_project_fn=create_project_fn,
+            copy_text_to_system_clipboard_fn=copy_text_to_system_clipboard_fn,
+        )
+
+
+def _apply_chat_record_to_editor(
+    *,
+    st,
+    msg_idx: int,
+    extracted: dict,
+    hsf_name: str,
+    create_project_fn: Callable[[str], object],
+    capture_last_project_snapshot_fn: Callable[[str], None],
+    apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
+    bump_main_editor_version_fn: Callable[[], int],
+    save_as_hsf: bool,
+) -> tuple[bool, str]:
+    if not extracted:
+        return False, "未找到可注入的代码块"
+
+    project = st.session_state.get("project")
+    safe_name = sanitize_hsf_name(hsf_name, fallback="chat_hsf")
+    if save_as_hsf or project is None:
+        if project is not None:
+            capture_last_project_snapshot_fn("聊天记录保存")
+        project = create_project_fn(safe_name)
+        st.session_state.project = project
+        st.session_state.pending_gsm_name = safe_name
+        st.session_state.script_revision = 0
+    else:
+        capture_last_project_snapshot_fn("聊天记录注入")
+
+    applied_scripts, applied_params = apply_scripts_to_project_fn(project, extracted)
+    if save_as_hsf:
+        project.save_to_disk()
+    bump_main_editor_version_fn()
+    st.session_state.chat_record_open_idx = None
+    st.session_state.adopted_msg_index = msg_idx
+    label = "保存并注入" if save_as_hsf else "已注入编辑器"
+    return True, f"✅ {label}：{applied_scripts} 个脚本，{applied_params} 组参数"
+
+
+def _render_chat_record_dialog(
+    st,
+    *,
+    extract_gdl_from_text_fn: Callable[[str], dict],
+    extract_gsm_name_candidate_fn: Callable[[str], str | None],
+    capture_last_project_snapshot_fn: Callable[[str], None],
+    apply_scripts_to_project_fn: Callable[[object, dict], tuple[int, int]],
+    bump_main_editor_version_fn: Callable[[], int],
+    create_project_fn: Callable[[str], object],
+    copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
+) -> None:
+    idx = st.session_state.get("chat_record_open_idx")
+    if idx is None:
+        return
+    history = st.session_state.get("chat_history", [])
+    if not (0 <= idx < len(history)):
+        st.session_state.chat_record_open_idx = None
+        return
+
+    msg = history[idx]
+    record_role = "用户" if msg.get("role") == "user" else "助手"
+    record_text = st.session_state.get(f"chat_record_text_{idx}") or str(msg.get("content") or "")
+    extracted = extract_gdl_from_text_fn(record_text)
+    suggested_name = suggest_hsf_name_from_chat_record(
+        history,
+        idx,
+        extract_gsm_name_candidate_fn=extract_gsm_name_candidate_fn,
+    )
+    name_key = f"chat_record_hsf_name_{idx}"
+    if not st.session_state.get(name_key):
+        st.session_state[name_key] = suggested_name
+
+    @st.dialog(f"📂 聊天记录 · {record_role}")
+    def _dialog(msg_idx: int) -> None:
+        edited_text = st.text_area(
+            "记录内容",
+            value=record_text,
+            height=220,
+            key=f"chat_record_text_{msg_idx}",
+            label_visibility="visible",
+        )
+        edited_extracted = extract_gdl_from_text_fn(edited_text)
+        st.text_input(
+            "HSF 名称",
+            value=sanitize_hsf_name(st.session_state.get(name_key, suggested_name)),
+            key=name_key,
+            help="保存到 HSF 文件夹时使用的名称",
+        )
+        st.caption("代码块提取")
+        if edited_extracted:
+            for path, code in edited_extracted.items():
+                st.text_area(
+                    path,
+                    value=code,
+                    height=180,
+                    key=f"chat_record_code_{msg_idx}_{path}",
+                )
+        else:
+            st.info("这条记录里没有可识别的代码块")
+
+        action_cols = st.columns([1, 1, 1])
+        with action_cols[0]:
+            if st.button("📋 复制全文", width="stretch"):
+                ok, copy_msg = copy_text_to_system_clipboard_fn(edited_text)
+                if ok:
+                    st.toast(copy_msg, icon="✅")
+                else:
+                    st.warning(copy_msg)
+        with action_cols[1]:
+            if st.button("📥 注入编辑器", type="primary", width="stretch"):
+                ok, msg_text = _apply_chat_record_to_editor(
+                    st=st,
+                    msg_idx=msg_idx,
+                    extracted=edited_extracted,
+                    hsf_name=st.session_state.get(name_key, suggested_name),
+                    create_project_fn=create_project_fn,
+                    capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+                    apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+                    bump_main_editor_version_fn=bump_main_editor_version_fn,
+                    save_as_hsf=False,
+                )
+                if ok:
+                    st.toast(msg_text, icon="📥")
+                    st.rerun()
+                else:
+                    st.error(msg_text)
+        with action_cols[2]:
+            if st.button("💾 保存为 HSF", width="stretch"):
+                ok, msg_text = _apply_chat_record_to_editor(
+                    st=st,
+                    msg_idx=msg_idx,
+                    extracted=edited_extracted,
+                    hsf_name=st.session_state.get(name_key, suggested_name),
+                    create_project_fn=create_project_fn,
+                    capture_last_project_snapshot_fn=capture_last_project_snapshot_fn,
+                    apply_scripts_to_project_fn=apply_scripts_to_project_fn,
+                    bump_main_editor_version_fn=bump_main_editor_version_fn,
+                    save_as_hsf=True,
+                )
+                if ok:
+                    st.toast(msg_text, icon="💾")
+                    st.rerun()
+                else:
+                    st.error(msg_text)
+
+        if st.button("关闭", width="stretch"):
+            st.session_state.chat_record_open_idx = None
+            st.rerun()
+
+    _dialog(idx)
 
 
 def _render_history_anchors(st, *, build_chat_script_anchors_fn: Callable[[list[dict]], list[dict]]) -> None:
@@ -123,6 +332,9 @@ def _render_chat_history(
                     copy_text_to_system_clipboard_fn=copy_text_to_system_clipboard_fn,
                     is_bridgeable_explainer_message_fn=is_bridgeable_explainer_message_fn,
                 )
+            else:
+                if st.button("打开", key=f"chat_record_inline_open_{idx}", help="查看并回放这条记录"):
+                    st.session_state.chat_record_open_idx = idx
 
 
 def _render_assistant_message_actions(
@@ -134,7 +346,7 @@ def _render_assistant_message_actions(
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
     is_bridgeable_explainer_message_fn: Callable[[dict], bool],
 ) -> None:
-    copy_col, redo_col, action_col = st.columns([1, 1, 10])
+    copy_col, redo_col, open_col, action_col = st.columns([1, 1, 1, 9])
     with copy_col:
         if st.button("📋", key=f"copy_{idx}", help="复制本条回复"):
             copy_text = copyable_chat_text_fn(msg)
@@ -156,6 +368,9 @@ def _render_assistant_message_actions(
             st.session_state.chat_history = st.session_state.chat_history[:idx]
             st.session_state["_redo_input"] = prev_user
             st.rerun()
+    with open_col:
+        if st.button("📂", key=f"open_{idx}", help="打开聊天记录"):
+            st.session_state.chat_record_open_idx = idx
     with action_col:
         _render_assistant_primary_action(
             st,
