@@ -70,7 +70,7 @@ END
             ],
         )
 
-    def test_hydrate_chat_history_from_workspace_memory_loads_only_when_empty(self):
+    def test_hydrate_chat_history_from_workspace_memory_loads_records_without_touching_active_chat(self):
         class State(dict):
             def __getattr__(self, key):
                 return self[key]
@@ -85,7 +85,11 @@ END
             def list_chat_transcript(self):
                 return [SimpleNamespace(role="user", content="旧记录")]
 
-        state = State(chat_history=[], chat_history_loaded_work_dir="")
+        state = State(
+            chat_history=[],
+            chat_record_history=[],
+            chat_record_history_loaded_work_dir="",
+        )
 
         loaded = hydrate_chat_history_from_workspace_memory(
             state,
@@ -94,8 +98,9 @@ END
         )
 
         self.assertEqual(loaded, 1)
-        self.assertEqual(state.chat_history, [{"role": "user", "content": "旧记录"}])
-        self.assertEqual(state.chat_history_loaded_work_dir, "/tmp/openbrep-workspace")
+        self.assertEqual(state.chat_history, [])
+        self.assertEqual(state.chat_record_history, [{"role": "user", "content": "旧记录"}])
+        self.assertEqual(state.chat_record_history_loaded_work_dir, "/tmp/openbrep-workspace")
 
 
 if __name__ == "__main__":

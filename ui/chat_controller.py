@@ -247,11 +247,17 @@ def persist_new_chat_messages(session_state, start_index: int) -> int:
         project = session_state.get("project")
         project_name = getattr(project, "name", "") if project is not None else ""
         work_dir = session_state.get("work_dir", "./workdir")
-        return ErrorLearningStore(work_dir).append_chat_messages(
+        stored = ErrorLearningStore(work_dir).append_chat_messages(
             messages,
             project_name=project_name,
             source="ui_chat",
         )
+        if stored:
+            record_history = list(session_state.get("chat_record_history") or [])
+            record_history.extend(messages)
+            session_state.chat_record_history = record_history
+            session_state.chat_record_history_loaded_work_dir = work_dir
+        return stored
     except Exception:
         return 0
 

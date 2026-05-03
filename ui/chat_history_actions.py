@@ -128,16 +128,14 @@ def hydrate_chat_history_from_workspace_memory(
     if not workspace:
         return 0
 
-    if session_state.get("chat_history_loaded_work_dir") == workspace:
-        return 0
-
-    if session_state.get("chat_history"):
-        session_state.chat_history_loaded_work_dir = workspace
+    if (
+        session_state.get("chat_record_history_loaded_work_dir") == workspace
+        and session_state.get("chat_record_history")
+    ):
         return 0
 
     entries = store_factory(workspace).list_chat_transcript()
     messages = transcript_entries_to_chat_messages(entries, limit=limit)
-    if messages:
-        session_state.chat_history = messages
-    session_state.chat_history_loaded_work_dir = workspace
+    session_state.chat_record_history = messages
+    session_state.chat_record_history_loaded_work_dir = workspace
     return len(messages)

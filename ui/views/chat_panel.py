@@ -78,7 +78,8 @@ def _render_chat_record_launcher(
     create_project_fn: Callable[[str], object],
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
 ) -> None:
-    entries = build_chat_record_entries(st.session_state.chat_history, classify_code_blocks_fn=extract_gdl_from_text_fn)
+    history = st.session_state.get("chat_record_history") or []
+    entries = build_chat_record_entries(history, classify_code_blocks_fn=extract_gdl_from_text_fn)
     if not entries:
         return
 
@@ -148,7 +149,7 @@ def _render_chat_record_dialog(
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
 ) -> None:
     idx = st.session_state.get("chat_record_open_idx")
-    history = st.session_state.get("chat_history", [])
+    history = st.session_state.get("chat_record_history") or []
     entries = build_chat_record_entries(history, classify_code_blocks_fn=extract_gdl_from_text_fn)
     if not entries:
         st.session_state.chat_record_browser_open = False
