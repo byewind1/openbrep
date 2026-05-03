@@ -141,6 +141,12 @@ def hydrate_chat_history_from_workspace_memory(
     return len(messages)
 
 
+def close_chat_record_browser(session_state) -> None:
+    session_state.chat_record_browser_open = False
+    session_state.chat_record_open_idx = None
+    session_state.chat_record_delete_idx = None
+
+
 def delete_chat_record_entry(
     session_state,
     index: int,
@@ -154,8 +160,7 @@ def delete_chat_record_entry(
 
     remaining = history[:index] + history[index + 1:]
     session_state.chat_record_history = remaining
-    session_state.chat_record_open_idx = None
-    session_state.chat_record_delete_idx = None
+    close_chat_record_browser(session_state)
 
     workspace = str(work_dir or "").strip()
     if not workspace:

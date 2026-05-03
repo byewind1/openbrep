@@ -5,6 +5,7 @@ from typing import Callable
 
 from openbrep.hsf_project import HSFProject
 from openbrep.learning import ErrorLearningStore
+from ui.chat_history_actions import close_chat_record_browser
 
 
 def render_workspace_tools_panel(
@@ -31,6 +32,7 @@ def render_preview_workbench(
     preview_2d, preview_3d = st.columns(2)
     with preview_2d:
         if st.button("👁️ 预览 2D", width="stretch", help="运行 2D 子集解释并显示图形"):
+            close_chat_record_browser(st.session_state)
             ok, msg = run_preview_fn(proj, "2d")
             if ok:
                 st.toast(msg, icon="✅")
@@ -39,6 +41,7 @@ def render_preview_workbench(
 
     with preview_3d:
         if st.button("🧊 预览 3D", width="stretch", help="运行 3D 子集解释并显示图形"):
+            close_chat_record_browser(st.session_state)
             ok, msg = run_preview_fn(proj, "3d")
             if ok:
                 st.toast(msg, icon="✅")

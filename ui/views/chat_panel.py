@@ -6,6 +6,7 @@ from typing import Callable
 from ui.chat_render import render_assistant_block, render_user_bubble
 from ui.chat_history_actions import (
     build_chat_record_entries,
+    close_chat_record_browser,
     delete_chat_record_entry,
     sanitize_hsf_name,
     suggest_hsf_name_from_chat_record,
@@ -144,6 +145,11 @@ def _return_to_chat_record_list(st) -> None:
     st.rerun()
 
 
+def _close_chat_record_browser(st) -> None:
+    close_chat_record_browser(st.session_state)
+    st.rerun()
+
+
 def _render_chat_record_dialog(
     st,
     *,
@@ -199,10 +205,7 @@ def _render_chat_record_dialog(
                     if row_idx > 0:
                         st.divider()
             if st.button("关闭", width="stretch"):
-                st.session_state.chat_record_browser_open = False
-                st.session_state.chat_record_open_idx = None
-                st.session_state.chat_record_delete_idx = None
-                st.rerun()
+                _close_chat_record_browser(st)
             return
 
         msg = history[selected_idx]

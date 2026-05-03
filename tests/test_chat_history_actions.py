@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from ui.chat_history_actions import (
     build_chat_record_entries,
+    close_chat_record_browser,
     delete_chat_record_entry,
     hydrate_chat_history_from_workspace_memory,
     sanitize_hsf_name,
@@ -150,6 +151,26 @@ END
             ])
             self.assertIsNone(state.chat_record_open_idx)
             self.assertIsNone(state.chat_record_delete_idx)
+
+    def test_close_chat_record_browser_clears_dialog_state(self):
+        class State(dict):
+            def __getattr__(self, key):
+                return self[key]
+
+            def __setattr__(self, key, value):
+                self[key] = value
+
+        state = State(
+            chat_record_browser_open=True,
+            chat_record_open_idx=3,
+            chat_record_delete_idx=2,
+        )
+
+        close_chat_record_browser(state)
+
+        self.assertFalse(state.chat_record_browser_open)
+        self.assertIsNone(state.chat_record_open_idx)
+        self.assertIsNone(state.chat_record_delete_idx)
 
 
 if __name__ == "__main__":
