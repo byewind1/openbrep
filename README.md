@@ -48,6 +48,8 @@
 - macOS：`OpenBrep-free-macOS.zip`
 - Windows：`OpenBrep-free-Windows.zip`
 
+Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 14 Sonoma or later. Intel Mac is not covered by the current macOS zip.
+
 On macOS, unzip it, open the `OpenBrep` folder, and double-click `OpenBrep.command`. On Windows, unzip it and run `OpenBrep.exe`. This path does not require users to learn `git clone`, `git pull`, or manual Python dependency installation first.
 
 ### 命令行安装（高级用户）

@@ -43,6 +43,11 @@ chmod +x dist/OpenBrep/OpenBrep.command
 cat > dist/OpenBrep/README-macOS.txt <<'EOF'
 OpenBrep macOS package
 
+Compatibility:
+- Apple Silicon only (arm64, M1/M2/M3/M4).
+- macOS 14 Sonoma or later.
+- Intel Mac is not covered by this zip.
+
 How to start:
 1. Unzip OpenBrep-free-macOS.zip.
 2. Open the OpenBrep folder.

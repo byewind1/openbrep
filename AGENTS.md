@@ -324,6 +324,18 @@ OpenBrep-free-macOS.zip
 OpenBrep-free-Windows.zip
 ```
 
+The Release notes must state platform compatibility explicitly:
+
+```text
+macOS CPU architecture: arm64 / x86_64 / universal
+Minimum macOS version: derived from the packaged binary dependencies
+Windows architecture and minimum tested version
+```
+
+For macOS, do not infer compatibility from the filename alone. Check the
+published zip itself. The effective minimum macOS version is the highest
+`minos` value among the frozen executable and bundled `.dylib` / `.so` files.
+
 If the workflow fails after the tag is pushed, fix the workflow in a new commit
 and publish the next patch tag. Do not delete, move, or overwrite the failed
 release tag unless the human maintainer explicitly instructs that destructive

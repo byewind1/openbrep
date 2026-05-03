@@ -29,6 +29,8 @@ https://github.com/byewind1/openbrep/releases/latest
 - macOS：`OpenBrep-free-macOS.zip`
 - Windows：`OpenBrep-free-Windows.zip`
 
+当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 14 Sonoma 或更高版本；当前 zip 不覆盖 Intel Mac。
+
 macOS 解压后进入 `OpenBrep` 文件夹，双击 `OpenBrep.command` 启动；Windows 解压后运行 `OpenBrep.exe`。这种方式最接近普通软件安装，不需要用户执行 `git pull` 或手动安装 Python 依赖。
 
 macOS 第一次运行如果提示来自未知开发者，请右键 `OpenBrep.command`，选择“打开”，再在系统提示里确认。启动后浏览器会自动打开 OpenBrep；如果没有自动打开，默认访问 `http://127.0.0.1:8501`，或查看终端窗口里显示的本机地址。

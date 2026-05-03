@@ -58,6 +58,9 @@ trigger the installer build workflow. For `v*` tags, that workflow should:
 2. Upload them as workflow artifacts.
 3. Create or update the matching GitHub Release.
 4. Attach `OpenBrep-*-macOS.zip` and `OpenBrep-*-Windows.zip` as release assets.
+5. State supported OS versions and CPU architectures in the GitHub Release
+   notes. Do not publish a generic `macOS` claim when the asset is only
+   `arm64` or only `x86_64`.
 
 ## Package Smoke Guardrails
 
@@ -69,6 +72,9 @@ Installer verification must cover both startup and browser rendering.
   app without `ModuleNotFoundError`, `ImportError`, or `Traceback` in the log.
 - Test the zip itself, not the local `obr` command.
 - Use a fresh extraction directory for each test run.
+- Check the published package architecture and minimum macOS version before
+  announcing compatibility. The effective minimum is the highest `minos` value
+  among the frozen executable and bundled `.dylib` / `.so` files.
 - For macOS release zips, verify both:
 
 ```bash
