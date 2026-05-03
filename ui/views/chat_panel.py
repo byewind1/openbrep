@@ -31,7 +31,7 @@ def render_chat_panel(
 ) -> dict:
     st.markdown("### AI 助手（生成与调试）")
     _render_header(st)
-    _render_chat_record_browser(
+    _render_chat_record_launcher(
         st,
         extract_gdl_from_text_fn=extract_gdl_from_text_fn,
         extract_gsm_name_candidate_fn=extract_gsm_name_candidate_fn,
@@ -69,7 +69,7 @@ def _render_header(st) -> None:
     st.caption("描述需求，AI 自动创建 GDL 对象写入编辑器")
 
 
-def _render_chat_record_browser(
+def _render_chat_record_launcher(
     st,
     *,
     extract_gdl_from_text_fn: Callable[[str], dict],
@@ -84,22 +84,11 @@ def _render_chat_record_browser(
     if not entries:
         return
 
-    with st.expander(f"聊天记录（{len(entries)}）", expanded=False):
-        with st.container(height=220, border=True):
-            for entry in reversed(entries):
-                idx = entry["index"]
-                summary = entry["summary"]
-                role_label = entry["role_label"]
-                cols = st.columns([5, 1])
-                with cols[0]:
-                    st.caption(f"{role_label} · {summary}")
-                with cols[1]:
-                    if st.button("打开", key=f"chat_record_open_{idx}", width="stretch"):
-                        st.session_state.chat_record_open_idx = idx
-                if idx > 0:
-                    st.divider()
+    if st.button(f"📚 聊天记录（{len(entries)}）", key="chat_record_browser_button", width="stretch"):
+        st.session_state.chat_record_browser_open = True
+        st.rerun()
 
-    if st.session_state.get("chat_record_open_idx") is not None:
+    if st.session_state.get("chat_record_browser_open") or st.session_state.get("chat_record_open_idx") is not None:
         _render_chat_record_dialog(
             st,
             extract_gdl_from_text_fn=extract_gdl_from_text_fn,
@@ -161,33 +150,59 @@ def _render_chat_record_dialog(
     copy_text_to_system_clipboard_fn: Callable[[str], tuple[bool, str]],
 ) -> None:
     idx = st.session_state.get("chat_record_open_idx")
-    if idx is None:
-        return
     history = st.session_state.get("chat_history", [])
-    if not (0 <= idx < len(history)):
+    entries = build_chat_record_entries(history, classify_code_blocks_fn=extract_gdl_from_text_fn)
+    if not entries:
+        st.session_state.chat_record_browser_open = False
         st.session_state.chat_record_open_idx = None
         return
 
-    msg = history[idx]
-    record_role = "用户" if msg.get("role") == "user" else "助手"
-    record_text = st.session_state.get(f"chat_record_text_{idx}") or str(msg.get("content") or "")
-    extracted = extract_gdl_from_text_fn(record_text)
-    suggested_name = suggest_hsf_name_from_chat_record(
-        history,
-        idx,
-        extract_gsm_name_candidate_fn=extract_gsm_name_candidate_fn,
-    )
-    name_key = f"chat_record_hsf_name_{idx}"
-    if not st.session_state.get(name_key):
-        st.session_state[name_key] = suggested_name
+    if idx is not None and not (0 <= idx < len(history)):
+        st.session_state.chat_record_open_idx = None
+        idx = None
 
-    @st.dialog(f"📂 聊天记录 · {record_role}")
-    def _dialog(msg_idx: int) -> None:
+    @st.dialog("📚 聊天记录")
+    def _dialog() -> None:
+        selected_idx = st.session_state.get("chat_record_open_idx")
+        if selected_idx is None:
+            st.caption("浏览并打开任一聊天记录，可复制、注入编辑器或保存为 HSF。")
+            with st.container(height=420, border=True):
+                for entry in reversed(entries):
+                    row_idx = entry["index"]
+                    cols = st.columns([5, 1])
+                    with cols[0]:
+                        st.caption(f"{entry['role_label']} · {entry['summary']}")
+                    with cols[1]:
+                        if st.button("打开", key=f"chat_record_browser_open_{row_idx}", width="stretch"):
+                            st.session_state.chat_record_open_idx = row_idx
+                            st.rerun()
+                    if row_idx > 0:
+                        st.divider()
+            if st.button("关闭", width="stretch"):
+                st.session_state.chat_record_browser_open = False
+                st.session_state.chat_record_open_idx = None
+                st.rerun()
+            return
+
+        msg = history[selected_idx]
+        record_role = "用户" if msg.get("role") == "user" else "助手"
+        record_text = st.session_state.get(f"chat_record_text_{selected_idx}") or str(msg.get("content") or "")
+        extracted = extract_gdl_from_text_fn(record_text)
+        suggested_name = suggest_hsf_name_from_chat_record(
+            history,
+            selected_idx,
+            extract_gsm_name_candidate_fn=extract_gsm_name_candidate_fn,
+        )
+        name_key = f"chat_record_hsf_name_{selected_idx}"
+        if not st.session_state.get(name_key):
+            st.session_state[name_key] = suggested_name
+
+        st.caption(f"记录角色：{record_role}")
         edited_text = st.text_area(
             "记录内容",
             value=record_text,
             height=220,
-            key=f"chat_record_text_{msg_idx}",
+            key=f"chat_record_text_{selected_idx}",
             label_visibility="visible",
         )
         edited_extracted = extract_gdl_from_text_fn(edited_text)
@@ -204,7 +219,7 @@ def _render_chat_record_dialog(
                     path,
                     value=code,
                     height=180,
-                    key=f"chat_record_code_{msg_idx}_{path}",
+                    key=f"chat_record_code_{selected_idx}_{path}",
                 )
         else:
             st.info("这条记录里没有可识别的代码块")
@@ -221,7 +236,7 @@ def _render_chat_record_dialog(
             if st.button("📥 注入编辑器", type="primary", width="stretch"):
                 ok, msg_text = _apply_chat_record_to_editor(
                     st=st,
-                    msg_idx=msg_idx,
+                    msg_idx=selected_idx,
                     extracted=edited_extracted,
                     hsf_name=st.session_state.get(name_key, suggested_name),
                     create_project_fn=create_project_fn,
@@ -239,7 +254,7 @@ def _render_chat_record_dialog(
             if st.button("💾 保存为 HSF", width="stretch"):
                 ok, msg_text = _apply_chat_record_to_editor(
                     st=st,
-                    msg_idx=msg_idx,
+                    msg_idx=selected_idx,
                     extracted=edited_extracted,
                     hsf_name=st.session_state.get(name_key, suggested_name),
                     create_project_fn=create_project_fn,
@@ -254,11 +269,18 @@ def _render_chat_record_dialog(
                 else:
                     st.error(msg_text)
 
-        if st.button("关闭", width="stretch"):
-            st.session_state.chat_record_open_idx = None
-            st.rerun()
+        nav_cols = st.columns(2)
+        with nav_cols[0]:
+            if st.button("返回列表", width="stretch"):
+                st.session_state.chat_record_open_idx = None
+                st.rerun()
+        with nav_cols[1]:
+            if st.button("关闭", width="stretch"):
+                st.session_state.chat_record_browser_open = False
+                st.session_state.chat_record_open_idx = None
+                st.rerun()
 
-    _dialog(idx)
+    _dialog()
 
 
 def _render_history_anchors(st, *, build_chat_script_anchors_fn: Callable[[list[dict]], list[dict]]) -> None:
@@ -334,6 +356,7 @@ def _render_chat_history(
                 )
             else:
                 if st.button("打开", key=f"chat_record_inline_open_{idx}", help="查看并回放这条记录"):
+                    st.session_state.chat_record_browser_open = True
                     st.session_state.chat_record_open_idx = idx
 
 
@@ -370,6 +393,7 @@ def _render_assistant_message_actions(
             st.rerun()
     with open_col:
         if st.button("📂", key=f"open_{idx}", help="打开聊天记录"):
+            st.session_state.chat_record_browser_open = True
             st.session_state.chat_record_open_idx = idx
     with action_col:
         _render_assistant_primary_action(
