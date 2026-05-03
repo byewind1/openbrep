@@ -28,9 +28,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "ruff>=0.4.0",
     "cryptography>=41.0",
+    "plotly>=5.20.0",
+    "pytest>=8.0",
+    "streamlit>=1.30.0",
+    "streamlit-ace>=0.1.1",
+    "ruff>=0.4.0",
 ]
 ui = [
     "streamlit>=1.30.0",
