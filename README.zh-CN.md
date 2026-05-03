@@ -6,7 +6,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.6.9 — 安装包验证补丁：加入包级冒烟测试能力，Release 后可直接验证 zip 内启动器。
+> 正式发布版本 v0.6.10 — macOS 安装包启动修复：关闭 Streamlit 开发模式冲突，并保留包级 smoke 验证能力。
 
 ---
 
@@ -308,6 +308,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.10 | macOS 安装包修复：打包启动器显式关闭 Streamlit `global.developmentMode`，避免 `server.port` 冲突；保留包级 smoke 验证入口，便于直接验证 Release zip（见 docs/releases/v0.6.10.md） |
 | v0.6.9 | 安装包验证补丁：打包启动器支持固定端口与禁用自动开浏览器，新增 `scripts/package_smoke.py`，用于下载 Release zip 后直接运行包内启动器并验证 Streamlit health，不依赖本地 `obr`（见 docs/releases/v0.6.9.md） |
 | v0.6.8 | macOS 安装包修复：打包启动器改为进程内启动 Streamlit，避免冻结包递归拉起自身；macOS zip 增加 `OpenBrep.command` 和启动说明；`openbrep[ui]` 明确包含 UI 导入所需依赖（见 docs/releases/v0.6.8.md） |
 | v0.6.7 | UI 收尾小版本：隐藏版本管理与 Archicad 实机联动入口，收敛 HSF 保存 / 另存为为直达动作，清理多余提示与低频操作，进一步降低工作台认知负担（见 docs/releases/v0.6.7.md） |

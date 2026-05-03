@@ -59,6 +59,28 @@ def test_launcher_can_disable_browser_for_smoke_tests(monkeypatch):
     assert calls == []
 
 
+def test_launcher_disables_streamlit_development_mode(monkeypatch, tmp_path):
+    launcher = _load_launcher()
+    app_py = tmp_path / "ui" / "app.py"
+    app_py.parent.mkdir()
+    app_py.write_text("print('app')\n", encoding="utf-8")
+
+    monkeypatch.setattr(launcher, "_resource_path", lambda rel: tmp_path / rel)
+    monkeypatch.setattr(launcher, "_find_free_port", lambda: 18602)
+    monkeypatch.setattr(launcher, "_schedule_browser_open", lambda _port: None)
+
+    captured_env = {}
+
+    def _capture(args):
+        captured_env["dev_mode"] = launcher.os.environ.get("STREAMLIT_GLOBAL_DEVELOPMENT_MODE")
+        return 0
+
+    monkeypatch.setattr(launcher, "_run_streamlit_cli", _capture)
+
+    assert launcher.main() == 0
+    assert captured_env["dev_mode"] == "false"
+
+
 def test_launcher_returns_error_when_app_is_missing(monkeypatch, tmp_path):
     launcher = _load_launcher()
 

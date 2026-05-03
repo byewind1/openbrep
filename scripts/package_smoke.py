@@ -61,6 +61,18 @@ def _resolve_launcher(package_dir: Path) -> Path:
     raise FileNotFoundError(f"No OpenBrep launcher found in {package_dir}")
 
 
+def _ensure_executable(path: Path) -> None:
+    if os.name == "nt" or not path.exists():
+        return
+    path.chmod(path.stat().st_mode | 0o755)
+
+
+def _restore_package_permissions(package_dir: Path) -> None:
+    _ensure_executable(package_dir / "OpenBrep.command")
+    _ensure_executable(package_dir / "OpenBrep")
+    _ensure_executable(package_dir / "OpenBrep.exe")
+
+
 def smoke_package(zip_path: Path, timeout_seconds: float) -> dict[str, object]:
     port = _find_free_port()
     tmp_root = Path(tempfile.mkdtemp(prefix="openbrep_package_smoke_"))
@@ -71,6 +83,7 @@ def smoke_package(zip_path: Path, timeout_seconds: float) -> dict[str, object]:
 
         package_dir = tmp_root / "OpenBrep"
         launcher = _resolve_launcher(package_dir)
+        _restore_package_permissions(package_dir)
         env = os.environ.copy()
         env["OPENBREP_PORT"] = str(port)
         env["OPENBREP_NO_BROWSER"] = "1"

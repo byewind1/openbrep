@@ -91,6 +91,7 @@ def main() -> int:
     env = os.environ.copy()
     root = str(_resource_path("."))
     env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["STREAMLIT_GLOBAL_DEVELOPMENT_MODE"] = "false"
     os.environ.update(env)
 
     port = _find_free_port()
