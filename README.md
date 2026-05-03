@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.6.6 — UI 清爽化小版本：简化打开、编译、预览和工作区工具区，减少低价值提示，让常用流程更直接。
+> 正式发布版本 v0.6.7 — UI 收尾小版本：隐藏低价值高级入口，保留 HSF 保存/另存为的直达链路，让常用流程更直接。
 
 ---
 
@@ -309,6 +309,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.7 | UI 收尾小版本：隐藏版本管理与 Archicad 实机联动入口，收敛 HSF 保存 / 另存为为直达动作，清理多余提示与低频操作，进一步降低工作台认知负担（见 docs/releases/v0.6.7.md） |
 | v0.6.6 | UI 清爽化小版本：拆分打开文件/HSF 项目入口，简化编译 GSM 和输出目录选择，移除低价值调试按钮与冗余提示，优化 macOS 原生文件选择器激活体验（见 docs/releases/v0.6.6.md） |
 | v0.6.5 | 安装体验补丁：修正 GitHub Release 自动发布命令，改用 `gh release create --generate-notes` 兼容 `--repo`，用于接续 v0.6.4 的安装包发布自动化（见 docs/releases/v0.6.5.md） |
 | v0.6.4 | 安装体验小版本：普通用户首选 GitHub Release 桌面包；修正 macOS/Windows installer workflow 产物路径并在 tag 构建后自动创建/更新 GitHub Release；补充 pipx / uv / git clone 分层安装说明（见 docs/releases/v0.6.4.md） |
