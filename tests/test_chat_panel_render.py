@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from ui.views.chat_panel import _render_chat_history
+from ui.views.chat_panel import _render_chat_history, _return_to_chat_record_list
 
 
 class _Col:
@@ -55,6 +55,25 @@ class _DummySt:
 
 
 class TestChatPanelRender(unittest.TestCase):
+    def test_chat_record_detail_close_returns_to_list_without_closing_browser(self):
+        st = _DummySt([])
+        st.rerun_called = False
+        st.session_state.chat_record_browser_open = True
+        st.session_state.chat_record_open_idx = 1
+        st.session_state.chat_record_delete_idx = 1
+
+        def rerun():
+            st.rerun_called = True
+
+        st.rerun = rerun
+
+        _return_to_chat_record_list(st)
+
+        self.assertTrue(st.session_state.chat_record_browser_open)
+        self.assertIsNone(st.session_state.chat_record_open_idx)
+        self.assertIsNone(st.session_state.chat_record_delete_idx)
+        self.assertTrue(st.rerun_called)
+
     def test_history_render_uses_shared_renderer(self):
         st = _DummySt(
             [

@@ -138,6 +138,12 @@ def _apply_chat_record_to_editor(
     return True, f"✅ {label}：{applied_scripts} 个脚本，{applied_params} 组参数"
 
 
+def _return_to_chat_record_list(st) -> None:
+    st.session_state.chat_record_open_idx = None
+    st.session_state.chat_record_delete_idx = None
+    st.rerun()
+
+
 def _render_chat_record_dialog(
     st,
     *,
@@ -288,11 +294,8 @@ def _render_chat_record_dialog(
                 st.session_state.chat_record_delete_idx = selected_idx
                 st.rerun()
 
-        if st.button("关闭", width="stretch"):
-            st.session_state.chat_record_browser_open = False
-            st.session_state.chat_record_open_idx = None
-            st.session_state.chat_record_delete_idx = None
-            st.rerun()
+        if st.button("返回列表", width="stretch"):
+            _return_to_chat_record_list(st)
 
     _dialog()
 
