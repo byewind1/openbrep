@@ -19,7 +19,9 @@ def render_revision_panel(
         project_root_text = str(getattr(proj, "root", "") or "")
         project_key = hashlib.sha1(project_root_text.encode("utf-8")).hexdigest()[:10]
         notice_key = f"revision_project_{project_key}_notice"
-        st.caption(f"当前项目目录：`{project_root_text}`")
+        active_hsf_source_dir = str(st.session_state.get("active_hsf_source_dir", "") or "").strip()
+        if active_hsf_source_dir:
+            st.caption(f"当前 HSF 源目录：`{active_hsf_source_dir}`")
         st.checkbox(
             "编译成功后自动保存版本",
             key="revision_auto_snapshot",

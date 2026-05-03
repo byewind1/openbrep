@@ -1011,6 +1011,10 @@ def _project_service() -> ui_project_service.ProjectService:
             title="选择 HSF 项目目录",
             initial_dir=initial_dir,
         ),
+        choose_hsf_save_parent_dir_fn=lambda initial_dir=None: ui_local_file_dialog.choose_directory(
+            title="选择 HSF 保存位置",
+            initial_dir=initial_dir,
+        ),
         choose_output_directory_fn=lambda initial_dir=None: ui_local_file_dialog.choose_directory(
             title="选择 GSM 输出文件夹（取消使用默认输出目录）",
             initial_dir=initial_dir,
@@ -1411,6 +1415,12 @@ with col_left:
             handle_hsf_directory_load_fn=_handle_hsf_directory_load,
             browse_and_open_project_file_fn=_browse_and_open_project_file,
             browse_and_load_hsf_directory_fn=_browse_and_load_hsf_directory,
+            choose_hsf_save_parent_dir_fn=lambda: _project_service().choose_hsf_save_parent_dir(),
+            save_hsf_project_fn=lambda project, parent_dir, hsf_name: _project_service().save_hsf_project(
+                project,
+                parent_dir,
+                hsf_name,
+            ),
             choose_compile_output_dir_fn=_choose_compile_output_dir,
             do_compile_fn=lambda project, gsm_name, instruction, output_dir=None: do_compile(
                 project,

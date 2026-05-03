@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from ui.project_service import ProjectService
 
@@ -260,6 +261,7 @@ class TestProjectService(unittest.TestCase):
             self.assertEqual(session_state.chat_history, [])
             self.assertEqual(len(session_state.project_activity_log), 1)
             self.assertIn("已加载 HSF 项目", session_state.project_activity_log[0]["message"])
+            self.assertEqual(session_state.active_hsf_source_dir, str(hsf_dir.resolve()))
             self.assertNotIn("revision_notice", session_state)
             self.assertNotIn("revision_project_old_notice", session_state)
             self.assertIsNone(session_state.preview_2d_data)
@@ -472,6 +474,51 @@ class TestProjectService(unittest.TestCase):
             self.assertIn("已导入 GDL", msg)
             self.assertEqual(session_state.editor_open_path, str(gdl_file))
             self.assertEqual(session_state.editor_hsf_dir, str(gdl_file.parent))
+
+    def test_save_hsf_project_writes_to_selected_parent_and_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent_dir = Path(tmp) / "saved"
+            session_state = _SessionState(
+                work_dir=tmp,
+                active_hsf_source_dir="",
+                editor_hsf_dir="",
+                chat_history=[],
+                pending_diffs={},
+                preview_2d_data=None,
+                preview_3d_data=None,
+                preview_warnings=[],
+                preview_meta={},
+            )
+            proj = SimpleNamespace(
+                name="Draft",
+                root=Path(tmp) / "Draft",
+                work_dir=Path(tmp),
+                save_to_disk=MagicMock(return_value=parent_dir / "Chair"),
+            )
+            calls = []
+
+            service = ProjectService(
+                session_state=session_state,
+                compiler_mode="LP",
+                get_compiler_fn=lambda: None,
+                mock_compiler_class=object,
+                parse_gdl_source_fn=lambda *_args: None,
+                load_project_from_disk_fn=lambda _path: None,
+                reset_tapir_p0_state_fn=lambda: None,
+                bump_main_editor_version_fn=lambda: None,
+            )
+            service.sync_visible_editor_buffers_fn = lambda _proj: calls.append("sync") or True
+
+            ok, msg = service.save_hsf_project(proj, str(parent_dir), "Chair")
+
+            self.assertTrue(ok, msg)
+            self.assertIn("已保存 HSF 项目", msg)
+            self.assertEqual(calls, ["sync"])
+            self.assertEqual(proj.name, "Chair")
+            self.assertEqual(proj.work_dir, parent_dir.resolve())
+            self.assertEqual(proj.root, parent_dir.resolve() / "Chair")
+            self.assertEqual(session_state.active_hsf_source_dir, str(parent_dir.resolve() / "Chair"))
+            self.assertEqual(session_state.editor_hsf_dir, str(parent_dir.resolve() / "Chair"))
 
     def test_open_project_source_path_imports_supported_file(self):
         with tempfile.TemporaryDirectory() as tmp:

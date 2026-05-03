@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from openbrep.hsf_project import HSFProject
 from openbrep.revisions import create_revision, restore_revision
 from ui.proposed_preview_controller import clear_pending_preview_state
@@ -55,6 +57,7 @@ def restore_project_revision(
         reloaded = load_project_from_disk_fn(str(proj.root))
         session_state.project = reloaded
         session_state.pending_gsm_name = reloaded.name
+        session_state.active_hsf_source_dir = str(Path(proj.root).expanduser().resolve())
         session_state.pending_diffs = {}
         session_state.pending_ai_label = ""
         session_state.compile_result = None

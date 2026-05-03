@@ -59,10 +59,77 @@ def _max_existing_gsm_revision_in_dir(proj_name: str, output_dir: str | Path) ->
     return max_rev
 
 
+_INVALID_HSF_NAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def sanitize_hsf_project_name(raw: str, fallback: str = "") -> str:
+    name = _INVALID_HSF_NAME_RE.sub("_", str(raw or "").strip())
+    name = re.sub(r"\s+", "_", name)
+    name = re.sub(r"_+", "_", name)
+    return name.strip(" ._-") or fallback
+
+
 def _versioned_gsm_path_in_dir(proj_name: str, output_dir: str | Path, revision: int) -> str:
     out_dir = Path(output_dir).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     return str(out_dir / f"{proj_name}_v{revision}.gsm")
+
+
+def save_project_to_hsf_dir(
+    proj,
+    parent_dir: str,
+    hsf_name: str,
+    *,
+    source_root: str | Path | None = None,
+) -> tuple[bool, str, Path | None]:
+    if proj is None:
+        return False, "❌ 当前没有可保存的项目", None
+
+    parent = Path(str(parent_dir or "")).expanduser()
+    if not str(parent_dir or "").strip():
+        return False, "❌ 请选择保存目录", None
+    if not parent.exists():
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return False, f"❌ 无法创建保存目录：{exc}", None
+    if not parent.is_dir():
+        return False, f"❌ 不是目录：{parent}", None
+    parent = parent.resolve()
+
+    project_name = sanitize_hsf_project_name(hsf_name, fallback="")
+    if not project_name:
+        return False, "❌ 请输入 HSF 文件夹名称", None
+
+    target_root = (parent / project_name).expanduser().resolve()
+    if target_root.exists() and not target_root.is_dir():
+        return False, f"❌ 目标路径不是目录：{target_root}", None
+
+    current_root = None
+    raw_root = getattr(proj, "root", None)
+    if raw_root:
+        current_root = Path(raw_root).expanduser().resolve()
+
+    if target_root.exists() and target_root != current_root:
+        has_contents = any(target_root.iterdir())
+        if has_contents:
+            return False, f"❌ 目标 HSF 目录已存在且不为空：{target_root}", None
+
+    previous_source = Path(source_root).expanduser().resolve() if source_root else None
+    proj.name = project_name
+    proj.work_dir = parent
+    proj.root = target_root
+    saved_root = Path(proj.save_to_disk()).expanduser().resolve()
+
+    if previous_source is not None and previous_source.exists() and previous_source != saved_root:
+        try:
+            from openbrep.revisions import copy_project_metadata
+
+            copy_project_metadata(previous_source, saved_root)
+        except Exception:
+            pass
+
+    return True, f"✅ 已保存 HSF 项目 `{saved_root}`", saved_root
 
 
 def _prepare_project_for_compile(proj, gsm_name: str, work_dir: str) -> None:

@@ -23,6 +23,7 @@ class ProjectService:
     reset_revision_ui_state_fn: Callable[[object], None] | None = None
     reload_libraries_after_compile_fn: Callable[[], tuple[bool, str] | None] | None = None
     choose_directory_fn: Callable[[str | None], str | None] | None = None
+    choose_hsf_save_parent_dir_fn: Callable[[str | None], str | None] | None = None
     choose_output_directory_fn: Callable[[str | None], str | None] | None = None
     choose_file_fn: Callable[[str | None], str | None] | None = None
     choose_path_fn: Callable[[str | None], str | None] | None = None
@@ -85,6 +86,29 @@ class ProjectService:
 
         self.session_state.editor_hsf_dir = selected
         return self.handle_hsf_directory_load(selected)
+
+    def choose_hsf_save_parent_dir(self) -> str | None:
+        chooser = self.choose_hsf_save_parent_dir_fn or self.choose_directory_fn
+        if chooser is None:
+            return None
+
+        if hasattr(self.session_state, "get"):
+            initial_dir = (
+                self.session_state.get("hsf_save_parent_dir", "")
+                or self.session_state.get("active_hsf_source_dir", "")
+                or self.session_state.get("work_dir", "")
+            )
+        else:
+            initial_dir = (
+                getattr(self.session_state, "hsf_save_parent_dir", "")
+                or getattr(self.session_state, "active_hsf_source_dir", "")
+                or getattr(self.session_state, "work_dir", "")
+            )
+        selected = chooser(initial_dir or None)
+        if not selected:
+            return None
+        self.session_state.hsf_save_parent_dir = selected
+        return selected
 
     def open_project_source_path(self, source_path: str) -> tuple[bool, str]:
         import_gsm_fn = self.import_gsm_override_fn or self.import_gsm
@@ -188,3 +212,27 @@ class ProjectService:
         if self.reset_revision_ui_state_fn is not None:
             self.reset_revision_ui_state_fn(self.session_state)
         return result
+
+    def save_hsf_project(self, proj, parent_dir: str, hsf_name: str) -> tuple[bool, str]:
+        sync_visible_editor_buffers_fn = getattr(self, "sync_visible_editor_buffers_fn", None)
+        if sync_visible_editor_buffers_fn is not None:
+            try:
+                sync_visible_editor_buffers_fn(proj)
+            except Exception as exc:
+                return False, f"❌ 同步编辑器内容失败：{exc}"
+
+        source_root = self.session_state.get("active_hsf_source_dir", "") if hasattr(self.session_state, "get") else getattr(self.session_state, "active_hsf_source_dir", "")
+        ok, msg, saved_root = project_io.save_project_to_hsf_dir(
+            proj,
+            parent_dir,
+            hsf_name,
+            source_root=source_root or None,
+        )
+        if ok and saved_root is not None:
+            saved_root_str = str(saved_root)
+            self.session_state.active_hsf_source_dir = saved_root_str
+            self.session_state.editor_hsf_dir = saved_root_str
+            self.session_state.pending_gsm_name = proj.name
+            if self.reset_revision_ui_state_fn is not None:
+                self.reset_revision_ui_state_fn(self.session_state)
+        return ok, msg

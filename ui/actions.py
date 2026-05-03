@@ -90,6 +90,7 @@ def finalize_loaded_project(
     if preserve_project_root:
         proj.root = Path(proj.root).expanduser().resolve()
         proj.work_dir = proj.root.parent
+        session_state.active_hsf_source_dir = str(proj.root)
     else:
         source_root_raw = getattr(proj, "root", None)
         source_root = Path(source_root_raw) if source_root_raw else None
@@ -97,12 +98,15 @@ def finalize_loaded_project(
         proj.root = proj.work_dir / proj.name
         if source_root is not None:
             copy_project_metadata(source_root, proj.root)
+        session_state.active_hsf_source_dir = ""
     session_state.project = proj
     session_state.pending_diffs = {}
     session_state.preview_2d_data = None
     session_state.preview_3d_data = None
     session_state.preview_warnings = []
     session_state.preview_meta = {"kind": "", "timestamp": ""}
+    session_state.hsf_save_dialog_open = False
+    session_state.hsf_save_dialog_mode = ""
     clear_pending_preview_state(session_state)
     session_state.pending_gsm_name = pending_gsm_name
     session_state.script_revision = 0
