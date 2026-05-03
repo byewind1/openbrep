@@ -14,12 +14,8 @@ def render_parameter_panel(
     render_tapir_param_workbench_fn: Callable[[], None] | None = None,
 ) -> None:
     st.markdown("### 对象参数")
-    tab_project, tab_archicad = st.tabs(["参数定义", "Archicad 写回"])
-
-    with tab_project:
-        _render_project_parameters(st, proj)
-
-    with tab_archicad:
+    _render_project_parameters(st, proj)
+    if render_tapir_inspector_fn is not None and render_tapir_param_workbench_fn is not None:
         _render_archicad_parameter_bridge(
             st,
             render_tapir_inspector_fn=render_tapir_inspector_fn,

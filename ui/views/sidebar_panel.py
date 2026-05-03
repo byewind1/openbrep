@@ -39,9 +39,6 @@ def render_sidebar(
 ) -> dict:
     if not st.session_state.assistant_settings:
         st.session_state.assistant_settings = config_defaults.get("assistant_settings", "")
-    if tapir_import_ok and not is_archicad_running_fn():
-        st.sidebar.warning("⚠️ Archicad 未运行，编译和实时预览不可用")
-
     st.markdown('<p class="main-header">OpenBrep</p>', unsafe_allow_html=True)
     st.markdown(
         '<p class="intro-header">面向 ArchiCAD 高阶用户和 GDL 开发者的 AI 工作台。'

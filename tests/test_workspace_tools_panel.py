@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ui.views.workspace_tools_panel import render_preview_workbench
+from ui.views.workspace_tools_panel import render_preview_workbench, render_workspace_tools_panel
 
 
 class _State(dict):
@@ -20,6 +20,9 @@ class _Col:
     def __exit__(self, exc_type, exc, tb):
         return False
 
+    def metric(self, *_args, **_kwargs):
+        return None
+
 
 class _FakeStreamlit:
     def __init__(self, clicked_label: str):
@@ -31,8 +34,27 @@ class _FakeStreamlit:
         )
         self.toasts = []
         self.errors = []
+        self.captions = []
+        self.markdowns = []
 
     def markdown(self, *_args, **_kwargs):
+        if _args:
+            self.markdowns.append(str(_args[0]))
+        return None
+
+    def divider(self):
+        return None
+
+    def caption(self, message):
+        self.captions.append(str(message))
+
+    def success(self, *_args, **_kwargs):
+        return None
+
+    def info(self, *_args, **_kwargs):
+        return None
+
+    def warning(self, *_args, **_kwargs):
         return None
 
     def columns(self, spec):
@@ -50,6 +72,31 @@ class _FakeStreamlit:
 
 
 class TestWorkspaceToolsPanel(unittest.TestCase):
+    def test_workspace_panel_does_not_render_archicad_live_link_controls(self):
+        st = _FakeStreamlit("")
+        st.session_state.work_dir = "/tmp/openbrep-workspace"
+        st.session_state.confirm_clear_memory = False
+        memory_status = SimpleNamespace(
+            memory_root="/tmp/openbrep-workspace/.openbrep/memory",
+            chat_count=0,
+            lesson_count=0,
+            has_learned_skill=False,
+            total_bytes=0,
+        )
+
+        with patch("ui.views.workspace_tools_panel.ErrorLearningStore") as store_class:
+            store_class.return_value.memory_status.return_value = memory_status
+            with patch("ui.views.workspace_tools_panel._render_tapir_controls") as tapir_controls:
+                render_workspace_tools_panel(
+                    st,
+                    SimpleNamespace(name="Chair"),
+                    tapir_import_ok=True,
+                    get_bridge_fn=lambda: (_ for _ in ()).throw(AssertionError("should not open Tapir bridge")),
+                )
+
+        tapir_controls.assert_not_called()
+        self.assertNotIn("Archicad 实机联动", "\n".join(st.markdowns))
+
     def test_preview_click_closes_chat_record_browser_before_running_preview(self):
         st = _FakeStreamlit("🧊 预览 3D")
         calls = []

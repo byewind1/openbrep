@@ -1463,8 +1463,6 @@ with col_mid:
             ui_parameter_panel.render_parameter_panel(
                 st,
                 proj_now,
-                render_tapir_inspector_fn=_render_tapir_inspector_panel,
-                render_tapir_param_workbench_fn=_render_tapir_param_workbench_panel,
             )
 
 
