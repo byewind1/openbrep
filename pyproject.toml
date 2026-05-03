@@ -30,6 +30,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.4.0",
+    "cryptography>=41.0",
 ]
 ui = [
     "streamlit>=1.30.0",
