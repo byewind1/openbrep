@@ -23,17 +23,34 @@ def _find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_health(port: int, timeout_seconds: float) -> bool:
-    health_url = f"http://127.0.0.1:{port}/_stcore/health"
+def _wait_for_http_ok(url: str, timeout_seconds: float, validator) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(health_url, timeout=1.0) as response:
-                if response.status == 200 and response.read().decode("utf-8").strip() == "ok":
+            with urllib.request.urlopen(url, timeout=1.0) as response:
+                if validator(response, response.read()):
                     return True
         except Exception:
             time.sleep(0.5)
     return False
+
+
+def _wait_for_health(port: int, timeout_seconds: float) -> bool:
+    health_url = f"http://127.0.0.1:{port}/_stcore/health"
+    return _wait_for_http_ok(
+        health_url,
+        timeout_seconds,
+        lambda response, body: response.status == 200 and body.decode("utf-8").strip() == "ok",
+    )
+
+
+def _wait_for_homepage(port: int, timeout_seconds: float) -> bool:
+    root_url = f"http://127.0.0.1:{port}/"
+    return _wait_for_http_ok(
+        root_url,
+        timeout_seconds,
+        lambda response, body: response.status == 200 and bool(body.strip()),
+    )
 
 
 def _terminate(process: subprocess.Popen[str]) -> None:
@@ -97,12 +114,16 @@ def smoke_package(zip_path: Path, timeout_seconds: float) -> dict[str, object]:
             text=True,
             start_new_session=(os.name != "nt"),
         )
-        ok = _wait_for_health(port, timeout_seconds)
+        health_ok = _wait_for_health(port, timeout_seconds)
+        homepage_ok = _wait_for_homepage(port, timeout_seconds) if health_ok else False
+        ok = health_ok and homepage_ok
         output = ""
         if process.stdout:
             output = process.stdout.read(2000) if process.poll() is not None else ""
         return {
             "ok": ok,
+            "health_ok": health_ok,
+            "homepage_ok": homepage_ok,
             "zip": str(zip_path),
             "launcher": str(launcher),
             "port": port,

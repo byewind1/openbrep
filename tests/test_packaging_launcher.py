@@ -102,3 +102,19 @@ def test_macos_build_package_includes_clickable_command_launcher():
     assert "dist/OpenBrep/OpenBrep.command" in script
     assert "chmod +x dist/OpenBrep/OpenBrep.command" in script
     assert "dist/OpenBrep/README-macOS.txt" in script
+
+
+def test_openbrep_spec_includes_streamlit_static_assets():
+    spec = (Path(__file__).resolve().parents[1] / "openbrep.spec").read_text(encoding="utf-8")
+
+    assert "streamlit_static" in spec
+    assert 'added.append((str(streamlit_static), "streamlit/static"))' in spec
+    assert "streamlit_ace_frontend" in spec
+    assert 'added.append((str(streamlit_ace_frontend), "streamlit_ace/frontend/build"))' in spec
+
+
+def test_openbrep_spec_includes_streamlit_scriptrunner_modules():
+    spec = (Path(__file__).resolve().parents[1] / "openbrep.spec").read_text(encoding="utf-8")
+
+    assert "collect_submodules" in spec
+    assert "streamlit.runtime.scriptrunner" in spec

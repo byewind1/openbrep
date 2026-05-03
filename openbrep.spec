@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import os
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 block_cipher = None
 root = Path.cwd()
@@ -36,6 +36,14 @@ for item in ["ui", "openbrep", "skills", "config.example.toml", "README.md", "RE
         target = item if p.is_dir() else "."
         added.append((str(p), target))
 
+streamlit_static = Path(__import__("streamlit").__file__).resolve().parent / "static"
+if streamlit_static.exists():
+    added.append((str(streamlit_static), "streamlit/static"))
+
+streamlit_ace_frontend = Path(__import__("streamlit_ace").__file__).resolve().parent / "frontend" / "build"
+if streamlit_ace_frontend.exists():
+    added.append((str(streamlit_ace_frontend), "streamlit_ace/frontend/build"))
+
 knowledge_dir = root / "knowledge"
 
 # Include package metadata required by importlib.metadata at runtime
@@ -55,6 +63,7 @@ a = Analysis(
     hiddenimports=[
         'streamlit',
         'streamlit.web.cli',
+        *collect_submodules('streamlit.runtime.scriptrunner'),
         'click',
         'rich',
         'tomli',
