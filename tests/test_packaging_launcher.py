@@ -39,6 +39,26 @@ def test_launcher_runs_streamlit_in_process(monkeypatch, tmp_path):
     assert "18601" in calls["args"]
 
 
+def test_launcher_can_use_explicit_smoke_test_port(monkeypatch):
+    launcher = _load_launcher()
+
+    monkeypatch.setenv("OPENBREP_PORT", "19001")
+
+    assert launcher._find_free_port() == 19001
+
+
+def test_launcher_can_disable_browser_for_smoke_tests(monkeypatch):
+    launcher = _load_launcher()
+    calls = []
+
+    monkeypatch.setenv("OPENBREP_NO_BROWSER", "1")
+    monkeypatch.setattr(launcher.threading, "Thread", lambda **_kwargs: calls.append(_kwargs))
+
+    launcher._schedule_browser_open(19001)
+
+    assert calls == []
+
+
 def test_launcher_returns_error_when_app_is_missing(monkeypatch, tmp_path):
     launcher = _load_launcher()
 

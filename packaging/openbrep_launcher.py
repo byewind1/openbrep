@@ -19,6 +19,10 @@ def _resource_path(rel: str) -> Path:
 
 
 def _find_free_port(preferred: int = 8501, attempts: int = 50) -> int:
+    explicit_port = os.environ.get("OPENBREP_PORT") or os.environ.get("STREAMLIT_SERVER_PORT")
+    if explicit_port:
+        return int(explicit_port)
+
     for port in range(preferred, preferred + attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(0.2)
@@ -45,6 +49,9 @@ def _wait_for_server_and_open_browser(port: int, timeout_seconds: float = 45.0) 
 
 
 def _schedule_browser_open(port: int) -> None:
+    if os.environ.get("OPENBREP_NO_BROWSER", "").strip().lower() in {"1", "true", "yes"}:
+        return
+
     thread = threading.Thread(
         target=_wait_for_server_and_open_browser,
         args=(port,),
