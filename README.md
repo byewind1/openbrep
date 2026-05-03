@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.6.10 — macOS 安装包启动修复：关闭 Streamlit 开发模式冲突，并保留包级 smoke 验证能力。
+> 正式发布版本 v0.6.11 — macOS 安装包修复：补齐 Streamlit 冻结包前端资源与隐藏导入，并保留包级 smoke / browser smoke 验证能力。
 
 ---
 
@@ -309,6 +309,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.11 | macOS 安装包修复：补齐 Streamlit 冻结包的前端静态资源与 `streamlit.runtime.scriptrunner` 隐藏导入；新增浏览器级包验证脚本，确保不仅 health 通过，首页和脚本执行也通过（见 docs/releases/v0.6.11.md） |
 | v0.6.10 | macOS 安装包修复：打包启动器显式关闭 Streamlit `global.developmentMode`，避免 `server.port` 冲突；保留包级 smoke 验证入口，便于直接验证 Release zip（见 docs/releases/v0.6.10.md） |
 | v0.6.9 | 安装包验证补丁：打包启动器支持固定端口与禁用自动开浏览器，新增 `scripts/package_smoke.py`，用于下载 Release zip 后直接运行包内启动器并验证 Streamlit health，不依赖本地 `obr`（见 docs/releases/v0.6.9.md） |
 | v0.6.8 | macOS 安装包修复：打包启动器改为进程内启动 Streamlit，避免冻结包递归拉起自身；macOS zip 增加 `OpenBrep.command` 和启动说明；`openbrep[ui]` 明确包含 UI 导入所需依赖（见 docs/releases/v0.6.8.md） |

@@ -258,6 +258,30 @@ python -m pytest tests/ -q
 python -m pip wheel . -w /tmp/openbrep_wheel_check --no-deps
 ```
 
+For installer or packaged-launcher changes, package-level verification must
+exercise the downloaded/generated zip itself, not the local `obr` command:
+
+```bash
+python scripts/package_smoke.py release/OpenBrep-free-macOS.zip --timeout 90
+python scripts/package_browser_smoke.py release/OpenBrep-free-macOS.zip --timeout 90
+```
+
+Do not treat `/_stcore/health` alone as installer success. Streamlit can return
+health while `/` is `404`, and `/` can load before the app script exposes a
+missing frozen dependency. The browser smoke must pass with `ok=true`,
+`page_ok=true`, and no `error_markers`.
+
+Known PyInstaller/Streamlit packaging requirements:
+
+```text
+streamlit/static must be bundled at streamlit/static
+streamlit_ace/frontend/build must be bundled at streamlit_ace/frontend/build
+streamlit.runtime.scriptrunner hidden imports must be included
+```
+
+Always test from a fresh extraction directory. Do not reuse an old
+`/tmp/openbrep-install-test` directory when validating a fixed installer.
+
 For installer workflow changes, also validate workflow syntax locally if
 possible:
 

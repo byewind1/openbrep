@@ -59,6 +59,31 @@ trigger the installer build workflow. For `v*` tags, that workflow should:
 3. Create or update the matching GitHub Release.
 4. Attach `OpenBrep-*-macOS.zip` and `OpenBrep-*-Windows.zip` as release assets.
 
+## Package Smoke Guardrails
+
+Installer verification must cover both startup and browser rendering.
+
+- Never use only `/_stcore/health` as success. Streamlit can report health
+  while `/` still returns `404` if frozen frontend assets are missing.
+- Never treat a page load alone as success. The browser must finish loading the
+  app without `ModuleNotFoundError`, `ImportError`, or `Traceback` in the log.
+- Test the zip itself, not the local `obr` command.
+- Use a fresh extraction directory for each test run.
+- For macOS release zips, verify both:
+
+```bash
+python scripts/package_smoke.py release/OpenBrep-free-macOS.zip --timeout 90
+python scripts/package_browser_smoke.py release/OpenBrep-free-macOS.zip --timeout 90
+```
+
+Packaging regressions fixed in v0.6.11:
+
+- Bundle `streamlit/static` at the exact runtime path expected by Streamlit.
+- Bundle `streamlit_ace/frontend/build` at the exact runtime path expected by
+  `streamlit_ace`.
+- Include `streamlit.runtime.scriptrunner` hidden imports so frozen script
+  execution can import `magic_funcs`.
+
 ## Postflight
 
 ```bash
