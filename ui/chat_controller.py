@@ -28,7 +28,6 @@ def pop_chat_runtime_state(
         "tapir_load_params_trigger": session_state.pop("tapir_load_params_trigger", False),
         "tapir_apply_params_trigger": session_state.pop("tapir_apply_params_trigger", False),
         "has_image_input": bool(has_image_input),
-        "anchor_pending": session_state.pop("chat_anchor_pending", None),
     }
 
 
@@ -153,26 +152,6 @@ def handle_tapir_apply_params_trigger(
     else:
         st.error(f"❌ {msg}")
     return True, True
-
-
-def apply_chat_anchor_pending(
-    *,
-    anchor_pending,
-    session_state,
-    rerun_fn: Callable[[], None],
-) -> bool:
-    if anchor_pending is None:
-        return False
-
-    session_state.chat_anchor_focus = anchor_pending
-    try:
-        import asyncio
-
-        loop = asyncio.get_running_loop()
-        loop.call_soon(rerun_fn)
-    except RuntimeError:
-        rerun_fn()
-    return True
 
 
 def resolve_bridge_input(
@@ -508,7 +487,6 @@ def process_chat_turn(
     handle_tapir_apply_params_trigger_fn: Callable[[bool], tuple[bool, bool]],
     run_vision_path_fn: Callable[..., tuple[bool, bool, str | None]],
     run_normal_text_path_fn: Callable[..., tuple[bool, bool, str | None]],
-    apply_chat_anchor_pending_fn: Callable[..., bool],
 ) -> None:
     runtime = pop_chat_runtime_state(session_state=session_state, has_image_input=bool(chat_payload.get("vision_b64")))
     user_input = chat_payload.get("user_input")
@@ -592,9 +570,3 @@ def process_chat_turn(
         persist_new_chat_messages(session_state, chat_start_index)
         if handled and should_rerun:
             st.rerun()
-
-    apply_chat_anchor_pending_fn(
-        anchor_pending=runtime["anchor_pending"],
-        session_state=session_state,
-        rerun_fn=st.rerun,
-    )

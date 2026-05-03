@@ -73,7 +73,6 @@ class TestChatFlowDispatch(unittest.TestCase):
             handle_tapir_apply_params_trigger_fn=lambda *_args: (False, False),
             run_vision_path_fn=run_vision_path_fn,
             run_normal_text_path_fn=run_normal_text_path_fn,
-            apply_chat_anchor_pending_fn=lambda **_kwargs: False,
         )
 
         self.assertEqual(calls["normal"], 1)
@@ -115,7 +114,6 @@ class TestChatFlowDispatch(unittest.TestCase):
                 handle_tapir_apply_params_trigger_fn=lambda *_args: (False, False),
                 run_vision_path_fn=lambda *args, **kwargs: (False, False, None),
                 run_normal_text_path_fn=lambda *args, **kwargs: (True, True, None),
-                apply_chat_anchor_pending_fn=lambda **_kwargs: False,
             )
 
             lessons = ErrorLearningStore(tmpdir).list_error_lessons()
@@ -162,7 +160,6 @@ class TestChatFlowDispatch(unittest.TestCase):
                 handle_tapir_apply_params_trigger_fn=lambda *_args: (False, False),
                 run_vision_path_fn=lambda *args, **kwargs: (False, False, None),
                 run_normal_text_path_fn=run_normal_text_path_fn,
-                apply_chat_anchor_pending_fn=lambda **_kwargs: False,
             )
 
             transcript = ErrorLearningStore(tmpdir).list_chat_transcript()
@@ -209,7 +206,6 @@ class TestChatFlowDispatch(unittest.TestCase):
             handle_tapir_apply_params_trigger_fn=lambda *_args: (False, False),
             run_vision_path_fn=run_vision_path_fn,
             run_normal_text_path_fn=run_normal_text_path_fn,
-            apply_chat_anchor_pending_fn=lambda **_kwargs: False,
         )
 
         self.assertEqual(calls["normal"], 0)

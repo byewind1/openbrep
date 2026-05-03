@@ -1195,14 +1195,6 @@ def _handle_tapir_apply_params_trigger(tapir_apply_params_trigger: bool) -> tupl
     )
 
 
-def _apply_chat_anchor_pending(anchor_pending, session_state=None, rerun_fn=None) -> bool:
-    return ui_chat_controller.apply_chat_anchor_pending(
-        anchor_pending=anchor_pending,
-        session_state=session_state or st.session_state,
-        rerun_fn=rerun_fn or st.rerun,
-    )
-
-
 def _run_normal_text_path(effective_input: str, redo_input, bridge_input, live_output, api_key: str, model_name: str) -> tuple[bool, bool, str | None]:
     return ui_chat_controller.run_normal_text_path(
         effective_input=effective_input,
@@ -1266,7 +1258,6 @@ def _extract_gdl_from_chat() -> dict:
     return ui_chat_helpers.extract_gdl_from_chat(st.session_state, _classify_code_blocks)
 
 
-_build_chat_script_anchors = ui_view_models.build_chat_script_anchors
 _classify_vision_error = ui_view_models.classify_vision_error
 
 
@@ -1483,7 +1474,6 @@ with col_right:
         _chat_panel_payload = ui_chat_panel.render_chat_panel(
             st,
             is_generation_locked_fn=_is_generation_locked,
-            build_chat_script_anchors_fn=_build_chat_script_anchors,
             extract_gsm_name_candidate_fn=_extract_gsm_name_candidate,
             thumb_image_bytes_fn=_thumb_image_bytes,
             copyable_chat_text_fn=_copyable_chat_text,
@@ -1513,7 +1503,6 @@ with col_right:
         handle_tapir_apply_params_trigger_fn=_handle_tapir_apply_params_trigger,
         run_vision_path_fn=_run_vision_path,
         run_normal_text_path_fn=_run_normal_text_path,
-        apply_chat_anchor_pending_fn=_apply_chat_anchor_pending,
     )
 
     # ── Footer ────────────────────────────────────────────────

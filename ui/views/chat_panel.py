@@ -16,7 +16,6 @@ def render_chat_panel(
     st,
     *,
     is_generation_locked_fn: Callable[[object], bool],
-    build_chat_script_anchors_fn: Callable[[list[dict]], list[dict]],
     extract_gsm_name_candidate_fn: Callable[[str], str | None],
     thumb_image_bytes_fn: Callable[[str], bytes | None],
     copyable_chat_text_fn: Callable[[dict], str],
@@ -41,7 +40,6 @@ def render_chat_panel(
         create_project_fn=create_project_fn,
         copy_text_to_system_clipboard_fn=copy_text_to_system_clipboard_fn,
     )
-    _render_history_anchors(st, build_chat_script_anchors_fn=build_chat_script_anchors_fn)
     _render_chat_history(
         st,
         thumb_image_bytes_fn=thumb_image_bytes_fn,
@@ -269,49 +267,12 @@ def _render_chat_record_dialog(
                 else:
                     st.error(msg_text)
 
-        nav_cols = st.columns(2)
-        with nav_cols[0]:
-            if st.button("返回列表", width="stretch"):
-                st.session_state.chat_record_open_idx = None
-                st.rerun()
-        with nav_cols[1]:
-            if st.button("关闭", width="stretch"):
-                st.session_state.chat_record_browser_open = False
-                st.session_state.chat_record_open_idx = None
-                st.rerun()
+        if st.button("关闭", width="stretch"):
+            st.session_state.chat_record_browser_open = False
+            st.session_state.chat_record_open_idx = None
+            st.rerun()
 
     _dialog()
-
-
-def _render_history_anchors(st, *, build_chat_script_anchors_fn: Callable[[list[dict]], list[dict]]) -> None:
-    anchors = build_chat_script_anchors_fn(st.session_state.chat_history)
-    if not anchors:
-        return
-
-    st.caption("🧭 历史锚点（点击快速定位）")
-    anchor_cols = st.columns([1.8, 4.2, 1.2])
-    with anchor_cols[0]:
-        options = [anchor["label"] for anchor in anchors]
-        default_idx = 0
-        focus = st.session_state.get("chat_anchor_focus")
-        if isinstance(focus, int):
-            for idx, anchor in enumerate(anchors):
-                if anchor["msg_idx"] == focus:
-                    default_idx = idx
-                    break
-        selected = st.selectbox(
-            "历史锚点",
-            options,
-            index=default_idx,
-            label_visibility="collapsed",
-            key="chat_anchor_select",
-        )
-    picked = next((anchor for anchor in anchors if anchor["label"] == selected), anchors[-1])
-    with anchor_cols[1]:
-        st.caption(f"范围: {', '.join(picked['paths'])}")
-    with anchor_cols[2]:
-        if st.button("📍 定位", width="stretch", key="chat_anchor_go"):
-            st.session_state.chat_anchor_pending = picked["msg_idx"]
 
 
 def _render_chat_history(
@@ -323,11 +284,6 @@ def _render_chat_history(
     is_bridgeable_explainer_message_fn: Callable[[dict], bool],
 ) -> None:
     for idx, msg in enumerate(st.session_state.chat_history):
-        is_focus = st.session_state.get("chat_anchor_focus") == idx
-        if is_focus:
-            st.markdown("<div style='border-top:1px dashed #38bdf8;margin:0.4rem 0;'></div>", unsafe_allow_html=True)
-            st.caption("📍 当前锚点")
-
         role = msg.get("role", "assistant")
         if role == "assistant" and is_project_activity_message(msg.get("content", "")):
             continue

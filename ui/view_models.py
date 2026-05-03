@@ -506,38 +506,6 @@ def extract_gdl_from_text(text: str) -> dict[str, str]:
     return classify_code_blocks(text)
 
 
-def build_chat_script_anchors(history: list[dict]) -> list[dict]:
-    anchors: list[dict] = []
-    rev = 1
-    for i, message in enumerate(history or []):
-        if message.get("role") != "assistant":
-            continue
-        extracted = classify_code_blocks(message.get("content", ""))
-        if not extracted:
-            continue
-        script_keys = [
-            path.replace("scripts/", "").replace(".gdl", "").upper()
-            for path in extracted.keys()
-            if path.startswith("scripts/")
-        ]
-        parts = []
-        if script_keys:
-            parts.append("/".join(script_keys))
-        if "paramlist.xml" in extracted:
-            parts.append("PARAM")
-        scope = " + ".join(parts) if parts else "CODE"
-        anchors.append(
-            {
-                "rev": rev,
-                "msg_idx": i,
-                "label": f"r{rev} · {scope}",
-                "paths": sorted(extracted.keys()),
-            }
-        )
-        rev += 1
-    return anchors
-
-
 _INTENT_CLARIFY_ACTION_LABELS = {
     "1": "先快速解释脚本结构",
     "2": "先检查明显错误/风险",

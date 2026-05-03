@@ -51,8 +51,6 @@ def ensure_session_defaults(session_state, *, work_dir_default: str | None = Non
         "model_api_keys": {},
         "chat_route_mode": "自动",
         "chat_image_route_mode": "自动",
-        "chat_anchor_focus": None,
-        "chat_anchor_pending": None,
         "pro_unlocked": False,
         "pro_license_loaded": False,
         "preview_2d_data": None,
