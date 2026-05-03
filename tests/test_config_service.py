@@ -1,4 +1,7 @@
 import unittest
+import os
+import tempfile
+from pathlib import Path
 
 from openbrep.config import GDLAgentConfig, LLMConfig
 from ui import config_service
@@ -101,6 +104,40 @@ class TestConfigService(unittest.TestCase):
         self.assertEqual(session_state.model_api_keys["gpt-5.4"], "openai-key")
         self.assertEqual(session_state.model_api_keys["unknown"], "manual-key")
         self.assertEqual(session_state.assistant_settings, "prefer concise diffs")
+
+    def test_load_runtime_config_uses_explicit_root_even_when_cwd_differs(self):
+        with tempfile.TemporaryDirectory() as root_dir, tempfile.TemporaryDirectory() as cwd:
+            root = Path(root_dir)
+            (root / "config.toml").write_text(
+                """
+[llm]
+model = "mimo-v2.5-pro"
+assistant_settings = "prefer compact changes"
+
+[[llm.custom_providers]]
+name = "mimo"
+base_url = "https://api.example.test/v1"
+api_key = "custom-key"
+protocol = "openai"
+models = ["mimo-v2.5-pro"]
+""",
+                encoding="utf-8",
+            )
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(cwd)
+                state = config_service.load_runtime_config(root)
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(state.config.llm.model, "mimo-v2.5-pro")
+        self.assertEqual(state.defaults["assistant_settings"], "prefer compact changes")
+        self.assertEqual(len(state.config.llm.custom_providers), 1)
+        self.assertEqual(state.custom_providers[0]["name"], "mimo")
+        self.assertIn(
+            "mimo-v2.5-pro",
+            config_service.available_models(state.config, state.custom_providers, []),
+        )
 
 
 class _SessionState(dict):

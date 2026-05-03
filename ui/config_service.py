@@ -29,7 +29,7 @@ def load_runtime_config(root: Path | str) -> RuntimeConfigState:
         provider_keys = dict(llm_raw.get("provider_keys", {}) or {})
         custom_providers = list(llm_raw.get("custom_providers", []) or [])
 
-    config = GDLAgentConfig.load()
+    config = GDLAgentConfig.load(str(toml_path) if toml_path.exists() else None)
     provider_keys = dict(config.llm.provider_keys or provider_keys)
     custom_providers = list(config.llm.custom_providers or custom_providers)
     defaults = {
