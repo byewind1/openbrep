@@ -1,7 +1,7 @@
-# openbrep v0.6.7 安装指南（中文）
+# openbrep v0.6.8 安装指南（中文）
 
 > 针对设计师用户的分步骤安装教程
-> 当前正式版本：v0.6.7
+> 当前正式版本：v0.6.8
 > 难度：⭐️ 小白可用
 
 ---
@@ -29,7 +29,9 @@ https://github.com/byewind1/openbrep/releases/latest
 - macOS：`OpenBrep-free-macOS.zip`
 - Windows：`OpenBrep-free-Windows.zip`
 
-解压后运行 `OpenBrep`。这种方式最接近普通软件安装，不需要用户执行 `git pull` 或手动安装 Python 依赖。
+macOS 解压后进入 `OpenBrep` 文件夹，双击 `OpenBrep.command` 启动；Windows 解压后运行 `OpenBrep.exe`。这种方式最接近普通软件安装，不需要用户执行 `git pull` 或手动安装 Python 依赖。
+
+macOS 第一次运行如果提示来自未知开发者，请右键 `OpenBrep.command`，选择“打开”，再在系统提示里确认。启动后浏览器会自动打开 OpenBrep；如果没有自动打开，默认访问 `http://127.0.0.1:8501`，或查看终端窗口里显示的本机地址。
 
 ### 命令行方式：pipx / uv
 

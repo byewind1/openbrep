@@ -6,7 +6,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.6.7 — UI 收尾小版本：隐藏低价值高级入口，保留 HSF 保存/另存为的直达链路，让常用流程更直接。
+> 正式发布版本 v0.6.8 — macOS 安装包启动修复：避免打包启动器递归拉起自身，并加入双击启动脚本与说明。
 
 ---
 
@@ -39,7 +39,7 @@
 - macOS：`OpenBrep-free-macOS.zip`
 - Windows：`OpenBrep-free-Windows.zip`
 
-解压后运行 `OpenBrep`。这种方式不要求用户先学会 `git clone`、`git pull` 或手动安装 Python 依赖。
+macOS 解压后进入 `OpenBrep` 文件夹，双击 `OpenBrep.command`；Windows 解压后运行 `OpenBrep.exe`。这种方式不要求用户先学会 `git clone`、`git pull` 或手动安装 Python 依赖。
 
 ### 命令行安装（高级用户）
 
@@ -308,6 +308,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.6.8 | macOS 安装包修复：打包启动器改为进程内启动 Streamlit，避免冻结包递归拉起自身；macOS zip 增加 `OpenBrep.command` 和启动说明；`openbrep[ui]` 明确包含 UI 导入所需依赖（见 docs/releases/v0.6.8.md） |
 | v0.6.7 | UI 收尾小版本：隐藏版本管理与 Archicad 实机联动入口，收敛 HSF 保存 / 另存为为直达动作，清理多余提示与低频操作，进一步降低工作台认知负担（见 docs/releases/v0.6.7.md） |
 | v0.6.6 | UI 清爽化小版本：拆分打开文件/HSF 项目入口，简化编译 GSM 和输出目录选择，移除低价值调试按钮与冗余提示，优化 macOS 原生文件选择器激活体验（见 docs/releases/v0.6.6.md） |
 | v0.6.5 | 安装体验补丁：修正 GitHub Release 自动发布命令，改用 `gh release create --generate-notes` 兼容 `--repo`，用于接续 v0.6.4 的安装包发布自动化（见 docs/releases/v0.6.5.md） |
