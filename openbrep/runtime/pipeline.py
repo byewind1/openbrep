@@ -42,6 +42,7 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
+from openbrep.object_planner import plan_gdl_object
 from openbrep.project_context import (
     build_project_context_prompt,
     load_project_knowledge,
@@ -369,6 +370,22 @@ class TaskPipeline:
                 # fallback: 原始 instruction + image，行为与 Phase 1 之前一致
         # ─────────────────────────────────────────────────────────────────────
 
+        object_plan = None
+        if request.intent in ("CREATE", "IMAGE"):
+            on_event("status", {"message": "正在规划 GDL 对象结构…"})
+            object_plan = plan_gdl_object(
+                llm,
+                instruction=enriched_instruction,
+                knowledge=knowledge,
+                skills=skills_text,
+            )
+            enriched_instruction = (
+                f"{enriched_instruction}\n\n"
+                f"{object_plan.to_prompt()}\n\n"
+                "请严格按上述规划生成可继续工程化修改的 HSF/GDL 源码。"
+            )
+            on_event("object_plan_done", {"object_type": object_plan.object_type})
+
         agent = GDLAgent(
             llm=llm,
             compiler=compiler,
@@ -441,6 +458,8 @@ class TaskPipeline:
         # ─────────────────────────────────────────────────────────────────────
 
         create_text_parts = []
+        if object_plan is not None:
+            create_text_parts.append(object_plan.to_user_summary())
         if plain_text:
             create_text_parts.append(plain_text)
         if lint_summary:
