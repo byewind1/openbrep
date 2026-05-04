@@ -1,5 +1,7 @@
 import unittest
 import tempfile
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from openbrep.config import GDLAgentConfig
@@ -76,6 +78,8 @@ class TestObjectPlanner(unittest.TestCase):
         self.assertIn("专业书架", captured["instruction"])
         self.assertIn("shelf_count", captured["instruction"])
         self.assertIn("生成前规划", result.plain_text)
+        self.assertEqual(result.object_plan["object_type"], "专业书架")
+        self.assertIn("侧板和层板", result.object_plan["geometry"])
 
     def test_modify_path_does_not_run_object_planner(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -104,6 +108,39 @@ class TestObjectPlanner(unittest.TestCase):
         self.assertIn("侧板", "\n".join(plan.geometry))
         self.assertIn("层板", "\n".join(plan.geometry))
         self.assertIn("FOR", "\n".join(plan.script_3d_strategy))
+
+    def test_trace_records_object_plan_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline = TaskPipeline(config=GDLAgentConfig(), trace_dir=tmpdir)
+            project = HSFProject.create_new("bookshelf", work_dir=tmpdir)
+            mock_llm = MagicMock()
+            mock_llm.generate.return_value = LLMResponse(
+                content='{"object_type":"专业书架","geometry":["侧板"],"parameters":["A"],"script_3d_strategy":["BLOCK"],"script_2d_strategy":["PROJECT2"],"material_strategy":["材质"],"risks":["DEL"]}',
+                model="mock",
+                usage={},
+                finish_reason="stop",
+            )
+            pipeline._make_llm = lambda req: mock_llm
+            pipeline._load_knowledge = lambda: ""
+            pipeline._load_skills = lambda inst: ""
+
+            with patch("openbrep.runtime.pipeline.GDLAgent") as mock_agent_cls:
+                mock_agent = MagicMock()
+                mock_agent.generate_only.return_value = ({"scripts/3d.gdl": "BLOCK A, B, ZZYZX\nEND\n"}, "")
+                mock_agent_cls.return_value = mock_agent
+                result = pipeline.execute(
+                    TaskRequest(
+                        user_input="做一个书架",
+                        intent="CREATE",
+                        project=project,
+                        work_dir=tmpdir,
+                    )
+                )
+
+            trace = json.loads(Path(result.trace_path).read_text(encoding="utf-8"))
+
+        self.assertTrue(trace["has_object_plan"])
+        self.assertEqual(trace["object_type"], "专业书架")
 
 
 if __name__ == "__main__":

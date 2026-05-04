@@ -20,6 +20,17 @@ class GDLObjectPlan:
     material_strategy: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "object_type": self.object_type,
+            "geometry": list(self.geometry),
+            "parameters": list(self.parameters),
+            "script_3d_strategy": list(self.script_3d_strategy),
+            "script_2d_strategy": list(self.script_2d_strategy),
+            "material_strategy": list(self.material_strategy),
+            "risks": list(self.risks),
+        }
+
     def to_prompt(self) -> str:
         lines = [
             "## GDL Object Plan",

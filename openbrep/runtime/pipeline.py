@@ -127,6 +127,7 @@ class TaskResult:
     trace_path: Optional[str] = None
     error: Optional[str] = None
     lint_summary: str = ""
+    object_plan: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -472,6 +473,7 @@ class TaskPipeline:
             plain_text="\n\n".join(create_text_parts),
             project=project,
             lint_summary=lint_summary,
+            object_plan=object_plan.to_dict() if object_plan is not None else {},
         )
 
     def _handle_modify(self, request: TaskRequest) -> TaskResult:
