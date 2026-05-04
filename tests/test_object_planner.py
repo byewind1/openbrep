@@ -78,20 +78,22 @@ class TestObjectPlanner(unittest.TestCase):
         self.assertIn("生成前规划", result.plain_text)
 
     def test_modify_path_does_not_run_object_planner(self):
-        pipeline = TaskPipeline(config=GDLAgentConfig(), trace_dir="./traces")
-        project = HSFProject.create_new("bookshelf")
-        pipeline._load_knowledge = lambda: ""
-        pipeline._load_skills = lambda inst: ""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline = TaskPipeline(config=GDLAgentConfig(), trace_dir="./traces")
+            project = HSFProject.create_new("bookshelf", work_dir=tmpdir)
+            pipeline._load_knowledge = lambda: ""
+            pipeline._load_skills = lambda inst: ""
 
-        with patch("openbrep.runtime.pipeline.plan_gdl_object") as mock_planner:
-            with patch("openbrep.core.GDLAgent.generate_only", return_value=({}, "analysis")):
-                result = pipeline.execute(
-                    TaskRequest(
-                        user_input="把宽度改大",
-                        intent="MODIFY",
-                        project=project,
+            with patch("openbrep.runtime.pipeline.plan_gdl_object") as mock_planner:
+                with patch("openbrep.core.GDLAgent.generate_only", return_value=({}, "analysis")):
+                    result = pipeline.execute(
+                        TaskRequest(
+                            user_input="把宽度改大",
+                            intent="MODIFY",
+                            project=project,
+                            work_dir=tmpdir,
+                        )
                     )
-                )
 
         self.assertTrue(result.success)
         mock_planner.assert_not_called()
