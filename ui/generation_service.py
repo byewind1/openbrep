@@ -8,6 +8,7 @@ from typing import Callable
 
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.project_reports import write_object_plan_report
+from openbrep.revisions import create_revision
 from openbrep.runtime.pipeline import TaskRequest
 
 
@@ -150,14 +151,29 @@ class GenerationService:
         if project is None or not object_plan:
             return
         try:
-            write_object_plan_report(
+            report_path = write_object_plan_report(
                 project,
                 object_plan,
                 instruction=instruction,
                 intent=intent,
             )
+            if report_path is None:
+                return
+            project_root = Path(project.root).expanduser()
+            metadata = {
+                "source": "ai_object_generation",
+                "intent": intent,
+                "object_type": str(object_plan.get("object_type") or ""),
+                "object_plan_report": report_path.relative_to(project_root).as_posix(),
+            }
+            create_revision(
+                project.root,
+                "AI object generation",
+                gsm_name=project.name,
+                metadata=metadata,
+            )
         except Exception as exc:
-            self.logger.warning("failed to write object plan report: %s", exc)
+            self.logger.warning("failed to persist object plan report/revision: %s", exc)
 
     def _resolve_generation_intent(self, user_input: str, pipeline_project: HSFProject, debug_mode: bool) -> str:
         if debug_mode:

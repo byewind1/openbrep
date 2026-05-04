@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import json
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -94,6 +95,11 @@ def _service_with_pipeline(session_state, pipeline_class):
     return service
 
 
+def _save_project_apply_generation_plan(_plan, proj, _gsm_name, **_kwargs):
+    proj.save_to_disk()
+    return "", []
+
+
 class TestGenerationService(unittest.TestCase):
     def test_routes_debug_request_to_repair(self):
         state = _State(chat_history=[], work_dir="./workdir")
@@ -158,9 +164,17 @@ class TestGenerationService(unittest.TestCase):
             service.build_generation_result_plan_fn = lambda *_args, **_kwargs: SimpleNamespace(
                 has_changes=True,
                 mode="auto_apply",
-                code_blocks=[],
+                code_blocks=[
+                    {
+                        "path": "scripts/3d.gdl",
+                        "label": "3D",
+                        "language": "gdl",
+                        "content": "BLOCK A, B, ZZYZX\nEND\n",
+                    }
+                ],
                 reply_prefix="",
             )
+            service.apply_generation_plan_fn = _save_project_apply_generation_plan
 
             service.run_agent_generate("生成一个书架", project, _Status(), gsm_name="bookshelf")
 
@@ -168,9 +182,21 @@ class TestGenerationService(unittest.TestCase):
             latest = reports_dir / "latest_object_plan.json"
             latest_exists = latest.exists()
             latest_text = latest.read_text(encoding="utf-8") if latest_exists else ""
+            manifest = json.loads(
+                (
+                    Path(project.root)
+                    / ".openbrep"
+                    / "revisions"
+                    / "r0001"
+                    / "manifest.json"
+                ).read_text(encoding="utf-8")
+            )
 
         self.assertTrue(latest_exists)
         self.assertIn("object_plan", latest_text)
+        self.assertEqual(manifest["message"], "AI object generation")
+        self.assertEqual(manifest["metadata"]["object_type"], "专业书架")
+        self.assertTrue(manifest["metadata"]["object_plan_report"].startswith(".openbrep/reports/object_plan_"))
 
 
 if __name__ == "__main__":
