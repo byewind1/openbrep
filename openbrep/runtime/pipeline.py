@@ -42,6 +42,12 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
+from openbrep.project_context import (
+    build_project_context_prompt,
+    load_project_knowledge,
+    load_project_skills,
+    resolve_project_context,
+)
 from openbrep.skill_creator import SkillCreator
 from openbrep.user_knowledge import load_user_knowledge
 from openbrep.wiki_knowledge import WikiKnowledge
@@ -316,7 +322,7 @@ class TaskPipeline:
         """GDL generation / modification via GDLAgent.generate_only()."""
         llm = self._make_llm(request)
         compiler = self._make_compiler()
-        knowledge = self._load_knowledge()
+        knowledge = self._load_knowledge_for_request(request)
 
         # Ensure project exists
         project = request.project
@@ -327,7 +333,7 @@ class TaskPipeline:
                 work_dir=request.work_dir,
             )
         skills_text = self._with_learned_error_skill(
-            self._load_skills(request.user_input),
+            self._load_skills_for_request(request.user_input, request),
             work_dir=request.work_dir,
             project_name=project.name,
         )
@@ -472,7 +478,7 @@ class TaskPipeline:
         """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
         llm = self._make_llm(request)
         compiler = self._make_compiler()
-        knowledge = self._load_knowledge()
+        knowledge = self._load_knowledge_for_request(request)
         clean_instruction, syntax_report = _normalize_modify_request(request)
 
         # Prepare project — create empty one if none provided
@@ -482,7 +488,7 @@ class TaskPipeline:
             project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
         self._record_user_error_learning(request, project, clean_instruction)
         skills_text = _MODIFY_SKILLS_PROMPT + "\n\n" + self._with_learned_error_skill(
-            self._load_skills(clean_instruction),
+            self._load_skills_for_request(clean_instruction, request),
             work_dir=request.work_dir,
             project_name=project.name,
         )
@@ -688,6 +694,14 @@ class TaskPipeline:
             self._knowledge_text = builtin
         return self._knowledge_text
 
+    def _load_knowledge_for_request(self, request: TaskRequest) -> str:
+        """Load global knowledge plus optional project-scoped context."""
+        parts = [self._load_knowledge()]
+        context = resolve_project_context(request.project)
+        parts.append(build_project_context_prompt(context))
+        parts.append(load_project_knowledge(context, task_type=(request.intent or "all").lower()))
+        return "\n\n---\n\n".join(part for part in parts if part)
+
     def _load_skills(self, instruction: str) -> str:
         """Load skills relevant to instruction (loader cached)."""
         if self._skills_loader is None:
@@ -695,6 +709,18 @@ class TaskPipeline:
             self._skills_loader = SkillsLoader(str(sk_dir))
             self._skills_loader.load()
         return self._skills_loader.get_for_task(instruction)
+
+    def _load_skills_for_request(self, instruction: str, request: TaskRequest) -> str:
+        """Load global skills plus optional project-scoped skills."""
+        context = resolve_project_context(request.project)
+        return "\n\n---\n\n".join(
+            part
+            for part in [
+                self._load_skills(instruction),
+                load_project_skills(context, instruction),
+            ]
+            if part
+        )
 
     def _with_learned_error_skill(self, skills_text: str, *, work_dir: str = "", project_name: str = "") -> str:
         learned_skill = ""
