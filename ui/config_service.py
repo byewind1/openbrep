@@ -45,6 +45,28 @@ def load_runtime_config(root: Path | str) -> RuntimeConfigState:
     )
 
 
+def build_generation_config(
+    root: Path | str,
+    *,
+    model_name: str = "",
+    api_key: str = "",
+    api_base: str = "",
+    assistant_settings: str = "",
+) -> GDLAgentConfig:
+    """Build the config used by generation from the same root as the UI."""
+    cfg = load_runtime_config(root).config
+    model = str(model_name or "").strip()
+    if model:
+        cfg.llm.model = model
+    if api_key:
+        cfg.llm.api_key = api_key
+    if api_base:
+        cfg.llm.api_base = api_base
+    if assistant_settings:
+        cfg.llm.assistant_settings = assistant_settings
+    return cfg
+
+
 def available_models(config: GDLAgentConfig | None, custom_providers: list[dict], builtin_models: Iterable[str]) -> list[str]:
     if config is not None:
         return [str(model) for model in config.get_available_models()]

@@ -525,6 +525,17 @@ def get_llm():
         custom_providers=_custom_providers,
     )
 
+
+def _load_generation_config() -> GDLAgentConfig:
+    return ui_config_service.build_generation_config(
+        Path(__file__).parent.parent,
+        model_name=model_name,
+        api_key=api_key,
+        api_base=api_base,
+        assistant_settings=st.session_state.get("assistant_settings", ""),
+    )
+
+
 def load_knowledge(task_type: str = "all"):
     return ui_knowledge_access.load_knowledge(
         task_type,
@@ -587,7 +598,7 @@ def classify_and_extract(text: str, llm, project_loaded: bool = False) -> tuple:
 def chat_respond(user_input: str, history: list, llm) -> str:
     """Deprecated compatibility wrapper; main chat path should use TaskPipeline."""
     pipeline = TaskPipeline(trace_dir="./traces")
-    pipeline.config = GDLAgentConfig.load()
+    pipeline.config = _load_generation_config()
     request_kwargs = ui_view_models.build_chat_respond_request_kwargs(
         user_input,
         project=st.session_state.get("project"),
@@ -846,7 +857,7 @@ def run_agent_generate(
     service = ui_generation_service.GenerationService(
         session_state=st.session_state,
         pipeline_class=TaskPipeline,
-        config_loader_fn=GDLAgentConfig.load,
+        config_loader_fn=_load_generation_config,
         build_generation_result_plan_fn=build_generation_result_plan,
         begin_generation_state_fn=_begin_generation_state,
         is_active_generation_fn=_is_active_generation,

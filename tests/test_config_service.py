@@ -139,6 +139,35 @@ models = ["mimo-v2.5-pro"]
             config_service.available_models(state.config, state.custom_providers, []),
         )
 
+    def test_build_generation_config_uses_ui_root_when_cwd_differs(self):
+        with tempfile.TemporaryDirectory() as root_dir, tempfile.TemporaryDirectory() as cwd:
+            root = Path(root_dir)
+            (root / "config.toml").write_text(
+                """
+[llm]
+model = "mimo-v2.5-pro"
+
+[[llm.custom_providers]]
+name = "mimo"
+base_url = "https://api.example.test/v1"
+api_key = "custom-key"
+protocol = "openai"
+models = ["mimo-v2.5-pro"]
+""",
+                encoding="utf-8",
+            )
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(cwd)
+                cfg = config_service.build_generation_config(root, model_name="mimo-v2.5-pro")
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(cfg.llm.model, "mimo-v2.5-pro")
+        self.assertEqual(len(cfg.llm.custom_providers), 1)
+        self.assertEqual(cfg.llm.resolve_api_key(), "custom-key")
+        self.assertEqual(cfg.llm.resolve_api_base(), "https://api.example.test/v1")
+
 
 class _SessionState(dict):
     def __getattr__(self, key):
