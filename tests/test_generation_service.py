@@ -1,5 +1,7 @@
 import unittest
+import tempfile
 from types import SimpleNamespace
+from pathlib import Path
 
 from openbrep.hsf_project import HSFProject, ScriptType
 from ui.generation_service import GenerationService
@@ -46,6 +48,22 @@ class _FailingPipeline(_Pipeline):
     def execute(self, request):
         _Pipeline.captured_request = request
         return SimpleNamespace(success=False, error="pipeline failed")
+
+
+class _PlanningPipeline(_Pipeline):
+    def execute(self, request):
+        _Pipeline.captured_request = request
+        return SimpleNamespace(
+            success=True,
+            scripts={"scripts/3d.gdl": "BLOCK A, B, ZZYZX\nEND\n"},
+            plain_text="ok",
+            project=request.project,
+            object_plan={
+                "object_type": "专业书架",
+                "geometry": ["侧板", "层板"],
+                "parameters": ["Integer shelf_count = 层板数"],
+            },
+        )
 
 
 def _service(session_state, *, should_accept=True):
@@ -130,6 +148,29 @@ class TestGenerationService(unittest.TestCase):
         self.assertIn("错误", result)
         self.assertIn("pipeline failed", result)
         self.assertEqual(state.finished, "failed")
+
+    def test_auto_apply_generation_persists_object_plan_report(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = _State(chat_history=[], work_dir=tmpdir)
+            project = HSFProject.create_new("bookshelf", work_dir=tmpdir)
+            project.scripts = {}
+            service = _service_with_pipeline(state, _PlanningPipeline)
+            service.build_generation_result_plan_fn = lambda *_args, **_kwargs: SimpleNamespace(
+                has_changes=True,
+                mode="auto_apply",
+                code_blocks=[],
+                reply_prefix="",
+            )
+
+            service.run_agent_generate("生成一个书架", project, _Status(), gsm_name="bookshelf")
+
+            reports_dir = Path(project.root) / ".openbrep" / "reports"
+            latest = reports_dir / "latest_object_plan.json"
+            latest_exists = latest.exists()
+            latest_text = latest.read_text(encoding="utf-8") if latest_exists else ""
+
+        self.assertTrue(latest_exists)
+        self.assertIn("object_plan", latest_text)
 
 
 if __name__ == "__main__":

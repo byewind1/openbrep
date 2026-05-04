@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.project_reports import write_object_plan_report
 from openbrep.runtime.pipeline import TaskRequest
 
 
@@ -127,6 +128,7 @@ class GenerationService:
                         gsm_name,
                         already_applied=True,
                     )
+                    self._persist_object_plan_report(result, request_input, intent)
                 else:
                     result_prefix, code_blocks = self.apply_generation_plan_fn(
                         plan,
@@ -141,6 +143,21 @@ class GenerationService:
             status_ph.empty()
             self.finish_generation_state_fn(self.session_state, generation_id, "failed")
             return f"❌ **错误**: {str(e)}"
+
+    def _persist_object_plan_report(self, result, instruction: str, intent: str) -> None:
+        project = getattr(result, "project", None)
+        object_plan = getattr(result, "object_plan", None)
+        if project is None or not object_plan:
+            return
+        try:
+            write_object_plan_report(
+                project,
+                object_plan,
+                instruction=instruction,
+                intent=intent,
+            )
+        except Exception as exc:
+            self.logger.warning("failed to write object plan report: %s", exc)
 
     def _resolve_generation_intent(self, user_input: str, pipeline_project: HSFProject, debug_mode: bool) -> str:
         if debug_mode:
@@ -207,6 +224,10 @@ class GenerationService:
             component = data.get("component_type", "")
             label = f"「{component}」" if component and component != "未知构件" else ""
             self._guarded_event_update(status_ph, generation_id, "info", f"🖼️ 图像分析完成{label}，正在生成 GDL…")
+        elif event_type == "object_plan_done":
+            object_type = data.get("object_type", "")
+            label = f"「{object_type}」" if object_type else ""
+            self._guarded_event_update(status_ph, generation_id, "info", f"📐 对象规划完成{label}，正在生成 GDL…")
 
 
 def _strip_force_generate_prefix(user_input: str) -> tuple[str, bool]:
