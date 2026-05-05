@@ -20,6 +20,8 @@ class TestObjectPlanner(unittest.TestCase):
               "object_type": "参数化鞋柜",
               "geometry": ["柜体", "隔板"],
               "parameters": ["Length A = 宽度"],
+              "command_candidates": ["BLOCK", "PROJECT2"],
+              "validation_checks": ["ADD/DEL 平衡"],
               "script_3d_strategy": ["BLOCK 组合"],
               "script_2d_strategy": ["PROJECT2"],
               "material_strategy": ["材质参数"],
@@ -31,6 +33,8 @@ class TestObjectPlanner(unittest.TestCase):
 
         self.assertEqual(plan.object_type, "参数化鞋柜")
         self.assertIn("隔板", plan.geometry)
+        self.assertIn("BLOCK", plan.command_candidates)
+        self.assertIn("ADD/DEL 平衡", plan.validation_checks)
         self.assertIn("ADD/DEL 平衡", plan.risks)
 
     def test_plan_gdl_object_falls_back_when_llm_fails(self):
@@ -72,11 +76,14 @@ class TestObjectPlanner(unittest.TestCase):
                     )
                 )
                 captured["instruction"] = mock_agent.generate_only.call_args.kwargs["instruction"]
+                captured["planner_prompt"] = mock_llm.generate.call_args.args[0][1]["content"]
 
         self.assertTrue(result.success)
         self.assertIn("GDL Object Plan", captured["instruction"])
         self.assertIn("专业书架", captured["instruction"])
         self.assertIn("shelf_count", captured["instruction"])
+        self.assertIn("Archetype: bookshelf", captured["planner_prompt"])
+        self.assertIn("Wiki: BLOCK", captured["planner_prompt"])
         self.assertIn("生成前规划", result.plain_text)
         self.assertEqual(result.object_plan["object_type"], "专业书架")
         self.assertIn("侧板和层板", result.object_plan["geometry"])

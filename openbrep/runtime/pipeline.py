@@ -40,6 +40,7 @@ from openbrep.core import GDLAgent
 from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
+from openbrep.knowledge_selector import KnowledgeSelection, select_gdl_knowledge
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
 from openbrep.object_planner import plan_gdl_object
@@ -324,7 +325,6 @@ class TaskPipeline:
         """GDL generation / modification via GDLAgent.generate_only()."""
         llm = self._make_llm(request)
         compiler = self._make_compiler()
-        knowledge = self._load_knowledge_for_request(request)
 
         # Ensure project exists
         project = request.project
@@ -334,6 +334,9 @@ class TaskPipeline:
                 gsm_name,
                 work_dir=request.work_dir,
             )
+        request.project = project
+        knowledge_selection = self._select_knowledge_for_request(request)
+        knowledge = knowledge_selection.generation_context
         skills_text = self._with_learned_error_skill(
             self._load_skills_for_request(request.user_input, request),
             work_dir=request.work_dir,
@@ -377,7 +380,7 @@ class TaskPipeline:
             object_plan = plan_gdl_object(
                 llm,
                 instruction=enriched_instruction,
-                knowledge=knowledge,
+                knowledge=knowledge_selection.planner_context,
                 skills=skills_text,
             )
             enriched_instruction = (
@@ -717,6 +720,23 @@ class TaskPipeline:
 
     def _load_knowledge_for_request(self, request: TaskRequest) -> str:
         """Load global knowledge plus optional project-scoped context."""
+        return self._select_knowledge_for_request(request).generation_context
+
+    def _select_knowledge_for_request(self, request: TaskRequest) -> KnowledgeSelection:
+        """Load request-aware GDL knowledge for planning and generation."""
+        project_root = Path(__file__).parent.parent.parent
+        context = resolve_project_context(request.project)
+        return select_gdl_knowledge(
+            instruction=request.user_input,
+            intent=(request.intent or "all").lower(),
+            knowledge_dir=project_root / "knowledge",
+            base_context=self._load_knowledge(),
+            project_context=build_project_context_prompt(context),
+            project_knowledge=load_project_knowledge(context, task_type=(request.intent or "all").lower()),
+        )
+
+    def _load_legacy_knowledge_for_request(self, request: TaskRequest) -> str:
+        """Load global knowledge plus optional project-scoped context using the old concatenation path."""
         parts = [self._load_knowledge()]
         context = resolve_project_context(request.project)
         parts.append(build_project_context_prompt(context))

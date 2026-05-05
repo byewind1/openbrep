@@ -1,0 +1,81 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from openbrep.knowledge import KnowledgeBase
+from openbrep.knowledge_selector import select_gdl_knowledge
+
+
+class TestKnowledgeSelector(unittest.TestCase):
+    def test_select_bookshelf_knowledge_includes_archetype_and_command_wiki(self):
+        root = Path(__file__).parent.parent / "knowledge"
+
+        selection = select_gdl_knowledge(
+            instruction="做一个专业一点的参数化书架",
+            intent="CREATE",
+            knowledge_dir=root,
+            base_context="## GDL_quick_reference\n\n基础规则",
+        )
+
+        self.assertIn("Archetype: bookshelf", selection.planner_context)
+        self.assertIn("参数化书架", selection.planner_context)
+        self.assertIn("Wiki: BLOCK", selection.planner_context)
+        self.assertIn("Wiki: ADD_DEL", selection.planner_context)
+        self.assertIn("Wiki: FOR_NEXT", selection.planner_context)
+        self.assertIn("Wiki: PROJECT2", selection.planner_context)
+        self.assertIn("archetype.bookshelf", selection.source_ids)
+        self.assertIn("wiki.BLOCK", selection.source_ids)
+
+    def test_select_cabinet_knowledge_includes_cabinet_archetype(self):
+        root = Path(__file__).parent.parent / "knowledge"
+
+        selection = select_gdl_knowledge(
+            instruction="生成一个带门板和层板的收纳柜",
+            intent="CREATE",
+            knowledge_dir=root,
+            base_context="## GDL_quick_reference\n\n基础规则",
+        )
+
+        self.assertIn("Archetype: cabinet", selection.planner_context)
+        self.assertIn("参数化柜体", selection.planner_context)
+        self.assertIn("Wiki: BLOCK", selection.planner_context)
+
+    def test_generation_context_keeps_project_knowledge_priority(self):
+        root = Path(__file__).parent.parent / "knowledge"
+
+        selection = select_gdl_knowledge(
+            instruction="生成一个书架",
+            intent="CREATE",
+            knowledge_dir=root,
+            base_context="## GDL_quick_reference\n\n基础规则",
+            project_context="## Project Context\n\n- project.name: 住宅收纳",
+            project_knowledge="层板数量必须由项目参数驱动。",
+        )
+
+        self.assertLess(
+            selection.generation_context.index("Project Context"),
+            selection.generation_context.index("Archetype: bookshelf"),
+        )
+        self.assertIn("层板数量必须由项目参数驱动", selection.generation_context)
+
+
+class TestKnowledgeBaseNoiseFiltering(unittest.TestCase):
+    def test_load_skips_agent_and_maintenance_notes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "GDL_quick_reference.md").write_text("real knowledge", encoding="utf-8")
+            (root / "CLAUDE.md").write_text("agent notes", encoding="utf-8")
+            (root / "index.md").write_text("index noise", encoding="utf-8")
+            (root / "log.md").write_text("maintenance log", encoding="utf-8")
+
+            kb = KnowledgeBase(str(root))
+            kb.load()
+
+        self.assertIn("GDL_quick_reference", kb.doc_names)
+        self.assertNotIn("CLAUDE", kb.doc_names)
+        self.assertNotIn("index", kb.doc_names)
+        self.assertNotIn("log", kb.doc_names)
+
+
+if __name__ == "__main__":
+    unittest.main()

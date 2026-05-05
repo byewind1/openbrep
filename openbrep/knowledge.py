@@ -63,8 +63,8 @@ class KnowledgeBase:
             self._loaded = True
             return
 
-        # Free tier: top-level *.md (skip README / index noise)
-        _skip = {"README", "CHANGELOG"}
+        # Free tier: top-level *.md. Keep maintenance/agent notes out of LLM context.
+        _skip = {"README", "CHANGELOG", "CLAUDE", "AGENTS", "index", "log"}
         for md_file in sorted(self.knowledge_dir.glob("*.md")):
             if md_file.stem in _skip:
                 continue
