@@ -61,6 +61,71 @@ class TestProjectContext(unittest.TestCase):
         self.assertIn("可参数化层板", knowledge)
         self.assertIn("模块化参数", skills)
 
+    def test_project_knowledge_manifest_filters_and_sorts_docs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("bookshelf", work_dir=tmpdir)
+            project.save_to_disk()
+            knowledge_dir = Path(project.root) / ".openbrep" / "knowledge"
+            knowledge_dir.mkdir(parents=True)
+            (knowledge_dir / "create_rules.md").write_text("create priority 10", encoding="utf-8")
+            (knowledge_dir / "project_rules.md").write_text("all priority 100", encoding="utf-8")
+            (knowledge_dir / "debug_rules.md").write_text("debug only", encoding="utf-8")
+            (knowledge_dir / "manifest.toml").write_text(
+                '[[docs]]\n'
+                'id = "project.create"\n'
+                'path = "create_rules.md"\n'
+                'task_types = ["create"]\n'
+                "priority = 10\n"
+                "\n[[docs]]\n"
+                'id = "project.all"\n'
+                'path = "project_rules.md"\n'
+                'task_types = ["all"]\n'
+                "priority = 100\n"
+                "\n[[docs]]\n"
+                'id = "project.debug"\n'
+                'path = "debug_rules.md"\n'
+                'task_types = ["debug"]\n'
+                "priority = 50\n",
+                encoding="utf-8",
+            )
+
+            context = resolve_project_context(project)
+            knowledge = load_project_knowledge(context, task_type="create")
+
+        self.assertIn("Project Knowledge: project.all", knowledge)
+        self.assertIn("Project Knowledge: project.create", knowledge)
+        self.assertNotIn("debug only", knowledge)
+        self.assertLess(knowledge.index("all priority 100"), knowledge.index("create priority 10"))
+
+    def test_project_knowledge_manifest_blocks_paths_outside_knowledge_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("bookshelf", work_dir=tmpdir)
+            project.save_to_disk()
+            root = Path(project.root)
+            knowledge_dir = root / ".openbrep" / "knowledge"
+            knowledge_dir.mkdir(parents=True)
+            (root / "secret.md").write_text("must not load", encoding="utf-8")
+            (knowledge_dir / "safe.md").write_text("safe project rule", encoding="utf-8")
+            (knowledge_dir / "manifest.toml").write_text(
+                '[[docs]]\n'
+                'id = "unsafe"\n'
+                'path = "../../secret.md"\n'
+                'task_types = ["create"]\n'
+                "priority = 100\n"
+                "\n[[docs]]\n"
+                'id = "safe"\n'
+                'path = "safe.md"\n'
+                'task_types = ["create"]\n'
+                "priority = 1\n",
+                encoding="utf-8",
+            )
+
+            context = resolve_project_context(project)
+            knowledge = load_project_knowledge(context, task_type="create")
+
+        self.assertIn("safe project rule", knowledge)
+        self.assertNotIn("must not load", knowledge)
+
     def test_pipeline_injects_project_context_knowledge_and_skills(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = HSFProject.create_new("bookshelf", work_dir=tmpdir)

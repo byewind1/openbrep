@@ -21,11 +21,19 @@ class KnowledgeSelection:
 _OBJECT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "bookshelf": ("书架", "书柜", "层板架", "bookshelf", "shelf", "bookcase"),
     "cabinet": ("柜", "柜体", "收纳柜", "鞋柜", "橱柜", "cabinet", "cupboard"),
+    "table": ("桌", "桌子", "餐桌", "书桌", "会议桌", "table", "desk"),
+    "door": ("门", "门扇", "门框", "door"),
+    "window": ("窗", "窗户", "窗框", "window"),
+    "profile_object": ("旋转体", "剖面", "放样", "异形板", "profile", "revolve", "sweep", "extrude"),
 }
 
 _ARCHETYPE_COMMANDS: dict[str, tuple[str, ...]] = {
     "bookshelf": ("BLOCK", "ADD_DEL", "FOR_NEXT", "PROJECT2", "HOTSPOT2"),
     "cabinet": ("BLOCK", "ADD_DEL", "FOR_NEXT", "PROJECT2", "HOTSPOT2", "PRISM_"),
+    "table": ("BLOCK", "ADD_DEL", "FOR_NEXT", "PROJECT2", "HOTSPOT2", "CYLIND"),
+    "door": ("BLOCK", "ADD_DEL", "PROJECT2", "HOTSPOT2", "Object_Types"),
+    "window": ("BLOCK", "ADD_DEL", "PROJECT2", "HOTSPOT2", "Object_Types"),
+    "profile_object": ("PRISM_", "REVOLVE", "SWEEP", "ADD_DEL", "PROJECT2", "HOTSPOT2"),
 }
 
 _INTENT_WIKI_HINTS: dict[str, tuple[str, ...]] = {

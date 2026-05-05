@@ -20,6 +20,7 @@ from openbrep.skills_loader import SkillsLoader
 OPENBREP_DIR = ".openbrep"
 PROJECT_TOML = "project.toml"
 KNOWLEDGE_DIR = "knowledge"
+KNOWLEDGE_MANIFEST = "manifest.toml"
 SKILLS_DIR = "skills"
 REVISIONS_DIR = "revisions"
 
@@ -87,12 +88,68 @@ def load_project_knowledge(context: ProjectContext | None, *, task_type: str = "
     """Load optional project-scoped knowledge from .openbrep/knowledge."""
     if context is None or not context.knowledge_dir.is_dir():
         return ""
+    manifest_text = _load_project_knowledge_manifest(context.knowledge_dir, task_type=task_type)
+    if manifest_text:
+        return manifest_text
     try:
         kb = KnowledgeBase(str(context.knowledge_dir))
         kb.load()
         return kb.get_by_task_type(task_type)
     except Exception:
         return ""
+
+
+def _load_project_knowledge_manifest(knowledge_dir: Path, *, task_type: str = "all") -> str:
+    """Load project knowledge docs declared in .openbrep/knowledge/manifest.toml."""
+    manifest = knowledge_dir / KNOWLEDGE_MANIFEST
+    if not manifest.is_file():
+        return ""
+
+    data = load_project_toml(manifest)
+    docs = data.get("docs") if isinstance(data, dict) else None
+    if not isinstance(docs, list):
+        return ""
+
+    task = (task_type or "all").lower()
+    selected: list[tuple[int, str, str]] = []
+    for item in docs:
+        if not isinstance(item, dict):
+            continue
+        path_value = item.get("path")
+        if not isinstance(path_value, str) or not path_value.strip():
+            continue
+        task_types = item.get("task_types")
+        if isinstance(task_types, list):
+            allowed = {str(value).lower() for value in task_types}
+            if task != "all" and "all" not in allowed and task not in allowed:
+                continue
+
+        fp = (knowledge_dir / path_value).resolve()
+        try:
+            fp.relative_to(knowledge_dir.resolve())
+        except ValueError:
+            continue
+        if not fp.is_file() or fp.name == KNOWLEDGE_MANIFEST:
+            continue
+
+        try:
+            body = fp.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        doc_id = str(item.get("id") or fp.stem)
+        try:
+            priority = int(item.get("priority", 0))
+        except Exception:
+            priority = 0
+        selected.append((priority, doc_id, body))
+
+    if not selected:
+        return ""
+
+    selected.sort(key=lambda row: row[0], reverse=True)
+    parts = [f"## Project Knowledge: {doc_id}\n\n{body.strip()}" for _, doc_id, body in selected]
+    return "\n\n---\n\n".join(parts)
 
 
 def load_project_skills(context: ProjectContext | None, instruction: str) -> str:

@@ -40,6 +40,27 @@ class TestKnowledgeSelector(unittest.TestCase):
         self.assertIn("参数化柜体", selection.planner_context)
         self.assertIn("Wiki: BLOCK", selection.planner_context)
 
+    def test_select_table_door_window_and_profile_archetypes(self):
+        root = Path(__file__).parent.parent / "knowledge"
+
+        cases = [
+            ("做一个会议桌", "Archetype: table", "参数化桌子"),
+            ("生成一个带门框的门", "Archetype: door", "参数化门"),
+            ("生成一个三分格窗户", "Archetype: window", "参数化窗"),
+            ("做一个旋转体花瓶", "Archetype: profile_object", "剖面/旋转/放样构件"),
+        ]
+
+        for instruction, marker, title in cases:
+            with self.subTest(instruction=instruction):
+                selection = select_gdl_knowledge(
+                    instruction=instruction,
+                    intent="CREATE",
+                    knowledge_dir=root,
+                    base_context="## GDL_quick_reference\n\n基础规则",
+                )
+                self.assertIn(marker, selection.planner_context)
+                self.assertIn(title, selection.planner_context)
+
     def test_generation_context_keeps_project_knowledge_priority(self):
         root = Path(__file__).parent.parent / "knowledge"
 
