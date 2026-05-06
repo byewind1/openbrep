@@ -21,7 +21,7 @@ import difflib
 import logging
 import re
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -382,6 +382,13 @@ class TaskPipeline:
                 instruction=enriched_instruction,
                 knowledge=knowledge_selection.planner_context,
                 skills=skills_text,
+            )
+            object_plan = replace(
+                object_plan,
+                knowledge_sources=_merge_list_values(
+                    object_plan.knowledge_sources,
+                    knowledge_selection.source_ids,
+                ),
             )
             enriched_instruction = (
                 f"{enriched_instruction}\n\n"
@@ -1154,6 +1161,18 @@ def _build_diff_summary(before: dict[str, str], changed_files: dict[str, str]) -
             parts.append(f"  {label}: 内容未变化")
 
     return "\n".join(parts)
+
+
+def _merge_list_values(*groups: list[str]) -> list[str]:
+    seen: set[str] = set()
+    values: list[str] = []
+    for group in groups:
+        for item in group or []:
+            text = str(item).strip()
+            if text and text not in seen:
+                seen.add(text)
+                values.append(text)
+    return values
 
 
 def _key_for_model(model: str, provider_keys: dict, custom_providers: list) -> str:

@@ -43,6 +43,7 @@ class Tracer:
             "has_plain_text": bool(result.plain_text),
             "has_object_plan": bool(getattr(result, "object_plan", None)),
             "object_type": (getattr(result, "object_plan", {}) or {}).get("object_type"),
+            "knowledge_sources": (getattr(result, "object_plan", {}) or {}).get("knowledge_sources") or [],
             "has_compile": result.compile_result is not None,
             "compile_pass": result.compile_result.success if result.compile_result else None,
             "error": result.error,

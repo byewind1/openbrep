@@ -84,9 +84,13 @@ class TestObjectPlanner(unittest.TestCase):
         self.assertIn("shelf_count", captured["instruction"])
         self.assertIn("Archetype: bookshelf", captured["planner_prompt"])
         self.assertIn("Wiki: BLOCK", captured["planner_prompt"])
+        self.assertIn("本次使用知识", result.plain_text)
+        self.assertIn("archetype.bookshelf", result.plain_text)
         self.assertIn("生成前规划", result.plain_text)
         self.assertEqual(result.object_plan["object_type"], "专业书架")
         self.assertIn("侧板和层板", result.object_plan["geometry"])
+        self.assertIn("archetype.bookshelf", result.object_plan["knowledge_sources"])
+        self.assertIn("wiki.BLOCK", result.object_plan["knowledge_sources"])
 
     def test_modify_path_does_not_run_object_planner(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -148,6 +152,7 @@ class TestObjectPlanner(unittest.TestCase):
 
         self.assertTrue(trace["has_object_plan"])
         self.assertEqual(trace["object_type"], "专业书架")
+        self.assertIn("archetype.bookshelf", trace["knowledge_sources"])
 
 
 if __name__ == "__main__":

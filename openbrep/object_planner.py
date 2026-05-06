@@ -91,6 +91,8 @@ class GDLObjectPlan:
             parts.append(f"- 3D 策略：{'；'.join(self.script_3d_strategy[:3])}")
         if self.script_2d_strategy:
             parts.append(f"- 2D 策略：{'；'.join(self.script_2d_strategy[:2])}")
+        if self.knowledge_sources:
+            parts.append(f"- 本次使用知识：{'；'.join(self.knowledge_sources[:8])}")
         return "\n".join(parts)
 
 
