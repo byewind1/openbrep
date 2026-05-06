@@ -61,7 +61,7 @@ python scripts/verify_gdl_knowledge_sources.py \
 | P0 已完成 | 最高风险生成命令 | `BLOCK`、`PROJECT2`、`HOTSPOT2`、`MATERIAL`、`REVOLVE`、`SWEEP` | 修掉伪语法和误导性简写 |
 | P1 已完成 | 核心 3D 几何 | `PRISM_`、`CYLIND`、`CUTPLANE`、`BODY_EDGE_PGON` | 确认参数顺序、状态码、退化几何、布尔/裁切边界 |
 | P2 已完成 | 变换与控制流 | `ADD_DEL`、`Transformation_Stack`、`FOR_NEXT`、`IF_ENDIF` | 防止 ADD/DEL、FOR/NEXT、IF/ENDIF 结构性错误 |
-| P3 | 2D 表达 | `2D_Primitives`、`PROJECT2`、`HOTSPOT2` | 校对平面符号、热点编辑、投影策略 |
+| P3 已完成 | 2D 表达 | `2D_Primitives`、`PROJECT2`、`HOTSPOT2` | 校对平面符号、热点编辑、投影策略 |
 | P4 | 参数与属性 | `Paramlist_XML`、`DEFINE`、`MATERIAL`、`GLOBALS`、`Object_Types` | 校对参数类型、材质/属性、对象类型、全局变量 |
 | P5 | Group / 高级几何 | `GROUP`、`SWEEP`、`REVOLVE`、`BODY_EDGE_PGON` | 确认高级命令只在有把握时用于生成 |
 | P6 | 构件 archetype | `bookshelf`、`cabinet`、`table`、`door`、`window`、`profile_object` | 让构件知识只引用已校对命令，修正不合理建模策略 |
@@ -116,4 +116,21 @@ knowledge/wiki/IF_ENDIF.md
 - `IF_ENDIF` 修正为官方允许的比较与逻辑表达式写法。
 - `tests/test_knowledge_lint.py` 增加 P2 语法防回退断言。
 
-P2 完成后再进入 P3，不并行铺开。
+## P3 完成记录
+
+已校对：
+
+```text
+knowledge/wiki/2D_Primitives.md
+knowledge/wiki/PROJECT2.md
+knowledge/wiki/HOTSPOT2.md
+```
+
+完成结果：
+
+- `2D_Primitives` 改成官方 `LINE2` / `RECT2` / `CIRCLE2` / `ARC2` / `POLY2` 语法。
+- `PROJECT2` 修正为官方 3D-to-2D projection 语义，并去掉错误的 cut plane 解释。
+- `HOTSPOT2` 对齐 graphical editing 用法，保留官方参数签名和图形编辑约束。
+- `tests/test_knowledge_lint.py` 增加 P3 语法防回退断言。
+
+P3 完成后再进入 P4，不并行铺开。

@@ -3,18 +3,18 @@ type: concept
 status: stable
 tags: [projection, plan, 2d, drawing, 3d-to-2d, view]
 aliases: [PROJECT2, projection, 2d projection, plan projection, gdl projection]
-source: raw/ccgdl_dev_doc/docs/GDL_11_2D_Advanced.md
+source: official:gdl.graphisoft.com/reference-guide/3d-projections-in-2d
 ---
 
 # PROJECT2
 
-`PROJECT2` generates a 2D plan-view projection from the 3D geometry of a GDL object. It's the standard way to create the floor plan representation of a 3D object automatically.
+`PROJECT2` generates a 2D projection from the 3D geometry of a GDL object. OpenBrep uses it as the default way to derive a plan symbol from 3D script output when manual 2D drawing is not needed.
 
 ## Why PROJECT2?
 
 Manually drawing the 2D plan with `RECT2`, `LINE2`, `CIRCLE2`, etc. is tedious and error-prone — and it drifts out of sync when the 3D geometry changes. `PROJECT2` solves this by deriving the 2D drawing directly from the 3D script output, guaranteeing consistency.
 
-## Syntax
+## Official Syntax
 
 ```gdl
 PROJECT2 projection_code, angle, method
@@ -22,25 +22,19 @@ PROJECT2{2} projection_code, angle, method [, backgroundColor, fillOrigoX, fillO
 PROJECT2{3} projection_code, angle, method, parts [, backgroundColor, fillOrigoX, fillOrigoY, filldirection] [[,] PARAMETERS name1=value1, ..., namen=valuen]
 ```
 
-The standard top-view floor plan projection used by OpenBrep is:
+Recommended default for a top-view plan projection:
 
 ```gdl
 PROJECT2 3, 270, 2
 ```
 
-`projection_code = 3` means top view. `method = 2` means hidden lines. This is the reliable default for generated library parts that need a quick 2D representation from the 3D script.
+`projection_code = 3` means top view. `method = 2` means hidden lines.
 
 ## Cut Plane Behavior
 
-`PROJECT2` creates a projection of the 3D script in the same library part and adds the generated lines to the 2D parametric symbol.
+`PROJECT2` projects the 3D script in the same library part and appends the generated lines to the 2D parametric symbol.
 
-To control the cut plane from GDL:
-
-```gdl
-CUTPLANE x, y, z, angle    ! set cut plane position
-```
-
-This is rarely needed — ArchiCAD's automatic cut plane usually produces correct results.
+It does not define the cut plane itself. Use `CUTPLANE` / `CUTEND` only when you need an actual 3D cutaway.
 
 ## Manual 2D Drawing
 
@@ -63,9 +57,9 @@ LINE2 A, 0, 0, B
 | Situation | Recommendation |
 |-----------|----------------|
 | Simple objects (boxes, prisms) | `PROJECT2` — automatic |
-| Objects with custom cut planes | `PROJECT2` — automatic |
-| Complex plan annotations needed | Manual 2D + [[HOTSPOT2]] |
-| Hidden line removal | Manual 2D |
+| Objects with standard plan display | `PROJECT2` — automatic |
+| Objects with custom plan annotations | Manual 2D + [[HOTSPOT2]] |
+| Hotspot-driven editing | `PROJECT2` + [[HOTSPOT2]] |
 | Very complex 3D (slow projection) | Manual 2D for performance |
 
 ## Edge Cases & Traps
@@ -73,7 +67,7 @@ LINE2 A, 0, 0, B
 - **Performance**: `PROJECT2` must evaluate the full 3D script internally. For objects with complex 3D (loops, many primitives), the projection can be slow. Consider caching the result or using manual 2D.
 - **Arguments are required**: do not emit bare `PROJECT2`; use `PROJECT2 3, 270, 2` for the common top-view hidden-line plan.
 - **Projection code matters**: `3` is top view, `-3` is bottom view, and other official codes produce side or axonometric views.
-- **No style control**: you cannot control line type, pen, or fill from `PROJECT2` directly. Use `PEN`, `LINE_TYPE`, `FILL` before calling it.
+- **No style control**: line type, pen, and fill still need to be set with normal 2D commands before calling it.
 - **Interaction with HOTSPOT2**: `PROJECT2` draws lines, not hotspots. You must place [[HOTSPOT2]] separately for interactive editing.
 - **Empty 2D script**: if the 2D script is empty and `PROJECT2` is missing, the object has no floor plan display.
 
