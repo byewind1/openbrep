@@ -254,6 +254,51 @@ python -m pytest tests/ -q
 
 不要把 `CLAUDE.md`、`AGENTS.md`、`index.md`、`log.md` 这类维护说明注入 LLM 生成上下文。
 
+### 专业知识交叉验证
+
+当新增或修改命令级 GDL 知识时，应把本地知识、Graphisoft 官方文档和官方社区入口分层验证。
+
+权威顺序：
+
+```text
+Graphisoft GDL Reference Guide
+  > Graphisoft GDL Center 其他官方文档
+  > Graphisoft Community GDL 讨论
+  > OpenBrep 本地知识库
+  > LLM 推断
+```
+
+官方文档用于验证语法事实，社区只用于发现实践案例、边界问题和常见坑，不得用社区讨论覆盖官方语法。
+
+默认交叉验证命令：
+
+```bash
+python scripts/verify_gdl_knowledge_sources.py \
+  --commands BLOCK PRISM_ REVOLVE PROJECT2 HOTSPOT2 MATERIAL \
+  --format markdown \
+  --output /tmp/openbrep-gdl-knowledge-verify.md
+```
+
+如果本机 Python 无法直接连接 Graphisoft GDL Center，可先下载官方 index HTML，再离线验证：
+
+```bash
+mkdir -p /tmp/openbrep-gdl-verify
+curl -L --compressed https://gdl.graphisoft.com/reference-guide/index/ \
+  -o /tmp/openbrep-gdl-verify/graphisoft-gdl-index.html
+
+python scripts/verify_gdl_knowledge_sources.py \
+  --official-index-file /tmp/openbrep-gdl-verify/graphisoft-gdl-index.html \
+  --commands BLOCK PRISM_ REVOLVE PROJECT2 HOTSPOT2 MATERIAL \
+  --format markdown \
+  --output /tmp/openbrep-gdl-knowledge-verify.md
+```
+
+如果当前环境不允许联网，但希望生成明确错误报告而不中断流程：
+
+```bash
+python scripts/verify_gdl_knowledge_sources.py --offline-ok
+```
+
 ## 项目生命周期契约
 
 当前项目路径：
