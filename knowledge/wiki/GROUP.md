@@ -1,90 +1,79 @@
 ---
 type: concept
 status: stable
-tags: [3d, geometry, group, body, hierarchy]
-aliases: [GROUP, group, body, sub-body, nesting]
-source: raw/ccgdl_dev_doc/docs/GDL_02_Shapes.md
+tags: [3d, geometry, group, boolean, solid-operation]
+aliases: [GROUP, ENDGROUP, PLACEGROUP, KILLGROUP, ADDGROUP, SUBGROUP, ISECTGROUP, ISECTLINES, SWEEPGROUP]
+source: official:gdl.graphisoft.com/reference-guide/solid-geometry-commands
 ---
 
 # GROUP
 
-`GROUP` ... `ENDGROUP` creates a **named group** within a GDL body. Groups allow you to organize geometry hierarchically, apply attributes to sub-sections of a body, and control visibility at a finer granularity than the body level.
+`GROUP` / `ENDGROUP` defines a named group of 3D bodies for solid geometry operations. The bodies inside the group are not generated in the model until the group is explicitly placed with `PLACEGROUP`.
 
-## Syntax
+OpenBrep should treat group commands as advanced, non-default GDL. For ordinary furniture, casework, and simple building objects, prefer high-level primitives such as [[BLOCK]], [[PRISM_]], [[CYLIND]], [[REVOLVE]], and [[SWEEP]].
+
+## Official Syntax
 
 ```gdl
-GROUP "name" [, pen, material]
-  ... geometry ...
+GROUP "name"
+    statement1
+    ...
 ENDGROUP
 ```
 
-| Param      | Type        | Description                            |
-|------------|-------------|----------------------------------------|
-| `"name"`   | string      | Group identifier (for reference)       |
-| `pen`      | integer     | Optional — pen override for the group  |
-| `material` | integer     | Optional — material override           |
-
-## How Groups Work
-
-- Groups exist **inside a body** (between `BODY` and `END`).
-- Groups can contain primitives ([[PRISM_]], [[BLOCK]], [[CYLIND]], etc.), transform operations, and **nested groups**.
-- Attributes set on the group (`pen`, `material`) override the outer body's attributes for geometry inside.
-- Groups **do not** perform CSG union/intersection — they are a logical organization tool, not a Boolean operation.
-
-## Example
-
-### Basic grouping
+Related solid geometry commands:
 
 ```gdl
-BODY 1
-  GROUP "main_body", 3, 52
-    PRISM_ 4, 2.0,
-        0, 0, 1,
-        1, 0, 1,
-        1, 1, 1,
-        0, 1, 1
-    CYLIND 0.5, 0.5, 0.2, 0.2, 1.5
-  ENDGROUP
-
-  GROUP "base", 5, 44
-    BLOCK 0, 0, -0.2, 1.2, 1.2, 0.2
-  ENDGROUP
-END
+ADDGROUP (g_expr1, g_expr2)
+SUBGROUP (g_expr1, g_expr2)
+ISECTGROUP (g_expr1, g_expr2)
+ISECTLINES (g_expr1, g_expr2)
+PLACEGROUP g_expr
+KILLGROUP g_expr
+SWEEPGROUP (g_expr, x, y, z)
 ```
 
-### Nested groups
+## Recommended OpenBrep Use
+
+- Use `GROUP` only when the task explicitly needs Boolean union, difference, intersection, intersection lines, or sweeping a body.
+- Define groups with unique names inside the current script.
+- Always `PLACEGROUP` the final group expression that should appear in the model.
+- `KILLGROUP` temporary groups after they are no longer needed.
+- Avoid group operations in first-pass generation unless a simpler primitive approach would clearly fail.
+
+## Example: Boolean Difference
 
 ```gdl
-GROUP "assembly", 1, 1
-  GROUP "left_wing"
-    PRISM_ ...
-  ENDGROUP
-  GROUP "right_wing"
-    PRISM_ ...
-  ENDGROUP
+GROUP "box"
+    BLOCK A, B, ZZYZX
 ENDGROUP
+
+GROUP "cut"
+    ADD A / 2, B / 2, ZZYZX / 2
+    SPHERE cut_r
+    DEL 1
+ENDGROUP
+
+_result = SUBGROUP("box", "cut")
+PLACEGROUP _result
+KILLGROUP "box"
+KILLGROUP "cut"
+KILLGROUP _result
 ```
-
-## Group vs Body
-
-| Feature          | `BODY`                    | `GROUP`                     |
-|------------------|---------------------------|-----------------------------|
-| Scope            | Top-level geometry unit   | Sub-division within a body  |
-| Can contain      | Groups + geometry         | Groups + geometry           |
-| Creates solid    | Yes (CSG-compatible)      | No (logical only)           |
-| Attribute scope  | Entire body               | Nested group only           |
-| Nesting          | No (sequential bodies)    | Yes (deeply nested)         |
 
 ## Edge Cases & Traps
 
-- **Empty group**: a group with no geometry compiles but produces no visible result.
-- **Attribute leak**: attributes set on a group do NOT persist after `ENDGROUP` — the parent body/group attributes resume.
-- **Naming**: group names are strings. Duplicate names are allowed but make debugging harder. Names are **not** referenced by any GDL command — they are for human readability only.
-- **No CSG**: unlike bodies, groups do not participate in Boolean union/intersection. All geometry in a group merges additively with the rest of the body.
-- **Performance**: excessive groups inside a body slow down ArchiCAD's rendering engine. Use them for organization, not as a substitute for separate bodies.
+- Group definitions are not visible geometry by themselves.
+- `PLACEGROUP` is required to generate geometry from a group expression.
+- Group definitions cannot be nested.
+- Group names must be unique inside the current script.
+- Transformations and cutplanes outside a group definition do not affect group parts; transformations and cutplanes inside a group do not affect bodies outside the group.
+- Attribute `DEFINE` and `SET` statements are transparent across group definitions.
+- `ADDGROUP`, `SUBGROUP`, `ISECTGROUP`, and `ISECTLINES` return group expressions; they do not place geometry by themselves.
+- `KILLGROUP` clears group bodies from memory. Killed group names cannot be reused in the same script.
 
 ## Related
 
-- [[BODY_EDGE_PGON]] — bodies and the BODY/END construct
-- [[IF_ENDIF]] — conditional group visibility
-- [[PRISM_]] — common geometry inside groups
+- [[CUTPLANE]] — simpler 3D trimming when a full Boolean group is not needed
+- [[BODY_EDGE_PGON]] — primitive body definitions used by lower-level modeling
+- [[SWEEP]] — profile sweep without group Boolean workflow

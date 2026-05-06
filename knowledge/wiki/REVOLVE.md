@@ -3,12 +3,14 @@ type: concept
 status: stable
 tags: [3d, geometry, revolve, rotation, lathe]
 aliases: [REVOLVE, revolve, lathe, rotational sweep]
-source: raw/ccgdl_dev_doc/docs/GDL_10_3D_Commands_Full.md
+source: official:gdl.graphisoft.com/reference-guide/index
 ---
 
 # REVOLVE
 
 `REVOLVE` creates a 3D surface or body by rotating a polyline defined in the x-y plane around the x-axis. This is the GDL equivalent of a lathe operation — useful for balusters, vases, domes, turned columns, and rotationally-symmetric details.
+
+OpenBrep should treat `REVOLVE` as advanced but acceptable when the requested object is clearly rotational: vase, turned leg, knob, dome, baluster, circular trim, or similar.
 
 ## Syntax
 
@@ -81,6 +83,7 @@ REVOLVE 4, 90, 63,
 
 ## Edge Cases & Traps
 
+- **Advanced non-default command**: require a rotational-shape reason before using `REVOLVE`; use [[CYLIND]] for simple cylinders.
 - **Profile is inline**: do not generate `POLY2 id` + `REVOLVE id, angle`; that is not the official `REVOLVE` syntax.
 - **Points on axis**: vertices with `Y = 0` lie on the rotation axis. Two adjacent points with `Y = 0` may produce degenerate triangles at the pole — use a single point on the axis, or offset slightly (`Y = 0.001`).
 - **Full 360°**: `angle = 360` creates a closed ring. The end faces seal automatically.

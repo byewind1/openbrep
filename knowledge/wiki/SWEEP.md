@@ -3,12 +3,14 @@ type: concept
 status: stable
 tags: [3d, geometry, sweep, extrusion, path]
 aliases: [SWEEP, sweep, extrude along path]
-source: raw/ccgdl_dev_doc/docs/GDL_10_3D_Commands_Full.md
+source: official:gdl.graphisoft.com/reference-guide/index
 ---
 
 # SWEEP
 
 `SWEEP` generates a surface or body by sweeping a 2D profile polyline along a 3D path polyline. Unlike [[PRISM_]], which extrudes straight along Z, `SWEEP` can follow a path in space, making it useful for railings, frames, mouldings, and profile-based details.
+
+OpenBrep should treat `SWEEP` as advanced geometry. Use it when the object genuinely needs a profile along a path; otherwise prefer [[PRISM_]], [[BLOCK]], or [[CYLIND]].
 
 ## Syntax
 
@@ -66,6 +68,7 @@ The sweep maintains **minimal twist**: the section is oriented relative to the p
 
 ## Edge Cases & Traps
 
+- **Advanced non-default command**: require an explicit generation-plan reason before using `SWEEP`.
 - **Self-intersecting path**: if the path bends so sharply that the cross-section overlaps itself, the result may produce malformed geometry.
 - **Parallel tangents**: when path segments form a perfectly straight line, orientation calculation may produce unexpected rotations — insert small micro-kinks to avoid ambiguity.
 - **Inline syntax**: do not generate `POLY2 id` + `POLY id` + `SWEEP path_id, section_id`; that is not the official `SWEEP` syntax.

@@ -8,7 +8,7 @@ source: official:gdl.graphisoft.com/reference-guide/primitive-elements
 
 # BODY / VERT / EDGE / PGON
 
-`VERT`, `EDGE`, `PGON`, and `BODY` are GDL primitive elements for low-level boundary representation. They are powerful but fragile. OpenBrep should not use them as default generation commands for ordinary furniture, doors, windows, cabinets, or shelves.
+`VERT`, `EDGE`, `PGON`, and `BODY` are GDL primitive elements for low-level boundary representation. They are powerful but fragile. OpenBrep must not use them as default generation commands for ordinary furniture, doors, windows, cabinets, or shelves.
 
 Prefer [[BLOCK]], [[PRISM_]], [[CYLIND]], [[REVOLVE]], or [[SWEEP]] whenever the shape can be described by high-level primitives.
 
@@ -69,6 +69,7 @@ Use `vect = 0` and negative `status` only when you intentionally let the engine 
 - Use only when importing explicit mesh data or when a shape cannot be expressed by high-level GDL commands.
 - Require an explicit reason in the generation plan before using primitive elements.
 - For furniture and building object generation, prefer parametric high-level solids.
+- Do not use primitive elements just to model boxes, shelves, frames, cylinders, revolved profiles, or simple extrusions.
 
 ## Edge Cases & Traps
 

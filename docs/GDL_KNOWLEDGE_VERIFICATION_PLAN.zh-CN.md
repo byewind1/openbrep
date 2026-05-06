@@ -63,7 +63,7 @@ python scripts/verify_gdl_knowledge_sources.py \
 | P2 已完成 | 变换与控制流 | `ADD_DEL`、`Transformation_Stack`、`FOR_NEXT`、`IF_ENDIF` | 防止 ADD/DEL、FOR/NEXT、IF/ENDIF 结构性错误 |
 | P3 已完成 | 2D 表达 | `2D_Primitives`、`PROJECT2`、`HOTSPOT2` | 校对平面符号、热点编辑、投影策略 |
 | P4 已完成 | 参数与属性 | `Paramlist_XML`、`DEFINE`、`MATERIAL`、`GLOBALS`、`Object_Types` | 校对参数类型、材质/属性、对象类型、全局变量 |
-| P5 | Group / 高级几何 | `GROUP`、`SWEEP`、`REVOLVE`、`BODY_EDGE_PGON` | 确认高级命令只在有把握时用于生成 |
+| P5 已完成 | Group / 高级几何 | `GROUP`、`SWEEP`、`REVOLVE`、`BODY_EDGE_PGON` | 确认高级命令只在有把握时用于生成 |
 | P6 | 构件 archetype | `bookshelf`、`cabinet`、`table`、`door`、`window`、`profile_object` | 让构件知识只引用已校对命令，修正不合理建模策略 |
 
 ## 每批验收标准
@@ -158,3 +158,25 @@ knowledge/wiki/Object_Types.md
 - `tests/test_knowledge_lint.py` 增加 P4 语法防回退断言。
 
 P4 完成后再进入 P5，不并行铺开。
+
+## P5 完成记录
+
+已校对：
+
+```text
+knowledge/wiki/GROUP.md
+knowledge/wiki/SWEEP.md
+knowledge/wiki/REVOLVE.md
+knowledge/wiki/BODY_EDGE_PGON.md
+```
+
+完成结果：
+
+- `GROUP` 修正为 solid geometry operation 组，不再误写为可见的嵌套组织容器。
+- `GROUP` 明确需要 `PLACEGROUP` 才会生成几何，并补充 `KILLGROUP`、唯一名称、不可嵌套等约束。
+- `SWEEP` 标注为高级非默认命令，只有明确需要 profile along path 时使用。
+- `REVOLVE` 标注为高级但可用于明确旋转体对象，简单圆柱仍优先用 `CYLIND`。
+- `BODY_EDGE_PGON` 强化 primitive elements 非默认策略，普通构件不得用它替代高层实体命令。
+- `tests/test_knowledge_lint.py` 增加 P5 语法防回退断言。
+
+P5 完成后再进入 P6，不并行铺开。
