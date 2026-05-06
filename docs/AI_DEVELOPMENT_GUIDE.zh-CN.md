@@ -258,6 +258,8 @@ python -m pytest tests/ -q
 
 当新增或修改命令级 GDL 知识时，应把本地知识、Graphisoft 官方文档和官方社区入口分层验证。
 
+分批执行计划见：[GDL_KNOWLEDGE_VERIFICATION_PLAN.zh-CN.md](GDL_KNOWLEDGE_VERIFICATION_PLAN.zh-CN.md)。
+
 权威顺序：
 
 ```text
