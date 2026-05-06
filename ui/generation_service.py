@@ -164,6 +164,7 @@ class GenerationService:
                 "source": "ai_object_generation",
                 "intent": intent,
                 "object_type": str(object_plan.get("object_type") or ""),
+                "knowledge_sources": list(object_plan.get("knowledge_sources") or []),
                 "object_plan_report": report_path.relative_to(project_root).as_posix(),
             }
             create_revision(

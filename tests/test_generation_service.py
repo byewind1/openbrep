@@ -63,6 +63,7 @@ class _PlanningPipeline(_Pipeline):
                 "object_type": "专业书架",
                 "geometry": ["侧板", "层板"],
                 "parameters": ["Integer shelf_count = 层板数"],
+                "knowledge_sources": ["archetype.bookshelf", "wiki.BLOCK"],
             },
         )
 
@@ -196,6 +197,7 @@ class TestGenerationService(unittest.TestCase):
         self.assertIn("object_plan", latest_text)
         self.assertEqual(manifest["message"], "AI object generation")
         self.assertEqual(manifest["metadata"]["object_type"], "专业书架")
+        self.assertIn("archetype.bookshelf", manifest["metadata"]["knowledge_sources"])
         self.assertTrue(manifest["metadata"]["object_plan_report"].startswith(".openbrep/reports/object_plan_"))
 
 

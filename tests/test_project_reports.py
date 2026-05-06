@@ -20,6 +20,8 @@ class TestProjectReports(unittest.TestCase):
                     "script_3d_strategy": ["FOR/NEXT"],
                     "script_2d_strategy": ["PROJECT2"],
                     "material_strategy": ["材质参数"],
+                    "knowledge_sources": ["archetype.bookshelf", "wiki.BLOCK"],
+                    "validation_checks": ["检查 ADD/DEL 平衡"],
                     "risks": ["DEL 平衡"],
                 },
                 instruction="生成一个书架",
@@ -35,6 +37,9 @@ class TestProjectReports(unittest.TestCase):
         self.assertEqual(payload["instruction"], "生成一个书架")
         self.assertIn("专业书架", markdown)
         self.assertIn("层板", markdown)
+        self.assertIn("Knowledge Sources", markdown)
+        self.assertIn("archetype.bookshelf", markdown)
+        self.assertIn("Validation Checks", markdown)
 
 
 if __name__ == "__main__":

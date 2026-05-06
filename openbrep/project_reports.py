@@ -77,11 +77,21 @@ def _render_object_plan_markdown(payload: dict[str, Any]) -> str:
         lines.extend(["", "## User Goal", "", instruction])
 
     lines.extend(["", "## Object", "", str(plan.get("object_type") or "未命名 GDL 构件")])
+    _append_list(lines, "Assumptions", plan.get("assumptions"))
     _append_list(lines, "Geometry", plan.get("geometry"))
+    _append_list(lines, "Geometry Parts", plan.get("geometry_parts"))
     _append_list(lines, "Parameters", plan.get("parameters"))
+    _append_list(lines, "Parameter Groups", plan.get("parameter_groups"))
+    _append_list(lines, "Derived Parameters", plan.get("derived_parameters"))
+    _append_list(lines, "Command Candidates", plan.get("command_candidates"))
     _append_list(lines, "3D Script Strategy", plan.get("script_3d_strategy"))
     _append_list(lines, "2D Script Strategy", plan.get("script_2d_strategy"))
+    _append_list(lines, "Parameter Script Strategy", plan.get("parameter_script_strategy"))
+    _append_list(lines, "UI Script Strategy", plan.get("ui_script_strategy"))
     _append_list(lines, "Materials And Attributes", plan.get("material_strategy"))
+    _append_list(lines, "Hotspots And Editability", plan.get("hotspots_and_editability"))
+    _append_list(lines, "Validation Checks", plan.get("validation_checks"))
+    _append_list(lines, "Knowledge Sources", plan.get("knowledge_sources"))
     _append_list(lines, "Risks To Avoid", plan.get("risks"))
     return "\n".join(lines).rstrip() + "\n"
 
