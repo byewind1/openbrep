@@ -150,6 +150,14 @@
 - 禁止硬编码URL、端口、密钥——用环境变量或常量文件
 - 禁止一次性修改超过3个无关文件
 
+### OpenBrep 架构防退化规则
+
+- 按产品 Seam 放代码，不按按钮放代码：HSF Source Session、AI Workbench、Preview Verification、Knowledge Memory、Archicad Adapter、Streamlit Shell。
+- `ui/app.py` 只做装配入口；超过薄 wrapper 的逻辑必须放到 controller/service/domain。
+- 不要让一个 controller 混合多个 Seam；聊天执行路径放 `ui/chat_paths.py`，聊天运行时规则放 `ui/chat_runtime.py`，聊天里的 Tapir 事件放 `ui/chat_tapir_events.py`。
+- 每次拆新模块都要补最小合同测试，保护公开 Interface 和关键优先级规则。
+- 优先做小而深的 Module，避免一堆只转发参数的浅 helper。
+
 ### 完成任务后必须做的事
 
 1. 给出验证步骤（打开哪个页面，做什么操作，预期结果是什么）

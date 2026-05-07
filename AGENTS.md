@@ -80,6 +80,29 @@ before opening large files.
 9. Do not make Streamlit views instantiate LLMs, compilers, or pipelines.
 10. Do not break the current flat workspace layout.
 
+## Architecture Hygiene
+
+Prevent architecture drift by coding to product seams, not buttons or temporary
+UI flows. New behavior must first choose one seam:
+
+```text
+HSF Source Session
+AI Workbench
+Preview Verification
+Knowledge Memory
+Archicad Adapter
+Streamlit Shell
+```
+
+Rules:
+
+- `ui/app.py` is a composition root. Keep real behavior in testable modules.
+- Do not grow a controller by mixing unrelated seams. Split when a module starts
+  combining chat routing, source mutation, preview, knowledge, and adapter
+  behavior.
+- Every extracted module needs a small contract test for its public interface.
+- Prefer a small, deep interface over many pass-through helpers.
+
 ## Where Code Belongs
 
 ```text
@@ -91,6 +114,8 @@ Streamlit panels
 
 Chat turn orchestration
   ui/chat_controller.py
+  ui/chat_runtime.py
+  ui/chat_paths.py
 
 Chat rendering
   ui/chat_render.py
@@ -104,9 +129,11 @@ AI generation workflow
   openbrep/runtime/pipeline.py
 
 Vision/image workflow
+  ui/chat_paths.py
   ui/vision_controller.py
 
 Tapir/Archicad workflow
+  ui/chat_tapir_events.py
   ui/tapir_controller.py
   ui/tapir_views.py
   openbrep/tapir_bridge.py
