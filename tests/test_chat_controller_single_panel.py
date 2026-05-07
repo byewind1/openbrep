@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from ui.chat_controller import run_normal_text_path, run_vision_path
+from ui.chat_paths import run_normal_text_path, run_vision_path
 
 
 class _State(dict):
@@ -40,7 +40,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         )
         live_output = _DummyContainer()
 
-        with patch("ui.chat_controller.render_user_bubble") as render_user, patch("ui.chat_controller.render_assistant_block") as render_assistant, patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
+        with patch("ui.chat_paths.render_user_bubble") as render_user, patch("ui.chat_paths.render_assistant_block") as render_assistant, patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
             ok, should_rerun, _ = run_normal_text_path(
                 effective_input="你好",
                 redo_input=None,
@@ -78,7 +78,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         live_output = _DummyContainer()
         captured = {}
 
-        with patch("ui.chat_controller.render_user_bubble"), patch("ui.chat_controller.render_assistant_block"):
+        with patch("ui.chat_paths.render_user_bubble"), patch("ui.chat_paths.render_assistant_block"):
             ok, should_rerun, _ = run_normal_text_path(
                 effective_input="生成一个椅子",
                 redo_input=None,
@@ -114,7 +114,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         live_output = _DummyContainer()
         captured = {}
 
-        with patch("ui.chat_controller.render_user_bubble"), patch("ui.chat_controller.render_assistant_block"):
+        with patch("ui.chat_paths.render_user_bubble"), patch("ui.chat_paths.render_assistant_block"):
             ok, should_rerun, _ = run_normal_text_path(
                 effective_input="看看这个",
                 redo_input=None,
@@ -151,7 +151,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         live_output = _DummyContainer()
         captured = {}
 
-        with patch("ui.chat_controller.render_user_bubble"), patch("ui.chat_controller.render_assistant_block"):
+        with patch("ui.chat_paths.render_user_bubble"), patch("ui.chat_paths.render_assistant_block"):
             ok, should_rerun, _ = run_normal_text_path(
                 effective_input="Error in 3D script, line 12",
                 redo_input=None,
@@ -187,7 +187,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         )
         live_output = _DummyContainer()
 
-        with patch("ui.chat_controller.render_user_bubble") as render_user, patch("ui.chat_controller.render_assistant_block") as render_assistant, patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
+        with patch("ui.chat_paths.render_user_bubble") as render_user, patch("ui.chat_paths.render_assistant_block") as render_assistant, patch("streamlit.chat_message", side_effect=AssertionError("should not call st.chat_message")):
             ok, should_rerun, _ = run_vision_path(
                 has_image_input=True,
                 vision_mime="image/png",
@@ -228,7 +228,7 @@ class TestChatControllerSinglePanel(unittest.TestCase):
         live_output = _DummyContainer()
         captured = {}
 
-        with patch("ui.chat_controller.render_user_bubble"), patch("ui.chat_controller.render_assistant_block"):
+        with patch("ui.chat_paths.render_user_bubble"), patch("ui.chat_paths.render_assistant_block"):
             ok, should_rerun, _ = run_vision_path(
                 has_image_input=True,
                 vision_mime="image/png",

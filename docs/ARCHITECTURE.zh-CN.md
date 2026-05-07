@@ -24,6 +24,8 @@ OpenBrep 是面向 Archicad 高阶用户和 GDL 开发者的 AI GDL 工作台。
 - [ADR 0002: AI 生成写入由 generation service 边界承接](adr/0002-generation-service-boundary.zh-CN.md)
 - [ADR 0003: 自定义 Skill 是用户经验的可追溯输入](adr/0003-custom-skill-workflow.zh-CN.md)
 
+功能基本定型后的长期治理路径见：[OpenBrep 顶级架构优化路径](ARCHITECTURE_TOP_LEVEL_PATH.zh-CN.md)。
+
 ## 当前状态
 
 早期 Streamlit UI 主要集中在 `ui/app.py`。当前 `main` 已经完成第一轮架构治理，核心逻辑被拆入明确边界：

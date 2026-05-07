@@ -45,6 +45,7 @@ from ui import proposed_preview_controller as ui_proposed_preview_controller
 from ui import project_service as ui_project_service
 from ui import revision_controller as ui_revision_controller
 from ui import chat_controller as ui_chat_controller
+from ui import chat_paths as ui_chat_paths
 from ui import tapir_controller as ui_tapir_controller
 from ui import tapir_views as ui_tapir_views
 from ui import vision_controller as ui_vision_controller
@@ -1097,7 +1098,7 @@ def _handle_tapir_apply_params_trigger(tapir_apply_params_trigger: bool) -> tupl
 
 
 def _run_normal_text_path(effective_input: str, redo_input, bridge_input, live_output, api_key: str, model_name: str) -> tuple[bool, bool, str | None]:
-    return ui_chat_controller.run_normal_text_path(
+    return ui_chat_paths.run_normal_text_path(
         effective_input=effective_input,
         redo_input=redo_input,
         bridge_input=bridge_input,
@@ -1120,7 +1121,7 @@ def _run_normal_text_path(effective_input: str, redo_input, bridge_input, live_o
 
 
 def _run_vision_path(has_image_input: bool, vision_mime: str | None, vision_name: str | None, user_input: str | None, active_debug_mode, vision_b64: str, live_output, api_key: str, model_name: str) -> tuple[bool, bool, str | None]:
-    return ui_chat_controller.run_vision_path(
+    return ui_chat_paths.run_vision_path(
         has_image_input=has_image_input,
         vision_mime=vision_mime,
         vision_name=vision_name,
