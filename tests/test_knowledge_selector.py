@@ -18,12 +18,17 @@ class TestKnowledgeSelector(unittest.TestCase):
         )
 
         self.assertIn("Archetype: bookshelf", selection.planner_context)
+        self.assertIn("Core: core.planning_contract", selection.planner_context)
+        self.assertIn("Core: core.parameter_rules", selection.planner_context)
+        self.assertIn("GDL 构件规划约定", selection.planner_context)
         self.assertIn("参数化书架", selection.planner_context)
         self.assertIn("Wiki: BLOCK", selection.planner_context)
         self.assertIn("Wiki: ADD_DEL", selection.planner_context)
         self.assertIn("Wiki: FOR_NEXT", selection.planner_context)
         self.assertIn("Wiki: PROJECT2", selection.planner_context)
         self.assertIn("archetype.bookshelf", selection.source_ids)
+        self.assertIn("core.planning_contract", selection.source_ids)
+        self.assertIn("core.parameter_rules", selection.source_ids)
         self.assertIn("wiki.BLOCK", selection.source_ids)
 
     def test_select_cabinet_knowledge_includes_cabinet_archetype(self):

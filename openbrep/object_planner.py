@@ -102,6 +102,8 @@ def plan_gdl_object(
     instruction: str,
     knowledge: str = "",
     skills: str = "",
+    planner_knowledge_max_chars: int | None = None,
+    planner_skills_max_chars: int | None = 3000,
 ) -> GDLObjectPlan:
     """
     Ask the LLM for a compact GDL object plan, with deterministic fallback.
@@ -113,7 +115,16 @@ def plan_gdl_object(
     try:
         messages = [
             {"role": "system", "content": _PLANNER_SYSTEM_PROMPT},
-            {"role": "user", "content": _build_planner_user_prompt(instruction, knowledge, skills)},
+            {
+                "role": "user",
+                "content": _build_planner_user_prompt(
+                    instruction,
+                    knowledge,
+                    skills,
+                    knowledge_max_chars=planner_knowledge_max_chars,
+                    skills_max_chars=planner_skills_max_chars,
+                ),
+            },
         ]
         raw = llm.generate(messages)
         content = raw.content if hasattr(raw, "content") else str(raw)
@@ -293,7 +304,14 @@ def infer_minimum_plan(instruction: str) -> GDLObjectPlan:
     )
 
 
-def _build_planner_user_prompt(instruction: str, knowledge: str, skills: str) -> str:
+def _build_planner_user_prompt(
+    instruction: str,
+    knowledge: str,
+    skills: str,
+    *,
+    knowledge_max_chars: int | None = None,
+    skills_max_chars: int | None = 3000,
+) -> str:
     parts = [
         f"用户目标：{instruction}",
         "",
@@ -301,10 +319,16 @@ def _build_planner_user_prompt(instruction: str, knowledge: str, skills: str) ->
         "规划必须覆盖：构件假设、参数组、派生参数、几何拆解、GDL 命令选择、2D/3D 策略、材质、热点可编辑性、校验项和风险。",
     ]
     if knowledge:
-        parts.append("可参考知识片段：\n" + knowledge[:6000])
+        parts.append("可参考知识片段：\n" + _limit_text(knowledge, knowledge_max_chars))
     if skills:
-        parts.append("可参考 skill 片段：\n" + skills[:3000])
+        parts.append("可参考 skill 片段：\n" + _limit_text(skills, skills_max_chars))
     return "\n\n".join(parts)
+
+
+def _limit_text(text: str, max_chars: int | None) -> str:
+    if max_chars is None or max_chars <= 0:
+        return text
+    return text[:max_chars]
 
 
 def _extract_json_object(text: str) -> str:

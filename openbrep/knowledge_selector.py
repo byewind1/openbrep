@@ -74,6 +74,16 @@ def select_gdl_knowledge(
         generation_parts.append(_section("Project Knowledge", project_knowledge))
         source_ids.append("project.knowledge")
 
+    planner_core_context, planner_core_sources = _load_core_context(
+        root,
+        task_type=task_type,
+        stage="planner",
+        max_chars=4000,
+    )
+    if planner_core_context:
+        planner_parts.append(planner_core_context)
+        source_ids.extend(planner_core_sources)
+
     archetype_context = _load_archetypes(root, object_keys)
     if archetype_context:
         planner_parts.append(archetype_context)
@@ -123,6 +133,47 @@ def _load_archetypes(root: Path, object_keys: list[str]) -> str:
     return _join(parts)
 
 
+def _load_core_context(
+    root: Path,
+    *,
+    task_type: str,
+    stage: str,
+    max_chars: int,
+) -> tuple[str, list[str]]:
+    core_dir = root / "core"
+    if not core_dir.is_dir():
+        return "", []
+
+    candidates: list[tuple[int, str, str]] = []
+    for fp in sorted(core_dir.glob("*.md")):
+        try:
+            raw = fp.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        frontmatter, body = _split_frontmatter(raw)
+        if frontmatter and not _frontmatter_matches_task(frontmatter, task_type):
+            continue
+        priority = _parse_priority(frontmatter.get("priority", "0"))
+        source_id = frontmatter.get("id") or f"core.{fp.stem}"
+        candidates.append((priority, source_id, _section(f"Core: {source_id}", body or raw)))
+
+    if not candidates:
+        return "", []
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    parts: list[str] = []
+    sources: list[str] = []
+    total = 0
+    for _priority, source_id, content in candidates:
+        if total and total + len(content) > max_chars:
+            continue
+        parts.append(content)
+        sources.append(source_id)
+        total += len(content)
+
+    return _join(parts), sources
+
+
 def _load_wiki_context(
     root: Path,
     instruction: str,
@@ -159,6 +210,39 @@ def _load_wiki_context(
         _join(page.format_for_context() for page in selected),
         [f"wiki.{page.slug}" for page in selected],
     )
+
+
+def _split_frontmatter(raw: str) -> tuple[dict[str, str], str]:
+    text = raw or ""
+    if not text.startswith("---"):
+        return {}, text
+    end = text.find("\n---", 3)
+    if end < 0:
+        return {}, text
+    fm_text = text[3:end].strip()
+    body = text[end + len("\n---"):].strip()
+    frontmatter: dict[str, str] = {}
+    for line in fm_text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        frontmatter[key.strip()] = value.strip()
+    return frontmatter, body
+
+
+def _frontmatter_matches_task(frontmatter: dict[str, str], task_type: str) -> bool:
+    raw = frontmatter.get("task_types", "")
+    if not raw:
+        return True
+    items = [item.strip().lower() for item in raw.strip("[]").split(",") if item.strip()]
+    return (task_type or "").lower() in items or "all" in items
+
+
+def _parse_priority(raw: str) -> int:
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return 0
 
 
 def _compact_core_context(base_context: str, *, task_type: str) -> str:
