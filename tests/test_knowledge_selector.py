@@ -25,11 +25,47 @@ class TestKnowledgeSelector(unittest.TestCase):
         self.assertIn("Wiki: BLOCK", selection.planner_context)
         self.assertIn("Wiki: ADD_DEL", selection.planner_context)
         self.assertIn("Wiki: FOR_NEXT", selection.planner_context)
-        self.assertIn("Wiki: PROJECT2", selection.planner_context)
         self.assertIn("archetype.bookshelf", selection.source_ids)
         self.assertIn("core.planning_contract", selection.source_ids)
         self.assertIn("core.parameter_rules", selection.source_ids)
         self.assertIn("wiki.BLOCK", selection.source_ids)
+        self.assertLessEqual(
+            len([sid for sid in selection.source_ids if sid.startswith("wiki.")]),
+            5,
+        )
+
+    def test_select_profile_object_knowledge_recalls_revolve_wiki(self):
+        root = Path(__file__).parent.parent / "knowledge"
+
+        selection = select_gdl_knowledge(
+            instruction="做一个旋转体花瓶",
+            intent="CREATE",
+            knowledge_dir=root,
+            base_context="## GDL_quick_reference\n\n基础规则",
+        )
+
+        self.assertIn("Wiki: REVOLVE", selection.planner_context)
+        self.assertIn("wiki.REVOLVE", selection.source_ids)
+
+    def test_wiki_failure_degrades_without_blocking_selection(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "archetypes").mkdir()
+            (root / "archetypes" / "bookshelf.md").write_text(
+                "# 参数化书架\n\n使用板式结构。",
+                encoding="utf-8",
+            )
+            (root / "wiki").write_text("not a directory", encoding="utf-8")
+
+            selection = select_gdl_knowledge(
+                instruction="做一个书架",
+                intent="CREATE",
+                knowledge_dir=root,
+                base_context="## GDL_quick_reference\n\n基础规则",
+            )
+
+        self.assertIn("Archetype: bookshelf", selection.planner_context)
+        self.assertNotIn("Wiki:", selection.planner_context)
 
     def test_select_cabinet_knowledge_includes_cabinet_archetype(self):
         root = Path(__file__).parent.parent / "knowledge"

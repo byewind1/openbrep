@@ -179,6 +179,9 @@ def _load_wiki_context(
     instruction: str,
     task_type: str,
     object_keys: list[str],
+    *,
+    max_pages: int = 5,
+    max_chars_per_page: int = 600,
 ) -> tuple[str, list[str]]:
     wiki = WikiKnowledge(str(root / "wiki"))
     try:
@@ -198,18 +201,25 @@ def _load_wiki_context(
             pages.append(page)
 
     existing = {page.slug for page in pages}
-    for page in wiki.get_relevant(instruction, max_pages=4):
+    for page in wiki.get_relevant(instruction, max_pages=max_pages):
         if page.slug not in existing:
             pages.append(page)
             existing.add(page.slug)
 
-    selected = pages[:8]
+    selected = pages[:max_pages]
     if not selected:
         return "", []
     return (
-        _join(page.format_for_context() for page in selected),
+        _join(_format_wiki_page_compact(page, max_chars=max_chars_per_page) for page in selected),
         [f"wiki.{page.slug}" for page in selected],
     )
+
+
+def _format_wiki_page_compact(page, *, max_chars: int) -> str:
+    formatted = page.format_for_context()
+    if max_chars <= 0 or len(formatted) <= max_chars:
+        return formatted
+    return formatted[:max_chars].rstrip() + "\n\n[truncated]"
 
 
 def _split_frontmatter(raw: str) -> tuple[dict[str, str], str]:
