@@ -124,6 +124,41 @@ class TestProjectRevisions(unittest.TestCase):
             self.assertTrue(copied)
             self.assertEqual(get_latest_revision_id(target), "r0001")
             self.assertEqual([r.message for r in list_revisions(target)], ["initial"])
+    def test_create_revision_records_v07_manifest_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            revision = create_revision(
+                project,
+                "before modify",
+                trigger="modify",
+                intent="MODIFY",
+                user_instruction="增加背板",
+                changed_files=["scripts/3d.gdl"],
+                parent_revision_id="r0000",
+                metadata={"compile": {"success": True, "gsm_size_bytes": 123, "gsm_path": "/tmp/a.gsm"}},
+            )
+
+            manifest = json.loads((revision.path / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema"], 1)
+            self.assertEqual(manifest["trigger"], "modify")
+            self.assertEqual(manifest["intent"], "MODIFY")
+            self.assertEqual(manifest["user_instruction"], "增加背板")
+            self.assertEqual(manifest["changed_files"], ["scripts/3d.gdl"])
+            self.assertEqual(manifest["parent_revision_id"], "r0000")
+            self.assertTrue(manifest["compile"]["success"])
+            self.assertEqual(manifest["compile"]["gsm_size_bytes"], 123)
+
+    def test_list_revisions_hydrates_v07_manifest_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            create_revision(project, "modify", trigger="modify", intent="MODIFY", user_instruction="改层板")
+
+            revision = list_revisions(project)[0]
+
+            self.assertEqual(revision.trigger, "modify")
+            self.assertEqual(revision.intent, "MODIFY")
+            self.assertEqual(revision.user_instruction, "改层板")
 
 
 if __name__ == "__main__":

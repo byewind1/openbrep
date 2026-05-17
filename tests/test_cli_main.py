@@ -224,6 +224,26 @@ class TestCliMainCommands(unittest.TestCase):
             self.assertEqual(fake_project.work_dir, output_root.resolve())
 
 
+    def test_modify_forwards_compare_mode_to_pipeline(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir) / "Chair"
+            project_dir.mkdir(parents=True)
+            fake_project = _FakeResultProject()
+            fake_project.name = "Chair"
+            fake_project.root = project_dir
+            fake_pipeline = _FakePipeline(_FakePipelineResult(project=fake_project))
+
+            with patch("openbrep.hsf_project.HSFProject.load_from_disk", return_value=fake_project):
+                with patch("cli.main._load_pipeline", return_value=fake_pipeline):
+                    result = self.runner.invoke(
+                        app,
+                        ["modify", str(project_dir), "增加背板参数", "--compare", "mock"],
+                    )
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertEqual(fake_pipeline.last_request.compare_compile, "mock")
+
+
     def test_compile_prints_final_filename_and_alias(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir) / "Planter"
@@ -327,6 +347,66 @@ class TestCliMainCommands(unittest.TestCase):
             self.assertEqual(clear_result.exit_code, 0, msg=clear_result.output)
             self.assertIn("已清除工作区记忆", clear_result.output)
             self.assertEqual(store.memory_status().chat_count, 0)
+
+    def test_history_command_prints_trigger_and_instruction(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Chair"
+            scripts = project / "scripts"
+            scripts.mkdir(parents=True)
+            (project / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+            (project / "paramlist.xml").write_text("<ParamList />\n", encoding="utf-8")
+            (scripts / "3d.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            from openbrep.revisions import create_revision
+
+            create_revision(project, "before", trigger="modify", intent="MODIFY", user_instruction="增加一个背板参数")
+            result = self.runner.invoke(app, ["history", str(project)])
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertIn("r0001", result.output)
+            self.assertIn("modify", result.output)
+            self.assertIn("增加一个背板参数", result.output)
+
+    def test_rollback_yes_saves_safety_revision_and_restores(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Chair"
+            scripts = project / "scripts"
+            scripts.mkdir(parents=True)
+            (project / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+            (project / "paramlist.xml").write_text("<ParamList />\n", encoding="utf-8")
+            (scripts / "3d.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            from openbrep.revisions import create_revision, list_revisions
+
+            create_revision(project, "initial")
+            (scripts / "3d.gdl").write_text("CYLIND 1, 1\n", encoding="utf-8")
+            create_revision(project, "cylinder")
+
+            result = self.runner.invoke(app, ["rollback", str(project), "r0001", "--yes"])
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertIn("回滚前状态已保存为 r0003", result.output)
+            self.assertIn("当前最新版本：r0004", result.output)
+            self.assertEqual((scripts / "3d.gdl").read_text(encoding="utf-8"), "BLOCK A, B, ZZYZX\n")
+            self.assertEqual([r.revision_id for r in list_revisions(project)], ["r0001", "r0002", "r0003", "r0004"])
+
+    def test_rollback_without_yes_can_cancel_before_safety_revision(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Chair"
+            scripts = project / "scripts"
+            scripts.mkdir(parents=True)
+            (project / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+            (project / "paramlist.xml").write_text("<ParamList />\n", encoding="utf-8")
+            (scripts / "3d.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            from openbrep.revisions import create_revision, list_revisions
+
+            create_revision(project, "initial")
+            result = self.runner.invoke(app, ["rollback", str(project), "r0001"], input="n\n")
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertIn("已取消", result.output)
+            self.assertEqual(len(list_revisions(project)), 1)
 
     def test_configure_writes_builtin_provider_key_and_backup(self):
         with tempfile.TemporaryDirectory() as tmpdir:

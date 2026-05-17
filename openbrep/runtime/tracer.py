@@ -46,6 +46,7 @@ class Tracer:
             "knowledge_sources": (getattr(result, "object_plan", {}) or {}).get("knowledge_sources") or [],
             "has_compile": result.compile_result is not None,
             "compile_pass": result.compile_result.success if result.compile_result else None,
+            "compile_comparison": _compile_comparison_trace(getattr(result, "compile_comparison", None)),
             "error": result.error,
             "timestamp": datetime.now().isoformat(),
         }
@@ -58,3 +59,17 @@ class Tracer:
         except Exception as exc:
             logger.warning("Tracer: failed to write trace file: %s", exc)
         return path
+
+
+def _compile_comparison_trace(comparison) -> dict | None:
+    if comparison is None:
+        return None
+    mode = comparison.before.mode if comparison.before else (comparison.after.mode if comparison.after else None)
+    size_delta = comparison.size_delta
+    return {
+        "mode": mode,
+        "before_success": comparison.before.success if comparison.before else None,
+        "after_success": comparison.after.success if comparison.after else None,
+        "size_delta_kb": size_delta // 1024 if size_delta is not None else None,
+        "param_delta": comparison.param_delta,
+    }

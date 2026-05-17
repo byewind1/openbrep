@@ -20,15 +20,19 @@ from pathlib import Path
 
 import typer
 
-from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse
-from openbrep.compiler import CompileResult
+from openbrep.compiler import CompileComparison, CompileResult, CompileSnapshot
 from openbrep.runtime.pipeline import (
     TaskPipeline,
     TaskRequest,
     TaskResult,
     _MODIFY_SKILLS_PROMPT,
     _build_diff_summary,
+    _build_structured_summary,
+    _compile_revision_metadata,
+    _diff_parameters,
+    _normalize_compare_compile_mode,
     _snapshot_scripts,
 )
 from openbrep.static_checker import StaticError, StaticCheckResult
@@ -284,6 +288,280 @@ class TestModifyApply(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.scripts, {})
         self.assertEqual(proj.get_script(ScriptType.SCRIPT_3D), original_3d)
+
+
+class TestAutoRevisions(unittest.TestCase):
+    def test_modify_creates_before_revision_before_apply_and_after_only_on_compile_success(self):
+        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nADDZ 0.1\nEND\n")
+        calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\nEND\n"
+            project.save_to_disk()
+
+            original_apply = __import__("openbrep.core", fromlist=["GDLAgent"]).GDLAgent._apply_changes
+
+            def spy_apply(self_agent, project_arg, changes):
+                if project_arg is project:
+                    calls.append("apply")
+                return original_apply(self_agent, project_arg, changes)
+
+            def fake_create_revision(*args, **kwargs):
+                calls.append(kwargs["message"])
+                return MagicMock(revision_id=f"r{len(calls):04d}")
+
+            with patch("openbrep.runtime.pipeline.GDLAgent._apply_changes", spy_apply):
+                with patch("openbrep.runtime.pipeline.create_revision", fake_create_revision):
+                    result = pipeline.execute(TaskRequest(
+                        user_input="加层板",
+                        intent="MODIFY",
+                        project=project,
+                        work_dir=tmpdir,
+                        output_dir=str(Path(tmpdir) / "out"),
+                    ))
+
+        self.assertTrue(result.success)
+        self.assertLess(calls.index("auto: before modify"), calls.index("apply"))
+        self.assertIn("auto: after modify (compile ok)", calls)
+
+    def test_modify_does_not_create_after_revision_when_compile_fails(self):
+        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")
+        calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.save_to_disk()
+
+            class FailingCompiler:
+                def hsf2libpart(self, *_args):
+                    return CompileResult(success=False, stderr="boom", exit_code=1)
+
+            pipeline._make_compiler = lambda: FailingCompiler()
+
+            def fake_create_revision(*args, **kwargs):
+                calls.append(kwargs["message"])
+                return MagicMock(revision_id=f"r{len(calls):04d}")
+
+            with patch("openbrep.runtime.pipeline.create_revision", fake_create_revision):
+                result = pipeline.execute(TaskRequest(
+                    user_input="加层板",
+                    intent="MODIFY",
+                    project=project,
+                    work_dir=tmpdir,
+                    output_dir=str(Path(tmpdir) / "out"),
+                ))
+
+        self.assertTrue(result.success)
+        self.assertIn("auto: before modify", calls)
+        self.assertNotIn("auto: after modify (compile ok)", calls)
+
+    def test_after_revision_manifest_records_structured_summary(self):
+        pipeline = _make_pipeline(
+            "[FILE: paramlist.xml]\nLength A = 1.00  ! Width\nLength B = 1.00  ! Depth\nLength ZZYZX = 1.00  ! Height\nLength back_thickness = 0.018  ! 背板厚度\n"
+        )
+        metadata_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.save_to_disk()
+
+            def fake_create_revision(*args, **kwargs):
+                metadata_calls.append(kwargs.get("metadata") or {})
+                return MagicMock(revision_id=f"r{len(metadata_calls):04d}")
+
+            with patch("openbrep.runtime.pipeline.create_revision", fake_create_revision):
+                result = pipeline.execute(TaskRequest(
+                    user_input="增加背板厚度参数",
+                    intent="MODIFY",
+                    project=project,
+                    work_dir=tmpdir,
+                    output_dir=str(Path(tmpdir) / "out"),
+                ))
+
+        self.assertTrue(result.success)
+        self.assertIn("新增参数：back_thickness", result.plain_text)
+        self.assertIn("explanation", metadata_calls[-1])
+        self.assertIn("新增参数：back_thickness", metadata_calls[-1]["explanation"])
+
+
+class TestStructuredSummary(unittest.TestCase):
+    def test_diff_parameters_reports_added_parameter(self):
+        before = _make_project()
+        after = deepcopy(before)
+        after.parameters.append(GDLParameter("back_thickness", "Length", "背板厚度", "0.018"))
+
+        diff = _diff_parameters(before, after)
+
+        self.assertEqual(
+            diff["added"],
+            [{"name": "back_thickness", "type": "Length", "default": "0.018"}],
+        )
+        self.assertEqual(diff["removed"], [])
+        self.assertEqual(diff["changed"], [])
+
+    def test_diff_parameters_returns_empty_dict_when_parameters_unreadable(self):
+        before = _make_project()
+        after = _make_project()
+        before.parameters = None
+
+        self.assertEqual(_diff_parameters(before, after), {})
+
+    def test_structured_summary_lists_changed_and_unchanged_scripts(self):
+        before = _make_project()
+        after = deepcopy(before)
+
+        summary = _build_structured_summary(
+            before_project=before,
+            after_project=after,
+            changed_files=["scripts/3d.gdl"],
+            all_scripts=["scripts/3d.gdl", "scripts/2d.gdl"],
+            compile_result=CompileResult(success=True),
+            linter_result=None,
+        )
+
+        self.assertIn("修改脚本：scripts/3d.gdl", summary)
+        self.assertIn("未改脚本：scripts/2d.gdl", summary)
+        self.assertIn("编译结果：✅ 通过", summary)
+
+    def test_structured_summary_omits_parameter_lines_when_parameters_unchanged(self):
+        before = _make_project()
+        after = deepcopy(before)
+
+        summary = _build_structured_summary(
+            before_project=before,
+            after_project=after,
+            changed_files=["scripts/3d.gdl"],
+            all_scripts=["scripts/3d.gdl"],
+            compile_result=None,
+            linter_result=None,
+        )
+
+        self.assertNotIn("新增参数", summary)
+        self.assertNotIn("删除参数", summary)
+        self.assertNotIn("修改参数", summary)
+        self.assertNotIn("编译结果", summary)
+
+    def test_structured_summary_reports_linter_fix_count(self):
+        linter_result = MagicMock(fix_count=2)
+
+        summary = _build_structured_summary(
+            before_project=None,
+            after_project=None,
+            changed_files=[],
+            all_scripts=[],
+            compile_result=None,
+            linter_result=linter_result,
+        )
+
+        self.assertIn("自动修复：linter 修复了 2 个问题", summary)
+
+    def test_structured_summary_degrades_when_project_missing(self):
+        summary = _build_structured_summary(
+            before_project=None,
+            after_project=None,
+            changed_files=["scripts/3d.gdl"],
+            all_scripts=["scripts/3d.gdl", "scripts/2d.gdl"],
+            compile_result=None,
+            linter_result=None,
+        )
+
+        self.assertIn("修改脚本：scripts/3d.gdl", summary)
+        self.assertIn("未改脚本：scripts/2d.gdl", summary)
+
+
+class TestCompileComparison(unittest.TestCase):
+    def test_compile_comparison_summary_reports_deltas(self):
+        comparison = CompileComparison(
+            before=CompileSnapshot(True, 1024, 3, 0, "mock"),
+            after=CompileSnapshot(True, 3072, 5, 0, "mock"),
+        )
+
+        self.assertEqual(comparison.size_delta, 2048)
+        self.assertEqual(comparison.param_delta, 2)
+        self.assertIn("**对比编译：** ✅ → ✅", comparison.summary())
+        self.assertIn(".gsm 大小：+2 KB", comparison.summary())
+        self.assertIn("参数数量：+2", comparison.summary())
+
+    def test_compare_mode_normalization(self):
+        self.assertEqual(_normalize_compare_compile_mode(None), "off")
+        self.assertEqual(_normalize_compare_compile_mode("off"), "off")
+        self.assertEqual(_normalize_compare_compile_mode("mock"), "mock")
+        self.assertEqual(_normalize_compare_compile_mode("true"), "mock")
+        self.assertEqual(_normalize_compare_compile_mode("real"), "real")
+        self.assertEqual(_normalize_compare_compile_mode("bad"), "off")
+
+    def test_compile_revision_metadata_preserves_compile_mode(self):
+        project = _make_project()
+        result = CompileResult(
+            success=True,
+            output_path="",
+            exit_code=0,
+            mode="mock",
+        )
+
+        metadata = _compile_revision_metadata(result, project)
+
+        self.assertEqual(metadata["mode"], "mock")
+
+    def test_compare_off_does_not_run_before_compile(self):
+        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.save_to_disk()
+
+            with patch("openbrep.runtime.pipeline._compile_snapshot_for_project") as before_compile:
+                result = pipeline.execute(TaskRequest(
+                    user_input="加层板",
+                    intent="MODIFY",
+                    project=project,
+                    work_dir=tmpdir,
+                    output_dir=str(Path(tmpdir) / "out"),
+                ))
+
+        self.assertTrue(result.success)
+        before_compile.assert_called_once()
+        self.assertEqual(before_compile.call_args.kwargs["mode"], "off")
+        self.assertIsNone(result.compile_comparison)
+        self.assertNotIn("对比编译", result.plain_text)
+
+    def test_compare_mock_adds_summary_trace_and_revision_metadata(self):
+        pipeline = _make_pipeline("[FILE: paramlist.xml]\nLength A = 1.00  ! Width\nLength B = 1.00  ! Depth\nLength ZZYZX = 1.00  ! Height\nLength back_thickness = 0.018  ! 背板厚度\n")
+        metadata_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.save_to_disk()
+            trace_dir = Path(tmpdir) / "traces"
+            pipeline.tracer.trace_dir = trace_dir
+            trace_dir.mkdir()
+
+            def fake_create_revision(*args, **kwargs):
+                metadata_calls.append(kwargs.get("metadata") or {})
+                return MagicMock(revision_id=f"r{len(metadata_calls):04d}")
+
+            with patch("openbrep.runtime.pipeline.create_revision", fake_create_revision):
+                result = pipeline.execute(TaskRequest(
+                    user_input="增加背板厚度参数",
+                    intent="MODIFY",
+                    project=project,
+                    work_dir=tmpdir,
+                    output_dir=str(Path(tmpdir) / "out"),
+                    compare_compile="mock",
+                ))
+
+            self.assertTrue(result.success)
+            self.assertIsNotNone(result.compile_comparison)
+            self.assertIn("**对比编译：**", result.plain_text)
+            self.assertIn("compile_comparison", metadata_calls[-1])
+            self.assertEqual(metadata_calls[-1]["compile_comparison"]["mode"], "mock")
+
+            trace_files = list(trace_dir.glob("*.json"))
+            self.assertEqual(len(trace_files), 1)
+            trace_text = trace_files[0].read_text(encoding="utf-8")
+            self.assertIn('"compile_comparison"', trace_text)
+            self.assertIn('"mode": "mock"', trace_text)
 
 
 # ── Tests: diff summary ───────────────────────────────────

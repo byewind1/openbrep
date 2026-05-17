@@ -27,6 +27,7 @@ class CompileResult:
     stderr: str = ""
     exit_code: int = 0
     output_path: str = ""
+    mode: str | None = None
     errors: list[str] = None
     warnings: list[str] = None
 
@@ -164,6 +165,7 @@ class HSFCompiler:
                 stderr=stderr,
                 exit_code=proc.returncode,
                 output_path=dest if proc.returncode == 0 else "",
+                mode="real",
             )
 
         except subprocess.TimeoutExpired:
@@ -214,6 +216,79 @@ class HSFCompiler:
             if converter.suffix.lower() != ".exe":
                 return False
         return True
+
+
+@dataclass
+class CompileSnapshot:
+    """Small, serializable compile facts for before/after comparison."""
+
+    success: bool
+    gsm_size_bytes: int | None
+    parameter_count: int | None
+    exit_code: int | None
+    mode: str
+
+    def to_dict(self) -> dict:
+        return {
+            "success": self.success,
+            "gsm_size_bytes": self.gsm_size_bytes,
+            "parameter_count": self.parameter_count,
+            "exit_code": self.exit_code,
+            "mode": self.mode,
+        }
+
+
+@dataclass
+class CompileComparison:
+    """Before/after compile comparison summary."""
+
+    before: CompileSnapshot | None
+    after: CompileSnapshot | None
+
+    @property
+    def size_delta(self) -> int | None:
+        if (
+            self.before is not None
+            and self.after is not None
+            and self.before.gsm_size_bytes is not None
+            and self.after.gsm_size_bytes is not None
+        ):
+            return self.after.gsm_size_bytes - self.before.gsm_size_bytes
+        return None
+
+    @property
+    def param_delta(self) -> int | None:
+        if (
+            self.before is not None
+            and self.after is not None
+            and self.before.parameter_count is not None
+            and self.after.parameter_count is not None
+        ):
+            return self.after.parameter_count - self.before.parameter_count
+        return None
+
+    def summary(self) -> str:
+        if not self.before or not self.after:
+            return ""
+        before_status = "✅" if self.before.success else "❌"
+        after_status = "✅" if self.after.success else "❌"
+        lines = [f"**对比编译：** {before_status} → {after_status}"]
+        if self.size_delta is not None:
+            sign = "+" if self.size_delta >= 0 else ""
+            lines.append(f"- .gsm 大小：{sign}{self.size_delta // 1024} KB")
+        if self.param_delta is not None:
+            sign = "+" if self.param_delta >= 0 else ""
+            lines.append(f"- 参数数量：{sign}{self.param_delta}")
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        return {
+            "mode": self.before.mode if self.before else (self.after.mode if self.after else "off"),
+            "before": self.before.to_dict() if self.before else None,
+            "after": self.after.to_dict() if self.after else None,
+            "size_delta_bytes": self.size_delta,
+            "param_delta": self.param_delta,
+        }
 
 
 class MockHSFCompiler:
@@ -276,6 +351,7 @@ class MockHSFCompiler:
             success=True, exit_code=0,
             stdout=f"Successfully compiled: {output_gsm}",
             output_path=output_gsm,
+            mode="mock",
         )
 
     def libpart2hsf(self, gsm_path: str, output_dir: str) -> CompileResult:

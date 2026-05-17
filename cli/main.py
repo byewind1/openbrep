@@ -121,6 +121,40 @@ def _print_scripts(scripts: dict[str, str]) -> None:
         )
 
 
+def _revision_instruction_preview(text: str, limit: int = 50) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit] + "…"
+
+
+def _print_revision_history(project: str, *, limit: int | None = None) -> None:
+    from openbrep.revisions import get_latest_revision_id, list_revisions
+
+    revisions = list_revisions(project)
+    latest = get_latest_revision_id(project)
+    if limit is not None and limit > 0:
+        revisions = revisions[-limit:]
+    if not revisions:
+        console.print("[yellow]暂无版本快照。[/yellow]")
+        return
+
+    table = Table(title="OpenBrep 项目版本", show_header=True, header_style="bold cyan")
+    table.add_column("版本", style="green")
+    table.add_column("时间")
+    table.add_column("触发")
+    table.add_column("指令")
+    for revision in reversed(revisions):
+        marker = " *" if revision.revision_id == latest else ""
+        table.add_row(
+            f"{revision.revision_id}{marker}",
+            revision.created_at,
+            revision.trigger,
+            _revision_instruction_preview(revision.user_instruction or revision.message),
+        )
+    console.print(table)
+
+
 def _persist_result_project(result_project, target_path: Path, project_name: Optional[str] = None) -> Path:
     """Re-root a result project to target_path and save it to disk."""
     project_name = project_name or target_path.name
@@ -765,6 +799,7 @@ def modify(
     prompt: str = typer.Argument(..., help="修改指令"),
     no_progress: bool = typer.Option(False, "--no-progress"),
     trace_dir: str = typer.Option("./traces", "--trace-dir"),
+    compare: str = typer.Option("off", "--compare", help="对比编译模式：off / mock / real"),
 ):
     """修改现有 GDL 对象"""
     from openbrep.runtime.pipeline import TaskRequest
@@ -787,6 +822,7 @@ def modify(
         project=project,
         work_dir=str(Path(project_dir).parent),
         on_event=_make_on_event(not no_progress),
+        compare_compile=compare,
     )
 
     with console.status("[bold green]修改中...[/bold green]"):
@@ -856,6 +892,69 @@ def compile(
     else:
         err_console.print(f"[red]❌ 编译失败：\n{result.stderr}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("history")
+def cmd_history(
+    project: str = typer.Argument(..., help="HSF 项目目录路径"),
+    limit: int = typer.Option(10, help="显示最近 N 条"),
+):
+    """列出项目版本历史"""
+    try:
+        _print_revision_history(project, limit=limit)
+    except Exception as exc:
+        err_console.print(f"[red]❌ 读取版本历史失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("rollback")
+def cmd_rollback(
+    project: str = typer.Argument(..., help="HSF 项目目录路径"),
+    revision: str = typer.Argument(..., help="版本 ID，如 r0001 或 latest"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认"),
+):
+    """回滚项目到指定版本（回滚前自动保存当前状态）"""
+    from openbrep.revisions import create_revision, get_latest_revision_id, list_revisions, restore_revision
+
+    try:
+        revisions = list_revisions(project)
+        if not revisions:
+            err_console.print("[red]❌ 当前项目没有可回滚的版本。[/red]")
+            raise typer.Exit(1)
+        latest = get_latest_revision_id(project)
+        target_id = latest if revision == "latest" else revision
+        target = next((item for item in revisions if item.revision_id == target_id), None)
+        if target is None:
+            err_console.print(f"[red]❌ 找不到版本：{revision}[/red]")
+            raise typer.Exit(1)
+
+        if not yes:
+            console.print(f"将回滚项目：[cyan]{project}[/cyan]")
+            console.print(f"目标版本：[cyan]{target.revision_id}[/cyan] · {target.created_at} · {target.message}")
+            if not typer.confirm("确认回滚？当前状态会先自动保存为 safety revision。", default=False):
+                console.print("[yellow]已取消，未回滚。[/yellow]")
+                return
+
+        safety = create_revision(
+            project,
+            message=f"safety: before rollback to {target.revision_id}",
+            trigger="rollback",
+            parent_revision_id=latest,
+        )
+        restored = restore_revision(
+            project,
+            target.revision_id,
+            message=f"rollback to {target.revision_id}",
+        )
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        err_console.print(f"[red]❌ 回滚失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✅ 已回滚到 {target.revision_id}[/green]")
+    console.print(f"[green]🛟 回滚前状态已保存为 {safety.revision_id}[/green]")
+    console.print(f"[green]📌 当前最新版本：{restored.revision_id}[/green]")
 
 
 @revision_app.command("save")

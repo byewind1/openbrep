@@ -27,6 +27,12 @@ class Revision:
     message: str
     files: list[str]
     path: Path
+    trigger: str = "manual"
+    intent: str = ""
+    user_instruction: str = ""
+    changed_files: list[str] | None = None
+    parent_revision_id: str | None = None
+    compile: dict[str, Any] | None = None
 
 
 def create_revision(
@@ -34,10 +40,17 @@ def create_revision(
     message: str = "",
     gsm_name: str | None = None,
     metadata: dict[str, Any] | None = None,
+    trigger: str = "manual",
+    intent: str = "",
+    user_instruction: str = "",
+    changed_files: list[str] | None = None,
+    parent_revision_id: str | None = None,
 ) -> Revision:
     """Create a new snapshot under ``<project>/.openbrep/revisions``."""
     root = _resolve_project_root(project_dir)
     revision_id = _next_revision_id(root)
+    if parent_revision_id is None:
+        parent_revision_id = get_latest_revision_id(root)
     revision_dir = _revisions_root(root) / revision_id
     tmp_dir = revision_dir.with_name(f".{revision_id}.tmp")
 
@@ -56,8 +69,11 @@ def create_revision(
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
+    extra_metadata = metadata or {}
+    compile_metadata = extra_metadata.get("compile") or {}
     manifest = {
         "schema_version": REVISION_SCHEMA_VERSION,
+        "schema": REVISION_SCHEMA_VERSION,
         "revision_id": revision_id,
         "project_name": root.name,
         "gsm_name": (gsm_name or root.name),
@@ -65,7 +81,22 @@ def create_revision(
         "message": message,
         "source_format": "hsf-project",
         "files": files,
-        "metadata": metadata or {},
+        "trigger": trigger,
+        "intent": intent,
+        "user_instruction": user_instruction,
+        "changed_files": list(changed_files or []),
+        "parent_revision_id": parent_revision_id,
+        "compile": {
+            "mode": compile_metadata.get("mode"),
+            "success": compile_metadata.get("success"),
+            "gsm_size_bytes": compile_metadata.get("gsm_size_bytes"),
+            "gsm_path": compile_metadata.get("gsm_path"),
+            "parameter_count": compile_metadata.get("parameter_count"),
+            "exit_code": compile_metadata.get("exit_code"),
+        },
+        "explanation": extra_metadata.get("explanation", ""),
+        "compile_comparison": extra_metadata.get("compile_comparison"),
+        "metadata": extra_metadata,
     }
     _write_json(tmp_dir / "manifest.json", manifest)
     tmp_dir.rename(revision_dir)
@@ -128,6 +159,8 @@ def restore_revision(
         message=restore_message,
         gsm_name=str(manifest.get("gsm_name") or root.name),
         metadata={"restored_from": revision_id},
+        trigger="rollback",
+        parent_revision_id=get_latest_revision_id(root),
     )
 
 
@@ -236,4 +269,10 @@ def _revision_from_manifest(revision_dir: Path, manifest: dict[str, Any]) -> Rev
         message=str(manifest.get("message") or ""),
         files=list(manifest.get("files") or []),
         path=revision_dir,
+        trigger=str(manifest.get("trigger") or "manual"),
+        intent=str(manifest.get("intent") or ""),
+        user_instruction=str(manifest.get("user_instruction") or ""),
+        changed_files=list(manifest.get("changed_files") or []),
+        parent_revision_id=manifest.get("parent_revision_id"),
+        compile=dict(manifest.get("compile") or {}),
     )

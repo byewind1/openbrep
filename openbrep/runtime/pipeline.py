@@ -20,6 +20,7 @@ from __future__ import annotations
 import difflib
 import logging
 import re
+import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -34,7 +35,7 @@ from openbrep.explainer.context_builder import (
     resolve_script_target,
 )
 from openbrep.explainer.service import explain_parameter_context, explain_project_context, explain_script_context
-from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
+from openbrep.compiler import CompileComparison, CompileResult, CompileSnapshot, HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
 from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
@@ -57,6 +58,7 @@ from openbrep.skills_loader import SkillsLoader
 from openbrep.runtime.router import IntentRouter
 from openbrep.runtime.tracer import Tracer
 from openbrep.preflight import PreflightAnalyzer
+from openbrep.revisions import create_revision, get_latest_revision_id, is_hsf_project_dir
 from openbrep.vision.image_to_plan import analyze_reference_image, visual_structure_to_gdl_hint
 
 
@@ -113,6 +115,7 @@ class TaskRequest:
     image_mime: str = "image/png"
     assistant_settings: str = ""           # injected into GDL system prompt
     on_event: Optional[Callable] = None    # progress callback (event_type, data) -> None
+    compare_compile: str = "off"           # off / mock / real
 
 
 @dataclass
@@ -129,6 +132,8 @@ class TaskResult:
     error: Optional[str] = None
     lint_summary: str = ""
     object_plan: dict = field(default_factory=dict)
+    revision_warnings: list[str] = field(default_factory=list)
+    compile_comparison: Optional[CompileComparison] = None
 
 
 @dataclass
@@ -524,8 +529,15 @@ class TaskPipeline:
             project_name=project.name,
         )
 
-        # Snapshot BEFORE state for diff
-        before_scripts = _snapshot_scripts(project)
+        # Snapshot BEFORE state for rule-based summary and optional compile comparison.
+        before_project_snapshot = deepcopy(project)
+        compare_mode = _normalize_compare_compile_mode(request.compare_compile)
+        before_compile_snapshot = _compile_snapshot_for_project(
+            before_project_snapshot,
+            mode=compare_mode,
+            config=self.config,
+            label="before",
+        )
 
         on_event = request.on_event or (lambda *_: None)
 
@@ -554,6 +566,21 @@ class TaskPipeline:
 
         cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}
         cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
+
+        before_revision_id: str | None = None
+        revision_warnings: list[str] = []
+        if cleaned:
+            before_revision_id, before_revision_warning = _create_auto_revision(
+                project,
+                message=f"auto: before {(request.intent or 'MODIFY').lower()}",
+                trigger=(request.intent or "MODIFY").lower(),
+                intent=request.intent or "MODIFY",
+                user_instruction=clean_instruction,
+                changed_files=list(cleaned.keys()),
+                parent_revision_id=get_latest_revision_id(project.root) if _can_revision_project(project) else None,
+            )
+            if before_revision_warning:
+                revision_warnings.append(before_revision_warning)
 
         # Apply changes to project in-place
         if cleaned:
@@ -642,15 +669,36 @@ class TaskPipeline:
                 logger.warning("Auto-repair attempt failed: %s", exc)
                 auto_repair_info = f"🔧 自动修复尝试失败：{exc}"
 
-        # Build output text: LLM analysis + diff summary + preflight/static/compile status
-        diff_summary = _build_diff_summary(before_scripts, cleaned)
+        compile_comparison: CompileComparison | None = None
+        if before_compile_snapshot is not None:
+            after_compile_snapshot = _compile_snapshot_from_result(
+                compile_result,
+                project,
+                mode=compare_mode,
+            )
+            if after_compile_snapshot is not None:
+                compile_comparison = CompileComparison(
+                    before=before_compile_snapshot,
+                    after=after_compile_snapshot,
+                )
+
+        # Build output text: LLM analysis + structured summary + preflight/static/compile status
+        all_scripts = [f"scripts/{stype.value}" for stype in ScriptType if project.get_script(stype)]
+        structured_summary = _build_structured_summary(
+            before_project=before_project_snapshot,
+            after_project=project,
+            changed_files=list(cleaned.keys()),
+            all_scripts=all_scripts,
+            compile_result=compile_result,
+            linter_result=lint_summary,
+        )
         output_parts: list[str] = []
         if plain_text:
             output_parts.append(plain_text)
         if lint_summary:
             output_parts.append(lint_summary)
-        if diff_summary:
-            output_parts.append(diff_summary)
+        if structured_summary:
+            output_parts.append(structured_summary)
         if preflight_summary:
             output_parts.append(preflight_summary)
         if not static_result.passed:
@@ -665,6 +713,30 @@ class TaskPipeline:
             else:
                 short_err = compile_result.stderr[:400].strip()
                 output_parts.append(f"❌ 编译失败：\n```\n{short_err}\n```")
+        comparison_summary = compile_comparison.summary() if compile_comparison else ""
+        if comparison_summary:
+            output_parts.append(comparison_summary)
+
+        if cleaned and compile_result is not None and compile_result.success:
+            _after_revision_id, after_revision_warning = _create_auto_revision(
+                project,
+                message=f"auto: after {(request.intent or 'MODIFY').lower()} (compile ok)",
+                trigger=(request.intent or "MODIFY").lower(),
+                intent=request.intent or "MODIFY",
+                user_instruction=clean_instruction,
+                changed_files=list(cleaned.keys()),
+                parent_revision_id=before_revision_id,
+                metadata={
+                    "compile": _compile_revision_metadata(compile_result, project),
+                    "explanation": structured_summary,
+                    "compile_comparison": compile_comparison.to_dict() if compile_comparison else None,
+                },
+            )
+            if after_revision_warning:
+                revision_warnings.append(after_revision_warning)
+
+        if revision_warnings:
+            output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {warning}" for warning in revision_warnings))
 
         return TaskResult(
             success=True,
@@ -674,6 +746,8 @@ class TaskPipeline:
             project=project,
             compile_result=compile_result,
             lint_summary=lint_summary,
+            revision_warnings=revision_warnings,
+            compile_comparison=compile_comparison,
         )
 
     # ── Initialization Helpers ────────────────────────────
@@ -1104,6 +1178,131 @@ def _strip_md_fences(code: str) -> str:
     return strip_md_fences(code)
 
 
+def _can_revision_project(project: HSFProject) -> bool:
+    root = Path(getattr(project, "root", "") or "")
+    try:
+        return root.is_dir() and is_hsf_project_dir(root)
+    except Exception:
+        return False
+
+
+def _create_auto_revision(
+    project: HSFProject,
+    *,
+    message: str,
+    trigger: str,
+    intent: str,
+    user_instruction: str,
+    changed_files: list[str],
+    parent_revision_id: str | None,
+    metadata: dict | None = None,
+) -> tuple[str | None, str]:
+    if not _can_revision_project(project):
+        return None, "项目尚未保存为 HSF 目录，已跳过自动版本快照"
+    try:
+        revision = create_revision(
+            project.root,
+            message=message,
+            gsm_name=project.name,
+            metadata=metadata,
+            trigger=trigger,
+            intent=intent,
+            user_instruction=user_instruction,
+            changed_files=changed_files,
+            parent_revision_id=parent_revision_id,
+        )
+        return revision.revision_id, ""
+    except Exception as exc:
+        logger.warning("Auto revision failed: %s", exc)
+        return None, f"自动版本快照失败：{exc}"
+
+
+def _compile_revision_metadata(compile_result: CompileResult, project: HSFProject) -> dict:
+    output_path = compile_result.output_path or ""
+    output = Path(output_path) if output_path else None
+    return {
+        "mode": compile_result.mode,
+        "success": compile_result.success,
+        "gsm_size_bytes": output.stat().st_size if output is not None and output.exists() else None,
+        "gsm_path": output_path or None,
+        "parameter_count": len(project.parameters),
+        "exit_code": compile_result.exit_code,
+    }
+
+
+def _normalize_compare_compile_mode(mode: str | None) -> str:
+    value = str(mode or "off").strip().lower()
+    if value in {"", "off", "none", "false", "0", "no"}:
+        return "off"
+    if value in {"mock", "true", "1", "yes", "on"}:
+        return "mock"
+    if value == "real":
+        return "real"
+    return "off"
+
+
+def _compiler_for_compare_mode(mode: str, config: GDLAgentConfig):
+    if mode == "mock":
+        return MockHSFCompiler()
+    if mode == "real":
+        return HSFCompiler(
+            converter_path=config.compiler.path,
+            timeout=config.compiler.timeout,
+        )
+    return None
+
+
+def _compile_snapshot_from_result(
+    compile_result: CompileResult | None,
+    project: HSFProject,
+    *,
+    mode: str,
+) -> CompileSnapshot | None:
+    if mode == "off" or compile_result is None:
+        return None
+    output_path = Path(compile_result.output_path) if compile_result.output_path else None
+    return CompileSnapshot(
+        success=compile_result.success,
+        gsm_size_bytes=output_path.stat().st_size if output_path is not None and output_path.exists() else None,
+        parameter_count=len(project.parameters),
+        exit_code=compile_result.exit_code,
+        mode=mode,
+    )
+
+
+def _compile_snapshot_for_project(
+    project: HSFProject,
+    *,
+    mode: str,
+    config: GDLAgentConfig,
+    label: str,
+) -> CompileSnapshot | None:
+    if mode == "off":
+        return None
+    compiler = _compiler_for_compare_mode(mode, config)
+    if compiler is None:
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"openbrep_compare_{label}_") as temp_dir:
+            temp_root = Path(temp_dir)
+            project_copy = deepcopy(project)
+            project_copy.work_dir = temp_root
+            project_copy.root = temp_root / project_copy.name
+            hsf_dir = project_copy.save_to_disk()
+            gsm_path = temp_root / f"{label}.gsm"
+            result = compiler.hsf2libpart(str(hsf_dir), str(gsm_path))
+            return _compile_snapshot_from_result(result, project_copy, mode=mode)
+    except Exception as exc:
+        logger.warning("Compare compile failed for %s snapshot: %s", label, exc)
+        return CompileSnapshot(
+            success=False,
+            gsm_size_bytes=None,
+            parameter_count=len(project.parameters),
+            exit_code=-1,
+            mode=mode,
+        )
+
+
 def _snapshot_scripts(project: HSFProject) -> dict[str, str]:
     """
     Capture current project scripts as {file_path: content}.
@@ -1125,6 +1324,109 @@ def _snapshot_scripts(project: HSFProject) -> dict[str, str]:
         ]
         snap["paramlist.xml"] = "\n".join(lines)
     return snap
+
+
+def _diff_parameters(before: HSFProject, after: HSFProject) -> dict:
+    """Compare HSF project parameters and return added, removed, and changed items."""
+    try:
+        if before.parameters is None or after.parameters is None:
+            return {}
+        before_params = {p.name: p for p in before.parameters}
+        after_params = {p.name: p for p in after.parameters}
+    except Exception:
+        return {}
+
+    added = []
+    removed = []
+    changed = []
+
+    for name, param in after_params.items():
+        if name not in before_params:
+            added.append({
+                "name": name,
+                "type": str(getattr(param, "type_tag", "")),
+                "default": str(getattr(param, "value", "")),
+            })
+            continue
+
+        before_param = before_params[name]
+        changes = {}
+        before_type = str(getattr(before_param, "type_tag", ""))
+        after_type = str(getattr(param, "type_tag", ""))
+        if after_type != before_type:
+            changes["type"] = (before_type, after_type)
+
+        before_default = str(getattr(before_param, "value", ""))
+        after_default = str(getattr(param, "value", ""))
+        if after_default != before_default:
+            changes["default"] = (before_default, after_default)
+
+        if changes:
+            changed.append({"name": name, **changes})
+
+    for name in before_params:
+        if name not in after_params:
+            removed.append({"name": name})
+
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def _linter_fix_count(linter_result) -> int:
+    if linter_result is None:
+        return 0
+    value = getattr(linter_result, "fix_count", None)
+    if isinstance(value, int):
+        return value
+    if isinstance(linter_result, str):
+        matches = re.findall(r"修复\s+(\d+)\s+处", linter_result)
+        return sum(int(item) for item in matches)
+    return 0
+
+
+def _build_structured_summary(
+    before_project,
+    after_project,
+    changed_files: list,
+    all_scripts: list,
+    compile_result,
+    linter_result,
+) -> str:
+    """Build a rule-based project-level change summary."""
+    try:
+        lines = ["**变更摘要：**"]
+
+        if changed_files:
+            lines.append(f"- 修改脚本：{', '.join(changed_files)}")
+        unchanged = [script for script in all_scripts if script not in changed_files]
+        if unchanged:
+            lines.append(f"- 未改脚本：{', '.join(unchanged)}")
+
+        if before_project and after_project:
+            diff = _diff_parameters(before_project, after_project)
+            for param in diff.get("added", []):
+                suffix = f"（{param['type']}，默认 {param['default']}）" if param["type"] else ""
+                lines.append(f"- 新增参数：{param['name']}{suffix}")
+            for param in diff.get("removed", []):
+                lines.append(f"- 删除参数：{param['name']}")
+            for param in diff.get("changed", []):
+                parts = []
+                if "type" in param:
+                    parts.append(f"类型 {param['type'][0]} → {param['type'][1]}")
+                if "default" in param:
+                    parts.append(f"默认值 {param['default'][0]} → {param['default'][1]}")
+                lines.append(f"- 修改参数：{param['name']}（{', '.join(parts)}）")
+
+        fix_count = _linter_fix_count(linter_result)
+        if fix_count > 0:
+            lines.append(f"- 自动修复：linter 修复了 {fix_count} 个问题")
+
+        if compile_result is not None:
+            status = "✅ 通过" if compile_result.success else "❌ 失败"
+            lines.append(f"- 编译结果：{status}")
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 def _build_diff_summary(before: dict[str, str], changed_files: dict[str, str]) -> str:
