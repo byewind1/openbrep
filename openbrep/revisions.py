@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from difflib import unified_diff
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -164,6 +165,39 @@ def restore_revision(
     )
 
 
+def compare_revisions(project_dir: str | Path, from_revision_id: str, to_revision_id: str) -> str:
+    """Return a unified text diff between two revision source snapshots."""
+    root = _resolve_project_root(project_dir)
+    from_dir = _find_revision_dir(root, from_revision_id)
+    to_dir = _find_revision_dir(root, to_revision_id)
+    from_manifest = _read_manifest(from_dir)
+    to_manifest = _read_manifest(to_dir)
+    files = sorted(set(from_manifest.get("files") or []) | set(to_manifest.get("files") or []))
+
+    chunks: list[str] = []
+    for rel_path in files:
+        from_text = _read_revision_text(from_dir / rel_path)
+        to_text = _read_revision_text(to_dir / rel_path)
+        if from_text == to_text:
+            continue
+        chunks.extend(
+            unified_diff(
+                from_text.splitlines(keepends=True),
+                to_text.splitlines(keepends=True),
+                fromfile=f"{from_revision_id}/{rel_path}",
+                tofile=f"{to_revision_id}/{rel_path}",
+            )
+        )
+        if chunks and not chunks[-1].endswith("\n"):
+            chunks[-1] += "\n"
+
+    compile_summary = _compare_compile_metadata(from_revision_id, from_manifest, to_revision_id, to_manifest)
+    if compile_summary:
+        chunks.append(compile_summary)
+
+    return "".join(chunks) or f"No source differences between {from_revision_id} and {to_revision_id}.\n"
+
+
 def get_latest_revision_id(project_dir: str | Path) -> str | None:
     """Return the latest revision id, if present."""
     root = _resolve_project_root(project_dir)
@@ -248,6 +282,38 @@ def _find_revision_dir(project_root: Path, revision_id: str) -> Path:
     if not revision_dir.is_dir():
         raise FileNotFoundError(f"Revision not found: {revision_id}")
     return revision_dir
+
+
+def _read_manifest(revision_dir: Path) -> dict[str, Any]:
+    manifest_path = revision_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Revision manifest not found: {manifest_path}")
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _read_revision_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _compare_compile_metadata(
+    from_revision_id: str,
+    from_manifest: dict[str, Any],
+    to_revision_id: str,
+    to_manifest: dict[str, Any],
+) -> str:
+    from_compile = dict(from_manifest.get("compile") or {})
+    to_compile = dict(to_manifest.get("compile") or {})
+    keys = ["mode", "success", "gsm_path", "gsm_size_bytes", "exit_code"]
+    lines = []
+    for key in keys:
+        if from_compile.get(key) != to_compile.get(key):
+            lines.append(f"- {key}: {from_compile.get(key)!r} -> {to_compile.get(key)!r}")
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    return f"\n## Compile metadata changed ({from_revision_id} -> {to_revision_id})\n{body}\n"
 
 
 def _write_latest(project_root: Path, revision_id: str) -> None:

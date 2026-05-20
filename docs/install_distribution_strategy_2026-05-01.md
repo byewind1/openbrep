@@ -84,6 +84,32 @@ creates or updates the matching GitHub Release for `v*` tags.
 - Consider npm only as a bootstrapper if there is real demand from JS-oriented
   users or plugin ecosystems.
 
+### Signing closure update, 2026-05-21
+
+The repository now has signing and notarization hooks for macOS Release zips:
+
+- `scripts/sign_macos_dist.sh` signs the PyInstaller output with a Developer ID
+  Application certificate and hardened runtime.
+- `scripts/notarize_macos_zip.sh` submits the final zip with `xcrun notarytool`.
+- `.github/workflows/build-installers.yml` imports a Developer ID certificate
+  from GitHub Secrets when configured, then runs Gatekeeper checks on the signed
+  package.
+
+Required GitHub Secrets:
+
+```text
+MACOS_CERTIFICATE_P12_BASE64
+MACOS_CERTIFICATE_PASSWORD
+MACOS_KEYCHAIN_PASSWORD
+MACOS_DEVELOPER_ID_APPLICATION
+APPLE_ID
+APPLE_TEAM_ID
+APPLE_APP_SPECIFIC_PASSWORD
+```
+
+Without those secrets, the workflow still builds unsigned packages and the
+README Gatekeeper workaround remains the public fallback.
+
 ## References
 
 - GitHub CLI release commands: https://cli.github.com/manual/gh_release_create

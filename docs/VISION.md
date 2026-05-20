@@ -129,7 +129,7 @@ AI 写的代码不可信——必须通过 LP_XMLConverter 真实编译验证。
 ### Phase 3: 智能增强（v0.7 → v0.8）
 
 - [ ] 3D 交互增强预览（选择/测量/剖切/材质反馈）
-- [ ] 对话历史记忆（跨 session 记住项目上下文）
+- [x] 工作区对话/错题记忆（跨 session 保存聊天、错题和整理后的 Skill；更深的项目语义记忆仍属于后续 Knowledge Memory 深化）
 - [ ] 多对象项目管理（一个 workspace 管理多个 .gsm）
 - [ ] CALL 宏依赖分析（自动检测和管理宏调用关系）
 - [ ] ArchiCAD Libpacks 支持（AC28+ 的新库管理格式）

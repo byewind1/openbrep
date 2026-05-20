@@ -957,6 +957,24 @@ def cmd_rollback(
     console.print(f"[green]📌 当前最新版本：{restored.revision_id}[/green]")
 
 
+@app.command("compare")
+def cmd_compare(
+    project: str = typer.Argument(..., help="HSF 项目目录路径"),
+    from_revision: str = typer.Argument(..., help="起始版本 ID，如 r0001"),
+    to_revision: str = typer.Argument(..., help="目标版本 ID，如 r0002"),
+):
+    """对比两个项目版本快照"""
+    from openbrep.revisions import compare_revisions
+
+    try:
+        diff = compare_revisions(project, from_revision, to_revision)
+    except Exception as exc:
+        err_console.print(f"[red]❌ 对比版本失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(diff, markup=False)
+
+
 @revision_app.command("save")
 def revision_save(
     project_dir: str = typer.Argument(..., help="HSF 项目目录路径"),
@@ -1028,6 +1046,24 @@ def revision_restore(
 
     console.print(f"[green]✅ 已恢复 {revision_id}[/green]")
     console.print(f"[green]📌 当前最新版本：{revision.revision_id}[/green]")
+
+
+@revision_app.command("compare")
+def revision_compare(
+    project_dir: str = typer.Argument(..., help="HSF 项目目录路径"),
+    from_revision: str = typer.Argument(..., help="起始版本 ID，如 r0001"),
+    to_revision: str = typer.Argument(..., help="目标版本 ID，如 r0002"),
+):
+    """对比两个 HSF 项目版本快照"""
+    from openbrep.revisions import compare_revisions
+
+    try:
+        diff = compare_revisions(project_dir, from_revision, to_revision)
+    except Exception as exc:
+        err_console.print(f"[red]❌ 对比版本失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    console.print(diff, markup=False)
 
 
 @memory_app.command("status")

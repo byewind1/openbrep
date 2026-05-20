@@ -408,6 +408,29 @@ class TestCliMainCommands(unittest.TestCase):
             self.assertIn("已取消", result.output)
             self.assertEqual(len(list_revisions(project)), 1)
 
+    def test_compare_command_prints_revision_diff(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Chair"
+            scripts = project / "scripts"
+            scripts.mkdir(parents=True)
+            (project / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+            (project / "paramlist.xml").write_text("<ParamList />\n", encoding="utf-8")
+            (scripts / "3d.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            from openbrep.revisions import create_revision
+
+            create_revision(project, "initial")
+            (scripts / "3d.gdl").write_text("CYLIND 1, 1\n", encoding="utf-8")
+            create_revision(project, "cylinder")
+
+            result = self.runner.invoke(app, ["compare", str(project), "r0001", "r0002"])
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertIn("--- r0001/scripts/3d.gdl", result.output)
+            self.assertIn("+++ r0002/scripts/3d.gdl", result.output)
+            self.assertIn("-BLOCK A, B, ZZYZX", result.output)
+            self.assertIn("+CYLIND 1, 1", result.output)
+
     def test_configure_writes_builtin_provider_key_and_backup(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"

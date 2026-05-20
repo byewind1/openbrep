@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from openbrep.revisions import (
+    compare_revisions,
     copy_project_metadata,
     create_revision,
     get_latest_revision_id,
@@ -101,6 +102,45 @@ class TestProjectRevisions(unittest.TestCase):
             restore_revision(project, "r0001")
 
             self.assertFalse((project / "scripts" / "2d.gdl").exists())
+
+    def test_compare_revisions_returns_unified_diff_for_changed_sources(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            create_revision(project, "initial")
+            (project / "scripts" / "3d.gdl").write_text("CYLIND 1, 1\n", encoding="utf-8")
+            (project / "scripts" / "2d.gdl").write_text("LINE2 0, 0, A, B\n", encoding="utf-8")
+            create_revision(project, "make cylinder")
+
+            diff = compare_revisions(project, "r0001", "r0002")
+
+            self.assertIn("--- r0001/scripts/3d.gdl", diff)
+            self.assertIn("+++ r0002/scripts/3d.gdl", diff)
+            self.assertIn("-BLOCK A, B, ZZYZX", diff)
+            self.assertIn("+CYLIND 1, 1", diff)
+            self.assertIn("+++ r0002/scripts/2d.gdl", diff)
+            self.assertIn("+LINE2 0, 0, A, B", diff)
+
+    def test_compare_revisions_includes_compile_metadata_changes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            create_revision(
+                project,
+                "mock",
+                metadata={"compile": {"mode": "mock", "success": True, "gsm_path": "/tmp/mock.gsm"}},
+            )
+            create_revision(
+                project,
+                "real",
+                metadata={"compile": {"mode": "real", "success": False, "exit_code": 1}},
+            )
+
+            diff = compare_revisions(project, "r0001", "r0002")
+
+            self.assertIn("## Compile metadata changed (r0001 -> r0002)", diff)
+            self.assertIn("- mode: 'mock' -> 'real'", diff)
+            self.assertIn("- success: True -> False", diff)
 
     def test_create_revision_rejects_non_hsf_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -104,6 +104,17 @@ def test_macos_build_package_includes_clickable_command_launcher():
     assert "dist/OpenBrep/README-macOS.txt" in script
 
 
+def test_macos_build_package_supports_signing_and_notarization_hooks():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "build_macos.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "MACOS_DEVELOPER_ID_APPLICATION" in script
+    assert "scripts/sign_macos_dist.sh" in script
+    assert "scripts/notarize_macos_zip.sh" in script
+    assert 'zip -r -X "../$OUT" OpenBrep' in script
+
+
 def test_openbrep_spec_includes_streamlit_static_assets():
     spec = (Path(__file__).resolve().parents[1] / "openbrep.spec").read_text(encoding="utf-8")
 

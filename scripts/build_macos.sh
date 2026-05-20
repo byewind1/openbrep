@@ -66,9 +66,21 @@ Keep the OpenBrep file and _internal folder together. Do not move only the
 OpenBrep executable out of this folder.
 EOF
 
+if [[ -n "${MACOS_DEVELOPER_ID_APPLICATION:-}" ]]; then
+  bash scripts/sign_macos_dist.sh dist/OpenBrep
+else
+  echo "⚠️  MACOS_DEVELOPER_ID_APPLICATION is not set; building unsigned macOS zip."
+fi
+
 (
   cd dist
   zip -r -X "../$OUT" OpenBrep >/dev/null
 )
+
+if [[ -n "${APPLE_ID:-}" || -n "${APPLE_TEAM_ID:-}" || -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]]; then
+  bash scripts/notarize_macos_zip.sh "$OUT"
+else
+  echo "⚠️  Apple notarization credentials are not set; skipping notarization."
+fi
 
 echo "Built: $OUT"
