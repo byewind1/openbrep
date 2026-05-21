@@ -96,46 +96,19 @@ Packaging regressions fixed in v0.6.11:
 - Include `streamlit.runtime.scriptrunner` hidden imports so frozen script
   execution can import `magic_funcs`.
 
-## macOS Signing And Notarization
+## macOS Unsigned Distribution
 
-The macOS installer workflow can produce signed and notarized zips when the
-repository has Apple Developer secrets configured. Apple Developer ID signing
-and notarization require a paid Apple Developer Program account.
-
-Required GitHub Secrets:
-
-```text
-MACOS_CERTIFICATE_P12_BASE64
-MACOS_CERTIFICATE_PASSWORD
-MACOS_KEYCHAIN_PASSWORD
-MACOS_DEVELOPER_ID_APPLICATION
-APPLE_ID
-APPLE_TEAM_ID
-APPLE_APP_SPECIFIC_PASSWORD
-```
-
-Local equivalent:
+The current macOS Release asset is an unsigned zip. This is intentional for the
+current project stage. Users may need to remove the quarantine flag after
+unzipping:
 
 ```bash
-export MACOS_DEVELOPER_ID_APPLICATION="Developer ID Application: Name (TEAMID)"
-export APPLE_ID="apple-id@example.com"
-export APPLE_TEAM_ID="TEAMID"
-export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
-bash scripts/build_macos.sh
+xattr -dr com.apple.quarantine /path/to/OpenBrep
 ```
 
-`scripts/build_macos.sh` signs `dist/OpenBrep` before zipping when
-`MACOS_DEVELOPER_ID_APPLICATION` is set, then notarizes the final zip when the
-Apple notarization credentials are present. The GitHub workflow verifies signed
-macOS builds with:
-
-```bash
-codesign --verify --deep --strict --verbose=2 OpenBrep/OpenBrep
-spctl -a -vvv -t execute OpenBrep/OpenBrep
-```
-
-If these secrets are absent, the workflow intentionally falls back to the
-unsigned package and the public Gatekeeper workaround remains required.
+Do not require Apple Developer certificates for ordinary releases. Developer ID
+signing, Apple notarization, `.app`, and `.dmg` packaging are optional future
+distribution work, not release blockers today.
 
 ## Postflight
 

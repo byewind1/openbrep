@@ -84,31 +84,22 @@ creates or updates the matching GitHub Release for `v*` tags.
 - Consider npm only as a bootstrapper if there is real demand from JS-oriented
   users or plugin ecosystems.
 
-### Signing closure update, 2026-05-21
+### macOS distribution closure update, 2026-05-21
 
-The repository now has signing and notarization hooks for macOS Release zips:
+The current macOS distribution remains an unsigned Release zip. This is
+intentional for the current project stage because Developer ID signing and
+Apple notarization require paid Apple Developer credentials and ongoing release
+maintenance.
 
-- `scripts/sign_macos_dist.sh` signs the PyInstaller output with a Developer ID
-  Application certificate and hardened runtime.
-- `scripts/notarize_macos_zip.sh` submits the final zip with `xcrun notarytool`.
-- `.github/workflows/build-installers.yml` imports a Developer ID certificate
-  from GitHub Secrets when configured, then runs Gatekeeper checks on the signed
-  package.
+Current policy:
 
-Required GitHub Secrets:
+- Keep `OpenBrep-free-macOS.zip` as the ordinary GitHub Release asset.
+- Document the Gatekeeper workaround:
+  `xattr -dr com.apple.quarantine /path/to/OpenBrep`.
+- Verify each macOS zip with package smoke and browser smoke.
+- Do not require Apple Developer certificates for normal releases.
 
-```text
-MACOS_CERTIFICATE_P12_BASE64
-MACOS_CERTIFICATE_PASSWORD
-MACOS_KEYCHAIN_PASSWORD
-MACOS_DEVELOPER_ID_APPLICATION
-APPLE_ID
-APPLE_TEAM_ID
-APPLE_APP_SPECIFIC_PASSWORD
-```
-
-Without those secrets, the workflow still builds unsigned packages and the
-README Gatekeeper workaround remains the public fallback.
+Signing, notarization, `.app`, and `.dmg` packaging remain optional future work.
 
 ## References
 

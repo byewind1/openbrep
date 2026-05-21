@@ -14,22 +14,20 @@
 
 ## 必须收口
 
-### 1. macOS 分发信任链
+### 1. macOS unsigned 分发说明
 
-状态：代码入口已补齐，正式通过仍需要 Apple Developer 凭据。
+状态：收口为 unsigned zip + Gatekeeper workaround，不再把证书签名/公证作为当前阶段必须项。
 
 已完成：
 
-- `scripts/sign_macos_dist.sh`：签名 PyInstaller 输出中的 Mach-O 文件。
-- `scripts/notarize_macos_zip.sh`：使用 `xcrun notarytool` 提交 zip 公证。
-- `.github/workflows/build-installers.yml`：配置证书导入、签名、公证和 Gatekeeper 检查入口。
-- `docs/RELEASE_PROCESS.md`：记录所需 GitHub Secrets 和本地命令。
+- `README.md`、`README.zh-CN.md`、`INSTALL_CN.md` 已写明 `xattr -dr com.apple.quarantine /path/to/OpenBrep` 临时处理方式。
+- `scripts/build_macos.sh` 保持 unsigned zip 构建，不要求维护者配置 Apple Developer 证书。
+- macOS package smoke 和 browser smoke 用真实 zip 验证启动与首页渲染。
 
-剩余阻塞：
+后续可选：
 
-- 配置 Apple Developer ID Application 证书。
-- 配置 Apple notarization 凭据。
-- 发布一个新 patch tag，并用真实下载的 Release zip 验证 Gatekeeper 不再触发未签名提示。
+- 如果未来用户规模和分发需求上升，再单独做 Developer ID 签名、公证、`.app` / `.dmg` 分发。
+- 当前不为签名公证单独发布 patch release。
 
 ### 2. v0.7 Revision MVP
 
