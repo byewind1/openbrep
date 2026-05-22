@@ -1,0 +1,146 @@
+! =============================================================================
+! Skill Reference: gdl-dougong
+! 斗拱 GDL 参考实现 — 一斗三升（单抄）
+! 基于清式斗口制模数
+! 适用于 Archicad 29+ / GDL Cookbook 规范
+! =============================================================================
+!
+! 文件结构（HSF 工程）:
+!   dougong/
+!   ├── libpartdata.xml
+!   ├── paramlist.xml
+!   └── scripts/
+!       ├── 1d.gdl   — Master 脚本（预计算）
+!       ├── 2d.gdl   — 2D 符号
+!       ├── 3d.gdl   — 3D 几何（主脚本）
+!       └── ui.gdl   — 界面交互
+!
+! 核心命令: PRISM_(斗), REVOLVE(拱), GOSUB(子程序)
+
+! ===== scripts/1d.gdl — Master Script =====
+! 斗口模数制
+_dou_kou = A           ! 斗口宽度（清式基本模数）
+_dan_cai = _dou_kou    ! 单材 = 1 斗口
+_zu_cai = _dou_kou * 1.4  ! 足材 = 1.4 斗口
+
+! 坐斗
+zuodou_h = _zu_cai * 0.8
+dou_w = _dan_cai * 1.5
+dou_d = _dan_cai * 1.5
+dou_hole_w = _dan_cai * 0.6
+dou_hole_d = _dan_cai * 0.6
+
+! 拱
+gong_h = _zu_cai
+gong_w = _dan_cai * 1.0  ! 拱身宽度
+jump_len = _dan_cai * 1.2
+
+! 散斗
+sandou_h = _dan_cai * 0.6
+sd_w = _dan_cai * 0.8
+sd_d = _dan_cai * 0.8
+sd_hole_w = _dan_cai * 0.4
+sd_hole_d = _dan_cai * 0.4
+
+! 拱轮廓点（用于 REVOLVE）
+! 中间高两端低的弧线
+_dim_p = 7              ! 7个控制点
+_dim_i = 1
+PUT -gong_w/2, 0, 1     ! 左端点
+PUT -gong_w/4, gong_h * 1.2, 1  ! 1/4处微拱
+PUT -gong_w/8, gong_h * 1.5, 1  ! 近中左
+PUT 0, gong_h * 1.6, 1         ! 最高点
+PUT gong_w/8, gong_h * 1.5, 1  ! 近中右
+PUT gong_w/4, gong_h * 1.2, 1  ! 1/4处微拱
+PUT gong_w/2, 0, 1       ! 右端点
+
+
+! ===== scripts/3d.gdl — 3D Script =====
+PEN 1
+MATERIAL mat_body
+TOLER 0.005
+
+! --- 坐斗 ---
+GOSUB 100
+
+! --- 华拱（出跳） ---
+ADDZ zuodou_h
+GOSUB 200
+
+! --- 散斗 x 2（拱两端） ---
+ADDX -jump_len
+ADDZ gong_h
+GOSUB 300
+ADDX jump_len * 2
+GOSUB 300
+
+! --- 泥道拱（横向） ---
+ADDX -jump_len
+ADDZ sandou_h
+GOSUB 400
+
+! 清栈
+DEL 6
+END
+
+! ============ 子程序 ============
+
+! 100: 坐斗 — 12点多边形十字槽截面
+100:
+  PRISM_ 12, zuodou_h,
+    -dou_w/2, -dou_d/2, 1,
+     dou_w/2, -dou_d/2, 1,
+     dou_w/2, -dou_hole_w/2, 1,
+     dou_hole_w/2, -dou_hole_d/2, 1,
+     dou_hole_w/2,  dou_hole_d/2, 1,
+     dou_w/2,  dou_hole_d/2, 1,
+     dou_w/2,  dou_d/2, 1,
+    -dou_w/2,  dou_d/2, 1,
+    -dou_w/2,  dou_hole_d/2, 1,
+    -dou_hole_w/2,  dou_hole_d/2, 1,
+    -dou_hole_w/2, -dou_hole_d/2, 1,
+    -dou_w/2, -dou_hole_d/2, 1
+RETURN
+
+! 200: 华拱 — 用 REVOLVE 形成拱形曲面
+200:
+  REVOLVE _dim_p, 180, 63, GET(NSP)
+RETURN
+
+! 300: 散斗 — 8点截面矩形开槽
+300:
+  PRISM_ 8, sandou_h,
+    -sd_w/2, -sd_d/2, 1,
+     sd_w/2, -sd_d/2, 1,
+     sd_w/2, -sd_hole_d/2, 1,
+     sd_hole_w/2, -sd_hole_d/2, 1,
+     sd_hole_w/2,  sd_hole_d/2, 1,
+     sd_w/2,  sd_hole_d/2, 1,
+     sd_w/2,  sd_d/2, 1,
+    -sd_w/2,  sd_d/2, 1
+RETURN
+
+! 400: 泥道拱 — 横向拱（Y方向旋转90度）
+400:
+  ROTX 90
+  REVOLVE _dim_p, 180, 63, GET(NSP)
+  DEL 1
+RETURN
+
+
+! ===== scripts/2d.gdl — 2D Script =====
+! 投影 + 热点
+PROJECT2 3, 270, 2
+
+HOTSPOT2 -jump_len * 2, 0
+HOTSPOT2  jump_len * 2, 0
+HOTSPOT2  0, dou_w/2
+HOTSPOT2  0, -dou_w/2
+
+
+! ===== paramlist.xml — 参数定义 =====
+! <Length Name="A"><Fix/><Value>0.42</Value></Length>
+! <Length Name="B"><Fix/><Value>1.20</Value></Length>
+! <Length Name="ZZYZX"><Fix/><Value>0.60</Value></Length>
+! <Integer Name="n_tiers"><Value>1</Value></Integer>
+! <Material Name="mat_body"><Value>0</Value></Material>
