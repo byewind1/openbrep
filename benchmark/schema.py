@@ -8,11 +8,21 @@ import yaml
 
 
 @dataclass(frozen=True)
+class SemanticAssertion:
+    type: str
+    script: str = ""
+    command: str = ""
+    param: str = ""
+    contains: str = ""
+
+
+@dataclass(frozen=True)
 class SuccessCriteria:
     compile_pass: bool = True
     required_params: list[str] = field(default_factory=list)
     required_scripts: list[str] = field(default_factory=list)
     geometry_check: str = ""
+    semantic_assertions: list[SemanticAssertion] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -44,7 +54,21 @@ def benchmark_task_from_dict(data: dict[str, Any]) -> BenchmarkTask:
             required_params=list(criteria.get("required_params") or []),
             required_scripts=list(criteria.get("required_scripts") or []),
             geometry_check=str(criteria.get("geometry_check") or ""),
+            semantic_assertions=[
+                _semantic_assertion_from_dict(item)
+                for item in list(criteria.get("semantic_assertions") or data.get("semantic_assertions") or [])
+            ],
         ),
         expected_difficulty=str(data.get("expected_difficulty") or ""),
         expected_pass=data.get("expected_pass"),
+    )
+
+
+def _semantic_assertion_from_dict(data: dict[str, Any]) -> SemanticAssertion:
+    return SemanticAssertion(
+        type=str(data.get("type") or ""),
+        script=str(data.get("script") or ""),
+        command=str(data.get("command") or ""),
+        param=str(data.get("param") or ""),
+        contains=str(data.get("contains") or ""),
     )

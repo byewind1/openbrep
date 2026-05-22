@@ -8,5 +8,14 @@ success_criteria:
   required_params: [A, B, ZZYZX]
   required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "单一 BLOCK 几何，尺寸与参数对应"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: BLOCK
+    - type: param_used
+      script: 3d.gdl
+      param: A
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: easy
 expected_pass: true

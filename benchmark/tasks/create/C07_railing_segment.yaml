@@ -8,5 +8,17 @@ success_criteria:
   required_params: [A, ZZYZX, post_spacing, post_d, rail_d, has_bottom_rail]
   required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "立杆数量由间距自动计算，FOR循环正确，CYLIND使用正确"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: command_present
+      script: 3d.gdl
+      command: CYLIND
+    - type: param_used
+      script: 3d.gdl
+      param: post_spacing
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: medium_high
 expected_pass: maybe

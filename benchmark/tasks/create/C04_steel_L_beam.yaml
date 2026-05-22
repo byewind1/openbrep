@@ -8,5 +8,14 @@ success_criteria:
   required_params: [A, ZZYZX, flange_w, flange_t, web_h, web_t, mat_steel]
   required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "L截面几何正确，无穿模，截面参数联动"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: flange_w
+    - type: param_used
+      script: 3d.gdl
+      param: web_h
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: medium
 expected_pass: maybe

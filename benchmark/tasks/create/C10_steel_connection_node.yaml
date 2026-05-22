@@ -8,5 +8,17 @@ success_criteria:
   required_params: [col_hw, col_bf, col_tf, col_tw, beam_hw, beam_bf, bolt_rows, bolt_cols, has_stiff]
   required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "多构件装配，螺栓FOR循环，ADD/DEL配平，无穿模"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: bolt_rows
+    - type: param_used
+      script: 3d.gdl
+      param: bolt_cols
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: very_high
 expected_pass: unlikely

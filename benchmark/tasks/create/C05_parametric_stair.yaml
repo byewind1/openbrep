@@ -8,5 +8,17 @@ success_criteria:
   required_params: [stair_steps, riser_h, tread_w, tread_thk, has_riser]
   required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "FOR循环驱动步数，总高度 = steps * riser_h，ADD/DEL正确"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: stair_steps
+    - type: expression_present
+      script: 3d.gdl
+      contains: stair_steps * riser_h
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: medium_high
 expected_pass: maybe

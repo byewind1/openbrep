@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from benchmark.assertions import assert_success_criteria
-from benchmark.runner import BenchmarkRunner
+from benchmark.runner import BenchmarkRunner, build_summary, render_markdown_summary
 from benchmark.schema import SuccessCriteria, load_benchmark_task
 from openbrep.core import AgentResult, Status
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
@@ -97,7 +97,11 @@ class TestBenchmarkAssertions(unittest.TestCase):
                 "  compile_pass: true\n"
                 "  required_params: [A, B]\n"
                 "  required_scripts: [3d.gdl, paramlist.xml]\n"
-                "  geometry_check: \"BLOCK geometry\"\n",
+                "  geometry_check: \"BLOCK geometry\"\n"
+                "  semantic_assertions:\n"
+                "    - type: command_present\n"
+                "      script: 3d.gdl\n"
+                "      command: BLOCK\n",
                 encoding="utf-8",
             )
 
@@ -107,6 +111,73 @@ class TestBenchmarkAssertions(unittest.TestCase):
             self.assertEqual(task.success_criteria.required_params, ["A", "B"])
             self.assertEqual(task.success_criteria.required_scripts, ["3d.gdl", "paramlist.xml"])
             self.assertEqual(task.success_criteria.geometry_check, "BLOCK geometry")
+            self.assertEqual(task.success_criteria.semantic_assertions[0].type, "command_present")
+            self.assertEqual(task.success_criteria.semantic_assertions[0].command, "BLOCK")
+
+    def test_semantic_assertions_loaded_from_yaml_are_checked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "C98.yaml"
+            task_path.write_text(
+                "---\n"
+                "id: C98\n"
+                "description: semantic test\n"
+                "success_criteria:\n"
+                "  semantic_assertions:\n"
+                "    - type: command_present\n"
+                "      script: 3d.gdl\n"
+                "      command: FOR\n"
+                "    - type: param_used\n"
+                "      script: 3d.gdl\n"
+                "      param: n_shelves\n"
+                "    - type: expression_present\n"
+                "      script: 1d.gdl\n"
+                "      contains: ZZYZX / n_shelves\n"
+                "    - type: transform_balanced\n"
+                "      script: 3d.gdl\n",
+                encoding="utf-8",
+            )
+
+            task = load_benchmark_task(task_path)
+            result = assert_success_criteria(self._project(), task.success_criteria)
+
+            self.assertTrue(result.passed, result.failures)
+
+    def test_semantic_assertions_report_missing_command_param_expression_and_stack(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "C97.yaml"
+            task_path.write_text(
+                "---\n"
+                "id: C97\n"
+                "description: semantic failure test\n"
+                "success_criteria:\n"
+                "  semantic_assertions:\n"
+                "    - type: command_present\n"
+                "      script: 3d.gdl\n"
+                "      command: CYLIND\n"
+                "    - type: param_used\n"
+                "      script: 3d.gdl\n"
+                "      param: missing_param\n"
+                "    - type: expression_present\n"
+                "      script: 1d.gdl\n"
+                "      contains: stair_steps * riser_h\n"
+                "    - type: transform_balanced\n"
+                "      script: 3d.gdl\n",
+                encoding="utf-8",
+            )
+            project = self._project()
+            project.set_script(ScriptType.SCRIPT_3D, "ADDZ 1\nBLOCK A, B, ZZYZX\n")
+
+            task = load_benchmark_task(task_path)
+            result = assert_success_criteria(project, task.success_criteria)
+
+            self.assertFalse(result.passed)
+            self.assertIn("semantic_assertion: scripts/3d.gdl missing command CYLIND", result.failures)
+            self.assertIn("semantic_assertion: scripts/3d.gdl does not use param missing_param", result.failures)
+            self.assertIn(
+                "semantic_assertion: scripts/1d.gdl missing expression containing 'stair_steps * riser_h'",
+                result.failures,
+            )
+            self.assertIn("semantic_assertion: scripts/3d.gdl transform stack unbalanced push=1 pop=0", result.failures)
 
     def test_create_benchmark_tasks_all_have_machine_readable_criteria(self):
         task_dir = Path(__file__).resolve().parents[1] / "benchmark" / "tasks" / "create"
@@ -117,6 +188,7 @@ class TestBenchmarkAssertions(unittest.TestCase):
             self.assertTrue(task.success_criteria.required_params, task.id)
             self.assertTrue(task.success_criteria.required_scripts, task.id)
             self.assertTrue(task.success_criteria.geometry_check, task.id)
+            self.assertTrue(task.success_criteria.semantic_assertions, task.id)
 
 
 class _FakeBenchmarkAgent:
@@ -180,6 +252,8 @@ class TestBenchmarkRunnerCriteria(unittest.TestCase):
             self.assertIsNone(result["compile_exit_code"])
             self.assertEqual(result["compile_stderr"], "")
             self.assertTrue(result["static_pass"])
+            self.assertTrue(result["contract_pass"])
+            self.assertEqual(result["contract_failures"], [])
             self.assertTrue(result["criteria_pass"])
             self.assertEqual(result["criteria_failures"], [])
 
@@ -198,6 +272,73 @@ class TestBenchmarkRunnerCriteria(unittest.TestCase):
             self.assertTrue(result["static_pass"])
             self.assertFalse(result["criteria_pass"])
             self.assertIn("required_param: missing custom_w", result["criteria_failures"])
+
+    def test_runner_writes_jsonl_history_and_markdown_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runner = self._runner(tmpdir, lambda project: None)
+            runner.results_dir = Path(tmpdir) / "results"
+            runner.config = type(
+                "Cfg",
+                (),
+                {
+                    "llm": type("LLM", (), {"model": "fake", "temperature": 0.0})(),
+                    "agent": type("Agent", (), {"max_iterations": 1})(),
+                },
+            )()
+            results = [
+                {
+                    "task_id": "C99",
+                    "success": True,
+                    "skipped": False,
+                    "compile_pass": True,
+                    "static_pass": True,
+                    "contract_pass": True,
+                    "criteria_pass": True,
+                    "attempts": 1,
+                    "elapsed_sec": 0.1,
+                }
+            ]
+
+            paths = runner.write_results(results, suite_name="unit")
+
+            self.assertTrue(Path(paths["results_json"]).exists())
+            self.assertTrue(Path(paths["history_jsonl"]).exists())
+            self.assertTrue(Path(paths["summary_md"]).exists())
+            self.assertIn('"suite": "unit"', Path(paths["history_jsonl"]).read_text(encoding="utf-8"))
+            self.assertIn("| C99 | pass | pass | pass | pass | pass | 1 | 0.1 |", Path(paths["summary_md"]).read_text(encoding="utf-8"))
+
+    def test_build_summary_and_markdown_are_deterministic(self):
+        results = [
+            {
+                "task_id": "C01",
+                "success": True,
+                "compile_pass": True,
+                "static_pass": True,
+                "contract_pass": True,
+                "criteria_pass": True,
+                "attempts": 1,
+                "elapsed_sec": 1.2,
+            },
+            {
+                "task_id": "C02",
+                "success": False,
+                "skipped": True,
+                "compile_pass": False,
+                "static_pass": False,
+                "contract_pass": False,
+                "criteria_pass": False,
+                "attempts": 0,
+                "elapsed_sec": 0,
+            },
+        ]
+
+        summary = build_summary(results, {"suite": "unit", "mode": "mock", "effective_mode": "mock"})
+        markdown = render_markdown_summary(summary, results)
+
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["success"], 1)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertIn("1/2 passed", markdown)
 
 
 if __name__ == "__main__":

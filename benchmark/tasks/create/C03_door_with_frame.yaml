@@ -8,5 +8,14 @@ success_criteria:
   required_params: [A, ZZYZX, frame_w, panel_thk, open_direction]
   required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "门框与门板分离，开启方向影响几何"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: frame_w
+    - type: param_used
+      script: 3d.gdl
+      param: open_direction
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: medium
 expected_pass: true

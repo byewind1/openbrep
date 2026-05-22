@@ -8,5 +8,14 @@ success_criteria:
   required_params: [A, B, ZZYZX, n_shelves, shelf_thk]
   required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "层板数量参数驱动，FOR循环正确，ADD/DEL配平"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: n_shelves
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: easy_medium
 expected_pass: true

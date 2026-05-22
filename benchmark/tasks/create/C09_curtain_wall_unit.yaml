@@ -8,5 +8,17 @@ success_criteria:
   required_params: [A, ZZYZX, mullion_w, mullion_d, glass_thk, v_divs, h_divs]
   required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "嵌套FOR循环分格，竖横框交叉处理，分格数参数联动"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: v_divs
+    - type: param_used
+      script: 3d.gdl
+      param: h_divs
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: very_high
 expected_pass: unlikely

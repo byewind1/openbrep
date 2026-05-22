@@ -28,3 +28,19 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ -q
+
+  scorecard-mock:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run mock scorecard
+        run: python evals/scorecards/run_scorecard.py --mode mock --output evals/scorecards/results/

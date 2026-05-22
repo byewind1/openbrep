@@ -8,5 +8,17 @@ success_criteria:
   required_params: [pipe_od, pipe_thk, bend_angle, bend_radius, mat_pipe]
   required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
   geometry_check: "弯管几何正确，壁厚均匀，角度参数驱动"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: pipe_od
+    - type: param_used
+      script: 3d.gdl
+      param: bend_angle
+    - type: param_used
+      script: 3d.gdl
+      param: bend_radius
+    - type: transform_balanced
+      script: 3d.gdl
 expected_difficulty: high
 expected_pass: unlikely
