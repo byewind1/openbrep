@@ -69,7 +69,7 @@ from openbrep.vision.image_to_plan import analyze_reference_image, visual_struct
 # These are prepended to skills_text for MODIFY/DEBUG tasks.
 # They ride in the ## TASK STRATEGY section of the system prompt.
 
-_MODIFY_SKILLS_PROMPT = """\
+_DEFAULT_MODIFY_SKILLS_PROMPT = """\
 ## 修改任务规则（必须遵守）
 你正在修改一个已有的 GDL 对象。严格遵守以下规则：
 1. 只修改需要修改的部分，不要重写整个脚本（除非整个脚本都需要变）
@@ -80,6 +80,23 @@ _MODIFY_SKILLS_PROMPT = """\
 6. 不需要修改的文件不要输出
 7. 用 [FILE: path] 格式输出每个改动文件的完整修改后内容
 """
+
+def _load_prompt_body(relative_path: str, fallback: str) -> str:
+    """Load a prompt file body, ignoring frontmatter and falling back safely."""
+    prompt_path = Path(__file__).resolve().parents[2] / "prompts" / relative_path
+    try:
+        content = prompt_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return fallback
+    if content.startswith("---"):
+        end = content.find("---", 3)
+        if end != -1:
+            content = content[end + 3 :].strip()
+    return content or fallback
+
+
+_MODIFY_SKILLS_PROMPT = _load_prompt_body("tasks/modify_skills.md", _DEFAULT_MODIFY_SKILLS_PROMPT)
+
 
 logger = logging.getLogger(__name__)
 
