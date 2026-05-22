@@ -1,6 +1,6 @@
 # OpenBrep 必须收口项状态
 
-日期：2026-05-21
+日期：2026-05-23
 
 本文把当前计划噪声收敛为维护者可执行的三类状态。它不替代路线图，只回答“现在必须先收口什么”。
 
@@ -31,13 +31,16 @@
 
 ### 2. v0.7 Revision MVP
 
-状态：核心能力可用，UI 收口策略仍需决定。
+状态：CLI 和数据层 T1-T3 已收口，UI 收口策略仍需决定。
 
 已完成：
 
 - project-level `.openbrep/revisions` 快照。
 - `history` / `rollback` CLI。
 - `compare` CLI 和 revision 子命令。
+- 每个带解释 metadata 的 revision 落盘 `explanation.md`。
+- CLI history/list 展示触发来源、编译状态、变更摘要。
+- revision compare 展示 source diff、compile metadata、explanation diff 和 compare compile 摘要。
 - create/list/compare/rollback 单元测试。
 
 剩余选择：

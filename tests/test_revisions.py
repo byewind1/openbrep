@@ -142,6 +142,72 @@ class TestProjectRevisions(unittest.TestCase):
             self.assertIn("- mode: 'mock' -> 'real'", diff)
             self.assertIn("- success: True -> False", diff)
 
+    def test_create_revision_writes_explanation_markdown(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            revision = create_revision(
+                project,
+                "modify shelves",
+                trigger="modify",
+                user_instruction="把层板改成 6 个",
+                changed_files=["scripts/3d.gdl"],
+                metadata={
+                    "explanation": "- Added shelf_count parameter.",
+                    "compile": {"mode": "mock", "success": True, "gsm_size_bytes": 2048},
+                },
+            )
+
+            explanation = (revision.path / "explanation.md").read_text(encoding="utf-8")
+            self.assertIn("# Revision r0001", explanation)
+            self.assertIn("把层板改成 6 个", explanation)
+            self.assertIn("- Added shelf_count parameter.", explanation)
+            self.assertIn("- `scripts/3d.gdl`", explanation)
+            self.assertIn("Passed (mock); size=2048 bytes.", explanation)
+
+    def test_compare_revisions_includes_explanation_changes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            create_revision(project, "initial", metadata={"explanation": "Initial block."})
+            create_revision(project, "modify", metadata={"explanation": "Changed to cylinder."})
+
+            diff = compare_revisions(project, "r0001", "r0002")
+
+            self.assertIn("## Explanation changed (r0001 -> r0002)", diff)
+            self.assertIn("--- r0001/explanation.md", diff)
+            self.assertIn("+++ r0002/explanation.md", diff)
+            self.assertIn("-Initial block.", diff)
+            self.assertIn("+Changed to cylinder.", diff)
+
+    def test_compare_revisions_includes_compile_comparison_changes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            create_revision(project, "initial")
+            create_revision(
+                project,
+                "modify",
+                metadata={
+                    "compile_comparison": {
+                        "mode": "mock",
+                        "before": {"success": True},
+                        "after": {"success": False},
+                        "size_delta_bytes": 1024,
+                        "param_delta": 2,
+                    }
+                },
+            )
+
+            diff = compare_revisions(project, "r0001", "r0002")
+
+            self.assertIn("## Compile comparison changed (r0001 -> r0002)", diff)
+            self.assertIn("- mode: None -> 'mock'", diff)
+            self.assertIn("- before.success: None -> True", diff)
+            self.assertIn("- after.success: None -> False", diff)
+            self.assertIn("- size_delta_bytes: None -> 1024", diff)
+            self.assertIn("- param_delta: None -> 2", diff)
+
     def test_create_revision_rejects_non_hsf_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             plain_dir = Path(tmpdir) / "plain"
@@ -192,13 +258,25 @@ class TestProjectRevisions(unittest.TestCase):
     def test_list_revisions_hydrates_v07_manifest_fields(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = self._make_project(tmpdir)
-            create_revision(project, "modify", trigger="modify", intent="MODIFY", user_instruction="改层板")
+            create_revision(
+                project,
+                "modify",
+                trigger="modify",
+                intent="MODIFY",
+                user_instruction="改层板",
+                metadata={
+                    "explanation": "Updated shelf spacing.",
+                    "compile_comparison": {"mode": "mock", "before": {"success": True}, "after": {"success": True}},
+                },
+            )
 
             revision = list_revisions(project)[0]
 
             self.assertEqual(revision.trigger, "modify")
             self.assertEqual(revision.intent, "MODIFY")
             self.assertEqual(revision.user_instruction, "改层板")
+            self.assertEqual(revision.explanation, "Updated shelf spacing.")
+            self.assertEqual(revision.compile_comparison["mode"], "mock")
 
 
 if __name__ == "__main__":

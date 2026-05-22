@@ -348,7 +348,7 @@ class TestCliMainCommands(unittest.TestCase):
             self.assertIn("已清除工作区记忆", clear_result.output)
             self.assertEqual(store.memory_status().chat_count, 0)
 
-    def test_history_command_prints_trigger_and_instruction(self):
+    def test_history_command_prints_trigger_instruction_summary_and_compile_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir) / "Chair"
             scripts = project / "scripts"
@@ -359,13 +359,58 @@ class TestCliMainCommands(unittest.TestCase):
 
             from openbrep.revisions import create_revision
 
-            create_revision(project, "before", trigger="modify", intent="MODIFY", user_instruction="增加一个背板参数")
+            create_revision(
+                project,
+                "before",
+                trigger="modify",
+                intent="MODIFY",
+                user_instruction="增加一个背板参数",
+                metadata={
+                    "explanation": "Updated back panel parameter.",
+                    "compile": {"mode": "mock", "success": True},
+                    "compile_comparison": {"mode": "mock", "before": {"success": True}, "after": {"success": True}},
+                },
+            )
             result = self.runner.invoke(app, ["history", str(project)])
 
             self.assertEqual(result.exit_code, 0, msg=result.output)
             self.assertIn("r0001", result.output)
             self.assertIn("modify", result.output)
+            self.assertIn("pass/mock", result.output)
+            self.assertIn("cmp:mock", result.output)
             self.assertIn("增加一个背板参数", result.output)
+            self.assertIn("Updated back panel parameter.", result.output)
+
+    def test_revision_list_prints_summary_and_compile_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "Chair"
+            scripts = project / "scripts"
+            scripts.mkdir(parents=True)
+            (project / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+            (project / "paramlist.xml").write_text("<ParamList />\n", encoding="utf-8")
+            (scripts / "3d.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            from openbrep.revisions import create_revision
+
+            create_revision(
+                project,
+                "modify",
+                trigger="modify",
+                user_instruction="改层板",
+                metadata={
+                    "explanation": "Updated shelf spacing.",
+                    "compile": {"mode": "mock", "success": False},
+                },
+            )
+
+            result = self.runner.invoke(app, ["revision", "list", str(project)])
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertIn("r0001", result.output)
+            self.assertIn("modify", result.output)
+            self.assertIn("fail/mock", result.output)
+            self.assertIn("Updated", result.output)
+            self.assertIn("shelf spacing.", result.output)
 
     def test_rollback_yes_saves_safety_revision_and_restores(self):
         with tempfile.TemporaryDirectory() as tmpdir:

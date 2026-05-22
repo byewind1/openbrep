@@ -128,6 +128,24 @@ def _revision_instruction_preview(text: str, limit: int = 50) -> str:
     return compact[:limit] + "…"
 
 
+def _revision_compile_status(revision) -> str:
+    compile_metadata = revision.compile or {}
+    mode = compile_metadata.get("mode") or "-"
+    success = compile_metadata.get("success")
+    if success is True:
+        status = "pass"
+    elif success is False:
+        status = "fail"
+    else:
+        status = "unknown"
+
+    comparison = revision.compile_comparison or {}
+    compare_mode = comparison.get("mode")
+    if compare_mode and compare_mode != "off":
+        return f"{status}/{mode} · cmp:{compare_mode}"
+    return f"{status}/{mode}"
+
+
 def _print_revision_history(project: str, *, limit: int | None = None) -> None:
     from openbrep.revisions import get_latest_revision_id, list_revisions
 
@@ -143,16 +161,31 @@ def _print_revision_history(project: str, *, limit: int | None = None) -> None:
     table.add_column("版本", style="green")
     table.add_column("时间")
     table.add_column("触发")
+    table.add_column("编译")
     table.add_column("指令")
+    table.add_column("摘要")
     for revision in reversed(revisions):
         marker = " *" if revision.revision_id == latest else ""
         table.add_row(
             f"{revision.revision_id}{marker}",
             revision.created_at,
             revision.trigger,
+            _revision_compile_status(revision),
             _revision_instruction_preview(revision.user_instruction or revision.message),
+            _revision_instruction_preview(revision.explanation, limit=60),
         )
     console.print(table)
+    for revision in reversed(revisions):
+        marker = " *" if revision.revision_id == latest else ""
+        console.print(
+            (
+                f"{revision.revision_id}{marker} | trigger={revision.trigger} | "
+                f"compile={_revision_compile_status(revision)} | "
+                f"instruction={revision.user_instruction or revision.message} | "
+                f"summary={revision.explanation}"
+            ),
+            markup=False,
+        )
 
 
 def _persist_result_project(result_project, target_path: Path, project_name: Optional[str] = None) -> Path:
@@ -1016,17 +1049,33 @@ def revision_list(
     table = Table(title="OpenBrep 项目版本", show_header=True, header_style="bold cyan")
     table.add_column("版本", style="green")
     table.add_column("时间")
+    table.add_column("触发")
+    table.add_column("编译")
     table.add_column("说明")
+    table.add_column("摘要")
     table.add_column("文件数", justify="right")
     for revision in revisions:
         marker = " *" if revision.revision_id == latest else ""
         table.add_row(
             f"{revision.revision_id}{marker}",
             revision.created_at,
+            revision.trigger,
+            _revision_compile_status(revision),
             revision.message,
+            _revision_instruction_preview(revision.explanation, limit=60),
             str(len(revision.files)),
         )
     console.print(table)
+    for revision in revisions:
+        marker = " *" if revision.revision_id == latest else ""
+        console.print(
+            (
+                f"{revision.revision_id}{marker} | trigger={revision.trigger} | "
+                f"compile={_revision_compile_status(revision)} | "
+                f"message={revision.message} | summary={revision.explanation}"
+            ),
+            markup=False,
+        )
 
 
 @revision_app.command("restore")

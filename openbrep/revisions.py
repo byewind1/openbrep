@@ -34,6 +34,8 @@ class Revision:
     changed_files: list[str] | None = None
     parent_revision_id: str | None = None
     compile: dict[str, Any] | None = None
+    explanation: str = ""
+    compile_comparison: dict[str, Any] | None = None
 
 
 def create_revision(
@@ -100,6 +102,7 @@ def create_revision(
         "metadata": extra_metadata,
     }
     _write_json(tmp_dir / "manifest.json", manifest)
+    _write_explanation_markdown(tmp_dir, manifest)
     tmp_dir.rename(revision_dir)
     _write_latest(root, revision_id)
 
@@ -194,6 +197,24 @@ def compare_revisions(project_dir: str | Path, from_revision_id: str, to_revisio
     compile_summary = _compare_compile_metadata(from_revision_id, from_manifest, to_revision_id, to_manifest)
     if compile_summary:
         chunks.append(compile_summary)
+
+    explanation_summary = _compare_explanation_metadata(
+        from_revision_id,
+        from_manifest,
+        to_revision_id,
+        to_manifest,
+    )
+    if explanation_summary:
+        chunks.append(explanation_summary)
+
+    compile_comparison_summary = _compare_compile_comparison_metadata(
+        from_revision_id,
+        from_manifest,
+        to_revision_id,
+        to_manifest,
+    )
+    if compile_comparison_summary:
+        chunks.append(compile_comparison_summary)
 
     return "".join(chunks) or f"No source differences between {from_revision_id} and {to_revision_id}.\n"
 
@@ -316,6 +337,131 @@ def _compare_compile_metadata(
     return f"\n## Compile metadata changed ({from_revision_id} -> {to_revision_id})\n{body}\n"
 
 
+def _compare_explanation_metadata(
+    from_revision_id: str,
+    from_manifest: dict[str, Any],
+    to_revision_id: str,
+    to_manifest: dict[str, Any],
+) -> str:
+    from_explanation = str(from_manifest.get("explanation") or "")
+    to_explanation = str(to_manifest.get("explanation") or "")
+    if from_explanation == to_explanation:
+        return ""
+
+    diff = unified_diff(
+        from_explanation.splitlines(keepends=True),
+        to_explanation.splitlines(keepends=True),
+        fromfile=f"{from_revision_id}/explanation.md",
+        tofile=f"{to_revision_id}/explanation.md",
+    )
+    lines = list(diff)
+    if not lines:
+        return ""
+    return "\n## Explanation changed ({0} -> {1})\n{2}".format(
+        from_revision_id,
+        to_revision_id,
+        "".join(lines),
+    )
+
+
+def _compare_compile_comparison_metadata(
+    from_revision_id: str,
+    from_manifest: dict[str, Any],
+    to_revision_id: str,
+    to_manifest: dict[str, Any],
+) -> str:
+    from_comparison = dict(from_manifest.get("compile_comparison") or {})
+    to_comparison = dict(to_manifest.get("compile_comparison") or {})
+    keys = [
+        "mode",
+        "before.success",
+        "after.success",
+        "size_delta_bytes",
+        "param_delta",
+    ]
+    lines = []
+    for key in keys:
+        from_value = _nested_manifest_value(from_comparison, key)
+        to_value = _nested_manifest_value(to_comparison, key)
+        if from_value != to_value:
+            lines.append(f"- {key}: {from_value!r} -> {to_value!r}")
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    return f"\n## Compile comparison changed ({from_revision_id} -> {to_revision_id})\n{body}\n"
+
+
+def _nested_manifest_value(data: dict[str, Any], dotted_key: str) -> Any:
+    value: Any = data
+    for part in dotted_key.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _write_explanation_markdown(revision_dir: Path, manifest: dict[str, Any]) -> None:
+    explanation = str(manifest.get("explanation") or "").strip()
+    if not explanation:
+        return
+
+    changed_files = list(manifest.get("changed_files") or [])
+    if not changed_files:
+        changed_files = list(manifest.get("files") or [])
+    compile_result = _format_compile_result(dict(manifest.get("compile") or {}))
+
+    lines = [
+        f"# Revision {manifest.get('revision_id')}",
+        "",
+        "## User Intent",
+        "",
+        str(manifest.get("user_instruction") or manifest.get("message") or "Not recorded."),
+        "",
+        "## Engineering Summary",
+        "",
+        explanation,
+        "",
+        "## Changed Files",
+        "",
+    ]
+    lines.extend(f"- `{path}`" for path in changed_files)
+    lines.extend(
+        [
+            "",
+            "## Compile Result",
+            "",
+            compile_result,
+            "",
+        ]
+    )
+    (revision_dir / "explanation.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _format_compile_result(compile_metadata: dict[str, Any]) -> str:
+    if not any(value is not None for value in compile_metadata.values()):
+        return "Not recorded."
+
+    status = compile_metadata.get("success")
+    if status is True:
+        label = "Passed"
+    elif status is False:
+        label = "Failed"
+    else:
+        label = "Unknown"
+
+    mode = compile_metadata.get("mode") or "unknown"
+    parts = [f"{label} ({mode})"]
+    if compile_metadata.get("gsm_path"):
+        parts.append(f"gsm={compile_metadata['gsm_path']}")
+    if compile_metadata.get("gsm_size_bytes") is not None:
+        parts.append(f"size={compile_metadata['gsm_size_bytes']} bytes")
+    if compile_metadata.get("parameter_count") is not None:
+        parts.append(f"parameters={compile_metadata['parameter_count']}")
+    if compile_metadata.get("exit_code") is not None:
+        parts.append(f"exit_code={compile_metadata['exit_code']}")
+    return "; ".join(parts) + "."
+
+
 def _write_latest(project_root: Path, revision_id: str) -> None:
     latest_path = project_root / OPENBREP_DIR / LATEST_FILE
     latest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -341,4 +487,8 @@ def _revision_from_manifest(revision_dir: Path, manifest: dict[str, Any]) -> Rev
         changed_files=list(manifest.get("changed_files") or []),
         parent_revision_id=manifest.get("parent_revision_id"),
         compile=dict(manifest.get("compile") or {}),
+        explanation=str(manifest.get("explanation") or ""),
+        compile_comparison=dict(manifest.get("compile_comparison") or {})
+        if manifest.get("compile_comparison")
+        else None,
     )
