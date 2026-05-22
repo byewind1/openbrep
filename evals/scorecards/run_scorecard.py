@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from evals.prepare_fixtures import BROKEN_DIR, VALID_DIR, prepare_broken_fixtures
-from openbrep.compiler import MockHSFCompiler
+from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.static_checker import StaticChecker
 
@@ -43,8 +44,30 @@ def run_scorecard(
     output_dir: Path | None = None,
 ) -> dict:
     """Run all scorecard suites and optionally write a timestamped JSON report."""
-    if mode != "mock":
-        raise ValueError("Only --mode mock is currently supported")
+    if mode not in {"mock", "real", "auto"}:
+        raise ValueError("mode must be one of: mock, real, auto")
+
+    compiler, effective_mode, skip_reason = _resolve_compiler(mode)
+    generated_at = datetime.now().isoformat(timespec="seconds")
+    result = {
+        "generated_at": generated_at,
+        "mode": mode,
+        "effective_mode": effective_mode,
+        "skipped": bool(skip_reason),
+        "skip_reason": skip_reason,
+        "environment": _environment_metadata(compiler),
+    }
+    if skip_reason:
+        result["suites"] = {}
+        result["summary"] = {
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 1,
+            "pass_rate": 0.0,
+        }
+        _write_result_if_requested(result, output_dir)
+        return result
 
     prepare_broken_fixtures(valid_dir, broken_dir)
     valid_cases = [
@@ -55,30 +78,52 @@ def run_scorecard(
         ScorecardCase(path.stem, path, False)
         for path in sorted(broken_dir.glob("*.gdl"))
     ]
-    generated_at = datetime.now().isoformat(timespec="seconds")
-    result = {
-        "generated_at": generated_at,
-        "mode": mode,
-        "suites": {
-            "fixture_compile": _run_cases(valid_cases),
-            "broken_detection": _run_cases(broken_cases),
-        },
+    result["suites"] = {
+        "fixture_compile": _run_cases(valid_cases, compiler),
+        "broken_detection": _run_cases(broken_cases, compiler),
     }
     result["summary"] = _summarize(result["suites"].values())
+    result["summary"]["skipped"] = 0
 
+    _write_result_if_requested(result, output_dir)
+    return result
+
+
+def _write_result_if_requested(result: dict, output_dir: Path | None) -> None:
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = output_dir / f"scorecard_{stamp}.json"
         output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         result["output_path"] = str(output_path)
-    return result
 
 
-def _run_cases(cases: list[ScorecardCase]) -> dict:
+def _resolve_compiler(mode: str):
+    if mode == "mock":
+        return MockHSFCompiler(), "mock", ""
+
+    real_compiler = HSFCompiler()
+    if real_compiler.is_available:
+        return real_compiler, "real", ""
+
+    reason = "LP_XMLConverter not found. Install Archicad or set CONVERTER_PATH/config compiler.path."
+    if mode == "real":
+        return real_compiler, "real", reason
+    return MockHSFCompiler(), "mock", ""
+
+
+def _environment_metadata(compiler) -> dict:
+    return {
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "converter_path": getattr(compiler, "converter_path", None),
+    }
+
+
+def _run_cases(cases: list[ScorecardCase], compiler) -> dict:
     records = []
     for case in cases:
-        records.append(_run_case(case))
+        records.append(_run_case(case, compiler))
     total = len(records)
     passed = sum(1 for record in records if record["passed"])
     return {
@@ -90,13 +135,13 @@ def _run_cases(cases: list[ScorecardCase]) -> dict:
     }
 
 
-def _run_case(case: ScorecardCase) -> dict:
+def _run_case(case: ScorecardCase, compiler) -> dict:
     with tempfile.TemporaryDirectory(prefix="openbrep-scorecard-") as tmpdir:
         project = _project_from_fixture(case.fixture_path, tmpdir)
         hsf_dir = project.save_to_disk()
         static_result = StaticChecker().check(project)
         output_gsm = Path(tmpdir) / "output" / f"{project.name}.gsm"
-        compile_result = MockHSFCompiler().hsf2libpart(str(hsf_dir), str(output_gsm))
+        compile_result = compiler.hsf2libpart(str(hsf_dir), str(output_gsm))
 
     actual_ok = static_result.passed and compile_result.success
     passed = actual_ok is case.expected_ok
@@ -112,7 +157,10 @@ def _run_case(case: ScorecardCase) -> dict:
             for err in static_result.errors
         ],
         "compile_ok": compile_result.success,
+        "compile_mode": compile_result.mode,
+        "compile_exit_code": compile_result.exit_code,
         "compile_stderr": compile_result.stderr,
+        "compile_output_path": compile_result.output_path,
     }
 
 
@@ -145,12 +193,14 @@ def _summarize(suites: Iterable[dict]) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run OpenBrep GDL scorecards")
-    parser.add_argument("--mode", default="mock", choices=["mock"], help="scorecard execution mode")
+    parser.add_argument("--mode", default="mock", choices=["mock", "real", "auto"], help="scorecard execution mode")
     parser.add_argument("--output", type=Path, default=None, help="directory for JSON result")
     args = parser.parse_args(argv)
 
     result = run_scorecard(mode=args.mode, output_dir=args.output)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result.get("skipped"):
+        return 0
     return 0 if result["summary"]["failed"] == 0 else 1
 
 
