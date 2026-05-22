@@ -1,0 +1,20 @@
+! Simple table 3D script
+top_thk = 0.08
+leg_size = 0.08
+leg_h = ZZYZX - top_thk
+
+! table top
+ADDZ leg_h
+BLOCK A, B, top_thk
+DEL 1
+
+! legs
+FOR i = 0 TO 1
+    FOR j = 0 TO 1
+        ADDX i * (A - leg_size)
+        ADDY j * (B - leg_size)
+        BLOCK leg_size, leg_size, leg_h
+        DEL 2
+! removed NEXT j
+NEXT i
+END

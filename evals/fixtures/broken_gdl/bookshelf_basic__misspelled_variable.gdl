@@ -1,0 +1,32 @@
+! Basic bookshelf 3D script
+frame_thk = 0.05
+shelf_thk = 0.04
+inner_w = A - 2 * frame_thk
+shelf_count = 4
+
+! left side
+BLOCK frame_thk, B, ZZYZX
+
+! right side
+ADDX A - frame_thk
+BLOCK frame_thk, B, ZZYZX
+DEL 1
+
+! bottom shelf
+ADDZ 0
+BLOCK AA, B, shelf_thk
+DEL 1
+
+! top shelf
+ADDZ ZZYZX - shelf_thk
+BLOCK A, B, shelf_thk
+DEL 1
+
+! middle shelves
+FOR i = 1 TO shelf_count - 1
+    ADDZ i * (ZZYZX - shelf_thk) / shelf_count
+    ADDX frame_thk
+    BLOCK inner_w, B, shelf_thk
+    DEL 2
+NEXT i
+END

@@ -1,0 +1,23 @@
+! Basic window frame 3D script
+frame_thk = 0.06
+glass_thk = 0.02
+
+! outer frame left and right
+BLOCK frame_thk, B, ZZYZX
+ADDX A - frame_thk
+BLOCK frame_thk, B, ZZYZX
+DEL 1
+
+! outer frame bottom and top
+BLOCK AA, B, frame_thk
+ADDZ ZZYZX - frame_thk
+BLOCK A, B, frame_thk
+DEL 1
+
+! glass pane
+ADDX frame_thk
+ADDZ frame_thk
+ADDY B / 2 - glass_thk / 2
+BLOCK A - 2 * frame_thk, glass_thk, ZZYZX - 2 * frame_thk
+DEL 3
+END

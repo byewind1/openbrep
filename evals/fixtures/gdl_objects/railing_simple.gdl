@@ -1,0 +1,19 @@
+! Simple railing 3D script
+post_size = 0.06
+rail_h = ZZYZX
+rail_thk = 0.05
+post_count = 5
+span = A - post_size
+
+! posts
+FOR i = 0 TO post_count - 1
+    ADDX i * span / (post_count - 1)
+    BLOCK post_size, post_size, rail_h
+    DEL 1
+NEXT i
+
+! top rail
+ADDZ rail_h - rail_thk
+BLOCK A, rail_thk, rail_thk
+DEL 1
+END

@@ -1,0 +1,23 @@
+! Simple door panel 3D script
+frame_thk = 0.08
+panel_thk = 0.04
+
+! door leaf
+ADDY B / 2 - panel_thk / 2
+BLOCK A, panel_thk, ZZYZX
+DEL 1
+
+! left jamb
+BLOCK frame_thk, B, ZZYZX
+
+! right jamb
+ADDX A - frame_thk
+BLOCK frame_thk, B, ZZYZX
+DEL 1
+
+! top jamb
+ADDZ ZZYZX - frame_thk
+BLOCK A, B, frame_thk
+DEL 1
+FOR i = 1 TO 2
+END
