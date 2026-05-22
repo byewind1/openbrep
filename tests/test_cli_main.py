@@ -485,7 +485,18 @@ class TestCliMainCommands(unittest.TestCase):
             config_path = Path(tmpdir) / "config.toml"
             config_path.write_text('[llm]\nmodel = "claude-opus-4-6"\n', encoding="utf-8")
 
-            result = self.runner.invoke(app, ["doctor", "--config", str(config_path)])
+            with patch.dict(
+                "os.environ",
+                {
+                    "ANTHROPIC_API_KEY": "",
+                    "OPENAI_API_KEY": "",
+                    "DEEPSEEK_API_KEY": "",
+                    "ZHIPU_API_KEY": "",
+                    "ZAI_API_KEY": "",
+                },
+                clear=False,
+            ):
+                result = self.runner.invoke(app, ["doctor", "--config", str(config_path)])
 
             self.assertNotEqual(result.exit_code, 0)
             self.assertIn("未解析到 API Key", result.output)

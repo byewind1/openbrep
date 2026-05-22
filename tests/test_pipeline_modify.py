@@ -732,6 +732,30 @@ class TestModifyPipelineContext(unittest.TestCase):
             self.assertEqual(lessons[0].category, "variable_mapping")
             self.assertEqual(lessons[0].project_name, "Chair")
 
+    def test_error_log_is_also_recorded_under_hsf_project_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.save_to_disk()
+            pipeline = _make_pipeline("")
+
+            def capture_generate_only(self_agent, **kwargs):
+                return {}, ""
+
+            with patch("openbrep.core.GDLAgent.generate_only", capture_generate_only):
+                pipeline.execute(TaskRequest(
+                    user_input="修复脚本中的编译错误",
+                    intent="REPAIR",
+                    project=project,
+                    work_dir=tmpdir,
+                    error_log="Error in 3D script, line 12: Undefined variable width",
+                ))
+
+            workspace_lessons = ErrorLearningStore(tmpdir).list_error_lessons()
+            project_lessons = ErrorLearningStore(project.root).list_error_lessons()
+            self.assertEqual(len(workspace_lessons), 1)
+            self.assertEqual(len(project_lessons), 1)
+            self.assertEqual(project_lessons[0].project_name, "Chair")
+
     def test_learned_error_skill_is_injected_into_modify_prompt(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             ErrorLearningStore(tmpdir).record_error(
@@ -757,6 +781,33 @@ class TestModifyPipelineContext(unittest.TestCase):
             self.assertIn("workspace_gdl_error_avoidance", captured.get("skills", ""))
             self.assertIn("developer_gdl_error_baseline", captured.get("skills", ""))
             self.assertIn("PRISM_", captured.get("skills", ""))
+
+    def test_successful_modify_appends_project_decision_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\nEND\n"
+            project.save_to_disk()
+            pipeline = _make_pipeline("")
+
+            def capture_generate_only(self_agent, **kwargs):
+                return {"scripts/3d.gdl": "BLOCK A + 0.1, B, ZZYZX\nEND\n"}, "已改宽"
+
+            with patch("openbrep.core.GDLAgent.generate_only", capture_generate_only):
+                result = pipeline.execute(TaskRequest(
+                    user_input="把椅子改宽一点",
+                    intent="MODIFY",
+                    project=project,
+                    work_dir=tmpdir,
+                    output_dir=str(Path(tmpdir) / "output"),
+                ))
+
+            decisions = Path(project.root) / ".openbrep" / "memory" / "decisions.md"
+            self.assertTrue(result.success)
+            self.assertTrue(decisions.exists())
+            text = decisions.read_text(encoding="utf-8")
+            self.assertIn("把椅子改宽一点", text)
+            self.assertIn("scripts/3d.gdl", text)
+            self.assertIn("编译结果：✅ 通过", text)
 
 
 class TestCliRepairIntent(unittest.TestCase):

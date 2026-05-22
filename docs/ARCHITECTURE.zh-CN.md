@@ -103,6 +103,8 @@ Domain Core
 输出
   ├─ 可编辑 HSF 项目目录
   ├─ revision 元数据
+  ├─ .openbrep/knowledge 项目级上下文
+  ├─ .openbrep/memory 项目级执行记忆
   └─ workspace/output/ 下的编译 GSM
 ```
 
@@ -125,6 +127,17 @@ workspace/
       vl.gdl
       ui.gdl
       pr.gdl
+    .openbrep/
+      knowledge/
+        project.toml
+        01_context.md
+        02_standards.md
+        03_decisions.md
+      memory/
+        decisions.md
+        learnings/
+          error_lessons.jsonl
+      revisions/
 ```
 
 规则：
@@ -135,6 +148,9 @@ workspace/
 - 编译不能创建新的 HSF 源目录。
 - 导入 `.gsm` 可以创建新的稳定 HSF 项目目录。
 - 修改对象时直接更新当前 HSF 项目，并通过 revision 元数据保留可追溯性。
+- 项目级 `.openbrep/knowledge/` 是比全局知识优先的上下文来源。
+- 成功的修改摘要写入 `.openbrep/memory/decisions.md`，后续 session 会读回。
+- 编译/用户错误学习同时写入 workspace memory 与当前 HSF 项目的 `.openbrep/memory/learnings/`，保留跨 session 的项目级错题本。
 
 相关文档：[project_layout.md](project_layout.md)
 

@@ -1,12 +1,13 @@
 """Project-level OpenBrep context for HSF source directories.
 
 This module reads optional metadata and prompt context from an HSF project's
-own ``.openbrep`` directory. It is intentionally read-only: creating or
-editing project context remains an explicit project/workflow action.
+own ``.openbrep`` directory. Context files are explicit project artifacts;
+runtime learnings may append compact memory records under ``.openbrep/memory``.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,9 @@ OPENBREP_DIR = ".openbrep"
 PROJECT_TOML = "project.toml"
 KNOWLEDGE_DIR = "knowledge"
 KNOWLEDGE_MANIFEST = "manifest.toml"
+KNOWLEDGE_PROJECT_TOML = "project.toml"
+MEMORY_DIR = "memory"
+DECISIONS_FILE = "decisions.md"
 SKILLS_DIR = "skills"
 REVISIONS_DIR = "revisions"
 
@@ -32,7 +36,10 @@ class ProjectContext:
     project_root: Path
     metadata_root: Path
     project_toml: Path
+    knowledge_project_toml: Path
     knowledge_dir: Path
+    memory_dir: Path
+    decisions_file: Path
     skills_dir: Path
     revisions_dir: Path
     config: dict[str, Any] = field(default_factory=dict)
@@ -46,14 +53,23 @@ def resolve_project_context(project: HSFProject | None) -> ProjectContext | None
     project_root = Path(project.root).expanduser()
     metadata_root = project_root / OPENBREP_DIR
     project_toml = metadata_root / PROJECT_TOML
+    knowledge_dir = metadata_root / KNOWLEDGE_DIR
+    knowledge_project_toml = knowledge_dir / KNOWLEDGE_PROJECT_TOML
+    config = _merge_dicts(
+        load_project_toml(project_toml),
+        load_project_toml(knowledge_project_toml),
+    )
     return ProjectContext(
         project_root=project_root,
         metadata_root=metadata_root,
         project_toml=project_toml,
-        knowledge_dir=metadata_root / KNOWLEDGE_DIR,
+        knowledge_project_toml=knowledge_project_toml,
+        knowledge_dir=knowledge_dir,
+        memory_dir=metadata_root / MEMORY_DIR,
+        decisions_file=metadata_root / MEMORY_DIR / DECISIONS_FILE,
         skills_dir=metadata_root / SKILLS_DIR,
         revisions_dir=metadata_root / REVISIONS_DIR,
-        config=load_project_toml(project_toml),
+        config=config,
     )
 
 
@@ -162,6 +178,71 @@ def load_project_skills(context: ProjectContext | None, instruction: str) -> str
         return loader.get_for_task(instruction)
     except Exception:
         return ""
+
+
+def append_project_decision(
+    context: ProjectContext | None,
+    *,
+    summary: str,
+    intent: str,
+    instruction: str,
+    changed_files: list[str],
+    revision_id: str | None = None,
+) -> Path | None:
+    """Append a compact successful-change record to project memory."""
+    if context is None:
+        return None
+    body = (summary or "").strip()
+    if not body:
+        return None
+
+    timestamp = _dt.datetime.now().isoformat(timespec="seconds")
+    title_revision = f" / {revision_id}" if revision_id else ""
+    lines = [
+        f"## {timestamp} · {intent or 'UPDATE'}{title_revision}",
+        "",
+    ]
+    if instruction.strip():
+        lines.append(f"- Instruction: {instruction.strip()}")
+    if changed_files:
+        lines.append(f"- Changed files: {', '.join(changed_files)}")
+    lines.extend(["", body, ""])
+
+    context.memory_dir.mkdir(parents=True, exist_ok=True)
+    with context.decisions_file.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+        fh.write("\n")
+    return context.decisions_file
+
+
+def load_project_memory(context: ProjectContext | None, *, limit_chars: int = 6000) -> str:
+    """Load compact project memory that should influence later sessions."""
+    if context is None or not context.decisions_file.is_file():
+        return ""
+    try:
+        text = context.decisions_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+    if not text:
+        return ""
+    if len(text) > limit_chars:
+        text = text[-limit_chars:]
+    return "## Project Memory: decisions\n\n" + text
+
+
+def _merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Merge TOML dicts, with right-hand project knowledge overriding left."""
+    if not left:
+        return dict(right)
+    if not right:
+        return dict(left)
+    merged = dict(left)
+    for key, value in right.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _flatten_toml(data: dict[str, Any], *, prefix: str = "") -> list[tuple[str, str]]:

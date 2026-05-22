@@ -46,7 +46,10 @@ from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
 from openbrep.object_planner import plan_gdl_object
 from openbrep.project_context import (
+    ProjectContext,
+    append_project_decision,
     build_project_context_prompt,
+    load_project_memory,
     load_project_knowledge,
     load_project_skills,
     resolve_project_context,
@@ -134,6 +137,27 @@ class TaskResult:
     object_plan: dict = field(default_factory=dict)
     revision_warnings: list[str] = field(default_factory=list)
     compile_comparison: Optional[CompileComparison] = None
+
+
+@dataclass(frozen=True)
+class AssembledContext:
+    """Prompt context assembled for one pipeline task."""
+
+    project_context: Optional[ProjectContext]
+    knowledge_selection: KnowledgeSelection
+    skills_text: str
+
+    @property
+    def generation_context(self) -> str:
+        return self.knowledge_selection.generation_context
+
+    @property
+    def planner_context(self) -> str:
+        return self.knowledge_selection.planner_context
+
+    @property
+    def source_ids(self) -> list[str]:
+        return self.knowledge_selection.source_ids
 
 
 @dataclass
@@ -348,13 +372,9 @@ class TaskPipeline:
                 work_dir=request.work_dir,
             )
         request.project = project
-        knowledge_selection = self._select_knowledge_for_request(request)
-        knowledge = knowledge_selection.generation_context
-        skills_text = self._with_learned_error_skill(
-            self._load_skills_for_request(request.user_input, request),
-            work_dir=request.work_dir,
-            project_name=project.name,
-        )
+        assembled_context = self._assemble_context(request, project)
+        knowledge = assembled_context.generation_context
+        skills_text = assembled_context.skills_text
 
         # Load image if provided
         image_b64: Optional[str] = request.image_b64
@@ -393,14 +413,14 @@ class TaskPipeline:
             object_plan = plan_gdl_object(
                 llm,
                 instruction=enriched_instruction,
-                knowledge=knowledge_selection.planner_context,
+                knowledge=assembled_context.planner_context,
                 skills=skills_text,
             )
             object_plan = replace(
                 object_plan,
                 knowledge_sources=_merge_list_values(
                     object_plan.knowledge_sources,
-                    knowledge_selection.source_ids,
+                    assembled_context.source_ids,
                 ),
             )
             enriched_instruction = (
@@ -522,7 +542,6 @@ class TaskPipeline:
         """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
         llm = self._make_llm(request)
         compiler = self._make_compiler()
-        knowledge = self._load_knowledge_for_request(request)
         clean_instruction, syntax_report = _normalize_modify_request(request)
 
         # Prepare project — create empty one if none provided
@@ -530,12 +549,16 @@ class TaskPipeline:
         if project is None:
             gsm_name = request.gsm_name or "untitled"
             project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
-        self._record_user_error_learning(request, project, clean_instruction)
-        skills_text = _MODIFY_SKILLS_PROMPT + "\n\n" + self._with_learned_error_skill(
-            self._load_skills_for_request(clean_instruction, request),
-            work_dir=request.work_dir,
-            project_name=project.name,
+        request.project = project
+        assembled_context = self._assemble_context(
+            request,
+            project,
+            instruction=clean_instruction,
+            include_modify_rules=True,
         )
+        knowledge = assembled_context.generation_context
+        skills_text = assembled_context.skills_text
+        self._record_user_error_learning(request, project, clean_instruction)
 
         # Snapshot BEFORE state for rule-based summary and optional compile comparison.
         before_project_snapshot = deepcopy(project)
@@ -632,6 +655,7 @@ class TaskPipeline:
                 source="compile_result",
                 project_name=project.name,
                 instruction=clean_instruction,
+                project=project,
             )
             on_event("status", {"message": "🔧 编译失败，正在自动修复…"})
             logger.info("Compile failed; triggering auto-repair. error_log=%d chars", len(error_log))
@@ -742,6 +766,14 @@ class TaskPipeline:
             )
             if after_revision_warning:
                 revision_warnings.append(after_revision_warning)
+            _append_project_decision_from_update(
+                assembled_context.project_context,
+                summary=structured_summary,
+                intent=request.intent or "MODIFY",
+                instruction=clean_instruction,
+                changed_files=list(cleaned.keys()),
+                revision_id=_after_revision_id,
+            )
 
         if revision_warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {warning}" for warning in revision_warnings))
@@ -811,16 +843,59 @@ class TaskPipeline:
         """Load global knowledge plus optional project-scoped context."""
         return self._select_knowledge_for_request(request).generation_context
 
-    def _select_knowledge_for_request(self, request: TaskRequest) -> KnowledgeSelection:
+    def _assemble_context(
+        self,
+        request: TaskRequest,
+        project: HSFProject | None,
+        *,
+        instruction: str | None = None,
+        include_modify_rules: bool = False,
+    ) -> AssembledContext:
+        """
+        Assemble task context in one place.
+
+        Priority:
+        1. project-level metadata and knowledge;
+        2. project-level durable memory;
+        3. global/user knowledge selected for the request;
+        4. global/project skills plus learned error avoidance.
+        """
+        task_request = replace(request, project=project, user_input=instruction or request.user_input)
+        project_context = resolve_project_context(project)
+        knowledge_selection = self._select_knowledge_for_request(task_request, context=project_context)
+        skill_parts = [
+            _MODIFY_SKILLS_PROMPT if include_modify_rules else "",
+            self._load_skills_for_request(instruction or request.user_input, task_request, context=project_context),
+            self._build_learned_error_skill_prompt(
+                work_dir=request.work_dir,
+                project=project,
+            ),
+        ]
+        return AssembledContext(
+            project_context=project_context,
+            knowledge_selection=knowledge_selection,
+            skills_text="\n\n---\n\n".join(part for part in skill_parts if part),
+        )
+
+    def _select_knowledge_for_request(
+        self,
+        request: TaskRequest,
+        *,
+        context: ProjectContext | None = None,
+    ) -> KnowledgeSelection:
         """Load request-aware GDL knowledge for planning and generation."""
         project_root = Path(__file__).parent.parent.parent
-        context = resolve_project_context(request.project)
+        context = context if context is not None else resolve_project_context(request.project)
+        project_context_parts = [
+            build_project_context_prompt(context),
+            load_project_memory(context),
+        ]
         return select_gdl_knowledge(
             instruction=request.user_input,
             intent=(request.intent or "all").lower(),
             knowledge_dir=project_root / "knowledge",
             base_context=self._load_knowledge(),
-            project_context=build_project_context_prompt(context),
+            project_context="\n\n---\n\n".join(part for part in project_context_parts if part),
             project_knowledge=load_project_knowledge(context, task_type=(request.intent or "all").lower()),
         )
 
@@ -840,9 +915,15 @@ class TaskPipeline:
             self._skills_loader.load()
         return self._skills_loader.get_for_task(instruction)
 
-    def _load_skills_for_request(self, instruction: str, request: TaskRequest) -> str:
+    def _load_skills_for_request(
+        self,
+        instruction: str,
+        request: TaskRequest,
+        *,
+        context: ProjectContext | None = None,
+    ) -> str:
         """Load global skills plus optional project-scoped skills."""
-        context = resolve_project_context(request.project)
+        context = context if context is not None else resolve_project_context(request.project)
         return "\n\n---\n\n".join(
             part
             for part in [
@@ -852,14 +933,20 @@ class TaskPipeline:
             if part
         )
 
-    def _with_learned_error_skill(self, skills_text: str, *, work_dir: str = "", project_name: str = "") -> str:
-        learned_skill = ""
+    def _build_learned_error_skill_prompt(self, *, work_dir: str = "", project: HSFProject | None = None) -> str:
+        project_name = getattr(project, "name", "") if project is not None else ""
+        parts: list[str] = []
+        if project is not None and _can_revision_project(project):
+            try:
+                parts.append(ErrorLearningStore(project.root).build_skill_prompt(project_name=project_name))
+            except Exception:
+                pass
         if work_dir:
             try:
-                learned_skill = ErrorLearningStore(work_dir).build_skill_prompt(project_name=project_name)
+                parts.append(ErrorLearningStore(work_dir).build_skill_prompt(project_name=project_name))
             except Exception:
-                learned_skill = ""
-        return "\n\n---\n\n".join(part for part in [skills_text, learned_skill] if part)
+                pass
+        return "\n\n---\n\n".join(part for part in parts if part)
 
     def _record_user_error_learning(self, request: TaskRequest, project: HSFProject, instruction: str) -> None:
         raw_error = request.error_log.strip() if request.error_log else ""
@@ -875,6 +962,7 @@ class TaskPipeline:
             source=source,
             project_name=project.name,
             instruction=instruction,
+            project=project,
         )
 
     def _record_error_learning(
@@ -885,16 +973,23 @@ class TaskPipeline:
         source: str,
         project_name: str,
         instruction: str = "",
+        project: HSFProject | None = None,
     ) -> None:
-        try:
-            ErrorLearningStore(work_dir).record_error(
-                raw_error,
-                source=source,
-                project_name=project_name,
-                instruction=instruction,
-            )
-        except Exception:
-            logger.debug("Failed to record GDL error learning", exc_info=True)
+        roots: list[str | Path] = []
+        if work_dir:
+            roots.append(work_dir)
+        if project is not None and _can_revision_project(project):
+            roots.append(project.root)
+        for root in _unique_paths(roots):
+            try:
+                ErrorLearningStore(root).record_error(
+                    raw_error,
+                    source=source,
+                    project_name=project_name,
+                    instruction=instruction,
+                )
+            except Exception:
+                logger.debug("Failed to record GDL error learning", exc_info=True)
 
     # ── Skill creator ────────────────────────────────────
 
@@ -1236,6 +1331,44 @@ def _compile_revision_metadata(compile_result: CompileResult, project: HSFProjec
         "parameter_count": len(project.parameters),
         "exit_code": compile_result.exit_code,
     }
+
+
+def _append_project_decision_from_update(
+    context: ProjectContext | None,
+    *,
+    summary: str,
+    intent: str,
+    instruction: str,
+    changed_files: list[str],
+    revision_id: str | None,
+) -> None:
+    try:
+        append_project_decision(
+            context,
+            summary=summary,
+            intent=intent,
+            instruction=instruction,
+            changed_files=changed_files,
+            revision_id=revision_id,
+        )
+    except Exception:
+        logger.debug("Failed to append project decision memory", exc_info=True)
+
+
+def _unique_paths(paths: list[str | Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for raw in paths:
+        try:
+            path = Path(raw).expanduser().resolve()
+        except Exception:
+            path = Path(raw).expanduser()
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
 
 
 def _normalize_compare_compile_mode(mode: str | None) -> str:

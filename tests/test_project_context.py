@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 
 from openbrep.hsf_project import HSFProject
 from openbrep.project_context import (
+    append_project_decision,
     build_project_context_prompt,
+    load_project_memory,
     load_project_knowledge,
     load_project_skills,
     resolve_project_context,
@@ -36,6 +38,35 @@ class TestProjectContext(unittest.TestCase):
         self.assertIn("project.name: 工程椅", prompt)
         self.assertIn("constraints.units: meters", prompt)
 
+    def test_project_context_merges_knowledge_project_toml_over_root_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("door", work_dir=tmpdir)
+            project.save_to_disk()
+            meta_dir = Path(project.root) / ".openbrep"
+            knowledge_dir = meta_dir / "knowledge"
+            knowledge_dir.mkdir(parents=True)
+            (meta_dir / "project.toml").write_text(
+                "[project]\n"
+                'object_type = "generic door"\n'
+                "\n[constraints]\n"
+                'handing = "left"\n',
+                encoding="utf-8",
+            )
+            (knowledge_dir / "project.toml").write_text(
+                "[project]\n"
+                'object_type = "residential interior door"\n'
+                "\n[constraints]\n"
+                'opening = "inward"\n',
+                encoding="utf-8",
+            )
+
+            context = resolve_project_context(project)
+            prompt = build_project_context_prompt(context)
+
+        self.assertIn("project.object_type: residential interior door", prompt)
+        self.assertIn("constraints.handing: left", prompt)
+        self.assertIn("constraints.opening: inward", prompt)
+
     def test_project_context_loads_project_knowledge_and_skills(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = HSFProject.create_new("bookshelf", work_dir=tmpdir)
@@ -60,6 +91,28 @@ class TestProjectContext(unittest.TestCase):
 
         self.assertIn("可参数化层板", knowledge)
         self.assertIn("模块化参数", skills)
+
+    def test_project_decision_memory_appends_and_loads(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("bookshelf", work_dir=tmpdir)
+            project.save_to_disk()
+            context = resolve_project_context(project)
+
+            path = append_project_decision(
+                context,
+                summary="**变更摘要：**\n- 新增参数：shelf_count",
+                intent="MODIFY",
+                instruction="增加层板数量参数",
+                changed_files=["paramlist.xml", "scripts/3d.gdl"],
+                revision_id="r0002",
+            )
+            memory = load_project_memory(context)
+            self.assertIsNotNone(path)
+            self.assertTrue(path.exists())
+
+        self.assertIn("Project Memory: decisions", memory)
+        self.assertIn("增加层板数量参数", memory)
+        self.assertIn("shelf_count", memory)
 
     def test_project_knowledge_manifest_filters_and_sorts_docs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -142,6 +195,14 @@ class TestProjectContext(unittest.TestCase):
                 "层板数量必须由参数驱动。",
                 encoding="utf-8",
             )
+            append_project_decision(
+                resolve_project_context(project),
+                summary="**变更摘要：**\n- 已确定层板默认 5 层",
+                intent="MODIFY",
+                instruction="固定默认层板策略",
+                changed_files=["paramlist.xml"],
+                revision_id="r0003",
+            )
             (meta_dir / "skills" / "create_object.md").write_text(
                 "先规划参数表，再生成 3D 脚本。",
                 encoding="utf-8",
@@ -171,6 +232,7 @@ class TestProjectContext(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertIn("GLOBAL_KNOWLEDGE", captured["knowledge"])
         self.assertIn("用于住宅收纳系统", captured["knowledge"])
+        self.assertIn("已确定层板默认 5 层", captured["knowledge"])
         self.assertIn("层板数量必须由参数驱动", captured["knowledge"])
         self.assertIn("先规划参数表", captured["skills"])
 
