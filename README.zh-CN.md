@@ -6,7 +6,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.6.12 — GDL 知识库校准收口：完成核心命令、参数、2D/3D 表达与典型物件 archetype 的官方交叉校验，并沉淀 Pro 层商业化 Skill 方向。
+> 正式发布版本 v0.7.0 — 版本管理、变更可解释与对比编译收口，OpenBrep 从 GDL 生成工具迈向可追溯的 GDL 资产开发工作台。
 
 ---
 
@@ -322,6 +322,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.7.0 | GDL 资产生命周期里程碑：新增 modify / repair 前后 revision 快照、`obr history` / `obr rollback`、工程级变更摘要、GDLContractChecker 合规检查输出，以及 `--compare mock|real` 对比编译（见 docs/releases/v0.7.0.md） |
 | v0.6.12 | GDL 知识库校准收口：完成 P0-P6 批次的官方文档/社区/本地知识交叉校验，修正核心命令语义、参数结构、2D/3D 投影与高级几何边界，并补充 Pro 层商业化 Skill 开发方向（见 docs/releases/v0.6.12.md） |
 | v0.6.11 | macOS 安装包修复：补齐 Streamlit 冻结包的前端静态资源与 `streamlit.runtime.scriptrunner` 隐藏导入；新增浏览器级包验证脚本，确保不仅 health 通过，首页和脚本执行也通过（见 docs/releases/v0.6.11.md） |
 | v0.6.10 | macOS 安装包修复：打包启动器显式关闭 Streamlit `global.developmentMode`，避免 `server.port` 冲突；保留包级 smoke 验证入口，便于直接验证 Release zip（见 docs/releases/v0.6.10.md） |
