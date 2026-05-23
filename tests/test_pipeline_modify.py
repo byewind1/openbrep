@@ -32,12 +32,14 @@ from openbrep.runtime.pipeline import (
     _build_structured_summary,
     _compile_revision_metadata,
     _diff_parameters,
+    _format_contract_summary,
     _normalize_compare_compile_mode,
     _snapshot_scripts,
 )
 from openbrep.static_checker import StaticError, StaticCheckResult
 from openbrep.config import GDLAgentConfig
 from openbrep.learning import ErrorLearningStore
+from openbrep.gdl_contract_checker import GDLContractIssue, GDLContractResult
 
 
 # ── Test helpers ──────────────────────────────────────────
@@ -594,6 +596,110 @@ class TestDiffSummary(unittest.TestCase):
         summary = _build_diff_summary(before, changed)
         self.assertIn("2D", summary)
         self.assertIn("+1", summary)
+
+
+class TestModifyContractCheck(unittest.TestCase):
+    def _run_with_contract_result(self, contract_result):
+        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")
+        metadata_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.save_to_disk()
+
+            def fake_create_revision(*args, **kwargs):
+                metadata_calls.append(kwargs.get("metadata") or {})
+                return MagicMock(revision_id=f"r{len(metadata_calls):04d}")
+
+            with patch("openbrep.runtime.pipeline._run_contract_check", return_value=contract_result):
+                with patch("openbrep.runtime.pipeline.create_revision", fake_create_revision):
+                    result = pipeline.execute(TaskRequest(
+                        user_input="调整书架",
+                        intent="MODIFY",
+                        project=project,
+                        work_dir=tmpdir,
+                        output_dir=str(Path(tmpdir) / "out"),
+                    ))
+        return result, metadata_calls
+
+    def test_contract_check_exception_does_not_affect_modify_flow(self):
+        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("Chair", work_dir=tmpdir)
+            project.save_to_disk()
+            with patch("openbrep.gdl_contract_checker.GDLContractChecker.check", side_effect=RuntimeError("boom")):
+                result = pipeline.execute(TaskRequest(
+                    user_input="调整书架",
+                    intent="MODIFY",
+                    project=project,
+                    work_dir=tmpdir,
+                    output_dir=str(Path(tmpdir) / "out"),
+                ))
+
+        self.assertTrue(result.success)
+        self.assertNotIn("合规检查", result.plain_text)
+
+    def test_contract_error_is_shown_in_plain_text(self):
+        result, metadata_calls = self._run_with_contract_result(GDLContractResult(
+            passed=False,
+            issues=[
+                GDLContractIssue(
+                    "empty_2d_script",
+                    "scripts/2d.gdl",
+                    "2D script is missing or empty",
+                    severity="error",
+                )
+            ],
+        ))
+
+        self.assertIn("**合规检查：**", result.plain_text)
+        self.assertIn("❌ 2D script is missing or empty（scripts/2d.gdl）", result.plain_text)
+        self.assertEqual(metadata_calls[-1]["contract_issues"], 1)
+
+    def test_contract_warning_is_shown_in_plain_text(self):
+        result, metadata_calls = self._run_with_contract_result(GDLContractResult(
+            passed=True,
+            issues=[
+                GDLContractIssue(
+                    "derived_var_not_in_master",
+                    "scripts/1d.gdl",
+                    "Derived variable '_gap' is assigned in both 2D and 3D scripts",
+                    severity="warning",
+                )
+            ],
+        ))
+
+        self.assertIn("**合规检查：**", result.plain_text)
+        self.assertIn("⚠️ Derived variable '_gap'", result.plain_text)
+        self.assertEqual(metadata_calls[-1]["contract_issues"], 0)
+
+    def test_contract_clean_result_does_not_add_noise(self):
+        result, metadata_calls = self._run_with_contract_result(GDLContractResult(passed=True, issues=[]))
+
+        self.assertNotIn("合规检查", result.plain_text)
+        self.assertEqual(metadata_calls[-1]["contract_issues"], 0)
+
+    def test_contract_summary_caps_visible_issues(self):
+        issues = [
+            GDLContractIssue("issue", f"scripts/{idx}.gdl", f"Problem {idx}", severity="error")
+            for idx in range(7)
+        ]
+
+        summary = _format_contract_summary(GDLContractResult(passed=False, issues=issues))
+
+        self.assertIn("Problem 0", summary)
+        self.assertIn("Problem 4", summary)
+        self.assertNotIn("Problem 5", summary)
+        self.assertIn("还有 2 个问题", summary)
+
+    def test_info_level_issue_is_hidden(self):
+        summary = _format_contract_summary(GDLContractResult(
+            passed=True,
+            issues=[GDLContractIssue("info", "scripts/3d.gdl", "Info only", severity="info")],
+        ))
+
+        self.assertEqual(summary, "")
 
 
 # ── Tests: _snapshot_scripts ─────────────────────────────

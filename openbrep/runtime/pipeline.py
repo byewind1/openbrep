@@ -741,6 +741,8 @@ class TaskPipeline:
             compile_result=compile_result,
             linter_result=lint_summary,
         )
+        contract_result = _run_contract_check(project) if cleaned else None
+        contract_summary = _format_contract_summary(contract_result)
         output_parts: list[str] = []
         if plain_text:
             output_parts.append(plain_text)
@@ -748,6 +750,8 @@ class TaskPipeline:
             output_parts.append(lint_summary)
         if structured_summary:
             output_parts.append(structured_summary)
+        if contract_summary:
+            output_parts.append(contract_summary)
         if preflight_summary:
             output_parts.append(preflight_summary)
         if not static_result.passed:
@@ -779,6 +783,7 @@ class TaskPipeline:
                     "compile": _compile_revision_metadata(compile_result, project),
                     "explanation": structured_summary,
                     "compile_comparison": compile_comparison.to_dict() if compile_comparison else None,
+                    "contract_issues": _contract_error_count(contract_result),
                 },
             )
             if after_revision_warning:
@@ -1539,6 +1544,66 @@ def _linter_fix_count(linter_result) -> int:
         matches = re.findall(r"修复\s+(\d+)\s+处", linter_result)
         return sum(int(item) for item in matches)
     return 0
+
+
+def _run_contract_check(project: "HSFProject"):
+    """
+    Run GDLContractChecker and return GDLContractResult or None.
+
+    Contract checks are explanatory only in the modify path; failures should not
+    block generation, compile, revision creation, or user-visible output.
+    """
+    try:
+        from openbrep.gdl_contract_checker import GDLContractChecker
+
+        return GDLContractChecker().check(project)
+    except Exception:
+        return None
+
+
+def _format_contract_summary(result) -> str:
+    """
+    Format GDLContractResult into a concise user-facing summary.
+
+    Only error/warning issues are shown, capped at five entries to avoid
+    drowning the main change explanation.
+    """
+    if not result:
+        return ""
+    try:
+        issues = [
+            issue
+            for issue in getattr(result, "issues", [])
+            if str(getattr(issue, "severity", "")).lower() in ("error", "warning")
+        ]
+        if not issues:
+            return ""
+        lines = ["**合规检查：**"]
+        for issue in issues[:5]:
+            severity = str(getattr(issue, "severity", "")).lower()
+            icon = "❌" if severity == "error" else "⚠️"
+            detail = str(getattr(issue, "detail", "") or "")
+            file_hint = str(getattr(issue, "file", "") or "")
+            text = f"{detail}（{file_hint}）" if file_hint else detail
+            lines.append(f"- {icon} {text}")
+        if len(issues) > 5:
+            lines.append(f"- ... 还有 {len(issues) - 5} 个问题")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _contract_error_count(result) -> int:
+    if not result:
+        return 0
+    try:
+        return sum(
+            1
+            for issue in getattr(result, "issues", [])
+            if str(getattr(issue, "severity", "")).lower() == "error"
+        )
+    except Exception:
+        return 0
 
 
 def _build_structured_summary(
