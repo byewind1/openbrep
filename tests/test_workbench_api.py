@@ -79,3 +79,28 @@ def test_workbench_session_apply_persists_loaded_hsf_parameters(tmp_path):
     reloaded = HSFProject.load_from_disk(str(hsf_dir))
     assert response["ok"] is True
     assert reloaded.get_parameter("shelf_count").value == "8"
+
+
+def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_path):
+    project = HSFProject.create_new("CompiledShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    output_dir = tmp_path / "out"
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/compile", {"output_dir": str(output_dir)})
+
+    assert response["ok"] is True
+    assert response["compile"]["success"] is True
+    assert response["compile"]["mode"] == "mock"
+    assert response["compile"]["output_path"].endswith("CompiledShelf.gsm")
+    assert (output_dir / "CompiledShelf.gsm").exists()
+
+
+def test_workbench_session_compile_requires_loaded_hsf_project():
+    session = WorkbenchSession()
+
+    response = session.route("POST", "/api/compile", {})
+
+    assert response["ok"] is False
+    assert "Load an HSF project" in response["error"]

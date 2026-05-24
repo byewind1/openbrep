@@ -48,3 +48,19 @@ export interface ApplyResult extends WorkbenchSnapshot {
   ok: boolean
   changed: Record<string, unknown>
 }
+
+export interface CompileInfo {
+  success: boolean
+  mode: string
+  output_path: string
+  stdout: string
+  stderr: string
+  errors: string[]
+  warnings: string[]
+}
+
+export interface CompileResult {
+  ok: boolean
+  compile?: CompileInfo
+  error?: string
+}

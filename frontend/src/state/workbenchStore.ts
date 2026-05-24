@@ -1,11 +1,12 @@
 import { createStore } from 'zustand/vanilla'
-import { applyParameters, fetchPreview, fetchSnapshot, loadProjectPath } from '../api/client'
-import type { ApplyResult, PreviewPayload, WorkbenchParameter, WorkbenchProject, WorkbenchSnapshot } from '../api/types'
+import { applyParameters, compileProject, fetchPreview, fetchSnapshot, loadProjectPath } from '../api/client'
+import type { ApplyResult, CompileResult, PreviewPayload, WorkbenchParameter, WorkbenchProject, WorkbenchSnapshot } from '../api/types'
 
 export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
+  compileProject: () => Promise<CompileResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
 }
 
@@ -17,8 +18,11 @@ export interface WorkbenchState {
   warnings: string[]
   loading: boolean
   applying: boolean
+  compiling: boolean
+  compileLog: string[]
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
+  compileCurrentProject: () => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
   hasDraftChanges: () => boolean
@@ -28,6 +32,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
   loadProjectPath,
+  compileProject,
   applyParameters,
 }
 
@@ -40,6 +45,8 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     warnings: [],
     loading: false,
     applying: false,
+    compiling: false,
+    compileLog: [],
 
     async load() {
       set({ loading: true })
@@ -88,6 +95,19 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         draftParameters: {},
         applying: false,
       })
+    },
+
+    async compileCurrentProject() {
+      set({ compiling: true })
+      const result = await api.compileProject()
+      const message =
+        result.ok && result.compile
+          ? `${result.compile.mode === 'mock' ? 'Mock' : 'LP'} compile passed: ${result.compile.output_path}`
+          : `Compile failed: ${result.error ?? 'Unknown error'}`
+      set((state) => ({
+        compileLog: [message, ...state.compileLog].slice(0, 20),
+        compiling: false,
+      }))
     },
 
     hasDraftChanges() {

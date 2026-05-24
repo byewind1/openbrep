@@ -55,6 +55,7 @@ Included:
 - Real HSF directory loading through `/api/project/load`
 - `/api/snapshot`, `/api/preview`, `/api/apply`
 - Parameter apply persists values back to the loaded HSF source directory
+- Mock GSM compilation through `/api/compile`
 - Left rail for dimensions
 - Center live 3D preview
 - Right rail for quantity/properties
@@ -66,7 +67,7 @@ Not included yet:
 - Native file picker
 - `.gsm` import/decompile
 - AI chat integration
-- Compile workflow
+- Real LP_XMLConverter compile configuration
 - Tauri packaging
 - Archicad/Tapir integration
 

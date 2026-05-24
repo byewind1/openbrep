@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.gdl_previewer import preview_3d_script
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from ui.three_preview import preview_3d_to_three_payload
@@ -174,6 +175,35 @@ class WorkbenchSession:
             self.project.save_to_disk()
         return {"ok": True, "changed": changed, **self.snapshot()}
 
+    def compile_project(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before compiling."}
+
+        output_dir = Path(str(body.get("output_dir") or self.source_path.parent / "output"))
+        output_dir = output_dir.expanduser().resolve()
+        output_gsm = output_dir / f"{self.project.name}.gsm"
+        compiler_mode = str(body.get("compiler_mode") or "mock")
+        converter_path = body.get("converter_path")
+        compiler = (
+            HSFCompiler(str(converter_path)) if compiler_mode == "lp" and converter_path else MockHSFCompiler()
+        )
+
+        self.project.save_to_disk()
+        result = compiler.hsf2libpart(str(self.source_path), str(output_gsm))
+        return {
+            "ok": bool(result.success),
+            "compile": {
+                "success": bool(result.success),
+                "mode": result.mode or ("lp" if compiler_mode == "lp" else "mock"),
+                "output_path": result.output_path or str(output_gsm),
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "errors": result.errors,
+                "warnings": result.warnings,
+            },
+            **({} if result.success else {"error": result.stderr or "Compile failed"}),
+        }
+
     def route(
         self,
         method: str,
@@ -195,6 +225,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/apply":
             return self.apply(body.get("parameters") or {})
+
+        if normalized_method == "POST" and route == "/api/compile":
+            return self.compile_project(body)
 
         return {"ok": False, "error": f"Unknown route: {normalized_method} {route}"}
 

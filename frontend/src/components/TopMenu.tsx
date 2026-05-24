@@ -7,11 +7,22 @@ interface TopMenuProps {
   hasDraftChanges: boolean
   onApply: () => void
   onLoadProjectPath: (path: string) => void
+  onCompile: () => void
   applying: boolean
   loading: boolean
+  compiling: boolean
 }
 
-export function TopMenu({ project, hasDraftChanges, onApply, onLoadProjectPath, applying, loading }: TopMenuProps) {
+export function TopMenu({
+  project,
+  hasDraftChanges,
+  onApply,
+  onLoadProjectPath,
+  onCompile,
+  applying,
+  loading,
+  compiling,
+}: TopMenuProps) {
   const [path, setPath] = useState(project?.path ?? '')
 
   useEffect(() => {
@@ -46,8 +57,8 @@ export function TopMenu({ project, hasDraftChanges, onApply, onLoadProjectPath, 
         </button>
       </form>
       <nav className="menu-row" aria-label="Migration status">
-        <button type="button" disabled title="下一步接入旧版编译流程">
-          编译 GSM
+        <button type="button" disabled={!project?.path || hasDraftChanges || compiling} onClick={onCompile}>
+          {compiling ? '编译中' : '编译 GSM'}
         </button>
         <button type="button" disabled title="下一步接入旧版 AI 生成 / 修改 / 解释">
           AI 协作

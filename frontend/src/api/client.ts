@@ -1,4 +1,4 @@
-import type { ApplyResult, PreviewPayload, WorkbenchSnapshot } from './types'
+import type { ApplyResult, CompileResult, PreviewPayload, WorkbenchSnapshot } from './types'
 
 const API_BASE = import.meta.env.VITE_OPENBREP_API || ''
 
@@ -40,6 +40,18 @@ export async function applyParameters(parameters: Record<string, unknown>): Prom
       body: JSON.stringify({ parameters }),
     },
     { ok: true, changed: parameters, ...fallbackSnapshot },
+  )
+}
+
+export async function compileProject(): Promise<CompileResult> {
+  return requestJson<CompileResult>(
+    '/api/compile',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ compiler_mode: 'mock' }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

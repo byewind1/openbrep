@@ -17,6 +17,7 @@ test('updates draft parameter without changing saved parameter value', async () 
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
     }),
+    compileProject: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: { A: 2 },
@@ -50,6 +51,7 @@ test('loads a project path and clears stale draft parameters', async () => {
       preview: { meshes: [], wires: [], warnings: ['loaded'] },
       warnings: ['loaded'],
     }),
+    compileProject: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: {},
@@ -68,4 +70,49 @@ test('loads a project path and clears stale draft parameters', async () => {
   expect(store.getState().parameters.map((parameter) => parameter.name)).toEqual(['B'])
   expect(store.getState().draftParameters).toEqual({})
   expect(store.getState().warnings).toEqual(['loaded'])
+})
+
+test('records compile results in the workbench log', async () => {
+  const store = createWorkbenchStore({
+    fetchSnapshot: async () => ({
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+    fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
+    loadProjectPath: async () => ({
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+    compileProject: async () => ({
+      ok: true,
+      compile: {
+        success: true,
+        mode: 'mock',
+        output_path: '/workspace/output/Chair.gsm',
+        stdout: 'compiled',
+        stderr: '',
+        errors: [],
+        warnings: [],
+      },
+    }),
+    applyParameters: async () => ({
+      ok: true,
+      changed: {},
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+  })
+
+  await store.getState().compileCurrentProject()
+
+  expect(store.getState().compileLog).toEqual([
+    'Mock compile passed: /workspace/output/Chair.gsm',
+  ])
+  expect(store.getState().compiling).toBe(false)
 })
