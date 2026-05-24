@@ -18,6 +18,7 @@ export default function App() {
   const load = useWorkbenchStore((state) => state.load)
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
+  const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const hasDraftChanges = useWorkbenchStore((state) => state.hasDraftChanges)
   const grouped = groupParameters(parameters)
 
@@ -27,7 +28,14 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <TopMenu project={project} hasDraftChanges={hasDraftChanges()} onApply={() => void applyDraftParameters()} applying={applying} />
+      <TopMenu
+        project={project}
+        hasDraftChanges={hasDraftChanges()}
+        onApply={() => void applyDraftParameters()}
+        onLoadProjectPath={(path) => void loadProjectPath(path)}
+        applying={applying}
+        loading={loading}
+      />
       <section className="workspace-grid" aria-busy={loading}>
         <ParameterRail
           title="尺寸参数"

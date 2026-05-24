@@ -1,10 +1,11 @@
 import { createStore } from 'zustand/vanilla'
-import { applyParameters, fetchPreview, fetchSnapshot } from '../api/client'
+import { applyParameters, fetchPreview, fetchSnapshot, loadProjectPath } from '../api/client'
 import type { ApplyResult, PreviewPayload, WorkbenchParameter, WorkbenchProject, WorkbenchSnapshot } from '../api/types'
 
 export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
+  loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
 }
 
@@ -17,6 +18,7 @@ export interface WorkbenchState {
   loading: boolean
   applying: boolean
   load: () => Promise<void>
+  loadProjectPath: (path: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
   hasDraftChanges: () => boolean
@@ -25,6 +27,7 @@ export interface WorkbenchState {
 const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
+  loadProjectPath,
   applyParameters,
 }
 
@@ -46,6 +49,21 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         parameters: snapshot.parameters,
         preview: snapshot.preview,
         warnings: snapshot.warnings,
+        loading: false,
+      })
+    },
+
+    async loadProjectPath(path) {
+      const normalizedPath = path.trim()
+      if (!normalizedPath) return
+      set({ loading: true })
+      const snapshot = await api.loadProjectPath(normalizedPath)
+      set({
+        project: snapshot.project,
+        parameters: snapshot.parameters,
+        preview: snapshot.preview,
+        warnings: snapshot.warnings,
+        draftParameters: {},
         loading: false,
       })
     },

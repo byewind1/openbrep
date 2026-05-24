@@ -19,6 +19,18 @@ export async function fetchPreview(parameters: Record<string, unknown>): Promise
   return response.preview
 }
 
+export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> {
+  return requestJson<WorkbenchSnapshot>(
+    '/api/project/load',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    fallbackSnapshot,
+  )
+}
+
 export async function applyParameters(parameters: Record<string, unknown>): Promise<ApplyResult> {
   return requestJson<ApplyResult>(
     '/api/apply',

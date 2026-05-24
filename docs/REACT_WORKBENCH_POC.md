@@ -12,6 +12,7 @@ Prove the product direction:
 - Zustand state for draft parameter values
 - Python local RPC backend that reuses `openbrep/*`
 - Parameter changes update preview immediately; applying changes is a separate action
+- Real HSF directories can be loaded by local path without going through Streamlit
 
 ## Run
 
@@ -51,7 +52,9 @@ npm run build
 Included:
 
 - Demo bookshelf HSF project served by Python
+- Real HSF directory loading through `/api/project/load`
 - `/api/snapshot`, `/api/preview`, `/api/apply`
+- Parameter apply persists values back to the loaded HSF source directory
 - Left rail for dimensions
 - Center live 3D preview
 - Right rail for quantity/properties
@@ -60,7 +63,7 @@ Included:
 
 Not included yet:
 
-- Real HSF file picker
+- Native file picker
 - `.gsm` import/decompile
 - AI chat integration
 - Compile workflow

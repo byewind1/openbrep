@@ -48,7 +48,7 @@ button:disabled {
 .topbar {
   height: 52px;
   display: grid;
-  grid-template-columns: 280px 1fr auto;
+  grid-template-columns: 260px minmax(360px, 1fr) auto auto;
   align-items: center;
   gap: 18px;
   padding: 0 16px;
@@ -102,6 +102,30 @@ button:disabled {
 
 .menu-row {
   gap: 6px;
+}
+
+.project-path-form {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-path-form label {
+  color: oklch(43% 0.018 245);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.project-path-form input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid oklch(82% 0.014 245);
+  border-radius: 6px;
+  background: oklch(96.5% 0.006 245);
+  color: oklch(24% 0.018 245);
+  padding: 0 9px;
 }
 
 .topbar-status {

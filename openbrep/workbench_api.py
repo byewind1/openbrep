@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -12,6 +13,7 @@ from ui.three_preview import preview_3d_to_three_payload
 
 
 _DEMO_PROJECT: HSFProject | None = None
+_DEFAULT_SESSION: WorkbenchSession | None = None
 
 
 def build_demo_project() -> HSFProject:
@@ -74,12 +76,18 @@ def build_demo_snapshot() -> dict[str, Any]:
     return project_to_snapshot(_demo_project())
 
 
-def project_to_snapshot(project: HSFProject) -> dict[str, Any]:
+def project_to_snapshot(
+    project: HSFProject,
+    *,
+    source: str = "demo",
+    source_path: str | None = None,
+) -> dict[str, Any]:
     preview = preview_payload(project)
     return {
         "project": {
             "name": project.name,
-            "source": "demo",
+            "source": source,
+            **({"path": source_path} if source_path else {}),
         },
         "parameters": [_parameter_to_dict(param) for param in project.parameters],
         "preview": preview,
@@ -124,26 +132,82 @@ def apply_parameter_values(project: HSFProject, changes: dict[str, Any]) -> dict
     return changed
 
 
-def route_rpc(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    normalized_method = method.upper()
-    route = urlparse(path).path
-    project = _demo_project()
-    body = body or {}
+class WorkbenchSession:
+    """Current-project state for the React workbench local API."""
 
-    if normalized_method == "GET" and route == "/api/snapshot":
-        return {"ok": True, **project_to_snapshot(project)}
+    def __init__(self) -> None:
+        self.project: HSFProject = build_demo_project()
+        self.source = "demo"
+        self.source_path: Path | None = None
 
-    if normalized_method == "POST" and route == "/api/preview":
+    def snapshot(self) -> dict[str, Any]:
+        return project_to_snapshot(
+            self.project,
+            source=self.source,
+            source_path=str(self.source_path) if self.source_path else None,
+        )
+
+    def load_hsf_directory(self, path: str) -> dict[str, Any]:
+        hsf_path = Path(path).expanduser().resolve()
+        if not hsf_path.is_dir():
+            return {"ok": False, "error": f"HSF directory not found: {path}"}
+
+        try:
+            project = HSFProject.load_from_disk(str(hsf_path))
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to load HSF project: {exc}"}
+
+        self.project = project
+        self.source = "hsf"
+        self.source_path = hsf_path
+        return {"ok": True, **self.snapshot()}
+
+    def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "ok": True,
-            "preview": preview_payload(project, body.get("parameters") or {}),
+            "preview": preview_payload(self.project, overrides or {}),
         }
 
-    if normalized_method == "POST" and route == "/api/apply":
-        changed = apply_parameter_values(project, body.get("parameters") or {})
-        return {"ok": True, "changed": changed, **project_to_snapshot(project)}
+    def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
+        changed = apply_parameter_values(self.project, changes)
+        if changed and self.source_path is not None:
+            self.project.save_to_disk()
+        return {"ok": True, "changed": changed, **self.snapshot()}
 
-    return {"ok": False, "error": f"Unknown route: {normalized_method} {route}"}
+    def route(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_method = method.upper()
+        route = urlparse(path).path
+        body = body or {}
+
+        if normalized_method == "GET" and route == "/api/snapshot":
+            return {"ok": True, **self.snapshot()}
+
+        if normalized_method == "POST" and route == "/api/project/load":
+            return self.load_hsf_directory(str(body.get("path") or ""))
+
+        if normalized_method == "POST" and route == "/api/preview":
+            return self.preview(body.get("parameters") or {})
+
+        if normalized_method == "POST" and route == "/api/apply":
+            return self.apply(body.get("parameters") or {})
+
+        return {"ok": False, "error": f"Unknown route: {normalized_method} {route}"}
+
+
+def _default_session() -> WorkbenchSession:
+    global _DEFAULT_SESSION
+    if _DEFAULT_SESSION is None:
+        _DEFAULT_SESSION = WorkbenchSession()
+    return _DEFAULT_SESSION
+
+
+def route_rpc(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    return _default_session().route(method, path, body)
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:

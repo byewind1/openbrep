@@ -14,6 +14,7 @@ export type ParameterType =
 export interface WorkbenchProject {
   name: string
   source?: string
+  path?: string
 }
 
 export interface WorkbenchParameter {
