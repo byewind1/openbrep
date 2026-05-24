@@ -78,3 +78,17 @@ export interface AssistantResult {
   }
   error?: string
 }
+
+export interface GenerateResult {
+  ok: boolean
+  assistant?: {
+    kind: string
+    reply: string
+    changed_files: string[]
+    intent: string
+  }
+  preview?: PreviewPayload
+  warnings?: string[]
+  events?: Array<{ type: string; data: unknown }>
+  error?: string
+}

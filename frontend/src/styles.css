@@ -322,6 +322,12 @@ input[type="text"] {
   padding-top: 10px;
 }
 
+.assistant-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .assistant-input textarea {
   width: 100%;
   resize: vertical;

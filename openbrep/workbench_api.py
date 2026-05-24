@@ -23,6 +23,7 @@ from openbrep.explainer.service import (
 )
 from openbrep.gdl_previewer import preview_3d_script
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from ui.three_preview import preview_3d_to_three_payload
 
 
@@ -149,10 +150,11 @@ def apply_parameter_values(project: HSFProject, changes: dict[str, Any]) -> dict
 class WorkbenchSession:
     """Current-project state for the React workbench local API."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, pipeline_class: type = TaskPipeline) -> None:
         self.project: HSFProject = build_demo_project()
         self.source = "demo"
         self.source_path: Path | None = None
+        self.pipeline_class = pipeline_class
 
     def snapshot(self) -> dict[str, Any]:
         return project_to_snapshot(
@@ -257,6 +259,51 @@ class WorkbenchSession:
             },
         }
 
+    def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
+        message = str(body.get("message") or "").strip()
+        if not message:
+            return {"ok": False, "error": "Generation message is empty."}
+
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before generating changes."}
+
+        events: list[dict[str, Any]] = []
+
+        def on_event(event_type, data):
+            events.append({"type": event_type, "data": data})
+
+        pipeline = self.pipeline_class(trace_dir="./traces")
+        request = TaskRequest(
+            user_input=message,
+            intent=str(body.get("intent") or "MODIFY"),
+            project=self.project,
+            work_dir=str(self.source_path.parent),
+            output_dir=str(self.source_path.parent / "output"),
+            gsm_name=self.project.name,
+            assistant_settings=str(body.get("assistant_settings") or ""),
+            history=list(body.get("history") or []),
+            on_event=on_event,
+        )
+        result = pipeline.execute(request)
+        if not result.success:
+            return {"ok": False, "error": result.error or "Generation failed.", "events": events}
+
+        if result.project is not None:
+            self.project = result.project
+        self.project.save_to_disk()
+        return {
+            "ok": True,
+            "assistant": {
+                "kind": "generate",
+                "reply": result.plain_text,
+                "changed_files": list((result.scripts or {}).keys()),
+                "intent": result.intent,
+            },
+            "preview": preview_payload(self.project),
+            "warnings": [],
+            "events": events,
+        }
+
     def route(
         self,
         method: str,
@@ -284,6 +331,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)
+
+        if normalized_method == "POST" and route == "/api/assistant/generate":
+            return self.generate_with_assistant(body)
 
         return {"ok": False, "error": f"Unknown route: {normalized_method} {route}"}
 

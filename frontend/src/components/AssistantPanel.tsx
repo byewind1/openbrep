@@ -6,17 +6,26 @@ interface AssistantPanelProps {
   messages: AssistantMessage[]
   busy: boolean
   onSend: (message: string) => void
+  onGenerate: (message: string) => void
 }
 
-export function AssistantPanel({ messages, busy, onSend }: AssistantPanelProps) {
+export function AssistantPanel({ messages, busy, onSend, onGenerate }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
 
   function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    sendDraft('explain')
+  }
+
+  function sendDraft(mode: 'explain' | 'generate') {
     const message = draft.trim()
     if (!message) return
     setDraft('')
-    onSend(message)
+    if (mode === 'generate') {
+      onGenerate(message)
+    } else {
+      onSend(message)
+    }
   }
 
   return (
@@ -44,9 +53,14 @@ export function AssistantPanel({ messages, busy, onSend }: AssistantPanelProps) 
           value={draft}
           onChange={(event) => setDraft(event.currentTarget.value)}
         />
-        <button type="submit" disabled={busy || draft.trim().length === 0}>
-          发送
-        </button>
+        <div className="assistant-actions">
+          <button type="submit" disabled={busy || draft.trim().length === 0}>
+            解释
+          </button>
+          <button type="button" className="primary-action" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('generate')}>
+            生成修改
+          </button>
+        </div>
       </form>
     </aside>
   )

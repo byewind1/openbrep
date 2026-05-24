@@ -56,6 +56,8 @@ Included:
 - `/api/snapshot`, `/api/preview`, `/api/apply`
 - Parameter apply persists values back to the loaded HSF source directory
 - Mock GSM compilation through `/api/compile`
+- Explanation assistant through `/api/assistant`
+- Pipeline-backed AI generation/modification through `/api/assistant/generate`
 - Left rail for dimensions
 - Center live 3D preview
 - Right rail for quantity/properties
@@ -66,8 +68,8 @@ Not included yet:
 
 - Native file picker
 - `.gsm` import/decompile
-- AI chat integration
 - Real LP_XMLConverter compile configuration
+- Full chat history persistence
 - Tauri packaging
 - Archicad/Tapir integration
 

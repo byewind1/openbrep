@@ -19,6 +19,7 @@ test('updates draft parameter without changing saved parameter value', async () 
     }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
+    generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: { A: 2 },
@@ -54,6 +55,7 @@ test('loads a project path and clears stale draft parameters', async () => {
     }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
+    generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: {},
@@ -102,6 +104,7 @@ test('records compile results in the workbench log', async () => {
       },
     }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
+    generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: {},
@@ -140,6 +143,7 @@ test('adds user and assistant messages to the assistant thread', async () => {
       ok: true,
       assistant: { kind: 'explain_project', reply: `reply to ${message}` },
     }),
+    generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: {},
@@ -157,4 +161,56 @@ test('adds user and assistant messages to the assistant thread', async () => {
     { role: 'assistant', content: 'reply to 解释这个构件' },
   ])
   expect(store.getState().assistantBusy).toBe(false)
+})
+
+test('generate assistant message refreshes preview and records changed files', async () => {
+  const store = createWorkbenchStore({
+    fetchSnapshot: async () => ({
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+    fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
+    loadProjectPath: async () => ({
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+    compileProject: async () => ({ ok: false, error: 'not loaded' }),
+    askAssistant: async () => ({ ok: false, error: 'use generate' }),
+    generateWithAssistant: async (message: string) => ({
+      ok: true,
+      assistant: {
+        kind: 'generate',
+        reply: `changed ${message}`,
+        changed_files: ['scripts/3d.gdl'],
+        intent: 'MODIFY',
+      },
+      preview: {
+        meshes: [{ name: 'changed', vertices: [], faces: [] }],
+        wires: [],
+        warnings: ['preview refreshed'],
+      },
+      warnings: ['preview refreshed'],
+    }),
+    applyParameters: async () => ({
+      ok: true,
+      changed: {},
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+  })
+
+  await store.getState().generateAssistantChanges('加一块层板')
+
+  expect(store.getState().preview?.meshes[0]?.name).toBe('changed')
+  expect(store.getState().warnings).toEqual(['preview refreshed'])
+  expect(store.getState().assistantMessages.at(-1)).toEqual({
+    role: 'assistant',
+    content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
+  })
 })

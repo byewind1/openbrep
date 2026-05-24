@@ -1,10 +1,19 @@
 import { createStore } from 'zustand/vanilla'
-import { applyParameters, askAssistant, compileProject, fetchPreview, fetchSnapshot, loadProjectPath } from '../api/client'
+import {
+  applyParameters,
+  askAssistant,
+  compileProject,
+  fetchPreview,
+  fetchSnapshot,
+  generateWithAssistant,
+  loadProjectPath,
+} from '../api/client'
 import type {
   ApplyResult,
   AssistantMessage,
   AssistantResult,
   CompileResult,
+  GenerateResult,
   PreviewPayload,
   WorkbenchParameter,
   WorkbenchProject,
@@ -17,6 +26,7 @@ export interface WorkbenchApi {
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   compileProject: () => Promise<CompileResult>
   askAssistant: (message: string) => Promise<AssistantResult>
+  generateWithAssistant: (message: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
 }
 
@@ -36,6 +46,7 @@ export interface WorkbenchState {
   loadProjectPath: (path: string) => Promise<void>
   compileCurrentProject: () => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
+  generateAssistantChanges: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
   hasDraftChanges: () => boolean
@@ -47,6 +58,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   loadProjectPath,
   compileProject,
   askAssistant,
+  generateWithAssistant,
   applyParameters,
 }
 
@@ -138,6 +150,29 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       set((state) => ({
         assistantBusy: false,
         assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
+      }))
+    },
+
+    async generateAssistantChanges(message) {
+      const trimmed = message.trim()
+      if (!trimmed) return
+      set((state) => ({
+        assistantBusy: true,
+        assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
+      }))
+      const result = await api.generateWithAssistant(trimmed)
+      const changedFiles = result.assistant?.changed_files ?? []
+      const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
+      const reply =
+        result.ok && result.assistant
+          ? `${result.assistant.reply}${suffix}`
+          : result.error ?? 'Generation request failed.'
+      set((state) => ({
+        assistantBusy: false,
+        assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
+        preview: result.preview ?? state.preview,
+        warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
+        draftParameters: {},
       }))
     },
 

@@ -25,6 +25,7 @@ export default function App() {
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
+  const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
   const hasDraftChanges = useWorkbenchStore((state) => state.hasDraftChanges)
   const grouped = groupParameters(parameters)
 
@@ -58,7 +59,12 @@ export default function App() {
           draftParameters={draftParameters}
           onChange={(name, value) => void setDraftParameter(name, value)}
         />
-        <AssistantPanel messages={assistantMessages} busy={assistantBusy} onSend={(message) => void sendAssistantMessage(message)} />
+        <AssistantPanel
+          messages={assistantMessages}
+          busy={assistantBusy}
+          onSend={(message) => void sendAssistantMessage(message)}
+          onGenerate={(message) => void generateAssistantChanges(message)}
+        />
       </section>
       <BottomDrawer warnings={warnings} compileLog={compileLog} />
     </main>

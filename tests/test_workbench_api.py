@@ -1,4 +1,5 @@
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.runtime.pipeline import TaskResult
 from openbrep.workbench_api import (
     WorkbenchSession,
     apply_parameter_values,
@@ -132,3 +133,56 @@ def test_workbench_session_assistant_explains_parameter_mentions(tmp_path):
     assert response["assistant"]["kind"] == "explain_parameter"
     assert "参数：A" in response["assistant"]["reply"]
     assert "3D" in response["assistant"]["reply"]
+
+
+def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):
+    project = HSFProject.create_new("GeneratedShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FakePipeline:
+        last_request = None
+
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            FakePipeline.last_request = request
+            request.project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nADDZ 1\n")
+            return TaskResult(
+                success=True,
+                intent="MODIFY",
+                scripts={"scripts/3d.gdl": request.project.get_script(ScriptType.SCRIPT_3D)},
+                plain_text="已加高",
+                project=request.project,
+            )
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/assistant/generate", {"message": "把柜子加高"})
+
+    assert response["ok"] is True
+    assert response["assistant"]["kind"] == "generate"
+    assert response["assistant"]["changed_files"] == ["scripts/3d.gdl"]
+    assert response["preview"]["meshes"]
+    assert "ADDZ 1" in HSFProject.load_from_disk(str(hsf_dir)).get_script(ScriptType.SCRIPT_3D)
+    assert FakePipeline.last_request.intent == "MODIFY"
+    assert FakePipeline.last_request.gsm_name == "GeneratedShelf"
+
+
+def test_workbench_session_generate_reports_pipeline_failure(tmp_path):
+    project = HSFProject.create_new("FailedGeneration", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FailingPipeline:
+        def __init__(self, trace_dir="./traces"):
+            pass
+
+        def execute(self, request):
+            return TaskResult(success=False, error="missing API key")
+
+    session = WorkbenchSession(pipeline_class=FailingPipeline)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/assistant/generate", {"message": "修改"})
+
+    assert response["ok"] is False
+    assert "missing API key" in response["error"]
