@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import argparse
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+from urllib.parse import urlparse
+
+from openbrep.gdl_previewer import preview_3d_script
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from ui.three_preview import preview_3d_to_three_payload
+
+
+_DEMO_PROJECT: HSFProject | None = None
+
+
+def build_demo_project() -> HSFProject:
+    project = HSFProject.create_new("Demo Bookshelf")
+    project.parameters = [
+        GDLParameter("A", "Length", "总宽", "1.2", is_fixed=True),
+        GDLParameter("B", "Length", "总深", "0.36", is_fixed=True),
+        GDLParameter("ZZYZX", "Length", "总高", "1.8", is_fixed=True),
+        GDLParameter("shelf_count", "Integer", "层板数", "5"),
+        GDLParameter("shelf_thickness", "Length", "层板厚度", "0.035"),
+        GDLParameter("frame_thickness", "Length", "侧板厚度", "0.04"),
+        GDLParameter("has_back_panel", "Boolean", "背板", "1"),
+        GDLParameter("object_label", "String", "对象标签", "Bookshelf"),
+    ]
+    project.set_script(
+        ScriptType.MASTER,
+        """
+inner_w = A - 2 * frame_thickness
+gap = (ZZYZX - shelf_count * shelf_thickness) / (shelf_count + 1)
+""".strip()
+        + "\n",
+    )
+    project.set_script(
+        ScriptType.SCRIPT_3D,
+        """
+! side panels
+BLOCK frame_thickness, B, ZZYZX
+ADDX A - frame_thickness
+BLOCK frame_thickness, B, ZZYZX
+DEL 1
+
+! shelves
+FOR i = 1 TO shelf_count
+    ADDX frame_thickness
+    ADDZ i * gap + (i - 1) * shelf_thickness
+    BLOCK inner_w, B, shelf_thickness
+    DEL 2
+NEXT i
+
+! optional back panel
+IF has_back_panel = 1 THEN
+    ADDY B - 0.018
+    BLOCK A, 0.018, ZZYZX
+    DEL 1
+ENDIF
+""".strip()
+        + "\n",
+    )
+    return project
+
+
+def _demo_project() -> HSFProject:
+    global _DEMO_PROJECT
+    if _DEMO_PROJECT is None:
+        _DEMO_PROJECT = build_demo_project()
+    return _DEMO_PROJECT
+
+
+def build_demo_snapshot() -> dict[str, Any]:
+    return project_to_snapshot(_demo_project())
+
+
+def project_to_snapshot(project: HSFProject) -> dict[str, Any]:
+    preview = preview_payload(project)
+    return {
+        "project": {
+            "name": project.name,
+            "source": "demo",
+        },
+        "parameters": [_parameter_to_dict(param) for param in project.parameters],
+        "preview": preview,
+        "warnings": preview.get("warnings", []),
+    }
+
+
+def preview_payload(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = preview_3d_script(
+        project.get_script(ScriptType.SCRIPT_3D),
+        parameters=parameter_values(project, overrides),
+        setup_script=project.get_script(ScriptType.MASTER),
+        unknown_command_policy="warn",
+        quality="fast",
+    )
+    payload = preview_3d_to_three_payload(result)
+    payload["warnings"] = result.warnings
+    return payload
+
+
+def parameter_values(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for param in project.parameters:
+        numeric = _to_preview_number(param.value)
+        if numeric is not None:
+            values[param.name.upper()] = numeric
+    for name, value in (overrides or {}).items():
+        numeric = _to_preview_number(value)
+        if numeric is not None:
+            values[str(name).upper()] = numeric
+    return values
+
+
+def apply_parameter_values(project: HSFProject, changes: dict[str, Any]) -> dict[str, Any]:
+    changed: dict[str, Any] = {}
+    for name, value in changes.items():
+        param = project.get_parameter(name)
+        if param is None:
+            continue
+        param.value = _coerce_parameter_value(param.type_tag, value)
+        changed[name] = value
+    return changed
+
+
+def route_rpc(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    normalized_method = method.upper()
+    route = urlparse(path).path
+    project = _demo_project()
+    body = body or {}
+
+    if normalized_method == "GET" and route == "/api/snapshot":
+        return {"ok": True, **project_to_snapshot(project)}
+
+    if normalized_method == "POST" and route == "/api/preview":
+        return {
+            "ok": True,
+            "preview": preview_payload(project, body.get("parameters") or {}),
+        }
+
+    if normalized_method == "POST" and route == "/api/apply":
+        changed = apply_parameter_values(project, body.get("parameters") or {})
+        return {"ok": True, "changed": changed, **project_to_snapshot(project)}
+
+    return {"ok": False, "error": f"Unknown route: {normalized_method} {route}"}
+
+
+def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:
+    server = ThreadingHTTPServer((host, port), _WorkbenchRequestHandler)
+    print(f"OpenBrep workbench API listening on http://{host}:{port}")
+    server.serve_forever()
+
+
+class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self._send(route_rpc("GET", self.path))
+
+    def do_POST(self) -> None:
+        raw_len = self.headers.get("Content-Length", "0")
+        try:
+            length = int(raw_len)
+        except ValueError:
+            length = 0
+        raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
+        try:
+            body = json.loads(raw_body or "{}")
+        except json.JSONDecodeError:
+            self._send({"ok": False, "error": "Invalid JSON"}, status=400)
+            return
+        self._send(route_rpc("POST", self.path, body))
+
+    def do_OPTIONS(self) -> None:
+        self._send({}, status=204)
+
+    def log_message(self, _format: str, *_args) -> None:
+        return
+
+    def _send(self, payload: dict[str, Any], status: int | None = None) -> None:
+        ok = payload.get("ok", True)
+        response_status = status or (200 if ok else 404)
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(response_status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if response_status != 204:
+            self.wfile.write(data)
+
+
+def _parameter_to_dict(param: GDLParameter) -> dict[str, Any]:
+    return {
+        "name": param.name,
+        "type_tag": param.type_tag,
+        "description": param.description,
+        "value": param.value,
+        "is_fixed": param.is_fixed,
+    }
+
+
+def _coerce_parameter_value(type_tag: str, value: Any) -> str:
+    if type_tag in {"Length", "Angle", "RealNum"}:
+        return str(float(value))
+    if type_tag == "Integer":
+        return str(int(value))
+    if type_tag == "Boolean":
+        if isinstance(value, str):
+            return "1" if value.strip().lower() in {"1", "true", "yes", "on"} else "0"
+        return "1" if value else "0"
+    return str(value)
+
+
+def _to_preview_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    text = str(value).strip()
+    if text.lower() in {"true", "yes", "on"}:
+        return 1.0
+    if text.lower() in {"false", "no", "off"}:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="OpenBrep React workbench local API")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args()
+    run_server(host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

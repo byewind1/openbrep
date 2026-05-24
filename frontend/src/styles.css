@@ -1,0 +1,279 @@
+:root {
+  color: oklch(24% 0.018 245);
+  background: oklch(95.5% 0.008 245);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 1240px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 1px solid oklch(82% 0.014 245);
+  background: oklch(98% 0.006 245);
+  color: oklch(28% 0.018 245);
+  border-radius: 6px;
+  height: 30px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: oklch(95.5% 0.008 245);
+}
+
+.topbar {
+  height: 52px;
+  display: grid;
+  grid-template-columns: 280px 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+  border-bottom: 1px solid oklch(84% 0.012 245);
+  background: oklch(98% 0.006 245);
+}
+
+.brand-lockup,
+.topbar-status,
+.menu-row,
+.panel-heading,
+.control-label,
+.preview-toolbar,
+.preview-footer,
+.drawer-tabs {
+  display: flex;
+  align-items: center;
+}
+
+.brand-lockup {
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: oklch(32% 0.055 245);
+  color: oklch(96% 0.008 245);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.brand-lockup div,
+.preview-toolbar div:first-child {
+  display: grid;
+  gap: 1px;
+}
+
+.brand-lockup span:last-child,
+.preview-toolbar span,
+.parameter-control small,
+.panel-heading span,
+.preview-footer,
+.drawer-content {
+  color: oklch(49% 0.018 245);
+  font-size: 12px;
+}
+
+.menu-row {
+  gap: 6px;
+}
+
+.topbar-status {
+  gap: 10px;
+}
+
+.status-pill {
+  border: 1px solid oklch(82% 0.014 245);
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.status-pill.changed {
+  border-color: oklch(68% 0.12 70);
+  background: oklch(94% 0.04 70);
+  color: oklch(36% 0.08 70);
+}
+
+.primary-action {
+  background: oklch(35% 0.065 245);
+  border-color: oklch(35% 0.065 245);
+  color: oklch(98% 0.006 245);
+}
+
+.workspace-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px minmax(520px, 1fr) 240px 320px;
+  gap: 10px;
+  padding: 10px;
+}
+
+.parameter-rail,
+.preview-stage,
+.assistant-panel,
+.bottom-drawer {
+  border: 1px solid oklch(84% 0.012 245);
+  background: oklch(98.5% 0.005 245);
+  border-radius: 8px;
+}
+
+.parameter-rail,
+.assistant-panel {
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.panel-heading {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.panel-heading h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.parameter-list {
+  display: grid;
+  gap: 12px;
+}
+
+.parameter-control {
+  display: grid;
+  gap: 7px;
+}
+
+.parameter-control.inline-control {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.control-label {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.control-label span {
+  display: grid;
+  gap: 2px;
+}
+
+.control-label code {
+  color: oklch(36% 0.045 245);
+  font-size: 12px;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: oklch(48% 0.11 245);
+}
+
+input[type="number"],
+input[type="text"] {
+  width: 100%;
+  height: 30px;
+  border: 1px solid oklch(82% 0.014 245);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: oklch(99% 0.003 245);
+}
+
+.preview-stage {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+}
+
+.preview-toolbar {
+  height: 48px;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid oklch(86% 0.01 245);
+}
+
+.viewport-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.viewport-tabs .active,
+.drawer-tabs .active {
+  background: oklch(35% 0.065 245);
+  color: oklch(98% 0.006 245);
+  border-color: oklch(35% 0.065 245);
+}
+
+.canvas-wrap {
+  min-height: 520px;
+}
+
+.preview-footer {
+  height: 34px;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-top: 1px solid oklch(86% 0.01 245);
+}
+
+.assistant-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.chat-placeholder {
+  align-self: end;
+  display: grid;
+  gap: 12px;
+  color: oklch(40% 0.018 245);
+  font-size: 13px;
+}
+
+.bottom-drawer {
+  margin: 0 10px 10px;
+  min-height: 118px;
+  overflow: hidden;
+}
+
+.drawer-tabs {
+  gap: 6px;
+  padding: 9px;
+  border-bottom: 1px solid oklch(86% 0.01 245);
+}
+
+.drawer-content {
+  padding: 10px 12px;
+}
+
+.drawer-content p {
+  margin: 0;
+}
