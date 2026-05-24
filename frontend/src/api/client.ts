@@ -1,4 +1,4 @@
-import type { ApplyResult, CompileResult, PreviewPayload, WorkbenchSnapshot } from './types'
+import type { ApplyResult, AssistantResult, CompileResult, PreviewPayload, WorkbenchSnapshot } from './types'
 
 const API_BASE = import.meta.env.VITE_OPENBREP_API || ''
 
@@ -50,6 +50,18 @@ export async function compileProject(): Promise<CompileResult> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ compiler_mode: 'mock' }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function askAssistant(message: string): Promise<AssistantResult> {
+  return requestJson<AssistantResult>(
+    '/api/assistant',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )

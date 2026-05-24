@@ -18,6 +18,7 @@ test('updates draft parameter without changing saved parameter value', async () 
       warnings: [],
     }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
+    askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: { A: 2 },
@@ -52,6 +53,7 @@ test('loads a project path and clears stale draft parameters', async () => {
       warnings: ['loaded'],
     }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
+    askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: {},
@@ -99,6 +101,7 @@ test('records compile results in the workbench log', async () => {
         warnings: [],
       },
     }),
+    askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async () => ({
       ok: true,
       changed: {},
@@ -115,4 +118,43 @@ test('records compile results in the workbench log', async () => {
     'Mock compile passed: /workspace/output/Chair.gsm',
   ])
   expect(store.getState().compiling).toBe(false)
+})
+
+test('adds user and assistant messages to the assistant thread', async () => {
+  const store = createWorkbenchStore({
+    fetchSnapshot: async () => ({
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+    fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
+    loadProjectPath: async () => ({
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+    compileProject: async () => ({ ok: false, error: 'not loaded' }),
+    askAssistant: async (message: string) => ({
+      ok: true,
+      assistant: { kind: 'explain_project', reply: `reply to ${message}` },
+    }),
+    applyParameters: async () => ({
+      ok: true,
+      changed: {},
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+  })
+
+  await store.getState().sendAssistantMessage('解释这个构件')
+
+  expect(store.getState().assistantMessages).toEqual([
+    { role: 'user', content: '解释这个构件' },
+    { role: 'assistant', content: 'reply to 解释这个构件' },
+  ])
+  expect(store.getState().assistantBusy).toBe(false)
 })

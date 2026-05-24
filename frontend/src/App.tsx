@@ -17,11 +17,14 @@ export default function App() {
   const applying = useWorkbenchStore((state) => state.applying)
   const compiling = useWorkbenchStore((state) => state.compiling)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
+  const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
+  const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
   const load = useWorkbenchStore((state) => state.load)
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
+  const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const hasDraftChanges = useWorkbenchStore((state) => state.hasDraftChanges)
   const grouped = groupParameters(parameters)
 
@@ -55,7 +58,7 @@ export default function App() {
           draftParameters={draftParameters}
           onChange={(name, value) => void setDraftParameter(name, value)}
         />
-        <AssistantPanel />
+        <AssistantPanel messages={assistantMessages} busy={assistantBusy} onSend={(message) => void sendAssistantMessage(message)} />
       </section>
       <BottomDrawer warnings={warnings} compileLog={compileLog} />
     </main>

@@ -1,12 +1,22 @@
 import { createStore } from 'zustand/vanilla'
-import { applyParameters, compileProject, fetchPreview, fetchSnapshot, loadProjectPath } from '../api/client'
-import type { ApplyResult, CompileResult, PreviewPayload, WorkbenchParameter, WorkbenchProject, WorkbenchSnapshot } from '../api/types'
+import { applyParameters, askAssistant, compileProject, fetchPreview, fetchSnapshot, loadProjectPath } from '../api/client'
+import type {
+  ApplyResult,
+  AssistantMessage,
+  AssistantResult,
+  CompileResult,
+  PreviewPayload,
+  WorkbenchParameter,
+  WorkbenchProject,
+  WorkbenchSnapshot,
+} from '../api/types'
 
 export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   compileProject: () => Promise<CompileResult>
+  askAssistant: (message: string) => Promise<AssistantResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
 }
 
@@ -20,9 +30,12 @@ export interface WorkbenchState {
   applying: boolean
   compiling: boolean
   compileLog: string[]
+  assistantBusy: boolean
+  assistantMessages: AssistantMessage[]
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
   compileCurrentProject: () => Promise<void>
+  sendAssistantMessage: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
   hasDraftChanges: () => boolean
@@ -33,6 +46,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchPreview,
   loadProjectPath,
   compileProject,
+  askAssistant,
   applyParameters,
 }
 
@@ -47,6 +61,8 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     applying: false,
     compiling: false,
     compileLog: [],
+    assistantBusy: false,
+    assistantMessages: [],
 
     async load() {
       set({ loading: true })
@@ -107,6 +123,21 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       set((state) => ({
         compileLog: [message, ...state.compileLog].slice(0, 20),
         compiling: false,
+      }))
+    },
+
+    async sendAssistantMessage(message) {
+      const trimmed = message.trim()
+      if (!trimmed) return
+      set((state) => ({
+        assistantBusy: true,
+        assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
+      }))
+      const result = await api.askAssistant(trimmed)
+      const reply = result.ok && result.assistant ? result.assistant.reply : result.error ?? 'Assistant request failed.'
+      set((state) => ({
+        assistantBusy: false,
+        assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
       }))
     },
 

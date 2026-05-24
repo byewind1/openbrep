@@ -104,3 +104,31 @@ def test_workbench_session_compile_requires_loaded_hsf_project():
 
     assert response["ok"] is False
     assert "Load an HSF project" in response["error"]
+
+
+def test_workbench_session_assistant_explains_loaded_project(tmp_path):
+    project = HSFProject.create_new("ExplainedShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/assistant", {"message": "解释这个构件"})
+
+    assert response["ok"] is True
+    assert response["assistant"]["kind"] == "explain_project"
+    assert "ExplainedShelf" in response["assistant"]["reply"]
+
+
+def test_workbench_session_assistant_explains_parameter_mentions(tmp_path):
+    project = HSFProject.create_new("ParameterShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/assistant", {"message": "详细解释 A 参数"})
+
+    assert response["ok"] is True
+    assert response["assistant"]["kind"] == "explain_parameter"
+    assert "参数：A" in response["assistant"]["reply"]
+    assert "3D" in response["assistant"]["reply"]

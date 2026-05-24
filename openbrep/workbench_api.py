@@ -8,6 +8,19 @@ from typing import Any
 from urllib.parse import urlparse
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
+from openbrep.explainer.chat_adapter import build_chat_explanation_reply
+from openbrep.explainer.context_builder import (
+    build_project_context,
+    build_project_parameter_context,
+    build_project_script_context,
+    resolve_parameter_targets,
+    resolve_script_target,
+)
+from openbrep.explainer.service import (
+    explain_parameter_context,
+    explain_project_context,
+    explain_script_context,
+)
 from openbrep.gdl_previewer import preview_3d_script
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from ui.three_preview import preview_3d_to_three_payload
@@ -204,6 +217,46 @@ class WorkbenchSession:
             **({} if result.success else {"error": result.stderr or "Compile failed"}),
         }
 
+    def assistant_reply(self, body: dict[str, Any]) -> dict[str, Any]:
+        message = str(body.get("message") or "").strip()
+        if not message:
+            return {"ok": False, "error": "Assistant message is empty."}
+
+        parameter_targets = resolve_parameter_targets(self.project, message)
+        if parameter_targets:
+            context = build_project_parameter_context(self.project, parameter_targets[0])
+            if context is not None:
+                explanation = explain_parameter_context(context)
+                return {
+                    "ok": True,
+                    "assistant": {
+                        "kind": "explain_parameter",
+                        "reply": build_chat_explanation_reply(explanation, user_input=message),
+                    },
+                }
+
+        script_target = resolve_script_target(message)
+        if script_target:
+            context = build_project_script_context(self.project, script_target)
+            if context is not None:
+                explanation = explain_script_context(context)
+                return {
+                    "ok": True,
+                    "assistant": {
+                        "kind": "explain_script",
+                        "reply": build_chat_explanation_reply(explanation, user_input=message),
+                    },
+                }
+
+        explanation = explain_project_context(build_project_context(self.project))
+        return {
+            "ok": True,
+            "assistant": {
+                "kind": "explain_project",
+                "reply": build_chat_explanation_reply(explanation, user_input=message),
+            },
+        }
+
     def route(
         self,
         method: str,
@@ -228,6 +281,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/compile":
             return self.compile_project(body)
+
+        if normalized_method == "POST" and route == "/api/assistant":
+            return self.assistant_reply(body)
 
         return {"ok": False, "error": f"Unknown route: {normalized_method} {route}"}
 

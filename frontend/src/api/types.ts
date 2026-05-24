@@ -64,3 +64,17 @@ export interface CompileResult {
   compile?: CompileInfo
   error?: string
 }
+
+export interface AssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface AssistantResult {
+  ok: boolean
+  assistant?: {
+    kind: string
+    reply: string
+  }
+  error?: string
+}

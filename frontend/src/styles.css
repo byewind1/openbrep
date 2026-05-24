@@ -271,14 +271,68 @@ input[type="text"] {
 
 .assistant-panel {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
 }
 
-.chat-placeholder {
-  align-self: end;
+.assistant-thread {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.assistant-empty {
+  margin: auto 0 0;
+  color: oklch(46% 0.018 245);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.assistant-message {
   display: grid;
-  gap: 12px;
-  color: oklch(40% 0.018 245);
+  gap: 5px;
+  border: 1px solid oklch(86% 0.01 245);
+  border-radius: 7px;
+  padding: 9px;
+  background: oklch(97% 0.006 245);
+  font-size: 13px;
+}
+
+.assistant-message.user {
+  background: oklch(94% 0.014 245);
+}
+
+.assistant-message span {
+  color: oklch(43% 0.018 245);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.assistant-message p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.assistant-input {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.assistant-input textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 70px;
+  max-height: 140px;
+  border: 1px solid oklch(82% 0.014 245);
+  border-radius: 7px;
+  background: oklch(99% 0.003 245);
+  color: oklch(24% 0.018 245);
+  padding: 8px;
+  font: inherit;
   font-size: 13px;
 }
 
