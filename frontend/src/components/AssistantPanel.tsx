@@ -32,7 +32,7 @@ export function AssistantPanel({ messages, busy, onSend, onGenerate }: Assistant
     <aside className="assistant-panel">
       <div className="panel-heading">
         <h2>AI 助手</h2>
-        <span>{busy ? '分析中' : 'Explain'}</span>
+        <span>{busy ? 'Working' : 'Ready'}</span>
       </div>
       <div className="assistant-thread">
         {messages.length ? (
@@ -43,13 +43,13 @@ export function AssistantPanel({ messages, busy, onSend, onGenerate }: Assistant
             </article>
           ))
         ) : (
-          <p className="assistant-empty">加载 HSF 后，可以问我解释构件、分析 3D 脚本，或说明某个参数。</p>
+          <p className="assistant-empty">No messages</p>
         )}
       </div>
       <form className="assistant-input" onSubmit={submitMessage}>
         <textarea
           rows={3}
-          placeholder="例如：详细解释 A 参数"
+          placeholder="Ask or generate..."
           value={draft}
           onChange={(event) => setDraft(event.currentTarget.value)}
         />

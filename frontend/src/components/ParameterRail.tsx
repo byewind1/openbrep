@@ -2,28 +2,37 @@ import type { WorkbenchParameter } from '../api/types'
 
 interface ParameterRailProps {
   title: string
-  parameters: WorkbenchParameter[]
+  parameters?: WorkbenchParameter[]
+  sections?: Array<{ title: string; parameters: WorkbenchParameter[] }>
   draftParameters: Record<string, unknown>
   onChange: (name: string, value: unknown) => void
 }
 
-export function ParameterRail({ title, parameters, draftParameters, onChange }: ParameterRailProps) {
+export function ParameterRail({ title, parameters = [], sections, draftParameters, onChange }: ParameterRailProps) {
+  const renderedSections = sections ?? [{ title, parameters }]
+  const count = renderedSections.reduce((total, section) => total + section.parameters.length, 0)
+
   return (
     <aside className="parameter-rail">
       <div className="panel-heading">
         <h2>{title}</h2>
-        <span>{parameters.length}</span>
+        <span>{count}</span>
       </div>
-      <div className="parameter-list">
-        {parameters.map((parameter) => (
-          <ParameterControl
-            key={parameter.name}
-            parameter={parameter}
-            value={draftParameters[parameter.name] ?? parseParameterValue(parameter)}
-            onChange={onChange}
-          />
-        ))}
-      </div>
+      {renderedSections.map((section) => (
+        <section className="parameter-section" key={section.title}>
+          <div className="section-label">{section.title}</div>
+          <div className="parameter-list">
+            {section.parameters.map((parameter) => (
+              <ParameterControl
+                key={parameter.name}
+                parameter={parameter}
+                value={draftParameters[parameter.name] ?? parseParameterValue(parameter)}
+                onChange={onChange}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </aside>
   )
 }
@@ -37,15 +46,13 @@ function ParameterControl({
   value: unknown
   onChange: (name: string, value: unknown) => void
 }) {
-  const label = parameter.description || parameter.name
+  const label = parameter.name
   if (parameter.type_tag === 'Boolean') {
     return (
-      <label className="parameter-control inline-control">
-        <span>
-          <strong>{label}</strong>
-          <small>{parameter.name}</small>
-        </span>
+      <label className="parameter-control compact-control">
+        <span className="parameter-name">{label}</span>
         <input
+          className="toggle-input"
           type="checkbox"
           checked={Boolean(value)}
           onChange={(event) => onChange(parameter.name, event.currentTarget.checked)}
@@ -56,9 +63,10 @@ function ParameterControl({
 
   if (parameter.type_tag === 'Integer') {
     return (
-      <label className="parameter-control">
-        <ControlLabel label={label} parameter={parameter} value={String(value)} />
+      <label className="parameter-control compact-control">
+        <span className="parameter-name">{label}</span>
         <input
+          className="numeric-input"
           type="number"
           min={0}
           step={1}
@@ -70,17 +78,14 @@ function ParameterControl({
   }
 
   if (['Length', 'Angle', 'RealNum'].includes(parameter.type_tag)) {
-    const numeric = Number(value)
-    const max = parameter.type_tag === 'Angle' ? 360 : Math.max(1, numeric * 2.5)
     return (
-      <label className="parameter-control">
-        <ControlLabel label={label} parameter={parameter} value={formatValue(value)} />
+      <label className="parameter-control compact-control">
+        <span className="parameter-name">{label}</span>
         <input
-          type="range"
-          min={0}
-          max={max}
+          className="numeric-input"
+          type="number"
           step={parameter.type_tag === 'Angle' ? 1 : 0.01}
-          value={numeric}
+          value={Number(value)}
           onChange={(event) => onChange(parameter.name, Number(event.currentTarget.value))}
         />
       </label>
@@ -88,22 +93,15 @@ function ParameterControl({
   }
 
   return (
-    <label className="parameter-control">
-      <ControlLabel label={label} parameter={parameter} value={String(value)} />
-      <input type="text" value={String(value)} onChange={(event) => onChange(parameter.name, event.currentTarget.value)} />
+    <label className="parameter-control compact-control">
+      <span className="parameter-name">{label}</span>
+      <input
+        className="text-input"
+        type="text"
+        value={String(value)}
+        onChange={(event) => onChange(parameter.name, event.currentTarget.value)}
+      />
     </label>
-  )
-}
-
-function ControlLabel({ label, parameter, value }: { label: string; parameter: WorkbenchParameter; value: string }) {
-  return (
-    <span className="control-label">
-      <span>
-        <strong>{label}</strong>
-        <small>{parameter.name}</small>
-      </span>
-      <code>{value}</code>
-    </span>
   )
 }
 
@@ -111,8 +109,4 @@ function parseParameterValue(parameter: WorkbenchParameter): unknown {
   if (parameter.type_tag === 'Boolean') return parameter.value === '1'
   if (['Length', 'Angle', 'RealNum', 'Integer'].includes(parameter.type_tag)) return Number(parameter.value)
   return parameter.value
-}
-
-function formatValue(value: unknown): string {
-  return typeof value === 'number' ? value.toFixed(2) : String(value)
 }

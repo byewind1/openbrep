@@ -47,24 +47,24 @@ export function TopMenu({
       <div className="brand-lockup">
         <span className="brand-mark">OB</span>
         <div>
-          <strong>OpenBrep Studio</strong>
-          <span>{project ? `${project.name} · ${project.source ?? 'workspace'}` : 'No project loaded'}</span>
+          <strong>{project?.name ?? 'OpenBrep'}</strong>
+          <span>{project?.source ?? 'workbench'}</span>
         </div>
       </div>
       <form className="project-path-form" onSubmit={submitPath}>
-        <label htmlFor="hsf-path">HSF project</label>
         <input
           id="hsf-path"
           type="text"
-          placeholder="/path/to/Object"
+          aria-label="HSF project path"
+          placeholder="HSF project path"
           value={path}
           onChange={(event) => setPath(event.currentTarget.value)}
         />
         <button type="submit" disabled={loading || path.trim().length === 0}>
-          {loading ? '加载中' : '加载'}
+          {loading ? '...' : 'Open'}
         </button>
         <button type="button" disabled={loading} onClick={onBrowseProjectDirectory}>
-          Browse
+          ...
         </button>
       </form>
       <nav className="menu-row" aria-label="Migration status">
@@ -95,22 +95,16 @@ export function TopMenu({
           }
         />
         <button type="button" disabled={compilerSettings.mode !== 'lp'} onClick={onBrowseCompilerFile}>
-          Browse LP
+          LP...
         </button>
         <button type="button" disabled={!project?.path || hasDraftChanges || compiling} onClick={onCompile}>
-          {compiling ? '编译中' : '编译 GSM'}
-        </button>
-        <button type="button" disabled title="下一步接入旧版 AI 生成 / 修改 / 解释">
-          AI 协作
-        </button>
-        <button type="button" disabled title="后续接入 Archicad / Tapir">
-          Archicad
+          {compiling ? '...' : 'GSM'}
         </button>
       </nav>
       <div className="topbar-status">
-        <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? '临时预览' : '已保存'}</span>
+        <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? 'Draft' : 'Saved'}</span>
         <button className="primary-action" disabled={!hasDraftChanges || applying} onClick={onApply}>
-          {applying ? '应用中' : '应用到 HSF'}
+          {applying ? '...' : 'Apply'}
         </button>
       </div>
     </header>

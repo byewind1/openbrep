@@ -13,8 +13,8 @@ export function PreviewViewport({ preview, warnings }: PreviewViewportProps) {
     <section className="preview-stage">
       <div className="preview-toolbar">
         <div>
-          <strong>Live 3D Preview</strong>
-          <span>参数变化实时响应，保存动作独立</span>
+          <strong>3D Preview</strong>
+          <span>{preview?.meshes.length ?? 0} meshes</span>
         </div>
         <div className="viewport-tabs">
           <button className="active">3D</button>
@@ -23,10 +23,11 @@ export function PreviewViewport({ preview, warnings }: PreviewViewportProps) {
       </div>
       <div className="canvas-wrap">
         <Canvas camera={{ position: [2.8, -3.6, 2.4], fov: 42 }}>
-          <color attach="background" args={['#f7f9fb']} />
-          <ambientLight intensity={0.8} />
-          <directionalLight position={[3, -4, 5]} intensity={2.2} />
-          <gridHelper args={[4, 8, '#94a3b8', '#d8e0ea']} rotation={[Math.PI / 2, 0, 0]} />
+          <color attach="background" args={['#05070d']} />
+          <ambientLight intensity={0.55} />
+          <directionalLight position={[3, -4, 5]} intensity={2.6} />
+          <directionalLight position={[-4, 2, 3]} intensity={0.8} color="#38bdf8" />
+          <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} />
           <axesHelper args={[1.4]} />
           {preview?.meshes.map((mesh, index) => <MeshView key={`${mesh.name}-${index}`} mesh={mesh} index={index} />)}
           <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
@@ -46,7 +47,7 @@ function MeshView({ mesh, index }: { mesh: PreviewMesh; index: number }) {
   geometry.setIndex(new BufferAttribute(new Uint32Array(mesh.faces.flat()), 1))
   geometry.computeVertexNormals()
 
-  const colors = ['#0ea5e9', '#22c55e', '#f97316', '#8b5cf6', '#14b8a6']
+  const colors = ['#f59e0b', '#38bdf8', '#10b981', '#f43f5e', '#a78bfa']
   return (
     <mesh geometry={geometry}>
       <meshStandardMaterial color={colors[index % colors.length]} roughness={0.68} metalness={0.02} side={DoubleSide} />

@@ -55,18 +55,15 @@ export default function App() {
       />
       <section className="workspace-grid" aria-busy={loading}>
         <ParameterRail
-          title="尺寸参数"
-          parameters={grouped.dimensions}
+          title="参数"
+          sections={[
+            { title: '尺寸', parameters: grouped.dimensions },
+            { title: '属性', parameters: grouped.properties },
+          ]}
           draftParameters={draftParameters}
           onChange={(name, value) => void setDraftParameter(name, value)}
         />
         <PreviewViewport preview={preview} warnings={warnings} />
-        <ParameterRail
-          title="数量 / 属性"
-          parameters={grouped.properties}
-          draftParameters={draftParameters}
-          onChange={(name, value) => void setDraftParameter(name, value)}
-        />
         <AssistantPanel
           messages={assistantMessages}
           busy={assistantBusy}
