@@ -1,34 +1,42 @@
+import type { WorkbenchApi } from './workbenchStore'
 import { createWorkbenchStore } from './workbenchStore'
 
-test('updates draft parameter without changing saved parameter value', async () => {
-  const store = createWorkbenchStore({
+function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
+  return {
     fetchSnapshot: async () => ({
-      project: { name: 'Demo', source: 'test' },
-      parameters: [
-        { name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true },
-      ],
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
+      compiler: { mode: 'mock', converter_path: '' },
     }),
     fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
-    loadProjectPath: async () => ({
-      project: { name: 'Loaded', source: 'hsf', path: '/tmp/Loaded' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
+    loadProjectPath: async (path: string) => ({
+      project: { name: 'Chair', source: 'hsf', path },
+      parameters: [{ name: 'B', type_tag: 'Length', description: 'Depth', value: '0.5', is_fixed: true }],
+      preview: { meshes: [], wires: [], warnings: ['loaded'] },
+      warnings: ['loaded'],
+      compiler: { mode: 'mock', converter_path: '' },
     }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
+    updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
-    applyParameters: async () => ({
+    applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
-      changed: { A: 2 },
-      project: { name: 'Demo', source: 'test' },
+      changed: parameters,
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
       parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '2.0', is_fixed: true }],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
+      compiler: { mode: 'mock', converter_path: '' },
     }),
-  })
+    ...overrides,
+  }
+}
+
+test('updates draft parameter without changing saved parameter value', async () => {
+  const store = createWorkbenchStore(makeApi())
 
   await store.getState().load()
   await store.getState().setDraftParameter('A', 2)
@@ -39,32 +47,7 @@ test('updates draft parameter without changing saved parameter value', async () 
 
 test('loads a project path and clears stale draft parameters', async () => {
   const loadedPath = '/workspace/Chair'
-  const store = createWorkbenchStore({
-    fetchSnapshot: async () => ({
-      project: { name: 'Demo', source: 'test' },
-      parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-    fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
-    loadProjectPath: async (path: string) => ({
-      project: { name: 'Chair', source: 'hsf', path },
-      parameters: [{ name: 'B', type_tag: 'Length', description: 'Depth', value: '0.5', is_fixed: true }],
-      preview: { meshes: [], wires: [], warnings: ['loaded'] },
-      warnings: ['loaded'],
-    }),
-    compileProject: async () => ({ ok: false, error: 'not loaded' }),
-    askAssistant: async () => ({ ok: false, error: 'not loaded' }),
-    generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
-    applyParameters: async () => ({
-      ok: true,
-      changed: {},
-      project: { name: 'Demo', source: 'test' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-  })
+  const store = createWorkbenchStore(makeApi())
 
   await store.getState().load()
   await store.getState().setDraftParameter('A', 2)
@@ -76,83 +59,72 @@ test('loads a project path and clears stale draft parameters', async () => {
   expect(store.getState().warnings).toEqual(['loaded'])
 })
 
-test('records compile results in the workbench log', async () => {
-  const store = createWorkbenchStore({
-    fetchSnapshot: async () => ({
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-    fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
-    loadProjectPath: async () => ({
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-    compileProject: async () => ({
-      ok: true,
-      compile: {
-        success: true,
-        mode: 'mock',
-        output_path: '/workspace/output/Chair.gsm',
-        stdout: 'compiled',
-        stderr: '',
-        errors: [],
+test('loads compiler settings from snapshot', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: [] },
         warnings: [],
-      },
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter' },
+      }),
     }),
-    askAssistant: async () => ({ ok: false, error: 'not loaded' }),
-    generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
-    applyParameters: async () => ({
-      ok: true,
-      changed: {},
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
+  )
+
+  await store.getState().load()
+
+  expect(store.getState().compilerSettings).toEqual({
+    mode: 'lp',
+    converter_path: '/Applications/LP_XMLConverter',
   })
+})
+
+test('updates compiler settings through the API', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      updateCompilerSettings: async (settings) => ({ ok: true, compiler: settings }),
+    }),
+  )
+
+  await store.getState().setCompilerSettings({ mode: 'lp', converter_path: '/converter' })
+
+  expect(store.getState().compilerSettings).toEqual({ mode: 'lp', converter_path: '/converter' })
+})
+
+test('records compile results in the workbench log', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      compileProject: async () => ({
+        ok: true,
+        compile: {
+          success: true,
+          mode: 'lp',
+          output_path: '/workspace/output/Chair.gsm',
+          stdout: 'compiled',
+          stderr: '',
+          errors: [],
+          warnings: [],
+        },
+      }),
+    }),
+  )
 
   await store.getState().compileCurrentProject()
 
-  expect(store.getState().compileLog).toEqual([
-    'Mock compile passed: /workspace/output/Chair.gsm',
-  ])
+  expect(store.getState().compileLog).toEqual(['LP compile passed: /workspace/output/Chair.gsm'])
   expect(store.getState().compiling).toBe(false)
 })
 
 test('adds user and assistant messages to the assistant thread', async () => {
-  const store = createWorkbenchStore({
-    fetchSnapshot: async () => ({
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
+  const store = createWorkbenchStore(
+    makeApi({
+      askAssistant: async (message: string) => ({
+        ok: true,
+        assistant: { kind: 'explain_project', reply: `reply to ${message}` },
+      }),
     }),
-    fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
-    loadProjectPath: async () => ({
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-    compileProject: async () => ({ ok: false, error: 'not loaded' }),
-    askAssistant: async (message: string) => ({
-      ok: true,
-      assistant: { kind: 'explain_project', reply: `reply to ${message}` },
-    }),
-    generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
-    applyParameters: async () => ({
-      ok: true,
-      changed: {},
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-  })
+  )
 
   await store.getState().sendAssistantMessage('解释这个构件')
 
@@ -164,46 +136,25 @@ test('adds user and assistant messages to the assistant thread', async () => {
 })
 
 test('generate assistant message refreshes preview and records changed files', async () => {
-  const store = createWorkbenchStore({
-    fetchSnapshot: async () => ({
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-    fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
-    loadProjectPath: async () => ({
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-    compileProject: async () => ({ ok: false, error: 'not loaded' }),
-    askAssistant: async () => ({ ok: false, error: 'use generate' }),
-    generateWithAssistant: async (message: string) => ({
-      ok: true,
-      assistant: {
-        kind: 'generate',
-        reply: `changed ${message}`,
-        changed_files: ['scripts/3d.gdl'],
-        intent: 'MODIFY',
-      },
-      preview: {
-        meshes: [{ name: 'changed', vertices: [], faces: [] }],
-        wires: [],
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async (message: string) => ({
+        ok: true,
+        assistant: {
+          kind: 'generate',
+          reply: `changed ${message}`,
+          changed_files: ['scripts/3d.gdl'],
+          intent: 'MODIFY',
+        },
+        preview: {
+          meshes: [{ name: 'changed', vertices: [], faces: [] }],
+          wires: [],
+          warnings: ['preview refreshed'],
+        },
         warnings: ['preview refreshed'],
-      },
-      warnings: ['preview refreshed'],
+      }),
     }),
-    applyParameters: async () => ({
-      ok: true,
-      changed: {},
-      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
-      parameters: [],
-      preview: { meshes: [], wires: [], warnings: [] },
-      warnings: [],
-    }),
-  })
+  )
 
   await store.getState().generateAssistantChanges('加一块层板')
 

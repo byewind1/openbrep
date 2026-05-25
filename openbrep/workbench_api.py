@@ -155,13 +155,31 @@ class WorkbenchSession:
         self.source = "demo"
         self.source_path: Path | None = None
         self.pipeline_class = pipeline_class
+        self.compiler_mode = "mock"
+        self.converter_path = ""
 
     def snapshot(self) -> dict[str, Any]:
-        return project_to_snapshot(
+        snapshot = project_to_snapshot(
             self.project,
             source=self.source,
             source_path=str(self.source_path) if self.source_path else None,
         )
+        snapshot["compiler"] = self.compiler_settings()
+        return snapshot
+
+    def compiler_settings(self) -> dict[str, str]:
+        return {
+            "mode": self.compiler_mode,
+            "converter_path": self.converter_path,
+        }
+
+    def update_compiler_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        mode = str(body.get("mode") or self.compiler_mode).strip().lower()
+        if mode not in {"mock", "lp"}:
+            return {"ok": False, "error": f"Unsupported compiler mode: {mode}"}
+        self.compiler_mode = mode
+        self.converter_path = str(body.get("converter_path") or "").strip()
+        return {"ok": True, "compiler": self.compiler_settings()}
 
     def load_hsf_directory(self, path: str) -> dict[str, Any]:
         hsf_path = Path(path).expanduser().resolve()
@@ -197,8 +215,10 @@ class WorkbenchSession:
         output_dir = Path(str(body.get("output_dir") or self.source_path.parent / "output"))
         output_dir = output_dir.expanduser().resolve()
         output_gsm = output_dir / f"{self.project.name}.gsm"
-        compiler_mode = str(body.get("compiler_mode") or "mock")
+        compiler_mode = str(body.get("compiler_mode") or self.compiler_mode)
         converter_path = body.get("converter_path")
+        if converter_path is None:
+            converter_path = self.converter_path
         compiler = (
             HSFCompiler(str(converter_path)) if compiler_mode == "lp" and converter_path else MockHSFCompiler()
         )
@@ -319,6 +339,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/load":
             return self.load_hsf_directory(str(body.get("path") or ""))
+
+        if normalized_method == "POST" and route == "/api/settings/compiler":
+            return self.update_compiler_settings(body)
 
         if normalized_method == "POST" and route == "/api/preview":
             return self.preview(body.get("parameters") or {})

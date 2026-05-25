@@ -1,4 +1,13 @@
-import type { ApplyResult, AssistantResult, CompileResult, GenerateResult, PreviewPayload, WorkbenchSnapshot } from './types'
+import type {
+  ApplyResult,
+  AssistantResult,
+  CompileResult,
+  CompilerSettings,
+  CompilerSettingsResult,
+  GenerateResult,
+  PreviewPayload,
+  WorkbenchSnapshot,
+} from './types'
 
 const API_BASE = import.meta.env.VITE_OPENBREP_API || ''
 
@@ -49,7 +58,19 @@ export async function compileProject(): Promise<CompileResult> {
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ compiler_mode: 'mock' }),
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function updateCompilerSettings(settings: CompilerSettings): Promise<CompilerSettingsResult> {
+  return requestJson<CompilerSettingsResult>(
+    '/api/settings/compiler',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
@@ -91,6 +112,7 @@ async function requestJson<T>(path: string, init: RequestInit, fallback: T): Pro
 
 export const fallbackSnapshot: WorkbenchSnapshot = {
   project: { name: 'Demo Bookshelf', source: 'fallback' },
+  compiler: { mode: 'mock', converter_path: '' },
   parameters: [
     { name: 'A', type_tag: 'Length', description: '总宽', value: '1.2', is_fixed: true },
     { name: 'B', type_tag: 'Length', description: '总深', value: '0.36', is_fixed: true },

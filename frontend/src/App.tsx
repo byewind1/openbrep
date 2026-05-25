@@ -17,12 +17,14 @@ export default function App() {
   const applying = useWorkbenchStore((state) => state.applying)
   const compiling = useWorkbenchStore((state) => state.compiling)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
+  const compilerSettings = useWorkbenchStore((state) => state.compilerSettings)
   const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
   const load = useWorkbenchStore((state) => state.load)
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
+  const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
@@ -41,6 +43,8 @@ export default function App() {
         onApply={() => void applyDraftParameters()}
         onLoadProjectPath={(path) => void loadProjectPath(path)}
         onCompile={() => void compileCurrentProject()}
+        compilerSettings={compilerSettings}
+        onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
         applying={applying}
         loading={loading}
         compiling={compiling}

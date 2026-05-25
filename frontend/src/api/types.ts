@@ -37,11 +37,17 @@ export interface PreviewPayload {
   warnings?: string[]
 }
 
+export interface CompilerSettings {
+  mode: 'mock' | 'lp'
+  converter_path: string
+}
+
 export interface WorkbenchSnapshot {
   project: WorkbenchProject
   parameters: WorkbenchParameter[]
   preview: PreviewPayload
   warnings: string[]
+  compiler?: CompilerSettings
 }
 
 export interface ApplyResult extends WorkbenchSnapshot {
@@ -62,6 +68,12 @@ export interface CompileInfo {
 export interface CompileResult {
   ok: boolean
   compile?: CompileInfo
+  error?: string
+}
+
+export interface CompilerSettingsResult {
+  ok: boolean
+  compiler?: CompilerSettings
   error?: string
 }
 

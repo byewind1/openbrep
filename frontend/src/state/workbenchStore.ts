@@ -7,12 +7,15 @@ import {
   fetchSnapshot,
   generateWithAssistant,
   loadProjectPath,
+  updateCompilerSettings,
 } from '../api/client'
 import type {
   ApplyResult,
   AssistantMessage,
   AssistantResult,
   CompileResult,
+  CompilerSettings,
+  CompilerSettingsResult,
   GenerateResult,
   PreviewPayload,
   WorkbenchParameter,
@@ -25,6 +28,7 @@ export interface WorkbenchApi {
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   compileProject: () => Promise<CompileResult>
+  updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   askAssistant: (message: string) => Promise<AssistantResult>
   generateWithAssistant: (message: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
@@ -40,10 +44,12 @@ export interface WorkbenchState {
   applying: boolean
   compiling: boolean
   compileLog: string[]
+  compilerSettings: CompilerSettings
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
+  setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   compileCurrentProject: () => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
   generateAssistantChanges: (message: string) => Promise<void>
@@ -57,6 +63,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchPreview,
   loadProjectPath,
   compileProject,
+  updateCompilerSettings,
   askAssistant,
   generateWithAssistant,
   applyParameters,
@@ -73,6 +80,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     applying: false,
     compiling: false,
     compileLog: [],
+    compilerSettings: { mode: 'mock', converter_path: '' },
     assistantBusy: false,
     assistantMessages: [],
 
@@ -84,6 +92,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         parameters: snapshot.parameters,
         preview: snapshot.preview,
         warnings: snapshot.warnings,
+        compilerSettings: snapshot.compiler ?? get().compilerSettings,
         loading: false,
       })
     },
@@ -98,9 +107,17 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         parameters: snapshot.parameters,
         preview: snapshot.preview,
         warnings: snapshot.warnings,
+        compilerSettings: snapshot.compiler ?? get().compilerSettings,
         draftParameters: {},
         loading: false,
       })
+    },
+
+    async setCompilerSettings(settings) {
+      const result = await api.updateCompilerSettings(settings)
+      if (result.ok && result.compiler) {
+        set({ compilerSettings: result.compiler })
+      }
     },
 
     async setDraftParameter(name, value) {

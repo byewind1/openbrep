@@ -98,6 +98,38 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     assert (output_dir / "CompiledShelf.gsm").exists()
 
 
+def test_workbench_session_exposes_and_updates_compiler_settings():
+    session = WorkbenchSession()
+
+    update = session.route(
+        "POST",
+        "/api/settings/compiler",
+        {"mode": "lp", "converter_path": "/Applications/LP_XMLConverter"},
+    )
+    snapshot = session.route("GET", "/api/snapshot")
+
+    assert update["ok"] is True
+    assert update["compiler"] == {
+        "mode": "lp",
+        "converter_path": "/Applications/LP_XMLConverter",
+    }
+    assert snapshot["compiler"] == update["compiler"]
+
+
+def test_workbench_session_compile_uses_session_compiler_settings(tmp_path):
+    project = HSFProject.create_new("LPFallbackShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.route("POST", "/api/settings/compiler", {"mode": "lp", "converter_path": "/missing/converter"})
+    response = session.route("POST", "/api/compile", {})
+
+    assert response["ok"] is False
+    assert response["compile"]["mode"] == "lp"
+    assert "LP_XMLConverter not found" in response["error"]
+
+
 def test_workbench_session_compile_requires_loaded_hsf_project():
     session = WorkbenchSession()
 

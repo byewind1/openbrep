@@ -19,7 +19,8 @@ body,
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -102,6 +103,24 @@ button:disabled {
 
 .menu-row {
   gap: 6px;
+}
+
+.menu-row select,
+.converter-path-input {
+  height: 30px;
+  border: 1px solid oklch(82% 0.014 245);
+  border-radius: 6px;
+  background: oklch(98% 0.006 245);
+  color: oklch(28% 0.018 245);
+}
+
+.menu-row select {
+  padding: 0 8px;
+}
+
+.converter-path-input {
+  width: 180px;
+  padding: 0 8px;
 }
 
 .project-path-form {

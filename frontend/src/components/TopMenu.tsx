@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { WorkbenchProject } from '../api/types'
+import type { CompilerSettings, WorkbenchProject } from '../api/types'
 
 interface TopMenuProps {
   project: WorkbenchProject | null
@@ -8,6 +8,8 @@ interface TopMenuProps {
   onApply: () => void
   onLoadProjectPath: (path: string) => void
   onCompile: () => void
+  compilerSettings: CompilerSettings
+  onCompilerSettingsChange: (settings: CompilerSettings) => void
   applying: boolean
   loading: boolean
   compiling: boolean
@@ -19,6 +21,8 @@ export function TopMenu({
   onApply,
   onLoadProjectPath,
   onCompile,
+  compilerSettings,
+  onCompilerSettingsChange,
   applying,
   loading,
   compiling,
@@ -57,6 +61,32 @@ export function TopMenu({
         </button>
       </form>
       <nav className="menu-row" aria-label="Migration status">
+        <select
+          aria-label="Compiler mode"
+          value={compilerSettings.mode}
+          onChange={(event) =>
+            onCompilerSettingsChange({
+              ...compilerSettings,
+              mode: event.currentTarget.value === 'lp' ? 'lp' : 'mock',
+            })
+          }
+        >
+          <option value="mock">Mock</option>
+          <option value="lp">LP</option>
+        </select>
+        <input
+          className="converter-path-input"
+          type="text"
+          placeholder="LP_XMLConverter path"
+          value={compilerSettings.converter_path}
+          disabled={compilerSettings.mode !== 'lp'}
+          onChange={(event) =>
+            onCompilerSettingsChange({
+              ...compilerSettings,
+              converter_path: event.currentTarget.value,
+            })
+          }
+        />
         <button type="button" disabled={!project?.path || hasDraftChanges || compiling} onClick={onCompile}>
           {compiling ? '编译中' : '编译 GSM'}
         </button>

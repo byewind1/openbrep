@@ -56,6 +56,8 @@ Included:
 - `/api/snapshot`, `/api/preview`, `/api/apply`
 - Parameter apply persists values back to the loaded HSF source directory
 - Mock GSM compilation through `/api/compile`
+- Compiler mode/path settings through `/api/settings/compiler`
+- LP_XMLConverter compile path support when mode is `lp`
 - Explanation assistant through `/api/assistant`
 - Pipeline-backed AI generation/modification through `/api/assistant/generate`
 - Left rail for dimensions
@@ -68,7 +70,6 @@ Not included yet:
 
 - Native file picker
 - `.gsm` import/decompile
-- Real LP_XMLConverter compile configuration
 - Full chat history persistence
 - Tauri packaging
 - Archicad/Tapir integration
