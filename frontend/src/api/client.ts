@@ -4,6 +4,7 @@ import type {
   CompileResult,
   CompilerSettings,
   CompilerSettingsResult,
+  DirectoryChoiceResult,
   GenerateResult,
   PreviewPayload,
   WorkbenchSnapshot,
@@ -37,6 +38,18 @@ export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> 
       body: JSON.stringify({ path }),
     },
     fallbackSnapshot,
+  )
+}
+
+export async function chooseProjectDirectory(): Promise<DirectoryChoiceResult> {
+  return requestJson<DirectoryChoiceResult>(
+    '/api/dialog/open-directory',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

@@ -2,6 +2,7 @@ import { createStore } from 'zustand/vanilla'
 import {
   applyParameters,
   askAssistant,
+  chooseProjectDirectory,
   compileProject,
   fetchPreview,
   fetchSnapshot,
@@ -16,6 +17,7 @@ import type {
   CompileResult,
   CompilerSettings,
   CompilerSettingsResult,
+  DirectoryChoiceResult,
   GenerateResult,
   PreviewPayload,
   WorkbenchParameter,
@@ -27,6 +29,7 @@ export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
+  chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   compileProject: () => Promise<CompileResult>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   askAssistant: (message: string) => Promise<AssistantResult>
@@ -49,6 +52,7 @@ export interface WorkbenchState {
   assistantMessages: AssistantMessage[]
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
+  browseProjectDirectory: () => Promise<void>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   compileCurrentProject: () => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
@@ -62,6 +66,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
   loadProjectPath,
+  chooseProjectDirectory,
   compileProject,
   updateCompilerSettings,
   askAssistant,
@@ -108,6 +113,24 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         preview: snapshot.preview,
         warnings: snapshot.warnings,
         compilerSettings: snapshot.compiler ?? get().compilerSettings,
+        draftParameters: {},
+        loading: false,
+      })
+    },
+
+    async browseProjectDirectory() {
+      set({ loading: true })
+      const result = await api.chooseProjectDirectory()
+      if (!result.ok || !result.project || !result.parameters || !result.preview) {
+        set({ loading: false })
+        return
+      }
+      set({
+        project: result.project,
+        parameters: result.parameters,
+        preview: result.preview,
+        warnings: result.warnings ?? result.preview.warnings ?? [],
+        compilerSettings: result.compiler ?? get().compilerSettings,
         draftParameters: {},
         loading: false,
       })

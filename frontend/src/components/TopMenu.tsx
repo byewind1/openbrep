@@ -7,6 +7,7 @@ interface TopMenuProps {
   hasDraftChanges: boolean
   onApply: () => void
   onLoadProjectPath: (path: string) => void
+  onBrowseProjectDirectory: () => void
   onCompile: () => void
   compilerSettings: CompilerSettings
   onCompilerSettingsChange: (settings: CompilerSettings) => void
@@ -20,6 +21,7 @@ export function TopMenu({
   hasDraftChanges,
   onApply,
   onLoadProjectPath,
+  onBrowseProjectDirectory,
   onCompile,
   compilerSettings,
   onCompilerSettingsChange,
@@ -58,6 +60,9 @@ export function TopMenu({
         />
         <button type="submit" disabled={loading || path.trim().length === 0}>
           {loading ? '加载中' : '加载'}
+        </button>
+        <button type="button" disabled={loading} onClick={onBrowseProjectDirectory}>
+          Browse
         </button>
       </form>
       <nav className="menu-row" aria-label="Migration status">

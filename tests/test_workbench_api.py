@@ -68,6 +68,27 @@ def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
     assert response["preview"]["meshes"]
 
 
+def test_workbench_session_choose_project_directory_loads_selected_hsf(tmp_path):
+    project = HSFProject.create_new("ChosenShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(directory_chooser=lambda: str(hsf_dir))
+    response = session.route("POST", "/api/dialog/open-directory", {})
+
+    assert response["ok"] is True
+    assert response["path"] == str(hsf_dir)
+    assert response["project"]["name"] == "ChosenShelf"
+
+
+def test_workbench_session_choose_project_directory_handles_cancel():
+    session = WorkbenchSession(directory_chooser=lambda: "")
+
+    response = session.route("POST", "/api/dialog/open-directory", {})
+
+    assert response["ok"] is False
+    assert response["cancelled"] is True
+
+
 def test_workbench_session_apply_persists_loaded_hsf_parameters(tmp_path):
     project = HSFProject.create_new("PersistedShelf", str(tmp_path))
     project.parameters.append(GDLParameter("shelf_count", "Integer", "Shelves", "4"))

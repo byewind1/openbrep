@@ -126,7 +126,7 @@ button:disabled {
 .project-path-form {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(220px, 1fr) auto;
+  grid-template-columns: auto minmax(220px, 1fr) auto auto;
   align-items: center;
   gap: 8px;
 }

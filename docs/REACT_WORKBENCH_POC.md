@@ -53,6 +53,7 @@ Included:
 
 - Demo bookshelf HSF project served by Python
 - Real HSF directory loading through `/api/project/load`
+- Native HSF directory picker through `/api/dialog/open-directory`
 - `/api/snapshot`, `/api/preview`, `/api/apply`
 - Parameter apply persists values back to the loaded HSF source directory
 - Mock GSM compilation through `/api/compile`
@@ -68,7 +69,7 @@ Included:
 
 Not included yet:
 
-- Native file picker
+- Native file picker for LP_XMLConverter
 - `.gsm` import/decompile
 - Full chat history persistence
 - Tauri packaging

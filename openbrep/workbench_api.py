@@ -4,7 +4,7 @@ import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
@@ -150,11 +150,17 @@ def apply_parameter_values(project: HSFProject, changes: dict[str, Any]) -> dict
 class WorkbenchSession:
     """Current-project state for the React workbench local API."""
 
-    def __init__(self, *, pipeline_class: type = TaskPipeline) -> None:
+    def __init__(
+        self,
+        *,
+        pipeline_class: type = TaskPipeline,
+        directory_chooser: Callable[[], str] | None = None,
+    ) -> None:
         self.project: HSFProject = build_demo_project()
         self.source = "demo"
         self.source_path: Path | None = None
         self.pipeline_class = pipeline_class
+        self.directory_chooser = directory_chooser or _choose_directory
         self.compiler_mode = "mock"
         self.converter_path = ""
 
@@ -195,6 +201,18 @@ class WorkbenchSession:
         self.source = "hsf"
         self.source_path = hsf_path
         return {"ok": True, **self.snapshot()}
+
+    def choose_and_load_hsf_directory(self) -> dict[str, Any]:
+        try:
+            selected = self.directory_chooser()
+        except Exception as exc:
+            return {"ok": False, "error": f"Directory chooser failed: {exc}"}
+        if not selected:
+            return {"ok": False, "cancelled": True, "error": "Directory selection cancelled."}
+        loaded = self.load_hsf_directory(selected)
+        if loaded.get("ok"):
+            loaded["path"] = str(Path(selected).expanduser().resolve())
+        return loaded
 
     def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
@@ -340,6 +358,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/load":
             return self.load_hsf_directory(str(body.get("path") or ""))
 
+        if normalized_method == "POST" and route == "/api/dialog/open-directory":
+            return self.choose_and_load_hsf_directory()
+
         if normalized_method == "POST" and route == "/api/settings/compiler":
             return self.update_compiler_settings(body)
 
@@ -370,6 +391,18 @@ def _default_session() -> WorkbenchSession:
 
 def route_rpc(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     return _default_session().route(method, path, body)
+
+
+def _choose_directory() -> str:
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        return str(filedialog.askdirectory(title="Open HSF project directory") or "")
+    finally:
+        root.destroy()
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:

@@ -18,6 +18,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['loaded'],
       compiler: { mode: 'mock', converter_path: '' },
     }),
+    chooseProjectDirectory: async () => ({ ok: false, cancelled: true }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
     updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
@@ -57,6 +58,28 @@ test('loads a project path and clears stale draft parameters', async () => {
   expect(store.getState().parameters.map((parameter) => parameter.name)).toEqual(['B'])
   expect(store.getState().draftParameters).toEqual({})
   expect(store.getState().warnings).toEqual(['loaded'])
+})
+
+test('browses for a project directory and loads the selected HSF snapshot', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      chooseProjectDirectory: async () => ({
+        ok: true,
+        path: '/workspace/Browsed',
+        project: { name: 'Browsed', source: 'hsf', path: '/workspace/Browsed' },
+        parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.5', is_fixed: true }],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        compiler: { mode: 'mock', converter_path: '' },
+      }),
+    }),
+  )
+
+  await store.getState().browseProjectDirectory()
+
+  expect(store.getState().project).toEqual({ name: 'Browsed', source: 'hsf', path: '/workspace/Browsed' })
+  expect(store.getState().parameters[0].value).toBe('1.5')
+  expect(store.getState().draftParameters).toEqual({})
 })
 
 test('loads compiler settings from snapshot', async () => {
