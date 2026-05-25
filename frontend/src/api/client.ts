@@ -5,6 +5,7 @@ import type {
   CompilerSettings,
   CompilerSettingsResult,
   DirectoryChoiceResult,
+  FileChoiceResult,
   GenerateResult,
   PreviewPayload,
   WorkbenchSnapshot,
@@ -48,6 +49,18 @@ export async function chooseProjectDirectory(): Promise<DirectoryChoiceResult> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function chooseCompilerFile(): Promise<FileChoiceResult> {
+  return requestJson<FileChoiceResult>(
+    '/api/dialog/open-file',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose: 'compiler' }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )

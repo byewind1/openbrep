@@ -137,6 +137,28 @@ def test_workbench_session_exposes_and_updates_compiler_settings():
     assert snapshot["compiler"] == update["compiler"]
 
 
+def test_workbench_session_choose_converter_file_updates_compiler_settings():
+    session = WorkbenchSession(file_chooser=lambda: "/Applications/LP_XMLConverter")
+
+    response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
+
+    assert response["ok"] is True
+    assert response["path"] == "/Applications/LP_XMLConverter"
+    assert response["compiler"] == {
+        "mode": "lp",
+        "converter_path": "/Applications/LP_XMLConverter",
+    }
+
+
+def test_workbench_session_choose_converter_file_handles_cancel():
+    session = WorkbenchSession(file_chooser=lambda: "")
+
+    response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
+
+    assert response["ok"] is False
+    assert response["cancelled"] is True
+
+
 def test_workbench_session_compile_uses_session_compiler_settings(tmp_path):
     project = HSFProject.create_new("LPFallbackShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

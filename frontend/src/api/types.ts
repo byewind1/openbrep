@@ -84,6 +84,14 @@ export interface DirectoryChoiceResult extends Partial<WorkbenchSnapshot> {
   error?: string
 }
 
+export interface FileChoiceResult {
+  ok: boolean
+  path?: string
+  compiler?: CompilerSettings
+  cancelled?: boolean
+  error?: string
+}
+
 export interface AssistantMessage {
   role: 'user' | 'assistant'
   content: string

@@ -26,6 +26,7 @@ export default function App() {
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
+  const browseCompilerFile = useWorkbenchStore((state) => state.browseCompilerFile)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
@@ -47,6 +48,7 @@ export default function App() {
         onCompile={() => void compileCurrentProject()}
         compilerSettings={compilerSettings}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
+        onBrowseCompilerFile={() => void browseCompilerFile()}
         applying={applying}
         loading={loading}
         compiling={compiling}

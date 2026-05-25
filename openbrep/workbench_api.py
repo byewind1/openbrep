@@ -155,12 +155,14 @@ class WorkbenchSession:
         *,
         pipeline_class: type = TaskPipeline,
         directory_chooser: Callable[[], str] | None = None,
+        file_chooser: Callable[[], str] | None = None,
     ) -> None:
         self.project: HSFProject = build_demo_project()
         self.source = "demo"
         self.source_path: Path | None = None
         self.pipeline_class = pipeline_class
         self.directory_chooser = directory_chooser or _choose_directory
+        self.file_chooser = file_chooser or _choose_file
         self.compiler_mode = "mock"
         self.converter_path = ""
 
@@ -213,6 +215,20 @@ class WorkbenchSession:
         if loaded.get("ok"):
             loaded["path"] = str(Path(selected).expanduser().resolve())
         return loaded
+
+    def choose_file(self, body: dict[str, Any]) -> dict[str, Any]:
+        purpose = str(body.get("purpose") or "").strip().lower()
+        if purpose != "compiler":
+            return {"ok": False, "error": f"Unsupported file chooser purpose: {purpose}"}
+        try:
+            selected = self.file_chooser()
+        except Exception as exc:
+            return {"ok": False, "error": f"File chooser failed: {exc}"}
+        if not selected:
+            return {"ok": False, "cancelled": True, "error": "File selection cancelled."}
+        self.compiler_mode = "lp"
+        self.converter_path = str(Path(selected).expanduser())
+        return {"ok": True, "path": self.converter_path, "compiler": self.compiler_settings()}
 
     def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
@@ -361,6 +377,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/dialog/open-directory":
             return self.choose_and_load_hsf_directory()
 
+        if normalized_method == "POST" and route == "/api/dialog/open-file":
+            return self.choose_file(body)
+
         if normalized_method == "POST" and route == "/api/settings/compiler":
             return self.update_compiler_settings(body)
 
@@ -401,6 +420,18 @@ def _choose_directory() -> str:
     root.withdraw()
     try:
         return str(filedialog.askdirectory(title="Open HSF project directory") or "")
+    finally:
+        root.destroy()
+
+
+def _choose_file() -> str:
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        return str(filedialog.askopenfilename(title="Choose LP_XMLConverter") or "")
     finally:
         root.destroy()
 

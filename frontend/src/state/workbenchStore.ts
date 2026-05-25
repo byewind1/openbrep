@@ -2,6 +2,7 @@ import { createStore } from 'zustand/vanilla'
 import {
   applyParameters,
   askAssistant,
+  chooseCompilerFile,
   chooseProjectDirectory,
   compileProject,
   fetchPreview,
@@ -18,6 +19,7 @@ import type {
   CompilerSettings,
   CompilerSettingsResult,
   DirectoryChoiceResult,
+  FileChoiceResult,
   GenerateResult,
   PreviewPayload,
   WorkbenchParameter,
@@ -30,6 +32,7 @@ export interface WorkbenchApi {
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
+  chooseCompilerFile: () => Promise<FileChoiceResult>
   compileProject: () => Promise<CompileResult>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   askAssistant: (message: string) => Promise<AssistantResult>
@@ -53,6 +56,7 @@ export interface WorkbenchState {
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
   browseProjectDirectory: () => Promise<void>
+  browseCompilerFile: () => Promise<void>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   compileCurrentProject: () => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
@@ -67,6 +71,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchPreview,
   loadProjectPath,
   chooseProjectDirectory,
+  chooseCompilerFile,
   compileProject,
   updateCompilerSettings,
   askAssistant,
@@ -138,6 +143,13 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
 
     async setCompilerSettings(settings) {
       const result = await api.updateCompilerSettings(settings)
+      if (result.ok && result.compiler) {
+        set({ compilerSettings: result.compiler })
+      }
+    },
+
+    async browseCompilerFile() {
+      const result = await api.chooseCompilerFile()
       if (result.ok && result.compiler) {
         set({ compilerSettings: result.compiler })
       }

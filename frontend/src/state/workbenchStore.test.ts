@@ -19,6 +19,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       compiler: { mode: 'mock', converter_path: '' },
     }),
     chooseProjectDirectory: async () => ({ ok: false, cancelled: true }),
+    chooseCompilerFile: async () => ({ ok: false, cancelled: true }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
     updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
@@ -113,6 +114,25 @@ test('updates compiler settings through the API', async () => {
   await store.getState().setCompilerSettings({ mode: 'lp', converter_path: '/converter' })
 
   expect(store.getState().compilerSettings).toEqual({ mode: 'lp', converter_path: '/converter' })
+})
+
+test('browses for LP_XMLConverter and stores compiler settings', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      chooseCompilerFile: async () => ({
+        ok: true,
+        path: '/Applications/LP_XMLConverter',
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter' },
+      }),
+    }),
+  )
+
+  await store.getState().browseCompilerFile()
+
+  expect(store.getState().compilerSettings).toEqual({
+    mode: 'lp',
+    converter_path: '/Applications/LP_XMLConverter',
+  })
 })
 
 test('records compile results in the workbench log', async () => {

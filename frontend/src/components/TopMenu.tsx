@@ -11,6 +11,7 @@ interface TopMenuProps {
   onCompile: () => void
   compilerSettings: CompilerSettings
   onCompilerSettingsChange: (settings: CompilerSettings) => void
+  onBrowseCompilerFile: () => void
   applying: boolean
   loading: boolean
   compiling: boolean
@@ -25,6 +26,7 @@ export function TopMenu({
   onCompile,
   compilerSettings,
   onCompilerSettingsChange,
+  onBrowseCompilerFile,
   applying,
   loading,
   compiling,
@@ -92,6 +94,9 @@ export function TopMenu({
             })
           }
         />
+        <button type="button" disabled={compilerSettings.mode !== 'lp'} onClick={onBrowseCompilerFile}>
+          Browse LP
+        </button>
         <button type="button" disabled={!project?.path || hasDraftChanges || compiling} onClick={onCompile}>
           {compiling ? '编译中' : '编译 GSM'}
         </button>
