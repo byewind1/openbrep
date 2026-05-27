@@ -21,6 +21,19 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     chooseProjectDirectory: async () => ({ ok: false, cancelled: true }),
     chooseCompilerFile: async () => ({ ok: false, cancelled: true }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
+    listProjectScripts: async () => ({
+      scripts: [
+        { name: '3d.gdl', path: 'scripts/3d.gdl', exists: true, size: 128 },
+        { name: '2d.gdl', path: 'scripts/2d.gdl', exists: true, size: 64 },
+      ],
+    }),
+    getProjectScript: async (scriptName: string) => ({
+      name: scriptName,
+      path: `scripts/${scriptName}`,
+      content: `content for ${scriptName}`,
+    }),
+    saveProjectScript: async () => ({ success: true, saved_at: '2026-05-27T09:00:00' }),
+    mockCompile: async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 12 }),
     updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
@@ -102,6 +115,67 @@ test('loads compiler settings from snapshot', async () => {
     mode: 'lp',
     converter_path: '/Applications/LP_XMLConverter',
   })
+})
+
+test('load fetches scripts and opens 3d.gdl by default', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+
+  expect(store.getState().scripts.map((script) => script.name)).toEqual(['3d.gdl', '2d.gdl'])
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().scriptContents['3d.gdl']).toBe('content for 3d.gdl')
+})
+
+test('openScript loads content and marks the script active', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().loadScripts()
+  await store.getState().openScript('2d.gdl')
+
+  expect(store.getState().activeScriptName).toBe('2d.gdl')
+  expect(store.getState().scriptContents['2d.gdl']).toBe('content for 2d.gdl')
+})
+
+test('updateActiveScriptContent marks active script dirty', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+  store.getState().updateActiveScriptContent('changed 3d content')
+
+  expect(store.getState().scriptContents['3d.gdl']).toBe('changed 3d content')
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+})
+
+test('saveActiveScript clears dirty state after successful save', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+  store.getState().updateActiveScriptContent('changed 3d content')
+  await store.getState().saveActiveScript()
+
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+  expect(store.getState().scriptSaving).toBe(false)
+  expect(store.getState().compileLog[0]).toContain('Saved 3d.gdl')
+})
+
+test('runMockCompile stores diagnostics result', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      mockCompile: async () => ({
+        success: false,
+        mode: 'mock',
+        issues: [{ severity: 'error', script: 'scripts/3d.gdl', line: 12, message: 'FOR/NEXT mismatch' }],
+        duration_ms: 23,
+      }),
+    }),
+  )
+
+  await store.getState().runMockCompile()
+
+  expect(store.getState().mockCompileResult?.issues).toHaveLength(1)
+  expect(store.getState().mockCompileResult?.issues[0]?.message).toBe('FOR/NEXT mismatch')
+  expect(store.getState().compileLog[0]).toContain('1 errors')
 })
 
 test('updates compiler settings through the API', async () => {

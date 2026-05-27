@@ -9,12 +9,16 @@ interface TopMenuProps {
   onLoadProjectPath: (path: string) => void
   onBrowseProjectDirectory: () => void
   onCompile: () => void
+  onSave: () => void
   compilerSettings: CompilerSettings
   onCompilerSettingsChange: (settings: CompilerSettings) => void
   onBrowseCompilerFile: () => void
   applying: boolean
   loading: boolean
   compiling: boolean
+  saving: boolean
+  hasDirtyScript: boolean
+  activeScriptName: string | null
 }
 
 export function TopMenu({
@@ -24,12 +28,16 @@ export function TopMenu({
   onLoadProjectPath,
   onBrowseProjectDirectory,
   onCompile,
+  onSave,
   compilerSettings,
   onCompilerSettingsChange,
   onBrowseCompilerFile,
   applying,
   loading,
   compiling,
+  saving,
+  hasDirtyScript,
+  activeScriptName,
 }: TopMenuProps) {
   const [path, setPath] = useState(project?.path ?? '')
 
@@ -97,12 +105,16 @@ export function TopMenu({
         <button type="button" disabled={compilerSettings.mode !== 'lp'} onClick={onBrowseCompilerFile}>
           LP...
         </button>
-        <button type="button" disabled={!project?.path || hasDraftChanges || compiling} onClick={onCompile}>
-          {compiling ? '...' : 'GSM'}
+        <button type="button" disabled={!activeScriptName || saving} onClick={onSave}>
+          {saving ? '...' : 'Save'}
+        </button>
+        <button type="button" disabled={!project?.path || compiling} onClick={onCompile}>
+          {compiling ? '...' : 'Mock'}
         </button>
       </nav>
       <div className="topbar-status">
-        <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? 'Draft' : 'Saved'}</span>
+        <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>{hasDirtyScript ? 'Dirty' : 'Saved'}</span>
+        <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? 'Params' : 'Stable'}</span>
         <button className="primary-action" disabled={!hasDraftChanges || applying} onClick={onApply}>
           {applying ? '...' : 'Apply'}
         </button>

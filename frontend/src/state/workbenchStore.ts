@@ -8,7 +8,11 @@ import {
   fetchPreview,
   fetchSnapshot,
   generateWithAssistant,
+  getProjectScript,
   loadProjectPath,
+  listProjectScripts,
+  mockCompile,
+  saveProjectScript,
   updateCompilerSettings,
 } from '../api/client'
 import type {
@@ -16,12 +20,18 @@ import type {
   AssistantMessage,
   AssistantResult,
   CompileResult,
+  CompileIssue,
   CompilerSettings,
   CompilerSettingsResult,
   DirectoryChoiceResult,
   FileChoiceResult,
   GenerateResult,
+  MockCompileResponse,
   PreviewPayload,
+  ProjectScript,
+  ProjectScriptContentResponse,
+  ProjectScriptsResponse,
+  SaveScriptResponse,
   WorkbenchParameter,
   WorkbenchProject,
   WorkbenchSnapshot,
@@ -34,6 +44,10 @@ export interface WorkbenchApi {
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
   compileProject: () => Promise<CompileResult>
+  listProjectScripts: () => Promise<ProjectScriptsResponse>
+  getProjectScript: (scriptName: string) => Promise<ProjectScriptContentResponse | null>
+  saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
+  mockCompile: () => Promise<MockCompileResponse>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   askAssistant: (message: string) => Promise<AssistantResult>
   generateWithAssistant: (message: string) => Promise<GenerateResult>
@@ -53,6 +67,13 @@ export interface WorkbenchState {
   compilerSettings: CompilerSettings
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
+  scripts: ProjectScript[]
+  activeScriptName: string | null
+  scriptContents: Record<string, string>
+  dirtyScripts: Record<string, boolean>
+  scriptLoading: boolean
+  scriptSaving: boolean
+  mockCompileResult: MockCompileResponse | null
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
   browseProjectDirectory: () => Promise<void>
@@ -63,6 +84,11 @@ export interface WorkbenchState {
   generateAssistantChanges: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
+  loadScripts: () => Promise<void>
+  openScript: (name: string) => Promise<void>
+  updateActiveScriptContent: (content: string) => void
+  saveActiveScript: () => Promise<void>
+  runMockCompile: () => Promise<void>
   hasDraftChanges: () => boolean
 }
 
@@ -73,11 +99,17 @@ const defaultWorkbenchApi: WorkbenchApi = {
   chooseProjectDirectory,
   chooseCompilerFile,
   compileProject,
+  listProjectScripts,
+  getProjectScript,
+  saveProjectScript,
+  mockCompile,
   updateCompilerSettings,
   askAssistant,
   generateWithAssistant,
   applyParameters,
 }
+
+const SCRIPT_FALLBACK_ORDER = ['3d.gdl', '2d.gdl', '1d.gdl', 'vl.gdl', 'pr.gdl', 'ui.gdl', 'paramlist.xml', 'libpartdata.xml']
 
 export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
   return createStore<WorkbenchState>((set, get) => ({
@@ -93,18 +125,20 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     compilerSettings: { mode: 'mock', converter_path: '' },
     assistantBusy: false,
     assistantMessages: [],
+    scripts: [],
+    activeScriptName: null,
+    scriptContents: {},
+    dirtyScripts: {},
+    scriptLoading: false,
+    scriptSaving: false,
+    mockCompileResult: null,
 
     async load() {
       set({ loading: true })
       const snapshot = await api.fetchSnapshot()
-      set({
-        project: snapshot.project,
-        parameters: snapshot.parameters,
-        preview: snapshot.preview,
-        warnings: snapshot.warnings,
-        compilerSettings: snapshot.compiler ?? get().compilerSettings,
-        loading: false,
-      })
+      set(hydrateSnapshot(snapshot, get().compilerSettings))
+      await get().loadScripts()
+      set({ loading: false })
     },
 
     async loadProjectPath(path) {
@@ -112,15 +146,9 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       if (!normalizedPath) return
       set({ loading: true })
       const snapshot = await api.loadProjectPath(normalizedPath)
-      set({
-        project: snapshot.project,
-        parameters: snapshot.parameters,
-        preview: snapshot.preview,
-        warnings: snapshot.warnings,
-        compilerSettings: snapshot.compiler ?? get().compilerSettings,
-        draftParameters: {},
-        loading: false,
-      })
+      set(hydrateSnapshot(snapshot, get().compilerSettings))
+      await get().loadScripts()
+      set({ loading: false })
     },
 
     async browseProjectDirectory() {
@@ -130,15 +158,9 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         set({ loading: false })
         return
       }
-      set({
-        project: result.project,
-        parameters: result.parameters,
-        preview: result.preview,
-        warnings: result.warnings ?? result.preview.warnings ?? [],
-        compilerSettings: result.compiler ?? get().compilerSettings,
-        draftParameters: {},
-        loading: false,
-      })
+      set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings))
+      await get().loadScripts()
+      set({ loading: false })
     },
 
     async setCompilerSettings(settings) {
@@ -190,6 +212,78 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       }))
     },
 
+    async loadScripts() {
+      set({ scriptLoading: true })
+      const result = await api.listProjectScripts()
+      const scripts = result.scripts ?? []
+      const activeScriptName = selectPreferredScript(scripts, get().activeScriptName)
+      set((state) => ({
+        scripts,
+        activeScriptName,
+        dirtyScripts: pruneDirtyScripts(state.dirtyScripts, scripts),
+        scriptLoading: false,
+      }))
+      if (activeScriptName && !get().scriptContents[activeScriptName]) {
+        await get().openScript(activeScriptName)
+      }
+    },
+
+    async openScript(name) {
+      const target = name.trim()
+      if (!target) return
+      const cached = get().scriptContents[target]
+      if (typeof cached === 'string') {
+        set({ activeScriptName: target })
+        return
+      }
+      set({ scriptLoading: true, activeScriptName: target })
+      const result = await api.getProjectScript(target)
+      set((state) => ({
+        scriptLoading: false,
+        activeScriptName: target,
+        scriptContents: result ? { ...state.scriptContents, [target]: result.content } : state.scriptContents,
+      }))
+    },
+
+    updateActiveScriptContent(content) {
+      const activeScriptName = get().activeScriptName
+      if (!activeScriptName) return
+      set((state) => ({
+        scriptContents: { ...state.scriptContents, [activeScriptName]: content },
+        dirtyScripts: { ...state.dirtyScripts, [activeScriptName]: true },
+      }))
+    },
+
+    async saveActiveScript() {
+      const activeScriptName = get().activeScriptName
+      if (!activeScriptName) return
+      const content = get().scriptContents[activeScriptName]
+      if (typeof content !== 'string') return
+      set({ scriptSaving: true })
+      const result = await api.saveProjectScript(activeScriptName, content)
+      if (result.success) {
+        set((state) => ({
+          scriptSaving: false,
+          dirtyScripts: { ...state.dirtyScripts, [activeScriptName]: false },
+          compileLog: [`Saved ${activeScriptName} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
+        }))
+        await get().loadScripts()
+        return
+      }
+      set({ scriptSaving: false })
+    },
+
+    async runMockCompile() {
+      set({ compiling: true })
+      const result = await api.mockCompile()
+      const summary = buildMockCompileSummary(result)
+      set((state) => ({
+        compiling: false,
+        mockCompileResult: result,
+        compileLog: summary ? [summary, ...state.compileLog].slice(0, 20) : state.compileLog,
+      }))
+    },
+
     async sendAssistantMessage(message) {
       const trimmed = message.trim()
       if (!trimmed) return
@@ -235,3 +329,44 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
 }
 
 export const workbenchStore = createWorkbenchStore()
+
+function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: CompilerSettings) {
+  return {
+    project: snapshot.project,
+    parameters: snapshot.parameters,
+    preview: snapshot.preview,
+    warnings: snapshot.warnings ?? snapshot.preview?.warnings ?? [],
+    compilerSettings: snapshot.compiler ?? fallbackCompiler,
+    draftParameters: {},
+    scripts: [],
+    activeScriptName: null,
+    scriptContents: {},
+    dirtyScripts: {},
+    mockCompileResult: null,
+  }
+}
+
+function selectPreferredScript(scripts: ProjectScript[], current: string | null) {
+  if (current && scripts.some((script) => script.name === current && script.exists)) return current
+  for (const preferred of SCRIPT_FALLBACK_ORDER) {
+    if (scripts.some((script) => script.name === preferred && script.exists)) return preferred
+  }
+  return scripts.find((script) => script.exists)?.name ?? null
+}
+
+function pruneDirtyScripts(dirtyScripts: Record<string, boolean>, scripts: ProjectScript[]) {
+  const allowed = new Set(scripts.map((script) => script.name))
+  return Object.fromEntries(Object.entries(dirtyScripts).filter(([name]) => allowed.has(name)))
+}
+
+function buildMockCompileSummary(result: MockCompileResponse) {
+  if (!result.success && result.error) return `Mock compile failed: ${result.error}`
+  const errors = countIssues(result.issues, 'error')
+  const warnings = countIssues(result.issues, 'warning')
+  if (errors === 0 && warnings === 0) return `Mock compile passed in ${result.duration_ms} ms`
+  return `Mock compile finished in ${result.duration_ms} ms (${errors} errors, ${warnings} warnings)`
+}
+
+function countIssues(issues: CompileIssue[], severity: string) {
+  return issues.filter((issue) => issue.severity === severity).length
+}

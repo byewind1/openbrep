@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from datetime import datetime, timezone
+from urllib.parse import unquote, urlparse
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.explainer.chat_adapter import build_chat_explanation_reply
@@ -29,6 +32,28 @@ from ui.three_preview import preview_3d_to_three_payload
 
 _DEMO_PROJECT: HSFProject | None = None
 _DEFAULT_SESSION: WorkbenchSession | None = None
+
+
+SCRIPT_FILE_ORDER = [
+    "3d.gdl",
+    "2d.gdl",
+    "1d.gdl",
+    "vl.gdl",
+    "pr.gdl",
+    "ui.gdl",
+    "paramlist.xml",
+    "libpartdata.xml",
+]
+
+SCRIPT_NAME_TO_TYPE = {
+    ScriptType.SCRIPT_3D.value: ScriptType.SCRIPT_3D,
+    ScriptType.SCRIPT_2D.value: ScriptType.SCRIPT_2D,
+    ScriptType.MASTER.value: ScriptType.MASTER,
+    ScriptType.PARAM.value: ScriptType.PARAM,
+    ScriptType.PROPERTIES.value: ScriptType.PROPERTIES,
+    ScriptType.UI.value: ScriptType.UI,
+}
+SCRIPT_ROUTE_RE = re.compile(r"^/api/project/script/([^/]+)$")
 
 
 def build_demo_project() -> HSFProject:
@@ -236,11 +261,71 @@ class WorkbenchSession:
             "preview": preview_payload(self.project, overrides or {}),
         }
 
+    def list_project_scripts(self) -> dict[str, Any]:
+        return {"ok": True, "scripts": [_script_file_info(self.project, name) for name in SCRIPT_FILE_ORDER]}
+
+    def get_project_script(self, script_name: str) -> dict[str, Any]:
+        resolved = _resolve_script_name(script_name)
+        if resolved is None:
+            return {"ok": False, "error": f"Unsupported script file: {script_name}"}
+        path = _script_relative_path(resolved)
+        content = _read_project_file_content(self.project, resolved)
+        if content is None:
+            return {"ok": False, "error": f"Script file not found: {resolved}"}
+        return {"ok": True, "name": resolved, "path": path, "content": content}
+
+    def save_project_script(self, script_name: str, body: dict[str, Any]) -> dict[str, Any]:
+        resolved = _resolve_script_name(script_name)
+        if resolved is None:
+            return {"ok": False, "error": f"Unsupported script file: {script_name}"}
+        content = str(body.get("content") or "")
+        script_type = SCRIPT_NAME_TO_TYPE.get(resolved)
+        if script_type is not None:
+            self.project.set_script(script_type, content)
+            if self.source_path is None:
+                self.project.save_to_disk()
+            else:
+                self.project.save_to_disk()
+        else:
+            if self.source_path is None:
+                return {"ok": False, "error": "Load an HSF project before saving XML files."}
+            target = _project_file_path(self.project, resolved)
+            if target is None:
+                return {"ok": False, "error": f"Unsupported script file: {script_name}"}
+            target.write_text(content, encoding="utf-8-sig")
+            self.project = HSFProject.load_from_disk(str(self.source_path))
+        return {
+            "ok": True,
+            "success": True,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
         changed = apply_parameter_values(self.project, changes)
         if changed and self.source_path is not None:
             self.project.save_to_disk()
         return {"ok": True, "changed": changed, **self.snapshot()}
+
+    def compile_mock(self, body: dict[str, Any]) -> dict[str, Any]:
+        start = time.perf_counter()
+        if self.source_path is None:
+            self.project.save_to_disk()
+            hsf_dir = self.project.root
+        else:
+            self.project.save_to_disk()
+            hsf_dir = self.source_path
+        output_dir = Path(str(body.get("output_dir") or hsf_dir.parent / "output"))
+        output_dir = output_dir.expanduser().resolve()
+        output_gsm = output_dir / f"{self.project.name}.gsm"
+        result = MockHSFCompiler().hsf2libpart(str(hsf_dir), str(output_gsm))
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        return {
+            "ok": True,
+            "success": bool(result.success),
+            "mode": "mock",
+            "issues": _compile_issues_from_result(result),
+            "duration_ms": duration_ms,
+        }
 
     def compile_project(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.source_path is None:
@@ -386,11 +471,24 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/preview":
             return self.preview(body.get("parameters") or {})
 
+        if normalized_method == "GET" and route == "/api/project/scripts":
+            return self.list_project_scripts()
+
+        script_match = SCRIPT_ROUTE_RE.match(route)
+        if script_match and normalized_method == "GET":
+            return self.get_project_script(unquote(script_match.group(1)))
+
+        if script_match and normalized_method == "POST":
+            return self.save_project_script(unquote(script_match.group(1)), body)
+
         if normalized_method == "POST" and route == "/api/apply":
             return self.apply(body.get("parameters") or {})
 
         if normalized_method == "POST" and route == "/api/compile":
             return self.compile_project(body)
+
+        if normalized_method == "POST" and route == "/api/compile/mock":
+            return self.compile_mock(body)
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)
@@ -434,6 +532,87 @@ def _choose_file() -> str:
         return str(filedialog.askopenfilename(title="Choose LP_XMLConverter") or "")
     finally:
         root.destroy()
+
+
+def _resolve_script_name(script_name: str) -> str | None:
+    name = Path(str(script_name or "")).name
+    if name != script_name:
+        return None
+    if name not in SCRIPT_FILE_ORDER:
+        return None
+    return name
+
+
+def _script_relative_path(script_name: str) -> str:
+    if script_name.endswith(".gdl"):
+        return f"scripts/{script_name}"
+    return script_name
+
+
+def _project_file_path(project: HSFProject, script_name: str) -> Path | None:
+    resolved = _resolve_script_name(script_name)
+    if resolved is None:
+        return None
+    rel_path = _script_relative_path(resolved)
+    return project.root / rel_path
+
+
+def _script_file_info(project: HSFProject, script_name: str) -> dict[str, Any]:
+    path = _script_relative_path(script_name)
+    file_path = _project_file_path(project, script_name)
+    script_type = SCRIPT_NAME_TO_TYPE.get(script_name)
+    memory_content = project.get_script(script_type) if script_type is not None else ""
+    exists = bool(memory_content) or (file_path.exists() if file_path is not None else False)
+    return {
+        "name": script_name,
+        "path": path,
+        "exists": exists,
+        "size": (
+            len(memory_content.encode("utf-8"))
+            if memory_content
+            else file_path.stat().st_size if file_path is not None and exists else 0
+        ),
+    }
+
+
+def _read_project_file_content(project: HSFProject, script_name: str) -> str | None:
+    script_type = SCRIPT_NAME_TO_TYPE.get(script_name)
+    if script_type is not None:
+        content = project.get_script(script_type)
+        if content:
+            return content
+        file_path = _project_file_path(project, script_name)
+        if file_path is not None and file_path.exists():
+            return file_path.read_text(encoding="utf-8-sig")
+        return None
+    file_path = _project_file_path(project, script_name)
+    if file_path is None or not file_path.exists():
+        return None
+    return file_path.read_text(encoding="utf-8-sig")
+
+
+def _compile_issues_from_result(result) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for severity, lines in (("error", result.errors), ("warning", result.warnings)):
+        for raw in lines or []:
+            script, line, message = _parse_compile_issue(str(raw))
+            issues.append({
+                "severity": severity,
+                "script": script,
+                "line": line,
+                "message": message,
+            })
+    return issues
+
+
+def _parse_compile_issue(raw: str) -> tuple[str, int | None, str]:
+    match = re.search(r"Error in ([^:]+):\s*(.+)", raw)
+    if match:
+        return f"scripts/{match.group(1)}", None, match.group(2)
+    match = re.search(r"([^:\s]+\.gdl).*?line\s+(\d+)[:\s-]*(.+)", raw, re.IGNORECASE)
+    if match:
+        return f"scripts/{Path(match.group(1)).name}", int(match.group(2)), match.group(3).strip()
+    return "", None, raw
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:

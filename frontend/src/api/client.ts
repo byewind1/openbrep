@@ -2,12 +2,16 @@ import type {
   ApplyResult,
   AssistantResult,
   CompileResult,
+  MockCompileResponse,
   CompilerSettings,
   CompilerSettingsResult,
   DirectoryChoiceResult,
   FileChoiceResult,
   GenerateResult,
   PreviewPayload,
+  ProjectScriptContentResponse,
+  ProjectScriptsResponse,
+  SaveScriptResponse,
   WorkbenchSnapshot,
 } from './types'
 
@@ -123,6 +127,42 @@ export async function generateWithAssistant(message: string): Promise<GenerateRe
       body: JSON.stringify({ message }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function listProjectScripts(): Promise<ProjectScriptsResponse> {
+  return requestJson<ProjectScriptsResponse>('/api/project/scripts', { method: 'GET' }, { scripts: [] })
+}
+
+export async function getProjectScript(scriptName: string): Promise<ProjectScriptContentResponse | null> {
+  return requestJson<ProjectScriptContentResponse | null>(
+    `/api/project/script/${encodeURIComponent(scriptName)}`,
+    { method: 'GET' },
+    null,
+  )
+}
+
+export async function saveProjectScript(scriptName: string, content: string): Promise<SaveScriptResponse> {
+  return requestJson<SaveScriptResponse>(
+    `/api/project/script/${encodeURIComponent(scriptName)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    },
+    { success: false, saved_at: '' },
+  )
+}
+
+export async function mockCompile(): Promise<MockCompileResponse> {
+  return requestJson<MockCompileResponse>(
+    '/api/compile/mock',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { success: false, mode: 'mock', issues: [], duration_ms: 0, error: 'OpenBrep local API is not available.' },
   )
 }
 

@@ -25,6 +25,13 @@ export interface WorkbenchParameter {
   is_fixed: boolean
 }
 
+export interface ProjectScript {
+  name: string
+  path: string
+  exists: boolean
+  size: number
+}
+
 export interface PreviewMesh {
   name: string
   vertices: number[][]
@@ -68,6 +75,22 @@ export interface CompileInfo {
 export interface CompileResult {
   ok: boolean
   compile?: CompileInfo
+  error?: string
+}
+
+export interface CompileIssue {
+  severity: 'info' | 'warning' | 'error' | string
+  script: string
+  line: number | null
+  message: string
+}
+
+export interface MockCompileResponse {
+  ok?: boolean
+  success: boolean
+  mode: 'mock'
+  issues: CompileIssue[]
+  duration_ms: number
   error?: string
 }
 
@@ -118,4 +141,19 @@ export interface GenerateResult {
   warnings?: string[]
   events?: Array<{ type: string; data: unknown }>
   error?: string
+}
+
+export interface ProjectScriptsResponse {
+  scripts: ProjectScript[]
+}
+
+export interface ProjectScriptContentResponse {
+  name: string
+  path: string
+  content: string
+}
+
+export interface SaveScriptResponse {
+  success: boolean
+  saved_at: string
 }

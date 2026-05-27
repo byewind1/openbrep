@@ -119,6 +119,83 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     assert (output_dir / "CompiledShelf.gsm").exists()
 
 
+def test_workbench_session_lists_project_scripts(tmp_path):
+    project = HSFProject.create_new("ScriptListShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_2D, "PROJECT2 3, 270, 2\n")
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("GET", "/api/project/scripts")
+
+    names = [script["name"] for script in response["scripts"]]
+    assert response["ok"] is True
+    assert names[:8] == [
+        "3d.gdl",
+        "2d.gdl",
+        "1d.gdl",
+        "vl.gdl",
+        "pr.gdl",
+        "ui.gdl",
+        "paramlist.xml",
+        "libpartdata.xml",
+    ]
+    assert response["scripts"][0]["path"] == "scripts/3d.gdl"
+    assert response["scripts"][0]["exists"] is True
+    assert response["scripts"][2]["exists"] is False
+
+
+def test_workbench_session_reads_project_script_content(tmp_path):
+    project = HSFProject.create_new("ReadScriptShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nADDZ 1\n")
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("GET", "/api/project/script/3d.gdl")
+
+    assert response["ok"] is True
+    assert response["name"] == "3d.gdl"
+    assert response["path"] == "scripts/3d.gdl"
+    assert "ADDZ 1" in response["content"]
+
+
+def test_workbench_session_saves_project_script_content(tmp_path):
+    project = HSFProject.create_new("SaveScriptShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/project/script/3d.gdl",
+        {"content": "BLOCK A, B, ZZYZX\nADDZ 2\n"},
+    )
+
+    reloaded = HSFProject.load_from_disk(str(hsf_dir))
+    assert response["ok"] is True
+    assert response["success"] is True
+    assert response["saved_at"]
+    assert "ADDZ 2" in reloaded.get_script(ScriptType.SCRIPT_3D)
+
+
+def test_workbench_session_mock_compile_returns_diagnostics(tmp_path):
+    project = HSFProject.create_new("MockCompileDiagnostics", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "FOR i = 1 TO 2\nBLOCK A, B, ZZYZX\n")
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/compile/mock", {"output_dir": str(tmp_path / "out")})
+
+    assert response["ok"] is True
+    assert response["success"] is False
+    assert response["mode"] == "mock"
+    assert response["duration_ms"] >= 0
+    assert response["issues"]
+    assert response["issues"][0]["severity"] == "error"
+
+
 def test_workbench_session_exposes_and_updates_compiler_settings():
     session = WorkbenchSession()
 
