@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { AssistantPanel } from './components/AssistantPanel'
 import { BottomDrawer } from './components/BottomDrawer'
 import { ParameterRail } from './components/ParameterRail'
 import { PreviewViewport } from './components/PreviewViewport'
@@ -20,8 +19,6 @@ export default function App() {
   const compiling = useWorkbenchStore((state) => state.compiling)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
   const compilerSettings = useWorkbenchStore((state) => state.compilerSettings)
-  const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
-  const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
   const scripts = useWorkbenchStore((state) => state.scripts)
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
   const scriptContents = useWorkbenchStore((state) => state.scriptContents)
@@ -36,8 +33,6 @@ export default function App() {
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
   const browseCompilerFile = useWorkbenchStore((state) => state.browseCompilerFile)
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
-  const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
-  const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
   const openScript = useWorkbenchStore((state) => state.openScript)
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
   const saveActiveScript = useWorkbenchStore((state) => state.saveActiveScript)
@@ -83,7 +78,7 @@ export default function App() {
             onChange={(name, value) => void setDraftParameter(name, value)}
           />
         </aside>
-        <section className="editor-stage">
+        <section className="workbench-main-stage editor-stage">
           {activeScriptName ? (
             <ScriptEditor
               scriptName={activeScriptName}
@@ -95,21 +90,20 @@ export default function App() {
             <div className="editor-empty">No script loaded</div>
           )}
         </section>
-        <aside className="right-rail">
-          <div className="right-rail-preview">
+        <aside className="workbench-right-rail right-rail">
+          <div className="rail-tabs" role="tablist" aria-label="Right rail panels">
+            <button type="button" className="rail-tab active" aria-selected="true">
+              3D
+            </button>
+            <button type="button" className="rail-tab" disabled aria-selected="false">
+              2D
+            </button>
+            <button type="button" className="rail-tab" disabled aria-selected="false">
+              AI
+            </button>
+          </div>
+          <div className="rail-panel viewport-panel">
             <PreviewViewport preview={preview} warnings={warnings} />
-          </div>
-          <div className="right-rail-tabs">
-            <button className="active">AI</button>
-            <button>2D</button>
-          </div>
-          <div className="right-rail-panel">
-            <AssistantPanel
-              messages={assistantMessages}
-              busy={assistantBusy}
-              onSend={(message) => void sendAssistantMessage(message)}
-              onGenerate={(message) => void generateAssistantChanges(message)}
-            />
           </div>
         </aside>
       </section>

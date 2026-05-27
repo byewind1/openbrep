@@ -10,15 +10,11 @@ interface PreviewViewportProps {
 
 export function PreviewViewport({ preview, warnings }: PreviewViewportProps) {
   return (
-    <section className="preview-stage">
-      <div className="preview-toolbar">
+    <section className="viewport-surface">
+      <div className="viewport-toolbar">
         <div>
           <strong>3D Preview</strong>
           <span>{preview?.meshes.length ?? 0} meshes</span>
-        </div>
-        <div className="viewport-tabs">
-          <button className="active">3D</button>
-          <button>2D</button>
         </div>
       </div>
       <div className="canvas-wrap">
@@ -33,7 +29,7 @@ export function PreviewViewport({ preview, warnings }: PreviewViewportProps) {
           <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
         </Canvas>
       </div>
-      <footer className="preview-footer">
+      <footer className="viewport-footer">
         <span>{preview?.meshes.length ?? 0} meshes</span>
         <span>{warnings.length ? `${warnings.length} warnings` : 'no warnings'}</span>
       </footer>
