@@ -214,6 +214,123 @@ def test_workbench_session_exposes_and_updates_compiler_settings():
     assert snapshot["compiler"] == update["compiler"]
 
 
+def test_workbench_session_exposes_runtime_llm_settings(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "deepseek-chat"
+api_key = "deepseek-key"
+api_base = "https://api.deepseek.com/v1"
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+custom_providers = []
+assistant_settings = "prefer concise GDL diffs"
+
+[agent]
+max_iterations = 7
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = ""
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route("GET", "/api/settings/runtime")
+
+    assert response["ok"] is True
+    assert response["llm"]["model"] == "deepseek-chat"
+    assert response["llm"]["api_key"] == "deepseek-key"
+    assert response["llm"]["api_base"] == "https://api.deepseek.com/v1"
+    assert response["llm"]["max_retries"] == 7
+    assert response["llm"]["assistant_settings"] == "prefer concise GDL diffs"
+    assert "glm-4-flash" in response["llm"]["models"]
+
+
+def test_workbench_session_updates_llm_settings_and_persists_config(tmp_path):
+    config_path = tmp_path / "config.toml"
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm",
+        {
+            "model": "gpt-4.1-mini",
+            "api_key": "openai-key",
+            "api_base": "https://api.openai.com/v1",
+            "max_retries": 6,
+            "assistant_settings": "先解释再改代码",
+        },
+    )
+    reloaded = WorkbenchSession(config_path=config_path)
+
+    assert response["ok"] is True
+    assert response["llm"]["model"] == "gpt-4.1-mini"
+    assert response["llm"]["max_retries"] == 6
+    assert reloaded.llm_model == "gpt-4.1-mini"
+    assert reloaded.llm_api_key == "openai-key"
+    assert reloaded.llm_api_base == "https://api.openai.com/v1"
+    assert reloaded.assistant_settings == "先解释再改代码"
+
+
+def test_workbench_session_updates_custom_provider_credentials(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "mimo-v2.5-pro"
+api_key = ""
+api_base = ""
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+assistant_settings = ""
+
+[[llm.custom_providers]]
+name = "mimo"
+base_url = "https://old.example.test/v1"
+api_key = "old-key"
+protocol = "openai"
+models = ["mimo-v2.5-pro"]
+
+[agent]
+max_iterations = 5
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = ""
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm",
+        {
+            "model": "mimo-v2.5-pro",
+            "api_key": "new-key",
+            "api_base": "https://new.example.test/v1",
+            "max_retries": 5,
+            "assistant_settings": "",
+        },
+    )
+    reloaded = WorkbenchSession(config_path=config_path)
+
+    assert response["ok"] is True
+    assert reloaded.llm_api_key == "new-key"
+    assert reloaded.llm_api_base == "https://new.example.test/v1"
+
+
 def test_workbench_session_choose_converter_file_updates_compiler_settings():
     session = WorkbenchSession(file_chooser=lambda: "/Applications/LP_XMLConverter")
 

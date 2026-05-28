@@ -1,20 +1,39 @@
-import type { CompilerSettings } from '../api/types'
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+import type { CompilerSettings, LlmSettings } from '../api/types'
 
 interface SettingsDrawerProps {
   open: boolean
   compilerSettings: CompilerSettings
+  llmSettings: LlmSettings
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => void
+  onLlmSettingsChange: (settings: LlmSettings) => void
+  onReloadRuntimeSettings: () => void
   onBrowseCompilerFile: () => void
 }
 
 export function SettingsDrawer({
   open,
   compilerSettings,
+  llmSettings,
   onClose,
   onCompilerSettingsChange,
+  onLlmSettingsChange,
+  onReloadRuntimeSettings,
   onBrowseCompilerFile,
 }: SettingsDrawerProps) {
+  const [llmDraft, setLlmDraft] = useState(llmSettings)
+
+  useEffect(() => {
+    setLlmDraft(llmSettings)
+  }, [llmSettings])
+
+  function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onLlmSettingsChange(llmDraft)
+  }
+
   return (
     <>
       {open ? <button className="settings-scrim" type="button" aria-label="Close settings" onClick={onClose} /> : null}
@@ -26,6 +45,12 @@ export function SettingsDrawer({
           </div>
           <button type="button" onClick={onClose}>
             Close
+          </button>
+        </div>
+
+        <div className="settings-actions">
+          <button type="button" onClick={onReloadRuntimeSettings}>
+            Reload config
           </button>
         </div>
 
@@ -71,12 +96,72 @@ export function SettingsDrawer({
           </label>
         </section>
 
-        <section className="settings-section muted">
+        <form className="settings-section" onSubmit={submitLlmSettings}>
           <div className="settings-section-heading">
             <strong>AI</strong>
-            <span>Uses current OpenBrep LLM configuration</span>
+            <span>Model, endpoint and collaboration preference</span>
           </div>
-        </section>
+          <label className="settings-field">
+            <span>Model</span>
+            <input
+              type="text"
+              list="openbrep-models"
+              value={llmDraft.model}
+              onChange={(event) => setLlmDraft({ ...llmDraft, model: event.currentTarget.value })}
+            />
+            <datalist id="openbrep-models">
+              {llmDraft.models.map((model) => (
+                <option value={model} key={model} />
+              ))}
+            </datalist>
+          </label>
+          <label className="settings-field">
+            <span>API Key</span>
+            <input
+              type="password"
+              value={llmDraft.api_key}
+              placeholder="Provider API key"
+              onChange={(event) => setLlmDraft({ ...llmDraft, api_key: event.currentTarget.value })}
+            />
+          </label>
+          <label className="settings-field">
+            <span>API Base URL</span>
+            <input
+              type="text"
+              value={llmDraft.api_base}
+              placeholder="Optional endpoint override"
+              onChange={(event) => setLlmDraft({ ...llmDraft, api_base: event.currentTarget.value })}
+            />
+          </label>
+          <label className="settings-row">
+            <span>Max retries</span>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={llmDraft.max_retries}
+              onChange={(event) =>
+                setLlmDraft({
+                  ...llmDraft,
+                  max_retries: Number(event.currentTarget.value),
+                })
+              }
+            />
+          </label>
+          <label className="settings-field">
+            <span>Assistant preference</span>
+            <textarea
+              value={llmDraft.assistant_settings}
+              placeholder="例如：先解释再给最小修改；优先保证可编译；不要大改结构。"
+              onChange={(event) => setLlmDraft({ ...llmDraft, assistant_settings: event.currentTarget.value })}
+            />
+          </label>
+          <div className="settings-submit-row">
+            <button type="submit" className="primary-action">
+              Save AI
+            </button>
+          </div>
+        </form>
 
         <section className="settings-section muted">
           <div className="settings-section-heading">

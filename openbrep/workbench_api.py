@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
+from openbrep.config import ALL_MODELS, GDLAgentConfig, model_to_provider
 from openbrep.explainer.chat_adapter import build_chat_explanation_reply
 from openbrep.explainer.context_builder import (
     build_project_context,
@@ -181,6 +182,7 @@ class WorkbenchSession:
         pipeline_class: type = TaskPipeline,
         directory_chooser: Callable[[], str] | None = None,
         file_chooser: Callable[[], str] | None = None,
+        config_path: str | Path | None = None,
     ) -> None:
         self.project: HSFProject = build_demo_project()
         self.source = "demo"
@@ -188,8 +190,15 @@ class WorkbenchSession:
         self.pipeline_class = pipeline_class
         self.directory_chooser = directory_chooser or _choose_directory
         self.file_chooser = file_chooser or _choose_file
+        self.config_path = Path(config_path or "config.toml")
+        self.config = _load_workbench_config(self.config_path)
         self.compiler_mode = "mock"
-        self.converter_path = ""
+        self.converter_path = self.config.compiler.path or ""
+        self.llm_model = self.config.llm.model
+        self.llm_api_key = self.config.llm.resolve_api_key() or ""
+        self.llm_api_base = self.config.llm.resolve_api_base() or ""
+        self.max_retries = self.config.agent.max_iterations
+        self.assistant_settings = self.config.llm.assistant_settings or ""
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = project_to_snapshot(
@@ -198,6 +207,7 @@ class WorkbenchSession:
             source_path=str(self.source_path) if self.source_path else None,
         )
         snapshot["compiler"] = self.compiler_settings()
+        snapshot["llm"] = self.llm_settings()
         return snapshot
 
     def compiler_settings(self) -> dict[str, str]:
@@ -212,7 +222,48 @@ class WorkbenchSession:
             return {"ok": False, "error": f"Unsupported compiler mode: {mode}"}
         self.compiler_mode = mode
         self.converter_path = str(body.get("converter_path") or "").strip()
+        self.config.compiler.path = self.converter_path
+        _save_workbench_config(self.config, self.config_path)
         return {"ok": True, "compiler": self.compiler_settings()}
+
+    def llm_settings(self) -> dict[str, Any]:
+        models = self.config.get_available_models()
+        for model in ALL_MODELS:
+            if model not in models:
+                models.append(model)
+        return {
+            "model": self.llm_model,
+            "models": models,
+            "api_key": self.llm_api_key,
+            "api_base": self.llm_api_base,
+            "max_retries": self.max_retries,
+            "assistant_settings": self.assistant_settings,
+        }
+
+    def update_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        model = str(body.get("model") or self.llm_model).strip()
+        if not model:
+            return {"ok": False, "error": "Model is required."}
+        self.llm_model = model
+        self.llm_api_key = str(body.get("api_key") or "").strip()
+        self.llm_api_base = str(body.get("api_base") or "").strip()
+        self.assistant_settings = str(body.get("assistant_settings") or "")
+        try:
+            self.max_retries = max(1, min(10, int(body.get("max_retries") or self.max_retries)))
+        except (TypeError, ValueError):
+            self.max_retries = 5
+
+        self.config.llm.model = self.llm_model
+        self.config.llm.assistant_settings = self.assistant_settings
+        self.config.agent.max_iterations = self.max_retries
+        _apply_llm_credentials_to_config(
+            self.config,
+            model=self.llm_model,
+            api_key=self.llm_api_key,
+            api_base=self.llm_api_base,
+        )
+        _save_workbench_config(self.config, self.config_path)
+        return {"ok": True, "llm": self.llm_settings()}
 
     def load_hsf_directory(self, path: str) -> dict[str, Any]:
         hsf_path = Path(path).expanduser().resolve()
@@ -419,10 +470,18 @@ class WorkbenchSession:
             work_dir=str(self.source_path.parent),
             output_dir=str(self.source_path.parent / "output"),
             gsm_name=self.project.name,
-            assistant_settings=str(body.get("assistant_settings") or ""),
+            assistant_settings=str(body.get("assistant_settings") or self.assistant_settings),
             history=list(body.get("history") or []),
             on_event=on_event,
         )
+        if hasattr(pipeline, "config"):
+            pipeline.config.llm.model = self.llm_model
+            if self.llm_api_key:
+                pipeline.config.llm.api_key = self.llm_api_key
+            if self.llm_api_base:
+                pipeline.config.llm.api_base = self.llm_api_base
+            pipeline.config.llm.assistant_settings = self.assistant_settings
+            pipeline.config.agent.max_iterations = self.max_retries
         result = pipeline.execute(request)
         if not result.success:
             return {"ok": False, "error": result.error or "Generation failed.", "events": events}
@@ -468,6 +527,12 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/settings/compiler":
             return self.update_compiler_settings(body)
 
+        if normalized_method == "GET" and route == "/api/settings/runtime":
+            return {"ok": True, "compiler": self.compiler_settings(), "llm": self.llm_settings()}
+
+        if normalized_method == "POST" and route == "/api/settings/llm":
+            return self.update_llm_settings(body)
+
         if normalized_method == "POST" and route == "/api/preview":
             return self.preview(body.get("parameters") or {})
 
@@ -508,6 +573,40 @@ def _default_session() -> WorkbenchSession:
 
 def route_rpc(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     return _default_session().route(method, path, body)
+
+
+def _load_workbench_config(config_path: Path) -> GDLAgentConfig:
+    if config_path.exists():
+        return GDLAgentConfig.load(str(config_path))
+    return GDLAgentConfig()
+
+
+def _save_workbench_config(config: GDLAgentConfig, config_path: Path) -> None:
+    config.save(str(config_path))
+
+
+def _apply_llm_credentials_to_config(
+    config: GDLAgentConfig,
+    *,
+    model: str,
+    api_key: str,
+    api_base: str,
+) -> None:
+    custom_match = config.llm._find_custom_provider_match(model)
+    if custom_match is not None:
+        provider = custom_match.get("provider")
+        if isinstance(provider, dict):
+            provider["api_key"] = api_key
+            provider["base_url"] = api_base
+        config.llm.api_key = api_key
+        config.llm.api_base = api_base
+        return
+
+    provider_name = model_to_provider(model)
+    if provider_name and provider_name != "custom" and api_key:
+        config.llm.provider_keys[provider_name] = api_key
+    config.llm.api_key = api_key
+    config.llm.api_base = api_base
 
 
 def _choose_directory() -> str:

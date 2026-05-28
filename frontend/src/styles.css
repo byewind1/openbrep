@@ -666,7 +666,7 @@ button:focus-visible {
   max-width: calc(100vw - 24px);
   height: 100vh;
   display: grid;
-  grid-template-rows: 52px repeat(4, auto) minmax(0, 1fr);
+  grid-template-rows: 52px auto repeat(4, auto) minmax(0, 1fr);
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
   transform: translateX(100%);
@@ -715,6 +715,13 @@ button:focus-visible {
   padding: 14px;
 }
 
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 14px;
+}
+
 .settings-section.muted {
   gap: 0;
 }
@@ -736,6 +743,12 @@ button:focus-visible {
   padding: 0 8px;
 }
 
+.settings-row input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+}
+
 .settings-field {
   display: grid;
   gap: 7px;
@@ -751,6 +764,29 @@ button:focus-visible {
   min-width: 0;
   height: 28px;
   padding: 0 8px;
+}
+
+.settings-field > input,
+.settings-field > textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.settings-field > input {
+  height: 28px;
+}
+
+.settings-field > textarea {
+  min-height: 88px;
+  resize: vertical;
+  padding-block: 7px;
+  line-height: 1.42;
+}
+
+.settings-submit-row {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .drawer-content p {

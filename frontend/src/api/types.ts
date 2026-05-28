@@ -49,12 +49,22 @@ export interface CompilerSettings {
   converter_path: string
 }
 
+export interface LlmSettings {
+  model: string
+  models: string[]
+  api_key: string
+  api_base: string
+  max_retries: number
+  assistant_settings: string
+}
+
 export interface WorkbenchSnapshot {
   project: WorkbenchProject
   parameters: WorkbenchParameter[]
   preview: PreviewPayload
   warnings: string[]
   compiler?: CompilerSettings
+  llm?: LlmSettings
 }
 
 export interface ApplyResult extends WorkbenchSnapshot {
@@ -97,6 +107,19 @@ export interface MockCompileResponse {
 export interface CompilerSettingsResult {
   ok: boolean
   compiler?: CompilerSettings
+  error?: string
+}
+
+export interface RuntimeSettingsResult {
+  ok: boolean
+  compiler?: CompilerSettings
+  llm?: LlmSettings
+  error?: string
+}
+
+export interface LlmSettingsResult {
+  ok: boolean
+  llm?: LlmSettings
   error?: string
 }
 

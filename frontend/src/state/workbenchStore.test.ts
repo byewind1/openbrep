@@ -35,6 +35,19 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     saveProjectScript: async () => ({ success: true, saved_at: '2026-05-27T09:00:00' }),
     mockCompile: async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 12 }),
     updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
+    fetchRuntimeSettings: async () => ({
+      ok: true,
+      compiler: { mode: 'mock', converter_path: '' },
+      llm: {
+        model: 'glm-4-flash',
+        models: ['glm-4-flash', 'deepseek-chat'],
+        api_key: '',
+        api_base: '',
+        max_retries: 5,
+        assistant_settings: '',
+      },
+    }),
+    updateLlmSettings: async (settings) => ({ ok: true, llm: settings }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
@@ -188,6 +201,53 @@ test('updates compiler settings through the API', async () => {
   await store.getState().setCompilerSettings({ mode: 'lp', converter_path: '/converter' })
 
   expect(store.getState().compilerSettings).toEqual({ mode: 'lp', converter_path: '/converter' })
+})
+
+test('updates llm settings through the API', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().setLlmSettings({
+    model: 'deepseek-chat',
+    models: ['glm-4-flash', 'deepseek-chat'],
+    api_key: 'deepseek-key',
+    api_base: 'https://api.deepseek.com/v1',
+    max_retries: 6,
+    assistant_settings: '先解释再改',
+  })
+
+  expect(store.getState().llmSettings).toEqual({
+    model: 'deepseek-chat',
+    models: ['glm-4-flash', 'deepseek-chat'],
+    api_key: 'deepseek-key',
+    api_base: 'https://api.deepseek.com/v1',
+    max_retries: 6,
+    assistant_settings: '先解释再改',
+  })
+})
+
+test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchRuntimeSettings: async () => ({
+        ok: true,
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter' },
+        llm: {
+          model: 'gpt-4.1-mini',
+          models: ['gpt-4.1-mini'],
+          api_key: 'openai-key',
+          api_base: 'https://api.openai.com/v1',
+          max_retries: 4,
+          assistant_settings: 'short answers',
+        },
+      }),
+    }),
+  )
+
+  await store.getState().reloadRuntimeSettings()
+
+  expect(store.getState().compilerSettings.mode).toBe('lp')
+  expect(store.getState().llmSettings.model).toBe('gpt-4.1-mini')
+  expect(store.getState().llmSettings.assistant_settings).toBe('short answers')
 })
 
 test('browses for LP_XMLConverter and stores compiler settings', async () => {

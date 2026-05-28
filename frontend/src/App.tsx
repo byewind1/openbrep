@@ -22,6 +22,7 @@ export default function App() {
   const compiling = useWorkbenchStore((state) => state.compiling)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
   const compilerSettings = useWorkbenchStore((state) => state.compilerSettings)
+  const llmSettings = useWorkbenchStore((state) => state.llmSettings)
   const activeRailPanel = useWorkbenchStore((state) => state.activeRailPanel)
   const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
@@ -37,6 +38,8 @@ export default function App() {
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
+  const setLlmSettings = useWorkbenchStore((state) => state.setLlmSettings)
+  const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const browseCompilerFile = useWorkbenchStore((state) => state.browseCompilerFile)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
@@ -139,8 +142,11 @@ export default function App() {
       <SettingsDrawer
         open={settingsOpen}
         compilerSettings={compilerSettings}
+        llmSettings={llmSettings}
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
+        onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
+        onReloadRuntimeSettings={() => void reloadRuntimeSettings()}
         onBrowseCompilerFile={() => void browseCompilerFile()}
       />
     </main>

@@ -8,9 +8,12 @@ import type {
   DirectoryChoiceResult,
   FileChoiceResult,
   GenerateResult,
+  LlmSettings,
+  LlmSettingsResult,
   PreviewPayload,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
+  RuntimeSettingsResult,
   SaveScriptResponse,
   WorkbenchSnapshot,
 } from './types'
@@ -106,6 +109,26 @@ export async function updateCompilerSettings(settings: CompilerSettings): Promis
   )
 }
 
+export async function fetchRuntimeSettings(): Promise<RuntimeSettingsResult> {
+  return requestJson<RuntimeSettingsResult>(
+    '/api/settings/runtime',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function updateLlmSettings(settings: LlmSettings): Promise<LlmSettingsResult> {
+  return requestJson<LlmSettingsResult>(
+    '/api/settings/llm',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
 export async function askAssistant(message: string): Promise<AssistantResult> {
   return requestJson<AssistantResult>(
     '/api/assistant',
@@ -118,13 +141,13 @@ export async function askAssistant(message: string): Promise<AssistantResult> {
   )
 }
 
-export async function generateWithAssistant(message: string): Promise<GenerateResult> {
+export async function generateWithAssistant(message: string, assistantSettings = ''): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, assistant_settings: assistantSettings }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
@@ -179,6 +202,14 @@ async function requestJson<T>(path: string, init: RequestInit, fallback: T): Pro
 export const fallbackSnapshot: WorkbenchSnapshot = {
   project: { name: 'Demo Bookshelf', source: 'fallback' },
   compiler: { mode: 'mock', converter_path: '' },
+  llm: {
+    model: 'glm-4-flash',
+    models: ['glm-4-flash'],
+    api_key: '',
+    api_base: '',
+    max_retries: 5,
+    assistant_settings: '',
+  },
   parameters: [
     { name: 'A', type_tag: 'Length', description: '总宽', value: '1.2', is_fixed: true },
     { name: 'B', type_tag: 'Length', description: '总深', value: '0.36', is_fixed: true },

@@ -5,6 +5,7 @@ import {
   chooseCompilerFile,
   chooseProjectDirectory,
   compileProject,
+  fetchRuntimeSettings,
   fetchPreview,
   fetchSnapshot,
   generateWithAssistant,
@@ -14,6 +15,7 @@ import {
   mockCompile,
   saveProjectScript,
   updateCompilerSettings,
+  updateLlmSettings,
 } from '../api/client'
 import type {
   ApplyResult,
@@ -26,11 +28,14 @@ import type {
   DirectoryChoiceResult,
   FileChoiceResult,
   GenerateResult,
+  LlmSettings,
+  LlmSettingsResult,
   MockCompileResponse,
   PreviewPayload,
   ProjectScript,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
+  RuntimeSettingsResult,
   SaveScriptResponse,
   WorkbenchParameter,
   WorkbenchProject,
@@ -49,8 +54,10 @@ export interface WorkbenchApi {
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
   mockCompile: () => Promise<MockCompileResponse>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
+  fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
+  updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
   askAssistant: (message: string) => Promise<AssistantResult>
-  generateWithAssistant: (message: string) => Promise<GenerateResult>
+  generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
 }
 
@@ -65,6 +72,7 @@ export interface WorkbenchState {
   compiling: boolean
   compileLog: string[]
   compilerSettings: CompilerSettings
+  llmSettings: LlmSettings
   activeRailPanel: '3d' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
@@ -80,6 +88,8 @@ export interface WorkbenchState {
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<void>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
+  setLlmSettings: (settings: LlmSettings) => Promise<void>
+  reloadRuntimeSettings: () => Promise<void>
   compileCurrentProject: () => Promise<void>
   setActiveRailPanel: (panel: '3d' | 'ai') => void
   sendAssistantMessage: (message: string) => Promise<void>
@@ -106,6 +116,8 @@ const defaultWorkbenchApi: WorkbenchApi = {
   saveProjectScript,
   mockCompile,
   updateCompilerSettings,
+  fetchRuntimeSettings,
+  updateLlmSettings,
   askAssistant,
   generateWithAssistant,
   applyParameters,
@@ -125,6 +137,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     compiling: false,
     compileLog: [],
     compilerSettings: { mode: 'mock', converter_path: '' },
+    llmSettings: defaultLlmSettings(),
     activeRailPanel: '3d',
     assistantBusy: false,
     assistantMessages: [],
@@ -139,7 +152,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     async load() {
       set({ loading: true })
       const snapshot = await api.fetchSnapshot()
-      set(hydrateSnapshot(snapshot, get().compilerSettings))
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadScripts()
       set({ loading: false })
     },
@@ -149,7 +162,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       if (!normalizedPath) return
       set({ loading: true })
       const snapshot = await api.loadProjectPath(normalizedPath)
-      set(hydrateSnapshot(snapshot, get().compilerSettings))
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadScripts()
       set({ loading: false })
     },
@@ -161,7 +174,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         set({ loading: false })
         return
       }
-      set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings))
+      set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
       await get().loadScripts()
       set({ loading: false })
     },
@@ -178,6 +191,21 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       if (result.ok && result.compiler) {
         set({ compilerSettings: result.compiler })
       }
+    },
+
+    async setLlmSettings(settings) {
+      const result = await api.updateLlmSettings(settings)
+      if (result.ok && result.llm) {
+        set({ llmSettings: result.llm })
+      }
+    },
+
+    async reloadRuntimeSettings() {
+      const result = await api.fetchRuntimeSettings()
+      set((state) => ({
+        compilerSettings: result.compiler ?? state.compilerSettings,
+        llmSettings: result.llm ?? state.llmSettings,
+      }))
     },
 
     async setDraftParameter(name, value) {
@@ -330,7 +358,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         assistantBusy: true,
         assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
       }))
-      const result = await api.generateWithAssistant(trimmed)
+      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings)
       const changedFiles = result.assistant?.changed_files ?? []
       const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
       const reply =
@@ -367,13 +395,25 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
 
 export const workbenchStore = createWorkbenchStore()
 
-function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: CompilerSettings) {
+function defaultLlmSettings(): LlmSettings {
+  return {
+    model: 'glm-4-flash',
+    models: ['glm-4-flash'],
+    api_key: '',
+    api_base: '',
+    max_retries: 5,
+    assistant_settings: '',
+  }
+}
+
+function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: CompilerSettings, fallbackLlm: LlmSettings) {
   return {
     project: snapshot.project,
     parameters: snapshot.parameters,
     preview: snapshot.preview,
     warnings: snapshot.warnings ?? snapshot.preview?.warnings ?? [],
     compilerSettings: snapshot.compiler ?? fallbackCompiler,
+    llmSettings: snapshot.llm ?? fallbackLlm,
     draftParameters: {},
     scripts: [],
     activeScriptName: null,
