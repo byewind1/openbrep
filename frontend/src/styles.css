@@ -390,6 +390,13 @@ button:focus-visible {
   min-height: 0;
 }
 
+.assistant-panel {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--bg-panel);
+}
+
 .panel-heading {
   height: 38px;
   justify-content: space-between;
@@ -529,6 +536,68 @@ button:focus-visible {
   padding: 0 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+.assistant-thread {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding: 10px;
+}
+
+.assistant-empty {
+  margin: auto;
+}
+
+.assistant-message {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.assistant-message.user {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.assistant-message span {
+  font-weight: 800;
+}
+
+.assistant-message p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.assistant-input {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 10px;
+}
+
+.assistant-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.assistant-input textarea {
+  width: 100%;
+  min-height: 70px;
+  max-height: 120px;
+  resize: vertical;
+  padding: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
 }
 
 .bottom-drawer {

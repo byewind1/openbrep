@@ -88,7 +88,7 @@ export interface CompileIssue {
 export interface MockCompileResponse {
   ok?: boolean
   success: boolean
-  mode: 'mock'
+  mode: string
   issues: CompileIssue[]
   duration_ms: number
   error?: string

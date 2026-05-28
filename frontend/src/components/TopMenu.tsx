@@ -9,6 +9,7 @@ interface TopMenuProps {
   onLoadProjectPath: (path: string) => void
   onBrowseProjectDirectory: () => void
   onCompile: () => void
+  onMockCompile: () => void
   onSave: () => void
   compilerSettings: CompilerSettings
   onCompilerSettingsChange: (settings: CompilerSettings) => void
@@ -28,6 +29,7 @@ export function TopMenu({
   onLoadProjectPath,
   onBrowseProjectDirectory,
   onCompile,
+  onMockCompile,
   onSave,
   compilerSettings,
   onCompilerSettingsChange,
@@ -108,8 +110,11 @@ export function TopMenu({
         <button type="button" disabled={!activeScriptName || saving} onClick={onSave}>
           {saving ? '...' : 'Save'}
         </button>
-        <button type="button" disabled={!project?.path || compiling} onClick={onCompile}>
+        <button type="button" disabled={!project?.path || compiling} onClick={onMockCompile}>
           {compiling ? '...' : 'Mock'}
+        </button>
+        <button type="button" disabled={!project?.path || compiling} onClick={onCompile}>
+          {compiling ? '...' : 'Compile'}
         </button>
       </nav>
       <div className="topbar-status">

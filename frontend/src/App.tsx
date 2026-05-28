@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { AssistantPanel } from './components/AssistantPanel'
 import { BottomDrawer } from './components/BottomDrawer'
 import { ParameterRail } from './components/ParameterRail'
 import { PreviewViewport } from './components/PreviewViewport'
@@ -19,6 +20,9 @@ export default function App() {
   const compiling = useWorkbenchStore((state) => state.compiling)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
   const compilerSettings = useWorkbenchStore((state) => state.compilerSettings)
+  const activeRailPanel = useWorkbenchStore((state) => state.activeRailPanel)
+  const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
+  const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
   const scripts = useWorkbenchStore((state) => state.scripts)
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
   const scriptContents = useWorkbenchStore((state) => state.scriptContents)
@@ -32,7 +36,11 @@ export default function App() {
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
   const browseCompilerFile = useWorkbenchStore((state) => state.browseCompilerFile)
+  const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
+  const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
+  const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
+  const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
   const openScript = useWorkbenchStore((state) => state.openScript)
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
   const saveActiveScript = useWorkbenchStore((state) => state.saveActiveScript)
@@ -53,7 +61,8 @@ export default function App() {
         onApply={() => void applyDraftParameters()}
         onLoadProjectPath={(path) => void loadProjectPath(path)}
         onBrowseProjectDirectory={() => void browseProjectDirectory()}
-        onCompile={() => void runMockCompile()}
+        onCompile={() => void compileCurrentProject()}
+        onMockCompile={() => void runMockCompile()}
         onSave={() => void saveActiveScript()}
         compilerSettings={compilerSettings}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
@@ -92,18 +101,37 @@ export default function App() {
         </section>
         <aside className="workbench-right-rail right-rail">
           <div className="rail-tabs" role="tablist" aria-label="Right rail panels">
-            <button type="button" className="rail-tab active" aria-selected="true">
+            <button
+              type="button"
+              className={`rail-tab${activeRailPanel === '3d' ? ' active' : ''}`}
+              aria-selected={activeRailPanel === '3d'}
+              onClick={() => setActiveRailPanel('3d')}
+            >
               3D
             </button>
             <button type="button" className="rail-tab" disabled aria-selected="false">
               2D
             </button>
-            <button type="button" className="rail-tab" disabled aria-selected="false">
+            <button
+              type="button"
+              className={`rail-tab${activeRailPanel === 'ai' ? ' active' : ''}`}
+              aria-selected={activeRailPanel === 'ai'}
+              onClick={() => setActiveRailPanel('ai')}
+            >
               AI
             </button>
           </div>
           <div className="rail-panel viewport-panel">
-            <PreviewViewport preview={preview} warnings={warnings} />
+            {activeRailPanel === '3d' ? (
+              <PreviewViewport preview={preview} warnings={warnings} />
+            ) : (
+              <AssistantPanel
+                messages={assistantMessages}
+                busy={assistantBusy}
+                onSend={(message) => void sendAssistantMessage(message)}
+                onGenerate={(message) => void generateAssistantChanges(message)}
+              />
+            )}
           </div>
         </aside>
       </section>

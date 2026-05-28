@@ -230,7 +230,43 @@ test('records compile results in the workbench log', async () => {
   await store.getState().compileCurrentProject()
 
   expect(store.getState().compileLog).toEqual(['LP compile passed: /workspace/output/Chair.gsm'])
+  expect(store.getState().mockCompileResult).toEqual({
+    success: true,
+    mode: 'lp',
+    issues: [],
+    duration_ms: 0,
+    error: undefined,
+  })
   expect(store.getState().compiling).toBe(false)
+})
+
+test('records real compile errors in diagnostics', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      compileProject: async () => ({
+        ok: false,
+        error: 'LP_XMLConverter not found',
+        compile: {
+          success: false,
+          mode: 'lp',
+          output_path: '',
+          stdout: '',
+          stderr: 'LP_XMLConverter not found',
+          errors: ['LP_XMLConverter not found'],
+          warnings: ['no gsm written'],
+        },
+      }),
+    }),
+  )
+
+  await store.getState().compileCurrentProject()
+
+  expect(store.getState().mockCompileResult?.success).toBe(false)
+  expect(store.getState().mockCompileResult?.mode).toBe('lp')
+  expect(store.getState().mockCompileResult?.issues).toEqual([
+    { severity: 'error', script: '', line: null, message: 'LP_XMLConverter not found' },
+    { severity: 'warning', script: '', line: null, message: 'no gsm written' },
+  ])
 })
 
 test('adds user and assistant messages to the assistant thread', async () => {
@@ -252,6 +288,14 @@ test('adds user and assistant messages to the assistant thread', async () => {
   expect(store.getState().assistantBusy).toBe(false)
 })
 
+test('sets active rail panel', () => {
+  const store = createWorkbenchStore(makeApi())
+
+  store.getState().setActiveRailPanel('ai')
+
+  expect(store.getState().activeRailPanel).toBe('ai')
+})
+
 test('generate assistant message refreshes preview and records changed files', async () => {
   const store = createWorkbenchStore(
     makeApi({
@@ -270,13 +314,21 @@ test('generate assistant message refreshes preview and records changed files', a
         },
         warnings: ['preview refreshed'],
       }),
+      getProjectScript: async (scriptName: string) => ({
+        name: scriptName,
+        path: `scripts/${scriptName}`,
+        content: `updated content for ${scriptName}`,
+      }),
     }),
   )
 
+  await store.getState().load()
   await store.getState().generateAssistantChanges('加一块层板')
 
   expect(store.getState().preview?.meshes[0]?.name).toBe('changed')
   expect(store.getState().warnings).toEqual(['preview refreshed'])
+  expect(store.getState().scriptContents['3d.gdl']).toBe('updated content for 3d.gdl')
+  expect(store.getState().scriptContents['2d.gdl']).toBe('updated content for 2d.gdl')
   expect(store.getState().assistantMessages.at(-1)).toEqual({
     role: 'assistant',
     content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',

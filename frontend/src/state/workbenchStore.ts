@@ -65,6 +65,7 @@ export interface WorkbenchState {
   compiling: boolean
   compileLog: string[]
   compilerSettings: CompilerSettings
+  activeRailPanel: '3d' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
   scripts: ProjectScript[]
@@ -80,6 +81,7 @@ export interface WorkbenchState {
   browseCompilerFile: () => Promise<void>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   compileCurrentProject: () => Promise<void>
+  setActiveRailPanel: (panel: '3d' | 'ai') => void
   sendAssistantMessage: (message: string) => Promise<void>
   generateAssistantChanges: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
@@ -123,6 +125,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     compiling: false,
     compileLog: [],
     compilerSettings: { mode: 'mock', converter_path: '' },
+    activeRailPanel: '3d',
     assistantBusy: false,
     assistantMessages: [],
     scripts: [],
@@ -202,14 +205,26 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     async compileCurrentProject() {
       set({ compiling: true })
       const result = await api.compileProject()
+      const issues = compileIssuesFromResult(result)
       const message =
         result.ok && result.compile
           ? `${result.compile.mode === 'mock' ? 'Mock' : 'LP'} compile passed: ${result.compile.output_path}`
           : `Compile failed: ${result.error ?? 'Unknown error'}`
       set((state) => ({
         compileLog: [message, ...state.compileLog].slice(0, 20),
+        mockCompileResult: {
+          success: Boolean(result.compile?.success),
+          mode: result.compile?.mode ?? state.compilerSettings.mode,
+          issues,
+          duration_ms: 0,
+          error: result.error,
+        },
         compiling: false,
       }))
+    },
+
+    setActiveRailPanel(panel) {
+      set({ activeRailPanel: panel })
     },
 
     async loadScripts() {
@@ -268,6 +283,15 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
           compileLog: [`Saved ${activeScriptName} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
         }))
         await get().loadScripts()
+        const refreshedActiveScriptName = get().activeScriptName
+        if (refreshedActiveScriptName) {
+          const saved = await api.getProjectScript(refreshedActiveScriptName)
+          if (saved) {
+            set((state) => ({
+              scriptContents: { ...state.scriptContents, [refreshedActiveScriptName]: saved.content },
+            }))
+          }
+        }
         return
       }
       set({ scriptSaving: false })
@@ -320,6 +344,19 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
         draftParameters: {},
       }))
+      if (result.ok) {
+        await get().loadScripts()
+        const refreshedScripts = get().scripts.filter((script) => script.exists)
+        for (const script of refreshedScripts) {
+          const updated = await api.getProjectScript(script.name)
+          if (updated) {
+            set((state) => ({
+              scriptContents: { ...state.scriptContents, [script.name]: updated.content },
+              dirtyScripts: { ...state.dirtyScripts, [script.name]: false },
+            }))
+          }
+        }
+      }
     },
 
     hasDraftChanges() {
@@ -369,4 +406,15 @@ function buildMockCompileSummary(result: MockCompileResponse) {
 
 function countIssues(issues: CompileIssue[], severity: string) {
   return issues.filter((issue) => issue.severity === severity).length
+}
+
+function compileIssuesFromResult(result: CompileResult): CompileIssue[] {
+  const compile = result.compile
+  if (!compile) {
+    return result.error ? [{ severity: 'error', script: '', line: null, message: result.error }] : []
+  }
+  return [
+    ...(compile.errors ?? []).map((message) => ({ severity: 'error', script: '', line: null, message })),
+    ...(compile.warnings ?? []).map((message) => ({ severity: 'warning', script: '', line: null, message })),
+  ]
 }
