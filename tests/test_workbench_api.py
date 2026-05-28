@@ -113,6 +113,41 @@ def test_workbench_session_rejects_non_gdl_import(tmp_path):
     assert "Unsupported file type" in response["error"]
 
 
+def test_workbench_session_creates_project_from_prompt(tmp_path):
+    class FakePipeline:
+        last_request = None
+
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            FakePipeline.last_request = request
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nADDZ 1\n")
+            return TaskResult(
+                success=True,
+                intent="CREATE",
+                scripts={"scripts/3d.gdl": project.get_script(ScriptType.SCRIPT_3D)},
+                plain_text="已创建书架",
+                project=project,
+            )
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "create a bookshelf", "output_dir": str(tmp_path)},
+    )
+
+    assert response["ok"] is True
+    assert response["assistant"]["kind"] == "create"
+    assert response["project"]["source"] == "hsf"
+    assert response["project"]["path"].startswith(str(tmp_path))
+    assert HSFProject.load_from_disk(response["project"]["path"]).get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
+    assert FakePipeline.last_request.intent == "CREATE"
+    assert FakePipeline.last_request.output_dir == str(tmp_path.resolve())
+
+
 def test_workbench_session_saves_and_lists_project_revisions(tmp_path):
     project = HSFProject.create_new("RevisionShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")

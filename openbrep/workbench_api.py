@@ -316,6 +316,69 @@ class WorkbenchSession:
         self._remember_project_path(hsf_dir)
         return {"ok": True, "imported_from": str(source_file), **self.snapshot()}
 
+    def create_project_from_prompt(self, body: dict[str, Any]) -> dict[str, Any]:
+        prompt = str(body.get("prompt") or body.get("message") or "").strip()
+        if not prompt:
+            return {"ok": False, "error": "Create prompt is empty."}
+
+        output_root = Path(str(body.get("output_dir") or "./output")).expanduser().resolve()
+        output_root.mkdir(parents=True, exist_ok=True)
+        requested_name = str(body.get("project_name") or "").strip()
+        project_name = _unique_project_name(
+            _safe_project_name(requested_name or _project_name_from_prompt(prompt)),
+            output_root,
+        )
+        target_dir = output_root / project_name
+        events: list[dict[str, Any]] = []
+
+        def on_event(event_type, data):
+            events.append({"type": event_type, "data": data})
+
+        pipeline = self.pipeline_class(trace_dir="./traces")
+        if hasattr(pipeline, "config"):
+            pipeline.config.llm.model = self.llm_model
+            if self.llm_api_key:
+                pipeline.config.llm.api_key = self.llm_api_key
+            if self.llm_api_base:
+                pipeline.config.llm.api_base = self.llm_api_base
+            pipeline.config.llm.assistant_settings = self.assistant_settings
+            pipeline.config.agent.max_iterations = self.max_retries
+
+        result = pipeline.execute(
+            TaskRequest(
+                user_input=prompt,
+                intent="CREATE",
+                work_dir=str(output_root),
+                output_dir=str(output_root),
+                gsm_name=project_name,
+                assistant_settings=str(body.get("assistant_settings") or self.assistant_settings),
+                history=list(body.get("history") or []),
+                on_event=on_event,
+            )
+        )
+        if not result.success or result.project is None:
+            return {"ok": False, "error": result.error or "Create failed.", "events": events}
+
+        result.project.name = project_name
+        result.project.work_dir = target_dir.parent
+        result.project.root = target_dir
+        hsf_dir = result.project.save_to_disk()
+        self.project = result.project
+        self.source = "hsf"
+        self.source_path = hsf_dir
+        self._remember_project_path(hsf_dir)
+        return {
+            "ok": True,
+            "assistant": {
+                "kind": "create",
+                "reply": result.plain_text,
+                "changed_files": list((result.scripts or {}).keys()),
+                "intent": result.intent,
+            },
+            "events": events,
+            **self.snapshot(),
+        }
+
     def close_project(self) -> dict[str, Any]:
         self.project = build_demo_project()
         self.source = "demo"
@@ -642,6 +705,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/import-gdl":
             return self.import_gdl_file(body)
 
+        if normalized_method == "POST" and route == "/api/project/create":
+            return self.create_project_from_prompt(body)
+
         if normalized_method == "POST" and route == "/api/project/close":
             return self.close_project()
 
@@ -728,6 +794,13 @@ def _safe_project_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_\- ]+", "_", str(name or "").strip())
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" ._")
     return cleaned or "Imported_GDL"
+
+
+def _project_name_from_prompt(prompt: str) -> str:
+    words = re.findall(r"[A-Za-z0-9_\-]+", prompt)
+    if words:
+        return "_".join(words[:4])
+    return "Generated_Object"
 
 
 def _unique_project_name(base_name: str, work_dir: Path) -> str:

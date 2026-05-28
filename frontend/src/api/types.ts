@@ -190,6 +190,18 @@ export interface GenerateResult {
   error?: string
 }
 
+export interface CreateProjectResult extends WorkbenchSnapshot {
+  ok: boolean
+  assistant?: {
+    kind: string
+    reply: string
+    changed_files: string[]
+    intent: string
+  }
+  events?: Array<{ type: string; data: unknown }>
+  error?: string
+}
+
 export interface ProjectScriptsResponse {
   scripts: ProjectScript[]
 }

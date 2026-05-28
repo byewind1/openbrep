@@ -54,6 +54,7 @@ export function WorkbenchApp() {
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
+  const createProjectFromPrompt = useWorkbenchStore((state) => state.createProjectFromPrompt)
   const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
   const openScript = useWorkbenchStore((state) => state.openScript)
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
@@ -153,6 +154,7 @@ export function WorkbenchApp() {
                 messages={assistantMessages}
                 busy={assistantBusy}
                 onSend={(message) => void sendAssistantMessage(message)}
+                onCreate={(message) => void createProjectFromPrompt(message)}
                 onGenerate={(message) => void generateAssistantChanges(message)}
               />
             )}

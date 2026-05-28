@@ -1,4 +1,5 @@
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
+import { hydrateSnapshot } from '../workbenchStoreUtils'
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
   return {
@@ -18,6 +19,38 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       set((state) => ({
         assistantBusy: false,
         assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
+      }))
+    },
+
+    async createProjectFromPrompt(message: string) {
+      const trimmed = message.trim()
+      if (!trimmed) return
+      set((state) => ({
+        assistantBusy: true,
+        assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
+      }))
+      const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings)
+      if (!result.ok || !result.project || !result.parameters || !result.preview) {
+        set((state) => ({
+          assistantBusy: false,
+          assistantMessages: [
+            ...state.assistantMessages,
+            { role: 'assistant', content: result.error ?? 'Create request failed.' },
+          ],
+          lastError: result.error ?? 'Create request failed.',
+        }))
+        return
+      }
+      set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
+      await get().loadScripts()
+      await get().loadRevisions()
+      set((state) => ({
+        assistantBusy: false,
+        assistantMessages: [
+          ...state.assistantMessages,
+          { role: 'assistant', content: result.assistant?.reply ?? 'Project created.' },
+        ],
       }))
     },
 

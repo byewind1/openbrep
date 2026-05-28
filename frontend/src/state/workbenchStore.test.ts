@@ -37,6 +37,20 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     chooseProjectDirectory: async () => ({ ok: false, cancelled: true }),
     chooseCompilerFile: async () => ({ ok: false, cancelled: true }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
+    createProjectFromPrompt: async () => ({
+      ok: true,
+      assistant: {
+        kind: 'create',
+        reply: 'created bookshelf',
+        changed_files: ['scripts/3d.gdl'],
+        intent: 'CREATE',
+      },
+      project: { name: 'Bookshelf', source: 'hsf', path: '/workspace/Bookshelf' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: ['created'] },
+      warnings: ['created'],
+      compiler: { mode: 'mock', converter_path: '' },
+    }),
     listProjectScripts: async () => ({
       scripts: [
         { name: '3d.gdl', path: 'scripts/3d.gdl', exists: true, size: 128 },
@@ -616,6 +630,21 @@ test('sets active rail panel', () => {
   store.getState().setActiveRailPanel('ai')
 
   expect(store.getState().activeRailPanel).toBe('ai')
+})
+
+test('createProjectFromPrompt loads the created project and records assistant reply', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().createProjectFromPrompt('做一个书架')
+
+  expect(store.getState().project).toEqual({ name: 'Bookshelf', source: 'hsf', path: '/workspace/Bookshelf' })
+  expect(store.getState().warnings).toEqual(['created'])
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().assistantMessages).toEqual([
+    { role: 'user', content: '做一个书架' },
+    { role: 'assistant', content: 'created bookshelf' },
+  ])
+  expect(store.getState().assistantBusy).toBe(false)
 })
 
 test('generate assistant message refreshes preview and records changed files', async () => {

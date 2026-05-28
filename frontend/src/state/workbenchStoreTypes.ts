@@ -5,6 +5,7 @@ import type {
   CompileResult,
   CompilerSettings,
   CompilerSettingsResult,
+  CreateProjectResult,
   DirectoryChoiceResult,
   FileChoiceResult,
   GenerateResult,
@@ -37,6 +38,7 @@ export interface WorkbenchApi {
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
   compileProject: () => Promise<CompileResult>
+  createProjectFromPrompt: (message: string, assistantSettings?: string) => Promise<CreateProjectResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
   listRecentProjects: () => Promise<RecentProjectsResponse>
   listProjectRevisions: () => Promise<ProjectRevisionsResponse>
@@ -92,6 +94,7 @@ export interface WorkbenchState {
   compileCurrentProject: () => Promise<void>
   setActiveRailPanel: (panel: '3d' | 'ai') => void
   sendAssistantMessage: (message: string) => Promise<void>
+  createProjectFromPrompt: (message: string) => Promise<void>
   generateAssistantChanges: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>

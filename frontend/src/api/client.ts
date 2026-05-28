@@ -2,6 +2,7 @@ import type {
   ApplyResult,
   AssistantResult,
   CompileResult,
+  CreateProjectResult,
   MockCompileResponse,
   CompilerSettings,
   CompilerSettingsResult,
@@ -72,6 +73,18 @@ export async function importGdlFile(path = ''): Promise<WorkbenchSnapshot> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function createProjectFromPrompt(message: string, assistantSettings = ''): Promise<CreateProjectResult> {
+  return requestJson<CreateProjectResult>(
+    '/api/project/create',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: message, assistant_settings: assistantSettings }),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
   )

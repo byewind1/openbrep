@@ -6,10 +6,11 @@ interface AssistantPanelProps {
   messages: AssistantMessage[]
   busy: boolean
   onSend: (message: string) => void
+  onCreate: (message: string) => void
   onGenerate: (message: string) => void
 }
 
-export function AssistantPanel({ messages, busy, onSend, onGenerate }: AssistantPanelProps) {
+export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
 
   function submitMessage(event: FormEvent<HTMLFormElement>) {
@@ -17,11 +18,13 @@ export function AssistantPanel({ messages, busy, onSend, onGenerate }: Assistant
     sendDraft('explain')
   }
 
-  function sendDraft(mode: 'explain' | 'generate') {
+  function sendDraft(mode: 'explain' | 'create' | 'generate') {
     const message = draft.trim()
     if (!message) return
     setDraft('')
-    if (mode === 'generate') {
+    if (mode === 'create') {
+      onCreate(message)
+    } else if (mode === 'generate') {
       onGenerate(message)
     } else {
       onSend(message)
@@ -56,6 +59,9 @@ export function AssistantPanel({ messages, busy, onSend, onGenerate }: Assistant
         <div className="assistant-actions">
           <button type="submit" disabled={busy || draft.trim().length === 0}>
             解释
+          </button>
+          <button type="button" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('create')}>
+            新建项目
           </button>
           <button type="button" className="primary-action" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('generate')}>
             生成修改
