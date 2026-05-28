@@ -6,133 +6,34 @@ import {
   chooseProjectDirectory,
   closeProject,
   compileProject,
-  fetchRuntimeSettings,
   fetchPreview,
+  fetchRuntimeSettings,
   fetchSnapshot,
   generateWithAssistant,
   getProjectScript,
   importGdlFile,
-  loadProjectPath,
-  listRecentProjects,
   listProjectRevisions,
   listProjectScripts,
+  listRecentProjects,
+  loadProjectPath,
   mockCompile,
   restoreProjectRevision,
-  saveProjectScript,
   saveProjectRevision,
+  saveProjectScript,
   updateCompilerSettings,
   updateLlmSettings,
 } from '../api/client'
-import type {
-  ApplyResult,
-  AssistantMessage,
-  AssistantResult,
-  CompileResult,
-  CompileIssue,
-  CompilerSettings,
-  CompilerSettingsResult,
-  DirectoryChoiceResult,
-  FileChoiceResult,
-  GenerateResult,
-  LlmSettings,
-  LlmSettingsResult,
-  MockCompileResponse,
-  PreviewPayload,
-  ProjectScript,
-  ProjectScriptContentResponse,
-  ProjectScriptsResponse,
-  ProjectRevision,
-  ProjectRevisionsResponse,
-  RecentProject,
-  RecentProjectsResponse,
-  RestoreRevisionResponse,
-  RuntimeSettingsResult,
-  SaveScriptResponse,
-  SaveRevisionResponse,
-  WorkbenchParameter,
-  WorkbenchProject,
-  WorkbenchSnapshot,
-} from '../api/types'
+import { createAssistantActions } from './actions/assistantActions'
+import { createCompileActions } from './actions/compileActions'
+import { createParameterActions } from './actions/parameterActions'
+import { createProjectActions } from './actions/projectActions'
+import { createRevisionActions } from './actions/revisionActions'
+import { createScriptActions } from './actions/scriptActions'
+import { createSettingsActions } from './actions/settingsActions'
+import type { WorkbenchActionContext, WorkbenchApi, WorkbenchSet, WorkbenchState } from './workbenchStoreTypes'
+import { defaultLlmSettings } from './workbenchStoreUtils'
 
-export interface WorkbenchApi {
-  fetchSnapshot: () => Promise<WorkbenchSnapshot>
-  fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
-  loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
-  importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
-  closeProject: () => Promise<WorkbenchSnapshot>
-  chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
-  chooseCompilerFile: () => Promise<FileChoiceResult>
-  compileProject: () => Promise<CompileResult>
-  listProjectScripts: () => Promise<ProjectScriptsResponse>
-  listRecentProjects: () => Promise<RecentProjectsResponse>
-  listProjectRevisions: () => Promise<ProjectRevisionsResponse>
-  getProjectScript: (scriptName: string) => Promise<ProjectScriptContentResponse | null>
-  saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
-  saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
-  restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
-  mockCompile: () => Promise<MockCompileResponse>
-  updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
-  fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
-  updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
-  askAssistant: (message: string) => Promise<AssistantResult>
-  generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
-  applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
-}
-
-export interface WorkbenchState {
-  project: WorkbenchProject | null
-  parameters: WorkbenchParameter[]
-  draftParameters: Record<string, unknown>
-  preview: PreviewPayload | null
-  warnings: string[]
-  loading: boolean
-  applying: boolean
-  compiling: boolean
-  lastError: string | null
-  compileLog: string[]
-  compilerSettings: CompilerSettings
-  llmSettings: LlmSettings
-  activeRailPanel: '3d' | 'ai'
-  assistantBusy: boolean
-  assistantMessages: AssistantMessage[]
-  scripts: ProjectScript[]
-  recentProjects: RecentProject[]
-  revisions: ProjectRevision[]
-  latestRevisionId: string | null
-  revisionLoading: boolean
-  activeScriptName: string | null
-  scriptContents: Record<string, string>
-  dirtyScripts: Record<string, boolean>
-  scriptLoading: boolean
-  scriptSaving: boolean
-  mockCompileResult: MockCompileResponse | null
-  load: () => Promise<void>
-  loadProjectPath: (path: string) => Promise<void>
-  importGdlFile: (path?: string) => Promise<void>
-  closeProject: () => Promise<void>
-  browseProjectDirectory: () => Promise<void>
-  browseCompilerFile: () => Promise<void>
-  setCompilerSettings: (settings: CompilerSettings) => Promise<void>
-  setLlmSettings: (settings: LlmSettings) => Promise<void>
-  reloadRuntimeSettings: () => Promise<void>
-  compileCurrentProject: () => Promise<void>
-  setActiveRailPanel: (panel: '3d' | 'ai') => void
-  sendAssistantMessage: (message: string) => Promise<void>
-  generateAssistantChanges: (message: string) => Promise<void>
-  setDraftParameter: (name: string, value: unknown) => Promise<void>
-  applyDraftParameters: () => Promise<void>
-  loadScripts: () => Promise<void>
-  loadRecentProjects: () => Promise<void>
-  loadRevisions: () => Promise<void>
-  saveRevision: (message?: string) => Promise<void>
-  restoreRevision: (revisionId: string) => Promise<void>
-  openScript: (name: string) => Promise<void>
-  updateActiveScriptContent: (content: string) => void
-  saveActiveScript: () => Promise<void>
-  runMockCompile: () => Promise<void>
-  clearLastError: () => void
-  hasDraftChanges: () => boolean
-}
+export type { WorkbenchApi, WorkbenchState } from './workbenchStoreTypes'
 
 const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
@@ -159,10 +60,33 @@ const defaultWorkbenchApi: WorkbenchApi = {
   applyParameters,
 }
 
-const SCRIPT_FALLBACK_ORDER = ['3d.gdl', '2d.gdl', '1d.gdl', 'vl.gdl', 'pr.gdl', 'ui.gdl', 'paramlist.xml', 'libpartdata.xml']
-
 export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
-  return createStore<WorkbenchState>((set, get) => ({
+  return createStore<WorkbenchState>((set, get) => {
+    const context: WorkbenchActionContext = {
+      api,
+      get,
+      set: set as WorkbenchSet,
+    }
+    return {
+      ...initialWorkbenchState(),
+      ...createProjectActions(context),
+      ...createSettingsActions(context),
+      ...createParameterActions(context),
+      ...createCompileActions(context),
+      ...createScriptActions(context),
+      ...createRevisionActions(context),
+      ...createAssistantActions(context),
+      clearLastError() {
+        set({ lastError: null })
+      },
+    }
+  })
+}
+
+export const workbenchStore = createWorkbenchStore()
+
+function initialWorkbenchState() {
+  return {
     project: null,
     parameters: [],
     draftParameters: {},
@@ -173,9 +97,9 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     compiling: false,
     lastError: null,
     compileLog: [],
-    compilerSettings: { mode: 'mock', converter_path: '' },
+    compilerSettings: { mode: 'mock' as const, converter_path: '' },
     llmSettings: defaultLlmSettings(),
-    activeRailPanel: '3d',
+    activeRailPanel: '3d' as const,
     assistantBusy: false,
     assistantMessages: [],
     scripts: [],
@@ -189,441 +113,5 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     scriptLoading: false,
     scriptSaving: false,
     mockCompileResult: null,
-
-    async load() {
-      set({ loading: true, lastError: null })
-      const snapshot = await api.fetchSnapshot()
-      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
-      await get().loadRecentProjects()
-      await get().loadScripts()
-      await get().loadRevisions()
-      set({ loading: false })
-    },
-
-    async loadProjectPath(path) {
-      const normalizedPath = path.trim()
-      if (!normalizedPath) return
-      set({ loading: true, lastError: null })
-      const snapshot = await api.loadProjectPath(normalizedPath)
-      if (snapshot.ok === false) {
-        set({
-          loading: false,
-          lastError: snapshot.error ?? `Failed to open HSF project: ${normalizedPath}`,
-        })
-        return
-      }
-      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
-      await get().loadRecentProjects()
-      await get().loadScripts()
-      await get().loadRevisions()
-      set({ loading: false })
-    },
-
-    async importGdlFile(path = '') {
-      set({ loading: true, lastError: null })
-      const snapshot = await api.importGdlFile(path)
-      if (snapshot.ok === false) {
-        set({
-          loading: false,
-          lastError: snapshot.error ?? 'Failed to import GDL file.',
-        })
-        return
-      }
-      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
-      await get().loadRecentProjects()
-      await get().loadScripts()
-      await get().loadRevisions()
-      set({ loading: false })
-    },
-
-    async closeProject() {
-      set({ loading: true, lastError: null })
-      const snapshot = await api.closeProject()
-      if (snapshot.ok === false) {
-        set({
-          loading: false,
-          lastError: snapshot.error ?? 'Failed to close current project.',
-        })
-        return
-      }
-      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
-      await get().loadScripts()
-      await get().loadRevisions()
-      set({ loading: false })
-    },
-
-    async browseProjectDirectory() {
-      set({ loading: true, lastError: null })
-      const result = await api.chooseProjectDirectory()
-      if (!result.ok || !result.project || !result.parameters || !result.preview) {
-        set({
-          loading: false,
-          lastError: result.cancelled ? null : result.error ?? 'Failed to open HSF project directory.',
-        })
-        return
-      }
-      set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
-      await get().loadRecentProjects()
-      await get().loadScripts()
-      await get().loadRevisions()
-      set({ loading: false })
-    },
-
-    async setCompilerSettings(settings) {
-      const result = await api.updateCompilerSettings(settings)
-      if (result.ok && result.compiler) {
-        set({ compilerSettings: result.compiler })
-      }
-    },
-
-    async browseCompilerFile() {
-      const result = await api.chooseCompilerFile()
-      if (result.ok && result.compiler) {
-        set({ compilerSettings: result.compiler })
-      }
-    },
-
-    async setLlmSettings(settings) {
-      const result = await api.updateLlmSettings(settings)
-      if (result.ok && result.llm) {
-        set({ llmSettings: result.llm })
-      }
-    },
-
-    async reloadRuntimeSettings() {
-      const result = await api.fetchRuntimeSettings()
-      set((state) => ({
-        compilerSettings: result.compiler ?? state.compilerSettings,
-        llmSettings: result.llm ?? state.llmSettings,
-      }))
-    },
-
-    async setDraftParameter(name, value) {
-      const draftParameters = { ...get().draftParameters, [name]: value }
-      set({ draftParameters })
-      const preview = await api.fetchPreview(draftParameters)
-      set({ preview, warnings: preview.warnings ?? [] })
-    },
-
-    async applyDraftParameters() {
-      const draft = get().draftParameters
-      if (Object.keys(draft).length === 0) return
-      set({ applying: true })
-      const result = await api.applyParameters(draft)
-      set({
-        project: result.project,
-        parameters: result.parameters,
-        preview: result.preview,
-        warnings: result.warnings,
-        draftParameters: {},
-        applying: false,
-      })
-    },
-
-    async compileCurrentProject() {
-      set({ compiling: true })
-      const result = await api.compileProject()
-      const issues = compileIssuesFromResult(result)
-      const message =
-        result.ok && result.compile
-          ? `${result.compile.mode === 'mock' ? 'Mock' : 'LP'} compile passed: ${result.compile.output_path}`
-          : `Compile failed: ${result.error ?? 'Unknown error'}`
-      set((state) => ({
-        compileLog: [message, ...state.compileLog].slice(0, 20),
-        mockCompileResult: {
-          success: Boolean(result.compile?.success),
-          mode: result.compile?.mode ?? state.compilerSettings.mode,
-          issues,
-          duration_ms: 0,
-          error: result.error,
-        },
-        compiling: false,
-      }))
-    },
-
-    setActiveRailPanel(panel) {
-      set({ activeRailPanel: panel })
-    },
-
-    async loadScripts() {
-      set({ scriptLoading: true })
-      const result = await api.listProjectScripts()
-      const scripts = result.scripts ?? []
-      const activeScriptName = selectPreferredScript(scripts, get().activeScriptName)
-      set((state) => ({
-        scripts,
-        activeScriptName,
-        dirtyScripts: pruneDirtyScripts(state.dirtyScripts, scripts),
-        scriptLoading: false,
-      }))
-      if (activeScriptName && !get().scriptContents[activeScriptName]) {
-        await get().openScript(activeScriptName)
-      }
-    },
-
-    async loadRecentProjects() {
-      const result = await api.listRecentProjects()
-      if (result.ok) {
-        set({ recentProjects: result.projects ?? [] })
-      }
-    },
-
-    async loadRevisions() {
-      set({ revisionLoading: true })
-      const result = await api.listProjectRevisions()
-      if (!result.ok) {
-        set({
-          revisionLoading: false,
-          revisions: [],
-          latestRevisionId: null,
-        })
-        return
-      }
-      set({
-        revisionLoading: false,
-        revisions: result.revisions ?? [],
-        latestRevisionId: result.latest_revision_id ?? null,
-      })
-    },
-
-    async saveRevision(message = '') {
-      set({ revisionLoading: true, lastError: null })
-      const result = await api.saveProjectRevision(message)
-      if (!result.ok) {
-        set({
-          revisionLoading: false,
-          lastError: result.error ?? 'Failed to save revision.',
-        })
-        return
-      }
-      await get().loadRevisions()
-      set((state) => ({
-        compileLog: [`Saved revision ${result.revision?.revision_id ?? ''}`.trim(), ...state.compileLog].slice(0, 20),
-      }))
-    },
-
-    async restoreRevision(revisionId) {
-      const target = revisionId.trim()
-      if (!target) return
-      set({ revisionLoading: true, lastError: null })
-      const result = await api.restoreProjectRevision(target)
-      if (!result.ok || !result.project || !result.parameters || !result.preview) {
-        set({
-          revisionLoading: false,
-          lastError: result.error ?? `Failed to restore revision: ${target}`,
-        })
-        return
-      }
-      set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
-      await get().loadScripts()
-      await get().loadRevisions()
-      set((state) => ({
-        revisionLoading: false,
-        compileLog: [`Restored revision ${target}`, ...state.compileLog].slice(0, 20),
-      }))
-    },
-
-    async openScript(name) {
-      const target = name.trim()
-      if (!target) return
-      const cached = get().scriptContents[target]
-      if (typeof cached === 'string') {
-        set({ activeScriptName: target, lastError: null })
-        return
-      }
-      set({ scriptLoading: true, lastError: null })
-      const result = await api.getProjectScript(target)
-      if (!result) {
-        set({
-          scriptLoading: false,
-          lastError: `Failed to open script: ${target}`,
-        })
-        return
-      }
-      set((state) => ({
-        scriptLoading: false,
-        activeScriptName: target,
-        scriptContents: { ...state.scriptContents, [target]: result.content },
-      }))
-    },
-
-    updateActiveScriptContent(content) {
-      const activeScriptName = get().activeScriptName
-      if (!activeScriptName) return
-      set((state) => ({
-        scriptContents: { ...state.scriptContents, [activeScriptName]: content },
-        dirtyScripts: { ...state.dirtyScripts, [activeScriptName]: true },
-      }))
-    },
-
-    async saveActiveScript() {
-      const activeScriptName = get().activeScriptName
-      if (!activeScriptName) return
-      const content = get().scriptContents[activeScriptName]
-      if (typeof content !== 'string') return
-      set({ scriptSaving: true, lastError: null })
-      const result = await api.saveProjectScript(activeScriptName, content)
-      if (result.success) {
-        set((state) => ({
-          scriptSaving: false,
-          dirtyScripts: { ...state.dirtyScripts, [activeScriptName]: false },
-          compileLog: [`Saved ${activeScriptName} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
-        }))
-        await get().loadScripts()
-        const refreshedActiveScriptName = get().activeScriptName
-        if (refreshedActiveScriptName) {
-          const saved = await api.getProjectScript(refreshedActiveScriptName)
-          if (saved) {
-            set((state) => ({
-              scriptContents: { ...state.scriptContents, [refreshedActiveScriptName]: saved.content },
-            }))
-          }
-        }
-        return
-      }
-      set({
-        scriptSaving: false,
-        lastError: result.error ?? `Failed to save script: ${activeScriptName}`,
-      })
-    },
-
-    async runMockCompile() {
-      set({ compiling: true })
-      const result = await api.mockCompile()
-      const summary = buildMockCompileSummary(result)
-      set((state) => ({
-        compiling: false,
-        mockCompileResult: result,
-        compileLog: summary ? [summary, ...state.compileLog].slice(0, 20) : state.compileLog,
-      }))
-    },
-
-    async sendAssistantMessage(message) {
-      const trimmed = message.trim()
-      if (!trimmed) return
-      set((state) => ({
-        assistantBusy: true,
-        assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
-      }))
-      const result = await api.askAssistant(trimmed)
-      const reply = result.ok && result.assistant ? result.assistant.reply : result.error ?? 'Assistant request failed.'
-      set((state) => ({
-        assistantBusy: false,
-        assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
-      }))
-    },
-
-    async generateAssistantChanges(message) {
-      const trimmed = message.trim()
-      if (!trimmed) return
-      set((state) => ({
-        assistantBusy: true,
-        assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
-      }))
-      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings)
-      const changedFiles = result.assistant?.changed_files ?? []
-      const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
-      const reply =
-        result.ok && result.assistant
-          ? `${result.assistant.reply}${suffix}`
-          : result.error ?? 'Generation request failed.'
-      set((state) => ({
-        assistantBusy: false,
-        assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
-        preview: result.preview ?? state.preview,
-        warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
-        draftParameters: {},
-      }))
-      if (result.ok) {
-        await get().loadScripts()
-        const refreshedScripts = get().scripts.filter((script) => script.exists)
-        for (const script of refreshedScripts) {
-          const updated = await api.getProjectScript(script.name)
-          if (updated) {
-            set((state) => ({
-              scriptContents: { ...state.scriptContents, [script.name]: updated.content },
-              dirtyScripts: { ...state.dirtyScripts, [script.name]: false },
-            }))
-          }
-        }
-      }
-    },
-
-    hasDraftChanges() {
-      return Object.keys(get().draftParameters).length > 0
-    },
-
-    clearLastError() {
-      set({ lastError: null })
-    },
-  }))
-}
-
-export const workbenchStore = createWorkbenchStore()
-
-function defaultLlmSettings(): LlmSettings {
-  return {
-    model: 'glm-4-flash',
-    models: ['glm-4-flash'],
-    api_key: '',
-    api_base: '',
-    max_retries: 5,
-    assistant_settings: '',
   }
-}
-
-function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: CompilerSettings, fallbackLlm: LlmSettings) {
-  return {
-    project: snapshot.project,
-    parameters: snapshot.parameters,
-    preview: snapshot.preview,
-    warnings: snapshot.warnings ?? snapshot.preview?.warnings ?? [],
-    compilerSettings: snapshot.compiler ?? fallbackCompiler,
-    llmSettings: snapshot.llm ?? fallbackLlm,
-    draftParameters: {},
-    scripts: [],
-    activeScriptName: null,
-    scriptContents: {},
-    dirtyScripts: {},
-    revisions: [],
-    latestRevisionId: null,
-    revisionLoading: false,
-    mockCompileResult: null,
-  }
-}
-
-function selectPreferredScript(scripts: ProjectScript[], current: string | null) {
-  if (current && scripts.some((script) => script.name === current && script.exists)) return current
-  for (const preferred of SCRIPT_FALLBACK_ORDER) {
-    if (scripts.some((script) => script.name === preferred && script.exists)) return preferred
-  }
-  return scripts.find((script) => script.exists)?.name ?? null
-}
-
-function pruneDirtyScripts(dirtyScripts: Record<string, boolean>, scripts: ProjectScript[]) {
-  const allowed = new Set(scripts.map((script) => script.name))
-  return Object.fromEntries(Object.entries(dirtyScripts).filter(([name]) => allowed.has(name)))
-}
-
-function buildMockCompileSummary(result: MockCompileResponse) {
-  if (!result.success && result.error) return `Mock compile failed: ${result.error}`
-  const errors = countIssues(result.issues, 'error')
-  const warnings = countIssues(result.issues, 'warning')
-  if (errors === 0 && warnings === 0) return `Mock compile passed in ${result.duration_ms} ms`
-  return `Mock compile finished in ${result.duration_ms} ms (${errors} errors, ${warnings} warnings)`
-}
-
-function countIssues(issues: CompileIssue[], severity: string) {
-  return issues.filter((issue) => issue.severity === severity).length
-}
-
-function compileIssuesFromResult(result: CompileResult): CompileIssue[] {
-  const compile = result.compile
-  if (!compile) {
-    return result.error ? [{ severity: 'error', script: '', line: null, message: result.error }] : []
-  }
-  return [
-    ...(compile.errors ?? []).map((message) => ({ severity: 'error', script: '', line: null, message })),
-    ...(compile.warnings ?? []).map((message) => ({ severity: 'warning', script: '', line: null, message })),
-  ]
 }
