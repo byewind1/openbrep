@@ -801,6 +801,34 @@ button:focus-visible {
   justify-content: flex-end;
 }
 
+.recent-project-list {
+  display: grid;
+  gap: 6px;
+}
+
+.recent-project-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.recent-project-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-project-item em,
+.settings-empty {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
 .drawer-content p {
   margin: 0 0 5px;
 }

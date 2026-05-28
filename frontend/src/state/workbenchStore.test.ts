@@ -18,6 +18,14 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['loaded'],
       compiler: { mode: 'mock', converter_path: '' },
     }),
+    closeProject: async () => ({
+      ok: true,
+      project: { name: 'Demo Bookshelf', source: 'demo' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+      compiler: { mode: 'mock', converter_path: '' },
+    }),
     chooseProjectDirectory: async () => ({ ok: false, cancelled: true }),
     chooseCompilerFile: async () => ({ ok: false, cancelled: true }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
@@ -26,6 +34,10 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         { name: '3d.gdl', path: 'scripts/3d.gdl', exists: true, size: 128 },
         { name: '2d.gdl', path: 'scripts/2d.gdl', exists: true, size: 64 },
       ],
+    }),
+    listRecentProjects: async () => ({
+      ok: true,
+      projects: [{ path: '/workspace/Chair', exists: true }],
     }),
     getProjectScript: async (scriptName: string) => ({
       name: scriptName,
@@ -85,6 +97,26 @@ test('loads a project path and clears stale draft parameters', async () => {
   expect(store.getState().parameters.map((parameter) => parameter.name)).toEqual(['B'])
   expect(store.getState().draftParameters).toEqual({})
   expect(store.getState().warnings).toEqual(['loaded'])
+  expect(store.getState().recentProjects).toEqual([{ path: '/workspace/Chair', exists: true }])
+})
+
+test('closes the current project and returns to demo state', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().loadProjectPath('/workspace/Chair')
+  await store.getState().closeProject()
+
+  expect(store.getState().project).toEqual({ name: 'Demo Bookshelf', source: 'demo' })
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().loading).toBe(false)
+})
+
+test('load fetches recent project list', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+
+  expect(store.getState().recentProjects).toEqual([{ path: '/workspace/Chair', exists: true }])
 })
 
 test('failed project path load keeps current project and records an error', async () => {

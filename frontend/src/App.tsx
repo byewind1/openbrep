@@ -28,6 +28,7 @@ export default function App() {
   const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
   const scripts = useWorkbenchStore((state) => state.scripts)
+  const recentProjects = useWorkbenchStore((state) => state.recentProjects)
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
   const scriptContents = useWorkbenchStore((state) => state.scriptContents)
   const dirtyScripts = useWorkbenchStore((state) => state.dirtyScripts)
@@ -37,6 +38,7 @@ export default function App() {
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
+  const closeProject = useWorkbenchStore((state) => state.closeProject)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
   const setLlmSettings = useWorkbenchStore((state) => state.setLlmSettings)
@@ -147,11 +149,14 @@ export default function App() {
         open={settingsOpen}
         compilerSettings={compilerSettings}
         llmSettings={llmSettings}
+        recentProjects={recentProjects}
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
         onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
         onReloadRuntimeSettings={() => void reloadRuntimeSettings()}
         onBrowseCompilerFile={() => void browseCompilerFile()}
+        onOpenProjectPath={(path) => void loadProjectPath(path)}
+        onCloseProject={() => void closeProject()}
       />
     </main>
   )

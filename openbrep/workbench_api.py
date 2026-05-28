@@ -199,6 +199,7 @@ class WorkbenchSession:
         self.llm_api_base = self.config.llm.resolve_api_base() or ""
         self.max_retries = self.config.agent.max_iterations
         self.assistant_settings = self.config.llm.assistant_settings or ""
+        self.recent_project_paths: list[str] = []
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = project_to_snapshot(
@@ -278,7 +279,30 @@ class WorkbenchSession:
         self.project = project
         self.source = "hsf"
         self.source_path = hsf_path
+        self._remember_project_path(hsf_path)
         return {"ok": True, **self.snapshot()}
+
+    def close_project(self) -> dict[str, Any]:
+        self.project = build_demo_project()
+        self.source = "demo"
+        self.source_path = None
+        return {"ok": True, **self.snapshot()}
+
+    def recent_projects(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "projects": [
+                {"path": path, "exists": Path(path).is_dir()}
+                for path in self.recent_project_paths
+            ],
+        }
+
+    def _remember_project_path(self, path: Path) -> None:
+        normalized = str(path.expanduser().resolve())
+        self.recent_project_paths = [
+            normalized,
+            *[item for item in self.recent_project_paths if item != normalized],
+        ][:8]
 
     def choose_and_load_hsf_directory(self) -> dict[str, Any]:
         try:
@@ -517,6 +541,12 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/load":
             return self.load_hsf_directory(str(body.get("path") or ""))
+
+        if normalized_method == "POST" and route == "/api/project/close":
+            return self.close_project()
+
+        if normalized_method == "GET" and route == "/api/project/recent":
+            return self.recent_projects()
 
         if normalized_method == "POST" and route == "/api/dialog/open-directory":
             return self.choose_and_load_hsf_directory()

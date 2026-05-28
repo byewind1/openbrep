@@ -32,6 +32,11 @@ export interface ProjectScript {
   size: number
 }
 
+export interface RecentProject {
+  path: string
+  exists: boolean
+}
+
 export interface PreviewMesh {
   name: string
   vertices: number[][]
@@ -170,6 +175,12 @@ export interface GenerateResult {
 
 export interface ProjectScriptsResponse {
   scripts: ProjectScript[]
+}
+
+export interface RecentProjectsResponse {
+  ok: boolean
+  projects: RecentProject[]
+  error?: string
 }
 
 export interface ProjectScriptContentResponse {

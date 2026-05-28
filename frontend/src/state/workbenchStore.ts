@@ -4,6 +4,7 @@ import {
   askAssistant,
   chooseCompilerFile,
   chooseProjectDirectory,
+  closeProject,
   compileProject,
   fetchRuntimeSettings,
   fetchPreview,
@@ -11,6 +12,7 @@ import {
   generateWithAssistant,
   getProjectScript,
   loadProjectPath,
+  listRecentProjects,
   listProjectScripts,
   mockCompile,
   saveProjectScript,
@@ -35,6 +37,8 @@ import type {
   ProjectScript,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
+  RecentProject,
+  RecentProjectsResponse,
   RuntimeSettingsResult,
   SaveScriptResponse,
   WorkbenchParameter,
@@ -46,10 +50,12 @@ export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
+  closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
   compileProject: () => Promise<CompileResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
+  listRecentProjects: () => Promise<RecentProjectsResponse>
   getProjectScript: (scriptName: string) => Promise<ProjectScriptContentResponse | null>
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
   mockCompile: () => Promise<MockCompileResponse>
@@ -78,6 +84,7 @@ export interface WorkbenchState {
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
   scripts: ProjectScript[]
+  recentProjects: RecentProject[]
   activeScriptName: string | null
   scriptContents: Record<string, string>
   dirtyScripts: Record<string, boolean>
@@ -86,6 +93,7 @@ export interface WorkbenchState {
   mockCompileResult: MockCompileResponse | null
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
+  closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<void>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
@@ -98,6 +106,7 @@ export interface WorkbenchState {
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
   loadScripts: () => Promise<void>
+  loadRecentProjects: () => Promise<void>
   openScript: (name: string) => Promise<void>
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
@@ -110,10 +119,12 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
   loadProjectPath,
+  closeProject,
   chooseProjectDirectory,
   chooseCompilerFile,
   compileProject,
   listProjectScripts,
+  listRecentProjects,
   getProjectScript,
   saveProjectScript,
   mockCompile,
@@ -145,6 +156,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     assistantBusy: false,
     assistantMessages: [],
     scripts: [],
+    recentProjects: [],
     activeScriptName: null,
     scriptContents: {},
     dirtyScripts: {},
@@ -156,6 +168,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       set({ loading: true, lastError: null })
       const snapshot = await api.fetchSnapshot()
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
       await get().loadScripts()
       set({ loading: false })
     },
@@ -169,6 +182,22 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         set({
           loading: false,
           lastError: snapshot.error ?? `Failed to open HSF project: ${normalizedPath}`,
+        })
+        return
+      }
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
+      await get().loadScripts()
+      set({ loading: false })
+    },
+
+    async closeProject() {
+      set({ loading: true, lastError: null })
+      const snapshot = await api.closeProject()
+      if (snapshot.ok === false) {
+        set({
+          loading: false,
+          lastError: snapshot.error ?? 'Failed to close current project.',
         })
         return
       }
@@ -188,6 +217,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         return
       }
       set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
       await get().loadScripts()
       set({ loading: false })
     },
@@ -281,6 +311,13 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       }))
       if (activeScriptName && !get().scriptContents[activeScriptName]) {
         await get().openScript(activeScriptName)
+      }
+    },
+
+    async loadRecentProjects() {
+      const result = await api.listRecentProjects()
+      if (result.ok) {
+        set({ recentProjects: result.projects ?? [] })
       }
     },
 

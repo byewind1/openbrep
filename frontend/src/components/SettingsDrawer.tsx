@@ -1,27 +1,33 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { CompilerSettings, LlmSettings } from '../api/types'
+import type { CompilerSettings, LlmSettings, RecentProject } from '../api/types'
 
 interface SettingsDrawerProps {
   open: boolean
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
+  recentProjects: RecentProject[]
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => void
   onLlmSettingsChange: (settings: LlmSettings) => void
   onReloadRuntimeSettings: () => void
   onBrowseCompilerFile: () => void
+  onOpenProjectPath: (path: string) => void
+  onCloseProject: () => void
 }
 
 export function SettingsDrawer({
   open,
   compilerSettings,
   llmSettings,
+  recentProjects,
   onClose,
   onCompilerSettingsChange,
   onLlmSettingsChange,
   onReloadRuntimeSettings,
   onBrowseCompilerFile,
+  onOpenProjectPath,
+  onCloseProject,
 }: SettingsDrawerProps) {
   const [llmDraft, setLlmDraft] = useState(llmSettings)
 
@@ -163,10 +169,34 @@ export function SettingsDrawer({
           </div>
         </form>
 
-        <section className="settings-section muted">
+        <section className="settings-section">
           <div className="settings-section-heading">
             <strong>Workspace</strong>
-            <span>Project path stays in the top bar for now</span>
+            <span>Recent HSF projects and current session</span>
+          </div>
+          <div className="recent-project-list">
+            {recentProjects.length ? (
+              recentProjects.map((project) => (
+                <button
+                  type="button"
+                  className="recent-project-item"
+                  disabled={!project.exists}
+                  key={project.path}
+                  onClick={() => onOpenProjectPath(project.path)}
+                  title={project.path}
+                >
+                  <span>{project.path}</span>
+                  {!project.exists ? <em>missing</em> : null}
+                </button>
+              ))
+            ) : (
+              <span className="settings-empty">No recent HSF projects</span>
+            )}
+          </div>
+          <div className="settings-submit-row">
+            <button type="button" onClick={onCloseProject}>
+              Close Project
+            </button>
           </div>
         </section>
 

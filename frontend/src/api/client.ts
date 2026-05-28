@@ -13,6 +13,7 @@ import type {
   PreviewPayload,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
+  RecentProjectsResponse,
   RuntimeSettingsResult,
   SaveScriptResponse,
   WorkbenchSnapshot,
@@ -46,6 +47,26 @@ export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> 
       body: JSON.stringify({ path }),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function closeProject(): Promise<WorkbenchSnapshot> {
+  return requestJson<WorkbenchSnapshot>(
+    '/api/project/close',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function listRecentProjects(): Promise<RecentProjectsResponse> {
+  return requestJson<RecentProjectsResponse>(
+    '/api/project/recent',
+    { method: 'GET' },
+    { ok: false, projects: [], error: 'OpenBrep local API is not available.' },
   )
 }
 

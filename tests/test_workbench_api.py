@@ -68,6 +68,24 @@ def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
     assert response["preview"]["meshes"]
 
 
+def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp_path):
+    first = HSFProject.create_new("RecentOne", str(tmp_path / "one")).save_to_disk()
+    second = HSFProject.create_new("RecentTwo", str(tmp_path / "two")).save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(first)})
+    session.route("POST", "/api/project/load", {"path": str(second)})
+    recent = session.route("GET", "/api/project/recent")
+    closed = session.route("POST", "/api/project/close", {})
+
+    assert recent["ok"] is True
+    assert [item["path"] for item in recent["projects"]][:2] == [str(second), str(first)]
+    assert all(item["exists"] for item in recent["projects"][:2])
+    assert closed["ok"] is True
+    assert closed["project"]["source"] == "demo"
+    assert "path" not in closed["project"]
+
+
 def test_workbench_session_choose_project_directory_loads_selected_hsf(tmp_path):
     project = HSFProject.create_new("ChosenShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()
