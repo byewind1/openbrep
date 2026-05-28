@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { CompilerSettings, LlmSettings, RecentProject } from '../api/types'
+import type { CompilerSettings, LlmSettings, RecentProject } from '../../api/types'
 
 interface SettingsDrawerProps {
   open: boolean
