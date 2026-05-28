@@ -14,9 +14,12 @@ import {
   importGdlFile,
   loadProjectPath,
   listRecentProjects,
+  listProjectRevisions,
   listProjectScripts,
   mockCompile,
+  restoreProjectRevision,
   saveProjectScript,
+  saveProjectRevision,
   updateCompilerSettings,
   updateLlmSettings,
 } from '../api/client'
@@ -38,10 +41,14 @@ import type {
   ProjectScript,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
+  ProjectRevision,
+  ProjectRevisionsResponse,
   RecentProject,
   RecentProjectsResponse,
+  RestoreRevisionResponse,
   RuntimeSettingsResult,
   SaveScriptResponse,
+  SaveRevisionResponse,
   WorkbenchParameter,
   WorkbenchProject,
   WorkbenchSnapshot,
@@ -58,8 +65,11 @@ export interface WorkbenchApi {
   compileProject: () => Promise<CompileResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
   listRecentProjects: () => Promise<RecentProjectsResponse>
+  listProjectRevisions: () => Promise<ProjectRevisionsResponse>
   getProjectScript: (scriptName: string) => Promise<ProjectScriptContentResponse | null>
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
+  saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
+  restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
   mockCompile: () => Promise<MockCompileResponse>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
@@ -87,6 +97,9 @@ export interface WorkbenchState {
   assistantMessages: AssistantMessage[]
   scripts: ProjectScript[]
   recentProjects: RecentProject[]
+  revisions: ProjectRevision[]
+  latestRevisionId: string | null
+  revisionLoading: boolean
   activeScriptName: string | null
   scriptContents: Record<string, string>
   dirtyScripts: Record<string, boolean>
@@ -110,6 +123,9 @@ export interface WorkbenchState {
   applyDraftParameters: () => Promise<void>
   loadScripts: () => Promise<void>
   loadRecentProjects: () => Promise<void>
+  loadRevisions: () => Promise<void>
+  saveRevision: (message?: string) => Promise<void>
+  restoreRevision: (revisionId: string) => Promise<void>
   openScript: (name: string) => Promise<void>
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
@@ -129,8 +145,11 @@ const defaultWorkbenchApi: WorkbenchApi = {
   compileProject,
   listProjectScripts,
   listRecentProjects,
+  listProjectRevisions,
   getProjectScript,
   saveProjectScript,
+  saveProjectRevision,
+  restoreProjectRevision,
   mockCompile,
   updateCompilerSettings,
   fetchRuntimeSettings,
@@ -161,6 +180,9 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     assistantMessages: [],
     scripts: [],
     recentProjects: [],
+    revisions: [],
+    latestRevisionId: null,
+    revisionLoading: false,
     activeScriptName: null,
     scriptContents: {},
     dirtyScripts: {},
@@ -174,6 +196,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadRecentProjects()
       await get().loadScripts()
+      await get().loadRevisions()
       set({ loading: false })
     },
 
@@ -192,6 +215,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadRecentProjects()
       await get().loadScripts()
+      await get().loadRevisions()
       set({ loading: false })
     },
 
@@ -208,6 +232,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadRecentProjects()
       await get().loadScripts()
+      await get().loadRevisions()
       set({ loading: false })
     },
 
@@ -223,6 +248,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       }
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadScripts()
+      await get().loadRevisions()
       set({ loading: false })
     },
 
@@ -239,6 +265,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
       await get().loadRecentProjects()
       await get().loadScripts()
+      await get().loadRevisions()
       set({ loading: false })
     },
 
@@ -339,6 +366,61 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       if (result.ok) {
         set({ recentProjects: result.projects ?? [] })
       }
+    },
+
+    async loadRevisions() {
+      set({ revisionLoading: true })
+      const result = await api.listProjectRevisions()
+      if (!result.ok) {
+        set({
+          revisionLoading: false,
+          revisions: [],
+          latestRevisionId: null,
+        })
+        return
+      }
+      set({
+        revisionLoading: false,
+        revisions: result.revisions ?? [],
+        latestRevisionId: result.latest_revision_id ?? null,
+      })
+    },
+
+    async saveRevision(message = '') {
+      set({ revisionLoading: true, lastError: null })
+      const result = await api.saveProjectRevision(message)
+      if (!result.ok) {
+        set({
+          revisionLoading: false,
+          lastError: result.error ?? 'Failed to save revision.',
+        })
+        return
+      }
+      await get().loadRevisions()
+      set((state) => ({
+        compileLog: [`Saved revision ${result.revision?.revision_id ?? ''}`.trim(), ...state.compileLog].slice(0, 20),
+      }))
+    },
+
+    async restoreRevision(revisionId) {
+      const target = revisionId.trim()
+      if (!target) return
+      set({ revisionLoading: true, lastError: null })
+      const result = await api.restoreProjectRevision(target)
+      if (!result.ok || !result.project || !result.parameters || !result.preview) {
+        set({
+          revisionLoading: false,
+          lastError: result.error ?? `Failed to restore revision: ${target}`,
+        })
+        return
+      }
+      set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
+      await get().loadScripts()
+      await get().loadRevisions()
+      set((state) => ({
+        revisionLoading: false,
+        compileLog: [`Restored revision ${target}`, ...state.compileLog].slice(0, 20),
+      }))
     },
 
     async openScript(name) {
@@ -503,6 +585,9 @@ function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: Compiler
     activeScriptName: null,
     scriptContents: {},
     dirtyScripts: {},
+    revisions: [],
+    latestRevisionId: null,
+    revisionLoading: false,
     mockCompileResult: null,
   }
 }

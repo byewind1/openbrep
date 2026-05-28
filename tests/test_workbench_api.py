@@ -113,6 +113,43 @@ def test_workbench_session_rejects_non_gdl_import(tmp_path):
     assert "Unsupported file type" in response["error"]
 
 
+def test_workbench_session_saves_and_lists_project_revisions(tmp_path):
+    project = HSFProject.create_new("RevisionShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    saved = session.route("POST", "/api/project/revision/save", {"message": "stable shelf"})
+    listed = session.route("GET", "/api/project/revisions")
+
+    assert saved["ok"] is True
+    assert saved["revision"]["revision_id"] == "r0001"
+    assert listed["ok"] is True
+    assert listed["latest_revision_id"] == "r0001"
+    assert listed["revisions"][0]["message"] == "stable shelf"
+    assert listed["revisions"][0]["is_latest"] is True
+
+
+def test_workbench_session_restores_project_revision_and_refreshes_snapshot(tmp_path):
+    project = HSFProject.create_new("RevisionShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.route("POST", "/api/project/revision/save", {"message": "box"})
+    session.route("POST", "/api/project/script/3d.gdl", {"content": "CYLIND 1, 1\n"})
+
+    restored = session.route("POST", "/api/project/revision/restore", {"revision_id": "r0001"})
+
+    assert restored["ok"] is True
+    assert restored["restored_revision_id"] == "r0001"
+    assert restored["latest_revision_id"] == "r0002"
+    assert session.route("GET", "/api/project/script/3d.gdl")["content"] == "BLOCK A, B, ZZYZX\n"
+    assert restored["project"]["source"] == "hsf"
+
+
 def test_workbench_session_choose_project_directory_loads_selected_hsf(tmp_path):
     project = HSFProject.create_new("ChosenShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

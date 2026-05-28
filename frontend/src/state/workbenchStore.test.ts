@@ -47,12 +47,63 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       ok: true,
       projects: [{ path: '/workspace/Chair', exists: true }],
     }),
+    listProjectRevisions: async () => ({
+      ok: true,
+      latest_revision_id: 'r0001',
+      revisions: [
+        {
+          revision_id: 'r0001',
+          project_name: 'Chair',
+          gsm_name: 'Chair',
+          created_at: '2026-05-27T09:00:00Z',
+          message: 'stable',
+          file_count: 3,
+          trigger: 'manual',
+          intent: '',
+          user_instruction: '',
+          changed_files: [],
+          parent_revision_id: null,
+          compile: {},
+          explanation: '',
+          is_latest: true,
+        },
+      ],
+    }),
     getProjectScript: async (scriptName: string) => ({
       name: scriptName,
       path: `scripts/${scriptName}`,
       content: `content for ${scriptName}`,
     }),
     saveProjectScript: async () => ({ success: true, saved_at: '2026-05-27T09:00:00' }),
+    saveProjectRevision: async () => ({
+      ok: true,
+      latest_revision_id: 'r0002',
+      revision: {
+        revision_id: 'r0002',
+        project_name: 'Chair',
+        gsm_name: 'Chair',
+        created_at: '2026-05-27T09:01:00Z',
+        message: 'saved from test',
+        file_count: 3,
+        trigger: 'manual',
+        intent: '',
+        user_instruction: '',
+        changed_files: [],
+        parent_revision_id: 'r0001',
+        compile: {},
+        explanation: '',
+        is_latest: true,
+      },
+    }),
+    restoreProjectRevision: async (revisionId: string) => ({
+      ok: true,
+      restored_revision_id: revisionId,
+      latest_revision_id: 'r0003',
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
+      preview: { meshes: [], wires: [], warnings: ['restored'] },
+      warnings: ['restored'],
+    }),
     mockCompile: async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 12 }),
     updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
     fetchRuntimeSettings: async () => ({
@@ -125,6 +176,62 @@ test('load fetches recent project list', async () => {
   await store.getState().load()
 
   expect(store.getState().recentProjects).toEqual([{ path: '/workspace/Chair', exists: true }])
+})
+
+test('load fetches revision history', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+
+  expect(store.getState().latestRevisionId).toBe('r0001')
+  expect(store.getState().revisions[0]?.message).toBe('stable')
+})
+
+test('saveRevision refreshes revision history and records a log entry', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      listProjectRevisions: async () => ({
+        ok: true,
+        latest_revision_id: 'r0002',
+        revisions: [
+          {
+            revision_id: 'r0002',
+            project_name: 'Chair',
+            gsm_name: 'Chair',
+            created_at: '2026-05-27T09:01:00Z',
+            message: 'manual save',
+            file_count: 3,
+            trigger: 'manual',
+            intent: '',
+            user_instruction: '',
+            changed_files: [],
+            parent_revision_id: 'r0001',
+            compile: {},
+            explanation: '',
+            is_latest: true,
+          },
+        ],
+      }),
+    }),
+  )
+
+  await store.getState().saveRevision('manual save')
+
+  expect(store.getState().latestRevisionId).toBe('r0002')
+  expect(store.getState().compileLog[0]).toBe('Saved revision r0002')
+  expect(store.getState().revisionLoading).toBe(false)
+})
+
+test('restoreRevision refreshes project scripts and revision history', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().restoreRevision('r0001')
+
+  expect(store.getState().warnings).toEqual(['restored'])
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().scriptContents['3d.gdl']).toBe('content for 3d.gdl')
+  expect(store.getState().compileLog[0]).toBe('Restored revision r0001')
+  expect(store.getState().revisionLoading).toBe(false)
 })
 
 test('failed project path load keeps current project and records an error', async () => {

@@ -8,6 +8,7 @@ import { ScriptTree } from '../components/ScriptTree'
 import { TopMenu } from '../components/TopMenu'
 import { groupParameters } from '../state/parameterGroups'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
+import { RevisionPanel } from './diagnostics/RevisionPanel'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { SettingsDrawer } from './settings/SettingsDrawer'
 
@@ -30,6 +31,9 @@ export function WorkbenchApp() {
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
   const scripts = useWorkbenchStore((state) => state.scripts)
   const recentProjects = useWorkbenchStore((state) => state.recentProjects)
+  const revisions = useWorkbenchStore((state) => state.revisions)
+  const latestRevisionId = useWorkbenchStore((state) => state.latestRevisionId)
+  const revisionLoading = useWorkbenchStore((state) => state.revisionLoading)
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
   const scriptContents = useWorkbenchStore((state) => state.scriptContents)
   const dirtyScripts = useWorkbenchStore((state) => state.dirtyScripts)
@@ -54,6 +58,8 @@ export function WorkbenchApp() {
   const openScript = useWorkbenchStore((state) => state.openScript)
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
   const saveActiveScript = useWorkbenchStore((state) => state.saveActiveScript)
+  const saveRevision = useWorkbenchStore((state) => state.saveRevision)
+  const restoreRevision = useWorkbenchStore((state) => state.restoreRevision)
   const clearLastError = useWorkbenchStore((state) => state.clearLastError)
   const hasDraftChanges = useWorkbenchStore((state) => state.hasDraftChanges)
   const grouped = groupParameters(parameters)
@@ -153,7 +159,20 @@ export function WorkbenchApp() {
           </div>
         </aside>
       </section>
-      <BottomDrawer warnings={warnings} compileLog={compileLog} mockCompileResult={mockCompileResult} />
+      <BottomDrawer
+        warnings={warnings}
+        compileLog={compileLog}
+        mockCompileResult={mockCompileResult}
+        revisionPanel={
+          <RevisionPanel
+            revisions={revisions}
+            latestRevisionId={latestRevisionId}
+            loading={revisionLoading}
+            onSave={(message) => void saveRevision(message)}
+            onRestore={(revisionId) => void restoreRevision(revisionId)}
+          />
+        }
+      />
       <SettingsDrawer
         open={settingsOpen}
         compilerSettings={compilerSettings}

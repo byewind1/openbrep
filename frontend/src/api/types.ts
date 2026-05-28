@@ -37,6 +37,23 @@ export interface RecentProject {
   exists: boolean
 }
 
+export interface ProjectRevision {
+  revision_id: string
+  project_name: string
+  gsm_name: string
+  created_at: string
+  message: string
+  file_count: number
+  trigger: string
+  intent: string
+  user_instruction: string
+  changed_files: string[]
+  parent_revision_id: string | null
+  compile: Record<string, unknown>
+  explanation: string
+  is_latest: boolean
+}
+
 export interface PreviewMesh {
   name: string
   vertices: number[][]
@@ -180,6 +197,28 @@ export interface ProjectScriptsResponse {
 export interface RecentProjectsResponse {
   ok: boolean
   projects: RecentProject[]
+  error?: string
+}
+
+export interface ProjectRevisionsResponse {
+  ok: boolean
+  revisions: ProjectRevision[]
+  latest_revision_id?: string | null
+  error?: string
+}
+
+export interface SaveRevisionResponse {
+  ok: boolean
+  revision?: ProjectRevision
+  latest_revision_id?: string | null
+  error?: string
+}
+
+export interface RestoreRevisionResponse extends Partial<WorkbenchSnapshot> {
+  ok: boolean
+  restored_revision_id?: string
+  revision?: ProjectRevision
+  latest_revision_id?: string | null
   error?: string
 }
 

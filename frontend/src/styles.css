@@ -653,6 +653,58 @@ button:focus-visible {
   color: var(--warning);
 }
 
+.revision-panel {
+  display: grid;
+  gap: 9px;
+}
+
+.revision-actions {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 8px;
+}
+
+.revision-actions input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+}
+
+.revision-list {
+  display: grid;
+  gap: 7px;
+}
+
+.revision-item {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  padding: 8px 10px;
+}
+
+.revision-item div,
+.revision-item footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.revision-item strong {
+  color: var(--text-primary);
+}
+
+.revision-item span,
+.revision-item p {
+  color: var(--text-muted);
+}
+
+.revision-item p {
+  margin: 0;
+}
+
 .settings-scrim {
   position: fixed;
   inset: 0;

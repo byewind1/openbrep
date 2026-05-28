@@ -331,6 +331,69 @@ class WorkbenchSession:
             ],
         }
 
+    def list_project_revisions(self) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before reading revisions.", "revisions": []}
+        try:
+            from openbrep.revisions import get_latest_revision_id, list_revisions
+
+            latest = get_latest_revision_id(self.source_path)
+            revisions = [
+                _revision_to_api_item(revision, latest_revision_id=latest)
+                for revision in reversed(list_revisions(self.source_path))
+            ]
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to read revisions: {exc}", "revisions": []}
+        return {"ok": True, "revisions": revisions, "latest_revision_id": latest}
+
+    def save_project_revision(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before saving revisions."}
+        try:
+            from openbrep.revisions import create_revision, get_latest_revision_id
+
+            self.project.save_to_disk()
+            message = str(body.get("message") or "").strip()
+            revision = create_revision(
+                self.source_path,
+                message=message,
+                gsm_name=self.project.name,
+                trigger="manual",
+                parent_revision_id=get_latest_revision_id(self.source_path),
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to save revision: {exc}"}
+        return {
+            "ok": True,
+            "revision": _revision_to_api_item(revision, latest_revision_id=revision.revision_id),
+            "latest_revision_id": revision.revision_id,
+        }
+
+    def restore_project_revision(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before restoring revisions."}
+        revision_id = str(body.get("revision_id") or "").strip()
+        if not revision_id:
+            return {"ok": False, "error": "Revision id is required."}
+        try:
+            from openbrep.revisions import restore_revision
+
+            restored = restore_revision(
+                self.source_path,
+                revision_id,
+                message=f"workbench restore {revision_id}",
+            )
+            self.project = HSFProject.load_from_disk(str(self.source_path))
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to restore revision: {exc}"}
+        return {
+            "ok": True,
+            "restored_revision_id": revision_id,
+            "revision": _revision_to_api_item(restored, latest_revision_id=restored.revision_id),
+            "latest_revision_id": restored.revision_id,
+            **self.snapshot(),
+        }
+
     def _remember_project_path(self, path: Path) -> None:
         normalized = str(path.expanduser().resolve())
         self.recent_project_paths = [
@@ -585,6 +648,15 @@ class WorkbenchSession:
         if normalized_method == "GET" and route == "/api/project/recent":
             return self.recent_projects()
 
+        if normalized_method == "GET" and route == "/api/project/revisions":
+            return self.list_project_revisions()
+
+        if normalized_method == "POST" and route == "/api/project/revision/save":
+            return self.save_project_revision(body)
+
+        if normalized_method == "POST" and route == "/api/project/revision/restore":
+            return self.restore_project_revision(body)
+
         if normalized_method == "POST" and route == "/api/dialog/open-directory":
             return self.choose_and_load_hsf_directory()
 
@@ -665,6 +737,25 @@ def _unique_project_name(base_name: str, work_dir: Path) -> str:
         candidate = f"{base_name}_{suffix}"
         suffix += 1
     return candidate
+
+
+def _revision_to_api_item(revision, *, latest_revision_id: str | None = None) -> dict[str, Any]:
+    return {
+        "revision_id": revision.revision_id,
+        "project_name": revision.project_name,
+        "gsm_name": revision.gsm_name,
+        "created_at": revision.created_at,
+        "message": revision.message,
+        "file_count": len(revision.files or []),
+        "trigger": revision.trigger,
+        "intent": revision.intent,
+        "user_instruction": revision.user_instruction,
+        "changed_files": list(revision.changed_files or []),
+        "parent_revision_id": revision.parent_revision_id,
+        "compile": revision.compile or {},
+        "explanation": revision.explanation,
+        "is_latest": revision.revision_id == latest_revision_id,
+    }
 
 
 def _apply_llm_credentials_to_config(

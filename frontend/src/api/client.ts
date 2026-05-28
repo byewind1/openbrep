@@ -13,9 +13,12 @@ import type {
   PreviewPayload,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
+  ProjectRevisionsResponse,
   RecentProjectsResponse,
+  RestoreRevisionResponse,
   RuntimeSettingsResult,
   SaveScriptResponse,
+  SaveRevisionResponse,
   WorkbenchSnapshot,
 } from './types'
 
@@ -79,6 +82,38 @@ export async function listRecentProjects(): Promise<RecentProjectsResponse> {
     '/api/project/recent',
     { method: 'GET' },
     { ok: false, projects: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function listProjectRevisions(): Promise<ProjectRevisionsResponse> {
+  return requestJson<ProjectRevisionsResponse>(
+    '/api/project/revisions',
+    { method: 'GET' },
+    { ok: false, revisions: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function saveProjectRevision(message = ''): Promise<SaveRevisionResponse> {
+  return requestJson<SaveRevisionResponse>(
+    '/api/project/revision/save',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function restoreProjectRevision(revisionId: string): Promise<RestoreRevisionResponse> {
+  return requestJson<RestoreRevisionResponse>(
+    '/api/project/revision/restore',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revision_id: revisionId }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 
