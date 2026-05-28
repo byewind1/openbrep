@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -d "$ROOT_DIR/frontend" && -f "$ROOT_DIR/openbrep/workbench_api.py" ]]; then
+  APP_DIR="$ROOT_DIR"
+elif [[ -d "$ROOT_DIR/.worktrees/react-workbench-poc/frontend" ]]; then
+  APP_DIR="$ROOT_DIR/.worktrees/react-workbench-poc"
+else
+  echo "[obr7] React Workbench not found."
+  echo "[obr7] Expected either ./frontend or ./.worktrees/react-workbench-poc/frontend"
+  exit 1
+fi
+
+FRONTEND_DIR="$APP_DIR/frontend"
+API_PORT="${OBR7_API_PORT:-8765}"
+WEB_PORT="${OBR7_WEB_PORT:-5174}"
+HOST="127.0.0.1"
+LOG_DIR="${TMPDIR:-/tmp}/openbrep-obr7"
+API_LOG="$LOG_DIR/workbench-api.log"
+WEB_LOG="$LOG_DIR/vite.log"
+
+mkdir -p "$LOG_DIR"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "[obr7] Missing command: $1"
+    exit 1
+  fi
+}
+
+port_pid() {
+  lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -n 1
+}
+
+port_command() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1}'
+}
+
+port_in_use() {
+  if lsof -tiTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
+  python - "$1" <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.settimeout(0.2)
+    sys.exit(0 if s.connect_ex(("127.0.0.1", port)) == 0 else 1)
+PY
+}
+
+wait_for_url() {
+  local url="$1"
+  local name="$2"
+  for _ in $(seq 1 80); do
+    if curl --noproxy "*" -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "[obr7] $name did not become ready: $url"
+  return 1
+}
+
+wait_for_port_release() {
+  local port="$1"
+  for _ in $(seq 1 40); do
+    if ! port_in_use "$port"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+ensure_api_port_available() {
+  if ! port_in_use "$API_PORT"; then
+    return 0
+  fi
+
+  local pid
+  pid="$(port_pid "$API_PORT")"
+  local command=""
+  if [[ -n "$pid" ]]; then
+    command="$(port_command "$API_PORT")"
+  fi
+
+  if [[ -n "$pid" && "$command" == python* ]]; then
+    echo "[obr7] Found stale OpenBrep API on port $API_PORT (pid $pid). Stopping it."
+    kill "$pid" >/dev/null 2>&1 || true
+    if ! wait_for_port_release "$API_PORT"; then
+      echo "[obr7] Graceful stop timed out, forcing stale OpenBrep API to exit."
+      kill -9 "$pid" >/dev/null 2>&1 || true
+      if ! wait_for_port_release "$API_PORT"; then
+        echo "[obr7] Stale OpenBrep API on port $API_PORT did not stop cleanly."
+        echo "[obr7] Command: ${command:-unknown}"
+        exit 1
+      fi
+    fi
+    return 0
+  fi
+
+  echo "[obr7] Port $API_PORT is already in use."
+  if [[ -n "$pid" ]]; then
+    echo "[obr7] Occupant pid: $pid"
+    echo "[obr7] Occupant command: ${command:-unknown}"
+  fi
+  echo "[obr7] Stop the old workbench API or set OBR7_API_PORT."
+  exit 1
+}
+
+cleanup() {
+  if [[ -n "${WEB_PID:-}" ]] && kill -0 "$WEB_PID" >/dev/null 2>&1; then
+    kill "$WEB_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${API_PID:-}" ]] && kill -0 "$API_PID" >/dev/null 2>&1; then
+    kill "$API_PID" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+require_cmd python
+require_cmd npm
+require_cmd curl
+require_cmd lsof
+
+if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+  echo "[obr7] frontend/node_modules not found. Run:"
+  echo "       cd \"$FRONTEND_DIR\" && npm install"
+  exit 1
+fi
+
+ensure_api_port_available
+if port_in_use "$WEB_PORT"; then
+  echo "[obr7] Port $WEB_PORT is already in use. Stop the old Vite server or set OBR7_WEB_PORT."
+  exit 1
+fi
+
+echo "[obr7] app: $APP_DIR"
+echo "[obr7] logs: $LOG_DIR"
+echo "[obr7] starting Python API on http://$HOST:$API_PORT"
+(
+  cd "$APP_DIR"
+  python -m openbrep.workbench_api --host "$HOST" --port "$API_PORT"
+) >"$API_LOG" 2>&1 &
+API_PID=$!
+
+wait_for_url "http://$HOST:$API_PORT/api/snapshot" "Python API" || {
+  echo "[obr7] API log:"
+  tail -60 "$API_LOG" || true
+  exit 1
+}
+
+echo "[obr7] starting React Workbench on http://$HOST:$WEB_PORT"
+(
+  cd "$FRONTEND_DIR"
+  npm run dev -- --host "$HOST" --port "$WEB_PORT" --strictPort
+) >"$WEB_LOG" 2>&1 &
+WEB_PID=$!
+
+wait_for_url "http://$HOST:$WEB_PORT/" "React Workbench" || {
+  echo "[obr7] Vite log:"
+  tail -80 "$WEB_LOG" || true
+  exit 1
+}
+
+URL="http://$HOST:$WEB_PORT/"
+echo "[obr7] ready: $URL"
+
+if command -v open >/dev/null 2>&1; then
+  open "$URL" >/dev/null 2>&1 || true
+fi
+
+echo "[obr7] Press Ctrl-C to stop both servers."
+wait "$WEB_PID"
