@@ -8,6 +8,7 @@ import { ScriptTree } from '../components/ScriptTree'
 import { TopMenu } from '../components/TopMenu'
 import { groupParameters } from '../state/parameterGroups'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
+import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { SettingsDrawer } from './settings/SettingsDrawer'
 
 export function WorkbenchApp() {
@@ -38,6 +39,7 @@ export function WorkbenchApp() {
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
+  const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
   const closeProject = useWorkbenchStore((state) => state.closeProject)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
@@ -66,10 +68,17 @@ export function WorkbenchApp() {
     <main className="app-shell">
       <TopMenu
         project={project}
+        projectControls={
+          <ProjectOpenControls
+            project={project}
+            loading={loading}
+            onLoadProjectPath={(path) => void loadProjectPath(path)}
+            onBrowseProjectDirectory={() => void browseProjectDirectory()}
+            onImportGdlFile={() => void importGdlFile()}
+          />
+        }
         hasDraftChanges={hasDraftChanges()}
         onApply={() => void applyDraftParameters()}
-        onLoadProjectPath={(path) => void loadProjectPath(path)}
-        onBrowseProjectDirectory={() => void browseProjectDirectory()}
         onCompile={() => void compileCurrentProject()}
         onMockCompile={() => void runMockCompile()}
         onSave={() => void saveActiveScript()}

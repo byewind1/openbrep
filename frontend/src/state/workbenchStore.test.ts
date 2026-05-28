@@ -18,6 +18,14 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['loaded'],
       compiler: { mode: 'mock', converter_path: '' },
     }),
+    importGdlFile: async () => ({
+      ok: true,
+      project: { name: 'spiral stair', source: 'hsf', path: '/workspace/spiral stair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: ['imported'] },
+      warnings: ['imported'],
+      compiler: { mode: 'mock', converter_path: '' },
+    }),
     closeProject: async () => ({
       ok: true,
       project: { name: 'Demo Bookshelf', source: 'demo' },
@@ -161,6 +169,61 @@ test('browses for a project directory and loads the selected HSF snapshot', asyn
   expect(store.getState().project).toEqual({ name: 'Browsed', source: 'hsf', path: '/workspace/Browsed' })
   expect(store.getState().parameters[0].value).toBe('1.5')
   expect(store.getState().draftParameters).toEqual({})
+})
+
+test('imports a single GDL file as a project and opens its default script', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importGdlFile: async () => ({
+        ok: true,
+        project: { name: 'spiral stair', source: 'hsf', path: '/workspace/spiral stair' },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: ['imported'] },
+        warnings: ['imported'],
+        compiler: { mode: 'mock', converter_path: '' },
+      }),
+      listRecentProjects: async () => ({
+        ok: true,
+        projects: [{ path: '/workspace/spiral stair', exists: true }],
+      }),
+      getProjectScript: async (scriptName: string) => ({
+        name: scriptName,
+        path: `scripts/${scriptName}`,
+        content: 'BLOCK A, B, ZZYZX\n',
+      }),
+    }),
+  )
+
+  await store.getState().importGdlFile('/input/spiral stair.gdl')
+
+  expect(store.getState().project).toEqual({ name: 'spiral stair', source: 'hsf', path: '/workspace/spiral stair' })
+  expect(store.getState().warnings).toEqual(['imported'])
+  expect(store.getState().recentProjects).toEqual([{ path: '/workspace/spiral stair', exists: true }])
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().scriptContents['3d.gdl']).toBe('BLOCK A, B, ZZYZX\n')
+  expect(store.getState().loading).toBe(false)
+})
+
+test('failed GDL import keeps the current project and records an error', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importGdlFile: async () => ({
+        ok: false,
+        error: 'Unsupported file type: .txt',
+        project: { name: 'Fallback' },
+        parameters: [],
+        preview: { meshes: [], wires: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().importGdlFile('/input/notes.txt')
+
+  expect(store.getState().project?.name).toBe('Chair')
+  expect(store.getState().lastError).toBe('Unsupported file type: .txt')
+  expect(store.getState().loading).toBe(false)
 })
 
 test('loads compiler settings from snapshot', async () => {

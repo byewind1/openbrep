@@ -1,13 +1,11 @@
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
 import type { WorkbenchProject } from '../api/types'
+import type { ReactNode } from 'react'
 
 interface TopMenuProps {
   project: WorkbenchProject | null
+  projectControls: ReactNode
   hasDraftChanges: boolean
   onApply: () => void
-  onLoadProjectPath: (path: string) => void
-  onBrowseProjectDirectory: () => void
   onCompile: () => void
   onMockCompile: () => void
   onSave: () => void
@@ -24,10 +22,9 @@ interface TopMenuProps {
 
 export function TopMenu({
   project,
+  projectControls,
   hasDraftChanges,
   onApply,
-  onLoadProjectPath,
-  onBrowseProjectDirectory,
   onCompile,
   onMockCompile,
   onSave,
@@ -41,17 +38,6 @@ export function TopMenu({
   lastError,
   onClearError,
 }: TopMenuProps) {
-  const [path, setPath] = useState(project?.path ?? '')
-
-  useEffect(() => {
-    setPath(project?.path ?? '')
-  }, [project?.path])
-
-  function submitPath(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    onLoadProjectPath(path)
-  }
-
   return (
     <header className="topbar">
       <div className="brand-lockup">
@@ -61,22 +47,7 @@ export function TopMenu({
           <span>{project?.source ?? 'workbench'}</span>
         </div>
       </div>
-      <form className="project-path-form" onSubmit={submitPath}>
-        <input
-          id="hsf-path"
-          type="text"
-          aria-label="HSF project path"
-          placeholder="HSF project path"
-          value={path}
-          onChange={(event) => setPath(event.currentTarget.value)}
-        />
-        <button type="submit" disabled={loading || path.trim().length === 0}>
-          {loading ? '...' : 'Open'}
-        </button>
-        <button type="button" disabled={loading} onClick={onBrowseProjectDirectory}>
-          ...
-        </button>
-      </form>
+      {projectControls}
       <nav className="menu-row" aria-label="Migration status">
         <button type="button" disabled={!activeScriptName || saving} onClick={onSave}>
           {saving ? '...' : 'Save'}

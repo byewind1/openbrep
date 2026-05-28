@@ -282,6 +282,40 @@ class WorkbenchSession:
         self._remember_project_path(hsf_path)
         return {"ok": True, **self.snapshot()}
 
+    def import_gdl_file(self, body: dict[str, Any]) -> dict[str, Any]:
+        raw_path = str(body.get("path") or "").strip()
+        if not raw_path:
+            try:
+                raw_path = self.file_chooser()
+            except Exception as exc:
+                return {"ok": False, "error": f"File chooser failed: {exc}"}
+        if not raw_path:
+            return {"ok": False, "cancelled": True, "error": "GDL file selection cancelled."}
+
+        source_file = Path(raw_path).expanduser().resolve()
+        if not source_file.is_file():
+            return {"ok": False, "error": f"GDL file not found: {raw_path}"}
+        if source_file.suffix.lower() != ".gdl":
+            return {"ok": False, "error": f"Unsupported file type: {source_file.suffix or '(none)'}"}
+
+        script_name = str(body.get("script_name") or ScriptType.SCRIPT_3D.value)
+        script_type = SCRIPT_NAME_TO_TYPE.get(script_name)
+        if script_type is None:
+            return {"ok": False, "error": f"Unsupported target script: {script_name}"}
+
+        content = source_file.read_text(encoding="utf-8-sig")
+        project_name = _unique_project_name(_safe_project_name(source_file.stem), source_file.parent)
+        project = HSFProject.create_new(project_name, str(source_file.parent))
+        project.description = f"Imported from {source_file.name}"
+        project.set_script(script_type, content)
+        hsf_dir = project.save_to_disk()
+
+        self.project = project
+        self.source = "hsf"
+        self.source_path = hsf_dir
+        self._remember_project_path(hsf_dir)
+        return {"ok": True, "imported_from": str(source_file), **self.snapshot()}
+
     def close_project(self) -> dict[str, Any]:
         self.project = build_demo_project()
         self.source = "demo"
@@ -542,6 +576,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/load":
             return self.load_hsf_directory(str(body.get("path") or ""))
 
+        if normalized_method == "POST" and route == "/api/project/import-gdl":
+            return self.import_gdl_file(body)
+
         if normalized_method == "POST" and route == "/api/project/close":
             return self.close_project()
 
@@ -615,6 +652,21 @@ def _save_workbench_config(config: GDLAgentConfig, config_path: Path) -> None:
     config.save(str(config_path))
 
 
+def _safe_project_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_\- ]+", "_", str(name or "").strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ._")
+    return cleaned or "Imported_GDL"
+
+
+def _unique_project_name(base_name: str, work_dir: Path) -> str:
+    candidate = base_name
+    suffix = 2
+    while (work_dir / candidate).exists():
+        candidate = f"{base_name}_{suffix}"
+        suffix += 1
+    return candidate
+
+
 def _apply_llm_credentials_to_config(
     config: GDLAgentConfig,
     *,
@@ -658,7 +710,7 @@ def _choose_file() -> str:
     root = tk.Tk()
     root.withdraw()
     try:
-        return str(filedialog.askopenfilename(title="Choose LP_XMLConverter") or "")
+        return str(filedialog.askopenfilename(title="Choose OpenBrep file") or "")
     finally:
         root.destroy()
 

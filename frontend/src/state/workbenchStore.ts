@@ -11,6 +11,7 @@ import {
   fetchSnapshot,
   generateWithAssistant,
   getProjectScript,
+  importGdlFile,
   loadProjectPath,
   listRecentProjects,
   listProjectScripts,
@@ -50,6 +51,7 @@ export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
+  importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
@@ -93,6 +95,7 @@ export interface WorkbenchState {
   mockCompileResult: MockCompileResponse | null
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
+  importGdlFile: (path?: string) => Promise<void>
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<void>
@@ -119,6 +122,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
   loadProjectPath,
+  importGdlFile,
   closeProject,
   chooseProjectDirectory,
   chooseCompilerFile,
@@ -182,6 +186,22 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         set({
           loading: false,
           lastError: snapshot.error ?? `Failed to open HSF project: ${normalizedPath}`,
+        })
+        return
+      }
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
+      await get().loadScripts()
+      set({ loading: false })
+    },
+
+    async importGdlFile(path = '') {
+      set({ loading: true, lastError: null })
+      const snapshot = await api.importGdlFile(path)
+      if (snapshot.ok === false) {
+        set({
+          loading: false,
+          lastError: snapshot.error ?? 'Failed to import GDL file.',
         })
         return
       }

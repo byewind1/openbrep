@@ -86,6 +86,33 @@ def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp
     assert "path" not in closed["project"]
 
 
+def test_workbench_session_imports_single_gdl_file_as_hsf_project(tmp_path):
+    gdl_path = tmp_path / "spiral stair.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\nADDZ 1\n", encoding="utf-8")
+
+    session = WorkbenchSession()
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert response["ok"] is True
+    assert response["imported_from"] == str(gdl_path)
+    assert response["project"]["source"] == "hsf"
+    assert response["project"]["path"].endswith("spiral stair")
+    imported = HSFProject.load_from_disk(response["project"]["path"])
+    assert imported.get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
+    assert session.route("GET", "/api/project/recent")["projects"][0]["path"] == response["project"]["path"]
+
+
+def test_workbench_session_rejects_non_gdl_import(tmp_path):
+    text_path = tmp_path / "notes.txt"
+    text_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+    session = WorkbenchSession()
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(text_path)})
+
+    assert response["ok"] is False
+    assert "Unsupported file type" in response["error"]
+
+
 def test_workbench_session_choose_project_directory_loads_selected_hsf(tmp_path):
     project = HSFProject.create_new("ChosenShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

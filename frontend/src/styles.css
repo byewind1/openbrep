@@ -145,15 +145,15 @@ button:focus-visible {
   font-size: 12px;
 }
 
-.project-path-form {
+.project-open-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) auto auto;
+  grid-template-columns: minmax(170px, 1fr) auto auto auto;
   align-items: center;
   gap: 6px;
 }
 
-.project-path-form input {
+.project-open-controls input {
   min-width: 0;
   height: 28px;
   padding: 0 8px;

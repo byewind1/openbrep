@@ -62,6 +62,18 @@ export async function closeProject(): Promise<WorkbenchSnapshot> {
   )
 }
 
+export async function importGdlFile(path = ''): Promise<WorkbenchSnapshot> {
+  return requestJson<WorkbenchSnapshot>(
+    '/api/project/import-gdl',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
 export async function listRecentProjects(): Promise<RecentProjectsResponse> {
   return requestJson<RecentProjectsResponse>(
     '/api/project/recent',
