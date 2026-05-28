@@ -87,6 +87,28 @@ test('loads a project path and clears stale draft parameters', async () => {
   expect(store.getState().warnings).toEqual(['loaded'])
 })
 
+test('failed project path load keeps current project and records an error', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      loadProjectPath: async () => ({
+        ok: false,
+        error: 'HSF directory not found',
+        project: { name: 'Fallback' },
+        parameters: [],
+        preview: { meshes: [], wires: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().loadProjectPath('/missing/project')
+
+  expect(store.getState().project?.name).toBe('Chair')
+  expect(store.getState().lastError).toBe('HSF directory not found')
+  expect(store.getState().loading).toBe(false)
+})
+
 test('browses for a project directory and loads the selected HSF snapshot', async () => {
   const store = createWorkbenchStore(
     makeApi({
@@ -150,6 +172,28 @@ test('openScript loads content and marks the script active', async () => {
   expect(store.getState().scriptContents['2d.gdl']).toBe('content for 2d.gdl')
 })
 
+test('openScript keeps current script active when content cannot be loaded', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      getProjectScript: async (scriptName: string) =>
+        scriptName === '2d.gdl'
+          ? null
+          : {
+              name: scriptName,
+              path: `scripts/${scriptName}`,
+              content: `content for ${scriptName}`,
+            },
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().openScript('2d.gdl')
+
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().lastError).toBe('Failed to open script: 2d.gdl')
+  expect(store.getState().scriptLoading).toBe(false)
+})
+
 test('updateActiveScriptContent marks active script dirty', async () => {
   const store = createWorkbenchStore(makeApi())
 
@@ -170,6 +214,22 @@ test('saveActiveScript clears dirty state after successful save', async () => {
   expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
   expect(store.getState().scriptSaving).toBe(false)
   expect(store.getState().compileLog[0]).toContain('Saved 3d.gdl')
+})
+
+test('saveActiveScript records save failures without clearing dirty state', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      saveProjectScript: async () => ({ ok: false, success: false, saved_at: '', error: 'Disk is read-only' }),
+    }),
+  )
+
+  await store.getState().load()
+  store.getState().updateActiveScriptContent('changed 3d content')
+  await store.getState().saveActiveScript()
+
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+  expect(store.getState().lastError).toBe('Disk is read-only')
+  expect(store.getState().scriptSaving).toBe(false)
 })
 
 test('runMockCompile stores diagnostics result', async () => {

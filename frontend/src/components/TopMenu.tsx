@@ -18,6 +18,8 @@ interface TopMenuProps {
   saving: boolean
   hasDirtyScript: boolean
   activeScriptName: string | null
+  lastError: string | null
+  onClearError: () => void
 }
 
 export function TopMenu({
@@ -36,6 +38,8 @@ export function TopMenu({
   saving,
   hasDirtyScript,
   activeScriptName,
+  lastError,
+  onClearError,
 }: TopMenuProps) {
   const [path, setPath] = useState(project?.path ?? '')
 
@@ -88,6 +92,11 @@ export function TopMenu({
         </button>
       </nav>
       <div className="topbar-status">
+        {lastError ? (
+          <button type="button" className="error-pill" title={lastError} onClick={onClearError}>
+            {lastError}
+          </button>
+        ) : null}
         <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>{hasDirtyScript ? 'Dirty' : 'Saved'}</span>
         <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? 'Params' : 'Stable'}</span>
         <button className="primary-action" disabled={!hasDraftChanges || applying} onClick={onApply}>

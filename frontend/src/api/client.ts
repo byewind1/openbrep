@@ -45,7 +45,7 @@ export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
     },
-    fallbackSnapshot,
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
   )
 }
 
@@ -192,8 +192,9 @@ export async function mockCompile(): Promise<MockCompileResponse> {
 async function requestJson<T>(path: string, init: RequestInit, fallback: T): Promise<T> {
   try {
     const response = await fetch(`${API_BASE}${path}`, init)
-    if (!response.ok) return fallback
-    return (await response.json()) as T
+    const payload = (await response.json()) as T
+    if (!response.ok) return payload ?? fallback
+    return payload
   } catch {
     return fallback
   }

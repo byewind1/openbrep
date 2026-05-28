@@ -59,12 +59,14 @@ export interface LlmSettings {
 }
 
 export interface WorkbenchSnapshot {
+  ok?: boolean
   project: WorkbenchProject
   parameters: WorkbenchParameter[]
   preview: PreviewPayload
   warnings: string[]
   compiler?: CompilerSettings
   llm?: LlmSettings
+  error?: string
 }
 
 export interface ApplyResult extends WorkbenchSnapshot {
@@ -171,12 +173,16 @@ export interface ProjectScriptsResponse {
 }
 
 export interface ProjectScriptContentResponse {
+  ok?: boolean
   name: string
   path: string
   content: string
+  error?: string
 }
 
 export interface SaveScriptResponse {
+  ok?: boolean
   success: boolean
   saved_at: string
+  error?: string
 }

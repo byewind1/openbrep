@@ -70,6 +70,7 @@ export interface WorkbenchState {
   loading: boolean
   applying: boolean
   compiling: boolean
+  lastError: string | null
   compileLog: string[]
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
@@ -101,6 +102,7 @@ export interface WorkbenchState {
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
   runMockCompile: () => Promise<void>
+  clearLastError: () => void
   hasDraftChanges: () => boolean
 }
 
@@ -135,6 +137,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     loading: false,
     applying: false,
     compiling: false,
+    lastError: null,
     compileLog: [],
     compilerSettings: { mode: 'mock', converter_path: '' },
     llmSettings: defaultLlmSettings(),
@@ -150,7 +153,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     mockCompileResult: null,
 
     async load() {
-      set({ loading: true })
+      set({ loading: true, lastError: null })
       const snapshot = await api.fetchSnapshot()
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadScripts()
@@ -160,18 +163,28 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
     async loadProjectPath(path) {
       const normalizedPath = path.trim()
       if (!normalizedPath) return
-      set({ loading: true })
+      set({ loading: true, lastError: null })
       const snapshot = await api.loadProjectPath(normalizedPath)
+      if (snapshot.ok === false) {
+        set({
+          loading: false,
+          lastError: snapshot.error ?? `Failed to open HSF project: ${normalizedPath}`,
+        })
+        return
+      }
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
       await get().loadScripts()
       set({ loading: false })
     },
 
     async browseProjectDirectory() {
-      set({ loading: true })
+      set({ loading: true, lastError: null })
       const result = await api.chooseProjectDirectory()
       if (!result.ok || !result.project || !result.parameters || !result.preview) {
-        set({ loading: false })
+        set({
+          loading: false,
+          lastError: result.cancelled ? null : result.error ?? 'Failed to open HSF project directory.',
+        })
         return
       }
       set(hydrateSnapshot(result as WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
@@ -276,15 +289,22 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       if (!target) return
       const cached = get().scriptContents[target]
       if (typeof cached === 'string') {
-        set({ activeScriptName: target })
+        set({ activeScriptName: target, lastError: null })
         return
       }
-      set({ scriptLoading: true, activeScriptName: target })
+      set({ scriptLoading: true, lastError: null })
       const result = await api.getProjectScript(target)
+      if (!result) {
+        set({
+          scriptLoading: false,
+          lastError: `Failed to open script: ${target}`,
+        })
+        return
+      }
       set((state) => ({
         scriptLoading: false,
         activeScriptName: target,
-        scriptContents: result ? { ...state.scriptContents, [target]: result.content } : state.scriptContents,
+        scriptContents: { ...state.scriptContents, [target]: result.content },
       }))
     },
 
@@ -302,7 +322,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       if (!activeScriptName) return
       const content = get().scriptContents[activeScriptName]
       if (typeof content !== 'string') return
-      set({ scriptSaving: true })
+      set({ scriptSaving: true, lastError: null })
       const result = await api.saveProjectScript(activeScriptName, content)
       if (result.success) {
         set((state) => ({
@@ -322,7 +342,10 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
         }
         return
       }
-      set({ scriptSaving: false })
+      set({
+        scriptSaving: false,
+        lastError: result.error ?? `Failed to save script: ${activeScriptName}`,
+      })
     },
 
     async runMockCompile() {
@@ -389,6 +412,10 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
 
     hasDraftChanges() {
       return Object.keys(get().draftParameters).length > 0
+    },
+
+    clearLastError() {
+      set({ lastError: null })
     },
   }))
 }

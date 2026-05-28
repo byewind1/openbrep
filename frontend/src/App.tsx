@@ -20,6 +20,7 @@ export default function App() {
   const loading = useWorkbenchStore((state) => state.loading)
   const applying = useWorkbenchStore((state) => state.applying)
   const compiling = useWorkbenchStore((state) => state.compiling)
+  const lastError = useWorkbenchStore((state) => state.lastError)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
   const compilerSettings = useWorkbenchStore((state) => state.compilerSettings)
   const llmSettings = useWorkbenchStore((state) => state.llmSettings)
@@ -49,6 +50,7 @@ export default function App() {
   const openScript = useWorkbenchStore((state) => state.openScript)
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
   const saveActiveScript = useWorkbenchStore((state) => state.saveActiveScript)
+  const clearLastError = useWorkbenchStore((state) => state.clearLastError)
   const hasDraftChanges = useWorkbenchStore((state) => state.hasDraftChanges)
   const grouped = groupParameters(parameters)
   const activeScriptContent = activeScriptName ? scriptContents[activeScriptName] ?? '' : ''
@@ -76,6 +78,8 @@ export default function App() {
         saving={scriptSaving}
         hasDirtyScript={hasDirtyScript}
         activeScriptName={activeScriptName}
+        lastError={lastError}
+        onClearError={clearLastError}
       />
       <section className="workspace-grid" aria-busy={loading}>
         <aside className="left-rail">

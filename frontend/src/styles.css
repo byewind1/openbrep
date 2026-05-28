@@ -196,6 +196,18 @@ button:focus-visible {
   color: var(--accent-soft);
 }
 
+.error-pill {
+  max-width: 260px;
+  height: 24px;
+  overflow: hidden;
+  border-color: rgba(239, 68, 68, 0.7);
+  background: rgba(239, 68, 68, 0.14);
+  color: #fecaca;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .primary-action {
   border-color: var(--accent);
   background: var(--accent);
