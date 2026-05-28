@@ -153,15 +153,10 @@ button:focus-visible {
   gap: 6px;
 }
 
-.project-path-form input,
-.converter-path-input {
+.project-path-form input {
   min-width: 0;
   height: 28px;
   padding: 0 8px;
-}
-
-.converter-path-input {
-  width: 150px;
 }
 
 .menu-row,
@@ -211,6 +206,10 @@ button:focus-visible {
 .primary-action:hover:not(:disabled) {
   background: var(--accent-soft);
   color: #111827;
+}
+
+.settings-trigger {
+  color: var(--text-primary);
 }
 
 .workspace-grid {
@@ -640,6 +639,118 @@ button:focus-visible {
 
 .diagnostic-warning {
   color: var(--warning);
+}
+
+.settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: rgba(2, 6, 23, 0.46);
+  padding: 0;
+}
+
+.settings-scrim:hover:not(:disabled) {
+  background: rgba(2, 6, 23, 0.52);
+}
+
+.settings-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 21;
+  width: 390px;
+  max-width: calc(100vw - 24px);
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 52px repeat(4, auto) minmax(0, 1fr);
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  transform: translateX(100%);
+  transition: transform 160ms ease-out;
+  box-shadow: none;
+}
+
+.settings-drawer.open {
+  transform: translateX(0);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 0 14px;
+}
+
+.settings-header div,
+.settings-section-heading {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-header strong,
+.settings-section-heading strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.settings-header span,
+.settings-section-heading span,
+.settings-row > span,
+.settings-field > span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 14px;
+}
+
+.settings-section.muted {
+  gap: 0;
+}
+
+.settings-section.muted .settings-section-heading strong {
+  color: var(--text-secondary);
+}
+
+.settings-row {
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-row select {
+  height: 28px;
+  padding: 0 8px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.settings-path-row input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
 }
 
 .drawer-content p {

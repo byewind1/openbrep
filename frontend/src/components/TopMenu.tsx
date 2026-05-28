@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { CompilerSettings, WorkbenchProject } from '../api/types'
+import type { WorkbenchProject } from '../api/types'
 
 interface TopMenuProps {
   project: WorkbenchProject | null
@@ -11,9 +11,7 @@ interface TopMenuProps {
   onCompile: () => void
   onMockCompile: () => void
   onSave: () => void
-  compilerSettings: CompilerSettings
-  onCompilerSettingsChange: (settings: CompilerSettings) => void
-  onBrowseCompilerFile: () => void
+  onOpenSettings: () => void
   applying: boolean
   loading: boolean
   compiling: boolean
@@ -31,9 +29,7 @@ export function TopMenu({
   onCompile,
   onMockCompile,
   onSave,
-  compilerSettings,
-  onCompilerSettingsChange,
-  onBrowseCompilerFile,
+  onOpenSettings,
   applying,
   loading,
   compiling,
@@ -78,35 +74,6 @@ export function TopMenu({
         </button>
       </form>
       <nav className="menu-row" aria-label="Migration status">
-        <select
-          aria-label="Compiler mode"
-          value={compilerSettings.mode}
-          onChange={(event) =>
-            onCompilerSettingsChange({
-              ...compilerSettings,
-              mode: event.currentTarget.value === 'lp' ? 'lp' : 'mock',
-            })
-          }
-        >
-          <option value="mock">Mock</option>
-          <option value="lp">LP</option>
-        </select>
-        <input
-          className="converter-path-input"
-          type="text"
-          placeholder="LP_XMLConverter path"
-          value={compilerSettings.converter_path}
-          disabled={compilerSettings.mode !== 'lp'}
-          onChange={(event) =>
-            onCompilerSettingsChange({
-              ...compilerSettings,
-              converter_path: event.currentTarget.value,
-            })
-          }
-        />
-        <button type="button" disabled={compilerSettings.mode !== 'lp'} onClick={onBrowseCompilerFile}>
-          LP...
-        </button>
         <button type="button" disabled={!activeScriptName || saving} onClick={onSave}>
           {saving ? '...' : 'Save'}
         </button>
@@ -115,6 +82,9 @@ export function TopMenu({
         </button>
         <button type="button" disabled={!project?.path || compiling} onClick={onCompile}>
           {compiling ? '...' : 'Compile'}
+        </button>
+        <button type="button" className="settings-trigger" onClick={onOpenSettings}>
+          Settings
         </button>
       </nav>
       <div className="topbar-status">

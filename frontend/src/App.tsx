@@ -1,15 +1,17 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AssistantPanel } from './components/AssistantPanel'
 import { BottomDrawer } from './components/BottomDrawer'
 import { ParameterRail } from './components/ParameterRail'
 import { PreviewViewport } from './components/PreviewViewport'
 import { ScriptEditor } from './components/ScriptEditor'
 import { ScriptTree } from './components/ScriptTree'
+import { SettingsDrawer } from './components/SettingsDrawer'
 import { TopMenu } from './components/TopMenu'
 import { groupParameters } from './state/parameterGroups'
 import { useWorkbenchStore } from './state/useWorkbenchStore'
 
 export default function App() {
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const project = useWorkbenchStore((state) => state.project)
   const parameters = useWorkbenchStore((state) => state.parameters)
   const draftParameters = useWorkbenchStore((state) => state.draftParameters)
@@ -64,9 +66,7 @@ export default function App() {
         onCompile={() => void compileCurrentProject()}
         onMockCompile={() => void runMockCompile()}
         onSave={() => void saveActiveScript()}
-        compilerSettings={compilerSettings}
-        onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
-        onBrowseCompilerFile={() => void browseCompilerFile()}
+        onOpenSettings={() => setSettingsOpen(true)}
         applying={applying}
         loading={loading}
         compiling={compiling}
@@ -136,6 +136,13 @@ export default function App() {
         </aside>
       </section>
       <BottomDrawer warnings={warnings} compileLog={compileLog} mockCompileResult={mockCompileResult} />
+      <SettingsDrawer
+        open={settingsOpen}
+        compilerSettings={compilerSettings}
+        onClose={() => setSettingsOpen(false)}
+        onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
+        onBrowseCompilerFile={() => void browseCompilerFile()}
+      />
     </main>
   )
 }
