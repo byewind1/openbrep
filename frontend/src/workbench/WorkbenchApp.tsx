@@ -9,11 +9,13 @@ import { TopMenu } from '../components/TopMenu'
 import { groupParameters } from '../state/parameterGroups'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { RevisionPanel } from './diagnostics/RevisionPanel'
+import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { SettingsDrawer } from './settings/SettingsDrawer'
 
 export function WorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
   const project = useWorkbenchStore((state) => state.project)
   const parameters = useWorkbenchStore((state) => state.parameters)
   const draftParameters = useWorkbenchStore((state) => state.draftParameters)
@@ -148,7 +150,15 @@ export function WorkbenchApp() {
           </div>
           <div className="rail-panel viewport-panel">
             {activeRailPanel === '3d' ? (
-              <PreviewViewport preview={preview} warnings={warnings} />
+              <PreviewViewport
+                preview={preview}
+                warnings={warnings}
+                actions={
+                  <button type="button" className="viewport-action-button" onClick={() => setFloatingPreviewOpen(true)}>
+                    浮窗
+                  </button>
+                }
+              />
             ) : (
               <AssistantPanel
                 messages={assistantMessages}
@@ -174,6 +184,12 @@ export function WorkbenchApp() {
             onRestore={(revisionId) => void restoreRevision(revisionId)}
           />
         }
+      />
+      <FloatingPreviewWindow
+        open={floatingPreviewOpen}
+        preview={preview}
+        warnings={warnings}
+        onClose={() => setFloatingPreviewOpen(false)}
       />
       <SettingsDrawer
         open={settingsOpen}

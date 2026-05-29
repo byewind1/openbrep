@@ -1,21 +1,25 @@
 import { OrbitControls } from '@react-three/drei'
 import { Canvas } from '@react-three/fiber'
+import type { ReactNode } from 'react'
 import { BufferAttribute, BufferGeometry, DoubleSide } from 'three'
 import type { PreviewMesh, PreviewPayload } from '../api/types'
 
 interface PreviewViewportProps {
   preview: PreviewPayload | null
   warnings: string[]
+  actions?: ReactNode
+  variant?: 'rail' | 'floating'
 }
 
-export function PreviewViewport({ preview, warnings }: PreviewViewportProps) {
+export function PreviewViewport({ preview, warnings, actions, variant = 'rail' }: PreviewViewportProps) {
   return (
-    <section className="viewport-surface">
+    <section className={`viewport-surface viewport-surface-${variant}`}>
       <div className="viewport-toolbar">
         <div>
           <strong>3D Preview</strong>
           <span>{preview?.meshes.length ?? 0} meshes</span>
         </div>
+        {actions ? <div className="viewport-toolbar-actions">{actions}</div> : null}
       </div>
       <div className="canvas-wrap">
         <Canvas camera={{ position: [2.8, -3.6, 2.4], fov: 42 }}>

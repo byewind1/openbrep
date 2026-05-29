@@ -520,9 +520,21 @@ button:focus-visible {
 
 .viewport-toolbar {
   justify-content: space-between;
+  gap: 8px;
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+.viewport-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viewport-action-button {
+  height: 24px;
+  font-size: 12px;
 }
 
 .drawer-tabs button {
@@ -547,6 +559,64 @@ button:focus-visible {
   padding: 0 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+.floating-preview-window {
+  position: fixed;
+  top: 72px;
+  right: 28px;
+  z-index: 50;
+  width: min(760px, calc(100vw - 56px));
+  height: min(560px, calc(100vh - 112px));
+  min-width: 420px;
+  min-height: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  display: grid;
+  grid-template-rows: 36px minmax(0, 1fr);
+  resize: both;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+}
+
+.floating-preview-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.floating-preview-header div {
+  min-width: 0;
+  display: grid;
+}
+
+.floating-preview-header strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.floating-preview-header span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.floating-preview-header button {
+  height: 24px;
+  font-size: 12px;
+}
+
+.floating-preview-body {
+  min-height: 0;
+}
+
+.floating-preview-body .viewport-surface {
+  height: 100%;
 }
 
 .assistant-thread {
