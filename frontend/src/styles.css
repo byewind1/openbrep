@@ -938,6 +938,27 @@ button:focus-visible {
   color: var(--warning);
 }
 
+.diagnostic-group {
+  margin: 8px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-card);
+  padding: 7px 8px 4px;
+}
+
+.diagnostic-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+.diagnostic-group-heading span {
+  color: var(--text-muted);
+}
+
 .diagnostic-line {
   width: 100%;
   height: auto;

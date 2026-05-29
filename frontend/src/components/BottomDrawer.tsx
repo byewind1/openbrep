@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CompileIssue, MockCompileResponse } from '../api/types'
+import { countGroupedIssues, groupCompileIssuesByScript } from '../state/diagnostics'
 
 interface BottomDrawerProps {
   warnings: string[]
@@ -12,8 +13,7 @@ interface BottomDrawerProps {
 
 export function BottomDrawer({ warnings, compileLog, mockCompileResult, revisionPanel, onIssueSelect }: BottomDrawerProps) {
   const [activeTab, setActiveTab] = useState<'compile' | 'diagnostics' | 'preview' | 'revision'>('compile')
-  const errors = mockCompileResult?.issues.filter((issue) => issue.severity === 'error') ?? []
-  const nonErrors = mockCompileResult?.issues.filter((issue) => issue.severity !== 'error') ?? []
+  const issueGroups = groupCompileIssuesByScript(mockCompileResult?.issues ?? [])
 
   return (
     <section className="bottom-drawer">
@@ -38,8 +38,7 @@ export function BottomDrawer({ warnings, compileLog, mockCompileResult, revision
           <CompileDiagnostics
             compileLog={compileLog}
             duration={mockCompileResult?.duration_ms ?? null}
-            errors={errors}
-            nonErrors={nonErrors}
+            issueGroups={issueGroups}
             outputPath={mockCompileResult?.output_path ?? null}
             parameterCount={mockCompileResult?.parameter_count ?? null}
             sizeBytes={mockCompileResult?.gsm_size_bytes ?? null}
@@ -55,8 +54,7 @@ export function BottomDrawer({ warnings, compileLog, mockCompileResult, revision
 function CompileDiagnostics({
   compileLog,
   duration,
-  errors,
-  nonErrors,
+  issueGroups,
   outputPath,
   parameterCount,
   sizeBytes,
@@ -65,21 +63,27 @@ function CompileDiagnostics({
 }: {
   compileLog: string[]
   duration: number | null
-  errors: CompileIssue[]
-  nonErrors: CompileIssue[]
+  issueGroups: ReturnType<typeof groupCompileIssuesByScript>
   outputPath: string | null
   parameterCount: number | null
   sizeBytes: number | null
   success: boolean | null
   onIssueSelect?: (issue: CompileIssue) => void
 }) {
+  const errorCount = countGroupedIssues(issueGroups, 'error')
+  const warningCount = countGroupedIssues(issueGroups, 'warning')
   return (
     <>
       <div className="diagnostics-summary">
         <strong>Compile</strong>
         <span>{duration !== null ? `${duration} ms` : 'Not compiled'}</span>
       </div>
-      {success && errors.length === 0 && nonErrors.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
+      {success && issueGroups.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
+      {issueGroups.length ? (
+        <p>
+          Diagnostics: {errorCount} errors · {warningCount} warnings · {issueGroups.length} groups
+        </p>
+      ) : null}
       {outputPath ? <p>Output: {outputPath}</p> : null}
       {sizeBytes !== null || parameterCount !== null ? (
         <p>
@@ -88,25 +92,23 @@ function CompileDiagnostics({
           {parameterCount !== null ? `Parameters: ${parameterCount}` : ''}
         </p>
       ) : null}
-      {errors.map((issue, index) => (
-        <button
-          type="button"
-          className="diagnostic-line diagnostic-error"
-          key={`${issue.script}-${issue.line}-${index}`}
-          onClick={() => onIssueSelect?.(issue)}
-        >
-          {formatIssue(issue)}
-        </button>
-      ))}
-      {nonErrors.map((issue, index) => (
-        <button
-          type="button"
-          className="diagnostic-line diagnostic-warning"
-          key={`${issue.script}-${issue.line}-${index}`}
-          onClick={() => onIssueSelect?.(issue)}
-        >
-          {formatIssue(issue)}
-        </button>
+      {issueGroups.map((group) => (
+        <div className="diagnostic-group" key={group.script}>
+          <div className="diagnostic-group-heading">
+            <strong>{group.script}</strong>
+            <span>{group.errors.length} errors · {group.warnings.length} warnings</span>
+          </div>
+          {[...group.errors, ...group.warnings, ...group.infos].map((issue, index) => (
+            <button
+              type="button"
+              className={`diagnostic-line ${issue.severity === 'error' ? 'diagnostic-error' : 'diagnostic-warning'}`}
+              key={`${issue.script}-${issue.line}-${index}`}
+              onClick={() => onIssueSelect?.(issue)}
+            >
+              {formatIssue(issue)}
+            </button>
+          ))}
+        </div>
       ))}
       {compileLog.length ? compileLog.map((entry) => <p key={entry}>{entry}</p>) : null}
     </>
