@@ -1,7 +1,28 @@
-import type { AddParameterRequest } from '../../api/types'
+import type { AddParameterRequest, UpdateParameterRequest, WorkbenchSnapshot } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 
 export function createParameterActions({ api, get, set }: WorkbenchActionContext) {
+  async function refreshParameterSource() {
+    await get().refreshProjectWorkspace({
+      preferredScriptName: 'paramlist.xml',
+      refreshAllScripts: true,
+      refreshPreview: false,
+      runDiagnostics: true,
+    })
+  }
+
+  function applyParameterSnapshot(result: WorkbenchSnapshot) {
+    set({
+      project: result.project,
+      parameters: result.parameters,
+      parameterIssues: [],
+      preview: result.preview,
+      warnings: result.warnings,
+      draftParameters: {},
+      applying: false,
+    })
+  }
+
   return {
     async setDraftParameter(name: string, value: unknown) {
       const draftParameters = { ...get().draftParameters, [name]: value }
@@ -20,21 +41,32 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
         set({ applying: false, lastError: result.error ?? 'Failed to add parameter.' })
         return false
       }
-      set({
-        project: result.project,
-        parameters: result.parameters,
-        parameterIssues: [],
-        preview: result.preview,
-        warnings: result.warnings,
-        draftParameters: {},
-        applying: false,
-      })
-      await get().refreshProjectWorkspace({
-        preferredScriptName: 'paramlist.xml',
-        refreshAllScripts: true,
-        refreshPreview: false,
-        runDiagnostics: true,
-      })
+      applyParameterSnapshot(result)
+      await refreshParameterSource()
+      return true
+    },
+
+    async updateProjectParameter(parameter: UpdateParameterRequest) {
+      set({ applying: true, lastError: null })
+      const result = await api.updateProjectParameter(parameter)
+      if (!result.ok) {
+        set({ applying: false, lastError: result.error ?? 'Failed to update parameter.' })
+        return false
+      }
+      applyParameterSnapshot(result)
+      await refreshParameterSource()
+      return true
+    },
+
+    async deleteProjectParameter(name: string) {
+      set({ applying: true, lastError: null })
+      const result = await api.deleteProjectParameter(name)
+      if (!result.ok) {
+        set({ applying: false, lastError: result.error ?? 'Failed to delete parameter.' })
+        return false
+      }
+      applyParameterSnapshot(result)
+      await refreshParameterSource()
       return true
     },
 

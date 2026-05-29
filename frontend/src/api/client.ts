@@ -23,6 +23,9 @@ import type {
   RuntimeSettingsResult,
   SaveScriptResponse,
   SaveRevisionResponse,
+  DeleteParameterResult,
+  UpdateParameterRequest,
+  UpdateParameterResult,
   ValidateParametersResult,
   WorkbenchSnapshot,
 } from './types'
@@ -204,6 +207,30 @@ export async function validateProjectParameters(): Promise<ValidateParametersRes
       body: JSON.stringify({}),
     },
     { ok: false, issues: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function updateProjectParameter(parameter: UpdateParameterRequest): Promise<UpdateParameterResult> {
+  return requestJson<UpdateParameterResult>(
+    '/api/project/parameters/update',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parameter),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function deleteProjectParameter(name: string): Promise<DeleteParameterResult> {
+  return requestJson<DeleteParameterResult>(
+    '/api/project/parameters/delete',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
   )
 }
 

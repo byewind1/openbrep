@@ -1,5 +1,6 @@
 import { AddParameterInlineForm } from './AddParameterInlineForm'
-import type { AddParameterRequest, WorkbenchParameter } from '../api/types'
+import { ParameterMetadataEditor } from './ParameterMetadataEditor'
+import type { AddParameterRequest, UpdateParameterRequest, WorkbenchParameter } from '../api/types'
 
 interface ParameterRailProps {
   title: string
@@ -11,6 +12,8 @@ interface ParameterRailProps {
   onApply: () => void
   onReset: () => void
   onAddParameter: (parameter: AddParameterRequest) => Promise<boolean>
+  onUpdateParameter: (parameter: UpdateParameterRequest) => Promise<boolean>
+  onDeleteParameter: (name: string) => Promise<boolean>
   onValidateParameters: () => void
   applying: boolean
 }
@@ -25,6 +28,8 @@ export function ParameterRail({
   onApply,
   onReset,
   onAddParameter,
+  onUpdateParameter,
+  onDeleteParameter,
   onValidateParameters,
   applying,
 }: ParameterRailProps) {
@@ -54,6 +59,12 @@ export function ParameterRail({
         applying={applying}
         onAdd={onAddParameter}
         onValidate={onValidateParameters}
+      />
+      <ParameterMetadataEditor
+        parameters={renderedSections.flatMap((section) => section.parameters)}
+        applying={applying}
+        onUpdate={onUpdateParameter}
+        onDelete={onDeleteParameter}
       />
       {renderedSections.map((section) => (
         <section className="parameter-section" key={section.title}>

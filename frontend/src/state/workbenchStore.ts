@@ -8,6 +8,7 @@ import {
   closeProject,
   compileProject,
   createProjectFromPrompt,
+  deleteProjectParameter,
   fetchPreview2D,
   fetchPreview,
   fetchRuntimeSettings,
@@ -25,6 +26,7 @@ import {
   saveProjectScript,
   updateCompilerSettings,
   updateLlmSettings,
+  updateProjectParameter,
   validateProjectParameters,
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
@@ -66,6 +68,8 @@ const defaultWorkbenchApi: WorkbenchApi = {
   generateWithAssistant,
   applyParameters,
   addProjectParameter,
+  updateProjectParameter,
+  deleteProjectParameter,
   validateProjectParameters,
 }
 

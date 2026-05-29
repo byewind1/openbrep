@@ -116,6 +116,24 @@ export interface AddParameterResult extends WorkbenchSnapshot {
   added?: WorkbenchParameter
 }
 
+export interface UpdateParameterRequest {
+  name: string
+  new_name?: string
+  type_tag?: 'Length' | 'RealNum' | 'Integer' | 'Boolean' | 'String'
+  value?: unknown
+  description?: string
+}
+
+export interface UpdateParameterResult extends WorkbenchSnapshot {
+  ok: boolean
+  updated?: WorkbenchParameter
+}
+
+export interface DeleteParameterResult extends WorkbenchSnapshot {
+  ok: boolean
+  deleted?: string
+}
+
 export interface ValidateParametersResult {
   ok: boolean
   issues: string[]

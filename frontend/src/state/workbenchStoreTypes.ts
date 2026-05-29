@@ -9,6 +9,7 @@ import type {
   CompilerSettingsResult,
   CreateProjectResult,
   DirectoryChoiceResult,
+  DeleteParameterResult,
   FileChoiceResult,
   GenerateResult,
   LlmSettings,
@@ -27,6 +28,8 @@ import type {
   RuntimeSettingsResult,
   SaveRevisionResponse,
   SaveScriptResponse,
+  UpdateParameterRequest,
+  UpdateParameterResult,
   ValidateParametersResult,
   WorkbenchParameter,
   WorkbenchProject,
@@ -59,6 +62,8 @@ export interface WorkbenchApi {
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
+  updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>
+  deleteProjectParameter: (name: string) => Promise<DeleteParameterResult>
   validateProjectParameters: () => Promise<ValidateParametersResult>
 }
 
@@ -107,6 +112,8 @@ export interface WorkbenchState {
   generateAssistantChanges: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<boolean>
+  updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<boolean>
+  deleteProjectParameter: (name: string) => Promise<boolean>
   validateProjectParameters: () => Promise<void>
   applyDraftParameters: () => Promise<void>
   resetDraftParameters: () => void

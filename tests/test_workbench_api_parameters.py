@@ -102,3 +102,92 @@ def test_validate_parameters_returns_paramlist_issues(tmp_path):
 
     assert result["ok"] is True
     assert any("width_mm" in issue for issue in result["issues"])
+
+
+def test_update_parameter_renames_and_persists_metadata(tmp_path):
+    session = make_loaded_session(tmp_path)
+    session.route(
+        "POST",
+        "/api/project/parameters",
+        {"name": "seat_height", "type_tag": "Length", "value": "0.45"},
+    )
+
+    result = session.route(
+        "POST",
+        "/api/project/parameters/update",
+        {
+            "name": "seat_height",
+            "new_name": "chair_seat_height",
+            "type_tag": "RealNum",
+            "value": "0.5",
+            "description": "Chair seat height",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["updated"]["name"] == "chair_seat_height"
+    assert result["updated"]["type_tag"] == "RealNum"
+    assert result["updated"]["value"] == "0.5"
+    assert session.source_path is not None
+    content = (session.source_path / "paramlist.xml").read_text(encoding="utf-8-sig")
+    assert 'Name="chair_seat_height"' in content
+    assert 'Name="seat_height"' not in content
+
+
+def test_update_parameter_rejects_duplicate_target_name(tmp_path):
+    session = make_loaded_session(tmp_path)
+    session.route(
+        "POST",
+        "/api/project/parameters",
+        {"name": "seat_height", "type_tag": "Length", "value": "0.45"},
+    )
+
+    result = session.route(
+        "POST",
+        "/api/project/parameters/update",
+        {"name": "seat_height", "new_name": "A"},
+    )
+
+    assert result["ok"] is False
+    assert "already exists" in result["error"]
+
+
+def test_update_fixed_parameter_rejects_rename(tmp_path):
+    session = make_loaded_session(tmp_path)
+
+    result = session.route(
+        "POST",
+        "/api/project/parameters/update",
+        {"name": "A", "new_name": "width"},
+    )
+
+    assert result["ok"] is False
+    assert "cannot be renamed" in result["error"]
+
+
+def test_delete_parameter_removes_non_fixed_parameter(tmp_path):
+    session = make_loaded_session(tmp_path)
+    session.route(
+        "POST",
+        "/api/project/parameters",
+        {"name": "seat_height", "type_tag": "Length", "value": "0.45"},
+    )
+
+    result = session.route(
+        "POST",
+        "/api/project/parameters/delete",
+        {"name": "seat_height"},
+    )
+
+    assert result["ok"] is True
+    assert result["deleted"] == "seat_height"
+    assert all(param["name"] != "seat_height" for param in result["parameters"])
+
+
+def test_delete_parameter_rejects_fixed_parameter(tmp_path):
+    session = make_loaded_session(tmp_path)
+
+    result = session.route("POST", "/api/project/parameters/delete", {"name": "A"})
+
+    assert result["ok"] is False
+    assert "cannot be deleted" in result["error"]

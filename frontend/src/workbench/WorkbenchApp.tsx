@@ -52,6 +52,8 @@ export function WorkbenchApp() {
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
   const addProjectParameter = useWorkbenchStore((state) => state.addProjectParameter)
+  const updateProjectParameter = useWorkbenchStore((state) => state.updateProjectParameter)
+  const deleteProjectParameter = useWorkbenchStore((state) => state.deleteProjectParameter)
   const validateProjectParameters = useWorkbenchStore((state) => state.validateProjectParameters)
   const resetDraftParameters = useWorkbenchStore((state) => state.resetDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
@@ -140,6 +142,8 @@ export function WorkbenchApp() {
             onApply={() => void applyDraftParameters()}
             onReset={resetDraftParameters}
             onAddParameter={addProjectParameter}
+            onUpdateParameter={updateProjectParameter}
+            onDeleteParameter={deleteProjectParameter}
             onValidateParameters={() => void validateProjectParameters()}
             applying={applying}
           />

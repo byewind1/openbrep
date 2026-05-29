@@ -164,6 +164,32 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: [],
       compiler: { mode: 'mock', converter_path: '' },
     }),
+    updateProjectParameter: async (parameter) => ({
+      ok: true,
+      updated: {
+        name: parameter.new_name ?? parameter.name,
+        type_tag: parameter.type_tag ?? 'Length',
+        description: parameter.description ?? '',
+        value: String(parameter.value ?? '1.0'),
+        is_fixed: false,
+      },
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [
+        { name: parameter.new_name ?? parameter.name, type_tag: parameter.type_tag ?? 'Length', description: parameter.description ?? '', value: String(parameter.value ?? '1.0'), is_fixed: false },
+      ],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+      compiler: { mode: 'mock', converter_path: '' },
+    }),
+    deleteProjectParameter: async (name) => ({
+      ok: true,
+      deleted: name,
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+      compiler: { mode: 'mock', converter_path: '' },
+    }),
     validateProjectParameters: async () => ({ ok: true, issues: [] }),
     ...overrides,
   }
@@ -244,6 +270,37 @@ test('validateProjectParameters stores parameter issues', async () => {
   await store.getState().validateProjectParameters()
 
   expect(store.getState().parameterIssues).toEqual(["Length parameter 'width_mm' should not include unit markers"])
+})
+
+test('updateProjectParameter refreshes parameter metadata and diagnostics', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+  const ok = await store.getState().updateProjectParameter({
+    name: 'A',
+    new_name: 'seat_width',
+    type_tag: 'Length',
+    value: 1.2,
+    description: 'Seat width',
+  })
+
+  expect(ok).toBe(true)
+  expect(store.getState().parameters[0].name).toBe('seat_width')
+  expect(store.getState().parameters[0].description).toBe('Seat width')
+  expect(store.getState().mockCompileResult?.success).toBe(true)
+  expect(store.getState().applying).toBe(false)
+})
+
+test('deleteProjectParameter removes parameter and refreshes diagnostics', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+  const ok = await store.getState().deleteProjectParameter('shelf_count')
+
+  expect(ok).toBe(true)
+  expect(store.getState().parameters).toEqual([])
+  expect(store.getState().mockCompileResult?.success).toBe(true)
+  expect(store.getState().applying).toBe(false)
 })
 
 test('resetDraftParameters discards unapplied parameter edits', async () => {

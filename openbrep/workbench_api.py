@@ -219,6 +219,26 @@ def build_parameter_from_authoring_request(project: HSFProject, body: dict[str, 
     return GDLParameter(name=name, type_tag=type_tag, description=description, value=value)
 
 
+def _validate_authorable_parameter_name(project: HSFProject, name: str, *, current_name: str = "") -> str:
+    cleaned = str(name or "").strip()
+    if not cleaned:
+        raise ValueError("Parameter name is required.")
+    if not GDL_PARAMETER_NAME_RE.match(cleaned):
+        raise ValueError("Invalid parameter name.")
+    if cleaned != current_name and project.get_parameter(cleaned) is not None:
+        raise ValueError(f"Parameter '{cleaned}' already exists")
+    return cleaned
+
+
+def _validate_authorable_type(type_tag: str) -> str:
+    cleaned = str(type_tag or "").strip()
+    if not cleaned:
+        raise ValueError("Parameter type is required.")
+    if cleaned not in AUTHORABLE_PARAM_TYPES or cleaned not in VALID_PARAM_TYPES:
+        raise ValueError(f"Unsupported parameter type: {cleaned}")
+    return cleaned
+
+
 class WorkbenchSession:
     """Current-project state for the React workbench local API."""
 
@@ -607,6 +627,54 @@ class WorkbenchSession:
             **self.snapshot(),
         }
 
+    def update_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
+        name = str(body.get("name") or "").strip()
+        param = self.project.get_parameter(name)
+        if param is None:
+            return {"ok": False, "error": f"Parameter '{name}' not found"}
+
+        try:
+            new_name = _validate_authorable_parameter_name(
+                self.project,
+                str(body.get("new_name") if "new_name" in body else param.name),
+                current_name=param.name,
+            )
+            new_type = _validate_authorable_type(
+                str(body.get("type_tag") if "type_tag" in body else param.type_tag)
+            )
+            if param.is_fixed and (new_name != param.name or new_type != param.type_tag):
+                return {"ok": False, "error": f"Fixed parameter '{param.name}' cannot be renamed or retagged"}
+            if "value" in body:
+                param.value = _coerce_parameter_value(new_type, body.get("value"))
+            if "description" in body:
+                param.description = str(body.get("description") or "").strip()
+            param.name = new_name
+            param.type_tag = new_type
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        self.project.save_to_disk()
+        return {
+            "ok": True,
+            "updated": _parameter_to_dict(param),
+            **self.snapshot(),
+        }
+
+    def delete_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
+        name = str(body.get("name") or "").strip()
+        param = self.project.get_parameter(name)
+        if param is None:
+            return {"ok": False, "error": f"Parameter '{name}' not found"}
+        if param.is_fixed:
+            return {"ok": False, "error": f"Fixed parameter '{name}' cannot be deleted"}
+        self.project.remove_parameter(name)
+        self.project.save_to_disk()
+        return {
+            "ok": True,
+            "deleted": name,
+            **self.snapshot(),
+        }
+
     def validate_project_parameters(self) -> dict[str, Any]:
         return {
             "ok": True,
@@ -836,6 +904,12 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/parameters":
             return self.add_project_parameter(body)
+
+        if normalized_method == "POST" and route == "/api/project/parameters/update":
+            return self.update_project_parameter(body)
+
+        if normalized_method == "POST" and route == "/api/project/parameters/delete":
+            return self.delete_project_parameter(body)
 
         if normalized_method == "POST" and route == "/api/project/parameters/validate":
             return self.validate_project_parameters()

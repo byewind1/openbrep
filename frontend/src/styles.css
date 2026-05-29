@@ -558,6 +558,50 @@ button:focus-visible {
   line-height: 1.35;
 }
 
+.parameter-metadata-editor {
+  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding: 7px 12px 9px;
+}
+
+.parameter-metadata-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+}
+
+.parameter-metadata-grid input,
+.parameter-metadata-grid select,
+.parameter-metadata-description {
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.parameter-metadata-description {
+  width: 100%;
+}
+
+.parameter-metadata-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.parameter-metadata-actions span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.parameter-metadata-actions button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
 .parameter-control {
   min-height: 34px;
   display: grid;
