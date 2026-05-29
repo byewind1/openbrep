@@ -564,7 +564,7 @@ button:focus-visible {
 .floating-preview-window {
   position: fixed;
   top: 72px;
-  right: 28px;
+  right: auto;
   z-index: 50;
   width: min(760px, calc(100vw - 56px));
   height: min(560px, calc(100vh - 112px));
@@ -580,6 +580,15 @@ button:focus-visible {
   background: var(--bg-panel);
 }
 
+.floating-preview-window.fullscreen {
+  inset: 8px;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  resize: none;
+}
+
 .floating-preview-header {
   min-width: 0;
   display: flex;
@@ -589,6 +598,12 @@ button:focus-visible {
   padding: 0 10px 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
+  cursor: move;
+  user-select: none;
+}
+
+.floating-preview-window.fullscreen .floating-preview-header {
+  cursor: default;
 }
 
 .floating-preview-header div {
@@ -606,7 +621,13 @@ button:focus-visible {
   font-size: 11px;
 }
 
-.floating-preview-header button {
+.floating-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.floating-preview-actions button {
   height: 24px;
   font-size: 12px;
 }
