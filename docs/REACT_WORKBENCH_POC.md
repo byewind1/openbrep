@@ -16,30 +16,31 @@ Prove the product direction:
 
 ## Run
 
-Terminal 1:
-
 ```bash
-python -m openbrep.workbench_api --port 8765
-```
-
-Terminal 2:
-
-```bash
-cd frontend
-npm run dev
+./obr7
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:5174
+http://127.0.0.1:<printed web port>
 ```
 
-The Vite dev server proxies `/api/*` to `http://127.0.0.1:8765`.
+`obr7` starts the Python API and the React dev server together. If the default
+ports are busy, it automatically picks the next available ports and prints the
+actual URLs.
+
+Manual overrides:
+
+```bash
+OBR7_API_PORT=8765 OBR7_WEB_PORT=5174 ./obr7
+./obr7 --api-port 8770 --web-port 5180 --no-open
+```
 
 ## Verification
 
 ```bash
+python -m pytest tests/test_obr7_launcher.py -q
 python -m pytest tests/test_workbench_api.py -q
 python -m pytest tests/ -q
 cd frontend
