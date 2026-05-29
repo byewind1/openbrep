@@ -76,29 +76,13 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         draftParameters: {},
       }))
       if (result.ok) {
-        await get().loadScripts()
-        const refreshedScripts = get().scripts.filter((script) => script.exists)
-        for (const script of refreshedScripts) {
-          const updated = await api.getProjectScript(script.name)
-          if (updated) {
-            set((state) => ({
-              scriptContents: { ...state.scriptContents, [script.name]: updated.content },
-              dirtyScripts: { ...state.dirtyScripts, [script.name]: false },
-            }))
-          }
-        }
-        const firstChangedScript = normalizeChangedScriptName(changedFiles[0] ?? '')
-        if (firstChangedScript && refreshedScripts.some((script) => script.name === firstChangedScript)) {
-          await get().openScript(firstChangedScript)
-        }
-        await get().runMockCompile()
+        await get().refreshProjectWorkspace({
+          preferredScriptName: changedFiles[0] ?? '',
+          refreshAllScripts: true,
+          refreshPreview: false,
+          runDiagnostics: true,
+        })
       }
     },
   }
-}
-
-function normalizeChangedScriptName(path: string) {
-  const trimmed = path.trim()
-  if (!trimmed) return ''
-  return trimmed.split('/').pop() ?? trimmed
 }

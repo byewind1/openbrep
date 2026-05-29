@@ -29,8 +29,11 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
         draftParameters: {},
         applying: false,
       })
-      await get().loadScripts()
-      await get().runMockCompile()
+      await get().refreshProjectWorkspace({
+        refreshAllScripts: true,
+        refreshPreview: false,
+        runDiagnostics: true,
+      })
     },
 
     resetDraftParameters() {

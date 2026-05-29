@@ -454,7 +454,9 @@ test('saveActiveScript clears dirty state after successful save', async () => {
 
   expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
   expect(store.getState().scriptSaving).toBe(false)
-  expect(store.getState().compileLog[0]).toContain('Saved 3d.gdl')
+  expect(store.getState().mockCompileResult?.success).toBe(true)
+  expect(store.getState().compileLog[0]).toContain('Mock compile passed')
+  expect(store.getState().compileLog.some((entry) => entry.includes('Saved 3d.gdl'))).toBe(true)
 })
 
 test('saveActiveScript records save failures without clearing dirty state', async () => {

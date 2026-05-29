@@ -46,6 +46,12 @@ export function pruneDirtyScripts(dirtyScripts: Record<string, boolean>, scripts
   return Object.fromEntries(Object.entries(dirtyScripts).filter(([name]) => allowed.has(name)))
 }
 
+export function normalizeScriptName(path: string) {
+  const trimmed = path.trim()
+  if (!trimmed) return ''
+  return trimmed.split('/').pop() ?? trimmed
+}
+
 export function buildMockCompileSummary(result: MockCompileResponse) {
   if (!result.success && result.error) return `Mock compile failed: ${result.error}`
   const errors = countIssues(result.issues, 'error')

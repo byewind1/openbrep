@@ -99,6 +99,7 @@ export interface WorkbenchState {
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
   resetDraftParameters: () => void
+  refreshProjectWorkspace: (options?: ProjectWorkspaceRefreshOptions) => Promise<void>
   loadScripts: () => Promise<void>
   loadRecentProjects: () => Promise<void>
   loadRevisions: () => Promise<void>
@@ -110,6 +111,13 @@ export interface WorkbenchState {
   runMockCompile: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean
+}
+
+export interface ProjectWorkspaceRefreshOptions {
+  preferredScriptName?: string
+  refreshAllScripts?: boolean
+  refreshPreview?: boolean
+  runDiagnostics?: boolean
 }
 
 export type WorkbenchSet = (

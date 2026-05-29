@@ -1,8 +1,44 @@
-import type { WorkbenchActionContext } from '../workbenchStoreTypes'
-import { pruneDirtyScripts, selectPreferredScript } from '../workbenchStoreUtils'
+import type { ProjectWorkspaceRefreshOptions, WorkbenchActionContext } from '../workbenchStoreTypes'
+import { normalizeScriptName, pruneDirtyScripts, selectPreferredScript } from '../workbenchStoreUtils'
 
 export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
   return {
+    async refreshProjectWorkspace(options: ProjectWorkspaceRefreshOptions = {}) {
+      const preferredScriptName = normalizeScriptName(options.preferredScriptName ?? '')
+      const refreshAllScripts = options.refreshAllScripts ?? true
+      const refreshPreview = options.refreshPreview ?? true
+      const runDiagnostics = options.runDiagnostics ?? false
+
+      await get().loadScripts()
+      const existingScripts = get().scripts.filter((script) => script.exists)
+      const targetNames = refreshAllScripts
+        ? existingScripts.map((script) => script.name)
+        : [preferredScriptName || get().activeScriptName || ''].filter(Boolean)
+
+      for (const scriptName of [...new Set(targetNames)]) {
+        const updated = await api.getProjectScript(scriptName)
+        if (updated) {
+          set((state) => ({
+            scriptContents: { ...state.scriptContents, [scriptName]: updated.content },
+            dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
+          }))
+        }
+      }
+
+      if (preferredScriptName && existingScripts.some((script) => script.name === preferredScriptName)) {
+        await get().openScript(preferredScriptName)
+      }
+
+      if (refreshPreview) {
+        const preview = await api.fetchPreview({})
+        set({ preview, warnings: preview.warnings ?? [] })
+      }
+
+      if (runDiagnostics) {
+        await get().runMockCompile()
+      }
+    },
+
     async loadScripts() {
       set({ scriptLoading: true })
       const result = await api.listProjectScripts()
@@ -65,16 +101,12 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
           dirtyScripts: { ...state.dirtyScripts, [activeScriptName]: false },
           compileLog: [`Saved ${activeScriptName} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
         }))
-        await get().loadScripts()
-        const refreshedActiveScriptName = get().activeScriptName
-        if (refreshedActiveScriptName) {
-          const saved = await api.getProjectScript(refreshedActiveScriptName)
-          if (saved) {
-            set((state) => ({
-              scriptContents: { ...state.scriptContents, [refreshedActiveScriptName]: saved.content },
-            }))
-          }
-        }
+        await get().refreshProjectWorkspace({
+          preferredScriptName: activeScriptName,
+          refreshAllScripts: false,
+          refreshPreview: true,
+          runDiagnostics: true,
+        })
         return
       }
       set({
