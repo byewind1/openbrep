@@ -16,7 +16,7 @@ export function PreviewViewport({ preview, warnings, actions, variant = 'rail' }
     <section className={`viewport-surface viewport-surface-${variant}`}>
       <div className="viewport-toolbar">
         <div>
-          <strong>3D Preview</strong>
+          <span>3D View</span>
           <span>{preview?.meshes.length ?? 0} meshes</span>
         </div>
         {actions ? <div className="viewport-toolbar-actions">{actions}</div> : null}
@@ -34,8 +34,9 @@ export function PreviewViewport({ preview, warnings, actions, variant = 'rail' }
         </Canvas>
       </div>
       <footer className="viewport-footer">
-        <span>{preview?.meshes.length ?? 0} meshes</span>
-        <span>{warnings.length ? `${warnings.length} warnings` : 'no warnings'}</span>
+        <span>
+          {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings
+        </span>
       </footer>
     </section>
   )
@@ -47,7 +48,7 @@ function MeshView({ mesh, index }: { mesh: PreviewMesh; index: number }) {
   geometry.setIndex(new BufferAttribute(new Uint32Array(mesh.faces.flat()), 1))
   geometry.computeVertexNormals()
 
-  const colors = ['#f59e0b', '#38bdf8', '#10b981', '#f43f5e', '#a78bfa']
+  const colors = ['#d6a04f', '#a8a29e', '#94a3b8', '#64748b', '#8b7355']
   return (
     <mesh geometry={geometry}>
       <meshStandardMaterial color={colors[index % colors.length]} roughness={0.68} metalness={0.02} side={DoubleSide} />

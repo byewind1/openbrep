@@ -157,6 +157,13 @@ button:focus-visible {
   min-width: 0;
   height: 28px;
   padding: 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-open-controls button {
+  padding-inline: 7px;
+  font-size: 12px;
 }
 
 .menu-row,
@@ -197,12 +204,12 @@ button:focus-visible {
 }
 
 .error-pill {
-  max-width: 260px;
+  max-width: 180px;
   height: 24px;
   overflow: hidden;
-  border-color: rgba(239, 68, 68, 0.7);
-  background: rgba(239, 68, 68, 0.14);
-  color: #fecaca;
+  border-color: var(--status-error-border);
+  background: var(--status-error-bg);
+  color: var(--status-error-text);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -211,13 +218,13 @@ button:focus-visible {
 .primary-action {
   border-color: var(--accent);
   background: var(--accent);
-  color: #111827;
+  color: var(--accent-text);
   font-weight: 700;
 }
 
 .primary-action:hover:not(:disabled) {
   background: var(--accent-soft);
-  color: #111827;
+  color: var(--accent-text);
 }
 
 .settings-trigger {
@@ -227,7 +234,7 @@ button:focus-visible {
 .workspace-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px minmax(520px, 1fr) 300px;
+  grid-template-columns: var(--panel-width-left) minmax(520px, 1fr) var(--panel-width-right);
   gap: 0;
   border-bottom: 1px solid var(--border);
 }

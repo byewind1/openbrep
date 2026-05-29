@@ -36,7 +36,7 @@ export function ParameterRail({
           <button type="button" disabled={!dirtyCount || applying} onClick={onReset}>
             Reset
           </button>
-          <button type="button" className="primary-action" disabled={!dirtyCount || applying} onClick={onApply}>
+          <button type="button" disabled={!dirtyCount || applying} onClick={onApply}>
             {applying ? 'Applying' : 'Apply'}
           </button>
         </div>
@@ -73,7 +73,7 @@ function ParameterControl({
   if (parameter.type_tag === 'Boolean') {
     return (
       <label className="parameter-control compact-control">
-        <span className="parameter-name">{label}</span>
+        <span className="parameter-name" title={label}>{label}</span>
         <input
           className="toggle-input"
           type="checkbox"
@@ -87,7 +87,7 @@ function ParameterControl({
   if (parameter.type_tag === 'Integer') {
     return (
       <label className="parameter-control compact-control">
-        <span className="parameter-name">{label}</span>
+        <span className="parameter-name" title={label}>{label}</span>
         <input
           className="numeric-input"
           type="number"
@@ -103,7 +103,7 @@ function ParameterControl({
   if (['Length', 'Angle', 'RealNum'].includes(parameter.type_tag)) {
     return (
       <label className="parameter-control compact-control">
-        <span className="parameter-name">{label}</span>
+        <span className="parameter-name" title={label}>{label}</span>
         <input
           className="numeric-input"
           type="number"
@@ -117,7 +117,7 @@ function ParameterControl({
 
   return (
     <label className="parameter-control compact-control">
-      <span className="parameter-name">{label}</span>
+      <span className="parameter-name" title={label}>{label}</span>
       <input
         className="text-input"
         type="text"

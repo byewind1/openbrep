@@ -19,7 +19,7 @@ export function BottomDrawer({ warnings, compileLog, mockCompileResult, revision
     <section className="bottom-drawer">
       <div className="drawer-tabs">
         <button className={activeTab === 'compile' ? 'active' : ''} onClick={() => setActiveTab('compile')}>
-          编译日志
+          Compile
         </button>
         <button className={activeTab === 'diagnostics' ? 'active' : ''} onClick={() => setActiveTab('diagnostics')}>
           Diagnostics
@@ -77,9 +77,8 @@ function CompileDiagnostics({
     <>
       <div className="diagnostics-summary">
         <strong>Compile</strong>
-        <span>{duration !== null ? `${duration} ms` : '未编译'}</span>
+        <span>{duration !== null ? `${duration} ms` : 'Not compiled'}</span>
       </div>
-      {success === null ? <p>未编译</p> : null}
       {success && errors.length === 0 && nonErrors.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
       {outputPath ? <p>Output: {outputPath}</p> : null}
       {sizeBytes !== null || parameterCount !== null ? (
@@ -124,7 +123,7 @@ function PreviewLog({ warnings }: { warnings: string[] }) {
   return (
     <>
       {warnings.map((warning) => (
-        <p key={warning}>Preview warning: {warning}</p>
+        <p key={warning}>⚠ {warning}</p>
       ))}
     </>
   )

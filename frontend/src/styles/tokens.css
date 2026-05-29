@@ -11,6 +11,7 @@
   --accent: #f59e0b;
   --accent-soft: #fcd34d;
   --accent-muted: rgba(245, 158, 11, 0.15);
+  --accent-text: #111827;
 
   /* Text */
   --text-primary: #f8fafc;
@@ -22,14 +23,19 @@
   --warning: #f59e0b;
   --error: #ef4444;
   --info: #38bdf8;
+  --status-error-bg: rgba(239, 68, 68, 0.14);
+  --status-error-border: rgba(239, 68, 68, 0.7);
+  --status-error-text: #fecaca;
+  --status-warning-bg: rgba(245, 158, 11, 0.12);
+  --status-success-bg: rgba(16, 185, 129, 0.12);
 
   /* Lines */
   --border: #334155;
   --border-strong: #475569;
 
   /* Dimensions */
-  --panel-width-left: 280px;
-  --panel-width-right: 320px;
+  --panel-width-left: 240px;
+  --panel-width-right: 300px;
   --bottom-drawer-height: 180px;
   --header-height: 48px;
 }

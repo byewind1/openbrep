@@ -14,6 +14,8 @@ import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { SettingsDrawer } from './settings/SettingsDrawer'
 
+const ENABLE_FLOATING_PREVIEW = false
+
 export function WorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
@@ -160,6 +162,9 @@ export function WorkbenchApp() {
             <button type="button" className="rail-tab" disabled aria-selected="false">
               2D
             </button>
+            <button type="button" className="rail-tab" disabled aria-selected="false">
+              Inspect
+            </button>
             <button
               type="button"
               className={`rail-tab${activeRailPanel === 'ai' ? ' active' : ''}`}
@@ -174,11 +179,11 @@ export function WorkbenchApp() {
               <PreviewViewport
                 preview={preview}
                 warnings={warnings}
-                actions={
+                actions={ENABLE_FLOATING_PREVIEW ? (
                   <button type="button" className="viewport-action-button" onClick={() => setFloatingPreviewOpen(true)}>
                     浮窗
                   </button>
-                }
+                ) : null}
               />
             ) : (
               <AssistantPanel
@@ -207,12 +212,14 @@ export function WorkbenchApp() {
           />
         }
       />
-      <FloatingPreviewWindow
-        open={floatingPreviewOpen}
-        preview={preview}
-        warnings={warnings}
-        onClose={() => setFloatingPreviewOpen(false)}
-      />
+      {ENABLE_FLOATING_PREVIEW ? (
+        <FloatingPreviewWindow
+          open={floatingPreviewOpen}
+          preview={preview}
+          warnings={warnings}
+          onClose={() => setFloatingPreviewOpen(false)}
+        />
+      ) : null}
       <SettingsDrawer
         open={settingsOpen}
         compilerSettings={compilerSettings}

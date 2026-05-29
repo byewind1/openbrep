@@ -34,7 +34,7 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate }:
   return (
     <aside className="assistant-panel">
       <div className="panel-heading">
-        <h2>AI 助手</h2>
+        <h2>AI</h2>
         <span>{busy ? 'Working' : 'Ready'}</span>
       </div>
       <div className="assistant-thread">
@@ -46,7 +46,7 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate }:
             </article>
           ))
         ) : (
-          <p className="assistant-empty">No messages</p>
+          <p className="assistant-empty">Ready</p>
         )}
       </div>
       <form className="assistant-input" onSubmit={submitMessage}>
