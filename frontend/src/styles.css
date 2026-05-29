@@ -421,6 +421,22 @@ button:focus-visible {
   font-weight: 700;
 }
 
+.panel-heading > div:first-child {
+  min-width: 0;
+  display: grid;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-actions button {
+  height: 24px;
+  font-size: 12px;
+}
+
 .parameter-section {
   border-bottom: 1px solid var(--border);
   padding: 9px 0;

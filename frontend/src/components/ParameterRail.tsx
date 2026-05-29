@@ -6,17 +6,40 @@ interface ParameterRailProps {
   sections?: Array<{ title: string; parameters: WorkbenchParameter[] }>
   draftParameters: Record<string, unknown>
   onChange: (name: string, value: unknown) => void
+  onApply: () => void
+  onReset: () => void
+  applying: boolean
 }
 
-export function ParameterRail({ title, parameters = [], sections, draftParameters, onChange }: ParameterRailProps) {
+export function ParameterRail({
+  title,
+  parameters = [],
+  sections,
+  draftParameters,
+  onChange,
+  onApply,
+  onReset,
+  applying,
+}: ParameterRailProps) {
   const renderedSections = sections ?? [{ title, parameters }]
   const count = renderedSections.reduce((total, section) => total + section.parameters.length, 0)
+  const dirtyCount = Object.keys(draftParameters).length
 
   return (
     <aside className="parameter-rail">
       <div className="panel-heading">
-        <h2>{title}</h2>
-        <span>{count}</span>
+        <div>
+          <h2>{title}</h2>
+          <span>{dirtyCount ? `${dirtyCount} changed / ${count}` : `${count}`}</span>
+        </div>
+        <div className="panel-actions">
+          <button type="button" disabled={!dirtyCount || applying} onClick={onReset}>
+            Reset
+          </button>
+          <button type="button" className="primary-action" disabled={!dirtyCount || applying} onClick={onApply}>
+            {applying ? 'Applying' : 'Apply'}
+          </button>
+        </div>
       </div>
       {renderedSections.map((section) => (
         <section className="parameter-section" key={section.title}>

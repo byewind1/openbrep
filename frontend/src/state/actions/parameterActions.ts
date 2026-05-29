@@ -12,8 +12,15 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
     async applyDraftParameters() {
       const draft = get().draftParameters
       if (Object.keys(draft).length === 0) return
-      set({ applying: true })
+      set({ applying: true, lastError: null })
       const result = await api.applyParameters(draft)
+      if (!result.ok) {
+        set({
+          applying: false,
+          lastError: result.error ?? 'Failed to apply parameters.',
+        })
+        return
+      }
       set({
         project: result.project,
         parameters: result.parameters,
@@ -22,6 +29,12 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
         draftParameters: {},
         applying: false,
       })
+      await get().loadScripts()
+      await get().runMockCompile()
+    },
+
+    resetDraftParameters() {
+      set({ draftParameters: {} })
     },
 
     hasDraftChanges() {

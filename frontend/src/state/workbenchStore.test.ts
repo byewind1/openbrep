@@ -158,6 +158,31 @@ test('updates draft parameter without changing saved parameter value', async () 
   expect(store.getState().parameters[0].value).toBe('1.0')
 })
 
+test('applyDraftParameters applies changes and runs mock diagnostics', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+  await store.getState().setDraftParameter('A', 2)
+  await store.getState().applyDraftParameters()
+
+  expect(store.getState().draftParameters).toEqual({})
+  expect(store.getState().parameters[0].value).toBe('2.0')
+  expect(store.getState().mockCompileResult?.success).toBe(true)
+  expect(store.getState().compileLog[0]).toContain('Mock compile passed')
+  expect(store.getState().applying).toBe(false)
+})
+
+test('resetDraftParameters discards unapplied parameter edits', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+  await store.getState().setDraftParameter('A', 2)
+  store.getState().resetDraftParameters()
+
+  expect(store.getState().draftParameters).toEqual({})
+  expect(store.getState().parameters[0].value).toBe('1.0')
+})
+
 test('loads a project path and clears stale draft parameters', async () => {
   const loadedPath = '/workspace/Chair'
   const store = createWorkbenchStore(makeApi())

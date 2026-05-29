@@ -46,6 +46,7 @@ export function WorkbenchApp() {
   const load = useWorkbenchStore((state) => state.load)
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
+  const resetDraftParameters = useWorkbenchStore((state) => state.resetDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
   const closeProject = useWorkbenchStore((state) => state.closeProject)
@@ -127,6 +128,9 @@ export function WorkbenchApp() {
             ]}
             draftParameters={draftParameters}
             onChange={(name, value) => void setDraftParameter(name, value)}
+            onApply={() => void applyDraftParameters()}
+            onReset={resetDraftParameters}
+            applying={applying}
           />
         </aside>
         <section className="workbench-main-stage editor-stage">

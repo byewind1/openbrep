@@ -98,6 +98,7 @@ export interface WorkbenchState {
   generateAssistantChanges: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   applyDraftParameters: () => Promise<void>
+  resetDraftParameters: () => void
   loadScripts: () => Promise<void>
   loadRecentProjects: () => Promise<void>
   loadRevisions: () => Promise<void>
