@@ -39,6 +39,9 @@ export function BottomDrawer({ warnings, compileLog, mockCompileResult, revision
             duration={mockCompileResult?.duration_ms ?? null}
             errors={errors}
             nonErrors={nonErrors}
+            outputPath={mockCompileResult?.output_path ?? null}
+            parameterCount={mockCompileResult?.parameter_count ?? null}
+            sizeBytes={mockCompileResult?.gsm_size_bytes ?? null}
             success={mockCompileResult?.success ?? null}
           />
         ) : null}
@@ -52,12 +55,18 @@ function CompileDiagnostics({
   duration,
   errors,
   nonErrors,
+  outputPath,
+  parameterCount,
+  sizeBytes,
   success,
 }: {
   compileLog: string[]
   duration: number | null
   errors: Array<{ script: string; line: number | null; message: string }>
   nonErrors: Array<{ script: string; line: number | null; message: string }>
+  outputPath: string | null
+  parameterCount: number | null
+  sizeBytes: number | null
   success: boolean | null
 }) {
   return (
@@ -68,6 +77,14 @@ function CompileDiagnostics({
       </div>
       {success === null ? <p>未编译</p> : null}
       {success && errors.length === 0 && nonErrors.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
+      {outputPath ? <p>Output: {outputPath}</p> : null}
+      {sizeBytes !== null || parameterCount !== null ? (
+        <p>
+          {sizeBytes !== null ? `Size: ${formatBytes(sizeBytes)}` : ''}
+          {sizeBytes !== null && parameterCount !== null ? ' · ' : ''}
+          {parameterCount !== null ? `Parameters: ${parameterCount}` : ''}
+        </p>
+      ) : null}
       {errors.map((issue, index) => (
         <p className="diagnostic-error" key={`${issue.script}-${issue.line}-${index}`}>
           {formatIssue(issue)}
@@ -81,6 +98,11 @@ function CompileDiagnostics({
       {compileLog.length ? compileLog.map((entry) => <p key={entry}>{entry}</p>) : null}
     </>
   )
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
 }
 
 function PreviewLog({ warnings }: { warnings: string[] }) {

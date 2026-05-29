@@ -560,6 +560,9 @@ class WorkbenchSession:
             "mode": "mock",
             "issues": _compile_issues_from_result(result),
             "duration_ms": duration_ms,
+            "output_path": result.output_path or str(output_gsm),
+            "gsm_size_bytes": _file_size_or_none(output_gsm),
+            "parameter_count": len(self.project.parameters or []),
         }
 
     def compile_project(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -589,6 +592,8 @@ class WorkbenchSession:
                 "stderr": result.stderr,
                 "errors": result.errors,
                 "warnings": result.warnings,
+                "gsm_size_bytes": _file_size_or_none(output_gsm),
+                "parameter_count": len(self.project.parameters or []),
             },
             **({} if result.success else {"error": result.stderr or "Compile failed"}),
         }
@@ -829,6 +834,13 @@ def _revision_to_api_item(revision, *, latest_revision_id: str | None = None) ->
         "explanation": revision.explanation,
         "is_latest": revision.revision_id == latest_revision_id,
     }
+
+
+def _file_size_or_none(path: Path) -> int | None:
+    try:
+        return path.stat().st_size if path.exists() else None
+    except OSError:
+        return None
 
 
 def _apply_llm_credentials_to_config(

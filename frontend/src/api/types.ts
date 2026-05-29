@@ -104,6 +104,8 @@ export interface CompileInfo {
   stderr: string
   errors: string[]
   warnings: string[]
+  gsm_size_bytes?: number | null
+  parameter_count?: number | null
 }
 
 export interface CompileResult {
@@ -125,6 +127,9 @@ export interface MockCompileResponse {
   mode: string
   issues: CompileIssue[]
   duration_ms: number
+  output_path?: string
+  gsm_size_bytes?: number | null
+  parameter_count?: number | null
   error?: string
 }
 

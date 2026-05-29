@@ -233,6 +233,8 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     assert response["compile"]["success"] is True
     assert response["compile"]["mode"] == "mock"
     assert response["compile"]["output_path"].endswith("CompiledShelf.gsm")
+    assert response["compile"]["gsm_size_bytes"] is not None
+    assert response["compile"]["parameter_count"] == 3
     assert (output_dir / "CompiledShelf.gsm").exists()
 
 
@@ -309,6 +311,8 @@ def test_workbench_session_mock_compile_returns_diagnostics(tmp_path):
     assert response["success"] is False
     assert response["mode"] == "mock"
     assert response["duration_ms"] >= 0
+    assert response["output_path"].endswith("MockCompileDiagnostics.gsm")
+    assert response["parameter_count"] == 3
     assert response["issues"]
     assert response["issues"][0]["severity"] == "error"
 

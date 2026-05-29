@@ -558,6 +558,8 @@ test('records compile results in the workbench log', async () => {
           stderr: '',
           errors: [],
           warnings: [],
+          gsm_size_bytes: 4096,
+          parameter_count: 3,
         },
       }),
     }),
@@ -571,6 +573,9 @@ test('records compile results in the workbench log', async () => {
     mode: 'lp',
     issues: [],
     duration_ms: 0,
+    output_path: '/workspace/output/Chair.gsm',
+    gsm_size_bytes: 4096,
+    parameter_count: 3,
     error: undefined,
   })
   expect(store.getState().compiling).toBe(false)
