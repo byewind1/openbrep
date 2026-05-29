@@ -744,6 +744,25 @@ button:focus-visible {
   color: var(--warning);
 }
 
+.diagnostic-line {
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  margin: 0 0 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.diagnostic-line:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
 .revision-panel {
   display: grid;
   gap: 9px;

@@ -87,7 +87,18 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             }))
           }
         }
+        const firstChangedScript = normalizeChangedScriptName(changedFiles[0] ?? '')
+        if (firstChangedScript && refreshedScripts.some((script) => script.name === firstChangedScript)) {
+          await get().openScript(firstChangedScript)
+        }
+        await get().runMockCompile()
       }
     },
   }
+}
+
+function normalizeChangedScriptName(path: string) {
+  const trimmed = path.trim()
+  if (!trimmed) return ''
+  return trimmed.split('/').pop() ?? trimmed
 }

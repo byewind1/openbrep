@@ -685,6 +685,9 @@ test('generate assistant message refreshes preview and records changed files', a
   expect(store.getState().warnings).toEqual(['preview refreshed'])
   expect(store.getState().scriptContents['3d.gdl']).toBe('updated content for 3d.gdl')
   expect(store.getState().scriptContents['2d.gdl']).toBe('updated content for 2d.gdl')
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().mockCompileResult?.success).toBe(true)
+  expect(store.getState().compileLog[0]).toContain('Mock compile passed')
   expect(store.getState().assistantMessages.at(-1)).toEqual({
     role: 'assistant',
     content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',

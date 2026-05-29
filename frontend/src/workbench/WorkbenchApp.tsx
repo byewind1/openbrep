@@ -6,6 +6,7 @@ import { PreviewViewport } from '../components/PreviewViewport'
 import { ScriptEditor } from '../components/ScriptEditor'
 import { ScriptTree } from '../components/ScriptTree'
 import { TopMenu } from '../components/TopMenu'
+import type { CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { RevisionPanel } from './diagnostics/RevisionPanel'
@@ -16,6 +17,7 @@ import { SettingsDrawer } from './settings/SettingsDrawer'
 export function WorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
+  const [editorFocus, setEditorFocus] = useState<{ scriptName: string; line: number | null; token: number } | null>(null)
   const project = useWorkbenchStore((state) => state.project)
   const parameters = useWorkbenchStore((state) => state.parameters)
   const draftParameters = useWorkbenchStore((state) => state.draftParameters)
@@ -68,10 +70,23 @@ export function WorkbenchApp() {
   const grouped = groupParameters(parameters)
   const activeScriptContent = activeScriptName ? scriptContents[activeScriptName] ?? '' : ''
   const hasDirtyScript = activeScriptName ? Boolean(dirtyScripts[activeScriptName]) : false
+  const activeFocusLine = editorFocus?.scriptName === activeScriptName ? editorFocus.line : null
+  const activeFocusKey = editorFocus?.scriptName === activeScriptName ? editorFocus.token : null
 
   useEffect(() => {
     void load()
   }, [load])
+
+  function focusDiagnosticIssue(issue: CompileIssue) {
+    const scriptName = issue.script.split('/').pop() ?? issue.script
+    if (!scriptName) return
+    void openScript(scriptName)
+    setEditorFocus({
+      scriptName,
+      line: issue.line && issue.line > 0 ? issue.line : null,
+      token: Date.now(),
+    })
+  }
 
   return (
     <main className="app-shell">
@@ -121,6 +136,8 @@ export function WorkbenchApp() {
               content={activeScriptContent}
               onChange={updateActiveScriptContent}
               isDirty={hasDirtyScript}
+              focusLine={activeFocusLine}
+              focusKey={activeFocusKey}
             />
           ) : (
             <div className="editor-empty">No script loaded</div>
@@ -175,6 +192,7 @@ export function WorkbenchApp() {
         warnings={warnings}
         compileLog={compileLog}
         mockCompileResult={mockCompileResult}
+        onIssueSelect={focusDiagnosticIssue}
         revisionPanel={
           <RevisionPanel
             revisions={revisions}

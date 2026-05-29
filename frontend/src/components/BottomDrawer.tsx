@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { MockCompileResponse } from '../api/types'
+import type { CompileIssue, MockCompileResponse } from '../api/types'
 
 interface BottomDrawerProps {
   warnings: string[]
   compileLog: string[]
   mockCompileResult: MockCompileResponse | null
   revisionPanel?: ReactNode
+  onIssueSelect?: (issue: CompileIssue) => void
 }
 
-export function BottomDrawer({ warnings, compileLog, mockCompileResult, revisionPanel }: BottomDrawerProps) {
+export function BottomDrawer({ warnings, compileLog, mockCompileResult, revisionPanel, onIssueSelect }: BottomDrawerProps) {
   const [activeTab, setActiveTab] = useState<'compile' | 'diagnostics' | 'preview' | 'revision'>('compile')
   const errors = mockCompileResult?.issues.filter((issue) => issue.severity === 'error') ?? []
   const nonErrors = mockCompileResult?.issues.filter((issue) => issue.severity !== 'error') ?? []
@@ -43,6 +44,7 @@ export function BottomDrawer({ warnings, compileLog, mockCompileResult, revision
             parameterCount={mockCompileResult?.parameter_count ?? null}
             sizeBytes={mockCompileResult?.gsm_size_bytes ?? null}
             success={mockCompileResult?.success ?? null}
+            onIssueSelect={onIssueSelect}
           />
         ) : null}
       </div>
@@ -59,15 +61,17 @@ function CompileDiagnostics({
   parameterCount,
   sizeBytes,
   success,
+  onIssueSelect,
 }: {
   compileLog: string[]
   duration: number | null
-  errors: Array<{ script: string; line: number | null; message: string }>
-  nonErrors: Array<{ script: string; line: number | null; message: string }>
+  errors: CompileIssue[]
+  nonErrors: CompileIssue[]
   outputPath: string | null
   parameterCount: number | null
   sizeBytes: number | null
   success: boolean | null
+  onIssueSelect?: (issue: CompileIssue) => void
 }) {
   return (
     <>
@@ -86,14 +90,24 @@ function CompileDiagnostics({
         </p>
       ) : null}
       {errors.map((issue, index) => (
-        <p className="diagnostic-error" key={`${issue.script}-${issue.line}-${index}`}>
+        <button
+          type="button"
+          className="diagnostic-line diagnostic-error"
+          key={`${issue.script}-${issue.line}-${index}`}
+          onClick={() => onIssueSelect?.(issue)}
+        >
           {formatIssue(issue)}
-        </p>
+        </button>
       ))}
       {nonErrors.map((issue, index) => (
-        <p className="diagnostic-warning" key={`${issue.script}-${issue.line}-${index}`}>
+        <button
+          type="button"
+          className="diagnostic-line diagnostic-warning"
+          key={`${issue.script}-${issue.line}-${index}`}
+          onClick={() => onIssueSelect?.(issue)}
+        >
           {formatIssue(issue)}
-        </p>
+        </button>
       ))}
       {compileLog.length ? compileLog.map((entry) => <p key={entry}>{entry}</p>) : null}
     </>
