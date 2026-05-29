@@ -104,6 +104,24 @@ export interface ApplyResult extends WorkbenchSnapshot {
   changed: Record<string, unknown>
 }
 
+export interface AddParameterRequest {
+  name: string
+  type_tag: 'Length' | 'RealNum' | 'Integer' | 'Boolean' | 'String'
+  value: unknown
+  description?: string
+}
+
+export interface AddParameterResult extends WorkbenchSnapshot {
+  ok: boolean
+  added?: WorkbenchParameter
+}
+
+export interface ValidateParametersResult {
+  ok: boolean
+  issues: string[]
+  error?: string
+}
+
 export interface CompileInfo {
   success: boolean
   mode: string

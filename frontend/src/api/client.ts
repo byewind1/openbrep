@@ -1,5 +1,7 @@
 import type {
   ApplyResult,
+  AddParameterRequest,
+  AddParameterResult,
   AssistantResult,
   CompileResult,
   CreateProjectResult,
@@ -21,6 +23,7 @@ import type {
   RuntimeSettingsResult,
   SaveScriptResponse,
   SaveRevisionResponse,
+  ValidateParametersResult,
   WorkbenchSnapshot,
 } from './types'
 
@@ -177,6 +180,30 @@ export async function applyParameters(parameters: Record<string, unknown>): Prom
       body: JSON.stringify({ parameters }),
     },
     { ok: true, changed: parameters, ...fallbackSnapshot },
+  )
+}
+
+export async function addProjectParameter(parameter: AddParameterRequest): Promise<AddParameterResult> {
+  return requestJson<AddParameterResult>(
+    '/api/project/parameters',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parameter),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function validateProjectParameters(): Promise<ValidateParametersResult> {
+  return requestJson<ValidateParametersResult>(
+    '/api/project/parameters/validate',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, issues: [], error: 'OpenBrep local API is not available.' },
   )
 }
 

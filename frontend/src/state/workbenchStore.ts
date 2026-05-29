@@ -1,5 +1,6 @@
 import { createStore } from 'zustand/vanilla'
 import {
+  addProjectParameter,
   applyParameters,
   askAssistant,
   chooseCompilerFile,
@@ -24,6 +25,7 @@ import {
   saveProjectScript,
   updateCompilerSettings,
   updateLlmSettings,
+  validateProjectParameters,
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
@@ -63,6 +65,8 @@ const defaultWorkbenchApi: WorkbenchApi = {
   askAssistant,
   generateWithAssistant,
   applyParameters,
+  addProjectParameter,
+  validateProjectParameters,
 }
 
 export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
@@ -95,6 +99,7 @@ function initialWorkbenchState() {
   return {
     project: null,
     parameters: [],
+    parameterIssues: [],
     draftParameters: {},
     preview: null,
     preview2d: null,

@@ -1,13 +1,17 @@
-import type { WorkbenchParameter } from '../api/types'
+import { AddParameterInlineForm } from './AddParameterInlineForm'
+import type { AddParameterRequest, WorkbenchParameter } from '../api/types'
 
 interface ParameterRailProps {
   title: string
   parameters?: WorkbenchParameter[]
   sections?: Array<{ title: string; parameters: WorkbenchParameter[] }>
+  parameterIssues: string[]
   draftParameters: Record<string, unknown>
   onChange: (name: string, value: unknown) => void
   onApply: () => void
   onReset: () => void
+  onAddParameter: (parameter: AddParameterRequest) => Promise<boolean>
+  onValidateParameters: () => void
   applying: boolean
 }
 
@@ -15,10 +19,13 @@ export function ParameterRail({
   title,
   parameters = [],
   sections,
+  parameterIssues,
   draftParameters,
   onChange,
   onApply,
   onReset,
+  onAddParameter,
+  onValidateParameters,
   applying,
 }: ParameterRailProps) {
   const renderedSections = sections ?? [{ title, parameters }]
@@ -41,6 +48,13 @@ export function ParameterRail({
           </button>
         </div>
       </div>
+      <AddParameterInlineForm
+        parameters={renderedSections.flatMap((section) => section.parameters)}
+        issues={parameterIssues}
+        applying={applying}
+        onAdd={onAddParameter}
+        onValidate={onValidateParameters}
+      />
       {renderedSections.map((section) => (
         <section className="parameter-section" key={section.title}>
           <div className="section-label">{section.title}</div>

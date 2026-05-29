@@ -23,6 +23,7 @@ export function WorkbenchApp() {
   const [editorFocus, setEditorFocus] = useState<{ scriptName: string; line: number | null; token: number } | null>(null)
   const project = useWorkbenchStore((state) => state.project)
   const parameters = useWorkbenchStore((state) => state.parameters)
+  const parameterIssues = useWorkbenchStore((state) => state.parameterIssues)
   const draftParameters = useWorkbenchStore((state) => state.draftParameters)
   const preview = useWorkbenchStore((state) => state.preview)
   const preview2d = useWorkbenchStore((state) => state.preview2d)
@@ -50,6 +51,8 @@ export function WorkbenchApp() {
   const load = useWorkbenchStore((state) => state.load)
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
+  const addProjectParameter = useWorkbenchStore((state) => state.addProjectParameter)
+  const validateProjectParameters = useWorkbenchStore((state) => state.validateProjectParameters)
   const resetDraftParameters = useWorkbenchStore((state) => state.resetDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
@@ -131,10 +134,13 @@ export function WorkbenchApp() {
               { title: '尺寸', parameters: grouped.dimensions },
               { title: '属性', parameters: grouped.properties },
             ]}
+            parameterIssues={parameterIssues}
             draftParameters={draftParameters}
             onChange={(name, value) => void setDraftParameter(name, value)}
             onApply={() => void applyDraftParameters()}
             onReset={resetDraftParameters}
+            onAddParameter={addProjectParameter}
+            onValidateParameters={() => void validateProjectParameters()}
             applying={applying}
           />
         </aside>

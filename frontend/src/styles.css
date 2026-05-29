@@ -462,6 +462,102 @@ button:focus-visible {
   display: grid;
 }
 
+.parameter-authoring {
+  border-bottom: 1px solid var(--border);
+  padding: 7px 12px;
+}
+
+.parameter-authoring.collapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.parameter-authoring-toggle,
+.parameter-authoring-validate {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.parameter-authoring-toggle {
+  color: var(--accent-soft);
+}
+
+.parameter-authoring-status {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.parameter-authoring-status.warning {
+  color: var(--warning);
+}
+
+.parameter-authoring.expanded {
+  display: grid;
+  gap: 6px;
+}
+
+.parameter-authoring-row.two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+}
+
+.parameter-authoring-input {
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.parameter-authoring-boolean {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.parameter-authoring-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.parameter-authoring-actions button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.parameter-authoring-error {
+  overflow: hidden;
+  color: var(--status-error-text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parameter-issues {
+  display: grid;
+  gap: 4px;
+}
+
+.parameter-issue {
+  border: 1px solid var(--status-error-border);
+  border-radius: 5px;
+  background: var(--status-error-bg);
+  color: var(--status-error-text);
+  padding: 5px 7px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .parameter-control {
   min-height: 34px;
   display: grid;

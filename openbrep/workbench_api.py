@@ -26,7 +26,8 @@ from openbrep.explainer.service import (
     explain_script_context,
 )
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
-from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, VALID_PARAM_TYPES
+from openbrep.paramlist_builder import validate_paramlist
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from ui.three_preview import preview_3d_to_three_payload
 
@@ -55,6 +56,8 @@ SCRIPT_NAME_TO_TYPE = {
     ScriptType.UI.value: ScriptType.UI,
 }
 SCRIPT_ROUTE_RE = re.compile(r"^/api/project/script/([^/]+)$")
+GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+AUTHORABLE_PARAM_TYPES = {"Length", "RealNum", "Integer", "Boolean", "String"}
 
 
 def build_demo_project() -> HSFProject:
@@ -194,6 +197,26 @@ def apply_parameter_values(project: HSFProject, changes: dict[str, Any]) -> dict
         param.value = _coerce_parameter_value(param.type_tag, value)
         changed[name] = value
     return changed
+
+
+def build_parameter_from_authoring_request(project: HSFProject, body: dict[str, Any]) -> GDLParameter:
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise ValueError("Parameter name is required.")
+    if not GDL_PARAMETER_NAME_RE.match(name):
+        raise ValueError("Invalid parameter name.")
+    if project.get_parameter(name) is not None:
+        raise ValueError(f"Parameter '{name}' already exists")
+
+    type_tag = str(body.get("type_tag") or "").strip()
+    if not type_tag:
+        raise ValueError("Parameter type is required.")
+    if type_tag not in AUTHORABLE_PARAM_TYPES or type_tag not in VALID_PARAM_TYPES:
+        raise ValueError(f"Unsupported parameter type: {type_tag}")
+
+    value = _coerce_parameter_value(type_tag, body.get("value"))
+    description = str(body.get("description") or "").strip()
+    return GDLParameter(name=name, type_tag=type_tag, description=description, value=value)
 
 
 class WorkbenchSession:
@@ -570,6 +593,26 @@ class WorkbenchSession:
             self.project.save_to_disk()
         return {"ok": True, "changed": changed, **self.snapshot()}
 
+    def add_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            param = build_parameter_from_authoring_request(self.project, body)
+            self.project.add_parameter(param)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        self.project.save_to_disk()
+        return {
+            "ok": True,
+            "added": _parameter_to_dict(param),
+            **self.snapshot(),
+        }
+
+    def validate_project_parameters(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "issues": validate_paramlist(self.project.parameters or []),
+        }
+
     def compile_mock(self, body: dict[str, Any]) -> dict[str, Any]:
         start = time.perf_counter()
         if self.source_path is None:
@@ -790,6 +833,12 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/apply":
             return self.apply(body.get("parameters") or {})
+
+        if normalized_method == "POST" and route == "/api/project/parameters":
+            return self.add_project_parameter(body)
+
+        if normalized_method == "POST" and route == "/api/project/parameters/validate":
+            return self.validate_project_parameters()
 
         if normalized_method == "POST" and route == "/api/compile":
             return self.compile_project(body)

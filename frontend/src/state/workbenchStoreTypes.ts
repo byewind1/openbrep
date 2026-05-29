@@ -1,4 +1,6 @@
 import type {
+  AddParameterRequest,
+  AddParameterResult,
   ApplyResult,
   AssistantMessage,
   AssistantResult,
@@ -25,6 +27,7 @@ import type {
   RuntimeSettingsResult,
   SaveRevisionResponse,
   SaveScriptResponse,
+  ValidateParametersResult,
   WorkbenchParameter,
   WorkbenchProject,
   WorkbenchSnapshot,
@@ -55,11 +58,14 @@ export interface WorkbenchApi {
   askAssistant: (message: string) => Promise<AssistantResult>
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
+  addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
+  validateProjectParameters: () => Promise<ValidateParametersResult>
 }
 
 export interface WorkbenchState {
   project: WorkbenchProject | null
   parameters: WorkbenchParameter[]
+  parameterIssues: string[]
   draftParameters: Record<string, unknown>
   preview: PreviewPayload | null
   preview2d: Preview2DPayload | null
@@ -100,6 +106,8 @@ export interface WorkbenchState {
   createProjectFromPrompt: (message: string) => Promise<void>
   generateAssistantChanges: (message: string) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
+  addProjectParameter: (parameter: AddParameterRequest) => Promise<boolean>
+  validateProjectParameters: () => Promise<void>
   applyDraftParameters: () => Promise<void>
   resetDraftParameters: () => void
   refreshProjectWorkspace: (options?: ProjectWorkspaceRefreshOptions) => Promise<void>

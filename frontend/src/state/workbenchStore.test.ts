@@ -62,6 +62,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       scripts: [
         { name: '3d.gdl', path: 'scripts/3d.gdl', exists: true, size: 128 },
         { name: '2d.gdl', path: 'scripts/2d.gdl', exists: true, size: 64 },
+        { name: 'paramlist.xml', path: 'paramlist.xml', exists: true, size: 256 },
       ],
     }),
     listRecentProjects: async () => ({
@@ -151,6 +152,19 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: [],
       compiler: { mode: 'mock', converter_path: '' },
     }),
+    addProjectParameter: async (parameter) => ({
+      ok: true,
+      added: { name: parameter.name, type_tag: parameter.type_tag, description: parameter.description ?? '', value: String(parameter.value), is_fixed: false },
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [
+        { name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true },
+        { name: parameter.name, type_tag: parameter.type_tag, description: parameter.description ?? '', value: String(parameter.value), is_fixed: false },
+      ],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+      compiler: { mode: 'mock', converter_path: '' },
+    }),
+    validateProjectParameters: async () => ({ ok: true, issues: [] }),
     ...overrides,
   }
 }
@@ -177,6 +191,59 @@ test('applyDraftParameters applies changes and runs mock diagnostics', async () 
   expect(store.getState().mockCompileResult?.success).toBe(true)
   expect(store.getState().compileLog[0]).toContain('Mock compile passed')
   expect(store.getState().applying).toBe(false)
+})
+
+test('addProjectParameter refreshes parameters, paramlist cache, preview, and diagnostics', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().load()
+  await store.getState().openScript('paramlist.xml')
+  const ok = await store.getState().addProjectParameter({
+    name: 'seat_height',
+    type_tag: 'Length',
+    value: 0.45,
+    description: 'Seat height',
+  })
+
+  expect(ok).toBe(true)
+  expect(store.getState().parameters.map((parameter) => parameter.name)).toContain('seat_height')
+  expect(store.getState().scriptContents['paramlist.xml']).toBe('content for paramlist.xml')
+  expect(store.getState().mockCompileResult?.success).toBe(true)
+  expect(store.getState().compileLog[0]).toContain('Mock compile passed')
+  expect(store.getState().applying).toBe(false)
+})
+
+test('addProjectParameter stores api errors in lastError', async () => {
+  const store = createWorkbenchStore(makeApi({
+    addProjectParameter: async () => ({
+      ok: false,
+      error: 'Parameter already exists',
+      project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
+  }))
+
+  await store.getState().load()
+  const ok = await store.getState().addProjectParameter({ name: 'A', type_tag: 'Length', value: 1 })
+
+  expect(ok).toBe(false)
+  expect(store.getState().lastError).toBe('Parameter already exists')
+  expect(store.getState().applying).toBe(false)
+})
+
+test('validateProjectParameters stores parameter issues', async () => {
+  const store = createWorkbenchStore(makeApi({
+    validateProjectParameters: async () => ({
+      ok: true,
+      issues: ["Length parameter 'width_mm' should not include unit markers"],
+    }),
+  }))
+
+  await store.getState().validateProjectParameters()
+
+  expect(store.getState().parameterIssues).toEqual(["Length parameter 'width_mm' should not include unit markers"])
 })
 
 test('resetDraftParameters discards unapplied parameter edits', async () => {
@@ -405,7 +472,7 @@ test('load fetches scripts and opens 3d.gdl by default', async () => {
 
   await store.getState().load()
 
-  expect(store.getState().scripts.map((script) => script.name)).toEqual(['3d.gdl', '2d.gdl'])
+  expect(store.getState().scripts.map((script) => script.name)).toEqual(['3d.gdl', '2d.gdl', 'paramlist.xml'])
   expect(store.getState().activeScriptName).toBe('3d.gdl')
   expect(store.getState().scriptContents['3d.gdl']).toBe('content for 3d.gdl')
 })

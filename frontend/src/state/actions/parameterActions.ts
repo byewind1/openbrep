@@ -1,3 +1,4 @@
+import type { AddParameterRequest } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 
 export function createParameterActions({ api, get, set }: WorkbenchActionContext) {
@@ -10,6 +11,40 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       if (get().activeRailPanel === '2d') {
         await get().loadPreview2D()
       }
+    },
+
+    async addProjectParameter(parameter: AddParameterRequest) {
+      set({ applying: true, lastError: null })
+      const result = await api.addProjectParameter(parameter)
+      if (!result.ok) {
+        set({ applying: false, lastError: result.error ?? 'Failed to add parameter.' })
+        return false
+      }
+      set({
+        project: result.project,
+        parameters: result.parameters,
+        parameterIssues: [],
+        preview: result.preview,
+        warnings: result.warnings,
+        draftParameters: {},
+        applying: false,
+      })
+      await get().refreshProjectWorkspace({
+        preferredScriptName: 'paramlist.xml',
+        refreshAllScripts: true,
+        refreshPreview: false,
+        runDiagnostics: true,
+      })
+      return true
+    },
+
+    async validateProjectParameters() {
+      const result = await api.validateProjectParameters()
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to validate parameters.' })
+        return
+      }
+      set({ parameterIssues: result.issues })
     },
 
     async applyDraftParameters() {
@@ -27,6 +62,7 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       set({
         project: result.project,
         parameters: result.parameters,
+        parameterIssues: [],
         preview: result.preview,
         warnings: result.warnings,
         draftParameters: {},
