@@ -577,6 +577,37 @@ button:focus-visible {
   background: var(--bg-canvas);
 }
 
+.preview2d-surface {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-canvas);
+}
+
+.preview2d-svg {
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+}
+
+.preview2d-line {
+  stroke: var(--accent-soft);
+  stroke-width: 0.012;
+  vector-effect: non-scaling-stroke;
+}
+
+.preview2d-polygon {
+  fill: var(--accent-muted);
+  stroke: var(--accent-soft);
+  stroke-width: 0.012;
+  vector-effect: non-scaling-stroke;
+}
+
+.preview2d-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .viewport-footer {
   justify-content: space-between;
   padding: 0 12px;

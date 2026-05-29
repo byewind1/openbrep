@@ -5,6 +5,7 @@ from openbrep.workbench_api import (
     apply_parameter_values,
     build_demo_project,
     build_demo_snapshot,
+    preview_2d_payload,
     preview_payload,
     route_rpc,
 )
@@ -29,6 +30,16 @@ def test_preview_payload_uses_parameter_overrides_without_mutating_project():
     assert payload["meshes"]
 
 
+def test_preview_2d_payload_returns_plan_geometry():
+    project = build_demo_project()
+    project.set_script(ScriptType.SCRIPT_2D, "LINE2 0, 0, A, B\nCIRCLE2 A / 2, B / 2, 0.1\n")
+
+    payload = preview_2d_payload(project)
+
+    assert payload["lines"] == [{"from": [0.0, 0.0], "to": [1.2, 0.36]}]
+    assert payload["circles"][0]["r"] == 0.1
+
+
 def test_apply_parameter_values_updates_project_values():
     project = build_demo_project()
 
@@ -44,6 +55,14 @@ def test_route_rpc_preview_returns_preview_for_overrides():
 
     assert response["ok"] is True
     assert response["preview"]["meshes"]
+
+
+def test_route_rpc_preview_2d_returns_preview_for_overrides():
+    response = route_rpc("POST", "/api/preview/2d", {"parameters": {"A": 2.2}})
+
+    assert response["ok"] is True
+    assert "lines" in response["preview"]
+    assert "warnings" in response["preview"]
 
 
 def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):

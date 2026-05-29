@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AssistantPanel } from '../components/AssistantPanel'
 import { BottomDrawer } from '../components/BottomDrawer'
 import { ParameterRail } from '../components/ParameterRail'
+import { Preview2DViewport } from '../components/Preview2DViewport'
 import { PreviewViewport } from '../components/PreviewViewport'
 import { ScriptEditor } from '../components/ScriptEditor'
 import { ScriptTree } from '../components/ScriptTree'
@@ -24,6 +25,7 @@ export function WorkbenchApp() {
   const parameters = useWorkbenchStore((state) => state.parameters)
   const draftParameters = useWorkbenchStore((state) => state.draftParameters)
   const preview = useWorkbenchStore((state) => state.preview)
+  const preview2d = useWorkbenchStore((state) => state.preview2d)
   const warnings = useWorkbenchStore((state) => state.warnings)
   const loading = useWorkbenchStore((state) => state.loading)
   const applying = useWorkbenchStore((state) => state.applying)
@@ -59,6 +61,7 @@ export function WorkbenchApp() {
   const browseCompilerFile = useWorkbenchStore((state) => state.browseCompilerFile)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
+  const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const createProjectFromPrompt = useWorkbenchStore((state) => state.createProjectFromPrompt)
@@ -159,7 +162,15 @@ export function WorkbenchApp() {
             >
               3D
             </button>
-            <button type="button" className="rail-tab" disabled aria-selected="false">
+            <button
+              type="button"
+              className={`rail-tab${activeRailPanel === '2d' ? ' active' : ''}`}
+              aria-selected={activeRailPanel === '2d'}
+              onClick={() => {
+                setActiveRailPanel('2d')
+                void loadPreview2D()
+              }}
+            >
               2D
             </button>
             <button type="button" className="rail-tab" disabled aria-selected="false">
@@ -185,6 +196,8 @@ export function WorkbenchApp() {
                   </button>
                 ) : null}
               />
+            ) : activeRailPanel === '2d' ? (
+              <Preview2DViewport preview={preview2d} warnings={warnings} />
             ) : (
               <AssistantPanel
                 messages={assistantMessages}

@@ -11,6 +11,13 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       compiler: { mode: 'mock', converter_path: '' },
     }),
     fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
+    fetchPreview2D: async () => ({
+      lines: [{ from: [0, 0], to: [1, 1] }],
+      polygons: [],
+      circles: [],
+      arcs: [],
+      warnings: [],
+    }),
     loadProjectPath: async (path: string) => ({
       project: { name: 'Chair', source: 'hsf', path },
       parameters: [{ name: 'B', type_tag: 'Length', description: 'Depth', value: '0.5', is_fixed: true }],
@@ -492,6 +499,14 @@ test('runMockCompile stores diagnostics result', async () => {
   expect(store.getState().mockCompileResult?.issues).toHaveLength(1)
   expect(store.getState().mockCompileResult?.issues[0]?.message).toBe('FOR/NEXT mismatch')
   expect(store.getState().compileLog[0]).toContain('1 errors')
+})
+
+test('loadPreview2D stores plan preview geometry', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().loadPreview2D()
+
+  expect(store.getState().preview2d?.lines).toEqual([{ from: [0, 0], to: [1, 1] }])
 })
 
 test('updates compiler settings through the API', async () => {

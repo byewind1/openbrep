@@ -18,6 +18,7 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     project: snapshot.project,
     parameters: snapshot.parameters,
     preview: snapshot.preview,
+    preview2d: null,
     warnings: snapshot.warnings ?? snapshot.preview?.warnings ?? [],
     compilerSettings: snapshot.compiler ?? fallbackCompiler,
     llmSettings: snapshot.llm ?? fallbackLlm,

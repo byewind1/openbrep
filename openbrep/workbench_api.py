@@ -25,7 +25,7 @@ from openbrep.explainer.service import (
     explain_project_context,
     explain_script_context,
 )
-from openbrep.gdl_previewer import preview_3d_script
+from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from ui.three_preview import preview_3d_to_three_payload
@@ -147,6 +147,29 @@ def preview_payload(project: HSFProject, overrides: dict[str, Any] | None = None
     payload = preview_3d_to_three_payload(result)
     payload["warnings"] = result.warnings
     return payload
+
+
+def preview_2d_payload(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = preview_2d_script(
+        project.get_script(ScriptType.SCRIPT_2D),
+        parameters=parameter_values(project, overrides),
+        setup_script=project.get_script(ScriptType.MASTER),
+        unknown_command_policy="warn",
+        quality="fast",
+    )
+    return {
+        "lines": [{"from": list(p1), "to": list(p2)} for p1, p2 in result.lines],
+        "polygons": [[list(point) for point in polygon] for polygon in result.polygons],
+        "circles": [
+            {"cx": cx, "cy": cy, "r": r}
+            for cx, cy, r in result.circles
+        ],
+        "arcs": [
+            {"cx": cx, "cy": cy, "r": r, "a0": a0, "a1": a1}
+            for cx, cy, r, a0, a1 in result.arcs
+        ],
+        "warnings": result.warnings,
+    }
 
 
 def parameter_values(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, float]:
@@ -496,6 +519,12 @@ class WorkbenchSession:
             "preview": preview_payload(self.project, overrides or {}),
         }
 
+    def preview_2d(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "preview": preview_2d_payload(self.project, overrides or {}),
+        }
+
     def list_project_scripts(self) -> dict[str, Any]:
         return {"ok": True, "scripts": [_script_file_info(self.project, name) for name in SCRIPT_FILE_ORDER]}
 
@@ -745,6 +774,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/preview":
             return self.preview(body.get("parameters") or {})
+
+        if normalized_method == "POST" and route == "/api/preview/2d":
+            return self.preview_2d(body.get("parameters") or {})
 
         if normalized_method == "GET" and route == "/api/project/scripts":
             return self.list_project_scripts()

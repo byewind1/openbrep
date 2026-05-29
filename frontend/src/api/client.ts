@@ -11,6 +11,7 @@ import type {
   GenerateResult,
   LlmSettings,
   LlmSettingsResult,
+  Preview2DPayload,
   PreviewPayload,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
@@ -38,6 +39,19 @@ export async function fetchPreview(parameters: Record<string, unknown>): Promise
       body: JSON.stringify({ parameters }),
     },
     { preview: fallbackSnapshot.preview },
+  )
+  return response.preview
+}
+
+export async function fetchPreview2D(parameters: Record<string, unknown>): Promise<Preview2DPayload> {
+  const response = await requestJson<{ preview: Preview2DPayload }>(
+    '/api/preview/2d',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parameters }),
+    },
+    { preview: fallbackPreview2D },
   )
   return response.preview
 }
@@ -324,5 +338,13 @@ export const fallbackSnapshot: WorkbenchSnapshot = {
     wires: [],
     warnings: [],
   },
+  warnings: [],
+}
+
+export const fallbackPreview2D: Preview2DPayload = {
+  lines: [],
+  polygons: [],
+  circles: [],
+  arcs: [],
   warnings: [],
 }

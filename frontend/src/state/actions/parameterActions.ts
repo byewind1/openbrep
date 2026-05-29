@@ -7,6 +7,9 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       set({ draftParameters })
       const preview = await api.fetchPreview(draftParameters)
       set({ preview, warnings: preview.warnings ?? [] })
+      if (get().activeRailPanel === '2d') {
+        await get().loadPreview2D()
+      }
     },
 
     async applyDraftParameters() {

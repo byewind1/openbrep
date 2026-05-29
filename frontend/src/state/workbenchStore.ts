@@ -7,6 +7,7 @@ import {
   closeProject,
   compileProject,
   createProjectFromPrompt,
+  fetchPreview2D,
   fetchPreview,
   fetchRuntimeSettings,
   fetchSnapshot,
@@ -27,6 +28,7 @@ import {
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
 import { createParameterActions } from './actions/parameterActions'
+import { createPreviewActions } from './actions/previewActions'
 import { createProjectActions } from './actions/projectActions'
 import { createRevisionActions } from './actions/revisionActions'
 import { createScriptActions } from './actions/scriptActions'
@@ -39,6 +41,7 @@ export type { WorkbenchApi, WorkbenchState } from './workbenchStoreTypes'
 const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
+  fetchPreview2D,
   loadProjectPath,
   importGdlFile,
   closeProject,
@@ -74,6 +77,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       ...createProjectActions(context),
       ...createSettingsActions(context),
       ...createParameterActions(context),
+      ...createPreviewActions(context),
       ...createCompileActions(context),
       ...createScriptActions(context),
       ...createRevisionActions(context),
@@ -93,6 +97,7 @@ function initialWorkbenchState() {
     parameters: [],
     draftParameters: {},
     preview: null,
+    preview2d: null,
     warnings: [],
     loading: false,
     applying: false,

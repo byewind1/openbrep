@@ -66,6 +66,14 @@ export interface PreviewPayload {
   warnings?: string[]
 }
 
+export interface Preview2DPayload {
+  lines: Array<{ from: [number, number]; to: [number, number] }>
+  polygons: Array<Array<[number, number]>>
+  circles: Array<{ cx: number; cy: number; r: number }>
+  arcs: Array<{ cx: number; cy: number; r: number; a0: number; a1: number }>
+  warnings?: string[]
+}
+
 export interface CompilerSettings {
   mode: 'mock' | 'lp'
   converter_path: string

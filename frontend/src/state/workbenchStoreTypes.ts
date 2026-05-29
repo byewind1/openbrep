@@ -12,6 +12,7 @@ import type {
   LlmSettings,
   LlmSettingsResult,
   MockCompileResponse,
+  Preview2DPayload,
   PreviewPayload,
   ProjectRevision,
   ProjectRevisionsResponse,
@@ -32,6 +33,7 @@ import type {
 export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
+  fetchPreview2D: (parameters: Record<string, unknown>) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   closeProject: () => Promise<WorkbenchSnapshot>
@@ -60,6 +62,7 @@ export interface WorkbenchState {
   parameters: WorkbenchParameter[]
   draftParameters: Record<string, unknown>
   preview: PreviewPayload | null
+  preview2d: Preview2DPayload | null
   warnings: string[]
   loading: boolean
   applying: boolean
@@ -68,7 +71,7 @@ export interface WorkbenchState {
   compileLog: string[]
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
-  activeRailPanel: '3d' | 'ai'
+  activeRailPanel: '3d' | '2d' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
   scripts: ProjectScript[]
@@ -92,7 +95,7 @@ export interface WorkbenchState {
   setLlmSettings: (settings: LlmSettings) => Promise<void>
   reloadRuntimeSettings: () => Promise<void>
   compileCurrentProject: () => Promise<void>
-  setActiveRailPanel: (panel: '3d' | 'ai') => void
+  setActiveRailPanel: (panel: '3d' | '2d' | 'ai') => void
   sendAssistantMessage: (message: string) => Promise<void>
   createProjectFromPrompt: (message: string) => Promise<void>
   generateAssistantChanges: (message: string) => Promise<void>
@@ -109,6 +112,7 @@ export interface WorkbenchState {
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
   runMockCompile: () => Promise<void>
+  loadPreview2D: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean
 }
