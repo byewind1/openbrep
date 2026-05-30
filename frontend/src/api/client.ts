@@ -2,6 +2,8 @@ import type {
   ApplyResult,
   AddParameterRequest,
   AddParameterResult,
+  AssistantHistoryResult,
+  AssistantMessage,
   AssistantResult,
   CompileResult,
   CreateProjectResult,
@@ -23,6 +25,7 @@ import type {
   RevealArtifactResult,
   RestoreRevisionResponse,
   RuntimeSettingsResult,
+  SaveAssistantHistoryResult,
   SaveScriptResponse,
   SaveRevisionResponse,
   DeleteParameterResult,
@@ -325,6 +328,34 @@ export async function askAssistant(message: string): Promise<AssistantResult> {
       body: JSON.stringify({ message }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function listAssistantHistory(): Promise<AssistantHistoryResult> {
+  return requestJson<AssistantHistoryResult>(
+    '/api/assistant/history',
+    { method: 'GET' },
+    { ok: false, messages: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function saveAssistantHistory(messages: AssistantMessage[]): Promise<SaveAssistantHistoryResult> {
+  return requestJson<SaveAssistantHistoryResult>(
+    '/api/assistant/history',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    },
+    { ok: false, count: 0, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function clearAssistantHistory(): Promise<SaveAssistantHistoryResult> {
+  return requestJson<SaveAssistantHistoryResult>(
+    '/api/assistant/history',
+    { method: 'DELETE' },
+    { ok: false, count: 0, error: 'OpenBrep local API is not available.' },
   )
 }
 

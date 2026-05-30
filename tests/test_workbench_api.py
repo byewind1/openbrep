@@ -704,6 +704,50 @@ def test_workbench_session_assistant_explains_parameter_mentions(tmp_path):
     assert "3D" in response["assistant"]["reply"]
 
 
+def test_workbench_session_persists_project_assistant_history(tmp_path):
+    project = HSFProject.create_new("HistoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    saved = session.route(
+        "POST",
+        "/api/assistant/history",
+        {
+            "messages": [
+                {"role": "user", "content": "做一个书架"},
+                {"role": "assistant", "content": "已创建书架"},
+            ]
+        },
+    )
+    loaded = session.route("GET", "/api/assistant/history")
+
+    assert saved["ok"] is True
+    assert saved["count"] == 2
+    assert loaded["ok"] is True
+    assert loaded["messages"] == [
+        {"role": "user", "content": "做一个书架"},
+        {"role": "assistant", "content": "已创建书架"},
+    ]
+    transcript = hsf_dir / ".openbrep" / "memory" / "chats" / "chat_transcript.jsonl"
+    assert transcript.exists()
+
+
+def test_workbench_session_clears_project_assistant_history(tmp_path):
+    project = HSFProject.create_new("HistoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.route("POST", "/api/assistant/history", {"messages": [{"role": "user", "content": "旧记录"}]})
+    cleared = session.route("DELETE", "/api/assistant/history")
+    loaded = session.route("GET", "/api/assistant/history")
+
+    assert cleared["ok"] is True
+    assert cleared["count"] == 0
+    assert loaded["messages"] == []
+
+
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):
     project = HSFProject.create_new("GeneratedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

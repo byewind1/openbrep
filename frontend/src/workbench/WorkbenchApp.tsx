@@ -72,6 +72,7 @@ export function WorkbenchApp() {
   const revealCompileOutput = useWorkbenchStore((state) => state.revealCompileOutput)
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
+  const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const createProjectFromPrompt = useWorkbenchStore((state) => state.createProjectFromPrompt)
   const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
@@ -217,10 +218,11 @@ export function WorkbenchApp() {
               <AssistantPanel
                 messages={assistantMessages}
                 busy={assistantBusy}
-                onSend={(message) => void sendAssistantMessage(message)}
-                onCreate={(message) => void createProjectFromPrompt(message)}
-                onGenerate={(message) => void generateAssistantChanges(message)}
-              />
+            onSend={(message) => void sendAssistantMessage(message)}
+            onCreate={(message) => void createProjectFromPrompt(message)}
+            onGenerate={(message) => void generateAssistantChanges(message)}
+            onClearHistory={() => void clearAssistantHistory()}
+          />
             )}
           </div>
         </aside>

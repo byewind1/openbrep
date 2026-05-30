@@ -238,6 +238,18 @@ export interface AssistantResult {
   error?: string
 }
 
+export interface AssistantHistoryResult {
+  ok: boolean
+  messages: AssistantMessage[]
+  error?: string
+}
+
+export interface SaveAssistantHistoryResult {
+  ok: boolean
+  count: number
+  error?: string
+}
+
 export interface GenerateResult {
   ok: boolean
   assistant?: {

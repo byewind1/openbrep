@@ -161,6 +161,9 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     }),
     updateLlmSettings: async (settings) => ({ ok: true, llm: settings }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
+    listAssistantHistory: async () => ({ ok: true, messages: [] }),
+    saveAssistantHistory: async (messages) => ({ ok: true, count: messages.length }),
+    clearAssistantHistory: async () => ({ ok: true, count: 0 }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
@@ -924,8 +927,13 @@ test('records real compile errors in diagnostics', async () => {
 })
 
 test('adds user and assistant messages to the assistant thread', async () => {
+  let savedMessages: Array<{ role: string; content: string }> = []
   const store = createWorkbenchStore(
     makeApi({
+      saveAssistantHistory: async (messages) => {
+        savedMessages = messages
+        return { ok: true, count: messages.length }
+      },
       askAssistant: async (message: string) => ({
         ok: true,
         assistant: { kind: 'explain_project', reply: `reply to ${message}` },
@@ -939,7 +947,51 @@ test('adds user and assistant messages to the assistant thread', async () => {
     { role: 'user', content: '解释这个构件' },
     { role: 'assistant', content: 'reply to 解释这个构件' },
   ])
+  expect(savedMessages).toEqual(store.getState().assistantMessages)
   expect(store.getState().assistantBusy).toBe(false)
+})
+
+test('load hydrates persisted assistant history', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      listAssistantHistory: async () => ({
+        ok: true,
+        messages: [
+          { role: 'user', content: '旧问题' },
+          { role: 'assistant', content: '旧回答' },
+        ],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+
+  expect(store.getState().assistantMessages).toEqual([
+    { role: 'user', content: '旧问题' },
+    { role: 'assistant', content: '旧回答' },
+  ])
+})
+
+test('clearAssistantHistory clears local and persisted assistant history', async () => {
+  let cleared = false
+  const store = createWorkbenchStore(
+    makeApi({
+      listAssistantHistory: async () => ({
+        ok: true,
+        messages: [{ role: 'user', content: '旧问题' }],
+      }),
+      clearAssistantHistory: async () => {
+        cleared = true
+        return { ok: true, count: 0 }
+      },
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().clearAssistantHistory()
+
+  expect(cleared).toBe(true)
+  expect(store.getState().assistantMessages).toEqual([])
 })
 
 test('sets active rail panel', () => {

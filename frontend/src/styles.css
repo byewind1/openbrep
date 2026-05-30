@@ -148,7 +148,7 @@ button:focus-visible {
 .project-open-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) auto auto auto;
+  grid-template-columns: minmax(170px, 1fr) auto auto auto auto;
   align-items: center;
   gap: 6px;
 }
@@ -442,6 +442,18 @@ button:focus-visible {
 .panel-actions button {
   height: 24px;
   font-size: 12px;
+}
+
+.assistant-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-heading-actions button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
 }
 
 .parameter-section {

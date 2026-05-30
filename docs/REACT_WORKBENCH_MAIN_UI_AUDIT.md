@@ -73,7 +73,7 @@ root, not a business-logic dump. The store split is holding.
 | AI create | Yes | Assistant creates HSF project | Done |
 | AI modify | Yes | Assistant modifies current project, refreshes scripts/diagnostics | Done |
 | Explain/chat | Yes | Basic assistant explain | Partial |
-| Chat history browser | Yes | Not implemented | Gap |
+| Chat history browser | Yes | Assistant thread persists per HSF project; dedicated browser not implemented | Partial |
 | Adopt code from chat record | Yes | Not implemented | Gap |
 | Image/vision input | Yes | Not implemented | Gap |
 | LLM settings | Sidebar settings | Settings drawer | Done |
@@ -126,9 +126,13 @@ Do not implement Tapir or packaging here.
 Goal: recover the useful Streamlit chat-history workflows without recreating the
 old crowded UI.
 
-Implement:
+Implemented:
 
-- Persist assistant messages per workspace/project.
+- Persist assistant messages per HSF project under `.openbrep/memory/chats/`.
+- Clear assistant history from the AI panel.
+
+Remaining:
+
 - Chat history browser in a drawer/modal.
 - Re-apply/adopt code from prior assistant outputs.
 - Memory/privacy panel: status, clear memory, summarize wrong-answer notebook.
@@ -170,8 +174,9 @@ Keep these rules while migrating:
 
 ## Next Recommendation
 
-Move to P5B session memory.
+Continue P5B session memory.
 
 Reason: daily code work is now covered well enough. The next highest-value gap
-is now session continuity: users need chat history, project memory controls, and
-code adoption from previous assistant outputs without returning to Streamlit.
+is now session continuity: persisted assistant history exists, but users still
+need a history browser, project memory controls, and code adoption from previous
+assistant outputs without returning to Streamlit.

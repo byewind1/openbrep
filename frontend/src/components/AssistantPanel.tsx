@@ -8,9 +8,10 @@ interface AssistantPanelProps {
   onSend: (message: string) => void
   onCreate: (message: string) => void
   onGenerate: (message: string) => void
+  onClearHistory: () => void
 }
 
-export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate }: AssistantPanelProps) {
+export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, onClearHistory }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
 
   function submitMessage(event: FormEvent<HTMLFormElement>) {
@@ -35,7 +36,12 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate }:
     <aside className="assistant-panel">
       <div className="panel-heading">
         <h2>AI</h2>
-        <span>{busy ? 'Working' : 'Ready'}</span>
+        <div className="assistant-heading-actions">
+          <span>{busy ? 'Working' : 'Ready'}</span>
+          <button type="button" disabled={busy || messages.length === 0} onClick={onClearHistory}>
+            Clear
+          </button>
+        </div>
       </div>
       <div className="assistant-thread">
         {messages.length ? (

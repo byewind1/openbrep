@@ -2,6 +2,7 @@ import type {
   AddParameterRequest,
   AddParameterResult,
   ApplyResult,
+  AssistantHistoryResult,
   AssistantMessage,
   AssistantResult,
   CompileResult,
@@ -28,6 +29,7 @@ import type {
   RevealArtifactResult,
   RestoreRevisionResponse,
   RuntimeSettingsResult,
+  SaveAssistantHistoryResult,
   SaveRevisionResponse,
   SaveScriptResponse,
   UpdateParameterRequest,
@@ -65,6 +67,9 @@ export interface WorkbenchApi {
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
   askAssistant: (message: string) => Promise<AssistantResult>
+  listAssistantHistory: () => Promise<AssistantHistoryResult>
+  saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
+  clearAssistantHistory: () => Promise<SaveAssistantHistoryResult>
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
@@ -116,6 +121,8 @@ export interface WorkbenchState {
   reloadRuntimeSettings: () => Promise<void>
   compileCurrentProject: () => Promise<void>
   setActiveRailPanel: (panel: '3d' | '2d' | 'ai') => void
+  loadAssistantHistory: () => Promise<void>
+  clearAssistantHistory: () => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
   createProjectFromPrompt: (message: string) => Promise<void>
   generateAssistantChanges: (message: string) => Promise<void>

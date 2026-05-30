@@ -31,6 +31,7 @@ from openbrep.explainer.service import (
 )
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, VALID_PARAM_TYPES
+from openbrep.learning import ErrorLearningStore
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from ui.three_preview import preview_3d_to_three_payload
@@ -934,6 +935,49 @@ class WorkbenchSession:
             },
         }
 
+    def list_assistant_history(self) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": True, "messages": []}
+        try:
+            entries = ErrorLearningStore(self.source_path).list_chat_transcript()
+            messages = [
+                {"role": entry.role if entry.role in {"user", "assistant"} else "assistant", "content": entry.content}
+                for entry in entries
+                if entry.content
+            ]
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to load assistant history: {exc}", "messages": []}
+        return {"ok": True, "messages": messages}
+
+    def save_assistant_history(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before saving assistant history."}
+        messages = body.get("messages") or []
+        if not isinstance(messages, list):
+            return {"ok": False, "error": "Assistant history messages must be a list."}
+        try:
+            count = ErrorLearningStore(self.source_path).rewrite_chat_transcript(
+                messages,
+                project_name=self.project.name,
+                source="react_workbench",
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to save assistant history: {exc}"}
+        return {"ok": True, "count": count}
+
+    def clear_assistant_history(self) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": True, "count": 0}
+        try:
+            count = ErrorLearningStore(self.source_path).rewrite_chat_transcript(
+                [],
+                project_name=self.project.name,
+                source="react_workbench",
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to clear assistant history: {exc}"}
+        return {"ok": True, "count": count}
+
     def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()
         if not message:
@@ -1087,6 +1131,15 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/artifact/reveal":
             return self.reveal_artifact(body)
+
+        if normalized_method == "GET" and route == "/api/assistant/history":
+            return self.list_assistant_history()
+
+        if normalized_method == "POST" and route == "/api/assistant/history":
+            return self.save_assistant_history(body)
+
+        if normalized_method == "DELETE" and route == "/api/assistant/history":
+            return self.clear_assistant_history()
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)
