@@ -19,6 +19,7 @@ import type {
   ProjectScriptsResponse,
   ProjectRevisionsResponse,
   RecentProjectsResponse,
+  RevealArtifactResult,
   RestoreRevisionResponse,
   RuntimeSettingsResult,
   SaveScriptResponse,
@@ -347,6 +348,18 @@ export async function mockCompile(outputDir = ''): Promise<MockCompileResponse> 
       body: JSON.stringify({ output_dir: outputDir }),
     },
     { success: false, mode: 'mock', issues: [], duration_ms: 0, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function revealArtifact(path = ''): Promise<RevealArtifactResult> {
+  return requestJson<RevealArtifactResult>(
+    '/api/artifact/reveal',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

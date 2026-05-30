@@ -178,6 +178,12 @@ export interface MockCompileResponse {
   error?: string
 }
 
+export interface RevealArtifactResult {
+  ok: boolean
+  path?: string
+  error?: string
+}
+
 export interface CompilerSettingsResult {
   ok: boolean
   compiler?: CompilerSettings

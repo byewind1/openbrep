@@ -9,9 +9,17 @@ interface BottomDrawerProps {
   mockCompileResult: MockCompileResponse | null
   revisionPanel?: ReactNode
   onIssueSelect?: (issue: CompileIssue) => void
+  onRevealOutput?: (path: string) => void
 }
 
-export function BottomDrawer({ warnings, compileLog, mockCompileResult, revisionPanel, onIssueSelect }: BottomDrawerProps) {
+export function BottomDrawer({
+  warnings,
+  compileLog,
+  mockCompileResult,
+  revisionPanel,
+  onIssueSelect,
+  onRevealOutput,
+}: BottomDrawerProps) {
   const [activeTab, setActiveTab] = useState<'compile' | 'diagnostics' | 'preview' | 'revision'>('compile')
   const issueGroups = groupCompileIssuesByScript(mockCompileResult?.issues ?? [])
 
@@ -44,6 +52,7 @@ export function BottomDrawer({ warnings, compileLog, mockCompileResult, revision
             sizeBytes={mockCompileResult?.gsm_size_bytes ?? null}
             success={mockCompileResult?.success ?? null}
             onIssueSelect={onIssueSelect}
+            onRevealOutput={onRevealOutput}
           />
         ) : null}
       </div>
@@ -60,6 +69,7 @@ function CompileDiagnostics({
   sizeBytes,
   success,
   onIssueSelect,
+  onRevealOutput,
 }: {
   compileLog: string[]
   duration: number | null
@@ -69,6 +79,7 @@ function CompileDiagnostics({
   sizeBytes: number | null
   success: boolean | null
   onIssueSelect?: (issue: CompileIssue) => void
+  onRevealOutput?: (path: string) => void
 }) {
   const errorCount = countGroupedIssues(issueGroups, 'error')
   const warningCount = countGroupedIssues(issueGroups, 'warning')
@@ -84,7 +95,14 @@ function CompileDiagnostics({
           Diagnostics: {errorCount} errors · {warningCount} warnings · {issueGroups.length} groups
         </p>
       ) : null}
-      {outputPath ? <p>Output: {outputPath}</p> : null}
+      {outputPath ? (
+        <div className="diagnostic-output-row">
+          <span title={outputPath}>Output: {outputPath}</span>
+          <button type="button" onClick={() => onRevealOutput?.(outputPath)}>
+            Reveal
+          </button>
+        </div>
+      ) : null}
       {sizeBytes !== null || parameterCount !== null ? (
         <p>
           {sizeBytes !== null ? `Size: ${formatBytes(sizeBytes)}` : ''}

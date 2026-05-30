@@ -930,6 +930,26 @@ button:focus-visible {
   color: var(--success);
 }
 
+.diagnostic-output-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.diagnostic-output-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-output-row button {
+  height: 24px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
 .diagnostic-error {
   color: var(--error);
 }

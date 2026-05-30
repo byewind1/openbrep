@@ -24,6 +24,7 @@ import type {
   ProjectScriptsResponse,
   RecentProject,
   RecentProjectsResponse,
+  RevealArtifactResult,
   RestoreRevisionResponse,
   RuntimeSettingsResult,
   SaveRevisionResponse,
@@ -56,6 +57,7 @@ export interface WorkbenchApi {
   saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
   restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
   mockCompile: (outputDir?: string) => Promise<MockCompileResponse>
+  revealArtifact: (path?: string) => Promise<RevealArtifactResult>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
@@ -129,6 +131,7 @@ export interface WorkbenchState {
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
   runMockCompile: () => Promise<void>
+  revealCompileOutput: (path?: string) => Promise<void>
   loadPreview2D: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean

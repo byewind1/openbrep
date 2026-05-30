@@ -128,6 +128,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['restored'],
     }),
     mockCompile: async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 12 }),
+    revealArtifact: async (path = '') => ({ ok: true, path: path || '/workspace/output/Chair.gsm' }),
     updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
     fetchRuntimeSettings: async () => ({
       ok: true,
@@ -793,6 +794,26 @@ test('mock compile uses configured output directory', async () => {
   await store.getState().runMockCompile()
 
   expect(receivedOutputDir).toBe('/workspace/output')
+})
+
+test('revealCompileOutput records revealed artifact path', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().revealCompileOutput('/workspace/output/Chair.gsm')
+
+  expect(store.getState().compileLog[0]).toBe('Revealed /workspace/output/Chair.gsm')
+})
+
+test('revealCompileOutput stores api errors in lastError', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      revealArtifact: async () => ({ ok: false, error: 'Artifact not found' }),
+    }),
+  )
+
+  await store.getState().revealCompileOutput('/missing.gsm')
+
+  expect(store.getState().lastError).toBe('Artifact not found')
 })
 
 test('records real compile errors in diagnostics', async () => {

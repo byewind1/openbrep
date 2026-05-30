@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import re
+import subprocess
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -248,6 +250,7 @@ class WorkbenchSession:
         pipeline_class: type = TaskPipeline,
         directory_chooser: Callable[[], str] | None = None,
         file_chooser: Callable[[], str] | None = None,
+        path_revealer: Callable[[Path], None] | None = None,
         config_path: str | Path | None = None,
     ) -> None:
         self.project: HSFProject = build_demo_project()
@@ -256,6 +259,7 @@ class WorkbenchSession:
         self.pipeline_class = pipeline_class
         self.directory_chooser = directory_chooser or _choose_directory
         self.file_chooser = file_chooser or _choose_file
+        self.path_revealer = path_revealer or _reveal_path
         self.config_path = Path(config_path or "config.toml")
         self.config = _load_workbench_config(self.config_path)
         self.compiler_mode = "mock"
@@ -267,6 +271,7 @@ class WorkbenchSession:
         self.max_retries = self.config.agent.max_iterations
         self.assistant_settings = self.config.llm.assistant_settings or ""
         self.recent_project_paths: list[str] = []
+        self.last_compile_output_path = ""
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = project_to_snapshot(
@@ -710,13 +715,15 @@ class WorkbenchSession:
         output_gsm = output_dir / f"{self.project.name}.gsm"
         result = MockHSFCompiler().hsf2libpart(str(hsf_dir), str(output_gsm))
         duration_ms = int((time.perf_counter() - start) * 1000)
+        output_path = result.output_path or str(output_gsm)
+        self.last_compile_output_path = output_path
         return {
             "ok": True,
             "success": bool(result.success),
             "mode": "mock",
             "issues": _compile_issues_from_result(result),
             "duration_ms": duration_ms,
-            "output_path": result.output_path or str(output_gsm),
+            "output_path": output_path,
             "gsm_size_bytes": _file_size_or_none(output_gsm),
             "parameter_count": len(self.project.parameters or []),
         }
@@ -738,12 +745,14 @@ class WorkbenchSession:
 
         self.project.save_to_disk()
         result = compiler.hsf2libpart(str(self.source_path), str(output_gsm))
+        output_path = result.output_path or str(output_gsm)
+        self.last_compile_output_path = output_path
         return {
             "ok": bool(result.success),
             "compile": {
                 "success": bool(result.success),
                 "mode": result.mode or ("lp" if compiler_mode == "lp" else "mock"),
-                "output_path": result.output_path or str(output_gsm),
+                "output_path": output_path,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "errors": result.errors,
@@ -753,6 +762,19 @@ class WorkbenchSession:
             },
             **({} if result.success else {"error": result.stderr or "Compile failed"}),
         }
+
+    def reveal_artifact(self, body: dict[str, Any]) -> dict[str, Any]:
+        raw_path = str(body.get("path") or self.last_compile_output_path or "").strip()
+        if not raw_path:
+            return {"ok": False, "error": "No compiled artifact path is available."}
+        target = Path(raw_path).expanduser().resolve()
+        if not target.exists():
+            return {"ok": False, "error": f"Artifact not found: {target}"}
+        try:
+            self.path_revealer(target)
+        except Exception as exc:
+            return {"ok": False, "error": f"Reveal failed: {exc}"}
+        return {"ok": True, "path": str(target)}
 
     def assistant_reply(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()
@@ -939,6 +961,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/compile/mock":
             return self.compile_mock(body)
 
+        if normalized_method == "POST" and route == "/api/artifact/reveal":
+            return self.reveal_artifact(body)
+
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)
 
@@ -1063,6 +1088,18 @@ def _choose_file() -> str:
         return str(filedialog.askopenfilename(title="Choose OpenBrep file") or "")
     finally:
         root.destroy()
+
+
+def _reveal_path(path: Path) -> None:
+    target = path.resolve()
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.run(["open", "-R", str(target)], check=False)
+        return
+    if system == "Windows":
+        subprocess.run(["explorer", "/select,", str(target)], check=False)
+        return
+    subprocess.run(["xdg-open", str(target.parent if target.is_file() else target)], check=False)
 
 
 def _resolve_script_name(script_name: str) -> str | None:

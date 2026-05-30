@@ -67,6 +67,7 @@ export function WorkbenchApp() {
   const browseOutputDirectory = useWorkbenchStore((state) => state.browseOutputDirectory)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
+  const revealCompileOutput = useWorkbenchStore((state) => state.revealCompileOutput)
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
@@ -226,6 +227,7 @@ export function WorkbenchApp() {
         compileLog={compileLog}
         mockCompileResult={mockCompileResult}
         onIssueSelect={focusDiagnosticIssue}
+        onRevealOutput={(path) => void revealCompileOutput(path)}
         revisionPanel={
           <RevisionPanel
             revisions={revisions}

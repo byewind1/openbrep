@@ -37,5 +37,16 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
         compileLog: summary ? [summary, ...state.compileLog].slice(0, 20) : state.compileLog,
       }))
     },
+
+    async revealCompileOutput(path = '') {
+      const result = await api.revealArtifact(path)
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to reveal artifact.' })
+        return
+      }
+      set((state) => ({
+        compileLog: [`Revealed ${result.path ?? path}`, ...state.compileLog].slice(0, 20),
+      }))
+    },
   }
 }

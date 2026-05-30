@@ -257,6 +257,38 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     assert (output_dir / "CompiledShelf.gsm").exists()
 
 
+def test_workbench_session_reveals_last_compiled_artifact(tmp_path):
+    project = HSFProject.create_new("RevealShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    revealed: list[Path] = []
+    output_dir = tmp_path / "out"
+
+    session = WorkbenchSession(path_revealer=lambda path: revealed.append(path))
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    compile_response = session.route("POST", "/api/compile", {"output_dir": str(output_dir)})
+    response = session.route("POST", "/api/artifact/reveal", {})
+
+    assert compile_response["ok"] is True
+    assert response["ok"] is True
+    assert response["path"] == str(output_dir / "RevealShelf.gsm")
+    assert revealed == [output_dir / "RevealShelf.gsm"]
+
+
+def test_workbench_session_reveal_artifact_rejects_missing_path(tmp_path):
+    revealed: list[Path] = []
+    session = WorkbenchSession(path_revealer=lambda path: revealed.append(path))
+
+    response = session.route(
+        "POST",
+        "/api/artifact/reveal",
+        {"path": str(tmp_path / "missing.gsm")},
+    )
+
+    assert response["ok"] is False
+    assert "Artifact not found" in response["error"]
+    assert revealed == []
+
+
 def test_workbench_session_lists_project_scripts(tmp_path):
     project = HSFProject.create_new("ScriptListShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_2D, "PROJECT2 3, 270, 2\n")
