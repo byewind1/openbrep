@@ -75,7 +75,7 @@ root, not a business-logic dump. The store split is holding.
 | Explain/chat | Yes | Basic assistant explain | Partial |
 | Chat history browser | Yes | Assistant thread persists per HSF project; compact drawer browser is available from AI panel | Partial |
 | Adopt code from chat record | Yes | Assistant replies with code can be adopted from thread or history drawer into dirty script buffers | Done |
-| Image/vision input | Yes | AI panel can attach PNG/JPEG/WebP references for create/generate, validates 5 MB limit, normalizes unsupported-vision errors, forwarded to existing pipeline vision path | Partial |
+| Image/vision input | Yes | AI panel can attach PNG/JPEG/WebP references for create/generate, validates 5 MB limit, normalizes unsupported-vision errors, forwarded to existing pipeline vision path, scriptable smoke exists | Partial |
 | LLM settings | Sidebar settings | Settings drawer | Done |
 | Custom provider credentials | Yes | Settings drawer supports model/key/base | Partial but usable |
 | Compiler settings | Sidebar settings | Settings drawer | Done |
@@ -190,3 +190,12 @@ Reason: daily code work and the main memory curation controls are now covered
 well enough. Image attachment now reaches the existing pipeline vision path, but
 still needs manual smoke testing with a real vision-capable model and
 provider-specific capability hints before it should be treated as full parity.
+
+Run the opt-in smoke with:
+
+```bash
+python scripts/workbench_vision_smoke.py --config ~/.openbrep/config.toml --output-dir /tmp/openbrep-vision-smoke --pretty
+```
+
+If the config file is missing, the script returns a JSON `skip` result instead
+of making a real model call.
