@@ -229,6 +229,12 @@ export interface AssistantMessage {
   content: string
 }
 
+export interface AssistantImageAttachment {
+  name: string
+  mime: string
+  b64: string
+}
+
 export interface AssistantResult {
   ok: boolean
   assistant?: {

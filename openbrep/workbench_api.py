@@ -497,10 +497,12 @@ class WorkbenchSession:
         result = pipeline.execute(
             TaskRequest(
                 user_input=prompt,
-                intent="CREATE",
+                intent="IMAGE" if str(body.get("image_b64") or "").strip() else "CREATE",
                 work_dir=str(output_root),
                 output_dir=str(output_root),
                 gsm_name=project_name,
+                image_b64=str(body.get("image_b64") or "").strip() or None,
+                image_mime=str(body.get("image_mime") or "image/png"),
                 assistant_settings=str(body.get("assistant_settings") or self.assistant_settings),
                 history=list(body.get("history") or []),
                 on_event=on_event,
@@ -1140,6 +1142,8 @@ class WorkbenchSession:
             work_dir=str(self.source_path.parent),
             output_dir=str(self.source_path.parent / "output"),
             gsm_name=self.project.name,
+            image_b64=str(body.get("image_b64") or "").strip() or None,
+            image_mime=str(body.get("image_mime") or "image/png"),
             assistant_settings=str(body.get("assistant_settings") or self.assistant_settings),
             history=list(body.get("history") or []),
             on_event=on_event,

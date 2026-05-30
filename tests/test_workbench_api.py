@@ -259,6 +259,44 @@ def test_workbench_session_creates_project_from_prompt(tmp_path):
     assert FakePipeline.last_request.output_dir == str(tmp_path.resolve())
 
 
+def test_workbench_session_creates_project_from_image_prompt(tmp_path):
+    class FakePipeline:
+        last_request = None
+
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            FakePipeline.last_request = request
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            return TaskResult(
+                success=True,
+                intent=request.intent,
+                scripts={"scripts/3d.gdl": project.get_script(ScriptType.SCRIPT_3D)},
+                plain_text="已根据参考图创建对象",
+                project=project,
+            )
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {
+            "prompt": "根据参考图生成一个书架",
+            "output_dir": str(tmp_path),
+            "image_b64": "ZmFrZS1pbWFnZQ==",
+            "image_mime": "image/png",
+        },
+    )
+
+    assert response["ok"] is True
+    assert response["assistant"]["kind"] == "create"
+    assert FakePipeline.last_request.intent == "IMAGE"
+    assert FakePipeline.last_request.image_b64 == "ZmFrZS1pbWFnZQ=="
+    assert FakePipeline.last_request.image_mime == "image/png"
+
+
 def test_workbench_session_saves_and_lists_project_revisions(tmp_path):
     project = HSFProject.create_new("RevisionShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
@@ -965,6 +1003,45 @@ def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_pat
     assert "ADDZ 1" in HSFProject.load_from_disk(str(hsf_dir)).get_script(ScriptType.SCRIPT_3D)
     assert FakePipeline.last_request.intent == "MODIFY"
     assert FakePipeline.last_request.gsm_name == "GeneratedShelf"
+
+
+def test_workbench_session_generate_passes_reference_image_to_pipeline(tmp_path):
+    project = HSFProject.create_new("VisionShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FakePipeline:
+        last_request = None
+
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            FakePipeline.last_request = request
+            request.project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            return TaskResult(
+                success=True,
+                intent="MODIFY",
+                scripts={"scripts/3d.gdl": request.project.get_script(ScriptType.SCRIPT_3D)},
+                plain_text="已按参考图调整",
+                project=request.project,
+            )
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/assistant/generate",
+        {
+            "message": "按这张图调整比例",
+            "image_b64": "ZmFrZS1pbWFnZQ==",
+            "image_mime": "image/jpeg",
+        },
+    )
+
+    assert response["ok"] is True
+    assert FakePipeline.last_request.intent == "MODIFY"
+    assert FakePipeline.last_request.image_b64 == "ZmFrZS1pbWFnZQ=="
+    assert FakePipeline.last_request.image_mime == "image/jpeg"
 
 
 def test_workbench_session_generate_reports_pipeline_failure(tmp_path):

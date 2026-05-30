@@ -4,6 +4,7 @@ import type {
   ApplyResult,
   AssistantCodeBlocksResult,
   AssistantHistoryResult,
+  AssistantImageAttachment,
   AssistantMessage,
   AssistantResult,
   ClearProjectMemoryResult,
@@ -64,7 +65,11 @@ export interface WorkbenchApi {
   chooseCompilerFile: () => Promise<FileChoiceResult>
   chooseOutputDirectory: () => Promise<DirectoryChoiceResult>
   compileProject: (outputDir?: string) => Promise<CompileResult>
-  createProjectFromPrompt: (message: string, assistantSettings?: string) => Promise<CreateProjectResult>
+  createProjectFromPrompt: (
+    message: string,
+    assistantSettings?: string,
+    image?: AssistantImageAttachment | null,
+  ) => Promise<CreateProjectResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
   listRecentProjects: () => Promise<RecentProjectsResponse>
   listProjectRevisions: () => Promise<ProjectRevisionsResponse>
@@ -89,7 +94,11 @@ export interface WorkbenchApi {
   ignoreMemoryLesson: (fingerprint: string) => Promise<IgnoreMemoryLessonResult>
   updateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => Promise<UpdateMemoryLessonResult>
   clearProjectMemory: () => Promise<ClearProjectMemoryResult>
-  generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
+  generateWithAssistant: (
+    message: string,
+    assistantSettings?: string,
+    image?: AssistantImageAttachment | null,
+  ) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>
@@ -148,8 +157,8 @@ export interface WorkbenchState {
   clearAssistantHistory: () => Promise<void>
   adoptAssistantMessageCode: (index: number) => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
-  createProjectFromPrompt: (message: string) => Promise<void>
-  generateAssistantChanges: (message: string) => Promise<void>
+  createProjectFromPrompt: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
+  generateAssistantChanges: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<boolean>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<boolean>

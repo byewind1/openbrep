@@ -905,6 +905,38 @@ button:focus-visible {
   gap: 6px;
 }
 
+.assistant-attachment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.assistant-attach-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.assistant-attach-button input {
+  display: none;
+}
+
+.assistant-image-chip {
+  overflow: hidden;
+  max-width: 180px;
+  height: 26px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .assistant-input textarea {
   width: 100%;
   min-height: 70px;

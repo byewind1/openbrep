@@ -4,6 +4,7 @@ import type {
   AddParameterResult,
   AssistantCodeBlocksResult,
   AssistantHistoryResult,
+  AssistantImageAttachment,
   AssistantMessage,
   AssistantResult,
   ClearProjectMemoryResult,
@@ -136,13 +137,21 @@ export async function exportHsfProject(parentDir = '', name = ''): Promise<HsfEx
   )
 }
 
-export async function createProjectFromPrompt(message: string, assistantSettings = ''): Promise<CreateProjectResult> {
+export async function createProjectFromPrompt(
+  message: string,
+  assistantSettings = '',
+  image?: AssistantImageAttachment | null,
+): Promise<CreateProjectResult> {
   return requestJson<CreateProjectResult>(
     '/api/project/create',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: message, assistant_settings: assistantSettings }),
+      body: JSON.stringify({
+        prompt: message,
+        assistant_settings: assistantSettings,
+        ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+      }),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
   )
@@ -447,13 +456,21 @@ export async function clearProjectMemory(): Promise<ClearProjectMemoryResult> {
   )
 }
 
-export async function generateWithAssistant(message: string, assistantSettings = ''): Promise<GenerateResult> {
+export async function generateWithAssistant(
+  message: string,
+  assistantSettings = '',
+  image?: AssistantImageAttachment | null,
+): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, assistant_settings: assistantSettings }),
+      body: JSON.stringify({
+        message,
+        assistant_settings: assistantSettings,
+        ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+      }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )

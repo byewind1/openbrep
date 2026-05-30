@@ -75,7 +75,7 @@ root, not a business-logic dump. The store split is holding.
 | Explain/chat | Yes | Basic assistant explain | Partial |
 | Chat history browser | Yes | Assistant thread persists per HSF project; compact drawer browser is available from AI panel | Partial |
 | Adopt code from chat record | Yes | Assistant replies with code can be adopted from thread or history drawer into dirty script buffers | Done |
-| Image/vision input | Yes | Not implemented | Gap |
+| Image/vision input | Yes | AI panel can attach image references for create/generate, forwarded to existing pipeline vision path | Partial |
 | LLM settings | Sidebar settings | Settings drawer | Done |
 | Custom provider credentials | Yes | Settings drawer supports model/key/base | Partial but usable |
 | Compiler settings | Sidebar settings | Settings drawer | Done |
@@ -96,7 +96,7 @@ React Workbench is ready to become the primary path for these users:
 
 React Workbench is not ready to fully replace Streamlit for these workflows:
 
-- Image-to-GDL generation.
+- Advanced image-to-GDL workflows beyond one attached reference image.
 - Archicad/Tapir live integration.
 - Advanced wrong-answer notebook curation beyond summarize/review.
 - Pro licensing and Pro knowledge package import.
@@ -183,10 +183,10 @@ Keep these rules while migrating:
 
 ## Next Recommendation
 
-Continue P5B session memory with lesson curation, then move to image input.
+Continue image input hardening, then move to Archicad/Tapir only after the
+daily React workbench remains stable.
 
-Reason: daily code work is now covered well enough. The next highest-value gap
-is now polishing session continuity: persisted assistant history, drawer browsing,
-code adoption, lesson review, per-lesson delete, summarize, and skill preview
-exist, but users still need merge controls before this fully replaces
-the Streamlit memory tools.
+Reason: daily code work and the main memory curation controls are now covered
+well enough. Image attachment now reaches the existing pipeline vision path, but
+still needs manual smoke testing with a real vision-capable model and better
+error messaging for unsupported providers or oversized images.

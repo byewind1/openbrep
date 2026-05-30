@@ -1,7 +1,12 @@
+import type { AssistantImageAttachment } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
+  function userMessageContent(message: string, image?: AssistantImageAttachment | null) {
+    return image ? `${message}\n[image: ${image.name}]` : message
+  }
+
   async function persistAssistantHistory() {
     const result = await api.saveAssistantHistory(get().assistantMessages)
     if (!result.ok && result.error) {
@@ -92,14 +97,14 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       await persistAssistantHistory()
     },
 
-    async createProjectFromPrompt(message: string) {
+    async createProjectFromPrompt(message: string, image: AssistantImageAttachment | null = null) {
       const trimmed = message.trim()
       if (!trimmed) return
       set((state) => ({
         assistantBusy: true,
-        assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
+        assistantMessages: [...state.assistantMessages, { role: 'user', content: userMessageContent(trimmed, image) }],
       }))
-      const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings)
+      const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, image)
       if (!result.ok || !result.project || !result.parameters || !result.preview) {
         set((state) => ({
           assistantBusy: false,
@@ -125,14 +130,14 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       await persistAssistantHistory()
     },
 
-    async generateAssistantChanges(message: string) {
+    async generateAssistantChanges(message: string, image: AssistantImageAttachment | null = null) {
       const trimmed = message.trim()
       if (!trimmed) return
       set((state) => ({
         assistantBusy: true,
-        assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
+        assistantMessages: [...state.assistantMessages, { role: 'user', content: userMessageContent(trimmed, image) }],
       }))
-      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings)
+      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, image)
       const changedFiles = result.assistant?.changed_files ?? []
       const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
       const reply =

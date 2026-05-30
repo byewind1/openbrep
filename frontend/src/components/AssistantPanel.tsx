@@ -1,19 +1,21 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import type { AssistantMessage } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage } from '../api/types'
 
 interface AssistantPanelProps {
   messages: AssistantMessage[]
   busy: boolean
   onSend: (message: string) => void
-  onCreate: (message: string) => void
-  onGenerate: (message: string) => void
+  onCreate: (message: string, image?: AssistantImageAttachment | null) => void
+  onGenerate: (message: string, image?: AssistantImageAttachment | null) => void
   onClearHistory: () => void
   onAdoptCode: (index: number) => void
 }
 
 export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, onClearHistory, onAdoptCode }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
+  const [image, setImage] = useState<AssistantImageAttachment | null>(null)
+  const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
 
   function submitMessage(event: FormEvent<HTMLFormElement>) {
@@ -26,12 +28,35 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
     if (!message) return
     setDraft('')
     if (mode === 'create') {
-      onCreate(message)
+      onCreate(message, image)
+      setImage(null)
     } else if (mode === 'generate') {
-      onGenerate(message)
+      onGenerate(message, image)
+      setImage(null)
     } else {
       onSend(message)
     }
+  }
+
+  function attachImage(file: File | null) {
+    setImageError('')
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setImageError('Only image files')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      const comma = result.indexOf(',')
+      setImage({
+        name: file.name,
+        mime: file.type || 'image/png',
+        b64: comma >= 0 ? result.slice(comma + 1) : result,
+      })
+    }
+    reader.onerror = () => setImageError('Image read failed')
+    reader.readAsDataURL(file)
   }
 
   return (
@@ -72,6 +97,24 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
           value={draft}
           onChange={(event) => setDraft(event.currentTarget.value)}
         />
+        <div className="assistant-attachment-row">
+          <label className="assistant-attach-button">
+            Image
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              disabled={busy}
+              onChange={(event) => attachImage(event.currentTarget.files?.[0] ?? null)}
+            />
+          </label>
+          {image ? (
+            <button type="button" className="assistant-image-chip" disabled={busy} onClick={() => setImage(null)}>
+              {image.name} ×
+            </button>
+          ) : (
+            <span>{imageError || 'No image'}</span>
+          )}
+        </div>
         <div className="assistant-actions">
           <button type="submit" disabled={busy || draft.trim().length === 0}>
             解释

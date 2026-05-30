@@ -1406,6 +1406,44 @@ test('createProjectFromPrompt loads the created project and records assistant re
   expect(store.getState().assistantBusy).toBe(false)
 })
 
+test('createProjectFromPrompt passes image attachments to the API', async () => {
+  let capturedImage = null
+  const store = createWorkbenchStore(
+    makeApi({
+      createProjectFromPrompt: async (_message, _assistantSettings, image) => {
+        capturedImage = image
+        return {
+          ok: true,
+          assistant: {
+            kind: 'create',
+            reply: 'created from image',
+            changed_files: ['scripts/3d.gdl'],
+            intent: 'IMAGE',
+          },
+          project: { name: 'ImageShelf', source: 'hsf', path: '/workspace/ImageShelf' },
+          parameters: [],
+          preview: { meshes: [], wires: [], warnings: [] },
+          warnings: [],
+          compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+        }
+      },
+    }),
+  )
+
+  await store.getState().createProjectFromPrompt('照图生成书架', {
+    name: 'shelf.png',
+    mime: 'image/png',
+    b64: 'ZmFrZS1pbWFnZQ==',
+  })
+
+  expect(capturedImage).toEqual({
+    name: 'shelf.png',
+    mime: 'image/png',
+    b64: 'ZmFrZS1pbWFnZQ==',
+  })
+  expect(store.getState().assistantMessages[0].content).toContain('[image: shelf.png]')
+})
+
 test('generate assistant message refreshes preview and records changed files', async () => {
   const store = createWorkbenchStore(
     makeApi({
@@ -1446,4 +1484,39 @@ test('generate assistant message refreshes preview and records changed files', a
     role: 'assistant',
     content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
   })
+})
+
+test('generateAssistantChanges passes image attachments to the API', async () => {
+  let capturedImage = null
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async (_message, _assistantSettings, image) => {
+        capturedImage = image
+        return {
+          ok: true,
+          assistant: {
+            kind: 'generate',
+            reply: 'changed from image',
+            changed_files: ['scripts/3d.gdl'],
+            intent: 'MODIFY',
+          },
+          preview: { meshes: [], wires: [], warnings: [] },
+          warnings: [],
+        }
+      },
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('按图调整', {
+    name: 'chair.jpg',
+    mime: 'image/jpeg',
+    b64: 'ZmFrZS1pbWFnZQ==',
+  })
+
+  expect(capturedImage).toEqual({
+    name: 'chair.jpg',
+    mime: 'image/jpeg',
+    b64: 'ZmFrZS1pbWFnZQ==',
+  })
+  expect(store.getState().assistantMessages[0].content).toContain('[image: chair.jpg]')
 })
