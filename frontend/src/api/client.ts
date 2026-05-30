@@ -9,6 +9,7 @@ import type {
   ClearProjectMemoryResult,
   CompileResult,
   CreateProjectResult,
+  DeleteMemoryLessonResult,
   MockCompileResponse,
   CompilerSettings,
   CompilerSettingsResult,
@@ -400,6 +401,14 @@ export async function summarizeProjectMemory(): Promise<SummarizeMemoryResult> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function deleteMemoryLesson(fingerprint: string): Promise<DeleteMemoryLessonResult> {
+  return requestJson<DeleteMemoryLessonResult>(
+    `/api/memory/lessons/${encodeURIComponent(fingerprint)}`,
+    { method: 'DELETE' },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }

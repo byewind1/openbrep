@@ -46,6 +46,31 @@ export function createMemoryActions({ api, set }: WorkbenchActionContext) {
       }))
     },
 
+    async deleteMemoryLesson(fingerprint: string) {
+      const cleaned = fingerprint.trim()
+      if (!cleaned) {
+        set({ lastError: 'Lesson fingerprint is required.' })
+        return
+      }
+      const result = await api.deleteMemoryLesson(cleaned)
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to delete project memory lesson.' })
+        return
+      }
+      const [status, lessons] = await Promise.all([
+        api.fetchMemoryStatus(),
+        api.fetchMemoryLessons(),
+      ])
+      set((state) => ({
+        memoryStatus: status.ok ? status.memory ?? null : state.memoryStatus,
+        memoryLessons: lessons.ok
+          ? lessons.lessons
+          : state.memoryLessons.filter((lesson) => lesson.fingerprint !== cleaned),
+        compileLog: ['Deleted memory lesson', ...state.compileLog].slice(0, 20),
+        lastError: status.ok && lessons.ok ? null : status.error ?? lessons.error ?? state.lastError,
+      }))
+    },
+
     async clearProjectMemory() {
       const result = await api.clearProjectMemory()
       if (!result.ok) {

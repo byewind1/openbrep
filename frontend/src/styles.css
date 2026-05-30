@@ -1380,6 +1380,20 @@ button:focus-visible {
   font-size: 11px;
 }
 
+.memory-lesson-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-lesson-delete {
+  min-height: 22px;
+  padding: 0 7px;
+  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--error);
+  font-size: 11px;
+}
+
 .memory-lesson-item p {
   margin: 0;
   color: var(--text-secondary);

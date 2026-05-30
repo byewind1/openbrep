@@ -316,6 +316,13 @@ export interface SummarizeMemoryResult {
   error?: string
 }
 
+export interface DeleteMemoryLessonResult {
+  ok: boolean
+  deleted?: string
+  remaining_count?: number
+  error?: string
+}
+
 export interface GenerateResult {
   ok: boolean
   assistant?: {

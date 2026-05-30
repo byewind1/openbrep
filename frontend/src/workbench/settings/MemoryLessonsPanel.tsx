@@ -8,6 +8,7 @@ interface MemoryLessonsPanelProps {
   formatBytes: (bytes: number) => string
   onRefresh: () => void
   onSummarize: () => void
+  onDeleteLesson: (fingerprint: string) => void
   onClear: () => void
 }
 
@@ -19,6 +20,7 @@ export function MemoryLessonsPanel({
   formatBytes,
   onRefresh,
   onSummarize,
+  onDeleteLesson,
   onClear,
 }: MemoryLessonsPanelProps) {
   return (
@@ -60,7 +62,18 @@ export function MemoryLessonsPanel({
             <article className="memory-lesson-item" key={lesson.fingerprint}>
               <div className="memory-lesson-meta">
                 <span>{lesson.category || 'general'}</span>
-                <strong>{lesson.count}x</strong>
+                <div className="memory-lesson-controls">
+                  <strong>{lesson.count}x</strong>
+                  <button
+                    type="button"
+                    className="memory-lesson-delete"
+                    onClick={() => onDeleteLesson(lesson.fingerprint)}
+                    disabled={busy}
+                    aria-label={`Delete lesson ${lesson.category}`}
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
               <p>{lesson.summary}</p>
               {lesson.guidance ? <small>{lesson.guidance}</small> : null}

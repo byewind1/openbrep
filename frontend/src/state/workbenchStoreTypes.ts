@@ -11,6 +11,7 @@ import type {
   CompilerSettings,
   CompilerSettingsResult,
   CreateProjectResult,
+  DeleteMemoryLessonResult,
   DirectoryChoiceResult,
   DeleteParameterResult,
   ErrorLesson,
@@ -81,6 +82,7 @@ export interface WorkbenchApi {
   fetchMemoryStatus: () => Promise<ProjectMemoryStatusResult>
   fetchMemoryLessons: () => Promise<ProjectLessonsResult>
   summarizeProjectMemory: () => Promise<SummarizeMemoryResult>
+  deleteMemoryLesson: (fingerprint: string) => Promise<DeleteMemoryLessonResult>
   clearProjectMemory: () => Promise<ClearProjectMemoryResult>
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
@@ -157,6 +159,7 @@ export interface WorkbenchState {
   loadMemoryStatus: () => Promise<void>
   loadMemoryLessons: () => Promise<void>
   summarizeProjectMemory: () => Promise<void>
+  deleteMemoryLesson: (fingerprint: string) => Promise<void>
   clearProjectMemory: () => Promise<void>
   saveRevision: (message?: string) => Promise<void>
   restoreRevision: (revisionId: string) => Promise<void>

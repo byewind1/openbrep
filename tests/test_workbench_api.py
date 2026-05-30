@@ -847,6 +847,30 @@ def test_workbench_session_summarizes_project_memory_to_skill(tmp_path):
     assert "FOO" in response["skill"]
 
 
+def test_workbench_session_deletes_project_memory_lesson(tmp_path):
+    project = HSFProject.create_new("MemoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    lesson = ErrorLearningStore(hsf_dir).record_error(
+        "Unknown command FOO at line 3",
+        source="test",
+        project_name="MemoryShelf",
+        instruction="bad command",
+    )
+
+    response = session.route("DELETE", f"/api/memory/lessons/{lesson.fingerprint}")
+    lessons = session.route("GET", "/api/memory/lessons")
+    status = session.route("GET", "/api/memory/status")
+
+    assert response["ok"] is True
+    assert response["deleted"] == lesson.fingerprint
+    assert response["remaining_count"] == 0
+    assert lessons["lessons"] == []
+    assert status["memory"]["lesson_count"] == 0
+
+
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):
     project = HSFProject.create_new("GeneratedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

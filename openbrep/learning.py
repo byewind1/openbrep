@@ -154,6 +154,22 @@ class ErrorLearningStore:
             return lessons
         return lessons
 
+    def delete_error_lesson(self, fingerprint: str) -> tuple[bool, int]:
+        """Delete one workspace lesson by fingerprint.
+
+        Returns ``(deleted, remaining_count)``. Developer seed lessons are not
+        editable here because they are not user workspace memory.
+        """
+        target = str(fingerprint or "").strip()
+        if not target:
+            return False, len(self.list_error_lessons(include_seed=False))
+        lessons = self.list_error_lessons(include_seed=False)
+        remaining = [lesson for lesson in lessons if lesson.fingerprint != target]
+        deleted = len(remaining) != len(lessons)
+        if deleted:
+            self._write_lessons(remaining)
+        return deleted, len(remaining)
+
     def build_skill_prompt(self, *, project_name: str = "", limit: int = 8) -> str:
         compacted = self.load_learned_skill()
         workspace_recent = build_error_learning_skill(
