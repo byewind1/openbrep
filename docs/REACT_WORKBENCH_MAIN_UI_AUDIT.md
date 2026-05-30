@@ -199,3 +199,12 @@ python scripts/workbench_vision_smoke.py --config ~/.openbrep/config.toml --outp
 
 If the config file is missing, the script returns a JSON `skip` result instead
 of making a real model call.
+
+For the regular React Workbench readiness gate, run:
+
+```bash
+python scripts/workbench_readiness_gate.py --pretty
+```
+
+Use `--full` before merge-level decisions; default mode is the faster targeted
+gate for ordinary development.
