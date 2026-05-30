@@ -1013,6 +1013,42 @@ class WorkbenchSession:
             return {"ok": False, "error": f"Failed to read project memory status: {exc}"}
         return {"ok": True, "memory": _memory_status_to_api(status)}
 
+    def list_memory_lessons(self) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": True, "lessons": []}
+        try:
+            lessons = ErrorLearningStore(self.source_path).list_error_lessons(include_seed=False)
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to read project memory lessons: {exc}", "lessons": []}
+        return {"ok": True, "lessons": [_error_lesson_to_api(lesson) for lesson in lessons]}
+
+    def summarize_project_memory(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before summarizing project memory."}
+        body = body or {}
+        try:
+            limit = int(body.get("limit") or 12)
+        except (TypeError, ValueError):
+            limit = 12
+        limit = max(1, min(limit, 50))
+        try:
+            store = ErrorLearningStore(self.source_path)
+            summary = store.summarize_to_skill(
+                project_name=self.project.name,
+                limit=limit,
+                scan_chat=True,
+                llm_refiner=None,
+            )
+            skill = store.load_learned_skill()
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to summarize project memory: {exc}"}
+        return {
+            "ok": bool(summary.ok),
+            "summary": _learning_summary_to_api(summary),
+            "skill": skill,
+            **({} if summary.ok else {"error": summary.message}),
+        }
+
     def clear_project_memory(self) -> dict[str, Any]:
         if self.source_path is None:
             return {
@@ -1200,6 +1236,12 @@ class WorkbenchSession:
         if normalized_method == "GET" and route == "/api/memory/status":
             return self.memory_status()
 
+        if normalized_method == "GET" and route == "/api/memory/lessons":
+            return self.list_memory_lessons()
+
+        if normalized_method == "POST" and route == "/api/memory/summarize":
+            return self.summarize_project_memory(body)
+
         if normalized_method == "DELETE" and route == "/api/memory":
             return self.clear_project_memory()
 
@@ -1281,6 +1323,31 @@ def _memory_status_to_api(status) -> dict[str, Any]:
         "lesson_count": status.lesson_count,
         "has_learned_skill": bool(status.has_learned_skill),
         "total_bytes": status.total_bytes,
+    }
+
+
+def _error_lesson_to_api(lesson) -> dict[str, Any]:
+    return {
+        "fingerprint": lesson.fingerprint,
+        "category": lesson.category,
+        "summary": lesson.summary,
+        "guidance": lesson.guidance,
+        "example": lesson.example,
+        "count": lesson.count,
+        "first_seen": lesson.first_seen,
+        "last_seen": lesson.last_seen,
+        "source": lesson.source,
+        "project_name": lesson.project_name,
+        "raw_excerpt": lesson.raw_excerpt,
+    }
+
+
+def _learning_summary_to_api(summary) -> dict[str, Any]:
+    return {
+        "ok": bool(summary.ok),
+        "lesson_count": summary.lesson_count,
+        "path": str(summary.path),
+        "message": summary.message,
     }
 
 

@@ -20,6 +20,7 @@ import type {
   LlmSettingsResult,
   Preview2DPayload,
   PreviewPayload,
+  ProjectLessonsResult,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
   ProjectMemoryStatusResult,
@@ -31,6 +32,7 @@ import type {
   SaveAssistantHistoryResult,
   SaveScriptResponse,
   SaveRevisionResponse,
+  SummarizeMemoryResult,
   DeleteParameterResult,
   UpdateParameterRequest,
   UpdateParameterResult,
@@ -378,6 +380,26 @@ export async function fetchMemoryStatus(): Promise<ProjectMemoryStatusResult> {
   return requestJson<ProjectMemoryStatusResult>(
     '/api/memory/status',
     { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchMemoryLessons(): Promise<ProjectLessonsResult> {
+  return requestJson<ProjectLessonsResult>(
+    '/api/memory/lessons',
+    { method: 'GET' },
+    { ok: false, lessons: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function summarizeProjectMemory(): Promise<SummarizeMemoryResult> {
+  return requestJson<SummarizeMemoryResult>(
+    '/api/memory/summarize',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }

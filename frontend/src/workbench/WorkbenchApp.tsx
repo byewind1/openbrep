@@ -42,6 +42,9 @@ export function WorkbenchApp() {
   const recentProjects = useWorkbenchStore((state) => state.recentProjects)
   const revisions = useWorkbenchStore((state) => state.revisions)
   const memoryStatus = useWorkbenchStore((state) => state.memoryStatus)
+  const memoryLessons = useWorkbenchStore((state) => state.memoryLessons)
+  const memorySkillPreview = useWorkbenchStore((state) => state.memorySkillPreview)
+  const memoryBusy = useWorkbenchStore((state) => state.memoryBusy)
   const latestRevisionId = useWorkbenchStore((state) => state.latestRevisionId)
   const revisionLoading = useWorkbenchStore((state) => state.revisionLoading)
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
@@ -74,6 +77,8 @@ export function WorkbenchApp() {
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
+  const loadMemoryLessons = useWorkbenchStore((state) => state.loadMemoryLessons)
+  const summarizeProjectMemory = useWorkbenchStore((state) => state.summarizeProjectMemory)
   const clearProjectMemory = useWorkbenchStore((state) => state.clearProjectMemory)
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
@@ -261,6 +266,9 @@ export function WorkbenchApp() {
         llmSettings={llmSettings}
         recentProjects={recentProjects}
         memoryStatus={memoryStatus}
+        memoryLessons={memoryLessons}
+        memorySkillPreview={memorySkillPreview}
+        memoryBusy={memoryBusy}
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
         onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
@@ -270,7 +278,9 @@ export function WorkbenchApp() {
         onOpenProjectPath={(path) => void loadProjectPath(path)}
         onExportHsfProject={() => void exportHsfProject()}
         onCloseProject={() => void closeProject()}
-        onClearProjectMemory={() => void clearProjectMemory()}
+        onLoadMemoryLessons={loadMemoryLessons}
+        onSummarizeProjectMemory={summarizeProjectMemory}
+        onClearProjectMemory={clearProjectMemory}
       />
     </main>
   )

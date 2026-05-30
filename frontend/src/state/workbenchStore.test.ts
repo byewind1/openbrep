@@ -185,6 +185,17 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         total_bytes: 0,
       },
     }),
+    fetchMemoryLessons: async () => ({ ok: true, lessons: [] }),
+    summarizeProjectMemory: async () => ({
+      ok: true,
+      summary: {
+        ok: true,
+        lesson_count: 0,
+        path: '/workspace/Chair/.openbrep/memory/skills/learned_skill.md',
+        message: '已整理 0 条错题约束，方式：规则整理',
+      },
+      skill: '',
+    }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
@@ -1083,6 +1094,98 @@ test('clearProjectMemory clears persisted memory and local assistant history', a
   expect(store.getState().assistantMessages).toEqual([])
   expect(store.getState().memoryStatus?.chat_count).toBe(0)
   expect(store.getState().compileLog[0]).toContain('Cleared project memory')
+})
+
+test('loadMemoryLessons stores project lessons', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchMemoryLessons: async () => ({
+        ok: true,
+        lessons: [
+          {
+            fingerprint: 'fp-1',
+            category: 'general_compile_error',
+            summary: 'Unknown command FOO at line 3',
+            guidance: 'Avoid unsupported commands.',
+            example: '',
+            count: 2,
+            first_seen: '2026-05-30T10:00:00Z',
+            last_seen: '2026-05-30T10:10:00Z',
+            source: 'test',
+            project_name: 'Chair',
+            raw_excerpt: 'Unknown command FOO at line 3',
+          },
+        ],
+      }),
+    }),
+  )
+
+  await store.getState().loadMemoryLessons()
+
+  expect(store.getState().memoryLessons).toHaveLength(1)
+  expect(store.getState().memoryLessons[0].summary).toContain('FOO')
+})
+
+test('summarizeProjectMemory stores skill preview and refreshes memory state', async () => {
+  let summarized = false
+  let lessonRefreshes = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      summarizeProjectMemory: async () => {
+        summarized = true
+        return {
+          ok: true,
+          summary: {
+            ok: true,
+            lesson_count: 1,
+            path: '/workspace/Chair/.openbrep/memory/skills/learned_skill.md',
+            message: '已整理 1 条错题约束，扫描聊天命中 0 条，方式：规则整理',
+          },
+          skill: '# OpenBrep Learned GDL Error Avoidance\n\n- Avoid FOO',
+        }
+      },
+      fetchMemoryStatus: async () => ({
+        ok: true,
+        memory: {
+          memory_root: '/workspace/Chair/.openbrep/memory',
+          chat_count: 0,
+          lesson_count: 1,
+          has_learned_skill: true,
+          total_bytes: 1024,
+        },
+      }),
+      fetchMemoryLessons: async () => {
+        lessonRefreshes += 1
+        return {
+          ok: true,
+          lessons: [
+            {
+              fingerprint: 'fp-1',
+              category: 'general_compile_error',
+              summary: 'Unknown command FOO at line 3',
+              guidance: 'Avoid unsupported commands.',
+              example: '',
+              count: 1,
+              first_seen: '2026-05-30T10:00:00Z',
+              last_seen: '2026-05-30T10:00:00Z',
+              source: 'test',
+              project_name: 'Chair',
+              raw_excerpt: 'Unknown command FOO at line 3',
+            },
+          ],
+        }
+      },
+    }),
+  )
+
+  await store.getState().summarizeProjectMemory()
+
+  expect(summarized).toBe(true)
+  expect(lessonRefreshes).toBe(1)
+  expect(store.getState().memoryStatus?.has_learned_skill).toBe(true)
+  expect(store.getState().memoryLessons).toHaveLength(1)
+  expect(store.getState().memorySkillPreview).toContain('Avoid FOO')
+  expect(store.getState().compileLog[0]).toContain('已整理 1 条错题约束')
 })
 
 test('adopts code blocks from an assistant history message into dirty script buffers', async () => {

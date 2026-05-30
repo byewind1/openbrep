@@ -282,6 +282,40 @@ export interface ClearProjectMemoryResult {
   error?: string
 }
 
+export interface ErrorLesson {
+  fingerprint: string
+  category: string
+  summary: string
+  guidance: string
+  example: string
+  count: number
+  first_seen: string
+  last_seen: string
+  source: string
+  project_name: string
+  raw_excerpt: string
+}
+
+export interface ProjectLessonsResult {
+  ok: boolean
+  lessons: ErrorLesson[]
+  error?: string
+}
+
+export interface LearningSummaryResult {
+  ok: boolean
+  lesson_count: number
+  path: string
+  message: string
+}
+
+export interface SummarizeMemoryResult {
+  ok: boolean
+  summary?: LearningSummaryResult
+  skill?: string
+  error?: string
+}
+
 export interface GenerateResult {
   ok: boolean
   assistant?: {

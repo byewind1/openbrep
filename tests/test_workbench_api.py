@@ -1,5 +1,6 @@
 from openbrep.compiler import CompileResult
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import TaskResult
 import openbrep.workbench_api as workbench_api
 from openbrep.workbench_api import (
@@ -795,6 +796,55 @@ def test_workbench_session_reports_and_clears_project_memory_status(tmp_path):
     assert cleared["before"]["chat_count"] == 1
     assert after["memory"]["chat_count"] == 0
     assert after["memory"]["total_bytes"] == 0
+
+
+def test_workbench_session_lists_project_memory_lessons(tmp_path):
+    project = HSFProject.create_new("MemoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    ErrorLearningStore(hsf_dir).record_error(
+        "Unknown command FOO at line 3",
+        source="test",
+        project_name="MemoryShelf",
+        instruction="bad command",
+    )
+
+    response = session.route("GET", "/api/memory/lessons")
+
+    assert response["ok"] is True
+    assert len(response["lessons"]) == 1
+    lesson = response["lessons"][0]
+    assert lesson["category"]
+    assert "FOO" in lesson["summary"]
+    assert lesson["guidance"]
+    assert lesson["count"] == 1
+    assert lesson["project_name"] == "MemoryShelf"
+    assert lesson["source"] == "test"
+
+
+def test_workbench_session_summarizes_project_memory_to_skill(tmp_path):
+    project = HSFProject.create_new("MemoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    ErrorLearningStore(hsf_dir).record_error(
+        "Unknown command FOO at line 3",
+        source="test",
+        project_name="MemoryShelf",
+        instruction="bad command",
+    )
+
+    response = session.route("POST", "/api/memory/summarize", {})
+
+    assert response["ok"] is True
+    assert response["summary"]["ok"] is True
+    assert response["summary"]["lesson_count"] >= 1
+    assert response["summary"]["path"].endswith("learned_skill.md")
+    assert "规则整理" in response["summary"]["message"]
+    assert "FOO" in response["skill"]
 
 
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):

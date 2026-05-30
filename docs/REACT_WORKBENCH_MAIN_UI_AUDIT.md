@@ -80,8 +80,8 @@ root, not a business-logic dump. The store split is holding.
 | Custom provider credentials | Yes | Settings drawer supports model/key/base | Partial but usable |
 | Compiler settings | Sidebar settings | Settings drawer | Done |
 | Work directory | Sidebar setting | Not explicit; project paths are direct | Gap |
-| Memory/privacy panel | Error lessons, memory status, clear memory | Settings drawer shows project memory status and can clear project memory | Partial |
-| Wrong-answer notebook summarize | Streamlit workspace tool | Not implemented | Gap |
+| Memory/privacy panel | Error lessons, memory status, clear memory | Settings drawer shows project memory status, lesson review, skill preview, summarize, and clear memory | Done |
+| Wrong-answer notebook summarize | Streamlit workspace tool | Settings drawer can summarize lessons into learned skill via local API | Partial |
 | Pro license/knowledge package | Streamlit sidebar | Not implemented | Defer |
 | Tapir/Archicad bridge | Streamlit controls | Not implemented | Defer |
 
@@ -98,7 +98,7 @@ React Workbench is not ready to fully replace Streamlit for these workflows:
 
 - Image-to-GDL generation.
 - Archicad/Tapir live integration.
-- Wrong-answer notebook summarization and review.
+- Advanced wrong-answer notebook curation beyond summarize/review.
 - Pro licensing and Pro knowledge package import.
 - Multi-message history browser actions beyond single-message code adoption.
 
@@ -133,12 +133,15 @@ Implemented:
 - Adopt code blocks from assistant history into editable script buffers.
 - Browse assistant history in a compact drawer from the AI panel.
 - Show project memory status in Settings.
+- Review project error lessons in Settings.
+- Summarize project memory into the learned skill from Settings.
+- Preview the generated learned skill in Settings.
 - Clear project memory from Settings.
 
 Remaining:
 
 - Bulk or multi-message history actions beyond single-message adoption.
-- Wrong-answer notebook summarize/review.
+- Advanced wrong-answer notebook curation: merge/edit/delete individual lessons.
 
 This is more important than Pro/Tapir for day-to-day AI-assisted work.
 
@@ -177,9 +180,9 @@ Keep these rules while migrating:
 
 ## Next Recommendation
 
-Continue P5B session memory.
+Continue P5B session memory with lesson curation, then move to image input.
 
 Reason: daily code work is now covered well enough. The next highest-value gap
-is now session continuity: persisted assistant history, drawer browsing, code
-adoption, and basic project memory controls exist, but users still need richer
-history actions and wrong-answer notebook review without returning to Streamlit.
+is now polishing session continuity: persisted assistant history, drawer browsing,
+code adoption, lesson review, summarize, and skill preview exist, but users still
+need lesson-level curation before this fully replaces the Streamlit memory tools.

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { CompilerSettings, LlmSettings, ProjectMemoryStatus, RecentProject } from '../../api/types'
+import type { CompilerSettings, ErrorLesson, LlmSettings, ProjectMemoryStatus, RecentProject } from '../../api/types'
+import { MemoryLessonsPanel } from './MemoryLessonsPanel'
 
 interface SettingsDrawerProps {
   open: boolean
@@ -8,6 +9,9 @@ interface SettingsDrawerProps {
   llmSettings: LlmSettings
   recentProjects: RecentProject[]
   memoryStatus: ProjectMemoryStatus | null
+  memoryLessons: ErrorLesson[]
+  memorySkillPreview: string
+  memoryBusy: boolean
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => void
   onLlmSettingsChange: (settings: LlmSettings) => void
@@ -17,6 +21,8 @@ interface SettingsDrawerProps {
   onOpenProjectPath: (path: string) => void
   onExportHsfProject: () => void
   onCloseProject: () => void
+  onLoadMemoryLessons: () => void
+  onSummarizeProjectMemory: () => void
   onClearProjectMemory: () => void
 }
 
@@ -26,6 +32,9 @@ export function SettingsDrawer({
   llmSettings,
   recentProjects,
   memoryStatus,
+  memoryLessons,
+  memorySkillPreview,
+  memoryBusy,
   onClose,
   onCompilerSettingsChange,
   onLlmSettingsChange,
@@ -35,6 +44,8 @@ export function SettingsDrawer({
   onOpenProjectPath,
   onExportHsfProject,
   onCloseProject,
+  onLoadMemoryLessons,
+  onSummarizeProjectMemory,
   onClearProjectMemory,
 }: SettingsDrawerProps) {
   const [llmDraft, setLlmDraft] = useState(llmSettings)
@@ -42,6 +53,12 @@ export function SettingsDrawer({
   useEffect(() => {
     setLlmDraft(llmSettings)
   }, [llmSettings])
+
+  useEffect(() => {
+    if (open) {
+      onLoadMemoryLessons()
+    }
+  }, [open, onLoadMemoryLessons])
 
   function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -230,30 +247,16 @@ export function SettingsDrawer({
           </div>
         </section>
 
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <strong>Memory</strong>
-            <span>Project chat and learning records</span>
-          </div>
-          <div className="memory-status-grid">
-            <span>Chats</span>
-            <strong>{memoryStatus?.chat_count ?? 0}</strong>
-            <span>Lessons</span>
-            <strong>{memoryStatus?.lesson_count ?? 0}</strong>
-            <span>Size</span>
-            <strong>{formatBytes(memoryStatus?.total_bytes ?? 0)}</strong>
-            <span>Skill</span>
-            <strong>{memoryStatus?.has_learned_skill ? 'Yes' : 'No'}</strong>
-          </div>
-          <div className="settings-path-note" title={memoryStatus?.memory_root || ''}>
-            {memoryStatus?.memory_root || 'No project memory directory'}
-          </div>
-          <div className="settings-submit-row">
-            <button type="button" className="danger-action" onClick={onClearProjectMemory}>
-              Clear Memory
-            </button>
-          </div>
-        </section>
+        <MemoryLessonsPanel
+          memoryStatus={memoryStatus}
+          lessons={memoryLessons}
+          skillPreview={memorySkillPreview}
+          busy={memoryBusy}
+          formatBytes={formatBytes}
+          onRefresh={onLoadMemoryLessons}
+          onSummarize={onSummarizeProjectMemory}
+          onClear={onClearProjectMemory}
+        />
 
         <section className="settings-section muted">
           <div className="settings-section-heading">

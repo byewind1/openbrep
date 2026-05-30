@@ -1344,6 +1344,79 @@ button:focus-visible {
   font-weight: 600;
 }
 
+.memory-lessons-panel {
+  gap: 10px;
+}
+
+.memory-actions {
+  justify-content: space-between;
+}
+
+.memory-lessons-list {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-lesson-item {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-card) 82%, transparent);
+  padding: 9px 10px;
+}
+
+.memory-lesson-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.memory-lesson-meta strong {
+  color: var(--accent-soft);
+  font-size: 11px;
+}
+
+.memory-lesson-item p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.memory-lesson-item small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.memory-skill-preview {
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.memory-skill-preview summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.memory-skill-preview pre {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .settings-path-note {
   min-width: 0;
   overflow: hidden;
