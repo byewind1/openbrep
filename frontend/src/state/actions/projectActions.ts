@@ -67,6 +67,26 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: false })
     },
 
+    async exportHsfProject(parentDir = '', name = '') {
+      set({ loading: true, lastError: null })
+      const result = await api.exportHsfProject(parentDir, name)
+      if (result.ok === false) {
+        set({
+          loading: false,
+          lastError: result.cancelled ? null : result.error ?? 'Failed to export HSF project.',
+        })
+        return
+      }
+      set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
+      await get().loadScripts()
+      await get().loadRevisions()
+      set((state) => ({
+        loading: false,
+        compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
+      }))
+    },
+
     async closeProject() {
       set({ loading: true, lastError: null })
       const snapshot = await api.closeProject()

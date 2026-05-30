@@ -107,6 +107,45 @@ def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp
     assert "path" not in closed["project"]
 
 
+def test_workbench_session_exports_current_project_as_hsf(tmp_path):
+    source_root = tmp_path / "source"
+    export_root = tmp_path / "exported"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {"parent_dir": str(export_root), "name": "Saved Shelf"},
+    )
+
+    assert response["ok"] is True
+    assert response["saved_to"] == str(export_root / "Saved Shelf")
+    assert response["project"]["name"] == "Saved Shelf"
+    assert response["project"]["path"] == str(export_root / "Saved Shelf")
+    assert (export_root / "Saved Shelf" / "libpartdata.xml").exists()
+    assert HSFProject.load_from_disk(response["project"]["path"]).get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\n"
+
+
+def test_workbench_session_export_hsf_rejects_non_empty_target(tmp_path):
+    target = tmp_path / "exported" / "Existing"
+    target.mkdir(parents=True)
+    (target / "notes.txt").write_text("do not overwrite", encoding="utf-8")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {"parent_dir": str(target.parent), "name": "Existing"},
+    )
+
+    assert response["ok"] is False
+    assert "already exists" in response["error"]
+    assert (target / "notes.txt").read_text(encoding="utf-8") == "do not overwrite"
+
+
 def test_workbench_session_imports_single_gdl_file_as_hsf_project(tmp_path):
     gdl_path = tmp_path / "spiral stair.gdl"
     gdl_path.write_text("BLOCK A, B, ZZYZX\nADDZ 1\n", encoding="utf-8")

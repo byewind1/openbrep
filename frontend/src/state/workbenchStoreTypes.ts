@@ -12,6 +12,7 @@ import type {
   DeleteParameterResult,
   FileChoiceResult,
   GenerateResult,
+  HsfExportResult,
   LlmSettings,
   LlmSettingsResult,
   MockCompileResponse,
@@ -44,6 +45,7 @@ export interface WorkbenchApi {
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
+  exportHsfProject: (parentDir?: string, name?: string) => Promise<HsfExportResult>
   closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
@@ -104,6 +106,7 @@ export interface WorkbenchState {
   loadProjectPath: (path: string) => Promise<void>
   importGdlFile: (path?: string) => Promise<void>
   importGsmFile: (path?: string) => Promise<void>
+  exportHsfProject: (parentDir?: string, name?: string) => Promise<void>
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<void>

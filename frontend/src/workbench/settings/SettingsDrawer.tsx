@@ -14,6 +14,7 @@ interface SettingsDrawerProps {
   onBrowseCompilerFile: () => void
   onBrowseOutputDirectory: () => void
   onOpenProjectPath: (path: string) => void
+  onExportHsfProject: () => void
   onCloseProject: () => void
 }
 
@@ -29,6 +30,7 @@ export function SettingsDrawer({
   onBrowseCompilerFile,
   onBrowseOutputDirectory,
   onOpenProjectPath,
+  onExportHsfProject,
   onCloseProject,
 }: SettingsDrawerProps) {
   const [llmDraft, setLlmDraft] = useState(llmSettings)
@@ -215,6 +217,9 @@ export function SettingsDrawer({
             )}
           </div>
           <div className="settings-submit-row">
+            <button type="button" onClick={onExportHsfProject}>
+              Export HSF
+            </button>
             <button type="button" onClick={onCloseProject}>
               Close Project
             </button>

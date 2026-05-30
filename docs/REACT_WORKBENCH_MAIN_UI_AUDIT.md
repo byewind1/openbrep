@@ -14,7 +14,7 @@ revisions, configure compiler/LLM settings, and start with one command.
 
 The remaining gap is not basic workbench viability. The remaining gap is
 Streamlit parity for long-running project workflows: history, memory,
-image input, explicit source export, and Archicad/Tapir integration.
+image input, and Archicad/Tapir integration.
 
 ## Architecture Map
 
@@ -97,7 +97,6 @@ React Workbench is ready to become the primary path for these users:
 React Workbench is not ready to fully replace Streamlit for these workflows:
 
 - Image-to-GDL generation.
-- Explicit source export/save-as workflows beyond direct HSF editing.
 - Archicad/Tapir live integration.
 - Workspace memory and wrong-answer notebook management.
 - Pro licensing and Pro knowledge package import.
@@ -145,10 +144,7 @@ Implemented:
 - `.gsm` import/decompile through existing converter path.
 - Output directory selection. Done as a P5A/P5C bridge.
 - Open/reveal compiled `.gsm` output.
-
-Remaining:
-
-- Explicit HSF save-as/export workflow if needed.
+- Explicit HSF save-as/export through the Settings workspace panel.
 
 ### P5D: Defer Heavy Integrations
 
@@ -174,9 +170,8 @@ Keep these rules while migrating:
 
 ## Next Recommendation
 
-Finish P5C with explicit HSF save-as/export workflow if needed, then move to
-P5B session memory.
+Move to P5B session memory.
 
 Reason: daily code work is now covered well enough. The next highest-value gap
-is still source/artifact lifecycle, but compile output reveal and GSM
-decompile/import no longer require returning to Streamlit.
+is now session continuity: users need chat history, project memory controls, and
+code adoption from previous assistant outputs without returning to Streamlit.

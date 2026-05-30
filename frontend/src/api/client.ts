@@ -11,6 +11,7 @@ import type {
   DirectoryChoiceResult,
   FileChoiceResult,
   GenerateResult,
+  HsfExportResult,
   LlmSettings,
   LlmSettingsResult,
   Preview2DPayload,
@@ -106,6 +107,18 @@ export async function importGsmFile(path = ''): Promise<WorkbenchSnapshot> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function exportHsfProject(parentDir = '', name = ''): Promise<HsfExportResult> {
+  return requestJson<HsfExportResult>(
+    '/api/project/export-hsf',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_dir: parentDir, name }),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
   )

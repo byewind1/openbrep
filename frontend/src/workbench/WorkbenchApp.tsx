@@ -59,6 +59,7 @@ export function WorkbenchApp() {
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
   const importGsmFile = useWorkbenchStore((state) => state.importGsmFile)
+  const exportHsfProject = useWorkbenchStore((state) => state.exportHsfProject)
   const closeProject = useWorkbenchStore((state) => state.closeProject)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
@@ -260,6 +261,7 @@ export function WorkbenchApp() {
         onBrowseCompilerFile={() => void browseCompilerFile()}
         onBrowseOutputDirectory={() => void browseOutputDirectory()}
         onOpenProjectPath={(path) => void loadProjectPath(path)}
+        onExportHsfProject={() => void exportHsfProject()}
         onCloseProject={() => void closeProject()}
       />
     </main>

@@ -41,6 +41,15 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['decompiled'],
       compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
     }),
+    exportHsfProject: async () => ({
+      ok: true,
+      saved_to: '/exports/Chair',
+      project: { name: 'Chair', source: 'hsf', path: '/exports/Chair' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: ['saved'] },
+      warnings: ['saved'],
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+    }),
     closeProject: async () => ({
       ok: true,
       project: { name: 'Demo Bookshelf', source: 'demo' },
@@ -544,6 +553,34 @@ test('imports a GSM file as a decompiled HSF project and opens its default scrip
   expect(store.getState().recentProjects).toEqual([{ path: '/workspace/imported shelf', exists: true }])
   expect(store.getState().activeScriptName).toBe('3d.gdl')
   expect(store.getState().scriptContents['3d.gdl']).toBe('BLOCK A, B, ZZYZX\n')
+})
+
+test('exports current HSF project and refreshes workspace state', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      exportHsfProject: async (parentDir = '', name = '') => ({
+        ok: true,
+        saved_to: `${parentDir}/${name}`,
+        project: { name, source: 'hsf', path: `${parentDir}/${name}` },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: ['saved'] },
+        warnings: ['saved'],
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+      }),
+      listRecentProjects: async () => ({
+        ok: true,
+        projects: [{ path: '/exports/ExportedShelf', exists: true }],
+      }),
+    }),
+  )
+
+  await store.getState().exportHsfProject('/exports', 'ExportedShelf')
+
+  expect(store.getState().project).toEqual({ name: 'ExportedShelf', source: 'hsf', path: '/exports/ExportedShelf' })
+  expect(store.getState().warnings).toEqual(['saved'])
+  expect(store.getState().recentProjects).toEqual([{ path: '/exports/ExportedShelf', exists: true }])
+  expect(store.getState().compileLog[0]).toBe('Saved HSF source: /exports/ExportedShelf')
+  expect(store.getState().loading).toBe(false)
 })
 
 test('loads compiler settings from snapshot', async () => {

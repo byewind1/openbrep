@@ -531,6 +531,53 @@ class WorkbenchSession:
         self.source_path = None
         return {"ok": True, **self.snapshot()}
 
+    def export_hsf_project(self, body: dict[str, Any]) -> dict[str, Any]:
+        raw_parent = str(body.get("parent_dir") or "").strip()
+        if not raw_parent:
+            try:
+                raw_parent = self.directory_chooser()
+            except Exception as exc:
+                return {"ok": False, "error": f"Directory chooser failed: {exc}"}
+        if not raw_parent:
+            return {"ok": False, "cancelled": True, "error": "HSF export directory selection cancelled."}
+
+        parent = Path(raw_parent).expanduser().resolve()
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to create export directory: {exc}"}
+        if not parent.is_dir():
+            return {"ok": False, "error": f"Export target is not a directory: {parent}"}
+
+        project_name = _safe_project_name(str(body.get("name") or self.project.name or "OpenBrep_Project"))
+        target = (parent / project_name).resolve()
+        previous_source = self.source_path.expanduser().resolve() if self.source_path else None
+        current_root = self.project.root.expanduser().resolve() if self.project.root else None
+        allowed_existing_roots = {root for root in (previous_source, current_root) if root is not None}
+        if target.exists() and target not in allowed_existing_roots and any(target.iterdir()):
+            return {"ok": False, "error": f"Target HSF directory already exists and is not empty: {target}"}
+
+        self.project.name = project_name
+        self.project.work_dir = parent
+        self.project.root = target
+        try:
+            saved_root = self.project.save_to_disk().expanduser().resolve()
+            if previous_source is not None and previous_source.exists() and previous_source != saved_root:
+                try:
+                    from openbrep.revisions import copy_project_metadata
+
+                    copy_project_metadata(previous_source, saved_root)
+                except Exception:
+                    pass
+            self.source = "hsf"
+            self.source_path = saved_root
+            self._remember_project_path(saved_root)
+            self.project = HSFProject.load_from_disk(str(saved_root))
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to export HSF project: {exc}"}
+
+        return {"ok": True, "saved_to": str(saved_root), **self.snapshot()}
+
     def recent_projects(self) -> dict[str, Any]:
         return {
             "ok": True,
@@ -967,6 +1014,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/close":
             return self.close_project()
+
+        if normalized_method == "POST" and route == "/api/project/export-hsf":
+            return self.export_hsf_project(body)
 
         if normalized_method == "GET" and route == "/api/project/recent":
             return self.recent_projects()

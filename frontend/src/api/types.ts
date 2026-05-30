@@ -100,6 +100,12 @@ export interface WorkbenchSnapshot {
   error?: string
 }
 
+export interface HsfExportResult extends WorkbenchSnapshot {
+  ok: boolean
+  saved_to?: string
+  cancelled?: boolean
+}
+
 export interface ApplyResult extends WorkbenchSnapshot {
   ok: boolean
   changed: Record<string, unknown>
