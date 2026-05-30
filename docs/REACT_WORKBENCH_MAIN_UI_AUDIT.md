@@ -13,8 +13,8 @@ generation/modification, preview 3D, compile, inspect diagnostics, manage
 revisions, configure compiler/LLM settings, and start with one command.
 
 The remaining gap is not basic workbench viability. The remaining gap is
-Streamlit parity for long-running project workflows: history, memory, 2D preview,
-GSM import/decompile, parameter authoring, and Archicad/Tapir integration.
+Streamlit parity for long-running project workflows: history, memory,
+GSM import/decompile, image input, and Archicad/Tapir integration.
 
 ## Architecture Map
 
@@ -61,14 +61,14 @@ root, not a business-logic dump. The store split is holding.
 | Script editing | Ace/text area, fullscreen dialog | Monaco, script tree, save, diagnostics | Better in React |
 | Save script | Yes | Save + refresh + mock diagnostics | Done |
 | 3D preview | Streamlit preview panel | Three.js viewport + right rail | Done |
-| 2D preview | Available in Streamlit | Disabled tab only | Gap |
+| 2D preview | Available in Streamlit | Right rail 2D tab backed by existing preview path | Done |
 | Floating preview | Streamlit-ish fullscreen patterns | Implemented but frozen by flag | Deferred |
-| Parameter editing | View/edit/add/validate/paramlist preview | Edit/apply/reset existing params | Partial |
-| Manual parameter add | Yes | Not implemented | Gap |
+| Parameter editing | View/edit/add/validate/paramlist preview | Edit/apply/reset values, metadata edit/delete, validate | Done |
+| Manual parameter add | Yes | Compact add parameter control | Done |
 | Paramlist XML preview | Yes | XML file can be opened, no dedicated preview | Partial |
 | Mock compile | Yes | Mock compile + diagnostics | Done |
 | Real compile | Yes | LP mode/path settings + compile | Done |
-| Compile output selection | Streamlit has chooser | React uses backend defaults | Gap |
+| Compile output selection | Streamlit has chooser | Settings drawer output directory + compile uses it | Done |
 | Revision save/list/restore | Yes | Bottom drawer panel | Done |
 | AI create | Yes | Assistant creates HSF project | Done |
 | AI modify | Yes | Assistant modifies current project, refreshes scripts/diagnostics | Done |
@@ -109,12 +109,17 @@ React Workbench is not ready to fully replace Streamlit for these workflows:
 
 Goal: make React the default UI for daily code work.
 
-Implement:
+Implemented:
 
 - 2D preview tab using existing backend/domain preview path.
 - Compile output directory choice or at least visible/openable output location.
 - Better diagnostics grouping by script.
 - Manual parameter add/edit validation and paramlist preview.
+
+Remaining small follow-up:
+
+- Dedicated paramlist preview/summary panel, beyond opening `paramlist.xml`.
+- Open/reveal compiled `.gsm` output from the UI.
 
 Do not implement Tapir or packaging here.
 
@@ -139,7 +144,7 @@ Goal: make React cover source and artifact lifecycle.
 Implement:
 
 - `.gsm` import/decompile through existing converter path.
-- Output directory selection.
+- Output directory selection. Done as a P5A/P5C bridge.
 - Open/reveal compiled `.gsm` output.
 - Explicit HSF save-as/export workflow if needed.
 
@@ -167,9 +172,9 @@ Keep these rules while migrating:
 
 ## Next Recommendation
 
-Do P5A first, starting with 2D preview and parameter authoring.
+Continue P5C, starting with open/reveal compiled `.gsm` output, then `.gsm`
+import/decompile.
 
-Reason: the React workbench already wins at code editing. The next highest-value
-gap is making the right rail and left inspector cover the same object-development
-surface as Streamlit without bringing back the crowded form UI.
-
+Reason: daily code work is now covered well enough. The next highest-value gap
+is source/artifact lifecycle: users need to find, open, import, and decompile
+GSM artifacts without returning to Streamlit.
