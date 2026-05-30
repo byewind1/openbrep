@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type { AssistantImageAttachment, AssistantMessage } from '../api/types'
+import { validateAssistantImageFile } from './assistantImage'
 
 interface AssistantPanelProps {
   messages: AssistantMessage[]
@@ -41,8 +42,9 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
   function attachImage(file: File | null) {
     setImageError('')
     if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setImageError('Only image files')
+    const error = validateAssistantImageFile(file)
+    if (error) {
+      setImageError(error)
       return
     }
     const reader = new FileReader()

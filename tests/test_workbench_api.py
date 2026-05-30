@@ -1,3 +1,5 @@
+import base64
+
 from openbrep.compiler import CompileResult
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.learning import ErrorLearningStore
@@ -295,6 +297,30 @@ def test_workbench_session_creates_project_from_image_prompt(tmp_path):
     assert FakePipeline.last_request.intent == "IMAGE"
     assert FakePipeline.last_request.image_b64 == "ZmFrZS1pbWFnZQ=="
     assert FakePipeline.last_request.image_mime == "image/png"
+
+
+def test_workbench_session_rejects_unsupported_image_mime_for_create(tmp_path):
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            pass
+
+        def execute(self, request):  # pragma: no cover - validation should stop first
+            raise AssertionError("pipeline should not run")
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {
+            "prompt": "根据参考图生成",
+            "output_dir": str(tmp_path),
+            "image_b64": "ZmFrZS1pbWFnZQ==",
+            "image_mime": "image/gif",
+        },
+    )
+
+    assert response["ok"] is False
+    assert "Unsupported image type" in response["error"]
 
 
 def test_workbench_session_saves_and_lists_project_revisions(tmp_path):
@@ -1042,6 +1068,34 @@ def test_workbench_session_generate_passes_reference_image_to_pipeline(tmp_path)
     assert FakePipeline.last_request.intent == "MODIFY"
     assert FakePipeline.last_request.image_b64 == "ZmFrZS1pbWFnZQ=="
     assert FakePipeline.last_request.image_mime == "image/jpeg"
+
+
+def test_workbench_session_rejects_oversized_generate_image(tmp_path):
+    project = HSFProject.create_new("VisionShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    too_large = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode()
+
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            pass
+
+        def execute(self, request):  # pragma: no cover - validation should stop first
+            raise AssertionError("pipeline should not run")
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/assistant/generate",
+        {
+            "message": "按图调整",
+            "image_b64": too_large,
+            "image_mime": "image/png",
+        },
+    )
+
+    assert response["ok"] is False
+    assert "5 MB" in response["error"]
 
 
 def test_workbench_session_generate_reports_pipeline_failure(tmp_path):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import platform
 import re
@@ -66,6 +68,8 @@ MEMORY_LESSON_ROUTE_RE = re.compile(r"^/api/memory/lessons/([^/]+)$")
 MEMORY_LESSON_IGNORE_ROUTE_RE = re.compile(r"^/api/memory/lessons/([^/]+)/ignore$")
 GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 AUTHORABLE_PARAM_TYPES = {"Length", "RealNum", "Integer", "Boolean", "String"}
+MAX_WORKBENCH_IMAGE_BYTES = 5 * 1024 * 1024
+SUPPORTED_WORKBENCH_IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp"}
 
 
 def build_demo_project() -> HSFProject:
@@ -470,6 +474,9 @@ class WorkbenchSession:
         prompt = str(body.get("prompt") or body.get("message") or "").strip()
         if not prompt:
             return {"ok": False, "error": "Create prompt is empty."}
+        image_payload = _validate_image_payload(body)
+        if not image_payload["ok"]:
+            return {"ok": False, "error": image_payload["error"]}
 
         output_root = Path(str(body.get("output_dir") or "./output")).expanduser().resolve()
         output_root.mkdir(parents=True, exist_ok=True)
@@ -497,12 +504,12 @@ class WorkbenchSession:
         result = pipeline.execute(
             TaskRequest(
                 user_input=prompt,
-                intent="IMAGE" if str(body.get("image_b64") or "").strip() else "CREATE",
+                intent="IMAGE" if image_payload["image_b64"] else "CREATE",
                 work_dir=str(output_root),
                 output_dir=str(output_root),
                 gsm_name=project_name,
-                image_b64=str(body.get("image_b64") or "").strip() or None,
-                image_mime=str(body.get("image_mime") or "image/png"),
+                image_b64=image_payload["image_b64"],
+                image_mime=image_payload["image_mime"],
                 assistant_settings=str(body.get("assistant_settings") or self.assistant_settings),
                 history=list(body.get("history") or []),
                 on_event=on_event,
@@ -1128,6 +1135,9 @@ class WorkbenchSession:
 
         if self.source_path is None:
             return {"ok": False, "error": "Load an HSF project before generating changes."}
+        image_payload = _validate_image_payload(body)
+        if not image_payload["ok"]:
+            return {"ok": False, "error": image_payload["error"]}
 
         events: list[dict[str, Any]] = []
 
@@ -1142,8 +1152,8 @@ class WorkbenchSession:
             work_dir=str(self.source_path.parent),
             output_dir=str(self.source_path.parent / "output"),
             gsm_name=self.project.name,
-            image_b64=str(body.get("image_b64") or "").strip() or None,
-            image_mime=str(body.get("image_mime") or "image/png"),
+            image_b64=image_payload["image_b64"],
+            image_mime=image_payload["image_mime"],
             assistant_settings=str(body.get("assistant_settings") or self.assistant_settings),
             history=list(body.get("history") or []),
             on_event=on_event,
@@ -1352,6 +1362,30 @@ def _project_name_from_prompt(prompt: str) -> str:
     if words:
         return "_".join(words[:4])
     return "Generated_Object"
+
+
+def _validate_image_payload(body: dict[str, Any]) -> dict[str, Any]:
+    image_b64 = str(body.get("image_b64") or "").strip()
+    if not image_b64:
+        return {"ok": True, "image_b64": None, "image_mime": "image/png"}
+
+    image_mime = str(body.get("image_mime") or "image/png").strip().lower()
+    if image_mime not in SUPPORTED_WORKBENCH_IMAGE_MIMES:
+        supported = ", ".join(sorted(SUPPORTED_WORKBENCH_IMAGE_MIMES))
+        return {"ok": False, "error": f"Unsupported image type: {image_mime}. Supported: {supported}."}
+
+    try:
+        raw = base64.b64decode(image_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return {"ok": False, "error": "Invalid image data: expected base64 payload."}
+
+    if len(raw) > MAX_WORKBENCH_IMAGE_BYTES:
+        size_mb = len(raw) / (1024 * 1024)
+        return {
+            "ok": False,
+            "error": f"Image is too large ({size_mb:.1f} MB). Please compress it to 5 MB or less.",
+        }
+    return {"ok": True, "image_b64": image_b64, "image_mime": image_mime}
 
 
 def _unique_project_name(base_name: str, work_dir: Path) -> str:
