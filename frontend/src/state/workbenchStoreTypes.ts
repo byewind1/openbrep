@@ -18,6 +18,7 @@ import type {
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  IgnoreMemoryLessonResult,
   LlmSettings,
   LlmSettingsResult,
   MockCompileResponse,
@@ -83,6 +84,7 @@ export interface WorkbenchApi {
   fetchMemoryLessons: () => Promise<ProjectLessonsResult>
   summarizeProjectMemory: () => Promise<SummarizeMemoryResult>
   deleteMemoryLesson: (fingerprint: string) => Promise<DeleteMemoryLessonResult>
+  ignoreMemoryLesson: (fingerprint: string) => Promise<IgnoreMemoryLessonResult>
   clearProjectMemory: () => Promise<ClearProjectMemoryResult>
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
@@ -160,6 +162,7 @@ export interface WorkbenchState {
   loadMemoryLessons: () => Promise<void>
   summarizeProjectMemory: () => Promise<void>
   deleteMemoryLesson: (fingerprint: string) => Promise<void>
+  ignoreMemoryLesson: (fingerprint: string) => Promise<void>
   clearProjectMemory: () => Promise<void>
   saveRevision: (message?: string) => Promise<void>
   restoreRevision: (revisionId: string) => Promise<void>

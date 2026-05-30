@@ -71,6 +71,31 @@ export function createMemoryActions({ api, set }: WorkbenchActionContext) {
       }))
     },
 
+    async ignoreMemoryLesson(fingerprint: string) {
+      const cleaned = fingerprint.trim()
+      if (!cleaned) {
+        set({ lastError: 'Lesson fingerprint is required.' })
+        return
+      }
+      const result = await api.ignoreMemoryLesson(cleaned)
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to ignore project memory lesson.' })
+        return
+      }
+      const [status, lessons] = await Promise.all([
+        api.fetchMemoryStatus(),
+        api.fetchMemoryLessons(),
+      ])
+      set((state) => ({
+        memoryStatus: status.ok ? status.memory ?? null : state.memoryStatus,
+        memoryLessons: lessons.ok
+          ? lessons.lessons
+          : state.memoryLessons.filter((lesson) => lesson.fingerprint !== cleaned),
+        compileLog: ['Ignored memory lesson', ...state.compileLog].slice(0, 20),
+        lastError: status.ok && lessons.ok ? null : status.error ?? lessons.error ?? state.lastError,
+      }))
+    },
+
     async clearProjectMemory() {
       const result = await api.clearProjectMemory()
       if (!result.ok) {

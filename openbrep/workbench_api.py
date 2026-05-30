@@ -63,6 +63,7 @@ SCRIPT_NAME_TO_TYPE = {
 }
 SCRIPT_ROUTE_RE = re.compile(r"^/api/project/script/([^/]+)$")
 MEMORY_LESSON_ROUTE_RE = re.compile(r"^/api/memory/lessons/([^/]+)$")
+MEMORY_LESSON_IGNORE_ROUTE_RE = re.compile(r"^/api/memory/lessons/([^/]+)/ignore$")
 GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 AUTHORABLE_PARAM_TYPES = {"Length", "RealNum", "Integer", "Boolean", "String"}
 
@@ -1064,6 +1065,20 @@ class WorkbenchSession:
             return {"ok": False, "error": "Project memory lesson was not found.", "remaining_count": remaining_count}
         return {"ok": True, "deleted": cleaned, "remaining_count": remaining_count}
 
+    def ignore_memory_lesson(self, fingerprint: str) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before ignoring project memory lessons."}
+        cleaned = str(fingerprint or "").strip()
+        if not cleaned:
+            return {"ok": False, "error": "Lesson fingerprint is required."}
+        try:
+            ignored, remaining_count = ErrorLearningStore(self.source_path).ignore_error_lesson(cleaned)
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to ignore project memory lesson: {exc}"}
+        if not ignored:
+            return {"ok": False, "error": "Project memory lesson was not found.", "remaining_count": remaining_count}
+        return {"ok": True, "ignored": cleaned, "remaining_count": remaining_count}
+
     def clear_project_memory(self) -> dict[str, Any]:
         if self.source_path is None:
             return {
@@ -1257,6 +1272,10 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/memory/summarize":
             return self.summarize_project_memory(body)
 
+        lesson_ignore_match = MEMORY_LESSON_IGNORE_ROUTE_RE.match(route)
+        if lesson_ignore_match and normalized_method == "POST":
+            return self.ignore_memory_lesson(unquote(lesson_ignore_match.group(1)))
+
         lesson_match = MEMORY_LESSON_ROUTE_RE.match(route)
         if lesson_match and normalized_method == "DELETE":
             return self.delete_memory_lesson(unquote(lesson_match.group(1)))
@@ -1358,6 +1377,7 @@ def _error_lesson_to_api(lesson) -> dict[str, Any]:
         "source": lesson.source,
         "project_name": lesson.project_name,
         "raw_excerpt": lesson.raw_excerpt,
+        "ignored": bool(getattr(lesson, "ignored", False)),
     }
 
 

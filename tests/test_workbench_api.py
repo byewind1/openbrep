@@ -871,6 +871,33 @@ def test_workbench_session_deletes_project_memory_lesson(tmp_path):
     assert status["memory"]["lesson_count"] == 0
 
 
+def test_workbench_session_ignores_project_memory_lesson_without_deleting_it(tmp_path):
+    project = HSFProject.create_new("MemoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    lesson = ErrorLearningStore(hsf_dir).record_error(
+        "Unknown command FOO at line 3",
+        source="test",
+        project_name="MemoryShelf",
+        instruction="bad command",
+    )
+
+    response = session.route("POST", f"/api/memory/lessons/{lesson.fingerprint}/ignore")
+    visible_lessons = session.route("GET", "/api/memory/lessons")
+    status = session.route("GET", "/api/memory/status")
+    stored_lessons = ErrorLearningStore(hsf_dir).list_error_lessons(include_ignored=True)
+
+    assert response["ok"] is True
+    assert response["ignored"] == lesson.fingerprint
+    assert response["remaining_count"] == 0
+    assert visible_lessons["lessons"] == []
+    assert status["memory"]["lesson_count"] == 0
+    assert len(stored_lessons) == 1
+    assert stored_lessons[0].ignored is True
+
+
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):
     project = HSFProject.create_new("GeneratedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

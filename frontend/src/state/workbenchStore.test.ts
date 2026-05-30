@@ -197,6 +197,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       skill: '',
     }),
     deleteMemoryLesson: async (fingerprint: string) => ({ ok: true, deleted: fingerprint, remaining_count: 0 }),
+    ignoreMemoryLesson: async (fingerprint: string) => ({ ok: true, ignored: fingerprint, remaining_count: 0 }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
@@ -1236,6 +1237,54 @@ test('deleteMemoryLesson removes a lesson and refreshes memory status', async ()
   expect(store.getState().memoryLessons).toEqual([])
   expect(store.getState().memoryStatus?.lesson_count).toBe(0)
   expect(store.getState().compileLog[0]).toContain('Deleted memory lesson')
+})
+
+test('ignoreMemoryLesson hides a lesson and refreshes memory status', async () => {
+  let ignored = ''
+  const store = createWorkbenchStore(
+    makeApi({
+      ignoreMemoryLesson: async (fingerprint) => {
+        ignored = fingerprint
+        return { ok: true, ignored: fingerprint, remaining_count: 0 }
+      },
+      fetchMemoryStatus: async () => ({
+        ok: true,
+        memory: {
+          memory_root: '/workspace/Chair/.openbrep/memory',
+          chat_count: 0,
+          lesson_count: 0,
+          has_learned_skill: false,
+          total_bytes: 0,
+        },
+      }),
+      fetchMemoryLessons: async () => ({ ok: true, lessons: [] }),
+    }),
+  )
+
+  store.setState({
+    memoryLessons: [
+      {
+        fingerprint: 'general_compile_error:abc123',
+        category: 'general_compile_error',
+        summary: 'Unknown command FOO at line 3',
+        guidance: 'Avoid unsupported commands.',
+        example: '',
+        count: 1,
+        first_seen: '2026-05-30T10:00:00Z',
+        last_seen: '2026-05-30T10:00:00Z',
+        source: 'test',
+        project_name: 'Chair',
+        raw_excerpt: 'Unknown command FOO at line 3',
+      },
+    ],
+  })
+
+  await store.getState().ignoreMemoryLesson('general_compile_error:abc123')
+
+  expect(ignored).toBe('general_compile_error:abc123')
+  expect(store.getState().memoryLessons).toEqual([])
+  expect(store.getState().memoryStatus?.lesson_count).toBe(0)
+  expect(store.getState().compileLog[0]).toContain('Ignored memory lesson')
 })
 
 test('adopts code blocks from an assistant history message into dirty script buffers', async () => {

@@ -80,7 +80,7 @@ root, not a business-logic dump. The store split is holding.
 | Custom provider credentials | Yes | Settings drawer supports model/key/base | Partial but usable |
 | Compiler settings | Sidebar settings | Settings drawer | Done |
 | Work directory | Sidebar setting | Not explicit; project paths are direct | Gap |
-| Memory/privacy panel | Error lessons, memory status, clear memory | Settings drawer shows project memory status, lesson review, per-lesson delete, skill preview, summarize, and clear memory | Done |
+| Memory/privacy panel | Error lessons, memory status, clear memory | Settings drawer shows project memory status, lesson review, per-lesson ignore/delete, skill preview, summarize, and clear memory | Done |
 | Wrong-answer notebook summarize | Streamlit workspace tool | Settings drawer can summarize lessons into learned skill via local API | Partial |
 | Pro license/knowledge package | Streamlit sidebar | Not implemented | Defer |
 | Tapir/Archicad bridge | Streamlit controls | Not implemented | Defer |
@@ -134,6 +134,7 @@ Implemented:
 - Browse assistant history in a compact drawer from the AI panel.
 - Show project memory status in Settings.
 - Review project error lessons in Settings.
+- Ignore individual project error lessons from Settings without deleting audit records.
 - Delete individual project error lessons from Settings.
 - Summarize project memory into the learned skill from Settings.
 - Preview the generated learned skill in Settings.
@@ -142,7 +143,7 @@ Implemented:
 Remaining:
 
 - Bulk or multi-message history actions beyond single-message adoption.
-- Advanced wrong-answer notebook curation: merge/edit/ignore individual lessons.
+- Advanced wrong-answer notebook curation: merge/edit individual lessons.
 
 This is more important than Pro/Tapir for day-to-day AI-assisted work.
 
@@ -186,5 +187,5 @@ Continue P5B session memory with lesson curation, then move to image input.
 Reason: daily code work is now covered well enough. The next highest-value gap
 is now polishing session continuity: persisted assistant history, drawer browsing,
 code adoption, lesson review, per-lesson delete, summarize, and skill preview
-exist, but users still need merge/edit/ignore controls before this fully replaces
+exist, but users still need merge/edit controls before this fully replaces
 the Streamlit memory tools.

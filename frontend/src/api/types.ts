@@ -294,6 +294,7 @@ export interface ErrorLesson {
   source: string
   project_name: string
   raw_excerpt: string
+  ignored?: boolean
 }
 
 export interface ProjectLessonsResult {
@@ -319,6 +320,13 @@ export interface SummarizeMemoryResult {
 export interface DeleteMemoryLessonResult {
   ok: boolean
   deleted?: string
+  remaining_count?: number
+  error?: string
+}
+
+export interface IgnoreMemoryLessonResult {
+  ok: boolean
+  ignored?: string
   remaining_count?: number
   error?: string
 }

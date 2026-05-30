@@ -9,6 +9,7 @@ interface MemoryLessonsPanelProps {
   onRefresh: () => void
   onSummarize: () => void
   onDeleteLesson: (fingerprint: string) => void
+  onIgnoreLesson: (fingerprint: string) => void
   onClear: () => void
 }
 
@@ -21,6 +22,7 @@ export function MemoryLessonsPanel({
   onRefresh,
   onSummarize,
   onDeleteLesson,
+  onIgnoreLesson,
   onClear,
 }: MemoryLessonsPanelProps) {
   return (
@@ -64,6 +66,15 @@ export function MemoryLessonsPanel({
                 <span>{lesson.category || 'general'}</span>
                 <div className="memory-lesson-controls">
                   <strong>{lesson.count}x</strong>
+                  <button
+                    type="button"
+                    className="memory-lesson-ignore"
+                    onClick={() => onIgnoreLesson(lesson.fingerprint)}
+                    disabled={busy}
+                    aria-label={`Ignore lesson ${lesson.category}`}
+                  >
+                    Ignore
+                  </button>
                   <button
                     type="button"
                     className="memory-lesson-delete"

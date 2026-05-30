@@ -24,6 +24,7 @@ interface SettingsDrawerProps {
   onLoadMemoryLessons: () => void
   onSummarizeProjectMemory: () => void
   onDeleteMemoryLesson: (fingerprint: string) => void
+  onIgnoreMemoryLesson: (fingerprint: string) => void
   onClearProjectMemory: () => void
 }
 
@@ -48,6 +49,7 @@ export function SettingsDrawer({
   onLoadMemoryLessons,
   onSummarizeProjectMemory,
   onDeleteMemoryLesson,
+  onIgnoreMemoryLesson,
   onClearProjectMemory,
 }: SettingsDrawerProps) {
   const [llmDraft, setLlmDraft] = useState(llmSettings)
@@ -258,6 +260,7 @@ export function SettingsDrawer({
           onRefresh={onLoadMemoryLessons}
           onSummarize={onSummarizeProjectMemory}
           onDeleteLesson={onDeleteMemoryLesson}
+          onIgnoreLesson={onIgnoreMemoryLesson}
           onClear={onClearProjectMemory}
         />
 
