@@ -43,6 +43,7 @@ export interface WorkbenchApi {
   fetchPreview2D: (parameters: Record<string, unknown>) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
+  importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
   closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
@@ -102,6 +103,7 @@ export interface WorkbenchState {
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
   importGdlFile: (path?: string) => Promise<void>
+  importGsmFile: (path?: string) => Promise<void>
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<void>

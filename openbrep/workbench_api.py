@@ -4,7 +4,9 @@ import argparse
 import json
 import platform
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -390,6 +392,75 @@ class WorkbenchSession:
         self.source_path = hsf_dir
         self._remember_project_path(hsf_dir)
         return {"ok": True, "imported_from": str(source_file), **self.snapshot()}
+
+    def import_gsm_file(self, body: dict[str, Any]) -> dict[str, Any]:
+        raw_path = str(body.get("path") or "").strip()
+        if not raw_path:
+            try:
+                raw_path = self.file_chooser()
+            except Exception as exc:
+                return {"ok": False, "error": f"File chooser failed: {exc}"}
+        if not raw_path:
+            return {"ok": False, "cancelled": True, "error": "GSM file selection cancelled."}
+
+        source_file = Path(raw_path).expanduser().resolve()
+        if not source_file.is_file():
+            return {"ok": False, "error": f"GSM file not found: {raw_path}"}
+        if source_file.suffix.lower() != ".gsm":
+            return {"ok": False, "error": f"Unsupported file type: {source_file.suffix or '(none)'}"}
+        if self.compiler_mode != "lp":
+            return {
+                "ok": False,
+                "error": "GSM import requires LP_XMLConverter mode. Open settings and select Real compiler first.",
+            }
+
+        compiler = HSFCompiler(self.converter_path)
+        if not compiler.is_available:
+            return {
+                "ok": False,
+                "error": f"LP_XMLConverter not found: {compiler.converter_path or '(not configured)'}",
+            }
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="openbrep-gsm-import-"))
+        try:
+            hsf_out = tmp_dir / "hsf_out"
+            result = compiler.libpart2hsf(str(source_file), str(hsf_out))
+            if not result.success:
+                diag = result.stderr or result.stdout or "(no converter output)"
+                return {
+                    "ok": False,
+                    "error": f"GSM decompile failed (exit={result.exit_code}): {diag[:800]}",
+                }
+
+            hsf_root = _find_hsf_root(hsf_out)
+            if hsf_root is None:
+                contents = sorted(path.name for path in hsf_out.iterdir()) if hsf_out.exists() else []
+                return {"ok": False, "error": f"Could not locate HSF root in converter output: {contents}"}
+
+            target_name = _unique_project_name(_safe_project_name(source_file.stem), source_file.parent)
+            target_dir = source_file.parent / target_name
+            shutil.copytree(hsf_root, target_dir)
+            project = HSFProject.load_from_disk(str(target_dir))
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to import GSM file: {exc}"}
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        self.project = project
+        self.source = "hsf"
+        self.source_path = target_dir
+        self._remember_project_path(target_dir)
+        return {
+            "ok": True,
+            "imported_from": str(source_file),
+            "decompile": {
+                "mode": "lp",
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            },
+            **self.snapshot(),
+        }
 
     def create_project_from_prompt(self, body: dict[str, Any]) -> dict[str, Any]:
         prompt = str(body.get("prompt") or body.get("message") or "").strip()
@@ -888,6 +959,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/import-gdl":
             return self.import_gdl_file(body)
 
+        if normalized_method == "POST" and route == "/api/project/import-gsm":
+            return self.import_gsm_file(body)
+
         if normalized_method == "POST" and route == "/api/project/create":
             return self.create_project_from_prompt(body)
 
@@ -1088,6 +1162,21 @@ def _choose_file() -> str:
         return str(filedialog.askopenfilename(title="Choose OpenBrep file") or "")
     finally:
         root.destroy()
+
+
+def _find_hsf_root(base: Path) -> Path | None:
+    if not base.exists():
+        return None
+    if (base / "libpartdata.xml").exists() or (base / "scripts").is_dir():
+        return base
+    for child in sorted(base.iterdir()):
+        if child.is_dir() and (child / "libpartdata.xml").exists():
+            return child
+    for child in sorted(base.iterdir()):
+        if child.is_dir() and (child / "scripts").is_dir():
+            return child
+    subdirs = [child for child in sorted(base.iterdir()) if child.is_dir()]
+    return subdirs[0] if subdirs else None
 
 
 def _reveal_path(path: Path) -> None:

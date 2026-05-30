@@ -8,6 +8,7 @@ interface ProjectOpenControlsProps {
   onLoadProjectPath: (path: string) => void
   onBrowseProjectDirectory: () => void
   onImportGdlFile: () => void
+  onImportGsmFile: () => void
 }
 
 export function ProjectOpenControls({
@@ -16,6 +17,7 @@ export function ProjectOpenControls({
   onLoadProjectPath,
   onBrowseProjectDirectory,
   onImportGdlFile,
+  onImportGsmFile,
 }: ProjectOpenControlsProps) {
   const [path, setPath] = useState(project?.path ?? '')
 
@@ -46,6 +48,9 @@ export function ProjectOpenControls({
       </button>
       <button type="button" disabled={loading} onClick={onImportGdlFile}>
         Import GDL
+      </button>
+      <button type="button" disabled={loading} onClick={onImportGsmFile}>
+        Import GSM
       </button>
     </form>
   )

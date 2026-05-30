@@ -1,5 +1,7 @@
+from openbrep.compiler import CompileResult
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.runtime.pipeline import TaskResult
+import openbrep.workbench_api as workbench_api
 from openbrep.workbench_api import (
     WorkbenchSession,
     apply_parameter_values,
@@ -130,6 +132,56 @@ def test_workbench_session_rejects_non_gdl_import(tmp_path):
 
     assert response["ok"] is False
     assert "Unsupported file type" in response["error"]
+
+
+def test_workbench_session_imports_gsm_file_with_lp_converter(tmp_path, monkeypatch):
+    gsm_path = tmp_path / "ImportedShelf.gsm"
+    gsm_path.write_bytes(b"fake gsm")
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+            self.timeout = timeout
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            assert gsm_path_arg == str(gsm_path)
+            project = HSFProject.create_new("ConverterOutput", output_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\nADDZ 1\n")
+            project.save_to_disk()
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    monkeypatch.setattr(workbench_api, "HSFCompiler", FakeHSFCompiler)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route(
+        "POST",
+        "/api/settings/compiler",
+        {"mode": "lp", "converter_path": "/Applications/LP_XMLConverter"},
+    )
+
+    response = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert response["ok"] is True
+    assert response["imported_from"] == str(gsm_path)
+    assert response["project"]["source"] == "hsf"
+    assert response["project"]["path"].endswith("ImportedShelf")
+    imported = HSFProject.load_from_disk(response["project"]["path"])
+    assert imported.get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
+    assert response["decompile"]["mode"] == "lp"
+
+
+def test_workbench_session_rejects_gsm_import_in_mock_mode(tmp_path):
+    gsm_path = tmp_path / "ImportedShelf.gsm"
+    gsm_path.write_bytes(b"fake gsm")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert response["ok"] is False
+    assert "LP_XMLConverter mode" in response["error"]
 
 
 def test_workbench_session_creates_project_from_prompt(tmp_path):

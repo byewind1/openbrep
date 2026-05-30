@@ -33,6 +33,14 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['imported'],
       compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
+    importGsmFile: async () => ({
+      ok: true,
+      project: { name: 'imported shelf', source: 'hsf', path: '/workspace/imported shelf' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: ['decompiled'] },
+      warnings: ['decompiled'],
+      compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
+    }),
     closeProject: async () => ({
       ok: true,
       project: { name: 'Demo Bookshelf', source: 'demo' },
@@ -503,6 +511,39 @@ test('failed GDL import keeps the current project and records an error', async (
   expect(store.getState().project?.name).toBe('Chair')
   expect(store.getState().lastError).toBe('Unsupported file type: .txt')
   expect(store.getState().loading).toBe(false)
+})
+
+test('imports a GSM file as a decompiled HSF project and opens its default script', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importGsmFile: async () => ({
+        ok: true,
+        project: { name: 'imported shelf', source: 'hsf', path: '/workspace/imported shelf' },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: ['decompiled'] },
+        warnings: ['decompiled'],
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
+      }),
+      listRecentProjects: async () => ({
+        ok: true,
+        projects: [{ path: '/workspace/imported shelf', exists: true }],
+      }),
+      getProjectScript: async (scriptName: string) => ({
+        name: scriptName,
+        path: `scripts/${scriptName}`,
+        content: 'BLOCK A, B, ZZYZX\n',
+      }),
+    }),
+  )
+
+  await store.getState().importGsmFile('/input/imported shelf.gsm')
+
+  expect(store.getState().project).toEqual({ name: 'imported shelf', source: 'hsf', path: '/workspace/imported shelf' })
+  expect(store.getState().warnings).toEqual(['decompiled'])
+  expect(store.getState().compilerSettings.mode).toBe('lp')
+  expect(store.getState().recentProjects).toEqual([{ path: '/workspace/imported shelf', exists: true }])
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().scriptContents['3d.gdl']).toBe('BLOCK A, B, ZZYZX\n')
 })
 
 test('loads compiler settings from snapshot', async () => {

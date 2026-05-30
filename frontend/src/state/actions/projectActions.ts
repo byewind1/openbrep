@@ -50,6 +50,23 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: false })
     },
 
+    async importGsmFile(path = '') {
+      set({ loading: true, lastError: null })
+      const snapshot = await api.importGsmFile(path)
+      if (snapshot.ok === false) {
+        set({
+          loading: false,
+          lastError: snapshot.error ?? 'Failed to import GSM file.',
+        })
+        return
+      }
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
+      await get().loadScripts()
+      await get().loadRevisions()
+      set({ loading: false })
+    },
+
     async closeProject() {
       set({ loading: true, lastError: null })
       const snapshot = await api.closeProject()

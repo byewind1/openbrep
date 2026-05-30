@@ -14,7 +14,7 @@ revisions, configure compiler/LLM settings, and start with one command.
 
 The remaining gap is not basic workbench viability. The remaining gap is
 Streamlit parity for long-running project workflows: history, memory,
-GSM import/decompile, image input, and Archicad/Tapir integration.
+image input, explicit source export, and Archicad/Tapir integration.
 
 ## Architecture Map
 
@@ -57,7 +57,7 @@ root, not a business-logic dump. The store split is holding.
 | One-command launch | Streamlit command/package launcher | `./obr7` starts API + Vite | Done |
 | Open HSF directory | Yes | Path input + native directory picker | Done |
 | Import single `.gdl` | Yes | Native import creates HSF project | Done |
-| Import/decompile `.gsm` | Yes when converter is available | Not implemented | Gap |
+| Import/decompile `.gsm` | Yes when converter is available | LP mode import creates HSF project through existing converter path | Done |
 | Script editing | Ace/text area, fullscreen dialog | Monaco, script tree, save, diagnostics | Better in React |
 | Save script | Yes | Save + refresh + mock diagnostics | Done |
 | 3D preview | Streamlit preview panel | Three.js viewport + right rail | Done |
@@ -68,7 +68,7 @@ root, not a business-logic dump. The store split is holding.
 | Paramlist XML preview | Yes | XML file can be opened, no dedicated preview | Partial |
 | Mock compile | Yes | Mock compile + diagnostics | Done |
 | Real compile | Yes | LP mode/path settings + compile | Done |
-| Compile output selection | Streamlit has chooser | Settings drawer output directory + compile uses it | Done |
+| Compile output selection | Streamlit has chooser | Settings drawer output directory + compile uses it + reveal output | Done |
 | Revision save/list/restore | Yes | Bottom drawer panel | Done |
 | AI create | Yes | Assistant creates HSF project | Done |
 | AI modify | Yes | Assistant modifies current project, refreshes scripts/diagnostics | Done |
@@ -97,7 +97,7 @@ React Workbench is ready to become the primary path for these users:
 React Workbench is not ready to fully replace Streamlit for these workflows:
 
 - Image-to-GDL generation.
-- `.gsm` import/decompile workflows.
+- Explicit source export/save-as workflows beyond direct HSF editing.
 - Archicad/Tapir live integration.
 - Workspace memory and wrong-answer notebook management.
 - Pro licensing and Pro knowledge package import.
@@ -119,7 +119,6 @@ Implemented:
 Remaining small follow-up:
 
 - Dedicated paramlist preview/summary panel, beyond opening `paramlist.xml`.
-- Open/reveal compiled `.gsm` output from the UI.
 
 Do not implement Tapir or packaging here.
 
@@ -141,11 +140,14 @@ This is more important than Pro/Tapir for day-to-day AI-assisted work.
 
 Goal: make React cover source and artifact lifecycle.
 
-Implement:
+Implemented:
 
 - `.gsm` import/decompile through existing converter path.
 - Output directory selection. Done as a P5A/P5C bridge.
 - Open/reveal compiled `.gsm` output.
+
+Remaining:
+
 - Explicit HSF save-as/export workflow if needed.
 
 ### P5D: Defer Heavy Integrations
@@ -172,9 +174,9 @@ Keep these rules while migrating:
 
 ## Next Recommendation
 
-Continue P5C, starting with open/reveal compiled `.gsm` output, then `.gsm`
-import/decompile.
+Finish P5C with explicit HSF save-as/export workflow if needed, then move to
+P5B session memory.
 
 Reason: daily code work is now covered well enough. The next highest-value gap
-is source/artifact lifecycle: users need to find, open, import, and decompile
-GSM artifacts without returning to Streamlit.
+is still source/artifact lifecycle, but compile output reveal and GSM
+decompile/import no longer require returning to Streamlit.

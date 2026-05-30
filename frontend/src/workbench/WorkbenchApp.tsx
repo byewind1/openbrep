@@ -58,6 +58,7 @@ export function WorkbenchApp() {
   const resetDraftParameters = useWorkbenchStore((state) => state.resetDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
+  const importGsmFile = useWorkbenchStore((state) => state.importGsmFile)
   const closeProject = useWorkbenchStore((state) => state.closeProject)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
@@ -112,6 +113,7 @@ export function WorkbenchApp() {
             onLoadProjectPath={(path) => void loadProjectPath(path)}
             onBrowseProjectDirectory={() => void browseProjectDirectory()}
             onImportGdlFile={() => void importGdlFile()}
+            onImportGsmFile={() => void importGsmFile()}
           />
         }
         hasDraftChanges={hasDraftChanges()}

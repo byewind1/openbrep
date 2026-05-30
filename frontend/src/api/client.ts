@@ -99,6 +99,18 @@ export async function importGdlFile(path = ''): Promise<WorkbenchSnapshot> {
   )
 }
 
+export async function importGsmFile(path = ''): Promise<WorkbenchSnapshot> {
+  return requestJson<WorkbenchSnapshot>(
+    '/api/project/import-gsm',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
 export async function createProjectFromPrompt(message: string, assistantSettings = ''): Promise<CreateProjectResult> {
   return requestJson<CreateProjectResult>(
     '/api/project/create',
