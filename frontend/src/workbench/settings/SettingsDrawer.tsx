@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { CompilerSettings, LlmSettings, RecentProject } from '../../api/types'
+import type { CompilerSettings, LlmSettings, ProjectMemoryStatus, RecentProject } from '../../api/types'
 
 interface SettingsDrawerProps {
   open: boolean
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
   recentProjects: RecentProject[]
+  memoryStatus: ProjectMemoryStatus | null
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => void
   onLlmSettingsChange: (settings: LlmSettings) => void
@@ -16,6 +17,7 @@ interface SettingsDrawerProps {
   onOpenProjectPath: (path: string) => void
   onExportHsfProject: () => void
   onCloseProject: () => void
+  onClearProjectMemory: () => void
 }
 
 export function SettingsDrawer({
@@ -23,6 +25,7 @@ export function SettingsDrawer({
   compilerSettings,
   llmSettings,
   recentProjects,
+  memoryStatus,
   onClose,
   onCompilerSettingsChange,
   onLlmSettingsChange,
@@ -32,6 +35,7 @@ export function SettingsDrawer({
   onOpenProjectPath,
   onExportHsfProject,
   onCloseProject,
+  onClearProjectMemory,
 }: SettingsDrawerProps) {
   const [llmDraft, setLlmDraft] = useState(llmSettings)
 
@@ -226,6 +230,31 @@ export function SettingsDrawer({
           </div>
         </section>
 
+        <section className="settings-section">
+          <div className="settings-section-heading">
+            <strong>Memory</strong>
+            <span>Project chat and learning records</span>
+          </div>
+          <div className="memory-status-grid">
+            <span>Chats</span>
+            <strong>{memoryStatus?.chat_count ?? 0}</strong>
+            <span>Lessons</span>
+            <strong>{memoryStatus?.lesson_count ?? 0}</strong>
+            <span>Size</span>
+            <strong>{formatBytes(memoryStatus?.total_bytes ?? 0)}</strong>
+            <span>Skill</span>
+            <strong>{memoryStatus?.has_learned_skill ? 'Yes' : 'No'}</strong>
+          </div>
+          <div className="settings-path-note" title={memoryStatus?.memory_root || ''}>
+            {memoryStatus?.memory_root || 'No project memory directory'}
+          </div>
+          <div className="settings-submit-row">
+            <button type="button" className="danger-action" onClick={onClearProjectMemory}>
+              Clear Memory
+            </button>
+          </div>
+        </section>
+
         <section className="settings-section muted">
           <div className="settings-section-heading">
             <strong>Advanced</strong>
@@ -235,4 +264,10 @@ export function SettingsDrawer({
       </aside>
     </>
   )
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }

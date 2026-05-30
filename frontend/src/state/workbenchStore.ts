@@ -7,12 +7,14 @@ import {
   chooseOutputDirectory,
   chooseProjectDirectory,
   clearAssistantHistory,
+  clearProjectMemory,
   closeProject,
   compileProject,
   createProjectFromPrompt,
   deleteProjectParameter,
   exportHsfProject,
   extractAssistantCodeBlocks,
+  fetchMemoryStatus,
   fetchPreview2D,
   fetchPreview,
   fetchRuntimeSettings,
@@ -39,6 +41,7 @@ import {
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
+import { createMemoryActions } from './actions/memoryActions'
 import { createParameterActions } from './actions/parameterActions'
 import { createPreviewActions } from './actions/previewActions'
 import { createProjectActions } from './actions/projectActions'
@@ -81,6 +84,8 @@ const defaultWorkbenchApi: WorkbenchApi = {
   saveAssistantHistory,
   clearAssistantHistory,
   extractAssistantCodeBlocks,
+  fetchMemoryStatus,
+  clearProjectMemory,
   generateWithAssistant,
   applyParameters,
   addProjectParameter,
@@ -103,6 +108,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       ...createParameterActions(context),
       ...createPreviewActions(context),
       ...createCompileActions(context),
+      ...createMemoryActions(context),
       ...createScriptActions(context),
       ...createRevisionActions(context),
       ...createAssistantActions(context),
@@ -137,6 +143,7 @@ function initialWorkbenchState() {
     scripts: [],
     recentProjects: [],
     revisions: [],
+    memoryStatus: null,
     latestRevisionId: null,
     revisionLoading: false,
     activeScriptName: null,

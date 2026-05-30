@@ -80,7 +80,7 @@ root, not a business-logic dump. The store split is holding.
 | Custom provider credentials | Yes | Settings drawer supports model/key/base | Partial but usable |
 | Compiler settings | Sidebar settings | Settings drawer | Done |
 | Work directory | Sidebar setting | Not explicit; project paths are direct | Gap |
-| Memory/privacy panel | Error lessons, memory status, clear memory | Not implemented | Gap |
+| Memory/privacy panel | Error lessons, memory status, clear memory | Settings drawer shows project memory status and can clear project memory | Partial |
 | Wrong-answer notebook summarize | Streamlit workspace tool | Not implemented | Gap |
 | Pro license/knowledge package | Streamlit sidebar | Not implemented | Defer |
 | Tapir/Archicad bridge | Streamlit controls | Not implemented | Defer |
@@ -98,9 +98,9 @@ React Workbench is not ready to fully replace Streamlit for these workflows:
 
 - Image-to-GDL generation.
 - Archicad/Tapir live integration.
-- Workspace memory and wrong-answer notebook management.
+- Wrong-answer notebook summarization and review.
 - Pro licensing and Pro knowledge package import.
-- Chat-record reuse and code adoption from prior sessions.
+- Dedicated chat history browser.
 
 ## Recommended Migration Path
 
@@ -131,12 +131,14 @@ Implemented:
 - Persist assistant messages per HSF project under `.openbrep/memory/chats/`.
 - Clear assistant history from the AI panel.
 - Adopt code blocks from assistant history into editable script buffers.
+- Show project memory status in Settings.
+- Clear project memory from Settings.
 
 Remaining:
 
 - Chat history browser in a drawer/modal.
 - Multi-message history browser actions beyond inline assistant thread.
-- Memory/privacy panel: status, clear memory, summarize wrong-answer notebook.
+- Wrong-answer notebook summarize/review.
 
 This is more important than Pro/Tapir for day-to-day AI-assisted work.
 
@@ -178,6 +180,6 @@ Keep these rules while migrating:
 Continue P5B session memory.
 
 Reason: daily code work is now covered well enough. The next highest-value gap
-is now session continuity: persisted assistant history and code adoption exist
-inside the AI panel, but users still need a fuller history browser and project
-memory controls without returning to Streamlit.
+is now session continuity: persisted assistant history, code adoption, and basic
+project memory controls exist, but users still need a fuller history browser and
+wrong-answer notebook review without returning to Streamlit.

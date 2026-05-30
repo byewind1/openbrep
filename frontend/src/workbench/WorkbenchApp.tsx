@@ -41,6 +41,7 @@ export function WorkbenchApp() {
   const scripts = useWorkbenchStore((state) => state.scripts)
   const recentProjects = useWorkbenchStore((state) => state.recentProjects)
   const revisions = useWorkbenchStore((state) => state.revisions)
+  const memoryStatus = useWorkbenchStore((state) => state.memoryStatus)
   const latestRevisionId = useWorkbenchStore((state) => state.latestRevisionId)
   const revisionLoading = useWorkbenchStore((state) => state.revisionLoading)
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
@@ -73,6 +74,7 @@ export function WorkbenchApp() {
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
+  const clearProjectMemory = useWorkbenchStore((state) => state.clearProjectMemory)
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const createProjectFromPrompt = useWorkbenchStore((state) => state.createProjectFromPrompt)
@@ -258,6 +260,7 @@ export function WorkbenchApp() {
         compilerSettings={compilerSettings}
         llmSettings={llmSettings}
         recentProjects={recentProjects}
+        memoryStatus={memoryStatus}
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
         onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
@@ -267,6 +270,7 @@ export function WorkbenchApp() {
         onOpenProjectPath={(path) => void loadProjectPath(path)}
         onExportHsfProject={() => void exportHsfProject()}
         onCloseProject={() => void closeProject()}
+        onClearProjectMemory={() => void clearProjectMemory()}
       />
     </main>
   )

@@ -165,6 +165,26 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     saveAssistantHistory: async (messages) => ({ ok: true, count: messages.length }),
     clearAssistantHistory: async () => ({ ok: true, count: 0 }),
     extractAssistantCodeBlocks: async () => ({ ok: true, blocks: [] }),
+    fetchMemoryStatus: async () => ({
+      ok: true,
+      memory: {
+        memory_root: '/workspace/Chair/.openbrep/memory',
+        chat_count: 0,
+        lesson_count: 0,
+        has_learned_skill: false,
+        total_bytes: 0,
+      },
+    }),
+    clearProjectMemory: async () => ({
+      ok: true,
+      before: {
+        memory_root: '/workspace/Chair/.openbrep/memory',
+        chat_count: 0,
+        lesson_count: 0,
+        has_learned_skill: false,
+        total_bytes: 0,
+      },
+    }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
@@ -993,6 +1013,76 @@ test('clearAssistantHistory clears local and persisted assistant history', async
 
   expect(cleared).toBe(true)
   expect(store.getState().assistantMessages).toEqual([])
+})
+
+test('load hydrates project memory status', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchMemoryStatus: async () => ({
+        ok: true,
+        memory: {
+          memory_root: '/workspace/Chair/.openbrep/memory',
+          chat_count: 2,
+          lesson_count: 1,
+          has_learned_skill: true,
+          total_bytes: 2048,
+        },
+      }),
+    }),
+  )
+
+  await store.getState().load()
+
+  expect(store.getState().memoryStatus).toEqual({
+    memory_root: '/workspace/Chair/.openbrep/memory',
+    chat_count: 2,
+    lesson_count: 1,
+    has_learned_skill: true,
+    total_bytes: 2048,
+  })
+})
+
+test('clearProjectMemory clears persisted memory and local assistant history', async () => {
+  let cleared = false
+  const store = createWorkbenchStore(
+    makeApi({
+      listAssistantHistory: async () => ({
+        ok: true,
+        messages: [{ role: 'user', content: '旧问题' }],
+      }),
+      clearProjectMemory: async () => {
+        cleared = true
+        return {
+          ok: true,
+          before: {
+            memory_root: '/workspace/Chair/.openbrep/memory',
+            chat_count: 1,
+            lesson_count: 0,
+            has_learned_skill: false,
+            total_bytes: 512,
+          },
+        }
+      },
+      fetchMemoryStatus: async () => ({
+        ok: true,
+        memory: {
+          memory_root: '/workspace/Chair/.openbrep/memory',
+          chat_count: 0,
+          lesson_count: 0,
+          has_learned_skill: false,
+          total_bytes: 0,
+        },
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().clearProjectMemory()
+
+  expect(cleared).toBe(true)
+  expect(store.getState().assistantMessages).toEqual([])
+  expect(store.getState().memoryStatus?.chat_count).toBe(0)
+  expect(store.getState().compileLog[0]).toContain('Cleared project memory')
 })
 
 test('adopts code blocks from an assistant history message into dirty script buffers', async () => {

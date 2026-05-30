@@ -995,6 +995,42 @@ class WorkbenchSession:
         ]
         return {"ok": True, "blocks": blocks}
 
+    def memory_status(self) -> dict[str, Any]:
+        if self.source_path is None:
+            return {
+                "ok": True,
+                "memory": {
+                    "memory_root": "",
+                    "chat_count": 0,
+                    "lesson_count": 0,
+                    "has_learned_skill": False,
+                    "total_bytes": 0,
+                },
+            }
+        try:
+            status = ErrorLearningStore(self.source_path).memory_status()
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to read project memory status: {exc}"}
+        return {"ok": True, "memory": _memory_status_to_api(status)}
+
+    def clear_project_memory(self) -> dict[str, Any]:
+        if self.source_path is None:
+            return {
+                "ok": True,
+                "before": {
+                    "memory_root": "",
+                    "chat_count": 0,
+                    "lesson_count": 0,
+                    "has_learned_skill": False,
+                    "total_bytes": 0,
+                },
+            }
+        try:
+            before = ErrorLearningStore(self.source_path).clear_memory()
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to clear project memory: {exc}"}
+        return {"ok": True, "before": _memory_status_to_api(before)}
+
     def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()
         if not message:
@@ -1161,6 +1197,12 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/assistant/code-blocks":
             return self.extract_assistant_code_blocks(body)
 
+        if normalized_method == "GET" and route == "/api/memory/status":
+            return self.memory_status()
+
+        if normalized_method == "DELETE" and route == "/api/memory":
+            return self.clear_project_memory()
+
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)
 
@@ -1229,6 +1271,16 @@ def _revision_to_api_item(revision, *, latest_revision_id: str | None = None) ->
         "compile": revision.compile or {},
         "explanation": revision.explanation,
         "is_latest": revision.revision_id == latest_revision_id,
+    }
+
+
+def _memory_status_to_api(status) -> dict[str, Any]:
+    return {
+        "memory_root": str(status.memory_root),
+        "chat_count": status.chat_count,
+        "lesson_count": status.lesson_count,
+        "has_learned_skill": bool(status.has_learned_skill),
+        "total_bytes": status.total_bytes,
     }
 
 

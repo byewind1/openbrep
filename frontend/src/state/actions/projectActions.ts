@@ -12,6 +12,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
       set({ loading: false })
     },
 
@@ -32,6 +33,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
       set({ loading: false })
     },
 
@@ -50,6 +52,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
       set({ loading: false })
     },
 
@@ -68,6 +71,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
       set({ loading: false })
     },
 
@@ -86,6 +90,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
       set((state) => ({
         loading: false,
         compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
@@ -106,6 +111,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
       set({ loading: false })
     },
 
@@ -124,6 +130,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
       set({ loading: false })
     },
 

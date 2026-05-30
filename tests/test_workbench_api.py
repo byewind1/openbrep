@@ -775,6 +775,28 @@ END
     ]
 
 
+def test_workbench_session_reports_and_clears_project_memory_status(tmp_path):
+    project = HSFProject.create_new("MemoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.route("POST", "/api/assistant/history", {"messages": [{"role": "user", "content": "旧记录"}]})
+
+    status = session.route("GET", "/api/memory/status")
+    cleared = session.route("DELETE", "/api/memory")
+    after = session.route("GET", "/api/memory/status")
+
+    assert status["ok"] is True
+    assert status["memory"]["chat_count"] == 1
+    assert status["memory"]["memory_root"] == str(hsf_dir / ".openbrep" / "memory")
+    assert status["memory"]["total_bytes"] > 0
+    assert cleared["ok"] is True
+    assert cleared["before"]["chat_count"] == 1
+    assert after["memory"]["chat_count"] == 0
+    assert after["memory"]["total_bytes"] == 0
+
+
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):
     project = HSFProject.create_new("GeneratedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

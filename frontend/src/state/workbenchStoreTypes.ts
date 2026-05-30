@@ -6,6 +6,7 @@ import type {
   AssistantHistoryResult,
   AssistantMessage,
   AssistantResult,
+  ClearProjectMemoryResult,
   CompileResult,
   CompilerSettings,
   CompilerSettingsResult,
@@ -22,6 +23,8 @@ import type {
   PreviewPayload,
   ProjectRevision,
   ProjectRevisionsResponse,
+  ProjectMemoryStatus,
+  ProjectMemoryStatusResult,
   ProjectScript,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
@@ -72,6 +75,8 @@ export interface WorkbenchApi {
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
   clearAssistantHistory: () => Promise<SaveAssistantHistoryResult>
   extractAssistantCodeBlocks: (content: string) => Promise<AssistantCodeBlocksResult>
+  fetchMemoryStatus: () => Promise<ProjectMemoryStatusResult>
+  clearProjectMemory: () => Promise<ClearProjectMemoryResult>
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
@@ -101,6 +106,7 @@ export interface WorkbenchState {
   scripts: ProjectScript[]
   recentProjects: RecentProject[]
   revisions: ProjectRevision[]
+  memoryStatus: ProjectMemoryStatus | null
   latestRevisionId: string | null
   revisionLoading: boolean
   activeScriptName: string | null
@@ -140,6 +146,8 @@ export interface WorkbenchState {
   loadScripts: () => Promise<void>
   loadRecentProjects: () => Promise<void>
   loadRevisions: () => Promise<void>
+  loadMemoryStatus: () => Promise<void>
+  clearProjectMemory: () => Promise<void>
   saveRevision: (message?: string) => Promise<void>
   restoreRevision: (revisionId: string) => Promise<void>
   openScript: (name: string) => Promise<void>

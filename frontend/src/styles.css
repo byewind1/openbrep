@@ -1094,12 +1094,13 @@ button:focus-visible {
   max-width: calc(100vw - 24px);
   height: 100vh;
   display: grid;
-  grid-template-rows: 52px auto repeat(4, auto) minmax(0, 1fr);
+  grid-auto-rows: min-content;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
   transform: translateX(100%);
   transition: transform 160ms ease-out;
   box-shadow: none;
+  overflow-y: auto;
 }
 
 .settings-drawer.open {
@@ -1215,6 +1216,47 @@ button:focus-visible {
 .settings-submit-row {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.memory-status-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  padding: 10px;
+}
+
+.memory-status-grid span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.memory-status-grid strong {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-path-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.danger-action {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: var(--error);
+}
+
+.danger-action:hover:not(:disabled) {
+  border-color: rgba(239, 68, 68, 0.7);
+  background: rgba(239, 68, 68, 0.12);
 }
 
 .recent-project-list {

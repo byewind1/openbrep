@@ -262,6 +262,26 @@ export interface AssistantCodeBlocksResult {
   error?: string
 }
 
+export interface ProjectMemoryStatus {
+  memory_root: string
+  chat_count: number
+  lesson_count: number
+  has_learned_skill: boolean
+  total_bytes: number
+}
+
+export interface ProjectMemoryStatusResult {
+  ok: boolean
+  memory?: ProjectMemoryStatus
+  error?: string
+}
+
+export interface ClearProjectMemoryResult {
+  ok: boolean
+  before?: ProjectMemoryStatus
+  error?: string
+}
+
 export interface GenerateResult {
   ok: boolean
   assistant?: {

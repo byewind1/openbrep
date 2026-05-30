@@ -6,6 +6,7 @@ import type {
   AssistantHistoryResult,
   AssistantMessage,
   AssistantResult,
+  ClearProjectMemoryResult,
   CompileResult,
   CreateProjectResult,
   MockCompileResponse,
@@ -21,6 +22,7 @@ import type {
   PreviewPayload,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
+  ProjectMemoryStatusResult,
   ProjectRevisionsResponse,
   RecentProjectsResponse,
   RevealArtifactResult,
@@ -369,6 +371,22 @@ export async function extractAssistantCodeBlocks(content: string): Promise<Assis
       body: JSON.stringify({ content }),
     },
     { ok: false, blocks: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchMemoryStatus(): Promise<ProjectMemoryStatusResult> {
+  return requestJson<ProjectMemoryStatusResult>(
+    '/api/memory/status',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function clearProjectMemory(): Promise<ClearProjectMemoryResult> {
+  return requestJson<ClearProjectMemoryResult>(
+    '/api/memory',
+    { method: 'DELETE' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 
