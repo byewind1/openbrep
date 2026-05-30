@@ -1070,6 +1070,34 @@ def test_workbench_session_generate_passes_reference_image_to_pipeline(tmp_path)
     assert FakePipeline.last_request.image_mime == "image/jpeg"
 
 
+def test_workbench_session_normalizes_vision_provider_errors(tmp_path):
+    project = HSFProject.create_new("VisionShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FailingVisionPipeline:
+        def __init__(self, trace_dir="./traces"):
+            pass
+
+        def execute(self, request):
+            return TaskResult(success=False, error="BadRequest: unsupported image_url content block")
+
+    session = WorkbenchSession(pipeline_class=FailingVisionPipeline)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/assistant/generate",
+        {
+            "message": "按图调整",
+            "image_b64": "ZmFrZS1pbWFnZQ==",
+            "image_mime": "image/png",
+        },
+    )
+
+    assert response["ok"] is False
+    assert "当前模型或网关不支持图片分析" in response["error"]
+    assert "unsupported image_url" in response["error"]
+
+
 def test_workbench_session_rejects_oversized_generate_image(tmp_path):
     project = HSFProject.create_new("VisionShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

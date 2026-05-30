@@ -37,7 +37,7 @@ from openbrep.learning import ErrorLearningStore
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from ui.three_preview import preview_3d_to_three_payload
-from ui.view_models import classify_code_blocks
+from ui.view_models import classify_code_blocks, classify_vision_error
 
 
 _DEMO_PROJECT: HSFProject | None = None
@@ -516,7 +516,10 @@ class WorkbenchSession:
             )
         )
         if not result.success or result.project is None:
-            return {"ok": False, "error": result.error or "Create failed.", "events": events}
+            error = result.error or "Create failed."
+            if image_payload["image_b64"]:
+                error = classify_vision_error(Exception(error))
+            return {"ok": False, "error": error, "events": events}
 
         result.project.name = project_name
         result.project.work_dir = target_dir.parent
@@ -1168,7 +1171,10 @@ class WorkbenchSession:
             pipeline.config.agent.max_iterations = self.max_retries
         result = pipeline.execute(request)
         if not result.success:
-            return {"ok": False, "error": result.error or "Generation failed.", "events": events}
+            error = result.error or "Generation failed."
+            if image_payload["image_b64"]:
+                error = classify_vision_error(Exception(error))
+            return {"ok": False, "error": error, "events": events}
 
         if result.project is not None:
             self.project = result.project

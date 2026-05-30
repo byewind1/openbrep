@@ -147,6 +147,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       set((state) => ({
         assistantBusy: false,
         assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
+        lastError: result.ok ? null : reply,
         preview: result.preview ?? state.preview,
         warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
         draftParameters: {},

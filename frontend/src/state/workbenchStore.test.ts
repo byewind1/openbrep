@@ -1520,3 +1520,24 @@ test('generateAssistantChanges passes image attachments to the API', async () =>
   })
   expect(store.getState().assistantMessages[0].content).toContain('[image: chair.jpg]')
 })
+
+test('generateAssistantChanges exposes image generation failures as lastError', async () => {
+  const error = '当前模型或网关不支持图片分析：unsupported image_url'
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => ({ ok: false, error }),
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('按图调整', {
+    name: 'chair.png',
+    mime: 'image/png',
+    b64: 'ZmFrZS1pbWFnZQ==',
+  })
+
+  expect(store.getState().lastError).toBe(error)
+  expect(store.getState().assistantMessages.at(-1)).toEqual({
+    role: 'assistant',
+    content: error,
+  })
+})
