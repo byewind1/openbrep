@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { CompilerSettings, ErrorLesson, LlmSettings, ProjectMemoryStatus, RecentProject } from '../../api/types'
+import type {
+  CompilerSettings,
+  ErrorLesson,
+  LlmSettings,
+  ProjectMemoryStatus,
+  RecentProject,
+  UpdateMemoryLessonRequest,
+} from '../../api/types'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
 
 interface SettingsDrawerProps {
@@ -23,6 +30,7 @@ interface SettingsDrawerProps {
   onCloseProject: () => void
   onLoadMemoryLessons: () => void
   onSummarizeProjectMemory: () => void
+  onUpdateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => void
   onDeleteMemoryLesson: (fingerprint: string) => void
   onIgnoreMemoryLesson: (fingerprint: string) => void
   onClearProjectMemory: () => void
@@ -48,6 +56,7 @@ export function SettingsDrawer({
   onCloseProject,
   onLoadMemoryLessons,
   onSummarizeProjectMemory,
+  onUpdateMemoryLesson,
   onDeleteMemoryLesson,
   onIgnoreMemoryLesson,
   onClearProjectMemory,
@@ -259,6 +268,7 @@ export function SettingsDrawer({
           formatBytes={formatBytes}
           onRefresh={onLoadMemoryLessons}
           onSummarize={onSummarizeProjectMemory}
+          onUpdateLesson={onUpdateMemoryLesson}
           onDeleteLesson={onDeleteMemoryLesson}
           onIgnoreLesson={onIgnoreMemoryLesson}
           onClear={onClearProjectMemory}

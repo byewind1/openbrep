@@ -79,6 +79,7 @@ export function WorkbenchApp() {
   const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
   const loadMemoryLessons = useWorkbenchStore((state) => state.loadMemoryLessons)
   const summarizeProjectMemory = useWorkbenchStore((state) => state.summarizeProjectMemory)
+  const updateMemoryLesson = useWorkbenchStore((state) => state.updateMemoryLesson)
   const deleteMemoryLesson = useWorkbenchStore((state) => state.deleteMemoryLesson)
   const ignoreMemoryLesson = useWorkbenchStore((state) => state.ignoreMemoryLesson)
   const clearProjectMemory = useWorkbenchStore((state) => state.clearProjectMemory)
@@ -282,6 +283,7 @@ export function WorkbenchApp() {
         onCloseProject={() => void closeProject()}
         onLoadMemoryLessons={loadMemoryLessons}
         onSummarizeProjectMemory={summarizeProjectMemory}
+        onUpdateMemoryLesson={updateMemoryLesson}
         onDeleteMemoryLesson={deleteMemoryLesson}
         onIgnoreMemoryLesson={ignoreMemoryLesson}
         onClearProjectMemory={clearProjectMemory}

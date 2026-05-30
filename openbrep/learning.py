@@ -194,6 +194,34 @@ class ErrorLearningStore:
             self._write_lessons(lessons)
         return ignored, len([lesson for lesson in lessons if not lesson.ignored])
 
+    def update_error_lesson(self, fingerprint: str, updates: dict[str, Any]) -> ErrorLesson | None:
+        """Update editable text fields for one workspace lesson."""
+        target = str(fingerprint or "").strip()
+        if not target:
+            return None
+        lessons = self.list_error_lessons(include_seed=False, include_ignored=True)
+        editable_fields = {
+            "category": 80,
+            "summary": 600,
+            "guidance": 1200,
+            "example": 800,
+        }
+        updated_lesson: ErrorLesson | None = None
+        for lesson in lessons:
+            if lesson.fingerprint != target:
+                continue
+            for field, limit in editable_fields.items():
+                if field not in updates:
+                    continue
+                value = _clean(str(updates.get(field, "")))[:limit]
+                setattr(lesson, field, value)
+            updated_lesson = lesson
+            break
+        if updated_lesson is None:
+            return None
+        self._write_lessons(lessons)
+        return updated_lesson
+
     def build_skill_prompt(self, *, project_name: str = "", limit: int = 8) -> str:
         compacted = self.load_learned_skill()
         workspace_recent = build_error_learning_skill(

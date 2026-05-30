@@ -96,6 +96,33 @@ export function createMemoryActions({ api, set }: WorkbenchActionContext) {
       }))
     },
 
+    async updateMemoryLesson(fingerprint: string, updates: Parameters<typeof api.updateMemoryLesson>[1]) {
+      const cleaned = fingerprint.trim()
+      if (!cleaned) {
+        set({ lastError: 'Lesson fingerprint is required.' })
+        return
+      }
+      const result = await api.updateMemoryLesson(cleaned, updates)
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to update project memory lesson.' })
+        return
+      }
+      const [status, lessons] = await Promise.all([
+        api.fetchMemoryStatus(),
+        api.fetchMemoryLessons(),
+      ])
+      set((state) => ({
+        memoryStatus: status.ok ? status.memory ?? null : state.memoryStatus,
+        memoryLessons: lessons.ok
+          ? lessons.lessons
+          : state.memoryLessons.map((lesson) =>
+              lesson.fingerprint === cleaned && result.lesson ? result.lesson : lesson,
+            ),
+        compileLog: ['Updated memory lesson', ...state.compileLog].slice(0, 20),
+        lastError: status.ok && lessons.ok ? null : status.error ?? lessons.error ?? state.lastError,
+      }))
+    },
+
     async clearProjectMemory() {
       const result = await api.clearProjectMemory()
       if (!result.ok) {

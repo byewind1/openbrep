@@ -1079,6 +1079,28 @@ class WorkbenchSession:
             return {"ok": False, "error": "Project memory lesson was not found.", "remaining_count": remaining_count}
         return {"ok": True, "ignored": cleaned, "remaining_count": remaining_count}
 
+    def update_memory_lesson(self, fingerprint: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before editing project memory lessons."}
+        cleaned = str(fingerprint or "").strip()
+        if not cleaned:
+            return {"ok": False, "error": "Lesson fingerprint is required."}
+        body = body or {}
+        updates = {
+            key: body[key]
+            for key in ("category", "summary", "guidance", "example")
+            if key in body
+        }
+        if not updates:
+            return {"ok": False, "error": "No editable lesson fields were provided."}
+        try:
+            lesson = ErrorLearningStore(self.source_path).update_error_lesson(cleaned, updates)
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to update project memory lesson: {exc}"}
+        if lesson is None:
+            return {"ok": False, "error": "Project memory lesson was not found."}
+        return {"ok": True, "lesson": _error_lesson_to_api(lesson)}
+
     def clear_project_memory(self) -> dict[str, Any]:
         if self.source_path is None:
             return {
@@ -1277,6 +1299,8 @@ class WorkbenchSession:
             return self.ignore_memory_lesson(unquote(lesson_ignore_match.group(1)))
 
         lesson_match = MEMORY_LESSON_ROUTE_RE.match(route)
+        if lesson_match and normalized_method == "PATCH":
+            return self.update_memory_lesson(unquote(lesson_match.group(1)), body)
         if lesson_match and normalized_method == "DELETE":
             return self.delete_memory_lesson(unquote(lesson_match.group(1)))
 

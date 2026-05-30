@@ -36,6 +36,8 @@ import type {
   SaveRevisionResponse,
   SummarizeMemoryResult,
   DeleteParameterResult,
+  UpdateMemoryLessonRequest,
+  UpdateMemoryLessonResult,
   UpdateParameterRequest,
   UpdateParameterResult,
   ValidateParametersResult,
@@ -418,6 +420,21 @@ export async function ignoreMemoryLesson(fingerprint: string): Promise<IgnoreMem
   return requestJson<IgnoreMemoryLessonResult>(
     `/api/memory/lessons/${encodeURIComponent(fingerprint)}/ignore`,
     { method: 'POST' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function updateMemoryLesson(
+  fingerprint: string,
+  updates: UpdateMemoryLessonRequest,
+): Promise<UpdateMemoryLessonResult> {
+  return requestJson<UpdateMemoryLessonResult>(
+    `/api/memory/lessons/${encodeURIComponent(fingerprint)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }

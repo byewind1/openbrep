@@ -898,6 +898,41 @@ def test_workbench_session_ignores_project_memory_lesson_without_deleting_it(tmp
     assert stored_lessons[0].ignored is True
 
 
+def test_workbench_session_updates_project_memory_lesson(tmp_path):
+    project = HSFProject.create_new("MemoryShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    lesson = ErrorLearningStore(hsf_dir).record_error(
+        "Unknown command FOO at line 3",
+        source="test",
+        project_name="MemoryShelf",
+        instruction="bad command",
+    )
+
+    response = session.route(
+        "PATCH",
+        f"/api/memory/lessons/{lesson.fingerprint}",
+        {
+            "category": "syntax",
+            "summary": "FOO is not a valid GDL command.",
+            "guidance": "Replace FOO with a supported primitive or helper.",
+            "example": "Use BLOCK A, B, ZZYZX instead.",
+        },
+    )
+    lessons = session.route("GET", "/api/memory/lessons")
+
+    assert response["ok"] is True
+    assert response["lesson"]["fingerprint"] == lesson.fingerprint
+    assert response["lesson"]["category"] == "syntax"
+    assert response["lesson"]["summary"] == "FOO is not a valid GDL command."
+    assert response["lesson"]["guidance"] == "Replace FOO with a supported primitive or helper."
+    assert response["lesson"]["example"] == "Use BLOCK A, B, ZZYZX instead."
+    assert response["lesson"]["count"] == 1
+    assert lessons["lessons"][0]["summary"] == "FOO is not a valid GDL command."
+
+
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):
     project = HSFProject.create_new("GeneratedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

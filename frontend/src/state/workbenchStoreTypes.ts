@@ -41,6 +41,8 @@ import type {
   SaveRevisionResponse,
   SaveScriptResponse,
   SummarizeMemoryResult,
+  UpdateMemoryLessonRequest,
+  UpdateMemoryLessonResult,
   UpdateParameterRequest,
   UpdateParameterResult,
   ValidateParametersResult,
@@ -85,6 +87,7 @@ export interface WorkbenchApi {
   summarizeProjectMemory: () => Promise<SummarizeMemoryResult>
   deleteMemoryLesson: (fingerprint: string) => Promise<DeleteMemoryLessonResult>
   ignoreMemoryLesson: (fingerprint: string) => Promise<IgnoreMemoryLessonResult>
+  updateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => Promise<UpdateMemoryLessonResult>
   clearProjectMemory: () => Promise<ClearProjectMemoryResult>
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
@@ -163,6 +166,7 @@ export interface WorkbenchState {
   summarizeProjectMemory: () => Promise<void>
   deleteMemoryLesson: (fingerprint: string) => Promise<void>
   ignoreMemoryLesson: (fingerprint: string) => Promise<void>
+  updateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => Promise<void>
   clearProjectMemory: () => Promise<void>
   saveRevision: (message?: string) => Promise<void>
   restoreRevision: (revisionId: string) => Promise<void>

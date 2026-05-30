@@ -40,6 +40,7 @@ import {
   summarizeProjectMemory,
   updateCompilerSettings,
   updateLlmSettings,
+  updateMemoryLesson,
   updateProjectParameter,
   validateProjectParameters,
 } from '../api/client'
@@ -93,6 +94,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   summarizeProjectMemory,
   deleteMemoryLesson,
   ignoreMemoryLesson,
+  updateMemoryLesson,
   clearProjectMemory,
   generateWithAssistant,
   applyParameters,

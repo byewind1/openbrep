@@ -1,4 +1,5 @@
-import type { ErrorLesson, ProjectMemoryStatus } from '../../api/types'
+import { useState } from 'react'
+import type { ErrorLesson, ProjectMemoryStatus, UpdateMemoryLessonRequest } from '../../api/types'
 
 interface MemoryLessonsPanelProps {
   memoryStatus: ProjectMemoryStatus | null
@@ -8,6 +9,7 @@ interface MemoryLessonsPanelProps {
   formatBytes: (bytes: number) => string
   onRefresh: () => void
   onSummarize: () => void
+  onUpdateLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => void
   onDeleteLesson: (fingerprint: string) => void
   onIgnoreLesson: (fingerprint: string) => void
   onClear: () => void
@@ -21,10 +23,34 @@ export function MemoryLessonsPanel({
   formatBytes,
   onRefresh,
   onSummarize,
+  onUpdateLesson,
   onDeleteLesson,
   onIgnoreLesson,
   onClear,
 }: MemoryLessonsPanelProps) {
+  const [editingFingerprint, setEditingFingerprint] = useState<string | null>(null)
+  const [draft, setDraft] = useState<UpdateMemoryLessonRequest>({})
+
+  function startEdit(lesson: ErrorLesson) {
+    setEditingFingerprint(lesson.fingerprint)
+    setDraft({
+      category: lesson.category,
+      summary: lesson.summary,
+      guidance: lesson.guidance,
+      example: lesson.example,
+    })
+  }
+
+  function cancelEdit() {
+    setEditingFingerprint(null)
+    setDraft({})
+  }
+
+  function submitEdit(fingerprint: string) {
+    onUpdateLesson(fingerprint, draft)
+    cancelEdit()
+  }
+
   return (
     <section className="settings-section memory-lessons-panel">
       <div className="settings-section-heading">
@@ -68,6 +94,15 @@ export function MemoryLessonsPanel({
                   <strong>{lesson.count}x</strong>
                   <button
                     type="button"
+                    className="memory-lesson-edit"
+                    onClick={() => startEdit(lesson)}
+                    disabled={busy}
+                    aria-label={`Edit lesson ${lesson.category}`}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
                     className="memory-lesson-ignore"
                     onClick={() => onIgnoreLesson(lesson.fingerprint)}
                     disabled={busy}
@@ -88,6 +123,42 @@ export function MemoryLessonsPanel({
               </div>
               <p>{lesson.summary}</p>
               {lesson.guidance ? <small>{lesson.guidance}</small> : null}
+              {editingFingerprint === lesson.fingerprint ? (
+                <div className="memory-lesson-editor">
+                  <input
+                    type="text"
+                    value={draft.category ?? ''}
+                    placeholder="Category"
+                    onChange={(event) => setDraft({ ...draft, category: event.currentTarget.value })}
+                  />
+                  <textarea
+                    value={draft.summary ?? ''}
+                    placeholder="Summary"
+                    rows={2}
+                    onChange={(event) => setDraft({ ...draft, summary: event.currentTarget.value })}
+                  />
+                  <textarea
+                    value={draft.guidance ?? ''}
+                    placeholder="Guidance"
+                    rows={3}
+                    onChange={(event) => setDraft({ ...draft, guidance: event.currentTarget.value })}
+                  />
+                  <textarea
+                    value={draft.example ?? ''}
+                    placeholder="Example"
+                    rows={2}
+                    onChange={(event) => setDraft({ ...draft, example: event.currentTarget.value })}
+                  />
+                  <div className="memory-lesson-editor-actions">
+                    <button type="button" onClick={() => submitEdit(lesson.fingerprint)} disabled={busy}>
+                      Save
+                    </button>
+                    <button type="button" onClick={cancelEdit} disabled={busy}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </article>
           ))
         )}

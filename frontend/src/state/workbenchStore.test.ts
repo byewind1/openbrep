@@ -198,6 +198,22 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     }),
     deleteMemoryLesson: async (fingerprint: string) => ({ ok: true, deleted: fingerprint, remaining_count: 0 }),
     ignoreMemoryLesson: async (fingerprint: string) => ({ ok: true, ignored: fingerprint, remaining_count: 0 }),
+    updateMemoryLesson: async (fingerprint: string, updates) => ({
+      ok: true,
+      lesson: {
+        fingerprint,
+        category: updates.category ?? 'general_compile_error',
+        summary: updates.summary ?? '',
+        guidance: updates.guidance ?? '',
+        example: updates.example ?? '',
+        count: 1,
+        first_seen: '2026-05-30T10:00:00Z',
+        last_seen: '2026-05-30T10:00:00Z',
+        source: 'test',
+        project_name: 'Chair',
+        raw_excerpt: '',
+      },
+    }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
@@ -1285,6 +1301,55 @@ test('ignoreMemoryLesson hides a lesson and refreshes memory status', async () =
   expect(store.getState().memoryLessons).toEqual([])
   expect(store.getState().memoryStatus?.lesson_count).toBe(0)
   expect(store.getState().compileLog[0]).toContain('Ignored memory lesson')
+})
+
+test('updateMemoryLesson edits a lesson and refreshes memory status', async () => {
+  let updatedFingerprint = ''
+  const editedLesson = {
+    fingerprint: 'general_compile_error:abc123',
+    category: 'syntax',
+    summary: 'FOO is not a valid GDL command.',
+    guidance: 'Replace FOO with a supported primitive.',
+    example: 'Use BLOCK A, B, ZZYZX instead.',
+    count: 1,
+    first_seen: '2026-05-30T10:00:00Z',
+    last_seen: '2026-05-30T10:00:00Z',
+    source: 'test',
+    project_name: 'Chair',
+    raw_excerpt: 'Unknown command FOO at line 3',
+  }
+  const store = createWorkbenchStore(
+    makeApi({
+      updateMemoryLesson: async (fingerprint, updates) => {
+        updatedFingerprint = fingerprint
+        return { ok: true, lesson: { ...editedLesson, ...updates } }
+      },
+      fetchMemoryStatus: async () => ({
+        ok: true,
+        memory: {
+          memory_root: '/workspace/Chair/.openbrep/memory',
+          chat_count: 0,
+          lesson_count: 1,
+          has_learned_skill: false,
+          total_bytes: 0,
+        },
+      }),
+      fetchMemoryLessons: async () => ({ ok: true, lessons: [editedLesson] }),
+    }),
+  )
+
+  await store.getState().updateMemoryLesson('general_compile_error:abc123', {
+    category: 'syntax',
+    summary: 'FOO is not a valid GDL command.',
+    guidance: 'Replace FOO with a supported primitive.',
+    example: 'Use BLOCK A, B, ZZYZX instead.',
+  })
+
+  expect(updatedFingerprint).toBe('general_compile_error:abc123')
+  expect(store.getState().memoryLessons[0].summary).toBe('FOO is not a valid GDL command.')
+  expect(store.getState().memoryLessons[0].guidance).toBe('Replace FOO with a supported primitive.')
+  expect(store.getState().memoryStatus?.lesson_count).toBe(1)
+  expect(store.getState().compileLog[0]).toContain('Updated memory lesson')
 })
 
 test('adopts code blocks from an assistant history message into dirty script buffers', async () => {

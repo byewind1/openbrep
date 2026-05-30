@@ -1386,20 +1386,27 @@ button:focus-visible {
   gap: 8px;
 }
 
-.memory-lesson-delete {
-  min-height: 22px;
-  padding: 0 7px;
-  border-color: rgba(239, 68, 68, 0.35);
-  color: var(--error);
-  font-size: 11px;
-}
-
+.memory-lesson-delete,
+.memory-lesson-edit,
 .memory-lesson-ignore {
   min-height: 22px;
   padding: 0 7px;
+  font-size: 11px;
+}
+
+.memory-lesson-delete {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--error);
+}
+
+.memory-lesson-edit {
+  border-color: rgba(56, 189, 248, 0.35);
+  color: var(--info);
+}
+
+.memory-lesson-ignore {
   border-color: rgba(245, 158, 11, 0.35);
   color: var(--accent-soft);
-  font-size: 11px;
 }
 
 .memory-lesson-item p {
@@ -1413,6 +1420,29 @@ button:focus-visible {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.memory-lesson-editor {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.memory-lesson-editor input,
+.memory-lesson-editor textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.memory-lesson-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .memory-skill-preview {

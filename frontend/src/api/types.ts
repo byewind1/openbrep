@@ -324,6 +324,19 @@ export interface DeleteMemoryLessonResult {
   error?: string
 }
 
+export interface UpdateMemoryLessonRequest {
+  category?: string
+  summary?: string
+  guidance?: string
+  example?: string
+}
+
+export interface UpdateMemoryLessonResult {
+  ok: boolean
+  lesson?: ErrorLesson
+  error?: string
+}
+
 export interface IgnoreMemoryLessonResult {
   ok: boolean
   ignored?: string
