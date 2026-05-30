@@ -164,6 +164,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     listAssistantHistory: async () => ({ ok: true, messages: [] }),
     saveAssistantHistory: async (messages) => ({ ok: true, count: messages.length }),
     clearAssistantHistory: async () => ({ ok: true, count: 0 }),
+    extractAssistantCodeBlocks: async () => ({ ok: true, blocks: [] }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
@@ -992,6 +993,37 @@ test('clearAssistantHistory clears local and persisted assistant history', async
 
   expect(cleared).toBe(true)
   expect(store.getState().assistantMessages).toEqual([])
+})
+
+test('adopts code blocks from an assistant history message into dirty script buffers', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      listAssistantHistory: async () => ({
+        ok: true,
+        messages: [
+          { role: 'user', content: '改 3D' },
+          { role: 'assistant', content: '```gdl\nBLOCK A, B, ZZYZX\nEND\n```' },
+        ],
+      }),
+      extractAssistantCodeBlocks: async () => ({
+        ok: true,
+        blocks: [
+          {
+            path: 'scripts/3d.gdl',
+            script_name: '3d.gdl',
+            content: 'BLOCK A, B, ZZYZX\nEND',
+          },
+        ],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().adoptAssistantMessageCode(1)
+
+  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().scriptContents['3d.gdl']).toBe('BLOCK A, B, ZZYZX\nEND')
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
 })
 
 test('sets active rail panel', () => {

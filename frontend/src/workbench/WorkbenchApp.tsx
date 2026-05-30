@@ -73,6 +73,7 @@ export function WorkbenchApp() {
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
+  const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const createProjectFromPrompt = useWorkbenchStore((state) => state.createProjectFromPrompt)
   const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
@@ -222,6 +223,7 @@ export function WorkbenchApp() {
             onCreate={(message) => void createProjectFromPrompt(message)}
             onGenerate={(message) => void generateAssistantChanges(message)}
             onClearHistory={() => void clearAssistantHistory()}
+            onAdoptCode={(index) => void adoptAssistantMessageCode(index)}
           />
             )}
           </div>

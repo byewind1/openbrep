@@ -1,5 +1,5 @@
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
-import { hydrateSnapshot } from '../workbenchStoreUtils'
+import { hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
   async function persistAssistantHistory() {
@@ -32,6 +32,48 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       set({ assistantMessages: [] })
+    },
+
+    async adoptAssistantMessageCode(index: number) {
+      const message = get().assistantMessages[index]
+      if (!message || message.role !== 'assistant') {
+        set({ lastError: 'Select an assistant message with code to adopt.' })
+        return
+      }
+      const result = await api.extractAssistantCodeBlocks(message.content)
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to extract code from assistant message.' })
+        return
+      }
+      if (!result.blocks.length) {
+        set({ lastError: 'No GDL or XML code blocks found in this assistant message.' })
+        return
+      }
+      const normalizedBlocks = result.blocks
+        .map((block) => ({
+          scriptName: normalizeScriptName(block.script_name || block.path.split('/').pop() || ''),
+          content: block.content,
+        }))
+        .filter((block) => block.scriptName && typeof block.content === 'string')
+      if (!normalizedBlocks.length) {
+        set({ lastError: 'No supported script files found in this assistant message.' })
+        return
+      }
+      set((state) => {
+        const scriptContents = { ...state.scriptContents }
+        const dirtyScripts = { ...state.dirtyScripts }
+        for (const block of normalizedBlocks) {
+          scriptContents[block.scriptName] = block.content
+          dirtyScripts[block.scriptName] = true
+        }
+        return {
+          activeScriptName: normalizedBlocks[0].scriptName,
+          scriptContents,
+          dirtyScripts,
+          lastError: null,
+          compileLog: [`Adopted code from assistant history: ${normalizedBlocks.map((block) => block.scriptName).join(', ')}`, ...state.compileLog].slice(0, 20),
+        }
+      })
     },
 
     async sendAssistantMessage(message: string) {

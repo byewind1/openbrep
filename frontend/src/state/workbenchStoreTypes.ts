@@ -2,6 +2,7 @@ import type {
   AddParameterRequest,
   AddParameterResult,
   ApplyResult,
+  AssistantCodeBlocksResult,
   AssistantHistoryResult,
   AssistantMessage,
   AssistantResult,
@@ -70,6 +71,7 @@ export interface WorkbenchApi {
   listAssistantHistory: () => Promise<AssistantHistoryResult>
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
   clearAssistantHistory: () => Promise<SaveAssistantHistoryResult>
+  extractAssistantCodeBlocks: (content: string) => Promise<AssistantCodeBlocksResult>
   generateWithAssistant: (message: string, assistantSettings?: string) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
@@ -123,6 +125,7 @@ export interface WorkbenchState {
   setActiveRailPanel: (panel: '3d' | '2d' | 'ai') => void
   loadAssistantHistory: () => Promise<void>
   clearAssistantHistory: () => Promise<void>
+  adoptAssistantMessageCode: (index: number) => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
   createProjectFromPrompt: (message: string) => Promise<void>
   generateAssistantChanges: (message: string) => Promise<void>

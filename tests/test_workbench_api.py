@@ -748,6 +748,33 @@ def test_workbench_session_clears_project_assistant_history(tmp_path):
     assert loaded["messages"] == []
 
 
+def test_workbench_session_extracts_code_blocks_from_assistant_history_text():
+    session = WorkbenchSession()
+    response = session.route(
+        "POST",
+        "/api/assistant/code-blocks",
+        {
+            "content": """这里是修改后的 3D 脚本：
+
+```gdl
+BLOCK A, B, ZZYZX
+ADDZ 1
+END
+```
+"""
+        },
+    )
+
+    assert response["ok"] is True
+    assert response["blocks"] == [
+        {
+            "path": "scripts/3d.gdl",
+            "script_name": "3d.gdl",
+            "content": "BLOCK A, B, ZZYZX\nADDZ 1\nEND",
+        }
+    ]
+
+
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):
     project = HSFProject.create_new("GeneratedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

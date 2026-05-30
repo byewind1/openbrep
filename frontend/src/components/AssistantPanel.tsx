@@ -9,9 +9,10 @@ interface AssistantPanelProps {
   onCreate: (message: string) => void
   onGenerate: (message: string) => void
   onClearHistory: () => void
+  onAdoptCode: (index: number) => void
 }
 
-export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, onClearHistory }: AssistantPanelProps) {
+export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, onClearHistory, onAdoptCode }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
 
   function submitMessage(event: FormEvent<HTMLFormElement>) {
@@ -49,6 +50,11 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
             <article className={`assistant-message ${message.role}`} key={`${message.role}-${index}`}>
               <span>{message.role === 'user' ? '你' : 'OpenBrep'}</span>
               <p>{message.content}</p>
+              {message.role === 'assistant' && message.content.includes('```') ? (
+                <button type="button" disabled={busy} onClick={() => onAdoptCode(index)}>
+                  Adopt code
+                </button>
+              ) : null}
             </article>
           ))
         ) : (

@@ -250,6 +250,18 @@ export interface SaveAssistantHistoryResult {
   error?: string
 }
 
+export interface AssistantCodeBlock {
+  path: string
+  script_name: string
+  content: string
+}
+
+export interface AssistantCodeBlocksResult {
+  ok: boolean
+  blocks: AssistantCodeBlock[]
+  error?: string
+}
+
 export interface GenerateResult {
   ok: boolean
   assistant?: {

@@ -35,6 +35,7 @@ from openbrep.learning import ErrorLearningStore
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from ui.three_preview import preview_3d_to_three_payload
+from ui.view_models import classify_code_blocks
 
 
 _DEMO_PROJECT: HSFProject | None = None
@@ -978,6 +979,22 @@ class WorkbenchSession:
             return {"ok": False, "error": f"Failed to clear assistant history: {exc}"}
         return {"ok": True, "count": count}
 
+    def extract_assistant_code_blocks(self, body: dict[str, Any]) -> dict[str, Any]:
+        content = str(body.get("content") or "")
+        try:
+            extracted = classify_code_blocks(content)
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to extract assistant code blocks: {exc}", "blocks": []}
+        blocks = [
+            {
+                "path": path,
+                "script_name": Path(path).name,
+                "content": script,
+            }
+            for path, script in extracted.items()
+        ]
+        return {"ok": True, "blocks": blocks}
+
     def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()
         if not message:
@@ -1140,6 +1157,9 @@ class WorkbenchSession:
 
         if normalized_method == "DELETE" and route == "/api/assistant/history":
             return self.clear_assistant_history()
+
+        if normalized_method == "POST" and route == "/api/assistant/code-blocks":
+            return self.extract_assistant_code_blocks(body)
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)

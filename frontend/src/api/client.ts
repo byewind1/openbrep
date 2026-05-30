@@ -2,6 +2,7 @@ import type {
   ApplyResult,
   AddParameterRequest,
   AddParameterResult,
+  AssistantCodeBlocksResult,
   AssistantHistoryResult,
   AssistantMessage,
   AssistantResult,
@@ -356,6 +357,18 @@ export async function clearAssistantHistory(): Promise<SaveAssistantHistoryResul
     '/api/assistant/history',
     { method: 'DELETE' },
     { ok: false, count: 0, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function extractAssistantCodeBlocks(content: string): Promise<AssistantCodeBlocksResult> {
+  return requestJson<AssistantCodeBlocksResult>(
+    '/api/assistant/code-blocks',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    },
+    { ok: false, blocks: [], error: 'OpenBrep local API is not available.' },
   )
 }
 
