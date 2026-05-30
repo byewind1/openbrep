@@ -260,6 +260,7 @@ class WorkbenchSession:
         self.config = _load_workbench_config(self.config_path)
         self.compiler_mode = "mock"
         self.converter_path = self.config.compiler.path or ""
+        self.output_dir = "" if self.config.output_dir in {"", "./output"} else self.config.output_dir
         self.llm_model = self.config.llm.model
         self.llm_api_key = self.config.llm.resolve_api_key() or ""
         self.llm_api_base = self.config.llm.resolve_api_base() or ""
@@ -281,6 +282,7 @@ class WorkbenchSession:
         return {
             "mode": self.compiler_mode,
             "converter_path": self.converter_path,
+            "output_dir": self.output_dir,
         }
 
     def update_compiler_settings(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -289,7 +291,9 @@ class WorkbenchSession:
             return {"ok": False, "error": f"Unsupported compiler mode: {mode}"}
         self.compiler_mode = mode
         self.converter_path = str(body.get("converter_path") or "").strip()
+        self.output_dir = str(body.get("output_dir") or "").strip()
         self.config.compiler.path = self.converter_path
+        self.config.output_dir = self.output_dir or "./output"
         _save_workbench_config(self.config, self.config_path)
         return {"ok": True, "compiler": self.compiler_settings()}
 
@@ -556,6 +560,18 @@ class WorkbenchSession:
         self.converter_path = str(Path(selected).expanduser())
         return {"ok": True, "path": self.converter_path, "compiler": self.compiler_settings()}
 
+    def choose_output_directory(self) -> dict[str, Any]:
+        try:
+            selected = self.directory_chooser()
+        except Exception as exc:
+            return {"ok": False, "error": f"Directory chooser failed: {exc}"}
+        if not selected:
+            return {"ok": False, "cancelled": True, "error": "Directory selection cancelled."}
+        self.output_dir = str(Path(selected).expanduser().resolve())
+        self.config.output_dir = self.output_dir
+        _save_workbench_config(self.config, self.config_path)
+        return {"ok": True, "path": self.output_dir, "compiler": self.compiler_settings()}
+
     def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "ok": True,
@@ -689,7 +705,7 @@ class WorkbenchSession:
         else:
             self.project.save_to_disk()
             hsf_dir = self.source_path
-        output_dir = Path(str(body.get("output_dir") or hsf_dir.parent / "output"))
+        output_dir = _resolve_output_dir(body, self.output_dir, hsf_dir.parent / "output")
         output_dir = output_dir.expanduser().resolve()
         output_gsm = output_dir / f"{self.project.name}.gsm"
         result = MockHSFCompiler().hsf2libpart(str(hsf_dir), str(output_gsm))
@@ -709,7 +725,7 @@ class WorkbenchSession:
         if self.source_path is None:
             return {"ok": False, "error": "Load an HSF project before compiling."}
 
-        output_dir = Path(str(body.get("output_dir") or self.source_path.parent / "output"))
+        output_dir = _resolve_output_dir(body, self.output_dir, self.source_path.parent / "output")
         output_dir = output_dir.expanduser().resolve()
         output_gsm = output_dir / f"{self.project.name}.gsm"
         compiler_mode = str(body.get("compiler_mode") or self.compiler_mode)
@@ -873,6 +889,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/dialog/open-file":
             return self.choose_file(body)
+
+        if normalized_method == "POST" and route == "/api/dialog/output-directory":
+            return self.choose_output_directory()
 
         if normalized_method == "POST" and route == "/api/settings/compiler":
             return self.update_compiler_settings(body)
@@ -1115,6 +1134,13 @@ def _compile_issues_from_result(result) -> list[dict[str, Any]]:
                 "message": message,
             })
     return issues
+
+
+def _resolve_output_dir(body: dict[str, Any], session_output_dir: str, fallback: Path) -> Path:
+    configured = str(body.get("output_dir") or session_output_dir or "").strip()
+    if configured:
+        return Path(configured)
+    return fallback
 
 
 def _parse_compile_issue(raw: str) -> tuple[str, int | None, str]:

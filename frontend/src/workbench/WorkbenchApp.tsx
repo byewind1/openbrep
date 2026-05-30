@@ -64,6 +64,7 @@ export function WorkbenchApp() {
   const setLlmSettings = useWorkbenchStore((state) => state.setLlmSettings)
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const browseCompilerFile = useWorkbenchStore((state) => state.browseCompilerFile)
+  const browseOutputDirectory = useWorkbenchStore((state) => state.browseOutputDirectory)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
@@ -253,6 +254,7 @@ export function WorkbenchApp() {
         onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
         onReloadRuntimeSettings={() => void reloadRuntimeSettings()}
         onBrowseCompilerFile={() => void browseCompilerFile()}
+        onBrowseOutputDirectory={() => void browseOutputDirectory()}
         onOpenProjectPath={(path) => void loadProjectPath(path)}
         onCloseProject={() => void closeProject()}
       />

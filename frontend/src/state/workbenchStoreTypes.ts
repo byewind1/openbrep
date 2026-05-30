@@ -45,7 +45,8 @@ export interface WorkbenchApi {
   closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
-  compileProject: () => Promise<CompileResult>
+  chooseOutputDirectory: () => Promise<DirectoryChoiceResult>
+  compileProject: (outputDir?: string) => Promise<CompileResult>
   createProjectFromPrompt: (message: string, assistantSettings?: string) => Promise<CreateProjectResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
   listRecentProjects: () => Promise<RecentProjectsResponse>
@@ -54,7 +55,7 @@ export interface WorkbenchApi {
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
   saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
   restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
-  mockCompile: () => Promise<MockCompileResponse>
+  mockCompile: (outputDir?: string) => Promise<MockCompileResponse>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
@@ -102,6 +103,7 @@ export interface WorkbenchState {
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<void>
+  browseOutputDirectory: () => Promise<void>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   setLlmSettings: (settings: LlmSettings) => Promise<void>
   reloadRuntimeSettings: () => Promise<void>

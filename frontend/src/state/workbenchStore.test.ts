@@ -8,7 +8,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
     fetchPreview2D: async () => ({
@@ -23,7 +23,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [{ name: 'B', type_tag: 'Length', description: 'Depth', value: '0.5', is_fixed: true }],
       preview: { meshes: [], wires: [], warnings: ['loaded'] },
       warnings: ['loaded'],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     importGdlFile: async () => ({
       ok: true,
@@ -31,7 +31,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [],
       preview: { meshes: [], wires: [], warnings: ['imported'] },
       warnings: ['imported'],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     closeProject: async () => ({
       ok: true,
@@ -39,10 +39,11 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     chooseProjectDirectory: async () => ({ ok: false, cancelled: true }),
     chooseCompilerFile: async () => ({ ok: false, cancelled: true }),
+    chooseOutputDirectory: async () => ({ ok: false, cancelled: true }),
     compileProject: async () => ({ ok: false, error: 'not loaded' }),
     createProjectFromPrompt: async () => ({
       ok: true,
@@ -56,7 +57,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [],
       preview: { meshes: [], wires: [], warnings: ['created'] },
       warnings: ['created'],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     listProjectScripts: async () => ({
       scripts: [
@@ -130,7 +131,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     updateCompilerSettings: async () => ({ ok: false, error: 'not loaded' }),
     fetchRuntimeSettings: async () => ({
       ok: true,
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
       llm: {
         model: 'glm-4-flash',
         models: ['glm-4-flash', 'deepseek-chat'],
@@ -150,7 +151,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '2.0', is_fixed: true }],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     addProjectParameter: async (parameter) => ({
       ok: true,
@@ -162,7 +163,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       ],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     updateProjectParameter: async (parameter) => ({
       ok: true,
@@ -179,7 +180,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       ],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     deleteProjectParameter: async (name) => ({
       ok: true,
@@ -188,7 +189,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
-      compiler: { mode: 'mock', converter_path: '' },
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     validateProjectParameters: async () => ({ ok: true, issues: [] }),
     ...overrides,
@@ -436,7 +437,7 @@ test('browses for a project directory and loads the selected HSF snapshot', asyn
         parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.5', is_fixed: true }],
         preview: { meshes: [], wires: [], warnings: [] },
         warnings: [],
-        compiler: { mode: 'mock', converter_path: '' },
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
       }),
     }),
   )
@@ -457,7 +458,7 @@ test('imports a single GDL file as a project and opens its default script', asyn
         parameters: [],
         preview: { meshes: [], wires: [], warnings: ['imported'] },
         warnings: ['imported'],
-        compiler: { mode: 'mock', converter_path: '' },
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
       }),
       listRecentProjects: async () => ({
         ok: true,
@@ -511,7 +512,7 @@ test('loads compiler settings from snapshot', async () => {
         parameters: [],
         preview: { meshes: [], wires: [], warnings: [] },
         warnings: [],
-        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter' },
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
       }),
     }),
   )
@@ -521,6 +522,7 @@ test('loads compiler settings from snapshot', async () => {
   expect(store.getState().compilerSettings).toEqual({
     mode: 'lp',
     converter_path: '/Applications/LP_XMLConverter',
+    output_dir: '',
   })
 })
 
@@ -640,9 +642,9 @@ test('updates compiler settings through the API', async () => {
     }),
   )
 
-  await store.getState().setCompilerSettings({ mode: 'lp', converter_path: '/converter' })
+  await store.getState().setCompilerSettings({ mode: 'lp', converter_path: '/converter', output_dir: '' })
 
-  expect(store.getState().compilerSettings).toEqual({ mode: 'lp', converter_path: '/converter' })
+  expect(store.getState().compilerSettings).toEqual({ mode: 'lp', converter_path: '/converter', output_dir: '' })
 })
 
 test('updates llm settings through the API', async () => {
@@ -672,7 +674,7 @@ test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
     makeApi({
       fetchRuntimeSettings: async () => ({
         ok: true,
-        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter' },
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
         llm: {
           model: 'gpt-4.1-mini',
           models: ['gpt-4.1-mini'],
@@ -698,7 +700,7 @@ test('browses for LP_XMLConverter and stores compiler settings', async () => {
       chooseCompilerFile: async () => ({
         ok: true,
         path: '/Applications/LP_XMLConverter',
-        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter' },
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
       }),
     }),
   )
@@ -708,31 +710,59 @@ test('browses for LP_XMLConverter and stores compiler settings', async () => {
   expect(store.getState().compilerSettings).toEqual({
     mode: 'lp',
     converter_path: '/Applications/LP_XMLConverter',
+    output_dir: '',
   })
 })
 
-test('records compile results in the workbench log', async () => {
+test('browses for compile output directory and stores compiler settings', async () => {
   const store = createWorkbenchStore(
     makeApi({
-      compileProject: async () => ({
+      chooseOutputDirectory: async () => ({
         ok: true,
-        compile: {
-          success: true,
-          mode: 'lp',
-          output_path: '/workspace/output/Chair.gsm',
-          stdout: 'compiled',
-          stderr: '',
-          errors: [],
-          warnings: [],
-          gsm_size_bytes: 4096,
-          parameter_count: 3,
-        },
+        path: '/workspace/output',
+        compiler: { mode: 'mock', converter_path: '', output_dir: '/workspace/output' },
       }),
     }),
   )
 
+  await store.getState().browseOutputDirectory()
+
+  expect(store.getState().compilerSettings).toEqual({
+    mode: 'mock',
+    converter_path: '',
+    output_dir: '/workspace/output',
+  })
+})
+
+test('records compile results in the workbench log', async () => {
+  let receivedOutputDir = ''
+  const store = createWorkbenchStore(
+    makeApi({
+      updateCompilerSettings: async (settings) => ({ ok: true, compiler: settings }),
+      compileProject: async (outputDir = '') => {
+        receivedOutputDir = outputDir
+        return {
+          ok: true,
+          compile: {
+            success: true,
+            mode: 'lp',
+            output_path: '/workspace/output/Chair.gsm',
+            stdout: 'compiled',
+            stderr: '',
+            errors: [],
+            warnings: [],
+            gsm_size_bytes: 4096,
+            parameter_count: 3,
+          },
+        }
+      },
+    }),
+  )
+
+  await store.getState().setCompilerSettings({ mode: 'mock', converter_path: '', output_dir: '/workspace/output' })
   await store.getState().compileCurrentProject()
 
+  expect(receivedOutputDir).toBe('/workspace/output')
   expect(store.getState().compileLog).toEqual(['LP compile passed: /workspace/output/Chair.gsm'])
   expect(store.getState().mockCompileResult).toEqual({
     success: true,
@@ -745,6 +775,24 @@ test('records compile results in the workbench log', async () => {
     error: undefined,
   })
   expect(store.getState().compiling).toBe(false)
+})
+
+test('mock compile uses configured output directory', async () => {
+  let receivedOutputDir = ''
+  const store = createWorkbenchStore(
+    makeApi({
+      updateCompilerSettings: async (settings) => ({ ok: true, compiler: settings }),
+      mockCompile: async (outputDir = '') => {
+        receivedOutputDir = outputDir
+        return { success: true, mode: 'mock', issues: [], duration_ms: 12 }
+      },
+    }),
+  )
+
+  await store.getState().setCompilerSettings({ mode: 'mock', converter_path: '', output_dir: '/workspace/output' })
+  await store.getState().runMockCompile()
+
+  expect(receivedOutputDir).toBe('/workspace/output')
 })
 
 test('records real compile errors in diagnostics', async () => {

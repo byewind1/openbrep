@@ -1,11 +1,11 @@
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { buildMockCompileSummary, compileIssuesFromResult } from '../workbenchStoreUtils'
 
-export function createCompileActions({ api, set }: WorkbenchActionContext) {
+export function createCompileActions({ api, get, set }: WorkbenchActionContext) {
   return {
     async compileCurrentProject() {
       set({ compiling: true })
-      const result = await api.compileProject()
+      const result = await api.compileProject(get().compilerSettings.output_dir)
       const issues = compileIssuesFromResult(result)
       const message =
         result.ok && result.compile
@@ -29,7 +29,7 @@ export function createCompileActions({ api, set }: WorkbenchActionContext) {
 
     async runMockCompile() {
       set({ compiling: true })
-      const result = await api.mockCompile()
+      const result = await api.mockCompile(get().compilerSettings.output_dir)
       const summary = buildMockCompileSummary(result)
       set((state) => ({
         compiling: false,

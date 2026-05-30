@@ -17,6 +17,13 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
       }
     },
 
+    async browseOutputDirectory() {
+      const result = await api.chooseOutputDirectory()
+      if (result.ok && result.compiler) {
+        set({ compilerSettings: result.compiler })
+      }
+    },
+
     async setLlmSettings(settings: LlmSettings) {
       const result = await api.updateLlmSettings(settings)
       if (result.ok && result.llm) {

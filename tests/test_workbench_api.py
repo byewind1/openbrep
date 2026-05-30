@@ -350,8 +350,30 @@ def test_workbench_session_exposes_and_updates_compiler_settings():
     assert update["compiler"] == {
         "mode": "lp",
         "converter_path": "/Applications/LP_XMLConverter",
+        "output_dir": "",
     }
     assert snapshot["compiler"] == update["compiler"]
+
+
+def test_workbench_session_updates_compile_output_directory(tmp_path):
+    output_dir = tmp_path / "configured-out"
+    project = HSFProject.create_new("ConfiguredOutputShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    update = session.route(
+        "POST",
+        "/api/settings/compiler",
+        {"mode": "mock", "converter_path": "", "output_dir": str(output_dir)},
+    )
+    response = session.route("POST", "/api/compile", {})
+
+    assert update["ok"] is True
+    assert update["compiler"]["output_dir"] == str(output_dir)
+    assert response["ok"] is True
+    assert response["compile"]["output_path"] == str(output_dir / "ConfiguredOutputShelf.gsm")
+    assert (output_dir / "ConfiguredOutputShelf.gsm").exists()
 
 
 def test_workbench_session_exposes_runtime_llm_settings(tmp_path):
@@ -481,7 +503,22 @@ def test_workbench_session_choose_converter_file_updates_compiler_settings():
     assert response["compiler"] == {
         "mode": "lp",
         "converter_path": "/Applications/LP_XMLConverter",
+        "output_dir": "",
     }
+
+
+def test_workbench_session_choose_output_directory_updates_compiler_settings(tmp_path):
+    output_dir = tmp_path / "selected-output"
+    session = WorkbenchSession(
+        config_path=tmp_path / "config.toml",
+        directory_chooser=lambda: str(output_dir),
+    )
+
+    response = session.route("POST", "/api/dialog/output-directory", {})
+
+    assert response["ok"] is True
+    assert response["path"] == str(output_dir.resolve())
+    assert response["compiler"]["output_dir"] == str(output_dir.resolve())
 
 
 def test_workbench_session_choose_converter_file_handles_cancel():

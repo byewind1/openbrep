@@ -174,6 +174,18 @@ export async function chooseCompilerFile(): Promise<FileChoiceResult> {
   )
 }
 
+export async function chooseOutputDirectory(): Promise<DirectoryChoiceResult> {
+  return requestJson<DirectoryChoiceResult>(
+    '/api/dialog/output-directory',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
 export async function applyParameters(parameters: Record<string, unknown>): Promise<ApplyResult> {
   return requestJson<ApplyResult>(
     '/api/apply',
@@ -234,13 +246,13 @@ export async function deleteProjectParameter(name: string): Promise<DeleteParame
   )
 }
 
-export async function compileProject(): Promise<CompileResult> {
+export async function compileProject(outputDir = ''): Promise<CompileResult> {
   return requestJson<CompileResult>(
     '/api/compile',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ output_dir: outputDir }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
@@ -326,13 +338,13 @@ export async function saveProjectScript(scriptName: string, content: string): Pr
   )
 }
 
-export async function mockCompile(): Promise<MockCompileResponse> {
+export async function mockCompile(outputDir = ''): Promise<MockCompileResponse> {
   return requestJson<MockCompileResponse>(
     '/api/compile/mock',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ output_dir: outputDir }),
     },
     { success: false, mode: 'mock', issues: [], duration_ms: 0, error: 'OpenBrep local API is not available.' },
   )
@@ -351,7 +363,7 @@ async function requestJson<T>(path: string, init: RequestInit, fallback: T): Pro
 
 export const fallbackSnapshot: WorkbenchSnapshot = {
   project: { name: 'Demo Bookshelf', source: 'fallback' },
-  compiler: { mode: 'mock', converter_path: '' },
+  compiler: { mode: 'mock', converter_path: '', output_dir: '' },
   llm: {
     model: 'glm-4-flash',
     models: ['glm-4-flash'],

@@ -77,6 +77,7 @@ export interface Preview2DPayload {
 export interface CompilerSettings {
   mode: 'mock' | 'lp'
   converter_path: string
+  output_dir: string
 }
 
 export interface LlmSettings {

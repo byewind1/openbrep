@@ -12,6 +12,7 @@ interface SettingsDrawerProps {
   onLlmSettingsChange: (settings: LlmSettings) => void
   onReloadRuntimeSettings: () => void
   onBrowseCompilerFile: () => void
+  onBrowseOutputDirectory: () => void
   onOpenProjectPath: (path: string) => void
   onCloseProject: () => void
 }
@@ -26,6 +27,7 @@ export function SettingsDrawer({
   onLlmSettingsChange,
   onReloadRuntimeSettings,
   onBrowseCompilerFile,
+  onBrowseOutputDirectory,
   onOpenProjectPath,
   onCloseProject,
 }: SettingsDrawerProps) {
@@ -96,6 +98,25 @@ export function SettingsDrawer({
                 }
               />
               <button type="button" disabled={compilerSettings.mode !== 'lp'} onClick={onBrowseCompilerFile}>
+                Browse
+              </button>
+            </div>
+          </label>
+          <label className="settings-field">
+            <span>Output directory</span>
+            <div className="settings-path-row">
+              <input
+                type="text"
+                placeholder="Project sibling /output"
+                value={compilerSettings.output_dir}
+                onChange={(event) =>
+                  onCompilerSettingsChange({
+                    ...compilerSettings,
+                    output_dir: event.currentTarget.value,
+                  })
+                }
+              />
+              <button type="button" onClick={onBrowseOutputDirectory}>
                 Browse
               </button>
             </div>
