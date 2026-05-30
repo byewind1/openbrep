@@ -73,8 +73,8 @@ root, not a business-logic dump. The store split is holding.
 | AI create | Yes | Assistant creates HSF project | Done |
 | AI modify | Yes | Assistant modifies current project, refreshes scripts/diagnostics | Done |
 | Explain/chat | Yes | Basic assistant explain | Partial |
-| Chat history browser | Yes | Assistant thread persists per HSF project; dedicated browser not implemented | Partial |
-| Adopt code from chat record | Yes | Assistant replies with code can be adopted into dirty script buffers | Partial |
+| Chat history browser | Yes | Assistant thread persists per HSF project; compact drawer browser is available from AI panel | Partial |
+| Adopt code from chat record | Yes | Assistant replies with code can be adopted from thread or history drawer into dirty script buffers | Done |
 | Image/vision input | Yes | Not implemented | Gap |
 | LLM settings | Sidebar settings | Settings drawer | Done |
 | Custom provider credentials | Yes | Settings drawer supports model/key/base | Partial but usable |
@@ -100,7 +100,7 @@ React Workbench is not ready to fully replace Streamlit for these workflows:
 - Archicad/Tapir live integration.
 - Wrong-answer notebook summarization and review.
 - Pro licensing and Pro knowledge package import.
-- Dedicated chat history browser.
+- Multi-message history browser actions beyond single-message code adoption.
 
 ## Recommended Migration Path
 
@@ -131,13 +131,13 @@ Implemented:
 - Persist assistant messages per HSF project under `.openbrep/memory/chats/`.
 - Clear assistant history from the AI panel.
 - Adopt code blocks from assistant history into editable script buffers.
+- Browse assistant history in a compact drawer from the AI panel.
 - Show project memory status in Settings.
 - Clear project memory from Settings.
 
 Remaining:
 
-- Chat history browser in a drawer/modal.
-- Multi-message history browser actions beyond inline assistant thread.
+- Bulk or multi-message history actions beyond single-message adoption.
 - Wrong-answer notebook summarize/review.
 
 This is more important than Pro/Tapir for day-to-day AI-assisted work.
@@ -180,6 +180,6 @@ Keep these rules while migrating:
 Continue P5B session memory.
 
 Reason: daily code work is now covered well enough. The next highest-value gap
-is now session continuity: persisted assistant history, code adoption, and basic
-project memory controls exist, but users still need a fuller history browser and
-wrong-answer notebook review without returning to Streamlit.
+is now session continuity: persisted assistant history, drawer browsing, code
+adoption, and basic project memory controls exist, but users still need richer
+history actions and wrong-answer notebook review without returning to Streamlit.
