@@ -108,25 +108,6 @@ obr
 
 ---
 
-## React Workbench（开发者预览）
-
-`react-workbench-poc` 分支提供新的代码优先工作台：
-
-```bash
-./obr7
-```
-
-`obr7` 会同时启动本地 Python API 和 React/Vite 前端，并打印实际访问地址。
-默认端口被占用时会自动换端口；显式设置的 `OBR7_API_PORT` /
-`OBR7_WEB_PORT` 或 `--api-port` / `--web-port` 仍会严格按指定值使用。
-如果提示 `frontend/node_modules not found`，先运行 `cd frontend && npm install`。
-
-React Workbench 适合 HSF/GDL 源码编辑、Monaco 脚本编辑、mock 编译、
-预览、参数、记忆和 AI 助手工作流。Streamlit 仍保留为 Tapir/Archicad
-实时联动、Pro UX 和剩余兼容路径的 fallback。
-
----
-
 ## CLI 模式
 
 面向 GDL 开发者的终端工作流。

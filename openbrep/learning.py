@@ -43,7 +43,6 @@ class ErrorLesson:
     source: str = ""
     project_name: str = ""
     raw_excerpt: str = ""
-    ignored: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,12 +135,7 @@ class ErrorLearningStore:
         self._write_lessons(lessons)
         return lesson
 
-    def list_error_lessons(
-        self,
-        *,
-        include_seed: bool = False,
-        include_ignored: bool = False,
-    ) -> list[ErrorLesson]:
+    def list_error_lessons(self, *, include_seed: bool = False) -> list[ErrorLesson]:
         lessons: list[ErrorLesson] = developer_error_lessons() if include_seed else []
         paths = _current_then_legacy_paths(
             self.error_lessons_path,
@@ -158,69 +152,7 @@ class ErrorLearningStore:
                     _merge_lesson(lessons, _lesson_from_dict(json.loads(line)))
         except Exception:
             return lessons
-        if not include_ignored:
-            lessons = [lesson for lesson in lessons if not lesson.ignored]
         return lessons
-
-    def delete_error_lesson(self, fingerprint: str) -> tuple[bool, int]:
-        """Delete one workspace lesson by fingerprint.
-
-        Returns ``(deleted, remaining_count)``. Developer seed lessons are not
-        editable here because they are not user workspace memory.
-        """
-        target = str(fingerprint or "").strip()
-        if not target:
-            return False, len(self.list_error_lessons(include_seed=False))
-        lessons = self.list_error_lessons(include_seed=False, include_ignored=True)
-        remaining = [lesson for lesson in lessons if lesson.fingerprint != target]
-        deleted = len(remaining) != len(lessons)
-        if deleted:
-            self._write_lessons(remaining)
-        return deleted, len([lesson for lesson in remaining if not lesson.ignored])
-
-    def ignore_error_lesson(self, fingerprint: str) -> tuple[bool, int]:
-        """Mark one workspace lesson ignored while preserving it on disk."""
-        target = str(fingerprint or "").strip()
-        if not target:
-            return False, len(self.list_error_lessons(include_seed=False))
-        lessons = self.list_error_lessons(include_seed=False, include_ignored=True)
-        ignored = False
-        for lesson in lessons:
-            if lesson.fingerprint == target:
-                lesson.ignored = True
-                ignored = True
-                break
-        if ignored:
-            self._write_lessons(lessons)
-        return ignored, len([lesson for lesson in lessons if not lesson.ignored])
-
-    def update_error_lesson(self, fingerprint: str, updates: dict[str, Any]) -> ErrorLesson | None:
-        """Update editable text fields for one workspace lesson."""
-        target = str(fingerprint or "").strip()
-        if not target:
-            return None
-        lessons = self.list_error_lessons(include_seed=False, include_ignored=True)
-        editable_fields = {
-            "category": 80,
-            "summary": 600,
-            "guidance": 1200,
-            "example": 800,
-        }
-        updated_lesson: ErrorLesson | None = None
-        for lesson in lessons:
-            if lesson.fingerprint != target:
-                continue
-            for field, limit in editable_fields.items():
-                if field not in updates:
-                    continue
-                value = _clean(str(updates.get(field, "")))[:limit]
-                setattr(lesson, field, value)
-            updated_lesson = lesson
-            break
-        if updated_lesson is None:
-            return None
-        self._write_lessons(lessons)
-        return updated_lesson
 
     def build_skill_prompt(self, *, project_name: str = "", limit: int = 8) -> str:
         compacted = self.load_learned_skill()
@@ -637,7 +569,6 @@ def _merge_lesson(lessons: list[ErrorLesson], lesson: ErrorLesson) -> None:
         existing.project_name = lesson.project_name or existing.project_name
         existing.raw_excerpt = lesson.raw_excerpt or existing.raw_excerpt
         existing.example = lesson.example or existing.example
-        existing.ignored = existing.ignored or lesson.ignored
         return
     lessons.append(lesson)
 
@@ -876,7 +807,6 @@ def _lesson_from_dict(data: dict[str, Any]) -> ErrorLesson:
         source=str(data.get("source", "")),
         project_name=str(data.get("project_name", "")),
         raw_excerpt=str(data.get("raw_excerpt", "")),
-        ignored=bool(data.get("ignored", False)),
     )
 
 
@@ -893,7 +823,6 @@ def _lesson_to_dict(lesson: ErrorLesson) -> dict[str, Any]:
         "source": lesson.source,
         "project_name": lesson.project_name,
         "raw_excerpt": lesson.raw_excerpt,
-        "ignored": bool(lesson.ignored),
     }
 
 
