@@ -41,6 +41,23 @@ def test_workbench_browser_smoke_rejects_plain_vite_shell():
     )
 
 
+def test_workbench_browser_smoke_detects_mock_compile_result():
+    smoke = _load_smoke_module()
+
+    assert smoke.body_has_mock_compile_result("Mock compile passed in 12 ms")
+    assert smoke.body_has_mock_compile_result("✓ 编译通过")
+    assert not smoke.body_has_mock_compile_result("Not compiled")
+
+
+def test_workbench_browser_smoke_creates_disk_hsf_project(tmp_path):
+    smoke = _load_smoke_module()
+
+    hsf_dir = smoke.create_smoke_hsf_project(tmp_path)
+
+    assert (hsf_dir / "scripts" / "3d.gdl").exists()
+    assert (hsf_dir / "paramlist.xml").exists()
+
+
 def test_workbench_browser_smoke_collects_process_output():
     smoke = _load_smoke_module()
     process = subprocess.Popen(

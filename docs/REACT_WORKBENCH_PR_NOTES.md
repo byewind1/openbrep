@@ -68,11 +68,11 @@ python -m pytest tests/test_obr7_launcher.py -q
 
 python scripts/workbench_readiness_gate.py --full --pretty
   ok: true
-  backend full tests: 775 passed, 2 warnings, 10 subtests passed
+  backend full tests: 777 passed, 2 warnings, 10 subtests passed
   backend vision smoke tests: 3 passed
   frontend tests: 64 passed
   frontend build: passed
-  browser smoke: pass, OpenBrep Workbench page markers present
+  browser smoke: pass, temporary HSF loaded, Mock Compile clicked, Diagnostics passed
   vision smoke: skip, config not found
 
 ./obr7 --no-open
@@ -85,8 +85,9 @@ python scripts/workbench_readiness_gate.py --full --pretty
 
 Automated browser smoke now verifies that `./obr7` starts the API and React
 frontend, Playwright can open the page, and the code-first Workbench markers are
-present. A human product smoke is still recommended before making React the
-documented default UI:
+present. It also loads a temporary HSF project, clicks Mock Compile, and verifies
+that the Diagnostics drawer reports a successful compile. A human product smoke
+is still recommended before making React the documented default UI:
 
 ```text
 open existing HSF

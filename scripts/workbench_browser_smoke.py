@@ -10,6 +10,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -35,6 +36,27 @@ def build_obr7_launch(root: str | Path, *, api_port: int, web_port: int) -> tupl
     return command, env
 
 
+def create_smoke_hsf_project(work_dir: str | Path) -> Path:
+    from openbrep.hsf_project import HSFProject, ScriptType
+
+    project = HSFProject.create_new("BrowserSmokeShelf", str(work_dir))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    project.set_script(ScriptType.SCRIPT_2D, "PROJECT2 3, 270, 2\n")
+    return Path(project.save_to_disk())
+
+
+def post_json(url: str, body: dict[str, Any], *, timeout: float = 5.0) -> dict[str, Any]:
+    payload = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def wait_for_url(url: str, *, timeout_seconds: float = 30.0) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -53,6 +75,11 @@ def page_has_workbench_markers(*, title: str, body: str) -> bool:
     normalized = body.casefold()
     required = ("scripts", "3d.gdl", "save", "compile", "settings")
     return all(marker in normalized for marker in required)
+
+
+def body_has_mock_compile_result(body: str) -> bool:
+    normalized = body.casefold()
+    return "mock compile passed" in normalized or "编译通过" in body
 
 
 def terminate_process(process: subprocess.Popen[str]) -> None:
@@ -109,8 +136,11 @@ def run_smoke(
     browser_error = ""
     title = ""
     body = ""
+    temp_project_root: tempfile.TemporaryDirectory[str] | None = None
 
     try:
+        temp_project_root = tempfile.TemporaryDirectory(prefix="openbrep_workbench_browser_smoke_")
+        smoke_hsf_dir = create_smoke_hsf_project(temp_project_root.name)
         env = os.environ.copy()
         env.update(env_overrides)
         process = subprocess.Popen(
@@ -123,10 +153,15 @@ def run_smoke(
             start_new_session=(os.name != "nt"),
         )
         api_ready = wait_for_url(f"{api_url}/api/snapshot", timeout_seconds=timeout_seconds)
+        project_loaded = False
+        if api_ready:
+            load_result = post_json(f"{api_url}/api/project/load", {"path": str(smoke_hsf_dir)})
+            project_loaded = bool(load_result.get("ok"))
         web_ready = wait_for_url(web_url, timeout_seconds=timeout_seconds)
 
         page_ok = False
-        if api_ready and web_ready:
+        compile_interaction_ok = False
+        if api_ready and project_loaded and web_ready:
             try:
                 with sync_playwright() as p:
                     browser = p.chromium.launch(headless=not headed)
@@ -135,19 +170,29 @@ def run_smoke(
                     title = page.title()
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)
+                    if page_ok:
+                        page.get_by_role("button", name="Mock").click()
+                        page.wait_for_function(
+                            "() => document.body.innerText.includes('Mock compile passed') || document.body.innerText.includes('编译通过')",
+                            timeout=int(timeout_seconds * 1000),
+                        )
+                        body = page.locator("body").inner_text(timeout=5000)
+                        compile_interaction_ok = body_has_mock_compile_result(body)
                     browser.close()
             except Exception as exc:
                 browser_error = f"{type(exc).__name__}: {exc}"
 
         output = collect_process_output(process)
 
-        ok = api_ready and web_ready and page_ok
+        ok = api_ready and project_loaded and web_ready and page_ok and compile_interaction_ok
         return {
             "ok": ok,
             "status": "pass" if ok else "fail",
             "api_ready": api_ready,
+            "project_loaded": project_loaded,
             "web_ready": web_ready,
             "page_ok": page_ok,
+            "compile_interaction_ok": compile_interaction_ok,
             "api_url": api_url,
             "web_url": web_url,
             "title": title,
@@ -159,6 +204,8 @@ def run_smoke(
     finally:
         if process is not None and process.poll() is None:
             terminate_process(process)
+        if temp_project_root is not None:
+            temp_project_root.cleanup()
 
 
 def main(argv: list[str] | None = None) -> int:
