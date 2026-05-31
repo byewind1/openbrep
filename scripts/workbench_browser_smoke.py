@@ -25,16 +25,14 @@ def find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def build_obr7_command(root: str | Path, *, api_port: int, web_port: int) -> list[str]:
+def build_obr7_launch(root: str | Path, *, api_port: int, web_port: int) -> tuple[list[str], dict[str, str]]:
     root_path = Path(root)
-    return [
-        str(root_path / "obr7"),
-        "--no-open",
-        "--api-port",
-        str(api_port),
-        "--web-port",
-        str(web_port),
-    ]
+    command = [str(root_path / "obr7"), "--no-open"]
+    env = {
+        "OBR7_API_PORT": str(api_port),
+        "OBR7_WEB_PORT": str(web_port),
+    }
+    return command, env
 
 
 def wait_for_url(url: str, *, timeout_seconds: float = 30.0) -> bool:
@@ -106,16 +104,19 @@ def run_smoke(
     web = web_port or find_free_port()
     api_url = f"http://127.0.0.1:{api}"
     web_url = f"http://127.0.0.1:{web}"
-    command = build_obr7_command(root_path, api_port=api, web_port=web)
+    command, env_overrides = build_obr7_launch(root_path, api_port=api, web_port=web)
     process: subprocess.Popen[str] | None = None
     browser_error = ""
     title = ""
     body = ""
 
     try:
+        env = os.environ.copy()
+        env.update(env_overrides)
         process = subprocess.Popen(
             command,
             cwd=str(root_path),
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

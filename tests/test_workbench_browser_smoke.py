@@ -16,16 +16,11 @@ def _load_smoke_module():
 def test_workbench_browser_smoke_builds_obr7_command(tmp_path):
     smoke = _load_smoke_module()
 
-    command = smoke.build_obr7_command(tmp_path, api_port=19065, web_port=19074)
+    command, env = smoke.build_obr7_launch(tmp_path, api_port=19065, web_port=19074)
 
-    assert command == [
-        str(tmp_path / "obr7"),
-        "--no-open",
-        "--api-port",
-        "19065",
-        "--web-port",
-        "19074",
-    ]
+    assert command == [str(tmp_path / "obr7"), "--no-open"]
+    assert env["OBR7_API_PORT"] == "19065"
+    assert env["OBR7_WEB_PORT"] == "19074"
 
 
 def test_workbench_browser_smoke_accepts_code_first_page_markers():

@@ -83,3 +83,11 @@ def test_launcher_builds_frontend_command_with_strict_port():
         "5199",
         "--strictPort",
     ]
+
+
+def test_obr7_entrypoint_exports_vite_api_url():
+    entrypoint = Path(__file__).resolve().parents[1] / "obr7"
+
+    contents = entrypoint.read_text(encoding="utf-8")
+
+    assert 'export VITE_OPENBREP_API="http://$HOST:$API_PORT"' in contents
