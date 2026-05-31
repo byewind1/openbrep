@@ -66,14 +66,14 @@ python scripts/workbench_readiness_gate.py --pretty
 
 python scripts/workbench_readiness_gate.py --full --pretty
   ok: true
-  backend full tests: 778 passed, 2 warnings, 10 subtests passed
+  backend full tests: 779 passed, 2 warnings, 10 subtests passed
   frontend tests: 64 passed
   frontend build: passed
   browser smoke: pass, temporary HSF loaded, Monaco edited, Save clicked,
   disk script write verified, Mock Compile clicked, Diagnostics passed
 
 python -m pytest tests/ -q
-  778 passed, 2 warnings, 10 subtests passed
+  779 passed, 2 warnings, 10 subtests passed
 
 cd frontend && npm run test -- --run
   64 passed

@@ -68,7 +68,7 @@ python -m pytest tests/test_obr7_launcher.py -q
 
 python scripts/workbench_readiness_gate.py --full --pretty
   ok: true
-  backend full tests: 778 passed, 2 warnings, 10 subtests passed
+  backend full tests: 779 passed, 2 warnings, 10 subtests passed
   backend vision smoke tests: 3 passed
   frontend tests: 64 passed
   frontend build: passed

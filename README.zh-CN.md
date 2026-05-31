@@ -112,6 +112,7 @@ obr
 它会同时启动本地 Python API 和 React/Vite 前端，并打印实际访问地址。
 默认端口被占用时会自动换端口；如果显式设置了 `OBR7_API_PORT` /
 `OBR7_WEB_PORT` 或 `--api-port` / `--web-port`，端口会严格按指定值使用。
+如果提示 `frontend/node_modules not found`，先运行 `cd frontend && npm install`。
 
 当前 React Workbench 适合 HSF/GDL 源码编辑、Monaco 脚本编辑、mock 编译、
 预览、参数和记忆等 code-first 工作流。Streamlit 仍保留为 Tapir/Archicad

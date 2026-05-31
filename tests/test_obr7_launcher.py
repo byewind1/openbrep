@@ -85,9 +85,17 @@ def test_launcher_builds_frontend_command_with_strict_port():
     ]
 
 
-def test_obr7_entrypoint_exports_vite_api_url():
+def test_python_launcher_exports_vite_api_url():
+    launcher_path = Path(__file__).resolve().parents[1] / "scripts" / "obr7.py"
+
+    contents = launcher_path.read_text(encoding="utf-8")
+
+    assert 'env["VITE_OPENBREP_API"] = api_url' in contents
+
+
+def test_obr7_entrypoint_delegates_to_python_launcher():
     entrypoint = Path(__file__).resolve().parents[1] / "obr7"
 
     contents = entrypoint.read_text(encoding="utf-8")
 
-    assert 'export VITE_OPENBREP_API="http://$HOST:$API_PORT"' in contents
+    assert 'exec python "$APP_DIR/scripts/obr7.py" "$@"' in contents
