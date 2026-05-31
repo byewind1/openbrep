@@ -49,6 +49,13 @@ def test_workbench_browser_smoke_detects_mock_compile_result():
     assert not smoke.body_has_mock_compile_result("Not compiled")
 
 
+def test_workbench_browser_smoke_detects_save_result():
+    smoke = _load_smoke_module()
+
+    assert smoke.body_has_script_save_result("Saved 3d.gdl at 2026-05-31T10:00:00")
+    assert not smoke.body_has_script_save_result("Saved")
+
+
 def test_workbench_browser_smoke_creates_disk_hsf_project(tmp_path):
     smoke = _load_smoke_module()
 

@@ -18,6 +18,8 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SMOKE_EDIT_MARKER = "! browser smoke edit"
+SMOKE_SCRIPT_CONTENT = f"BLOCK A, B, ZZYZX\n{SMOKE_EDIT_MARKER}\n"
 
 
 def find_free_port() -> int:
@@ -80,6 +82,10 @@ def page_has_workbench_markers(*, title: str, body: str) -> bool:
 def body_has_mock_compile_result(body: str) -> bool:
     normalized = body.casefold()
     return "mock compile passed" in normalized or "编译通过" in body
+
+
+def body_has_script_save_result(body: str) -> bool:
+    return "Saved 3d.gdl at " in body
 
 
 def terminate_process(process: subprocess.Popen[str]) -> None:
@@ -160,6 +166,8 @@ def run_smoke(
         web_ready = wait_for_url(web_url, timeout_seconds=timeout_seconds)
 
         page_ok = False
+        edit_interaction_ok = False
+        save_interaction_ok = False
         compile_interaction_ok = False
         if api_ready and project_loaded and web_ready:
             try:
@@ -171,7 +179,20 @@ def run_smoke(
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)
                     if page_ok:
-                        page.get_by_role("button", name="Mock").click()
+                        page.locator(".monaco-editor").first.click()
+                        page.keyboard.press("Control+A")
+                        page.keyboard.insert_text(SMOKE_SCRIPT_CONTENT)
+                        body = page.locator("body").inner_text(timeout=5000)
+                        edit_interaction_ok = "Dirty" in body
+                        page.get_by_test_id("save-script-button").click()
+                        page.wait_for_function(
+                            "() => document.body.innerText.includes('Saved 3d.gdl at ')",
+                            timeout=int(timeout_seconds * 1000),
+                        )
+                        body = page.locator("body").inner_text(timeout=5000)
+                        saved_script = (smoke_hsf_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8")
+                        save_interaction_ok = body_has_script_save_result(body) and SMOKE_EDIT_MARKER in saved_script
+                        page.get_by_test_id("mock-compile-button").click()
                         page.wait_for_function(
                             "() => document.body.innerText.includes('Mock compile passed') || document.body.innerText.includes('编译通过')",
                             timeout=int(timeout_seconds * 1000),
@@ -184,7 +205,7 @@ def run_smoke(
 
         output = collect_process_output(process)
 
-        ok = api_ready and project_loaded and web_ready and page_ok and compile_interaction_ok
+        ok = api_ready and project_loaded and web_ready and page_ok and edit_interaction_ok and save_interaction_ok and compile_interaction_ok
         return {
             "ok": ok,
             "status": "pass" if ok else "fail",
@@ -192,6 +213,8 @@ def run_smoke(
             "project_loaded": project_loaded,
             "web_ready": web_ready,
             "page_ok": page_ok,
+            "edit_interaction_ok": edit_interaction_ok,
+            "save_interaction_ok": save_interaction_ok,
             "compile_interaction_ok": compile_interaction_ok,
             "api_url": api_url,
             "web_url": web_url,

@@ -49,10 +49,10 @@ export function TopMenu({
       </div>
       {projectControls}
       <nav className="menu-row" aria-label="Migration status">
-        <button type="button" disabled={!activeScriptName || saving} onClick={onSave}>
+        <button type="button" data-testid="save-script-button" disabled={!activeScriptName || saving} onClick={onSave}>
           {saving ? '...' : 'Save'}
         </button>
-        <button type="button" disabled={!project?.path || compiling} onClick={onMockCompile}>
+        <button type="button" data-testid="mock-compile-button" disabled={!project?.path || compiling} onClick={onMockCompile}>
           {compiling ? '...' : 'Mock'}
         </button>
         <button type="button" disabled={!project?.path || compiling} onClick={onCompile}>

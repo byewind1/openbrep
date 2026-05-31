@@ -66,16 +66,17 @@ python scripts/workbench_readiness_gate.py --pretty
 
 python scripts/workbench_readiness_gate.py --full --pretty
   ok: true
-  backend full tests: 777 passed, 2 warnings, 10 subtests passed
+  backend full tests: 778 passed, 2 warnings, 10 subtests passed
   frontend tests: 64 passed
   frontend build: passed
-  browser smoke: pass, temporary HSF loaded, Mock Compile clicked, Diagnostics passed
+  browser smoke: pass, temporary HSF loaded, Monaco edited, Save clicked,
+  disk script write verified, Mock Compile clicked, Diagnostics passed
 
 python -m pytest tests/ -q
-  777 passed, 2 warnings, 10 subtests passed
+  778 passed, 2 warnings, 10 subtests passed
 
 cd frontend && npm run test -- --run
-  63 passed
+  64 passed
 
 cd frontend && npm run build
   passed
@@ -187,9 +188,10 @@ python scripts/workbench_browser_smoke.py --pretty
 ```
 
 This verifies that `obr7` starts both the API and React frontend, Playwright can
-open the page, a temporary HSF project can be loaded, Mock Compile can be
-clicked, and the Diagnostics drawer reports a successful compile. A human
-product smoke is still useful before changing the default UI policy.
+open the page, a temporary HSF project can be loaded, Monaco can edit
+`3d.gdl`, Save writes the script back to disk, Mock Compile can be clicked, and
+the Diagnostics drawer reports a successful compile. A human product smoke is
+still useful before changing the default UI policy.
 
 3. If a vision-capable model is configured, run:
 
