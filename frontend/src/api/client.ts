@@ -36,6 +36,8 @@ import type {
   SaveScriptResponse,
   SaveRevisionResponse,
   SummarizeMemoryResult,
+  TapirActionResult,
+  TapirStatusResult,
   DeleteParameterResult,
   UpdateMemoryLessonRequest,
   UpdateMemoryLessonResult,
@@ -334,6 +336,74 @@ export async function updateLlmSettings(settings: LlmSettings): Promise<LlmSetti
       body: JSON.stringify(settings),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchTapirStatus(): Promise<TapirStatusResult> {
+  return requestJson<TapirStatusResult>(
+    '/api/tapir/status',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function reloadTapirLibraries(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/reload-libraries',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function syncTapirSelection(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/selection/sync',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function highlightTapirSelection(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/selection/highlight',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function loadTapirParameters(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/parameters/load',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function applyTapirParameterEdits(paramEdits?: Record<string, unknown>): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/parameters/apply',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ param_edits: paramEdits ?? {} }),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
   )
 }
 

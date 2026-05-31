@@ -14,6 +14,7 @@ import { RevisionPanel } from './diagnostics/RevisionPanel'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { SettingsDrawer } from './settings/SettingsDrawer'
+import { TapirPanel } from './tapir/TapirPanel'
 
 const ENABLE_FLOATING_PREVIEW = false
 
@@ -45,6 +46,8 @@ export function WorkbenchApp() {
   const memoryLessons = useWorkbenchStore((state) => state.memoryLessons)
   const memorySkillPreview = useWorkbenchStore((state) => state.memorySkillPreview)
   const memoryBusy = useWorkbenchStore((state) => state.memoryBusy)
+  const tapirStatus = useWorkbenchStore((state) => state.tapirStatus)
+  const tapirBusy = useWorkbenchStore((state) => state.tapirBusy)
   const latestRevisionId = useWorkbenchStore((state) => state.latestRevisionId)
   const revisionLoading = useWorkbenchStore((state) => state.revisionLoading)
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
@@ -69,6 +72,12 @@ export function WorkbenchApp() {
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
   const setLlmSettings = useWorkbenchStore((state) => state.setLlmSettings)
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
+  const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
+  const reloadTapirLibraries = useWorkbenchStore((state) => state.reloadTapirLibraries)
+  const syncTapirSelection = useWorkbenchStore((state) => state.syncTapirSelection)
+  const highlightTapirSelection = useWorkbenchStore((state) => state.highlightTapirSelection)
+  const loadTapirParameters = useWorkbenchStore((state) => state.loadTapirParameters)
+  const applyTapirParameters = useWorkbenchStore((state) => state.applyTapirParameters)
   const browseCompilerFile = useWorkbenchStore((state) => state.browseCompilerFile)
   const browseOutputDirectory = useWorkbenchStore((state) => state.browseOutputDirectory)
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
@@ -103,6 +112,12 @@ export function WorkbenchApp() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (activeRailPanel === 'inspect') {
+      void refreshTapirStatus()
+    }
+  }, [activeRailPanel, refreshTapirStatus])
 
   function focusDiagnosticIssue(issue: CompileIssue) {
     const scriptName = issue.script.split('/').pop() ?? issue.script
@@ -201,7 +216,12 @@ export function WorkbenchApp() {
             >
               2D
             </button>
-            <button type="button" className="rail-tab" disabled aria-selected="false">
+            <button
+              type="button"
+              className={`rail-tab${activeRailPanel === 'inspect' ? ' active' : ''}`}
+              aria-selected={activeRailPanel === 'inspect'}
+              onClick={() => setActiveRailPanel('inspect')}
+            >
               Inspect
             </button>
             <button
@@ -226,6 +246,17 @@ export function WorkbenchApp() {
               />
             ) : activeRailPanel === '2d' ? (
               <Preview2DViewport preview={preview2d} warnings={warnings} />
+            ) : activeRailPanel === 'inspect' ? (
+              <TapirPanel
+                status={tapirStatus}
+                busy={tapirBusy}
+                onRefresh={() => void refreshTapirStatus()}
+                onReloadLibraries={() => void reloadTapirLibraries()}
+                onSyncSelection={() => void syncTapirSelection()}
+                onHighlightSelection={() => void highlightTapirSelection()}
+                onLoadParameters={() => void loadTapirParameters()}
+                onApplyParameters={() => void applyTapirParameters()}
+              />
             ) : (
               <AssistantPanel
                 messages={assistantMessages}

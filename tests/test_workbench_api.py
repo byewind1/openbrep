@@ -70,6 +70,108 @@ def test_route_rpc_preview_2d_returns_preview_for_overrides():
     assert "warnings" in response["preview"]
 
 
+def test_workbench_tapir_status_degrades_when_bridge_is_not_imported():
+    session = WorkbenchSession(tapir_import_ok=False)
+
+    response = session.route("GET", "/api/tapir/status")
+
+    assert response["ok"] is True
+    assert response["tapir"]["import_ok"] is False
+    assert response["tapir"]["available"] is False
+    assert response["tapir"]["archicad_connected"] is False
+    assert response["tapir"]["tapir_available"] is False
+    assert "未导入" in response["tapir"]["message"]
+
+
+def test_workbench_tapir_sync_selection_reads_selected_archicad_elements():
+    class FakeBridge:
+        def is_available(self):
+            return True
+
+        def get_status(self):
+            return {
+                "archicad_connected": True,
+                "tapir_available": True,
+                "version": "/Applications/GRAPHISOFT/Archicad",
+            }
+
+        def get_selected_elements(self):
+            return ["GUID-1"]
+
+        def get_details_of_elements(self, guids):
+            assert guids == ["GUID-1"]
+            return [{"guid": "GUID-1", "type": "Object", "name": "Chair"}]
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+        now_text_fn=lambda: "2026-06-01 10:00",
+    )
+
+    response = session.route("POST", "/api/tapir/selection/sync")
+
+    assert response["ok"] is True
+    assert response["message"] == "已同步 1 个对象"
+    assert response["tapir"]["available"] is True
+    assert response["tapir"]["selected_guids"] == ["GUID-1"]
+    assert response["tapir"]["selected_details"] == [{"guid": "GUID-1", "type": "Object", "name": "Chair"}]
+    assert response["tapir"]["last_sync_at"] == "2026-06-01 10:00"
+
+
+def test_workbench_tapir_loads_and_applies_selected_parameters():
+    calls = {}
+
+    class FakeBridge:
+        def is_available(self):
+            return True
+
+        def get_status(self):
+            return {"archicad_connected": True, "tapir_available": True, "version": "Archicad"}
+
+        def get_gdl_parameters_of_elements(self, guids):
+            assert guids == ["GUID-1"]
+            return [
+                {
+                    "guid": "GUID-1",
+                    "gdlParameters": [
+                        {"name": "A", "value": 1.0},
+                        {"name": "is_visible", "value": True},
+                    ],
+                }
+            ]
+
+        def set_gdl_parameters_of_elements(self, rows):
+            calls["rows"] = rows
+            return {"executionResults": [{"success": True}]}
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+        now_text_fn=lambda: "2026-06-01 10:00",
+    )
+    session.tapir.state.tapir_selected_guids = ["GUID-1"]
+
+    loaded = session.route("POST", "/api/tapir/parameters/load")
+    applied = session.route(
+        "POST",
+        "/api/tapir/parameters/apply",
+        {"param_edits": {"GUID-1::A": "1.25", "GUID-1::is_visible": "false"}},
+    )
+
+    assert loaded["ok"] is True
+    assert loaded["tapir"]["param_edits"] == {"GUID-1::A": "1.0", "GUID-1::is_visible": "True"}
+    assert applied["ok"] is True
+    assert calls["rows"] == [
+        {
+            "guid": "GUID-1",
+            "gdlParameters": [
+                {"name": "A", "value": 1.25},
+                {"name": "is_visible", "value": False},
+            ],
+        }
+    ]
+
+
 def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
     project = HSFProject.create_new("LoadedShelf", str(tmp_path))
     project.parameters.append(GDLParameter("shelf_count", "Integer", "Shelves", "4"))

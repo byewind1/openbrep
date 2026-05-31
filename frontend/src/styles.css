@@ -1564,6 +1564,99 @@ button:focus-visible {
   font-style: normal;
 }
 
+.tapir-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.tapir-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tapir-panel-header div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.tapir-panel-header strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.tapir-panel-header span,
+.tapir-version,
+.tapir-sync {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.tapir-status-grid,
+.tapir-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tapir-status-item,
+.tapir-selection-item {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  padding: 8px;
+}
+
+.tapir-status-item span,
+.tapir-selection-item span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tapir-status-item strong,
+.tapir-selection-item strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tapir-action-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tapir-action-grid button:first-child {
+  grid-column: 1 / -1;
+}
+
+.tapir-selection-list {
+  display: grid;
+  gap: 6px;
+}
+
+.tapir-version,
+.tapir-error,
+.tapir-sync {
+  margin: 0;
+}
+
+.tapir-error {
+  color: var(--status-error-text);
+  font-size: 12px;
+}
+
 .drawer-content p {
   margin: 0 0 5px;
 }

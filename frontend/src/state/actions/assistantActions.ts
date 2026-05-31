@@ -15,7 +15,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
   }
 
   return {
-    setActiveRailPanel(panel: '3d' | '2d' | 'ai') {
+    setActiveRailPanel(panel: '3d' | '2d' | 'inspect' | 'ai') {
       set({ activeRailPanel: panel })
     },
 

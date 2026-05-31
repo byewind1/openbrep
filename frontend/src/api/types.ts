@@ -205,6 +205,31 @@ export interface RuntimeSettingsResult {
   error?: string
 }
 
+export interface TapirStatus {
+  import_ok: boolean
+  available: boolean
+  archicad_connected: boolean
+  tapir_available: boolean
+  version: string
+  message: string
+  selected_guids: string[]
+  selected_details: Array<Record<string, unknown>>
+  selected_params: Array<Record<string, unknown>>
+  param_edits: Record<string, unknown>
+  last_error: string
+  last_sync_at: string
+}
+
+export interface TapirStatusResult {
+  ok: boolean
+  tapir?: TapirStatus
+  error?: string
+}
+
+export interface TapirActionResult extends TapirStatusResult {
+  message?: string
+}
+
 export interface LlmSettingsResult {
   ok: boolean
   llm?: LlmSettings

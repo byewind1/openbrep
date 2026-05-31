@@ -263,6 +263,62 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     validateProjectParameters: async () => ({ ok: true, issues: [] }),
+    fetchTapirStatus: async () => ({
+      ok: true,
+      tapir: {
+        import_ok: false,
+        available: false,
+        archicad_connected: false,
+        tapir_available: false,
+        version: '',
+        message: 'Tapir bridge 未导入',
+        selected_guids: [],
+        selected_details: [],
+        selected_params: [],
+        param_edits: {},
+        last_error: '',
+        last_sync_at: '',
+      },
+    }),
+    syncTapirSelection: async () => ({
+      ok: true,
+      message: '已同步 1 个对象',
+      tapir: {
+        import_ok: true,
+        available: true,
+        archicad_connected: true,
+        tapir_available: true,
+        version: '/Applications/GRAPHISOFT/Archicad',
+        message: 'Archicad + Tapir 已连接',
+        selected_guids: ['GUID-1'],
+        selected_details: [{ guid: 'GUID-1', type: 'Object', name: 'Chair' }],
+        selected_params: [],
+        param_edits: {},
+        last_error: '',
+        last_sync_at: '2026-06-01 10:00',
+      },
+    }),
+    highlightTapirSelection: async () => ({ ok: false, message: '请先同步选中对象' }),
+    loadTapirParameters: async () => ({
+      ok: true,
+      message: '已读取 1 个对象参数',
+      tapir: {
+        import_ok: true,
+        available: true,
+        archicad_connected: true,
+        tapir_available: true,
+        version: '/Applications/GRAPHISOFT/Archicad',
+        message: 'Archicad + Tapir 已连接',
+        selected_guids: ['GUID-1'],
+        selected_details: [{ guid: 'GUID-1', type: 'Object', name: 'Chair' }],
+        selected_params: [{ guid: 'GUID-1', gdlParameters: [{ name: 'A', value: 1 }] }],
+        param_edits: { 'GUID-1::A': '1' },
+        last_error: '',
+        last_sync_at: '2026-06-01 10:00',
+      },
+    }),
+    applyTapirParameterEdits: async () => ({ ok: true, message: '参数已应用到 1 个对象' }),
+    reloadTapirLibraries: async () => ({ ok: false, message: 'Archicad 未运行或 Tapir 未安装' }),
     ...overrides,
   }
 }
@@ -373,6 +429,29 @@ test('deleteProjectParameter removes parameter and refreshes diagnostics', async
   expect(store.getState().parameters).toEqual([])
   expect(store.getState().mockCompileResult?.success).toBe(true)
   expect(store.getState().applying).toBe(false)
+})
+
+test('tapir actions refresh status and store selected Archicad elements', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().refreshTapirStatus()
+  expect(store.getState().tapirStatus?.message).toBe('Tapir bridge 未导入')
+
+  await store.getState().syncTapirSelection()
+  expect(store.getState().tapirStatus?.selected_guids).toEqual(['GUID-1'])
+  expect(store.getState().tapirStatus?.selected_details[0]?.name).toBe('Chair')
+  expect(store.getState().compileLog[0]).toBe('已同步 1 个对象')
+})
+
+test('tapir parameter actions keep edit state and record writeback result', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().loadTapirParameters()
+  expect(store.getState().tapirStatus?.param_edits).toEqual({ 'GUID-1::A': '1' })
+
+  await store.getState().applyTapirParameters()
+  expect(store.getState().compileLog[0]).toBe('参数已应用到 1 个对象')
+  expect(store.getState().tapirBusy).toBe(false)
 })
 
 test('resetDraftParameters discards unapplied parameter edits', async () => {

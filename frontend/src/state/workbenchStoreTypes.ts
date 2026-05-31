@@ -42,6 +42,9 @@ import type {
   SaveRevisionResponse,
   SaveScriptResponse,
   SummarizeMemoryResult,
+  TapirActionResult,
+  TapirStatus,
+  TapirStatusResult,
   UpdateMemoryLessonRequest,
   UpdateMemoryLessonResult,
   UpdateParameterRequest,
@@ -82,6 +85,12 @@ export interface WorkbenchApi {
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
+  fetchTapirStatus: () => Promise<TapirStatusResult>
+  reloadTapirLibraries: () => Promise<TapirActionResult>
+  syncTapirSelection: () => Promise<TapirActionResult>
+  highlightTapirSelection: () => Promise<TapirActionResult>
+  loadTapirParameters: () => Promise<TapirActionResult>
+  applyTapirParameterEdits: (paramEdits?: Record<string, unknown>) => Promise<TapirActionResult>
   askAssistant: (message: string) => Promise<AssistantResult>
   listAssistantHistory: () => Promise<AssistantHistoryResult>
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
@@ -121,7 +130,7 @@ export interface WorkbenchState {
   compileLog: string[]
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
-  activeRailPanel: '3d' | '2d' | 'ai'
+  activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
   scripts: ProjectScript[]
@@ -131,6 +140,8 @@ export interface WorkbenchState {
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
   memoryBusy: boolean
+  tapirStatus: TapirStatus | null
+  tapirBusy: boolean
   latestRevisionId: string | null
   revisionLoading: boolean
   activeScriptName: string | null
@@ -151,8 +162,14 @@ export interface WorkbenchState {
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   setLlmSettings: (settings: LlmSettings) => Promise<void>
   reloadRuntimeSettings: () => Promise<void>
+  refreshTapirStatus: () => Promise<void>
+  reloadTapirLibraries: () => Promise<void>
+  syncTapirSelection: () => Promise<void>
+  highlightTapirSelection: () => Promise<void>
+  loadTapirParameters: () => Promise<void>
+  applyTapirParameters: () => Promise<void>
   compileCurrentProject: () => Promise<void>
-  setActiveRailPanel: (panel: '3d' | '2d' | 'ai') => void
+  setActiveRailPanel: (panel: '3d' | '2d' | 'inspect' | 'ai') => void
   loadAssistantHistory: () => Promise<void>
   clearAssistantHistory: () => Promise<void>
   adoptAssistantMessageCode: (index: number) => Promise<void>

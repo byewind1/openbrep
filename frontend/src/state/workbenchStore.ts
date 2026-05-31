@@ -20,12 +20,14 @@ import {
   fetchPreview2D,
   fetchPreview,
   fetchRuntimeSettings,
+  fetchTapirStatus,
   fetchSnapshot,
   generateWithAssistant,
   getProjectScript,
   ignoreMemoryLesson,
   importGdlFile,
   importGsmFile,
+  reloadTapirLibraries,
   listAssistantHistory,
   listProjectRevisions,
   listProjectScripts,
@@ -38,6 +40,10 @@ import {
   saveProjectScript,
   saveAssistantHistory,
   summarizeProjectMemory,
+  syncTapirSelection,
+  highlightTapirSelection,
+  loadTapirParameters,
+  applyTapirParameterEdits,
   updateCompilerSettings,
   updateLlmSettings,
   updateMemoryLesson,
@@ -53,6 +59,7 @@ import { createProjectActions } from './actions/projectActions'
 import { createRevisionActions } from './actions/revisionActions'
 import { createScriptActions } from './actions/scriptActions'
 import { createSettingsActions } from './actions/settingsActions'
+import { createTapirActions } from './actions/tapirActions'
 import type { WorkbenchActionContext, WorkbenchApi, WorkbenchSet, WorkbenchState } from './workbenchStoreTypes'
 import { defaultLlmSettings } from './workbenchStoreUtils'
 
@@ -83,6 +90,12 @@ const defaultWorkbenchApi: WorkbenchApi = {
   revealArtifact,
   updateCompilerSettings,
   fetchRuntimeSettings,
+  fetchTapirStatus,
+  reloadTapirLibraries,
+  syncTapirSelection,
+  highlightTapirSelection,
+  loadTapirParameters,
+  applyTapirParameterEdits,
   updateLlmSettings,
   askAssistant,
   listAssistantHistory,
@@ -115,6 +128,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       ...initialWorkbenchState(),
       ...createProjectActions(context),
       ...createSettingsActions(context),
+      ...createTapirActions(context),
       ...createParameterActions(context),
       ...createPreviewActions(context),
       ...createCompileActions(context),
@@ -157,6 +171,8 @@ function initialWorkbenchState() {
     memoryLessons: [],
     memorySkillPreview: '',
     memoryBusy: false,
+    tapirStatus: null,
+    tapirBusy: false,
     latestRevisionId: null,
     revisionLoading: false,
     activeScriptName: null,

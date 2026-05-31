@@ -36,6 +36,7 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, VALID_PAR
 from openbrep.learning import ErrorLearningStore
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+from openbrep.workbench_tapir import WorkbenchTapirAdapter, default_tapir_bridge_loader
 from ui.three_preview import preview_3d_to_three_payload
 from ui.view_models import classify_code_blocks, classify_vision_error
 
@@ -262,6 +263,9 @@ class WorkbenchSession:
         file_chooser: Callable[[], str] | None = None,
         path_revealer: Callable[[Path], None] | None = None,
         config_path: str | Path | None = None,
+        tapir_import_ok: bool | None = None,
+        get_tapir_bridge_fn: Callable[[], object] | None = None,
+        now_text_fn: Callable[[], str] | None = None,
     ) -> None:
         self.project: HSFProject = build_demo_project()
         self.source = "demo"
@@ -282,6 +286,12 @@ class WorkbenchSession:
         self.assistant_settings = self.config.llm.assistant_settings or ""
         self.recent_project_paths: list[str] = list(self.config.recent_projects or [])
         self.last_compile_output_path = ""
+        default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
+        self.tapir = WorkbenchTapirAdapter(
+            tapir_import_ok=default_import_ok if tapir_import_ok is None else tapir_import_ok,
+            get_bridge_fn=get_tapir_bridge_fn or default_bridge_fn,
+            now_text_fn=now_text_fn or _now_text,
+        )
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = project_to_snapshot(
@@ -1255,6 +1265,25 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/settings/llm":
             return self.update_llm_settings(body)
 
+        if normalized_method == "GET" and route == "/api/tapir/status":
+            return self.tapir.status_response()
+
+        if normalized_method == "POST" and route == "/api/tapir/reload-libraries":
+            return self.tapir.reload_libraries()
+
+        if normalized_method == "POST" and route == "/api/tapir/selection/sync":
+            return self.tapir.sync_selection()
+
+        if normalized_method == "POST" and route == "/api/tapir/selection/highlight":
+            return self.tapir.highlight_selection()
+
+        if normalized_method == "POST" and route == "/api/tapir/parameters/load":
+            return self.tapir.load_selected_params()
+
+        if normalized_method == "POST" and route == "/api/tapir/parameters/apply":
+            edits = body.get("param_edits")
+            return self.tapir.apply_param_edits(edits if isinstance(edits, dict) else None)
+
         if normalized_method == "POST" and route == "/api/preview":
             return self.preview(body.get("parameters") or {})
 
@@ -1357,6 +1386,10 @@ def _load_workbench_config(config_path: Path) -> GDLAgentConfig:
 
 def _save_workbench_config(config: GDLAgentConfig, config_path: Path) -> None:
     config.save(str(config_path))
+
+
+def _now_text() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
 def _safe_project_name(name: str) -> str:
