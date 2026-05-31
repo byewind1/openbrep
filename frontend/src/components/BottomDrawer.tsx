@@ -1,0 +1,155 @@
+import { useState } from 'react'
+import type { ReactNode } from 'react'
+import type { CompileIssue, MockCompileResponse } from '../api/types'
+import { countGroupedIssues, groupCompileIssuesByScript } from '../state/diagnostics'
+
+interface BottomDrawerProps {
+  warnings: string[]
+  compileLog: string[]
+  mockCompileResult: MockCompileResponse | null
+  revisionPanel?: ReactNode
+  onIssueSelect?: (issue: CompileIssue) => void
+  onRevealOutput?: (path: string) => void
+}
+
+export function BottomDrawer({
+  warnings,
+  compileLog,
+  mockCompileResult,
+  revisionPanel,
+  onIssueSelect,
+  onRevealOutput,
+}: BottomDrawerProps) {
+  const [activeTab, setActiveTab] = useState<'compile' | 'diagnostics' | 'preview' | 'revision'>('compile')
+  const issueGroups = groupCompileIssuesByScript(mockCompileResult?.issues ?? [])
+
+  return (
+    <section className="bottom-drawer">
+      <div className="drawer-tabs">
+        <button className={activeTab === 'compile' ? 'active' : ''} onClick={() => setActiveTab('compile')}>
+          Compile
+        </button>
+        <button className={activeTab === 'diagnostics' ? 'active' : ''} onClick={() => setActiveTab('diagnostics')}>
+          Diagnostics
+        </button>
+        <button className={activeTab === 'preview' ? 'active' : ''} onClick={() => setActiveTab('preview')}>
+          Preview
+        </button>
+        <button className={activeTab === 'revision' ? 'active' : ''} onClick={() => setActiveTab('revision')}>
+          Revision
+        </button>
+      </div>
+      <div className="drawer-content">
+        {activeTab === 'revision' ? revisionPanel : null}
+        {activeTab === 'preview' ? <PreviewLog warnings={warnings} /> : null}
+        {activeTab === 'compile' || activeTab === 'diagnostics' ? (
+          <CompileDiagnostics
+            compileLog={compileLog}
+            duration={mockCompileResult?.duration_ms ?? null}
+            issueGroups={issueGroups}
+            outputPath={mockCompileResult?.output_path ?? null}
+            parameterCount={mockCompileResult?.parameter_count ?? null}
+            sizeBytes={mockCompileResult?.gsm_size_bytes ?? null}
+            success={mockCompileResult?.success ?? null}
+            onIssueSelect={onIssueSelect}
+            onRevealOutput={onRevealOutput}
+          />
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
+function CompileDiagnostics({
+  compileLog,
+  duration,
+  issueGroups,
+  outputPath,
+  parameterCount,
+  sizeBytes,
+  success,
+  onIssueSelect,
+  onRevealOutput,
+}: {
+  compileLog: string[]
+  duration: number | null
+  issueGroups: ReturnType<typeof groupCompileIssuesByScript>
+  outputPath: string | null
+  parameterCount: number | null
+  sizeBytes: number | null
+  success: boolean | null
+  onIssueSelect?: (issue: CompileIssue) => void
+  onRevealOutput?: (path: string) => void
+}) {
+  const errorCount = countGroupedIssues(issueGroups, 'error')
+  const warningCount = countGroupedIssues(issueGroups, 'warning')
+  return (
+    <>
+      <div className="diagnostics-summary">
+        <strong>Compile</strong>
+        <span>{duration !== null ? `${duration} ms` : 'Not compiled'}</span>
+      </div>
+      {success && issueGroups.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
+      {issueGroups.length ? (
+        <p>
+          Diagnostics: {errorCount} errors · {warningCount} warnings · {issueGroups.length} groups
+        </p>
+      ) : null}
+      {outputPath ? (
+        <div className="diagnostic-output-row">
+          <span title={outputPath}>Output: {outputPath}</span>
+          <button type="button" onClick={() => onRevealOutput?.(outputPath)}>
+            Reveal
+          </button>
+        </div>
+      ) : null}
+      {sizeBytes !== null || parameterCount !== null ? (
+        <p>
+          {sizeBytes !== null ? `Size: ${formatBytes(sizeBytes)}` : ''}
+          {sizeBytes !== null && parameterCount !== null ? ' · ' : ''}
+          {parameterCount !== null ? `Parameters: ${parameterCount}` : ''}
+        </p>
+      ) : null}
+      {issueGroups.map((group) => (
+        <div className="diagnostic-group" key={group.script}>
+          <div className="diagnostic-group-heading">
+            <strong>{group.script}</strong>
+            <span>{group.errors.length} errors · {group.warnings.length} warnings</span>
+          </div>
+          {[...group.errors, ...group.warnings, ...group.infos].map((issue, index) => (
+            <button
+              type="button"
+              className={`diagnostic-line ${issue.severity === 'error' ? 'diagnostic-error' : 'diagnostic-warning'}`}
+              key={`${issue.script}-${issue.line}-${index}`}
+              onClick={() => onIssueSelect?.(issue)}
+            >
+              {formatIssue(issue)}
+            </button>
+          ))}
+        </div>
+      ))}
+      {compileLog.length ? compileLog.map((entry) => <p key={entry}>{entry}</p>) : null}
+    </>
+  )
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+
+function PreviewLog({ warnings }: { warnings: string[] }) {
+  if (!warnings.length) return <p>No preview warnings</p>
+  return (
+    <>
+      {warnings.map((warning) => (
+        <p key={warning}>⚠ {warning}</p>
+      ))}
+    </>
+  )
+}
+
+function formatIssue(issue: { script: string; line: number | null; message: string }) {
+  const line = issue.line && issue.line > 0 ? `:${issue.line}` : ''
+  return `${issue.script}${line} - ${issue.message}`
+}
