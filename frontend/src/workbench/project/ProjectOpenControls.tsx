@@ -32,8 +32,8 @@ export function ProjectOpenControls({
     onLoadProjectPath(path)
   }
 
-  function displayName(projectPath: string) {
-    return projectPath.split(/[\\/]/).filter(Boolean).pop() || projectPath
+  function displayName(recent: RecentProject) {
+    return recent.name || recent.path.split(/[\\/]/).filter(Boolean).pop() || recent.path
   }
 
   return (
@@ -64,7 +64,7 @@ export function ProjectOpenControls({
         <option value="">Recent</option>
         {recentProjects.map((recent) => (
           <option key={recent.path} value={recent.path} disabled={!recent.exists}>
-            {displayName(recent.path)}
+            {displayName(recent)}
           </option>
         ))}
       </select>

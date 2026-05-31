@@ -34,6 +34,8 @@ export interface ProjectScript {
 
 export interface RecentProject {
   path: string
+  name?: string
+  parent_dir?: string
   exists: boolean
 }
 

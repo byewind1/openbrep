@@ -242,7 +242,8 @@ export function SettingsDrawer({
                   onClick={() => onOpenProjectPath(project.path)}
                   title={project.path}
                 >
-                  <span>{project.path}</span>
+                  <span>{project.name || project.path}</span>
+                  {project.parent_dir ? <small>{project.parent_dir}</small> : null}
                   {!project.exists ? <em>missing</em> : null}
                 </button>
               ))

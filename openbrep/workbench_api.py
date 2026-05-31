@@ -598,7 +598,7 @@ class WorkbenchSession:
         return {
             "ok": True,
             "projects": [
-                {"path": path, "exists": Path(path).is_dir()}
+                _recent_project_to_api(path)
                 for path in self.recent_project_paths
             ],
         }
@@ -1431,6 +1431,16 @@ def _memory_status_to_api(status) -> dict[str, Any]:
         "lesson_count": status.lesson_count,
         "has_learned_skill": bool(status.has_learned_skill),
         "total_bytes": status.total_bytes,
+    }
+
+
+def _recent_project_to_api(path: str) -> dict[str, Any]:
+    project_path = Path(path)
+    return {
+        "path": str(project_path),
+        "name": project_path.name or str(project_path),
+        "parent_dir": str(project_path.parent) if project_path.parent != Path(".") else "",
+        "exists": project_path.is_dir(),
     }
 
 

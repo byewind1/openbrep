@@ -11,7 +11,7 @@ describe('ProjectOpenControls', () => {
         project={{ name: 'Demo Bookshelf', source: 'demo' }}
         loading={false}
         recentProjects={[
-          { path: '/workspace/Chair', exists: true },
+          { path: '/workspace/Chair', name: 'Display Chair', parent_dir: '/workspace', exists: true },
           { path: '/workspace/Missing', exists: false },
         ]}
         onLoadProjectPath={onLoadProjectPath}
@@ -25,6 +25,7 @@ describe('ProjectOpenControls', () => {
     fireEvent.change(recent, { target: { value: '/workspace/Chair' } })
 
     expect(onLoadProjectPath).toHaveBeenCalledWith('/workspace/Chair')
+    expect(within(recent).getByText('Display Chair')).toBeTruthy()
     expect(within(recent).getByText('Missing')).toBeTruthy()
   })
 })

@@ -104,6 +104,8 @@ def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp
 
     assert recent["ok"] is True
     assert [item["path"] for item in recent["projects"]][:2] == [str(second), str(first)]
+    assert recent["projects"][0]["name"] == "RecentTwo"
+    assert recent["projects"][0]["parent_dir"] == str(second.parent)
     assert all(item["exists"] for item in recent["projects"][:2])
     assert closed["ok"] is True
     assert closed["project"]["source"] == "demo"
