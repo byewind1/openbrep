@@ -148,7 +148,7 @@ button:focus-visible {
 .project-open-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(170px, 1fr) auto auto minmax(86px, 110px) auto auto;
   align-items: center;
   gap: 6px;
 }
@@ -163,6 +163,14 @@ button:focus-visible {
 
 .project-open-controls button {
   padding-inline: 7px;
+  font-size: 12px;
+}
+
+.project-open-controls select {
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 

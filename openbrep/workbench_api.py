@@ -280,7 +280,7 @@ class WorkbenchSession:
         self.llm_api_base = self.config.llm.resolve_api_base() or ""
         self.max_retries = self.config.agent.max_iterations
         self.assistant_settings = self.config.llm.assistant_settings or ""
-        self.recent_project_paths: list[str] = []
+        self.recent_project_paths: list[str] = list(self.config.recent_projects or [])
         self.last_compile_output_path = ""
 
     def snapshot(self) -> dict[str, Any]:
@@ -672,6 +672,8 @@ class WorkbenchSession:
             normalized,
             *[item for item in self.recent_project_paths if item != normalized],
         ][:8]
+        self.config.recent_projects = self.recent_project_paths
+        _save_workbench_config(self.config, self.config_path)
 
     def choose_and_load_hsf_directory(self) -> dict[str, Any]:
         try:

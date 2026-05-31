@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { WorkbenchProject } from '../../api/types'
+import type { RecentProject, WorkbenchProject } from '../../api/types'
 
 interface ProjectOpenControlsProps {
   project: WorkbenchProject | null
   loading: boolean
+  recentProjects: RecentProject[]
   onLoadProjectPath: (path: string) => void
   onBrowseProjectDirectory: () => void
   onImportGdlFile: () => void
@@ -14,6 +15,7 @@ interface ProjectOpenControlsProps {
 export function ProjectOpenControls({
   project,
   loading,
+  recentProjects,
   onLoadProjectPath,
   onBrowseProjectDirectory,
   onImportGdlFile,
@@ -28,6 +30,10 @@ export function ProjectOpenControls({
   function submitPath(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     onLoadProjectPath(path)
+  }
+
+  function displayName(projectPath: string) {
+    return projectPath.split(/[\\/]/).filter(Boolean).pop() || projectPath
   }
 
   return (
@@ -46,6 +52,22 @@ export function ProjectOpenControls({
       <button type="button" disabled={loading} onClick={onBrowseProjectDirectory}>
         ...
       </button>
+      <select
+        aria-label="Recent HSF projects"
+        value=""
+        disabled={loading || recentProjects.length === 0}
+        onChange={(event) => {
+          const selectedPath = event.currentTarget.value
+          if (selectedPath) onLoadProjectPath(selectedPath)
+        }}
+      >
+        <option value="">Recent</option>
+        {recentProjects.map((recent) => (
+          <option key={recent.path} value={recent.path} disabled={!recent.exists}>
+            {displayName(recent.path)}
+          </option>
+        ))}
+      </select>
       <button type="button" disabled={loading} onClick={onImportGdlFile}>
         Import GDL
       </button>

@@ -123,6 +123,7 @@ export function WorkbenchApp() {
           <ProjectOpenControls
             project={project}
             loading={loading}
+            recentProjects={recentProjects}
             onLoadProjectPath={(path) => void loadProjectPath(path)}
             onBrowseProjectDirectory={() => void browseProjectDirectory()}
             onImportGdlFile={() => void importGdlFile()}

@@ -322,6 +322,7 @@ class GDLAgentConfig:
     templates_dir: str = "./templates"
     src_dir: str = "./src"
     output_dir: str = "./output"
+    recent_projects: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, config_path: Optional[str] = None, **overrides) -> GDLAgentConfig:
@@ -377,6 +378,10 @@ class GDLAgentConfig:
         llm_cfg = pick(LLMConfig, llm_data)
         llm_cfg.custom_providers = custom_providers
 
+        raw_recent_projects = data.get("recent_projects", [])
+        if not isinstance(raw_recent_projects, list):
+            raw_recent_projects = []
+
         return cls(
             llm=llm_cfg,
             agent=pick(AgentConfig, data.get("agent", {})),
@@ -386,6 +391,11 @@ class GDLAgentConfig:
             templates_dir=data.get("templates_dir", "./templates"),
             src_dir=data.get("src_dir", "./src"),
             output_dir=data.get("output_dir", "./output"),
+            recent_projects=[
+                str(path)
+                for path in raw_recent_projects
+                if isinstance(path, str) and path.strip()
+            ],
         )
 
     def get_available_models(self) -> list[str]:
@@ -430,6 +440,7 @@ class GDLAgentConfig:
             "templates_dir": self.templates_dir,
             "src_dir": self.src_dir,
             "output_dir": self.output_dir,
+            "recent_projects": self.recent_projects,
         }
         Path(config_path).write_text(toml.dumps(data), encoding="utf-8")
 
@@ -464,6 +475,11 @@ class GDLAgentConfig:
             f'templates_dir = "{self.templates_dir}"',
             f'src_dir = "{self.src_dir}"', f'output_dir = "{self.output_dir}"',
         ]
+        if self.recent_projects:
+            lines += ["", "recent_projects = ["]
+            for path in self.recent_projects:
+                lines.append(f'  "{path}",')
+            lines.append("]")
         return "\n".join(lines) + "\n"
 
 

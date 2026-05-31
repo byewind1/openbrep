@@ -110,6 +110,23 @@ def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp
     assert "path" not in closed["project"]
 
 
+def test_workbench_session_persists_recent_projects_in_config(tmp_path):
+    first = HSFProject.create_new("RecentOne", str(tmp_path / "one")).save_to_disk()
+    second = HSFProject.create_new("RecentTwo", str(tmp_path / "two")).save_to_disk()
+    config_path = tmp_path / "workbench.toml"
+
+    session = WorkbenchSession(config_path=config_path)
+    session.route("POST", "/api/project/load", {"path": str(first)})
+    session.route("POST", "/api/project/load", {"path": str(second)})
+
+    restored = WorkbenchSession(config_path=config_path)
+    recent = restored.route("GET", "/api/project/recent")
+
+    assert recent["ok"] is True
+    assert [item["path"] for item in recent["projects"]][:2] == [str(second), str(first)]
+    assert all(item["exists"] for item in recent["projects"][:2])
+
+
 def test_workbench_session_exports_current_project_as_hsf(tmp_path):
     source_root = tmp_path / "source"
     export_root = tmp_path / "exported"
