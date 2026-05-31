@@ -22,6 +22,14 @@ def test_find_available_port_skips_busy_port(monkeypatch):
     assert launcher.find_available_port(8765) == 8766
 
 
+def test_find_available_port_uses_fallback_range(monkeypatch):
+    launcher = load_launcher_module()
+
+    monkeypatch.setattr(launcher, "is_port_available", lambda port, host="127.0.0.1": port == 19065)
+
+    assert launcher.find_available_port(8766, max_attempts=50, fallback_start=19065) == 19065
+
+
 def test_choose_port_auto_shifts_default_when_busy(monkeypatch):
     launcher = load_launcher_module()
     monkeypatch.delenv("OBR7_API_PORT", raising=False)
@@ -31,6 +39,22 @@ def test_choose_port_auto_shifts_default_when_busy(monkeypatch):
 
     assert shifted is True
     assert port == 8766
+
+
+def test_choose_port_falls_back_to_high_port(monkeypatch):
+    launcher = load_launcher_module()
+    monkeypatch.delenv("OBR7_API_PORT", raising=False)
+    monkeypatch.setattr(launcher, "is_port_available", lambda port, host="127.0.0.1": port == 19065)
+
+    port, shifted = launcher.choose_port(
+        explicit=None,
+        env_name="OBR7_API_PORT",
+        default=8765,
+        fallback_start=19065,
+    )
+
+    assert shifted is True
+    assert port == 19065
 
 
 def test_choose_port_fails_for_busy_explicit_port(monkeypatch):

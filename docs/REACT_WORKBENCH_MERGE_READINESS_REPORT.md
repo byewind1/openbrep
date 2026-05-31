@@ -3,7 +3,7 @@
 Date: 2026-05-31  
 Branch: `react-workbench-poc`  
 Compared against: `origin/main` at `d6643960bbedcbc2d49f64bf39841e4127e8be45`  
-Branch head: `f867d4ebd8d529480845f31fe817d0847a8fdfa2`
+Branch head before final launcher hardening: `44a7d4af15e219efd086a5bc4dbdc19ee72957f4`
 
 ## Executive Decision
 
@@ -43,16 +43,26 @@ Primary additions:
 Latest verified gates on this branch:
 
 ```text
+python -m pytest tests/test_obr7_launcher.py -q
+  6 passed
+
+./obr7 --no-open
+  verified with existing API on 8765
+  auto-shifted API to 8766
+  started web on 5174
+  curl http://127.0.0.1:8766/api/snapshot returned ok=true
+  curl http://127.0.0.1:5174/ returned OpenBrep Workbench HTML
+
 python scripts/workbench_readiness_gate.py --pretty
   ok: true
-  backend workbench api: 66 passed
+  backend workbench api: 67 passed
   backend vision smoke tests: 3 passed
-  frontend tests: 63 passed
+  frontend tests: 64 passed
   frontend build: passed
   vision smoke: skip, config not found
 
 python -m pytest tests/ -q
-  767 passed, 2 warnings, 10 subtests passed
+  770 passed, 2 warnings, 10 subtests passed
 
 cd frontend && npm run test -- --run
   63 passed
@@ -158,7 +168,9 @@ Not ready to be the only UI for:
 python scripts/workbench_readiness_gate.py --full --pretty
 ```
 
-2. Run one manual `./obr7` smoke:
+2. Run one manual `./obr7` smoke. The launcher now auto-shifts from the default
+   API port range to a high fallback range if needed, while explicit
+   `--api-port` / `OBR7_API_PORT` values remain strict:
 
 ```text
 open existing HSF

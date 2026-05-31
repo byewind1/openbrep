@@ -14,6 +14,8 @@ from pathlib import Path
 
 DEFAULT_API_PORT = 8765
 DEFAULT_WEB_PORT = 5174
+FALLBACK_API_PORT = 19065
+FALLBACK_WEB_PORT = 19074
 HOST = "127.0.0.1"
 
 
@@ -27,14 +29,37 @@ def is_port_available(port: int, host: str = HOST) -> bool:
     return True
 
 
-def find_available_port(preferred: int, host: str = HOST, *, max_attempts: int = 50) -> int:
+def find_available_port(
+    preferred: int,
+    host: str = HOST,
+    *,
+    max_attempts: int = 50,
+    fallback_start: int | None = None,
+    fallback_attempts: int = 50,
+) -> int:
     for port in range(preferred, preferred + max_attempts):
         if is_port_available(port, host):
             return port
+    if fallback_start is not None:
+        for port in range(fallback_start, fallback_start + fallback_attempts):
+            if is_port_available(port, host):
+                return port
+        raise RuntimeError(
+            "No available port found from "
+            f"{preferred} to {preferred + max_attempts - 1}, "
+            f"or from {fallback_start} to {fallback_start + fallback_attempts - 1}."
+        )
     raise RuntimeError(f"No available port found from {preferred} to {preferred + max_attempts - 1}.")
 
 
-def choose_port(*, explicit: int | None, env_name: str, default: int, host: str = HOST) -> tuple[int, bool]:
+def choose_port(
+    *,
+    explicit: int | None,
+    env_name: str,
+    default: int,
+    fallback_start: int | None = None,
+    host: str = HOST,
+) -> tuple[int, bool]:
     raw_env = os.environ.get(env_name, "").strip()
     fixed = explicit is not None or bool(raw_env)
     port = explicit if explicit is not None else int(raw_env) if raw_env else default
@@ -42,7 +67,7 @@ def choose_port(*, explicit: int | None, env_name: str, default: int, host: str 
         return port, False
     if fixed:
         raise RuntimeError(f"{env_name or 'port'} {port} is already in use.")
-    return find_available_port(port + 1, host), True
+    return find_available_port(port + 1, host, fallback_start=fallback_start), True
 
 
 def wait_for_url(url: str, *, timeout: float = 12.0) -> bool:
@@ -90,8 +115,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        api_port, api_shifted = choose_port(explicit=args.api_port, env_name="OBR7_API_PORT", default=DEFAULT_API_PORT)
-        web_port, web_shifted = choose_port(explicit=args.web_port, env_name="OBR7_WEB_PORT", default=DEFAULT_WEB_PORT)
+        api_port, api_shifted = choose_port(
+            explicit=args.api_port,
+            env_name="OBR7_API_PORT",
+            default=DEFAULT_API_PORT,
+            fallback_start=FALLBACK_API_PORT,
+        )
+        web_port, web_shifted = choose_port(
+            explicit=args.web_port,
+            env_name="OBR7_WEB_PORT",
+            default=DEFAULT_WEB_PORT,
+            fallback_start=FALLBACK_WEB_PORT,
+        )
     except RuntimeError as exc:
         print(f"[obr7] {exc}", file=sys.stderr)
         return 1
