@@ -2,8 +2,13 @@
 
 Date: 2026-05-31  
 Branch: `react-workbench-poc`  
-Current head: `f158f10`  
 Compared against: `origin/main`
+
+Check the latest branch head before opening a PR:
+
+```bash
+git rev-parse HEAD
+```
 
 ## Suggested PR Title
 
@@ -38,8 +43,8 @@ yet migrated.
 ## Current Diff Shape
 
 ```text
-Commits ahead of origin/main: 59
-Files changed: 74
+Commits ahead of origin/main: about 60
+Files changed: about 75
 Approximate diff: 16.2k insertions
 Primary new areas:
   frontend/
@@ -123,4 +128,3 @@ Recommended post-merge documentation stance:
    Streamlit-only.
 4. Decide React default policy after manual browser smoke.
 5. Add code splitting for Monaco/Three if bundle size becomes a launch problem.
-
