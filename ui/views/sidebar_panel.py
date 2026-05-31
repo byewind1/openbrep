@@ -425,7 +425,12 @@ def _render_project_reset(
 ) -> None:
     if not st.session_state.project:
         return
-    if not st.button("🗑️ 清除项目", width="stretch", disabled=is_generation_locked_fn(st.session_state)):
+    if not st.button(
+        "重置当前项目",
+        width="stretch",
+        disabled=is_generation_locked_fn(st.session_state),
+        help="关闭当前会话里的项目并清空预览、待应用变更和编译结果；不删除磁盘文件，也不会自动另存。",
+    ):
         return
 
     keep_work_dir = st.session_state.work_dir

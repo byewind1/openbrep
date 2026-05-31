@@ -54,9 +54,10 @@ def _render_project_input_section(
         key="editor_open_project_file",
         disabled=is_generation_locked_fn(),
         width="stretch",
-        help="支持 .gdl / .txt / .gsm 文件",
+        help="打开系统文件选择器，支持 .gdl / .txt / .gsm 文件",
     ):
-        ok, msg = browse_and_open_project_file_fn()
+        with st.spinner("等待系统文件选择器..."):
+            ok, msg = browse_and_open_project_file_fn()
         if ok:
             st.rerun()
         elif msg.startswith("❌"):
@@ -69,9 +70,10 @@ def _render_project_input_section(
         key="editor_open_hsf_project",
         disabled=is_generation_locked_fn(),
         width="stretch",
-        help="选择 HSF 项目目录",
+        help="打开系统目录选择器；如果窗口没出现，请检查浏览器后方或 Dock 中的系统对话框",
     ):
-        ok, msg = browse_and_load_hsf_directory_fn()
+        with st.spinner("等待系统目录选择器..."):
+            ok, msg = browse_and_load_hsf_directory_fn()
         if ok:
             st.rerun()
         elif msg.startswith("❌"):
@@ -189,8 +191,13 @@ def _render_hsf_save_dialog(
         )
         choose_col, _ = st.columns([1, 2])
         with choose_col:
-            if st.button("选择目录", width="stretch"):
-                selected = choose_hsf_save_parent_dir_fn()
+            if st.button(
+                "选择目录",
+                width="stretch",
+                help="打开系统目录选择器；取消后会回到当前保存窗口",
+            ):
+                with st.spinner("等待系统目录选择器..."):
+                    selected = choose_hsf_save_parent_dir_fn()
                 if selected:
                     st.session_state.hsf_save_parent_dir = selected
                     st.rerun()
@@ -238,7 +245,8 @@ def _render_compile_section(
         help="选择输出文件夹；取消选择时使用默认 workspace/output",
         disabled=st.session_state.agent_running,
     ):
-        output_dir = choose_compile_output_dir_fn() if choose_compile_output_dir_fn else None
+        with st.spinner("等待系统目录选择器..."):
+            output_dir = choose_compile_output_dir_fn() if choose_compile_output_dir_fn else None
         with st.spinner("编译中..."):
             success, result_msg = do_compile_fn(
                 proj,
