@@ -61,8 +61,15 @@ python scripts/workbench_readiness_gate.py --pretty
   frontend build: passed
   vision smoke: skip, config not found
 
+python scripts/workbench_readiness_gate.py --full --pretty
+  ok: true
+  backend full tests: 774 passed, 2 warnings, 10 subtests passed
+  frontend tests: 64 passed
+  frontend build: passed
+  browser smoke: pass, OpenBrep Workbench page markers present
+
 python -m pytest tests/ -q
-  770 passed, 2 warnings, 10 subtests passed
+  774 passed, 2 warnings, 10 subtests passed
 
 cd frontend && npm run test -- --run
   63 passed
@@ -168,20 +175,17 @@ Not ready to be the only UI for:
 python scripts/workbench_readiness_gate.py --full --pretty
 ```
 
-2. Run one manual `./obr7` smoke. The launcher now auto-shifts from the default
+2. Run one browser `./obr7` smoke. The launcher now auto-shifts from the default
    API port range to a high fallback range if needed, while explicit
    `--api-port` / `OBR7_API_PORT` values remain strict:
 
 ```text
-open existing HSF
-open 3d.gdl
-edit one line
-save
-mock compile
-switch 3D/2D preview
-open Settings
-verify compiler/LLM/memory panels
+python scripts/workbench_browser_smoke.py --pretty
 ```
+
+This verifies that `obr7` starts both the API and React frontend, Playwright can
+open the page, and the code-first Workbench markers are present. A human product
+smoke is still useful before changing the default UI policy.
 
 3. If a vision-capable model is configured, run:
 

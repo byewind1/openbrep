@@ -52,6 +52,7 @@ port. Use a different explicit port or unset the environment variable.
 ```bash
 python -m pytest tests/test_obr7_launcher.py -q
 python -m pytest tests/test_workbench_api.py -q
+python scripts/workbench_browser_smoke.py --pretty
 python scripts/workbench_readiness_gate.py --full --pretty
 cd frontend
 npm test -- --run

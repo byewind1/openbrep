@@ -58,13 +58,16 @@ def build_plan(*, full: bool = False) -> list[Step]:
             ["python", "-m", "pytest", "tests/test_workbench_api.py", "tests/test_workbench_api_parameters.py", "-q"],
         )
     )
-    return [
+    steps = [
         backend,
         Step("backend vision smoke tests", ["python", "-m", "pytest", "tests/test_workbench_vision_smoke.py", "-q"]),
         Step("frontend tests", ["npm", "run", "test", "--", "--run"], cwd=ROOT / "frontend"),
         Step("frontend build", ["npm", "run", "build"], cwd=ROOT / "frontend"),
         Step("vision smoke", ["python", "scripts/workbench_vision_smoke.py", "--pretty"]),
     ]
+    if full:
+        steps.append(Step("browser smoke", ["python", "scripts/workbench_browser_smoke.py", "--pretty"]))
+    return steps
 
 
 def run_step(step: Step) -> StepResult:

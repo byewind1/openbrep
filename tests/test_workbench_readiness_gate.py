@@ -33,9 +33,11 @@ def test_workbench_readiness_gate_full_plan_uses_full_python_suite():
     gate = _load_gate_module()
 
     plan = gate.build_plan(full=True)
+    names = [step.name for step in plan]
 
     assert plan[0].name == "backend full tests"
     assert plan[0].command == ["python", "-m", "pytest", "tests/", "-q"]
+    assert "browser smoke" in names
 
 
 def test_workbench_readiness_gate_aggregates_failures(tmp_path):
