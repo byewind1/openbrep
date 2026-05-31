@@ -5,6 +5,9 @@ Branch: `react-workbench-poc`
 Compared against: `origin/main` at `d6643960bbedcbc2d49f64bf39841e4127e8be45`  
 Branch head before final launcher hardening: `44a7d4af15e219efd086a5bc4dbdc19ee72957f4`
 
+Update: `origin/main` has since been merged into `react-workbench-poc`; the
+`obr7` add/add conflict is resolved in this branch.
+
 ## Executive Decision
 
 `react-workbench-poc` is now a credible primary UI candidate for daily HSF/GDL
@@ -63,13 +66,13 @@ python scripts/workbench_readiness_gate.py --pretty
 
 python scripts/workbench_readiness_gate.py --full --pretty
   ok: true
-  backend full tests: 774 passed, 2 warnings, 10 subtests passed
+  backend full tests: 775 passed, 2 warnings, 10 subtests passed
   frontend tests: 64 passed
   frontend build: passed
   browser smoke: pass, OpenBrep Workbench page markers present
 
 python -m pytest tests/ -q
-  774 passed, 2 warnings, 10 subtests passed
+  775 passed, 2 warnings, 10 subtests passed
 
 cd frontend && npm run test -- --run
   63 passed

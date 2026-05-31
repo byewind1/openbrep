@@ -4,6 +4,9 @@ Date: 2026-05-31
 Branch: `react-workbench-poc`  
 Compared against: `origin/main`
 
+`origin/main` has been merged into this branch, and the `obr7` add/add conflict
+has been resolved here.
+
 Check the latest branch head before opening a PR:
 
 ```bash
@@ -65,7 +68,7 @@ python -m pytest tests/test_obr7_launcher.py -q
 
 python scripts/workbench_readiness_gate.py --full --pretty
   ok: true
-  backend full tests: 774 passed, 2 warnings, 10 subtests passed
+  backend full tests: 775 passed, 2 warnings, 10 subtests passed
   backend vision smoke tests: 3 passed
   frontend tests: 64 passed
   frontend build: passed
