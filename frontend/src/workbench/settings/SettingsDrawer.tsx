@@ -82,6 +82,7 @@ export function SettingsDrawer({
   const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [llmTesting, setLlmTesting] = useState(false)
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
+  const [manualModelMode, setManualModelMode] = useState(false)
   const customModelOptions = llmDraft.model_groups?.custom ?? []
   const officialModelOptions = llmDraft.model_groups?.official ?? []
   const groupedModelIds = new Set([...customModelOptions, ...officialModelOptions].map((option) => option.id))
@@ -89,13 +90,19 @@ export function SettingsDrawer({
     .filter((model) => model && !groupedModelIds.has(model))
     .map((model) => ({ id: model, label: model, kind: 'official' as const, provider: '' }))
   const knownModelIds = new Set([...groupedModelIds, ...fallbackModelOptions.map((option) => option.id)])
-  const selectedModelOption = knownModelIds.has(llmDraft.model) ? llmDraft.model : '__custom__'
-  const selectedModelMeta = [...customModelOptions, ...officialModelOptions, ...fallbackModelOptions].find(
-    (option) => option.id === llmDraft.model,
-  )
+  const allModelOptions = [...customModelOptions, ...officialModelOptions, ...fallbackModelOptions]
+  const selectedModelMeta = allModelOptions.find((option) => option.id === llmDraft.model)
+  const activeModelCategory = manualModelMode ? 'exact' : selectedModelMeta?.kind ?? (knownModelIds.has(llmDraft.model) ? 'official' : 'exact')
+  const visibleModelOptions =
+    activeModelCategory === 'custom'
+      ? customModelOptions
+      : activeModelCategory === 'official'
+        ? [...officialModelOptions, ...fallbackModelOptions]
+        : []
 
   useEffect(() => {
     setLlmDraft(llmSettings)
+    setManualModelMode(false)
   }, [llmSettings])
 
   useEffect(() => {
@@ -116,6 +123,27 @@ export function SettingsDrawer({
     const result = await onTestLlmConnection(llmDraft)
     setLlmTestResult(result)
     setLlmTesting(false)
+  }
+
+  function selectModelCategory(category: 'official' | 'custom' | 'exact') {
+    if (category === 'custom') {
+      const next = customModelOptions[0]
+      if (next) {
+        setManualModelMode(false)
+        setLlmDraft({ ...llmDraft, model: next.id, api_base: next.api_base ?? llmDraft.api_base })
+      }
+      return
+    }
+    if (category === 'official') {
+      const next = officialModelOptions[0] ?? fallbackModelOptions[0]
+      if (next) {
+        setManualModelMode(false)
+        setLlmDraft({ ...llmDraft, model: next.id })
+      }
+      return
+    }
+    setManualModelMode(true)
+    setLlmDraft({ ...llmDraft, model: selectedModelMeta?.id ?? llmDraft.model })
   }
 
   return (
@@ -204,62 +232,79 @@ export function SettingsDrawer({
             <strong>AI</strong>
             <span>Model, endpoint and collaboration preference</span>
           </div>
-          <label className="settings-field">
+          <div className="settings-field">
             <span>Model</span>
-            <div className="settings-model-row">
-              <select
-                value={selectedModelOption}
-                onChange={(event) => {
-                  const value = event.currentTarget.value
-                  if (value !== '__custom__') {
-                    setLlmDraft({ ...llmDraft, model: value })
-                  }
-                }}
+            <div className="settings-segmented" aria-label="AI source">
+              <button
+                type="button"
+                className={activeModelCategory === 'official' ? 'active' : ''}
+                disabled={!officialModelOptions.length && !fallbackModelOptions.length}
+                onClick={() => selectModelCategory('official')}
               >
-                {customModelOptions.length ? (
-                  <optgroup label="Custom providers">
-                    {customModelOptions.map((model) => (
-                      <option value={model.id} key={model.id}>
-                        {model.label} ({model.provider})
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                {officialModelOptions.length ? (
-                  <optgroup label="Official models">
-                    {officialModelOptions.map((model) => (
-                      <option value={model.id} key={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                {fallbackModelOptions.length ? (
-                  <optgroup label="Models">
-                    {fallbackModelOptions.map((model) => (
-                      <option value={model.id} key={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                <option value="__custom__">Custom model</option>
-              </select>
+                Official
+              </button>
+              <button
+                type="button"
+                className={activeModelCategory === 'custom' ? 'active' : ''}
+                disabled={!customModelOptions.length}
+                onClick={() => selectModelCategory('custom')}
+              >
+                Custom
+              </button>
+              <button
+                type="button"
+                className={activeModelCategory === 'exact' ? 'active' : ''}
+                onClick={() => selectModelCategory('exact')}
+              >
+                Exact ID
+              </button>
+            </div>
+            <div className="settings-model-row">
+              <div className="settings-model-list" role="listbox" aria-label="Model">
+                {activeModelCategory === 'exact' ? (
+                  <span className="settings-empty">Manual model ID</span>
+                ) : (
+                  visibleModelOptions.map((model) => (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={llmDraft.model === model.id}
+                      className={llmDraft.model === model.id ? 'active' : ''}
+                      onClick={() => {
+                        setLlmDraft({
+                          ...llmDraft,
+                          model: model.id,
+                          api_base: model.kind === 'custom' ? model.api_base ?? llmDraft.api_base : llmDraft.api_base,
+                        })
+                        setManualModelMode(false)
+                      }}
+                      key={model.id}
+                    >
+                      {model.kind === 'custom' ? `${model.label} (${model.provider})` : model.label}
+                    </button>
+                  ))
+                )}
+              </div>
               <input
                 type="text"
                 value={llmDraft.model}
                 placeholder="Exact model id"
-                onChange={(event) => setLlmDraft({ ...llmDraft, model: event.currentTarget.value })}
+                onChange={(event) => {
+                  setManualModelMode(true)
+                  setLlmDraft({ ...llmDraft, model: event.currentTarget.value })
+                }}
               />
             </div>
             {selectedModelMeta ? (
               <small className="settings-field-hint">
-                {selectedModelMeta.kind === 'custom'
+                {activeModelCategory === 'exact'
+                  ? 'Manual model ID'
+                  : selectedModelMeta.kind === 'custom'
                   ? `Custom provider: ${selectedModelMeta.provider}${selectedModelMeta.protocol ? ` / ${selectedModelMeta.protocol}` : ''}`
                   : `Official provider: ${selectedModelMeta.provider || 'auto'}`}
               </small>
             ) : null}
-          </label>
+          </div>
           <label className="settings-field">
             <span>API Key</span>
             <input

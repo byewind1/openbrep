@@ -1461,6 +1461,23 @@ button:focus-visible {
   font-size: 11px;
 }
 
+.settings-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-segmented button {
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.settings-segmented button.active {
+  border-color: rgba(125, 211, 252, 0.72);
+  background: rgba(14, 165, 233, 0.18);
+  color: var(--text);
+}
+
 .settings-path-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1498,9 +1515,34 @@ button:focus-visible {
   gap: 8px;
 }
 
-.settings-model-row > select,
 .settings-model-row > input {
   min-width: 0;
+}
+
+.settings-model-list {
+  min-width: 0;
+  max-height: 138px;
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.34);
+}
+
+.settings-model-list button {
+  min-height: 26px;
+  justify-content: flex-start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-model-list button.active {
+  border-color: rgba(125, 211, 252, 0.72);
+  background: rgba(14, 165, 233, 0.2);
+  color: var(--text);
 }
 
 .settings-submit-row {
