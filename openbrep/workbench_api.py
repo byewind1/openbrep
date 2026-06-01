@@ -3,9 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
-import copy
 import json
-import os
 import platform
 import re
 import shutil
@@ -19,7 +17,6 @@ from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
-from openbrep.config import ALL_MODELS, GDLAgentConfig, model_to_provider
 from openbrep.explainer.chat_adapter import build_chat_explanation_reply
 from openbrep.explainer.context_builder import (
     build_project_context,
@@ -39,6 +36,13 @@ from openbrep.learning import ErrorLearningStore
 from openbrep.llm import LLMAdapter
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+from openbrep.workbench.compiler_service import WorkbenchCompilerService
+from openbrep.workbench.settings_service import (
+    WorkbenchSettingsService,
+    load_workbench_config,
+    resolve_workbench_config_path,
+    save_workbench_config,
+)
 from openbrep.workbench_tapir import WorkbenchTapirAdapter, default_tapir_bridge_loader
 from ui.three_preview import preview_3d_to_three_payload
 from ui.view_models import classify_code_blocks, classify_vision_error
@@ -277,8 +281,8 @@ class WorkbenchSession:
         self.directory_chooser = directory_chooser or _choose_directory
         self.file_chooser = file_chooser or _choose_file
         self.path_revealer = path_revealer or _reveal_path
-        self.config_path = _resolve_workbench_config_path(config_path)
-        self.config = _load_workbench_config(self.config_path)
+        self.config_path = resolve_workbench_config_path(config_path)
+        self.config = load_workbench_config(self.config_path)
         self.compiler_mode = "mock"
         self.converter_path = self.config.compiler.path or ""
         self.output_dir = "" if self.config.output_dir in {"", "./output"} else self.config.output_dir
@@ -289,6 +293,15 @@ class WorkbenchSession:
         self.assistant_settings = self.config.llm.assistant_settings or ""
         self.recent_project_paths: list[str] = list(self.config.recent_projects or [])
         self.last_compile_output_path = ""
+        self.settings_service = WorkbenchSettingsService(
+            self,
+            llm_adapter_factory=lambda config: LLMAdapter(config),
+        )
+        self.compiler_service = WorkbenchCompilerService(
+            self,
+            real_compiler_factory=lambda converter_path: HSFCompiler(converter_path),
+            mock_compiler_factory=lambda: MockHSFCompiler(),
+        )
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
         self.tapir = WorkbenchTapirAdapter(
             tapir_import_ok=default_import_ok if tapir_import_ok is None else tapir_import_ok,
@@ -307,103 +320,19 @@ class WorkbenchSession:
         return snapshot
 
     def compiler_settings(self) -> dict[str, str]:
-        return {
-            "mode": self.compiler_mode,
-            "converter_path": self.converter_path,
-            "output_dir": self.output_dir,
-        }
+        return self.settings_service.compiler_settings()
 
     def update_compiler_settings(self, body: dict[str, Any]) -> dict[str, Any]:
-        mode = str(body.get("mode") or self.compiler_mode).strip().lower()
-        if mode not in {"mock", "lp"}:
-            return {"ok": False, "error": f"Unsupported compiler mode: {mode}"}
-        self.compiler_mode = mode
-        self.converter_path = str(body.get("converter_path") or "").strip()
-        self.output_dir = str(body.get("output_dir") or "").strip()
-        self.config.compiler.path = self.converter_path
-        self.config.output_dir = self.output_dir or "./output"
-        _save_workbench_config(self.config, self.config_path)
-        return {"ok": True, "compiler": self.compiler_settings()}
+        return self.settings_service.update_compiler_settings(body)
 
     def llm_settings(self) -> dict[str, Any]:
-        models = self.config.get_available_models()
-        for model in ALL_MODELS:
-            if model not in models:
-                models.append(model)
-        return {
-            "model": self.llm_model,
-            "models": models,
-            "api_key": self.llm_api_key,
-            "api_base": self.llm_api_base,
-            "max_retries": self.max_retries,
-            "assistant_settings": self.assistant_settings,
-        }
+        return self.settings_service.llm_settings()
 
     def update_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
-        model = str(body.get("model") or self.llm_model).strip()
-        if not model:
-            return {"ok": False, "error": "Model is required."}
-        self.llm_model = model
-        self.llm_api_key = str(body.get("api_key") or "").strip()
-        self.llm_api_base = str(body.get("api_base") or "").strip()
-        self.assistant_settings = str(body.get("assistant_settings") or "")
-        try:
-            self.max_retries = max(1, min(10, int(body.get("max_retries") or self.max_retries)))
-        except (TypeError, ValueError):
-            self.max_retries = 5
-
-        self.config.llm.model = self.llm_model
-        self.config.llm.assistant_settings = self.assistant_settings
-        self.config.agent.max_iterations = self.max_retries
-        _apply_llm_credentials_to_config(
-            self.config,
-            model=self.llm_model,
-            api_key=self.llm_api_key,
-            api_base=self.llm_api_base,
-        )
-        _save_workbench_config(self.config, self.config_path)
-        return {"ok": True, "llm": self.llm_settings()}
+        return self.settings_service.update_llm_settings(body)
 
     def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
-        model = str(body.get("model") or self.llm_model).strip()
-        if not model:
-            return {"ok": False, "error": "Model is required.", "category": "llm_configuration"}
-
-        test_config = copy.deepcopy(self.config)
-        test_config.llm.model = model
-        test_config.llm.assistant_settings = str(body.get("assistant_settings") or self.assistant_settings)
-        test_config.llm.max_tokens = min(test_config.llm.max_tokens, 16)
-        test_config.llm.timeout = min(test_config.llm.timeout, 20)
-        _apply_llm_credentials_to_config(
-            test_config,
-            model=model,
-            api_key=str(body.get("api_key") or "").strip(),
-            api_base=str(body.get("api_base") or "").strip(),
-        )
-
-        start = time.perf_counter()
-        try:
-            response = LLMAdapter(test_config.llm).generate(
-                [{"role": "user", "content": "Reply with OK."}],
-                temperature=0,
-                max_tokens=8,
-                timeout=20,
-            )
-        except Exception as exc:
-            return {
-                "ok": False,
-                "error": str(exc) or exc.__class__.__name__,
-                "category": "llm_configuration",
-                "model": model,
-                "duration_ms": int((time.perf_counter() - start) * 1000),
-            }
-
-        return {
-            "ok": True,
-            "message": "LLM connection OK",
-            "model": response.model or model,
-            "duration_ms": int((time.perf_counter() - start) * 1000),
-        }
+        return self.settings_service.test_llm_settings(body)
 
     def load_hsf_directory(self, path: str) -> dict[str, Any]:
         hsf_path = Path(path).expanduser().resolve()
@@ -727,7 +656,7 @@ class WorkbenchSession:
             *[item for item in self.recent_project_paths if item != normalized],
         ][:8]
         self.config.recent_projects = self.recent_project_paths
-        _save_workbench_config(self.config, self.config_path)
+        save_workbench_config(self.config, self.config_path)
 
     def choose_and_load_hsf_directory(self) -> dict[str, Any]:
         try:
@@ -764,7 +693,7 @@ class WorkbenchSession:
             return {"ok": False, "cancelled": True, "error": "Directory selection cancelled."}
         self.output_dir = str(Path(selected).expanduser().resolve())
         self.config.output_dir = self.output_dir
-        _save_workbench_config(self.config, self.config_path)
+        save_workbench_config(self.config, self.config_path)
         return {"ok": True, "path": self.output_dir, "compiler": self.compiler_settings()}
 
     def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -893,63 +822,10 @@ class WorkbenchSession:
         }
 
     def compile_mock(self, body: dict[str, Any]) -> dict[str, Any]:
-        start = time.perf_counter()
-        if self.source_path is None:
-            self.project.save_to_disk()
-            hsf_dir = self.project.root
-        else:
-            self.project.save_to_disk()
-            hsf_dir = self.source_path
-        output_dir = _resolve_output_dir(body, self.output_dir, hsf_dir.parent / "output")
-        output_dir = output_dir.expanduser().resolve()
-        output_gsm = output_dir / f"{self.project.name}.gsm"
-        result = MockHSFCompiler().hsf2libpart(str(hsf_dir), str(output_gsm))
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        output_path = result.output_path or str(output_gsm)
-        self.last_compile_output_path = output_path
-        return {
-            "ok": True,
-            "success": bool(result.success),
-            "mode": "mock",
-            "issues": _compile_issues_from_result(result),
-            "duration_ms": duration_ms,
-            "output_path": output_path,
-            "gsm_size_bytes": _file_size_or_none(output_gsm),
-            "parameter_count": len(self.project.parameters or []),
-        }
+        return self.compiler_service.compile_mock(body)
 
     def compile_project(self, body: dict[str, Any]) -> dict[str, Any]:
-        if self.source_path is None:
-            return {"ok": False, "error": "Load an HSF project before compiling."}
-
-        output_dir = _resolve_output_dir(body, self.output_dir, self.source_path.parent / "output")
-        output_dir = output_dir.expanduser().resolve()
-        output_gsm = output_dir / f"{self.project.name}.gsm"
-        compiler_mode = str(body.get("compiler_mode") or self.compiler_mode)
-        converter_path = body.get("converter_path")
-        if converter_path is None:
-            converter_path = self.converter_path
-        compiler = HSFCompiler(str(converter_path) if converter_path else None) if compiler_mode == "lp" else MockHSFCompiler()
-
-        self.project.save_to_disk()
-        result = compiler.hsf2libpart(str(self.source_path), str(output_gsm))
-        output_path = result.output_path or str(output_gsm)
-        self.last_compile_output_path = output_path
-        return {
-            "ok": bool(result.success),
-            "compile": {
-                "success": bool(result.success),
-                "mode": result.mode or ("lp" if compiler_mode == "lp" else "mock"),
-                "output_path": output_path,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "errors": result.errors,
-                "warnings": result.warnings,
-                "gsm_size_bytes": _file_size_or_none(output_gsm),
-                "parameter_count": len(self.project.parameters or []),
-            },
-            **({} if result.success else {"error": result.stderr or "Compile failed"}),
-        }
+        return self.compiler_service.compile_project(body)
 
     def reveal_artifact(self, body: dict[str, Any]) -> dict[str, Any]:
         raw_path = str(body.get("path") or self.last_compile_output_path or "").strip()
@@ -1423,25 +1299,6 @@ def route_rpc(method: str, path: str, body: dict[str, Any] | None = None) -> dic
     return _default_session().route(method, path, body)
 
 
-def _load_workbench_config(config_path: Path) -> GDLAgentConfig:
-    if config_path.exists():
-        return GDLAgentConfig.load(str(config_path))
-    return GDLAgentConfig()
-
-
-def _resolve_workbench_config_path(config_path: str | Path | None = None) -> Path:
-    if config_path:
-        return Path(config_path)
-    env_path = str(os.environ.get("GDL_AGENT_CONFIG") or "").strip()
-    if env_path:
-        return Path(env_path)
-    return Path("config.toml")
-
-
-def _save_workbench_config(config: GDLAgentConfig, config_path: Path) -> None:
-    config.save(str(config_path))
-
-
 def _now_text() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -1557,37 +1414,6 @@ def _learning_summary_to_api(summary) -> dict[str, Any]:
     }
 
 
-def _file_size_or_none(path: Path) -> int | None:
-    try:
-        return path.stat().st_size if path.exists() else None
-    except OSError:
-        return None
-
-
-def _apply_llm_credentials_to_config(
-    config: GDLAgentConfig,
-    *,
-    model: str,
-    api_key: str,
-    api_base: str,
-) -> None:
-    custom_match = config.llm._find_custom_provider_match(model)
-    if custom_match is not None:
-        provider = custom_match.get("provider")
-        if isinstance(provider, dict):
-            provider["api_key"] = api_key
-            provider["base_url"] = api_base
-        config.llm.api_key = api_key
-        config.llm.api_base = api_base
-        return
-
-    provider_name = model_to_provider(model)
-    if provider_name and provider_name != "custom" and api_key:
-        config.llm.provider_keys[provider_name] = api_key
-    config.llm.api_key = api_key
-    config.llm.api_base = api_base
-
-
 def _choose_directory() -> str:
     from ui.local_file_dialog import choose_directory
 
@@ -1682,37 +1508,6 @@ def _read_project_file_content(project: HSFProject, script_name: str) -> str | N
     if file_path is None or not file_path.exists():
         return None
     return file_path.read_text(encoding="utf-8-sig")
-
-
-def _compile_issues_from_result(result) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    for severity, lines in (("error", result.errors), ("warning", result.warnings)):
-        for raw in lines or []:
-            script, line, message = _parse_compile_issue(str(raw))
-            issues.append({
-                "severity": severity,
-                "script": script,
-                "line": line,
-                "message": message,
-            })
-    return issues
-
-
-def _resolve_output_dir(body: dict[str, Any], session_output_dir: str, fallback: Path) -> Path:
-    configured = str(body.get("output_dir") or session_output_dir or "").strip()
-    if configured:
-        return Path(configured)
-    return fallback
-
-
-def _parse_compile_issue(raw: str) -> tuple[str, int | None, str]:
-    match = re.search(r"Error in ([^:]+):\s*(.+)", raw)
-    if match:
-        return f"scripts/{match.group(1)}", None, match.group(2)
-    match = re.search(r"([^:\s]+\.gdl).*?line\s+(\d+)[:\s-]*(.+)", raw, re.IGNORECASE)
-    if match:
-        return f"scripts/{Path(match.group(1)).name}", int(match.group(2)), match.group(3).strip()
-    return "", None, raw
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:
