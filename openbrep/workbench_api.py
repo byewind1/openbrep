@@ -1535,27 +1535,15 @@ def _apply_llm_credentials_to_config(
 
 
 def _choose_directory() -> str:
-    import tkinter as tk
-    from tkinter import filedialog
+    from ui.local_file_dialog import choose_directory
 
-    root = tk.Tk()
-    root.withdraw()
-    try:
-        return str(filedialog.askdirectory(title="Open HSF project directory") or "")
-    finally:
-        root.destroy()
+    return str(choose_directory(title="Open HSF project directory") or "")
 
 
 def _choose_file() -> str:
-    import tkinter as tk
-    from tkinter import filedialog
+    from ui.local_file_dialog import choose_file
 
-    root = tk.Tk()
-    root.withdraw()
-    try:
-        return str(filedialog.askopenfilename(title="Choose OpenBrep file") or "")
-    finally:
-        root.destroy()
+    return str(choose_file(title="Choose OpenBrep file") or "")
 
 
 def _find_hsf_root(base: Path) -> Path | None:
