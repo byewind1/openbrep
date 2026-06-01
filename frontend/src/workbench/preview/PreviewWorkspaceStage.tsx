@@ -9,6 +9,7 @@ interface PreviewWorkspaceStageProps {
   activeScriptName: string | null
   activeScriptContent: string
   hasDirtyScript: boolean
+  hasDirtyScripts: boolean
   activeFocusLine: number | null
   activeFocusKey: number | null
   onCollapsePreview: () => void
@@ -23,6 +24,7 @@ export function PreviewWorkspaceStage({
   activeScriptName,
   activeScriptContent,
   hasDirtyScript,
+  hasDirtyScripts,
   activeFocusLine,
   activeFocusKey,
   onCollapsePreview,
@@ -37,6 +39,7 @@ export function PreviewWorkspaceStage({
           warnings={warnings}
           variant="workspace"
           expanded
+          hasDirtyScripts={hasDirtyScripts}
           onCollapse={onCollapsePreview}
           onFloat={onFloatPreview}
         />

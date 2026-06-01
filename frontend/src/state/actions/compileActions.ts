@@ -6,6 +6,7 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
     const dirtyScriptNames = Object.entries(get().dirtyScripts)
       .filter(([, dirty]) => dirty)
       .map(([name]) => name)
+    let didSave = false
 
     for (const scriptName of dirtyScriptNames) {
       const content = get().scriptContents[scriptName]
@@ -26,15 +27,22 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
         dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
         compileLog: [`Saved ${scriptName} before compile`, ...state.compileLog].slice(0, 20),
       }))
+      didSave = true
     }
 
-    return true
+    return { ok: true, didSave }
+  }
+
+  async function refreshPreviewFromSavedSource() {
+    const preview = await api.fetchPreview(get().draftParameters)
+    set({ preview, warnings: preview.warnings ?? [] })
   }
 
   return {
     async compileCurrentProject() {
       set({ compiling: true })
-      if (!(await saveDirtyScriptsBeforeCompile())) return
+      const saveResult = await saveDirtyScriptsBeforeCompile()
+      if (!saveResult) return
       const result = await api.compileProject(get().compilerSettings.output_dir)
       const issues = compileIssuesFromResult(result)
       const message =
@@ -55,11 +63,15 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
         },
         compiling: false,
       }))
+      if (saveResult.didSave) {
+        await refreshPreviewFromSavedSource()
+      }
     },
 
     async runMockCompile() {
       set({ compiling: true })
-      if (!(await saveDirtyScriptsBeforeCompile())) return
+      const saveResult = await saveDirtyScriptsBeforeCompile()
+      if (!saveResult) return
       const result = await api.mockCompile(get().compilerSettings.output_dir)
       const summary = buildMockCompileSummary(result)
       set((state) => ({
@@ -67,6 +79,9 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
         mockCompileResult: result,
         compileLog: summary ? [summary, ...state.compileLog].slice(0, 20) : state.compileLog,
       }))
+      if (saveResult.didSave) {
+        await refreshPreviewFromSavedSource()
+      }
     },
 
     async revealCompileOutput(path = '') {

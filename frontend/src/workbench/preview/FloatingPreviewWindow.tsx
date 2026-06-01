@@ -6,10 +6,11 @@ interface FloatingPreviewWindowProps {
   open: boolean
   preview: PreviewPayload | null
   warnings: string[]
+  hasDirtyScripts: boolean
   onClose: () => void
 }
 
-export function FloatingPreviewWindow({ open, preview, warnings, onClose }: FloatingPreviewWindowProps) {
+export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts, onClose }: FloatingPreviewWindowProps) {
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [fullscreen, setFullscreen] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
@@ -89,7 +90,7 @@ export function FloatingPreviewWindow({ open, preview, warnings, onClose }: Floa
         </div>
       </header>
       <div className="floating-preview-body">
-        <PreviewViewport preview={preview} warnings={warnings} variant="floating" />
+        <PreviewViewport preview={preview} warnings={warnings} variant="floating" hasDirtyScripts={hasDirtyScripts} />
       </div>
     </aside>
   )

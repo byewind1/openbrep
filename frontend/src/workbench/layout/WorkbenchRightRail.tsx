@@ -17,6 +17,7 @@ interface WorkbenchRightRailProps {
   preview: PreviewPayload | null
   preview2d: Preview2DPayload | null
   warnings: string[]
+  hasDirtyScripts: boolean
   tapirStatus: TapirStatus | null
   tapirBusy: boolean
   assistantMessages: AssistantMessage[]
@@ -44,6 +45,7 @@ export function WorkbenchRightRail({
   preview,
   preview2d,
   warnings,
+  hasDirtyScripts,
   tapirStatus,
   tapirBusy,
   assistantMessages,
@@ -93,6 +95,7 @@ export function WorkbenchRightRail({
           <PreviewViewport
             preview={preview}
             warnings={warnings}
+            hasDirtyScripts={hasDirtyScripts}
             onExpand={onExpandPreview}
             onFloat={onFloatPreview}
             actions={(

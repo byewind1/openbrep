@@ -1045,11 +1045,21 @@ test('records compile results in the workbench log', async () => {
 test('compile saves dirty script buffers before invoking compiler', async () => {
   const savedScripts: Array<{ name: string; content: string }> = []
   let compileCalled = false
+  let previewCalled = false
   const store = createWorkbenchStore(
     makeApi({
       saveProjectScript: async (name, content) => {
         savedScripts.push({ name, content })
         return { success: true, saved_at: '2026-06-01T08:00:00Z' }
+      },
+      fetchPreview: async () => {
+        previewCalled = true
+        return {
+          meshes: [{ name: 'compiled-source', vertices: [], faces: [] }],
+          wires: [],
+          warnings: ['saved preview'],
+          verification: { source: 'saved', script_overrides: [] },
+        }
       },
       compileProject: async () => {
         compileCalled = true
@@ -1078,7 +1088,10 @@ test('compile saves dirty script buffers before invoking compiler', async () => 
 
   expect(savedScripts).toEqual([{ name: '3d.gdl', content: 'BLOCK 1, 2, 3' }])
   expect(compileCalled).toBe(true)
+  expect(previewCalled).toBe(true)
   expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+  expect(store.getState().preview?.meshes[0]?.name).toBe('compiled-source')
+  expect(store.getState().warnings).toEqual(['saved preview'])
   expect(store.getState().compileLog[0]).toBe('LP compile passed: /workspace/output/Chair.gsm')
   expect(store.getState().compileLog).toContain('Saved 3d.gdl before compile')
 })

@@ -214,6 +214,7 @@ export function WorkbenchApp() {
             activeScriptName={activeScriptName}
             activeScriptContent={activeScriptContent}
             hasDirtyScript={hasDirtyScript}
+            hasDirtyScripts={hasAnyDirtyScript}
             activeFocusLine={activeFocusLine}
             activeFocusKey={activeFocusKey}
             onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
@@ -227,6 +228,7 @@ export function WorkbenchApp() {
             preview={preview}
             preview2d={preview2d}
             warnings={warnings}
+            hasDirtyScripts={hasAnyDirtyScript}
             tapirStatus={tapirStatus}
             tapirBusy={tapirBusy}
             assistantMessages={assistantMessages}
@@ -270,6 +272,7 @@ export function WorkbenchApp() {
         open={floatingPreviewOpen}
         preview={preview}
         warnings={warnings}
+        hasDirtyScripts={hasAnyDirtyScript}
         onClose={() => setFloatingPreviewOpen(false)}
       />
       <SettingsDrawer

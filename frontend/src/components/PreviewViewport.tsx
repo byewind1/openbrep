@@ -27,6 +27,7 @@ interface PreviewViewportProps {
   onExpand?: () => void
   onCollapse?: () => void
   onFloat?: () => void
+  hasDirtyScripts?: boolean
 }
 
 export function PreviewViewport({
@@ -38,6 +39,7 @@ export function PreviewViewport({
   onExpand,
   onCollapse,
   onFloat,
+  hasDirtyScripts = false,
 }: PreviewViewportProps) {
   const [cameraMode, setCameraMode] = useState<PreviewCameraMode>('perspective')
   const [viewPreset, setViewPreset] = useState<PreviewViewPreset>('iso')
@@ -45,6 +47,7 @@ export function PreviewViewport({
   const [showEdges, setShowEdges] = useState(true)
   const [showGrid, setShowGrid] = useState(true)
   const bounds = useMemo(() => computePreviewBounds(preview), [preview])
+  const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
 
   function fitView() {
     setFitNonce((value) => value + 1)
@@ -141,11 +144,16 @@ export function PreviewViewport({
           {cameraMode === 'orthographic' ? 'Orthographic' : 'Perspective'} | {viewPreset.toUpperCase()}
         </span>
         <span>
-          {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings | {preview?.verification?.source === 'editor_buffer' ? 'Editor Buffer' : 'Saved'}
+          {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings | {sourceLabel}
         </span>
       </footer>
     </section>
   )
+}
+
+function previewSourceLabel(preview: PreviewPayload | null, hasDirtyScripts: boolean) {
+  if (hasDirtyScripts && preview?.verification?.source !== 'editor_buffer') return 'Stale'
+  return preview?.verification?.source === 'editor_buffer' ? 'Editor Buffer' : 'Saved'
 }
 
 function ViewportPresetButton({
