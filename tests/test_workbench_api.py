@@ -853,6 +853,29 @@ def test_workbench_session_compile_uses_session_compiler_settings(tmp_path):
     assert "LP_XMLConverter not found" in response["error"]
 
 
+def test_workbench_session_lp_compile_without_path_uses_real_compiler_auto_detect(tmp_path, monkeypatch):
+    project = HSFProject.create_new("LPAutoDetectShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    constructed_paths: list[str | None] = []
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None):
+            constructed_paths.append(converter_path)
+
+        def hsf2libpart(self, hsf_path, output_gsm):
+            return CompileResult(success=True, stdout="compiled", output_path=output_gsm, mode="real")
+
+    monkeypatch.setattr(workbench_api, "HSFCompiler", FakeHSFCompiler)
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.route("POST", "/api/settings/compiler", {"mode": "lp", "converter_path": ""})
+    response = session.route("POST", "/api/compile", {})
+
+    assert response["ok"] is True
+    assert response["compile"]["mode"] == "real"
+    assert constructed_paths == [None]
+
+
 def test_workbench_session_compile_requires_loaded_hsf_project():
     session = WorkbenchSession()
 

@@ -55,7 +55,7 @@ export function TopMenu({
         <button type="button" data-testid="mock-compile-button" disabled={!project?.path || compiling} onClick={onMockCompile}>
           {compiling ? '...' : 'Mock'}
         </button>
-        <button type="button" disabled={!project?.path || compiling} onClick={onCompile}>
+        <button type="button" data-testid="compile-button" disabled={!project?.path || compiling} onClick={onCompile}>
           {compiling ? '...' : 'Compile'}
         </button>
         <button type="button" className="settings-trigger" onClick={onOpenSettings}>

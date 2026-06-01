@@ -2,9 +2,39 @@ import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { buildMockCompileSummary, compileIssuesFromResult } from '../workbenchStoreUtils'
 
 export function createCompileActions({ api, get, set }: WorkbenchActionContext) {
+  async function saveDirtyScriptsBeforeCompile() {
+    const dirtyScriptNames = Object.entries(get().dirtyScripts)
+      .filter(([, dirty]) => dirty)
+      .map(([name]) => name)
+
+    for (const scriptName of dirtyScriptNames) {
+      const content = get().scriptContents[scriptName]
+      if (typeof content !== 'string') continue
+
+      const result = await api.saveProjectScript(scriptName, content)
+      if (!result.success) {
+        const error = result.error ?? `Failed to save ${scriptName} before compile.`
+        set((state) => ({
+          compiling: false,
+          lastError: error,
+          compileLog: [`Compile stopped: ${error}`, ...state.compileLog].slice(0, 20),
+        }))
+        return false
+      }
+
+      set((state) => ({
+        dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
+        compileLog: [`Saved ${scriptName} before compile`, ...state.compileLog].slice(0, 20),
+      }))
+    }
+
+    return true
+  }
+
   return {
     async compileCurrentProject() {
       set({ compiling: true })
+      if (!(await saveDirtyScriptsBeforeCompile())) return
       const result = await api.compileProject(get().compilerSettings.output_dir)
       const issues = compileIssuesFromResult(result)
       const message =
@@ -29,6 +59,7 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
 
     async runMockCompile() {
       set({ compiling: true })
+      if (!(await saveDirtyScriptsBeforeCompile())) return
       const result = await api.mockCompile(get().compilerSettings.output_dir)
       const summary = buildMockCompileSummary(result)
       set((state) => ({

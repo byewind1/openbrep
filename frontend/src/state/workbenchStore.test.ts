@@ -988,6 +988,71 @@ test('records compile results in the workbench log', async () => {
   expect(store.getState().compiling).toBe(false)
 })
 
+test('compile saves dirty script buffers before invoking compiler', async () => {
+  const savedScripts: Array<{ name: string; content: string }> = []
+  let compileCalled = false
+  const store = createWorkbenchStore(
+    makeApi({
+      saveProjectScript: async (name, content) => {
+        savedScripts.push({ name, content })
+        return { success: true, saved_at: '2026-06-01T08:00:00Z' }
+      },
+      compileProject: async () => {
+        compileCalled = true
+        return {
+          ok: true,
+          compile: {
+            success: true,
+            mode: 'lp',
+            output_path: '/workspace/output/Chair.gsm',
+            stdout: '',
+            stderr: '',
+            errors: [],
+            warnings: [],
+          },
+        }
+      },
+    }),
+  )
+  store.setState({
+    activeScriptName: '3d.gdl',
+    scriptContents: { '3d.gdl': 'BLOCK 1, 2, 3', '2d.gdl': 'LINE2 0, 0, 1, 1' },
+    dirtyScripts: { '3d.gdl': true, '2d.gdl': false },
+  })
+
+  await store.getState().compileCurrentProject()
+
+  expect(savedScripts).toEqual([{ name: '3d.gdl', content: 'BLOCK 1, 2, 3' }])
+  expect(compileCalled).toBe(true)
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+  expect(store.getState().compileLog[0]).toBe('LP compile passed: /workspace/output/Chair.gsm')
+  expect(store.getState().compileLog).toContain('Saved 3d.gdl before compile')
+})
+
+test('compile stops when saving dirty scripts fails', async () => {
+  let compileCalled = false
+  const store = createWorkbenchStore(
+    makeApi({
+      saveProjectScript: async () => ({ success: false, saved_at: '', error: 'disk denied' }),
+      compileProject: async () => {
+        compileCalled = true
+        return { ok: false, error: 'should not compile' }
+      },
+    }),
+  )
+  store.setState({
+    scriptContents: { '3d.gdl': 'BLOCK 1, 2, 3' },
+    dirtyScripts: { '3d.gdl': true },
+  })
+
+  await store.getState().compileCurrentProject()
+
+  expect(compileCalled).toBe(false)
+  expect(store.getState().lastError).toBe('disk denied')
+  expect(store.getState().compiling).toBe(false)
+  expect(store.getState().compileLog[0]).toBe('Compile stopped: disk denied')
+})
+
 test('mock compile uses configured output directory', async () => {
   let receivedOutputDir = ''
   const store = createWorkbenchStore(

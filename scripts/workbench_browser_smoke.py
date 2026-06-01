@@ -268,7 +268,7 @@ def run_smoke(
                         body = page.locator("body").inner_text(timeout=5000)
                         saved_script = (smoke_hsf_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8")
                         save_interaction_ok = body_has_script_save_result(body) and SMOKE_EDIT_MARKER in saved_script
-                        page.get_by_test_id("mock-compile-button").click()
+                        page.get_by_test_id("compile-button").click()
                         page.wait_for_function(
                             "() => document.body.innerText.includes('Mock compile passed') || document.body.innerText.includes('编译通过')",
                             timeout=int(timeout_seconds * 1000),

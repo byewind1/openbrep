@@ -885,9 +885,7 @@ class WorkbenchSession:
         converter_path = body.get("converter_path")
         if converter_path is None:
             converter_path = self.converter_path
-        compiler = (
-            HSFCompiler(str(converter_path)) if compiler_mode == "lp" and converter_path else MockHSFCompiler()
-        )
+        compiler = HSFCompiler(str(converter_path) if converter_path else None) if compiler_mode == "lp" else MockHSFCompiler()
 
         self.project.save_to_disk()
         result = compiler.hsf2libpart(str(self.source_path), str(output_gsm))
