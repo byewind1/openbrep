@@ -189,6 +189,7 @@ def run_smoke(
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)
                     if page_ok:
+                        page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
                         preview_controls_ok = body_has_preview_controls(body)
                         page.get_by_role("button", name="Expand").click()
                         page.wait_for_function(
@@ -199,6 +200,7 @@ def run_smoke(
                         expanded_canvas_count = page.locator("canvas").count()
                         preview_interaction_ok = preview_controls_ok and "Dock" in expanded_body and expanded_canvas_count >= 2
                         page.get_by_role("button", name="Dock").click()
+                        page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
                         page.locator(".monaco-editor").first.click()
                         page.keyboard.press("Control+A")
                         page.keyboard.insert_text(SMOKE_SCRIPT_CONTENT)

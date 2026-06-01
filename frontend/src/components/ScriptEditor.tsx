@@ -1,6 +1,7 @@
 import Editor from '@monaco-editor/react'
 import type { OnMount } from '@monaco-editor/react'
 import { useEffect, useRef } from 'react'
+import { GDL_THEME_ID, registerGdlLanguage, scriptLanguageForName } from '../workbench/editor/gdlLanguage'
 
 interface ScriptEditorProps {
   scriptName: string
@@ -32,9 +33,10 @@ export function ScriptEditor({ scriptName, content, onChange, isDirty, focusLine
       <div className="script-editor-body">
         <Editor
           height="100%"
-          language={scriptName.endsWith('.xml') ? 'xml' : 'plaintext'}
+          language={scriptLanguageForName(scriptName)}
           value={content}
-          theme="vs-dark"
+          theme={scriptName.endsWith('.gdl') ? GDL_THEME_ID : 'vs-dark'}
+          beforeMount={registerGdlLanguage}
           onChange={(value) => onChange(value ?? '')}
           onMount={(editor) => {
             editorRef.current = editor
@@ -47,6 +49,13 @@ export function ScriptEditor({ scriptName, content, onChange, isDirty, focusLine
             lineNumbers: 'on',
             renderLineHighlight: 'line',
             padding: { top: 8 },
+            tabSize: 2,
+            insertSpaces: true,
+            bracketPairColorization: { enabled: true },
+            guides: { bracketPairs: true, indentation: true },
+            quickSuggestions: { other: true, comments: false, strings: false },
+            suggestOnTriggerCharacters: true,
+            wordBasedSuggestions: 'off',
           }}
         />
       </div>
