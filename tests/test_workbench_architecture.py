@@ -6,9 +6,13 @@ def test_workbench_api_stays_below_service_extraction_threshold():
 
     line_count = len(api_path.read_text(encoding="utf-8").splitlines())
 
-    assert line_count <= 1700
+    assert line_count <= 700
 
 
 def test_workbench_services_are_explicit_modules():
     assert Path("openbrep/workbench/settings_service.py").exists()
     assert Path("openbrep/workbench/compiler_service.py").exists()
+    assert Path("openbrep/workbench/project_service.py").exists()
+    assert Path("openbrep/workbench/assistant_service.py").exists()
+    assert Path("openbrep/workbench/memory_service.py").exists()
+    assert Path("openbrep/workbench/tapir_service.py").exists()

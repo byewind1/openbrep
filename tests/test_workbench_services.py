@@ -4,8 +4,12 @@ from types import SimpleNamespace
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject
+from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService, parse_compile_issue
+from openbrep.workbench.memory_service import WorkbenchMemoryService
+from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.workbench.settings_service import WorkbenchSettingsService
+from openbrep.workbench.tapir_service import WorkbenchTapirService
 
 
 def test_settings_service_updates_compiler_settings_and_persists_config(tmp_path):
@@ -71,3 +75,63 @@ def test_compiler_service_parses_lp_compile_issue_locations():
     assert script == "scripts/3d.gdl"
     assert line == 12
     assert message == "missing ENDIF"
+
+
+def test_project_service_loads_hsf_directory_and_updates_session(tmp_path):
+    project = HSFProject.create_new("ServiceLoadedShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = SimpleNamespace(
+        project=None,
+        source="demo",
+        source_path=None,
+        recent_project_paths=[],
+        config=GDLAgentConfig(),
+        config_path=tmp_path / "config.toml",
+        snapshot=lambda: {"project": {"name": "ServiceLoadedShelf"}},
+    )
+    service = WorkbenchProjectService(session, real_compiler_factory=lambda _path: None)
+
+    response = service.load_hsf_directory(str(hsf_dir))
+
+    assert response["ok"] is True
+    assert session.source == "hsf"
+    assert session.source_path == hsf_dir.resolve()
+    assert session.recent_project_paths == [str(hsf_dir.resolve())]
+
+
+def test_assistant_service_extracts_classified_code_blocks():
+    service = WorkbenchAssistantService(SimpleNamespace())
+
+    response = service.extract_assistant_code_blocks({
+        "content": "```gdl\n! scripts/3d.gdl\nBLOCK A, B, ZZYZX\n```",
+    })
+
+    assert response["ok"] is True
+    assert response["blocks"][0]["script_name"] == "3d.gdl"
+    assert "BLOCK A" in response["blocks"][0]["content"]
+
+
+def test_memory_service_reports_empty_status_without_loaded_project():
+    service = WorkbenchMemoryService(SimpleNamespace(source_path=None))
+
+    response = service.memory_status()
+
+    assert response["ok"] is True
+    assert response["memory"]["memory_root"] == ""
+    assert response["memory"]["lesson_count"] == 0
+
+
+def test_tapir_service_normalizes_missing_parameter_edits():
+    calls = []
+
+    class FakeAdapter:
+        def apply_param_edits(self, edits):
+            calls.append(edits)
+            return {"ok": True}
+
+    service = WorkbenchTapirService(FakeAdapter())
+
+    response = service.apply_param_edits({"param_edits": []})
+
+    assert response == {"ok": True}
+    assert calls == [None]
