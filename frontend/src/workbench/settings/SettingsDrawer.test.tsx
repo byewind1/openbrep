@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
-import { SettingsDrawer } from './SettingsDrawer'
+import { clampSettingsDrawerWidth, SettingsDrawer } from './SettingsDrawer'
 import type { LlmSettings } from '../../api/types'
 
 function renderSettingsDrawer(
@@ -47,6 +47,37 @@ function renderSettingsDrawer(
 }
 
 describe('SettingsDrawer AI model settings', () => {
+  test('resizes the settings panel from the left edge', () => {
+    renderSettingsDrawer({
+      model: 'deepseek-chat',
+      models: ['deepseek-chat'],
+      model_groups: {
+        custom: [],
+        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
+      },
+      api_key: '',
+      api_base: '',
+      max_retries: 5,
+      assistant_settings: '',
+    })
+
+    const drawer = screen.getByLabelText('Workbench settings')
+    const handle = screen.getByRole('separator', { name: 'Resize settings panel' })
+
+    expect(drawer.style.width).toBe('430px')
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 0, pointerId: 1 })
+    fireEvent.pointerMove(window, { clientX: -120 })
+
+    expect(drawer.style.width).toBe('550px')
+  })
+
+  test('keeps resized settings width inside the viewport', () => {
+    expect(clampSettingsDrawerWidth(900, 1024)).toBe(760)
+    expect(clampSettingsDrawerWidth(100, 1024)).toBe(360)
+    expect(clampSettingsDrawerWidth(900, 380)).toBe(356)
+  })
+
   test('switches between official and custom model lists without using a blank sentinel option', () => {
     renderSettingsDrawer({
       model: 'deepseek-chat',

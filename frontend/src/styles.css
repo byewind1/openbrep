@@ -1363,7 +1363,7 @@ button:focus-visible {
   top: 0;
   right: 0;
   z-index: 21;
-  width: 390px;
+  min-width: min(360px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   height: 100vh;
   display: grid;
@@ -1380,13 +1380,43 @@ button:focus-visible {
   transform: translateX(0);
 }
 
+.settings-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.settings-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: transparent;
+  transition: background 140ms ease-out;
+}
+
+.settings-resize-handle:hover::after,
+.settings-resize-handle:focus-visible::after {
+  background: rgba(125, 211, 252, 0.74);
+}
+
+.settings-resize-handle:focus-visible {
+  outline: none;
+}
+
 .settings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   border-bottom: 1px solid var(--border);
-  padding: 0 14px;
+  padding: 8px 14px;
 }
 
 .settings-header div,
@@ -1399,7 +1429,9 @@ button:focus-visible {
 .settings-header strong,
 .settings-section-heading strong {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
 }
 
 .settings-header span,
@@ -1407,14 +1439,15 @@ button:focus-visible {
 .settings-row > span,
 .settings-field > span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .settings-section {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   border-bottom: 1px solid var(--border);
-  padding: 14px;
+  padding: 12px 14px;
 }
 
 .settings-actions {
@@ -1435,7 +1468,7 @@ button:focus-visible {
 .settings-row {
   min-height: 30px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px;
+  grid-template-columns: minmax(116px, 0.7fr) minmax(120px, 1fr);
   align-items: center;
   gap: 12px;
 }
@@ -1464,12 +1497,13 @@ button:focus-visible {
 .settings-segmented {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .settings-segmented button {
   min-height: 28px;
-  padding: 0 10px;
+  flex: 1 1 92px;
+  padding: 0 8px;
 }
 
 .settings-segmented button.active {
@@ -1511,7 +1545,7 @@ button:focus-visible {
 .settings-model-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
 }
 
@@ -1550,6 +1584,25 @@ button:focus-visible {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+@media (max-width: 520px) {
+  .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .settings-path-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-submit-row {
+    justify-content: stretch;
+  }
+
+  .settings-submit-row button {
+    flex: 1 1 140px;
+  }
 }
 
 .settings-metadata-grid {

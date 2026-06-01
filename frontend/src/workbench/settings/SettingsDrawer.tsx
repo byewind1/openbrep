@@ -13,6 +13,12 @@ import type {
 import { GitSettingsPanel } from './GitSettingsPanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
 
+const SETTINGS_DRAWER_DEFAULT_WIDTH = 430
+const SETTINGS_DRAWER_MIN_WIDTH = 360
+const SETTINGS_DRAWER_MAX_WIDTH = 760
+const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
+const SETTINGS_DRAWER_KEY_STEP = 24
+
 interface SettingsDrawerProps {
   open: boolean
   compilerSettings: CompilerSettings
@@ -83,7 +89,9 @@ export function SettingsDrawer({
   const [llmTesting, setLlmTesting] = useState(false)
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
   const [manualModelMode, setManualModelMode] = useState(false)
+  const [drawerWidth, setDrawerWidth] = useState(SETTINGS_DRAWER_DEFAULT_WIDTH)
   const wasOpenRef = useRef(false)
+  const resizeStartRef = useRef<{ pointerX: number; width: number } | null>(null)
   const customModelOptions = llmDraft.model_groups?.custom ?? []
   const officialModelOptions = llmDraft.model_groups?.official ?? []
   const groupedModelIds = new Set([...customModelOptions, ...officialModelOptions].map((option) => option.id))
@@ -113,6 +121,41 @@ export function SettingsDrawer({
     }
     wasOpenRef.current = open
   }, [open, onLoadMemoryLessons, onLoadProjectGitStatus])
+
+  useEffect(() => {
+    if (!open) {
+      resizeStartRef.current = null
+      return
+    }
+
+    setDrawerWidth((width) => clampSettingsDrawerWidth(width))
+
+    function handlePointerMove(event: PointerEvent) {
+      const resizeStart = resizeStartRef.current
+      if (!resizeStart) {
+        return
+      }
+
+      setDrawerWidth(clampSettingsDrawerWidth(resizeStart.width + resizeStart.pointerX - event.clientX))
+    }
+
+    function handlePointerUp() {
+      resizeStartRef.current = null
+    }
+
+    function handleWindowResize() {
+      setDrawerWidth((width) => clampSettingsDrawerWidth(width))
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('resize', handleWindowResize)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('resize', handleWindowResize)
+    }
+  }, [open])
 
   function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -151,7 +194,39 @@ export function SettingsDrawer({
   return (
     <>
       {open ? <button className="settings-scrim" type="button" aria-label="Close settings" onClick={onClose} /> : null}
-      <aside className={`settings-drawer${open ? ' open' : ''}`} aria-hidden={!open} aria-label="Workbench settings">
+      <aside
+        className={`settings-drawer${open ? ' open' : ''}`}
+        style={{ width: drawerWidth }}
+        aria-hidden={!open}
+        aria-label="Workbench settings"
+      >
+        <div
+          className="settings-resize-handle"
+          role="separator"
+          aria-label="Resize settings panel"
+          aria-orientation="vertical"
+          aria-valuemin={SETTINGS_DRAWER_MIN_WIDTH}
+          aria-valuemax={getSettingsDrawerMaxWidth()}
+          aria-valuenow={drawerWidth}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              return
+            }
+            resizeStartRef.current = { pointerX: event.clientX, width: drawerWidth }
+            event.currentTarget.setPointerCapture?.(event.pointerId)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') {
+              event.preventDefault()
+              setDrawerWidth((width) => clampSettingsDrawerWidth(width + SETTINGS_DRAWER_KEY_STEP))
+            }
+            if (event.key === 'ArrowRight') {
+              event.preventDefault()
+              setDrawerWidth((width) => clampSettingsDrawerWidth(width - SETTINGS_DRAWER_KEY_STEP))
+            }
+          }}
+        />
         <div className="settings-header">
           <div>
             <strong>Settings</strong>
@@ -444,4 +519,19 @@ function formatBytes(value: number) {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function clampSettingsDrawerWidth(width: number, viewportWidth = getViewportWidth()) {
+  const viewportMax = Math.max(280, viewportWidth - SETTINGS_DRAWER_VIEWPORT_MARGIN)
+  const minWidth = Math.min(SETTINGS_DRAWER_MIN_WIDTH, viewportMax)
+  const maxWidth = Math.max(minWidth, Math.min(SETTINGS_DRAWER_MAX_WIDTH, viewportMax))
+  return Math.min(Math.max(width, minWidth), maxWidth)
+}
+
+function getSettingsDrawerMaxWidth() {
+  return Math.max(SETTINGS_DRAWER_MIN_WIDTH, Math.min(SETTINGS_DRAWER_MAX_WIDTH, getViewportWidth() - SETTINGS_DRAWER_VIEWPORT_MARGIN))
+}
+
+function getViewportWidth() {
+  return typeof window === 'undefined' ? 1024 : window.innerWidth
 }
