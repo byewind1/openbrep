@@ -18,6 +18,7 @@ from openbrep.llm import LLMAdapter
 from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
+from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
 from openbrep.workbench.preview_service import preview_2d_payload, preview_payload
 from openbrep.workbench.project_parameter_service import apply_parameter_values
@@ -92,6 +93,7 @@ class WorkbenchSession:
             self,
             real_compiler_factory=lambda converter_path: HSFCompiler(converter_path),
         )
+        self.git_service = WorkbenchGitService(self)
         self.assistant_service = WorkbenchAssistantService(self)
         self.memory_service = WorkbenchMemoryService(self)
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
@@ -156,6 +158,18 @@ class WorkbenchSession:
 
     def restore_project_revision(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.restore_project_revision(body)
+
+    def project_git_status(self) -> dict[str, Any]:
+        return self.git_service.status()
+
+    def initialize_project_git(self) -> dict[str, Any]:
+        return self.git_service.initialize()
+
+    def update_project_git_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.git_service.set_enabled(body)
+
+    def commit_project_git(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.git_service.commit(body)
 
     def _remember_project_path(self, path: Path) -> None:
         self.project_service.remember_project_path(path)
@@ -319,6 +333,18 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/revision/restore":
             return self.restore_project_revision(body)
+
+        if normalized_method == "GET" and route == "/api/project/git":
+            return self.project_git_status()
+
+        if normalized_method == "POST" and route == "/api/project/git/init":
+            return self.initialize_project_git()
+
+        if normalized_method == "POST" and route == "/api/project/git/settings":
+            return self.update_project_git_settings(body)
+
+        if normalized_method == "POST" and route == "/api/project/git/commit":
+            return self.commit_project_git(body)
 
         if normalized_method == "POST" and route == "/api/dialog/open-directory":
             return self.choose_and_load_hsf_directory()

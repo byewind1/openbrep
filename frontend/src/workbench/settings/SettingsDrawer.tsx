@@ -5,10 +5,12 @@ import type {
   ErrorLesson,
   LlmConnectionTestResult,
   LlmSettings,
+  ProjectGitStatus,
   ProjectMemoryStatus,
   RecentProject,
   UpdateMemoryLessonRequest,
 } from '../../api/types'
+import { GitSettingsPanel } from './GitSettingsPanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
 
 interface SettingsDrawerProps {
@@ -20,6 +22,8 @@ interface SettingsDrawerProps {
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
   memoryBusy: boolean
+  gitStatus: ProjectGitStatus | null
+  gitBusy: boolean
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => void
   onLlmSettingsChange: (settings: LlmSettings) => void
@@ -30,6 +34,10 @@ interface SettingsDrawerProps {
   onOpenProjectPath: (path: string) => void
   onExportHsfProject: () => void
   onResetCurrentProject: () => void
+  onLoadProjectGitStatus: () => void
+  onInitializeProjectGit: () => void
+  onSetProjectGitEnabled: (enabled: boolean) => void
+  onCommitProjectGit: (message: string) => void
   onLoadMemoryLessons: () => void
   onSummarizeProjectMemory: () => void
   onUpdateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => void
@@ -47,6 +55,8 @@ export function SettingsDrawer({
   memoryLessons,
   memorySkillPreview,
   memoryBusy,
+  gitStatus,
+  gitBusy,
   onClose,
   onCompilerSettingsChange,
   onLlmSettingsChange,
@@ -57,6 +67,10 @@ export function SettingsDrawer({
   onOpenProjectPath,
   onExportHsfProject,
   onResetCurrentProject,
+  onLoadProjectGitStatus,
+  onInitializeProjectGit,
+  onSetProjectGitEnabled,
+  onCommitProjectGit,
   onLoadMemoryLessons,
   onSummarizeProjectMemory,
   onUpdateMemoryLesson,
@@ -67,6 +81,7 @@ export function SettingsDrawer({
   const [llmDraft, setLlmDraft] = useState(llmSettings)
   const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [llmTesting, setLlmTesting] = useState(false)
+  const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
   const modelOptions = Array.from(new Set((llmDraft.models ?? []).filter(Boolean)))
   const selectedModelOption = modelOptions.includes(llmDraft.model) ? llmDraft.model : '__custom__'
 
@@ -77,8 +92,9 @@ export function SettingsDrawer({
   useEffect(() => {
     if (open) {
       onLoadMemoryLessons()
+      onLoadProjectGitStatus()
     }
-  }, [open, onLoadMemoryLessons])
+  }, [open, onLoadMemoryLessons, onLoadProjectGitStatus])
 
   function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -302,6 +318,17 @@ export function SettingsDrawer({
             </button>
           </div>
         </section>
+
+        <GitSettingsPanel
+          gitStatus={gitStatus}
+          gitBusy={gitBusy}
+          message={gitMessage}
+          onMessageChange={setGitMessage}
+          onRefresh={onLoadProjectGitStatus}
+          onInitialize={onInitializeProjectGit}
+          onSetEnabled={onSetProjectGitEnabled}
+          onCommit={onCommitProjectGit}
+        />
 
         <MemoryLessonsPanel
           memoryStatus={memoryStatus}

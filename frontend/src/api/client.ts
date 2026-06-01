@@ -24,6 +24,7 @@ import type {
   LlmConnectionTestResult,
   Preview2DPayload,
   PreviewPayload,
+  ProjectGitResponse,
   ProjectLessonsResult,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
@@ -203,6 +204,50 @@ export async function restoreProjectRevision(revisionId: string): Promise<Restor
       body: JSON.stringify({ revision_id: revisionId }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchProjectGitStatus(): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
+  )
+}
+
+export async function initializeProjectGit(): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git/init',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
+  )
+}
+
+export async function updateProjectGitSettings(enabled: boolean): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git/settings',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
+  )
+}
+
+export async function commitProjectGit(message = ''): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git/commit',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
   )
 }
 
@@ -676,4 +721,12 @@ export const fallbackPreview2D: Preview2DPayload = {
   circles: [],
   arcs: [],
   warnings: [],
+}
+
+export const fallbackProjectGitStatus = {
+  enabled: false,
+  initialized: false,
+  dirty: false,
+  changes: [],
+  last_commit: '',
 }

@@ -135,6 +135,22 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         is_latest: true,
       },
     }),
+    fetchProjectGitStatus: async () => ({
+      ok: true,
+      git: { enabled: false, initialized: false, dirty: false, changes: [], last_commit: '' },
+    }),
+    initializeProjectGit: async () => ({
+      ok: true,
+      git: { enabled: true, initialized: true, dirty: true, changes: ['A  scripts/3d.gdl'], last_commit: '' },
+    }),
+    updateProjectGitSettings: async (enabled) => ({
+      ok: true,
+      git: { enabled, initialized: true, dirty: false, changes: [], last_commit: 'abc1234' },
+    }),
+    commitProjectGit: async () => ({
+      ok: true,
+      git: { enabled: true, initialized: true, dirty: false, changes: [], last_commit: 'def5678' },
+    }),
     restoreProjectRevision: async (revisionId: string) => ({
       ok: true,
       restored_revision_id: revisionId,
@@ -997,6 +1013,36 @@ test('browses for compile output directory and stores compiler settings', async 
     converter_path: '',
     output_dir: '/workspace/output',
   })
+})
+
+test('manages project git state from settings actions', async () => {
+  const commits: string[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      commitProjectGit: async (message) => {
+        commits.push(message ?? '')
+        return {
+          ok: true,
+          git: { enabled: true, initialized: true, dirty: false, changes: [], last_commit: 'c0ffee1' },
+        }
+      },
+    }),
+  )
+
+  await store.getState().loadProjectGitStatus()
+  expect(store.getState().gitStatus?.initialized).toBe(false)
+
+  await store.getState().initializeProjectGit()
+  expect(store.getState().gitStatus?.enabled).toBe(true)
+  expect(store.getState().gitStatus?.dirty).toBe(true)
+
+  await store.getState().setProjectGitEnabled(false)
+  expect(store.getState().gitStatus?.enabled).toBe(false)
+
+  await store.getState().commitProjectGit('Checkpoint before LP compile')
+  expect(commits).toEqual(['Checkpoint before LP compile'])
+  expect(store.getState().gitStatus?.last_commit).toBe('c0ffee1')
+  expect(store.getState().compileLog[0]).toBe('Git commit: c0ffee1')
 })
 
 test('records compile results in the workbench log', async () => {

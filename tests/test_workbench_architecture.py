@@ -24,3 +24,4 @@ def test_workbench_services_are_explicit_modules():
     assert Path("openbrep/workbench/assistant_service.py").exists()
     assert Path("openbrep/workbench/memory_service.py").exists()
     assert Path("openbrep/workbench/tapir_service.py").exists()
+    assert Path("openbrep/workbench/git_service.py").exists()

@@ -451,6 +451,21 @@ export interface RestoreRevisionResponse extends Partial<WorkbenchSnapshot> {
   error?: string
 }
 
+export interface ProjectGitStatus {
+  enabled: boolean
+  initialized: boolean
+  dirty: boolean
+  changes: string[]
+  last_commit: string
+}
+
+export interface ProjectGitResponse {
+  ok: boolean
+  git: ProjectGitStatus
+  message?: string
+  error?: string
+}
+
 export interface ProjectScriptContentResponse {
   ok?: boolean
   name: string

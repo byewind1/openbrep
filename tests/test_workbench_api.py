@@ -479,6 +479,23 @@ def test_workbench_session_saves_and_lists_project_revisions(tmp_path):
     assert listed["revisions"][0]["is_latest"] is True
 
 
+def test_workbench_session_exposes_project_git_controls(tmp_path):
+    project = HSFProject.create_new("GitApiShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    initialized = session.route("POST", "/api/project/git/init")
+    status = session.route("GET", "/api/project/git")
+    committed = session.route("POST", "/api/project/git/commit", {"message": "Initial HSF source"})
+
+    assert initialized["ok"] is True
+    assert status["git"]["enabled"] is True
+    assert status["git"]["initialized"] is True
+    assert committed["ok"] is True
+    assert committed["git"]["last_commit"]
+
+
 def test_workbench_session_restores_project_revision_and_refreshes_snapshot(tmp_path):
     project = HSFProject.create_new("RevisionShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")

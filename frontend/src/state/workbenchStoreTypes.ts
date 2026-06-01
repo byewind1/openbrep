@@ -29,6 +29,8 @@ import type {
   ProjectRevision,
   ProjectRevisionsResponse,
   ProjectLessonsResult,
+  ProjectGitResponse,
+  ProjectGitStatus,
   ProjectMemoryStatus,
   ProjectMemoryStatusResult,
   ProjectScript,
@@ -81,6 +83,10 @@ export interface WorkbenchApi {
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
   saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
   restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
+  fetchProjectGitStatus: () => Promise<ProjectGitResponse>
+  initializeProjectGit: () => Promise<ProjectGitResponse>
+  updateProjectGitSettings: (enabled: boolean) => Promise<ProjectGitResponse>
+  commitProjectGit: (message?: string) => Promise<ProjectGitResponse>
   mockCompile: (outputDir?: string) => Promise<MockCompileResponse>
   revealArtifact: (path?: string) => Promise<RevealArtifactResult>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
@@ -138,6 +144,8 @@ export interface WorkbenchState {
   scripts: ProjectScript[]
   recentProjects: RecentProject[]
   revisions: ProjectRevision[]
+  gitStatus: ProjectGitStatus | null
+  gitBusy: boolean
   memoryStatus: ProjectMemoryStatus | null
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
@@ -199,6 +207,10 @@ export interface WorkbenchState {
   clearProjectMemory: () => Promise<void>
   saveRevision: (message?: string) => Promise<void>
   restoreRevision: (revisionId: string) => Promise<void>
+  loadProjectGitStatus: () => Promise<void>
+  initializeProjectGit: () => Promise<void>
+  setProjectGitEnabled: (enabled: boolean) => Promise<void>
+  commitProjectGit: (message?: string) => Promise<void>
   openScript: (name: string) => Promise<void>
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>

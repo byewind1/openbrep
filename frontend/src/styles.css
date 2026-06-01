@@ -1502,6 +1502,44 @@ button:focus-visible {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-metadata-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  padding: 10px;
+  font-size: 12px;
+}
+
+.settings-metadata-grid span {
+  color: var(--text-muted);
+}
+
+.settings-metadata-grid strong {
+  justify-self: end;
+  min-width: 0;
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.settings-code-list {
+  display: grid;
+  gap: 4px;
+  max-height: 132px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  padding: 8px;
+}
+
+.settings-code-list code {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .settings-test-result {

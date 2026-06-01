@@ -42,6 +42,8 @@ export function WorkbenchApp() {
   const memoryLessons = useWorkbenchStore((state) => state.memoryLessons)
   const memorySkillPreview = useWorkbenchStore((state) => state.memorySkillPreview)
   const memoryBusy = useWorkbenchStore((state) => state.memoryBusy)
+  const gitStatus = useWorkbenchStore((state) => state.gitStatus)
+  const gitBusy = useWorkbenchStore((state) => state.gitBusy)
   const tapirStatus = useWorkbenchStore((state) => state.tapirStatus)
   const tapirBusy = useWorkbenchStore((state) => state.tapirBusy)
   const latestRevisionId = useWorkbenchStore((state) => state.latestRevisionId)
@@ -90,6 +92,10 @@ export function WorkbenchApp() {
   const deleteMemoryLesson = useWorkbenchStore((state) => state.deleteMemoryLesson)
   const ignoreMemoryLesson = useWorkbenchStore((state) => state.ignoreMemoryLesson)
   const clearProjectMemory = useWorkbenchStore((state) => state.clearProjectMemory)
+  const loadProjectGitStatus = useWorkbenchStore((state) => state.loadProjectGitStatus)
+  const initializeProjectGit = useWorkbenchStore((state) => state.initializeProjectGit)
+  const setProjectGitEnabled = useWorkbenchStore((state) => state.setProjectGitEnabled)
+  const commitProjectGit = useWorkbenchStore((state) => state.commitProjectGit)
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
   const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
   const createProjectFromPrompt = useWorkbenchStore((state) => state.createProjectFromPrompt)
@@ -284,6 +290,8 @@ export function WorkbenchApp() {
         memoryLessons={memoryLessons}
         memorySkillPreview={memorySkillPreview}
         memoryBusy={memoryBusy}
+        gitStatus={gitStatus}
+        gitBusy={gitBusy}
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
         onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
@@ -294,6 +302,10 @@ export function WorkbenchApp() {
         onOpenProjectPath={(path) => void loadProjectPath(path)}
         onExportHsfProject={() => void exportHsfProject()}
         onResetCurrentProject={resetCurrentProject}
+        onLoadProjectGitStatus={() => void loadProjectGitStatus()}
+        onInitializeProjectGit={() => void initializeProjectGit()}
+        onSetProjectGitEnabled={(enabled) => void setProjectGitEnabled(enabled)}
+        onCommitProjectGit={(message) => void commitProjectGit(message)}
         onLoadMemoryLessons={loadMemoryLessons}
         onSummarizeProjectMemory={summarizeProjectMemory}
         onUpdateMemoryLesson={updateMemoryLesson}

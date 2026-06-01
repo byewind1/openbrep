@@ -6,6 +6,7 @@ from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService, parse_compile_issue
+from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
 from openbrep.workbench.preview_service import WorkbenchPreviewService
 from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService
@@ -200,3 +201,37 @@ def test_tapir_service_normalizes_missing_parameter_edits():
 
     assert response == {"ok": True}
     assert calls == [None]
+
+
+def test_git_service_initializes_enables_and_commits_hsf_project(tmp_path):
+    project = HSFProject.create_new("GitShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    service = WorkbenchGitService(SimpleNamespace(source_path=hsf_dir, project=project))
+
+    initialized = service.initialize()
+    status = service.status()
+
+    assert initialized["ok"] is True
+    assert status["git"]["enabled"] is True
+    assert status["git"]["initialized"] is True
+    assert (hsf_dir / ".git").is_dir()
+
+    committed = service.commit({"message": "Initial HSF source"})
+
+    assert committed["ok"] is True
+    assert committed["git"]["last_commit"]
+    assert committed["git"]["dirty"] is False
+
+
+def test_git_service_respects_project_level_enabled_switch(tmp_path):
+    project = HSFProject.create_new("GitSwitchShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    service = WorkbenchGitService(SimpleNamespace(source_path=hsf_dir, project=project))
+
+    service.initialize()
+    disabled = service.set_enabled({"enabled": False})
+    committed = service.commit({"message": "Should not commit"})
+
+    assert disabled["git"]["enabled"] is False
+    assert committed["ok"] is False
+    assert "Enable Git" in committed["error"]
