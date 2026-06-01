@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -21,7 +22,24 @@ def resolve_workbench_config_path(config_path: str | Path | None = None) -> Path
     env_path = str(os.environ.get("GDL_AGENT_CONFIG") or "").strip()
     if env_path:
         return Path(env_path)
-    return Path("config.toml")
+    cwd = Path.cwd()
+    try:
+        common_dir = subprocess.check_output(
+            ["git", "-C", str(cwd), "rev-parse", "--git-common-dir"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if common_dir:
+            common_path = Path(common_dir)
+            if not common_path.is_absolute():
+                common_path = cwd / common_path
+            if common_path.name == ".git":
+                main_config = common_path.parent / "config.toml"
+                if main_config.exists():
+                    return main_config
+    except Exception:
+        pass
+    return cwd / "config.toml"
 
 
 def save_workbench_config(config: GDLAgentConfig, config_path: Path) -> None:

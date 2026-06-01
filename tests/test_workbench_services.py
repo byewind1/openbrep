@@ -12,6 +12,7 @@ from openbrep.workbench.preview_service import WorkbenchPreviewService
 from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService
 from openbrep.workbench.project_script_service import WorkbenchProjectScriptService
 from openbrep.workbench.project_service import WorkbenchProjectService
+from openbrep.workbench import settings_service
 from openbrep.workbench.settings_service import WorkbenchSettingsService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
 
@@ -39,6 +40,27 @@ def test_settings_service_updates_compiler_settings_and_persists_config(tmp_path
     assert response["compiler"]["mode"] == "lp"
     assert reloaded.compiler.path == "/Applications/LP_XMLConverter"
     assert reloaded.output_dir == str(tmp_path / "out")
+
+
+def test_workbench_config_path_defaults_to_main_worktree_config(monkeypatch, tmp_path):
+    main_root = tmp_path / "repo"
+    worktree_root = main_root / ".worktrees" / "react-workbench"
+    git_dir = main_root / ".git"
+    worktree_root.mkdir(parents=True)
+    git_dir.mkdir()
+    main_config = main_root / "config.toml"
+    main_config.write_text("[llm]\nmodel = \"mimo-v2.5-pro\"\n", encoding="utf-8")
+    (worktree_root / "config.toml").write_text("[llm]\nmodel = \"deepseek-chat\"\n", encoding="utf-8")
+
+    monkeypatch.chdir(worktree_root)
+    monkeypatch.delenv("GDL_AGENT_CONFIG", raising=False)
+    monkeypatch.setattr(
+        settings_service.subprocess,
+        "check_output",
+        lambda *args, **kwargs: str(git_dir),
+    )
+
+    assert settings_service.resolve_workbench_config_path() == main_config
 
 
 def test_compiler_service_compiles_loaded_project_with_injected_mock_compiler(tmp_path):
