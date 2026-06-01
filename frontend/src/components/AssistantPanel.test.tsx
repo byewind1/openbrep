@@ -1,8 +1,41 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { AssistantPanel } from './AssistantPanel'
 
 describe('AssistantPanel', () => {
+  test('attaches an image to generate requests', async () => {
+    const onGenerate = vi.fn()
+    const file = new File(['fake image'], 'shelf.png', { type: 'image/png' })
+
+    render(
+      <AssistantPanel
+        messages={[]}
+        busy={false}
+        onSend={vi.fn()}
+        onCreate={vi.fn()}
+        onGenerate={onGenerate}
+        onClearHistory={vi.fn()}
+        onAdoptCode={vi.fn()}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Attach image'), { target: { files: [file] } })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove image shelf.png' })).toBeTruthy())
+
+    fireEvent.change(screen.getByPlaceholderText('Ask or generate...'), { target: { value: '按图调整比例' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate changes' }))
+
+    expect(onGenerate).toHaveBeenCalledWith(
+      '按图调整比例',
+      expect.objectContaining({
+        name: 'shelf.png',
+        mime: 'image/png',
+        b64: expect.any(String),
+      }),
+    )
+  })
+
   test('opens a compact history drawer and adopts code from a history message', () => {
     const onAdoptCode = vi.fn()
 

@@ -1778,6 +1778,47 @@ test('generateAssistantChanges passes image attachments to the API', async () =>
   expect(store.getState().assistantMessages[0].content).toContain('[image: chair.jpg]')
 })
 
+test('generateAssistantChanges shows an explicit thinking message while the request is running', async () => {
+  let resolveGenerate!: (value: Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>) => void
+  const pendingGenerate = new Promise<Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>>((resolve) => {
+    resolveGenerate = resolve
+  })
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => pendingGenerate,
+    }),
+  )
+
+  const turn = store.getState().generateAssistantChanges('按图调整', {
+    name: 'chair.jpg',
+    mime: 'image/jpeg',
+    b64: 'ZmFrZS1pbWFnZQ==',
+  })
+
+  expect(store.getState().assistantBusy).toBe(true)
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('Thinking...')
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('Reading the attached reference image: chair.jpg.')
+
+  resolveGenerate({
+    ok: true,
+    assistant: {
+      kind: 'generate',
+      reply: 'changed from image',
+      changed_files: ['scripts/3d.gdl'],
+      intent: 'MODIFY',
+    },
+    preview: { meshes: [], wires: [], warnings: [] },
+    warnings: [],
+    events: [{ type: 'status', data: { message: '正在分析参考图结构...' } }],
+  })
+  await turn
+
+  expect(store.getState().assistantBusy).toBe(false)
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('changed from image')
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('Process:')
+  expect(store.getState().assistantMessages.at(-1)?.content).not.toContain('Thinking...')
+})
+
 test('generateAssistantChanges exposes image generation failures as lastError', async () => {
   const error = '当前模型或网关不支持图片分析：unsupported image_url'
   const store = createWorkbenchStore(

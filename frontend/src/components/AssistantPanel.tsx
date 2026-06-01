@@ -101,17 +101,24 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
         />
         <div className="assistant-attachment-row">
           <label className="assistant-attach-button">
-            Image
+            Attach image
             <input
               type="file"
+              aria-label="Attach image"
               accept="image/png,image/jpeg,image/webp"
               disabled={busy}
               onChange={(event) => attachImage(event.currentTarget.files?.[0] ?? null)}
             />
           </label>
           {image ? (
-            <button type="button" className="assistant-image-chip" disabled={busy} onClick={() => setImage(null)}>
-              {image.name} ×
+            <button
+              type="button"
+              className="assistant-image-chip"
+              disabled={busy}
+              aria-label={`Remove image ${image.name}`}
+              onClick={() => setImage(null)}
+            >
+              {image.name}
             </button>
           ) : (
             <span>{imageError || 'No image'}</span>
@@ -119,13 +126,13 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
         </div>
         <div className="assistant-actions">
           <button type="submit" disabled={busy || draft.trim().length === 0}>
-            解释
+            Explain
           </button>
           <button type="button" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('create')}>
-            新建项目
+            New project
           </button>
           <button type="button" className="primary-action" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('generate')}>
-            生成修改
+            Generate changes
           </button>
         </div>
       </form>
