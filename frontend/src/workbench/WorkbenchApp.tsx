@@ -106,6 +106,7 @@ export function WorkbenchApp() {
   const grouped = groupParameters(parameters)
   const activeScriptContent = activeScriptName ? scriptContents[activeScriptName] ?? '' : ''
   const hasDirtyScript = activeScriptName ? Boolean(dirtyScripts[activeScriptName]) : false
+  const hasAnyDirtyScript = Object.values(dirtyScripts).some(Boolean)
   const activeFocusLine = editorFocus?.scriptName === activeScriptName ? editorFocus.line : null
   const activeFocusKey = editorFocus?.scriptName === activeScriptName ? editorFocus.token : null
 
@@ -118,6 +119,31 @@ export function WorkbenchApp() {
       void refreshTapirStatus()
     }
   }, [activeRailPanel, refreshTapirStatus])
+
+  function resetCurrentProject() {
+    if (!project || loading) return
+    const hasUnsavedDraft = hasAnyDirtyScript || hasDraftChanges()
+    if (
+      hasUnsavedDraft &&
+      !window.confirm('Reset current project? Unsaved script edits or parameter drafts will be discarded unless saved first.')
+    ) {
+      return
+    }
+    void closeProject()
+  }
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      const isResetShortcut = (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyR'
+      if (!isResetShortcut) return
+      event.preventDefault()
+      event.stopPropagation()
+      resetCurrentProject()
+    }
+
+    window.addEventListener('keydown', handleShortcut, true)
+    return () => window.removeEventListener('keydown', handleShortcut, true)
+  }, [project, loading, hasAnyDirtyScript, dirtyScripts, draftParameters, closeProject])
 
   function focusDiagnosticIssue(issue: CompileIssue) {
     const scriptName = issue.script.split('/').pop() ?? issue.script
@@ -312,7 +338,7 @@ export function WorkbenchApp() {
         onBrowseOutputDirectory={() => void browseOutputDirectory()}
         onOpenProjectPath={(path) => void loadProjectPath(path)}
         onExportHsfProject={() => void exportHsfProject()}
-        onCloseProject={() => void closeProject()}
+        onResetCurrentProject={resetCurrentProject}
         onLoadMemoryLessons={loadMemoryLessons}
         onSummarizeProjectMemory={summarizeProjectMemory}
         onUpdateMemoryLesson={updateMemoryLesson}

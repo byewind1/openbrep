@@ -27,7 +27,7 @@ interface SettingsDrawerProps {
   onBrowseOutputDirectory: () => void
   onOpenProjectPath: (path: string) => void
   onExportHsfProject: () => void
-  onCloseProject: () => void
+  onResetCurrentProject: () => void
   onLoadMemoryLessons: () => void
   onSummarizeProjectMemory: () => void
   onUpdateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => void
@@ -53,7 +53,7 @@ export function SettingsDrawer({
   onBrowseOutputDirectory,
   onOpenProjectPath,
   onExportHsfProject,
-  onCloseProject,
+  onResetCurrentProject,
   onLoadMemoryLessons,
   onSummarizeProjectMemory,
   onUpdateMemoryLesson,
@@ -255,8 +255,12 @@ export function SettingsDrawer({
             <button type="button" onClick={onExportHsfProject}>
               Export HSF
             </button>
-            <button type="button" onClick={onCloseProject}>
-              Close Project
+            <button
+              type="button"
+              onClick={onResetCurrentProject}
+              title="Reset the current workbench session without deleting files on disk"
+            >
+              Reset Current Project
             </button>
           </div>
         </section>

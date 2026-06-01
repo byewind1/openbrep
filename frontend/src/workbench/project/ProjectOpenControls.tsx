@@ -49,8 +49,14 @@ export function ProjectOpenControls({
       <button type="submit" disabled={loading || path.trim().length === 0}>
         {loading ? '...' : 'Open'}
       </button>
-      <button type="button" disabled={loading} onClick={onBrowseProjectDirectory}>
-        ...
+      <button
+        type="button"
+        disabled={loading}
+        onClick={onBrowseProjectDirectory}
+        title="Browse for an HSF project directory"
+        aria-label="Browse for an HSF project directory"
+      >
+        {loading ? 'Choosing...' : 'Browse'}
       </button>
       <select
         aria-label="Recent HSF projects"
