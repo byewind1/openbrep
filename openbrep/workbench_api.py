@@ -5,6 +5,7 @@ import base64
 import binascii
 import copy
 import json
+import os
 import platform
 import re
 import shutil
@@ -276,7 +277,7 @@ class WorkbenchSession:
         self.directory_chooser = directory_chooser or _choose_directory
         self.file_chooser = file_chooser or _choose_file
         self.path_revealer = path_revealer or _reveal_path
-        self.config_path = Path(config_path or "config.toml")
+        self.config_path = _resolve_workbench_config_path(config_path)
         self.config = _load_workbench_config(self.config_path)
         self.compiler_mode = "mock"
         self.converter_path = self.config.compiler.path or ""
@@ -1426,6 +1427,15 @@ def _load_workbench_config(config_path: Path) -> GDLAgentConfig:
     if config_path.exists():
         return GDLAgentConfig.load(str(config_path))
     return GDLAgentConfig()
+
+
+def _resolve_workbench_config_path(config_path: str | Path | None = None) -> Path:
+    if config_path:
+        return Path(config_path)
+    env_path = str(os.environ.get("GDL_AGENT_CONFIG") or "").strip()
+    if env_path:
+        return Path(env_path)
+    return Path("config.toml")
 
 
 def _save_workbench_config(config: GDLAgentConfig, config_path: Path) -> None:

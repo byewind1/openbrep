@@ -724,6 +724,34 @@ timeout = 60
     assert "glm-4-flash" in response["llm"]["models"]
 
 
+def test_workbench_session_uses_gdl_agent_config_env_by_default(tmp_path, monkeypatch):
+    config_path = tmp_path / "personal-config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "mimo-v2.5-pro"
+api_key = "mimo-key"
+api_base = "https://token-plan-cn.xiaomimimo.com/v1"
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+custom_providers = []
+assistant_settings = "personal preference"
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("GDL_AGENT_CONFIG", str(config_path))
+    session = WorkbenchSession()
+    response = session.route("GET", "/api/settings/runtime")
+
+    assert session.config_path == config_path
+    assert response["llm"]["model"] == "mimo-v2.5-pro"
+    assert response["llm"]["api_key"] == "mimo-key"
+    assert response["llm"]["api_base"] == "https://token-plan-cn.xiaomimimo.com/v1"
+    assert response["llm"]["assistant_settings"] == "personal preference"
+
+
 def test_workbench_session_updates_llm_settings_and_persists_config(tmp_path):
     config_path = tmp_path / "config.toml"
     session = WorkbenchSession(config_path=config_path)
