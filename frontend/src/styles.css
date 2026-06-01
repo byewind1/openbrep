@@ -769,6 +769,7 @@ button:focus-visible {
 }
 
 .viewport-surface-rail {
+  container-type: inline-size;
   grid-template-rows: auto minmax(0, 1fr) 28px;
 }
 
@@ -816,11 +817,25 @@ button:focus-visible {
 .viewport-surface-rail .viewport-toolbar-actions {
   width: 100%;
   max-width: none;
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
   justify-content: flex-start;
 }
 
 .viewport-surface-rail .viewport-action-button {
   padding-inline: 7px;
+}
+
+@container (min-width: 420px) {
+  .viewport-surface-rail .viewport-toolbar-actions {
+    grid-template-columns: repeat(6, max-content);
+  }
+}
+
+@container (min-width: 600px) {
+  .viewport-surface-rail .viewport-toolbar-actions {
+    grid-template-columns: repeat(12, max-content);
+  }
 }
 
 .viewport-surface-workspace .viewport-toolbar {
