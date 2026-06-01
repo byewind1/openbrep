@@ -72,6 +72,25 @@ export function compileIssuesFromResult(result: CompileResult): CompileIssue[] {
   ]
 }
 
+export function formatAssistantRequestError(error: string | undefined, fallback: string) {
+  const message = (error || fallback).trim()
+  return isLlmConfigurationError(message) ? `LLM settings error: ${message}` : message
+}
+
+export function isLlmConfigurationError(message: string) {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('llm 配置错误') ||
+    normalized.includes('llm 认证失败') ||
+    normalized.includes('api key') ||
+    normalized.includes('authentication') ||
+    normalized.includes('base_url') ||
+    normalized.includes('provider') ||
+    normalized.includes('litellm') ||
+    normalized.includes('model')
+  )
+}
+
 function countIssues(issues: CompileIssue[], severity: string) {
   return issues.filter((issue) => issue.severity === severity).length
 }

@@ -67,6 +67,7 @@ export function WorkbenchApp() {
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
   const setLlmSettings = useWorkbenchStore((state) => state.setLlmSettings)
+  const testLlmConnection = useWorkbenchStore((state) => state.testLlmConnection)
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
   const reloadTapirLibraries = useWorkbenchStore((state) => state.reloadTapirLibraries)
@@ -281,6 +282,7 @@ export function WorkbenchApp() {
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
         onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
+        onTestLlmConnection={testLlmConnection}
         onReloadRuntimeSettings={() => void reloadRuntimeSettings()}
         onBrowseCompilerFile={() => void browseCompilerFile()}
         onBrowseOutputDirectory={() => void browseOutputDirectory()}

@@ -1492,6 +1492,26 @@ button:focus-visible {
   gap: 8px;
 }
 
+.settings-test-result {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-test-result.success {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.settings-test-result.error {
+  border-color: var(--status-error-border);
+  color: var(--status-error-text);
+}
+
 .memory-status-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

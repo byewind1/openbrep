@@ -236,6 +236,15 @@ export interface LlmSettingsResult {
   error?: string
 }
 
+export interface LlmConnectionTestResult {
+  ok: boolean
+  message?: string
+  model?: string
+  duration_ms?: number
+  category?: string
+  error?: string
+}
+
 export interface DirectoryChoiceResult extends Partial<WorkbenchSnapshot> {
   ok: boolean
   path?: string

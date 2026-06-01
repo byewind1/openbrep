@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import type {
   CompilerSettings,
   ErrorLesson,
+  LlmConnectionTestResult,
   LlmSettings,
   ProjectMemoryStatus,
   RecentProject,
@@ -22,6 +23,7 @@ interface SettingsDrawerProps {
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => void
   onLlmSettingsChange: (settings: LlmSettings) => void
+  onTestLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
   onReloadRuntimeSettings: () => void
   onBrowseCompilerFile: () => void
   onBrowseOutputDirectory: () => void
@@ -48,6 +50,7 @@ export function SettingsDrawer({
   onClose,
   onCompilerSettingsChange,
   onLlmSettingsChange,
+  onTestLlmConnection,
   onReloadRuntimeSettings,
   onBrowseCompilerFile,
   onBrowseOutputDirectory,
@@ -62,6 +65,8 @@ export function SettingsDrawer({
   onClearProjectMemory,
 }: SettingsDrawerProps) {
   const [llmDraft, setLlmDraft] = useState(llmSettings)
+  const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
+  const [llmTesting, setLlmTesting] = useState(false)
 
   useEffect(() => {
     setLlmDraft(llmSettings)
@@ -76,6 +81,14 @@ export function SettingsDrawer({
   function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     onLlmSettingsChange(llmDraft)
+  }
+
+  async function testLlmConnection() {
+    setLlmTesting(true)
+    setLlmTestResult(null)
+    const result = await onTestLlmConnection(llmDraft)
+    setLlmTestResult(result)
+    setLlmTesting(false)
   }
 
   return (
@@ -220,10 +233,20 @@ export function SettingsDrawer({
             />
           </label>
           <div className="settings-submit-row">
+            <button type="button" disabled={llmTesting} onClick={() => void testLlmConnection()}>
+              {llmTesting ? 'Testing...' : 'Test connection'}
+            </button>
             <button type="submit" className="primary-action">
               Save AI
             </button>
           </div>
+          {llmTestResult ? (
+            <p className={`settings-test-result ${llmTestResult.ok ? 'success' : 'error'}`}>
+              {llmTestResult.ok
+                ? `${llmTestResult.message ?? 'LLM connection OK'}${llmTestResult.duration_ms !== undefined ? ` (${llmTestResult.duration_ms} ms)` : ''}`
+                : `LLM settings error: ${llmTestResult.error ?? 'Connection test failed.'}`}
+            </p>
+          ) : null}
         </form>
 
         <section className="settings-section">

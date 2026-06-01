@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import copy
 import json
 import platform
 import re
@@ -34,6 +35,7 @@ from openbrep.explainer.service import (
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, VALID_PARAM_TYPES
 from openbrep.learning import ErrorLearningStore
+from openbrep.llm import LLMAdapter
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from openbrep.workbench_tapir import WorkbenchTapirAdapter, default_tapir_bridge_loader
@@ -360,6 +362,47 @@ class WorkbenchSession:
         )
         _save_workbench_config(self.config, self.config_path)
         return {"ok": True, "llm": self.llm_settings()}
+
+    def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        model = str(body.get("model") or self.llm_model).strip()
+        if not model:
+            return {"ok": False, "error": "Model is required.", "category": "llm_configuration"}
+
+        test_config = copy.deepcopy(self.config)
+        test_config.llm.model = model
+        test_config.llm.assistant_settings = str(body.get("assistant_settings") or self.assistant_settings)
+        test_config.llm.max_tokens = min(test_config.llm.max_tokens, 16)
+        test_config.llm.timeout = min(test_config.llm.timeout, 20)
+        _apply_llm_credentials_to_config(
+            test_config,
+            model=model,
+            api_key=str(body.get("api_key") or "").strip(),
+            api_base=str(body.get("api_base") or "").strip(),
+        )
+
+        start = time.perf_counter()
+        try:
+            response = LLMAdapter(test_config.llm).generate(
+                [{"role": "user", "content": "Reply with OK."}],
+                temperature=0,
+                max_tokens=8,
+                timeout=20,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": str(exc) or exc.__class__.__name__,
+                "category": "llm_configuration",
+                "model": model,
+                "duration_ms": int((time.perf_counter() - start) * 1000),
+            }
+
+        return {
+            "ok": True,
+            "message": "LLM connection OK",
+            "model": response.model or model,
+            "duration_ms": int((time.perf_counter() - start) * 1000),
+        }
 
     def load_hsf_directory(self, path: str) -> dict[str, Any]:
         hsf_path = Path(path).expanduser().resolve()
@@ -1259,6 +1302,9 @@ class WorkbenchSession:
 
         if normalized_method == "GET" and route == "/api/settings/runtime":
             return {"ok": True, "compiler": self.compiler_settings(), "llm": self.llm_settings()}
+
+        if normalized_method == "POST" and route == "/api/settings/llm/test":
+            return self.test_llm_settings(body)
 
         if normalized_method == "POST" and route == "/api/settings/llm":
             return self.update_llm_settings(body)

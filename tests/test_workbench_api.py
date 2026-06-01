@@ -750,6 +750,48 @@ def test_workbench_session_updates_llm_settings_and_persists_config(tmp_path):
     assert reloaded.assistant_settings == "先解释再改代码"
 
 
+def test_workbench_session_tests_llm_connection_success(tmp_path, monkeypatch):
+    captured_models: list[str] = []
+
+    class FakeLLMAdapter:
+        def __init__(self, config):
+            captured_models.append(config.model)
+
+        def generate(self, messages, **kwargs):
+            return type("Response", (), {"model": "deepseek-chat"})()
+
+    monkeypatch.setattr(workbench_api, "LLMAdapter", FakeLLMAdapter)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route(
+        "POST",
+        "/api/settings/llm/test",
+        {"model": "deepseek-chat", "api_key": "key", "api_base": ""},
+    )
+
+    assert response["ok"] is True
+    assert response["message"] == "LLM connection OK"
+    assert response["model"] == "deepseek-chat"
+    assert response["duration_ms"] >= 0
+    assert captured_models == ["deepseek-chat"]
+
+
+def test_workbench_session_tests_llm_connection_reports_configuration_error(tmp_path, monkeypatch):
+    class FakeLLMAdapter:
+        def __init__(self, config):
+            pass
+
+        def generate(self, messages, **kwargs):
+            raise RuntimeError("LLM 认证失败：API Key invalid")
+
+    monkeypatch.setattr(workbench_api, "LLMAdapter", FakeLLMAdapter)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route("POST", "/api/settings/llm/test", {"model": "deepseek-chat"})
+
+    assert response["ok"] is False
+    assert response["category"] == "llm_configuration"
+    assert "API Key invalid" in response["error"]
+
+
 def test_workbench_session_updates_custom_provider_credentials(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

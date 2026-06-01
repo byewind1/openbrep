@@ -160,6 +160,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       },
     }),
     updateLlmSettings: async (settings) => ({ ok: true, llm: settings }),
+    testLlmConnection: async () => ({ ok: true, message: 'LLM connection OK', model: 'glm-4-flash', duration_ms: 12 }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     listAssistantHistory: async () => ({ ok: true, messages: [] }),
     saveAssistantHistory: async (messages) => ({ ok: true, count: messages.length }),
@@ -878,6 +879,31 @@ test('updates llm settings through the API', async () => {
     max_retries: 6,
     assistant_settings: '先解释再改',
   })
+})
+
+test('tests llm connection with draft settings', async () => {
+  let receivedModel = ''
+  const store = createWorkbenchStore(
+    makeApi({
+      testLlmConnection: async (settings) => {
+        receivedModel = settings.model
+        return { ok: true, message: 'LLM connection OK', model: settings.model, duration_ms: 34 }
+      },
+    }),
+  )
+
+  const result = await store.getState().testLlmConnection({
+    model: 'deepseek-chat',
+    models: ['deepseek-chat'],
+    api_key: 'key',
+    api_base: '',
+    max_retries: 5,
+    assistant_settings: '',
+  })
+
+  expect(receivedModel).toBe('deepseek-chat')
+  expect(result.ok).toBe(true)
+  expect(result.duration_ms).toBe(34)
 })
 
 test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
@@ -1684,4 +1710,18 @@ test('generateAssistantChanges exposes image generation failures as lastError', 
     role: 'assistant',
     content: error,
   })
+})
+
+test('generateAssistantChanges labels llm configuration errors', async () => {
+  const error = 'LLM 认证失败：模型 `deepseek-chat` 的 API Key 可能无效'
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => ({ ok: false, error }),
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('改成参数化')
+
+  expect(store.getState().lastError).toBe(`LLM settings error: ${error}`)
+  expect(store.getState().assistantMessages.at(-1)?.content).toBe(`LLM settings error: ${error}`)
 })

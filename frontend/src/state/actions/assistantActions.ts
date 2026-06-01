@@ -1,6 +1,6 @@
 import type { AssistantImageAttachment } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
-import { hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
+import { formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
   function userMessageContent(message: string, image?: AssistantImageAttachment | null) {
@@ -89,10 +89,14 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         assistantMessages: [...state.assistantMessages, { role: 'user', content: trimmed }],
       }))
       const result = await api.askAssistant(trimmed)
-      const reply = result.ok && result.assistant ? result.assistant.reply : result.error ?? 'Assistant request failed.'
+      const reply =
+        result.ok && result.assistant
+          ? result.assistant.reply
+          : formatAssistantRequestError(result.error, 'Assistant request failed.')
       set((state) => ({
         assistantBusy: false,
         assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],
+        lastError: result.ok ? null : reply,
       }))
       await persistAssistantHistory()
     },
@@ -106,13 +110,14 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }))
       const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, image)
       if (!result.ok || !result.project || !result.parameters || !result.preview) {
+        const error = formatAssistantRequestError(result.error, 'Create request failed.')
         set((state) => ({
           assistantBusy: false,
           assistantMessages: [
             ...state.assistantMessages,
-            { role: 'assistant', content: result.error ?? 'Create request failed.' },
+            { role: 'assistant', content: error },
           ],
-          lastError: result.error ?? 'Create request failed.',
+          lastError: error,
         }))
         return
       }
@@ -143,7 +148,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       const reply =
         result.ok && result.assistant
           ? `${result.assistant.reply}${suffix}`
-          : result.error ?? 'Generation request failed.'
+          : formatAssistantRequestError(result.error, 'Generation request failed.')
       set((state) => ({
         assistantBusy: false,
         assistantMessages: [...state.assistantMessages, { role: 'assistant', content: reply }],

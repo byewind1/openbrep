@@ -31,6 +31,10 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
       }
     },
 
+    async testLlmConnection(settings: LlmSettings) {
+      return api.testLlmConnection(settings)
+    },
+
     async reloadRuntimeSettings() {
       const result = await api.fetchRuntimeSettings()
       set((state) => ({

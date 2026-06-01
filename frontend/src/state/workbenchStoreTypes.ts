@@ -21,6 +21,7 @@ import type {
   HsfExportResult,
   IgnoreMemoryLessonResult,
   LlmSettings,
+  LlmConnectionTestResult,
   LlmSettingsResult,
   MockCompileResponse,
   Preview2DPayload,
@@ -85,6 +86,7 @@ export interface WorkbenchApi {
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
+  testLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
   fetchTapirStatus: () => Promise<TapirStatusResult>
   reloadTapirLibraries: () => Promise<TapirActionResult>
   syncTapirSelection: () => Promise<TapirActionResult>
@@ -161,6 +163,7 @@ export interface WorkbenchState {
   browseOutputDirectory: () => Promise<void>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   setLlmSettings: (settings: LlmSettings) => Promise<void>
+  testLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
   reloadRuntimeSettings: () => Promise<void>
   refreshTapirStatus: () => Promise<void>
   reloadTapirLibraries: () => Promise<void>

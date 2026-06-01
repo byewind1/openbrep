@@ -21,6 +21,7 @@ import type {
   HsfExportResult,
   LlmSettings,
   LlmSettingsResult,
+  LlmConnectionTestResult,
   Preview2DPayload,
   PreviewPayload,
   ProjectLessonsResult,
@@ -336,6 +337,18 @@ export async function updateLlmSettings(settings: LlmSettings): Promise<LlmSetti
       body: JSON.stringify(settings),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function testLlmConnection(settings: LlmSettings): Promise<LlmConnectionTestResult> {
+  return requestJson<LlmConnectionTestResult>(
+    '/api/settings/llm/test',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', category: 'llm_configuration' },
   )
 }
 
