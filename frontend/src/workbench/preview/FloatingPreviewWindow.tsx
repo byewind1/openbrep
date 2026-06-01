@@ -75,16 +75,16 @@ export function FloatingPreviewWindow({ open, preview, warnings, onClose }: Floa
           }
         }}
       >
-        <div>
+        <div className="floating-preview-title">
           <strong>3D Preview</strong>
-          <span>{fullscreen ? '全屏预览' : '拖动标题栏移动，右下角调大小'}</span>
+          <span>{fullscreen ? 'Fullscreen preview' : 'Drag header to move, resize from the corner'}</span>
         </div>
         <div className="floating-preview-actions">
           <button type="button" onClick={() => setFullscreen((value) => !value)}>
-            {fullscreen ? '还原' : '全屏'}
+            {fullscreen ? 'Restore' : 'Fullscreen'}
           </button>
           <button type="button" onClick={onClose} aria-label="Close floating preview">
-            关闭
+            Close
           </button>
         </div>
       </header>

@@ -180,7 +180,11 @@ def run_smoke(
                 with sync_playwright() as p:
                     browser = p.chromium.launch(headless=not headed)
                     page = browser.new_page(viewport={"width": 1440, "height": 960})
-                    page.goto(web_url, wait_until="networkidle", timeout=int(timeout_seconds * 1000))
+                    page.goto(web_url, wait_until="domcontentloaded", timeout=int(timeout_seconds * 1000))
+                    page.wait_for_function(
+                        "() => document.body.innerText.includes('SCRIPTS') && document.body.innerText.includes('3D View')",
+                        timeout=int(timeout_seconds * 1000),
+                    )
                     title = page.title()
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)
