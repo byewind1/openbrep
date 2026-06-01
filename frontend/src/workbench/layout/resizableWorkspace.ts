@@ -17,7 +17,7 @@ const RIGHT_PREVIEW_MIN = 360
 const RIGHT_MAX = 640
 const CENTER_MIN = 520
 const CENTER_PREVIEW_MIN = 720
-const RESIZE_HANDLE_TOTAL = 12
+const RESIZE_HANDLE_TOTAL = 20
 
 export function clampWorkspaceColumns(
   columns: WorkspaceColumns,

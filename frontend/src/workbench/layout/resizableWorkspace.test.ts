@@ -12,14 +12,14 @@ describe('resizable workspace columns', () => {
 
     expect(columns.left).toBeLessThanOrEqual(420)
     expect(columns.right).toBeLessThanOrEqual(640)
-    expect(1180 - 12 - columns.left - columns.right).toBeGreaterThanOrEqual(520)
+    expect(1180 - 20 - columns.left - columns.right).toBeGreaterThanOrEqual(520)
   })
 
   test('uses wider right minimum in preview workspace mode', () => {
     const columns = clampWorkspaceColumns({ left: 240, right: 300 }, 1320, { previewWorkspaceOpen: true })
 
     expect(columns.right).toBeGreaterThanOrEqual(360)
-    expect(1320 - 12 - columns.left - columns.right).toBeGreaterThanOrEqual(720)
+    expect(1320 - 20 - columns.left - columns.right).toBeGreaterThanOrEqual(720)
   })
 
   test('parses stored columns defensively', () => {

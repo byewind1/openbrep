@@ -175,6 +175,7 @@ def run_smoke(
         save_interaction_ok = False
         compile_interaction_ok = False
         preview_interaction_ok = False
+        resize_interaction_ok = False
         if api_ready and project_loaded and web_ready:
             try:
                 with sync_playwright() as p:
@@ -190,6 +191,33 @@ def run_smoke(
                     page_ok = page_has_workbench_markers(title=title, body=body)
                     if page_ok:
                         page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
+                        right_rail = page.locator(".workbench-right-rail")
+                        right_handle = page.get_by_role("button", name="Resize right workspace panel")
+                        right_handle.wait_for(timeout=int(timeout_seconds * 1000))
+                        initial_right_box = right_rail.bounding_box()
+                        handle_box = right_handle.bounding_box()
+                        if initial_right_box and handle_box:
+                            handle_x = handle_box["x"] + handle_box["width"] / 2
+                            handle_y = handle_box["y"] + handle_box["height"] / 2
+                            page.mouse.move(handle_x, handle_y)
+                            page.mouse.down()
+                            page.mouse.move(handle_x - 120, handle_y, steps=8)
+                            page.mouse.up()
+                            widened_right_box = right_rail.bounding_box()
+                            moved_handle_box = right_handle.bounding_box()
+                            if widened_right_box and moved_handle_box:
+                                moved_x = moved_handle_box["x"] + moved_handle_box["width"] / 2
+                                moved_y = moved_handle_box["y"] + moved_handle_box["height"] / 2
+                                page.mouse.move(moved_x, moved_y)
+                                page.mouse.down()
+                                page.mouse.move(moved_x + 80, moved_y, steps=8)
+                                page.mouse.up()
+                                narrowed_right_box = right_rail.bounding_box()
+                                resize_interaction_ok = bool(
+                                    narrowed_right_box
+                                    and widened_right_box["width"] > initial_right_box["width"] + 80
+                                    and narrowed_right_box["width"] < widened_right_box["width"] - 50
+                                )
                         preview_controls_ok = body_has_preview_controls(body)
                         page.get_by_role("button", name="Expand").click()
                         page.wait_for_function(
@@ -232,6 +260,7 @@ def run_smoke(
             and project_loaded
             and web_ready
             and page_ok
+            and resize_interaction_ok
             and preview_interaction_ok
             and edit_interaction_ok
             and save_interaction_ok
@@ -244,6 +273,7 @@ def run_smoke(
             "project_loaded": project_loaded,
             "web_ready": web_ready,
             "page_ok": page_ok,
+            "resize_interaction_ok": resize_interaction_ok,
             "preview_interaction_ok": preview_interaction_ok,
             "edit_interaction_ok": edit_interaction_ok,
             "save_interaction_ok": save_interaction_ok,
