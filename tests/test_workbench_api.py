@@ -758,6 +758,52 @@ timeout = 60
     assert "glm-4-flash" in response["llm"]["models"]
 
 
+def test_workbench_session_exposes_official_and_custom_llm_model_groups(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "ymg-gpt-5.3-codex"
+api_key = ""
+api_base = ""
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+assistant_settings = ""
+
+[[llm.custom_providers]]
+name = "ymg"
+base_url = "https://api.ymg.example/v1"
+api_key = "ymg-key"
+protocol = "openai"
+models = [{ alias = "ymg-gpt-5.3-codex", model = "gpt-5.3-codex" }]
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route("GET", "/api/settings/runtime")
+
+    assert response["ok"] is True
+    custom = response["llm"]["model_groups"]["custom"]
+    official = response["llm"]["model_groups"]["official"]
+    assert custom == [
+        {
+            "id": "ymg-gpt-5.3-codex",
+            "label": "ymg-gpt-5.3-codex",
+            "kind": "custom",
+            "provider": "ymg",
+            "target_model": "gpt-5.3-codex",
+            "protocol": "openai",
+            "api_base": "https://api.ymg.example/v1",
+            "has_api_key": True,
+        }
+    ]
+    assert any(option["id"] == "deepseek-chat" and option["kind"] == "official" for option in official)
+    assert response["llm"]["models"][0] == "ymg-gpt-5.3-codex"
+    assert response["llm"]["model_options"][0]["kind"] == "custom"
+
+
 def test_workbench_session_uses_gdl_agent_config_env_by_default(tmp_path, monkeypatch):
     config_path = tmp_path / "personal-config.toml"
     config_path.write_text(

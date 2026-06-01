@@ -92,10 +92,26 @@ export interface CompilerSettings {
 export interface LlmSettings {
   model: string
   models: string[]
+  model_options?: LlmModelOption[]
+  model_groups?: {
+    custom: LlmModelOption[]
+    official: LlmModelOption[]
+  }
   api_key: string
   api_base: string
   max_retries: number
   assistant_settings: string
+}
+
+export interface LlmModelOption {
+  id: string
+  label: string
+  kind: 'official' | 'custom'
+  provider: string
+  target_model?: string
+  protocol?: string
+  api_base?: string
+  has_api_key?: boolean
 }
 
 export interface WorkbenchSnapshot {

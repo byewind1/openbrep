@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from openbrep.config import ALL_MODELS, GDLAgentConfig, model_to_provider
+from openbrep.config import ALL_MODELS, GDLAgentConfig, iter_custom_provider_model_entries, model_to_provider
 
 
 def load_workbench_config(config_path: Path) -> GDLAgentConfig:
@@ -52,6 +52,48 @@ def apply_llm_credentials_to_config(
     config.llm.api_base = api_base
 
 
+def llm_model_groups(config: GDLAgentConfig) -> dict[str, list[dict[str, Any]]]:
+    custom = custom_model_options(config)
+    custom_ids = {option["id"] for option in custom}
+    official = [
+        {
+            "id": model,
+            "label": model,
+            "kind": "official",
+            "provider": model_to_provider(model),
+        }
+        for model in ALL_MODELS
+        if model not in custom_ids
+    ]
+    return {"custom": custom, "official": official}
+
+
+def custom_model_options(config: GDLAgentConfig) -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for provider in config.llm.custom_providers or []:
+        provider_name = str(provider.get("name", "") or "").strip() or "custom"
+        protocol = str(provider.get("protocol", "openai") or "openai")
+        api_base = str(provider.get("base_url", "") or "")
+        has_api_key = bool(str(provider.get("api_key", "") or "").strip())
+        for entry in iter_custom_provider_model_entries(provider):
+            alias = entry["alias"]
+            if alias in seen:
+                continue
+            seen.add(alias)
+            options.append({
+                "id": alias,
+                "label": alias,
+                "kind": "custom",
+                "provider": provider_name,
+                "target_model": entry["model"],
+                "protocol": protocol,
+                "api_base": api_base,
+                "has_api_key": has_api_key,
+            })
+    return options
+
+
 class WorkbenchSettingsService:
     def __init__(
         self,
@@ -82,13 +124,14 @@ class WorkbenchSettingsService:
         return {"ok": True, "compiler": self.compiler_settings()}
 
     def llm_settings(self) -> dict[str, Any]:
-        models = self.session.config.get_available_models()
-        for model in ALL_MODELS:
-            if model not in models:
-                models.append(model)
+        groups = llm_model_groups(self.session.config)
+        model_options = groups["custom"] + groups["official"]
+        models = [option["id"] for option in model_options]
         return {
             "model": self.session.llm_model,
             "models": models,
+            "model_options": model_options,
+            "model_groups": groups,
             "api_key": self.session.llm_api_key,
             "api_base": self.session.llm_api_base,
             "max_retries": self.session.max_retries,

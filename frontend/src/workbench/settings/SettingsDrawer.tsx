@@ -82,8 +82,17 @@ export function SettingsDrawer({
   const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [llmTesting, setLlmTesting] = useState(false)
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
-  const modelOptions = Array.from(new Set((llmDraft.models ?? []).filter(Boolean)))
-  const selectedModelOption = modelOptions.includes(llmDraft.model) ? llmDraft.model : '__custom__'
+  const customModelOptions = llmDraft.model_groups?.custom ?? []
+  const officialModelOptions = llmDraft.model_groups?.official ?? []
+  const groupedModelIds = new Set([...customModelOptions, ...officialModelOptions].map((option) => option.id))
+  const fallbackModelOptions = (llmDraft.models ?? [])
+    .filter((model) => model && !groupedModelIds.has(model))
+    .map((model) => ({ id: model, label: model, kind: 'official' as const, provider: '' }))
+  const knownModelIds = new Set([...groupedModelIds, ...fallbackModelOptions.map((option) => option.id)])
+  const selectedModelOption = knownModelIds.has(llmDraft.model) ? llmDraft.model : '__custom__'
+  const selectedModelMeta = [...customModelOptions, ...officialModelOptions, ...fallbackModelOptions].find(
+    (option) => option.id === llmDraft.model,
+  )
 
   useEffect(() => {
     setLlmDraft(llmSettings)
@@ -207,11 +216,33 @@ export function SettingsDrawer({
                   }
                 }}
               >
-                {modelOptions.map((model) => (
-                  <option value={model} key={model}>
-                    {model}
-                  </option>
-                ))}
+                {customModelOptions.length ? (
+                  <optgroup label="Custom providers">
+                    {customModelOptions.map((model) => (
+                      <option value={model.id} key={model.id}>
+                        {model.label} ({model.provider})
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {officialModelOptions.length ? (
+                  <optgroup label="Official models">
+                    {officialModelOptions.map((model) => (
+                      <option value={model.id} key={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {fallbackModelOptions.length ? (
+                  <optgroup label="Models">
+                    {fallbackModelOptions.map((model) => (
+                      <option value={model.id} key={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
                 <option value="__custom__">Custom model</option>
               </select>
               <input
@@ -221,6 +252,13 @@ export function SettingsDrawer({
                 onChange={(event) => setLlmDraft({ ...llmDraft, model: event.currentTarget.value })}
               />
             </div>
+            {selectedModelMeta ? (
+              <small className="settings-field-hint">
+                {selectedModelMeta.kind === 'custom'
+                  ? `Custom provider: ${selectedModelMeta.provider}${selectedModelMeta.protocol ? ` / ${selectedModelMeta.protocol}` : ''}`
+                  : `Official provider: ${selectedModelMeta.provider || 'auto'}`}
+              </small>
+            ) : null}
           </label>
           <label className="settings-field">
             <span>API Key</span>

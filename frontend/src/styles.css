@@ -1456,6 +1456,11 @@ button:focus-visible {
   gap: 7px;
 }
 
+.settings-field-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .settings-path-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
