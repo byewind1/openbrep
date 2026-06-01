@@ -195,10 +195,12 @@ def run_smoke(
                         right_handle = page.get_by_role("button", name="Resize right workspace panel")
                         right_handle.wait_for(timeout=int(timeout_seconds * 1000))
                         editor = page.locator(".monaco-editor").first
+                        toolbar_actions = page.locator(".viewport-surface-rail .viewport-toolbar-actions").first
                         initial_right_box = right_rail.bounding_box()
                         initial_editor_box = editor.bounding_box()
+                        initial_toolbar_actions_box = toolbar_actions.bounding_box()
                         handle_box = right_handle.bounding_box()
-                        if initial_right_box and initial_editor_box and handle_box:
+                        if initial_right_box and initial_editor_box and initial_toolbar_actions_box and handle_box:
                             handle_x = handle_box["x"] + handle_box["width"] / 2
                             handle_y = handle_box["y"] + handle_box["height"] / 2
                             page.mouse.move(handle_x, handle_y)
@@ -207,8 +209,9 @@ def run_smoke(
                             page.mouse.up()
                             widened_right_box = right_rail.bounding_box()
                             narrowed_editor_box = editor.bounding_box()
+                            widened_toolbar_actions_box = toolbar_actions.bounding_box()
                             moved_handle_box = right_handle.bounding_box()
-                            if widened_right_box and narrowed_editor_box and moved_handle_box:
+                            if widened_right_box and narrowed_editor_box and widened_toolbar_actions_box and moved_handle_box:
                                 moved_x = moved_handle_box["x"] + moved_handle_box["width"] / 2
                                 moved_y = moved_handle_box["y"] + moved_handle_box["height"] / 2
                                 page.mouse.move(moved_x, moved_y)
@@ -217,13 +220,17 @@ def run_smoke(
                                 page.mouse.up()
                                 narrowed_right_box = right_rail.bounding_box()
                                 widened_editor_box = editor.bounding_box()
+                                narrowed_toolbar_actions_box = toolbar_actions.bounding_box()
                                 resize_interaction_ok = bool(
                                     narrowed_right_box
                                     and widened_editor_box
+                                    and narrowed_toolbar_actions_box
                                     and widened_right_box["width"] > initial_right_box["width"] + 80
                                     and narrowed_right_box["width"] < widened_right_box["width"] - 50
                                     and narrowed_editor_box["width"] < initial_editor_box["width"] - 80
                                     and widened_editor_box["width"] > narrowed_editor_box["width"] + 50
+                                    and widened_toolbar_actions_box["width"] > initial_toolbar_actions_box["width"] + 80
+                                    and narrowed_toolbar_actions_box["width"] < widened_toolbar_actions_box["width"] - 50
                                 )
                         preview_controls_ok = body_has_preview_controls(body)
                         page.get_by_role("button", name="Expand").click()

@@ -805,13 +805,22 @@ button:focus-visible {
 }
 
 .viewport-surface-rail .viewport-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: flex-start;
   min-height: 70px;
+  gap: 6px;
   padding-block: 6px;
 }
 
 .viewport-surface-rail .viewport-toolbar-actions {
-  max-width: 210px;
+  width: 100%;
+  max-width: none;
+  justify-content: flex-start;
+}
+
+.viewport-surface-rail .viewport-action-button {
+  padding-inline: 7px;
 }
 
 .viewport-surface-workspace .viewport-toolbar {
