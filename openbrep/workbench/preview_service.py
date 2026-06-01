@@ -12,37 +12,69 @@ class WorkbenchPreviewService:
     def __init__(self, session: Any) -> None:
         self.session = session
 
-    def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    def preview(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
+        parameters, scripts = split_preview_request(request)
         return {
             "ok": True,
-            "preview": preview_payload(self.session.project, overrides or {}),
+            "preview": preview_payload(self.session.project, parameters, scripts),
         }
 
-    def preview_2d(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    def preview_2d(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
+        parameters, scripts = split_preview_request(request)
         return {
             "ok": True,
-            "preview": preview_2d_payload(self.session.project, overrides or {}),
+            "preview": preview_2d_payload(self.session.project, parameters, scripts),
         }
 
 
-def preview_payload(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+def split_preview_request(request: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, str]]:
+    if not request:
+        return {}, {}
+    if "parameters" in request or "scripts" in request:
+        parameters = request.get("parameters") if isinstance(request.get("parameters"), dict) else {}
+        scripts = request.get("scripts") if isinstance(request.get("scripts"), dict) else {}
+        return parameters, normalize_script_overrides(scripts)
+    return request, {}
+
+
+def normalize_script_overrides(scripts: dict[Any, Any]) -> dict[str, str]:
+    valid_names = {script_type.value for script_type in ScriptType}
+    return {
+        str(name): str(content)
+        for name, content in scripts.items()
+        if str(name) in valid_names and isinstance(content, str)
+    }
+
+
+def preview_payload(
+    project: HSFProject,
+    overrides: dict[str, Any] | None = None,
+    script_overrides: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    scripts = script_overrides or {}
     result = preview_3d_script(
-        project.get_script(ScriptType.SCRIPT_3D),
+        script_for(project, ScriptType.SCRIPT_3D, scripts),
         parameters=parameter_values(project, overrides),
-        setup_script=project.get_script(ScriptType.MASTER),
+        setup_script=script_for(project, ScriptType.MASTER, scripts),
         unknown_command_policy="warn",
         quality="fast",
     )
     payload = preview_3d_to_three_payload(result)
     payload["warnings"] = result.warnings
+    payload["verification"] = preview_verification(scripts)
     return payload
 
 
-def preview_2d_payload(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+def preview_2d_payload(
+    project: HSFProject,
+    overrides: dict[str, Any] | None = None,
+    script_overrides: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    scripts = script_overrides or {}
     result = preview_2d_script(
-        project.get_script(ScriptType.SCRIPT_2D),
+        script_for(project, ScriptType.SCRIPT_2D, scripts),
         parameters=parameter_values(project, overrides),
-        setup_script=project.get_script(ScriptType.MASTER),
+        setup_script=script_for(project, ScriptType.MASTER, scripts),
         unknown_command_policy="warn",
         quality="fast",
     )
@@ -58,4 +90,17 @@ def preview_2d_payload(project: HSFProject, overrides: dict[str, Any] | None = N
             for cx, cy, r, a0, a1 in result.arcs
         ],
         "warnings": result.warnings,
+        "verification": preview_verification(scripts),
+    }
+
+
+def script_for(project: HSFProject, script_type: ScriptType, script_overrides: dict[str, str]) -> str:
+    return script_overrides.get(script_type.value, project.get_script(script_type))
+
+
+def preview_verification(script_overrides: dict[str, str]) -> dict[str, Any]:
+    names = sorted(script_overrides)
+    return {
+        "source": "editor_buffer" if names else "saved",
+        "script_overrides": names,
     }

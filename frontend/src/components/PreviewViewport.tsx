@@ -141,7 +141,7 @@ export function PreviewViewport({
           {cameraMode === 'orthographic' ? 'Orthographic' : 'Perspective'} | {viewPreset.toUpperCase()}
         </span>
         <span>
-          {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings
+          {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings | {preview?.verification?.source === 'editor_buffer' ? 'Editor Buffer' : 'Saved'}
         </span>
       </footer>
     </section>

@@ -360,10 +360,10 @@ class WorkbenchSession:
             return self.tapir_service.apply_param_edits(body)
 
         if normalized_method == "POST" and route == "/api/preview":
-            return self.preview(body.get("parameters") or {})
+            return self.preview(body)
 
         if normalized_method == "POST" and route == "/api/preview/2d":
-            return self.preview_2d(body.get("parameters") or {})
+            return self.preview_2d(body)
 
         if normalized_method == "GET" and route == "/api/project/scripts":
             return self.list_project_scripts()

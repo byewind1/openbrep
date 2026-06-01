@@ -54,26 +54,32 @@ export async function fetchSnapshot(): Promise<WorkbenchSnapshot> {
   return requestJson<WorkbenchSnapshot>('/api/snapshot', { method: 'GET' }, fallbackSnapshot)
 }
 
-export async function fetchPreview(parameters: Record<string, unknown>): Promise<PreviewPayload> {
+export async function fetchPreview(
+  parameters: Record<string, unknown>,
+  scripts?: Record<string, string>,
+): Promise<PreviewPayload> {
   const response = await requestJson<{ preview: PreviewPayload }>(
     '/api/preview',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parameters }),
+      body: JSON.stringify({ parameters, scripts }),
     },
     { preview: fallbackSnapshot.preview },
   )
   return response.preview
 }
 
-export async function fetchPreview2D(parameters: Record<string, unknown>): Promise<Preview2DPayload> {
+export async function fetchPreview2D(
+  parameters: Record<string, unknown>,
+  scripts?: Record<string, string>,
+): Promise<Preview2DPayload> {
   const response = await requestJson<{ preview: Preview2DPayload }>(
     '/api/preview/2d',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parameters }),
+      body: JSON.stringify({ parameters, scripts }),
     },
     { preview: fallbackPreview2D },
   )

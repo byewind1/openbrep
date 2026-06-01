@@ -58,8 +58,8 @@ import type {
 
 export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
-  fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
-  fetchPreview2D: (parameters: Record<string, unknown>) => Promise<Preview2DPayload>
+  fetchPreview: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<PreviewPayload>
+  fetchPreview2D: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
@@ -204,6 +204,7 @@ export interface WorkbenchState {
   saveActiveScript: () => Promise<void>
   runMockCompile: () => Promise<void>
   revealCompileOutput: (path?: string) => Promise<void>
+  loadPreview3D: () => Promise<void>
   loadPreview2D: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean

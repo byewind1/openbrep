@@ -80,6 +80,7 @@ export function WorkbenchApp() {
   const compileCurrentProject = useWorkbenchStore((state) => state.compileCurrentProject)
   const runMockCompile = useWorkbenchStore((state) => state.runMockCompile)
   const revealCompileOutput = useWorkbenchStore((state) => state.revealCompileOutput)
+  const loadPreview3D = useWorkbenchStore((state) => state.loadPreview3D)
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
@@ -231,6 +232,7 @@ export function WorkbenchApp() {
             assistantMessages={assistantMessages}
             assistantBusy={assistantBusy}
             onSetActiveRailPanel={setActiveRailPanel}
+            onLoadPreview3D={() => void loadPreview3D()}
             onLoadPreview2D={() => void loadPreview2D()}
             onExpandPreview={() => setPreviewWorkspaceOpen(true)}
             onFloatPreview={() => setFloatingPreviewOpen(true)}

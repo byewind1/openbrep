@@ -144,6 +144,26 @@ def test_preview_service_returns_3d_payload_for_project(tmp_path):
     assert response["preview"]["meshes"]
 
 
+def test_preview_service_can_verify_dirty_editor_buffer_without_saving(tmp_path):
+    project = HSFProject.create_new("DirtyPreviewShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK 1, 1, 1\n")
+    session = SimpleNamespace(project=project)
+    service = WorkbenchPreviewService(session)
+
+    response = service.preview({
+        "scripts": {
+            "3d.gdl": "BLOCK 2, 1, 1\n",
+        },
+    })
+
+    assert response["ok"] is True
+    assert response["preview"]["verification"] == {
+        "source": "editor_buffer",
+        "script_overrides": ["3d.gdl"],
+    }
+    assert project.get_script(ScriptType.SCRIPT_3D) == "BLOCK 1, 1, 1\n"
+
+
 def test_assistant_service_extracts_classified_code_blocks():
     service = WorkbenchAssistantService(SimpleNamespace())
 

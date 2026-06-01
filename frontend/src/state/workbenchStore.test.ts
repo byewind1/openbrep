@@ -847,6 +847,34 @@ test('loadPreview2D stores plan preview geometry', async () => {
   expect(store.getState().preview2d?.lines).toEqual([{ from: [0, 0], to: [1, 1] }])
 })
 
+test('loadPreview3D verifies dirty editor buffers without saving first', async () => {
+  const calls: Array<{ parameters: Record<string, unknown>; scripts?: Record<string, string> }> = []
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async (parameters, scripts) => {
+        calls.push({ parameters, scripts })
+        return {
+          meshes: [{ name: 'dirty-block', vertices: [], faces: [] }],
+          wires: [],
+          warnings: ['preview uses editor buffer'],
+          verification: { source: 'editor_buffer', script_overrides: ['3d.gdl'] },
+        }
+      },
+    }),
+  )
+  store.setState({
+    activeScriptName: '3d.gdl',
+    scriptContents: { '3d.gdl': 'BLOCK 2, 1, 1', '2d.gdl': 'LINE2 0, 0, 1, 1' },
+    dirtyScripts: { '3d.gdl': true, '2d.gdl': false },
+  })
+
+  await store.getState().loadPreview3D()
+
+  expect(calls).toEqual([{ parameters: {}, scripts: { '3d.gdl': 'BLOCK 2, 1, 1' } }])
+  expect(store.getState().preview?.meshes[0]?.name).toBe('dirty-block')
+  expect(store.getState().warnings).toEqual(['preview uses editor buffer'])
+})
+
 test('updates compiler settings through the API', async () => {
   const store = createWorkbenchStore(
     makeApi({

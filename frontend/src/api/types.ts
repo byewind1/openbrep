@@ -66,6 +66,7 @@ export interface PreviewPayload {
   meshes: PreviewMesh[]
   wires: number[][][]
   warnings?: string[]
+  verification?: PreviewVerification
 }
 
 export interface Preview2DPayload {
@@ -74,6 +75,12 @@ export interface Preview2DPayload {
   circles: Array<{ cx: number; cy: number; r: number }>
   arcs: Array<{ cx: number; cy: number; r: number; a0: number; a1: number }>
   warnings?: string[]
+  verification?: PreviewVerification
+}
+
+export interface PreviewVerification {
+  source: 'saved' | 'editor_buffer'
+  script_overrides: string[]
 }
 
 export interface CompilerSettings {

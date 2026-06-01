@@ -62,6 +62,23 @@ def test_route_rpc_preview_returns_preview_for_overrides():
     assert response["preview"]["meshes"]
 
 
+def test_route_rpc_preview_forwards_editor_buffer_overrides():
+    response = route_rpc(
+        "POST",
+        "/api/preview",
+        {
+            "parameters": {"A": 2.2},
+            "scripts": {"3d.gdl": "BLOCK 2, 1, 1\n"},
+        },
+    )
+
+    assert response["ok"] is True
+    assert response["preview"]["verification"] == {
+        "source": "editor_buffer",
+        "script_overrides": ["3d.gdl"],
+    }
+
+
 def test_route_rpc_preview_2d_returns_preview_for_overrides():
     response = route_rpc("POST", "/api/preview/2d", {"parameters": {"A": 2.2}})
 

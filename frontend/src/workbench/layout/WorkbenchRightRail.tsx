@@ -22,6 +22,7 @@ interface WorkbenchRightRailProps {
   assistantMessages: AssistantMessage[]
   assistantBusy: boolean
   onSetActiveRailPanel: (panel: ActiveRailPanel) => void
+  onLoadPreview3D: () => void
   onLoadPreview2D: () => void
   onExpandPreview: () => void
   onFloatPreview: () => void
@@ -48,6 +49,7 @@ export function WorkbenchRightRail({
   assistantMessages,
   assistantBusy,
   onSetActiveRailPanel,
+  onLoadPreview3D,
   onLoadPreview2D,
   onExpandPreview,
   onFloatPreview,
@@ -88,7 +90,17 @@ export function WorkbenchRightRail({
       </div>
       <div className="rail-panel viewport-panel">
         {activeRailPanel === '3d' ? (
-          <PreviewViewport preview={preview} warnings={warnings} onExpand={onExpandPreview} onFloat={onFloatPreview} />
+          <PreviewViewport
+            preview={preview}
+            warnings={warnings}
+            onExpand={onExpandPreview}
+            onFloat={onFloatPreview}
+            actions={(
+              <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
+                Update
+              </button>
+            )}
+          />
         ) : activeRailPanel === '2d' ? (
           <Preview2DViewport preview={preview2d} warnings={warnings} />
         ) : activeRailPanel === 'inspect' ? (
