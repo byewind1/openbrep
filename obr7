@@ -5,11 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -d "$ROOT_DIR/frontend" && -f "$ROOT_DIR/openbrep/workbench_api.py" ]]; then
   APP_DIR="$ROOT_DIR"
-elif [[ -d "$ROOT_DIR/.worktrees/react-workbench-poc/frontend" ]]; then
-  APP_DIR="$ROOT_DIR/.worktrees/react-workbench-poc"
+elif [[ -d "$ROOT_DIR/.worktrees/react-workbench/frontend" ]]; then
+  APP_DIR="$ROOT_DIR/.worktrees/react-workbench"
 else
   echo "[obr7] React Workbench not found."
-  echo "[obr7] Expected either ./frontend or ./.worktrees/react-workbench-poc/frontend"
+  echo "[obr7] Expected either ./frontend or ./.worktrees/react-workbench/frontend"
   exit 1
 fi
 
