@@ -44,6 +44,7 @@ export function ScriptEditor({ scriptName, content, onChange, isDirty, focusLine
           options={{
             fontSize: 13,
             fontFamily: 'JetBrains Mono, Consolas, monospace',
+            automaticLayout: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
             lineNumbers: 'on',

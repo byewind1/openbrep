@@ -417,8 +417,11 @@ button:focus-visible {
 
 .script-editor {
   height: 100%;
+  width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr);
+  overflow: hidden;
   background: var(--main-stage-bg);
 }
 
@@ -443,6 +446,8 @@ button:focus-visible {
 
 .script-editor-body {
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .workbench-right-rail,
