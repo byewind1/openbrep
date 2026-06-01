@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type {
   CompilerSettings,
@@ -83,6 +83,7 @@ export function SettingsDrawer({
   const [llmTesting, setLlmTesting] = useState(false)
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
   const [manualModelMode, setManualModelMode] = useState(false)
+  const wasOpenRef = useRef(false)
   const customModelOptions = llmDraft.model_groups?.custom ?? []
   const officialModelOptions = llmDraft.model_groups?.official ?? []
   const groupedModelIds = new Set([...customModelOptions, ...officialModelOptions].map((option) => option.id))
@@ -106,10 +107,11 @@ export function SettingsDrawer({
   }, [llmSettings])
 
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       onLoadMemoryLessons()
       onLoadProjectGitStatus()
     }
+    wasOpenRef.current = open
   }, [open, onLoadMemoryLessons, onLoadProjectGitStatus])
 
   function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
