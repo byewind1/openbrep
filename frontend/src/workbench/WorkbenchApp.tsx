@@ -1,20 +1,17 @@
 import { useEffect, useState } from 'react'
-import { AssistantPanel } from '../components/AssistantPanel'
 import { BottomDrawer } from '../components/BottomDrawer'
 import { ParameterRail } from '../components/ParameterRail'
-import { Preview2DViewport } from '../components/Preview2DViewport'
-import { PreviewViewport } from '../components/PreviewViewport'
-import { ScriptEditor } from '../components/ScriptEditor'
 import { ScriptTree } from '../components/ScriptTree'
 import { TopMenu } from '../components/TopMenu'
 import type { CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { RevisionPanel } from './diagnostics/RevisionPanel'
+import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
+import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { SettingsDrawer } from './settings/SettingsDrawer'
-import { TapirPanel } from './tapir/TapirPanel'
 
 export function WorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -206,101 +203,44 @@ export function WorkbenchApp() {
             applying={applying}
           />
         </aside>
-        <section className={`workbench-main-stage ${previewWorkspaceOpen ? 'preview-workspace-stage' : 'editor-stage'}`}>
-          {previewWorkspaceOpen ? (
-            <PreviewViewport
-              preview={preview}
-              warnings={warnings}
-              variant="workspace"
-              expanded
-              onCollapse={() => setPreviewWorkspaceOpen(false)}
-              onFloat={() => setFloatingPreviewOpen(true)}
-            />
-          ) : activeScriptName ? (
-            <ScriptEditor
-              scriptName={activeScriptName}
-              content={activeScriptContent}
-              onChange={updateActiveScriptContent}
-              isDirty={hasDirtyScript}
-              focusLine={activeFocusLine}
-              focusKey={activeFocusKey}
-            />
-          ) : (
-            <div className="editor-empty">No script loaded</div>
-          )}
-        </section>
-        <aside className="workbench-right-rail right-rail">
-          <div className="rail-tabs" role="tablist" aria-label="Right rail panels">
-            <button
-              type="button"
-              className={`rail-tab${activeRailPanel === '3d' ? ' active' : ''}`}
-              aria-selected={activeRailPanel === '3d'}
-              onClick={() => setActiveRailPanel('3d')}
-            >
-              3D
-            </button>
-            <button
-              type="button"
-              className={`rail-tab${activeRailPanel === '2d' ? ' active' : ''}`}
-              aria-selected={activeRailPanel === '2d'}
-              onClick={() => {
-                setActiveRailPanel('2d')
-                void loadPreview2D()
-              }}
-            >
-              2D
-            </button>
-            <button
-              type="button"
-              className={`rail-tab${activeRailPanel === 'inspect' ? ' active' : ''}`}
-              aria-selected={activeRailPanel === 'inspect'}
-              onClick={() => setActiveRailPanel('inspect')}
-            >
-              Inspect
-            </button>
-            <button
-              type="button"
-              className={`rail-tab${activeRailPanel === 'ai' ? ' active' : ''}`}
-              aria-selected={activeRailPanel === 'ai'}
-              onClick={() => setActiveRailPanel('ai')}
-            >
-              AI
-            </button>
-          </div>
-          <div className="rail-panel viewport-panel">
-            {activeRailPanel === '3d' ? (
-              <PreviewViewport
-                preview={preview}
-                warnings={warnings}
-                onExpand={() => setPreviewWorkspaceOpen(true)}
-                onFloat={() => setFloatingPreviewOpen(true)}
-              />
-            ) : activeRailPanel === '2d' ? (
-              <Preview2DViewport preview={preview2d} warnings={warnings} />
-            ) : activeRailPanel === 'inspect' ? (
-              <TapirPanel
-                status={tapirStatus}
-                busy={tapirBusy}
-                onRefresh={() => void refreshTapirStatus()}
-                onReloadLibraries={() => void reloadTapirLibraries()}
-                onSyncSelection={() => void syncTapirSelection()}
-                onHighlightSelection={() => void highlightTapirSelection()}
-                onLoadParameters={() => void loadTapirParameters()}
-                onApplyParameters={() => void applyTapirParameters()}
-              />
-            ) : (
-              <AssistantPanel
-                messages={assistantMessages}
-                busy={assistantBusy}
-            onSend={(message) => void sendAssistantMessage(message)}
-            onCreate={(message) => void createProjectFromPrompt(message)}
-            onGenerate={(message) => void generateAssistantChanges(message)}
-            onClearHistory={() => void clearAssistantHistory()}
-            onAdoptCode={(index) => void adoptAssistantMessageCode(index)}
-          />
-            )}
-          </div>
-        </aside>
+        <PreviewWorkspaceStage
+          previewWorkspaceOpen={previewWorkspaceOpen}
+          preview={preview}
+          warnings={warnings}
+          activeScriptName={activeScriptName}
+          activeScriptContent={activeScriptContent}
+          hasDirtyScript={hasDirtyScript}
+          activeFocusLine={activeFocusLine}
+          activeFocusKey={activeFocusKey}
+          onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
+          onFloatPreview={() => setFloatingPreviewOpen(true)}
+          onChangeScript={updateActiveScriptContent}
+        />
+        <WorkbenchRightRail
+          activeRailPanel={activeRailPanel}
+          preview={preview}
+          preview2d={preview2d}
+          warnings={warnings}
+          tapirStatus={tapirStatus}
+          tapirBusy={tapirBusy}
+          assistantMessages={assistantMessages}
+          assistantBusy={assistantBusy}
+          onSetActiveRailPanel={setActiveRailPanel}
+          onLoadPreview2D={() => void loadPreview2D()}
+          onExpandPreview={() => setPreviewWorkspaceOpen(true)}
+          onFloatPreview={() => setFloatingPreviewOpen(true)}
+          onRefreshTapirStatus={() => void refreshTapirStatus()}
+          onReloadTapirLibraries={() => void reloadTapirLibraries()}
+          onSyncTapirSelection={() => void syncTapirSelection()}
+          onHighlightTapirSelection={() => void highlightTapirSelection()}
+          onLoadTapirParameters={() => void loadTapirParameters()}
+          onApplyTapirParameters={() => void applyTapirParameters()}
+          onSendAssistantMessage={(message) => void sendAssistantMessage(message)}
+          onCreateProjectFromPrompt={(message, image) => void createProjectFromPrompt(message, image)}
+          onGenerateAssistantChanges={(message, image) => void generateAssistantChanges(message, image)}
+          onClearAssistantHistory={() => void clearAssistantHistory()}
+          onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
+        />
       </section>
       <BottomDrawer
         warnings={warnings}
