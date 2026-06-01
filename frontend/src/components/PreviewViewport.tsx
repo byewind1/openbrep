@@ -8,6 +8,9 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload } from '../api/types'
 import {
   computePreviewBounds,
+  orthographicZoomForBounds,
+  perspectiveDistanceForBounds,
+  PREVIEW_CAMERA_FOV_DEGREES,
   viewDirectionForPreset,
   viewUpForPreset,
   type PreviewBounds,
@@ -182,10 +185,10 @@ function PreviewCameraRig({
   const { camera, size } = useThree()
 
   useEffect(() => {
-    fitCamera(camera, bounds, preset, mode, size.height)
+    fitCamera(camera, bounds, preset, mode, size.width, size.height)
     controlsRef.current?.target.set(...bounds.center)
     controlsRef.current?.update()
-  }, [camera, bounds, preset, mode, fitNonce, size.height])
+  }, [camera, bounds, preset, mode, fitNonce, size.width, size.height])
 
   return <OrbitControls ref={controlsRef} makeDefault enableDamping dampingFactor={0.08} screenSpacePanning={false} />
 }
@@ -195,12 +198,13 @@ function fitCamera(
   bounds: PreviewBounds,
   preset: PreviewViewPreset,
   mode: PreviewCameraMode,
+  viewportWidth: number,
   viewportHeight: number,
 ) {
   const center = new Vector3(...bounds.center)
   const direction = new Vector3(...viewDirectionForPreset(preset)).normalize()
   const up = new Vector3(...viewUpForPreset(preset)).normalize()
-  const distance = Math.max(bounds.radius * 2.8, 2.5)
+  const distance = perspectiveDistanceForBounds(bounds, viewportWidth, viewportHeight)
   const projectionCamera = camera as PerspectiveCameraType | OrthographicCameraType
 
   projectionCamera.up.copy(up)
@@ -209,11 +213,10 @@ function fitCamera(
 
   if (mode === 'orthographic') {
     const ortho = projectionCamera as OrthographicCameraType
-    const maxWorldSize = Math.max(bounds.size[0], bounds.size[1], bounds.size[2], 0.5)
-    ortho.zoom = Math.max(28, viewportHeight / (maxWorldSize * 1.65))
+    ortho.zoom = orthographicZoomForBounds(bounds, viewportWidth, viewportHeight)
   } else {
     const perspective = projectionCamera as PerspectiveCameraType
-    perspective.fov = 38
+    perspective.fov = PREVIEW_CAMERA_FOV_DEGREES
   }
 
   projectionCamera.near = 0.001
