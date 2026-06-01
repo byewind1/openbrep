@@ -3,10 +3,13 @@ from types import SimpleNamespace
 
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
-from openbrep.hsf_project import HSFProject
+from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService, parse_compile_issue
 from openbrep.workbench.memory_service import WorkbenchMemoryService
+from openbrep.workbench.preview_service import WorkbenchPreviewService
+from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService
+from openbrep.workbench.project_script_service import WorkbenchProjectScriptService
 from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.workbench.settings_service import WorkbenchSettingsService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
@@ -97,6 +100,48 @@ def test_project_service_loads_hsf_directory_and_updates_session(tmp_path):
     assert session.source == "hsf"
     assert session.source_path == hsf_dir.resolve()
     assert session.recent_project_paths == [str(hsf_dir.resolve())]
+
+
+def test_project_script_service_reads_memory_script_content(tmp_path):
+    project = HSFProject.create_new("ScriptShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    project.save_to_disk()
+    service = WorkbenchProjectScriptService(SimpleNamespace(project=project))
+
+    response = service.get_project_script("3d.gdl")
+
+    assert response["ok"] is True
+    assert response["path"] == "scripts/3d.gdl"
+    assert response["content"] == "BLOCK A, B, ZZYZX\n"
+
+
+def test_project_parameter_service_applies_values_and_snapshots(tmp_path):
+    project = HSFProject.create_new("ParamShelf", str(tmp_path))
+    project.save_to_disk()
+    session = SimpleNamespace(
+        project=project,
+        source_path=project.root,
+        snapshot=lambda: {"project": {"name": "ParamShelf"}},
+    )
+    service = WorkbenchProjectParameterService(session)
+
+    response = service.apply({"A": 2.5})
+
+    assert response["ok"] is True
+    assert response["changed"] == {"A": 2.5}
+    assert project.get_parameter("A").value == "2.5"
+
+
+def test_preview_service_returns_3d_payload_for_project(tmp_path):
+    project = HSFProject.create_new("PreviewShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    session = SimpleNamespace(project=project)
+    service = WorkbenchPreviewService(session)
+
+    response = service.preview({})
+
+    assert response["ok"] is True
+    assert response["preview"]["meshes"]
 
 
 def test_assistant_service_extracts_classified_code_blocks():

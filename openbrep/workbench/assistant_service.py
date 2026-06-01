@@ -18,7 +18,8 @@ from openbrep.explainer.service import (
 )
 from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import TaskRequest
-from openbrep.workbench.project_service import preview_payload, validate_image_payload
+from openbrep.workbench.preview_service import preview_payload
+from openbrep.workbench.project_service import validate_image_payload
 from ui.view_models import classify_code_blocks, classify_vision_error
 
 

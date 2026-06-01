@@ -19,13 +19,12 @@ from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
+from openbrep.workbench.preview_service import preview_2d_payload, preview_payload
+from openbrep.workbench.project_parameter_service import apply_parameter_values
 from openbrep.workbench.project_service import (
     WorkbenchProjectService,
-    apply_parameter_values,
     build_demo_project,
     build_demo_snapshot,
-    preview_2d_payload,
-    preview_payload,
     project_to_snapshot,
 )
 from openbrep.workbench.settings_service import (
