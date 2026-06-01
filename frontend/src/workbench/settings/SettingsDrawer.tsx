@@ -67,6 +67,8 @@ export function SettingsDrawer({
   const [llmDraft, setLlmDraft] = useState(llmSettings)
   const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [llmTesting, setLlmTesting] = useState(false)
+  const modelOptions = Array.from(new Set((llmDraft.models ?? []).filter(Boolean)))
+  const selectedModelOption = modelOptions.includes(llmDraft.model) ? llmDraft.model : '__custom__'
 
   useEffect(() => {
     setLlmDraft(llmSettings)
@@ -179,17 +181,30 @@ export function SettingsDrawer({
           </div>
           <label className="settings-field">
             <span>Model</span>
-            <input
-              type="text"
-              list="openbrep-models"
-              value={llmDraft.model}
-              onChange={(event) => setLlmDraft({ ...llmDraft, model: event.currentTarget.value })}
-            />
-            <datalist id="openbrep-models">
-              {llmDraft.models.map((model) => (
-                <option value={model} key={model} />
-              ))}
-            </datalist>
+            <div className="settings-model-row">
+              <select
+                value={selectedModelOption}
+                onChange={(event) => {
+                  const value = event.currentTarget.value
+                  if (value !== '__custom__') {
+                    setLlmDraft({ ...llmDraft, model: value })
+                  }
+                }}
+              >
+                {modelOptions.map((model) => (
+                  <option value={model} key={model}>
+                    {model}
+                  </option>
+                ))}
+                <option value="__custom__">Custom model</option>
+              </select>
+              <input
+                type="text"
+                value={llmDraft.model}
+                placeholder="Exact model id"
+                onChange={(event) => setLlmDraft({ ...llmDraft, model: event.currentTarget.value })}
+              />
+            </div>
           </label>
           <label className="settings-field">
             <span>API Key</span>

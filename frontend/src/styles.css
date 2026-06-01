@@ -1486,6 +1486,18 @@ button:focus-visible {
   line-height: 1.42;
 }
 
+.settings-model-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 1fr);
+  gap: 8px;
+}
+
+.settings-model-row > select,
+.settings-model-row > input {
+  min-width: 0;
+}
+
 .settings-submit-row {
   display: flex;
   justify-content: flex-end;
