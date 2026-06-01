@@ -247,6 +247,10 @@ button:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
+.workspace-grid.preview-workspace-open {
+  grid-template-columns: var(--panel-width-left) minmax(720px, 1fr) minmax(var(--panel-width-right), 360px);
+}
+
 .left-rail,
 .workbench-main-stage,
 .workbench-right-rail,
@@ -275,9 +279,15 @@ button:focus-visible {
 }
 
 .workbench-main-stage,
-.editor-stage {
+.editor-stage,
+.preview-workspace-stage {
   min-width: 0;
   background: var(--main-stage-bg);
+}
+
+.preview-workspace-stage {
+  min-height: 0;
+  display: grid;
 }
 
 .editor-empty {
@@ -701,6 +711,15 @@ button:focus-visible {
   background: var(--bg-canvas);
 }
 
+.viewport-surface-rail {
+  grid-template-rows: auto minmax(0, 1fr) 28px;
+}
+
+.viewport-surface-workspace,
+.viewport-surface-floating {
+  height: 100%;
+}
+
 .viewport-toolbar {
   justify-content: space-between;
   gap: 8px;
@@ -713,11 +732,33 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .viewport-action-button {
   height: 24px;
   font-size: 12px;
+}
+
+.viewport-action-button.active {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent-soft);
+}
+
+.viewport-surface-rail .viewport-toolbar {
+  align-items: flex-start;
+  min-height: 70px;
+  padding-block: 6px;
+}
+
+.viewport-surface-rail .viewport-toolbar-actions {
+  max-width: 210px;
+}
+
+.viewport-surface-workspace .viewport-toolbar {
+  min-height: 42px;
 }
 
 .drawer-tabs button {
@@ -735,6 +776,10 @@ button:focus-visible {
 .canvas-wrap {
   min-height: 0;
   background: var(--bg-canvas);
+}
+
+.canvas-wrap canvas {
+  display: block;
 }
 
 .preview2d-surface {

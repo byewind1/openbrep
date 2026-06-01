@@ -88,6 +88,11 @@ def body_has_script_save_result(body: str) -> bool:
     return "Saved 3d.gdl at " in body
 
 
+def body_has_preview_controls(body: str) -> bool:
+    required = ("3D View", "Fit", "Reset", "ISO", "Persp", "Float", "Expand")
+    return all(marker in body for marker in required)
+
+
 def terminate_process(process: subprocess.Popen[str]) -> None:
     if process.poll() is not None:
         return
@@ -169,6 +174,7 @@ def run_smoke(
         edit_interaction_ok = False
         save_interaction_ok = False
         compile_interaction_ok = False
+        preview_interaction_ok = False
         if api_ready and project_loaded and web_ready:
             try:
                 with sync_playwright() as p:
@@ -179,6 +185,16 @@ def run_smoke(
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)
                     if page_ok:
+                        preview_controls_ok = body_has_preview_controls(body)
+                        page.get_by_role("button", name="Expand").click()
+                        page.wait_for_function(
+                            "() => document.body.innerText.includes('Dock')",
+                            timeout=int(timeout_seconds * 1000),
+                        )
+                        expanded_body = page.locator("body").inner_text(timeout=5000)
+                        expanded_canvas_count = page.locator("canvas").count()
+                        preview_interaction_ok = preview_controls_ok and "Dock" in expanded_body and expanded_canvas_count >= 2
+                        page.get_by_role("button", name="Dock").click()
                         page.locator(".monaco-editor").first.click()
                         page.keyboard.press("Control+A")
                         page.keyboard.insert_text(SMOKE_SCRIPT_CONTENT)
@@ -205,7 +221,16 @@ def run_smoke(
 
         output = collect_process_output(process)
 
-        ok = api_ready and project_loaded and web_ready and page_ok and edit_interaction_ok and save_interaction_ok and compile_interaction_ok
+        ok = (
+            api_ready
+            and project_loaded
+            and web_ready
+            and page_ok
+            and preview_interaction_ok
+            and edit_interaction_ok
+            and save_interaction_ok
+            and compile_interaction_ok
+        )
         return {
             "ok": ok,
             "status": "pass" if ok else "fail",
@@ -213,6 +238,7 @@ def run_smoke(
             "project_loaded": project_loaded,
             "web_ready": web_ready,
             "page_ok": page_ok,
+            "preview_interaction_ok": preview_interaction_ok,
             "edit_interaction_ok": edit_interaction_ok,
             "save_interaction_ok": save_interaction_ok,
             "compile_interaction_ok": compile_interaction_ok,

@@ -16,11 +16,10 @@ import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { SettingsDrawer } from './settings/SettingsDrawer'
 import { TapirPanel } from './tapir/TapirPanel'
 
-const ENABLE_FLOATING_PREVIEW = false
-
 export function WorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
+  const [previewWorkspaceOpen, setPreviewWorkspaceOpen] = useState(false)
   const [editorFocus, setEditorFocus] = useState<{ scriptName: string; line: number | null; token: number } | null>(null)
   const project = useWorkbenchStore((state) => state.project)
   const parameters = useWorkbenchStore((state) => state.parameters)
@@ -186,7 +185,7 @@ export function WorkbenchApp() {
         lastError={lastError}
         onClearError={clearLastError}
       />
-      <section className="workspace-grid" aria-busy={loading}>
+      <section className={`workspace-grid${previewWorkspaceOpen ? ' preview-workspace-open' : ''}`} aria-busy={loading}>
         <aside className="left-rail">
           <ScriptTree scripts={scripts} activeScript={activeScriptName} dirtyScripts={dirtyScripts} onSelect={(name) => void openScript(name)} />
           <ParameterRail
@@ -207,8 +206,17 @@ export function WorkbenchApp() {
             applying={applying}
           />
         </aside>
-        <section className="workbench-main-stage editor-stage">
-          {activeScriptName ? (
+        <section className={`workbench-main-stage ${previewWorkspaceOpen ? 'preview-workspace-stage' : 'editor-stage'}`}>
+          {previewWorkspaceOpen ? (
+            <PreviewViewport
+              preview={preview}
+              warnings={warnings}
+              variant="workspace"
+              expanded
+              onCollapse={() => setPreviewWorkspaceOpen(false)}
+              onFloat={() => setFloatingPreviewOpen(true)}
+            />
+          ) : activeScriptName ? (
             <ScriptEditor
               scriptName={activeScriptName}
               content={activeScriptContent}
@@ -264,11 +272,8 @@ export function WorkbenchApp() {
               <PreviewViewport
                 preview={preview}
                 warnings={warnings}
-                actions={ENABLE_FLOATING_PREVIEW ? (
-                  <button type="button" className="viewport-action-button" onClick={() => setFloatingPreviewOpen(true)}>
-                    浮窗
-                  </button>
-                ) : null}
+                onExpand={() => setPreviewWorkspaceOpen(true)}
+                onFloat={() => setFloatingPreviewOpen(true)}
               />
             ) : activeRailPanel === '2d' ? (
               <Preview2DViewport preview={preview2d} warnings={warnings} />
@@ -313,14 +318,12 @@ export function WorkbenchApp() {
           />
         }
       />
-      {ENABLE_FLOATING_PREVIEW ? (
-        <FloatingPreviewWindow
-          open={floatingPreviewOpen}
-          preview={preview}
-          warnings={warnings}
-          onClose={() => setFloatingPreviewOpen(false)}
-        />
-      ) : null}
+      <FloatingPreviewWindow
+        open={floatingPreviewOpen}
+        preview={preview}
+        warnings={warnings}
+        onClose={() => setFloatingPreviewOpen(false)}
+      />
       <SettingsDrawer
         open={settingsOpen}
         compilerSettings={compilerSettings}

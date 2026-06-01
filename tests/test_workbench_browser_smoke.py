@@ -56,6 +56,13 @@ def test_workbench_browser_smoke_detects_save_result():
     assert not smoke.body_has_script_save_result("Saved")
 
 
+def test_workbench_browser_smoke_detects_preview_controls():
+    smoke = _load_smoke_module()
+
+    assert smoke.body_has_preview_controls("3D View Fit Reset ISO Persp Float Expand")
+    assert not smoke.body_has_preview_controls("3D View Fit")
+
+
 def test_workbench_browser_smoke_creates_disk_hsf_project(tmp_path):
     smoke = _load_smoke_module()
 
