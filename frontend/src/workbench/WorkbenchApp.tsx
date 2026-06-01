@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { BottomDrawer } from '../components/BottomDrawer'
-import { ParameterRail } from '../components/ParameterRail'
-import { ScriptTree } from '../components/ScriptTree'
 import { TopMenu } from '../components/TopMenu'
 import type { CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { RevisionPanel } from './diagnostics/RevisionPanel'
+import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
+import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
 import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
@@ -182,66 +182,71 @@ export function WorkbenchApp() {
         lastError={lastError}
         onClearError={clearLastError}
       />
-      <section className={`workspace-grid${previewWorkspaceOpen ? ' preview-workspace-open' : ''}`} aria-busy={loading}>
-        <aside className="left-rail">
-          <ScriptTree scripts={scripts} activeScript={activeScriptName} dirtyScripts={dirtyScripts} onSelect={(name) => void openScript(name)} />
-          <ParameterRail
-            title="参数"
-            sections={[
-              { title: '尺寸', parameters: grouped.dimensions },
-              { title: '属性', parameters: grouped.properties },
-            ]}
+      <ResizableWorkspaceGrid
+        previewWorkspaceOpen={previewWorkspaceOpen}
+        loading={loading}
+        left={(
+          <WorkbenchLeftRail
+            scripts={scripts}
+            activeScriptName={activeScriptName}
+            dirtyScripts={dirtyScripts}
+            groupedParameters={grouped}
             parameterIssues={parameterIssues}
             draftParameters={draftParameters}
-            onChange={(name, value) => void setDraftParameter(name, value)}
-            onApply={() => void applyDraftParameters()}
-            onReset={resetDraftParameters}
+            applying={applying}
+            onSelectScript={(name) => void openScript(name)}
+            onChangeParameter={(name, value) => void setDraftParameter(name, value)}
+            onApplyParameters={() => void applyDraftParameters()}
+            onResetParameters={resetDraftParameters}
             onAddParameter={addProjectParameter}
             onUpdateParameter={updateProjectParameter}
             onDeleteParameter={deleteProjectParameter}
             onValidateParameters={() => void validateProjectParameters()}
-            applying={applying}
           />
-        </aside>
-        <PreviewWorkspaceStage
-          previewWorkspaceOpen={previewWorkspaceOpen}
-          preview={preview}
-          warnings={warnings}
-          activeScriptName={activeScriptName}
-          activeScriptContent={activeScriptContent}
-          hasDirtyScript={hasDirtyScript}
-          activeFocusLine={activeFocusLine}
-          activeFocusKey={activeFocusKey}
-          onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
-          onFloatPreview={() => setFloatingPreviewOpen(true)}
-          onChangeScript={updateActiveScriptContent}
-        />
-        <WorkbenchRightRail
-          activeRailPanel={activeRailPanel}
-          preview={preview}
-          preview2d={preview2d}
-          warnings={warnings}
-          tapirStatus={tapirStatus}
-          tapirBusy={tapirBusy}
-          assistantMessages={assistantMessages}
-          assistantBusy={assistantBusy}
-          onSetActiveRailPanel={setActiveRailPanel}
-          onLoadPreview2D={() => void loadPreview2D()}
-          onExpandPreview={() => setPreviewWorkspaceOpen(true)}
-          onFloatPreview={() => setFloatingPreviewOpen(true)}
-          onRefreshTapirStatus={() => void refreshTapirStatus()}
-          onReloadTapirLibraries={() => void reloadTapirLibraries()}
-          onSyncTapirSelection={() => void syncTapirSelection()}
-          onHighlightTapirSelection={() => void highlightTapirSelection()}
-          onLoadTapirParameters={() => void loadTapirParameters()}
-          onApplyTapirParameters={() => void applyTapirParameters()}
-          onSendAssistantMessage={(message) => void sendAssistantMessage(message)}
-          onCreateProjectFromPrompt={(message, image) => void createProjectFromPrompt(message, image)}
-          onGenerateAssistantChanges={(message, image) => void generateAssistantChanges(message, image)}
-          onClearAssistantHistory={() => void clearAssistantHistory()}
-          onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
-        />
-      </section>
+        )}
+        main={(
+          <PreviewWorkspaceStage
+            previewWorkspaceOpen={previewWorkspaceOpen}
+            preview={preview}
+            warnings={warnings}
+            activeScriptName={activeScriptName}
+            activeScriptContent={activeScriptContent}
+            hasDirtyScript={hasDirtyScript}
+            activeFocusLine={activeFocusLine}
+            activeFocusKey={activeFocusKey}
+            onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
+            onFloatPreview={() => setFloatingPreviewOpen(true)}
+            onChangeScript={updateActiveScriptContent}
+          />
+        )}
+        right={(
+          <WorkbenchRightRail
+            activeRailPanel={activeRailPanel}
+            preview={preview}
+            preview2d={preview2d}
+            warnings={warnings}
+            tapirStatus={tapirStatus}
+            tapirBusy={tapirBusy}
+            assistantMessages={assistantMessages}
+            assistantBusy={assistantBusy}
+            onSetActiveRailPanel={setActiveRailPanel}
+            onLoadPreview2D={() => void loadPreview2D()}
+            onExpandPreview={() => setPreviewWorkspaceOpen(true)}
+            onFloatPreview={() => setFloatingPreviewOpen(true)}
+            onRefreshTapirStatus={() => void refreshTapirStatus()}
+            onReloadTapirLibraries={() => void reloadTapirLibraries()}
+            onSyncTapirSelection={() => void syncTapirSelection()}
+            onHighlightTapirSelection={() => void highlightTapirSelection()}
+            onLoadTapirParameters={() => void loadTapirParameters()}
+            onApplyTapirParameters={() => void applyTapirParameters()}
+            onSendAssistantMessage={(message) => void sendAssistantMessage(message)}
+            onCreateProjectFromPrompt={(message, image) => void createProjectFromPrompt(message, image)}
+            onGenerateAssistantChanges={(message, image) => void generateAssistantChanges(message, image)}
+            onClearAssistantHistory={() => void clearAssistantHistory()}
+            onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
+          />
+        )}
+      />
       <BottomDrawer
         warnings={warnings}
         compileLog={compileLog}

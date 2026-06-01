@@ -242,13 +242,37 @@ button:focus-visible {
 .workspace-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--panel-width-left) minmax(520px, 1fr) var(--panel-width-right);
+  grid-template-columns: var(--workspace-left-width) 6px minmax(520px, 1fr) 6px var(--workspace-right-width);
   gap: 0;
   border-bottom: 1px solid var(--border);
 }
 
 .workspace-grid.preview-workspace-open {
-  grid-template-columns: var(--panel-width-left) minmax(720px, 1fr) minmax(var(--panel-width-right), 360px);
+  grid-template-columns: var(--workspace-left-width) 6px minmax(720px, 1fr) 6px var(--workspace-right-width);
+}
+
+.workspace-resize-handle {
+  width: 6px;
+  min-width: 6px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: var(--border);
+  padding: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.workspace-resize-handle:hover,
+.workspace-resize-handle:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+
+.workspace-resizing,
+.workspace-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .left-rail,

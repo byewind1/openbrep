@@ -35,7 +35,9 @@
 
   /* Dimensions */
   --panel-width-left: 240px;
-  --panel-width-right: 300px;
+  --panel-width-right: 320px;
+  --workspace-left-width: var(--panel-width-left);
+  --workspace-right-width: var(--panel-width-right);
   --bottom-drawer-height: 180px;
   --header-height: 48px;
 }
