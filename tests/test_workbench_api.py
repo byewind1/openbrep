@@ -758,6 +758,76 @@ timeout = 60
     assert "glm-4-flash" in response["llm"]["models"]
 
 
+def test_workbench_session_reload_runtime_settings_reads_updated_config_file(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "deepseek-chat"
+api_key = "old-key"
+api_base = "https://api.deepseek.com/v1"
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+custom_providers = []
+assistant_settings = "old"
+
+[agent]
+max_iterations = 5
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = ""
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+    config_path.write_text(
+        """
+[llm]
+model = "mimo-v2.5-pro"
+api_key = ""
+api_base = ""
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+assistant_settings = "new"
+
+[[llm.custom_providers]]
+name = "mimo"
+base_url = "https://token-plan-cn.xiaomimimo.com/v1"
+api_key = "mimo-key"
+protocol = "openai"
+models = ["mimo-v2.5-pro"]
+
+[agent]
+max_iterations = 8
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = "/Applications/LP_XMLConverter"
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+
+    response = session.route("GET", "/api/settings/runtime")
+
+    assert response["ok"] is True
+    assert response["llm"]["model"] == "mimo-v2.5-pro"
+    assert response["llm"]["api_key"] == "mimo-key"
+    assert response["llm"]["api_base"] == "https://token-plan-cn.xiaomimimo.com/v1"
+    assert response["llm"]["max_retries"] == 8
+    assert response["llm"]["assistant_settings"] == "new"
+    assert response["llm"]["model_groups"]["custom"][0]["id"] == "mimo-v2.5-pro"
+    assert response["compiler"]["converter_path"] == "/Applications/LP_XMLConverter"
+
+
 def test_workbench_session_exposes_official_and_custom_llm_model_groups(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

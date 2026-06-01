@@ -156,6 +156,22 @@ class WorkbenchSettingsService:
             "assistant_settings": self.session.assistant_settings,
         }
 
+    def reload_runtime_settings(self) -> dict[str, Any]:
+        self.session.config = load_workbench_config(self.session.config_path)
+        self.session.converter_path = self.session.config.compiler.path or ""
+        self.session.output_dir = "" if self.session.config.output_dir in {"", "./output"} else self.session.config.output_dir
+        self.session.llm_model = self.session.config.llm.model
+        self.session.llm_api_key = self.session.config.llm.resolve_api_key() or ""
+        self.session.llm_api_base = self.session.config.llm.resolve_api_base() or ""
+        self.session.max_retries = self.session.config.agent.max_iterations
+        self.session.assistant_settings = self.session.config.llm.assistant_settings or ""
+        self.session.recent_project_paths = list(self.session.config.recent_projects or [])
+        return {
+            "ok": True,
+            "compiler": self.compiler_settings(),
+            "llm": self.llm_settings(),
+        }
+
     def update_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         model = str(body.get("model") or self.session.llm_model).strip()
         if not model:

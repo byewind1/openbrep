@@ -359,7 +359,7 @@ class WorkbenchSession:
             return self.update_compiler_settings(body)
 
         if normalized_method == "GET" and route == "/api/settings/runtime":
-            return {"ok": True, "compiler": self.compiler_settings(), "llm": self.llm_settings()}
+            return self.settings_service.reload_runtime_settings()
 
         if normalized_method == "POST" and route == "/api/settings/llm/test":
             return self.test_llm_settings(body)
