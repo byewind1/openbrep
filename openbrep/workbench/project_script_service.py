@@ -33,9 +33,13 @@ class WorkbenchProjectScriptService:
         self.session = session
 
     def list_project_scripts(self) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": True, "scripts": []}
         return {"ok": True, "scripts": [script_file_info(self.session.project, name) for name in SCRIPT_FILE_ORDER]}
 
     def get_project_script(self, script_name: str) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project before reading scripts."}
         resolved = resolve_script_name(script_name)
         if resolved is None:
             return {"ok": False, "error": f"Unsupported script file: {script_name}"}
@@ -46,6 +50,8 @@ class WorkbenchProjectScriptService:
         return {"ok": True, "name": resolved, "path": path, "content": content}
 
     def save_project_script(self, script_name: str, body: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project before saving scripts."}
         resolved = resolve_script_name(script_name)
         if resolved is None:
             return {"ok": False, "error": f"Unsupported script file: {script_name}"}
@@ -53,7 +59,8 @@ class WorkbenchProjectScriptService:
         script_type = SCRIPT_NAME_TO_TYPE.get(resolved)
         if script_type is not None:
             self.session.project.set_script(script_type, content)
-            self.session.project.save_to_disk()
+            if self.session.source_path is not None:
+                self.session.project.save_to_disk()
         else:
             if self.session.source_path is None:
                 return {"ok": False, "error": "Load an HSF project before saving XML files."}

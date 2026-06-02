@@ -20,6 +20,7 @@ from ui.view_models import classify_vision_error
 MAX_WORKBENCH_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_WORKBENCH_IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp"}
 _DEMO_PROJECT: HSFProject | None = None
+UNTITLED_PROJECT_NAME = "Untitled GDL Object"
 
 
 class WorkbenchProjectSessionService:
@@ -222,13 +223,34 @@ class WorkbenchProjectSessionService:
             **self.session.snapshot(),
         }
 
-    def close_project(self) -> dict[str, Any]:
-        self.session.project = build_demo_project()
-        self.session.source = "demo"
+    def new_project(self) -> dict[str, Any]:
+        project = HSFProject.create_new(UNTITLED_PROJECT_NAME)
+        self.session.project = project
+        self.session.source = "untitled"
         self.session.source_path = None
         return {"ok": True, **self.session.snapshot()}
 
+    def close_project(self) -> dict[str, Any]:
+        self.session.project = None
+        self.session.source = "empty"
+        self.session.source_path = None
+        return {"ok": True, **self.session.snapshot()}
+
+    def save_project(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "No project to save."}
+        if self.session.source_path is None:
+            return {
+                "ok": False,
+                "needs_save_as": True,
+                "error": "Project has no HSF path. Use Save As HSF.",
+            }
+        self.session.project.save_to_disk()
+        return {"ok": True, "saved_to": str(self.session.source_path), **self.session.snapshot()}
+
     def export_hsf_project(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "No project to export."}
         raw_parent = str(body.get("parent_dir") or "").strip()
         if not raw_parent:
             try:
@@ -366,12 +388,23 @@ def build_demo_snapshot() -> dict[str, Any]:
     return project_to_snapshot(demo_project())
 
 
+def empty_project_snapshot() -> dict[str, Any]:
+    return {
+        "project": None,
+        "parameters": [],
+        "preview": {"meshes": [], "wires": [], "warnings": []},
+        "warnings": [],
+    }
+
+
 def project_to_snapshot(
-    project: HSFProject,
+    project: HSFProject | None,
     *,
     source: str = "demo",
     source_path: str | None = None,
 ) -> dict[str, Any]:
+    if project is None:
+        return empty_project_snapshot()
     preview = preview_payload(project)
     return {
         "project": {

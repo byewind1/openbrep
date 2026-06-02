@@ -19,6 +19,15 @@ class WorkbenchCompilerService:
         self.mock_compiler_factory = mock_compiler_factory
 
     def compile_mock(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {
+                "ok": False,
+                "success": False,
+                "mode": "mock",
+                "issues": [],
+                "duration_ms": 0,
+                "error": "Create or open a project before compiling.",
+            }
         start = time.perf_counter()
         self.session.project.save_to_disk()
         hsf_dir = self.session.project.root if self.session.source_path is None else self.session.source_path
@@ -41,6 +50,8 @@ class WorkbenchCompilerService:
         }
 
     def compile_project(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project before compiling."}
         if self.session.source_path is None:
             return {"ok": False, "error": "Load an HSF project before compiling."}
 

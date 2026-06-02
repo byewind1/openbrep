@@ -44,8 +44,14 @@ class WorkbenchProjectService:
     def create_project_from_prompt(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.session_service.create_project_from_prompt(body)
 
+    def new_project(self) -> dict[str, Any]:
+        return self.session_service.new_project()
+
     def close_project(self) -> dict[str, Any]:
         return self.session_service.close_project()
+
+    def save_project(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.session_service.save_project(body)
 
     def export_hsf_project(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.session_service.export_hsf_project(body)

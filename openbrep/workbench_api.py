@@ -61,8 +61,8 @@ class WorkbenchSession:
         get_tapir_bridge_fn: Callable[[], object] | None = None,
         now_text_fn: Callable[[], str] | None = None,
     ) -> None:
-        self.project: HSFProject = build_demo_project()
-        self.source = "demo"
+        self.project: HSFProject | None = None
+        self.source = "empty"
         self.source_path: Path | None = None
         self.pipeline_class = pipeline_class
         self.directory_chooser = directory_chooser or _choose_directory
@@ -110,6 +110,7 @@ class WorkbenchSession:
             source=self.source,
             source_path=str(self.source_path) if self.source_path else None,
         )
+        snapshot["ok"] = True
         snapshot["compiler"] = self.compiler_settings()
         snapshot["llm"] = self.llm_settings()
         return snapshot
@@ -141,8 +142,14 @@ class WorkbenchSession:
     def create_project_from_prompt(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.create_project_from_prompt(body)
 
+    def new_project(self) -> dict[str, Any]:
+        return self.project_service.new_project()
+
     def close_project(self) -> dict[str, Any]:
         return self.project_service.close_project()
+
+    def save_project(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.project_service.save_project(body)
 
     def export_hsf_project(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.export_hsf_project(body)
@@ -324,8 +331,14 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/create":
             return self.create_project_from_prompt(body)
 
+        if normalized_method == "POST" and route == "/api/project/new":
+            return self.new_project()
+
         if normalized_method == "POST" and route == "/api/project/close":
             return self.close_project()
+
+        if normalized_method == "POST" and route == "/api/project/save":
+            return self.save_project(body)
 
         if normalized_method == "POST" and route == "/api/project/export-hsf":
             return self.export_hsf_project(body)

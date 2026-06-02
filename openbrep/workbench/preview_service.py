@@ -13,6 +13,8 @@ class WorkbenchPreviewService:
         self.session = session
 
     def preview(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": True, "preview": empty_preview_payload()}
         parameters, scripts = split_preview_request(request)
         return {
             "ok": True,
@@ -20,6 +22,8 @@ class WorkbenchPreviewService:
         }
 
     def preview_2d(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": True, "preview": empty_preview_2d_payload()}
         parameters, scripts = split_preview_request(request)
         return {
             "ok": True,
@@ -65,6 +69,15 @@ def preview_payload(
     return payload
 
 
+def empty_preview_payload() -> dict[str, Any]:
+    return {
+        "meshes": [],
+        "wires": [],
+        "warnings": [],
+        "verification": preview_verification({}),
+    }
+
+
 def preview_2d_payload(
     project: HSFProject,
     overrides: dict[str, Any] | None = None,
@@ -91,6 +104,17 @@ def preview_2d_payload(
         ],
         "warnings": result.warnings,
         "verification": preview_verification(scripts),
+    }
+
+
+def empty_preview_2d_payload() -> dict[str, Any]:
+    return {
+        "lines": [],
+        "polygons": [],
+        "circles": [],
+        "arcs": [],
+        "warnings": [],
+        "verification": preview_verification({}),
     }
 
 

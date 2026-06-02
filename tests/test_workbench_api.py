@@ -56,13 +56,22 @@ def test_apply_parameter_values_updates_project_values():
 
 
 def test_route_rpc_preview_returns_preview_for_overrides():
-    response = route_rpc("POST", "/api/preview", {"parameters": {"A": 2.2}})
+    route_rpc("POST", "/api/project/new", {})
+    response = route_rpc(
+        "POST",
+        "/api/preview",
+        {
+            "parameters": {"A": 2.2},
+            "scripts": {"3d.gdl": "BLOCK A, B, ZZYZX\n"},
+        },
+    )
 
     assert response["ok"] is True
     assert response["preview"]["meshes"]
 
 
 def test_route_rpc_preview_forwards_editor_buffer_overrides():
+    route_rpc("POST", "/api/project/new", {})
     response = route_rpc(
         "POST",
         "/api/preview",
@@ -211,6 +220,38 @@ def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
     assert response["preview"]["meshes"]
 
 
+def test_workbench_session_starts_empty(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    snapshot = session.snapshot()
+
+    assert snapshot["ok"] is True
+    assert snapshot["project"] is None
+    assert snapshot["parameters"] == []
+    assert snapshot["preview"]["meshes"] == []
+
+
+def test_workbench_session_new_project_is_untitled(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    response = session.route("POST", "/api/project/new", {})
+
+    assert response["ok"] is True
+    assert response["project"]["name"] == "Untitled GDL Object"
+    assert response["project"]["source"] == "untitled"
+    assert "path" not in response["project"]
+
+
+def test_workbench_session_close_returns_empty(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/new", {})
+
+    response = session.route("POST", "/api/project/close", {})
+
+    assert response["ok"] is True
+    assert response["project"] is None
+
+
 def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp_path):
     first = HSFProject.create_new("RecentOne", str(tmp_path / "one")).save_to_disk()
     second = HSFProject.create_new("RecentTwo", str(tmp_path / "two")).save_to_disk()
@@ -227,8 +268,7 @@ def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp
     assert recent["projects"][0]["parent_dir"] == str(second.parent)
     assert all(item["exists"] for item in recent["projects"][:2])
     assert closed["ok"] is True
-    assert closed["project"]["source"] == "demo"
-    assert "path" not in closed["project"]
+    assert closed["project"] is None
 
 
 def test_workbench_session_persists_recent_projects_in_config(tmp_path):
@@ -276,6 +316,7 @@ def test_workbench_session_export_hsf_rejects_non_empty_target(tmp_path):
     (target / "notes.txt").write_text("do not overwrite", encoding="utf-8")
 
     session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/new", {})
     response = session.route(
         "POST",
         "/api/project/export-hsf",
@@ -1112,7 +1153,7 @@ def test_workbench_session_compile_requires_loaded_hsf_project():
     response = session.route("POST", "/api/compile", {})
 
     assert response["ok"] is False
-    assert "Load an HSF project" in response["error"]
+    assert "Create or open a project" in response["error"]
 
 
 def test_workbench_session_assistant_explains_loaded_project(tmp_path):

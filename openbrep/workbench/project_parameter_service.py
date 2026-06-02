@@ -16,19 +16,24 @@ class WorkbenchProjectParameterService:
         self.session = session
 
     def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project before applying parameters."}
         changed = apply_parameter_values(self.session.project, changes)
         if changed and self.session.source_path is not None:
             self.session.project.save_to_disk()
         return {"ok": True, "changed": changed, **self.session.snapshot()}
 
     def add_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project before adding parameters."}
         try:
             param = build_parameter_from_authoring_request(self.session.project, body)
             self.session.project.add_parameter(param)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        self.session.project.save_to_disk()
+        if self.session.source_path is not None:
+            self.session.project.save_to_disk()
         return {
             "ok": True,
             "added": parameter_to_dict(param),
@@ -36,6 +41,8 @@ class WorkbenchProjectParameterService:
         }
 
     def update_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project before updating parameters."}
         name = str(body.get("name") or "").strip()
         param = self.session.project.get_parameter(name)
         if param is None:
@@ -61,7 +68,8 @@ class WorkbenchProjectParameterService:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        self.session.project.save_to_disk()
+        if self.session.source_path is not None:
+            self.session.project.save_to_disk()
         return {
             "ok": True,
             "updated": parameter_to_dict(param),
@@ -69,6 +77,8 @@ class WorkbenchProjectParameterService:
         }
 
     def delete_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project before deleting parameters."}
         name = str(body.get("name") or "").strip()
         param = self.session.project.get_parameter(name)
         if param is None:
@@ -76,7 +86,8 @@ class WorkbenchProjectParameterService:
         if param.is_fixed:
             return {"ok": False, "error": f"Fixed parameter '{name}' cannot be deleted"}
         self.session.project.remove_parameter(name)
-        self.session.project.save_to_disk()
+        if self.session.source_path is not None:
+            self.session.project.save_to_disk()
         return {
             "ok": True,
             "deleted": name,
@@ -84,6 +95,8 @@ class WorkbenchProjectParameterService:
         }
 
     def validate_project_parameters(self) -> dict[str, Any]:
+        if self.session.project is None:
+            return {"ok": True, "issues": []}
         return {
             "ok": True,
             "issues": validate_paramlist(self.session.project.parameters or []),
