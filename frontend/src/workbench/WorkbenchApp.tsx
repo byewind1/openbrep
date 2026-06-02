@@ -62,9 +62,11 @@ export function WorkbenchApp() {
   const validateProjectParameters = useWorkbenchStore((state) => state.validateProjectParameters)
   const resetDraftParameters = useWorkbenchStore((state) => state.resetDraftParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
+  const newProject = useWorkbenchStore((state) => state.newProject)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
   const importGsmFile = useWorkbenchStore((state) => state.importGsmFile)
   const exportHsfProject = useWorkbenchStore((state) => state.exportHsfProject)
+  const saveProject = useWorkbenchStore((state) => state.saveProject)
   const closeProject = useWorkbenchStore((state) => state.closeProject)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
@@ -136,6 +138,48 @@ export function WorkbenchApp() {
     void closeProject()
   }
 
+  function hasMeaningfulProjectContent() {
+    return Object.values(scriptContents).some((content) => content.trim().length > 0)
+  }
+
+  function confirmDiscardUnsavedChanges(action: string) {
+    const hasUnsavedDraft = hasAnyDirtyScript || hasDraftChanges()
+    return !hasUnsavedDraft || window.confirm(`${action}? Unsaved script edits or parameter drafts will be discarded unless saved first.`)
+  }
+
+  function createNewProject() {
+    if (loading || !confirmDiscardUnsavedChanges('Create a new project')) return
+    void newProject()
+  }
+
+  async function saveProjectAsWithPrompt() {
+    if (!project) return
+    if (!project.path && !hasMeaningfulProjectContent()) {
+      window.alert('Nothing to save yet. Add GDL code or generate an object first.')
+      return
+    }
+    const name = window.prompt('Project name', project.name || 'Untitled GDL Object')
+    if (name === null) return
+    const cleanedName = name.trim()
+    if (!cleanedName) {
+      window.alert('Project name is required.')
+      return
+    }
+    await exportHsfProject('', cleanedName)
+  }
+
+  async function saveCurrentProject() {
+    if (!project || loading) return
+    if (hasDirtyScript) {
+      await saveActiveScript()
+    }
+    if (!project.path) {
+      await saveProjectAsWithPrompt()
+      return
+    }
+    await saveProject()
+  }
+
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       const isResetShortcut = (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyR'
@@ -169,24 +213,26 @@ export function WorkbenchApp() {
             project={project}
             loading={loading}
             recentProjects={recentProjects}
+            onNewProject={createNewProject}
             onLoadProjectPath={(path) => void loadProjectPath(path)}
             onBrowseProjectDirectory={() => void browseProjectDirectory()}
             onImportGdlFile={() => void importGdlFile()}
             onImportGsmFile={() => void importGsmFile()}
+            onSaveProjectAs={() => void saveProjectAsWithPrompt()}
           />
         }
         hasDraftChanges={hasDraftChanges()}
         onApply={() => void applyDraftParameters()}
         onCompile={() => void compileCurrentProject()}
         onMockCompile={() => void runMockCompile()}
-        onSave={() => void saveActiveScript()}
+        onSave={() => void saveCurrentProject()}
+        onSaveAs={() => void saveProjectAsWithPrompt()}
         onOpenSettings={() => setSettingsOpen(true)}
         applying={applying}
         loading={loading}
         compiling={compiling}
         saving={scriptSaving}
         hasDirtyScript={hasDirtyScript}
-        activeScriptName={activeScriptName}
         lastError={lastError}
         onClearError={clearLastError}
       />

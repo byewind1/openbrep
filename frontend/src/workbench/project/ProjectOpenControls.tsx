@@ -6,20 +6,24 @@ interface ProjectOpenControlsProps {
   project: WorkbenchProject | null
   loading: boolean
   recentProjects: RecentProject[]
+  onNewProject: () => void
   onLoadProjectPath: (path: string) => void
   onBrowseProjectDirectory: () => void
   onImportGdlFile: () => void
   onImportGsmFile: () => void
+  onSaveProjectAs: () => void
 }
 
 export function ProjectOpenControls({
   project,
   loading,
   recentProjects,
+  onNewProject,
   onLoadProjectPath,
   onBrowseProjectDirectory,
   onImportGdlFile,
   onImportGsmFile,
+  onSaveProjectAs,
 }: ProjectOpenControlsProps) {
   const [path, setPath] = useState(project?.path ?? '')
 
@@ -38,6 +42,9 @@ export function ProjectOpenControls({
 
   return (
     <form className="project-open-controls" onSubmit={submitPath}>
+      <button type="button" disabled={loading} onClick={onNewProject}>
+        New
+      </button>
       <input
         id="hsf-path"
         type="text"
@@ -79,6 +86,9 @@ export function ProjectOpenControls({
       </button>
       <button type="button" disabled={loading} onClick={onImportGsmFile}>
         Import GSM
+      </button>
+      <button type="button" disabled={loading || !project} onClick={onSaveProjectAs}>
+        Save As
       </button>
     </form>
   )

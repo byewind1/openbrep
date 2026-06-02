@@ -98,10 +98,12 @@ def project_file_path(project: HSFProject, script_name: str) -> Path | None:
 def script_file_info(project: HSFProject, script_name: str) -> dict[str, Any]:
     path = project_file_path(project, script_name)
     content = read_project_file_content(project, script_name)
+    is_unsaved_project = bool(project.root and not project.root.exists())
+    is_authorable_gdl = script_name in SCRIPT_NAME_TO_TYPE
     return {
         "name": script_name,
         "path": script_relative_path(script_name),
-        "exists": bool(path and path.exists()),
+        "exists": bool(path and path.exists()) or (is_unsaved_project and is_authorable_gdl),
         "size": len(content.encode("utf-8")) if content is not None else 0,
         "empty": not bool((content or "").strip()),
     }

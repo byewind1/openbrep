@@ -9,13 +9,13 @@ interface TopMenuProps {
   onCompile: () => void
   onMockCompile: () => void
   onSave: () => void
+  onSaveAs: () => void
   onOpenSettings: () => void
   applying: boolean
   loading: boolean
   compiling: boolean
   saving: boolean
   hasDirtyScript: boolean
-  activeScriptName: string | null
   lastError: string | null
   onClearError: () => void
 }
@@ -28,16 +28,19 @@ export function TopMenu({
   onCompile,
   onMockCompile,
   onSave,
+  onSaveAs,
   onOpenSettings,
   applying,
   loading,
   compiling,
   saving,
   hasDirtyScript,
-  activeScriptName,
   lastError,
   onClearError,
 }: TopMenuProps) {
+  const canCompile = Boolean(project?.path)
+  const projectStatus = project ? (project.path ? 'Saved' : 'Unsaved') : 'Empty'
+
   return (
     <header className="topbar">
       <div className="brand-lockup">
@@ -49,13 +52,16 @@ export function TopMenu({
       </div>
       {projectControls}
       <nav className="menu-row" aria-label="Migration status">
-        <button type="button" data-testid="save-script-button" disabled={!activeScriptName || saving} onClick={onSave}>
+        <button type="button" data-testid="save-script-button" disabled={!project || saving} onClick={onSave}>
           {saving ? '...' : 'Save'}
         </button>
-        <button type="button" data-testid="mock-compile-button" disabled={!project?.path || compiling} onClick={onMockCompile}>
+        <button type="button" disabled={!project || saving} onClick={onSaveAs}>
+          Save As
+        </button>
+        <button type="button" data-testid="mock-compile-button" disabled={!canCompile || compiling} onClick={onMockCompile}>
           {compiling ? '...' : 'Mock'}
         </button>
-        <button type="button" data-testid="compile-button" disabled={!project?.path || compiling} onClick={onCompile}>
+        <button type="button" data-testid="compile-button" disabled={!canCompile || compiling} onClick={onCompile}>
           {compiling ? '...' : 'Compile'}
         </button>
         <button type="button" className="settings-trigger" onClick={onOpenSettings}>
@@ -68,7 +74,8 @@ export function TopMenu({
             {lastError}
           </button>
         ) : null}
-        <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>{hasDirtyScript ? 'Dirty' : 'Saved'}</span>
+        <span className={projectStatus === 'Unsaved' ? 'status-pill changed' : 'status-pill'}>{projectStatus}</span>
+        <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>{hasDirtyScript ? 'Dirty' : 'Clean'}</span>
         <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? 'Params' : 'Stable'}</span>
         <button className="primary-action" disabled={!hasDraftChanges || applying} onClick={onApply}>
           {applying ? '...' : 'Apply'}

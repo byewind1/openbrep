@@ -14,10 +14,12 @@ describe('ProjectOpenControls', () => {
           { path: '/workspace/Chair', name: 'Display Chair', parent_dir: '/workspace', exists: true },
           { path: '/workspace/Missing', exists: false },
         ]}
+        onNewProject={vi.fn()}
         onLoadProjectPath={onLoadProjectPath}
         onBrowseProjectDirectory={vi.fn()}
         onImportGdlFile={vi.fn()}
         onImportGsmFile={vi.fn()}
+        onSaveProjectAs={vi.fn()}
       />,
     )
 
@@ -27,5 +29,30 @@ describe('ProjectOpenControls', () => {
     expect(onLoadProjectPath).toHaveBeenCalledWith('/workspace/Chair')
     expect(within(recent).getByText('Display Chair')).toBeTruthy()
     expect(within(recent).getByText('Missing')).toBeTruthy()
+  })
+
+  test('exposes new and save-as project actions', () => {
+    const onNewProject = vi.fn()
+    const onSaveProjectAs = vi.fn()
+
+    render(
+      <ProjectOpenControls
+        project={{ name: 'Untitled GDL Object', source: 'untitled' }}
+        loading={false}
+        recentProjects={[]}
+        onNewProject={onNewProject}
+        onLoadProjectPath={vi.fn()}
+        onBrowseProjectDirectory={vi.fn()}
+        onImportGdlFile={vi.fn()}
+        onImportGsmFile={vi.fn()}
+        onSaveProjectAs={onSaveProjectAs}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'New' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save As' }))
+
+    expect(onNewProject).toHaveBeenCalledTimes(1)
+    expect(onSaveProjectAs).toHaveBeenCalledTimes(1)
   })
 })
