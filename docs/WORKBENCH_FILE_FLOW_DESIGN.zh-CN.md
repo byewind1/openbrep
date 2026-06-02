@@ -134,6 +134,19 @@ AI create -> 生成未保存项目 -> Save As HSF
 - Dirty
 - 当前项目路径（如有）
 
+## Settings 保存语义
+
+Settings 是运行时和个人配置入口，不能像临时 demo 控件一样“改一下就静默写盘”。
+
+规则：
+
+- 设置面板使用 draft state。
+- `Reload config` 从配置文件重新读回当前运行设置。
+- `Save Settings` 一次性写回 compiler 和 AI 设置。
+- Browse 文件/目录只更新 draft，不直接写配置文件。
+- 面板必须显示 `Unsaved changes` / `Saved` 等状态反馈。
+- 除非维护者明确批准某个具体控件使用 autosave，否则不得新增即时写盘设置项。
+
 ## 后端边界
 
 不要继续膨胀 `workbench_api.py`。

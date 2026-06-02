@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { clampSettingsDrawerWidth, SettingsDrawer } from './SettingsDrawer'
@@ -6,7 +6,7 @@ import type { LlmSettings } from '../../api/types'
 
 function renderSettingsDrawer(
   llmSettings: LlmSettings,
-  onLlmSettingsChange = vi.fn(),
+  onLlmSettingsChange: ComponentProps<typeof SettingsDrawer>['onLlmSettingsChange'] = vi.fn(async () => {}),
   overrides: Partial<ComponentProps<typeof SettingsDrawer>> = {},
 ) {
   return render(
@@ -22,12 +22,12 @@ function renderSettingsDrawer(
       gitStatus={null}
       gitBusy={false}
       onClose={vi.fn()}
-      onCompilerSettingsChange={vi.fn()}
+      onCompilerSettingsChange={vi.fn(async () => undefined)}
       onLlmSettingsChange={onLlmSettingsChange}
       onTestLlmConnection={async () => ({ ok: true })}
-      onReloadRuntimeSettings={vi.fn()}
-      onBrowseCompilerFile={vi.fn()}
-      onBrowseOutputDirectory={vi.fn()}
+      onReloadRuntimeSettings={vi.fn(async () => undefined)}
+      onBrowseCompilerFile={vi.fn(async () => null)}
+      onBrowseOutputDirectory={vi.fn(async () => null)}
       onOpenProjectPath={vi.fn()}
       onExportHsfProject={vi.fn()}
       onResetCurrentProject={vi.fn()}
@@ -47,6 +47,44 @@ function renderSettingsDrawer(
 }
 
 describe('SettingsDrawer AI model settings', () => {
+  test('keeps settings as draft until Save Settings is pressed and saves compiler before AI', async () => {
+    const saveOrder: string[] = []
+    const onCompilerSettingsChange = vi.fn(async () => {
+      saveOrder.push('compiler')
+    })
+    const onLlmSettingsChange = vi.fn(async () => {
+      saveOrder.push('llm')
+    })
+    renderSettingsDrawer(
+      {
+        model: 'deepseek-chat',
+        models: ['deepseek-chat'],
+        model_groups: {
+          custom: [],
+          official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
+        },
+        api_key: '',
+        api_base: '',
+        max_retries: 5,
+        assistant_settings: '',
+      },
+      onLlmSettingsChange,
+      { onCompilerSettingsChange },
+    )
+
+    fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
+
+    expect(onCompilerSettingsChange).not.toHaveBeenCalled()
+    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+
+    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy())
+    expect(onCompilerSettingsChange).toHaveBeenCalledWith({ mode: 'lp', converter_path: '', output_dir: '' })
+    expect(onLlmSettingsChange).toHaveBeenCalled()
+    expect(saveOrder).toEqual(['compiler', 'llm'])
+  })
+
   test('resizes the settings panel from the left edge', () => {
     renderSettingsDrawer({
       model: 'deepseek-chat',
@@ -137,7 +175,7 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     }
 
-    const view = renderSettingsDrawer(llmSettings, vi.fn(), {
+    const view = renderSettingsDrawer(llmSettings, vi.fn(async () => undefined), {
       onLoadMemoryLessons: loadMemory,
       onLoadProjectGitStatus: firstLoadGit,
     })
@@ -158,12 +196,12 @@ describe('SettingsDrawer AI model settings', () => {
         gitStatus={null}
         gitBusy={false}
         onClose={vi.fn()}
-        onCompilerSettingsChange={vi.fn()}
-        onLlmSettingsChange={vi.fn()}
+        onCompilerSettingsChange={vi.fn(async () => undefined)}
+        onLlmSettingsChange={vi.fn(async () => undefined)}
         onTestLlmConnection={async () => ({ ok: true })}
-        onReloadRuntimeSettings={vi.fn()}
-        onBrowseCompilerFile={vi.fn()}
-        onBrowseOutputDirectory={vi.fn()}
+        onReloadRuntimeSettings={vi.fn(async () => undefined)}
+        onBrowseCompilerFile={vi.fn(async () => null)}
+        onBrowseOutputDirectory={vi.fn(async () => null)}
         onOpenProjectPath={vi.fn()}
         onExportHsfProject={vi.fn()}
         onResetCurrentProject={vi.fn()}

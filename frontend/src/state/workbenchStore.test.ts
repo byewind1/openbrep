@@ -1011,7 +1011,7 @@ test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
   expect(store.getState().llmSettings.assistant_settings).toBe('short answers')
 })
 
-test('browses for LP_XMLConverter and stores compiler settings', async () => {
+test('browses for LP_XMLConverter and returns draft compiler settings without saving', async () => {
   const store = createWorkbenchStore(
     makeApi({
       chooseCompilerFile: async () => ({
@@ -1022,16 +1022,17 @@ test('browses for LP_XMLConverter and stores compiler settings', async () => {
     }),
   )
 
-  await store.getState().browseCompilerFile()
+  const draft = await store.getState().browseCompilerFile()
 
-  expect(store.getState().compilerSettings).toEqual({
+  expect(draft).toEqual({
     mode: 'lp',
     converter_path: '/Applications/LP_XMLConverter',
     output_dir: '',
   })
+  expect(store.getState().compilerSettings).toEqual({ mode: 'mock', converter_path: '', output_dir: '' })
 })
 
-test('browses for compile output directory and stores compiler settings', async () => {
+test('browses for compile output directory and returns draft compiler settings without saving', async () => {
   const store = createWorkbenchStore(
     makeApi({
       chooseOutputDirectory: async () => ({
@@ -1042,13 +1043,14 @@ test('browses for compile output directory and stores compiler settings', async 
     }),
   )
 
-  await store.getState().browseOutputDirectory()
+  const draft = await store.getState().browseOutputDirectory()
 
-  expect(store.getState().compilerSettings).toEqual({
+  expect(draft).toEqual({
     mode: 'mock',
     converter_path: '',
     output_dir: '/workspace/output',
   })
+  expect(store.getState().compilerSettings).toEqual({ mode: 'mock', converter_path: '', output_dir: '' })
 })
 
 test('manages project git state from settings actions', async () => {

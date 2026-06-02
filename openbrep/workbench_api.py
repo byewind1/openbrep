@@ -32,7 +32,6 @@ from openbrep.workbench.settings_service import (
     WorkbenchSettingsService,
     load_workbench_config,
     resolve_workbench_config_path,
-    save_workbench_config,
 )
 from openbrep.workbench.tapir_service import WorkbenchTapirService
 from openbrep.workbench_tapir import WorkbenchTapirAdapter, default_tapir_bridge_loader
@@ -195,16 +194,14 @@ class WorkbenchSession:
         if not selected:
             return {"ok": False, "cancelled": True, "error": "File selection cancelled."}
         converter_path = str(Path(selected).expanduser())
-        settings = self.update_compiler_settings(
-            {
-                "mode": "lp",
+        return {
+            "ok": True,
+            "path": converter_path,
+            "compiler": {
+                **self.compiler_settings(),
                 "converter_path": converter_path,
-                "output_dir": self.output_dir,
-            }
-        )
-        if not settings.get("ok"):
-            return settings
-        return {"ok": True, "path": converter_path, "compiler": settings["compiler"]}
+            },
+        }
 
     def choose_output_directory(self) -> dict[str, Any]:
         try:
@@ -213,10 +210,15 @@ class WorkbenchSession:
             return {"ok": False, "error": f"Directory chooser failed: {exc}"}
         if not selected:
             return {"ok": False, "cancelled": True, "error": "Directory selection cancelled."}
-        self.output_dir = str(Path(selected).expanduser().resolve())
-        self.config.output_dir = self.output_dir
-        save_workbench_config(self.config, self.config_path)
-        return {"ok": True, "path": self.output_dir, "compiler": self.compiler_settings()}
+        output_dir = str(Path(selected).expanduser().resolve())
+        return {
+            "ok": True,
+            "path": output_dir,
+            "compiler": {
+                **self.compiler_settings(),
+                "output_dir": output_dir,
+            },
+        }
 
     def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.project_service.preview(overrides)

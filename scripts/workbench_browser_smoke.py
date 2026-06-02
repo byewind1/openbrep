@@ -79,6 +79,16 @@ def page_has_workbench_markers(*, title: str, body: str) -> bool:
     return all(marker in normalized for marker in required)
 
 
+def workbench_markers_ready_script() -> str:
+    return """
+        () => {
+            if (document.title.trim() !== 'OpenBrep Workbench') return false;
+            const body = document.body.innerText.toLowerCase();
+            return ['scripts', '3d.gdl', 'save', 'compile', 'settings', '3d view'].every((marker) => body.includes(marker));
+        }
+    """
+
+
 def body_has_mock_compile_result(body: str) -> bool:
     normalized = body.casefold()
     return "mock compile passed" in normalized or "编译通过" in body
@@ -182,10 +192,7 @@ def run_smoke(
                     browser = p.chromium.launch(headless=not headed)
                     page = browser.new_page(viewport={"width": 1440, "height": 960})
                     page.goto(web_url, wait_until="domcontentloaded", timeout=int(timeout_seconds * 1000))
-                    page.wait_for_function(
-                        "() => document.body.innerText.includes('SCRIPTS') && document.body.innerText.includes('3D View')",
-                        timeout=int(timeout_seconds * 1000),
-                    )
+                    page.wait_for_function(workbench_markers_ready_script(), timeout=int(timeout_seconds * 1000))
                     title = page.title()
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)

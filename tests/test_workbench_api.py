@@ -1066,7 +1066,7 @@ timeout = 60
     assert reloaded.llm_api_base == "https://new.example.test/v1"
 
 
-def test_workbench_session_choose_converter_file_updates_compiler_settings(tmp_path):
+def test_workbench_session_choose_converter_file_returns_draft_compiler_settings(tmp_path):
     config_path = tmp_path / "config.toml"
     session = WorkbenchSession(
         config_path=config_path,
@@ -1074,20 +1074,18 @@ def test_workbench_session_choose_converter_file_updates_compiler_settings(tmp_p
     )
 
     response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
-    reloaded = WorkbenchSession(config_path=config_path)
 
     assert response["ok"] is True
     assert response["path"] == "/Applications/LP_XMLConverter"
     assert response["compiler"] == {
-        "mode": "lp",
+        "mode": "mock",
         "converter_path": "/Applications/LP_XMLConverter",
         "output_dir": "",
     }
-    assert reloaded.compiler_mode == "lp"
-    assert reloaded.converter_path == "/Applications/LP_XMLConverter"
+    assert WorkbenchSession(config_path=config_path).converter_path != "/Applications/LP_XMLConverter"
 
 
-def test_workbench_session_choose_output_directory_updates_compiler_settings(tmp_path):
+def test_workbench_session_choose_output_directory_returns_draft_compiler_settings(tmp_path):
     output_dir = tmp_path / "selected-output"
     session = WorkbenchSession(
         config_path=tmp_path / "config.toml",

@@ -339,12 +339,12 @@ export function WorkbenchApp() {
         gitStatus={gitStatus}
         gitBusy={gitBusy}
         onClose={() => setSettingsOpen(false)}
-        onCompilerSettingsChange={(settings) => void setCompilerSettings(settings)}
-        onLlmSettingsChange={(settings) => void setLlmSettings(settings)}
+        onCompilerSettingsChange={setCompilerSettings}
+        onLlmSettingsChange={setLlmSettings}
         onTestLlmConnection={testLlmConnection}
-        onReloadRuntimeSettings={() => void reloadRuntimeSettings()}
-        onBrowseCompilerFile={() => void browseCompilerFile()}
-        onBrowseOutputDirectory={() => void browseOutputDirectory()}
+        onReloadRuntimeSettings={reloadRuntimeSettings}
+        onBrowseCompilerFile={browseCompilerFile}
+        onBrowseOutputDirectory={browseOutputDirectory}
         onOpenProjectPath={(path) => void loadProjectPath(path)}
         onExportHsfProject={() => void exportHsfProject()}
         onResetCurrentProject={resetCurrentProject}

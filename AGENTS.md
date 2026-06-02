@@ -26,6 +26,19 @@ compile-verified GSM output
 traceable project and asset lifecycle
 ```
 
+Product posture:
+
+- OpenBrep must behave like a professional GDL workbench, not a demo toy or
+  throwaway chatbot shell.
+- File, source, compile, and settings flows need explicit state, clear
+  persistence semantics, and visible user feedback.
+- Do not silently write user configuration from incidental UI changes. Settings
+  panels should use draft state plus an explicit save action, with saved/dirty
+  feedback, unless the maintainer explicitly approves autosave for that exact
+  control.
+- Sample/demo objects may exist as explicit fixtures or examples, but must not
+  replace real empty/new/open/save workspace states.
+
 ## Goal-Oriented Execution
 
 Treat user requests as outcomes to deliver, not scripts to mechanically follow.

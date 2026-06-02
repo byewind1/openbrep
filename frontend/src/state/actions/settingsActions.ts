@@ -22,15 +22,17 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
     async browseCompilerFile() {
       const result = await api.chooseCompilerFile()
       if (result.ok && result.compiler) {
-        set({ compilerSettings: result.compiler })
+        return result.compiler
       }
+      return null
     },
 
     async browseOutputDirectory() {
       const result = await api.chooseOutputDirectory()
       if (result.ok && result.compiler) {
-        set({ compilerSettings: result.compiler })
+        return result.compiler
       }
+      return null
     },
 
     async setLlmSettings(settings: LlmSettings) {

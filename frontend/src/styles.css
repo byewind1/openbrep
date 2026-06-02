@@ -1452,9 +1452,37 @@ button:focus-visible {
 
 .settings-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   border-bottom: 1px solid var(--border);
   padding: 8px 14px;
+}
+
+.settings-dirty-state,
+.settings-saving-state,
+.settings-saved-state {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.settings-dirty-state {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.settings-saving-state {
+  border-color: var(--accent);
+  color: var(--accent-soft);
+}
+
+.settings-saved-state {
+  border-color: var(--success);
+  color: var(--success);
 }
 
 .settings-section.muted {

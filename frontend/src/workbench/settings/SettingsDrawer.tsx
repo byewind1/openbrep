@@ -31,12 +31,12 @@ interface SettingsDrawerProps {
   gitStatus: ProjectGitStatus | null
   gitBusy: boolean
   onClose: () => void
-  onCompilerSettingsChange: (settings: CompilerSettings) => void
-  onLlmSettingsChange: (settings: LlmSettings) => void
+  onCompilerSettingsChange: (settings: CompilerSettings) => Promise<void>
+  onLlmSettingsChange: (settings: LlmSettings) => Promise<void>
   onTestLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
-  onReloadRuntimeSettings: () => void
-  onBrowseCompilerFile: () => void
-  onBrowseOutputDirectory: () => void
+  onReloadRuntimeSettings: () => Promise<void>
+  onBrowseCompilerFile: () => Promise<CompilerSettings | null>
+  onBrowseOutputDirectory: () => Promise<CompilerSettings | null>
   onOpenProjectPath: (path: string) => void
   onExportHsfProject: () => void
   onResetCurrentProject: () => void
@@ -84,9 +84,11 @@ export function SettingsDrawer({
   onIgnoreMemoryLesson,
   onClearProjectMemory,
 }: SettingsDrawerProps) {
+  const [compilerDraft, setCompilerDraft] = useState(compilerSettings)
   const [llmDraft, setLlmDraft] = useState(llmSettings)
   const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [llmTesting, setLlmTesting] = useState(false)
+  const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty' | 'saving' | null>(null)
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
   const [manualModelMode, setManualModelMode] = useState(false)
   const [drawerWidth, setDrawerWidth] = useState(SETTINGS_DRAWER_DEFAULT_WIDTH)
@@ -115,7 +117,12 @@ export function SettingsDrawer({
   }, [llmSettings])
 
   useEffect(() => {
+    setCompilerDraft(compilerSettings)
+  }, [compilerSettings])
+
+  useEffect(() => {
     if (open && !wasOpenRef.current) {
+      setSettingsSaveState(null)
       onLoadMemoryLessons()
       onLoadProjectGitStatus()
     }
@@ -159,7 +166,43 @@ export function SettingsDrawer({
 
   function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    onLlmSettingsChange(llmDraft)
+    void saveSettings()
+  }
+
+  function updateCompilerDraft(settings: CompilerSettings) {
+    setCompilerDraft(settings)
+    setSettingsSaveState('dirty')
+  }
+
+  function updateLlmDraft(settings: LlmSettings) {
+    setLlmDraft(settings)
+    setSettingsSaveState('dirty')
+  }
+
+  async function saveSettings() {
+    setSettingsSaveState('saving')
+    await onCompilerSettingsChange(compilerDraft)
+    await onLlmSettingsChange(llmDraft)
+    setSettingsSaveState('saved')
+  }
+
+  async function reloadRuntimeSettings() {
+    setSettingsSaveState(null)
+    await onReloadRuntimeSettings()
+  }
+
+  async function browseCompilerDraft() {
+    const selected = await onBrowseCompilerFile()
+    if (selected) {
+      updateCompilerDraft({ ...compilerDraft, converter_path: selected.converter_path })
+    }
+  }
+
+  async function browseOutputDraft() {
+    const selected = await onBrowseOutputDirectory()
+    if (selected) {
+      updateCompilerDraft({ ...compilerDraft, output_dir: selected.output_dir })
+    }
   }
 
   async function testLlmConnection() {
@@ -175,7 +218,7 @@ export function SettingsDrawer({
       const next = customModelOptions[0]
       if (next) {
         setManualModelMode(false)
-        setLlmDraft({ ...llmDraft, model: next.id, api_base: next.api_base ?? llmDraft.api_base })
+        updateLlmDraft({ ...llmDraft, model: next.id, api_base: next.api_base ?? llmDraft.api_base })
       }
       return
     }
@@ -183,12 +226,12 @@ export function SettingsDrawer({
       const next = officialModelOptions[0] ?? fallbackModelOptions[0]
       if (next) {
         setManualModelMode(false)
-        setLlmDraft({ ...llmDraft, model: next.id })
+        updateLlmDraft({ ...llmDraft, model: next.id })
       }
       return
     }
     setManualModelMode(true)
-    setLlmDraft({ ...llmDraft, model: selectedModelMeta?.id ?? llmDraft.model })
+    updateLlmDraft({ ...llmDraft, model: selectedModelMeta?.id ?? llmDraft.model })
   }
 
   return (
@@ -238,9 +281,25 @@ export function SettingsDrawer({
         </div>
 
         <div className="settings-actions">
-          <button type="button" onClick={onReloadRuntimeSettings}>
+          <button type="button" onClick={() => void reloadRuntimeSettings()}>
             Reload config
           </button>
+          <button type="button" className="primary-action" disabled={settingsSaveState === 'saving'} onClick={() => void saveSettings()}>
+            {settingsSaveState === 'saving' ? 'Saving...' : 'Save Settings'}
+          </button>
+          {settingsSaveState ? (
+            <span
+              className={
+                settingsSaveState === 'dirty'
+                  ? 'settings-dirty-state'
+                  : settingsSaveState === 'saving'
+                    ? 'settings-saving-state'
+                    : 'settings-saved-state'
+              }
+            >
+              {settingsSaveState === 'dirty' ? 'Unsaved changes' : settingsSaveState === 'saving' ? 'Saving' : 'Saved'}
+            </span>
+          ) : null}
         </div>
 
         <section className="settings-section">
@@ -251,10 +310,11 @@ export function SettingsDrawer({
           <label className="settings-row">
             <span>Mode</span>
             <select
-              value={compilerSettings.mode}
+              aria-label="Compiler mode"
+              value={compilerDraft.mode}
               onChange={(event) =>
-                onCompilerSettingsChange({
-                  ...compilerSettings,
+                updateCompilerDraft({
+                  ...compilerDraft,
                   mode: event.currentTarget.value === 'lp' ? 'lp' : 'mock',
                 })
               }
@@ -269,16 +329,16 @@ export function SettingsDrawer({
               <input
                 type="text"
                 placeholder="/Applications/.../LP_XMLConverter"
-                value={compilerSettings.converter_path}
-                disabled={compilerSettings.mode !== 'lp'}
+                value={compilerDraft.converter_path}
+                disabled={compilerDraft.mode !== 'lp'}
                 onChange={(event) =>
-                  onCompilerSettingsChange({
-                    ...compilerSettings,
+                  updateCompilerDraft({
+                    ...compilerDraft,
                     converter_path: event.currentTarget.value,
                   })
                 }
               />
-              <button type="button" disabled={compilerSettings.mode !== 'lp'} onClick={onBrowseCompilerFile}>
+              <button type="button" disabled={compilerDraft.mode !== 'lp'} onClick={() => void browseCompilerDraft()}>
                 Browse
               </button>
             </div>
@@ -289,15 +349,15 @@ export function SettingsDrawer({
               <input
                 type="text"
                 placeholder="Project sibling /output"
-                value={compilerSettings.output_dir}
+                value={compilerDraft.output_dir}
                 onChange={(event) =>
-                  onCompilerSettingsChange({
-                    ...compilerSettings,
+                  updateCompilerDraft({
+                    ...compilerDraft,
                     output_dir: event.currentTarget.value,
                   })
                 }
               />
-              <button type="button" onClick={onBrowseOutputDirectory}>
+              <button type="button" onClick={() => void browseOutputDraft()}>
                 Browse
               </button>
             </div>
@@ -348,7 +408,7 @@ export function SettingsDrawer({
                       aria-selected={llmDraft.model === model.id}
                       className={llmDraft.model === model.id ? 'active' : ''}
                       onClick={() => {
-                        setLlmDraft({
+                        updateLlmDraft({
                           ...llmDraft,
                           model: model.id,
                           api_base: model.kind === 'custom' ? model.api_base ?? llmDraft.api_base : llmDraft.api_base,
@@ -368,7 +428,7 @@ export function SettingsDrawer({
                 placeholder="Exact model id"
                 onChange={(event) => {
                   setManualModelMode(true)
-                  setLlmDraft({ ...llmDraft, model: event.currentTarget.value })
+                  updateLlmDraft({ ...llmDraft, model: event.currentTarget.value })
                 }}
               />
             </div>
@@ -388,7 +448,7 @@ export function SettingsDrawer({
               type="password"
               value={llmDraft.api_key}
               placeholder="Provider API key"
-              onChange={(event) => setLlmDraft({ ...llmDraft, api_key: event.currentTarget.value })}
+              onChange={(event) => updateLlmDraft({ ...llmDraft, api_key: event.currentTarget.value })}
             />
           </label>
           <label className="settings-field">
@@ -397,7 +457,7 @@ export function SettingsDrawer({
               type="text"
               value={llmDraft.api_base}
               placeholder="Optional endpoint override"
-              onChange={(event) => setLlmDraft({ ...llmDraft, api_base: event.currentTarget.value })}
+              onChange={(event) => updateLlmDraft({ ...llmDraft, api_base: event.currentTarget.value })}
             />
           </label>
           <label className="settings-row">
@@ -408,7 +468,7 @@ export function SettingsDrawer({
               max={10}
               value={llmDraft.max_retries}
               onChange={(event) =>
-                setLlmDraft({
+                updateLlmDraft({
                   ...llmDraft,
                   max_retries: Number(event.currentTarget.value),
                 })
@@ -420,15 +480,12 @@ export function SettingsDrawer({
             <textarea
               value={llmDraft.assistant_settings}
               placeholder="例如：先解释再给最小修改；优先保证可编译；不要大改结构。"
-              onChange={(event) => setLlmDraft({ ...llmDraft, assistant_settings: event.currentTarget.value })}
+              onChange={(event) => updateLlmDraft({ ...llmDraft, assistant_settings: event.currentTarget.value })}
             />
           </label>
           <div className="settings-submit-row">
             <button type="button" disabled={llmTesting} onClick={() => void testLlmConnection()}>
               {llmTesting ? 'Testing...' : 'Test connection'}
-            </button>
-            <button type="submit" className="primary-action">
-              Save AI
             </button>
           </div>
           {llmTestResult ? (

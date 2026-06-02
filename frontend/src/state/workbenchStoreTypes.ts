@@ -172,8 +172,8 @@ export interface WorkbenchState {
   saveProjectAs: (parentDir?: string, name?: string) => Promise<void>
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
-  browseCompilerFile: () => Promise<void>
-  browseOutputDirectory: () => Promise<void>
+  browseCompilerFile: () => Promise<CompilerSettings | null>
+  browseOutputDirectory: () => Promise<CompilerSettings | null>
   setCompilerSettings: (settings: CompilerSettings) => Promise<void>
   setLlmSettings: (settings: LlmSettings) => Promise<void>
   testLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
