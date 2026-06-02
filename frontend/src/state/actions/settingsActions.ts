@@ -16,7 +16,11 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
       const result = await api.updateCompilerSettings(settings)
       if (result.ok && result.compiler) {
         set({ compilerSettings: result.compiler })
+        return result.compiler
       }
+      const error = result.error ?? 'Compiler settings were not saved.'
+      set({ lastError: error })
+      throw new Error(error)
     },
 
     async browseCompilerFile() {
@@ -39,7 +43,11 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
       const result = await api.updateLlmSettings(settings)
       if (result.ok && result.llm) {
         set({ llmSettings: result.llm })
+        return result.llm
       }
+      const error = result.error ?? 'AI settings were not saved.'
+      set({ lastError: error })
+      throw new Error(error)
     },
 
     async testLlmConnection(settings: LlmSettings) {

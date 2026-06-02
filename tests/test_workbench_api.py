@@ -763,6 +763,40 @@ def test_workbench_session_updates_compile_output_directory(tmp_path):
     assert (output_dir / "ConfiguredOutputShelf.gsm").exists()
 
 
+def test_workbench_session_persists_compiler_settings_after_llm_settings_save(tmp_path):
+    config_path = tmp_path / "config.toml"
+    output_dir = tmp_path / "configured-output"
+    session = WorkbenchSession(config_path=config_path)
+
+    compiler_response = session.route(
+        "POST",
+        "/api/settings/compiler",
+        {
+            "mode": "lp",
+            "converter_path": "/Applications/LP_XMLConverter",
+            "output_dir": str(output_dir),
+        },
+    )
+    llm_response = session.route(
+        "POST",
+        "/api/settings/llm",
+        {
+            "model": "deepseek-chat",
+            "api_key": "deepseek-key",
+            "api_base": "https://api.deepseek.com/v1",
+            "max_retries": 5,
+            "assistant_settings": "short answers",
+        },
+    )
+    reloaded = WorkbenchSession(config_path=config_path)
+
+    assert compiler_response["ok"] is True
+    assert llm_response["ok"] is True
+    assert reloaded.compiler_mode == "lp"
+    assert reloaded.converter_path == "/Applications/LP_XMLConverter"
+    assert reloaded.output_dir == str(output_dir)
+
+
 def test_workbench_session_exposes_runtime_llm_settings(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

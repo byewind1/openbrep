@@ -31,8 +31,8 @@ interface SettingsDrawerProps {
   gitStatus: ProjectGitStatus | null
   gitBusy: boolean
   onClose: () => void
-  onCompilerSettingsChange: (settings: CompilerSettings) => Promise<void>
-  onLlmSettingsChange: (settings: LlmSettings) => Promise<void>
+  onCompilerSettingsChange: (settings: CompilerSettings) => Promise<CompilerSettings>
+  onLlmSettingsChange: (settings: LlmSettings) => Promise<LlmSettings>
   onTestLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
   onReloadRuntimeSettings: () => Promise<void>
   onBrowseCompilerFile: () => Promise<CompilerSettings | null>
@@ -89,6 +89,7 @@ export function SettingsDrawer({
   const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [llmTesting, setLlmTesting] = useState(false)
   const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty' | 'saving' | null>(null)
+  const [settingsSaveError, setSettingsSaveError] = useState('')
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
   const [manualModelMode, setManualModelMode] = useState(false)
   const [drawerWidth, setDrawerWidth] = useState(SETTINGS_DRAWER_DEFAULT_WIDTH)
@@ -171,22 +172,32 @@ export function SettingsDrawer({
 
   function updateCompilerDraft(settings: CompilerSettings) {
     setCompilerDraft(settings)
+    setSettingsSaveError('')
     setSettingsSaveState('dirty')
   }
 
   function updateLlmDraft(settings: LlmSettings) {
     setLlmDraft(settings)
+    setSettingsSaveError('')
     setSettingsSaveState('dirty')
   }
 
   async function saveSettings() {
-    setSettingsSaveState('saving')
-    await onCompilerSettingsChange(compilerDraft)
-    await onLlmSettingsChange(llmDraft)
-    setSettingsSaveState('saved')
+    try {
+      setSettingsSaveError('')
+      setSettingsSaveState('saving')
+      await onCompilerSettingsChange(compilerDraft)
+      await onLlmSettingsChange(llmDraft)
+      await onReloadRuntimeSettings()
+      setSettingsSaveState('saved')
+    } catch (error) {
+      setSettingsSaveError(error instanceof Error ? error.message : 'Settings were not saved.')
+      setSettingsSaveState('dirty')
+    }
   }
 
   async function reloadRuntimeSettings() {
+    setSettingsSaveError('')
     setSettingsSaveState(null)
     await onReloadRuntimeSettings()
   }
@@ -300,6 +311,7 @@ export function SettingsDrawer({
               {settingsSaveState === 'dirty' ? 'Unsaved changes' : settingsSaveState === 'saving' ? 'Saving' : 'Saved'}
             </span>
           ) : null}
+          {settingsSaveError ? <span className="settings-save-error">{settingsSaveError}</span> : null}
         </div>
 
         <section className="settings-section">

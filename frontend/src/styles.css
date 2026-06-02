@@ -1538,6 +1538,16 @@ button:focus-visible {
   color: var(--success);
 }
 
+.settings-save-error {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--status-error-text);
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-section.muted {
   gap: 0;
 }

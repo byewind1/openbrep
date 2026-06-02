@@ -6,7 +6,7 @@ import type { LlmSettings } from '../../api/types'
 
 function renderSettingsDrawer(
   llmSettings: LlmSettings,
-  onLlmSettingsChange: ComponentProps<typeof SettingsDrawer>['onLlmSettingsChange'] = vi.fn(async () => {}),
+  onLlmSettingsChange: ComponentProps<typeof SettingsDrawer>['onLlmSettingsChange'] = vi.fn(async (settings) => settings),
   overrides: Partial<ComponentProps<typeof SettingsDrawer>> = {},
 ) {
   return render(
@@ -22,7 +22,7 @@ function renderSettingsDrawer(
       gitStatus={null}
       gitBusy={false}
       onClose={vi.fn()}
-      onCompilerSettingsChange={vi.fn(async () => undefined)}
+      onCompilerSettingsChange={vi.fn(async (settings) => settings)}
       onLlmSettingsChange={onLlmSettingsChange}
       onTestLlmConnection={async () => ({ ok: true })}
       onReloadRuntimeSettings={vi.fn(async () => undefined)}
@@ -49,11 +49,16 @@ function renderSettingsDrawer(
 describe('SettingsDrawer AI model settings', () => {
   test('keeps settings as draft until Save Settings is pressed and saves compiler before AI', async () => {
     const saveOrder: string[] = []
-    const onCompilerSettingsChange = vi.fn(async () => {
+    const onCompilerSettingsChange = vi.fn(async (settings) => {
       saveOrder.push('compiler')
+      return settings
     })
-    const onLlmSettingsChange = vi.fn(async () => {
+    const onLlmSettingsChange = vi.fn(async (settings) => {
       saveOrder.push('llm')
+      return settings
+    })
+    const onReloadRuntimeSettings = vi.fn(async () => {
+      saveOrder.push('reload')
     })
     renderSettingsDrawer(
       {
@@ -69,7 +74,7 @@ describe('SettingsDrawer AI model settings', () => {
         assistant_settings: '',
       },
       onLlmSettingsChange,
-      { onCompilerSettingsChange },
+      { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
@@ -82,7 +87,40 @@ describe('SettingsDrawer AI model settings', () => {
     await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy())
     expect(onCompilerSettingsChange).toHaveBeenCalledWith({ mode: 'lp', converter_path: '', output_dir: '' })
     expect(onLlmSettingsChange).toHaveBeenCalled()
-    expect(saveOrder).toEqual(['compiler', 'llm'])
+    expect(saveOrder).toEqual(['compiler', 'llm', 'reload'])
+  })
+
+  test('keeps settings dirty and reports save errors when compiler settings fail', async () => {
+    const onCompilerSettingsChange = vi.fn(async () => {
+      throw new Error('Compiler settings were not saved')
+    })
+    const onLlmSettingsChange = vi.fn(async (settings) => settings)
+    const onReloadRuntimeSettings = vi.fn(async () => undefined)
+    renderSettingsDrawer(
+      {
+        model: 'deepseek-chat',
+        models: ['deepseek-chat'],
+        model_groups: {
+          custom: [],
+          official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
+        },
+        api_key: '',
+        api_base: '',
+        max_retries: 5,
+        assistant_settings: '',
+      },
+      onLlmSettingsChange,
+      { onCompilerSettingsChange, onReloadRuntimeSettings },
+    )
+
+    fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+
+    await waitFor(() => expect(screen.getByText('Compiler settings were not saved')).toBeTruthy())
+    expect(screen.queryByText('Saved')).toBeNull()
+    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    expect(onLlmSettingsChange).not.toHaveBeenCalled()
+    expect(onReloadRuntimeSettings).not.toHaveBeenCalled()
   })
 
   test('resizes the settings panel from the left edge', () => {
@@ -175,7 +213,7 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     }
 
-    const view = renderSettingsDrawer(llmSettings, vi.fn(async () => undefined), {
+    const view = renderSettingsDrawer(llmSettings, vi.fn(async (settings) => settings), {
       onLoadMemoryLessons: loadMemory,
       onLoadProjectGitStatus: firstLoadGit,
     })
@@ -196,8 +234,8 @@ describe('SettingsDrawer AI model settings', () => {
         gitStatus={null}
         gitBusy={false}
         onClose={vi.fn()}
-        onCompilerSettingsChange={vi.fn(async () => undefined)}
-        onLlmSettingsChange={vi.fn(async () => undefined)}
+        onCompilerSettingsChange={vi.fn(async (settings) => settings)}
+        onLlmSettingsChange={vi.fn(async (settings) => settings)}
         onTestLlmConnection={async () => ({ ok: true })}
         onReloadRuntimeSettings={vi.fn(async () => undefined)}
         onBrowseCompilerFile={vi.fn(async () => null)}

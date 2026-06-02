@@ -174,8 +174,8 @@ export interface WorkbenchState {
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<CompilerSettings | null>
   browseOutputDirectory: () => Promise<CompilerSettings | null>
-  setCompilerSettings: (settings: CompilerSettings) => Promise<void>
-  setLlmSettings: (settings: LlmSettings) => Promise<void>
+  setCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettings>
+  setLlmSettings: (settings: LlmSettings) => Promise<LlmSettings>
   testLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
   reloadRuntimeSettings: () => Promise<void>
   refreshTapirStatus: () => Promise<void>
