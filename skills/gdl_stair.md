@@ -1,8 +1,8 @@
 ---
 name: gdl-stair
-description: "GDL stair generation strategy for straight parametric stairs, handrails, spiral stairs, and document-derived stair concepts."
-version: 1.1.0
-tags: [gdl, stair, spiral-stair, handrail, put-get, prism, bprism, tube, archicad, openbrep]
+description: "GDL stair generation strategy for straight parametric stairs, handrails, and spiral stairs."
+version: 1.0.0
+tags: [gdl, stair, spiral-stair, handrail, archicad, openbrep]
 ---
 
 # Skill: GDL Stair Objects
@@ -13,8 +13,6 @@ This skill distills the stair patterns from two GDL Cookbook stair notes:
 
 - 螺旋楼梯
 - 参数化楼梯：带扶手
-
-Document-to-skill extraction rule: keep reusable concepts, methods, parameter contracts, code patterns, and failure checks. Do not paste long source prose. The skill should help the model infer how to generate a new stair, not merely repeat one historical example.
 
 ## Activation Keywords
 
@@ -38,173 +36,6 @@ Document-to-skill extraction rule: keep reusable concepts, methods, parameter co
 ## Goal
 
 Generate compile-stable GDL stair objects by modelling the whole stair as a parametric body, not as many hard-coded steps. Use loop-driven `PUT` / `GET` point buffers so riser count, tread depth, riser height, stair width, handrail options, and spiral radius remain editable.
-
-## Document-Derived Concepts
-
-This skill is meant to preserve reusable concepts and methods from source documents, not just final code snippets. When generating a stair object, first identify which concept applies, then choose the GDL pattern.
-
-| Concept | Use When | GDL Method | Core Risk |
-|---|---|---|---|
-| Whole stair as one body | Straight parametric stair with repeated treads | `PUT` / `GET` profile + `PRISM` | Hard-coded steps create excess edges and do not scale |
-| Point buffer as geometry generator | Variable riser count or variable spiral segments | `PUT` in `FOR ... NEXT`, then `GET(NSP)` | Wrong `NSP / 2` vs `NSP / 3` count |
-| Raked riser | Tread riser edge leans back | Offset one buffered point by `rak` or `rakd` | Negative tread overlap or invalid profile |
-| Stair orientation | Profile is easier to draw in local XY | `ADDX`, `ADDY`, `ROTX`, `ROTY` before draw | Unbalanced transform stack |
-| Handrail configuration | No/left/right/both rails | `hrconf` value list -> `hrstyl` flag | UI value not translated into script logic |
-| Tube rail | Rail follows a path with round section | `TUBE` with circle section and 4 path nodes | Missing overshoot nodes, faceted rail |
-| Simple rail | Straight sloped handrail only | `SQR`, `ATN`, `ROTX`, `CYLIND` | Divide by zero when run length is zero |
-| Spiral stair body | Spiral or curved stair with inner well | `bPRISM_` with negative depth | Using normal `PRISM` loses the negative-depth trick |
-| 2D usability | Object must be selectable/stretchable in plan | `HOTSPOT2` + `PROJECT2` | Projection without hotspots is hard to edit |
-| Pitch display | User wants slope/pitch annotation | `ATN`, `DEFINE STYLE`, `TEXT2` | Text size not scaled to stair geometry |
-
-### Pattern Card: Whole Stair PRISM
-
-Inputs:
-
-- `numrisr`, `riser`, `going`, `rak`, `width`.
-
-Outputs:
-
-- One continuous stair body with sloped underside.
-
-Method:
-
-- Start the profile at the lower origin.
-- Add a first tread-depth point.
-- Add the high endpoint based on `numrisr`.
-- Walk from top riser to bottom riser with `FOR N = numrisr TO 1 STEP -1`.
-- Close the profile.
-- Emit `PRISM NSP / 2, width, GET(NSP)`.
-
-Failure checks:
-
-- `NSP` must be even before `PRISM NSP / 2`.
-- `going` and `riser` must be positive.
-- `rak` must not make a riser cross the adjacent tread.
-
-### Pattern Card: Spiral bPRISM_
-
-Inputs:
-
-- `A`, `width`, `numrisr`, `going`, `riser`, `rakd`.
-
-Outputs:
-
-- A spiral stair body around a central well.
-
-Method:
-
-- Shift origin by `ADDY -A / 2`.
-- Rotate with `ROTX 90`.
-- Fill `PUT` buffer with X/Y/status triples.
-- Use `bPRISM_ matl, matl, matl, NSP / 3, -width, A / 2, GET(NSP)`.
-
-Failure checks:
-
-- `NSP` must divide by 3.
-- `width` must not exceed `A / 2.01`.
-- `rakd` should be clamped to `going / 3`.
-
-### Pattern Card: TUBE Handrail
-
-Inputs:
-
-- `hrht`, `hrdiam`, `numrisr`, `going`, `riser`, `width`, `hrmatl`.
-
-Outputs:
-
-- Smooth round handrail following the stair pitch.
-
-Method:
-
-- Define a circular section with two section records.
-- Define four path nodes: overshoot start, true start, true end, overshoot end.
-- Use `RESOL 12` or higher before `TUBE`.
-- Add `4000 + 1` in the section record for a smooth circular rail.
-
-Failure checks:
-
-- Missing overshoot nodes can produce poor rail ends.
-- Rail side offset must include `hrdiam / 2`.
-- Transform stack must be cleaned after the rail.
-
-### Pattern Card: CYLIND Handrail
-
-Inputs:
-
-- `hrht`, `hrdiam`, `numrisr`, `going`, `riser`, `width`, `hrmatl`.
-
-Outputs:
-
-- Simple straight sloped cylindrical handrail.
-
-Method:
-
-- `hgoing = numrisr * going`.
-- `hriser = numrisr * riser`.
-- `hrailen = SQR(hgoing ^ 2 + hriser ^ 2)`.
-- `hrailang = ATN(hriser / hgoing)`.
-- Rotate and place a `CYLIND hrailen, hrdiam / 2`.
-
-Failure checks:
-
-- Guard `hgoing > 0` before `ATN(hriser / hgoing)`.
-- Use `ROTX -90 + hrailang` after positioning at `startht`.
-- Clean exactly the transforms added in the subroutine.
-
-### Pattern Card: 2D Projection With Hotspots
-
-Inputs:
-
-- `A`, `width`, `leng`, `pitc`, `stret`, `shodata`.
-
-Outputs:
-
-- Selectable and optionally annotated plan symbol.
-
-Method:
-
-- Place origin, end, width-edge, and stretch hotspots.
-- Use `PROJECT2 3, 270, 2` after hotspots.
-- Add direction lines or pitch text only after projection requirements are satisfied.
-
-Failure checks:
-
-- Do not rely on `PROJECT2` alone.
-- Do not calculate text size from an unguarded denominator.
-
-## Method Selection
-
-Choose the generation method before writing scripts. The method is part of the skill, not an afterthought.
-
-| User intent | Primary body method | Rail method | 2D method | Notes |
-|---|---|---|---|---|
-| straight parametric stair | `PUT` / `GET` + `PRISM` side profile | optional `TUBE` or `CYLIND` | hotspots + `PROJECT2` | Best default for editable straight runs. |
-| stair with clean sloped underside | one continuous `PRISM` body | optional | hotspots + `PROJECT2` | Avoid separate tread blocks. |
-| schematic/blocky stair | repeated `BLOCK` only if requested | optional simple `CYLIND` | manual lines acceptable | Lower fidelity draft only. |
-| spiral stair | `PUT` / `GET` + `bPRISM_` | rectangular `bPRISM_` or helical `TUBE` | spiral hotspots + `PROJECT2` | `bPRISM_` can handle negative depth. |
-| round handrail following a slope/path | stair body unchanged | `TUBE` | unchanged | Use overshoot points at path ends. |
-| simple straight handrail | stair body unchanged | `CYLIND` | unchanged | Compute length with `SQR`; angle with `ATN`. |
-| show pitch in plan | unchanged | unchanged | `TEXT2` with `STR(pitc, 4, 2)` | Guard `going > 0`. |
-
-Rules:
-
-- If the user asks for a straight or generic parametric stair, use the straight `PRISM` profile method.
-- If the user asks for a spiral stair, use `bPRISM_` and the spiral point buffer method.
-- If the user asks for railings with a circular or continuous tube, use `TUBE`.
-- If the user asks for a simple straight rail, use `CYLIND` with calculated length and angle.
-- If the user asks for both sides, write one rail method and mirror it where practical instead of duplicating logic.
-- If the user asks for only a quick placeholder, a repeated `BLOCK` stair is allowed only as a temporary draft and must be labelled schematic.
-
-## Generation Workflow
-
-Use this sequence for a complete HSF project:
-
-1. `paramlist.xml`: declare all public parameters, including stair body, rail, material, pen, 2D display, and optional spiral parameters.
-2. `scripts/1d.gdl`: validate minimum values, derive width, total run, total rise, pitch, handrail flags, and guard denominators.
-3. `scripts/3d.gdl`: keep the main body short; call subroutines for stair body, left rail, right rail, and optional posts.
-4. `scripts/2d.gdl`: place hotspots first, then `PROJECT2`; add optional direction arrow and pitch label.
-5. `scripts/pr.gdl`: constrain value lists and numeric ranges when possible.
-6. `scripts/ui.gdl`: only add custom UI if explicitly requested; do not let UI script block compile-stable geometry.
 
 ## Parameter Contract
 
@@ -245,42 +76,6 @@ For spiral stairs, constrain impossible well and rake values:
 IF width > A / 2 THEN width = A / 2.01
 IF rakd > going / 3 THEN rakd = going / 3
 ```
-
-Starter `paramlist.xml` shape:
-
-```xml
-<Length Name="A"><Fix/><Value>1.20</Value></Length>
-<Length Name="B"><Fix/><Value>2.80</Value></Length>
-<Length Name="ZZYZX"><Fix/><Value>1.70</Value></Length>
-<Integer Name="numrisr"><Value>10</Value></Integer>
-<Length Name="riser"><Value>0.17</Value></Length>
-<Length Name="going"><Value>0.28</Value></Length>
-<Length Name="rak"><Value>0.00</Value></Length>
-<String Name="hrconf"><Value>Both handrails</Value></String>
-<Length Name="hrht"><Value>0.90</Value></Length>
-<Length Name="hrdiam"><Value>0.04</Value></Length>
-<Material Name="matl"><Value>0</Value></Material>
-<Material Name="hrmatl"><Value>0</Value></Material>
-<PenColor Name="pcol"><Value>1</Value></PenColor>
-<Boolean Name="shodata"><Value>0</Value></Boolean>
-```
-
-Derived variables should be created in `1d.gdl`, not guessed inside every script:
-
-```gdl
-width = A
-leng = numrisr * going
-total_rise = numrisr * riser
-IF going <= 0 THEN going = 0.28
-pitc = ATN(riser / going)
-```
-
-Rules:
-
-- Do not invent aliases like `steps`, `height`, `depth`, or `rail_height` unless they are also declared in `paramlist.xml`.
-- Prefer one public parameter and one derived variable over repeatedly recomputing the same expression in 3D and 2D.
-- Keep `A` stretch semantics clear: for straight stair `A` is width; for spiral stair `A` is outer diameter.
-- If both straight and spiral variants are supported in one object, add a mode parameter and branch explicitly.
 
 ## Straight Parametric Stair Strategy
 

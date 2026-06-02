@@ -10,14 +10,8 @@ class TestSkillsLoader(unittest.TestCase):
         result = SkillsLoader("skills").get_for_task("生成一个带扶手的参数化螺旋楼梯")
 
         self.assertIn("## Skill: gdl_stair", result)
-        self.assertIn("Document-to-skill extraction rule", result)
-        self.assertIn("Method Selection", result)
-        self.assertIn("Pattern Card: Whole Stair PRISM", result)
-        self.assertIn("Pattern Card: TUBE Handrail", result)
         self.assertIn("bPRISM_", result)
-        self.assertIn("NSP / 3", result)
         self.assertIn("TUBE", result)
-        self.assertIn("CYLIND", result)
         self.assertIn("numrisr", result)
 
     def test_custom_skill_matches_instruction_by_activation_keywords_without_filename(self):
