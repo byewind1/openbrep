@@ -1,5 +1,6 @@
 import type { WorkbenchProject } from '../api/types'
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 
 interface TopMenuProps {
   project: WorkbenchProject | null
@@ -9,7 +10,6 @@ interface TopMenuProps {
   onCompile: () => void
   onMockCompile: () => void
   onSave: () => void
-  onSaveAs: () => void
   onOpenSettings: () => void
   applying: boolean
   loading: boolean
@@ -28,7 +28,6 @@ export function TopMenu({
   onCompile,
   onMockCompile,
   onSave,
-  onSaveAs,
   onOpenSettings,
   applying,
   loading,
@@ -38,8 +37,14 @@ export function TopMenu({
   lastError,
   onClearError,
 }: TopMenuProps) {
+  const [buildMenuOpen, setBuildMenuOpen] = useState(false)
   const canCompile = Boolean(project?.path)
   const projectStatus = project ? (project.path ? 'Saved' : 'Unsaved') : 'Empty'
+
+  function runBuildAction(action: () => void) {
+    action()
+    setBuildMenuOpen(false)
+  }
 
   return (
     <header className="topbar">
@@ -51,19 +56,41 @@ export function TopMenu({
         </div>
       </div>
       {projectControls}
-      <nav className="menu-row" aria-label="Migration status">
+      <nav className="menu-row" aria-label="Workbench actions">
         <button type="button" data-testid="save-script-button" disabled={!project || saving} onClick={onSave}>
           {saving ? '...' : 'Save'}
-        </button>
-        <button type="button" disabled={!project || saving} onClick={onSaveAs}>
-          Save As
-        </button>
-        <button type="button" data-testid="mock-compile-button" disabled={!canCompile || compiling} onClick={onMockCompile}>
-          {compiling ? '...' : 'Mock'}
         </button>
         <button type="button" data-testid="compile-button" disabled={!canCompile || compiling} onClick={onCompile}>
           {compiling ? '...' : 'Compile'}
         </button>
+        <div className="toolbar-menu build-menu">
+          <button
+            type="button"
+            className="toolbar-menu-trigger"
+            aria-haspopup="menu"
+            aria-expanded={buildMenuOpen}
+            aria-controls="build-menu-panel"
+            onClick={() => setBuildMenuOpen((value) => !value)}
+          >
+            Build
+          </button>
+          {buildMenuOpen ? (
+            <div id="build-menu-panel" className="toolbar-menu-panel build-menu-panel" role="menu" aria-label="Build menu">
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="mock-compile-button"
+                disabled={!canCompile || compiling}
+                onClick={() => runBuildAction(onMockCompile)}
+              >
+                {compiling ? '...' : 'Mock Compile'}
+              </button>
+              <button type="button" role="menuitem" disabled={!canCompile || compiling} onClick={() => runBuildAction(onCompile)}>
+                {compiling ? '...' : 'Compile'}
+              </button>
+            </div>
+          ) : null}
+        </div>
         <button type="button" className="settings-trigger" onClick={onOpenSettings}>
           Settings
         </button>

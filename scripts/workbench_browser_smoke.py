@@ -103,6 +103,21 @@ def body_has_preview_controls(body: str) -> bool:
     return all(marker in body for marker in required)
 
 
+def topbar_single_row_script() -> str:
+    return """
+        () => {
+            const topbar = document.querySelector('.topbar');
+            if (!topbar) return false;
+            const box = topbar.getBoundingClientRect();
+            if (topbar.scrollHeight > box.height + 1) return false;
+            return Array.from(topbar.children).every((child) => {
+                const childBox = child.getBoundingClientRect();
+                return childBox.top >= box.top - 1 && childBox.bottom <= box.bottom + 1;
+            });
+        }
+    """
+
+
 def terminate_process(process: subprocess.Popen[str]) -> None:
     if process.poll() is not None:
         return
@@ -181,6 +196,7 @@ def run_smoke(
         web_ready = wait_for_url(web_url, timeout_seconds=timeout_seconds)
 
         page_ok = False
+        topbar_layout_ok = False
         edit_interaction_ok = False
         save_interaction_ok = False
         compile_interaction_ok = False
@@ -196,6 +212,7 @@ def run_smoke(
                     title = page.title()
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)
+                    topbar_layout_ok = bool(page.evaluate(topbar_single_row_script()))
                     if page_ok:
                         page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
                         right_rail = page.locator(".workbench-right-rail")
@@ -293,6 +310,7 @@ def run_smoke(
             and project_loaded
             and web_ready
             and page_ok
+            and topbar_layout_ok
             and resize_interaction_ok
             and preview_interaction_ok
             and edit_interaction_ok
@@ -306,6 +324,7 @@ def run_smoke(
             "project_loaded": project_loaded,
             "web_ready": web_ready,
             "page_ok": page_ok,
+            "topbar_layout_ok": topbar_layout_ok,
             "resize_interaction_ok": resize_interaction_ok,
             "preview_interaction_ok": preview_interaction_ok,
             "edit_interaction_ok": edit_interaction_ok,

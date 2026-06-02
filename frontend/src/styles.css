@@ -76,7 +76,7 @@ button:focus-visible {
 .topbar {
   height: var(--header-height);
   display: grid;
-  grid-template-columns: 230px minmax(260px, 1fr) auto auto;
+  grid-template-columns: minmax(180px, 240px) auto auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   padding: 0 12px;
@@ -147,14 +147,9 @@ button:focus-visible {
 
 .project-open-controls {
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(170px, 1fr) auto auto minmax(86px, 110px) auto auto;
-  align-items: center;
-  gap: 6px;
 }
 
 .project-open-controls input {
-  min-width: 0;
   height: 28px;
   padding: 0 8px;
   color: var(--text-muted);
@@ -177,6 +172,7 @@ button:focus-visible {
 .menu-row,
 .topbar-status {
   gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .menu-row {
@@ -186,12 +182,69 @@ button:focus-visible {
 }
 
 .topbar-status {
+  min-width: 0;
   padding-left: 8px;
+  justify-content: flex-end;
 }
 
 .menu-row select {
   height: 28px;
   padding: 0 7px;
+}
+
+.toolbar-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-menu-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent-soft);
+}
+
+.toolbar-menu-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  left: 0;
+  width: 360px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.34);
+  padding: 10px;
+}
+
+.build-menu-panel {
+  right: 0;
+  left: auto;
+  width: 170px;
+}
+
+.toolbar-menu-panel button,
+.toolbar-menu-panel select,
+.toolbar-menu-panel input {
+  width: 100%;
+}
+
+.project-path-field {
+  display: grid;
+  gap: 5px;
+}
+
+.project-path-field span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.project-menu-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .status-pill {

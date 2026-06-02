@@ -26,6 +26,7 @@ export function ProjectOpenControls({
   onSaveProjectAs,
 }: ProjectOpenControlsProps) {
   const [path, setPath] = useState(project?.path ?? '')
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
     setPath(project?.path ?? '')
@@ -33,63 +34,94 @@ export function ProjectOpenControls({
 
   function submitPath(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!path.trim()) return
     onLoadProjectPath(path)
+    setOpen(false)
   }
 
   function displayName(recent: RecentProject) {
     return recent.name || recent.path.split(/[\\/]/).filter(Boolean).pop() || recent.path
   }
 
+  function runProjectAction(action: () => void) {
+    action()
+    setOpen(false)
+  }
+
   return (
-    <form className="project-open-controls" onSubmit={submitPath}>
-      <button type="button" disabled={loading} onClick={onNewProject}>
-        New
-      </button>
-      <input
-        id="hsf-path"
-        type="text"
-        aria-label="HSF project path"
-        placeholder="HSF project path"
-        value={path}
-        onChange={(event) => setPath(event.currentTarget.value)}
-      />
-      <button type="submit" disabled={loading || path.trim().length === 0}>
-        {loading ? '...' : 'Open'}
-      </button>
+    <div className="project-open-controls toolbar-menu">
       <button
         type="button"
-        disabled={loading}
-        onClick={onBrowseProjectDirectory}
-        title="Browse for an HSF project directory"
-        aria-label="Browse for an HSF project directory"
+        className="toolbar-menu-trigger"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="project-menu-panel"
+        onClick={() => setOpen((value) => !value)}
       >
-        {loading ? 'Choosing...' : 'Browse'}
+        Project
       </button>
-      <select
-        aria-label="Recent HSF projects"
-        value=""
-        disabled={loading || recentProjects.length === 0}
-        onChange={(event) => {
-          const selectedPath = event.currentTarget.value
-          if (selectedPath) onLoadProjectPath(selectedPath)
-        }}
-      >
-        <option value="">Recent</option>
-        {recentProjects.map((recent) => (
-          <option key={recent.path} value={recent.path} disabled={!recent.exists}>
-            {displayName(recent)}
-          </option>
-        ))}
-      </select>
-      <button type="button" disabled={loading} onClick={onImportGdlFile}>
-        Import GDL
-      </button>
-      <button type="button" disabled={loading} onClick={onImportGsmFile}>
-        Import GSM
-      </button>
-      <button type="button" disabled={loading || !project} onClick={onSaveProjectAs}>
-        Save As
-      </button>
-    </form>
+      {open ? (
+        <form id="project-menu-panel" className="toolbar-menu-panel project-menu-panel" aria-label="Project menu" onSubmit={submitPath}>
+          <button type="button" disabled={loading} onClick={() => runProjectAction(onNewProject)}>
+            New
+          </button>
+          <label className="project-path-field">
+            <span>HSF path</span>
+            <input
+              id="hsf-path"
+              type="text"
+              aria-label="HSF project path"
+              placeholder="HSF project path"
+              value={path}
+              onChange={(event) => setPath(event.currentTarget.value)}
+            />
+          </label>
+          <div className="project-menu-row">
+            <button type="submit" disabled={loading || path.trim().length === 0}>
+              {loading ? '...' : 'Open'}
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => runProjectAction(onBrowseProjectDirectory)}
+              title="Browse for an HSF project directory"
+              aria-label="Browse for an HSF project directory"
+            >
+              {loading ? 'Choosing...' : 'Browse'}
+            </button>
+          </div>
+          <select
+            aria-label="Recent HSF projects"
+            value=""
+            disabled={loading || recentProjects.length === 0}
+            onChange={(event) => {
+              const selectedPath = event.currentTarget.value
+              if (selectedPath) {
+                onLoadProjectPath(selectedPath)
+                setOpen(false)
+              }
+            }}
+          >
+            <option value="">Recent</option>
+            {recentProjects.map((recent) => (
+              <option key={recent.path} value={recent.path} disabled={!recent.exists}>
+                {displayName(recent)}
+              </option>
+            ))}
+          </select>
+          <div className="project-menu-row">
+            <button type="button" disabled={loading} onClick={() => runProjectAction(onImportGdlFile)}>
+              Import GDL
+            </button>
+            <button type="button" disabled={loading} onClick={() => runProjectAction(onImportGsmFile)}>
+              Import GSM
+            </button>
+          </div>
+          <button type="button" disabled={loading || !project} onClick={() => runProjectAction(onSaveProjectAs)}>
+            Save As
+          </button>
+        </form>
+      ) : null}
+    </div>
   )
 }

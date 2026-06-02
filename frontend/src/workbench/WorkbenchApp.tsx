@@ -226,7 +226,6 @@ export function WorkbenchApp() {
         onCompile={() => void compileCurrentProject()}
         onMockCompile={() => void runMockCompile()}
         onSave={() => void saveCurrentProject()}
-        onSaveAs={() => void saveProjectAsWithPrompt()}
         onOpenSettings={() => setSettingsOpen(true)}
         applying={applying}
         loading={loading}
