@@ -70,7 +70,7 @@ class WorkbenchSession:
         self.path_revealer = path_revealer or _reveal_path
         self.config_path = resolve_workbench_config_path(config_path)
         self.config = load_workbench_config(self.config_path)
-        self.compiler_mode = "mock"
+        self.compiler_mode = self.config.compiler.mode if self.config.compiler.mode in {"mock", "lp"} else "mock"
         self.converter_path = self.config.compiler.path or ""
         self.output_dir = "" if self.config.output_dir in {"", "./output"} else self.config.output_dir
         self.llm_model = self.config.llm.model
@@ -187,9 +187,17 @@ class WorkbenchSession:
             return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not selected:
             return {"ok": False, "cancelled": True, "error": "File selection cancelled."}
-        self.compiler_mode = "lp"
-        self.converter_path = str(Path(selected).expanduser())
-        return {"ok": True, "path": self.converter_path, "compiler": self.compiler_settings()}
+        converter_path = str(Path(selected).expanduser())
+        settings = self.update_compiler_settings(
+            {
+                "mode": "lp",
+                "converter_path": converter_path,
+                "output_dir": self.output_dir,
+            }
+        )
+        if not settings.get("ok"):
+            return settings
+        return {"ok": True, "path": converter_path, "compiler": settings["compiler"]}
 
     def choose_output_directory(self) -> dict[str, Any]:
         try:

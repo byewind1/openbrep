@@ -136,6 +136,7 @@ class WorkbenchSettingsService:
         self.session.compiler_mode = mode
         self.session.converter_path = str(body.get("converter_path") or "").strip()
         self.session.output_dir = str(body.get("output_dir") or "").strip()
+        self.session.config.compiler.mode = self.session.compiler_mode
         self.session.config.compiler.path = self.session.converter_path
         self.session.config.output_dir = self.session.output_dir or "./output"
         save_workbench_config(self.session.config, self.session.config_path)
@@ -158,6 +159,9 @@ class WorkbenchSettingsService:
 
     def reload_runtime_settings(self) -> dict[str, Any]:
         self.session.config = load_workbench_config(self.session.config_path)
+        self.session.compiler_mode = (
+            self.session.config.compiler.mode if self.session.config.compiler.mode in {"mock", "lp"} else "mock"
+        )
         self.session.converter_path = self.session.config.compiler.path or ""
         self.session.output_dir = "" if self.session.config.output_dir in {"", "./output"} else self.session.config.output_dir
         self.session.llm_model = self.session.config.llm.model

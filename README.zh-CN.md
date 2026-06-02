@@ -325,6 +325,7 @@ model = "gpt-5.3-codex"       # 实际请求给 provider 的模型名
 
 ```toml
 [compiler]
+mode = "lp"
 path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 ```
 

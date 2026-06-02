@@ -555,7 +555,7 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     hsf_dir = project.save_to_disk()
     output_dir = tmp_path / "out"
 
-    session = WorkbenchSession()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     response = session.route("POST", "/api/compile", {"output_dir": str(output_dir)})
 
@@ -574,7 +574,10 @@ def test_workbench_session_reveals_last_compiled_artifact(tmp_path):
     revealed: list[Path] = []
     output_dir = tmp_path / "out"
 
-    session = WorkbenchSession(path_revealer=lambda path: revealed.append(path))
+    session = WorkbenchSession(
+        config_path=tmp_path / "config.toml",
+        path_revealer=lambda path: revealed.append(path),
+    )
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     compile_response = session.route("POST", "/api/compile", {"output_dir": str(output_dir)})
     response = session.route("POST", "/api/artifact/reveal", {})
@@ -1022,10 +1025,15 @@ timeout = 60
     assert reloaded.llm_api_base == "https://new.example.test/v1"
 
 
-def test_workbench_session_choose_converter_file_updates_compiler_settings():
-    session = WorkbenchSession(file_chooser=lambda: "/Applications/LP_XMLConverter")
+def test_workbench_session_choose_converter_file_updates_compiler_settings(tmp_path):
+    config_path = tmp_path / "config.toml"
+    session = WorkbenchSession(
+        config_path=config_path,
+        file_chooser=lambda: "/Applications/LP_XMLConverter",
+    )
 
     response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
+    reloaded = WorkbenchSession(config_path=config_path)
 
     assert response["ok"] is True
     assert response["path"] == "/Applications/LP_XMLConverter"
@@ -1034,6 +1042,8 @@ def test_workbench_session_choose_converter_file_updates_compiler_settings():
         "converter_path": "/Applications/LP_XMLConverter",
         "output_dir": "",
     }
+    assert reloaded.compiler_mode == "lp"
+    assert reloaded.converter_path == "/Applications/LP_XMLConverter"
 
 
 def test_workbench_session_choose_output_directory_updates_compiler_settings(tmp_path):

@@ -82,6 +82,8 @@ diff_check = true
 auto_version = true
 
 [compiler]
+# 编译模式：mock 或 lp
+mode = "mock"
 # LP_XMLConverter 路径（配置一次永久生效）
 # macOS:   /Applications/GRAPHISOFT/Archicad 29/Archicad 29.app/Contents/MacOS/LP_XMLConverter
 # Windows: C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe
@@ -104,4 +106,3 @@ base_url = "https://your-proxy.com/v1"
 api_key  = "your-proxy-key"
 models   = ["gpt-5.4"]
 protocol = "openai"
-

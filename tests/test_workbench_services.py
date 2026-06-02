@@ -38,6 +38,7 @@ def test_settings_service_updates_compiler_settings_and_persists_config(tmp_path
     reloaded = GDLAgentConfig.load(str(config_path))
     assert response["ok"] is True
     assert response["compiler"]["mode"] == "lp"
+    assert reloaded.compiler.mode == "lp"
     assert reloaded.compiler.path == "/Applications/LP_XMLConverter"
     assert reloaded.output_dir == str(tmp_path / "out")
 

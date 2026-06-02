@@ -308,6 +308,7 @@ class AgentConfig:
 
 @dataclass
 class CompilerConfig:
+    mode: str = "mock"
     path: Optional[str] = None
     timeout: int = 60
 
@@ -381,11 +382,19 @@ class GDLAgentConfig:
         raw_recent_projects = data.get("recent_projects", [])
         if not isinstance(raw_recent_projects, list):
             raw_recent_projects = []
+        compiler_data = data.get("compiler", {})
+        if not isinstance(compiler_data, dict):
+            compiler_data = {}
+        compiler_cfg = pick(CompilerConfig, compiler_data)
+        if compiler_cfg.mode not in {"mock", "lp"}:
+            compiler_cfg.mode = "mock"
+        if "mode" not in compiler_data and compiler_cfg.path:
+            compiler_cfg.mode = "lp"
 
         return cls(
             llm=llm_cfg,
             agent=pick(AgentConfig, data.get("agent", {})),
-            compiler=pick(CompilerConfig, data.get("compiler", {})),
+            compiler=compiler_cfg,
             knowledge_dir=data.get("knowledge_dir", "./knowledge"),
             user_knowledge_dir=data.get("user_knowledge_dir", "./user_knowledge"),
             templates_dir=data.get("templates_dir", "./templates"),
@@ -432,6 +441,7 @@ class GDLAgentConfig:
                 "auto_version": self.agent.auto_version,
             },
             "compiler": {
+                "mode": self.compiler.mode,
                 "path": self.compiler.path or "",
                 "timeout": self.compiler.timeout,
             },
@@ -463,6 +473,7 @@ class GDLAgentConfig:
             f"diff_check = {str(self.agent.diff_check).lower()}",
             f"auto_version = {str(self.agent.auto_version).lower()}",
             "", "[compiler]",
+            f'mode = "{self.compiler.mode}"',
         ]
         if self.compiler.path:
             lines.append(f'path = "{self.compiler.path}"')
