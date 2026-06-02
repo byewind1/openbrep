@@ -37,6 +37,28 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: false })
     },
 
+    async newProject() {
+      set({ loading: true, lastError: null })
+      const snapshot = await api.newProject()
+      if (snapshot.ok === false) {
+        set({
+          loading: false,
+          lastError: snapshot.error ?? 'Failed to create a new project.',
+        })
+        return
+      }
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      if (!snapshot.project) {
+        set({ loading: false })
+        return
+      }
+      await get().loadScripts()
+      await get().loadRevisions()
+      await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
+      set({ loading: false })
+    },
+
     async importGdlFile(path = '') {
       set({ loading: true, lastError: null })
       const snapshot = await api.importGdlFile(path)
@@ -97,6 +119,32 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       }))
     },
 
+    async saveProject() {
+      set({ loading: true, lastError: null })
+      const result = await api.saveProject()
+      if (result.ok === false) {
+        set({
+          loading: false,
+          lastError: result.error ?? 'Failed to save HSF project.',
+        })
+        return
+      }
+      set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
+      await get().loadScripts()
+      await get().loadRevisions()
+      await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
+      set((state) => ({
+        loading: false,
+        compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
+      }))
+    },
+
+    async saveProjectAs(parentDir = '', name = '') {
+      await get().exportHsfProject(parentDir, name)
+    },
+
     async closeProject() {
       set({ loading: true, lastError: null })
       const snapshot = await api.closeProject()
@@ -108,6 +156,10 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
         return
       }
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      if (!snapshot.project) {
+        set({ loading: false })
+        return
+      }
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()

@@ -116,7 +116,7 @@ export interface LlmModelOption {
 
 export interface WorkbenchSnapshot {
   ok?: boolean
-  project: WorkbenchProject
+  project: WorkbenchProject | null
   parameters: WorkbenchParameter[]
   preview: PreviewPayload
   warnings: string[]
@@ -129,6 +129,7 @@ export interface HsfExportResult extends WorkbenchSnapshot {
   ok: boolean
   saved_to?: string
   cancelled?: boolean
+  needs_save_as?: boolean
 }
 
 export interface ApplyResult extends WorkbenchSnapshot {

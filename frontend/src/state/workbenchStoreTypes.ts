@@ -63,9 +63,11 @@ export interface WorkbenchApi {
   fetchPreview: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<PreviewPayload>
   fetchPreview2D: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
+  newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
   exportHsfProject: (parentDir?: string, name?: string) => Promise<HsfExportResult>
+  saveProject: () => Promise<HsfExportResult>
   closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
@@ -162,9 +164,12 @@ export interface WorkbenchState {
   mockCompileResult: MockCompileResponse | null
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
+  newProject: () => Promise<void>
   importGdlFile: (path?: string) => Promise<void>
   importGsmFile: (path?: string) => Promise<void>
   exportHsfProject: (parentDir?: string, name?: string) => Promise<void>
+  saveProject: () => Promise<void>
+  saveProjectAs: (parentDir?: string, name?: string) => Promise<void>
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<void>

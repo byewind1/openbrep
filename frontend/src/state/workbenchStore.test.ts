@@ -50,9 +50,26 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['saved'],
       compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
+    newProject: async () => ({
+      ok: true,
+      project: { name: 'Untitled GDL Object', source: 'untitled' },
+      parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+    }),
+    saveProject: async () => ({
+      ok: false,
+      needs_save_as: true,
+      error: 'Project has no HSF path. Use Save As HSF.',
+      project: { name: 'Untitled GDL Object', source: 'untitled' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
     closeProject: async () => ({
       ok: true,
-      project: { name: 'Demo Bookshelf', source: 'demo' },
+      project: null,
       parameters: [],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
@@ -497,14 +514,33 @@ test('loads a project path and clears stale draft parameters', async () => {
   expect(store.getState().recentProjects).toEqual([{ path: '/workspace/Chair', exists: true }])
 })
 
-test('closes the current project and returns to demo state', async () => {
+test('closes the current project and returns to empty workbench state', async () => {
   const store = createWorkbenchStore(makeApi())
 
   await store.getState().loadProjectPath('/workspace/Chair')
   await store.getState().closeProject()
 
-  expect(store.getState().project).toEqual({ name: 'Demo Bookshelf', source: 'demo' })
-  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().project).toBeNull()
+  expect(store.getState().activeScriptName).toBeNull()
+  expect(store.getState().loading).toBe(false)
+})
+
+test('newProject loads an untitled project and refreshes project resources', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().newProject()
+
+  expect(store.getState().project?.name).toBe('Untitled GDL Object')
+  expect(store.getState().project?.source).toBe('untitled')
+  expect(store.getState().scripts.length).toBeGreaterThan(0)
+})
+
+test('saveProject reports save-as requirement for unsaved projects', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().saveProject()
+
+  expect(store.getState().lastError).toContain('Save As HSF')
   expect(store.getState().loading).toBe(false)
 })
 
