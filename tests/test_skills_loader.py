@@ -25,6 +25,26 @@ class TestSkillsLoader(unittest.TestCase):
         self.assertIn("## Skill: project_style", result)
         self.assertIn("铝合金窗框", result)
 
+    def test_pro_skill_layer_matches_instruction_without_public_skill_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir)
+            pro_dir = skills_dir / "pro"
+            pro_dir.mkdir()
+            (pro_dir / "gdl_stair.md").write_text(
+                "# GDL Stair Pro Skill\n\n"
+                "## Activation Keywords\n"
+                "- 楼梯\n"
+                "- spiral stair\n\n"
+                "## Method\n"
+                "Use PUT/GET with bPRISM_ for spiral stairs.\n",
+                encoding="utf-8",
+            )
+
+            result = SkillsLoader(str(skills_dir)).get_for_task("生成一个螺旋楼梯")
+
+        self.assertIn("## Skill: gdl_stair", result)
+        self.assertIn("bPRISM_", result)
+
     def test_custom_skill_matches_instruction_by_body_content_without_filename(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir)
