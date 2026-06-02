@@ -237,7 +237,7 @@ export function SettingsDrawer({
       const next = officialModelOptions[0] ?? fallbackModelOptions[0]
       if (next) {
         setManualModelMode(false)
-        updateLlmDraft({ ...llmDraft, model: next.id })
+        updateLlmDraft({ ...llmDraft, model: next.id, api_key: '', api_base: '' })
       }
       return
     }
@@ -423,7 +423,8 @@ export function SettingsDrawer({
                         updateLlmDraft({
                           ...llmDraft,
                           model: model.id,
-                          api_base: model.kind === 'custom' ? model.api_base ?? llmDraft.api_base : llmDraft.api_base,
+                          api_key: model.kind === 'custom' ? llmDraft.api_key : '',
+                          api_base: model.kind === 'custom' ? model.api_base ?? llmDraft.api_base : '',
                         })
                         setManualModelMode(false)
                       }}

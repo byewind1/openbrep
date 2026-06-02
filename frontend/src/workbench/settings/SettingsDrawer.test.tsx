@@ -196,6 +196,37 @@ describe('SettingsDrawer AI model settings', () => {
     expect(screen.getAllByText('Manual model ID').length).toBeGreaterThanOrEqual(2)
   })
 
+  test('clears custom credentials when switching from custom to official models', () => {
+    renderSettingsDrawer({
+      model: 'ymg-gpt-5.3-codex',
+      models: ['ymg-gpt-5.3-codex', 'deepseek-chat'],
+      model_groups: {
+        custom: [
+          {
+            id: 'ymg-gpt-5.3-codex',
+            label: 'ymg-gpt-5.3-codex',
+            kind: 'custom',
+            provider: 'ymg',
+            target_model: 'gpt-5.3-codex',
+            protocol: 'openai',
+            api_base: 'https://custom.example.test/v1',
+            has_api_key: true,
+          },
+        ],
+        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
+      },
+      api_key: 'custom-key',
+      api_base: 'https://custom.example.test/v1',
+      max_retries: 5,
+      assistant_settings: '',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Official' }))
+
+    expect((screen.getByPlaceholderText('Provider API key') as HTMLInputElement).value).toBe('')
+    expect((screen.getByPlaceholderText('Optional endpoint override') as HTMLInputElement).value).toBe('')
+  })
+
   test('loads settings side data only when the drawer opens', () => {
     const loadMemory = vi.fn()
     const firstLoadGit = vi.fn()
