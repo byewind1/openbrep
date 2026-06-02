@@ -6,6 +6,14 @@ from openbrep.skills_loader import SkillsLoader
 
 
 class TestSkillsLoader(unittest.TestCase):
+    def test_builtin_stair_skill_matches_spiral_stair_without_filename(self):
+        result = SkillsLoader("skills").get_for_task("生成一个带扶手的参数化螺旋楼梯")
+
+        self.assertIn("## Skill: gdl_stair", result)
+        self.assertIn("bPRISM_", result)
+        self.assertIn("TUBE", result)
+        self.assertIn("numrisr", result)
+
     def test_custom_skill_matches_instruction_by_activation_keywords_without_filename(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir)
