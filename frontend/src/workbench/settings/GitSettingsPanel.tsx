@@ -22,11 +22,7 @@ export function GitSettingsPanel({
   onCommit,
 }: GitSettingsPanelProps) {
   return (
-    <section className="settings-section">
-      <div className="settings-section-heading">
-        <strong>Git</strong>
-        <span>Optional source control for the current HSF directory</span>
-      </div>
+    <>
       <label className="settings-row">
         <span>Enabled</span>
         <input
@@ -70,6 +66,6 @@ export function GitSettingsPanel({
           Refresh
         </button>
       </div>
-    </section>
+    </>
   )
 }

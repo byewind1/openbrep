@@ -47,6 +47,30 @@ function renderSettingsDrawer(
 }
 
 describe('SettingsDrawer AI model settings', () => {
+  test('shows common settings by default and keeps low-frequency sections collapsed', () => {
+    renderSettingsDrawer({
+      model: 'deepseek-chat',
+      models: ['deepseek-chat'],
+      model_groups: {
+        custom: [],
+        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
+      },
+      api_key: '',
+      api_base: '',
+      max_retries: 5,
+      assistant_settings: '',
+    })
+
+    expect(screen.getByText('Config file')).toBeTruthy()
+    expect(screen.getByText('Model')).toBeTruthy()
+    expect(screen.getByText('Mock')).toBeTruthy()
+    expect(screen.getByText('0 recent')).toBeTruthy()
+    expect(screen.queryByText('LP_XMLConverter')).toBeNull()
+    expect(screen.queryByText('Recent HSF projects')).toBeNull()
+    expect(screen.queryByText('Project Git')).toBeNull()
+    expect(screen.queryByText('Learned error lessons')).toBeNull()
+  })
+
   test('keeps settings as draft until Save Settings is pressed and saves compiler before AI', async () => {
     const saveOrder: string[] = []
     const onCompilerSettingsChange = vi.fn(async (settings) => {
@@ -77,9 +101,11 @@ describe('SettingsDrawer AI model settings', () => {
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
+    fireEvent.click(screen.getByRole('button', { name: /Compiler/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
 
     expect(onCompilerSettingsChange).not.toHaveBeenCalled()
+    expect(screen.getByText('Modified')).toBeTruthy()
     expect(screen.getByText('Unsaved changes')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
@@ -113,6 +139,7 @@ describe('SettingsDrawer AI model settings', () => {
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
+    fireEvent.click(screen.getByRole('button', { name: /Compiler/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
 

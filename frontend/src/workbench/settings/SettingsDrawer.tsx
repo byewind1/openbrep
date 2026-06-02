@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
 import type {
   CompilerSettings,
   ErrorLesson,
@@ -10,14 +9,31 @@ import type {
   RecentProject,
   UpdateMemoryLessonRequest,
 } from '../../api/types'
+import { AiSettingsPanel } from './AiSettingsPanel'
+import { CompilerSettingsPanel } from './CompilerSettingsPanel'
+import { GeneralSettingsPanel } from './GeneralSettingsPanel'
 import { GitSettingsPanel } from './GitSettingsPanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
+import { SettingsSection } from './SettingsSection'
+import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
 
 const SETTINGS_DRAWER_DEFAULT_WIDTH = 430
 const SETTINGS_DRAWER_MIN_WIDTH = 360
 const SETTINGS_DRAWER_MAX_WIDTH = 760
 const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
 const SETTINGS_DRAWER_KEY_STEP = 24
+
+type SettingsSectionId = 'general' | 'ai' | 'compiler' | 'workspace' | 'git' | 'memory' | 'advanced'
+
+const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
+  general: true,
+  ai: true,
+  compiler: false,
+  workspace: false,
+  git: false,
+  memory: false,
+  advanced: false,
+}
 
 interface SettingsDrawerProps {
   open: boolean
@@ -91,44 +107,15 @@ export function SettingsDrawer({
   const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty' | 'saving' | null>(null)
   const [settingsSaveError, setSettingsSaveError] = useState('')
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
-  const [manualModelMode, setManualModelMode] = useState(false)
   const [drawerWidth, setDrawerWidth] = useState(SETTINGS_DRAWER_DEFAULT_WIDTH)
+  const [expandedSections, setExpandedSections] = useState(DEFAULT_EXPANDED_SECTIONS)
   const wasOpenRef = useRef(false)
   const resizeStartRef = useRef<{ pointerX: number; width: number } | null>(null)
-  const customModelOptions = llmDraft.model_groups?.custom ?? []
-  const officialModelOptions = llmDraft.model_groups?.official ?? []
-  const groupedModelIds = new Set([...customModelOptions, ...officialModelOptions].map((option) => option.id))
-  const fallbackModelOptions = (llmDraft.models ?? [])
-    .filter((model) => model && !groupedModelIds.has(model))
-    .map((model) => ({ id: model, label: model, kind: 'official' as const, provider: '', has_api_key: false }))
-  const knownModelIds = new Set([...groupedModelIds, ...fallbackModelOptions.map((option) => option.id)])
-  const allModelOptions = [...customModelOptions, ...officialModelOptions, ...fallbackModelOptions]
-  const selectedModelMeta = allModelOptions.find((option) => option.id === llmDraft.model)
-  const activeModelCategory = manualModelMode ? 'exact' : selectedModelMeta?.kind ?? (knownModelIds.has(llmDraft.model) ? 'official' : 'exact')
-  const apiKeyHint =
-    activeModelCategory === 'custom'
-      ? 'Custom key saves to [[llm.custom_providers]] with its base URL.'
-      : activeModelCategory === 'official'
-        ? selectedModelMeta?.has_api_key
-          ? 'Official key saves to [llm.provider_keys]. Leave blank to keep the stored provider key.'
-          : 'Official key saves to [llm.provider_keys] for this provider.'
-        : 'Exact model IDs use the entered key unless they match a configured custom provider.'
-  const apiBaseHint =
-    activeModelCategory === 'custom'
-      ? 'Custom base URL is read from the selected custom provider.'
-      : activeModelCategory === 'official'
-        ? 'Leave empty for the native official endpoint; fill only for an endpoint override.'
-        : 'Optional endpoint override for OpenAI-compatible routes.'
-  const visibleModelOptions =
-    activeModelCategory === 'custom'
-      ? customModelOptions
-      : activeModelCategory === 'official'
-        ? [...officialModelOptions, ...fallbackModelOptions]
-        : []
+  const isCompilerDirty = compilerDirty(compilerDraft, compilerSettings)
+  const isLlmDirty = llmDirty(llmDraft, llmSettings)
 
   useEffect(() => {
     setLlmDraft(llmSettings)
-    setManualModelMode(false)
   }, [llmSettings])
 
   useEffect(() => {
@@ -179,9 +166,11 @@ export function SettingsDrawer({
     }
   }, [open])
 
-  function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    void saveSettings()
+  function toggleSection(id: string) {
+    setExpandedSections((sections) => ({
+      ...sections,
+      [id]: !sections[id as SettingsSectionId],
+    }))
   }
 
   function updateCompilerDraft(settings: CompilerSettings) {
@@ -238,27 +227,6 @@ export function SettingsDrawer({
     setLlmTesting(false)
   }
 
-  function selectModelCategory(category: 'official' | 'custom' | 'exact') {
-    if (category === 'custom') {
-      const next = customModelOptions[0]
-      if (next) {
-        setManualModelMode(false)
-        updateLlmDraft({ ...llmDraft, model: next.id, api_base: next.api_base ?? llmDraft.api_base })
-      }
-      return
-    }
-    if (category === 'official') {
-      const next = officialModelOptions[0] ?? fallbackModelOptions[0]
-      if (next) {
-        setManualModelMode(false)
-        updateLlmDraft({ ...llmDraft, model: next.id, api_key: '', api_base: '' })
-      }
-      return
-    }
-    setManualModelMode(true)
-    updateLlmDraft({ ...llmDraft, model: selectedModelMeta?.id ?? llmDraft.model })
-  }
-
   return (
     <>
       {open ? <button className="settings-scrim" type="button" aria-label="Close settings" onClick={onClose} /> : null}
@@ -305,299 +273,158 @@ export function SettingsDrawer({
           </button>
         </div>
 
-        <div className="settings-actions">
-          <button type="button" onClick={() => void reloadRuntimeSettings()}>
-            Reload config
-          </button>
-          <button type="button" className="primary-action" disabled={settingsSaveState === 'saving'} onClick={() => void saveSettings()}>
-            {settingsSaveState === 'saving' ? 'Saving...' : 'Save Settings'}
-          </button>
-          {settingsSaveState ? (
-            <span
-              className={
-                settingsSaveState === 'dirty'
-                  ? 'settings-dirty-state'
-                  : settingsSaveState === 'saving'
-                    ? 'settings-saving-state'
-                    : 'settings-saved-state'
-              }
-            >
-              {settingsSaveState === 'dirty' ? 'Unsaved changes' : settingsSaveState === 'saving' ? 'Saving' : 'Saved'}
-            </span>
-          ) : null}
-          {settingsSaveError ? <span className="settings-save-error">{settingsSaveError}</span> : null}
-        </div>
+        <SettingsSection
+          id="general"
+          title="General"
+          summary="config.toml"
+          expanded={expandedSections.general}
+          onToggle={toggleSection}
+        >
+          <GeneralSettingsPanel
+            configPath="config.toml"
+            saveState={settingsSaveState}
+            saveError={settingsSaveError}
+            onReload={() => void reloadRuntimeSettings()}
+            onSave={() => void saveSettings()}
+          />
+        </SettingsSection>
 
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <strong>Compiler</strong>
-            <span>Mock or LP_XMLConverter</span>
-          </div>
-          <label className="settings-row">
-            <span>Mode</span>
-            <select
-              aria-label="Compiler mode"
-              value={compilerDraft.mode}
-              onChange={(event) =>
-                updateCompilerDraft({
-                  ...compilerDraft,
-                  mode: event.currentTarget.value === 'lp' ? 'lp' : 'mock',
-                })
-              }
-            >
-              <option value="mock">Mock</option>
-              <option value="lp">LP</option>
-            </select>
-          </label>
-          <label className="settings-field">
-            <span>LP_XMLConverter</span>
-            <div className="settings-path-row">
-              <input
-                type="text"
-                placeholder="/Applications/.../LP_XMLConverter"
-                value={compilerDraft.converter_path}
-                disabled={compilerDraft.mode !== 'lp'}
-                onChange={(event) =>
-                  updateCompilerDraft({
-                    ...compilerDraft,
-                    converter_path: event.currentTarget.value,
-                  })
-                }
-              />
-              <button type="button" disabled={compilerDraft.mode !== 'lp'} onClick={() => void browseCompilerDraft()}>
-                Browse
-              </button>
-            </div>
-          </label>
-          <label className="settings-field">
-            <span>Output directory</span>
-            <div className="settings-path-row">
-              <input
-                type="text"
-                placeholder="Project sibling /output"
-                value={compilerDraft.output_dir}
-                onChange={(event) =>
-                  updateCompilerDraft({
-                    ...compilerDraft,
-                    output_dir: event.currentTarget.value,
-                  })
-                }
-              />
-              <button type="button" onClick={() => void browseOutputDraft()}>
-                Browse
-              </button>
-            </div>
-          </label>
-        </section>
+        <SettingsSection
+          id="ai"
+          title="AI"
+          summary={aiSummary(llmDraft)}
+          modified={isLlmDirty}
+          expanded={expandedSections.ai}
+          onToggle={toggleSection}
+        >
+          <AiSettingsPanel
+            draft={llmDraft}
+            testResult={llmTestResult}
+            testing={llmTesting}
+            onChange={updateLlmDraft}
+            onTestConnection={() => void testLlmConnection()}
+          />
+        </SettingsSection>
 
-        <form className="settings-section" onSubmit={submitLlmSettings}>
-          <div className="settings-section-heading">
-            <strong>AI</strong>
-            <span>Model, endpoint and collaboration preference</span>
-          </div>
-          <div className="settings-field">
-            <span>Model</span>
-            <div className="settings-segmented" aria-label="AI source">
-              <button
-                type="button"
-                className={activeModelCategory === 'official' ? 'active' : ''}
-                disabled={!officialModelOptions.length && !fallbackModelOptions.length}
-                onClick={() => selectModelCategory('official')}
-              >
-                Official
-              </button>
-              <button
-                type="button"
-                className={activeModelCategory === 'custom' ? 'active' : ''}
-                disabled={!customModelOptions.length}
-                onClick={() => selectModelCategory('custom')}
-              >
-                Custom
-              </button>
-              <button
-                type="button"
-                className={activeModelCategory === 'exact' ? 'active' : ''}
-                onClick={() => selectModelCategory('exact')}
-              >
-                Exact ID
-              </button>
-            </div>
-            <div className="settings-model-row">
-              <div className="settings-model-list" role="listbox" aria-label="Model">
-                {activeModelCategory === 'exact' ? (
-                  <span className="settings-empty">Manual model ID</span>
-                ) : (
-                  visibleModelOptions.map((model) => (
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={llmDraft.model === model.id}
-                      className={llmDraft.model === model.id ? 'active' : ''}
-                      onClick={() => {
-                        updateLlmDraft({
-                          ...llmDraft,
-                          model: model.id,
-                          api_key: model.kind === 'custom' ? llmDraft.api_key : '',
-                          api_base: model.kind === 'custom' ? model.api_base ?? llmDraft.api_base : '',
-                        })
-                        setManualModelMode(false)
-                      }}
-                      key={model.id}
-                    >
-                      {model.kind === 'custom' ? `${model.label} (${model.provider})` : model.label}
-                    </button>
-                  ))
-                )}
-              </div>
-              <input
-                type="text"
-                value={llmDraft.model}
-                placeholder="Exact model id"
-                onChange={(event) => {
-                  setManualModelMode(true)
-                  updateLlmDraft({ ...llmDraft, model: event.currentTarget.value })
-                }}
-              />
-            </div>
-            {selectedModelMeta ? (
-              <small className="settings-field-hint">
-                {activeModelCategory === 'exact'
-                  ? 'Manual model ID'
-                  : selectedModelMeta.kind === 'custom'
-                  ? `Custom provider: ${selectedModelMeta.provider}${selectedModelMeta.protocol ? ` / ${selectedModelMeta.protocol}` : ''}`
-                  : `Official provider: ${selectedModelMeta.provider || 'auto'}`}
-              </small>
-            ) : null}
-          </div>
-          <label className="settings-field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={llmDraft.api_key}
-              placeholder="Provider API key"
-              onChange={(event) => updateLlmDraft({ ...llmDraft, api_key: event.currentTarget.value })}
-            />
-            <small className="settings-field-hint">{apiKeyHint}</small>
-          </label>
-          <label className="settings-field">
-            <span>API Base URL</span>
-            <input
-              type="text"
-              value={llmDraft.api_base}
-              placeholder="Optional endpoint override"
-              onChange={(event) => updateLlmDraft({ ...llmDraft, api_base: event.currentTarget.value })}
-            />
-            <small className="settings-field-hint">{apiBaseHint}</small>
-          </label>
-          <label className="settings-row">
-            <span>Max retries</span>
-            <input
-              type="number"
-              min={1}
-              max={10}
-              value={llmDraft.max_retries}
-              onChange={(event) =>
-                updateLlmDraft({
-                  ...llmDraft,
-                  max_retries: Number(event.currentTarget.value),
-                })
-              }
-            />
-          </label>
-          <label className="settings-field">
-            <span>Assistant preference</span>
-            <textarea
-              value={llmDraft.assistant_settings}
-              placeholder="例如：先解释再给最小修改；优先保证可编译；不要大改结构。"
-              onChange={(event) => updateLlmDraft({ ...llmDraft, assistant_settings: event.currentTarget.value })}
-            />
-          </label>
-          <div className="settings-submit-row">
-            <button type="button" disabled={llmTesting} onClick={() => void testLlmConnection()}>
-              {llmTesting ? 'Testing...' : 'Test connection'}
-            </button>
-          </div>
-          {llmTestResult ? (
-            <p className={`settings-test-result ${llmTestResult.ok ? 'success' : 'error'}`}>
-              {llmTestResult.ok
-                ? `${llmTestResult.message ?? 'LLM connection OK'}${llmTestResult.duration_ms !== undefined ? ` (${llmTestResult.duration_ms} ms)` : ''}`
-                : `LLM settings error: ${llmTestResult.error ?? 'Connection test failed.'}`}
-            </p>
-          ) : null}
-        </form>
+        <SettingsSection
+          id="compiler"
+          title="Compiler"
+          summary={compilerSummary(compilerDraft)}
+          modified={isCompilerDirty}
+          expanded={expandedSections.compiler}
+          onToggle={toggleSection}
+        >
+          <CompilerSettingsPanel
+            draft={compilerDraft}
+            onChange={updateCompilerDraft}
+            onBrowseCompilerFile={() => void browseCompilerDraft()}
+            onBrowseOutputDirectory={() => void browseOutputDraft()}
+          />
+        </SettingsSection>
 
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <strong>Workspace</strong>
-            <span>Recent HSF projects and current session</span>
-          </div>
-          <div className="recent-project-list">
-            {recentProjects.length ? (
-              recentProjects.map((project) => (
-                <button
-                  type="button"
-                  className="recent-project-item"
-                  disabled={!project.exists}
-                  key={project.path}
-                  onClick={() => onOpenProjectPath(project.path)}
-                  title={project.path}
-                >
-                  <span>{project.name || project.path}</span>
-                  {project.parent_dir ? <small>{project.parent_dir}</small> : null}
-                  {!project.exists ? <em>missing</em> : null}
-                </button>
-              ))
-            ) : (
-              <span className="settings-empty">No recent HSF projects</span>
-            )}
-          </div>
-          <div className="settings-submit-row">
-            <button type="button" onClick={onExportHsfProject}>
-              Export HSF
-            </button>
-            <button
-              type="button"
-              onClick={onResetCurrentProject}
-              title="Reset the current workbench session without deleting files on disk"
-            >
-              Reset Current Project
-            </button>
-          </div>
-        </section>
+        <SettingsSection
+          id="workspace"
+          title="Workspace"
+          summary={workspaceSummary(recentProjects)}
+          expanded={expandedSections.workspace}
+          onToggle={toggleSection}
+        >
+          <WorkspaceSettingsPanel
+            recentProjects={recentProjects}
+            onOpenProjectPath={onOpenProjectPath}
+            onExportHsfProject={onExportHsfProject}
+            onResetCurrentProject={onResetCurrentProject}
+          />
+        </SettingsSection>
 
-        <GitSettingsPanel
-          gitStatus={gitStatus}
-          gitBusy={gitBusy}
-          message={gitMessage}
-          onMessageChange={setGitMessage}
-          onRefresh={onLoadProjectGitStatus}
-          onInitialize={onInitializeProjectGit}
-          onSetEnabled={onSetProjectGitEnabled}
-          onCommit={onCommitProjectGit}
-        />
+        <SettingsSection
+          id="git"
+          title="Git"
+          summary={gitSummary(gitStatus)}
+          expanded={expandedSections.git}
+          onToggle={toggleSection}
+        >
+          <GitSettingsPanel
+            gitStatus={gitStatus}
+            gitBusy={gitBusy}
+            message={gitMessage}
+            onMessageChange={setGitMessage}
+            onRefresh={onLoadProjectGitStatus}
+            onInitialize={onInitializeProjectGit}
+            onSetEnabled={onSetProjectGitEnabled}
+            onCommit={onCommitProjectGit}
+          />
+        </SettingsSection>
 
-        <MemoryLessonsPanel
-          memoryStatus={memoryStatus}
-          lessons={memoryLessons}
-          skillPreview={memorySkillPreview}
-          busy={memoryBusy}
-          formatBytes={formatBytes}
-          onRefresh={onLoadMemoryLessons}
-          onSummarize={onSummarizeProjectMemory}
-          onUpdateLesson={onUpdateMemoryLesson}
-          onDeleteLesson={onDeleteMemoryLesson}
-          onIgnoreLesson={onIgnoreMemoryLesson}
-          onClear={onClearProjectMemory}
-        />
+        <SettingsSection
+          id="memory"
+          title="Memory"
+          summary={memorySummary(memoryStatus, memoryLessons.length)}
+          expanded={expandedSections.memory}
+          onToggle={toggleSection}
+        >
+          <MemoryLessonsPanel
+            memoryStatus={memoryStatus}
+            lessons={memoryLessons}
+            skillPreview={memorySkillPreview}
+            busy={memoryBusy}
+            formatBytes={formatBytes}
+            onRefresh={onLoadMemoryLessons}
+            onSummarize={onSummarizeProjectMemory}
+            onUpdateLesson={onUpdateMemoryLesson}
+            onDeleteLesson={onDeleteMemoryLesson}
+            onIgnoreLesson={onIgnoreMemoryLesson}
+            onClear={onClearProjectMemory}
+          />
+        </SettingsSection>
 
-        <section className="settings-section muted">
-          <div className="settings-section-heading">
-            <strong>Advanced</strong>
-            <span>Reserved for later local runtime controls</span>
-          </div>
-        </section>
+        <SettingsSection
+          id="advanced"
+          title="Advanced"
+          summary="reserved"
+          expanded={expandedSections.advanced}
+          onToggle={toggleSection}
+        >
+          <span className="settings-empty">Reserved for later local runtime controls</span>
+        </SettingsSection>
       </aside>
     </>
+  )
+}
+
+function compilerSummary(settings: CompilerSettings) {
+  return settings.mode === 'lp' ? 'LP' : 'Mock'
+}
+
+function aiSummary(settings: LlmSettings) {
+  return settings.model || 'No model'
+}
+
+function workspaceSummary(recentProjects: RecentProject[]) {
+  return `${recentProjects.length} recent`
+}
+
+function gitSummary(gitStatus: ProjectGitStatus | null) {
+  if (!gitStatus?.initialized) return 'Not initialized'
+  return gitStatus.enabled ? 'Enabled' : 'Disabled'
+}
+
+function memorySummary(memoryStatus: ProjectMemoryStatus | null, fallbackLessonCount: number) {
+  const lessonCount = memoryStatus?.lesson_count ?? fallbackLessonCount
+  return `${lessonCount} lessons`
+}
+
+function compilerDirty(a: CompilerSettings, b: CompilerSettings) {
+  return a.mode !== b.mode || a.converter_path !== b.converter_path || a.output_dir !== b.output_dir
+}
+
+function llmDirty(a: LlmSettings, b: LlmSettings) {
+  return (
+    a.model !== b.model ||
+    a.api_key !== b.api_key ||
+    a.api_base !== b.api_base ||
+    a.max_retries !== b.max_retries ||
+    a.assistant_settings !== b.assistant_settings
   )
 }
 

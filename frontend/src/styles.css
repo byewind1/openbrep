@@ -1498,9 +1498,79 @@ button:focus-visible {
 
 .settings-section {
   display: grid;
-  gap: 10px;
+  gap: 0;
   border-bottom: 1px solid var(--border);
-  padding: 12px 14px;
+  padding: 0;
+}
+
+.settings-section-toggle {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 14px;
+  text-align: left;
+}
+
+.settings-section-toggle:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.settings-section-toggle:focus-visible {
+  outline: 1px solid rgba(125, 211, 252, 0.74);
+  outline-offset: -1px;
+}
+
+.settings-section-toggle > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-section-toggle strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.settings-section-toggle small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-section-toggle em {
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: var(--warning);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.settings-section-body,
+.settings-panel-form {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-section-body {
+  padding: 0 14px 12px;
+}
+
+.settings-section.collapsed .settings-section-toggle {
+  min-height: 38px;
 }
 
 .settings-actions {
@@ -1510,6 +1580,13 @@ button:focus-visible {
   gap: 8px;
   border-bottom: 1px solid var(--border);
   padding: 8px 14px;
+}
+
+.settings-actions.inline {
+  justify-content: flex-start;
+  border-bottom: 0;
+  padding: 0;
+  flex-wrap: wrap;
 }
 
 .settings-dirty-state,
