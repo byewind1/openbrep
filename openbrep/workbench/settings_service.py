@@ -64,9 +64,13 @@ def apply_llm_credentials_to_config(
         return
 
     provider_name = model_to_provider(model)
-    if provider_name and provider_name != "custom" and api_key:
-        config.llm.provider_keys[provider_name] = api_key
-    config.llm.api_key = api_key
+    resolved_api_key = api_key
+    if provider_name and provider_name != "custom":
+        if api_key:
+            config.llm.provider_keys[provider_name] = api_key
+        else:
+            resolved_api_key = str(config.llm.provider_keys.get(provider_name, "") or "")
+    config.llm.api_key = resolved_api_key
     config.llm.api_base = api_base
 
 
@@ -79,6 +83,7 @@ def llm_model_groups(config: GDLAgentConfig) -> dict[str, list[dict[str, Any]]]:
             "label": model,
             "kind": "official",
             "provider": model_to_provider(model),
+            "has_api_key": bool(config.llm.resolve_api_key(model)),
         }
         for model in ALL_MODELS
         if model not in custom_ids
@@ -198,6 +203,8 @@ class WorkbenchSettingsService:
             api_key=self.session.llm_api_key,
             api_base=self.session.llm_api_base,
         )
+        self.session.llm_api_key = self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
+        self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
         save_workbench_config(self.session.config, self.session.config_path)
         return {"ok": True, "llm": self.llm_settings()}
 

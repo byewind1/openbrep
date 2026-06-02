@@ -1,6 +1,7 @@
 import base64
 
 from openbrep.compiler import CompileResult
+from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import TaskResult
@@ -1004,6 +1005,57 @@ def test_workbench_session_updates_llm_settings_and_persists_config(tmp_path):
     assert reloaded.llm_api_key == "openai-key"
     assert reloaded.llm_api_base == "https://api.openai.com/v1"
     assert reloaded.assistant_settings == "先解释再改代码"
+    saved = GDLAgentConfig.load(str(config_path))
+    assert saved.llm.provider_keys["openai"] == "openai-key"
+
+
+def test_workbench_session_preserves_official_provider_key_when_save_has_blank_key(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "gpt-4.1-mini"
+api_key = ""
+api_base = ""
+temperature = 0.2
+max_tokens = 4096
+custom_providers = []
+assistant_settings = ""
+
+[llm.provider_keys]
+openai = "existing-openai-key"
+
+[agent]
+max_iterations = 5
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = ""
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm",
+        {
+            "model": "gpt-4.1-mini",
+            "api_key": "",
+            "api_base": "",
+            "max_retries": 5,
+            "assistant_settings": "",
+        },
+    )
+    saved = GDLAgentConfig.load(str(config_path))
+
+    assert response["ok"] is True
+    assert response["llm"]["api_key"] == "existing-openai-key"
+    assert saved.llm.provider_keys["openai"] == "existing-openai-key"
+    assert WorkbenchSession(config_path=config_path).llm_api_key == "existing-openai-key"
 
 
 def test_workbench_session_tests_llm_connection_success(tmp_path, monkeypatch):

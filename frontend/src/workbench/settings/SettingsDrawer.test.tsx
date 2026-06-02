@@ -227,6 +227,24 @@ describe('SettingsDrawer AI model settings', () => {
     expect((screen.getByPlaceholderText('Optional endpoint override') as HTMLInputElement).value).toBe('')
   })
 
+  test('shows official provider key persistence semantics', () => {
+    renderSettingsDrawer({
+      model: 'deepseek-chat',
+      models: ['deepseek-chat'],
+      model_groups: {
+        custom: [],
+        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek', has_api_key: true }],
+      },
+      api_key: '',
+      api_base: '',
+      max_retries: 5,
+      assistant_settings: '',
+    })
+
+    expect(screen.getByText('Official key saves to [llm.provider_keys]. Leave blank to keep the stored provider key.')).toBeTruthy()
+    expect(screen.getByText('Leave empty for the native official endpoint; fill only for an endpoint override.')).toBeTruthy()
+  })
+
   test('loads settings side data only when the drawer opens', () => {
     const loadMemory = vi.fn()
     const firstLoadGit = vi.fn()

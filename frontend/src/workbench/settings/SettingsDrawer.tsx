@@ -100,11 +100,25 @@ export function SettingsDrawer({
   const groupedModelIds = new Set([...customModelOptions, ...officialModelOptions].map((option) => option.id))
   const fallbackModelOptions = (llmDraft.models ?? [])
     .filter((model) => model && !groupedModelIds.has(model))
-    .map((model) => ({ id: model, label: model, kind: 'official' as const, provider: '' }))
+    .map((model) => ({ id: model, label: model, kind: 'official' as const, provider: '', has_api_key: false }))
   const knownModelIds = new Set([...groupedModelIds, ...fallbackModelOptions.map((option) => option.id)])
   const allModelOptions = [...customModelOptions, ...officialModelOptions, ...fallbackModelOptions]
   const selectedModelMeta = allModelOptions.find((option) => option.id === llmDraft.model)
   const activeModelCategory = manualModelMode ? 'exact' : selectedModelMeta?.kind ?? (knownModelIds.has(llmDraft.model) ? 'official' : 'exact')
+  const apiKeyHint =
+    activeModelCategory === 'custom'
+      ? 'Custom key saves to [[llm.custom_providers]] with its base URL.'
+      : activeModelCategory === 'official'
+        ? selectedModelMeta?.has_api_key
+          ? 'Official key saves to [llm.provider_keys]. Leave blank to keep the stored provider key.'
+          : 'Official key saves to [llm.provider_keys] for this provider.'
+        : 'Exact model IDs use the entered key unless they match a configured custom provider.'
+  const apiBaseHint =
+    activeModelCategory === 'custom'
+      ? 'Custom base URL is read from the selected custom provider.'
+      : activeModelCategory === 'official'
+        ? 'Leave empty for the native official endpoint; fill only for an endpoint override.'
+        : 'Optional endpoint override for OpenAI-compatible routes.'
   const visibleModelOptions =
     activeModelCategory === 'custom'
       ? customModelOptions
@@ -463,6 +477,7 @@ export function SettingsDrawer({
               placeholder="Provider API key"
               onChange={(event) => updateLlmDraft({ ...llmDraft, api_key: event.currentTarget.value })}
             />
+            <small className="settings-field-hint">{apiKeyHint}</small>
           </label>
           <label className="settings-field">
             <span>API Base URL</span>
@@ -472,6 +487,7 @@ export function SettingsDrawer({
               placeholder="Optional endpoint override"
               onChange={(event) => updateLlmDraft({ ...llmDraft, api_base: event.currentTarget.value })}
             />
+            <small className="settings-field-hint">{apiBaseHint}</small>
           </label>
           <label className="settings-row">
             <span>Max retries</span>
