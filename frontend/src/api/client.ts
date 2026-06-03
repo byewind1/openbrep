@@ -403,26 +403,18 @@ export async function fetchRuntimeSettings(): Promise<RuntimeSettingsResult> {
   )
 }
 
-export async function updateLlmSettings(settings: LlmSettings): Promise<LlmSettingsResult> {
-  return requestJson<LlmSettingsResult>(
-    '/api/settings/llm',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
-    },
+export async function openConfig(): Promise<{ ok: boolean; error?: string }> {
+  return requestJson(
+    '/api/settings/open-config',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 
-export async function testLlmConnection(settings: LlmSettings): Promise<LlmConnectionTestResult> {
+export async function testLlmConnection(): Promise<LlmConnectionTestResult> {
   return requestJson<LlmConnectionTestResult>(
     '/api/settings/llm/test',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
-    },
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
     { ok: false, error: 'OpenBrep local API is not available.', category: 'llm_configuration' },
   )
 }

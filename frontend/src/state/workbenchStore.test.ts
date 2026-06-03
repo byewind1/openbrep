@@ -192,7 +192,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         assistant_settings: '',
       },
     }),
-    updateLlmSettings: async (settings) => ({ ok: true, llm: settings }),
+    openConfig: async () => ({ ok: true }),
     testLlmConnection: async () => ({ ok: true, message: 'LLM connection OK', model: 'glm-4-flash', duration_ms: 12 }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     listAssistantHistory: async () => ({ ok: true, messages: [] }),
@@ -939,49 +939,27 @@ test('updates compiler settings through the API', async () => {
   expect(store.getState().compilerSettings).toEqual({ mode: 'lp', converter_path: '/converter', output_dir: '' })
 })
 
-test('updates llm settings through the API', async () => {
-  const store = createWorkbenchStore(makeApi())
-
-  await store.getState().setLlmSettings({
-    model: 'deepseek-chat',
-    models: ['glm-4-flash', 'deepseek-chat'],
-    api_key: 'deepseek-key',
-    api_base: 'https://api.deepseek.com/v1',
-    max_retries: 6,
-    assistant_settings: '先解释再改',
-  })
-
-  expect(store.getState().llmSettings).toEqual({
-    model: 'deepseek-chat',
-    models: ['glm-4-flash', 'deepseek-chat'],
-    api_key: 'deepseek-key',
-    api_base: 'https://api.deepseek.com/v1',
-    max_retries: 6,
-    assistant_settings: '先解释再改',
-  })
+test('opens config file via openConfig action', async () => {
+  let called = false
+  const store = createWorkbenchStore(makeApi({ openConfig: async () => { called = true; return { ok: true } } }))
+  await store.getState().openConfig()
+  expect(called).toBe(true)
 })
 
-test('tests llm connection with draft settings', async () => {
-  let receivedModel = ''
+test('tests llm connection using saved config', async () => {
+  let callCount = 0
   const store = createWorkbenchStore(
     makeApi({
-      testLlmConnection: async (settings) => {
-        receivedModel = settings.model
-        return { ok: true, message: 'LLM connection OK', model: settings.model, duration_ms: 34 }
+      testLlmConnection: async () => {
+        callCount++
+        return { ok: true, message: 'LLM connection OK', model: 'deepseek-chat', duration_ms: 34 }
       },
     }),
   )
 
-  const result = await store.getState().testLlmConnection({
-    model: 'deepseek-chat',
-    models: ['deepseek-chat'],
-    api_key: 'key',
-    api_base: '',
-    max_retries: 5,
-    assistant_settings: '',
-  })
+  const result = await store.getState().testLlmConnection()
 
-  expect(receivedModel).toBe('deepseek-chat')
+  expect(callCount).toBe(1)
   expect(result.ok).toBe(true)
   expect(result.duration_ms).toBe(34)
 })

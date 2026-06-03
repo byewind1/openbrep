@@ -1,4 +1,4 @@
-import type { CompilerSettings, LlmSettings } from '../../api/types'
+import type { CompilerSettings } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 
 export function createSettingsActions({ api, set }: WorkbenchActionContext) {
@@ -39,19 +39,12 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
       return null
     },
 
-    async setLlmSettings(settings: LlmSettings) {
-      const result = await api.updateLlmSettings(settings)
-      if (result.ok && result.llm) {
-        set({ llmSettings: result.llm })
-        return result.llm
-      }
-      const error = result.error ?? 'AI settings were not saved.'
-      set({ lastError: error })
-      throw new Error(error)
+    async openConfig() {
+      await api.openConfig()
     },
 
-    async testLlmConnection(settings: LlmSettings) {
-      return api.testLlmConnection(settings)
+    async testLlmConnection() {
+      return api.testLlmConnection()
     },
 
     async reloadRuntimeSettings() {

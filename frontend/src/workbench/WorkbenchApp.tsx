@@ -70,7 +70,7 @@ export function WorkbenchApp() {
   const closeProject = useWorkbenchStore((state) => state.closeProject)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
-  const setLlmSettings = useWorkbenchStore((state) => state.setLlmSettings)
+  const openConfig = useWorkbenchStore((state) => state.openConfig)
   const testLlmConnection = useWorkbenchStore((state) => state.testLlmConnection)
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
@@ -339,7 +339,7 @@ export function WorkbenchApp() {
         gitBusy={gitBusy}
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={setCompilerSettings}
-        onLlmSettingsChange={setLlmSettings}
+        onOpenConfig={() => void openConfig()}
         onTestLlmConnection={testLlmConnection}
         onReloadRuntimeSettings={reloadRuntimeSettings}
         onBrowseCompilerFile={browseCompilerFile}

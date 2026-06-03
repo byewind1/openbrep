@@ -129,6 +129,13 @@ class WorkbenchSession:
     def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.settings_service.test_llm_settings(body)
 
+    def open_config(self) -> dict[str, Any]:
+        config_path = Path(self.config_path)
+        if not config_path.exists():
+            return {"ok": False, "error": f"Config file not found: {config_path}"}
+        _open_file(config_path)
+        return {"ok": True, "path": str(config_path)}
+
     def load_hsf_directory(self, path: str) -> dict[str, Any]:
         return self.project_service.load_hsf_directory(path)
 
@@ -384,6 +391,9 @@ class WorkbenchSession:
         if normalized_method == "GET" and route == "/api/settings/runtime":
             return self.settings_service.reload_runtime_settings()
 
+        if normalized_method == "POST" and route == "/api/settings/open-config":
+            return self.open_config()
+
         if normalized_method == "POST" and route == "/api/settings/llm/test":
             return self.test_llm_settings(body)
 
@@ -528,6 +538,18 @@ def _reveal_path(path: Path) -> None:
         subprocess.run(["explorer", "/select,", str(target)], check=False)
         return
     subprocess.run(["xdg-open", str(target.parent if target.is_file() else target)], check=False)
+
+
+def _open_file(path: Path) -> None:
+    target = path.resolve()
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.Popen(["open", str(target)])
+        return
+    if system == "Windows":
+        subprocess.Popen(["start", str(target)], shell=True)
+        return
+    subprocess.Popen(["xdg-open", str(target)])
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:

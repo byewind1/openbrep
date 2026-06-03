@@ -1842,6 +1842,30 @@ button:focus-visible {
   color: var(--text);
 }
 
+.settings-model-display {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-open-config-btn {
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings-open-config-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-soft);
+  background: var(--accent-muted);
+}
+
 .settings-submit-row {
   display: flex;
   justify-content: flex-end;

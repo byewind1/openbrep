@@ -6,7 +6,7 @@ import type { LlmSettings } from '../../api/types'
 
 function renderSettingsDrawer(
   llmSettings: LlmSettings,
-  onLlmSettingsChange: ComponentProps<typeof SettingsDrawer>['onLlmSettingsChange'] = vi.fn(async (settings) => settings),
+  _unused?: unknown,
   overrides: Partial<ComponentProps<typeof SettingsDrawer>> = {},
 ) {
   return render(
@@ -23,8 +23,8 @@ function renderSettingsDrawer(
       gitBusy={false}
       onClose={vi.fn()}
       onCompilerSettingsChange={vi.fn(async (settings) => settings)}
-      onLlmSettingsChange={onLlmSettingsChange}
-      onTestLlmConnection={async () => ({ ok: true })}
+      onOpenConfig={vi.fn()}
+      onTestLlmConnection={vi.fn(async () => ({ ok: true }))}
       onReloadRuntimeSettings={vi.fn(async () => undefined)}
       onBrowseCompilerFile={vi.fn(async () => null)}
       onBrowseOutputDirectory={vi.fn(async () => null)}
@@ -70,71 +70,33 @@ describe('SettingsDrawer AI model settings', () => {
     expect(screen.queryByText('Learned error lessons')).toBeNull()
   })
 
-  test('keeps settings as draft until Save Settings is pressed and saves compiler before AI', async () => {
+  test('saves compiler settings and reloads on Save', async () => {
     const saveOrder: string[] = []
-    const onCompilerSettingsChange = vi.fn(async (settings) => {
-      saveOrder.push('compiler')
-      return settings
-    })
-    const onLlmSettingsChange = vi.fn(async (settings) => {
-      saveOrder.push('llm')
-      return settings
-    })
-    const onReloadRuntimeSettings = vi.fn(async () => {
-      saveOrder.push('reload')
-    })
+    const onCompilerSettingsChange = vi.fn(async (settings) => { saveOrder.push('compiler'); return settings })
+    const onReloadRuntimeSettings = vi.fn(async () => { saveOrder.push('reload') })
     renderSettingsDrawer(
-      {
-        model: 'deepseek-chat',
-        models: ['deepseek-chat'],
-        model_groups: {
-          custom: [],
-          official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
-        },
-        api_key: '',
-        api_base: '',
-        max_retries: 5,
-        assistant_settings: '',
-      },
-      onLlmSettingsChange,
+      { model: 'deepseek-chat', models: ['deepseek-chat'], model_groups: { custom: [], official: [] }, api_key: '', api_base: '', max_retries: 5, assistant_settings: '' },
+      undefined,
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
     fireEvent.click(screen.getByRole('button', { name: /Compiler/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
-
-    expect(onCompilerSettingsChange).not.toHaveBeenCalled()
-    expect(screen.getByText('Modified')).toBeTruthy()
     expect(screen.getByText('Unsaved')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy())
     expect(onCompilerSettingsChange).toHaveBeenCalledWith({ mode: 'lp', converter_path: '', output_dir: '' })
-    expect(onLlmSettingsChange).toHaveBeenCalled()
-    expect(saveOrder).toEqual(['compiler', 'llm', 'reload'])
+    expect(saveOrder).toEqual(['compiler', 'reload'])
   })
 
   test('keeps settings dirty and reports save errors when compiler settings fail', async () => {
-    const onCompilerSettingsChange = vi.fn(async () => {
-      throw new Error('Compiler settings were not saved')
-    })
-    const onLlmSettingsChange = vi.fn(async (settings) => settings)
+    const onCompilerSettingsChange = vi.fn(async () => { throw new Error('Compiler settings were not saved') })
     const onReloadRuntimeSettings = vi.fn(async () => undefined)
     renderSettingsDrawer(
-      {
-        model: 'deepseek-chat',
-        models: ['deepseek-chat'],
-        model_groups: {
-          custom: [],
-          official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
-        },
-        api_key: '',
-        api_base: '',
-        max_retries: 5,
-        assistant_settings: '',
-      },
-      onLlmSettingsChange,
+      { model: 'deepseek-chat', models: ['deepseek-chat'], model_groups: { custom: [], official: [] }, api_key: '', api_base: '', max_retries: 5, assistant_settings: '' },
+      undefined,
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
@@ -145,7 +107,6 @@ describe('SettingsDrawer AI model settings', () => {
     await waitFor(() => expect(screen.getByTitle('Compiler settings were not saved')).toBeTruthy())
     expect(screen.queryByText('Saved')).toBeNull()
     expect(screen.getByText('Unsaved')).toBeTruthy()
-    expect(onLlmSettingsChange).not.toHaveBeenCalled()
     expect(onReloadRuntimeSettings).not.toHaveBeenCalled()
   })
 
@@ -180,93 +141,31 @@ describe('SettingsDrawer AI model settings', () => {
     expect(clampSettingsDrawerWidth(900, 380)).toBe(356)
   })
 
-  test('switches between official and custom model lists without using a blank sentinel option', () => {
-    renderSettingsDrawer({
-      model: 'deepseek-chat',
-      models: ['ymg-gpt-5.3-codex', 'deepseek-chat'],
-      model_groups: {
-        custom: [
-          {
-            id: 'ymg-gpt-5.3-codex',
-            label: 'ymg-gpt-5.3-codex',
-            kind: 'custom',
-            provider: 'ymg',
-            target_model: 'gpt-5.3-codex',
-            protocol: 'openai',
-            api_base: 'https://api.ymg.example/v1',
-            has_api_key: true,
-          },
-        ],
-        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
-      },
-      api_key: 'deepseek-key',
-      api_base: 'https://api.deepseek.com/v1',
-      max_retries: 5,
-      assistant_settings: '',
-    })
-
-    expect(screen.getByRole('button', { name: 'Official' }).className).toContain('active')
-    expect(screen.getByRole('option', { name: 'deepseek-chat' }).getAttribute('aria-selected')).toBe('true')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Custom' }))
-
-    expect(screen.getByRole('button', { name: 'Custom' }).className).toContain('active')
-    expect(screen.getByRole('option', { name: 'ymg-gpt-5.3-codex (ymg)' }).getAttribute('aria-selected')).toBe('true')
-    expect(within(screen.getByRole('listbox', { name: 'Model' })).queryByText('Custom model')).toBeNull()
-    expect(screen.getByText('ymg')).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Exact ID' }))
-
-    expect(screen.getByRole('button', { name: 'Exact ID' }).className).toContain('active')
-    expect(within(screen.getByRole('listbox', { name: 'Model' })).getByText('Manual model ID')).toBeTruthy()
-  })
-
-  test('clears custom credentials when switching from custom to official models', () => {
-    renderSettingsDrawer({
-      model: 'ymg-gpt-5.3-codex',
-      models: ['ymg-gpt-5.3-codex', 'deepseek-chat'],
-      model_groups: {
-        custom: [
-          {
-            id: 'ymg-gpt-5.3-codex',
-            label: 'ymg-gpt-5.3-codex',
-            kind: 'custom',
-            provider: 'ymg',
-            target_model: 'gpt-5.3-codex',
-            protocol: 'openai',
-            api_base: 'https://custom.example.test/v1',
-            has_api_key: true,
-          },
-        ],
-        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
-      },
-      api_key: 'custom-key',
-      api_base: 'https://custom.example.test/v1',
-      max_retries: 5,
-      assistant_settings: '',
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Official' }))
-
-    expect((screen.getByPlaceholderText('Provider API key') as HTMLInputElement).value).toBe('')
-    expect((screen.getByPlaceholderText('Optional endpoint override') as HTMLInputElement).value).toBe('')
-  })
-
-  test('shows provider badge for official model', () => {
+  test('shows current model name and Edit config.toml button', () => {
     renderSettingsDrawer({
       model: 'deepseek-chat',
       models: ['deepseek-chat'],
-      model_groups: {
-        custom: [],
-        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek', has_api_key: true }],
-      },
+      model_groups: { custom: [], official: [] },
       api_key: '',
       api_base: '',
       max_retries: 5,
       assistant_settings: '',
     })
 
-    expect(screen.getByText('deepseek')).toBeTruthy()
+    expect(screen.getAllByText('deepseek-chat').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('button', { name: /Edit config\.toml/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Test connection/ })).toBeTruthy()
+  })
+
+  test('calls onOpenConfig when Edit config.toml is clicked', () => {
+    const onOpenConfig = vi.fn()
+    renderSettingsDrawer(
+      { model: 'deepseek-chat', models: [], model_groups: { custom: [], official: [] }, api_key: '', api_base: '', max_retries: 5, assistant_settings: '' },
+      undefined,
+      { onOpenConfig },
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Edit config\.toml/ }))
+    expect(onOpenConfig).toHaveBeenCalledTimes(1)
   })
 
   test('loads settings side data only when the drawer opens', () => {
@@ -286,7 +185,7 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     }
 
-    const view = renderSettingsDrawer(llmSettings, vi.fn(async (settings) => settings), {
+    const view = renderSettingsDrawer(llmSettings, undefined, {
       onLoadMemoryLessons: loadMemory,
       onLoadProjectGitStatus: firstLoadGit,
     })
@@ -308,8 +207,8 @@ describe('SettingsDrawer AI model settings', () => {
         gitBusy={false}
         onClose={vi.fn()}
         onCompilerSettingsChange={vi.fn(async (settings) => settings)}
-        onLlmSettingsChange={vi.fn(async (settings) => settings)}
-        onTestLlmConnection={async () => ({ ok: true })}
+        onOpenConfig={vi.fn()}
+        onTestLlmConnection={vi.fn(async () => ({ ok: true }))}
         onReloadRuntimeSettings={vi.fn(async () => undefined)}
         onBrowseCompilerFile={vi.fn(async () => null)}
         onBrowseOutputDirectory={vi.fn(async () => null)}

@@ -11,7 +11,6 @@ import type {
 } from '../../api/types'
 import { AiSettingsPanel } from './AiSettingsPanel'
 import { CompilerSettingsPanel } from './CompilerSettingsPanel'
-import { GeneralSettingsPanel } from './GeneralSettingsPanel'
 import { GitSettingsPanel } from './GitSettingsPanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
 import { SettingsSection } from './SettingsSection'
@@ -23,16 +22,14 @@ const SETTINGS_DRAWER_MAX_WIDTH = 760
 const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
 const SETTINGS_DRAWER_KEY_STEP = 24
 
-type SettingsSectionId = 'general' | 'ai' | 'compiler' | 'workspace' | 'git' | 'memory' | 'advanced'
+type SettingsSectionId = 'ai' | 'compiler' | 'workspace' | 'git' | 'memory'
 
 const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
-  general: true,
   ai: true,
   compiler: false,
   workspace: false,
   git: false,
   memory: false,
-  advanced: false,
 }
 
 interface SettingsDrawerProps {
@@ -48,8 +45,8 @@ interface SettingsDrawerProps {
   gitBusy: boolean
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => Promise<CompilerSettings>
-  onLlmSettingsChange: (settings: LlmSettings) => Promise<LlmSettings>
-  onTestLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
+  onOpenConfig: () => void
+  onTestLlmConnection: () => Promise<LlmConnectionTestResult>
   onReloadRuntimeSettings: () => Promise<void>
   onBrowseCompilerFile: () => Promise<CompilerSettings | null>
   onBrowseOutputDirectory: () => Promise<CompilerSettings | null>
@@ -81,7 +78,7 @@ export function SettingsDrawer({
   gitBusy,
   onClose,
   onCompilerSettingsChange,
-  onLlmSettingsChange,
+  onOpenConfig,
   onTestLlmConnection,
   onReloadRuntimeSettings,
   onBrowseCompilerFile,
@@ -101,9 +98,6 @@ export function SettingsDrawer({
   onClearProjectMemory,
 }: SettingsDrawerProps) {
   const [compilerDraft, setCompilerDraft] = useState(compilerSettings)
-  const [llmDraft, setLlmDraft] = useState(llmSettings)
-  const [llmTestResult, setLlmTestResult] = useState<LlmConnectionTestResult | null>(null)
-  const [llmTesting, setLlmTesting] = useState(false)
   const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty' | 'saving' | null>(null)
   const [settingsSaveError, setSettingsSaveError] = useState('')
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
@@ -112,11 +106,6 @@ export function SettingsDrawer({
   const wasOpenRef = useRef(false)
   const resizeStartRef = useRef<{ pointerX: number; width: number } | null>(null)
   const isCompilerDirty = compilerDirty(compilerDraft, compilerSettings)
-  const isLlmDirty = llmDirty(llmDraft, llmSettings)
-
-  useEffect(() => {
-    setLlmDraft(llmSettings)
-  }, [llmSettings])
 
   useEffect(() => {
     setCompilerDraft(compilerSettings)
@@ -179,18 +168,11 @@ export function SettingsDrawer({
     setSettingsSaveState('dirty')
   }
 
-  function updateLlmDraft(settings: LlmSettings) {
-    setLlmDraft(settings)
-    setSettingsSaveError('')
-    setSettingsSaveState('dirty')
-  }
-
   async function saveSettings() {
     try {
       setSettingsSaveError('')
       setSettingsSaveState('saving')
       await onCompilerSettingsChange(compilerDraft)
-      await onLlmSettingsChange(llmDraft)
       await onReloadRuntimeSettings()
       setSettingsSaveState('saved')
     } catch (error) {
@@ -217,14 +199,6 @@ export function SettingsDrawer({
     if (selected) {
       updateCompilerDraft({ ...compilerDraft, output_dir: selected.output_dir })
     }
-  }
-
-  async function testLlmConnection() {
-    setLlmTesting(true)
-    setLlmTestResult(null)
-    const result = await onTestLlmConnection(llmDraft)
-    setLlmTestResult(result)
-    setLlmTesting(false)
   }
 
   return (
@@ -308,17 +282,14 @@ export function SettingsDrawer({
         <SettingsSection
           id="ai"
           title="AI"
-          summary={aiSummary(llmDraft)}
-          modified={isLlmDirty}
+          summary={aiSummary(llmSettings)}
           expanded={expandedSections.ai}
           onToggle={toggleSection}
         >
           <AiSettingsPanel
-            draft={llmDraft}
-            testResult={llmTestResult}
-            testing={llmTesting}
-            onChange={updateLlmDraft}
-            onTestConnection={() => void testLlmConnection()}
+            llmSettings={llmSettings}
+            onOpenConfig={onOpenConfig}
+            onTestConnection={onTestLlmConnection}
           />
         </SettingsSection>
 
@@ -423,16 +394,6 @@ function memorySummary(memoryStatus: ProjectMemoryStatus | null, fallbackLessonC
 
 function compilerDirty(a: CompilerSettings, b: CompilerSettings) {
   return a.mode !== b.mode || a.converter_path !== b.converter_path || a.output_dir !== b.output_dir
-}
-
-function llmDirty(a: LlmSettings, b: LlmSettings) {
-  return (
-    a.model !== b.model ||
-    a.api_key !== b.api_key ||
-    a.api_base !== b.api_base ||
-    a.max_retries !== b.max_retries ||
-    a.assistant_settings !== b.assistant_settings
-  )
 }
 
 function formatBytes(value: number) {

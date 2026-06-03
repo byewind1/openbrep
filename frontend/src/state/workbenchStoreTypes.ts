@@ -93,8 +93,8 @@ export interface WorkbenchApi {
   revealArtifact: (path?: string) => Promise<RevealArtifactResult>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
-  updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
-  testLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
+  openConfig: () => Promise<{ ok: boolean; error?: string }>
+  testLlmConnection: () => Promise<LlmConnectionTestResult>
   fetchTapirStatus: () => Promise<TapirStatusResult>
   reloadTapirLibraries: () => Promise<TapirActionResult>
   syncTapirSelection: () => Promise<TapirActionResult>
@@ -175,8 +175,8 @@ export interface WorkbenchState {
   browseCompilerFile: () => Promise<CompilerSettings | null>
   browseOutputDirectory: () => Promise<CompilerSettings | null>
   setCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettings>
-  setLlmSettings: (settings: LlmSettings) => Promise<LlmSettings>
-  testLlmConnection: (settings: LlmSettings) => Promise<LlmConnectionTestResult>
+  openConfig: () => Promise<void>
+  testLlmConnection: () => Promise<LlmConnectionTestResult>
   reloadRuntimeSettings: () => Promise<void>
   refreshTapirStatus: () => Promise<void>
   reloadTapirLibraries: () => Promise<void>
