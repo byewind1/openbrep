@@ -153,6 +153,18 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
           }
         />
       </label>
+      <div className="settings-submit-row">
+        <button type="button" disabled={testing} onClick={onTestConnection}>
+          {testing ? 'Testing...' : 'Test connection'}
+        </button>
+      </div>
+      {testResult ? (
+        <p className={`settings-test-result ${testResult.ok ? 'success' : 'error'}`}>
+          {testResult.ok
+            ? `${testResult.message ?? 'LLM connection OK'}${testResult.duration_ms !== undefined ? ` (${testResult.duration_ms} ms)` : ''}`
+            : `LLM settings error: ${testResult.error ?? 'Connection test failed.'}`}
+        </p>
+      ) : null}
       <div className="settings-field">
         <div className="settings-row-header">
           <span>System prompt</span>
@@ -176,18 +188,6 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
           />
         ) : null}
       </div>
-      <div className="settings-submit-row">
-        <button type="button" disabled={testing} onClick={onTestConnection}>
-          {testing ? 'Testing...' : 'Test connection'}
-        </button>
-      </div>
-      {testResult ? (
-        <p className={`settings-test-result ${testResult.ok ? 'success' : 'error'}`}>
-          {testResult.ok
-            ? `${testResult.message ?? 'LLM connection OK'}${testResult.duration_ms !== undefined ? ` (${testResult.duration_ms} ms)` : ''}`
-            : `LLM settings error: ${testResult.error ?? 'Connection test failed.'}`}
-        </p>
-      ) : null}
     </form>
   )
 }
