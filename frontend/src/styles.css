@@ -1467,9 +1467,45 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   border-bottom: 1px solid var(--border);
-  padding: 8px 14px;
+  padding: 7px 10px 7px 14px;
+}
+
+.settings-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.settings-icon-btn {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.settings-save-btn {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 5px;
+  border: 1px solid var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.settings-save-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.28);
+}
+
+.settings-save-btn:disabled {
+  opacity: 0.5;
 }
 
 .settings-header div,
@@ -1488,12 +1524,19 @@ button:focus-visible {
 }
 
 .settings-header span,
-.settings-section-heading span,
-.settings-row > span,
-.settings-field > span {
+.settings-section-heading span {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.settings-row > span,
+.settings-field > span {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .settings-section {
@@ -1534,9 +1577,10 @@ button:focus-visible {
 
 .settings-section-toggle strong {
   color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1.25;
+  letter-spacing: 0.01em;
 }
 
 .settings-section-toggle small {
@@ -1562,11 +1606,11 @@ button:focus-visible {
 .settings-section-body,
 .settings-panel-form {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .settings-section-body {
-  padding: 0 14px 12px;
+  padding: 0 14px 10px;
 }
 
 .settings-section.collapsed .settings-section-toggle {
@@ -1594,10 +1638,21 @@ button:focus-visible {
 .settings-saved-state {
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 4px 8px;
-  font-size: 11px;
+  padding: 3px 7px;
+  font-size: 10px;
   line-height: 1;
   white-space: nowrap;
+}
+
+.settings-provider-badge {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.03em;
 }
 
 .settings-dirty-state {
@@ -1665,13 +1720,14 @@ button:focus-visible {
 .settings-segmented {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
 }
 
 .settings-segmented button {
-  min-height: 28px;
-  flex: 1 1 92px;
+  min-height: 24px;
+  flex: 1 1 80px;
   padding: 0 8px;
+  font-size: 11px;
 }
 
 .settings-segmented button.active {
@@ -1723,22 +1779,25 @@ button:focus-visible {
 
 .settings-model-list {
   min-width: 0;
-  max-height: 138px;
+  max-height: 110px;
   display: grid;
-  gap: 4px;
-  padding: 5px;
+  gap: 2px;
+  padding: 4px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 5px;
   background: rgba(2, 6, 23, 0.34);
 }
 
 .settings-model-list button {
-  min-height: 26px;
+  min-height: 22px;
   justify-content: flex-start;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 11px;
+  padding: 0 7px;
+  border-radius: 3px;
 }
 
 .settings-model-list button.active {

@@ -61,7 +61,6 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     })
 
-    expect(screen.getByText('Config file')).toBeTruthy()
     expect(screen.getByText('Model')).toBeTruthy()
     expect(screen.getByText('Mock')).toBeTruthy()
     expect(screen.getByText('0 recent')).toBeTruthy()
@@ -106,9 +105,9 @@ describe('SettingsDrawer AI model settings', () => {
 
     expect(onCompilerSettingsChange).not.toHaveBeenCalled()
     expect(screen.getByText('Modified')).toBeTruthy()
-    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    expect(screen.getByText('Unsaved')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy())
     expect(onCompilerSettingsChange).toHaveBeenCalledWith({ mode: 'lp', converter_path: '', output_dir: '' })
@@ -141,11 +140,11 @@ describe('SettingsDrawer AI model settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Compiler/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => expect(screen.getByText('Compiler settings were not saved')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTitle('Compiler settings were not saved')).toBeTruthy())
     expect(screen.queryByText('Saved')).toBeNull()
-    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    expect(screen.getByText('Unsaved')).toBeTruthy()
     expect(onLlmSettingsChange).not.toHaveBeenCalled()
     expect(onReloadRuntimeSettings).not.toHaveBeenCalled()
   })
@@ -214,13 +213,12 @@ describe('SettingsDrawer AI model settings', () => {
     expect(screen.getByRole('button', { name: 'Custom' }).className).toContain('active')
     expect(screen.getByRole('option', { name: 'ymg-gpt-5.3-codex (ymg)' }).getAttribute('aria-selected')).toBe('true')
     expect(within(screen.getByRole('listbox', { name: 'Model' })).queryByText('Custom model')).toBeNull()
-    expect(screen.getByText('Custom provider: ymg / openai')).toBeTruthy()
+    expect(screen.getByText('ymg')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Exact ID' }))
 
     expect(screen.getByRole('button', { name: 'Exact ID' }).className).toContain('active')
     expect(within(screen.getByRole('listbox', { name: 'Model' })).getByText('Manual model ID')).toBeTruthy()
-    expect(screen.getAllByText('Manual model ID').length).toBeGreaterThanOrEqual(2)
   })
 
   test('clears custom credentials when switching from custom to official models', () => {
@@ -254,7 +252,7 @@ describe('SettingsDrawer AI model settings', () => {
     expect((screen.getByPlaceholderText('Optional endpoint override') as HTMLInputElement).value).toBe('')
   })
 
-  test('shows official provider key persistence semantics', () => {
+  test('shows provider badge for official model', () => {
     renderSettingsDrawer({
       model: 'deepseek-chat',
       models: ['deepseek-chat'],
@@ -268,8 +266,7 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     })
 
-    expect(screen.getByText('Official key saves to [llm.provider_keys]. Leave blank to keep the stored provider key.')).toBeTruthy()
-    expect(screen.getByText('Leave empty for the native official endpoint; fill only for an endpoint override.')).toBeTruthy()
+    expect(screen.getByText('deepseek')).toBeTruthy()
   })
 
   test('loads settings side data only when the drawer opens', () => {

@@ -266,28 +266,44 @@ export function SettingsDrawer({
         <div className="settings-header">
           <div>
             <strong>Settings</strong>
-            <span>Workbench runtime</span>
+            <span>config.toml</span>
           </div>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
+          <div className="settings-header-actions">
+            {settingsSaveState === 'saving' && (
+              <span className="settings-saving-state">Saving</span>
+            )}
+            {settingsSaveState === 'dirty' && (
+              <span className="settings-dirty-state">Unsaved</span>
+            )}
+            {settingsSaveState === 'saved' && (
+              <span className="settings-saved-state">Saved</span>
+            )}
+            {settingsSaveError && (
+              <span className="settings-save-error" title={settingsSaveError}>
+                Error
+              </span>
+            )}
+            <button
+              type="button"
+              className="settings-icon-btn"
+              title="Reload config from disk"
+              onClick={() => void reloadRuntimeSettings()}
+            >
+              ↺
+            </button>
+            <button
+              type="button"
+              className="settings-save-btn"
+              disabled={settingsSaveState === 'saving'}
+              onClick={() => void saveSettings()}
+            >
+              {settingsSaveState === 'saving' ? '…' : 'Save'}
+            </button>
+            <button type="button" className="settings-icon-btn" title="Close" onClick={onClose}>
+              ✕
+            </button>
+          </div>
         </div>
-
-        <SettingsSection
-          id="general"
-          title="General"
-          summary="config.toml"
-          expanded={expandedSections.general}
-          onToggle={toggleSection}
-        >
-          <GeneralSettingsPanel
-            configPath="config.toml"
-            saveState={settingsSaveState}
-            saveError={settingsSaveError}
-            onReload={() => void reloadRuntimeSettings()}
-            onSave={() => void saveSettings()}
-          />
-        </SettingsSection>
 
         <SettingsSection
           id="ai"
@@ -378,15 +394,6 @@ export function SettingsDrawer({
           />
         </SettingsSection>
 
-        <SettingsSection
-          id="advanced"
-          title="Advanced"
-          summary="reserved"
-          expanded={expandedSections.advanced}
-          onToggle={toggleSection}
-        >
-          <span className="settings-empty">Reserved for later local runtime controls</span>
-        </SettingsSection>
       </aside>
     </>
   )

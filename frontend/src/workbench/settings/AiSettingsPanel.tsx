@@ -21,20 +21,6 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
   const allModelOptions = [...customModelOptions, ...officialModelOptions, ...fallbackModelOptions]
   const selectedModelMeta = allModelOptions.find((option) => option.id === draft.model)
   const activeModelCategory = manualModelMode ? 'exact' : selectedModelMeta?.kind ?? (knownModelIds.has(draft.model) ? 'official' : 'exact')
-  const apiKeyHint =
-    activeModelCategory === 'custom'
-      ? 'Custom key saves to [[llm.custom_providers]] with its base URL.'
-      : activeModelCategory === 'official'
-        ? selectedModelMeta?.has_api_key
-          ? 'Official key saves to [llm.provider_keys]. Leave blank to keep the stored provider key.'
-          : 'Official key saves to [llm.provider_keys] for this provider.'
-        : 'Exact model IDs use the entered key unless they match a configured custom provider.'
-  const apiBaseHint =
-    activeModelCategory === 'custom'
-      ? 'Custom base URL is read from the selected custom provider.'
-      : activeModelCategory === 'official'
-        ? 'Leave empty for the native official endpoint; fill only for an endpoint override.'
-        : 'Optional endpoint override for OpenAI-compatible routes.'
   const visibleModelOptions =
     activeModelCategory === 'custom'
       ? customModelOptions
@@ -129,14 +115,8 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
             }}
           />
         </div>
-        {selectedModelMeta ? (
-          <small className="settings-field-hint">
-            {activeModelCategory === 'exact'
-              ? 'Manual model ID'
-              : selectedModelMeta.kind === 'custom'
-                ? `Custom provider: ${selectedModelMeta.provider}${selectedModelMeta.protocol ? ` / ${selectedModelMeta.protocol}` : ''}`
-                : `Official provider: ${selectedModelMeta.provider || 'auto'}`}
-          </small>
+        {selectedModelMeta?.provider && activeModelCategory !== 'exact' ? (
+          <span className="settings-provider-badge">{selectedModelMeta.provider}</span>
         ) : null}
       </div>
       <label className="settings-field">
@@ -147,7 +127,6 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
           placeholder="Provider API key"
           onChange={(event) => onChange({ ...draft, api_key: event.currentTarget.value })}
         />
-        <small className="settings-field-hint">{apiKeyHint}</small>
       </label>
       <label className="settings-field">
         <span>API Base URL</span>
@@ -157,7 +136,6 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
           placeholder="Optional endpoint override"
           onChange={(event) => onChange({ ...draft, api_base: event.currentTarget.value })}
         />
-        <small className="settings-field-hint">{apiBaseHint}</small>
       </label>
       <label className="settings-row">
         <span>Max retries</span>
@@ -175,7 +153,7 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
         />
       </label>
       <label className="settings-field">
-        <span>Assistant preference</span>
+        <span>System prompt</span>
         <textarea
           value={draft.assistant_settings}
           placeholder="例如：先解释再给最小修改；优先保证可编译；不要大改结构。"
