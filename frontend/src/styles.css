@@ -1474,22 +1474,28 @@ button:focus-visible {
 
 .settings-header-actions {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  flex-wrap: nowrap;
 }
 
 .settings-icon-btn {
+  width: 26px;
+  height: 26px;
   min-width: 26px;
-  min-height: 26px;
-  padding: 0 6px;
+  padding: 0;
   border-radius: 5px;
   font-size: 13px;
-  line-height: 1;
+  line-height: 26px;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 .settings-save-btn {
-  min-height: 26px;
+  width: auto;
+  height: 26px;
   padding: 0 10px;
   border-radius: 5px;
   border: 1px solid var(--accent);
@@ -1498,6 +1504,7 @@ button:focus-visible {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .settings-save-btn:hover:not(:disabled) {
@@ -1508,7 +1515,7 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-.settings-header div,
+.settings-header > div:first-child,
 .settings-section-heading {
   min-width: 0;
   display: grid;
@@ -1653,6 +1660,35 @@ button:focus-visible {
   font-size: 10px;
   line-height: 1.5;
   letter-spacing: 0.03em;
+}
+
+.settings-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-inline-toggle {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.settings-prompt-preview {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  opacity: 0.7;
 }
 
 .settings-dirty-state {

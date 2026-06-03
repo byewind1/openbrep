@@ -11,6 +11,7 @@ interface AiSettingsPanelProps {
 
 export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestConnection }: AiSettingsPanelProps) {
   const [manualModelMode, setManualModelMode] = useState(false)
+  const [promptExpanded, setPromptExpanded] = useState(false)
   const customModelOptions = draft.model_groups?.custom ?? []
   const officialModelOptions = draft.model_groups?.official ?? []
   const groupedModelIds = new Set([...customModelOptions, ...officialModelOptions].map((option) => option.id))
@@ -152,14 +153,29 @@ export function AiSettingsPanel({ draft, testResult, testing, onChange, onTestCo
           }
         />
       </label>
-      <label className="settings-field">
-        <span>System prompt</span>
-        <textarea
-          value={draft.assistant_settings}
-          placeholder="例如：先解释再给最小修改；优先保证可编译；不要大改结构。"
-          onChange={(event) => onChange({ ...draft, assistant_settings: event.currentTarget.value })}
-        />
-      </label>
+      <div className="settings-field">
+        <div className="settings-row-header">
+          <span>System prompt</span>
+          <button
+            type="button"
+            className="settings-inline-toggle"
+            onClick={() => setPromptExpanded((v) => !v)}
+          >
+            {promptExpanded ? 'Collapse' : draft.assistant_settings ? 'Edit' : 'Add'}
+          </button>
+        </div>
+        {!promptExpanded && draft.assistant_settings ? (
+          <p className="settings-prompt-preview">{draft.assistant_settings.slice(0, 80)}{draft.assistant_settings.length > 80 ? '…' : ''}</p>
+        ) : null}
+        {promptExpanded ? (
+          <textarea
+            value={draft.assistant_settings}
+            placeholder="例如：先解释再给最小修改；优先保证可编译；不要大改结构。"
+            autoFocus
+            onChange={(event) => onChange({ ...draft, assistant_settings: event.currentTarget.value })}
+          />
+        ) : null}
+      </div>
       <div className="settings-submit-row">
         <button type="button" disabled={testing} onClick={onTestConnection}>
           {testing ? 'Testing...' : 'Test connection'}
