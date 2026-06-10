@@ -129,6 +129,7 @@
 - 禁止在 `config.example.toml` 暴露真实 key 和代理地址
 - 禁止删除现有 validator 规则（只能降级为 warning，不能删）
 - 禁止在没有明确问题时重写全部脚本
+- 禁止把 `react-workbench` 分支合并到 main，除非：① 通过 `scripts/workbench_readiness_gate.py` 与手动冒烟验证；② 用户明确说"合并到 main"。历史教训：上次合并后被 revert（`9db2b52`）。
 
 ## ⚠️ vibe coding 行为约束
 
