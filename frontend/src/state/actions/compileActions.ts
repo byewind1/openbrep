@@ -3,34 +3,15 @@ import { buildMockCompileSummary, compileIssuesFromResult } from '../workbenchSt
 
 export function createCompileActions({ api, get, set }: WorkbenchActionContext) {
   async function saveDirtyScriptsBeforeCompile() {
-    const dirtyScriptNames = Object.entries(get().dirtyScripts)
-      .filter(([, dirty]) => dirty)
-      .map(([name]) => name)
-    let didSave = false
-
-    for (const scriptName of dirtyScriptNames) {
-      const content = get().scriptContents[scriptName]
-      if (typeof content !== 'string') continue
-
-      const result = await api.saveProjectScript(scriptName, content)
-      if (!result.success) {
-        const error = result.error ?? `Failed to save ${scriptName} before compile.`
-        set((state) => ({
-          compiling: false,
-          lastError: error,
-          compileLog: [`Compile stopped: ${error}`, ...state.compileLog].slice(0, 20),
-        }))
-        return false
-      }
-
+    const flushed = await get().flushDirtyScripts()
+    if (!flushed.ok) {
       set((state) => ({
-        dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
-        compileLog: [`Saved ${scriptName} before compile`, ...state.compileLog].slice(0, 20),
+        compiling: false,
+        compileLog: [`Compile stopped: ${state.lastError ?? 'failed to save scripts'}`, ...state.compileLog].slice(0, 20),
       }))
-      didSave = true
+      return false
     }
-
-    return { ok: true, didSave }
+    return flushed
   }
 
   async function refreshPreviewFromSavedSource() {

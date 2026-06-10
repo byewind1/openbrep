@@ -88,6 +88,34 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
       }))
     },
 
+    // 统一的“读当前脚本前先落盘”入口：编译、AI 生成等操作必须先走这里，
+    // 否则后端会基于旧脚本工作，并在刷新时覆盖用户未保存的手改。
+    async flushDirtyScripts() {
+      const dirtyScriptNames = Object.entries(get().dirtyScripts)
+        .filter(([, dirty]) => dirty)
+        .map(([name]) => name)
+      let didSave = false
+
+      for (const scriptName of dirtyScriptNames) {
+        const content = get().scriptContents[scriptName]
+        if (typeof content !== 'string') continue
+
+        const result = await api.saveProjectScript(scriptName, content)
+        if (!result.success) {
+          set({ lastError: result.error ?? `Failed to save ${scriptName}.` })
+          return { ok: false, didSave }
+        }
+
+        set((state) => ({
+          dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
+          compileLog: [`Saved ${scriptName}`, ...state.compileLog].slice(0, 20),
+        }))
+        didSave = true
+      }
+
+      return { ok: true, didSave }
+    },
+
     async saveActiveScript() {
       const activeScriptName = get().activeScriptName
       if (!activeScriptName) return

@@ -15,6 +15,10 @@ export function defaultLlmSettings(): LlmSettings {
 
 export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: CompilerSettings, fallbackLlm: LlmSettings) {
   return {
+    // 旧版 backend 的 snapshot 不带 epoch 字段时保持原值，避免误触发过期守卫
+    ...(snapshot.project_epoch !== undefined
+      ? { projectEpoch: snapshot.project_epoch, sessionId: snapshot.session_id ?? null }
+      : {}),
     project: snapshot.project,
     parameters: snapshot.parameters,
     preview: snapshot.preview,

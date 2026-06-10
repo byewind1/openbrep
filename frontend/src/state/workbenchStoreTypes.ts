@@ -126,6 +126,10 @@ export interface WorkbenchApi {
 }
 
 export interface WorkbenchState {
+  // sessionId 标识 backend 进程；projectEpoch 在每次换项目时变化，
+  // 长操作（AI 生成/创建）用它丢弃跨项目的过期结果。
+  sessionId: string | null
+  projectEpoch: number
   project: WorkbenchProject | null
   parameters: WorkbenchParameter[]
   parameterIssues: string[]
@@ -219,6 +223,7 @@ export interface WorkbenchState {
   openScript: (name: string) => Promise<void>
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
+  flushDirtyScripts: () => Promise<{ ok: boolean; didSave: boolean }>
   runMockCompile: () => Promise<void>
   revealCompileOutput: (path?: string) => Promise<void>
   loadPreview3D: () => Promise<void>

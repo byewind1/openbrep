@@ -6,6 +6,7 @@ import platform
 import re
 import subprocess
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -60,7 +61,11 @@ class WorkbenchSession:
         get_tapir_bridge_fn: Callable[[], object] | None = None,
         now_text_fn: Callable[[], str] | None = None,
     ) -> None:
-        self.project: HSFProject | None = None
+        # session_id 标识一次 backend 进程生命周期；project_epoch 在每次更换项目时 +1，
+        # 前端用它丢弃跨项目的过期异步结果（防止 AI/编译结果写进切换后的项目）。
+        self.session_id = uuid.uuid4().hex
+        self.project_epoch = 0
+        self._project: HSFProject | None = None
         self.source = "empty"
         self.source_path: Path | None = None
         self.pipeline_class = pipeline_class
@@ -103,6 +108,24 @@ class WorkbenchSession:
         )
         self.tapir_service = WorkbenchTapirService(self.tapir)
 
+    @property
+    def project(self) -> HSFProject | None:
+        return self._project
+
+    @project.setter
+    def project(self, value: HSFProject | None) -> None:
+        self._project = value
+        self.project_epoch += 1
+
+    def restore_last_project(self) -> dict[str, Any]:
+        """Backend 启动时恢复上次打开的项目；路径不存在或加载失败则保持空会话。"""
+        last_path = self.recent_project_paths[0] if self.recent_project_paths else ""
+        if not last_path or not Path(last_path).is_dir():
+            return {"ok": False, "restored": False}
+        result = self.project_service.load_hsf_directory(last_path)
+        result["restored"] = bool(result.get("ok"))
+        return result
+
     def snapshot(self) -> dict[str, Any]:
         snapshot = project_to_snapshot(
             self.project,
@@ -110,6 +133,8 @@ class WorkbenchSession:
             source_path=str(self.source_path) if self.source_path else None,
         )
         snapshot["ok"] = True
+        snapshot["session_id"] = self.session_id
+        snapshot["project_epoch"] = self.project_epoch
         snapshot["compiler"] = self.compiler_settings()
         snapshot["llm"] = self.llm_settings()
         return snapshot
@@ -553,6 +578,9 @@ def _open_file(path: Path) -> None:
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:
+    restored = _default_session().restore_last_project()
+    if restored.get("restored"):
+        print(f"Restored last project: {restored.get('project', {}).get('path', '')}")
     server = ThreadingHTTPServer((host, port), _WorkbenchRequestHandler)
     print(f"OpenBrep workbench API listening on http://{host}:{port}")
     server.serve_forever()

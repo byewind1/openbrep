@@ -161,6 +161,8 @@ export const workbenchStore = createWorkbenchStore()
 
 function initialWorkbenchState() {
   return {
+    sessionId: null,
+    projectEpoch: 0,
     project: null,
     parameters: [],
     parameterIssues: [],

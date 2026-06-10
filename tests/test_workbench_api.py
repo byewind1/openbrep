@@ -1642,3 +1642,43 @@ def test_workbench_session_generate_reports_pipeline_failure(tmp_path):
 
     assert response["ok"] is False
     assert "missing API key" in response["error"]
+
+
+def test_workbench_session_snapshot_carries_session_identity_and_epoch(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    snapshot = session.snapshot()
+    assert snapshot["session_id"]
+    epoch_start = snapshot["project_epoch"]
+
+    session.route("POST", "/api/project/new", {})
+    after_new = session.snapshot()["project_epoch"]
+    session.route("POST", "/api/project/close", {})
+    after_close = session.snapshot()["project_epoch"]
+
+    assert after_new == epoch_start + 1
+    assert after_close == after_new + 1
+
+
+def test_workbench_session_restores_last_project_on_startup(tmp_path):
+    hsf_dir = HSFProject.create_new("RestoreMe", str(tmp_path / "proj")).save_to_disk()
+    config_path = tmp_path / "workbench.toml"
+    session = WorkbenchSession(config_path=config_path)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    restarted = WorkbenchSession(config_path=config_path)
+    result = restarted.restore_last_project()
+
+    assert result["restored"] is True
+    assert restarted.project is not None
+    assert restarted.project.name == "RestoreMe"
+
+
+def test_workbench_session_restore_keeps_empty_when_path_missing(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.recent_project_paths = [str(tmp_path / "gone")]
+
+    result = session.restore_last_project()
+
+    assert result["restored"] is False
+    assert session.project is None

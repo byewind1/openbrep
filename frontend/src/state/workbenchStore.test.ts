@@ -1155,7 +1155,7 @@ test('compile saves dirty script buffers before invoking compiler', async () => 
   expect(store.getState().preview?.meshes[0]?.name).toBe('compiled-source')
   expect(store.getState().warnings).toEqual(['saved preview'])
   expect(store.getState().compileLog[0]).toBe('LP compile passed: /workspace/output/Chair.gsm')
-  expect(store.getState().compileLog).toContain('Saved 3d.gdl before compile')
+  expect(store.getState().compileLog).toContain('Saved 3d.gdl')
 })
 
 test('compile stops when saving dirty scripts fails', async () => {
@@ -1868,4 +1868,79 @@ test('generateAssistantChanges labels llm configuration errors', async () => {
 
   expect(store.getState().lastError).toBe(`LLM settings error: ${error}`)
   expect(store.getState().assistantMessages.at(-1)?.content).toBe(`LLM settings error: ${error}`)
+})
+
+test('generateAssistantChanges saves dirty editor buffers before calling the LLM', async () => {
+  const calls: string[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      saveProjectScript: async (name) => {
+        calls.push(`save:${name}`)
+        return { success: true, saved_at: '2026-06-11T10:00:00' }
+      },
+      generateWithAssistant: async () => {
+        calls.push('generate')
+        return {
+          ok: true,
+          assistant: { kind: 'generate', reply: 'done', changed_files: [], intent: 'MODIFY' },
+          preview: { meshes: [], wires: [], warnings: [] },
+          warnings: [],
+        }
+      },
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().openScript('3d.gdl')
+  store.getState().updateActiveScriptContent('BLOCK 2, 2, 2')
+  await store.getState().generateAssistantChanges('改尺寸')
+
+  expect(calls.indexOf('save:3d.gdl')).toBeGreaterThanOrEqual(0)
+  expect(calls.indexOf('save:3d.gdl')).toBeLessThan(calls.indexOf('generate'))
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+})
+
+test('generateAssistantChanges discards results when the project switched mid-request', async () => {
+  let resolveGenerate!: (value: Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>) => void
+  const pendingGenerate = new Promise<Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>>((resolve) => {
+    resolveGenerate = resolve
+  })
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        session_id: 'backend-1',
+        project_epoch: 1,
+      }),
+      loadProjectPath: async (path: string) => ({
+        project: { name: 'Other', source: 'hsf', path },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        session_id: 'backend-1',
+        project_epoch: 2,
+      }),
+      generateWithAssistant: async () => pendingGenerate,
+    }),
+  )
+
+  await store.getState().load()
+  const turn = store.getState().generateAssistantChanges('加一块层板')
+  await store.getState().loadProjectPath('/workspace/Other')
+  resolveGenerate({
+    ok: true,
+    assistant: { kind: 'generate', reply: 'stale reply', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+    preview: { meshes: [{ name: 'stale', vertices: [], faces: [] }], wires: [], warnings: ['stale'] },
+    warnings: ['stale'],
+  })
+  await turn
+
+  expect(store.getState().assistantBusy).toBe(false)
+  expect(store.getState().project?.name).toBe('Other')
+  expect(store.getState().preview?.meshes.some((mesh) => mesh.name === 'stale')).toBe(false)
+  expect(store.getState().assistantMessages.at(-1)?.content ?? '').not.toContain('stale reply')
+  expect(store.getState().compileLog[0]).toContain('discarded')
 })

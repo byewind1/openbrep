@@ -17,6 +17,18 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     }
   }
 
+  // 长操作期间用户切换了项目 → 丢弃过期结果，防止写进新项目的 state
+  function projectSwitchedSince(epochAtStart: number) {
+    return get().projectEpoch !== epochAtStart
+  }
+
+  function discardStaleResult(note: string) {
+    set((state) => ({
+      assistantBusy: false,
+      compileLog: [note, ...state.compileLog].slice(0, 20),
+    }))
+  }
+
   return {
     setActiveRailPanel(panel: '3d' | '2d' | 'inspect' | 'ai') {
       set({ activeRailPanel: panel })
@@ -95,7 +107,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           { role: 'assistant', content: pendingAssistantMessage('explain') },
         ],
       }))
+      const epoch = get().projectEpoch
       const result = await api.askAssistant(trimmed)
+      if (projectSwitchedSince(epoch)) {
+        discardStaleResult('Assistant reply discarded: project switched during the request.')
+        return
+      }
       const reply =
         result.ok && result.assistant
           ? result.assistant.reply
@@ -119,7 +136,16 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           { role: 'assistant', content: pendingAssistantMessage('create', image) },
         ],
       }))
+      const epoch = get().projectEpoch
       const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, image)
+      if (projectSwitchedSince(epoch)) {
+        discardStaleResult(
+          result.ok && result.project
+            ? `Project "${result.project.name}" was created, but the workspace switched meanwhile. Open it from recent projects.`
+            : 'Create result discarded: project switched during the request.',
+        )
+        return
+      }
       if (!result.ok || !result.project || !result.parameters || !result.preview) {
         const error = formatAssistantRequestError(result.error, 'Create request failed.')
         set((state) => ({
@@ -154,7 +180,22 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           { role: 'assistant', content: pendingAssistantMessage('generate', image) },
         ],
       }))
+      // 生成基于磁盘上的 HSF，先把编辑器手改落盘，否则会被生成结果静默覆盖
+      const flushed = await get().flushDirtyScripts()
+      if (!flushed.ok) {
+        const error = get().lastError ?? 'Failed to save edited scripts before generation.'
+        set((state) => ({
+          assistantBusy: false,
+          assistantMessages: replacePendingAssistantMessage(state.assistantMessages, error),
+        }))
+        return
+      }
+      const epoch = get().projectEpoch
       const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, image)
+      if (projectSwitchedSince(epoch)) {
+        discardStaleResult('Generation result discarded: project switched during the request.')
+        return
+      }
       const changedFiles = result.assistant?.changed_files ?? []
       const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
       const eventSummary = formatAssistantEventSummary(result.events)

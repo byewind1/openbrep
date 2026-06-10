@@ -123,6 +123,8 @@ export interface WorkbenchSnapshot {
   compiler?: CompilerSettings
   llm?: LlmSettings
   error?: string
+  session_id?: string
+  project_epoch?: number
 }
 
 export interface HsfExportResult extends WorkbenchSnapshot {
