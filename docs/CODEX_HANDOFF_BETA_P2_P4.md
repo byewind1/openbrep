@@ -1,5 +1,8 @@
 # Codex 交接：React Workbench Beta 剩余任务（P2/P3/P4）
 
+> ⚠️ **已完成归档（2026-06-11）**：本文所有任务已完成（P2-1 由 codex 实现，其余由 Claude 完成）。
+> 最新交接见 `docs/REACT_WORKBENCH_BETA_HANDOFF.md`，本文仅作历史参考。
+
 > 写给执行 agent 的完整上下文。按任务顺序逐个实现，每个任务独立 commit。
 > 总纲领见 `docs/REACT_WORKBENCH_BETA_PLAN.md`，本文是它的可执行版。
 
