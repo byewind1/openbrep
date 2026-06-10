@@ -85,10 +85,10 @@ react-workbench 是 OpenBrep 的**新主工作台 Beta**：建筑师不用回到
 | 一键保存 revision ✅ | 摘要卡 Save revision 按钮，message 自动取触发生成的用户指令（截断 60 字） |
 | 错误分类展示 ✅ | 失败回复带 `errorCategory`（llm/compile/general），消息头渲染分类徽标；复用 `isLlmConfigurationError` |
 
-### P4：桌面壳准备（只评估，不实施）
+### P4：桌面壳准备（只评估，不实施）✅
 
-- 产出 `docs/DESKTOP_SHELL_EVALUATION.md`：Tauri vs Electron 最小壳对比
-- 关键问题：本地 Python API 启动/端口探测/进程关闭、原生文件对话框迁移路径（Python chooser 作为 fallback）
+- 产出 `docs/DESKTOP_SHELL_EVALUATION.md`：**推荐 Tauri 2.x**（sidecar 模型匹配 Python 后端、壳体积小一个数量级、壳层逻辑薄）
+- 三个必答题已回答：动态端口 + stdout 报告 + `/api/shutdown`；文件对话框壳层接管、Python chooser 留 fallback；体积大头是 PyInstaller sidecar 而非壳
 
 ## 验收：Beta 级手动 Smoke 清单
 
