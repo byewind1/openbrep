@@ -54,7 +54,7 @@ class WorkbenchSession:
         *,
         pipeline_class: type = TaskPipeline,
         directory_chooser: Callable[[], str] | None = None,
-        file_chooser: Callable[[], str] | None = None,
+        file_chooser: Callable[..., str] | None = None,
         path_revealer: Callable[[Path], None] | None = None,
         config_path: str | Path | None = None,
         tapir_import_ok: bool | None = None,
@@ -220,7 +220,7 @@ class WorkbenchSession:
         if purpose != "compiler":
             return {"ok": False, "error": f"Unsupported file chooser purpose: {purpose}"}
         try:
-            selected = self.file_chooser()
+            selected = self._choose_file_for_purpose(purpose)
         except Exception as exc:
             return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not selected:
@@ -234,6 +234,12 @@ class WorkbenchSession:
                 "converter_path": converter_path,
             },
         }
+
+    def _choose_file_for_purpose(self, purpose: str) -> str:
+        try:
+            return str(self.file_chooser(purpose) or "")
+        except TypeError:
+            return str(self.file_chooser() or "")
 
     def choose_output_directory(self) -> dict[str, Any]:
         try:
@@ -547,10 +553,20 @@ def _choose_directory() -> str:
     return str(choose_directory(title="Open HSF project directory") or "")
 
 
-def _choose_file() -> str:
+def _choose_file(purpose: str = "openbrep") -> str:
     from ui.local_file_dialog import choose_file
 
-    return str(choose_file(title="Choose OpenBrep file") or "")
+    titles = {
+        "compiler": "Choose LP_XMLConverter",
+        "gdl": "Import GDL script",
+        "gsm": "Import GSM object",
+    }
+    extensions = {
+        "compiler": [],
+        "gdl": ["gdl"],
+        "gsm": ["gsm"],
+    }
+    return str(choose_file(title=titles.get(purpose, "Choose OpenBrep file"), extensions=extensions.get(purpose)) or "")
 
 
 def _reveal_path(path: Path) -> None:

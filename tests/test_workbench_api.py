@@ -345,6 +345,18 @@ def test_workbench_session_imports_single_gdl_file_as_hsf_project(tmp_path):
     assert session.route("GET", "/api/project/recent")["projects"][0]["path"] == response["project"]["path"]
 
 
+def test_workbench_session_import_gdl_uses_gdl_file_chooser_purpose(tmp_path):
+    gdl_path = tmp_path / "chosen.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+    purposes = []
+
+    session = WorkbenchSession(file_chooser=lambda purpose: purposes.append(purpose) or str(gdl_path))
+    response = session.route("POST", "/api/project/import-gdl", {})
+
+    assert response["ok"] is True
+    assert purposes == ["gdl"]
+
+
 def test_workbench_session_rejects_non_gdl_import(tmp_path):
     text_path = tmp_path / "notes.txt"
     text_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
@@ -393,6 +405,34 @@ def test_workbench_session_imports_gsm_file_with_lp_converter(tmp_path, monkeypa
     imported = HSFProject.load_from_disk(response["project"]["path"])
     assert imported.get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
     assert response["decompile"]["mode"] == "lp"
+
+
+def test_workbench_session_import_gsm_uses_gsm_file_chooser_purpose(tmp_path, monkeypatch):
+    gsm_path = tmp_path / "ChosenObject.gsm"
+    gsm_path.write_bytes(b"fake gsm")
+    purposes = []
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            project = HSFProject.create_new("ChosenObject", output_dir)
+            project.save_to_disk()
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    monkeypatch.setattr(workbench_api, "HSFCompiler", FakeHSFCompiler)
+    session = WorkbenchSession(file_chooser=lambda purpose: purposes.append(purpose) or str(gsm_path))
+    session.route("POST", "/api/settings/compiler", {"mode": "lp", "converter_path": "/Applications/LP_XMLConverter"})
+
+    response = session.route("POST", "/api/project/import-gsm", {})
+
+    assert response["ok"] is True
+    assert purposes == ["gsm"]
 
 
 def test_workbench_session_rejects_gsm_import_in_mock_mode(tmp_path):
@@ -1169,6 +1209,19 @@ def test_workbench_session_choose_converter_file_returns_draft_compiler_settings
         "output_dir": "",
     }
     assert WorkbenchSession(config_path=config_path).converter_path != "/Applications/LP_XMLConverter"
+
+
+def test_workbench_session_choose_converter_file_uses_compiler_file_chooser_purpose(tmp_path):
+    purposes = []
+    session = WorkbenchSession(
+        config_path=tmp_path / "config.toml",
+        file_chooser=lambda purpose: purposes.append(purpose) or "/Applications/LP_XMLConverter",
+    )
+
+    response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
+
+    assert response["ok"] is True
+    assert purposes == ["compiler"]
 
 
 def test_workbench_session_choose_output_directory_returns_draft_compiler_settings(tmp_path):

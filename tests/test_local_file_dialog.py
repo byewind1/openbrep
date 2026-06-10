@@ -1,6 +1,6 @@
 import unittest
 
-from ui.local_file_dialog import _choose_directory_macos_script, _choose_file_macos_script
+from ui.local_file_dialog import _choose_directory_macos_script, _choose_file_macos_script, _filetypes_for_extensions
 
 
 class TestLocalFileDialog(unittest.TestCase):
@@ -15,6 +15,19 @@ class TestLocalFileDialog(unittest.TestCase):
         self.assertNotIn("choose folder with prompt", script)
         self.assertNotIn("NSOpenPanel", script)
         self.assertNotIn("choose file or folder", script)
+
+    def test_choose_file_macos_script_filters_extensions(self):
+        script = _choose_file_macos_script(title="Import GDL", extensions=[".gdl", "GDL"])
+
+        self.assertIn('choose file with prompt "Import GDL"', script)
+        self.assertIn('of type {"gdl"}', script)
+
+
+    def test_filetypes_for_extensions_filters_supported_files(self):
+        filetypes = _filetypes_for_extensions([".gsm", "GSM", "gdl"])
+
+        self.assertEqual(filetypes, [("Supported files", "*.gsm *.gdl"), ("All files", "*.*")])
+
 
     def test_choose_directory_macos_script_activates_folder_dialog(self):
         script = _choose_directory_macos_script(title='选择 "项目"', initial_dir="/tmp/file.gdl")

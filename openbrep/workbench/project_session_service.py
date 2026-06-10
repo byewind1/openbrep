@@ -53,7 +53,7 @@ class WorkbenchProjectSessionService:
         raw_path = str(body.get("path") or "").strip()
         if not raw_path:
             try:
-                raw_path = self.session.file_chooser()
+                raw_path = self.session._choose_file_for_purpose("gdl")
             except Exception as exc:
                 return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not raw_path:
@@ -87,7 +87,7 @@ class WorkbenchProjectSessionService:
         raw_path = str(body.get("path") or "").strip()
         if not raw_path:
             try:
-                raw_path = self.session.file_chooser()
+                raw_path = self.session._choose_file_for_purpose("gsm")
             except Exception as exc:
                 return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not raw_path:
