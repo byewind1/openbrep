@@ -1900,30 +1900,70 @@ test('generateAssistantChanges saves dirty editor buffers before calling the LLM
   expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
 })
 
+test('setDraftParameter debounces rapid preview requests while updating draft immediately', async () => {
+  vi.useFakeTimers()
+  try {
+    const calls: Record<string, unknown>[] = []
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchPreview: async (parameters) => {
+          calls.push({ ...parameters })
+          return { meshes: [{ name: 'debounced', vertices: [], faces: [] }], wires: [], warnings: [] }
+        },
+      }),
+    )
+
+    await store.getState().setDraftParameter('A', 1.1)
+    await store.getState().setDraftParameter('A', 1.2)
+    await store.getState().setDraftParameter('A', 1.3)
+
+    expect(store.getState().draftParameters).toEqual({ A: 1.3 })
+    expect(calls).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(249)
+    expect(calls).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(calls).toEqual([{ A: 1.3 }])
+    expect(store.getState().preview?.meshes[0]?.name).toBe('debounced')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('setDraftParameter ignores out-of-order preview responses', async () => {
-  let resolveFirst!: (value: Awaited<ReturnType<WorkbenchApi['fetchPreview']>>) => void
-  const firstPreview = new Promise<Awaited<ReturnType<WorkbenchApi['fetchPreview']>>>((resolve) => {
-    resolveFirst = resolve
-  })
-  let callCount = 0
-  const store = createWorkbenchStore(
-    makeApi({
-      fetchPreview: async () => {
-        callCount += 1
-        if (callCount === 1) return firstPreview
-        return { meshes: [{ name: 'latest', vertices: [], faces: [] }], wires: [], warnings: [] }
-      },
-    }),
-  )
+  vi.useFakeTimers()
+  try {
+    let resolveFirst!: (value: Awaited<ReturnType<WorkbenchApi['fetchPreview']>>) => void
+    const firstPreview = new Promise<Awaited<ReturnType<WorkbenchApi['fetchPreview']>>>((resolve) => {
+      resolveFirst = resolve
+    })
+    let callCount = 0
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchPreview: async () => {
+          callCount += 1
+          if (callCount === 1) return firstPreview
+          return { meshes: [{ name: 'latest', vertices: [], faces: [] }], wires: [], warnings: [] }
+        },
+      }),
+    )
 
-  const firstTurn = store.getState().setDraftParameter('A', 1.1)
-  await store.getState().setDraftParameter('A', 1.2)
-  resolveFirst({ meshes: [{ name: 'stale', vertices: [], faces: [] }], wires: [], warnings: ['stale'] })
-  await firstTurn
+    await store.getState().setDraftParameter('A', 1.1)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(callCount).toBe(1)
 
-  expect(store.getState().preview?.meshes[0]?.name).toBe('latest')
-  expect(store.getState().warnings).toEqual([])
-  expect(store.getState().draftParameters).toEqual({ A: 1.2 })
+    await store.getState().setDraftParameter('A', 1.2)
+    await vi.advanceTimersByTimeAsync(250)
+    resolveFirst({ meshes: [{ name: 'stale', vertices: [], faces: [] }], wires: [], warnings: ['stale'] })
+    await firstPreview
+
+    expect(store.getState().preview?.meshes[0]?.name).toBe('latest')
+    expect(store.getState().warnings).toEqual([])
+    expect(store.getState().draftParameters).toEqual({ A: 1.2 })
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 test('generateAssistantChanges discards results when the project switched mid-request', async () => {
