@@ -1900,6 +1900,32 @@ test('generateAssistantChanges saves dirty editor buffers before calling the LLM
   expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
 })
 
+test('setDraftParameter ignores out-of-order preview responses', async () => {
+  let resolveFirst!: (value: Awaited<ReturnType<WorkbenchApi['fetchPreview']>>) => void
+  const firstPreview = new Promise<Awaited<ReturnType<WorkbenchApi['fetchPreview']>>>((resolve) => {
+    resolveFirst = resolve
+  })
+  let callCount = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async () => {
+        callCount += 1
+        if (callCount === 1) return firstPreview
+        return { meshes: [{ name: 'latest', vertices: [], faces: [] }], wires: [], warnings: [] }
+      },
+    }),
+  )
+
+  const firstTurn = store.getState().setDraftParameter('A', 1.1)
+  await store.getState().setDraftParameter('A', 1.2)
+  resolveFirst({ meshes: [{ name: 'stale', vertices: [], faces: [] }], wires: [], warnings: ['stale'] })
+  await firstTurn
+
+  expect(store.getState().preview?.meshes[0]?.name).toBe('latest')
+  expect(store.getState().warnings).toEqual([])
+  expect(store.getState().draftParameters).toEqual({ A: 1.2 })
+})
+
 test('generateAssistantChanges discards results when the project switched mid-request', async () => {
   let resolveGenerate!: (value: Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>) => void
   const pendingGenerate = new Promise<Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>>((resolve) => {
