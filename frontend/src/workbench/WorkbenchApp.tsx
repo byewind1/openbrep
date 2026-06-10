@@ -127,6 +127,20 @@ export function WorkbenchApp() {
     }
   }, [activeRailPanel, refreshTapirStatus])
 
+  // 打开/切换到有路径的项目时默认进入预览舞台（建筑师视角先看几何）；
+  // 点开脚本时再切回编辑器舞台（见 openScriptInEditor）。
+  const projectPath = project?.path ?? null
+  useEffect(() => {
+    if (projectPath) {
+      setPreviewWorkspaceOpen(true)
+    }
+  }, [projectPath])
+
+  function openScriptInEditor(scriptName: string) {
+    setPreviewWorkspaceOpen(false)
+    void openScript(scriptName)
+  }
+
   function resetCurrentProject() {
     if (!project || loading) return
     const hasUnsavedDraft = hasAnyDirtyScript || hasDraftChanges()
@@ -197,7 +211,7 @@ export function WorkbenchApp() {
   function focusDiagnosticIssue(issue: CompileIssue) {
     const scriptName = issue.script.split('/').pop() ?? issue.script
     if (!scriptName) return
-    void openScript(scriptName)
+    openScriptInEditor(scriptName)
     setEditorFocus({
       scriptName,
       line: issue.line && issue.line > 0 ? issue.line : null,
@@ -249,7 +263,7 @@ export function WorkbenchApp() {
             parameterIssues={parameterIssues}
             draftParameters={draftParameters}
             applying={applying}
-            onSelectScript={(name) => void openScript(name)}
+            onSelectScript={openScriptInEditor}
             onChangeParameter={(name, value) => void setDraftParameter(name, value)}
             onApplyParameters={() => void applyDraftParameters()}
             onResetParameters={resetDraftParameters}
@@ -273,6 +287,7 @@ export function WorkbenchApp() {
             onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onChangeScript={updateActiveScriptContent}
+            onRefreshPreview={() => void loadPreview3D()}
           />
         )}
         right={(

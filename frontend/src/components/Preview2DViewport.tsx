@@ -48,6 +48,9 @@ export function Preview2DViewport({ preview, warnings }: Preview2DViewportProps)
         )}
       </div>
       <footer className="viewport-footer">
+        <span className="viewport-fidelity-hint" title="The built-in previewer renders a GDL subset. Compile and open in Archicad for the final result.">
+          Approximate preview · verify in Archicad
+        </span>
         <span>
           {entityCount} entities | {warnings.length} warnings
         </span>

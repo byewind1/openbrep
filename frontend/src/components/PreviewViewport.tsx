@@ -143,6 +143,9 @@ export function PreviewViewport({
         <span>
           {cameraMode === 'orthographic' ? 'Orthographic' : 'Perspective'} | {viewPreset.toUpperCase()}
         </span>
+        <span className="viewport-fidelity-hint" title="The built-in previewer renders a GDL subset. Compile and open in Archicad for the final result.">
+          Approximate preview · verify in Archicad
+        </span>
         <span>
           {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings | {sourceLabel}
         </span>

@@ -72,10 +72,10 @@ react-workbench 是 OpenBrep 的**新主工作台 Beta**：建筑师不用回到
 |---|---|
 | 参数刷新竞态保护 ✅ | 请求带序号，旧响应到达时丢弃（与 epoch 守卫同思路）；已落地（`6299308`）并有回归测试 |
 | 参数刷新 debounce ✅ | 连续变更合并为 ~250ms 一次请求；已用 fake timers 覆盖快速连续输入只触发一次预览请求 |
-| 预览来源标识 | 预览角落显示来源徽标："saved source" 或 "editor buffer (unsaved)" |
-| 保真度诚实提示 | 预览角落常驻轻提示"近似预览，以编译后 Archicad 为准"；不支持语句的 warning 保证可见 |
-| 主舞台切换打磨 | 打开项目默认预览舞台；点开脚本自动切编辑器舞台；切换不丢相机视角 |
-| 脚本改动刷新 | 编辑器内容变化后预览可一键刷新（dirty buffer 直接预览已支持，补 UI 入口） |
+| 预览来源标识 ✅ | 核查后判定已存在（`bf42bdd`）：footer 按 `verification.source` 显示 Saved / Editor Buffer / Stale |
+| 保真度诚实提示 ✅ | 3D/2D footer 常驻 "Approximate preview · verify in Archicad"（悬停有完整说明）；warnings 计数原已可见 |
+| 主舞台切换打磨 ✅ | 打开有路径的项目默认进预览舞台；点脚本/点诊断自动切编辑器舞台；双舞台常驻 DOM 用 display 切换，相机视角与编辑器滚动不丢 |
+| 脚本改动刷新 ✅ | 右栏原有 Update 按钮；主舞台预览补同款 Update（走 dirty buffer 预览路径） |
 
 ### P3：AI 修改进入可审查流程
 

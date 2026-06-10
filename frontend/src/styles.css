@@ -100,6 +100,15 @@ button:focus-visible {
   gap: 9px;
 }
 
+.stage-hidden {
+  display: none !important;
+}
+
+.viewport-fidelity-hint {
+  opacity: 0.65;
+  font-style: italic;
+}
+
 .brand-project-path {
   max-width: 320px;
   overflow: hidden;
