@@ -160,7 +160,11 @@ class WorkbenchProjectSessionService:
         if not image_payload["ok"]:
             return {"ok": False, "error": image_payload["error"]}
 
-        output_root = Path(str(body.get("output_dir") or "./output")).expanduser().resolve()
+        # AI 新建项目落点：请求显式指定 > 设置里的 output_dir > ./output 兜底，
+        # 保证用户在设置面板看到的目录就是项目实际生成的位置。
+        output_root = (
+            Path(str(body.get("output_dir") or self.session.output_dir or "./output")).expanduser().resolve()
+        )
         output_root.mkdir(parents=True, exist_ok=True)
         requested_name = str(body.get("project_name") or "").strip()
         project_name = unique_project_name(

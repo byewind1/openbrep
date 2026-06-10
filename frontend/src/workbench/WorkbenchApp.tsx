@@ -309,6 +309,7 @@ export function WorkbenchApp() {
         warnings={warnings}
         compileLog={compileLog}
         mockCompileResult={mockCompileResult}
+        compiling={compiling}
         onIssueSelect={focusDiagnosticIssue}
         onRevealOutput={(path) => void revealCompileOutput(path)}
         revisionPanel={

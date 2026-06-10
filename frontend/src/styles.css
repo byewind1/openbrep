@@ -1284,6 +1284,26 @@ button:focus-visible {
   color: var(--success);
 }
 
+.compile-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+}
+
+.compile-status.passed {
+  color: var(--success);
+}
+
+.compile-status.failed {
+  color: var(--error);
+}
+
+.compile-status.running {
+  color: var(--accent-soft);
+}
+
 .diagnostic-output-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

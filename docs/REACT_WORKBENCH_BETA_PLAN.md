@@ -56,9 +56,9 @@ react-workbench 是 OpenBrep 的**新主工作台 Beta**：建筑师不用回到
 | 任务 | 验收标准 |
 |---|---|
 | 项目状态条 ✅ | 顶部常驻显示：项目名、HSF 路径（过长保留末段+悬停全路径）、clean/dirty（脚本+参数，原有）、最近保存时间（脚本保存/参数应用/项目保存/另存均更新） |
-| 保存入口统一 | Project 菜单内 Save/Save As/导入/导出一组化，禁用态规则明确（无项目时灰掉） |
-| 编译诊断收口 | 按脚本分组展示 error/warning，编译状态用徽标（成功/失败/进行中）而非纯日志行 |
-| work directory 显示 | 设置里能看到并修改当前工作目录（审计表遗留 Gap） |
+| 保存入口统一 ✅ | 核查后判定已满足：Project 菜单含 New/Open/Recent/Import/Save As，禁用态明确；Save 留在工具栏（高频操作，合理设计） |
+| 编译诊断收口 ✅ | 分组/计数/点击跳转原已有；本轮补：状态徽标（Passed/Failed/Compiling）+ 失败时渲染 error 字段（原来失败原因只埋日志） |
+| work directory ✅ | 修正为真实 gap：AI 新建项目原硬编码落 `./output`，现改为走设置面板的 Output directory（请求显式指定 > 设置 > 兜底） |
 
 ### P2：预览可信化（原"预览中心化"，2026-06-11 修正）
 

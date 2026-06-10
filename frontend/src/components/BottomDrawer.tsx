@@ -7,6 +7,7 @@ interface BottomDrawerProps {
   warnings: string[]
   compileLog: string[]
   mockCompileResult: MockCompileResponse | null
+  compiling?: boolean
   revisionPanel?: ReactNode
   onIssueSelect?: (issue: CompileIssue) => void
   onRevealOutput?: (path: string) => void
@@ -16,6 +17,7 @@ export function BottomDrawer({
   warnings,
   compileLog,
   mockCompileResult,
+  compiling = false,
   revisionPanel,
   onIssueSelect,
   onRevealOutput,
@@ -45,7 +47,9 @@ export function BottomDrawer({
         {activeTab === 'compile' || activeTab === 'diagnostics' ? (
           <CompileDiagnostics
             compileLog={compileLog}
+            compiling={compiling}
             duration={mockCompileResult?.duration_ms ?? null}
+            error={mockCompileResult?.error ?? null}
             issueGroups={issueGroups}
             outputPath={mockCompileResult?.output_path ?? null}
             parameterCount={mockCompileResult?.parameter_count ?? null}
@@ -62,7 +66,9 @@ export function BottomDrawer({
 
 function CompileDiagnostics({
   compileLog,
+  compiling,
   duration,
+  error,
   issueGroups,
   outputPath,
   parameterCount,
@@ -72,7 +78,9 @@ function CompileDiagnostics({
   onRevealOutput,
 }: {
   compileLog: string[]
+  compiling: boolean
   duration: number | null
+  error: string | null
   issueGroups: ReturnType<typeof groupCompileIssuesByScript>
   outputPath: string | null
   parameterCount: number | null
@@ -83,12 +91,21 @@ function CompileDiagnostics({
 }) {
   const errorCount = countGroupedIssues(issueGroups, 'error')
   const warningCount = countGroupedIssues(issueGroups, 'warning')
+  const statusBadge = compiling
+    ? { className: 'compile-status running', label: '● Compiling…' }
+    : success === true
+      ? { className: 'compile-status passed', label: '✓ Passed' }
+      : success === false
+        ? { className: 'compile-status failed', label: '✗ Failed' }
+        : null
   return (
     <>
       <div className="diagnostics-summary">
         <strong>Compile</strong>
+        {statusBadge ? <span className={statusBadge.className}>{statusBadge.label}</span> : null}
         <span>{duration !== null ? `${duration} ms` : 'Not compiled'}</span>
       </div>
+      {!compiling && error ? <p className="diagnostic-line diagnostic-error">{error}</p> : null}
       {success && issueGroups.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
       {issueGroups.length ? (
         <p>

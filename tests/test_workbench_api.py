@@ -481,6 +481,25 @@ def test_workbench_session_creates_project_from_prompt(tmp_path):
     assert FakePipeline.last_request.output_dir == str(tmp_path.resolve())
 
 
+def test_workbench_session_create_uses_configured_output_dir(tmp_path):
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            return TaskResult(success=True, intent="CREATE", plain_text="ok", project=project)
+
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    session.output_dir = str(tmp_path / "workspace")
+
+    response = session.route("POST", "/api/project/create", {"prompt": "create a bookshelf"})
+
+    assert response["ok"] is True
+    assert response["project"]["path"].startswith(str((tmp_path / "workspace").resolve()))
+
+
 def test_workbench_session_creates_project_from_image_prompt(tmp_path):
     class FakePipeline:
         last_request = None
