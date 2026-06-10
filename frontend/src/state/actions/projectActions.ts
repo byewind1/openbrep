@@ -1,5 +1,5 @@
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
-import { hydrateSnapshot } from '../workbenchStoreUtils'
+import { hydrateSnapshot, nowTimeText } from '../workbenchStoreUtils'
 import type { WorkbenchSnapshot } from '../../api/types'
 
 export function createProjectActions({ api, get, set }: WorkbenchActionContext) {
@@ -115,6 +115,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadMemoryStatus()
       set((state) => ({
         loading: false,
+        lastSavedAt: nowTimeText(),
         compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
       }))
     },
@@ -137,6 +138,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadMemoryStatus()
       set((state) => ({
         loading: false,
+        lastSavedAt: nowTimeText(),
         compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
       }))
     },

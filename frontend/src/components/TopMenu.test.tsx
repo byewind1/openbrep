@@ -17,6 +17,7 @@ function renderTopMenu(overrides: Partial<Parameters<typeof TopMenu>[0]> = {}) {
     compiling: false,
     saving: false,
     hasDirtyScript: false,
+    lastSavedAt: null,
     lastError: null,
     onClearError: vi.fn(),
     ...overrides,
@@ -27,6 +28,19 @@ function renderTopMenu(overrides: Partial<Parameters<typeof TopMenu>[0]> = {}) {
 }
 
 describe('TopMenu', () => {
+  test('shows project path and last saved time in the status bar', () => {
+    renderTopMenu({ lastSavedAt: '10:32' })
+
+    expect(screen.getByText('/workspace/Shelf')).toBeTruthy()
+    expect(screen.getByText('Saved 10:32')).toBeTruthy()
+  })
+
+  test('hides last saved pill when nothing has been saved yet', () => {
+    renderTopMenu({ lastSavedAt: null })
+
+    expect(screen.queryByText(/^Saved \d/)).toBeNull()
+  })
+
   test('keeps primary workbench actions directly available in one toolbar', () => {
     const props = renderTopMenu()
 

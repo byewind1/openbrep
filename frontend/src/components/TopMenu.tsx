@@ -16,6 +16,7 @@ interface TopMenuProps {
   compiling: boolean
   saving: boolean
   hasDirtyScript: boolean
+  lastSavedAt: string | null
   lastError: string | null
   onClearError: () => void
 }
@@ -34,6 +35,7 @@ export function TopMenu({
   compiling,
   saving,
   hasDirtyScript,
+  lastSavedAt,
   lastError,
   onClearError,
 }: TopMenuProps) {
@@ -48,11 +50,11 @@ export function TopMenu({
 
   return (
     <header className="topbar">
-      <div className="brand-lockup">
+      <div className="brand-lockup" title={project?.path ?? ''}>
         <span className="brand-mark">OB</span>
         <div>
           <strong>{project?.name ?? 'OpenBrep'}</strong>
-          <span>{project?.source ?? 'workbench'}</span>
+          <span className="brand-project-path">{project?.path ?? project?.source ?? 'workbench'}</span>
         </div>
       </div>
       {projectControls}
@@ -104,6 +106,7 @@ export function TopMenu({
         <span className={projectStatus === 'Unsaved' ? 'status-pill changed' : 'status-pill'}>{projectStatus}</span>
         <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>{hasDirtyScript ? 'Dirty' : 'Clean'}</span>
         <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? 'Params' : 'Stable'}</span>
+        {lastSavedAt ? <span className="status-pill">Saved {lastSavedAt}</span> : null}
         <button className="primary-action" disabled={!hasDraftChanges || applying} onClick={onApply}>
           {applying ? '...' : 'Apply'}
         </button>

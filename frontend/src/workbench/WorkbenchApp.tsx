@@ -51,6 +51,7 @@ export function WorkbenchApp() {
   const activeScriptName = useWorkbenchStore((state) => state.activeScriptName)
   const scriptContents = useWorkbenchStore((state) => state.scriptContents)
   const dirtyScripts = useWorkbenchStore((state) => state.dirtyScripts)
+  const lastSavedAt = useWorkbenchStore((state) => state.lastSavedAt)
   const scriptSaving = useWorkbenchStore((state) => state.scriptSaving)
   const mockCompileResult = useWorkbenchStore((state) => state.mockCompileResult)
   const load = useWorkbenchStore((state) => state.load)
@@ -232,6 +233,7 @@ export function WorkbenchApp() {
         compiling={compiling}
         saving={scriptSaving}
         hasDirtyScript={hasDirtyScript}
+        lastSavedAt={lastSavedAt}
         lastError={lastError}
         onClearError={clearLastError}
       />

@@ -163,6 +163,7 @@ export interface WorkbenchState {
   activeScriptName: string | null
   scriptContents: Record<string, string>
   dirtyScripts: Record<string, boolean>
+  lastSavedAt: string | null
   scriptLoading: boolean
   scriptSaving: boolean
   mockCompileResult: MockCompileResponse | null

@@ -31,6 +31,7 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     activeScriptName: null,
     scriptContents: {},
     dirtyScripts: {},
+    lastSavedAt: null,
     revisions: [],
     latestRevisionId: null,
     revisionLoading: false,
@@ -49,6 +50,11 @@ export function selectPreferredScript(scripts: ProjectScript[], current: string 
 export function pruneDirtyScripts(dirtyScripts: Record<string, boolean>, scripts: ProjectScript[]) {
   const allowed = new Set(scripts.map((script) => script.name))
   return Object.fromEntries(Object.entries(dirtyScripts).filter(([name]) => allowed.has(name)))
+}
+
+export function nowTimeText() {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 }
 
 export function normalizeScriptName(path: string) {

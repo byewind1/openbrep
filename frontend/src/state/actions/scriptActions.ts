@@ -1,5 +1,5 @@
 import type { ProjectWorkspaceRefreshOptions, WorkbenchActionContext } from '../workbenchStoreTypes'
-import { normalizeScriptName, pruneDirtyScripts, selectPreferredScript } from '../workbenchStoreUtils'
+import { normalizeScriptName, nowTimeText, pruneDirtyScripts, selectPreferredScript } from '../workbenchStoreUtils'
 
 export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
   return {
@@ -108,6 +108,7 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
 
         set((state) => ({
           dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
+          lastSavedAt: nowTimeText(),
           compileLog: [`Saved ${scriptName}`, ...state.compileLog].slice(0, 20),
         }))
         didSave = true
@@ -127,6 +128,7 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
         set((state) => ({
           scriptSaving: false,
           dirtyScripts: { ...state.dirtyScripts, [activeScriptName]: false },
+          lastSavedAt: nowTimeText(),
           compileLog: [`Saved ${activeScriptName} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
         }))
         await get().refreshProjectWorkspace({

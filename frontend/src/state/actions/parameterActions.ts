@@ -1,5 +1,6 @@
 import type { AddParameterRequest, UpdateParameterRequest, WorkbenchSnapshot } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
+import { nowTimeText } from '../workbenchStoreUtils'
 
 export function createParameterActions({ api, get, set }: WorkbenchActionContext) {
   // 快速连续改参数时请求会乱序返回：只有最后一次请求的响应允许写入预览，
@@ -24,6 +25,8 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       warnings: result.warnings,
       draftParameters: {},
       applying: false,
+      // 参数应用/增删改在后端都会 save_to_disk，算一次保存
+      lastSavedAt: nowTimeText(),
     })
   }
 

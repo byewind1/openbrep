@@ -100,6 +100,15 @@ button:focus-visible {
   gap: 9px;
 }
 
+.brand-project-path {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* 路径过长时保留末段（项目目录名）比保留盘符更有用 */
+  text-align: left;
+}
+
 .brand-mark {
   width: 28px;
   height: 28px;

@@ -196,6 +196,7 @@ function initialWorkbenchState() {
     activeScriptName: null,
     scriptContents: {},
     dirtyScripts: {},
+    lastSavedAt: null,
     scriptLoading: false,
     scriptSaving: false,
     mockCompileResult: null,
