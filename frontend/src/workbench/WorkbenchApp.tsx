@@ -317,6 +317,8 @@ export function WorkbenchApp() {
             onGenerateAssistantChanges={(message, image) => void generateAssistantChanges(message, image)}
             onClearAssistantHistory={() => void clearAssistantHistory()}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
+            onOpenScript={openScriptInEditor}
+            onSaveRevision={(message) => void saveRevision(message)}
           />
         )}
       />

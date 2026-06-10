@@ -1756,6 +1756,7 @@ test('generate assistant message refreshes preview and records changed files', a
   expect(store.getState().assistantMessages.at(-1)).toEqual({
     role: 'assistant',
     content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
+    changedFiles: ['scripts/3d.gdl'],
   })
 })
 
@@ -1853,6 +1854,7 @@ test('generateAssistantChanges exposes image generation failures as lastError', 
   expect(store.getState().assistantMessages.at(-1)).toEqual({
     role: 'assistant',
     content: error,
+    errorCategory: 'general',
   })
 })
 
@@ -1964,6 +1966,37 @@ test('setDraftParameter ignores out-of-order preview responses', async () => {
   } finally {
     vi.useRealTimers()
   }
+})
+
+test('generateAssistantChanges attaches changed files to the reply message', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => ({
+        ok: true,
+        assistant: { kind: 'generate', reply: 'done', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('加一块层板')
+
+  const reply = store.getState().assistantMessages.at(-1)
+  expect(reply?.changedFiles).toEqual(['scripts/3d.gdl'])
+  expect(reply?.errorCategory).toBeUndefined()
+})
+
+test('generateAssistantChanges tags failed replies with an error category', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => ({ ok: false, error: 'LLM 认证失败：API Key 可能无效' }),
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('改成参数化')
+
+  expect(store.getState().assistantMessages.at(-1)?.errorCategory).toBe('llm')
 })
 
 test('generateAssistantChanges discards results when the project switched mid-request', async () => {

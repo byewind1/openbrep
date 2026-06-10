@@ -11,9 +11,21 @@ interface AssistantPanelProps {
   onGenerate: (message: string, image?: AssistantImageAttachment | null) => void
   onClearHistory: () => void
   onAdoptCode: (index: number) => void
+  onOpenScript?: (scriptName: string) => void
+  onSaveRevision?: (message: string) => void
 }
 
-export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, onClearHistory, onAdoptCode }: AssistantPanelProps) {
+export function AssistantPanel({
+  messages,
+  busy,
+  onSend,
+  onCreate,
+  onGenerate,
+  onClearHistory,
+  onAdoptCode,
+  onOpenScript,
+  onSaveRevision,
+}: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
   const [image, setImage] = useState<AssistantImageAttachment | null>(null)
   const [imageError, setImageError] = useState('')
@@ -79,8 +91,43 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
         {messages.length ? (
           messages.map((message, index) => (
             <article className={`assistant-message ${message.role}`} key={`${message.role}-${index}`}>
-              <span>{message.role === 'user' ? '你' : 'OpenBrep'}</span>
+              <span>
+                {message.role === 'user' ? '你' : 'OpenBrep'}
+                {message.errorCategory ? (
+                  <em className={`assistant-error-badge assistant-error-${message.errorCategory}`}>
+                    {errorCategoryLabel(message.errorCategory)}
+                  </em>
+                ) : null}
+              </span>
               <p>{message.content}</p>
+              {message.changedFiles?.length ? (
+                <div className="assistant-change-card">
+                  <strong>Changed files</strong>
+                  <div className="assistant-change-files">
+                    {message.changedFiles.map((file) => (
+                      <button
+                        type="button"
+                        key={file}
+                        disabled={busy || !onOpenScript}
+                        title={`Open ${file} in the editor`}
+                        onClick={() => onOpenScript?.(file.split('/').pop() ?? file)}
+                      >
+                        {file}
+                      </button>
+                    ))}
+                  </div>
+                  {onSaveRevision ? (
+                    <button
+                      type="button"
+                      className="assistant-save-revision"
+                      disabled={busy}
+                      onClick={() => onSaveRevision(revisionMessageFor(messages, index))}
+                    >
+                      Save revision
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {message.role === 'assistant' && message.content.includes('```') ? (
                 <button type="button" disabled={busy} onClick={() => onAdoptCode(index)}>
                   Adopt code
@@ -145,6 +192,23 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
       />
     </aside>
   )
+}
+
+function errorCategoryLabel(category: NonNullable<AssistantMessage['errorCategory']>) {
+  if (category === 'llm') return 'LLM settings'
+  if (category === 'compile') return 'Compile'
+  return 'Error'
+}
+
+// revision 信息取触发本次生成的用户指令（往前找最近一条 user 消息），截断防止过长
+function revisionMessageFor(messages: AssistantMessage[], assistantIndex: number) {
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      const instruction = messages[index].content.trim()
+      return `AI: ${instruction.length > 60 ? `${instruction.slice(0, 60)}…` : instruction}`
+    }
+  }
+  return 'AI generated changes'
 }
 
 function AssistantHistoryDrawer({

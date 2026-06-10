@@ -87,6 +87,13 @@ export function formatAssistantRequestError(error: string | undefined, fallback:
   return isLlmConfigurationError(message) ? `LLM settings error: ${message}` : message
 }
 
+export function classifyAssistantError(message: string): 'llm' | 'compile' | 'general' {
+  if (isLlmConfigurationError(message)) return 'llm'
+  const normalized = message.toLowerCase()
+  if (normalized.includes('compile') || normalized.includes('编译')) return 'compile'
+  return 'general'
+}
+
 export function isLlmConfigurationError(message: string) {
   const normalized = message.toLowerCase()
   return (

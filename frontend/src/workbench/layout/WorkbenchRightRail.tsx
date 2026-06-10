@@ -38,6 +38,8 @@ interface WorkbenchRightRailProps {
   onGenerateAssistantChanges: (message: string, image?: AssistantImageAttachment | null) => void
   onClearAssistantHistory: () => void
   onAdoptAssistantCode: (index: number) => void
+  onOpenScript?: (scriptName: string) => void
+  onSaveRevision?: (message: string) => void
 }
 
 export function WorkbenchRightRail({
@@ -66,6 +68,8 @@ export function WorkbenchRightRail({
   onGenerateAssistantChanges,
   onClearAssistantHistory,
   onAdoptAssistantCode,
+  onOpenScript,
+  onSaveRevision,
 }: WorkbenchRightRailProps) {
   return (
     <aside className="workbench-right-rail right-rail">
@@ -126,6 +130,8 @@ export function WorkbenchRightRail({
             onGenerate={onGenerateAssistantChanges}
             onClearHistory={onClearAssistantHistory}
             onAdoptCode={onAdoptAssistantCode}
+            onOpenScript={onOpenScript}
+            onSaveRevision={onSaveRevision}
           />
         )}
       </div>

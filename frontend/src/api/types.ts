@@ -289,6 +289,10 @@ export interface FileChoiceResult {
 export interface AssistantMessage {
   role: 'user' | 'assistant'
   content: string
+  // 以下字段仅在当前会话内存活：后端聊天历史只持久化 role/content，
+  // 刷新后摘要卡降级为 content 里的纯文本（含 Changed files 后缀兜底）。
+  changedFiles?: string[]
+  errorCategory?: 'llm' | 'compile' | 'general'
 }
 
 export interface AssistantImageAttachment {

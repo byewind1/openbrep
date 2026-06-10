@@ -65,4 +65,56 @@ describe('AssistantPanel', () => {
 
     expect(onAdoptCode).toHaveBeenCalledWith(1)
   })
+
+  test('renders a change summary card with clickable files and save revision', () => {
+    const onOpenScript = vi.fn()
+    const onSaveRevision = vi.fn()
+
+    render(
+      <AssistantPanel
+        messages={[
+          { role: 'user', content: '把书架加一块层板，并加深背板颜色让它看起来更稳重一些，再调整层板间距保持均匀' },
+          { role: 'assistant', content: '已修改。', changedFiles: ['scripts/3d.gdl', 'paramlist.xml'] },
+        ]}
+        busy={false}
+        onSend={vi.fn()}
+        onCreate={vi.fn()}
+        onGenerate={vi.fn()}
+        onClearHistory={vi.fn()}
+        onAdoptCode={vi.fn()}
+        onOpenScript={onOpenScript}
+        onSaveRevision={onSaveRevision}
+      />,
+    )
+
+    expect(screen.getByText('Changed files')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'scripts/3d.gdl' }))
+    expect(onOpenScript).toHaveBeenCalledWith('3d.gdl')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save revision' }))
+    expect(onSaveRevision).toHaveBeenCalledTimes(1)
+    const revisionMessage = onSaveRevision.mock.calls[0][0] as string
+    expect(revisionMessage.startsWith('AI: 把书架加一块层板')).toBe(true)
+    expect(revisionMessage.length).toBeLessThanOrEqual(65)
+  })
+
+  test('shows an error category badge on failed assistant replies', () => {
+    render(
+      <AssistantPanel
+        messages={[
+          { role: 'assistant', content: 'LLM settings error: API Key 无效', errorCategory: 'llm' },
+          { role: 'assistant', content: 'Compile failed: missing END', errorCategory: 'compile' },
+        ]}
+        busy={false}
+        onSend={vi.fn()}
+        onCreate={vi.fn()}
+        onGenerate={vi.fn()}
+        onClearHistory={vi.fn()}
+        onAdoptCode={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('LLM settings')).toBeTruthy()
+    expect(screen.getByText('Compile')).toBeTruthy()
+  })
 })

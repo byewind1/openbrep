@@ -81,9 +81,9 @@ react-workbench 是 OpenBrep 的**新主工作台 Beta**：建筑师不用回到
 
 | 任务 | 验收标准 |
 |---|---|
-| 变更摘要卡 | AI 生成完成后展示结构化卡片：changed files 列表、一句话摘要，而非纯聊天文本 |
-| 一键保存 revision | 摘要卡上直接保存本次 AI 变更为 revision |
-| 错误分类展示 | LLM 错误 / 编译错误 / 验证警告分开显示，不混在一段文本里 |
+| 变更摘要卡 ✅ | 回复消息携带结构化 `changedFiles`，渲染为卡片：文件按钮点击直达编辑器对应脚本。注：后端历史只持久化 role/content，卡片仅当前会话存活，刷新后降级为文本（Changed files 后缀兜底） |
+| 一键保存 revision ✅ | 摘要卡 Save revision 按钮，message 自动取触发生成的用户指令（截断 60 字） |
+| 错误分类展示 ✅ | 失败回复带 `errorCategory`（llm/compile/general），消息头渲染分类徽标；复用 `isLlmConfigurationError` |
 
 ### P4：桌面壳准备（只评估，不实施）
 

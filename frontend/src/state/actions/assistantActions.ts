@@ -1,7 +1,7 @@
 import type { AssistantImageAttachment } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
-import { formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
+import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 const ASSISTANT_PENDING_PREFIX = 'Thinking...'
 
@@ -119,7 +119,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           : formatAssistantRequestError(result.error, 'Assistant request failed.')
       set((state) => ({
         assistantBusy: false,
-        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply),
+        assistantMessages: replacePendingAssistantMessage(
+          state.assistantMessages,
+          reply,
+          result.ok ? {} : { errorCategory: classifyAssistantError(reply) },
+        ),
         lastError: result.ok ? null : reply,
       }))
       await persistAssistantHistory()
@@ -150,7 +154,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         const error = formatAssistantRequestError(result.error, 'Create request failed.')
         set((state) => ({
           assistantBusy: false,
-          assistantMessages: replacePendingAssistantMessage(state.assistantMessages, error),
+          assistantMessages: replacePendingAssistantMessage(state.assistantMessages, error, {
+            errorCategory: classifyAssistantError(error),
+          }),
           lastError: error,
         }))
         return
@@ -203,9 +209,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         result.ok && result.assistant
           ? `${result.assistant.reply}${suffix}${eventSummary}`
           : formatAssistantRequestError(result.error, 'Generation request failed.')
+      const replyExtras = result.ok
+        ? { changedFiles }
+        : { errorCategory: classifyAssistantError(reply) }
       set((state) => ({
         assistantBusy: false,
-        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply),
+        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply, replyExtras),
         lastError: result.ok ? null : reply,
         preview: result.preview ?? state.preview,
         warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
@@ -244,12 +253,13 @@ function pendingAssistantMessage(action: 'explain' | 'create' | 'generate', imag
   return `${ASSISTANT_PENDING_PREFIX}\n${steps.map((step) => `- ${step}`).join('\n')}`
 }
 
-function replacePendingAssistantMessage(messages: AssistantMessage[], reply: string) {
+function replacePendingAssistantMessage(messages: AssistantMessage[], reply: string, extras: Partial<AssistantMessage> = {}) {
+  const replyMessage = { role: 'assistant' as const, content: reply, ...extras }
   const last = messages.at(-1)
   if (last?.role === 'assistant' && last.content.startsWith(ASSISTANT_PENDING_PREFIX)) {
-    return [...messages.slice(0, -1), { role: 'assistant' as const, content: reply }]
+    return [...messages.slice(0, -1), replyMessage]
   }
-  return [...messages, { role: 'assistant' as const, content: reply }]
+  return [...messages, replyMessage]
 }
 
 function formatAssistantEventSummary(events?: Array<{ type: string; data: unknown }>) {

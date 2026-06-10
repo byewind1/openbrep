@@ -104,6 +104,49 @@ button:focus-visible {
   display: none !important;
 }
 
+.assistant-change-card {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--accent-muted);
+}
+
+.assistant-change-card strong {
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.assistant-change-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.assistant-change-files button {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.assistant-save-revision {
+  justify-self: start;
+  font-size: 11px;
+}
+
+.assistant-error-badge {
+  margin-left: 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--status-error-border);
+  color: var(--status-error-text);
+  background: var(--status-error-bg);
+}
+
 .viewport-fidelity-hint {
   opacity: 0.65;
   font-style: italic;
