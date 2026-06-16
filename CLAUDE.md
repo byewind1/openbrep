@@ -305,3 +305,49 @@ print('custom_providers:', len(c.llm.custom_providers))
 - **示例**：
   - 正确：`config.example.toml` 使用占位符 `YOUR_API_KEY`。
   - 错误：在示例里出现真实 key 或私有代理域名。
+
+## 落盘 SOP（知识沉淀规范）
+
+**Obsidian 文档目录**：`/Users/ren/Library/Mobile Documents/iCloud~md~obsidian/Documents/库/01-Projects/dev开发/OpenBrep 开发/`
+
+### 何时落盘
+用户说"落盘"、"记录一下"、"存下来"、"整理文档"等，**立即执行，不需要用户指定目录和内容范围**。
+
+### 落盘内容（无损整理，不能只摘重点）
+- 本轮讨论的核心决策和结论
+- 头脑风暴、方案对比、取舍原因
+- 架构疑问与解答
+- 用户的需求描述和想法
+- 重要技术发现、踩坑记录
+
+### 文件命名
+- 主题文档：语义清晰的中文名，例如 `validator架构重构方案.md`
+- 会话 handoff：`handoff-YYYY-MM-DD.md`
+
+### 落盘格式要求
+- 开头注明日期和背景（这次讨论的起因）
+- 保留对话中有价值的问答，不要只写结论
+- 末尾加「下一步」或「遗留问题」章节
+
+---
+
+## Handoff SOP（会话交接规范）
+
+**每轮开发会话结束前必须写 handoff**，保存到 Obsidian 目录。目的：让下一个 AI（或未来的自己）不依赖对话上下文就能继续工作。
+
+### Handoff 必须包含
+1. **本次做了什么**：功能/修复/探索，说清楚结果
+2. **未完成的事项**：具体列出，带优先级
+3. **重要决策和背景**：为什么这样做，有什么约束
+4. **当前状态**：代码在哪个分支、哪个 commit，有无未提交内容
+5. **下一步建议**：具体可执行的行动，不要泛泛而谈
+6. **相关文档**：Obsidian 里哪些文件有详细记录
+
+### Handoff 文件位置
+`/Users/ren/Library/Mobile Documents/iCloud~md~obsidian/Documents/库/01-Projects/dev开发/OpenBrep 开发/handoff-YYYY-MM-DD.md`
+
+### AI 接手新任务时
+开始工作前，先查阅：
+1. 最新的 `handoff-*.md`（了解上次停在哪）
+2. Obsidian OpenBrep 目录下相关主题文档（了解历史决策）
+3. 再看代码，不要只靠 commit message 推断背景
