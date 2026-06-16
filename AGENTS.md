@@ -2,6 +2,21 @@
 
 This file is the repository entry point for AI coding agents.
 
+## 接手任务前必读（Session Handoff）
+
+**在开始任何开发工作前，先查阅以下内容，不要只靠 git log 推断背景：**
+
+1. **最新 handoff 文档**（了解上次停在哪、未完成事项）：
+   - 目录：`/Users/ren/Library/Mobile Documents/iCloud~md~obsidian/Documents/库/01-Projects/dev开发/OpenBrep 开发/`
+   - 找最新的 `handoff-YYYY-MM-DD.md` 文件阅读
+
+2. **相关主题文档**（了解历史决策和架构思考）：
+   - 同上目录，找与当前任务相关的主题文档
+
+3. **再看代码**。commit message 只是摘要，Obsidian 文档才有决策背景。
+
+---
+
 中文维护者优先阅读：
 
 - `docs/ARCHITECTURE.zh-CN.md`
