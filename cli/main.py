@@ -635,7 +635,7 @@ def _launch_ui() -> int:
         root = Path(__file__).resolve().parents[1]
         obr7_script = root / "scripts" / "obr7.py"
         try:
-            return subprocess.call([sys.executable, str(obr7_script), "--no-open"])
+            return subprocess.call([sys.executable, str(obr7_script)])
         except Exception as exc:
             err_console.print(f"[yellow]⚠️ React 工作台启动失败：{exc}[/yellow]")
             err_console.print("[dim]回退到 Streamlit…[/dim]")

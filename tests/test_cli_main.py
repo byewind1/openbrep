@@ -177,7 +177,7 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertIn("fallback", result.output)
         cmd = call.call_args.args[0]
         self.assertTrue(any("obr7.py" in str(part) for part in cmd))
-        self.assertIn("--no-open", cmd)
+        self.assertNotIn("--no-open", cmd)
 
     def test_cli_subcommand_enters_repl(self):
         with patch("cli.main._run_chat_repl") as repl:
