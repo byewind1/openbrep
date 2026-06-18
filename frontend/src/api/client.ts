@@ -21,8 +21,10 @@ import type {
   HsfExportResult,
   LlmSettings,
   LlmSettingsResult,
+  LlmConnectionTestResult,
   Preview2DPayload,
   PreviewPayload,
+  ProjectGitResponse,
   ProjectLessonsResult,
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
@@ -36,6 +38,8 @@ import type {
   SaveScriptResponse,
   SaveRevisionResponse,
   SummarizeMemoryResult,
+  TapirActionResult,
+  TapirStatusResult,
   DeleteParameterResult,
   UpdateMemoryLessonRequest,
   UpdateMemoryLessonResult,
@@ -51,26 +55,32 @@ export async function fetchSnapshot(): Promise<WorkbenchSnapshot> {
   return requestJson<WorkbenchSnapshot>('/api/snapshot', { method: 'GET' }, fallbackSnapshot)
 }
 
-export async function fetchPreview(parameters: Record<string, unknown>): Promise<PreviewPayload> {
+export async function fetchPreview(
+  parameters: Record<string, unknown>,
+  scripts?: Record<string, string>,
+): Promise<PreviewPayload> {
   const response = await requestJson<{ preview: PreviewPayload }>(
     '/api/preview',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parameters }),
+      body: JSON.stringify({ parameters, scripts }),
     },
     { preview: fallbackSnapshot.preview },
   )
   return response.preview
 }
 
-export async function fetchPreview2D(parameters: Record<string, unknown>): Promise<Preview2DPayload> {
+export async function fetchPreview2D(
+  parameters: Record<string, unknown>,
+  scripts?: Record<string, string>,
+): Promise<Preview2DPayload> {
   const response = await requestJson<{ preview: Preview2DPayload }>(
     '/api/preview/2d',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parameters }),
+      body: JSON.stringify({ parameters, scripts }),
     },
     { preview: fallbackPreview2D },
   )
@@ -92,6 +102,30 @@ export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> 
 export async function closeProject(): Promise<WorkbenchSnapshot> {
   return requestJson<WorkbenchSnapshot>(
     '/api/project/close',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function newProject(): Promise<WorkbenchSnapshot> {
+  return requestJson<WorkbenchSnapshot>(
+    '/api/project/new',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function saveProject(): Promise<HsfExportResult> {
+  return requestJson<HsfExportResult>(
+    '/api/project/save',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -194,6 +228,50 @@ export async function restoreProjectRevision(revisionId: string): Promise<Restor
       body: JSON.stringify({ revision_id: revisionId }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchProjectGitStatus(): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
+  )
+}
+
+export async function initializeProjectGit(): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git/init',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
+  )
+}
+
+export async function updateProjectGitSettings(enabled: boolean): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git/settings',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
+  )
+}
+
+export async function commitProjectGit(message = ''): Promise<ProjectGitResponse> {
+  return requestJson<ProjectGitResponse>(
+    '/api/project/git/commit',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', git: fallbackProjectGitStatus },
   )
 }
 
@@ -325,15 +403,87 @@ export async function fetchRuntimeSettings(): Promise<RuntimeSettingsResult> {
   )
 }
 
-export async function updateLlmSettings(settings: LlmSettings): Promise<LlmSettingsResult> {
-  return requestJson<LlmSettingsResult>(
-    '/api/settings/llm',
+export async function openConfig(): Promise<{ ok: boolean; error?: string }> {
+  return requestJson(
+    '/api/settings/open-config',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function testLlmConnection(): Promise<LlmConnectionTestResult> {
+  return requestJson<LlmConnectionTestResult>(
+    '/api/settings/llm/test',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.', category: 'llm_configuration' },
+  )
+}
+
+export async function fetchTapirStatus(): Promise<TapirStatusResult> {
+  return requestJson<TapirStatusResult>(
+    '/api/tapir/status',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function reloadTapirLibraries(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/reload-libraries',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
+      body: JSON.stringify({}),
     },
-    { ok: false, error: 'OpenBrep local API is not available.' },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function syncTapirSelection(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/selection/sync',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function highlightTapirSelection(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/selection/highlight',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function loadTapirParameters(): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/parameters/load',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function applyTapirParameterEdits(paramEdits?: Record<string, unknown>): Promise<TapirActionResult> {
+  return requestJson<TapirActionResult>(
+    '/api/tapir/parameters/apply',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ param_edits: paramEdits ?? {} }),
+    },
+    { ok: false, message: 'OpenBrep local API is not available.' },
   )
 }
 
@@ -536,7 +686,7 @@ async function requestJson<T>(path: string, init: RequestInit, fallback: T): Pro
 }
 
 export const fallbackSnapshot: WorkbenchSnapshot = {
-  project: { name: 'Demo Bookshelf', source: 'fallback' },
+  project: null,
   compiler: { mode: 'mock', converter_path: '', output_dir: '' },
   llm: {
     model: 'glm-4-flash',
@@ -546,35 +696,9 @@ export const fallbackSnapshot: WorkbenchSnapshot = {
     max_retries: 5,
     assistant_settings: '',
   },
-  parameters: [
-    { name: 'A', type_tag: 'Length', description: '总宽', value: '1.2', is_fixed: true },
-    { name: 'B', type_tag: 'Length', description: '总深', value: '0.36', is_fixed: true },
-    { name: 'ZZYZX', type_tag: 'Length', description: '总高', value: '1.8', is_fixed: true },
-    { name: 'shelf_count', type_tag: 'Integer', description: '层板数', value: '5', is_fixed: false },
-    { name: 'has_back_panel', type_tag: 'Boolean', description: '背板', value: '1', is_fixed: false },
-  ],
+  parameters: [],
   preview: {
-    meshes: [
-      {
-        name: 'fallback-block',
-        vertices: [
-          [0, 0, 0],
-          [1, 0, 0],
-          [1, 1, 0],
-          [0, 1, 0],
-          [0, 0, 1],
-          [1, 0, 1],
-          [1, 1, 1],
-          [0, 1, 1],
-        ],
-        faces: [
-          [0, 1, 2],
-          [0, 2, 3],
-          [4, 6, 5],
-          [4, 7, 6],
-        ],
-      },
-    ],
+    meshes: [],
     wires: [],
     warnings: [],
   },
@@ -587,4 +711,12 @@ export const fallbackPreview2D: Preview2DPayload = {
   circles: [],
   arcs: [],
   warnings: [],
+}
+
+export const fallbackProjectGitStatus = {
+  enabled: false,
+  initialized: false,
+  dirty: false,
+  changes: [],
+  last_commit: '',
 }

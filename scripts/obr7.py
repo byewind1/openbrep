@@ -98,6 +98,31 @@ def build_web_command(web_port: int) -> list[str]:
     return ["npm", "run", "dev", "--", "--host", HOST, "--port", str(web_port), "--strictPort"]
 
 
+def resolve_shared_config_path(root: Path) -> Path | None:
+    env_path = os.environ.get("GDL_AGENT_CONFIG", "").strip()
+    if env_path:
+        return Path(env_path).expanduser()
+
+    candidates: list[Path] = []
+    try:
+        common_dir = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "--git-common-dir"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if common_dir:
+            common_path = Path(common_dir)
+            if not common_path.is_absolute():
+                common_path = root / common_path
+            if common_path.name == ".git":
+                candidates.append(common_path.parent / "config.toml")
+    except Exception:
+        pass
+
+    candidates.append(root / "config.toml")
+    return next((path for path in candidates if path.exists()), None)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start the OpenBrep React workbench.")
     parser.add_argument("--api-port", type=int, default=None, help="Workbench API port. Overrides OBR7_API_PORT.")
@@ -140,6 +165,10 @@ def main(argv: list[str] | None = None) -> int:
 
     env = os.environ.copy()
     env["VITE_OPENBREP_API"] = api_url
+    config_path = resolve_shared_config_path(root)
+    if config_path and not env.get("GDL_AGENT_CONFIG"):
+        env["GDL_AGENT_CONFIG"] = str(config_path)
+        print(f"[obr7] Config: {config_path}")
 
     processes: list[subprocess.Popen[bytes]] = []
 

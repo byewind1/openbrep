@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, VerificationReport } from '../api/types'
 import { validateAssistantImageFile } from './assistantImage'
 
 interface AssistantPanelProps {
@@ -11,9 +11,21 @@ interface AssistantPanelProps {
   onGenerate: (message: string, image?: AssistantImageAttachment | null) => void
   onClearHistory: () => void
   onAdoptCode: (index: number) => void
+  onOpenScript?: (scriptName: string) => void
+  onSaveRevision?: (message: string) => void
 }
 
-export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, onClearHistory, onAdoptCode }: AssistantPanelProps) {
+export function AssistantPanel({
+  messages,
+  busy,
+  onSend,
+  onCreate,
+  onGenerate,
+  onClearHistory,
+  onAdoptCode,
+  onOpenScript,
+  onSaveRevision,
+}: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
   const [image, setImage] = useState<AssistantImageAttachment | null>(null)
   const [imageError, setImageError] = useState('')
@@ -79,8 +91,44 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
         {messages.length ? (
           messages.map((message, index) => (
             <article className={`assistant-message ${message.role}`} key={`${message.role}-${index}`}>
-              <span>{message.role === 'user' ? '你' : 'OpenBrep'}</span>
+              <span>
+                {message.role === 'user' ? '你' : 'OpenBrep'}
+                {message.errorCategory ? (
+                  <em className={`assistant-error-badge assistant-error-${message.errorCategory}`}>
+                    {errorCategoryLabel(message.errorCategory)}
+                  </em>
+                ) : null}
+              </span>
               <p>{message.content}</p>
+              {message.changedFiles?.length ? (
+                <div className="assistant-change-card">
+                  <strong>Changed files</strong>
+                  <div className="assistant-change-files">
+                    {message.changedFiles.map((file) => (
+                      <button
+                        type="button"
+                        key={file}
+                        disabled={busy || !onOpenScript}
+                        title={`Open ${file} in the editor`}
+                        onClick={() => onOpenScript?.(file.split('/').pop() ?? file)}
+                      >
+                        {file}
+                      </button>
+                    ))}
+                  </div>
+                  {onSaveRevision ? (
+                    <button
+                      type="button"
+                      className="assistant-save-revision"
+                      disabled={busy}
+                      onClick={() => onSaveRevision(revisionMessageFor(messages, index))}
+                    >
+                      Save revision
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {message.verification ? <VerificationCard report={message.verification} /> : null}
               {message.role === 'assistant' && message.content.includes('```') ? (
                 <button type="button" disabled={busy} onClick={() => onAdoptCode(index)}>
                   Adopt code
@@ -101,17 +149,24 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
         />
         <div className="assistant-attachment-row">
           <label className="assistant-attach-button">
-            Image
+            Attach image
             <input
               type="file"
+              aria-label="Attach image"
               accept="image/png,image/jpeg,image/webp"
               disabled={busy}
               onChange={(event) => attachImage(event.currentTarget.files?.[0] ?? null)}
             />
           </label>
           {image ? (
-            <button type="button" className="assistant-image-chip" disabled={busy} onClick={() => setImage(null)}>
-              {image.name} ×
+            <button
+              type="button"
+              className="assistant-image-chip"
+              disabled={busy}
+              aria-label={`Remove image ${image.name}`}
+              onClick={() => setImage(null)}
+            >
+              {image.name}
             </button>
           ) : (
             <span>{imageError || 'No image'}</span>
@@ -119,13 +174,13 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
         </div>
         <div className="assistant-actions">
           <button type="submit" disabled={busy || draft.trim().length === 0}>
-            解释
+            Explain
           </button>
           <button type="button" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('create')}>
-            新建项目
+            New project
           </button>
           <button type="button" className="primary-action" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('generate')}>
-            生成修改
+            Generate changes
           </button>
         </div>
       </form>
@@ -138,6 +193,23 @@ export function AssistantPanel({ messages, busy, onSend, onCreate, onGenerate, o
       />
     </aside>
   )
+}
+
+function errorCategoryLabel(category: NonNullable<AssistantMessage['errorCategory']>) {
+  if (category === 'llm') return 'LLM settings'
+  if (category === 'compile') return 'Compile'
+  return 'Error'
+}
+
+// revision 信息取触发本次生成的用户指令（往前找最近一条 user 消息），截断防止过长
+function revisionMessageFor(messages: AssistantMessage[], assistantIndex: number) {
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      const instruction = messages[index].content.trim()
+      return `AI: ${instruction.length > 60 ? `${instruction.slice(0, 60)}…` : instruction}`
+    }
+  }
+  return 'AI generated changes'
 }
 
 function AssistantHistoryDrawer({
@@ -191,5 +263,79 @@ function AssistantHistoryDrawer({
         </div>
       </aside>
     </>
+  )
+}
+
+// ── Verification evidence card ────────────────────────────────────────────
+// Shows the self-correcting agent's proof-oriented report: what was checked,
+// pass/fail/unknown counts, compile status, confidence, and residual risks.
+// Compact by design — detailed evidence stays in trace/revision files.
+const CONFIDENCE_LABEL: Record<string, string> = {
+  high: '高',
+  medium: '中',
+  low: '低',
+}
+const STATUS_ICON: Record<string, string> = {
+  pass: '✅',
+  fail: '❌',
+  unknown: '❓',
+  not_run: '⏸️',
+}
+
+function VerificationCard({ report }: { report: VerificationReport }) {
+  const compileCheck = report.checks.find((c) => c.check_type === 'compile')
+  const compileLabel = compileCheck
+    ? `${STATUS_ICON[compileCheck.status] ?? '❓'} ${
+        compileCheck.status === 'pass'
+          ? '编译通过'
+          : compileCheck.status === 'fail'
+            ? '编译失败'
+            : compileCheck.status === 'not_run'
+              ? '未编译'
+              : '未知'
+      }`
+    : null
+  const failedChecks = report.checks.filter((c) => c.status === 'fail')
+  const unknownChecks = report.checks.filter(
+    (c) => c.status === 'unknown' || c.status === 'not_run',
+  )
+  return (
+    <div className={`assistant-verification ${report.passed ? 'is-pass' : 'is-fail'}`}>
+      <div className="assistant-verification-header">
+        <strong>验证报告</strong>
+        <em className={`assistant-verification-confidence confidence-${report.confidence}`}>
+          置信度 {CONFIDENCE_LABEL[report.confidence] ?? report.confidence}
+        </em>
+      </div>
+      <div className="assistant-verification-counts">
+        <span>✅ {report.counts.pass ?? 0}</span>
+        <span>❌ {report.counts.fail ?? 0}</span>
+        <span>❓ {report.counts.unknown ?? 0}</span>
+        <span>⏸️ {report.counts.not_run ?? 0}</span>
+        {compileLabel ? <span className="assistant-verification-compile">{compileLabel}</span> : null}
+      </div>
+      {report.fixes_applied.length ? (
+        <p className="assistant-verification-fixes">
+          已修复：{report.fixes_applied.slice(0, 2).join('；')}
+        </p>
+      ) : null}
+      {failedChecks.length ? (
+        <ul className="assistant-verification-fails">
+          {failedChecks.slice(0, 3).map((c, i) => (
+            <li key={i}>❌ {c.name}：{c.detail}</li>
+          ))}
+        </ul>
+      ) : null}
+      {unknownChecks.length ? (
+        <p className="assistant-verification-unknowns">
+          {unknownChecks.length} 项检查无自动化覆盖
+        </p>
+      ) : null}
+      {report.remaining_risks.length ? (
+        <p className="assistant-verification-risks">
+          残余风险：{report.remaining_risks.slice(0, 2).join('；')}
+        </p>
+      ) : null}
+    </div>
   )
 }

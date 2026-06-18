@@ -1,6 +1,7 @@
 import base64
 
 from openbrep.compiler import CompileResult
+from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import TaskResult
@@ -56,10 +57,36 @@ def test_apply_parameter_values_updates_project_values():
 
 
 def test_route_rpc_preview_returns_preview_for_overrides():
-    response = route_rpc("POST", "/api/preview", {"parameters": {"A": 2.2}})
+    route_rpc("POST", "/api/project/new", {})
+    response = route_rpc(
+        "POST",
+        "/api/preview",
+        {
+            "parameters": {"A": 2.2},
+            "scripts": {"3d.gdl": "BLOCK A, B, ZZYZX\n"},
+        },
+    )
 
     assert response["ok"] is True
     assert response["preview"]["meshes"]
+
+
+def test_route_rpc_preview_forwards_editor_buffer_overrides():
+    route_rpc("POST", "/api/project/new", {})
+    response = route_rpc(
+        "POST",
+        "/api/preview",
+        {
+            "parameters": {"A": 2.2},
+            "scripts": {"3d.gdl": "BLOCK 2, 1, 1\n"},
+        },
+    )
+
+    assert response["ok"] is True
+    assert response["preview"]["verification"] == {
+        "source": "editor_buffer",
+        "script_overrides": ["3d.gdl"],
+    }
 
 
 def test_route_rpc_preview_2d_returns_preview_for_overrides():
@@ -68,6 +95,108 @@ def test_route_rpc_preview_2d_returns_preview_for_overrides():
     assert response["ok"] is True
     assert "lines" in response["preview"]
     assert "warnings" in response["preview"]
+
+
+def test_workbench_tapir_status_degrades_when_bridge_is_not_imported():
+    session = WorkbenchSession(tapir_import_ok=False)
+
+    response = session.route("GET", "/api/tapir/status")
+
+    assert response["ok"] is True
+    assert response["tapir"]["import_ok"] is False
+    assert response["tapir"]["available"] is False
+    assert response["tapir"]["archicad_connected"] is False
+    assert response["tapir"]["tapir_available"] is False
+    assert "未导入" in response["tapir"]["message"]
+
+
+def test_workbench_tapir_sync_selection_reads_selected_archicad_elements():
+    class FakeBridge:
+        def is_available(self):
+            return True
+
+        def get_status(self):
+            return {
+                "archicad_connected": True,
+                "tapir_available": True,
+                "version": "/Applications/GRAPHISOFT/Archicad",
+            }
+
+        def get_selected_elements(self):
+            return ["GUID-1"]
+
+        def get_details_of_elements(self, guids):
+            assert guids == ["GUID-1"]
+            return [{"guid": "GUID-1", "type": "Object", "name": "Chair"}]
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+        now_text_fn=lambda: "2026-06-01 10:00",
+    )
+
+    response = session.route("POST", "/api/tapir/selection/sync")
+
+    assert response["ok"] is True
+    assert response["message"] == "已同步 1 个对象"
+    assert response["tapir"]["available"] is True
+    assert response["tapir"]["selected_guids"] == ["GUID-1"]
+    assert response["tapir"]["selected_details"] == [{"guid": "GUID-1", "type": "Object", "name": "Chair"}]
+    assert response["tapir"]["last_sync_at"] == "2026-06-01 10:00"
+
+
+def test_workbench_tapir_loads_and_applies_selected_parameters():
+    calls = {}
+
+    class FakeBridge:
+        def is_available(self):
+            return True
+
+        def get_status(self):
+            return {"archicad_connected": True, "tapir_available": True, "version": "Archicad"}
+
+        def get_gdl_parameters_of_elements(self, guids):
+            assert guids == ["GUID-1"]
+            return [
+                {
+                    "guid": "GUID-1",
+                    "gdlParameters": [
+                        {"name": "A", "value": 1.0},
+                        {"name": "is_visible", "value": True},
+                    ],
+                }
+            ]
+
+        def set_gdl_parameters_of_elements(self, rows):
+            calls["rows"] = rows
+            return {"executionResults": [{"success": True}]}
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+        now_text_fn=lambda: "2026-06-01 10:00",
+    )
+    session.tapir.state.tapir_selected_guids = ["GUID-1"]
+
+    loaded = session.route("POST", "/api/tapir/parameters/load")
+    applied = session.route(
+        "POST",
+        "/api/tapir/parameters/apply",
+        {"param_edits": {"GUID-1::A": "1.25", "GUID-1::is_visible": "false"}},
+    )
+
+    assert loaded["ok"] is True
+    assert loaded["tapir"]["param_edits"] == {"GUID-1::A": "1.0", "GUID-1::is_visible": "True"}
+    assert applied["ok"] is True
+    assert calls["rows"] == [
+        {
+            "guid": "GUID-1",
+            "gdlParameters": [
+                {"name": "A", "value": 1.25},
+                {"name": "is_visible", "value": False},
+            ],
+        }
+    ]
 
 
 def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
@@ -92,6 +221,38 @@ def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
     assert response["preview"]["meshes"]
 
 
+def test_workbench_session_starts_empty(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    snapshot = session.snapshot()
+
+    assert snapshot["ok"] is True
+    assert snapshot["project"] is None
+    assert snapshot["parameters"] == []
+    assert snapshot["preview"]["meshes"] == []
+
+
+def test_workbench_session_new_project_is_untitled(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    response = session.route("POST", "/api/project/new", {})
+
+    assert response["ok"] is True
+    assert response["project"]["name"] == "Untitled GDL Object"
+    assert response["project"]["source"] == "untitled"
+    assert "path" not in response["project"]
+
+
+def test_workbench_session_close_returns_empty(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/new", {})
+
+    response = session.route("POST", "/api/project/close", {})
+
+    assert response["ok"] is True
+    assert response["project"] is None
+
+
 def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp_path):
     first = HSFProject.create_new("RecentOne", str(tmp_path / "one")).save_to_disk()
     second = HSFProject.create_new("RecentTwo", str(tmp_path / "two")).save_to_disk()
@@ -108,8 +269,7 @@ def test_workbench_session_tracks_recent_projects_and_closes_current_project(tmp
     assert recent["projects"][0]["parent_dir"] == str(second.parent)
     assert all(item["exists"] for item in recent["projects"][:2])
     assert closed["ok"] is True
-    assert closed["project"]["source"] == "demo"
-    assert "path" not in closed["project"]
+    assert closed["project"] is None
 
 
 def test_workbench_session_persists_recent_projects_in_config(tmp_path):
@@ -157,6 +317,7 @@ def test_workbench_session_export_hsf_rejects_non_empty_target(tmp_path):
     (target / "notes.txt").write_text("do not overwrite", encoding="utf-8")
 
     session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/new", {})
     response = session.route(
         "POST",
         "/api/project/export-hsf",
@@ -182,6 +343,18 @@ def test_workbench_session_imports_single_gdl_file_as_hsf_project(tmp_path):
     imported = HSFProject.load_from_disk(response["project"]["path"])
     assert imported.get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
     assert session.route("GET", "/api/project/recent")["projects"][0]["path"] == response["project"]["path"]
+
+
+def test_workbench_session_import_gdl_uses_gdl_file_chooser_purpose(tmp_path):
+    gdl_path = tmp_path / "chosen.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+    purposes = []
+
+    session = WorkbenchSession(file_chooser=lambda purpose: purposes.append(purpose) or str(gdl_path))
+    response = session.route("POST", "/api/project/import-gdl", {})
+
+    assert response["ok"] is True
+    assert purposes == ["gdl"]
 
 
 def test_workbench_session_rejects_non_gdl_import(tmp_path):
@@ -234,6 +407,34 @@ def test_workbench_session_imports_gsm_file_with_lp_converter(tmp_path, monkeypa
     assert response["decompile"]["mode"] == "lp"
 
 
+def test_workbench_session_import_gsm_uses_gsm_file_chooser_purpose(tmp_path, monkeypatch):
+    gsm_path = tmp_path / "ChosenObject.gsm"
+    gsm_path.write_bytes(b"fake gsm")
+    purposes = []
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            project = HSFProject.create_new("ChosenObject", output_dir)
+            project.save_to_disk()
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    monkeypatch.setattr(workbench_api, "HSFCompiler", FakeHSFCompiler)
+    session = WorkbenchSession(file_chooser=lambda purpose: purposes.append(purpose) or str(gsm_path))
+    session.route("POST", "/api/settings/compiler", {"mode": "lp", "converter_path": "/Applications/LP_XMLConverter"})
+
+    response = session.route("POST", "/api/project/import-gsm", {})
+
+    assert response["ok"] is True
+    assert purposes == ["gsm"]
+
+
 def test_workbench_session_rejects_gsm_import_in_mock_mode(tmp_path):
     gsm_path = tmp_path / "ImportedShelf.gsm"
     gsm_path.write_bytes(b"fake gsm")
@@ -278,6 +479,25 @@ def test_workbench_session_creates_project_from_prompt(tmp_path):
     assert HSFProject.load_from_disk(response["project"]["path"]).get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
     assert FakePipeline.last_request.intent == "CREATE"
     assert FakePipeline.last_request.output_dir == str(tmp_path.resolve())
+
+
+def test_workbench_session_create_uses_configured_output_dir(tmp_path):
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            return TaskResult(success=True, intent="CREATE", plain_text="ok", project=project)
+
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    session.output_dir = str(tmp_path / "workspace")
+
+    response = session.route("POST", "/api/project/create", {"prompt": "create a bookshelf"})
+
+    assert response["ok"] is True
+    assert response["project"]["path"].startswith(str((tmp_path / "workspace").resolve()))
 
 
 def test_workbench_session_creates_project_from_image_prompt(tmp_path):
@@ -360,6 +580,23 @@ def test_workbench_session_saves_and_lists_project_revisions(tmp_path):
     assert listed["revisions"][0]["is_latest"] is True
 
 
+def test_workbench_session_exposes_project_git_controls(tmp_path):
+    project = HSFProject.create_new("GitApiShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    initialized = session.route("POST", "/api/project/git/init")
+    status = session.route("GET", "/api/project/git")
+    committed = session.route("POST", "/api/project/git/commit", {"message": "Initial HSF source"})
+
+    assert initialized["ok"] is True
+    assert status["git"]["enabled"] is True
+    assert status["git"]["initialized"] is True
+    assert committed["ok"] is True
+    assert committed["git"]["last_commit"]
+
+
 def test_workbench_session_restores_project_revision_and_refreshes_snapshot(tmp_path):
     project = HSFProject.create_new("RevisionShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
@@ -419,7 +656,7 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     hsf_dir = project.save_to_disk()
     output_dir = tmp_path / "out"
 
-    session = WorkbenchSession()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     response = session.route("POST", "/api/compile", {"output_dir": str(output_dir)})
 
@@ -438,7 +675,10 @@ def test_workbench_session_reveals_last_compiled_artifact(tmp_path):
     revealed: list[Path] = []
     output_dir = tmp_path / "out"
 
-    session = WorkbenchSession(path_revealer=lambda path: revealed.append(path))
+    session = WorkbenchSession(
+        config_path=tmp_path / "config.toml",
+        path_revealer=lambda path: revealed.append(path),
+    )
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     compile_response = session.route("POST", "/api/compile", {"output_dir": str(output_dir)})
     response = session.route("POST", "/api/artifact/reveal", {})
@@ -583,6 +823,40 @@ def test_workbench_session_updates_compile_output_directory(tmp_path):
     assert (output_dir / "ConfiguredOutputShelf.gsm").exists()
 
 
+def test_workbench_session_persists_compiler_settings_after_llm_settings_save(tmp_path):
+    config_path = tmp_path / "config.toml"
+    output_dir = tmp_path / "configured-output"
+    session = WorkbenchSession(config_path=config_path)
+
+    compiler_response = session.route(
+        "POST",
+        "/api/settings/compiler",
+        {
+            "mode": "lp",
+            "converter_path": "/Applications/LP_XMLConverter",
+            "output_dir": str(output_dir),
+        },
+    )
+    llm_response = session.route(
+        "POST",
+        "/api/settings/llm",
+        {
+            "model": "deepseek-chat",
+            "api_key": "deepseek-key",
+            "api_base": "https://api.deepseek.com/v1",
+            "max_retries": 5,
+            "assistant_settings": "short answers",
+        },
+    )
+    reloaded = WorkbenchSession(config_path=config_path)
+
+    assert compiler_response["ok"] is True
+    assert llm_response["ok"] is True
+    assert reloaded.compiler_mode == "lp"
+    assert reloaded.converter_path == "/Applications/LP_XMLConverter"
+    assert reloaded.output_dir == str(output_dir)
+
+
 def test_workbench_session_exposes_runtime_llm_settings(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -622,6 +896,150 @@ timeout = 60
     assert "glm-4-flash" in response["llm"]["models"]
 
 
+def test_workbench_session_reload_runtime_settings_reads_updated_config_file(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "deepseek-chat"
+api_key = "old-key"
+api_base = "https://api.deepseek.com/v1"
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+custom_providers = []
+assistant_settings = "old"
+
+[agent]
+max_iterations = 5
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = ""
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+    config_path.write_text(
+        """
+[llm]
+model = "mimo-v2.5-pro"
+api_key = ""
+api_base = ""
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+assistant_settings = "new"
+
+[[llm.custom_providers]]
+name = "mimo"
+base_url = "https://token-plan-cn.xiaomimimo.com/v1"
+api_key = "mimo-key"
+protocol = "openai"
+models = ["mimo-v2.5-pro"]
+
+[agent]
+max_iterations = 8
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = "/Applications/LP_XMLConverter"
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+
+    response = session.route("GET", "/api/settings/runtime")
+
+    assert response["ok"] is True
+    assert response["llm"]["model"] == "mimo-v2.5-pro"
+    assert response["llm"]["api_key"] == "mimo-key"
+    assert response["llm"]["api_base"] == "https://token-plan-cn.xiaomimimo.com/v1"
+    assert response["llm"]["max_retries"] == 8
+    assert response["llm"]["assistant_settings"] == "new"
+    assert response["llm"]["model_groups"]["custom"][0]["id"] == "mimo-v2.5-pro"
+    assert response["compiler"]["converter_path"] == "/Applications/LP_XMLConverter"
+
+
+def test_workbench_session_exposes_official_and_custom_llm_model_groups(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "ymg-gpt-5.3-codex"
+api_key = ""
+api_base = ""
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+assistant_settings = ""
+
+[[llm.custom_providers]]
+name = "ymg"
+base_url = "https://api.ymg.example/v1"
+api_key = "ymg-key"
+protocol = "openai"
+models = [{ alias = "ymg-gpt-5.3-codex", model = "gpt-5.3-codex" }]
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route("GET", "/api/settings/runtime")
+
+    assert response["ok"] is True
+    custom = response["llm"]["model_groups"]["custom"]
+    official = response["llm"]["model_groups"]["official"]
+    assert custom == [
+        {
+            "id": "ymg-gpt-5.3-codex",
+            "label": "ymg-gpt-5.3-codex",
+            "kind": "custom",
+            "provider": "ymg",
+            "target_model": "gpt-5.3-codex",
+            "protocol": "openai",
+            "api_base": "https://api.ymg.example/v1",
+            "has_api_key": True,
+        }
+    ]
+    assert any(option["id"] == "deepseek-chat" and option["kind"] == "official" for option in official)
+    assert response["llm"]["models"][0] == "ymg-gpt-5.3-codex"
+    assert response["llm"]["model_options"][0]["kind"] == "custom"
+
+
+def test_workbench_session_uses_gdl_agent_config_env_by_default(tmp_path, monkeypatch):
+    config_path = tmp_path / "personal-config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "mimo-v2.5-pro"
+api_key = "mimo-key"
+api_base = "https://token-plan-cn.xiaomimimo.com/v1"
+temperature = 0.2
+max_tokens = 4096
+provider_keys = {}
+custom_providers = []
+assistant_settings = "personal preference"
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("GDL_AGENT_CONFIG", str(config_path))
+    session = WorkbenchSession()
+    response = session.route("GET", "/api/settings/runtime")
+
+    assert session.config_path == config_path
+    assert response["llm"]["model"] == "mimo-v2.5-pro"
+    assert response["llm"]["api_key"] == "mimo-key"
+    assert response["llm"]["api_base"] == "https://token-plan-cn.xiaomimimo.com/v1"
+    assert response["llm"]["assistant_settings"] == "personal preference"
+
+
 def test_workbench_session_updates_llm_settings_and_persists_config(tmp_path):
     config_path = tmp_path / "config.toml"
     session = WorkbenchSession(config_path=config_path)
@@ -646,6 +1064,99 @@ def test_workbench_session_updates_llm_settings_and_persists_config(tmp_path):
     assert reloaded.llm_api_key == "openai-key"
     assert reloaded.llm_api_base == "https://api.openai.com/v1"
     assert reloaded.assistant_settings == "先解释再改代码"
+    saved = GDLAgentConfig.load(str(config_path))
+    assert saved.llm.provider_keys["openai"] == "openai-key"
+
+
+def test_workbench_session_preserves_official_provider_key_when_save_has_blank_key(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "gpt-4.1-mini"
+api_key = ""
+api_base = ""
+temperature = 0.2
+max_tokens = 4096
+custom_providers = []
+assistant_settings = ""
+
+[llm.provider_keys]
+openai = "existing-openai-key"
+
+[agent]
+max_iterations = 5
+validate_xml = true
+diff_check = true
+auto_version = true
+
+[compiler]
+path = ""
+timeout = 60
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm",
+        {
+            "model": "gpt-4.1-mini",
+            "api_key": "",
+            "api_base": "",
+            "max_retries": 5,
+            "assistant_settings": "",
+        },
+    )
+    saved = GDLAgentConfig.load(str(config_path))
+
+    assert response["ok"] is True
+    assert response["llm"]["api_key"] == "existing-openai-key"
+    assert saved.llm.provider_keys["openai"] == "existing-openai-key"
+    assert WorkbenchSession(config_path=config_path).llm_api_key == "existing-openai-key"
+
+
+def test_workbench_session_tests_llm_connection_success(tmp_path, monkeypatch):
+    captured_models: list[str] = []
+
+    class FakeLLMAdapter:
+        def __init__(self, config):
+            captured_models.append(config.model)
+
+        def generate(self, messages, **kwargs):
+            return type("Response", (), {"model": "deepseek-chat"})()
+
+    monkeypatch.setattr(workbench_api, "LLMAdapter", FakeLLMAdapter)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route(
+        "POST",
+        "/api/settings/llm/test",
+        {"model": "deepseek-chat", "api_key": "key", "api_base": ""},
+    )
+
+    assert response["ok"] is True
+    assert response["message"] == "LLM connection OK"
+    assert response["model"] == "deepseek-chat"
+    assert response["duration_ms"] >= 0
+    assert captured_models == ["deepseek-chat"]
+
+
+def test_workbench_session_tests_llm_connection_reports_configuration_error(tmp_path, monkeypatch):
+    class FakeLLMAdapter:
+        def __init__(self, config):
+            pass
+
+        def generate(self, messages, **kwargs):
+            raise RuntimeError("LLM 认证失败：API Key invalid")
+
+    monkeypatch.setattr(workbench_api, "LLMAdapter", FakeLLMAdapter)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route("POST", "/api/settings/llm/test", {"model": "deepseek-chat"})
+
+    assert response["ok"] is False
+    assert response["category"] == "llm_configuration"
+    assert "API Key invalid" in response["error"]
 
 
 def test_workbench_session_updates_custom_provider_credentials(tmp_path):
@@ -700,21 +1211,39 @@ timeout = 60
     assert reloaded.llm_api_base == "https://new.example.test/v1"
 
 
-def test_workbench_session_choose_converter_file_updates_compiler_settings():
-    session = WorkbenchSession(file_chooser=lambda: "/Applications/LP_XMLConverter")
+def test_workbench_session_choose_converter_file_returns_draft_compiler_settings(tmp_path):
+    config_path = tmp_path / "config.toml"
+    session = WorkbenchSession(
+        config_path=config_path,
+        file_chooser=lambda: "/Applications/LP_XMLConverter",
+    )
 
     response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
 
     assert response["ok"] is True
     assert response["path"] == "/Applications/LP_XMLConverter"
     assert response["compiler"] == {
-        "mode": "lp",
+        "mode": "mock",
         "converter_path": "/Applications/LP_XMLConverter",
         "output_dir": "",
     }
+    assert WorkbenchSession(config_path=config_path).converter_path != "/Applications/LP_XMLConverter"
 
 
-def test_workbench_session_choose_output_directory_updates_compiler_settings(tmp_path):
+def test_workbench_session_choose_converter_file_uses_compiler_file_chooser_purpose(tmp_path):
+    purposes = []
+    session = WorkbenchSession(
+        config_path=tmp_path / "config.toml",
+        file_chooser=lambda purpose: purposes.append(purpose) or "/Applications/LP_XMLConverter",
+    )
+
+    response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
+
+    assert response["ok"] is True
+    assert purposes == ["compiler"]
+
+
+def test_workbench_session_choose_output_directory_returns_draft_compiler_settings(tmp_path):
     output_dir = tmp_path / "selected-output"
     session = WorkbenchSession(
         config_path=tmp_path / "config.toml",
@@ -751,13 +1280,36 @@ def test_workbench_session_compile_uses_session_compiler_settings(tmp_path):
     assert "LP_XMLConverter not found" in response["error"]
 
 
+def test_workbench_session_lp_compile_without_path_uses_real_compiler_auto_detect(tmp_path, monkeypatch):
+    project = HSFProject.create_new("LPAutoDetectShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    constructed_paths: list[str | None] = []
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None):
+            constructed_paths.append(converter_path)
+
+        def hsf2libpart(self, hsf_path, output_gsm):
+            return CompileResult(success=True, stdout="compiled", output_path=output_gsm, mode="real")
+
+    monkeypatch.setattr(workbench_api, "HSFCompiler", FakeHSFCompiler)
+    session = WorkbenchSession()
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.route("POST", "/api/settings/compiler", {"mode": "lp", "converter_path": ""})
+    response = session.route("POST", "/api/compile", {})
+
+    assert response["ok"] is True
+    assert response["compile"]["mode"] == "real"
+    assert constructed_paths == [None]
+
+
 def test_workbench_session_compile_requires_loaded_hsf_project():
     session = WorkbenchSession()
 
     response = session.route("POST", "/api/compile", {})
 
     assert response["ok"] is False
-    assert "Load an HSF project" in response["error"]
+    assert "Create or open a project" in response["error"]
 
 
 def test_workbench_session_assistant_explains_loaded_project(tmp_path):
@@ -1162,3 +1714,43 @@ def test_workbench_session_generate_reports_pipeline_failure(tmp_path):
 
     assert response["ok"] is False
     assert "missing API key" in response["error"]
+
+
+def test_workbench_session_snapshot_carries_session_identity_and_epoch(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    snapshot = session.snapshot()
+    assert snapshot["session_id"]
+    epoch_start = snapshot["project_epoch"]
+
+    session.route("POST", "/api/project/new", {})
+    after_new = session.snapshot()["project_epoch"]
+    session.route("POST", "/api/project/close", {})
+    after_close = session.snapshot()["project_epoch"]
+
+    assert after_new == epoch_start + 1
+    assert after_close == after_new + 1
+
+
+def test_workbench_session_restores_last_project_on_startup(tmp_path):
+    hsf_dir = HSFProject.create_new("RestoreMe", str(tmp_path / "proj")).save_to_disk()
+    config_path = tmp_path / "workbench.toml"
+    session = WorkbenchSession(config_path=config_path)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    restarted = WorkbenchSession(config_path=config_path)
+    result = restarted.restore_last_project()
+
+    assert result["restored"] is True
+    assert restarted.project is not None
+    assert restarted.project.name == "RestoreMe"
+
+
+def test_workbench_session_restore_keeps_empty_when_path_missing(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.recent_project_paths = [str(tmp_path / "gone")]
+
+    result = session.restore_last_project()
+
+    assert result["restored"] is False
+    assert session.project is None

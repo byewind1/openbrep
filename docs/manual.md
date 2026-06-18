@@ -458,7 +458,8 @@ google    = "your-google-api-key"
 
 [compiler]
 # LP_XMLConverter 可执行文件完整路径
-# 留空则使用 Mock 模式
+# mode 可选 mock 或 lp；留空 path 通常使用 Mock 模式
+mode = "mock"
 path = ""
 
 [compiler.work_dir]

@@ -50,9 +50,26 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['saved'],
       compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
+    newProject: async () => ({
+      ok: true,
+      project: { name: 'Untitled GDL Object', source: 'untitled' },
+      parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+    }),
+    saveProject: async () => ({
+      ok: false,
+      needs_save_as: true,
+      error: 'Project has no HSF path. Use Save As HSF.',
+      project: { name: 'Untitled GDL Object', source: 'untitled' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+    }),
     closeProject: async () => ({
       ok: true,
-      project: { name: 'Demo Bookshelf', source: 'demo' },
+      project: null,
       parameters: [],
       preview: { meshes: [], wires: [], warnings: [] },
       warnings: [],
@@ -135,6 +152,22 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         is_latest: true,
       },
     }),
+    fetchProjectGitStatus: async () => ({
+      ok: true,
+      git: { enabled: false, initialized: false, dirty: false, changes: [], last_commit: '' },
+    }),
+    initializeProjectGit: async () => ({
+      ok: true,
+      git: { enabled: true, initialized: true, dirty: true, changes: ['A  scripts/3d.gdl'], last_commit: '' },
+    }),
+    updateProjectGitSettings: async (enabled) => ({
+      ok: true,
+      git: { enabled, initialized: true, dirty: false, changes: [], last_commit: 'abc1234' },
+    }),
+    commitProjectGit: async () => ({
+      ok: true,
+      git: { enabled: true, initialized: true, dirty: false, changes: [], last_commit: 'def5678' },
+    }),
     restoreProjectRevision: async (revisionId: string) => ({
       ok: true,
       restored_revision_id: revisionId,
@@ -159,7 +192,8 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         assistant_settings: '',
       },
     }),
-    updateLlmSettings: async (settings) => ({ ok: true, llm: settings }),
+    openConfig: async () => ({ ok: true }),
+    testLlmConnection: async () => ({ ok: true, message: 'LLM connection OK', model: 'glm-4-flash', duration_ms: 12 }),
     askAssistant: async () => ({ ok: false, error: 'not loaded' }),
     listAssistantHistory: async () => ({ ok: true, messages: [] }),
     saveAssistantHistory: async (messages) => ({ ok: true, count: messages.length }),
@@ -263,6 +297,62 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
     validateProjectParameters: async () => ({ ok: true, issues: [] }),
+    fetchTapirStatus: async () => ({
+      ok: true,
+      tapir: {
+        import_ok: false,
+        available: false,
+        archicad_connected: false,
+        tapir_available: false,
+        version: '',
+        message: 'Tapir bridge 未导入',
+        selected_guids: [],
+        selected_details: [],
+        selected_params: [],
+        param_edits: {},
+        last_error: '',
+        last_sync_at: '',
+      },
+    }),
+    syncTapirSelection: async () => ({
+      ok: true,
+      message: '已同步 1 个对象',
+      tapir: {
+        import_ok: true,
+        available: true,
+        archicad_connected: true,
+        tapir_available: true,
+        version: '/Applications/GRAPHISOFT/Archicad',
+        message: 'Archicad + Tapir 已连接',
+        selected_guids: ['GUID-1'],
+        selected_details: [{ guid: 'GUID-1', type: 'Object', name: 'Chair' }],
+        selected_params: [],
+        param_edits: {},
+        last_error: '',
+        last_sync_at: '2026-06-01 10:00',
+      },
+    }),
+    highlightTapirSelection: async () => ({ ok: false, message: '请先同步选中对象' }),
+    loadTapirParameters: async () => ({
+      ok: true,
+      message: '已读取 1 个对象参数',
+      tapir: {
+        import_ok: true,
+        available: true,
+        archicad_connected: true,
+        tapir_available: true,
+        version: '/Applications/GRAPHISOFT/Archicad',
+        message: 'Archicad + Tapir 已连接',
+        selected_guids: ['GUID-1'],
+        selected_details: [{ guid: 'GUID-1', type: 'Object', name: 'Chair' }],
+        selected_params: [{ guid: 'GUID-1', gdlParameters: [{ name: 'A', value: 1 }] }],
+        param_edits: { 'GUID-1::A': '1' },
+        last_error: '',
+        last_sync_at: '2026-06-01 10:00',
+      },
+    }),
+    applyTapirParameterEdits: async () => ({ ok: true, message: '参数已应用到 1 个对象' }),
+    reloadTapirLibraries: async () => ({ ok: false, message: 'Archicad 未运行或 Tapir 未安装' }),
     ...overrides,
   }
 }
@@ -375,6 +465,29 @@ test('deleteProjectParameter removes parameter and refreshes diagnostics', async
   expect(store.getState().applying).toBe(false)
 })
 
+test('tapir actions refresh status and store selected Archicad elements', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().refreshTapirStatus()
+  expect(store.getState().tapirStatus?.message).toBe('Tapir bridge 未导入')
+
+  await store.getState().syncTapirSelection()
+  expect(store.getState().tapirStatus?.selected_guids).toEqual(['GUID-1'])
+  expect(store.getState().tapirStatus?.selected_details[0]?.name).toBe('Chair')
+  expect(store.getState().compileLog[0]).toBe('已同步 1 个对象')
+})
+
+test('tapir parameter actions keep edit state and record writeback result', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().loadTapirParameters()
+  expect(store.getState().tapirStatus?.param_edits).toEqual({ 'GUID-1::A': '1' })
+
+  await store.getState().applyTapirParameters()
+  expect(store.getState().compileLog[0]).toBe('参数已应用到 1 个对象')
+  expect(store.getState().tapirBusy).toBe(false)
+})
+
 test('resetDraftParameters discards unapplied parameter edits', async () => {
   const store = createWorkbenchStore(makeApi())
 
@@ -401,14 +514,33 @@ test('loads a project path and clears stale draft parameters', async () => {
   expect(store.getState().recentProjects).toEqual([{ path: '/workspace/Chair', exists: true }])
 })
 
-test('closes the current project and returns to demo state', async () => {
+test('closes the current project and returns to empty workbench state', async () => {
   const store = createWorkbenchStore(makeApi())
 
   await store.getState().loadProjectPath('/workspace/Chair')
   await store.getState().closeProject()
 
-  expect(store.getState().project).toEqual({ name: 'Demo Bookshelf', source: 'demo' })
-  expect(store.getState().activeScriptName).toBe('3d.gdl')
+  expect(store.getState().project).toBeNull()
+  expect(store.getState().activeScriptName).toBeNull()
+  expect(store.getState().loading).toBe(false)
+})
+
+test('newProject loads an untitled project and refreshes project resources', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().newProject()
+
+  expect(store.getState().project?.name).toBe('Untitled GDL Object')
+  expect(store.getState().project?.source).toBe('untitled')
+  expect(store.getState().scripts.length).toBeGreaterThan(0)
+})
+
+test('saveProject reports save-as requirement for unsaved projects', async () => {
+  const store = createWorkbenchStore(makeApi())
+
+  await store.getState().saveProject()
+
+  expect(store.getState().lastError).toContain('Save As HSF')
   expect(store.getState().loading).toBe(false)
 })
 
@@ -767,6 +899,34 @@ test('loadPreview2D stores plan preview geometry', async () => {
   expect(store.getState().preview2d?.lines).toEqual([{ from: [0, 0], to: [1, 1] }])
 })
 
+test('loadPreview3D verifies dirty editor buffers without saving first', async () => {
+  const calls: Array<{ parameters: Record<string, unknown>; scripts?: Record<string, string> }> = []
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async (parameters, scripts) => {
+        calls.push({ parameters, scripts })
+        return {
+          meshes: [{ name: 'dirty-block', vertices: [], faces: [] }],
+          wires: [],
+          warnings: ['preview uses editor buffer'],
+          verification: { source: 'editor_buffer', script_overrides: ['3d.gdl'] },
+        }
+      },
+    }),
+  )
+  store.setState({
+    activeScriptName: '3d.gdl',
+    scriptContents: { '3d.gdl': 'BLOCK 2, 1, 1', '2d.gdl': 'LINE2 0, 0, 1, 1' },
+    dirtyScripts: { '3d.gdl': true, '2d.gdl': false },
+  })
+
+  await store.getState().loadPreview3D()
+
+  expect(calls).toEqual([{ parameters: {}, scripts: { '3d.gdl': 'BLOCK 2, 1, 1' } }])
+  expect(store.getState().preview?.meshes[0]?.name).toBe('dirty-block')
+  expect(store.getState().warnings).toEqual(['preview uses editor buffer'])
+})
+
 test('updates compiler settings through the API', async () => {
   const store = createWorkbenchStore(
     makeApi({
@@ -779,26 +939,29 @@ test('updates compiler settings through the API', async () => {
   expect(store.getState().compilerSettings).toEqual({ mode: 'lp', converter_path: '/converter', output_dir: '' })
 })
 
-test('updates llm settings through the API', async () => {
-  const store = createWorkbenchStore(makeApi())
+test('opens config file via openConfig action', async () => {
+  let called = false
+  const store = createWorkbenchStore(makeApi({ openConfig: async () => { called = true; return { ok: true } } }))
+  await store.getState().openConfig()
+  expect(called).toBe(true)
+})
 
-  await store.getState().setLlmSettings({
-    model: 'deepseek-chat',
-    models: ['glm-4-flash', 'deepseek-chat'],
-    api_key: 'deepseek-key',
-    api_base: 'https://api.deepseek.com/v1',
-    max_retries: 6,
-    assistant_settings: '先解释再改',
-  })
+test('tests llm connection using saved config', async () => {
+  let callCount = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      testLlmConnection: async () => {
+        callCount++
+        return { ok: true, message: 'LLM connection OK', model: 'deepseek-chat', duration_ms: 34 }
+      },
+    }),
+  )
 
-  expect(store.getState().llmSettings).toEqual({
-    model: 'deepseek-chat',
-    models: ['glm-4-flash', 'deepseek-chat'],
-    api_key: 'deepseek-key',
-    api_base: 'https://api.deepseek.com/v1',
-    max_retries: 6,
-    assistant_settings: '先解释再改',
-  })
+  const result = await store.getState().testLlmConnection()
+
+  expect(callCount).toBe(1)
+  expect(result.ok).toBe(true)
+  expect(result.duration_ms).toBe(34)
 })
 
 test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
@@ -826,7 +989,7 @@ test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
   expect(store.getState().llmSettings.assistant_settings).toBe('short answers')
 })
 
-test('browses for LP_XMLConverter and stores compiler settings', async () => {
+test('browses for LP_XMLConverter and returns draft compiler settings without saving', async () => {
   const store = createWorkbenchStore(
     makeApi({
       chooseCompilerFile: async () => ({
@@ -837,16 +1000,17 @@ test('browses for LP_XMLConverter and stores compiler settings', async () => {
     }),
   )
 
-  await store.getState().browseCompilerFile()
+  const draft = await store.getState().browseCompilerFile()
 
-  expect(store.getState().compilerSettings).toEqual({
+  expect(draft).toEqual({
     mode: 'lp',
     converter_path: '/Applications/LP_XMLConverter',
     output_dir: '',
   })
+  expect(store.getState().compilerSettings).toEqual({ mode: 'mock', converter_path: '', output_dir: '' })
 })
 
-test('browses for compile output directory and stores compiler settings', async () => {
+test('browses for compile output directory and returns draft compiler settings without saving', async () => {
   const store = createWorkbenchStore(
     makeApi({
       chooseOutputDirectory: async () => ({
@@ -857,13 +1021,44 @@ test('browses for compile output directory and stores compiler settings', async 
     }),
   )
 
-  await store.getState().browseOutputDirectory()
+  const draft = await store.getState().browseOutputDirectory()
 
-  expect(store.getState().compilerSettings).toEqual({
+  expect(draft).toEqual({
     mode: 'mock',
     converter_path: '',
     output_dir: '/workspace/output',
   })
+  expect(store.getState().compilerSettings).toEqual({ mode: 'mock', converter_path: '', output_dir: '' })
+})
+
+test('manages project git state from settings actions', async () => {
+  const commits: string[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      commitProjectGit: async (message) => {
+        commits.push(message ?? '')
+        return {
+          ok: true,
+          git: { enabled: true, initialized: true, dirty: false, changes: [], last_commit: 'c0ffee1' },
+        }
+      },
+    }),
+  )
+
+  await store.getState().loadProjectGitStatus()
+  expect(store.getState().gitStatus?.initialized).toBe(false)
+
+  await store.getState().initializeProjectGit()
+  expect(store.getState().gitStatus?.enabled).toBe(true)
+  expect(store.getState().gitStatus?.dirty).toBe(true)
+
+  await store.getState().setProjectGitEnabled(false)
+  expect(store.getState().gitStatus?.enabled).toBe(false)
+
+  await store.getState().commitProjectGit('Checkpoint before LP compile')
+  expect(commits).toEqual(['Checkpoint before LP compile'])
+  expect(store.getState().gitStatus?.last_commit).toBe('c0ffee1')
+  expect(store.getState().compileLog[0]).toBe('Git commit: c0ffee1')
 })
 
 test('records compile results in the workbench log', async () => {
@@ -907,6 +1102,84 @@ test('records compile results in the workbench log', async () => {
     error: undefined,
   })
   expect(store.getState().compiling).toBe(false)
+})
+
+test('compile saves dirty script buffers before invoking compiler', async () => {
+  const savedScripts: Array<{ name: string; content: string }> = []
+  let compileCalled = false
+  let previewCalled = false
+  const store = createWorkbenchStore(
+    makeApi({
+      saveProjectScript: async (name, content) => {
+        savedScripts.push({ name, content })
+        return { success: true, saved_at: '2026-06-01T08:00:00Z' }
+      },
+      fetchPreview: async () => {
+        previewCalled = true
+        return {
+          meshes: [{ name: 'compiled-source', vertices: [], faces: [] }],
+          wires: [],
+          warnings: ['saved preview'],
+          verification: { source: 'saved', script_overrides: [] },
+        }
+      },
+      compileProject: async () => {
+        compileCalled = true
+        return {
+          ok: true,
+          compile: {
+            success: true,
+            mode: 'lp',
+            output_path: '/workspace/output/Chair.gsm',
+            stdout: '',
+            stderr: '',
+            errors: [],
+            warnings: [],
+          },
+        }
+      },
+    }),
+  )
+  store.setState({
+    activeScriptName: '3d.gdl',
+    scriptContents: { '3d.gdl': 'BLOCK 1, 2, 3', '2d.gdl': 'LINE2 0, 0, 1, 1' },
+    dirtyScripts: { '3d.gdl': true, '2d.gdl': false },
+  })
+
+  await store.getState().compileCurrentProject()
+
+  expect(savedScripts).toEqual([{ name: '3d.gdl', content: 'BLOCK 1, 2, 3' }])
+  expect(compileCalled).toBe(true)
+  expect(previewCalled).toBe(true)
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+  expect(store.getState().preview?.meshes[0]?.name).toBe('compiled-source')
+  expect(store.getState().warnings).toEqual(['saved preview'])
+  expect(store.getState().compileLog[0]).toBe('LP compile passed: /workspace/output/Chair.gsm')
+  expect(store.getState().compileLog).toContain('Saved 3d.gdl')
+})
+
+test('compile stops when saving dirty scripts fails', async () => {
+  let compileCalled = false
+  const store = createWorkbenchStore(
+    makeApi({
+      saveProjectScript: async () => ({ success: false, saved_at: '', error: 'disk denied' }),
+      compileProject: async () => {
+        compileCalled = true
+        return { ok: false, error: 'should not compile' }
+      },
+    }),
+  )
+  store.setState({
+    scriptContents: { '3d.gdl': 'BLOCK 1, 2, 3' },
+    dirtyScripts: { '3d.gdl': true },
+  })
+
+  await store.getState().compileCurrentProject()
+
+  expect(compileCalled).toBe(false)
+  expect(store.getState().lastError).toBe('disk denied')
+  expect(store.getState().compiling).toBe(false)
+  expect(store.getState().compileLog[0]).toBe('Compile stopped: disk denied')
 })
 
 test('mock compile uses configured output directory', async () => {
@@ -1483,6 +1756,7 @@ test('generate assistant message refreshes preview and records changed files', a
   expect(store.getState().assistantMessages.at(-1)).toEqual({
     role: 'assistant',
     content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
+    changedFiles: ['scripts/3d.gdl'],
   })
 })
 
@@ -1521,6 +1795,47 @@ test('generateAssistantChanges passes image attachments to the API', async () =>
   expect(store.getState().assistantMessages[0].content).toContain('[image: chair.jpg]')
 })
 
+test('generateAssistantChanges shows an explicit thinking message while the request is running', async () => {
+  let resolveGenerate!: (value: Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>) => void
+  const pendingGenerate = new Promise<Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>>((resolve) => {
+    resolveGenerate = resolve
+  })
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => pendingGenerate,
+    }),
+  )
+
+  const turn = store.getState().generateAssistantChanges('按图调整', {
+    name: 'chair.jpg',
+    mime: 'image/jpeg',
+    b64: 'ZmFrZS1pbWFnZQ==',
+  })
+
+  expect(store.getState().assistantBusy).toBe(true)
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('Thinking...')
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('Reading the attached reference image: chair.jpg.')
+
+  resolveGenerate({
+    ok: true,
+    assistant: {
+      kind: 'generate',
+      reply: 'changed from image',
+      changed_files: ['scripts/3d.gdl'],
+      intent: 'MODIFY',
+    },
+    preview: { meshes: [], wires: [], warnings: [] },
+    warnings: [],
+    events: [{ type: 'status', data: { message: '正在分析参考图结构...' } }],
+  })
+  await turn
+
+  expect(store.getState().assistantBusy).toBe(false)
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('changed from image')
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('Process:')
+  expect(store.getState().assistantMessages.at(-1)?.content).not.toContain('Thinking...')
+})
+
 test('generateAssistantChanges exposes image generation failures as lastError', async () => {
   const error = '当前模型或网关不支持图片分析：unsupported image_url'
   const store = createWorkbenchStore(
@@ -1539,5 +1854,192 @@ test('generateAssistantChanges exposes image generation failures as lastError', 
   expect(store.getState().assistantMessages.at(-1)).toEqual({
     role: 'assistant',
     content: error,
+    errorCategory: 'general',
   })
+})
+
+test('generateAssistantChanges labels llm configuration errors', async () => {
+  const error = 'LLM 认证失败：模型 `deepseek-chat` 的 API Key 可能无效'
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => ({ ok: false, error }),
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('改成参数化')
+
+  expect(store.getState().lastError).toBe(`LLM settings error: ${error}`)
+  expect(store.getState().assistantMessages.at(-1)?.content).toBe(`LLM settings error: ${error}`)
+})
+
+test('generateAssistantChanges saves dirty editor buffers before calling the LLM', async () => {
+  const calls: string[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      saveProjectScript: async (name) => {
+        calls.push(`save:${name}`)
+        return { success: true, saved_at: '2026-06-11T10:00:00' }
+      },
+      generateWithAssistant: async () => {
+        calls.push('generate')
+        return {
+          ok: true,
+          assistant: { kind: 'generate', reply: 'done', changed_files: [], intent: 'MODIFY' },
+          preview: { meshes: [], wires: [], warnings: [] },
+          warnings: [],
+        }
+      },
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().openScript('3d.gdl')
+  store.getState().updateActiveScriptContent('BLOCK 2, 2, 2')
+  await store.getState().generateAssistantChanges('改尺寸')
+
+  expect(calls.indexOf('save:3d.gdl')).toBeGreaterThanOrEqual(0)
+  expect(calls.indexOf('save:3d.gdl')).toBeLessThan(calls.indexOf('generate'))
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+})
+
+test('setDraftParameter debounces rapid preview requests while updating draft immediately', async () => {
+  vi.useFakeTimers()
+  try {
+    const calls: Record<string, unknown>[] = []
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchPreview: async (parameters) => {
+          calls.push({ ...parameters })
+          return { meshes: [{ name: 'debounced', vertices: [], faces: [] }], wires: [], warnings: [] }
+        },
+      }),
+    )
+
+    await store.getState().setDraftParameter('A', 1.1)
+    await store.getState().setDraftParameter('A', 1.2)
+    await store.getState().setDraftParameter('A', 1.3)
+
+    expect(store.getState().draftParameters).toEqual({ A: 1.3 })
+    expect(calls).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(249)
+    expect(calls).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(calls).toEqual([{ A: 1.3 }])
+    expect(store.getState().preview?.meshes[0]?.name).toBe('debounced')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('setDraftParameter ignores out-of-order preview responses', async () => {
+  vi.useFakeTimers()
+  try {
+    let resolveFirst!: (value: Awaited<ReturnType<WorkbenchApi['fetchPreview']>>) => void
+    const firstPreview = new Promise<Awaited<ReturnType<WorkbenchApi['fetchPreview']>>>((resolve) => {
+      resolveFirst = resolve
+    })
+    let callCount = 0
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchPreview: async () => {
+          callCount += 1
+          if (callCount === 1) return firstPreview
+          return { meshes: [{ name: 'latest', vertices: [], faces: [] }], wires: [], warnings: [] }
+        },
+      }),
+    )
+
+    await store.getState().setDraftParameter('A', 1.1)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(callCount).toBe(1)
+
+    await store.getState().setDraftParameter('A', 1.2)
+    await vi.advanceTimersByTimeAsync(250)
+    resolveFirst({ meshes: [{ name: 'stale', vertices: [], faces: [] }], wires: [], warnings: ['stale'] })
+    await firstPreview
+
+    expect(store.getState().preview?.meshes[0]?.name).toBe('latest')
+    expect(store.getState().warnings).toEqual([])
+    expect(store.getState().draftParameters).toEqual({ A: 1.2 })
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('generateAssistantChanges attaches changed files to the reply message', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => ({
+        ok: true,
+        assistant: { kind: 'generate', reply: 'done', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('加一块层板')
+
+  const reply = store.getState().assistantMessages.at(-1)
+  expect(reply?.changedFiles).toEqual(['scripts/3d.gdl'])
+  expect(reply?.errorCategory).toBeUndefined()
+})
+
+test('generateAssistantChanges tags failed replies with an error category', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async () => ({ ok: false, error: 'LLM 认证失败：API Key 可能无效' }),
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('改成参数化')
+
+  expect(store.getState().assistantMessages.at(-1)?.errorCategory).toBe('llm')
+})
+
+test('generateAssistantChanges discards results when the project switched mid-request', async () => {
+  let resolveGenerate!: (value: Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>) => void
+  const pendingGenerate = new Promise<Awaited<ReturnType<WorkbenchApi['generateWithAssistant']>>>((resolve) => {
+    resolveGenerate = resolve
+  })
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        session_id: 'backend-1',
+        project_epoch: 1,
+      }),
+      loadProjectPath: async (path: string) => ({
+        project: { name: 'Other', source: 'hsf', path },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        session_id: 'backend-1',
+        project_epoch: 2,
+      }),
+      generateWithAssistant: async () => pendingGenerate,
+    }),
+  )
+
+  await store.getState().load()
+  const turn = store.getState().generateAssistantChanges('加一块层板')
+  await store.getState().loadProjectPath('/workspace/Other')
+  resolveGenerate({
+    ok: true,
+    assistant: { kind: 'generate', reply: 'stale reply', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+    preview: { meshes: [{ name: 'stale', vertices: [], faces: [] }], wires: [], warnings: ['stale'] },
+    warnings: ['stale'],
+  })
+  await turn
+
+  expect(store.getState().assistantBusy).toBe(false)
+  expect(store.getState().project?.name).toBe('Other')
+  expect(store.getState().preview?.meshes.some((mesh) => mesh.name === 'stale')).toBe(false)
+  expect(store.getState().assistantMessages.at(-1)?.content ?? '').not.toContain('stale reply')
+  expect(store.getState().compileLog[0]).toContain('discarded')
 })

@@ -1,5 +1,6 @@
 import type { WorkbenchProject } from '../api/types'
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 
 interface TopMenuProps {
   project: WorkbenchProject | null
@@ -15,7 +16,7 @@ interface TopMenuProps {
   compiling: boolean
   saving: boolean
   hasDirtyScript: boolean
-  activeScriptName: string | null
+  lastSavedAt: string | null
   lastError: string | null
   onClearError: () => void
 }
@@ -34,30 +35,64 @@ export function TopMenu({
   compiling,
   saving,
   hasDirtyScript,
-  activeScriptName,
+  lastSavedAt,
   lastError,
   onClearError,
 }: TopMenuProps) {
+  const [buildMenuOpen, setBuildMenuOpen] = useState(false)
+  const canCompile = Boolean(project?.path)
+  const projectStatus = project ? (project.path ? 'Saved' : 'Unsaved') : 'Empty'
+
+  function runBuildAction(action: () => void) {
+    action()
+    setBuildMenuOpen(false)
+  }
+
   return (
     <header className="topbar">
-      <div className="brand-lockup">
+      <div className="brand-lockup" title={project?.path ?? ''}>
         <span className="brand-mark">OB</span>
         <div>
           <strong>{project?.name ?? 'OpenBrep'}</strong>
-          <span>{project?.source ?? 'workbench'}</span>
+          <span className="brand-project-path">{project?.path ?? project?.source ?? 'workbench'}</span>
         </div>
       </div>
       {projectControls}
-      <nav className="menu-row" aria-label="Migration status">
-        <button type="button" data-testid="save-script-button" disabled={!activeScriptName || saving} onClick={onSave}>
+      <nav className="menu-row" aria-label="Workbench actions">
+        <button type="button" data-testid="save-script-button" disabled={!project || saving} onClick={onSave}>
           {saving ? '...' : 'Save'}
         </button>
-        <button type="button" data-testid="mock-compile-button" disabled={!project?.path || compiling} onClick={onMockCompile}>
-          {compiling ? '...' : 'Mock'}
-        </button>
-        <button type="button" disabled={!project?.path || compiling} onClick={onCompile}>
+        <button type="button" data-testid="compile-button" disabled={!canCompile || compiling} onClick={onCompile}>
           {compiling ? '...' : 'Compile'}
         </button>
+        <div className="toolbar-menu build-menu">
+          <button
+            type="button"
+            className="toolbar-menu-trigger"
+            aria-haspopup="menu"
+            aria-expanded={buildMenuOpen}
+            aria-controls="build-menu-panel"
+            onClick={() => setBuildMenuOpen((value) => !value)}
+          >
+            Build
+          </button>
+          {buildMenuOpen ? (
+            <div id="build-menu-panel" className="toolbar-menu-panel build-menu-panel" role="menu" aria-label="Build menu">
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="mock-compile-button"
+                disabled={!canCompile || compiling}
+                onClick={() => runBuildAction(onMockCompile)}
+              >
+                {compiling ? '...' : 'Mock Compile'}
+              </button>
+              <button type="button" role="menuitem" disabled={!canCompile || compiling} onClick={() => runBuildAction(onCompile)}>
+                {compiling ? '...' : 'Compile'}
+              </button>
+            </div>
+          ) : null}
+        </div>
         <button type="button" className="settings-trigger" onClick={onOpenSettings}>
           Settings
         </button>
@@ -68,8 +103,10 @@ export function TopMenu({
             {lastError}
           </button>
         ) : null}
-        <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>{hasDirtyScript ? 'Dirty' : 'Saved'}</span>
+        <span className={projectStatus === 'Unsaved' ? 'status-pill changed' : 'status-pill'}>{projectStatus}</span>
+        <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>{hasDirtyScript ? 'Dirty' : 'Clean'}</span>
         <span className={hasDraftChanges ? 'status-pill changed' : 'status-pill'}>{hasDraftChanges ? 'Params' : 'Stable'}</span>
+        {lastSavedAt ? <span className="status-pill">Saved {lastSavedAt}</span> : null}
         <button className="primary-action" disabled={!hasDraftChanges || applying} onClick={onApply}>
           {applying ? '...' : 'Apply'}
         </button>

@@ -36,6 +36,7 @@ releases/
 
 # pro internals (algorithm details, not for public repo)
 docs/pro_*.md
+skills/pro/
 .obsidian/
 .openbrep/
 generation_quality_report.md

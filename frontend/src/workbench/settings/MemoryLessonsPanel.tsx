@@ -52,11 +52,7 @@ export function MemoryLessonsPanel({
   }
 
   return (
-    <section className="settings-section memory-lessons-panel">
-      <div className="settings-section-heading">
-        <strong>Memory</strong>
-        <span>Project chat and learning records</span>
-      </div>
+    <div className="memory-lessons-panel">
       <div className="memory-status-grid">
         <span>Chats</span>
         <strong>{memoryStatus?.chat_count ?? 0}</strong>
@@ -170,6 +166,6 @@ export function MemoryLessonsPanel({
           <pre>{skillPreview}</pre>
         </details>
       ) : null}
-    </section>
+    </div>
   )
 }

@@ -21,6 +21,7 @@ import type {
   HsfExportResult,
   IgnoreMemoryLessonResult,
   LlmSettings,
+  LlmConnectionTestResult,
   LlmSettingsResult,
   MockCompileResponse,
   Preview2DPayload,
@@ -28,6 +29,8 @@ import type {
   ProjectRevision,
   ProjectRevisionsResponse,
   ProjectLessonsResult,
+  ProjectGitResponse,
+  ProjectGitStatus,
   ProjectMemoryStatus,
   ProjectMemoryStatusResult,
   ProjectScript,
@@ -42,6 +45,9 @@ import type {
   SaveRevisionResponse,
   SaveScriptResponse,
   SummarizeMemoryResult,
+  TapirActionResult,
+  TapirStatus,
+  TapirStatusResult,
   UpdateMemoryLessonRequest,
   UpdateMemoryLessonResult,
   UpdateParameterRequest,
@@ -54,12 +60,14 @@ import type {
 
 export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
-  fetchPreview: (parameters: Record<string, unknown>) => Promise<PreviewPayload>
-  fetchPreview2D: (parameters: Record<string, unknown>) => Promise<Preview2DPayload>
+  fetchPreview: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<PreviewPayload>
+  fetchPreview2D: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
+  newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
   exportHsfProject: (parentDir?: string, name?: string) => Promise<HsfExportResult>
+  saveProject: () => Promise<HsfExportResult>
   closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
   chooseCompilerFile: () => Promise<FileChoiceResult>
@@ -77,11 +85,22 @@ export interface WorkbenchApi {
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
   saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
   restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
+  fetchProjectGitStatus: () => Promise<ProjectGitResponse>
+  initializeProjectGit: () => Promise<ProjectGitResponse>
+  updateProjectGitSettings: (enabled: boolean) => Promise<ProjectGitResponse>
+  commitProjectGit: (message?: string) => Promise<ProjectGitResponse>
   mockCompile: (outputDir?: string) => Promise<MockCompileResponse>
   revealArtifact: (path?: string) => Promise<RevealArtifactResult>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
-  updateLlmSettings: (settings: LlmSettings) => Promise<LlmSettingsResult>
+  openConfig: () => Promise<{ ok: boolean; error?: string }>
+  testLlmConnection: () => Promise<LlmConnectionTestResult>
+  fetchTapirStatus: () => Promise<TapirStatusResult>
+  reloadTapirLibraries: () => Promise<TapirActionResult>
+  syncTapirSelection: () => Promise<TapirActionResult>
+  highlightTapirSelection: () => Promise<TapirActionResult>
+  loadTapirParameters: () => Promise<TapirActionResult>
+  applyTapirParameterEdits: (paramEdits?: Record<string, unknown>) => Promise<TapirActionResult>
   askAssistant: (message: string) => Promise<AssistantResult>
   listAssistantHistory: () => Promise<AssistantHistoryResult>
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
@@ -107,6 +126,10 @@ export interface WorkbenchApi {
 }
 
 export interface WorkbenchState {
+  // sessionId 标识 backend 进程；projectEpoch 在每次换项目时变化，
+  // 长操作（AI 生成/创建）用它丢弃跨项目的过期结果。
+  sessionId: string | null
+  projectEpoch: number
   project: WorkbenchProject | null
   parameters: WorkbenchParameter[]
   parameterIssues: string[]
@@ -121,38 +144,53 @@ export interface WorkbenchState {
   compileLog: string[]
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
-  activeRailPanel: '3d' | '2d' | 'ai'
+  activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
   scripts: ProjectScript[]
   recentProjects: RecentProject[]
   revisions: ProjectRevision[]
+  gitStatus: ProjectGitStatus | null
+  gitBusy: boolean
   memoryStatus: ProjectMemoryStatus | null
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
   memoryBusy: boolean
+  tapirStatus: TapirStatus | null
+  tapirBusy: boolean
   latestRevisionId: string | null
   revisionLoading: boolean
   activeScriptName: string | null
   scriptContents: Record<string, string>
   dirtyScripts: Record<string, boolean>
+  lastSavedAt: string | null
   scriptLoading: boolean
   scriptSaving: boolean
   mockCompileResult: MockCompileResponse | null
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
+  newProject: () => Promise<void>
   importGdlFile: (path?: string) => Promise<void>
   importGsmFile: (path?: string) => Promise<void>
   exportHsfProject: (parentDir?: string, name?: string) => Promise<void>
+  saveProject: () => Promise<void>
+  saveProjectAs: (parentDir?: string, name?: string) => Promise<void>
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
-  browseCompilerFile: () => Promise<void>
-  browseOutputDirectory: () => Promise<void>
-  setCompilerSettings: (settings: CompilerSettings) => Promise<void>
-  setLlmSettings: (settings: LlmSettings) => Promise<void>
+  browseCompilerFile: () => Promise<CompilerSettings | null>
+  browseOutputDirectory: () => Promise<CompilerSettings | null>
+  setCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettings>
+  openConfig: () => Promise<void>
+  testLlmConnection: () => Promise<LlmConnectionTestResult>
   reloadRuntimeSettings: () => Promise<void>
+  refreshTapirStatus: () => Promise<void>
+  reloadTapirLibraries: () => Promise<void>
+  syncTapirSelection: () => Promise<void>
+  highlightTapirSelection: () => Promise<void>
+  loadTapirParameters: () => Promise<void>
+  applyTapirParameters: () => Promise<void>
   compileCurrentProject: () => Promise<void>
-  setActiveRailPanel: (panel: '3d' | '2d' | 'ai') => void
+  setActiveRailPanel: (panel: '3d' | '2d' | 'inspect' | 'ai') => void
   loadAssistantHistory: () => Promise<void>
   clearAssistantHistory: () => Promise<void>
   adoptAssistantMessageCode: (index: number) => Promise<void>
@@ -179,11 +217,17 @@ export interface WorkbenchState {
   clearProjectMemory: () => Promise<void>
   saveRevision: (message?: string) => Promise<void>
   restoreRevision: (revisionId: string) => Promise<void>
+  loadProjectGitStatus: () => Promise<void>
+  initializeProjectGit: () => Promise<void>
+  setProjectGitEnabled: (enabled: boolean) => Promise<void>
+  commitProjectGit: (message?: string) => Promise<void>
   openScript: (name: string) => Promise<void>
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
+  flushDirtyScripts: () => Promise<{ ok: boolean; didSave: boolean }>
   runMockCompile: () => Promise<void>
   revealCompileOutput: (path?: string) => Promise<void>
+  loadPreview3D: () => Promise<void>
   loadPreview2D: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean

@@ -15,6 +15,10 @@ export function defaultLlmSettings(): LlmSettings {
 
 export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: CompilerSettings, fallbackLlm: LlmSettings) {
   return {
+    // 旧版 backend 的 snapshot 不带 epoch 字段时保持原值，避免误触发过期守卫
+    ...(snapshot.project_epoch !== undefined
+      ? { projectEpoch: snapshot.project_epoch, sessionId: snapshot.session_id ?? null }
+      : {}),
     project: snapshot.project,
     parameters: snapshot.parameters,
     preview: snapshot.preview,
@@ -27,6 +31,7 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     activeScriptName: null,
     scriptContents: {},
     dirtyScripts: {},
+    lastSavedAt: null,
     revisions: [],
     latestRevisionId: null,
     revisionLoading: false,
@@ -45,6 +50,11 @@ export function selectPreferredScript(scripts: ProjectScript[], current: string 
 export function pruneDirtyScripts(dirtyScripts: Record<string, boolean>, scripts: ProjectScript[]) {
   const allowed = new Set(scripts.map((script) => script.name))
   return Object.fromEntries(Object.entries(dirtyScripts).filter(([name]) => allowed.has(name)))
+}
+
+export function nowTimeText() {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 }
 
 export function normalizeScriptName(path: string) {
@@ -70,6 +80,32 @@ export function compileIssuesFromResult(result: CompileResult): CompileIssue[] {
     ...(compile.errors ?? []).map((message) => ({ severity: 'error', script: '', line: null, message })),
     ...(compile.warnings ?? []).map((message) => ({ severity: 'warning', script: '', line: null, message })),
   ]
+}
+
+export function formatAssistantRequestError(error: string | undefined, fallback: string) {
+  const message = (error || fallback).trim()
+  return isLlmConfigurationError(message) ? `LLM settings error: ${message}` : message
+}
+
+export function classifyAssistantError(message: string): 'llm' | 'compile' | 'general' {
+  if (isLlmConfigurationError(message)) return 'llm'
+  const normalized = message.toLowerCase()
+  if (normalized.includes('compile') || normalized.includes('编译')) return 'compile'
+  return 'general'
+}
+
+export function isLlmConfigurationError(message: string) {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('llm 配置错误') ||
+    normalized.includes('llm 认证失败') ||
+    normalized.includes('api key') ||
+    normalized.includes('authentication') ||
+    normalized.includes('base_url') ||
+    normalized.includes('provider') ||
+    normalized.includes('litellm') ||
+    normalized.includes('model')
+  )
 }
 
 function countIssues(issues: CompileIssue[], severity: string) {

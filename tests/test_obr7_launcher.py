@@ -93,6 +93,36 @@ def test_python_launcher_exports_vite_api_url():
     assert 'env["VITE_OPENBREP_API"] = api_url' in contents
 
 
+def test_python_launcher_resolves_main_worktree_config(monkeypatch, tmp_path):
+    launcher = load_launcher_module()
+    main_root = tmp_path / "repo"
+    worktree_root = main_root / ".worktrees" / "react-workbench"
+    git_dir = main_root / ".git"
+    worktree_root.mkdir(parents=True)
+    git_dir.mkdir()
+    main_config = main_root / "config.toml"
+    main_config.write_text("[llm]\nmodel = \"mimo-v2.5-pro\"\n", encoding="utf-8")
+    (worktree_root / "config.toml").write_text("[llm]\nmodel = \"deepseek-chat\"\n", encoding="utf-8")
+
+    monkeypatch.delenv("GDL_AGENT_CONFIG", raising=False)
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "check_output",
+        lambda *args, **kwargs: str(git_dir),
+    )
+
+    assert launcher.resolve_shared_config_path(worktree_root) == main_config
+
+
+def test_python_launcher_respects_explicit_config_env(monkeypatch, tmp_path):
+    launcher = load_launcher_module()
+    explicit_config = tmp_path / "custom.toml"
+
+    monkeypatch.setenv("GDL_AGENT_CONFIG", str(explicit_config))
+
+    assert launcher.resolve_shared_config_path(tmp_path) == explicit_config
+
+
 def test_obr7_entrypoint_delegates_to_python_launcher():
     entrypoint = Path(__file__).resolve().parents[1] / "obr7"
 

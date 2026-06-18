@@ -79,6 +79,16 @@ def page_has_workbench_markers(*, title: str, body: str) -> bool:
     return all(marker in normalized for marker in required)
 
 
+def workbench_markers_ready_script() -> str:
+    return """
+        () => {
+            if (document.title.trim() !== 'OpenBrep Workbench') return false;
+            const body = document.body.innerText.toLowerCase();
+            return ['scripts', '3d.gdl', 'save', 'compile', 'settings', '3d view'].every((marker) => body.includes(marker));
+        }
+    """
+
+
 def body_has_mock_compile_result(body: str) -> bool:
     normalized = body.casefold()
     return "mock compile passed" in normalized or "编译通过" in body
@@ -86,6 +96,26 @@ def body_has_mock_compile_result(body: str) -> bool:
 
 def body_has_script_save_result(body: str) -> bool:
     return "Saved 3d.gdl at " in body
+
+
+def body_has_preview_controls(body: str) -> bool:
+    required = ("3D View", "Fit", "Reset", "ISO", "Persp", "Float", "Expand")
+    return all(marker in body for marker in required)
+
+
+def topbar_single_row_script() -> str:
+    return """
+        () => {
+            const topbar = document.querySelector('.topbar');
+            if (!topbar) return false;
+            const box = topbar.getBoundingClientRect();
+            if (topbar.scrollHeight > box.height + 1) return false;
+            return Array.from(topbar.children).every((child) => {
+                const childBox = child.getBoundingClientRect();
+                return childBox.top >= box.top - 1 && childBox.bottom <= box.bottom + 1;
+            });
+        }
+    """
 
 
 def terminate_process(process: subprocess.Popen[str]) -> None:
@@ -166,19 +196,89 @@ def run_smoke(
         web_ready = wait_for_url(web_url, timeout_seconds=timeout_seconds)
 
         page_ok = False
+        topbar_layout_ok = False
         edit_interaction_ok = False
         save_interaction_ok = False
         compile_interaction_ok = False
+        preview_interaction_ok = False
+        resize_interaction_ok = False
         if api_ready and project_loaded and web_ready:
             try:
                 with sync_playwright() as p:
                     browser = p.chromium.launch(headless=not headed)
                     page = browser.new_page(viewport={"width": 1440, "height": 960})
-                    page.goto(web_url, wait_until="networkidle", timeout=int(timeout_seconds * 1000))
+                    page.goto(web_url, wait_until="domcontentloaded", timeout=int(timeout_seconds * 1000))
+                    page.wait_for_function(workbench_markers_ready_script(), timeout=int(timeout_seconds * 1000))
                     title = page.title()
                     body = page.locator("body").inner_text(timeout=5000)
                     page_ok = page_has_workbench_markers(title=title, body=body)
+                    topbar_layout_ok = bool(page.evaluate(topbar_single_row_script()))
                     if page_ok:
+                        page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
+                        right_rail = page.locator(".workbench-right-rail")
+                        right_handle = page.get_by_role("button", name="Resize right workspace panel")
+                        right_handle.wait_for(timeout=int(timeout_seconds * 1000))
+                        editor = page.locator(".monaco-editor").first
+                        toolbar_actions = page.locator(".viewport-surface-rail .viewport-toolbar-actions").first
+                        initial_right_box = right_rail.bounding_box()
+                        initial_editor_box = editor.bounding_box()
+                        initial_toolbar_actions_box = toolbar_actions.bounding_box()
+                        initial_toolbar_rows = toolbar_actions.evaluate(
+                            "(node) => new Set(Array.from(node.querySelectorAll('button')).map((button) => Math.round(button.getBoundingClientRect().top))).size"
+                        )
+                        handle_box = right_handle.bounding_box()
+                        if initial_right_box and initial_editor_box and initial_toolbar_actions_box and handle_box:
+                            handle_x = handle_box["x"] + handle_box["width"] / 2
+                            handle_y = handle_box["y"] + handle_box["height"] / 2
+                            page.mouse.move(handle_x, handle_y)
+                            page.mouse.down()
+                            page.mouse.move(handle_x - 300, handle_y, steps=10)
+                            page.mouse.up()
+                            widened_right_box = right_rail.bounding_box()
+                            narrowed_editor_box = editor.bounding_box()
+                            widened_toolbar_actions_box = toolbar_actions.bounding_box()
+                            widened_toolbar_rows = toolbar_actions.evaluate(
+                                "(node) => new Set(Array.from(node.querySelectorAll('button')).map((button) => Math.round(button.getBoundingClientRect().top))).size"
+                            )
+                            moved_handle_box = right_handle.bounding_box()
+                            if widened_right_box and narrowed_editor_box and widened_toolbar_actions_box and moved_handle_box:
+                                moved_x = moved_handle_box["x"] + moved_handle_box["width"] / 2
+                                moved_y = moved_handle_box["y"] + moved_handle_box["height"] / 2
+                                page.mouse.move(moved_x, moved_y)
+                                page.mouse.down()
+                                page.mouse.move(moved_x + 240, moved_y, steps=10)
+                                page.mouse.up()
+                                narrowed_right_box = right_rail.bounding_box()
+                                widened_editor_box = editor.bounding_box()
+                                narrowed_toolbar_actions_box = toolbar_actions.bounding_box()
+                                narrowed_toolbar_rows = toolbar_actions.evaluate(
+                                    "(node) => new Set(Array.from(node.querySelectorAll('button')).map((button) => Math.round(button.getBoundingClientRect().top))).size"
+                                )
+                                resize_interaction_ok = bool(
+                                    narrowed_right_box
+                                    and widened_editor_box
+                                    and narrowed_toolbar_actions_box
+                                    and widened_right_box["width"] > initial_right_box["width"] + 240
+                                    and narrowed_right_box["width"] < widened_right_box["width"] - 180
+                                    and narrowed_editor_box["width"] < initial_editor_box["width"] - 240
+                                    and widened_editor_box["width"] > narrowed_editor_box["width"] + 180
+                                    and widened_toolbar_actions_box["width"] > initial_toolbar_actions_box["width"] + 240
+                                    and narrowed_toolbar_actions_box["width"] < widened_toolbar_actions_box["width"] - 180
+                                    and initial_toolbar_rows >= 2
+                                    and widened_toolbar_rows == 1
+                                    and narrowed_toolbar_rows >= 2
+                                )
+                        preview_controls_ok = body_has_preview_controls(body)
+                        page.get_by_role("button", name="Expand").click()
+                        page.wait_for_function(
+                            "() => document.body.innerText.includes('Dock')",
+                            timeout=int(timeout_seconds * 1000),
+                        )
+                        expanded_body = page.locator("body").inner_text(timeout=5000)
+                        expanded_canvas_count = page.locator("canvas").count()
+                        preview_interaction_ok = preview_controls_ok and "Dock" in expanded_body and expanded_canvas_count >= 2
+                        page.get_by_role("button", name="Dock").click()
+                        page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
                         page.locator(".monaco-editor").first.click()
                         page.keyboard.press("Control+A")
                         page.keyboard.insert_text(SMOKE_SCRIPT_CONTENT)
@@ -192,7 +292,7 @@ def run_smoke(
                         body = page.locator("body").inner_text(timeout=5000)
                         saved_script = (smoke_hsf_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8")
                         save_interaction_ok = body_has_script_save_result(body) and SMOKE_EDIT_MARKER in saved_script
-                        page.get_by_test_id("mock-compile-button").click()
+                        page.get_by_test_id("compile-button").click()
                         page.wait_for_function(
                             "() => document.body.innerText.includes('Mock compile passed') || document.body.innerText.includes('编译通过')",
                             timeout=int(timeout_seconds * 1000),
@@ -205,7 +305,18 @@ def run_smoke(
 
         output = collect_process_output(process)
 
-        ok = api_ready and project_loaded and web_ready and page_ok and edit_interaction_ok and save_interaction_ok and compile_interaction_ok
+        ok = (
+            api_ready
+            and project_loaded
+            and web_ready
+            and page_ok
+            and topbar_layout_ok
+            and resize_interaction_ok
+            and preview_interaction_ok
+            and edit_interaction_ok
+            and save_interaction_ok
+            and compile_interaction_ok
+        )
         return {
             "ok": ok,
             "status": "pass" if ok else "fail",
@@ -213,6 +324,9 @@ def run_smoke(
             "project_loaded": project_loaded,
             "web_ready": web_ready,
             "page_ok": page_ok,
+            "topbar_layout_ok": topbar_layout_ok,
+            "resize_interaction_ok": resize_interaction_ok,
+            "preview_interaction_ok": preview_interaction_ok,
             "edit_interaction_ok": edit_interaction_ok,
             "save_interaction_ok": save_interaction_ok,
             "compile_interaction_ok": compile_interaction_ok,

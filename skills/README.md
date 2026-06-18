@@ -6,6 +6,16 @@ Skills are **task-specific prompt strategies** that tell the LLM *how* to approa
 
 Skills 是**任务特定的 prompt 策略**，告诉 LLM *如何*处理不同类型的 GDL 任务。`knowledge/` 提供"是什么"（参考知识），`skills/` 提供"怎么做"（方法论）。
 
+## Skill Layers / Skill 层级
+
+OpenBrep distinguishes three skill layers:
+
+1. **Free built-in skills**: public `skills/*.md` files. These are generic methods for create/modify/debug and can ship in the free repository.
+2. **Pro built-in skills**: gitignored `skills/pro/*.md` files or a future signed Pro package. These are developer-created, verified vertical skills and are commercial content.
+3. **User custom skills**: user-generated skills from private documents, project experience, or AI-assisted refinement. These should live in project `.openbrep/skills/` or a local user directory and belong to the user.
+
+Developer-created vertical skills derived from professional GDL documents, manufacturer data, enterprise standards, or curated examples should go to the Pro layer, not the free layer.
+
 ## knowledge/ vs skills/
 
 ```

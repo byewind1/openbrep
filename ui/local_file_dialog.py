@@ -5,16 +5,22 @@ import subprocess
 from pathlib import Path
 
 
-def choose_file(*, title: str = "打开 GDL / GSM 文件", initial_dir: str | None = None) -> str | None:
+def choose_file(
+    *,
+    title: str = "打开 GDL / GSM 文件",
+    initial_dir: str | None = None,
+    extensions: list[str] | tuple[str, ...] | None = None,
+) -> str | None:
     """
     Open a native file chooser for local Streamlit sessions.
 
     This is intended for local OpenBrep sessions where the Streamlit process
     runs on the same machine as the browser.
     """
+    normalized_extensions = _normalize_extensions(extensions)
     if platform.system() == "Darwin":
-        return _choose_file_macos(title=title, initial_dir=initial_dir)
-    return _choose_file_tk(title=title, initial_dir=initial_dir)
+        return _choose_file_macos(title=title, initial_dir=initial_dir, extensions=normalized_extensions)
+    return _choose_file_tk(title=title, initial_dir=initial_dir, extensions=normalized_extensions)
 
 
 def choose_path(*, title: str = "打开 GDL / GSM 文件", initial_dir: str | None = None) -> str | None:
@@ -70,8 +76,13 @@ def _choose_directory_macos_script(*, title: str, initial_dir: str | None = None
     )
 
 
-def _choose_file_macos(*, title: str, initial_dir: str | None = None) -> str | None:
-    script = _choose_file_macos_script(title=title, initial_dir=initial_dir)
+def _choose_file_macos(
+    *,
+    title: str,
+    initial_dir: str | None = None,
+    extensions: list[str] | tuple[str, ...] | None = None,
+) -> str | None:
+    script = _choose_file_macos_script(title=title, initial_dir=initial_dir, extensions=extensions)
 
     try:
         result = subprocess.run(
@@ -90,7 +101,12 @@ def _choose_file_macos(*, title: str, initial_dir: str | None = None) -> str | N
     return selected or None
 
 
-def _choose_file_macos_script(*, title: str, initial_dir: str | None = None) -> str:
+def _choose_file_macos_script(
+    *,
+    title: str,
+    initial_dir: str | None = None,
+    extensions: list[str] | tuple[str, ...] | None = None,
+) -> str:
     default_location_arg = ""
     if initial_dir:
         initial_path = Path(initial_dir).expanduser()
@@ -98,10 +114,16 @@ def _choose_file_macos_script(*, title: str, initial_dir: str | None = None) -> 
             default_location = initial_path if initial_path.is_dir() else initial_path.parent
             default_location_arg = f' default location POSIX file "{_escape_applescript(str(default_location))}"'
 
+    file_type_arg = ""
+    normalized_extensions = _normalize_extensions(extensions)
+    if normalized_extensions:
+        quoted = ", ".join(f'"{_escape_applescript(extension)}"' for extension in normalized_extensions)
+        file_type_arg = f" of type {{{quoted}}}"
+
     return (
         "use scripting additions\n"
         "activate\n"
-        f'return POSIX path of (choose file with prompt "{_escape_applescript(title)}"{default_location_arg})'
+        f'return POSIX path of (choose file with prompt "{_escape_applescript(title)}"{default_location_arg}{file_type_arg})'
     )
 
 
@@ -126,7 +148,12 @@ def _choose_directory_tk(*, title: str, initial_dir: str | None = None) -> str |
     return selected or None
 
 
-def _choose_file_tk(*, title: str, initial_dir: str | None = None) -> str | None:
+def _choose_file_tk(
+    *,
+    title: str,
+    initial_dir: str | None = None,
+    extensions: list[str] | tuple[str, ...] | None = None,
+) -> str | None:
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -140,17 +167,36 @@ def _choose_file_tk(*, title: str, initial_dir: str | None = None) -> str | None
         selected = filedialog.askopenfilename(
             title=title,
             initialdir=str(Path(initial_dir).expanduser()) if initial_dir else None,
-            filetypes=[
-                ("OpenBrep sources", "*.gdl *.txt *.gsm"),
-                ("GDL scripts", "*.gdl"),
-                ("Text files", "*.txt"),
-                ("GSM objects", "*.gsm"),
-                ("All files", "*.*"),
-            ],
+            filetypes=_filetypes_for_extensions(extensions),
         )
     finally:
         root.destroy()
     return selected or None
+
+
+def _filetypes_for_extensions(extensions: list[str] | tuple[str, ...] | None):
+    normalized_extensions = _normalize_extensions(extensions)
+    if normalized_extensions:
+        patterns = " ".join(f"*.{extension}" for extension in normalized_extensions)
+        return [("Supported files", patterns), ("All files", "*.*")]
+    return [
+        ("OpenBrep sources", "*.gdl *.txt *.gsm"),
+        ("GDL scripts", "*.gdl"),
+        ("Text files", "*.txt"),
+        ("GSM objects", "*.gsm"),
+        ("All files", "*.*"),
+    ]
+
+
+def _normalize_extensions(extensions: list[str] | tuple[str, ...] | None) -> list[str]:
+    if not extensions:
+        return []
+    normalized = []
+    for extension in extensions:
+        cleaned = str(extension).strip().lower().lstrip(".")
+        if cleaned and cleaned not in normalized:
+            normalized.append(cleaned)
+    return normalized
 
 
 def _raise_tk_dialog_root(root) -> None:

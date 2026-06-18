@@ -66,6 +66,7 @@ export interface PreviewPayload {
   meshes: PreviewMesh[]
   wires: number[][][]
   warnings?: string[]
+  verification?: PreviewVerification
 }
 
 export interface Preview2DPayload {
@@ -74,6 +75,12 @@ export interface Preview2DPayload {
   circles: Array<{ cx: number; cy: number; r: number }>
   arcs: Array<{ cx: number; cy: number; r: number; a0: number; a1: number }>
   warnings?: string[]
+  verification?: PreviewVerification
+}
+
+export interface PreviewVerification {
+  source: 'saved' | 'editor_buffer'
+  script_overrides: string[]
 }
 
 export interface CompilerSettings {
@@ -85,27 +92,46 @@ export interface CompilerSettings {
 export interface LlmSettings {
   model: string
   models: string[]
+  model_options?: LlmModelOption[]
+  model_groups?: {
+    custom: LlmModelOption[]
+    official: LlmModelOption[]
+  }
   api_key: string
   api_base: string
   max_retries: number
   assistant_settings: string
 }
 
+export interface LlmModelOption {
+  id: string
+  label: string
+  kind: 'official' | 'custom'
+  provider: string
+  target_model?: string
+  protocol?: string
+  api_base?: string
+  has_api_key?: boolean
+}
+
 export interface WorkbenchSnapshot {
   ok?: boolean
-  project: WorkbenchProject
+  project: WorkbenchProject | null
   parameters: WorkbenchParameter[]
   preview: PreviewPayload
   warnings: string[]
   compiler?: CompilerSettings
   llm?: LlmSettings
   error?: string
+  session_id?: string
+  project_epoch?: number
 }
 
 export interface HsfExportResult extends WorkbenchSnapshot {
   ok: boolean
   saved_to?: string
   cancelled?: boolean
+  needs_save_as?: boolean
 }
 
 export interface ApplyResult extends WorkbenchSnapshot {
@@ -205,9 +231,43 @@ export interface RuntimeSettingsResult {
   error?: string
 }
 
+export interface TapirStatus {
+  import_ok: boolean
+  available: boolean
+  archicad_connected: boolean
+  tapir_available: boolean
+  version: string
+  message: string
+  selected_guids: string[]
+  selected_details: Array<Record<string, unknown>>
+  selected_params: Array<Record<string, unknown>>
+  param_edits: Record<string, unknown>
+  last_error: string
+  last_sync_at: string
+}
+
+export interface TapirStatusResult {
+  ok: boolean
+  tapir?: TapirStatus
+  error?: string
+}
+
+export interface TapirActionResult extends TapirStatusResult {
+  message?: string
+}
+
 export interface LlmSettingsResult {
   ok: boolean
   llm?: LlmSettings
+  error?: string
+}
+
+export interface LlmConnectionTestResult {
+  ok: boolean
+  message?: string
+  model?: string
+  duration_ms?: number
+  category?: string
   error?: string
 }
 
@@ -229,6 +289,36 @@ export interface FileChoiceResult {
 export interface AssistantMessage {
   role: 'user' | 'assistant'
   content: string
+  // 以下字段仅在当前会话内存活：后端聊天历史只持久化 role/content，
+  // 刷新后摘要卡降级为 content 里的纯文本（含 Changed files 后缀兜底）。
+  changedFiles?: string[]
+  errorCategory?: 'llm' | 'compile' | 'general'
+  verification?: VerificationReport
+}
+
+// ── Verification report (Phase 3/4/5 self-correcting agent evidence) ──────
+// Mirrors openbrep/verification.py VerificationReport.to_dict().
+export type VerificationConfidence = 'low' | 'medium' | 'high'
+export type VerificationCheckStatus = 'pass' | 'fail' | 'unknown' | 'not_run'
+
+export interface VerificationCheck {
+  name: string
+  check_type: string // static | lint | compile | plan_check
+  status: VerificationCheckStatus
+  detail: string
+  auto_repairable: boolean
+}
+
+export interface VerificationReport {
+  intent: string
+  goal: string
+  passed: boolean
+  confidence: VerificationConfidence
+  counts: Record<VerificationCheckStatus, number>
+  checks: VerificationCheck[]
+  errors_caught: string[]
+  fixes_applied: string[]
+  remaining_risks: string[]
 }
 
 export interface AssistantImageAttachment {
@@ -359,6 +449,7 @@ export interface GenerateResult {
     reply: string
     changed_files: string[]
     intent: string
+    verification?: VerificationReport | null
   }
   preview?: PreviewPayload
   warnings?: string[]
@@ -373,6 +464,7 @@ export interface CreateProjectResult extends WorkbenchSnapshot {
     reply: string
     changed_files: string[]
     intent: string
+    verification?: VerificationReport | null
   }
   events?: Array<{ type: string; data: unknown }>
   error?: string
@@ -407,6 +499,21 @@ export interface RestoreRevisionResponse extends Partial<WorkbenchSnapshot> {
   restored_revision_id?: string
   revision?: ProjectRevision
   latest_revision_id?: string | null
+  error?: string
+}
+
+export interface ProjectGitStatus {
+  enabled: boolean
+  initialized: boolean
+  dirty: boolean
+  changes: string[]
+  last_commit: string
+}
+
+export interface ProjectGitResponse {
+  ok: boolean
+  git: ProjectGitStatus
+  message?: string
   error?: string
 }
 

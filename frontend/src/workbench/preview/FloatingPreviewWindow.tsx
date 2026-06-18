@@ -6,10 +6,11 @@ interface FloatingPreviewWindowProps {
   open: boolean
   preview: PreviewPayload | null
   warnings: string[]
+  hasDirtyScripts: boolean
   onClose: () => void
 }
 
-export function FloatingPreviewWindow({ open, preview, warnings, onClose }: FloatingPreviewWindowProps) {
+export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts, onClose }: FloatingPreviewWindowProps) {
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [fullscreen, setFullscreen] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
@@ -75,21 +76,21 @@ export function FloatingPreviewWindow({ open, preview, warnings, onClose }: Floa
           }
         }}
       >
-        <div>
+        <div className="floating-preview-title">
           <strong>3D Preview</strong>
-          <span>{fullscreen ? '全屏预览' : '拖动标题栏移动，右下角调大小'}</span>
+          <span>{fullscreen ? 'Fullscreen preview' : 'Drag header to move, resize from the corner'}</span>
         </div>
         <div className="floating-preview-actions">
           <button type="button" onClick={() => setFullscreen((value) => !value)}>
-            {fullscreen ? '还原' : '全屏'}
+            {fullscreen ? 'Restore' : 'Fullscreen'}
           </button>
           <button type="button" onClick={onClose} aria-label="Close floating preview">
-            关闭
+            Close
           </button>
         </div>
       </header>
       <div className="floating-preview-body">
-        <PreviewViewport preview={preview} warnings={warnings} variant="floating" />
+        <PreviewViewport preview={preview} warnings={warnings} variant="floating" hasDirtyScripts={hasDirtyScripts} />
       </div>
     </aside>
   )

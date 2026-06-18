@@ -114,8 +114,28 @@ timeout = 88
             reloaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(reloaded.llm.assistant_settings, "现在赶项目，优先给可运行结果。")
             self.assertEqual(reloaded.llm.provider_keys["anthropic"], "test-key")
+            self.assertEqual(reloaded.compiler.mode, "lp")
             self.assertEqual(reloaded.compiler.path, "/tmp/LP_XMLConverter")
             self.assertEqual(reloaded.llm.model, "claude-sonnet-4-6")
+
+
+    def test_compiler_mode_persists_explicit_mock_with_saved_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                '''
+[compiler]
+mode = "mock"
+path = "/tmp/LP_XMLConverter"
+timeout = 88
+'''.strip(),
+                encoding="utf-8",
+            )
+
+            config = GDLAgentConfig.load(str(config_path))
+
+            self.assertEqual(config.compiler.mode, "mock")
+            self.assertEqual(config.compiler.path, "/tmp/LP_XMLConverter")
 
 
     def test_custom_providers_loads_array_of_tables_without_inline_override(self):
@@ -224,4 +244,3 @@ protocol = "openai"
             self.assertIsNone(second.llm.api_key)
             self.assertEqual(second.llm.resolve_api_base(), "https://api.airsim.eu.cc/v1")
             self.assertEqual(second.llm.resolve_api_key(), "custom-key")
-

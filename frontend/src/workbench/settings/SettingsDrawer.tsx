@@ -1,14 +1,36 @@
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   CompilerSettings,
   ErrorLesson,
+  LlmConnectionTestResult,
   LlmSettings,
+  ProjectGitStatus,
   ProjectMemoryStatus,
   RecentProject,
   UpdateMemoryLessonRequest,
 } from '../../api/types'
+import { AiSettingsPanel } from './AiSettingsPanel'
+import { CompilerSettingsPanel } from './CompilerSettingsPanel'
+import { GitSettingsPanel } from './GitSettingsPanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
+import { SettingsSection } from './SettingsSection'
+import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
+
+const SETTINGS_DRAWER_DEFAULT_WIDTH = 430
+const SETTINGS_DRAWER_MIN_WIDTH = 360
+const SETTINGS_DRAWER_MAX_WIDTH = 760
+const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
+const SETTINGS_DRAWER_KEY_STEP = 24
+
+type SettingsSectionId = 'ai' | 'compiler' | 'workspace' | 'git' | 'memory'
+
+const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
+  ai: true,
+  compiler: false,
+  workspace: false,
+  git: false,
+  memory: false,
+}
 
 interface SettingsDrawerProps {
   open: boolean
@@ -19,15 +41,22 @@ interface SettingsDrawerProps {
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
   memoryBusy: boolean
+  gitStatus: ProjectGitStatus | null
+  gitBusy: boolean
   onClose: () => void
-  onCompilerSettingsChange: (settings: CompilerSettings) => void
-  onLlmSettingsChange: (settings: LlmSettings) => void
-  onReloadRuntimeSettings: () => void
-  onBrowseCompilerFile: () => void
-  onBrowseOutputDirectory: () => void
+  onCompilerSettingsChange: (settings: CompilerSettings) => Promise<CompilerSettings>
+  onOpenConfig: () => void
+  onTestLlmConnection: () => Promise<LlmConnectionTestResult>
+  onReloadRuntimeSettings: () => Promise<void>
+  onBrowseCompilerFile: () => Promise<CompilerSettings | null>
+  onBrowseOutputDirectory: () => Promise<CompilerSettings | null>
   onOpenProjectPath: (path: string) => void
   onExportHsfProject: () => void
-  onCloseProject: () => void
+  onResetCurrentProject: () => void
+  onLoadProjectGitStatus: () => void
+  onInitializeProjectGit: () => void
+  onSetProjectGitEnabled: (enabled: boolean) => void
+  onCommitProjectGit: (message: string) => void
   onLoadMemoryLessons: () => void
   onSummarizeProjectMemory: () => void
   onUpdateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => void
@@ -45,15 +74,22 @@ export function SettingsDrawer({
   memoryLessons,
   memorySkillPreview,
   memoryBusy,
+  gitStatus,
+  gitBusy,
   onClose,
   onCompilerSettingsChange,
-  onLlmSettingsChange,
+  onOpenConfig,
+  onTestLlmConnection,
   onReloadRuntimeSettings,
   onBrowseCompilerFile,
   onBrowseOutputDirectory,
   onOpenProjectPath,
   onExportHsfProject,
-  onCloseProject,
+  onResetCurrentProject,
+  onLoadProjectGitStatus,
+  onInitializeProjectGit,
+  onSetProjectGitEnabled,
+  onCommitProjectGit,
   onLoadMemoryLessons,
   onSummarizeProjectMemory,
   onUpdateMemoryLesson,
@@ -61,233 +97,322 @@ export function SettingsDrawer({
   onIgnoreMemoryLesson,
   onClearProjectMemory,
 }: SettingsDrawerProps) {
-  const [llmDraft, setLlmDraft] = useState(llmSettings)
+  const [compilerDraft, setCompilerDraft] = useState(compilerSettings)
+  const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty' | 'saving' | null>(null)
+  const [settingsSaveError, setSettingsSaveError] = useState('')
+  const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
+  const [drawerWidth, setDrawerWidth] = useState(SETTINGS_DRAWER_DEFAULT_WIDTH)
+  const [expandedSections, setExpandedSections] = useState(DEFAULT_EXPANDED_SECTIONS)
+  const wasOpenRef = useRef(false)
+  const resizeStartRef = useRef<{ pointerX: number; width: number } | null>(null)
+  const isCompilerDirty = compilerDirty(compilerDraft, compilerSettings)
 
   useEffect(() => {
-    setLlmDraft(llmSettings)
-  }, [llmSettings])
+    setCompilerDraft(compilerSettings)
+  }, [compilerSettings])
 
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
+      setSettingsSaveState(null)
       onLoadMemoryLessons()
+      onLoadProjectGitStatus()
     }
-  }, [open, onLoadMemoryLessons])
+    wasOpenRef.current = open
+  }, [open, onLoadMemoryLessons, onLoadProjectGitStatus])
 
-  function submitLlmSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    onLlmSettingsChange(llmDraft)
+  useEffect(() => {
+    if (!open) {
+      resizeStartRef.current = null
+      return
+    }
+
+    setDrawerWidth((width) => clampSettingsDrawerWidth(width))
+
+    function handlePointerMove(event: PointerEvent) {
+      const resizeStart = resizeStartRef.current
+      if (!resizeStart) {
+        return
+      }
+
+      setDrawerWidth(clampSettingsDrawerWidth(resizeStart.width + resizeStart.pointerX - event.clientX))
+    }
+
+    function handlePointerUp() {
+      resizeStartRef.current = null
+    }
+
+    function handleWindowResize() {
+      setDrawerWidth((width) => clampSettingsDrawerWidth(width))
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('resize', handleWindowResize)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('resize', handleWindowResize)
+    }
+  }, [open])
+
+  function toggleSection(id: string) {
+    setExpandedSections((sections) => ({
+      ...sections,
+      [id]: !sections[id as SettingsSectionId],
+    }))
+  }
+
+  function updateCompilerDraft(settings: CompilerSettings) {
+    setCompilerDraft(settings)
+    setSettingsSaveError('')
+    setSettingsSaveState('dirty')
+  }
+
+  async function saveSettings() {
+    try {
+      setSettingsSaveError('')
+      setSettingsSaveState('saving')
+      await onCompilerSettingsChange(compilerDraft)
+      await onReloadRuntimeSettings()
+      setSettingsSaveState('saved')
+    } catch (error) {
+      setSettingsSaveError(error instanceof Error ? error.message : 'Settings were not saved.')
+      setSettingsSaveState('dirty')
+    }
+  }
+
+  async function reloadRuntimeSettings() {
+    setSettingsSaveError('')
+    setSettingsSaveState(null)
+    await onReloadRuntimeSettings()
+  }
+
+  async function browseCompilerDraft() {
+    const selected = await onBrowseCompilerFile()
+    if (selected) {
+      updateCompilerDraft({ ...compilerDraft, converter_path: selected.converter_path })
+    }
+  }
+
+  async function browseOutputDraft() {
+    const selected = await onBrowseOutputDirectory()
+    if (selected) {
+      updateCompilerDraft({ ...compilerDraft, output_dir: selected.output_dir })
+    }
   }
 
   return (
     <>
       {open ? <button className="settings-scrim" type="button" aria-label="Close settings" onClick={onClose} /> : null}
-      <aside className={`settings-drawer${open ? ' open' : ''}`} aria-hidden={!open} aria-label="Workbench settings">
+      <aside
+        className={`settings-drawer${open ? ' open' : ''}`}
+        style={{ width: drawerWidth }}
+        aria-hidden={!open}
+        aria-label="Workbench settings"
+      >
+        <div
+          className="settings-resize-handle"
+          role="separator"
+          aria-label="Resize settings panel"
+          aria-orientation="vertical"
+          aria-valuemin={SETTINGS_DRAWER_MIN_WIDTH}
+          aria-valuemax={getSettingsDrawerMaxWidth()}
+          aria-valuenow={drawerWidth}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              return
+            }
+            resizeStartRef.current = { pointerX: event.clientX, width: drawerWidth }
+            event.currentTarget.setPointerCapture?.(event.pointerId)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') {
+              event.preventDefault()
+              setDrawerWidth((width) => clampSettingsDrawerWidth(width + SETTINGS_DRAWER_KEY_STEP))
+            }
+            if (event.key === 'ArrowRight') {
+              event.preventDefault()
+              setDrawerWidth((width) => clampSettingsDrawerWidth(width - SETTINGS_DRAWER_KEY_STEP))
+            }
+          }}
+        />
         <div className="settings-header">
           <div>
             <strong>Settings</strong>
-            <span>Workbench runtime</span>
+            <span>config.toml</span>
           </div>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        <div className="settings-actions">
-          <button type="button" onClick={onReloadRuntimeSettings}>
-            Reload config
-          </button>
-        </div>
-
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <strong>Compiler</strong>
-            <span>Mock or LP_XMLConverter</span>
-          </div>
-          <label className="settings-row">
-            <span>Mode</span>
-            <select
-              value={compilerSettings.mode}
-              onChange={(event) =>
-                onCompilerSettingsChange({
-                  ...compilerSettings,
-                  mode: event.currentTarget.value === 'lp' ? 'lp' : 'mock',
-                })
-              }
-            >
-              <option value="mock">Mock</option>
-              <option value="lp">LP</option>
-            </select>
-          </label>
-          <label className="settings-field">
-            <span>LP_XMLConverter</span>
-            <div className="settings-path-row">
-              <input
-                type="text"
-                placeholder="/Applications/.../LP_XMLConverter"
-                value={compilerSettings.converter_path}
-                disabled={compilerSettings.mode !== 'lp'}
-                onChange={(event) =>
-                  onCompilerSettingsChange({
-                    ...compilerSettings,
-                    converter_path: event.currentTarget.value,
-                  })
-                }
-              />
-              <button type="button" disabled={compilerSettings.mode !== 'lp'} onClick={onBrowseCompilerFile}>
-                Browse
-              </button>
-            </div>
-          </label>
-          <label className="settings-field">
-            <span>Output directory</span>
-            <div className="settings-path-row">
-              <input
-                type="text"
-                placeholder="Project sibling /output"
-                value={compilerSettings.output_dir}
-                onChange={(event) =>
-                  onCompilerSettingsChange({
-                    ...compilerSettings,
-                    output_dir: event.currentTarget.value,
-                  })
-                }
-              />
-              <button type="button" onClick={onBrowseOutputDirectory}>
-                Browse
-              </button>
-            </div>
-          </label>
-        </section>
-
-        <form className="settings-section" onSubmit={submitLlmSettings}>
-          <div className="settings-section-heading">
-            <strong>AI</strong>
-            <span>Model, endpoint and collaboration preference</span>
-          </div>
-          <label className="settings-field">
-            <span>Model</span>
-            <input
-              type="text"
-              list="openbrep-models"
-              value={llmDraft.model}
-              onChange={(event) => setLlmDraft({ ...llmDraft, model: event.currentTarget.value })}
-            />
-            <datalist id="openbrep-models">
-              {llmDraft.models.map((model) => (
-                <option value={model} key={model} />
-              ))}
-            </datalist>
-          </label>
-          <label className="settings-field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={llmDraft.api_key}
-              placeholder="Provider API key"
-              onChange={(event) => setLlmDraft({ ...llmDraft, api_key: event.currentTarget.value })}
-            />
-          </label>
-          <label className="settings-field">
-            <span>API Base URL</span>
-            <input
-              type="text"
-              value={llmDraft.api_base}
-              placeholder="Optional endpoint override"
-              onChange={(event) => setLlmDraft({ ...llmDraft, api_base: event.currentTarget.value })}
-            />
-          </label>
-          <label className="settings-row">
-            <span>Max retries</span>
-            <input
-              type="number"
-              min={1}
-              max={10}
-              value={llmDraft.max_retries}
-              onChange={(event) =>
-                setLlmDraft({
-                  ...llmDraft,
-                  max_retries: Number(event.currentTarget.value),
-                })
-              }
-            />
-          </label>
-          <label className="settings-field">
-            <span>Assistant preference</span>
-            <textarea
-              value={llmDraft.assistant_settings}
-              placeholder="例如：先解释再给最小修改；优先保证可编译；不要大改结构。"
-              onChange={(event) => setLlmDraft({ ...llmDraft, assistant_settings: event.currentTarget.value })}
-            />
-          </label>
-          <div className="settings-submit-row">
-            <button type="submit" className="primary-action">
-              Save AI
-            </button>
-          </div>
-        </form>
-
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <strong>Workspace</strong>
-            <span>Recent HSF projects and current session</span>
-          </div>
-          <div className="recent-project-list">
-            {recentProjects.length ? (
-              recentProjects.map((project) => (
-                <button
-                  type="button"
-                  className="recent-project-item"
-                  disabled={!project.exists}
-                  key={project.path}
-                  onClick={() => onOpenProjectPath(project.path)}
-                  title={project.path}
-                >
-                  <span>{project.name || project.path}</span>
-                  {project.parent_dir ? <small>{project.parent_dir}</small> : null}
-                  {!project.exists ? <em>missing</em> : null}
-                </button>
-              ))
-            ) : (
-              <span className="settings-empty">No recent HSF projects</span>
+          <div className="settings-header-actions">
+            {settingsSaveState === 'saving' && (
+              <span className="settings-saving-state">Saving</span>
             )}
-          </div>
-          <div className="settings-submit-row">
-            <button type="button" onClick={onExportHsfProject}>
-              Export HSF
+            {settingsSaveState === 'dirty' && (
+              <span className="settings-dirty-state">Unsaved</span>
+            )}
+            {settingsSaveState === 'saved' && (
+              <span className="settings-saved-state">Saved</span>
+            )}
+            {settingsSaveError && (
+              <span className="settings-save-error" title={settingsSaveError}>
+                Error
+              </span>
+            )}
+            <button
+              type="button"
+              className="settings-icon-btn"
+              title="Reload config from disk"
+              onClick={() => void reloadRuntimeSettings()}
+            >
+              ↺
             </button>
-            <button type="button" onClick={onCloseProject}>
-              Close Project
+            <button
+              type="button"
+              className="settings-save-btn"
+              disabled={settingsSaveState === 'saving'}
+              onClick={() => void saveSettings()}
+            >
+              {settingsSaveState === 'saving' ? '…' : 'Save'}
+            </button>
+            <button type="button" className="settings-icon-btn" title="Close" onClick={onClose}>
+              ✕
             </button>
           </div>
-        </section>
+        </div>
 
-        <MemoryLessonsPanel
-          memoryStatus={memoryStatus}
-          lessons={memoryLessons}
-          skillPreview={memorySkillPreview}
-          busy={memoryBusy}
-          formatBytes={formatBytes}
-          onRefresh={onLoadMemoryLessons}
-          onSummarize={onSummarizeProjectMemory}
-          onUpdateLesson={onUpdateMemoryLesson}
-          onDeleteLesson={onDeleteMemoryLesson}
-          onIgnoreLesson={onIgnoreMemoryLesson}
-          onClear={onClearProjectMemory}
-        />
+        <SettingsSection
+          id="ai"
+          title="AI"
+          summary={aiSummary(llmSettings)}
+          expanded={expandedSections.ai}
+          onToggle={toggleSection}
+        >
+          <AiSettingsPanel
+            llmSettings={llmSettings}
+            onOpenConfig={onOpenConfig}
+            onTestConnection={onTestLlmConnection}
+          />
+        </SettingsSection>
 
-        <section className="settings-section muted">
-          <div className="settings-section-heading">
-            <strong>Advanced</strong>
-            <span>Reserved for later local runtime controls</span>
-          </div>
-        </section>
+        <SettingsSection
+          id="compiler"
+          title="Compiler"
+          summary={compilerSummary(compilerDraft)}
+          modified={isCompilerDirty}
+          expanded={expandedSections.compiler}
+          onToggle={toggleSection}
+        >
+          <CompilerSettingsPanel
+            draft={compilerDraft}
+            onChange={updateCompilerDraft}
+            onBrowseCompilerFile={() => void browseCompilerDraft()}
+            onBrowseOutputDirectory={() => void browseOutputDraft()}
+          />
+        </SettingsSection>
+
+        <SettingsSection
+          id="workspace"
+          title="Workspace"
+          summary={workspaceSummary(recentProjects)}
+          expanded={expandedSections.workspace}
+          onToggle={toggleSection}
+        >
+          <WorkspaceSettingsPanel
+            recentProjects={recentProjects}
+            onOpenProjectPath={onOpenProjectPath}
+            onExportHsfProject={onExportHsfProject}
+            onResetCurrentProject={onResetCurrentProject}
+          />
+        </SettingsSection>
+
+        <SettingsSection
+          id="git"
+          title="Git"
+          summary={gitSummary(gitStatus)}
+          expanded={expandedSections.git}
+          onToggle={toggleSection}
+        >
+          <GitSettingsPanel
+            gitStatus={gitStatus}
+            gitBusy={gitBusy}
+            message={gitMessage}
+            onMessageChange={setGitMessage}
+            onRefresh={onLoadProjectGitStatus}
+            onInitialize={onInitializeProjectGit}
+            onSetEnabled={onSetProjectGitEnabled}
+            onCommit={onCommitProjectGit}
+          />
+        </SettingsSection>
+
+        <SettingsSection
+          id="memory"
+          title="Memory"
+          summary={memorySummary(memoryStatus, memoryLessons.length)}
+          expanded={expandedSections.memory}
+          onToggle={toggleSection}
+        >
+          <MemoryLessonsPanel
+            memoryStatus={memoryStatus}
+            lessons={memoryLessons}
+            skillPreview={memorySkillPreview}
+            busy={memoryBusy}
+            formatBytes={formatBytes}
+            onRefresh={onLoadMemoryLessons}
+            onSummarize={onSummarizeProjectMemory}
+            onUpdateLesson={onUpdateMemoryLesson}
+            onDeleteLesson={onDeleteMemoryLesson}
+            onIgnoreLesson={onIgnoreMemoryLesson}
+            onClear={onClearProjectMemory}
+          />
+        </SettingsSection>
+
       </aside>
     </>
   )
+}
+
+function compilerSummary(settings: CompilerSettings) {
+  return settings.mode === 'lp' ? 'LP' : 'Mock'
+}
+
+function aiSummary(settings: LlmSettings) {
+  return settings.model || 'No model'
+}
+
+function workspaceSummary(recentProjects: RecentProject[]) {
+  return `${recentProjects.length} recent`
+}
+
+function gitSummary(gitStatus: ProjectGitStatus | null) {
+  if (!gitStatus?.initialized) return 'Not initialized'
+  return gitStatus.enabled ? 'Enabled' : 'Disabled'
+}
+
+function memorySummary(memoryStatus: ProjectMemoryStatus | null, fallbackLessonCount: number) {
+  const lessonCount = memoryStatus?.lesson_count ?? fallbackLessonCount
+  return `${lessonCount} lessons`
+}
+
+function compilerDirty(a: CompilerSettings, b: CompilerSettings) {
+  return a.mode !== b.mode || a.converter_path !== b.converter_path || a.output_dir !== b.output_dir
 }
 
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function clampSettingsDrawerWidth(width: number, viewportWidth = getViewportWidth()) {
+  const viewportMax = Math.max(280, viewportWidth - SETTINGS_DRAWER_VIEWPORT_MARGIN)
+  const minWidth = Math.min(SETTINGS_DRAWER_MIN_WIDTH, viewportMax)
+  const maxWidth = Math.max(minWidth, Math.min(SETTINGS_DRAWER_MAX_WIDTH, viewportMax))
+  return Math.min(Math.max(width, minWidth), maxWidth)
+}
+
+function getSettingsDrawerMaxWidth() {
+  return Math.max(SETTINGS_DRAWER_MIN_WIDTH, Math.min(SETTINGS_DRAWER_MAX_WIDTH, getViewportWidth() - SETTINGS_DRAWER_VIEWPORT_MARGIN))
+}
+
+function getViewportWidth() {
+  return typeof window === 'undefined' ? 1024 : window.innerWidth
 }

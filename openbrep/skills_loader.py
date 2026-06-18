@@ -62,7 +62,7 @@ class SkillsLoader:
             self._loaded = True
             return
 
-        for md_file in sorted(self.skills_dir.glob("*.md")):
+        for md_file in _iter_skill_files(self.skills_dir):
             if md_file.stem.upper() == "README":
                 continue
             try:
@@ -174,6 +174,12 @@ class SkillsLoader:
 
 def _tokenize(text: str) -> list[str]:
     return [token for token in re.split(r"[^a-z0-9_一-鿿]+", text.lower()) if len(token) >= 2]
+
+
+def _iter_skill_files(skills_dir: Path) -> list[Path]:
+    public_files = sorted(skills_dir.glob("*.md"))
+    pro_files = sorted((skills_dir / "pro").glob("*.md"))
+    return public_files + pro_files
 
 
 def _score_custom_skill_match(name: str, content: str, instruction_lower: str, instruction_tokens: set[str]) -> int:

@@ -2,9 +2,28 @@ import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { buildMockCompileSummary, compileIssuesFromResult } from '../workbenchStoreUtils'
 
 export function createCompileActions({ api, get, set }: WorkbenchActionContext) {
+  async function saveDirtyScriptsBeforeCompile() {
+    const flushed = await get().flushDirtyScripts()
+    if (!flushed.ok) {
+      set((state) => ({
+        compiling: false,
+        compileLog: [`Compile stopped: ${state.lastError ?? 'failed to save scripts'}`, ...state.compileLog].slice(0, 20),
+      }))
+      return false
+    }
+    return flushed
+  }
+
+  async function refreshPreviewFromSavedSource() {
+    const preview = await api.fetchPreview(get().draftParameters)
+    set({ preview, warnings: preview.warnings ?? [] })
+  }
+
   return {
     async compileCurrentProject() {
       set({ compiling: true })
+      const saveResult = await saveDirtyScriptsBeforeCompile()
+      if (!saveResult) return
       const result = await api.compileProject(get().compilerSettings.output_dir)
       const issues = compileIssuesFromResult(result)
       const message =
@@ -25,10 +44,15 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
         },
         compiling: false,
       }))
+      if (saveResult.didSave) {
+        await refreshPreviewFromSavedSource()
+      }
     },
 
     async runMockCompile() {
       set({ compiling: true })
+      const saveResult = await saveDirtyScriptsBeforeCompile()
+      if (!saveResult) return
       const result = await api.mockCompile(get().compilerSettings.output_dir)
       const summary = buildMockCompileSummary(result)
       set((state) => ({
@@ -36,6 +60,9 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
         mockCompileResult: result,
         compileLog: summary ? [summary, ...state.compileLog].slice(0, 20) : state.compileLog,
       }))
+      if (saveResult.didSave) {
+        await refreshPreviewFromSavedSource()
+      }
     },
 
     async revealCompileOutput(path = '') {
