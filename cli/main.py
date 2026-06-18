@@ -617,7 +617,29 @@ def _kill_process_on_port(port: int, host: str = "127.0.0.1") -> bool:
 
 
 
+def _has_react_workbench() -> bool:
+    """True if React workbench (frontend/ + workbench_api.py + obr7.py) is available."""
+    root = Path(__file__).resolve().parents[1]
+    return (
+        (root / "frontend").exists()
+        and (root / "openbrep" / "workbench_api.py").is_file()
+        and (root / "scripts" / "obr7.py").is_file()
+    )
+
+
 def _launch_ui() -> int:
+    # 优先启动 React 工作台（obr7），不可用时 fallback 到 Streamlit
+    if _has_react_workbench():
+        console.print("[dim]启动 React 工作台（obr7）…[/dim]")
+        console.print("[dim]Streamlit 保留为 fallback：streamlit run ui/app.py[/dim]")
+        root = Path(__file__).resolve().parents[1]
+        obr7_script = root / "scripts" / "obr7.py"
+        try:
+            return subprocess.call([sys.executable, str(obr7_script), "--no-open"])
+        except Exception as exc:
+            err_console.print(f"[yellow]⚠️ React 工作台启动失败：{exc}[/yellow]")
+            err_console.print("[dim]回退到 Streamlit…[/dim]")
+
     if not _has_streamlit():
         err_console.print("[red]❌ 未安装 UI 依赖 streamlit。[/red]")
         err_console.print("请先安装： pip install openbrep[ui]", markup=False)
