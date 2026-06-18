@@ -6,6 +6,8 @@ dist/
 build/
 .eggs/
 .venv/
+node_modules/
+frontend/dist/
 .DS_Store
 temp/
 *.gsm
@@ -15,6 +17,7 @@ config.toml
 *.local.toml
 output/
 src/
+!frontend/src/
 .qoder/
 .qwen/
 knowledge/raw/ccgdl_dev_doc/

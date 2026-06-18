@@ -254,6 +254,8 @@ openbrep 需要调用 AI（如 Claude、GPT-4）。
 
 ### Step 4：启动应用
 
+#### 稳定入口：Streamlit UI
+
 在 openbrep 文件夹内，运行：
 
 ```bash
@@ -270,6 +272,45 @@ obr
 
 ```
 http://localhost:8501
+```
+
+#### 开发者预览：React Workbench
+
+如果你在 `react-workbench-poc` 分支，或者合并后仓库里已经包含 `frontend/`
+目录，可以用新的代码优先工作台：
+
+```bash
+./obr7
+```
+
+它会同时启动本地 Python API 和 React/Vite 前端，并自动打开浏览器。终端会打印
+实际地址，例如：
+
+```text
+[obr7] OpenBrep Workbench: http://127.0.0.1:5174
+[obr7] API: http://127.0.0.1:8765
+```
+
+`obr7` 适合直接打开 HSF 项目、编辑 `3d.gdl` / `2d.gdl` / XML、保存回磁盘、
+运行 mock 编译、查看诊断和预览。它目前是 developer preview，不替代
+Streamlit；Tapir/Archicad 实时联动、Pro UX 和剩余兼容路径仍以 Streamlit 为
+fallback。
+
+常用选项：
+
+```bash
+./obr7 --no-open
+./obr7 --api-port 8770 --web-port 5180
+OBR7_API_PORT=8770 OBR7_WEB_PORT=5180 ./obr7
+```
+
+默认端口被占用时，`obr7` 会自动选择附近可用端口；但如果你显式设置
+`--api-port`、`--web-port`、`OBR7_API_PORT` 或 `OBR7_WEB_PORT`，这些端口就是
+严格指定，端口被占用时会直接报错。遇到端口占用，可以换一个显式端口，或先用：
+
+```bash
+lsof -nP -iTCP:8765 -sTCP:LISTEN
+kill <PID>
 ```
 
 ---
