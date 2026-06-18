@@ -154,6 +154,7 @@ class TaskResult:
     object_plan: dict = field(default_factory=dict)
     revision_warnings: list[str] = field(default_factory=list)
     compile_comparison: Optional[CompileComparison] = None
+    verification: Optional[dict] = None          # unified VerificationReport (Phase 3/4)
 
 
 @dataclass(frozen=True)
@@ -526,6 +527,24 @@ class TaskPipeline:
         if lint_summary:
             create_text_parts.append(lint_summary)
 
+        # ── Verification report (Phase 3/4): aggregate checks into a
+        # proof-oriented report. CREATE path does not compile by default, so
+        # compile is reported honestly as not_run. ──────────────────────────
+        from openbrep.verification import build_verification_report
+        verification_report = build_verification_report(
+            intent=request.intent or "CREATE",
+            user_input=request.user_input,
+            project=project,
+            object_plan=object_plan,
+            static_result=static_result,
+            lint_summary=lint_summary,
+            compile_result=None,
+            compile_not_run_reason="CREATE 路径默认不执行编译验证",
+            static_repair_triggered=bool(undef_errors),
+        )
+        create_text_parts.append(verification_report.to_summary_text())
+        # ─────────────────────────────────────────────────────────────────────
+
         return TaskResult(
             success=True,
             intent=request.intent or "CREATE",
@@ -534,6 +553,7 @@ class TaskPipeline:
             project=project,
             lint_summary=lint_summary,
             object_plan=object_plan.to_dict() if object_plan is not None else {},
+            verification=verification_report.to_dict(),
         )
 
     def _handle_modify(self, request: TaskRequest) -> TaskResult:
@@ -800,6 +820,22 @@ class TaskPipeline:
         if revision_warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {warning}" for warning in revision_warnings))
 
+        # ── Verification report (Phase 3/4): aggregate static/lint/compile
+        # (and any compile auto-repair) into a proof-oriented report. ────────
+        from openbrep.verification import build_verification_report
+        verification_report = build_verification_report(
+            intent=request.intent or "MODIFY",
+            user_input=request.user_input,
+            project=project,
+            object_plan=None,
+            static_result=static_result,
+            lint_summary=lint_summary,
+            compile_result=compile_result,
+            auto_repair_info=auto_repair_info,
+        )
+        output_parts.append(verification_report.to_summary_text())
+        # ─────────────────────────────────────────────────────────────────────
+
         return TaskResult(
             success=True,
             intent=request.intent or "MODIFY",
@@ -810,6 +846,7 @@ class TaskPipeline:
             lint_summary=lint_summary,
             revision_warnings=revision_warnings,
             compile_comparison=compile_comparison,
+            verification=verification_report.to_dict(),
         )
 
     # ── Initialization Helpers ────────────────────────────

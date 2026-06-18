@@ -47,6 +47,7 @@ class Tracer:
             "has_compile": result.compile_result is not None,
             "compile_pass": result.compile_result.success if result.compile_result else None,
             "compile_comparison": _compile_comparison_trace(getattr(result, "compile_comparison", None)),
+            "verification": _verification_trace(getattr(result, "verification", None)),
             "error": result.error,
             "timestamp": datetime.now().isoformat(),
         }
@@ -72,4 +73,21 @@ def _compile_comparison_trace(comparison) -> dict | None:
         "after_success": comparison.after.success if comparison.after else None,
         "size_delta_kb": size_delta // 1024 if size_delta is not None else None,
         "param_delta": comparison.param_delta,
+    }
+
+
+def _verification_trace(v) -> dict | None:
+    """Compact verification summary for the trace (Phase 5)."""
+    if not isinstance(v, dict):
+        return None
+    compile_status = None
+    for c in v.get("checks") or []:
+        if c.get("check_type") == "compile":
+            compile_status = c.get("status")
+            break
+    return {
+        "passed": v.get("passed"),
+        "confidence": v.get("confidence"),
+        "counts": v.get("counts"),
+        "compile_status": compile_status,
     }
