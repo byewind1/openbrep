@@ -181,6 +181,7 @@ class WorkbenchAssistantService:
                 "reply": result.plain_text,
                 "changed_files": list((result.scripts or {}).keys()),
                 "intent": result.intent,
+                "verification": result.verification,
             },
             "preview": preview_payload(self.session.project),
             "warnings": [],

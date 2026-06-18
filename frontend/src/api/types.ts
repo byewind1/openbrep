@@ -293,6 +293,32 @@ export interface AssistantMessage {
   // 刷新后摘要卡降级为 content 里的纯文本（含 Changed files 后缀兜底）。
   changedFiles?: string[]
   errorCategory?: 'llm' | 'compile' | 'general'
+  verification?: VerificationReport
+}
+
+// ── Verification report (Phase 3/4/5 self-correcting agent evidence) ──────
+// Mirrors openbrep/verification.py VerificationReport.to_dict().
+export type VerificationConfidence = 'low' | 'medium' | 'high'
+export type VerificationCheckStatus = 'pass' | 'fail' | 'unknown' | 'not_run'
+
+export interface VerificationCheck {
+  name: string
+  check_type: string // static | lint | compile | plan_check
+  status: VerificationCheckStatus
+  detail: string
+  auto_repairable: boolean
+}
+
+export interface VerificationReport {
+  intent: string
+  goal: string
+  passed: boolean
+  confidence: VerificationConfidence
+  counts: Record<VerificationCheckStatus, number>
+  checks: VerificationCheck[]
+  errors_caught: string[]
+  fixes_applied: string[]
+  remaining_risks: string[]
 }
 
 export interface AssistantImageAttachment {
@@ -423,6 +449,7 @@ export interface GenerateResult {
     reply: string
     changed_files: string[]
     intent: string
+    verification?: VerificationReport | null
   }
   preview?: PreviewPayload
   warnings?: string[]
@@ -437,6 +464,7 @@ export interface CreateProjectResult extends WorkbenchSnapshot {
     reply: string
     changed_files: string[]
     intent: string
+    verification?: VerificationReport | null
   }
   events?: Array<{ type: string; data: unknown }>
   error?: string

@@ -135,6 +135,66 @@ button:focus-visible {
   font-size: 11px;
 }
 
+/* ── Verification evidence card ─────────────────────────────────────────── */
+.assistant-verification {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 11px;
+  display: grid;
+  gap: 4px;
+}
+.assistant-verification.is-fail {
+  border-color: var(--status-error-border, #c0392b);
+}
+.assistant-verification-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.assistant-verification-confidence {
+  font-style: normal;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+}
+.assistant-verification-confidence.confidence-high {
+  color: #2ecc71;
+  border-color: #2ecc71;
+}
+.assistant-verification-confidence.confidence-medium {
+  color: var(--accent, #f59e0b);
+  border-color: var(--accent, #f59e0b);
+}
+.assistant-verification-confidence.confidence-low {
+  color: var(--status-error-text, #e74c3c);
+  border-color: var(--status-error-border, #c0392b);
+}
+.assistant-verification-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+.assistant-verification-compile {
+  margin-left: auto;
+  font-weight: 600;
+}
+.assistant-verification-fixes,
+.assistant-verification-unknowns,
+.assistant-verification-risks {
+  color: var(--text-secondary);
+  margin: 0;
+}
+.assistant-verification-fails {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--status-error-text, #e74c3c);
+}
+
 .assistant-error-badge {
   margin-left: 6px;
   font-size: 10px;

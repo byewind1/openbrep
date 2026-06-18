@@ -170,6 +170,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         assistantMessages: replacePendingAssistantMessage(
           state.assistantMessages,
           `${result.assistant?.reply ?? 'Project created.'}${formatAssistantEventSummary(result.events)}`,
+          { verification: result.assistant?.verification ?? undefined },
         ),
       }))
       await persistAssistantHistory()
@@ -210,7 +211,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           ? `${result.assistant.reply}${suffix}${eventSummary}`
           : formatAssistantRequestError(result.error, 'Generation request failed.')
       const replyExtras = result.ok
-        ? { changedFiles }
+        ? { changedFiles, verification: result.assistant?.verification ?? undefined }
         : { errorCategory: classifyAssistantError(reply) }
       set((state) => ({
         assistantBusy: false,

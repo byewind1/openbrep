@@ -222,6 +222,7 @@ class WorkbenchProjectSessionService:
                 "reply": result.plain_text,
                 "changed_files": list((result.scripts or {}).keys()),
                 "intent": result.intent,
+                "verification": result.verification,
             },
             "events": events,
             **self.session.snapshot(),
