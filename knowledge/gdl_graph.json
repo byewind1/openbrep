@@ -1,0 +1,258 @@
+{
+  "version": "1.0",
+  "description": "GDL 领域知识图谱 — 预填充常用 API 与 BIM 概念",
+  "api_functions": [
+    {
+      "name": "BLOCK",
+      "signature": "a, b, c",
+      "return_type": "void",
+      "description": "长方体，沿 X/Y/Z 方向延伸",
+      "param_count_min": 3,
+      "param_count_max": 3,
+      "category": "geometry"
+    },
+    {
+      "name": "BRICK",
+      "signature": "a, b, c",
+      "return_type": "void",
+      "description": "与 BLOCK 等价的长方体命令",
+      "param_count_min": 3,
+      "param_count_max": 3,
+      "category": "geometry"
+    },
+    {
+      "name": "CYLIND",
+      "signature": "h, r",
+      "return_type": "void",
+      "description": "圆柱体，高度 h，底面半径 r",
+      "param_count_min": 2,
+      "param_count_max": 2,
+      "category": "geometry"
+    },
+    {
+      "name": "SPHERE",
+      "signature": "r",
+      "return_type": "void",
+      "description": "球体，半径 r",
+      "param_count_min": 1,
+      "param_count_max": 1,
+      "category": "geometry"
+    },
+    {
+      "name": "CONE",
+      "signature": "h, r1, r2, alpha, beta",
+      "return_type": "void",
+      "description": "圆锥/圆台，r1 底面半径，r2 顶面半径（0 为锥）",
+      "param_count_min": 3,
+      "param_count_max": 5,
+      "category": "geometry"
+    },
+    {
+      "name": "PRISM_",
+      "signature": "n, h, x1, y1, s1, ..., xn, yn, sn",
+      "return_type": "void",
+      "description": "任意截面棱柱。n=顶点数，h=高度，后续每顶点三元组 (x, y, 边状态)",
+      "param_count_min": 5,
+      "param_count_max": 0,
+      "category": "geometry"
+    },
+    {
+      "name": "ADD",
+      "signature": "x, y, z",
+      "return_type": "void",
+      "description": "平移变换入栈，必须配对 DEL",
+      "param_count_min": 3,
+      "param_count_max": 3,
+      "category": "transform"
+    },
+    {
+      "name": "ROT",
+      "signature": "alpha, x, y, z",
+      "return_type": "void",
+      "description": "旋转变换入栈（度数），必须配对 DEL",
+      "param_count_min": 4,
+      "param_count_max": 4,
+      "category": "transform"
+    },
+    {
+      "name": "MUL",
+      "signature": "x, y, z",
+      "return_type": "void",
+      "description": "缩放变换入栈，必须配对 DEL",
+      "param_count_min": 3,
+      "param_count_max": 3,
+      "category": "transform"
+    },
+    {
+      "name": "DEL",
+      "signature": "n",
+      "return_type": "void",
+      "description": "弹出最近 n 层变换栈，DEL 1 最常用",
+      "param_count_min": 1,
+      "param_count_max": 1,
+      "category": "transform"
+    },
+    {
+      "name": "DELALL",
+      "signature": "",
+      "return_type": "void",
+      "description": "清空所有变换栈层",
+      "param_count_min": 0,
+      "param_count_max": 0,
+      "category": "transform"
+    },
+    {
+      "name": "MATERIAL",
+      "signature": "mat_name_or_index",
+      "return_type": "void",
+      "description": "设置当前材质，参数为材质名称字符串或材质索引",
+      "param_count_min": 1,
+      "param_count_max": 1,
+      "category": "attribute"
+    },
+    {
+      "name": "DEFINE MATERIAL",
+      "signature": "mat_name, red, green, blue, ...",
+      "return_type": "void",
+      "description": "定义自定义材质，必须在 MATERIAL 引用前定义",
+      "param_count_min": 4,
+      "param_count_max": 0,
+      "category": "attribute"
+    },
+    {
+      "name": "PEN",
+      "signature": "pen_index",
+      "return_type": "void",
+      "description": "设置画笔颜色编号",
+      "param_count_min": 1,
+      "param_count_max": 1,
+      "category": "attribute"
+    },
+    {
+      "name": "RECT",
+      "signature": "x1, y1, x2, y2",
+      "return_type": "void",
+      "description": "2D 矩形（由对角两点定义）",
+      "param_count_min": 4,
+      "param_count_max": 4,
+      "category": "2d"
+    },
+    {
+      "name": "LINE",
+      "signature": "x1, y1, x2, y2",
+      "return_type": "void",
+      "description": "2D 直线",
+      "param_count_min": 4,
+      "param_count_max": 4,
+      "category": "2d"
+    },
+    {
+      "name": "ARC",
+      "signature": "x, y, r, alpha, beta",
+      "return_type": "void",
+      "description": "2D 圆弧，圆心(x,y)，半径 r，起止角度",
+      "param_count_min": 5,
+      "param_count_max": 5,
+      "category": "2d"
+    },
+    {
+      "name": "HOTSPOT",
+      "signature": "x, y, z",
+      "return_type": "void",
+      "description": "3D 热点，用于 Archicad 中拖拽操控",
+      "param_count_min": 3,
+      "param_count_max": 3,
+      "category": "misc"
+    },
+    {
+      "name": "HOTSPOT2",
+      "signature": "x, y",
+      "return_type": "void",
+      "description": "2D 热点",
+      "param_count_min": 2,
+      "param_count_max": 2,
+      "category": "2d"
+    },
+    {
+      "name": "PROJECT2",
+      "signature": "angle, code",
+      "return_type": "void",
+      "description": "将 3D 几何投影到 2D 平面图",
+      "param_count_min": 2,
+      "param_count_max": 2,
+      "category": "2d"
+    }
+  ],
+  "bim_concepts": [
+    {
+      "name": "Box",
+      "aliases": ["cube", "rectangular", "box", "方体", "长方体", "矩形体"],
+      "description": "矩形体块",
+      "required_apis": ["BLOCK"],
+      "init_pattern": "BLOCK A, B, ZZYZX"
+    },
+    {
+      "name": "Column",
+      "aliases": ["column", "pillar", "柱", "圆柱", "方柱", "柱子"],
+      "description": "建筑柱构件",
+      "required_apis": ["CYLIND", "BLOCK", "MATERIAL", "PEN"],
+      "init_pattern": "MATERIAL mat_name\nCYLIND ZZYZX, A/2"
+    },
+    {
+      "name": "Window",
+      "aliases": ["window", "窗", "窗户", "开窗"],
+      "description": "窗构件，含框架和开口",
+      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL", "RECT"],
+      "init_pattern": "ADD 0, 0, 0\nBLOCK A, B, ZZYZX\nDEL 1"
+    },
+    {
+      "name": "Door",
+      "aliases": ["door", "门", "门构件"],
+      "description": "门构件，含门框和门扇",
+      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL", "RECT"],
+      "init_pattern": "ADD 0, 0, 0\nBLOCK A, B, ZZYZX\nDEL 1"
+    },
+    {
+      "name": "Furniture",
+      "aliases": ["furniture", "家具", "桌子", "椅子", "柜子"],
+      "description": "家具类构件",
+      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL"],
+      "init_pattern": "MATERIAL mat_name\nADD 0, 0, 0\nBLOCK A, B, ZZYZX\nDEL 1"
+    },
+    {
+      "name": "Material",
+      "aliases": ["material", "材质", "表面材质", "定义材质"],
+      "description": "材质定义与引用",
+      "required_apis": ["DEFINE MATERIAL", "MATERIAL"],
+      "init_pattern": "DEFINE MATERIAL \"mat_name\", 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 100, 0\nMATERIAL \"mat_name\""
+    },
+    {
+      "name": "Cylinder",
+      "aliases": ["cylinder", "圆柱", "管", "圆筒"],
+      "description": "圆柱体几何",
+      "required_apis": ["CYLIND", "MATERIAL"],
+      "init_pattern": "CYLIND ZZYZX, A/2"
+    },
+    {
+      "name": "Shelf",
+      "aliases": ["shelf", "书架", "货架", "置物架", "层架"],
+      "description": "层架类构件，含多层搁板",
+      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL"],
+      "init_pattern": "FOR i = 1 TO shelf_count\n  ADD 0, 0, (i-1) * shelf_spacing\n  BLOCK A, B, shelf_thickness\n  DEL 1\nNEXT i"
+    }
+  ],
+  "known_error_patterns": [
+    {
+      "pattern": "mat_",
+      "concept": "Material",
+      "diagnosis": "变量名含 'mat_' 可能是材质变量未初始化。必须先调用 DEFINE MATERIAL 定义，再用 MATERIAL 引用。",
+      "fix_hint": "在使用前添加：DEFINE MATERIAL \"变量名\", r, g, b, ... 或改为引用已有材质名称字符串。"
+    },
+    {
+      "pattern": "material_",
+      "concept": "Material",
+      "diagnosis": "材质变量未初始化。",
+      "fix_hint": "在使用前添加：DEFINE MATERIAL \"变量名\", r, g, b, ..."
+    }
+  ]
+}

@@ -448,6 +448,27 @@ class TaskPipeline:
             )
             on_event("object_plan_done", {"object_type": object_plan.object_type})
 
+        # ── 图谱约束注入（阶段2）：在 CREATE 路径用图谱为 LLM 锚定合法 API ──
+        # 查询 BIM 概念的必需 API，将约束追加到 enriched_instruction。
+        # 只影响 CREATE/IMAGE，不改变 MODIFY/DEBUG 流程。
+        _graph_constraint_injected = False
+        try:
+            from openbrep.knowledge_graph import get_graph_manager
+            _graph_mgr = get_graph_manager()
+            _graph_constraint = _graph_mgr.build_constraint_prompt(enriched_instruction)
+            if _graph_constraint:
+                enriched_instruction = (
+                    f"{enriched_instruction}\n\n"
+                    f"{_graph_constraint}\n\n"
+                    "【图谱约束】生成时必须使用上述合法 API，禁止使用图谱未收录的 GDL 命令。"
+                )
+                _graph_constraint_injected = True
+                on_event("status", {"message": "📐 图谱约束已注入"})
+                logger.info("[graph] constraint injected for intent: %s", request.user_input[:60])
+        except Exception as _graph_exc:
+            logger.debug("Graph constraint injection skipped: %s", _graph_exc)
+        # ─────────────────────────────────────────────────────────────────────
+
         agent = GDLAgent(
             llm=llm,
             compiler=compiler,
@@ -541,6 +562,7 @@ class TaskPipeline:
             compile_result=None,
             compile_not_run_reason="CREATE 路径默认不执行编译验证",
             static_repair_triggered=bool(undef_errors),
+            graph_powered=_graph_constraint_injected,
         )
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
@@ -679,6 +701,7 @@ class TaskPipeline:
 
         # Auto-repair on compile failure (1 attempt)
         auto_repair_info: str = ""
+        _graph_powered_repair = False
         if compile_result is not None and not compile_result.success and gsm_path is not None:
             error_parts = [
                 p.strip()
@@ -697,10 +720,24 @@ class TaskPipeline:
             on_event("status", {"message": "🔧 编译失败，正在自动修复…"})
             logger.info("Compile failed; triggering auto-repair. error_log=%d chars", len(error_log))
 
+            # ── 图谱诊断（阶段3）：从错误归因，注入结构化修复提示 ──────────
+            graph_diagnosis = ""
+            try:
+                from openbrep.knowledge_graph import get_graph_manager
+                graph_diagnosis = get_graph_manager().diagnose_error(error_log)
+                if graph_diagnosis:
+                    _graph_powered_repair = True
+                    logger.info("[graph] diagnose_error provided diagnosis for repair")
+            except Exception as _gexc:
+                logger.debug("Graph diagnosis skipped: %s", _gexc)
+            # ─────────────────────────────────────────────────────────────────
+
+            graph_hint = f"\n\n{graph_diagnosis}" if graph_diagnosis else ""
             repair_instruction = (
                 f"{clean_instruction}\n\n"
                 f"编译失败，请基于当前脚本进行最小改动修复以下错误：\n"
                 f"```\n{error_log[:800]}\n```"
+                f"{graph_hint}"
             )
             try:
                 repair_changes, _repair_plain = agent.generate_only(
@@ -832,6 +869,7 @@ class TaskPipeline:
             lint_summary=lint_summary,
             compile_result=compile_result,
             auto_repair_info=auto_repair_info,
+            graph_powered=_graph_powered_repair,
         )
         output_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────

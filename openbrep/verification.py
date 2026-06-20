@@ -73,6 +73,7 @@ class VerificationReport:
     fixes_applied: list[str] = field(default_factory=list)
     remaining_risks: list[str] = field(default_factory=list)
     confidence: str = "low"     # low | medium | high
+    graph_powered: bool = False  # 本次任务使用了图谱约束或诊断
 
     # ── derived views ───────────────────────────────────────
 
@@ -106,6 +107,7 @@ class VerificationReport:
             "goal": self.goal,
             "passed": self.passed,
             "confidence": self.confidence,
+            "graph_powered": self.graph_powered,
             "counts": self.counts(),
             "checks": [
                 {
@@ -175,6 +177,8 @@ class VerificationReport:
                     lines.append(f"  - ❓ {c.name}：{c.detail or '暂无自动化检查'}")
 
         lines.append(f"置信度：{_confidence_zh(self.confidence)}")
+        if self.graph_powered:
+            lines.append("🔷 Graph-Powered：图谱约束/诊断已介入本次任务")
         if self.remaining_risks:
             lines.append("残余风险：" + "；".join(self.remaining_risks[:3]))
         return "\n".join(lines)
@@ -292,6 +296,7 @@ def build_verification_report(
     compile_not_run_reason: str = "",
     static_repair_triggered: bool = False,
     auto_repair_info: str = "",
+    graph_powered: bool = False,
 ) -> VerificationReport:
     """Aggregate scattered checks into one :class:`VerificationReport`.
 
@@ -301,6 +306,7 @@ def build_verification_report(
     report = VerificationReport(
         intent=intent,
         goal=(user_input or "")[:160],
+        graph_powered=graph_powered,
     )
     checks: list[VerificationCheck] = []
 
