@@ -1,6 +1,5 @@
+import { lazy, Suspense } from 'react'
 import { AssistantPanel } from '../../components/AssistantPanel'
-import { Preview2DViewport } from '../../components/Preview2DViewport'
-import { PreviewViewport } from '../../components/PreviewViewport'
 import type {
   AssistantImageAttachment,
   AssistantMessage,
@@ -8,7 +7,10 @@ import type {
   PreviewPayload,
   TapirStatus,
 } from '../../api/types'
-import { TapirPanel } from '../tapir/TapirPanel'
+
+const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
+const Preview2DViewport = lazy(() => import('../../components/Preview2DViewport').then((m) => ({ default: m.Preview2DViewport })))
+const TapirPanel = lazy(() => import('../tapir/TapirPanel').then((m) => ({ default: m.TapirPanel })))
 
 type ActiveRailPanel = '3d' | '2d' | 'inspect' | 'ai'
 
@@ -106,31 +108,37 @@ export function WorkbenchRightRail({
       </div>
       <div className="rail-panel viewport-panel">
         {activeRailPanel === '3d' ? (
-          <PreviewViewport
-            preview={preview}
-            warnings={warnings}
-            hasDirtyScripts={hasDirtyScripts}
-            onExpand={onExpandPreview}
-            onFloat={onFloatPreview}
-            actions={(
-              <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
-                Update
-              </button>
-            )}
-          />
+          <Suspense fallback={<div className="viewport-loading" />}>
+            <PreviewViewport
+              preview={preview}
+              warnings={warnings}
+              hasDirtyScripts={hasDirtyScripts}
+              onExpand={onExpandPreview}
+              onFloat={onFloatPreview}
+              actions={(
+                <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
+                  Update
+                </button>
+              )}
+            />
+          </Suspense>
         ) : activeRailPanel === '2d' ? (
-          <Preview2DViewport preview={preview2d} warnings={warnings} />
+          <Suspense fallback={<div className="viewport-loading" />}>
+            <Preview2DViewport preview={preview2d} warnings={warnings} />
+          </Suspense>
         ) : activeRailPanel === 'inspect' ? (
-          <TapirPanel
-            status={tapirStatus}
-            busy={tapirBusy}
-            onRefresh={onRefreshTapirStatus}
-            onReloadLibraries={onReloadTapirLibraries}
-            onSyncSelection={onSyncTapirSelection}
-            onHighlightSelection={onHighlightTapirSelection}
-            onLoadParameters={onLoadTapirParameters}
-            onApplyParameters={onApplyTapirParameters}
-          />
+          <Suspense fallback={<div className="viewport-loading" />}>
+            <TapirPanel
+              status={tapirStatus}
+              busy={tapirBusy}
+              onRefresh={onRefreshTapirStatus}
+              onReloadLibraries={onReloadTapirLibraries}
+              onSyncSelection={onSyncTapirSelection}
+              onHighlightSelection={onHighlightTapirSelection}
+              onLoadParameters={onLoadTapirParameters}
+              onApplyParameters={onApplyTapirParameters}
+            />
+          </Suspense>
         ) : (
           <AssistantPanel
             messages={assistantMessages}

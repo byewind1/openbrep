@@ -610,6 +610,8 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
         self._send(route_rpc("GET", self.path))
 
     def do_POST(self) -> None:
+        import threading
+
         raw_len = self.headers.get("Content-Length", "0")
         try:
             length = int(raw_len)
@@ -621,6 +623,12 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send({"ok": False, "error": "Invalid JSON"}, status=400)
             return
+
+        if urlparse(self.path).path == "/api/shutdown":
+            self._send({"ok": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
+
         self._send(route_rpc("POST", self.path, body))
 
     def do_OPTIONS(self) -> None:

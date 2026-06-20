@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { BottomDrawer } from '../components/BottomDrawer'
 import { TopMenu } from '../components/TopMenu'
 import type { CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
-import { RevisionPanel } from './diagnostics/RevisionPanel'
 import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
 import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
 import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
-import { SettingsDrawer } from './settings/SettingsDrawer'
+
+const RevisionPanel = lazy(() => import('./diagnostics/RevisionPanel').then((m) => ({ default: m.RevisionPanel })))
+const SettingsDrawer = lazy(() => import('./settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })))
 
 export function WorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -336,13 +337,15 @@ export function WorkbenchApp() {
         onIssueSelect={focusDiagnosticIssue}
         onRevealOutput={(path) => void revealCompileOutput(path)}
         revisionPanel={
-          <RevisionPanel
-            revisions={revisions}
-            latestRevisionId={latestRevisionId}
-            loading={revisionLoading}
-            onSave={(message) => void saveRevision(message)}
-            onRestore={(revisionId) => void restoreRevision(revisionId)}
-          />
+          <Suspense fallback={null}>
+            <RevisionPanel
+              revisions={revisions}
+              latestRevisionId={latestRevisionId}
+              loading={revisionLoading}
+              onSave={(message) => void saveRevision(message)}
+              onRestore={(revisionId) => void restoreRevision(revisionId)}
+            />
+          </Suspense>
         }
       />
       <FloatingPreviewWindow
@@ -352,6 +355,7 @@ export function WorkbenchApp() {
         hasDirtyScripts={hasAnyDirtyScript}
         onClose={() => setFloatingPreviewOpen(false)}
       />
+      <Suspense fallback={null}>
       <SettingsDrawer
         open={settingsOpen}
         compilerSettings={compilerSettings}
@@ -384,6 +388,7 @@ export function WorkbenchApp() {
         onIgnoreMemoryLesson={ignoreMemoryLesson}
         onClearProjectMemory={clearProjectMemory}
       />
+      </Suspense>
     </main>
   )
 }

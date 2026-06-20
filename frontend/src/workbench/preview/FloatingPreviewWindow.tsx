@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { PreviewPayload } from '../../api/types'
-import { PreviewViewport } from '../../components/PreviewViewport'
+
+const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
 
 interface FloatingPreviewWindowProps {
   open: boolean
@@ -90,7 +91,9 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
         </div>
       </header>
       <div className="floating-preview-body">
-        <PreviewViewport preview={preview} warnings={warnings} variant="floating" hasDirtyScripts={hasDirtyScripts} />
+        <Suspense fallback={<div className="viewport-loading" />}>
+          <PreviewViewport preview={preview} warnings={warnings} variant="floating" hasDirtyScripts={hasDirtyScripts} />
+        </Suspense>
       </div>
     </aside>
   )

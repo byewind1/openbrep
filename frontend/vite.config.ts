@@ -9,6 +9,17 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:8765',
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-monaco': ['@monaco-editor/react'],
+          'vendor-three': ['three', '@react-three/fiber', '@react-three/drei'],
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

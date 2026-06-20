@@ -353,6 +353,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     }),
     applyTapirParameterEdits: async () => ({ ok: true, message: '参数已应用到 1 个对象' }),
     reloadTapirLibraries: async () => ({ ok: false, message: 'Archicad 未运行或 Tapir 未安装' }),
+    updateLlmModel: async () => ({ ok: true }),
     ...overrides,
   }
 }

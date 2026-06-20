@@ -77,6 +77,7 @@ export interface WorkbenchApi {
     message: string,
     assistantSettings?: string,
     image?: AssistantImageAttachment | null,
+    signal?: AbortSignal,
   ) => Promise<CreateProjectResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
   listRecentProjects: () => Promise<RecentProjectsResponse>
@@ -102,7 +103,7 @@ export interface WorkbenchApi {
   highlightTapirSelection: () => Promise<TapirActionResult>
   loadTapirParameters: () => Promise<TapirActionResult>
   applyTapirParameterEdits: (paramEdits?: Record<string, unknown>) => Promise<TapirActionResult>
-  askAssistant: (message: string) => Promise<AssistantResult>
+  askAssistant: (message: string, signal?: AbortSignal) => Promise<AssistantResult>
   listAssistantHistory: () => Promise<AssistantHistoryResult>
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
   clearAssistantHistory: () => Promise<SaveAssistantHistoryResult>
@@ -118,6 +119,7 @@ export interface WorkbenchApi {
     message: string,
     assistantSettings?: string,
     image?: AssistantImageAttachment | null,
+    signal?: AbortSignal,
   ) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>

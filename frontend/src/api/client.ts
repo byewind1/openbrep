@@ -691,6 +691,15 @@ export async function revealArtifact(path = ''): Promise<RevealArtifactResult> {
   )
 }
 
+export async function shutdownServer(): Promise<{ ok: boolean }> {
+  try {
+    const response = await fetch(`${API_BASE}/api/shutdown`, { method: 'POST' })
+    return (await response.json()) as { ok: boolean }
+  } catch {
+    return { ok: false }
+  }
+}
+
 async function requestJson<T>(path: string, init: RequestInit, fallback: T, signal?: AbortSignal): Promise<T> {
   try {
     const response = await fetch(`${API_BASE}${path}`, signal ? { ...init, signal } : init)

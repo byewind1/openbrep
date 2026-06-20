@@ -1,6 +1,8 @@
-import { ScriptEditor } from '../../components/ScriptEditor'
+import { lazy, Suspense } from 'react'
 import type { PreviewPayload } from '../../api/types'
-import { PreviewViewport } from '../../components/PreviewViewport'
+
+const ScriptEditor = lazy(() => import('../../components/ScriptEditor').then((m) => ({ default: m.ScriptEditor })))
+const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
 
 interface PreviewWorkspaceStageProps {
   previewWorkspaceOpen: boolean
@@ -37,38 +39,42 @@ export function PreviewWorkspaceStage({
   return (
     <>
       <section className={`workbench-main-stage preview-workspace-stage${previewWorkspaceOpen ? '' : ' stage-hidden'}`}>
-        <PreviewViewport
-          preview={preview}
-          warnings={warnings}
-          variant="workspace"
-          expanded
-          hasDirtyScripts={hasDirtyScripts}
-          onCollapse={onCollapsePreview}
-          onFloat={onFloatPreview}
-          actions={
-            onRefreshPreview ? (
-              <button
-                type="button"
-                className="viewport-action-button"
-                onClick={onRefreshPreview}
-                title="Update preview from current editor buffer"
-              >
-                Update
-              </button>
-            ) : null
-          }
-        />
+        <Suspense fallback={<div className="viewport-loading" />}>
+          <PreviewViewport
+            preview={preview}
+            warnings={warnings}
+            variant="workspace"
+            expanded
+            hasDirtyScripts={hasDirtyScripts}
+            onCollapse={onCollapsePreview}
+            onFloat={onFloatPreview}
+            actions={
+              onRefreshPreview ? (
+                <button
+                  type="button"
+                  className="viewport-action-button"
+                  onClick={onRefreshPreview}
+                  title="Update preview from current editor buffer"
+                >
+                  Update
+                </button>
+              ) : null
+            }
+          />
+        </Suspense>
       </section>
       <section className={`workbench-main-stage editor-stage${previewWorkspaceOpen ? ' stage-hidden' : ''}`}>
         {activeScriptName ? (
-          <ScriptEditor
-            scriptName={activeScriptName}
-            content={activeScriptContent}
-            onChange={onChangeScript}
-            isDirty={hasDirtyScript}
-            focusLine={activeFocusLine}
-            focusKey={activeFocusKey}
-          />
+          <Suspense fallback={<div className="editor-loading" />}>
+            <ScriptEditor
+              scriptName={activeScriptName}
+              content={activeScriptContent}
+              onChange={onChangeScript}
+              isDirty={hasDirtyScript}
+              focusLine={activeFocusLine}
+              focusKey={activeFocusKey}
+            />
+          </Suspense>
         ) : (
           <div className="editor-empty">No script loaded</div>
         )}
