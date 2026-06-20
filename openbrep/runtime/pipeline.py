@@ -448,25 +448,47 @@ class TaskPipeline:
             )
             on_event("object_plan_done", {"object_type": object_plan.object_type})
 
-        # ── 图谱约束注入（阶段2）：在 CREATE 路径用图谱为 LLM 锚定合法 API ──
-        # 查询 BIM 概念的必需 API，将约束追加到 enriched_instruction。
-        # 只影响 CREATE/IMAGE，不改变 MODIFY/DEBUG 流程。
+        # ── 图谱注入（阶段2）：两层叠加，均有异常保护，失败静默降级 ──────────
+        # 层1：API 白名单（全量，来自 gdl_keywords.py，每次 CREATE 都注入）
+        #      解决"幻觉命令名"问题——LLM 不可能使用列表外的命令
+        # 层2：BIM 概念约束（仅当意图命中图谱别名时）
+        #      提供命中概念的 init_pattern 和必需 API 示例
         _graph_constraint_injected = False
+        try:
+            from openbrep.gdl_keywords import (
+                GEOMETRY_COMMANDS, TRANSFORM_COMMANDS, ATTRIBUTE_COMMANDS,
+                TWO_D_COMMANDS, MISC_COMMANDS, CONTROL_FLOW, PARAMETER_COMMANDS,
+                GROUP_COMMANDS, LOW_LEVEL_BODY_COMMANDS, BUILTIN_FUNCTIONS,
+            )
+            # 按类别组织，让 LLM 更容易理解结构
+            _whitelist_sections = [
+                ("几何命令", sorted(GEOMETRY_COMMANDS | LOW_LEVEL_BODY_COMMANDS)),
+                ("坐标变换（入栈/出栈必须配平）", sorted(TRANSFORM_COMMANDS)),
+                ("属性设置", sorted(ATTRIBUTE_COMMANDS | PARAMETER_COMMANDS)),
+                ("2D 命令", sorted(TWO_D_COMMANDS)),
+                ("控制流", sorted(CONTROL_FLOW)),
+                ("分组操作", sorted(GROUP_COMMANDS)),
+                ("杂项", sorted(MISC_COMMANDS)),
+                ("内置函数", sorted(BUILTIN_FUNCTIONS)),
+            ]
+            _wl_lines = ["【GDL API 合法命令白名单】只能使用以下 GDL 命令，禁止自造不存在的命令名："]
+            for _section_name, _cmds in _whitelist_sections:
+                _wl_lines.append(f"{_section_name}: {', '.join(_cmds)}")
+            enriched_instruction = enriched_instruction + "\n\n" + "\n".join(_wl_lines)
+            _graph_constraint_injected = True
+        except Exception as _wl_exc:
+            logger.debug("API whitelist injection skipped: %s", _wl_exc)
+
         try:
             from openbrep.knowledge_graph import get_graph_manager
             _graph_mgr = get_graph_manager()
             _graph_constraint = _graph_mgr.build_constraint_prompt(enriched_instruction)
             if _graph_constraint:
-                enriched_instruction = (
-                    f"{enriched_instruction}\n\n"
-                    f"{_graph_constraint}\n\n"
-                    "【图谱约束】生成时必须使用上述合法 API，禁止使用图谱未收录的 GDL 命令。"
-                )
-                _graph_constraint_injected = True
-                on_event("status", {"message": "📐 图谱约束已注入"})
-                logger.info("[graph] constraint injected for intent: %s", request.user_input[:60])
+                enriched_instruction = f"{enriched_instruction}\n\n{_graph_constraint}"
+                on_event("status", {"message": "📐 图谱概念约束已注入"})
+                logger.info("[graph] concept constraint injected for intent: %s", request.user_input[:60])
         except Exception as _graph_exc:
-            logger.debug("Graph constraint injection skipped: %s", _graph_exc)
+            logger.debug("Graph concept constraint injection skipped: %s", _graph_exc)
         # ─────────────────────────────────────────────────────────────────────
 
         agent = GDLAgent(

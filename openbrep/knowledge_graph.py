@@ -131,6 +131,11 @@ class GDLGraphManager:
     def diagnose_error(self, error_msg: str) -> str:
         """从编译错误消息推断根因，返回可注入 prompt 的诊断文本。
 
+        流程：
+          1. 调用 ErrorClassifier 做一次性分类（复用已有正则，不重复造轮子）
+          2. 用分类结果在图谱中查对应条目，补充 concept 层面的修复上下文
+          3. 若为 UNDEFINED_VAR，额外提取变量名做变量级归因
+
         返回空字符串表示无图谱诊断可用。
         """
         self.load()
@@ -139,29 +144,68 @@ class GDLGraphManager:
 
         lines: list[str] = []
 
-        # 1. 提取未定义变量名
-        undefined_names = _extract_undefined_names(error_msg)
-        if undefined_names:
-            for var_name in undefined_names[:3]:  # 最多诊断 3 个
-                diagnosis = self._diagnose_variable(var_name)
-                if diagnosis:
-                    lines.append(diagnosis)
+        # ── 1. 走 ErrorClassifier 分类（阶段3：与 error_classifier.py 深度对齐）──
+        try:
+            from openbrep.error_classifier import ErrorClassifier, ErrorCategory
+            ec = ErrorClassifier()
+            case = ec.classify(error_msg)
 
-        # 2. 对照 known_error_patterns
-        for ep in self.error_patterns:
-            pattern = ep.get("pattern", "")
-            if pattern and pattern in error_msg.lower():
+            if case.category != ErrorCategory.UNKNOWN:
+                # 在图谱中查该 error_category 的条目
+                graph_entry = self._find_error_pattern_by_category(case.category.value)
+                fix_hint = (graph_entry.get("fix_hint") if graph_entry else "") or case.hint
+                target = case.target_file or (graph_entry.get("target_file") if graph_entry else "")
+                target_str = f"（位置：{target}）" if target else ""
                 lines.append(
-                    f"[图谱诊断] 错误与 '{pattern}' 相关：{ep.get('diagnosis', '')} "
-                    f"修复建议：{ep.get('fix_hint', '')}"
+                    f"[图谱诊断] 错误类型：{case.category.value}{target_str}\n"
+                    f"修复建议：{fix_hint}"
                 )
-                break
+                logger.info("[graph] ErrorClassifier hit: %s", case.category.value)
+
+                # UNDEFINED_VAR 追加变量级归因
+                if case.category == ErrorCategory.UNDEFINED_VAR:
+                    undefined_names = _extract_undefined_names(error_msg)
+                    for var_name in undefined_names[:3]:
+                        var_diag = self._diagnose_variable(var_name)
+                        if var_diag:
+                            lines.append(var_diag)
+            else:
+                logger.debug("[graph] ErrorClassifier: UNKNOWN, falling back to pattern scan")
+                # Fallback：变量归因 + 直接匹配 known_error_patterns 中的自定义规则
+                undefined_names = _extract_undefined_names(error_msg)
+                for var_name in undefined_names[:3]:
+                    var_diag = self._diagnose_variable(var_name)
+                    if var_diag:
+                        lines.append(var_diag)
+                for ep in self.error_patterns:
+                    pattern = ep.get("pattern", "")
+                    if pattern and pattern in error_msg.lower():
+                        lines.append(
+                            f"[图谱诊断] 错误与 '{pattern}' 相关：{ep.get('diagnosis', '')} "
+                            f"修复建议：{ep.get('fix_hint', '')}"
+                        )
+                        break
+        except Exception as exc:
+            logger.debug("ErrorClassifier in graph diagnosis failed: %s", exc)
+            # 安全降级：纯 pattern 扫描
+            undefined_names = _extract_undefined_names(error_msg)
+            for var_name in undefined_names[:3]:
+                var_diag = self._diagnose_variable(var_name)
+                if var_diag:
+                    lines.append(var_diag)
 
         if not lines:
             return ""
         result = "\n".join(lines)
         logger.info("[graph] diagnose_error result:\n%s", result)
         return result
+
+    def _find_error_pattern_by_category(self, category_value: str) -> Optional[dict]:
+        """在 error_patterns 中查找匹配 error_category 的条目。"""
+        for ep in self.error_patterns:
+            if ep.get("error_category") == category_value:
+                return ep
+        return None
 
     def build_constraint_prompt(self, intent: str) -> str:
         """根据用户意图构建 API 约束提示，注入 CREATE 路径 prompt。

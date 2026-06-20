@@ -1,243 +1,1988 @@
 {
-  "version": "1.0",
-  "description": "GDL 领域知识图谱 — 预填充常用 API 与 BIM 概念",
+  "version": "1.1",
+  "description": "GDL 领域知识图谱 — 自动抽取版（无 LLM）。数据源：knowledge/GDL_*.md + openbrep/gdl_keywords.py + error_classifier.py",
   "api_functions": [
-    {
-      "name": "BLOCK",
-      "signature": "a, b, c",
-      "return_type": "void",
-      "description": "长方体，沿 X/Y/Z 方向延伸",
-      "param_count_min": 3,
-      "param_count_max": 3,
-      "category": "geometry"
-    },
     {
       "name": "BRICK",
       "signature": "a, b, c",
+      "description": "与 `BLOCK` 等价，保留写法。",
+      "category": "",
       "return_type": "void",
-      "description": "与 BLOCK 等价的长方体命令",
       "param_count_min": 3,
-      "param_count_max": 3,
-      "category": "geometry"
+      "param_count_max": 3
+    },
+    {
+      "name": "ELLIPS",
+      "signature": "h, r",
+      "description": "生成半椭球类实体（常用于端头/装饰）。",
+      "category": "",
+      "return_type": "void",
+      "param_count_min": 2,
+      "param_count_max": 2
+    },
+    {
+      "name": "FILLCOLOR",
+      "signature": "r, g, b",
+      "description": "",
+      "category": "",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ARC",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 5,
+      "param_count_max": 5
+    },
+    {
+      "name": "ARC2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 5,
+      "param_count_max": 5
+    },
+    {
+      "name": "CIRCLE",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CIRCLE2",
+      "signature": "x, y, radius",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 3,
+      "param_count_max": 3
+    },
+    {
+      "name": "FRAGMENT2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HOTARC",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HOTARC2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HOTLINE",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HOTLINE2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HOTSPOT",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 3,
+      "param_count_max": 3
+    },
+    {
+      "name": "HOTSPOT2",
+      "signature": "0, 0",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 2,
+      "param_count_max": 2
+    },
+    {
+      "name": "LINE",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 4,
+      "param_count_max": 4
+    },
+    {
+      "name": "LINE2",
+      "signature": "x1, y1, x2, y2",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 4,
+      "param_count_max": 4
+    },
+    {
+      "name": "MARKER",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MARKER2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PICTURE2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "POLY2",
+      "signature": "nVertices, x1, y1, x2, y2, ..., xn, yn",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 3,
+      "param_count_max": 0
+    },
+    {
+      "name": "PROJECT2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 2,
+      "param_count_max": 2
+    },
+    {
+      "name": "RECT",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 4,
+      "param_count_max": 4
+    },
+    {
+      "name": "RECT2",
+      "signature": "x1, y1, x2, y2",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 4,
+      "param_count_max": 4
+    },
+    {
+      "name": "SPLINE",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SPLINE2",
+      "signature": "",
+      "description": "",
+      "category": "2d",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "DEFINE",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FILL",
+      "signature": "fillNumber",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "LINE_TYPE",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MATERIAL",
+      "signature": "matIndex",
+      "description": "设置后续几何的材质。",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 1,
+      "param_count_max": 1
+    },
+    {
+      "name": "MODEL",
+      "signature": "mode",
+      "description": "控制模型显示模式与阴影行为。",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PEN",
+      "signature": "penIndex",
+      "description": "控制边线笔号。",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 1,
+      "param_count_max": 1
+    },
+    {
+      "name": "SECT_ATTRS",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SOLID",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STYLE",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SURFACE",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "USE",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "WIRE",
+      "signature": "",
+      "description": "",
+      "category": "attribute",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "BODY",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "EDGE",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HIDDENBODYEDGE",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HIDDENPROFILEEDGE",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SMOOTHBODYEDGE",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TEVE",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VECT",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VERT",
+      "signature": "",
+      "description": "",
+      "category": "body",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ELSE",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "END",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ENDIF",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ENDWHILE",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "EXIT",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FOR",
+      "signature": "i = 1 TO n",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "GOSUB",
+      "signature": "\"DrawLeg\"",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "GOTO",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "IF",
+      "signature": "has_back = 1 THEN",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "NEXT",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "REPEAT",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "RETURN",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STEP",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "THEN",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TO",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "UNTIL",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "WHILE",
+      "signature": "",
+      "description": "",
+      "category": "control",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ABS",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ACS",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "AND",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ASN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ATN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CHR",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "COS",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "DIV",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "DOWNCASE",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "EXP",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FIX",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FRAC",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "INFIX",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "INT",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "LN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "LOG",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MAX",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MIN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MOD",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "NOT",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "NUM",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "OR",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PREFIX",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "RND",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ROUND",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SGN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SIN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SPLIT",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SQR",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STR",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STR2",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STRLEN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STRSPN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STRSTR",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "STRSUB",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SUFFIX",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TAN",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "UPCASE",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VAL",
+      "signature": "",
+      "description": "",
+      "category": "function",
+      "return_type": "function",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "BLOCK",
+      "signature": "a, b, c",
+      "description": "生成长方体，沿当前坐标系正方向延伸。 / 常见坑：参数写反导致方向和尺寸错位。",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 3,
+      "param_count_max": 3
+    },
+    {
+      "name": "BPRISM_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CONE",
+      "signature": "h, r1, r2, alpha1, alpha2",
+      "description": "圆锥/圆台体。",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 3,
+      "param_count_max": 5
+    },
+    {
+      "name": "COONS",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CPRISM_",
+      "signature": "top_mat, bottom_mat, side_mat, n, h, ...",
+      "description": "顶/底/侧材质可分离控制。",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 8,
+      "param_count_max": 0
     },
     {
       "name": "CYLIND",
       "signature": "h, r",
+      "description": "沿当前 Z 轴生成圆柱。 / 常见坑：把参数写成 `CYLIND r, h`。",
+      "category": "geometry",
       "return_type": "void",
-      "description": "圆柱体，高度 h，底面半径 r",
       "param_count_min": 2,
-      "param_count_max": 2,
-      "category": "geometry"
+      "param_count_max": 2
+    },
+    {
+      "name": "CYLINDER",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CYLIND_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "EXTRUDE",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "EXTRUDE_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FPRISM_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MASS_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MESH",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PGON",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 3,
+      "param_count_max": 0
+    },
+    {
+      "name": "PGON_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PLANE",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PLANE_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "POLY",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "POLY2_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "POLY2_B",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "POLYROOF_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "POLY_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PRISM",
+      "signature": "n, h, x1, y1, x2, y2, ..., xn, yn",
+      "description": "任意多边形截面拉伸。",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 6,
+      "param_count_max": 0
+    },
+    {
+      "name": "PRISM_",
+      "signature": "n, h, x1, y1, s1, x2, y2, s2, ..., xn, yn, sn",
+      "description": "带边/面状态控制的棱柱。 / 常见坑：忘记 `h`，触发参数个数错误。",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 5,
+      "param_count_max": 0
+    },
+    {
+      "name": "PYRAMID",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "REVOLVE",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "REVOLVE_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "RULED_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
     },
     {
       "name": "SPHERE",
       "signature": "r",
+      "description": "在当前原点生成球体。",
+      "category": "geometry",
       "return_type": "void",
-      "description": "球体，半径 r",
       "param_count_min": 1,
-      "param_count_max": 1,
-      "category": "geometry"
+      "param_count_max": 1
     },
     {
-      "name": "CONE",
-      "signature": "h, r1, r2, alpha, beta",
+      "name": "SPRISM_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
       "return_type": "void",
-      "description": "圆锥/圆台，r1 底面半径，r2 顶面半径（0 为锥）",
-      "param_count_min": 3,
-      "param_count_max": 5,
-      "category": "geometry"
+      "param_count_min": 0,
+      "param_count_max": 0
     },
     {
-      "name": "PRISM_",
-      "signature": "n, h, x1, y1, s1, ..., xn, yn, sn",
+      "name": "TUBE",
+      "signature": "n, m, mask, ...",
+      "description": "管状/沿路径截面命令，适合扶手、管件。",
+      "category": "geometry",
       "return_type": "void",
-      "description": "任意截面棱柱。n=顶点数，h=高度，后续每顶点三元组 (x, y, 边状态)",
-      "param_count_min": 5,
-      "param_count_max": 0,
-      "category": "geometry"
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TUBEA",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TUBEB",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TUBE_",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "XFORM",
+      "signature": "a, b, c, d, e, f, g, h, i, j, k, l",
+      "description": "直接设置 3x4 变换矩阵，高级场景使用。",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "XFORMR",
+      "signature": "",
+      "description": "",
+      "category": "geometry",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ADDGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ENDGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "GROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "GROUP_OPERATION",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ISECTGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "KILLGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MULGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "OPERATION",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PLACEGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SECTGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "SUBGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "UNIONGROUP",
+      "signature": "",
+      "description": "",
+      "category": "group",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ASSERT",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CALL",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CLOSE",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CUTFORM",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CUTPLANE",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CUTPOLYA",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "CUTPOLYX",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FILE",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "GET",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "IND",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "INPUT",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "MACRO",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "NSP",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "OPEN",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "OUTPUT",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PRINT",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PUT",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "REQUEST",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "RESOL",
+      "signature": "n",
+      "description": "`RESOL`：圆弧分段数。",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TOLER",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VARDIM1",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VARDIM2",
+      "signature": "",
+      "description": "",
+      "category": "misc",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "DEFAULT",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "HIDEPARAMETER",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "LOCK",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PARAMETERS",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "RANGE",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VALUE",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VALUES",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "VARTYPE",
+      "signature": "",
+      "description": "",
+      "category": "parameter",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ALIGN",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ANCHOR",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ENDPARAGRAPH",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FONT",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "FRAME",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "PARAGRAPH",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "RICHTEXT2",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TAB",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TEXT",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TEXT2",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "TEXTBLOCK",
+      "signature": "",
+      "description": "",
+      "category": "text",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
     },
     {
       "name": "ADD",
       "signature": "x, y, z",
+      "description": "平移当前坐标系。",
+      "category": "transform",
       "return_type": "void",
-      "description": "平移变换入栈，必须配对 DEL",
       "param_count_min": 3,
-      "param_count_max": 3,
-      "category": "transform"
+      "param_count_max": 3
     },
     {
-      "name": "ROT",
-      "signature": "alpha, x, y, z",
+      "name": "ADD2",
+      "signature": "dx, dy",
+      "description": "",
+      "category": "transform",
       "return_type": "void",
-      "description": "旋转变换入栈（度数），必须配对 DEL",
-      "param_count_min": 4,
-      "param_count_max": 4,
-      "category": "transform"
+      "param_count_min": 2,
+      "param_count_max": 2
     },
     {
-      "name": "MUL",
-      "signature": "x, y, z",
+      "name": "ADDX",
+      "signature": "",
+      "description": "",
+      "category": "transform",
       "return_type": "void",
-      "description": "缩放变换入栈，必须配对 DEL",
-      "param_count_min": 3,
-      "param_count_max": 3,
-      "category": "transform"
+      "param_count_min": 1,
+      "param_count_max": 1
+    },
+    {
+      "name": "ADDY",
+      "signature": "",
+      "description": "",
+      "category": "transform",
+      "return_type": "void",
+      "param_count_min": 1,
+      "param_count_max": 1
+    },
+    {
+      "name": "ADDZ",
+      "signature": "",
+      "description": "",
+      "category": "transform",
+      "return_type": "void",
+      "param_count_min": 1,
+      "param_count_max": 1
     },
     {
       "name": "DEL",
       "signature": "n",
+      "description": "`DEL n`：弹出 n 层变换。",
+      "category": "transform",
       "return_type": "void",
-      "description": "弹出最近 n 层变换栈，DEL 1 最常用",
       "param_count_min": 1,
-      "param_count_max": 1,
-      "category": "transform"
+      "param_count_max": 1
     },
     {
       "name": "DELALL",
       "signature": "",
+      "description": "",
+      "category": "transform",
       "return_type": "void",
-      "description": "清空所有变换栈层",
       "param_count_min": 0,
-      "param_count_max": 0,
-      "category": "transform"
+      "param_count_max": 0
     },
     {
-      "name": "MATERIAL",
-      "signature": "mat_name_or_index",
+      "name": "DELN",
+      "signature": "",
+      "description": "",
+      "category": "transform",
       "return_type": "void",
-      "description": "设置当前材质，参数为材质名称字符串或材质索引",
-      "param_count_min": 1,
-      "param_count_max": 1,
-      "category": "attribute"
+      "param_count_min": 0,
+      "param_count_max": 0
     },
     {
-      "name": "DEFINE MATERIAL",
-      "signature": "mat_name, red, green, blue, ...",
-      "return_type": "void",
-      "description": "定义自定义材质，必须在 MATERIAL 引用前定义",
-      "param_count_min": 4,
-      "param_count_max": 0,
-      "category": "attribute"
-    },
-    {
-      "name": "PEN",
-      "signature": "pen_index",
-      "return_type": "void",
-      "description": "设置画笔颜色编号",
-      "param_count_min": 1,
-      "param_count_max": 1,
-      "category": "attribute"
-    },
-    {
-      "name": "RECT",
-      "signature": "x1, y1, x2, y2",
-      "return_type": "void",
-      "description": "2D 矩形（由对角两点定义）",
-      "param_count_min": 4,
-      "param_count_max": 4,
-      "category": "2d"
-    },
-    {
-      "name": "LINE",
-      "signature": "x1, y1, x2, y2",
-      "return_type": "void",
-      "description": "2D 直线",
-      "param_count_min": 4,
-      "param_count_max": 4,
-      "category": "2d"
-    },
-    {
-      "name": "ARC",
-      "signature": "x, y, r, alpha, beta",
-      "return_type": "void",
-      "description": "2D 圆弧，圆心(x,y)，半径 r，起止角度",
-      "param_count_min": 5,
-      "param_count_max": 5,
-      "category": "2d"
-    },
-    {
-      "name": "HOTSPOT",
+      "name": "MUL",
       "signature": "x, y, z",
+      "description": "缩放当前坐标系。",
+      "category": "transform",
       "return_type": "void",
-      "description": "3D 热点，用于 Archicad 中拖拽操控",
       "param_count_min": 3,
-      "param_count_max": 3,
-      "category": "misc"
+      "param_count_max": 3
     },
     {
-      "name": "HOTSPOT2",
-      "signature": "x, y",
+      "name": "MUL2",
+      "signature": "",
+      "description": "",
+      "category": "transform",
       "return_type": "void",
-      "description": "2D 热点",
-      "param_count_min": 2,
-      "param_count_max": 2,
-      "category": "2d"
+      "param_count_min": 0,
+      "param_count_max": 0
     },
     {
-      "name": "PROJECT2",
-      "signature": "angle, code",
+      "name": "ROT",
+      "signature": "angle",
+      "description": "旋转变换，角度单位是度。",
+      "category": "transform",
       "return_type": "void",
-      "description": "将 3D 几何投影到 2D 平面图",
-      "param_count_min": 2,
-      "param_count_max": 2,
-      "category": "2d"
+      "param_count_min": 1,
+      "param_count_max": 1
+    },
+    {
+      "name": "ROT2",
+      "signature": "",
+      "description": "",
+      "category": "transform",
+      "return_type": "void",
+      "param_count_min": 0,
+      "param_count_max": 0
+    },
+    {
+      "name": "ROTX",
+      "signature": "",
+      "description": "",
+      "category": "transform",
+      "return_type": "void",
+      "param_count_min": 1,
+      "param_count_max": 1
+    },
+    {
+      "name": "ROTY",
+      "signature": "",
+      "description": "",
+      "category": "transform",
+      "return_type": "void",
+      "param_count_min": 1,
+      "param_count_max": 1
+    },
+    {
+      "name": "ROTZ",
+      "signature": "",
+      "description": "",
+      "category": "transform",
+      "return_type": "void",
+      "param_count_min": 1,
+      "param_count_max": 1
     }
   ],
   "bim_concepts": [
     {
       "name": "Box",
-      "aliases": ["cube", "rectangular", "box", "方体", "长方体", "矩形体"],
+      "aliases": [
+        "cube",
+        "rectangular",
+        "box",
+        "方体",
+        "长方体",
+        "矩形体"
+      ],
       "description": "矩形体块",
-      "required_apis": ["BLOCK"],
+      "required_apis": [
+        "BLOCK"
+      ],
       "init_pattern": "BLOCK A, B, ZZYZX"
     },
     {
       "name": "Column",
-      "aliases": ["column", "pillar", "柱", "圆柱", "方柱", "柱子"],
+      "aliases": [
+        "column",
+        "pillar",
+        "柱",
+        "圆柱",
+        "方柱",
+        "柱子"
+      ],
       "description": "建筑柱构件",
-      "required_apis": ["CYLIND", "BLOCK", "MATERIAL", "PEN"],
+      "required_apis": [
+        "CYLIND",
+        "BLOCK",
+        "MATERIAL",
+        "PEN"
+      ],
       "init_pattern": "MATERIAL mat_name\nCYLIND ZZYZX, A/2"
     },
     {
       "name": "Window",
-      "aliases": ["window", "窗", "窗户", "开窗"],
+      "aliases": [
+        "window",
+        "窗",
+        "窗户",
+        "开窗"
+      ],
       "description": "窗构件，含框架和开口",
-      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL", "RECT"],
+      "required_apis": [
+        "BLOCK",
+        "ADD",
+        "DEL",
+        "MATERIAL",
+        "RECT"
+      ],
       "init_pattern": "ADD 0, 0, 0\nBLOCK A, B, ZZYZX\nDEL 1"
     },
     {
       "name": "Door",
-      "aliases": ["door", "门", "门构件"],
+      "aliases": [
+        "door",
+        "门",
+        "门构件"
+      ],
       "description": "门构件，含门框和门扇",
-      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL", "RECT"],
+      "required_apis": [
+        "BLOCK",
+        "ADD",
+        "DEL",
+        "MATERIAL",
+        "RECT"
+      ],
       "init_pattern": "ADD 0, 0, 0\nBLOCK A, B, ZZYZX\nDEL 1"
     },
     {
       "name": "Furniture",
-      "aliases": ["furniture", "家具", "桌子", "椅子", "柜子"],
+      "aliases": [
+        "furniture",
+        "家具",
+        "桌子",
+        "椅子",
+        "柜子"
+      ],
       "description": "家具类构件",
-      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL"],
+      "required_apis": [
+        "BLOCK",
+        "ADD",
+        "DEL",
+        "MATERIAL"
+      ],
       "init_pattern": "MATERIAL mat_name\nADD 0, 0, 0\nBLOCK A, B, ZZYZX\nDEL 1"
     },
     {
       "name": "Material",
-      "aliases": ["material", "材质", "表面材质", "定义材质"],
+      "aliases": [
+        "material",
+        "材质",
+        "表面材质",
+        "定义材质"
+      ],
       "description": "材质定义与引用",
-      "required_apis": ["DEFINE MATERIAL", "MATERIAL"],
+      "required_apis": [
+        "DEFINE MATERIAL",
+        "MATERIAL"
+      ],
       "init_pattern": "DEFINE MATERIAL \"mat_name\", 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 100, 0\nMATERIAL \"mat_name\""
     },
     {
       "name": "Cylinder",
-      "aliases": ["cylinder", "圆柱", "管", "圆筒"],
+      "aliases": [
+        "cylinder",
+        "圆柱",
+        "管",
+        "圆筒"
+      ],
       "description": "圆柱体几何",
-      "required_apis": ["CYLIND", "MATERIAL"],
+      "required_apis": [
+        "CYLIND",
+        "MATERIAL"
+      ],
       "init_pattern": "CYLIND ZZYZX, A/2"
     },
     {
       "name": "Shelf",
-      "aliases": ["shelf", "书架", "货架", "置物架", "层架"],
+      "aliases": [
+        "shelf",
+        "书架",
+        "货架",
+        "置物架",
+        "层架"
+      ],
       "description": "层架类构件，含多层搁板",
-      "required_apis": ["BLOCK", "ADD", "DEL", "MATERIAL"],
+      "required_apis": [
+        "BLOCK",
+        "ADD",
+        "DEL",
+        "MATERIAL"
+      ],
       "init_pattern": "FOR i = 1 TO shelf_count\n  ADD 0, 0, (i-1) * shelf_spacing\n  BLOCK A, B, shelf_thickness\n  DEL 1\nNEXT i"
     }
   ],
@@ -253,6 +1998,62 @@
       "concept": "Material",
       "diagnosis": "材质变量未初始化。",
       "fix_hint": "在使用前添加：DEFINE MATERIAL \"变量名\", r, g, b, ..."
+    },
+    {
+      "error_category": "xml_parse_error",
+      "match_via": "error_classifier",
+      "target_file": "paramlist.xml",
+      "diagnosis": "paramlist.xml 无法解析。",
+      "fix_hint": "paramlist.xml 无法解析：检查 XML 标签闭合、特殊字符转义（<>&）、UTF-8 编码是否正确。",
+      "concept": "Paramlist"
+    },
+    {
+      "error_category": "missing_endif",
+      "match_via": "error_classifier",
+      "target_file": "scripts/3d.gdl",
+      "diagnosis": "IF/ENDIF 块未正确闭合。",
+      "fix_hint": "IF/ENDIF 不配对：每个多行 IF ... THEN 必须有对应 ENDIF，单行 IF 不需要 ENDIF。",
+      "concept": ""
+    },
+    {
+      "error_category": "missing_next",
+      "match_via": "error_classifier",
+      "target_file": "scripts/3d.gdl",
+      "diagnosis": "FOR/NEXT 循环未正确闭合。",
+      "fix_hint": "FOR/NEXT 不配对：每个 FOR 必须有对应 NEXT，检查嵌套循环是否都有闭合。",
+      "concept": ""
+    },
+    {
+      "error_category": "missing_end",
+      "match_via": "error_classifier",
+      "target_file": "scripts/3d.gdl",
+      "diagnosis": "3D 脚本主流程末尾缺少 END。",
+      "fix_hint": "3D 脚本末尾缺少 END：确保主流程最后一行是 END，子程序用 RETURN 不用 END。",
+      "concept": ""
+    },
+    {
+      "error_category": "undefined_var",
+      "match_via": "error_classifier",
+      "target_file": "",
+      "diagnosis": "脚本中引用了未定义的变量或参数。",
+      "fix_hint": "未定义变量：检查 paramlist.xml 中参数名与脚本中使用的变量名是否完全一致（区分大小写）。",
+      "concept": "Variable"
+    },
+    {
+      "error_category": "wrong_arg_count",
+      "match_via": "error_classifier",
+      "target_file": "scripts/3d.gdl",
+      "diagnosis": "GDL 命令参数数量不正确。",
+      "fix_hint": "参数数量错误：最常见于 PRISM_ 缺少高度参数（PRISM_ n, h, ...），或顶点数与 n 不一致。",
+      "concept": "APIFunction"
+    },
+    {
+      "error_category": "add_del_mismatch",
+      "match_via": "error_classifier",
+      "target_file": "scripts/3d.gdl",
+      "diagnosis": "变换栈 ADD/DEL 不配平。",
+      "fix_hint": "ADD/DEL 不配平：每条执行路径（含 IF 分支）的变换层数必须配平，ADD/ADDX/ADDY/ADDZ 与 DEL 需一一对应。",
+      "concept": "Transform"
     }
   ]
 }
