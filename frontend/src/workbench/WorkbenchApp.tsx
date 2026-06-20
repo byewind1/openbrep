@@ -321,6 +321,7 @@ export function WorkbenchApp() {
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
             onOpenScript={openScriptInEditor}
             onSaveRevision={(message) => void saveRevision(message)}
+            onRevealLine={(scriptName, lineNumber) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' })}
             modelOptions={llmSettings.model_options ?? []}
             currentModel={llmSettings.model}
             onModelChange={switchLlmModel}

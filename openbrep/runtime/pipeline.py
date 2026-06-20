@@ -562,6 +562,148 @@ class TaskPipeline:
                 logger.warning("Static-check repair failed: %s", exc)
         # ─────────────────────────────────────────────────────────────────────
 
+        # ── CREATE 路径：编译验证 + 多轮自愈闭环 ────────────────────────────
+        # 仅当真实编译器（LP_XMLConverter）已配置时执行；
+        # 未配置时明确标记 SKIPPED_NO_COMPILER，不再返回含糊的 NOT_RUN。
+        compile_result: Optional[CompileResult] = None
+        auto_repair_info = ""
+        _graph_powered_repair = False
+        _MAX_CREATE_REPAIR = 3
+        _create_repair_rounds = 0
+
+        if not self.config.compiler.path:
+            compile_not_run_reason = (
+                "SKIPPED_NO_COMPILER（未配置 LP_XMLConverter，仅依赖静态检查）"
+            )
+        else:
+            compile_not_run_reason = ""
+            try:
+                import tempfile as _tempfile
+                gsm_name = request.gsm_name or project.name
+                out_dir_str = request.output_dir or ""
+                if out_dir_str:
+                    create_out_dir = Path(out_dir_str)
+                else:
+                    create_out_dir = Path(_tempfile.mkdtemp(prefix="obr_create_"))
+                create_out_dir.mkdir(parents=True, exist_ok=True)
+                create_gsm_path = str(create_out_dir / f"{gsm_name}.gsm")
+
+                hsf_dir_c = project.save_to_disk()
+                compile_result = compiler.hsf2libpart(str(hsf_dir_c), create_gsm_path)
+                on_event("compile_result", {
+                    "success": compile_result.success,
+                    "error": compile_result.stderr if not compile_result.success else "",
+                })
+
+                while (
+                    compile_result is not None
+                    and not compile_result.success
+                    and _create_repair_rounds < _MAX_CREATE_REPAIR
+                ):
+                    _create_repair_rounds += 1
+                    error_parts = [
+                        p.strip()
+                        for p in [compile_result.stderr or "", compile_result.stdout or ""]
+                        if p.strip()
+                    ]
+                    error_log = "\n".join(error_parts)
+                    on_event("status", {
+                        "message": f"🔧 编译失败（第 {_create_repair_rounds} 轮），正在自动修复…"
+                    })
+                    logger.info(
+                        "CREATE compile fail round %d; error_log=%d chars",
+                        _create_repair_rounds, len(error_log),
+                    )
+
+                    # 图谱诊断：复用 diagnose_error（ErrorClassifier + 图谱 concept 归因）
+                    graph_diagnosis = ""
+                    try:
+                        from openbrep.knowledge_graph import get_graph_manager
+                        graph_diagnosis = get_graph_manager().diagnose_error(error_log)
+                        if graph_diagnosis:
+                            _graph_powered_repair = True
+                    except Exception as _g_exc:
+                        logger.debug("Graph diagnosis skipped in CREATE repair: %s", _g_exc)
+
+                    graph_hint = f"\n\n{graph_diagnosis}" if graph_diagnosis else ""
+                    repair_instruction = (
+                        f"{enriched_instruction}\n\n"
+                        f"编译失败（第 {_create_repair_rounds} 轮），请基于当前脚本进行最小改动修复以下错误：\n"
+                        f"```\n{error_log[:800]}\n```"
+                        f"{graph_hint}"
+                    )
+                    try:
+                        repair_changes, _repair_plain = agent.generate_only(
+                            instruction=repair_instruction,
+                            project=project,
+                            knowledge=knowledge,
+                            skills=skills_text,
+                            include_all_scripts=True,
+                            history=request.history,
+                        )
+                        repair_cleaned = (
+                            {k: sanitize_llm_script_output(v, k) for k, v in repair_changes.items()}
+                            if repair_changes else {}
+                        )
+                        repair_cleaned, repair_lint = _run_gdl_linter(repair_cleaned, on_event=on_event)
+                        if repair_cleaned:
+                            agent._apply_changes(project, repair_cleaned)
+                            cleaned.update(repair_cleaned)
+                        if repair_lint:
+                            lint_summary = "\n\n".join(p for p in [lint_summary, repair_lint] if p)
+
+                        hsf_dir_c2 = project.save_to_disk()
+                        compile_result = compiler.hsf2libpart(str(hsf_dir_c2), create_gsm_path)
+                        on_event("compile_result", {
+                            "success": compile_result.success,
+                            "error": compile_result.stderr if not compile_result.success else "",
+                        })
+                        if compile_result.success:
+                            auto_repair_info = (
+                                f"🔧 第 {_create_repair_rounds} 轮自动修复后编译通过"
+                            )
+                            break
+                        elif _create_repair_rounds >= _MAX_CREATE_REPAIR:
+                            short_err = compile_result.stderr[:300].strip()
+                            auto_repair_info = (
+                                f"🔧 {_MAX_CREATE_REPAIR} 轮自动修复后仍编译失败，"
+                                f"已标记为需人工复查：\n```\n{short_err}\n```"
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "CREATE auto-repair round %d exception: %s", _create_repair_rounds, exc
+                        )
+                        auto_repair_info = f"🔧 第 {_create_repair_rounds} 轮自动修复异常：{exc}"
+                        break
+
+                # 编译通过后创建 Revision（与 MODIFY 路径对称）
+                if compile_result is not None and compile_result.success and cleaned:
+                    _create_auto_revision(
+                        project,
+                        message="auto: after create (compile ok)",
+                        trigger="create",
+                        intent=request.intent or "CREATE",
+                        user_instruction=request.user_input,
+                        changed_files=list(cleaned.keys()),
+                        parent_revision_id=(
+                            get_latest_revision_id(project.root)
+                            if _can_revision_project(project) else None
+                        ),
+                        metadata={
+                            "compile": _compile_revision_metadata(compile_result, project),
+                            "explanation": "",
+                        },
+                    )
+                    logger.info(
+                        "[create] compile ok after %d repair round(s); revision created",
+                        _create_repair_rounds,
+                    )
+
+            except Exception as exc:
+                logger.warning("CREATE compile verification failed: %s", exc)
+                compile_not_run_reason = f"编译调用异常：{exc}"
+        # ─────────────────────────────────────────────────────────────────────
+
         create_text_parts = []
         if object_plan is not None:
             create_text_parts.append(object_plan.to_user_summary())
@@ -569,10 +711,10 @@ class TaskPipeline:
             create_text_parts.append(plain_text)
         if lint_summary:
             create_text_parts.append(lint_summary)
+        if auto_repair_info:
+            create_text_parts.append(auto_repair_info)
 
-        # ── Verification report (Phase 3/4): aggregate checks into a
-        # proof-oriented report. CREATE path does not compile by default, so
-        # compile is reported honestly as not_run. ──────────────────────────
+        # ── Verification report ──────────────────────────────────────────────
         from openbrep.verification import build_verification_report
         verification_report = build_verification_report(
             intent=request.intent or "CREATE",
@@ -581,10 +723,11 @@ class TaskPipeline:
             object_plan=object_plan,
             static_result=static_result,
             lint_summary=lint_summary,
-            compile_result=None,
-            compile_not_run_reason="CREATE 路径默认不执行编译验证",
+            compile_result=compile_result,
+            compile_not_run_reason=compile_not_run_reason,
             static_repair_triggered=bool(undef_errors),
-            graph_powered=_graph_constraint_injected,
+            auto_repair_info=auto_repair_info,
+            graph_powered=_graph_constraint_injected or _graph_powered_repair,
         )
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────

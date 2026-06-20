@@ -60,6 +60,7 @@ class VerificationCheck:
     status: CheckStatus
     detail: str = ""
     auto_repairable: bool = False
+    line_errors: list = field(default_factory=list)  # [{line_number, severity, message}]
 
 
 @dataclass
@@ -116,6 +117,7 @@ class VerificationReport:
                     "status": c.status.value,
                     "detail": c.detail,
                     "auto_repairable": c.auto_repairable,
+                    **({"line_errors": c.line_errors} if c.line_errors else {}),
                 }
                 for c in self.checks
             ],
@@ -357,10 +359,12 @@ def build_verification_report(
             ))
         else:
             err = (compile_result.stderr or compile_result.stdout or "").strip()
+            line_errors = _extract_line_errors_from_stderr(err)
             report.errors_caught.append(f"编译失败：{err[:300]}")
             checks.append(VerificationCheck(
                 name="编译验证", check_type="compile",
                 status=CheckStatus.FAIL, detail="编译失败", auto_repairable=True,
+                line_errors=line_errors,
             ))
     else:
         reason = compile_not_run_reason or "本次任务未执行编译验证"
@@ -368,7 +372,8 @@ def build_verification_report(
             name="编译验证", check_type="compile",
             status=CheckStatus.NOT_RUN, detail=reason,
         ))
-        report.remaining_risks.append("未编译验证，GSM 输出未确认")
+        if "SKIPPED_NO_COMPILER" not in reason:
+            report.remaining_risks.append("未编译验证，GSM 输出未确认")
 
     # 5. fixes applied
     if static_repair_triggered:
@@ -458,6 +463,25 @@ def _status_icon(status: CheckStatus) -> str:
     return {"pass": "✅", "fail": "❌", "unknown": "❓", "not_run": "⏸️"}.get(
         status.value, "❓"
     )
+
+
+def _extract_line_errors_from_stderr(stderr: str) -> list[dict]:
+    """从 LP_XMLConverter stderr 提取结构化行号错误列表。
+
+    LP_XMLConverter 格式：
+      (LINE) : error: MESSAGE
+      (LINE) : warning: MESSAGE
+    """
+    results = []
+    for m in re.finditer(r'\((\d+)\)\s*:\s*(error|warning):\s*(.+)', stderr or ""):
+        line_num = int(m.group(1))
+        if line_num > 0:  # 0 通常是"无行号"的占位
+            results.append({
+                "line_number": line_num,
+                "severity": m.group(2),
+                "message": m.group(3).strip(),
+            })
+    return results
 
 
 def _compile_label(status: CheckStatus) -> str:

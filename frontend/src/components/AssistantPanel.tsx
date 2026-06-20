@@ -15,6 +15,7 @@ interface AssistantPanelProps {
   onAdoptCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => void
+  onRevealLine?: (scriptName: string, lineNumber: number) => void
   modelOptions?: LlmModelOption[]
   currentModel?: string
   onModelChange?: (model: string) => Promise<void>
@@ -35,6 +36,7 @@ export function AssistantPanel({
   onAdoptCode,
   onOpenScript,
   onSaveRevision,
+  onRevealLine,
   modelOptions = [],
   currentModel = '',
   onModelChange,
@@ -244,7 +246,7 @@ export function AssistantPanel({
                   ) : null}
                 </div>
               ) : null}
-              {message.verification ? <VerificationCard report={message.verification} /> : null}
+              {message.verification ? <VerificationCard report={message.verification} onRevealLine={onRevealLine} /> : null}
               {message.role === 'assistant' && message.content.includes('```') ? (
                 <button type="button" disabled={busy} onClick={() => onAdoptCode(index)}>
                   Adopt code
@@ -530,8 +532,17 @@ const STATUS_ICON: Record<string, string> = {
   not_run: '⏸️',
 }
 
-function VerificationCard({ report }: { report: VerificationReport }) {
+function VerificationCard({
+  report,
+  onRevealLine,
+}: {
+  report: VerificationReport
+  onRevealLine?: (scriptName: string, lineNumber: number) => void
+}) {
   const compileCheck = report.checks.find((c) => c.check_type === 'compile')
+  const isSkippedNoCompiler =
+    compileCheck?.status === 'not_run' &&
+    compileCheck.detail.includes('SKIPPED_NO_COMPILER')
   const compileLabel = compileCheck
     ? `${STATUS_ICON[compileCheck.status] ?? '❓'} ${
         compileCheck.status === 'pass'
@@ -539,14 +550,17 @@ function VerificationCard({ report }: { report: VerificationReport }) {
           : compileCheck.status === 'fail'
             ? '编译失败'
             : compileCheck.status === 'not_run'
-              ? '未编译'
+              ? isSkippedNoCompiler ? '无编译器' : '未编译'
               : '未知'
       }`
     : null
   const failedChecks = report.checks.filter((c) => c.status === 'fail')
   const unknownChecks = report.checks.filter(
-    (c) => c.status === 'unknown' || c.status === 'not_run',
+    (c) => c.status === 'unknown' || (c.status === 'not_run' && !isSkippedNoCompiler),
   )
+  // 编译失败时的行级错误列表
+  const compileLineErrors = compileCheck?.line_errors ?? []
+
   return (
     <div className={`assistant-verification ${report.passed ? 'is-pass' : 'is-fail'}`}>
       <div className="assistant-verification-header">
@@ -554,6 +568,11 @@ function VerificationCard({ report }: { report: VerificationReport }) {
         <em className={`assistant-verification-confidence confidence-${report.confidence}`}>
           置信度 {CONFIDENCE_LABEL[report.confidence] ?? report.confidence}
         </em>
+        {report.graph_powered ? (
+          <span className="assistant-verification-graph-badge" title="本次任务使用了 GDL 知识图谱约束或诊断">
+            🔌 图谱
+          </span>
+        ) : null}
       </div>
       <div className="assistant-verification-counts">
         <span>✅ {report.counts.pass ?? 0}</span>
@@ -562,6 +581,11 @@ function VerificationCard({ report }: { report: VerificationReport }) {
         <span>⏸️ {report.counts.not_run ?? 0}</span>
         {compileLabel ? <span className="assistant-verification-compile">{compileLabel}</span> : null}
       </div>
+      {isSkippedNoCompiler ? (
+        <p className="assistant-verification-no-compiler">
+          ⚠️ 未配置 LP_XMLConverter，跳过编译验证。请在设置中配置编译器路径以获得完整校验。
+        </p>
+      ) : null}
       {report.fixes_applied.length ? (
         <p className="assistant-verification-fixes">
           已修复：{report.fixes_applied.slice(0, 2).join('；')}
@@ -571,6 +595,26 @@ function VerificationCard({ report }: { report: VerificationReport }) {
         <ul className="assistant-verification-fails">
           {failedChecks.slice(0, 3).map((c, i) => (
             <li key={i}>❌ {c.name}：{c.detail}</li>
+          ))}
+        </ul>
+      ) : null}
+      {compileLineErrors.length ? (
+        <ul className="assistant-verification-line-errors">
+          {compileLineErrors.slice(0, 5).map((e, i) => (
+            <li key={i}>
+              {onRevealLine ? (
+                <button
+                  type="button"
+                  className="verification-line-error-link"
+                  onClick={() => onRevealLine('3d.gdl', e.line_number)}
+                  title={`跳转到第 ${e.line_number} 行`}
+                >
+                  第 {e.line_number} 行：{e.message}
+                </button>
+              ) : (
+                <span>第 {e.line_number} 行：{e.message}</span>
+              )}
+            </li>
           ))}
         </ul>
       ) : null}

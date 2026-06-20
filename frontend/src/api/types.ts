@@ -302,12 +302,19 @@ export interface AssistantMessage {
 export type VerificationConfidence = 'low' | 'medium' | 'high'
 export type VerificationCheckStatus = 'pass' | 'fail' | 'unknown' | 'not_run'
 
+export interface VerificationLineError {
+  line_number: number
+  severity: 'error' | 'warning'
+  message: string
+}
+
 export interface VerificationCheck {
   name: string
   check_type: string // static | lint | compile | plan_check
   status: VerificationCheckStatus
   detail: string
   auto_repairable: boolean
+  line_errors?: VerificationLineError[]
 }
 
 export interface VerificationReport {
@@ -315,6 +322,7 @@ export interface VerificationReport {
   goal: string
   passed: boolean
   confidence: VerificationConfidence
+  graph_powered?: boolean
   counts: Record<VerificationCheckStatus, number>
   checks: VerificationCheck[]
   errors_caught: string[]

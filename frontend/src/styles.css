@@ -200,6 +200,47 @@ button:focus-visible {
   color: var(--status-error-text, #e74c3c);
 }
 
+.assistant-verification-graph-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+}
+.assistant-verification-no-compiler {
+  margin: 0;
+  padding: 4px 6px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  color: var(--accent, #f59e0b);
+  font-size: 10px;
+}
+.assistant-verification-line-errors {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+.verification-line-error-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 1px 2px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--status-error-text, #e74c3c);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.verification-line-error-link:hover {
+  color: #fc8181;
+}
+
 .assistant-error-badge {
   margin-left: 6px;
   font-size: 10px;
@@ -493,13 +534,21 @@ button:focus-visible {
 }
 
 .left-rail,
-.parameter-rail,
-.workbench-right-rail,
-.rail-panel {
+.parameter-rail {
   overflow: auto;
 }
 
+/* 右栏外层不滚动，内部各 panel 自己管理 overflow */
+.workbench-right-rail {
+  overflow: hidden;
+}
+
+.rail-panel {
+  overflow: hidden;
+}
+
 .left-rail {
+  min-width: 0;
   display: grid;
   grid-template-rows: minmax(170px, 0.42fr) minmax(0, 0.58fr);
   border-right: 1px solid var(--border);
@@ -631,6 +680,7 @@ button:focus-visible {
 
 .workbench-right-rail,
 .right-rail {
+  min-width: 0;   /* grid item 必须能收缩 */
   display: grid;
   grid-template-rows: 34px minmax(0, 1fr);
   border-left: 1px solid var(--border);
@@ -1171,7 +1221,8 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  overflow: auto;
+  overflow-y: auto;    /* 只纵向滚动 */
+  overflow-x: hidden;  /* 横向不出滚动条，内容随容器宽度自然换行 */
   padding: 10px;
 }
 
@@ -1182,6 +1233,7 @@ button:focus-visible {
 .assistant-message {
   display: grid;
   gap: 5px;
+  min-width: 0;        /* 允许 flex 子项缩小到容器宽度 */
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px;
@@ -1201,7 +1253,9 @@ button:focus-visible {
 
 .assistant-message p {
   margin: 0;
+  min-width: 0;
   white-space: pre-wrap;
+  overflow-wrap: break-word;  /* 长单词 / URL / 代码不撑宽容器 */
   line-height: 1.45;
 }
 
