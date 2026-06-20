@@ -14,8 +14,13 @@ html,
 body,
 #root {
   min-width: 1180px;
-  min-height: 100vh;
+  height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+
+html {
+  height: 100vh;
 }
 
 body {
@@ -67,7 +72,7 @@ button:focus-visible {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100%;
   display: grid;
   grid-template-rows: var(--header-height) minmax(0, 1fr) var(--bottom-drawer-height);
   background: var(--bg-base);
@@ -655,6 +660,11 @@ button:focus-visible {
 .rail-panel,
 .viewport-panel {
   min-height: 0;
+}
+
+/* viewport-panel 内部各 panel 自行管理滚动，外层不滚动 */
+.viewport-panel {
+  overflow: hidden;
 }
 
 .assistant-panel {
@@ -1245,6 +1255,186 @@ button:focus-visible {
   height: 26px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.assistant-input-wrap {
+  position: relative;
+}
+
+.slash-picker {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.slash-picker--models {
+  max-height: 260px;
+}
+
+.slash-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.slash-picker-loading {
+  font-weight: normal;
+  color: var(--text-muted);
+}
+
+.slash-picker-empty {
+  margin: 0;
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.slash-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.slash-picker-item:last-child {
+  border-bottom: 0;
+}
+
+.slash-picker-item:hover,
+.slash-picker-item.is-active {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.07));
+}
+
+.slash-picker-item.is-current {
+  color: var(--accent, #60a5fa);
+}
+
+.slash-picker-label {
+  font-weight: 500;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-picker-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.slash-picker-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--accent-dim, rgba(96, 165, 250, 0.15));
+  color: var(--accent, #60a5fa);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* ── Unified chat footer ─────────────────────────────────────────────────── */
+.assistant-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.chat-intent-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: auto;
+  opacity: 0.8;
+}
+
+.chat-intent-badge.intent-modify { color: var(--accent, #60a5fa); }
+.chat-intent-badge.intent-create { color: #4ade80; }
+.chat-intent-badge.intent-debug  { color: #fb923c; }
+.chat-intent-badge.intent-explain { color: var(--text-muted); }
+
+.chat-resume-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chat-resume-btn:hover { background: var(--bg-hover, rgba(255,255,255,0.07)); }
+
+.chat-send-btn {
+  min-width: 64px;
+  padding: 5px 14px;
+  background: var(--accent, #60a5fa);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.chat-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-stop-btn {
+  min-width: 64px;
+  padding: 5px 14px;
+  background: var(--status-error-text, #ef4444);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.assistant-message.is-interrupted {
+  opacity: 0.6;
+}
+
+.assistant-interrupted {
+  background: rgba(251, 146, 60, 0.15);
+  color: #fb923c;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+.slash-picker-group-label {
+  padding: 4px 10px 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  background: var(--bg-subtle, rgba(255, 255, 255, 0.03));
+  border-bottom: 1px solid var(--border);
 }
 
 .assistant-input textarea {

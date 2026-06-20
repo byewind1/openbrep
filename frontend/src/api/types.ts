@@ -294,6 +294,7 @@ export interface AssistantMessage {
   changedFiles?: string[]
   errorCategory?: 'llm' | 'compile' | 'general'
   verification?: VerificationReport
+  interrupted?: boolean
 }
 
 // ── Verification report (Phase 3/4/5 self-correcting agent evidence) ──────

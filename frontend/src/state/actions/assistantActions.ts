@@ -1,9 +1,11 @@
 import type { AssistantImageAttachment } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
+import { detectChatIntent, isResumeMessage } from '../chatIntent'
 import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 const ASSISTANT_PENDING_PREFIX = 'Thinking...'
+const INTERRUPTED_CONTENT = '⏹ 已中断'
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
   function userMessageContent(message: string, image?: AssistantImageAttachment | null) {
@@ -27,6 +29,53 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       assistantBusy: false,
       compileLog: [note, ...state.compileLog].slice(0, 20),
     }))
+  }
+
+  async function _createProject(message: string, image: AssistantImageAttachment | null = null, signal?: AbortSignal) {
+    const trimmed = message.trim()
+    if (!trimmed) return
+    set((state) => ({
+      assistantBusy: true,
+      assistantMessages: [
+        ...state.assistantMessages,
+        { role: 'user', content: userMessageContent(trimmed, image) },
+        { role: 'assistant', content: pendingAssistantMessage('create', image) },
+      ],
+    }))
+    const epoch = get().projectEpoch
+    const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, image, signal)
+    if (projectSwitchedSince(epoch)) {
+      discardStaleResult(
+        result.ok && result.project
+          ? `Project "${result.project.name}" was created, but the workspace switched meanwhile. Open it from recent projects.`
+          : 'Create result discarded: project switched during the request.',
+      )
+      return
+    }
+    if (!result.ok || !result.project || !result.parameters || !result.preview) {
+      const error = formatAssistantRequestError(result.error, 'Create request failed.')
+      set((state) => ({
+        assistantBusy: false,
+        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, error, {
+          errorCategory: classifyAssistantError(error),
+        }),
+        lastError: error,
+      }))
+      return
+    }
+    set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
+    await get().loadRecentProjects()
+    await get().loadScripts()
+    await get().loadRevisions()
+    set((state) => ({
+      assistantBusy: false,
+      assistantMessages: replacePendingAssistantMessage(
+        state.assistantMessages,
+        `${result.assistant?.reply ?? 'Project created.'}${formatAssistantEventSummary(result.events)}`,
+        { verification: result.assistant?.verification ?? undefined },
+      ),
+    }))
+    await persistAssistantHistory()
   }
 
   return {
@@ -130,50 +179,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     },
 
     async createProjectFromPrompt(message: string, image: AssistantImageAttachment | null = null) {
-      const trimmed = message.trim()
-      if (!trimmed) return
-      set((state) => ({
-        assistantBusy: true,
-        assistantMessages: [
-          ...state.assistantMessages,
-          { role: 'user', content: userMessageContent(trimmed, image) },
-          { role: 'assistant', content: pendingAssistantMessage('create', image) },
-        ],
-      }))
-      const epoch = get().projectEpoch
-      const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, image)
-      if (projectSwitchedSince(epoch)) {
-        discardStaleResult(
-          result.ok && result.project
-            ? `Project "${result.project.name}" was created, but the workspace switched meanwhile. Open it from recent projects.`
-            : 'Create result discarded: project switched during the request.',
-        )
-        return
-      }
-      if (!result.ok || !result.project || !result.parameters || !result.preview) {
-        const error = formatAssistantRequestError(result.error, 'Create request failed.')
-        set((state) => ({
-          assistantBusy: false,
-          assistantMessages: replacePendingAssistantMessage(state.assistantMessages, error, {
-            errorCategory: classifyAssistantError(error),
-          }),
-          lastError: error,
-        }))
-        return
-      }
-      set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
-      await get().loadRecentProjects()
-      await get().loadScripts()
-      await get().loadRevisions()
-      set((state) => ({
-        assistantBusy: false,
-        assistantMessages: replacePendingAssistantMessage(
-          state.assistantMessages,
-          `${result.assistant?.reply ?? 'Project created.'}${formatAssistantEventSummary(result.events)}`,
-          { verification: result.assistant?.verification ?? undefined },
-        ),
-      }))
-      await persistAssistantHistory()
+      return _createProject(message, image)
     },
 
     async generateAssistantChanges(message: string, image: AssistantImageAttachment | null = null) {
@@ -230,6 +236,141 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           runDiagnostics: true,
         })
       }
+    },
+
+    // ── Unified chat entry point ───────────────────────────────────────────
+    // Detects intent → routes to explain / generate / create.
+    // Supports AbortController for ESC / stop-button interruption.
+    async sendChat(message: string, image: AssistantImageAttachment | null = null) {
+      const trimmed = message.trim()
+      if (!trimmed) return
+
+      const hasProject = !!get().project
+      const interrupted = get().interruptedContext
+
+      // Follow-up after an interrupt: "继续" retries the original
+      let finalMessage = trimmed
+      let intent = detectChatIntent(trimmed, hasProject)
+      if (interrupted && isResumeMessage(trimmed)) {
+        finalMessage = interrupted.message
+        intent = detectChatIntent(interrupted.message, hasProject)
+      }
+
+      const controller = new AbortController()
+      set({ chatAbortController: controller, interruptedContext: null })
+
+      try {
+        if (intent === 'create') {
+          // createProjectFromPrompt manages its own pending messages;
+          // pass signal so the stop button can abort project creation too.
+          await _createProject(finalMessage, image, controller.signal)
+        } else if (intent === 'modify' || intent === 'debug') {
+          // inject signal via the API layer directly
+          const settings = get().llmSettings.assistant_settings ?? ''
+          set((state) => ({
+            assistantBusy: true,
+            assistantMessages: [
+              ...state.assistantMessages,
+              { role: 'user', content: userMessageContent(finalMessage, image) },
+              { role: 'assistant', content: pendingAssistantMessage('generate', image) },
+            ],
+          }))
+          const flushed = await get().flushDirtyScripts()
+          if (!flushed.ok) {
+            const error = get().lastError ?? 'Failed to save scripts before generation.'
+            set((state) => ({
+              assistantBusy: false,
+              assistantMessages: replacePendingAssistantMessage(state.assistantMessages, error),
+            }))
+            return
+          }
+          const epoch = get().projectEpoch
+          const result = await api.generateWithAssistant(finalMessage, settings, image, controller.signal)
+          if (projectSwitchedSince(epoch)) {
+            discardStaleResult('Generation result discarded: project switched during the request.')
+            return
+          }
+          const changedFiles = result.assistant?.changed_files ?? []
+          const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
+          const reply =
+            result.ok && result.assistant
+              ? `${result.assistant.reply}${suffix}${formatAssistantEventSummary(result.events)}`
+              : formatAssistantRequestError(result.error, 'Generation request failed.')
+          const replyExtras = result.ok
+            ? { changedFiles, verification: result.assistant?.verification ?? undefined }
+            : { errorCategory: classifyAssistantError(reply) }
+          set((state) => ({
+            assistantBusy: false,
+            assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply, replyExtras),
+            lastError: result.ok ? null : reply,
+            preview: result.preview ?? state.preview,
+            warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
+            draftParameters: {},
+          }))
+          await persistAssistantHistory()
+          if (result.ok) {
+            await get().refreshProjectWorkspace({
+              preferredScriptName: changedFiles[0] ?? '',
+              refreshAllScripts: true,
+              refreshPreview: false,
+              runDiagnostics: true,
+            })
+          }
+        } else {
+          // explain
+          set((state) => ({
+            assistantBusy: true,
+            assistantMessages: [
+              ...state.assistantMessages,
+              { role: 'user', content: finalMessage },
+              { role: 'assistant', content: pendingAssistantMessage('explain') },
+            ],
+          }))
+          const epoch = get().projectEpoch
+          const result = await api.askAssistant(finalMessage, controller.signal)
+          if (projectSwitchedSince(epoch)) {
+            discardStaleResult('Assistant reply discarded: project switched during the request.')
+            return
+          }
+          const reply =
+            result.ok && result.assistant
+              ? result.assistant.reply
+              : formatAssistantRequestError(result.error, 'Assistant request failed.')
+          set((state) => ({
+            assistantBusy: false,
+            assistantMessages: replacePendingAssistantMessage(
+              state.assistantMessages,
+              reply,
+              result.ok ? {} : { errorCategory: classifyAssistantError(reply) },
+            ),
+            lastError: result.ok ? null : reply,
+          }))
+          await persistAssistantHistory()
+        }
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          set((state) => ({
+            assistantBusy: false,
+            chatAbortController: null,
+            interruptedContext: { message: finalMessage, intent },
+            assistantMessages: state.assistantMessages.map((m, i) =>
+              i === state.assistantMessages.length - 1 &&
+              m.role === 'assistant' &&
+              m.content.startsWith(ASSISTANT_PENDING_PREFIX)
+                ? { ...m, content: INTERRUPTED_CONTENT, interrupted: true }
+                : m,
+            ),
+          }))
+          return
+        }
+        throw e
+      } finally {
+        set({ chatAbortController: null })
+      }
+    },
+
+    stopChat() {
+      get().chatAbortController?.abort()
     },
   }
 }

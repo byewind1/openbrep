@@ -95,6 +95,7 @@ export interface WorkbenchApi {
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   openConfig: () => Promise<{ ok: boolean; error?: string }>
   testLlmConnection: () => Promise<LlmConnectionTestResult>
+  updateLlmModel: (model: string) => Promise<LlmSettingsResult>
   fetchTapirStatus: () => Promise<TapirStatusResult>
   reloadTapirLibraries: () => Promise<TapirActionResult>
   syncTapirSelection: () => Promise<TapirActionResult>
@@ -144,6 +145,8 @@ export interface WorkbenchState {
   compileLog: string[]
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
+  chatAbortController: AbortController | null
+  interruptedContext: { message: string; intent: string } | null
   activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
@@ -182,6 +185,9 @@ export interface WorkbenchState {
   setCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettings>
   openConfig: () => Promise<void>
   testLlmConnection: () => Promise<LlmConnectionTestResult>
+  switchLlmModel: (model: string) => Promise<void>
+  sendChat: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
+  stopChat: () => void
   reloadRuntimeSettings: () => Promise<void>
   refreshTapirStatus: () => Promise<void>
   reloadTapirLibraries: () => Promise<void>

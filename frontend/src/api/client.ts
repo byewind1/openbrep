@@ -175,6 +175,7 @@ export async function createProjectFromPrompt(
   message: string,
   assistantSettings = '',
   image?: AssistantImageAttachment | null,
+  signal?: AbortSignal,
 ): Promise<CreateProjectResult> {
   return requestJson<CreateProjectResult>(
     '/api/project/create',
@@ -188,6 +189,7 @@ export async function createProjectFromPrompt(
       }),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+    signal,
   )
 }
 
@@ -419,6 +421,18 @@ export async function testLlmConnection(): Promise<LlmConnectionTestResult> {
   )
 }
 
+export async function updateLlmModel(model: string): Promise<LlmSettingsResult> {
+  return requestJson<LlmSettingsResult>(
+    '/api/settings/llm/model',
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
 export async function fetchTapirStatus(): Promise<TapirStatusResult> {
   return requestJson<TapirStatusResult>(
     '/api/tapir/status',
@@ -487,7 +501,7 @@ export async function applyTapirParameterEdits(paramEdits?: Record<string, unkno
   )
 }
 
-export async function askAssistant(message: string): Promise<AssistantResult> {
+export async function askAssistant(message: string, signal?: AbortSignal): Promise<AssistantResult> {
   return requestJson<AssistantResult>(
     '/api/assistant',
     {
@@ -496,6 +510,7 @@ export async function askAssistant(message: string): Promise<AssistantResult> {
       body: JSON.stringify({ message }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+    signal,
   )
 }
 
@@ -610,6 +625,7 @@ export async function generateWithAssistant(
   message: string,
   assistantSettings = '',
   image?: AssistantImageAttachment | null,
+  signal?: AbortSignal,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
@@ -623,6 +639,7 @@ export async function generateWithAssistant(
       }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+    signal,
   )
 }
 
@@ -674,13 +691,14 @@ export async function revealArtifact(path = ''): Promise<RevealArtifactResult> {
   )
 }
 
-async function requestJson<T>(path: string, init: RequestInit, fallback: T): Promise<T> {
+async function requestJson<T>(path: string, init: RequestInit, fallback: T, signal?: AbortSignal): Promise<T> {
   try {
-    const response = await fetch(`${API_BASE}${path}`, init)
+    const response = await fetch(`${API_BASE}${path}`, signal ? { ...init, signal } : init)
     const payload = (await response.json()) as T
     if (!response.ok) return payload ?? fallback
     return payload
-  } catch {
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
     return fallback
   }
 }

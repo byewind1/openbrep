@@ -47,6 +47,15 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
       return api.testLlmConnection()
     },
 
+    async switchLlmModel(model: string) {
+      const result = await api.updateLlmModel(model)
+      if (result.ok && result.llm) {
+        set({ llmSettings: result.llm })
+      } else {
+        set({ lastError: result.error ?? 'Model switch failed.' })
+      }
+    },
+
     async reloadRuntimeSettings() {
       const result = await api.fetchRuntimeSettings()
       set((state) => ({

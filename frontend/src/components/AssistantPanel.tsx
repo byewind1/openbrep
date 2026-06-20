@@ -1,53 +1,164 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, VerificationReport } from '../api/types'
+import { useState, useRef, useCallback, useMemo } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
+import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, VerificationReport } from '../api/types'
+import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { validateAssistantImageFile } from './assistantImage'
 
 interface AssistantPanelProps {
   messages: AssistantMessage[]
   busy: boolean
-  onSend: (message: string) => void
-  onCreate: (message: string, image?: AssistantImageAttachment | null) => void
-  onGenerate: (message: string, image?: AssistantImageAttachment | null) => void
+  hasProject: boolean
+  interruptedContext?: { message: string; intent: string } | null
+  onChat: (message: string, image?: AssistantImageAttachment | null) => void
+  onStop: () => void
   onClearHistory: () => void
   onAdoptCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => void
+  modelOptions?: LlmModelOption[]
+  currentModel?: string
+  onModelChange?: (model: string) => Promise<void>
 }
+
+const SLASH_COMMANDS = [
+  { id: 'model', label: '/model', description: '切换 AI 模型' },
+] as const
 
 export function AssistantPanel({
   messages,
   busy,
-  onSend,
-  onCreate,
-  onGenerate,
+  hasProject,
+  interruptedContext,
+  onChat,
+  onStop,
   onClearHistory,
   onAdoptCode,
   onOpenScript,
   onSaveRevision,
+  modelOptions = [],
+  currentModel = '',
+  onModelChange,
 }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
   const [image, setImage] = useState<AssistantImageAttachment | null>(null)
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
 
+  // slash command state
+  const [pickerMode, setPickerMode] = useState<null | 'commands' | 'models'>(null)
+  const [pickerIndex, setPickerIndex] = useState(0)
+  const [modelSwitching, setModelSwitching] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // intent indicator: computed from current draft
+  const detectedIntent = useMemo(() => {
+    const t = draft.trim()
+    if (!t || pickerMode !== null) return null
+    return detectChatIntent(t, hasProject)
+  }, [draft, hasProject, pickerMode])
+
+  // slash command derived values
+  const commandQuery = pickerMode === 'commands' ? draft.slice(1).toLowerCase() : ''
+  const visibleCommands = SLASH_COMMANDS.filter(
+    (c) => c.id.startsWith(commandQuery) && (c.id !== 'model' || (modelOptions.length > 0 && !!onModelChange)),
+  )
+  const modelQuery = pickerMode === 'models' ? draft.toLowerCase() : ''
+  const visibleModelOptions = modelOptions.filter(
+    (m) => !modelQuery || m.id.toLowerCase().includes(modelQuery) || m.label.toLowerCase().includes(modelQuery),
+  )
+  const customModels = visibleModelOptions.filter((m) => m.kind === 'custom')
+  const officialModels = visibleModelOptions.filter((m) => m.kind === 'official')
+
+  // ── Submit ──────────────────────────────────────────────────────────────
   function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    sendDraft('explain')
+    handleSend()
   }
 
-  function sendDraft(mode: 'explain' | 'create' | 'generate') {
+  function handleSend() {
+    if (pickerMode !== null || busy) return
     const message = draft.trim()
     if (!message) return
     setDraft('')
-    if (mode === 'create') {
-      onCreate(message, image)
-      setImage(null)
-    } else if (mode === 'generate') {
-      onGenerate(message, image)
-      setImage(null)
+    onChat(message, image)
+    setImage(null)
+  }
+
+  // ── Keyboard ─────────────────────────────────────────────────────────────
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    // ESC: stop generation or close picker
+    if (event.key === 'Escape') {
+      if (busy) { onStop(); event.preventDefault(); return }
+      if (pickerMode !== null) { closePicker(); event.preventDefault(); return }
+    }
+
+    // Ctrl+C while busy → stop (only when no text is selected)
+    if (event.key === 'c' && event.ctrlKey && busy) {
+      const ta = textareaRef.current
+      if (ta && ta.selectionStart === ta.selectionEnd) {
+        onStop()
+        event.preventDefault()
+        return
+      }
+    }
+
+    // Picker navigation
+    if (pickerMode !== null) {
+      handlePickerKeyDown(event)
+      return
+    }
+
+    // Enter = send (Shift+Enter inserts newline, composition in progress = skip)
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault()
+      handleSend()
+    }
+  }
+
+  // ── Draft change ──────────────────────────────────────────────────────────
+  function handleDraftChange(value: string) {
+    setDraft(value)
+    if (pickerMode === 'models') return
+    if (value.startsWith('/') && !busy) {
+      if (pickerMode !== 'commands') { setPickerMode('commands'); setPickerIndex(0) }
     } else {
-      onSend(message)
+      setPickerMode(null)
+    }
+  }
+
+  // ── Picker helpers ────────────────────────────────────────────────────────
+  const closePicker = useCallback(() => {
+    setPickerMode(null)
+    setDraft('')
+    textareaRef.current?.focus()
+  }, [])
+
+  function selectCommand(id: string) {
+    if (id === 'model') {
+      setPickerMode('models'); setDraft(''); setPickerIndex(0)
+      textareaRef.current?.focus()
+    }
+  }
+
+  async function selectModel(model: string) {
+    if (!onModelChange) return
+    setModelSwitching(true)
+    try { await onModelChange(model) }
+    finally {
+      setModelSwitching(false); setPickerMode(null); setDraft('')
+      textareaRef.current?.focus()
+    }
+  }
+
+  function handlePickerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    const list = pickerMode === 'commands' ? visibleCommands : visibleModelOptions
+    const listLen = list.length
+    if (event.key === 'ArrowDown') { setPickerIndex((i) => (i + 1) % Math.max(listLen, 1)); event.preventDefault(); return }
+    if (event.key === 'ArrowUp') { setPickerIndex((i) => (i - 1 + Math.max(listLen, 1)) % Math.max(listLen, 1)); event.preventDefault(); return }
+    if (event.key === 'Enter' && listLen > 0) {
+      if (pickerMode === 'commands') selectCommand(visibleCommands[Math.min(pickerIndex, visibleCommands.length - 1)].id)
+      else void selectModel(visibleModelOptions[Math.min(pickerIndex, visibleModelOptions.length - 1)].id)
+      event.preventDefault()
     }
   }
 
@@ -90,10 +201,15 @@ export function AssistantPanel({
       <div className="assistant-thread">
         {messages.length ? (
           messages.map((message, index) => (
-            <article className={`assistant-message ${message.role}`} key={`${message.role}-${index}`}>
+            <article
+              className={`assistant-message ${message.role}${message.interrupted ? ' is-interrupted' : ''}`}
+              key={`${message.role}-${index}`}
+            >
               <span>
                 {message.role === 'user' ? '你' : 'OpenBrep'}
-                {message.errorCategory ? (
+                {message.interrupted ? (
+                  <em className="assistant-error-badge assistant-interrupted">已中断</em>
+                ) : message.errorCategory ? (
                   <em className={`assistant-error-badge assistant-error-${message.errorCategory}`}>
                     {errorCategoryLabel(message.errorCategory)}
                   </em>
@@ -141,12 +257,82 @@ export function AssistantPanel({
         )}
       </div>
       <form className="assistant-input" onSubmit={submitMessage}>
-        <textarea
-          rows={3}
-          placeholder="Ask or generate..."
-          value={draft}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-        />
+        <div className="assistant-input-wrap">
+          {pickerMode === 'commands' && visibleCommands.length > 0 && (
+            <div className="slash-picker" role="listbox" aria-label="命令列表">
+              <div className="slash-picker-header">命令</div>
+              {visibleCommands.map((cmd, i) => (
+                <button
+                  key={cmd.id}
+                  type="button"
+                  role="option"
+                  aria-selected={i === pickerIndex % visibleCommands.length}
+                  className={`slash-picker-item${i === pickerIndex % visibleCommands.length ? ' is-active' : ''}`}
+                  onClick={() => selectCommand(cmd.id)}
+                >
+                  <span className="slash-picker-label">{cmd.label}</span>
+                  <span className="slash-picker-desc">{cmd.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {pickerMode === 'models' && (
+            <div className="slash-picker slash-picker--models" role="listbox" aria-label="模型列表">
+              <div className="slash-picker-header">
+                选择模型
+                {modelSwitching && <span className="slash-picker-loading">切换中…</span>}
+              </div>
+              {visibleModelOptions.length === 0 ? (
+                <p className="slash-picker-empty">无匹配模型</p>
+              ) : (
+                <>
+                  {customModels.length > 0 && (
+                    <ModelGroup
+                      label="自定义模型"
+                      options={customModels}
+                      flatOffset={0}
+                      currentModel={currentModel}
+                      pickerIndex={pickerIndex}
+                      totalVisible={visibleModelOptions.length}
+                      modelSwitching={modelSwitching}
+                      onSelect={selectModel}
+                    />
+                  )}
+                  {officialModels.length > 0 && (
+                    <ModelGroup
+                      label="官方模型"
+                      options={officialModels}
+                      flatOffset={customModels.length}
+                      currentModel={currentModel}
+                      pickerIndex={pickerIndex}
+                      totalVisible={visibleModelOptions.length}
+                      modelSwitching={modelSwitching}
+                      onSelect={selectModel}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            rows={3}
+            aria-label="Ask or generate"
+            placeholder={
+              pickerMode === 'models'
+                ? '输入过滤…'
+                : busy
+                  ? '生成中… ESC 停止'
+                  : interruptedContext
+                    ? `已中断 — 输入继续，或发送"继续"重试`
+                    : '发送消息… Enter 发送  Shift+Enter 换行  / 触发命令'
+            }
+            value={draft}
+            disabled={modelSwitching}
+            onChange={(event) => handleDraftChange(event.currentTarget.value)}
+            onKeyDown={handleKeyDown}
+          />
+        </div>
         <div className="assistant-attachment-row">
           <label className="assistant-attach-button">
             Attach image
@@ -172,16 +358,32 @@ export function AssistantPanel({
             <span>{imageError || 'No image'}</span>
           )}
         </div>
-        <div className="assistant-actions">
-          <button type="submit" disabled={busy || draft.trim().length === 0}>
-            Explain
-          </button>
-          <button type="button" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('create')}>
-            New project
-          </button>
-          <button type="button" className="primary-action" disabled={busy || draft.trim().length === 0} onClick={() => sendDraft('generate')}>
-            Generate changes
-          </button>
+        <div className="assistant-footer-row">
+          {detectedIntent && !busy && (
+            <span className={`chat-intent-badge intent-${detectedIntent}`}>
+              → {INTENT_LABELS[detectedIntent]}
+            </span>
+          )}
+          {interruptedContext && !busy && (
+            <button
+              type="button"
+              className="chat-resume-btn"
+              onClick={() => { onChat('继续'); }}
+            >
+              ↩ 重试上次
+            </button>
+          )}
+          <div className="assistant-actions">
+            {busy ? (
+              <button type="button" className="chat-stop-btn" onClick={onStop}>
+                ■ 停止
+              </button>
+            ) : (
+              <button type="submit" className="chat-send-btn" disabled={draft.trim().length === 0}>
+                发送
+              </button>
+            )}
+          </div>
         </div>
       </form>
       <AssistantHistoryDrawer
@@ -262,6 +464,52 @@ function AssistantHistoryDrawer({
           ))}
         </div>
       </aside>
+    </>
+  )
+}
+
+// ── Model group for slash picker ─────────────────────────────────────────
+function ModelGroup({
+  label,
+  options,
+  flatOffset,
+  currentModel,
+  pickerIndex,
+  totalVisible,
+  modelSwitching,
+  onSelect,
+}: {
+  label: string
+  options: LlmModelOption[]
+  flatOffset: number
+  currentModel: string
+  pickerIndex: number
+  totalVisible: number
+  modelSwitching: boolean
+  onSelect: (id: string) => void
+}) {
+  return (
+    <>
+      <div className="slash-picker-group-label">{label}</div>
+      {options.map((opt, localIdx) => {
+        const flatIdx = flatOffset + localIdx
+        const isActive = flatIdx === pickerIndex % Math.max(totalVisible, 1)
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            role="option"
+            aria-selected={isActive}
+            disabled={modelSwitching}
+            className={`slash-picker-item${isActive ? ' is-active' : ''}${opt.id === currentModel ? ' is-current' : ''}`}
+            onClick={() => onSelect(opt.id)}
+          >
+            <span className="slash-picker-label">{opt.label}</span>
+            <span className="slash-picker-desc">{opt.provider}</span>
+            {opt.id === currentModel && <span className="slash-picker-badge">当前</span>}
+          </button>
+        )
+      })}
     </>
   )
 }

@@ -181,6 +181,16 @@ class WorkbenchSettingsService:
             "llm": self.llm_settings(),
         }
 
+    def update_llm_model_only(self, body: dict[str, Any]) -> dict[str, Any]:
+        """只切换 model 字段，不触碰 api_key / api_base。"""
+        model = str(body.get("model") or "").strip()
+        if not model:
+            return {"ok": False, "error": "Model is required."}
+        self.session.llm_model = model
+        self.session.config.llm.model = model
+        save_workbench_config(self.session.config, self.session.config_path)
+        return {"ok": True, "llm": self.llm_settings()}
+
     def update_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         model = str(body.get("model") or self.session.llm_model).strip()
         if not model:

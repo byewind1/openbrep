@@ -33,13 +33,17 @@ interface WorkbenchRightRailProps {
   onHighlightTapirSelection: () => void
   onLoadTapirParameters: () => void
   onApplyTapirParameters: () => void
-  onSendAssistantMessage: (message: string) => void
-  onCreateProjectFromPrompt: (message: string, image?: AssistantImageAttachment | null) => void
-  onGenerateAssistantChanges: (message: string, image?: AssistantImageAttachment | null) => void
+  hasProject: boolean
+  interruptedContext?: { message: string; intent: string } | null
+  onChat: (message: string, image?: AssistantImageAttachment | null) => void
+  onStop: () => void
   onClearAssistantHistory: () => void
   onAdoptAssistantCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => void
+  modelOptions?: import('../../api/types').LlmModelOption[]
+  currentModel?: string
+  onModelChange?: (model: string) => Promise<void>
 }
 
 export function WorkbenchRightRail({
@@ -63,13 +67,17 @@ export function WorkbenchRightRail({
   onHighlightTapirSelection,
   onLoadTapirParameters,
   onApplyTapirParameters,
-  onSendAssistantMessage,
-  onCreateProjectFromPrompt,
-  onGenerateAssistantChanges,
+  hasProject,
+  interruptedContext,
+  onChat,
+  onStop,
   onClearAssistantHistory,
   onAdoptAssistantCode,
   onOpenScript,
   onSaveRevision,
+  modelOptions,
+  currentModel,
+  onModelChange,
 }: WorkbenchRightRailProps) {
   return (
     <aside className="workbench-right-rail right-rail">
@@ -125,13 +133,17 @@ export function WorkbenchRightRail({
           <AssistantPanel
             messages={assistantMessages}
             busy={assistantBusy}
-            onSend={onSendAssistantMessage}
-            onCreate={onCreateProjectFromPrompt}
-            onGenerate={onGenerateAssistantChanges}
+            hasProject={hasProject}
+            interruptedContext={interruptedContext}
+            onChat={onChat}
+            onStop={onStop}
             onClearHistory={onClearAssistantHistory}
             onAdoptCode={onAdoptAssistantCode}
             onOpenScript={onOpenScript}
             onSaveRevision={onSaveRevision}
+            modelOptions={modelOptions}
+            currentModel={currentModel}
+            onModelChange={onModelChange}
           />
         )}
       </div>

@@ -73,6 +73,7 @@ export function WorkbenchApp() {
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
   const openConfig = useWorkbenchStore((state) => state.openConfig)
   const testLlmConnection = useWorkbenchStore((state) => state.testLlmConnection)
+  const switchLlmModel = useWorkbenchStore((state) => state.switchLlmModel)
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
   const reloadTapirLibraries = useWorkbenchStore((state) => state.reloadTapirLibraries)
@@ -100,9 +101,9 @@ export function WorkbenchApp() {
   const setProjectGitEnabled = useWorkbenchStore((state) => state.setProjectGitEnabled)
   const commitProjectGit = useWorkbenchStore((state) => state.commitProjectGit)
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
-  const sendAssistantMessage = useWorkbenchStore((state) => state.sendAssistantMessage)
-  const createProjectFromPrompt = useWorkbenchStore((state) => state.createProjectFromPrompt)
-  const generateAssistantChanges = useWorkbenchStore((state) => state.generateAssistantChanges)
+  const sendChat = useWorkbenchStore((state) => state.sendChat)
+  const stopChat = useWorkbenchStore((state) => state.stopChat)
+  const interruptedContext = useWorkbenchStore((state) => state.interruptedContext)
   const openScript = useWorkbenchStore((state) => state.openScript)
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
   const saveActiveScript = useWorkbenchStore((state) => state.saveActiveScript)
@@ -312,13 +313,17 @@ export function WorkbenchApp() {
             onHighlightTapirSelection={() => void highlightTapirSelection()}
             onLoadTapirParameters={() => void loadTapirParameters()}
             onApplyTapirParameters={() => void applyTapirParameters()}
-            onSendAssistantMessage={(message) => void sendAssistantMessage(message)}
-            onCreateProjectFromPrompt={(message, image) => void createProjectFromPrompt(message, image)}
-            onGenerateAssistantChanges={(message, image) => void generateAssistantChanges(message, image)}
+            hasProject={!!project}
+            interruptedContext={interruptedContext}
+            onChat={(message, image) => void sendChat(message, image)}
+            onStop={stopChat}
             onClearAssistantHistory={() => void clearAssistantHistory()}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
             onOpenScript={openScriptInEditor}
             onSaveRevision={(message) => void saveRevision(message)}
+            modelOptions={llmSettings.model_options ?? []}
+            currentModel={llmSettings.model}
+            onModelChange={switchLlmModel}
           />
         )}
       />
