@@ -2,8 +2,9 @@
 
 ## 项目定位
 
-- Python 项目：OpenBrep 的核心 Agent 运行时。
-- 负责 GDL 生成、编译、调试循环，以及 Streamlit/UI 与 API 服务能力。
+- Python 项目：OpenBrep 的核心 Agent 运行时 + React 工作台后端。
+- 负责 GDL 生成、编译、调试循环，以及 React 工作台 API 服务能力。
+- **Streamlit 已于 v0.9.0 完全退役**，UI 层只有 React 工作台。
 - 对外以 `localhost:8502` 提供服务，供 `openbrep-addon` 调用。
 
 ## 架构与模块职责
@@ -19,6 +20,12 @@
   - `openbrep/validator.py` / `openbrep/preflight.py`：输入与前置校验。
   - `openbrep/gdl_parser.py`：GDL 解析。
   - `openbrep/gdl_previewer.py`：预览相关能力。
+- React 工作台后端
+  - `openbrep/workbench_api.py`：ThreadingHTTPServer，提供 `/api/*` 路由 + 静态文件服务（Tauri 模式）。
+  - `openbrep/workbench/`：工作台各 service（assistant / preview / compiler / settings 等）。
+  - `openbrep/workbench/view_models.py`：classify_code_blocks / classify_vision_error（域逻辑，无 UI 依赖）。
+  - `openbrep/workbench/three_preview.py`：preview_3d_to_three_payload / render_three_preview_html。
+  - `openbrep/local_file_dialog.py`：macOS/Tk 原生文件选择对话框。
 - 数据与工程格式
   - `openbrep/hsf_project.py`：HSF 工程格式处理。
   - `openbrep/xml_utils.py`：XML 辅助处理。
@@ -31,6 +38,10 @@
   - `openbrep/config.py`：配置加载。
   - `openbrep/dependencies.py`：依赖检测。
   - `openbrep/sandbox.py`：沙箱/隔离执行相关。
+- Tauri 桌面壳（WIP）
+  - `src-tauri/`：Rust Tauri v2 项目骨架。
+  - `src-tauri/src/main.rs`：spawn Python 后端 → 读 OBR7_READY_URL → 打开 WebviewWindow → 关窗时调 /api/shutdown。
+  - 编译需要 Rust ≥ 1.85（rustup stable，非 Homebrew）。
 
 ## 对外接口（与 openbrep-addon）
 
@@ -86,32 +97,26 @@
 
 ## UI 已知陷阱
 
-### Streamlit widget 废弃参数
-当前环境 streamlit==1.54.0，以下写法已废弃会导致静默失效：
-- `st.plotly_chart(fig, width='stretch')` → 改为 `use_container_width=True`
-- `st.image(..., use_column_width=...)` → 改为 `use_container_width=True`
-- `st.button(..., use_container_width=...)` 仍有效
+> ⚠️ Streamlit 已于 v0.9.0 完全退役，以下 Streamlit 相关陷阱已归档，不再适用。
 
-每次修改 `ui/app.py` 涉及 widget 时，检查是否有废弃参数。
-
-### 预览失效排查顺序
+### 预览失效排查顺序（React 工作台）
 1. 先用 `python3` 直接测试 `gdl_previewer`，确认 previewer 本身是否正常
-2. 再检查 UI 调用层参数是否正确传入
-3. 最后检查 Streamlit widget 废弃参数
+2. 再检查 `openbrep/workbench/preview_service.py` 的调用参数
+3. 最后检查 `openbrep/workbench/three_preview.py` 中的 payload 转换逻辑
 
-### Streamlit 编辑器缓冲区同步
-- 编辑器内容修改后不会自动同步回 `st.session_state.project`
-- 任何需要读取“当前脚本”的操作（预览、编译、导出）前，
-  必须先调用 `_sync_visible_editor_buffers()` 同步缓冲区
-- 否则会拿到旧脚本或空脚本，表现为“功能失效”但无报错
+### workbench_api.py 静态文件服务（Tauri 模式）
+- `--static-dir <path>` 启动时，GET 非 `/api/` 路径会服务 `frontend/dist/`
+- 没有匹配文件或路径无扩展名时，回退到 `index.html`（SPA routing）
+- 注意路径遍历防护：candidate 必须在 _STATIC_DIR 下
 
-### 生成中禁用 widget
-- `agent_running = True` 时禁用：侧边栏模型选择、API Key、工作目录、编译/导入/提取按钮
-- 用 `try/finally` 保证异常时也能解锁
+### /api/shutdown 防死锁
+- ThreadingHTTPServer 不能在请求处理线程调 `server.shutdown()`（会死锁）
+- 现有实现：先 `_send({“ok”: True})` 返回响应，再启 daemon thread 调 shutdown
 
 ## 版本策略
-- 0.5.x：当前功能集稳定迭代，内部架构优化
-- 0.6.0：生成质量有可测量突破（编译通过率提升）
+- 0.8.x：React 工作台稳定迭代，Tauri 桌面化探索
+- 0.9.0：Streamlit 完全退役，架构债务清算完成
+- 1.0.0：Tauri 桌面壳正式发布，PyInstaller 打包
 - 每个版本在 `docs/releases/vX.X.X.md` 记录发布说明
 - README 版本历史统一用表格，不用标题+列表混排
 
@@ -244,7 +249,8 @@ timeout = 60
 ## 快速上手
 
 ### 启动
-obr                          # 启动 Streamlit UI
+obr                          # 启动 React 工作台（obr7）
+python3 scripts/obr7.py --tauri  # Tauri 单端口模式（服务 frontend/dist/）
 python3 -m py_compile openbrep/config.py  # 语法检查
 
 ### 验证预览
