@@ -2630,3 +2630,97 @@ button:focus-visible {
 .drawer-content p {
   margin: 0 0 5px;
 }
+
+/* ── Knowledge panel ──────────────────────────────────────────────── */
+.knowledge-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.knowledge-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-tier-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.knowledge-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  min-width: 44px;
+  text-align: center;
+}
+
+.knowledge-badge-free {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.knowledge-badge-pro {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid var(--accent);
+  color: var(--accent-soft);
+}
+
+.knowledge-badge-inactive {
+  background: var(--bg-card);
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.knowledge-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.knowledge-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.knowledge-hint p {
+  margin: 0 0 3px;
+}
+
+.knowledge-error {
+  font-size: 11.5px;
+  color: var(--error, #c0392b);
+}
+
+.knowledge-path {
+  display: block;
+  margin-top: 4px;
+  word-break: break-all;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.knowledge-pro-list {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.knowledge-pro-list summary {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 4px;
+}
+
+.knowledge-pro-list ul {
+  margin: 0;
+  padding-left: 16px;
+  line-height: 1.7;
+}

@@ -540,3 +540,15 @@ export interface SaveScriptResponse {
   saved_at: string
   error?: string
 }
+
+export interface KnowledgeStatus {
+  ok: boolean
+  has_pro: boolean
+  free_doc_count: number
+  pro_doc_count: number
+  pro_doc_names: string[]
+  pro_dir: string
+  pro_dir_exists: boolean
+  message?: string
+  error?: string
+}

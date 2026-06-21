@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   CompilerSettings,
   ErrorLesson,
+  KnowledgeStatus,
   LlmConnectionTestResult,
   LlmSettings,
   ProjectGitStatus,
@@ -12,6 +13,7 @@ import type {
 import { AiSettingsPanel } from './AiSettingsPanel'
 import { CompilerSettingsPanel } from './CompilerSettingsPanel'
 import { GitSettingsPanel } from './GitSettingsPanel'
+import { KnowledgePanel } from './KnowledgePanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
 import { SettingsSection } from './SettingsSection'
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
@@ -22,7 +24,7 @@ const SETTINGS_DRAWER_MAX_WIDTH = 760
 const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
 const SETTINGS_DRAWER_KEY_STEP = 24
 
-type SettingsSectionId = 'ai' | 'compiler' | 'workspace' | 'git' | 'memory'
+type SettingsSectionId = 'ai' | 'compiler' | 'workspace' | 'git' | 'memory' | 'knowledge'
 
 const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
   ai: true,
@@ -30,6 +32,7 @@ const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
   workspace: false,
   git: false,
   memory: false,
+  knowledge: false,
 }
 
 interface SettingsDrawerProps {
@@ -43,6 +46,8 @@ interface SettingsDrawerProps {
   memoryBusy: boolean
   gitStatus: ProjectGitStatus | null
   gitBusy: boolean
+  knowledgeStatus: KnowledgeStatus | null
+  knowledgeBusy: boolean
   onClose: () => void
   onCompilerSettingsChange: (settings: CompilerSettings) => Promise<CompilerSettings>
   onOpenConfig: () => void
@@ -57,6 +62,8 @@ interface SettingsDrawerProps {
   onInitializeProjectGit: () => void
   onSetProjectGitEnabled: (enabled: boolean) => void
   onCommitProjectGit: (message: string) => void
+  onLoadKnowledgeStatus: () => void
+  onReloadKnowledge: () => void
   onLoadMemoryLessons: () => void
   onSummarizeProjectMemory: () => void
   onUpdateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => void
@@ -76,6 +83,8 @@ export function SettingsDrawer({
   memoryBusy,
   gitStatus,
   gitBusy,
+  knowledgeStatus,
+  knowledgeBusy,
   onClose,
   onCompilerSettingsChange,
   onOpenConfig,
@@ -90,6 +99,8 @@ export function SettingsDrawer({
   onInitializeProjectGit,
   onSetProjectGitEnabled,
   onCommitProjectGit,
+  onLoadKnowledgeStatus,
+  onReloadKnowledge,
   onLoadMemoryLessons,
   onSummarizeProjectMemory,
   onUpdateMemoryLesson,
@@ -116,9 +127,10 @@ export function SettingsDrawer({
       setSettingsSaveState(null)
       onLoadMemoryLessons()
       onLoadProjectGitStatus()
+      onLoadKnowledgeStatus()
     }
     wasOpenRef.current = open
-  }, [open, onLoadMemoryLessons, onLoadProjectGitStatus])
+  }, [open, onLoadMemoryLessons, onLoadProjectGitStatus, onLoadKnowledgeStatus])
 
   useEffect(() => {
     if (!open) {
@@ -365,6 +377,21 @@ export function SettingsDrawer({
           />
         </SettingsSection>
 
+        <SettingsSection
+          id="knowledge"
+          title="Knowledge"
+          summary={knowledgeSummary(knowledgeStatus)}
+          expanded={expandedSections.knowledge}
+          onToggle={toggleSection}
+        >
+          <KnowledgePanel
+            status={knowledgeStatus}
+            busy={knowledgeBusy}
+            onRefresh={onLoadKnowledgeStatus}
+            onReload={onReloadKnowledge}
+          />
+        </SettingsSection>
+
       </aside>
     </>
   )
@@ -390,6 +417,13 @@ function gitSummary(gitStatus: ProjectGitStatus | null) {
 function memorySummary(memoryStatus: ProjectMemoryStatus | null, fallbackLessonCount: number) {
   const lessonCount = memoryStatus?.lesson_count ?? fallbackLessonCount
   return `${lessonCount} lessons`
+}
+
+function knowledgeSummary(status: KnowledgeStatus | null) {
+  if (!status?.ok) return '—'
+  return status.has_pro
+    ? `Free ${status.free_doc_count} · Pro ${status.pro_doc_count}`
+    : `Free ${status.free_doc_count} · No Pro`
 }
 
 function compilerDirty(a: CompilerSettings, b: CompilerSettings) {

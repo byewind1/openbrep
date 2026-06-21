@@ -347,6 +347,53 @@ class WorkbenchSession:
     def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.assistant_service.generate_with_assistant(body)
 
+    def _knowledge_status(self) -> dict[str, Any]:
+        """Return current knowledge base status (Free/Pro doc counts and path info)."""
+        try:
+            from openbrep.knowledge import KnowledgeBase
+            root = Path(__file__).resolve().parent.parent
+            kb = KnowledgeBase(str(root / "knowledge"))
+            kb.load()
+            names = list(kb._docs.keys())
+            pro_names = [n for n in names if n.startswith("pro_")]
+            free_names = [n for n in names if not n.startswith("pro_")]
+            pro_dir = root / "knowledge" / "raw" / "ccgdl_dev_doc" / "docs"
+            return {
+                "ok": True,
+                "has_pro": kb.has_pro,
+                "free_doc_count": len(free_names),
+                "pro_doc_count": len(pro_names),
+                "pro_doc_names": pro_names,
+                "pro_dir": str(pro_dir),
+                "pro_dir_exists": pro_dir.exists(),
+            }
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _knowledge_reload(self) -> dict[str, Any]:
+        """Hot-reload the knowledge base from disk and return new status."""
+        try:
+            from openbrep.knowledge import KnowledgeBase
+            root = Path(__file__).resolve().parent.parent
+            kb = KnowledgeBase(str(root / "knowledge"))
+            kb.load()  # fresh load (no singleton — always reads from disk)
+            names = list(kb._docs.keys())
+            pro_names = [n for n in names if n.startswith("pro_")]
+            free_names = [n for n in names if not n.startswith("pro_")]
+            pro_dir = root / "knowledge" / "raw" / "ccgdl_dev_doc" / "docs"
+            return {
+                "ok": True,
+                "has_pro": kb.has_pro,
+                "free_doc_count": len(free_names),
+                "pro_doc_count": len(pro_names),
+                "pro_doc_names": pro_names,
+                "pro_dir": str(pro_dir),
+                "pro_dir_exists": pro_dir.exists(),
+                "message": f"Knowledge base reloaded: {len(free_names)} free + {len(pro_names)} pro docs.",
+            }
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def route(
         self,
         method: str,
@@ -532,6 +579,12 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/assistant/generate":
             return self.generate_with_assistant(body)
+
+        if normalized_method == "GET" and route == "/api/knowledge/status":
+            return self._knowledge_status()
+
+        if normalized_method == "POST" and route == "/api/knowledge/reload":
+            return self._knowledge_reload()
 
         return {"ok": False, "error": f"Unknown route: {normalized_method} {route}"}
 

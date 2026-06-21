@@ -20,6 +20,7 @@ import type {
   GenerateResult,
   HsfExportResult,
   IgnoreMemoryLessonResult,
+  KnowledgeStatus,
   LlmSettings,
   LlmConnectionTestResult,
   LlmSettingsResult,
@@ -115,6 +116,8 @@ export interface WorkbenchApi {
   ignoreMemoryLesson: (fingerprint: string) => Promise<IgnoreMemoryLessonResult>
   updateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => Promise<UpdateMemoryLessonResult>
   clearProjectMemory: () => Promise<ClearProjectMemoryResult>
+  fetchKnowledgeStatus: () => Promise<KnowledgeStatus>
+  reloadKnowledge: () => Promise<KnowledgeStatus>
   generateWithAssistant: (
     message: string,
     assistantSettings?: string,
@@ -157,6 +160,8 @@ export interface WorkbenchState {
   revisions: ProjectRevision[]
   gitStatus: ProjectGitStatus | null
   gitBusy: boolean
+  knowledgeStatus: KnowledgeStatus | null
+  knowledgeBusy: boolean
   memoryStatus: ProjectMemoryStatus | null
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
@@ -216,6 +221,8 @@ export interface WorkbenchState {
   loadScripts: () => Promise<void>
   loadRecentProjects: () => Promise<void>
   loadRevisions: () => Promise<void>
+  loadKnowledgeStatus: () => Promise<void>
+  reloadKnowledge: () => Promise<void>
   loadMemoryStatus: () => Promise<void>
   loadMemoryLessons: () => Promise<void>
   summarizeProjectMemory: () => Promise<void>

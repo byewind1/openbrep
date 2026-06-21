@@ -41,6 +41,7 @@ import type {
   TapirActionResult,
   TapirStatusResult,
   DeleteParameterResult,
+  KnowledgeStatus,
   UpdateMemoryLessonRequest,
   UpdateMemoryLessonResult,
   UpdateParameterRequest,
@@ -551,6 +552,22 @@ export async function extractAssistantCodeBlocks(content: string): Promise<Assis
       body: JSON.stringify({ content }),
     },
     { ok: false, blocks: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchKnowledgeStatus(): Promise<KnowledgeStatus> {
+  return requestJson<KnowledgeStatus>(
+    '/api/knowledge/status',
+    { method: 'GET' },
+    { ok: false, has_pro: false, free_doc_count: 0, pro_doc_count: 0, pro_doc_names: [], pro_dir: '', pro_dir_exists: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function reloadKnowledge(): Promise<KnowledgeStatus> {
+  return requestJson<KnowledgeStatus>(
+    '/api/knowledge/reload',
+    { method: 'POST' },
+    { ok: false, has_pro: false, free_doc_count: 0, pro_doc_count: 0, pro_doc_names: [], pro_dir: '', pro_dir_exists: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

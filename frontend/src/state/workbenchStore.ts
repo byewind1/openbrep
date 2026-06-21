@@ -15,6 +15,7 @@ import {
   deleteProjectParameter,
   exportHsfProject,
   extractAssistantCodeBlocks,
+  fetchKnowledgeStatus,
   fetchMemoryLessons,
   fetchMemoryStatus,
   fetchProjectGitStatus,
@@ -29,6 +30,7 @@ import {
   ignoreMemoryLesson,
   importGdlFile,
   importGsmFile,
+  reloadKnowledge,
   reloadTapirLibraries,
   listAssistantHistory,
   listProjectRevisions,
@@ -60,6 +62,7 @@ import {
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
+import { createKnowledgeActions } from './actions/knowledgeActions'
 import { createMemoryActions } from './actions/memoryActions'
 import { createParameterActions } from './actions/parameterActions'
 import { createPreviewActions } from './actions/previewActions'
@@ -118,6 +121,8 @@ const defaultWorkbenchApi: WorkbenchApi = {
   saveAssistantHistory,
   clearAssistantHistory,
   extractAssistantCodeBlocks,
+  fetchKnowledgeStatus,
+  reloadKnowledge,
   fetchMemoryStatus,
   fetchMemoryLessons,
   summarizeProjectMemory,
@@ -148,6 +153,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       ...createParameterActions(context),
       ...createPreviewActions(context),
       ...createCompileActions(context),
+      ...createKnowledgeActions(context),
       ...createMemoryActions(context),
       ...createScriptActions(context),
       ...createRevisionActions(context),
@@ -189,6 +195,8 @@ function initialWorkbenchState() {
     revisions: [],
     gitStatus: null,
     gitBusy: false,
+    knowledgeStatus: null,
+    knowledgeBusy: false,
     memoryStatus: null,
     memoryLessons: [],
     memorySkillPreview: '',

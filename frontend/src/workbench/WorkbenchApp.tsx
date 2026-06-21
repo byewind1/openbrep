@@ -45,6 +45,8 @@ export function WorkbenchApp() {
   const memoryBusy = useWorkbenchStore((state) => state.memoryBusy)
   const gitStatus = useWorkbenchStore((state) => state.gitStatus)
   const gitBusy = useWorkbenchStore((state) => state.gitBusy)
+  const knowledgeStatus = useWorkbenchStore((state) => state.knowledgeStatus)
+  const knowledgeBusy = useWorkbenchStore((state) => state.knowledgeBusy)
   const tapirStatus = useWorkbenchStore((state) => state.tapirStatus)
   const tapirBusy = useWorkbenchStore((state) => state.tapirBusy)
   const latestRevisionId = useWorkbenchStore((state) => state.latestRevisionId)
@@ -98,6 +100,8 @@ export function WorkbenchApp() {
   const ignoreMemoryLesson = useWorkbenchStore((state) => state.ignoreMemoryLesson)
   const clearProjectMemory = useWorkbenchStore((state) => state.clearProjectMemory)
   const loadProjectGitStatus = useWorkbenchStore((state) => state.loadProjectGitStatus)
+  const loadKnowledgeStatus = useWorkbenchStore((state) => state.loadKnowledgeStatus)
+  const reloadKnowledge = useWorkbenchStore((state) => state.reloadKnowledge)
   const initializeProjectGit = useWorkbenchStore((state) => state.initializeProjectGit)
   const setProjectGitEnabled = useWorkbenchStore((state) => state.setProjectGitEnabled)
   const commitProjectGit = useWorkbenchStore((state) => state.commitProjectGit)
@@ -367,6 +371,8 @@ export function WorkbenchApp() {
         memoryBusy={memoryBusy}
         gitStatus={gitStatus}
         gitBusy={gitBusy}
+        knowledgeStatus={knowledgeStatus}
+        knowledgeBusy={knowledgeBusy}
         onClose={() => setSettingsOpen(false)}
         onCompilerSettingsChange={setCompilerSettings}
         onOpenConfig={() => void openConfig()}
@@ -381,6 +387,8 @@ export function WorkbenchApp() {
         onInitializeProjectGit={() => void initializeProjectGit()}
         onSetProjectGitEnabled={(enabled) => void setProjectGitEnabled(enabled)}
         onCommitProjectGit={(message) => void commitProjectGit(message)}
+        onLoadKnowledgeStatus={() => void loadKnowledgeStatus()}
+        onReloadKnowledge={() => void reloadKnowledge()}
         onLoadMemoryLessons={loadMemoryLessons}
         onSummarizeProjectMemory={summarizeProjectMemory}
         onUpdateMemoryLesson={updateMemoryLesson}
