@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.8.0 — React 工作台成为默认 UI，Verification 一等 seam 落地，OpenBrep 从 GDL 生成工具迈向可验证的自校正 GDL 开发工作台。
+> 正式发布版本 v1.0.0 — Tauri 桌面工作台正式落地。React + Tauri + Python sidecar 全栈架构，Streamlit 完全退役，自愈编译循环与知识图谱驱动稳定运行。
 
 ---
 
@@ -108,22 +108,45 @@ obr
 
 ---
 
-## React Workbench（开发者预览）
+## 工作台架构
 
-`react-workbench-poc` 分支提供新的代码优先工作台：
+OpenBrep v1.0 采用全栈桌面架构：
 
-```bash
-./obr7
+```
+React 前端 (Vite + Monaco + Three.js)
+        ↕  HTTP/API
+Python 后端 (ThreadingHTTPServer + Agent Runtime)
+        ↕  stdout 握手协议
+Tauri 桌面壳 (Rust/Tauri v2)
 ```
 
-`obr7` 会同时启动本地 Python API 和 React/Vite 前端，并打印实际访问地址。
-默认端口被占用时会自动换端口；显式设置的 `OBR7_API_PORT` /
-`OBR7_WEB_PORT` 或 `--api-port` / `--web-port` 仍会严格按指定值使用。
-如果提示 `frontend/node_modules not found`，先运行 `cd frontend && npm install`。
+### 开发模式
 
-React Workbench 适合 HSF/GDL 源码编辑、Monaco 脚本编辑、mock 编译、
-预览、参数、记忆和 AI 助手工作流。Streamlit 仍保留为 Tapir/Archicad
-实时联动、Pro UX 和剩余兼容路径的 fallback。
+```bash
+# 启动 React 开发服务器 + Python API（热重载）
+obr
+
+# 或等价命令
+python3 scripts/obr7.py
+```
+
+默认端口被占用时会自动换端口。如果提示 `frontend/node_modules not found`，先运行 `cd frontend && npm install`。
+
+### Tauri 桌面模式
+
+```bash
+# 单端口模式：Python 同时服务 API + 前端静态资源
+python3 scripts/obr7.py --tauri
+
+# 完整 Tauri 桌面应用（开发模式）
+PATH="$HOME/.cargo/bin:$PATH" npx @tauri-apps/cli@2 dev
+
+# 打包 Tauri 桌面安装包
+cd frontend && npm run build && cd ..
+PATH="$HOME/.cargo/bin:$PATH" npx @tauri-apps/cli@2 build
+```
+
+Tauri 模式下，Rust 壳负责 spawn Python 进程、捕获 `OBR7_READY_URL` 信号、打开 Webview 窗口，关窗时发送 `/api/shutdown` 并等待 Python 进程退出。
 
 ---
 
@@ -235,20 +258,29 @@ openbrep 以 HSF 为原生格式，每个脚本独立处理，AI 只读取与当
 ```
 openbrep/
 ├── openbrep/
-│   ├── hsf_project.py       # HSF 数据模型
-│   ├── paramlist_builder.py # paramlist.xml 强类型生成
-│   ├── gdl_parser.py        # .gdl → HSFProject
-│   ├── compiler.py          # LP_XMLConverter 封装
-│   ├── core.py              # Agent 主循环 + generate_only
+│   ├── workbench/           # React 工作台服务层
+│   │   ├── assistant_service.py
+│   │   ├── compiler_service.py
+│   │   ├── preview_service.py
+│   │   ├── three_preview.py # Three.js payload 转换
+│   │   └── view_models.py   # LLM 输出分类 / 错误分类
+│   ├── workbench_api.py     # ThreadingHTTPServer API + SPA 静态服务
+│   ├── core.py              # Agent 主循环
 │   ├── llm.py               # 多模型统一接口
+│   ├── compiler.py          # LP_XMLConverter 封装
+│   ├── local_file_dialog.py # macOS/Tk 原生文件选择器
 │   ├── knowledge.py         # 知识库加载
 │   └── skills_loader.py     # 任务策略加载
-├── ui/
-│   └── app.py               # Streamlit Web 界面
+├── frontend/                # React + Vite + Monaco + Three.js 工作台
+│   ├── src/
+│   └── dist/                # npm run build 产物（Tauri 单端口模式）
+├── src-tauri/               # Tauri v2 桌面壳（Rust）
+│   ├── src/main.rs          # spawn Python → 捕获信号 → Webview
+│   └── tauri.conf.json
+├── scripts/
+│   └── obr7.py              # 启动编排（dev / tauri 双模式）
 ├── knowledge/               # GDL 参考文档（可自行扩充）
 ├── skills/                  # 任务策略（可自行扩充）
-├── docs/
-│   └── manual.md            # 详细用户手册
 ├── tests/                   # 单元测试
 ├── config.example.toml
 └── pyproject.toml
@@ -343,6 +375,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v1.0.0 | Tauri 桌面工作台正式落地：彻底退役 Streamlit（79 个文件 + 24 个 UI 测试），迁移域逻辑至 `openbrep/workbench/`，初始化 Rust/Tauri v2 桌面壳，实现 Python sidecar 启动握手、stderr relay、SPA 静态服务、关窗孤儿进程防护；674 测试全绿（见 docs/releases/v1.0.0.md） |
 | v0.8.0 | React 工作台成为默认 UI：合并 react-workbench 分支，`obr` 默认启动 React + Monaco + Three.js 工作台，Streamlit 降级为 fallback；新增 Verification 一等 seam（`openbrep/verification.py`），把散落的 static/lint/compile/plan_checks 聚合成统一验证报告，AI 生成后展示置信度、检查结果、残余风险；CREATE 路径 compile 状态显式可见，MODIFY 路径含 compile + auto-repair 证据（见 docs/releases/v0.8.0.md） |
 | v0.7.0 | GDL 资产生命周期里程碑：新增 modify / repair 前后 revision 快照、`obr history` / `obr rollback`、工程级变更摘要、GDLContractChecker 合规检查输出，以及 `--compare mock|real` 对比编译（见 docs/releases/v0.7.0.md） |
 | v0.6.12 | GDL 知识库校准收口：完成 P0-P6 批次的官方文档/社区/本地知识交叉校验，修正核心命令语义、参数结构、2D/3D 投影与高级几何边界，并补充 Pro 层商业化 Skill 开发方向（见 docs/releases/v0.6.12.md） |

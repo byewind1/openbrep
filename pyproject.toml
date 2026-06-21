@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbrep"
-version = "0.8.0"
-description = "AI Agent for automated ArchiCAD GDL library object development (HSF-native)"
+version = "1.0.0"
+description = "AI GDL Workbench for ArchiCAD — knowledge-graph driven, self-healing compile loop, Tauri desktop"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"

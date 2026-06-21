@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenBrep",
-  "version": "0.8.0",
-  "identifier": "dev.openbrep.app",
+  "version": "1.0.0",
+  "identifier": "com.openbrep.app",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:8766",
@@ -13,11 +13,11 @@
     "windows": [
       {
         "label": "main",
-        "title": "OpenBrep",
-        "width": 1400,
+        "title": "OpenBrep — AI GDL Workbench",
+        "width": 1440,
         "height": 900,
-        "minWidth": 900,
-        "minHeight": 600,
+        "minWidth": 1024,
+        "minHeight": 700,
         "visible": false
       }
     ],
