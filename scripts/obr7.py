@@ -70,15 +70,26 @@ def choose_port(
     return find_available_port(port + 1, host, fallback_start=fallback_start), True
 
 
-def wait_for_url(url: str, *, timeout: float = 12.0) -> bool:
+def wait_for_url(url: str, *, timeout: float = 12.0, waiting_msg: str | None = None) -> bool:
+    """Poll url until it responds with a non-5xx status or timeout expires.
+
+    Args:
+        waiting_msg: If given, printed every ~2 s so the terminal doesn't look frozen.
+    """
     deadline = time.time() + timeout
+    _last_print = 0.0
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=1.0) as response:
                 if response.status < 500:
                     return True
         except OSError:
-            time.sleep(0.25)
+            pass
+        now = time.time()
+        if waiting_msg is not None and now - _last_print >= 2.0:
+            print(f"[obr7] {waiting_msg}", flush=True)
+            _last_print = now
+        time.sleep(0.25)
     return False
 
 
@@ -198,8 +209,11 @@ def main(argv: list[str] | None = None) -> int:
             static_dir = args.static_dir or str(frontend_dir / "dist")
             print(f"[obr7] Starting API (Tauri mode): {api_url}")
             processes.append(subprocess.Popen(build_api_command(api_port, static_dir=static_dir), cwd=root, env=env))
-            if not wait_for_url(f"{api_url}/api/snapshot"):
-                print("[obr7] API did not become ready in time.", file=sys.stderr)
+            if not wait_for_url(
+                f"{api_url}/api/snapshot",
+                waiting_msg="正在等待后端 API 就绪…",
+            ):
+                print("[obr7] 后端启动超时，请检查环境配置。", file=sys.stderr)
                 stop_processes()
                 return 1
             print(f"[obr7] OpenBrep ready: {api_url}")
@@ -208,13 +222,26 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"[obr7] Starting API: {api_url}")
             processes.append(subprocess.Popen(build_api_command(api_port), cwd=root, env=env))
-            if not wait_for_url(f"{api_url}/api/snapshot"):
-                print("[obr7] API did not become ready in time.", file=sys.stderr)
+            if not wait_for_url(
+                f"{api_url}/api/snapshot",
+                waiting_msg="正在等待后端 API 就绪…",
+            ):
+                print("[obr7] 后端启动超时，请检查环境配置。", file=sys.stderr)
                 stop_processes()
                 return 1
 
             print(f"[obr7] Starting React workbench: {web_url}")
             processes.append(subprocess.Popen(build_web_command(web_port), cwd=frontend_dir, env=env))
+            # Wait for Vite dev server before opening the browser — eliminates the
+            # "site can't be reached" flash caused by the browser racing the dev server.
+            if not wait_for_url(
+                web_url,
+                timeout=30.0,
+                waiting_msg="正在等待前端开发服务器就绪…",
+            ):
+                print("[obr7] 前端服务器启动超时，请检查 Node 环境。", file=sys.stderr)
+                stop_processes()
+                return 1
             print(f"[obr7] OpenBrep Workbench: {web_url}")
             print(f"[obr7] API: {api_url}")
             print("[obr7] Press Ctrl+C to stop.")

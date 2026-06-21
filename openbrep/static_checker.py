@@ -83,6 +83,7 @@ class StaticChecker:
         errors.extend(self._check_undefined_var(project))
         errors.extend(self._check_forward_decl(project))
         errors.extend(self._check_stack_imbalance(project))
+        errors.extend(self._check_stack_imbalance_branches(project))
         errors.extend(self._check_block_mismatch(project))
 
         return StaticCheckResult(passed=len(errors) == 0, errors=errors)
@@ -260,6 +261,105 @@ class StaticChecker:
                 " 每条 ADD/ADDX/ADDY/ADDZ/ROT/MUL 都需要对应 DEL。"
             ),
         )]
+
+    # ── check 3b: stack_imbalance (branch-aware) ─────────────────────────────
+
+    def _check_stack_imbalance_branches(self, project: "HSFProject") -> list[StaticError]:
+        """
+        Branch-aware supplement to the global stack_imbalance check.
+
+        Detects IF blocks where the THEN branch has a different ADD/DEL delta
+        than the ELSE branch — a case the global count misses when outer code
+        cancels the per-branch difference.
+
+        Example of false negative caught here (global count sees 1 push, 1 pop):
+            ADD
+            IF cond THEN
+                DEL   ! pops the ADD
+            ELSE
+                ! DEL missing → ELSE path has stack underflow
+            ENDIF
+            DEL       ! global: push=1, pop=2 → global check flags this,
+                      ! but if the outer DEL were absent:
+            ! ADD + IF(DEL / -) + nothing = 1 push, 1 pop globally → masked
+
+        Only 3d.gdl is checked. DELALL-containing scripts are skipped (same
+        guard as the global check). Nested IFs propagate their net delta to
+        the enclosing branch so multi-level nesting is handled correctly.
+        """
+        code = self._strip_comments(self._get_script(project, "3d.gdl"))
+        if not code.strip() or self._DELALL_RE.search(code):
+            return []
+
+        errors: list[StaticError] = []
+        # Stack of branch frames, one per open IF block.
+        # Each frame: {then_push, then_pop, else_push, else_pop, in_else}
+        if_stack: list[dict] = []
+
+        for line in code.splitlines():
+            ci = line.find("!")
+            clean_line = line[:ci] if ci >= 0 else line
+            clean_upper = clean_line.strip().upper()
+            if not clean_upper:
+                continue
+
+            # ENDIF — close frame and compare branch deltas
+            if self._ENDIF_RE.search(clean_upper):
+                if if_stack:
+                    frame = if_stack.pop()
+                    then_delta = frame["then_push"] - frame["then_pop"]
+                    else_delta = frame["else_push"] - frame["else_pop"]
+                    if then_delta != else_delta:
+                        errors.append(StaticError(
+                            check_type="stack_imbalance",
+                            file="scripts/3d.gdl",
+                            detail=(
+                                f"IF 分支变换栈不对称：THEN delta={then_delta:+d}，"
+                                f"ELSE delta={else_delta:+d}。"
+                                " 确保每条执行路径的 ADD/DEL 数量相同。"
+                            ),
+                        ))
+                    # Propagate net delta to parent frame (both paths carry the same
+                    # delta when balanced; use THEN as canonical after error check)
+                    net = then_delta
+                    if if_stack and net != 0:
+                        parent = if_stack[-1]
+                        branch = "else" if parent["in_else"] else "then"
+                        if net > 0:
+                            parent[f"{branch}_push"] += net
+                        else:
+                            parent[f"{branch}_pop"] += -net
+                continue
+
+            # ELSE — flip branch in current frame
+            if re.search(r"(?<![A-Za-z])ELSE(?![A-Za-z])", clean_upper) and if_stack:
+                if_stack[-1]["in_else"] = True
+                continue
+
+            # Multi-line IF — open a new frame (skip single-line IF … THEN <code>)
+            if self._BARE_IF_RE.search(clean_upper) and not self._SINGLE_LINE_IF_RE.search(clean_upper):
+                if_stack.append({
+                    "then_push": 0, "then_pop": 0,
+                    "else_push": 0, "else_pop": 0,
+                    "in_else": False,
+                })
+                continue
+
+            # Count push / pop tokens on this line
+            push = len(self._PUSH_RE.findall(clean_upper))
+            pop = sum(
+                int(m.group(1)) if m.group(1) else 1
+                for m in self._POP_RE.finditer(clean_upper)
+            )
+
+            if if_stack:
+                frame = if_stack[-1]
+                branch = "else" if frame["in_else"] else "then"
+                frame[f"{branch}_push"] += push
+                frame[f"{branch}_pop"] += pop
+            # Outside any IF: handled by global _check_stack_imbalance
+
+        return errors
 
     # ── check 4: block_mismatch ──────────────────────────────────────────────
 

@@ -459,6 +459,7 @@ class TaskPipeline:
                 GEOMETRY_COMMANDS, TRANSFORM_COMMANDS, ATTRIBUTE_COMMANDS,
                 TWO_D_COMMANDS, MISC_COMMANDS, CONTROL_FLOW, PARAMETER_COMMANDS,
                 GROUP_COMMANDS, LOW_LEVEL_BODY_COMMANDS, BUILTIN_FUNCTIONS,
+                SYSTEM_IDENTIFIERS,
             )
             # 按类别组织，让 LLM 更容易理解结构
             _whitelist_sections = [
@@ -474,11 +475,30 @@ class TaskPipeline:
             _wl_lines = ["【GDL API 合法命令白名单】只能使用以下 GDL 命令，禁止自造不存在的命令名："]
             for _section_name, _cmds in _whitelist_sections:
                 _wl_lines.append(f"{_section_name}: {', '.join(_cmds)}")
+            # 系统变量白名单：防止 LLM 自造 GLOB_/SYMB_ 前缀变量
+            _wl_lines.append(
+                "【合法全局变量白名单】除以下系统变量外，禁止自造 GLOB_ 或 SYMB_ 前缀的变量：\n"
+                + ", ".join(sorted(SYSTEM_IDENTIFIERS))
+            )
+            # 高复杂度命令参数格式备忘（最易产生幻觉参数）
+            _wl_lines.append(
+                "【高复杂度命令参数格式】严格按以下格式使用，顶点数 n 必须与后续坐标组数一致：\n"
+                "  PRISM_ n, h, x1, y1, b1, x2, y2, b2, ...（b=曲率，每顶点一个）\n"
+                "  BPRISM_ n, h, x1, y1, b1, x2, y2, b2, ...\n"
+                "  EXTRUDE_ n, h, mat_top, mat_side, mat_bot, mask, x1, y1, b1, ...\n"
+                "  REVOLVE_ n, phi, mat_top, mat_side, mat_bot, mask, x1, y1, b1, ...\n"
+                "  RULED_ n, m, mat_top, mat_side, mat_bot, mask, x1, y1, z1, ...\n"
+                "  MESH n, m, mask, x11, y11, z11, x12, y12, z12, ...\n"
+                "  PGON_ n, mat_id, mask, x1, y1, z1, ...\n"
+                "  POLY_ n, mask, x1, y1, b1, ...\n"
+                "  TUBE_ n_path, n_sect, booleans, closed, mat_id, p1x, p1y, p1z, ..."
+            )
             enriched_instruction = enriched_instruction + "\n\n" + "\n".join(_wl_lines)
             _graph_constraint_injected = True
         except Exception as _wl_exc:
             logger.debug("API whitelist injection skipped: %s", _wl_exc)
 
+        _graph_constraint = ""
         try:
             from openbrep.knowledge_graph import get_graph_manager
             _graph_mgr = get_graph_manager()
@@ -489,6 +509,15 @@ class TaskPipeline:
                 logger.info("[graph] concept constraint injected for intent: %s", request.user_input[:60])
         except Exception as _graph_exc:
             logger.debug("Graph concept constraint injection skipped: %s", _graph_exc)
+
+        # 无概念命中时注入通用 3D/2D 隔离约束，防止 2D 专属命令误入 3D 脚本
+        if not _graph_constraint:
+            enriched_instruction = (
+                enriched_instruction + "\n\n"
+                "【领域约束】未匹配特定 BIM 概念，请严格遵循 GDL 语法规范，"
+                "禁止在 3D 脚本中使用 2D 专属命令（如 LINE2、RECT2、CIRCLE2、"
+                "ARC2、HOTSPOT2、POLY2、PROJECT2）。"
+            )
         # ─────────────────────────────────────────────────────────────────────
 
         agent = GDLAgent(
@@ -864,10 +893,18 @@ class TaskPipeline:
         except Exception as exc:
             logger.warning("Compile step failed: %s", exc)
 
-        # Auto-repair on compile failure (1 attempt)
+        # Auto-repair on compile failure (max 2 rounds)
+        _MAX_MODIFY_REPAIR = 2
+        _modify_repair_round = 0
         auto_repair_info: str = ""
         _graph_powered_repair = False
-        if compile_result is not None and not compile_result.success and gsm_path is not None:
+        while (
+            compile_result is not None
+            and not compile_result.success
+            and gsm_path is not None
+            and _modify_repair_round < _MAX_MODIFY_REPAIR
+        ):
+            _modify_repair_round += 1
             error_parts = [
                 p.strip()
                 for p in [compile_result.stderr or "", compile_result.stdout or ""]
@@ -882,8 +919,11 @@ class TaskPipeline:
                 instruction=clean_instruction,
                 project=project,
             )
-            on_event("status", {"message": "🔧 编译失败，正在自动修复…"})
-            logger.info("Compile failed; triggering auto-repair. error_log=%d chars", len(error_log))
+            on_event("status", {"message": f"🔧 编译失败（第 {_modify_repair_round} 轮），正在自动修复…"})
+            logger.info(
+                "Compile failed; triggering auto-repair round %d/%d. error_log=%d chars",
+                _modify_repair_round, _MAX_MODIFY_REPAIR, len(error_log),
+            )
 
             # ── 图谱诊断（阶段3）：从错误归因，注入结构化修复提示 ──────────
             graph_diagnosis = ""
@@ -898,11 +938,17 @@ class TaskPipeline:
             # ─────────────────────────────────────────────────────────────────
 
             graph_hint = f"\n\n{graph_diagnosis}" if graph_diagnosis else ""
+            # 第 2 轮追加跨文件同步提示，防止参数名不一致导致反复失败
+            cross_file_note = (
+                "\n\n第 2 轮修复要点：在修复上述错误的同时，必须检查 3d.gdl 与 "
+                "paramlist.xml 的跨文件参数名是否完全同步（大小写须一致）。"
+                if _modify_repair_round >= 2 else ""
+            )
             repair_instruction = (
                 f"{clean_instruction}\n\n"
-                f"编译失败，请基于当前脚本进行最小改动修复以下错误：\n"
+                f"编译失败（第 {_modify_repair_round} 轮），请基于当前脚本进行最小改动修复以下错误：\n"
                 f"```\n{error_log[:800]}\n```"
-                f"{graph_hint}"
+                f"{graph_hint}{cross_file_note}"
             )
             try:
                 repair_changes, _repair_plain = agent.generate_only(
@@ -932,13 +978,17 @@ class TaskPipeline:
                     "error": compile_result.stderr if not compile_result.success else "",
                 })
                 if compile_result.success:
-                    auto_repair_info = "🔧 自动修复后编译通过"
-                else:
+                    auto_repair_info = f"🔧 第 {_modify_repair_round} 轮自动修复后编译通过"
+                    break
+                elif _modify_repair_round >= _MAX_MODIFY_REPAIR:
                     short_err = compile_result.stderr[:300].strip()
-                    auto_repair_info = f"🔧 自动修复后仍编译失败：\n```\n{short_err}\n```"
+                    auto_repair_info = (
+                        f"🔧 {_MAX_MODIFY_REPAIR} 轮自动修复后仍编译失败：\n```\n{short_err}\n```"
+                    )
             except Exception as exc:
-                logger.warning("Auto-repair attempt failed: %s", exc)
-                auto_repair_info = f"🔧 自动修复尝试失败：{exc}"
+                logger.warning("Auto-repair attempt round %d failed: %s", _modify_repair_round, exc)
+                auto_repair_info = f"🔧 第 {_modify_repair_round} 轮自动修复尝试失败：{exc}"
+                break
 
         compile_comparison: CompileComparison | None = None
         if before_compile_snapshot is not None:

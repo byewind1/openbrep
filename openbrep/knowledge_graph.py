@@ -57,6 +57,7 @@ class GDLGraphManager:
             self._load_apis(data.get("api_functions", []))
             self._load_concepts(data.get("bim_concepts", []))
             self.error_patterns = data.get("known_error_patterns", [])
+            self._validate_error_patterns()
             self._loaded = True
             logger.info(
                 "GDL graph loaded: %d APIs, %d concepts, %d aliases",
@@ -99,6 +100,33 @@ class GDLGraphManager:
             self.alias_map[name.lower()] = name
             for alias in item.get("aliases", []):
                 self.alias_map[alias.lower()] = name
+
+    def _validate_error_patterns(self) -> None:
+        """校验 error_patterns 中的 error_category 字段与 ErrorCategory 枚举对齐。
+
+        不匹配时记录 ERROR 级日志，防止图谱诊断因字段拼写错误静默降级。
+        """
+        try:
+            from openbrep.error_classifier import ErrorCategory
+            valid_categories = {ec.value for ec in ErrorCategory}
+        except Exception as exc:
+            logger.debug("Cannot import ErrorCategory for schema validation: %s", exc)
+            return
+
+        bad: list[str] = []
+        for ep in self.error_patterns:
+            cat = ep.get("error_category")
+            if cat and cat not in valid_categories:
+                bad.append(repr(cat))
+
+        if bad:
+            logger.error(
+                "GDL graph schema error: %d error_pattern(s) have unknown error_category: %s. "
+                "Valid values: %s. Fix gdl_graph.json to enable graph diagnosis for these patterns.",
+                len(bad),
+                ", ".join(bad),
+                sorted(valid_categories),
+            )
 
     # ── 查询接口 ─────────────────────────────────────────
 

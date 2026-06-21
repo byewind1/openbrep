@@ -363,5 +363,131 @@ class TestEdgeCases(unittest.TestCase):
         self.assertTrue(result.passed)
 
 
+class TestStackImbalanceBranchAware(unittest.TestCase):
+    """Branch-aware stack check: IF branch delta asymmetry."""
+
+    def _branch_errors(self, code_3d: str):
+        proj = FakeProject(scripts={"3d.gdl": code_3d}, param_names=[])
+        return [e for e in StaticChecker().check(proj).errors if e.check_type == "stack_imbalance"]
+
+    def test_symmetric_if_else_passes(self):
+        """Both branches push and pop equally → no error."""
+        code = (
+            "IF a > 0 THEN\n"
+            "  ADD 0, 0, 1\n"
+            "  BLOCK 1, 1, 1\n"
+            "  DEL\n"
+            "ELSE\n"
+            "  ADD 0, 0, 1\n"
+            "  SPHERE 0.5\n"
+            "  DEL\n"
+            "ENDIF\n"
+            "END\n"
+        )
+        self.assertEqual(self._branch_errors(code), [])
+
+    def test_then_push_else_pop_global_balanced_detected(self):
+        """
+        True false negative for global check:
+          THEN: ADD (push+1, no DEL)
+          ELSE: DEL (no ADD, pop-1)
+          Global count: push=1, pop=1 → globally balanced, but both paths are broken.
+        Branch-aware check must catch the asymmetry (THEN delta=+1, ELSE delta=-1).
+        """
+        code = (
+            "IF a > 0 THEN\n"
+            "  ADD 0, 0, 1\n"    # push in THEN only, delta THEN = +1
+            "  BLOCK 1, 1, 1\n"
+            "ELSE\n"
+            "  BLOCK 1, 1, 1\n"
+            "  DEL\n"            # pop in ELSE only, delta ELSE = -1
+            "ENDIF\n"
+            "END\n"
+        )
+        errs = self._branch_errors(code)
+        branch_errs = [e for e in errs if "IF 分支" in e.detail]
+        self.assertTrue(len(branch_errs) >= 1, f"Expected branch error; got: {errs}")
+
+    def test_else_branch_missing_del_detected(self):
+        """
+        True false negative for global check:
+          THEN: ADD + DEL (balanced, delta=0)
+          ELSE: ADD only (no DEL, delta=+1) but a DEL sits outside ENDIF.
+          Global: push=2 (THEN+ELSE), pop=2 (THEN's DEL + outside DEL) → balanced.
+          Branch check: THEN delta=0, ELSE delta=+1 → asymmetric → error.
+        """
+        code = (
+            "IF a > 0 THEN\n"
+            "  ADD 0, 0, 1\n"
+            "  BLOCK 1, 1, 1\n"
+            "  DEL\n"            # delta THEN = 0
+            "ELSE\n"
+            "  ADD 0, 0, 1\n"   # push in ELSE, no DEL inside branch
+            "  BLOCK 1, 1, 1\n" # delta ELSE = +1
+            "ENDIF\n"
+            "DEL\n"             # global pop compensates → global push=2, pop=2
+            "END\n"
+        )
+        errs = self._branch_errors(code)
+        branch_errs = [e for e in errs if "IF 分支" in e.detail]
+        self.assertTrue(len(branch_errs) >= 1, f"Expected branch error; got: {errs}")
+
+    def test_if_without_else_balanced_passes(self):
+        """IF without ELSE: THEN delta=0 matched against implicit ELSE delta=0 → passes."""
+        code = (
+            "IF a > 0 THEN\n"
+            "  ADD 0, 0, 1\n"
+            "  BLOCK 1, 1, 1\n"
+            "  DEL\n"
+            "ENDIF\n"
+            "END\n"
+        )
+        errs = self._branch_errors(code)
+        self.assertEqual(errs, [], "Balanced IF without ELSE should not trigger branch error")
+
+    def test_single_line_if_not_tracked(self):
+        """Single-line IF THEN <code> has no ENDIF → no branch frame opened."""
+        code = (
+            "IF a > 0 THEN ADD 0, 0, 1\n"
+            "DEL\n"
+            "END\n"
+        )
+        errs = self._branch_errors(code)
+        self.assertEqual(errs, [])
+
+    def test_delall_skips_branch_check(self):
+        """DELALL present → entire branch check is skipped (no false positives)."""
+        code = (
+            "ADD 0, 0, 1\n"
+            "IF a > 0 THEN\n"
+            "  ADD 0, 0, 1\n"
+            "ELSE\n"
+            "  DELALL\n"
+            "ENDIF\n"
+            "END\n"
+        )
+        errs = self._branch_errors(code)
+        self.assertEqual(errs, [])
+
+    def test_nested_if_balanced_passes(self):
+        """Nested IF that is balanced contributes zero net delta to parent → no error."""
+        code = (
+            "IF outer > 0 THEN\n"
+            "  ADD 0, 0, 1\n"
+            "  IF inner > 0 THEN\n"
+            "    BLOCK 1, 1, 1\n"
+            "  ELSE\n"
+            "    SPHERE 0.5\n"
+            "  ENDIF\n"
+            "  DEL\n"
+            "ELSE\n"
+            "  CONE 1, 0.5, 1\n"
+            "ENDIF\n"
+            "END\n"
+        )
+        errs = self._branch_errors(code)
+        self.assertEqual(errs, [], "Balanced nested IF should not trigger branch error")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -55,12 +55,32 @@ _MODIFY_KEYWORDS = {
     "修复", "修改", "改一下", "调整",
 }
 
-_DEBUG_KEYWORDS = {
-    "debug", "fix", "error", "bug", "wrong", "issue", "broken", "fail", "crash",
-    "问题", "错误", "调试", "检查", "分析", "为什么", "帮我看", "看看", "出错",
-    "不对", "不行", "哪里", "原因", "解释", "explain", "why", "what", "how",
-    "review", "看一下", "看下", "告诉我", "这段", "这个脚本",
-}
+# Strong debug keywords: always route to DEBUG without requiring error log evidence.
+# Keep only words that are unambiguously "debugging a broken thing".
+_STRONG_DEBUG_KEYWORDS: frozenset[str] = frozenset({
+    "debug", "bug", "broken", "crash",
+    "调试", "出错", "报错",
+})
+
+# Weak debug keywords: only route to DEBUG when explicit error log evidence is present.
+# Words like "fix", "error", "wrong" are too generic on their own ("fix the width").
+_WEAK_DEBUG_KEYWORDS: frozenset[str] = frozenset({
+    "fix", "error", "fail", "wrong", "issue",
+    "错误", "问题", "不对",
+})
+
+# Explicit error log feature pattern (LP_XMLConverter / Archicad stderr format).
+# Presence of any of these in the message is strong evidence the user is pasting an error log.
+_ERROR_LOG_SIGNATURE_RE = re.compile(
+    r"(?:error\s*[:：]"                 # "error:"
+    r"|warning\s*[:：]"                 # "warning:"
+    r"|\(\d+\)\s*:"                     # "(LINE) :" LP_XMLConverter row
+    r"|line\s+\d+"                      # "line 42"
+    r"|编译失败|compilation\s+error"
+    r"|exit\s+code\s+\d+"
+    r")",
+    re.IGNORECASE,
+)
 
 _ARCHICAD_ERROR_PATTERN = re.compile(
     r"(error|warning)\s+in\s+\w[\w\s]*script[,\s]+line\s+\d+",
@@ -111,13 +131,25 @@ def _is_gdl_knowledge_question(text: str) -> bool:
 
 
 def _is_debug_intent(text: str) -> bool:
-    """True if text looks like a debug/error-analysis request."""
+    """True if text looks like a debug/error-analysis request.
+
+    Three tiers:
+    1. Explicit editor prefix or Archicad error pattern → always DEBUG.
+    2. Strong debug keyword (bug/crash/报错/…) → always DEBUG.
+    3. Weak debug keyword (error/fix/wrong/…) + explicit error log signature → DEBUG.
+       Without an error log signature, these weak words alone fall through to MODIFY,
+       avoiding false DEBUG routing for messages like "帮我fix宽度" or "看看这段脚本".
+    """
     if text.startswith("[DEBUG:editor]"):
         return True
     if _ARCHICAD_ERROR_PATTERN.search(text):
         return True
     t = text.lower()
-    return any(kw in t for kw in _DEBUG_KEYWORDS)
+    if any(kw in t for kw in _STRONG_DEBUG_KEYWORDS):
+        return True
+    if any(kw in t for kw in _WEAK_DEBUG_KEYWORDS):
+        return _ERROR_LOG_SIGNATURE_RE.search(text) is not None
+    return False
 
 
 def _is_modify_or_check(text: str) -> bool:

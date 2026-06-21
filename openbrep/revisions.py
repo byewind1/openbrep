@@ -106,6 +106,13 @@ def create_revision(
     tmp_dir.rename(revision_dir)
     _write_latest(root, revision_id)
 
+    # Auto-prune: keep disk usage bounded (non-blocking; failure is logged, not raised)
+    try:
+        prune_revisions(root, keep_last_n=20)
+    except Exception as _prune_exc:
+        import logging as _logging
+        _logging.getLogger(__name__).debug("Auto-prune revisions failed: %s", _prune_exc)
+
     return _revision_from_manifest(revision_dir, manifest)
 
 
@@ -466,6 +473,50 @@ def _write_latest(project_root: Path, revision_id: str) -> None:
     latest_path = project_root / OPENBREP_DIR / LATEST_FILE
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     latest_path.write_text(f"{revision_id}\n", encoding="utf-8")
+
+
+def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> int:
+    """Delete oldest revisions beyond keep_last_n.
+
+    Args:
+        project_dir:  HSF project root (must pass is_hsf_project_dir check).
+        keep_last_n:  Number of newest revisions to retain. Must be >= 1.
+
+    Returns:
+        Number of revision directories deleted.
+
+    Safety guarantees:
+    - The latest revision (pointed to by .openbrep/latest) is never deleted.
+    - If fewer than keep_last_n revisions exist, nothing is deleted.
+    - Deletion failures are logged but do not abort the rest of pruning.
+    """
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
+
+    keep_last_n = max(1, keep_last_n)
+    root = _resolve_project_root(project_dir)
+    revisions = list_revisions(root)
+    if len(revisions) <= keep_last_n:
+        return 0
+
+    latest_id = get_latest_revision_id(root)
+    to_delete = revisions[:-keep_last_n]  # oldest revisions
+    deleted = 0
+    for rev in to_delete:
+        if rev.revision_id == latest_id:
+            # Never delete the currently active revision
+            _logger.debug("prune_revisions: skipping latest revision %s", rev.revision_id)
+            continue
+        try:
+            shutil.rmtree(rev.path)
+            deleted += 1
+            _logger.debug("prune_revisions: deleted %s", rev.revision_id)
+        except Exception as exc:
+            _logger.warning("prune_revisions: failed to delete %s: %s", rev.revision_id, exc)
+
+    if deleted:
+        _logger.info("prune_revisions: deleted %d revision(s), kept %d", deleted, keep_last_n)
+    return deleted
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
