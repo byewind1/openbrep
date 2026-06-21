@@ -18,6 +18,7 @@ config.toml
 output/
 src/
 !frontend/src/
+!src-tauri/src/
 .qoder/
 .qwen/
 knowledge/raw/ccgdl_dev_doc/
