@@ -8,7 +8,6 @@ Usage:
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import mimetypes
 import os
@@ -555,16 +554,6 @@ def _collect_config_issues(config) -> list[str]:
     return issues
 
 
-def _has_streamlit() -> bool:
-    return importlib.util.find_spec("streamlit") is not None
-
-
-
-def _resolve_ui_app_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "ui" / "app.py"
-
-
-
 def _is_tcp_port_available(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -628,54 +617,16 @@ def _has_react_workbench() -> bool:
 
 
 def _launch_ui() -> int:
-    # 优先启动 React 工作台（obr7），不可用时 fallback 到 Streamlit
-    if _has_react_workbench():
-        console.print("[dim]启动 React 工作台（obr7）…[/dim]")
-        console.print("[dim]Streamlit 保留为 fallback：streamlit run ui/app.py[/dim]")
-        root = Path(__file__).resolve().parents[1]
-        obr7_script = root / "scripts" / "obr7.py"
-        try:
-            return subprocess.call([sys.executable, str(obr7_script)])
-        except Exception as exc:
-            err_console.print(f"[yellow]⚠️ React 工作台启动失败：{exc}[/yellow]")
-            err_console.print("[dim]回退到 Streamlit…[/dim]")
-
-    if not _has_streamlit():
-        err_console.print("[red]❌ 未安装 UI 依赖 streamlit。[/red]")
-        err_console.print("请先安装： pip install openbrep[ui]", markup=False)
+    if not _has_react_workbench():
+        err_console.print("[red]❌ React 工作台文件缺失（frontend/ 或 scripts/obr7.py 不存在）。[/red]")
         return 1
-
-    ui_app_path = _resolve_ui_app_path()
-    if not ui_app_path.is_file():
-        err_console.print(f"[red]❌ 未找到 UI 入口文件：{ui_app_path}[/red]")
+    root = Path(__file__).resolve().parents[1]
+    obr7_script = root / "scripts" / "obr7.py"
+    try:
+        return subprocess.call([sys.executable, str(obr7_script)])
+    except Exception as exc:
+        err_console.print(f"[red]❌ React 工作台启动失败：{exc}[/red]")
         return 1
-
-    port = 8501
-    if not _is_tcp_port_available(port):
-        console.print("[dim]旧进程占用端口 8501，正在清理...[/dim]")
-        if _kill_process_on_port(port):
-            time.sleep(0.5)
-        if not _is_tcp_port_available(port):
-            err_console.print(f"[red]❌ OpenBrep UI 默认端口 {port} 已被占用。[/red]")
-            err_console.print("请先关闭旧的 Streamlit/obr 进程，再重新运行 obr。")
-            return 1
-
-    console.print(f"[dim]OpenBrep UI 已启动：http://localhost:{port}[/dim]")
-    console.print("[dim]已关闭自动打开浏览器，请在常用浏览器中手动访问或使用已收藏地址。[/dim]")
-    cmd = [
-        sys.executable,
-        "-m",
-        "streamlit",
-        "run",
-        str(ui_app_path),
-        "--server.headless",
-        "true",
-        "--server.address",
-        "127.0.0.1",
-        "--server.port",
-        str(port),
-    ]
-    return subprocess.call(cmd)
 
 
 def _run_chat_repl(project_dir: Optional[str] = None) -> None:

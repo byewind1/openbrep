@@ -1,3 +1,7 @@
+"""Native file/directory chooser dialogs for local desktop sessions.
+
+Supports macOS (via osascript) and other platforms (via tkinter).
+"""
 from __future__ import annotations
 
 import platform
@@ -11,12 +15,6 @@ def choose_file(
     initial_dir: str | None = None,
     extensions: list[str] | tuple[str, ...] | None = None,
 ) -> str | None:
-    """
-    Open a native file chooser for local Streamlit sessions.
-
-    This is intended for local OpenBrep sessions where the Streamlit process
-    runs on the same machine as the browser.
-    """
     normalized_extensions = _normalize_extensions(extensions)
     if platform.system() == "Darwin":
         return _choose_file_macos(title=title, initial_dir=initial_dir, extensions=normalized_extensions)
@@ -24,18 +22,10 @@ def choose_file(
 
 
 def choose_path(*, title: str = "打开 GDL / GSM 文件", initial_dir: str | None = None) -> str | None:
-    """Compatibility wrapper for older callers that opened project source files."""
     return choose_file(title=title, initial_dir=initial_dir)
 
 
 def choose_directory(*, title: str = "选择 HSF 项目目录", initial_dir: str | None = None) -> str | None:
-    """
-    Open a native directory chooser for local Streamlit sessions.
-
-    Browsers cannot expose arbitrary local folder paths to web apps. OpenBrep is
-    normally run on the same Mac as Archicad, so this helper opens the chooser
-    on the local Python process and returns the selected POSIX path.
-    """
     if platform.system() == "Darwin":
         return _choose_directory_macos(title=title, initial_dir=initial_dir)
     return _choose_directory_tk(title=title, initial_dir=initial_dir)
@@ -43,7 +33,6 @@ def choose_directory(*, title: str = "选择 HSF 项目目录", initial_dir: str
 
 def _choose_directory_macos(*, title: str, initial_dir: str | None = None) -> str | None:
     script = _choose_directory_macos_script(title=title, initial_dir=initial_dir)
-
     try:
         result = subprocess.run(
             ["osascript", "-e", script],
@@ -54,11 +43,9 @@ def _choose_directory_macos(*, title: str, initial_dir: str | None = None) -> st
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
-
     if result.returncode != 0:
         return None
-    selected = result.stdout.strip()
-    return selected or None
+    return result.stdout.strip() or None
 
 
 def _choose_directory_macos_script(*, title: str, initial_dir: str | None = None) -> str:
@@ -68,7 +55,6 @@ def _choose_directory_macos_script(*, title: str, initial_dir: str | None = None
         if initial_path.exists():
             default_location = initial_path if initial_path.is_dir() else initial_path.parent
             default_location_arg = f' default location POSIX file "{_escape_applescript(str(default_location))}"'
-
     return (
         "use scripting additions\n"
         "activate\n"
@@ -83,7 +69,6 @@ def _choose_file_macos(
     extensions: list[str] | tuple[str, ...] | None = None,
 ) -> str | None:
     script = _choose_file_macos_script(title=title, initial_dir=initial_dir, extensions=extensions)
-
     try:
         result = subprocess.run(
             ["osascript", "-e", script],
@@ -94,11 +79,9 @@ def _choose_file_macos(
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
-
     if result.returncode != 0:
         return None
-    selected = result.stdout.strip()
-    return selected or None
+    return result.stdout.strip() or None
 
 
 def _choose_file_macos_script(
@@ -113,13 +96,11 @@ def _choose_file_macos_script(
         if initial_path.exists():
             default_location = initial_path if initial_path.is_dir() else initial_path.parent
             default_location_arg = f' default location POSIX file "{_escape_applescript(str(default_location))}"'
-
     file_type_arg = ""
     normalized_extensions = _normalize_extensions(extensions)
     if normalized_extensions:
-        quoted = ", ".join(f'"{_escape_applescript(extension)}"' for extension in normalized_extensions)
+        quoted = ", ".join(f'"{_escape_applescript(ext)}"' for ext in normalized_extensions)
         file_type_arg = f" of type {{{quoted}}}"
-
     return (
         "use scripting additions\n"
         "activate\n"
@@ -133,7 +114,6 @@ def _choose_directory_tk(*, title: str, initial_dir: str | None = None) -> str |
         from tkinter import filedialog
     except Exception:
         return None
-
     root = tk.Tk()
     root.withdraw()
     _raise_tk_dialog_root(root)
@@ -159,7 +139,6 @@ def _choose_file_tk(
         from tkinter import filedialog
     except Exception:
         return None
-
     root = tk.Tk()
     root.withdraw()
     _raise_tk_dialog_root(root)
@@ -177,7 +156,7 @@ def _choose_file_tk(
 def _filetypes_for_extensions(extensions: list[str] | tuple[str, ...] | None):
     normalized_extensions = _normalize_extensions(extensions)
     if normalized_extensions:
-        patterns = " ".join(f"*.{extension}" for extension in normalized_extensions)
+        patterns = " ".join(f"*.{ext}" for ext in normalized_extensions)
         return [("Supported files", patterns), ("All files", "*.*")]
     return [
         ("OpenBrep sources", "*.gdl *.txt *.gsm"),
@@ -192,8 +171,8 @@ def _normalize_extensions(extensions: list[str] | tuple[str, ...] | None) -> lis
     if not extensions:
         return []
     normalized = []
-    for extension in extensions:
-        cleaned = str(extension).strip().lower().lstrip(".")
+    for ext in extensions:
+        cleaned = str(ext).strip().lower().lstrip(".")
         if cleaned and cleaned not in normalized:
             normalized.append(cleaned)
     return normalized
@@ -211,3 +190,9 @@ def _raise_tk_dialog_root(root) -> None:
 
 def _escape_applescript(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+# Internal helpers exposed for testing
+_choose_directory_macos_script = _choose_directory_macos_script
+_choose_file_macos_script = _choose_file_macos_script
+_filetypes_for_extensions = _filetypes_for_extensions

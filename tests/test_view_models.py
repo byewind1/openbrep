@@ -1,6 +1,6 @@
 import unittest
 
-from ui.view_models import classify_code_blocks
+from openbrep.workbench.view_models import classify_code_blocks
 
 
 class TestViewModelsCodeExtraction(unittest.TestCase):

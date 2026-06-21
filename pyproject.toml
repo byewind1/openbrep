@@ -29,17 +29,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "cryptography>=41.0",
-    "plotly>=5.20.0",
     "pytest>=8.0",
-    "streamlit>=1.30.0",
-    "streamlit-ace>=0.1.1",
     "ruff>=0.4.0",
 ]
 ui = [
     "cryptography>=41.0",
-    "streamlit>=1.30.0",
-    "streamlit-ace>=0.1.1",
-    "plotly>=5.20.0",
 ]
 local = [
     "ollama>=0.2.0",
@@ -62,7 +56,6 @@ obrcli = "openbrep.cli:main_obrcli_entry"
 packages = ["openbrep", "cli"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"ui" = "ui"
 "knowledge" = "knowledge"
 "skills" = "skills"
 
@@ -70,7 +63,6 @@ packages = ["openbrep", "cli"]
 include = [
     "/cli",
     "/openbrep",
-    "/ui",
     "/knowledge",
     "/skills",
     "/tests",

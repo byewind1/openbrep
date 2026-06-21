@@ -1,3 +1,7 @@
+"""Converts Preview3DResult to the JSON payload consumed by the Three.js viewer.
+
+Migrated from ui/three_preview.py — no Streamlit dependency.
+"""
 from __future__ import annotations
 
 import json

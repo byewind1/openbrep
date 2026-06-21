@@ -1,6 +1,6 @@
 import unittest
 
-from ui.local_file_dialog import _choose_directory_macos_script, _choose_file_macos_script, _filetypes_for_extensions
+from openbrep.local_file_dialog import _choose_directory_macos_script, _choose_file_macos_script, _filetypes_for_extensions
 
 
 class TestLocalFileDialog(unittest.TestCase):

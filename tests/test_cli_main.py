@@ -123,58 +123,20 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         launch.assert_called_once()
 
-    def test_launch_ui_prints_install_hint_when_streamlit_missing(self):
+    def test_launch_ui_fails_when_react_workbench_missing(self):
         with patch("cli.main._has_react_workbench", return_value=False):
-            with patch("cli.main._has_streamlit", return_value=False):
-                result = self.runner.invoke(app, [])
+            result = self.runner.invoke(app, [])
 
         self.assertNotEqual(result.exit_code, 0)
-        self.assertIn("未安装 UI 依赖 streamlit", result.output)
-        self.assertIn("pip install openbrep[ui]", result.output)
+        self.assertIn("React 工作台文件缺失", result.output)
 
-    def test_launch_ui_uses_absolute_app_path(self):
-        with patch("cli.main._has_react_workbench", return_value=False):
-            with patch("cli.main._has_streamlit", return_value=True):
-                with patch("cli.main._is_tcp_port_available", return_value=True):
-                    with patch("cli.main.subprocess.call", return_value=0) as call:
-                        result = self.runner.invoke(app, [])
-
-        self.assertEqual(result.exit_code, 0, msg=result.output)
-        self.assertIn("OpenBrep UI 已启动：http://localhost:8501", result.output)
-        self.assertIn("已关闭自动打开浏览器", result.output)
-        cmd = call.call_args.args[0]
-        self.assertEqual(cmd[1:3], ["-m", "streamlit"])
-        self.assertEqual(cmd[3], "run")
-        ui_app_path = Path(cmd[4])
-        self.assertTrue(ui_app_path.is_absolute())
-        self.assertEqual(ui_app_path.name, "app.py")
-        self.assertEqual(ui_app_path.parent.name, "ui")
-        self.assertEqual(
-            cmd[5:],
-            ["--server.headless", "true", "--server.address", "127.0.0.1", "--server.port", "8501"],
-        )
-
-    def test_launch_ui_fails_when_default_port_is_occupied(self):
-        with patch("cli.main._has_react_workbench", return_value=False):
-            with patch("cli.main._has_streamlit", return_value=True):
-                with patch("cli.main._is_tcp_port_available", return_value=False):
-                    with patch("cli.main.subprocess.call") as call:
-                        result = self.runner.invoke(app, [])
-
-        self.assertNotEqual(result.exit_code, 0)
-        self.assertIn("默认端口 8501 已被占用", result.output)
-        self.assertIn("请先关闭旧的 Streamlit/obr 进程", result.output)
-        call.assert_not_called()
-
-    def test_launch_ui_prefers_react_workbench(self):
-        """obr 默认启动 React 工作台，不进 Streamlit。"""
+    def test_launch_ui_launches_react_workbench(self):
+        """obr 启动 React 工作台（obr7）。"""
         with patch("cli.main._has_react_workbench", return_value=True):
             with patch("cli.main.subprocess.call", return_value=0) as call:
                 result = self.runner.invoke(app, [])
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
-        self.assertIn("React 工作台", result.output)
-        self.assertIn("fallback", result.output)
         cmd = call.call_args.args[0]
         self.assertTrue(any("obr7.py" in str(part) for part in cmd))
         self.assertNotIn("--no-open", cmd)

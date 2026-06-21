@@ -1,7 +1,7 @@
 import unittest
 
 from openbrep.gdl_previewer import Preview3DResult, PreviewMesh3D, PreviewSourceRef
-from ui.three_preview import preview_3d_to_three_payload, render_three_preview_html
+from openbrep.workbench.three_preview import preview_3d_to_three_payload, render_three_preview_html
 
 
 class TestThreePreview(unittest.TestCase):

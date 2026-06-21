@@ -14,7 +14,7 @@ from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_parameter_service import parameter_to_dict
 from openbrep.workbench.project_script_service import SCRIPT_NAME_TO_TYPE
 from openbrep.workbench.settings_service import save_workbench_config
-from ui.view_models import classify_vision_error
+from openbrep.workbench.view_models import classify_vision_error
 
 
 MAX_WORKBENCH_IMAGE_BYTES = 5 * 1024 * 1024

@@ -82,8 +82,8 @@ def wait_for_url(url: str, *, timeout: float = 12.0) -> bool:
     return False
 
 
-def build_api_command(api_port: int) -> list[str]:
-    return [
+def build_api_command(api_port: int, static_dir: str | None = None) -> list[str]:
+    cmd = [
         sys.executable,
         "-m",
         "openbrep.workbench_api",
@@ -92,6 +92,9 @@ def build_api_command(api_port: int) -> list[str]:
         "--port",
         str(api_port),
     ]
+    if static_dir:
+        cmd += ["--static-dir", static_dir]
+    return cmd
 
 
 def build_web_command(web_port: int) -> list[str]:
@@ -128,6 +131,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--api-port", type=int, default=None, help="Workbench API port. Overrides OBR7_API_PORT.")
     parser.add_argument("--web-port", type=int, default=None, help="Workbench web port. Overrides OBR7_WEB_PORT.")
     parser.add_argument("--no-open", action="store_true", help="Do not open the browser automatically.")
+    parser.add_argument("--tauri", action="store_true", help="Tauri desktop mode: single-port, serve built frontend, no browser launch.")
+    parser.add_argument("--static-dir", default=None, help="Override frontend static files directory (Tauri mode).")
     return parser.parse_args(argv)
 
 
@@ -185,21 +190,39 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, stop_processes)
     signal.signal(signal.SIGTERM, stop_processes)
 
+    tauri_mode = args.tauri or os.environ.get("OBR7_TAURI_MODE", "").strip() in {"1", "true", "yes"}
+
     try:
-        print(f"[obr7] Starting API: {api_url}")
-        processes.append(subprocess.Popen(build_api_command(api_port), cwd=root, env=env))
-        if not wait_for_url(f"{api_url}/api/snapshot"):
-            print("[obr7] API did not become ready in time.", file=sys.stderr)
-            stop_processes()
-            return 1
+        if tauri_mode:
+            # Tauri desktop mode: single port, serve built frontend, skip browser launch
+            static_dir = args.static_dir or str(frontend_dir / "dist")
+            print(f"[obr7] Starting API (Tauri mode): {api_url}")
+            processes.append(subprocess.Popen(build_api_command(api_port, static_dir=static_dir), cwd=root, env=env))
+            if not wait_for_url(f"{api_url}/api/snapshot"):
+                print("[obr7] API did not become ready in time.", file=sys.stderr)
+                stop_processes()
+                return 1
+            print(f"[obr7] OpenBrep ready: {api_url}")
+            print(f"OBR7_READY_URL={api_url}", flush=True)
+            print(f"OBR7_API_URL={api_url}", flush=True)
+        else:
+            print(f"[obr7] Starting API: {api_url}")
+            processes.append(subprocess.Popen(build_api_command(api_port), cwd=root, env=env))
+            if not wait_for_url(f"{api_url}/api/snapshot"):
+                print("[obr7] API did not become ready in time.", file=sys.stderr)
+                stop_processes()
+                return 1
 
-        print(f"[obr7] Starting React workbench: {web_url}")
-        processes.append(subprocess.Popen(build_web_command(web_port), cwd=frontend_dir, env=env))
-        print(f"[obr7] OpenBrep Workbench: {web_url}")
-        print(f"[obr7] API: {api_url}")
-        print("[obr7] Press Ctrl+C to stop.")
+            print(f"[obr7] Starting React workbench: {web_url}")
+            processes.append(subprocess.Popen(build_web_command(web_port), cwd=frontend_dir, env=env))
+            print(f"[obr7] OpenBrep Workbench: {web_url}")
+            print(f"[obr7] API: {api_url}")
+            print("[obr7] Press Ctrl+C to stop.")
+            # Machine-readable signal for Tauri desktop shell
+            print(f"OBR7_READY_URL={web_url}", flush=True)
+            print(f"OBR7_API_URL={api_url}", flush=True)
 
-        if not args.no_open and os.environ.get("OBR7_NO_OPEN", "").strip() not in {"1", "true", "yes"}:
+        if not tauri_mode and not args.no_open and os.environ.get("OBR7_NO_OPEN", "").strip() not in {"1", "true", "yes"}:
             webbrowser.open(web_url)
 
         while all(proc.poll() is None for proc in processes):

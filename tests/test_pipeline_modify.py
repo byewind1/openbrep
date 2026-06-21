@@ -1045,11 +1045,6 @@ class TestReleaseDocs(unittest.TestCase):
         pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
         self.assertIn(f'version = "{__version__}"', pyproject_text)
 
-    def test_ui_reads_version_from_package(self):
-        app_text = Path("ui/app.py").read_text(encoding="utf-8")
-        self.assertIn("from openbrep import __version__ as OPENBREP_VERSION", app_text)
-        self.assertIn("v{OPENBREP_VERSION}", app_text)
-
     def test_install_cn_title_mentions_current_release(self):
         from openbrep import __version__
         install_cn = Path("INSTALL_CN.md").read_text(encoding="utf-8")

@@ -5,7 +5,7 @@ from typing import Any
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.project_parameter_service import parameter_values
-from ui.three_preview import preview_3d_to_three_payload
+from openbrep.workbench.three_preview import preview_3d_to_three_payload
 
 
 class WorkbenchPreviewService:
