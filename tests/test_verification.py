@@ -21,6 +21,7 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import LLMResponse
 from openbrep.object_planner import GDLObjectPlan
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
 from openbrep.static_checker import StaticCheckResult, StaticError
 from openbrep.verification import (
     CheckStatus,
@@ -49,6 +50,13 @@ def _project_with_3d(code: str = "BLOCK A, B, ZZYZX\nEND\n") -> HSFProject:
 
 def _static(errors=None) -> StaticCheckResult:
     return StaticCheckResult(passed=not errors, errors=errors or [])
+
+
+def _find_check(report: VerificationReport, check_type: str):
+    for c in report.checks:
+        if c.check_type == check_type:
+            return c
+    return None
 
 
 # ── contract tests ─────────────────────────────────────────
@@ -314,6 +322,52 @@ class TestBuildVerificationReport(unittest.TestCase):
         )
         self.assertTrue(any("静态检查自动修复" in f for f in r.fixes_applied))
 
+    def test_semantic_result_none_omits_semantic_check(self):
+        r = build_verification_report(
+            intent="CREATE", project=_project_with_3d(),
+            static_result=_static(), lint_summary="",
+        )
+        self.assertIsNone(_find_check(r, "semantic"))
+
+    def test_semantic_pass_recorded(self):
+        r = build_verification_report(
+            intent="CREATE", project=_project_with_3d(),
+            static_result=_static(), lint_summary="",
+            semantic_result=SemanticVerificationResult(passed=True),
+        )
+        semantic_chk = _find_check(r, "semantic")
+        self.assertIsNotNone(semantic_chk)
+        self.assertEqual(semantic_chk.status, CheckStatus.PASS)
+        self.assertTrue(r.passed)
+
+    def test_semantic_fail_lowers_passed_and_records_error(self):
+        r = build_verification_report(
+            intent="CREATE", project=_project_with_3d(),
+            static_result=_static(), lint_summary="",
+            semantic_result=SemanticVerificationResult(
+                passed=False,
+                issues=[SemanticIssue(check_type="bbox_mismatch", detail="包围盒对不上")],
+            ),
+        )
+        self.assertFalse(r.passed)
+        semantic_chk = _find_check(r, "semantic")
+        self.assertEqual(semantic_chk.status, CheckStatus.FAIL)
+        self.assertTrue(any("bbox_mismatch" in e for e in r.errors_caught))
+
+    def test_semantic_non_blocking_issue_becomes_remaining_risk_not_failure(self):
+        r = build_verification_report(
+            intent="CREATE", project=_project_with_3d(),
+            static_result=_static(), lint_summary="",
+            semantic_result=SemanticVerificationResult(
+                passed=True,
+                issues=[SemanticIssue(check_type="preview_error", detail="预览崩了", blocking=False)],
+            ),
+        )
+        self.assertTrue(r.passed)
+        semantic_chk = _find_check(r, "semantic")
+        self.assertEqual(semantic_chk.status, CheckStatus.PASS)
+        self.assertIn("预览崩了", r.remaining_risks)
+
 
 # ── pipeline integration ───────────────────────────────────
 
@@ -355,6 +409,29 @@ class TestPipelineVerificationIntegration(unittest.TestCase):
         compile_chk = [c for c in v["checks"] if c["check_type"] == "compile"][0]
         self.assertEqual(compile_chk["status"], "not_run")
         self.assertIn("验证报告", result.plain_text)
+
+    def test_create_path_runs_semantic_verification_without_a_compiler(self):
+        """Semantic verification uses the lightweight previewer, not
+        LP_XMLConverter, so it must run and pass even when compile is
+        NOT_RUN (no compiler configured)."""
+        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("shelf", work_dir=tmpdir)
+            with patch("openbrep.runtime.pipeline.GDLAgent") as mock_agent_cls:
+                mock_agent = MagicMock()
+                mock_agent.generate_only.return_value = (
+                    {"scripts/3d.gdl": "BLOCK A, B, ZZYZX\nEND\n"}, ""
+                )
+                mock_agent_cls.return_value = mock_agent
+                result = pipeline.execute(TaskRequest(
+                    user_input="做一个书架",
+                    intent="CREATE",
+                    project=project,
+                    work_dir=tmpdir,
+                ))
+
+        semantic_chk = [c for c in result.verification["checks"] if c["check_type"] == "semantic"][0]
+        self.assertEqual(semantic_chk["status"], "pass")
 
     def test_modify_path_has_verification_with_compile_status(self):
         pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n")

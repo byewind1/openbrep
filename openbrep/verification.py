@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from openbrep.compiler import CompileResult
     from openbrep.hsf_project import HSFProject
     from openbrep.object_planner import GDLObjectPlan
+    from openbrep.semantic_verifier import SemanticVerificationResult
     from openbrep.static_checker import StaticCheckResult
 
 __all__ = [
@@ -86,7 +87,7 @@ class VerificationReport:
         NOT_RUN do not fail the report (they lower confidence instead).
         """
         for c in self.checks:
-            if c.status == CheckStatus.FAIL and c.check_type in ("static", "compile", "plan_check"):
+            if c.status == CheckStatus.FAIL and c.check_type in ("static", "compile", "plan_check", "semantic"):
                 return False
         return True
 
@@ -162,6 +163,13 @@ class VerificationReport:
             label = _compile_label(compile_chk.status)
             extra = f"（{compile_chk.detail}）" if compile_chk.detail else ""
             lines.append(f"- 编译：{label}{extra}")
+
+        semantic_chk = _find(self.checks, "semantic")
+        if semantic_chk:
+            lines.append(
+                f"- 语义验证：{_status_icon(semantic_chk.status)} "
+                f"{semantic_chk.detail or semantic_chk.status.value}"
+            )
 
         plan_checks = [c for c in self.checks if c.check_type == "plan_check"]
         if plan_checks:
@@ -293,6 +301,7 @@ def build_verification_report(
     project: "HSFProject | None" = None,
     object_plan: "GDLObjectPlan | None" = None,
     static_result: "StaticCheckResult | None" = None,
+    semantic_result: "SemanticVerificationResult | None" = None,
     lint_summary: str = "",
     compile_result: "CompileResult | None" = None,
     compile_not_run_reason: str = "",
@@ -374,6 +383,26 @@ def build_verification_report(
         ))
         if "SKIPPED_NO_COMPILER" not in reason:
             report.remaining_risks.append("未编译验证，GSM 输出未确认")
+
+    # 4b. semantic verification (geometry-level, via gdl_previewer — works even
+    # without a configured LP_XMLConverter)
+    if semantic_result is not None:
+        blocking_issues = [i for i in semantic_result.issues if i.blocking]
+        info_issues = [i for i in semantic_result.issues if not i.blocking]
+        for issue in info_issues:
+            report.remaining_risks.append(issue.detail)
+        if semantic_result.passed:
+            checks.append(VerificationCheck(
+                name="语义验证", check_type="semantic",
+                status=CheckStatus.PASS, detail="无问题",
+            ))
+        else:
+            for issue in blocking_issues:
+                report.errors_caught.append(f"[{issue.check_type}] {issue.detail}")
+            checks.append(VerificationCheck(
+                name="语义验证", check_type="semantic", status=CheckStatus.FAIL,
+                detail=f"{len(blocking_issues)} 个问题",
+            ))
 
     # 5. fixes applied
     if static_repair_triggered:

@@ -733,6 +733,12 @@ class TaskPipeline:
                 compile_not_run_reason = f"编译调用异常：{exc}"
         # ─────────────────────────────────────────────────────────────────────
 
+        # ── 语义验证（Phase 1）：轻量 previewer 检查几何是否非空/非退化、
+        # 包围盒是否匹配声明的 A/B/ZZYZX；不依赖 LP_XMLConverter，never raises ──
+        from openbrep.semantic_verifier import verify_semantics
+        semantic_result = verify_semantics(project)
+        # ─────────────────────────────────────────────────────────────────────
+
         create_text_parts = []
         if object_plan is not None:
             create_text_parts.append(object_plan.to_user_summary())
@@ -751,6 +757,7 @@ class TaskPipeline:
             project=project,
             object_plan=object_plan,
             static_result=static_result,
+            semantic_result=semantic_result,
             lint_summary=lint_summary,
             compile_result=compile_result,
             compile_not_run_reason=compile_not_run_reason,
