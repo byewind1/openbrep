@@ -7,10 +7,11 @@ script's own declared A/B/ZZYZX dimensions.
 import unittest
 
 from openbrep.gdl_previewer import PreviewMesh3D, Preview3DResult
-from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.semantic_verifier import (
     check_bounding_box_against_dimensions,
     check_mesh_health,
+    sweep_parameters,
     verify_semantics,
 )
 
@@ -88,6 +89,99 @@ class TestCheckBoundingBoxAgainstDimensions(unittest.TestCase):
         self.assertEqual(issues, [])
 
 
+class TestSweepParameters(unittest.TestCase):
+    def _project(self, name: str = "T") -> HSFProject:
+        return HSFProject.create_new(name)
+
+    def test_none_project_is_a_noop(self):
+        self.assertEqual(sweep_parameters(None), [])
+
+    def test_empty_3d_script_is_a_noop(self):
+        project = self._project()
+        project.scripts[ScriptType.SCRIPT_3D] = ""
+        self.assertEqual(sweep_parameters(project), [])
+
+    def test_baseline_with_no_mesh_is_a_noop(self):
+        # mesh_empty is check_mesh_health's job; sweeping a broken baseline adds no signal.
+        project = self._project()
+        project.scripts[ScriptType.SCRIPT_3D] = "CIRCLE2 0, 0, 1\n"  # a 2D-only command in 3d.gdl
+        self.assertEqual(sweep_parameters(project), [])
+
+    def test_all_params_wired_produces_no_issues(self):
+        project = self._project()
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+        self.assertEqual(sweep_parameters(project), [])
+
+    def test_dead_parameter_flagged_as_unresponsive_non_blocking(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("n_shelves", "Integer", "", "4"))
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+        issues = sweep_parameters(project)
+        matching = [i for i in issues if i.check_type == "sweep_unresponsive" and "N_SHELVES" in i.detail]
+        self.assertEqual(len(matching), 1)
+        self.assertFalse(matching[0].blocking)
+
+    def test_toggling_hasxxx_flag_off_is_non_blocking(self):
+        # Turning an optional feature OFF (1 -> 0) removing its geometry is
+        # expected behavior, not a bug — must not block CREATE.
+        project = self._project()
+        project.add_parameter(GDLParameter("has_shelf", "Boolean", "", "1"))
+        project.scripts[ScriptType.SCRIPT_3D] = (
+            "BLOCK A, B, ZZYZX\n"
+            "IF has_shelf = 1 THEN\n"
+            "ADD 0, 0, ZZYZX\n"
+            "BLOCK A, B, 0.02\n"
+            "DEL 1\n"
+            "ENDIF\n"
+        )
+        issues = sweep_parameters(project)
+        vanished = [i for i in issues if i.check_type == "sweep_mesh_vanished"]
+        # The always-present base BLOCK keeps the mesh non-empty either way,
+        # so this scenario shouldn't even vanish — assert no blocking issues at all.
+        self.assertFalse(any(i.blocking for i in issues), issues)
+
+    def test_flag_turning_on_and_erasing_everything_is_blocking(self):
+        # A flag starting at 0 that, when turned on, wipes out geometry that
+        # existed at baseline is a genuine bug signal.
+        project = self._project()
+        project.add_parameter(GDLParameter("hide_all", "Boolean", "", "0"))
+        project.scripts[ScriptType.SCRIPT_3D] = (
+            "IF hide_all = 0 THEN\n"
+            "BLOCK A, B, ZZYZX\n"
+            "ENDIF\n"
+        )
+        issues = sweep_parameters(project)
+        vanished = [i for i in issues if i.check_type == "sweep_mesh_vanished"]
+        self.assertEqual(len(vanished), 1)
+        self.assertTrue(vanished[0].blocking)
+
+    def test_internal_only_dimension_change_is_detected_as_responsive(self):
+        # Regression: a parameter that only changes an inner mesh's own
+        # extent (e.g. a shelf's thickness) without moving the outer case's
+        # combined bounding box must still be recognized as "responsive" —
+        # the scene-level bbox alone would miss this.
+        project = self._project()
+        project.add_parameter(GDLParameter("shelf_thk", "Length", "", "0.02"))
+        project.scripts[ScriptType.SCRIPT_3D] = (
+            "BLOCK A, B, ZZYZX\n"
+            "ADD 0, 0, 0.1\n"
+            "BLOCK A, B, shelf_thk\n"
+            "DEL 1\n"
+        )
+        issues = sweep_parameters(project)
+        self.assertEqual(issues, [])
+
+    def test_max_params_caps_number_of_sweeps(self):
+        project = self._project()
+        for i in range(20):
+            project.add_parameter(GDLParameter(f"p{i:02d}", "Length", "", "1.0"))
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+        issues = sweep_parameters(project, max_params=3)
+        # 3 dummy params + A/B/ZZYZX all wired -> only the capped dummy subset
+        # (alphabetically first) could ever be flagged, so at most 3 issues total.
+        self.assertLessEqual(len(issues), 3)
+
+
 class TestVerifySemantics(unittest.TestCase):
     def _project(self, name: str = "T") -> HSFProject:
         return HSFProject.create_new(name)
@@ -127,6 +221,21 @@ class TestVerifySemantics(unittest.TestCase):
         result = verify_semantics(project)
         self.assertFalse(result.passed)
         self.assertTrue(any(i.check_type == "mesh_degenerate" for i in result.issues))
+
+    def test_dead_parameter_surfaces_but_does_not_fail(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("n_shelves", "Integer", "", "4"))
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+        result = verify_semantics(project)
+        self.assertTrue(result.passed)  # non-blocking: informational only
+        self.assertTrue(any(i.check_type == "sweep_unresponsive" for i in result.issues))
+
+    def test_sweep_false_skips_parameter_sweep_entirely(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("n_shelves", "Integer", "", "4"))
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+        result = verify_semantics(project, sweep=False)
+        self.assertFalse(any(i.check_type.startswith("sweep_") for i in result.issues))
 
 
 if __name__ == "__main__":

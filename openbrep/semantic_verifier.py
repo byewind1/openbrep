@@ -15,6 +15,13 @@ This module runs the lightweight gdl_previewer interpreter against a project's
                       axis rotation) roughly matches the object's declared
                       A/B/ZZYZX — GDL's reserved width/depth/height params.
                       Catches "geometry exists but ignores the parameters".
+  3. param_sweep   — perturb each declared numeric parameter one at a time and
+                      re-preview. A parameter that makes the mesh vanish
+                      entirely (sweep_mesh_vanished) is a blocking failure; a
+                      parameter whose change leaves the mesh byte-identical
+                      (sweep_unresponsive) is a non-blocking hint — many
+                      legitimate parameters (material, angle, text) don't
+                      move geometry the MVP previewer models.
 
 verify_semantics(project) never raises. A previewer crash (the interpreter is
 a pragmatic MVP subset, not a full GDL engine) is reported as a non-blocking
@@ -39,16 +46,22 @@ __all__ = [
     "SemanticVerificationResult",
     "check_mesh_health",
     "check_bounding_box_against_dimensions",
+    "sweep_parameters",
     "verify_semantics",
 ]
 
 DEFAULT_BBOX_TOLERANCE = 0.5
+DEFAULT_SWEEP_DELTA_RATIO = 0.5
+DEFAULT_SWEEP_MAX_PARAMS = 12
 _DEGENERATE_EPS = 1e-6
+_BBOX_ROUND_NDIGITS = 6
 
 
 @dataclass
 class SemanticIssue:
-    check_type: str   # "mesh_empty" | "mesh_degenerate" | "bbox_mismatch" | "preview_error"
+    check_type: str
+    # "mesh_empty" | "mesh_degenerate" | "bbox_mismatch" | "preview_error"
+    # | "sweep_mesh_vanished" | "sweep_unresponsive" | "sweep_preview_error"
     detail: str
     blocking: bool = True
 
@@ -86,6 +99,130 @@ def _has_geometry_call(controls: list[ControlBlock]) -> bool:
 def _script_has_geometry_command(script_3d: str) -> bool:
     script = parse_gdl_script(script_3d)
     return bool(script.geometry) or _has_geometry_call(script.controls)
+
+
+def _mesh_signature(result: "Preview3DResult") -> tuple:
+    """Cheap fingerprint of a preview result: vertex count + scene bbox +
+    sum of each individual mesh's own extents.
+
+    The scene-level bbox alone misses "internal-only" changes — e.g. a
+    shelf's thickness growing without the outer case's envelope moving — so
+    per-mesh extents are summed in too. Still not a full geometry diff (two
+    different meshes could in theory land on the same sum), but enough to
+    catch "this parameter changed and literally nothing moved".
+    """
+    vertex_count = sum(len(mesh.x) for mesh in result.meshes)
+    scene_bbox = _scene_bbox(result.meshes)
+    rounded_scene_bbox = (
+        tuple(round(v, _BBOX_ROUND_NDIGITS) for v in scene_bbox) if scene_bbox else None
+    )
+    extent_sum = 0.0
+    for mesh in result.meshes:
+        mesh_bbox = _scene_bbox([mesh])
+        if mesh_bbox is not None:
+            min_x, max_x, min_y, max_y, min_z, max_z = mesh_bbox
+            extent_sum += (max_x - min_x) + (max_y - min_y) + (max_z - min_z)
+    return (len(result.meshes), vertex_count, rounded_scene_bbox, round(extent_sum, _BBOX_ROUND_NDIGITS))
+
+
+def _perturb_value(value: float, delta_ratio: float) -> float:
+    """Return a different value to sweep a parameter to.
+
+    Values that look boolean-ish (exactly 0 or 1 — common for hasXxx flags in
+    these benchmark tasks) are toggled rather than scaled, since 0 * anything
+    is still 0. Everything else is scaled by delta_ratio.
+    """
+    if value in (0.0, 1.0):
+        return 1.0 - value
+    return value * (1 + delta_ratio)
+
+
+def sweep_parameters(
+    project: Optional["HSFProject"],
+    *,
+    delta_ratio: float = DEFAULT_SWEEP_DELTA_RATIO,
+    max_params: int = DEFAULT_SWEEP_MAX_PARAMS,
+) -> list[SemanticIssue]:
+    """Perturb each declared numeric parameter one at a time and re-preview.
+
+    Requires a working baseline preview to sweep against; if the baseline
+    itself has no mesh, mesh_health already reports that and sweeping adds no
+    signal, so this returns [] early instead of piling on.
+    """
+    if project is None:
+        return []
+
+    from openbrep.hsf_project import ScriptType
+    from openbrep.gdl_previewer import preview_3d_script
+    from openbrep.workbench.project_parameter_service import parameter_values
+
+    script_3d = project.get_script(ScriptType.SCRIPT_3D) or ""
+    if not script_3d.strip():
+        return []
+
+    setup_script = project.get_script(ScriptType.MASTER) or ""
+    baseline_params = parameter_values(project)
+    if not baseline_params:
+        return []
+
+    try:
+        baseline_result = preview_3d_script(
+            script_3d, parameters=baseline_params, setup_script=setup_script,
+            unknown_command_policy="warn", quality="fast",
+        )
+    except Exception:
+        return []  # can't sweep from a baseline that doesn't even preview
+
+    baseline_bbox = _scene_bbox(baseline_result.meshes)
+    if baseline_bbox is None:
+        return []  # mesh_empty already covers this case
+
+    baseline_sig = _mesh_signature(baseline_result)
+    issues: list[SemanticIssue] = []
+
+    for name in sorted(baseline_params.keys())[:max_params]:
+        baseline_value = baseline_params[name]
+        perturbed_params = dict(baseline_params)
+        perturbed_params[name] = _perturb_value(baseline_value, delta_ratio)
+
+        try:
+            perturbed_result = preview_3d_script(
+                script_3d, parameters=perturbed_params, setup_script=setup_script,
+                unknown_command_policy="warn", quality="fast",
+            )
+        except Exception as exc:
+            issues.append(SemanticIssue(
+                check_type="sweep_preview_error",
+                detail=f"参数 {name} 扫描时预览异常（不计入失败）：{exc}",
+                blocking=False,
+            ))
+            continue
+
+        perturbed_bbox = _scene_bbox(perturbed_result.meshes)
+        if perturbed_bbox is None:
+            # Toggling a boolean-ish "hasXxx" flag off (1 → 0) is *expected* to
+            # remove optional geometry — that's what the flag is for. Only
+            # treat vanishing as a real bug when it wasn't an intentional
+            # off-switch: scaled params, or a flag turning ON that erases
+            # everything.
+            is_expected_toggle_off = baseline_value == 1.0
+            issues.append(SemanticIssue(
+                check_type="sweep_mesh_vanished",
+                detail=f"参数 {name} 从 {baseline_value:.3g} 改为 "
+                       f"{perturbed_params[name]:.3g} 后，几何完全消失",
+                blocking=not is_expected_toggle_off,
+            ))
+            continue
+
+        if _mesh_signature(perturbed_result) == baseline_sig:
+            issues.append(SemanticIssue(
+                check_type="sweep_unresponsive",
+                detail=f"参数 {name} 从 {baseline_params[name]:.3g} 改为 "
+                       f"{perturbed_params[name]:.3g} 后，几何完全无变化",
+                blocking=False,
+            ))
+
+    return issues
 
 
 def check_mesh_health(script_3d: str, result: "Preview3DResult") -> list[SemanticIssue]:
@@ -160,6 +297,9 @@ def verify_semantics(
     project: Optional["HSFProject"],
     *,
     tolerance: float = DEFAULT_BBOX_TOLERANCE,
+    sweep: bool = True,
+    sweep_delta_ratio: float = DEFAULT_SWEEP_DELTA_RATIO,
+    sweep_max_params: int = DEFAULT_SWEEP_MAX_PARAMS,
 ) -> SemanticVerificationResult:
     """Preview the project's 3D script and run geometry-level sanity checks.
 
@@ -203,6 +343,10 @@ def verify_semantics(
 
     issues = check_mesh_health(script_3d, result)
     issues.extend(check_bounding_box_against_dimensions(result, dims, tolerance=tolerance))
+    if sweep:
+        issues.extend(sweep_parameters(
+            project, delta_ratio=sweep_delta_ratio, max_params=sweep_max_params,
+        ))
 
     passed = not any(issue.blocking for issue in issues)
     return SemanticVerificationResult(passed=passed, issues=issues)
