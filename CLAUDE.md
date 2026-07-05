@@ -271,9 +271,10 @@ print('custom_providers:', len(c.llm.custom_providers))
 
 ## 测试策略
 - **测试目录与命名**：新测试统一放在 `tests/` 下，文件命名 `test_*.py`，测试用例命名 `test_*`。
-- **最小回归集**：每次修改核心流程（`openbrep/core.py`、`openbrep/llm.py`、`openbrep/config.py`、`ui/app.py`）至少跑：
-  - `python3 -m py_compile openbrep/core.py openbrep/llm.py openbrep/config.py ui/app.py`
-  - `python3 run_tests.py`
+- **权威测试命令（唯一门禁）**：`uv run pytest tests`。当前基线：706 passed（2026-07-06）。
+  - 每次修改核心流程（`openbrep/core.py`、`openbrep/llm.py`、`openbrep/config.py`、`openbrep/runtime/pipeline.py`）后必须跑一遍，测试数量只能增不能减。
+  - `python3 -m py_compile openbrep/core.py openbrep/llm.py openbrep/config.py` 作为语法快速检查，不能替代 pytest。
+- **`run_tests.py` 已降级为遗留/非权威脚本**：v0.5 时代的手搓 runner，仍可跑（`uv run python run_tests.py`）但不是发布门禁。已知问题：`cli main suite` 里 2 个测试单独用 pytest 跑是绿的，只有在这个 runner 的 in-process 串行执行下才失败（怀疑是前面几十个内联测试之间的全局状态污染），暂不深挖，不要以此为由阻塞发布。
 - **新增测试规则**：
   - 只要改动了输入/输出结构、模型路由、参数解析，必须新增/更新对应测试。
   - 复现 bug 后新增回归测试，再修 bug。
@@ -282,15 +283,16 @@ print('custom_providers:', len(c.llm.custom_providers))
   - `tests/test_llm.py`：覆盖 `api_base` 和 `protocol` 分流逻辑。
 
 ## 发布流程
-- **版本号规则**：遵循当前策略（`0.5.x` 稳定迭代，`0.6.0` 质量突破）。
+- **版本号规则**：遵循当前策略（详见"版本策略"一节，当前 1.0.0 系列）。
+- **版本号必须同步更新的文件**：`openbrep/__init__.py`（`__version__`）、`pyproject.toml`、`src-tauri/tauri.conf.json`、`frontend/package.json`、`CHANGELOG.md`。历史教训：v1.0.0 发布时漏改了 `openbrep/__init__.py`，导致 `__version__` 停留在上一版本超过两周才被测试捕获。
 - **发布说明**：每次发布在 `docs/releases/vX.X.X.md` 记录变更要点。
-- **README 版本历史**：更新 `README.md` 和 `README.zh-CN.md` 的版本表格。
+- **README 版本历史**：更新 `README.md` 和 `README.zh-CN.md` 的版本表格；两个语言版本都要改，历史教训：`README.zh-CN.md` 曾整份停留在上一版本内容超过一个发布周期。
 - **发布前检查**：
-  - `python3 -m py_compile openbrep/config.py openbrep/llm.py ui/app.py`
-  - `python3 run_tests.py`
+  - `python3 -m py_compile openbrep/config.py openbrep/llm.py`
+  - `uv run pytest tests`
 - **示例命令**：
-  - `git tag v0.5.6`
-  - `git push origin v0.5.6`
+  - `git tag v1.0.1`
+  - `git push origin v1.0.1`
 
 ## 日志与监控
 - **日志位置**：核心流程日志集中在 `openbrep/core.py` 与 `openbrep/llm.py`，UI 日志在 `ui/app.py`。

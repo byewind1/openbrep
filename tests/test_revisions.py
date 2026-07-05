@@ -9,6 +9,7 @@ from openbrep.revisions import (
     create_revision,
     get_latest_revision_id,
     list_revisions,
+    prune_revisions,
     restore_revision,
 )
 
@@ -277,6 +278,75 @@ class TestProjectRevisions(unittest.TestCase):
             self.assertEqual(revision.user_instruction, "改层板")
             self.assertEqual(revision.explanation, "Updated shelf spacing.")
             self.assertEqual(revision.compile_comparison["mode"], "mock")
+
+
+class TestPruneRevisions(unittest.TestCase):
+    def _make_project(self, tmpdir: str) -> Path:
+        project = Path(tmpdir) / "Chair"
+        scripts = project / "scripts"
+        scripts.mkdir(parents=True)
+        (project / "libpartdata.xml").write_text("<LibpartData />\n", encoding="utf-8")
+        (project / "paramlist.xml").write_text("<ParamList />\n", encoding="utf-8")
+        (scripts / "3d.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+        return project
+
+    def test_prune_keeps_newest_n_and_deletes_rest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            for i in range(5):
+                create_revision(project, f"rev {i}")
+
+            deleted = prune_revisions(project, keep_last_n=2)
+
+            self.assertEqual(deleted, 3)
+            remaining_ids = {r.revision_id for r in list_revisions(project)}
+            self.assertEqual(remaining_ids, {"r0004", "r0005"})
+
+    def test_prune_never_deletes_latest_even_if_outside_keep_window(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            for i in range(3):
+                create_revision(project, f"rev {i}")
+            latest_id_before = get_latest_revision_id(project)
+
+            # keep_last_n=1 would normally only keep the newest; latest must survive regardless.
+            prune_revisions(project, keep_last_n=1)
+
+            self.assertEqual(get_latest_revision_id(project), latest_id_before)
+            remaining_ids = {r.revision_id for r in list_revisions(project)}
+            self.assertIn(latest_id_before, remaining_ids)
+
+    def test_prune_noop_when_fewer_revisions_than_keep_last_n(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            create_revision(project, "only one")
+
+            deleted = prune_revisions(project, keep_last_n=20)
+
+            self.assertEqual(deleted, 0)
+            self.assertEqual(len(list_revisions(project)), 1)
+
+    def test_prune_clamps_keep_last_n_to_at_least_one(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            for i in range(3):
+                create_revision(project, f"rev {i}")
+
+            deleted = prune_revisions(project, keep_last_n=0)
+
+            # keep_last_n clamps to 1: 3 revisions - 1 kept = 2 deleted.
+            self.assertEqual(deleted, 2)
+            self.assertEqual(len(list_revisions(project)), 1)
+
+    def test_create_revision_auto_prunes_beyond_twenty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            for i in range(23):
+                create_revision(project, f"rev {i}")
+
+            # create_revision auto-prunes with keep_last_n=20 after every call.
+            self.assertEqual(len(list_revisions(project)), 20)
+            self.assertEqual(get_latest_revision_id(project), "r0023")
 
 
 if __name__ == "__main__":

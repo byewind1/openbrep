@@ -6,7 +6,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.8.0 — React 工作台成为默认 UI，Verification 一等 seam 落地，OpenBrep 从 GDL 生成工具迈向可验证的自校正 GDL 开发工作台。
+> 正式发布版本 v1.0.0 — Tauri 桌面工作台正式落地。React + Tauri + Python sidecar 全栈架构，Streamlit 完全退役，自愈编译循环与知识图谱驱动稳定运行。
 
 ---
 
