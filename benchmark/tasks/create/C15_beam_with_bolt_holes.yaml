@@ -1,0 +1,27 @@
+---
+id: C15
+category: create
+complexity: medium_high
+description: "带螺栓孔阵列的钢梁，梁长度、截面宽度、截面高度参数化，螺栓孔数量参数化（默认6个），螺栓孔间距参数化，螺栓孔直径参数化，孔沿梁长度方向均匀排列"
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, hole_count, hole_spacing, hole_d]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "梁主体+孔阵列FOR循环，孔间距参数驱动位置，ADD/DEL配平"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: hole_count
+    - type: param_used
+      script: 3d.gdl
+      param: hole_spacing
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: hole_count
+expected_difficulty: medium_high
+expected_pass: maybe

@@ -1,0 +1,24 @@
+---
+id: C18
+category: create
+complexity: high
+description: "金字塔形采光顶，底部宽度、底部深度参数化，顶部高度（脊高）参数化，玻璃面板厚度参数化，四个坡面用PRISM_或倾斜BLOCK实现，框架材质与玻璃材质分区"
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, glass_thk, mat_glass]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "四坡面几何汇聚于顶点，坡面倾斜由底边尺寸和脊高共同决定，材质分区正确"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: glass_thk
+    - type: param_used
+      script: 3d.gdl
+      param: mat_glass
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: glass_thk
+expected_difficulty: high
+expected_pass: unlikely

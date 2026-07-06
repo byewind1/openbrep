@@ -123,7 +123,9 @@
 ## GDL生成质量标准
 
 - 编译通过 ≠ 任务完成，语义正确是唯一标准
-- C01–C10 benchmark是回归基准，任何修改不得降低已通过数量
+- C01–C20 benchmark是回归基准，任何修改不得降低已通过数量
+  - C01–C10：文本类断言（command_present/param_used/expression_present/transform_balanced），编译通过≠语义正确的早期基准
+  - C11–C20（Phase 1 扩容）：额外带几何类断言（semantic_verification/param_responsive，跑 `openbrep.semantic_verifier`），能抓"编译通过但几何是空的/尺寸对不上/参数没接进去"
 - ADD/DEL stack操作必须逐行追踪，禁止假设嵌套深度
 - 生成失败时输出根因分析，禁止盲目retry
 - 单次生成目标：结构完整、参数有意义、几何可渲染，而非仅能编译

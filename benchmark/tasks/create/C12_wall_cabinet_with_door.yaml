@@ -1,0 +1,27 @@
+---
+id: C12
+category: create
+complexity: medium
+description: "厨房吊柜，宽600mm深350mm高700mm，内部层板数量参数化（默认2层），柜门是否存在为布尔参数（默认有门），柜门厚度参数化，门铰链方向参数（左开/右开）"
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, n_shelves, has_door, door_thk, hinge_side]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "柜体箱型几何，层板FOR循环，柜门由has_door控制显隐，ADD/DEL配平"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: has_door
+    - type: param_used
+      script: 3d.gdl
+      param: n_shelves
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: n_shelves
+expected_difficulty: medium
+expected_pass: maybe

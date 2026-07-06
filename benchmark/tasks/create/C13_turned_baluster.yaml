@@ -1,0 +1,27 @@
+---
+id: C13
+category: create
+complexity: medium
+description: "车削栏杆柱（旋木造型），总高度900mm，柱身分段数参数化（默认3段，每段直径不同模拟车削造型），柱身基础直径参数化，柱顶直径参数化"
+success_criteria:
+  compile_pass: true
+  required_params: [ZZYZX, seg_count, base_d, top_d]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "多段CYLIND堆叠模拟车削造型，FOR循环驱动分段数，每段高度均分总高"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: CYLIND
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: seg_count
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: seg_count
+expected_difficulty: medium
+expected_pass: maybe

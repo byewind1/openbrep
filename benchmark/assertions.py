@@ -107,6 +107,8 @@ def _assert_semantic_assertions(
     assertions: list[SemanticAssertion],
 ) -> list[str]:
     failures: list[str] = []
+    semantic_result_cache: list = []  # lazy, memoized SemanticVerificationResult (0 or 1 item)
+
     for assertion in assertions:
         script_name = _normalize_script_name(assertion.script or "3d.gdl")
         script = _script_text(project, script_name)
@@ -132,9 +134,60 @@ def _assert_semantic_assertions(
                 )
         elif assertion_type == "transform_balanced":
             failures.extend(_assert_transform_balanced(script, script_name))
+        elif assertion_type == "semantic_verification":
+            failures.extend(_assert_semantic_verification(_get_semantic_result(project, semantic_result_cache)))
+        elif assertion_type == "param_responsive":
+            if not assertion.param:
+                failures.append("semantic_assertion: param_responsive missing param")
+            else:
+                failures.extend(
+                    _assert_param_responsive(
+                        _get_semantic_result(project, semantic_result_cache), assertion.param,
+                    )
+                )
         else:
             failures.append(f"semantic_assertion: unsupported type {assertion_type!r}")
     return failures
+
+
+def _get_semantic_result(project: "HSFProject", cache: list):
+    """Lazily run verify_semantics() once per assert_success_criteria() call.
+
+    Geometric assertions (semantic_verification / param_responsive) reuse the
+    same preview + sweep pass instead of each re-running it.
+    """
+    if not cache:
+        from openbrep.semantic_verifier import verify_semantics
+
+        cache.append(verify_semantics(project))
+    return cache[0]
+
+
+def _assert_semantic_verification(result) -> list[str]:
+    """mesh_health + bbox_vs_dims + param sweep, via openbrep.semantic_verifier.
+
+    Stricter than the live CREATE path: benchmark grading should catch
+    "compiles but the geometry is wrong/empty/mis-scaled", which is exactly
+    what Phase 1's semantic verifier was built to detect.
+    """
+    if result.passed:
+        return []
+    blocking = [i for i in result.issues if i.blocking]
+    return [f"semantic_verification: [{i.check_type}] {i.detail}" for i in blocking]
+
+
+def _assert_param_responsive(result, param: str) -> list[str]:
+    """Fail if *param* is flagged sweep_unresponsive — declared but not
+    actually wired into the rendered geometry. Stricter than
+    semantic_verification, which treats this as non-blocking by design
+    (many legitimate params don't move the MVP previewer's mesh); benchmark
+    tasks can opt a specific param into this stricter bar.
+    """
+    param_upper = param.upper()
+    for issue in result.issues:
+        if issue.check_type == "sweep_unresponsive" and re.search(rf"\b{re.escape(param_upper)}\b", issue.detail):
+            return [f"param_responsive: {param} declared but does not affect rendered geometry ({issue.detail})"]
+    return []
 
 
 def _assert_transform_balanced(script: str, script_name: str) -> list[str]:

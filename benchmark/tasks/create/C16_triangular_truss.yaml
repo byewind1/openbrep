@@ -1,0 +1,27 @@
+---
+id: C16
+category: create
+complexity: high
+description: "三角形桁架单元段，总跨度参数化，桁架高度（腹高）参数化，节间数量参数化（默认4个三角形单元），上下弦杆和斜腹杆均用圆管CYLIND表示，杆件直径参数化"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, panel_count, chord_d]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "上下弦杆+斜腹杆FOR循环生成三角形单元，节间数量驱动杆件重复，CYLIND使用正确"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: command_present
+      script: 3d.gdl
+      command: CYLIND
+    - type: param_used
+      script: 3d.gdl
+      param: panel_count
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: panel_count
+expected_difficulty: high
+expected_pass: unlikely

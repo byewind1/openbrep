@@ -1,0 +1,27 @@
+---
+id: C19
+category: create
+complexity: medium_high
+description: "遮阳百叶板阵列，安装面宽度、高度参数化，百叶叶片数量参数化（默认8片），叶片倾斜角度参数化（默认30度），叶片进深参数化，叶片沿高度方向均匀排列"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, blade_count, blade_angle, blade_depth]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "叶片FOR循环阵列，每片用ROT旋转blade_angle角度后用BLOCK生成，叶片数量参数驱动重复次数"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: blade_angle
+    - type: param_used
+      script: 3d.gdl
+      param: blade_count
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: blade_count
+expected_difficulty: medium_high
+expected_pass: maybe

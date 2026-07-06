@@ -1,10 +1,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from benchmark.assertions import assert_success_criteria
 from benchmark.runner import BenchmarkRunner, build_summary, render_markdown_summary
-from benchmark.schema import SuccessCriteria, load_benchmark_task
+from benchmark.schema import SemanticAssertion, SuccessCriteria, load_benchmark_task
 from openbrep.core import AgentResult, Status
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 
@@ -183,12 +184,120 @@ class TestBenchmarkAssertions(unittest.TestCase):
         task_dir = Path(__file__).resolve().parents[1] / "benchmark" / "tasks" / "create"
         tasks = [load_benchmark_task(path) for path in sorted(task_dir.glob("*.yaml"))]
 
-        self.assertEqual(len(tasks), 10)
+        self.assertEqual(len(tasks), 20)
         for task in tasks:
             self.assertTrue(task.success_criteria.required_params, task.id)
             self.assertTrue(task.success_criteria.required_scripts, task.id)
             self.assertTrue(task.success_criteria.geometry_check, task.id)
             self.assertTrue(task.success_criteria.semantic_assertions, task.id)
+
+    def test_c11_to_c20_include_geometric_semantic_assertions(self):
+        """C11-C20 (Phase 1 expansion) must each carry at least one of the new
+        geometry-level assertion types, not just textual command/param checks."""
+        task_dir = Path(__file__).resolve().parents[1] / "benchmark" / "tasks" / "create"
+        new_ids = {f"C{i}" for i in range(11, 21)}
+        tasks = [
+            load_benchmark_task(path)
+            for path in sorted(task_dir.glob("*.yaml"))
+            if load_benchmark_task(path).id in new_ids
+        ]
+
+        self.assertEqual(len(tasks), 10)
+        for task in tasks:
+            types = {a.type for a in task.success_criteria.semantic_assertions}
+            self.assertIn("semantic_verification", types, task.id)
+            self.assertIn("param_responsive", types, task.id)
+
+
+class TestGeometricSemanticAssertions(unittest.TestCase):
+    """semantic_verification / param_responsive — the new Phase 1 assertion
+    types that reuse openbrep.semantic_verifier instead of text matching."""
+
+    def _wired_project(self) -> HSFProject:
+        project = HSFProject.create_new("Wired")
+        project.add_parameter(GDLParameter("n_shelves", "Integer", value="4"))
+        project.set_script(
+            ScriptType.SCRIPT_3D,
+            "BLOCK A, B, ZZYZX\n"
+            "FOR i = 1 TO n_shelves\n"
+            "  ADDZ ZZYZX * i / (n_shelves + 1)\n"
+            "  BLOCK A, B, 0.02\n"
+            "  DEL 1\n"
+            "NEXT i\n",
+        )
+        return project
+
+    def test_semantic_verification_passes_on_wired_project(self):
+        criteria = SuccessCriteria(semantic_assertions=[SemanticAssertion(type="semantic_verification")])
+
+        result = assert_success_criteria(self._wired_project(), criteria)
+
+        self.assertTrue(result.passed, result.failures)
+
+    def test_semantic_verification_fails_on_bbox_mismatch(self):
+        project = self._wired_project()
+        for p in project.parameters:
+            if p.name in ("A", "B", "ZZYZX"):
+                p.value = "10.0"
+        project.set_script(ScriptType.SCRIPT_3D, "BLOCK 0.1, 0.1, 0.1\n")
+        criteria = SuccessCriteria(semantic_assertions=[SemanticAssertion(type="semantic_verification")])
+
+        result = assert_success_criteria(project, criteria)
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any(f.startswith("semantic_verification: [bbox_mismatch]") for f in result.failures))
+
+    def test_param_responsive_passes_when_param_moves_geometry(self):
+        criteria = SuccessCriteria(
+            semantic_assertions=[SemanticAssertion(type="param_responsive", param="n_shelves")]
+        )
+
+        result = assert_success_criteria(self._wired_project(), criteria)
+
+        self.assertTrue(result.passed, result.failures)
+
+    def test_param_responsive_fails_on_dead_parameter(self):
+        project = self._wired_project()
+        project.add_parameter(GDLParameter("shelf_color", "Integer", value="1"))
+        criteria = SuccessCriteria(
+            semantic_assertions=[SemanticAssertion(type="param_responsive", param="shelf_color")]
+        )
+
+        result = assert_success_criteria(project, criteria)
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any(f.startswith("param_responsive: shelf_color") for f in result.failures))
+
+    def test_param_responsive_missing_param_field_reports_error(self):
+        criteria = SuccessCriteria(semantic_assertions=[SemanticAssertion(type="param_responsive")])
+
+        result = assert_success_criteria(self._wired_project(), criteria)
+
+        self.assertFalse(result.passed)
+        self.assertIn("semantic_assertion: param_responsive missing param", result.failures)
+
+    def test_both_geometric_assertions_share_one_semantic_verifier_pass(self):
+        # Both assertion types should reuse a single verify_semantics() call
+        # per assert_success_criteria() invocation, not re-run the previewer twice.
+        import openbrep.semantic_verifier as sv
+
+        call_count = {"n": 0}
+        original = sv.verify_semantics
+
+        def counting_verify_semantics(*args, **kwargs):
+            call_count["n"] += 1
+            return original(*args, **kwargs)
+
+        criteria = SuccessCriteria(
+            semantic_assertions=[
+                SemanticAssertion(type="semantic_verification"),
+                SemanticAssertion(type="param_responsive", param="n_shelves"),
+            ]
+        )
+        with patch.object(sv, "verify_semantics", counting_verify_semantics):
+            assert_success_criteria(self._wired_project(), criteria)
+
+        self.assertEqual(call_count["n"], 1)
 
 
 class _FakeBenchmarkAgent:

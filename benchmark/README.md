@@ -17,9 +17,20 @@ Each task YAML can define:
 - `required_scripts`: script files that must exist and be non-empty.
 - `geometry_check`: legacy natural-language hints consumed by lightweight
   command checks.
-- `semantic_assertions`: machine-readable assertions such as
-  `command_present`, `param_used`, `expression_present`, and
-  `transform_balanced`.
+- `semantic_assertions`: machine-readable assertions. Two families:
+  - textual (regex over generated GDL source): `command_present`, `param_used`,
+    `expression_present`, `transform_balanced`.
+  - geometric (via `openbrep.semantic_verifier`, runs the lightweight
+    `gdl_previewer` — catches "compiles but the geometry is wrong", not just
+    "text mentions the right keyword"):
+    - `semantic_verification`: mesh non-empty/non-degenerate, and bounding box
+      matches the object's declared A/B/ZZYZX within tolerance.
+    - `param_responsive` (requires `param`): fails if that declared parameter
+      doesn't move the rendered geometry at all when perturbed (a "dead"
+      parameter — declared but not actually wired in).
+  C11–C20 (Phase 1 expansion) carry both geometric assertion types; C01–C10
+  are textual-only (pre-Phase-1 baseline, kept as-is so historical pass-rate
+  comparisons stay apples-to-apples).
 
 Runner output includes:
 

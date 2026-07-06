@@ -1,0 +1,27 @@
+---
+id: C17
+category: create
+complexity: very_high
+description: "螺旋楼梯段，总步数参数化（默认16步），每步高度参数化，总旋转角度参数化（默认360度），踏板宽度参数化，每步绕中心柱旋转角度均分，用ROT堆叠实现螺旋上升"
+success_criteria:
+  compile_pass: true
+  required_params: [stair_steps, riser_h, total_angle, tread_w]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "FOR循环驱动步数，每步ROT旋转角度=total_angle/stair_steps，ADD/DEL配平，总高度=steps*riser_h"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: total_angle
+    - type: expression_present
+      script: 3d.gdl
+      contains: stair_steps * riser_h
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: total_angle
+expected_difficulty: very_high
+expected_pass: unlikely

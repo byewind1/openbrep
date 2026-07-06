@@ -1,0 +1,27 @@
+---
+id: C14
+category: create
+complexity: medium
+description: "扶手墙面支架（连接件），支架伸出长度参数化（默认80mm），固定螺栓数量参数化（默认2个），支架厚度参数化，圆形扶手抓握直径参数化"
+success_criteria:
+  compile_pass: true
+  required_params: [arm_length, bolt_count, bracket_thk, rail_d]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "支架臂+墙面底板+螺栓孔阵列+扶手抓握圆环，FOR循环驱动螺栓数量"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: bolt_count
+    - type: param_used
+      script: 3d.gdl
+      param: arm_length
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: bolt_count
+expected_difficulty: medium
+expected_pass: maybe

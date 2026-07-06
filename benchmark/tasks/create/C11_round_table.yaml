@@ -1,0 +1,27 @@
+---
+id: C11
+category: create
+complexity: low_medium
+description: "圆形餐桌，桌面直径800mm，桌面厚度参数化（默认30mm），桌腿数量参数化（默认4条），桌腿直径参数化，桌腿高度参数化（默认720mm）"
+success_criteria:
+  compile_pass: true
+  required_params: [A, ZZYZX, top_thk, leg_count, leg_d]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "圆形桌面用CYLIND，桌腿用FOR循环环形阵列，腿数量参数驱动"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: CYLIND
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: leg_count
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: leg_count
+expected_difficulty: low_medium
+expected_pass: true

@@ -1,0 +1,27 @@
+---
+id: C20
+category: create
+complexity: very_high
+description: "空间网架球形节点连接件，球体节点直径参数化，辐射杆件数量参数化（默认6根，代表上弦/下弦/腹杆方向），杆件直径参数化，杆件伸出长度参数化，杆件均匀围绕球心辐射分布"
+success_criteria:
+  compile_pass: true
+  required_params: [node_r, strut_count, strut_d, strut_length]
+  required_scripts: [3d.gdl, 1d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "中心SPHERE节点+FOR循环生成辐射CYLIND杆件，杆件角度均分360度，ADD/DEL/ROT配平"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: strut_count
+    - type: param_used
+      script: 3d.gdl
+      param: node_r
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+    - type: param_responsive
+      param: strut_count
+expected_difficulty: very_high
+expected_pass: unlikely
