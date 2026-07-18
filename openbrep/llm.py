@@ -37,11 +37,72 @@ class Message:
 
 
 @dataclass
+class ToolDefinition:
+    """工具定义（OpenAI function 格式；litellm 会自动翻译给 anthropic 协议）。"""
+
+    name: str
+    description: str = ""
+    parameters: dict = field(default_factory=dict)  # JSON Schema
+
+    def to_openai_dict(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters or {"type": "object", "properties": {}},
+            },
+        }
+
+
+@dataclass
+class ToolCall:
+    """模型发起的一次工具调用。arguments 已解析为 dict（解析失败为空 dict）。"""
+
+    id: str
+    name: str
+    arguments: dict = field(default_factory=dict)
+    raw_arguments: str = ""
+
+
+@dataclass
 class LLMResponse:
     content: str
     model: str
     usage: dict = field(default_factory=dict)
     finish_reason: str = ""
+    tool_calls: list = field(default_factory=list)  # list[ToolCall]
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
+
+
+def tool_result_message(tool_call_id: str, content: str, name: str = "") -> dict:
+    """构造工具执行结果消息（OpenAI role=tool 格式，litellm 兼容各协议）。"""
+    msg = {"role": "tool", "tool_call_id": tool_call_id, "content": str(content)}
+    if name:
+        msg["name"] = name
+    return msg
+
+
+def assistant_tool_calls_message(response: "LLMResponse") -> dict:
+    """把带 tool_calls 的响应还原成 assistant 消息，供 agent loop 回填对话历史。"""
+    return {
+        "role": "assistant",
+        "content": response.content or None,
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": tc.raw_arguments or "{}",
+                },
+            }
+            for tc in response.tool_calls
+        ],
+    }
 
 
 class LLMAdapter:
@@ -264,6 +325,105 @@ class LLMAdapter:
             finish_reason=choice.finish_reason or "",
         )
 
+    def generate_with_tools(
+        self,
+        messages: list,
+        tools: list,
+        tool_choice: str = "auto",
+        **kwargs,
+    ) -> LLMResponse:
+        """带工具调用的 LLM 请求（Phase 3 agent loop 前置能力）。
+
+        tools 用 OpenAI function 格式（ToolDefinition 或等价 dict）；
+        litellm 会自动翻译到 anthropic 等协议，custom_providers 走
+        与 generate() 相同的模型解析，无需额外配置。
+
+        对话历史里的 dict 消息（含 role="tool" 结果与 assistant tool_calls
+        回填消息）原样透传。返回的 LLMResponse.tool_calls 非空时，
+        调用方执行工具后用 tool_result_message() 回填并再次调用。
+        """
+        if self._litellm is None:
+            raise RuntimeError(
+                "litellm is not installed. Install it with: pip install litellm"
+            )
+
+        msg_dicts = []
+        for m in messages:
+            if isinstance(m, dict):
+                msg_dicts.append(m)
+            else:
+                msg_dicts.append({"role": m.role, "content": m.content})
+
+        tool_dicts = []
+        for t in tools:
+            if isinstance(t, ToolDefinition):
+                tool_dicts.append(t.to_openai_dict())
+            elif isinstance(t, dict):
+                tool_dicts.append(t)
+
+        requested_model = kwargs.pop("model", None)
+        resolved = self._resolve_model_target(requested_model)
+        model = resolved.litellm_model
+
+        # 工具调用不走流式：tool_calls 分片重组容易丢参数，一次性拿完整响应
+        completion_kwargs = {
+            "model": model,
+            "messages": msg_dicts,
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+            "timeout": self.config.timeout,
+            "stream": False,
+            "tools": tool_dicts,
+            "tool_choice": tool_choice,
+        }
+
+        model_lower = model.lower()
+        if "gpt-5" in model_lower or "codex" in model_lower:
+            completion_kwargs["drop_params"] = True
+
+        api_key = self.config.resolve_api_key(resolved.configured_model)
+        if api_key:
+            completion_kwargs["api_key"] = api_key
+        is_native = self._is_native_provider_model(model)
+        api_base = self.config.resolve_api_base(resolved.configured_model)
+        if api_base and (resolved.is_custom_provider_request or not is_native):
+            completion_kwargs["api_base"] = api_base
+
+        completion_kwargs.update(kwargs)
+
+        start_time = time.perf_counter()
+        try:
+            response = self._litellm.completion(**completion_kwargs)
+        except Exception as exc:
+            elapsed = time.perf_counter() - start_time
+            logger.warning(
+                "LLM tools call failed model=%s tools=%d elapsed=%.2fs error=%s",
+                model,
+                len(tool_dicts),
+                elapsed,
+                exc.__class__.__name__,
+            )
+            self._raise_config_error_if_needed(exc, resolved)
+            raise
+        if not response.choices:
+            raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
+        choice = response.choices[0]
+        tool_calls = _parse_tool_calls(getattr(choice.message, "tool_calls", None))
+        logger.info(
+            "LLM tools call finished model=%s tools=%d tool_calls=%d elapsed=%.2fs",
+            model,
+            len(tool_dicts),
+            len(tool_calls),
+            time.perf_counter() - start_time,
+        )
+        return LLMResponse(
+            content=choice.message.content or "",
+            model=response.model or self.config.model,
+            usage=dict(response.usage) if response.usage else {},
+            finish_reason=choice.finish_reason or "",
+            tool_calls=tool_calls,
+        )
+
     def generate_with_image(
         self,
         text_prompt: str,
@@ -468,26 +628,81 @@ class LLMAdapter:
 
 
 
+def _parse_tool_calls(raw_tool_calls) -> list[ToolCall]:
+    """把 litellm 响应里的 tool_calls 解析为 ToolCall 列表（容错 JSON）。"""
+    import json as _json
+
+    calls: list[ToolCall] = []
+    for tc in raw_tool_calls or []:
+        function = getattr(tc, "function", None) or {}
+        name = getattr(function, "name", None) or (function.get("name") if isinstance(function, dict) else "")
+        raw_args = getattr(function, "arguments", None) or (
+            function.get("arguments") if isinstance(function, dict) else ""
+        ) or ""
+        try:
+            arguments = _json.loads(raw_args) if raw_args else {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+        except Exception:
+            logger.warning("Tool call arguments not valid JSON for %s: %.120s", name, raw_args)
+            arguments = {}
+        calls.append(ToolCall(
+            id=str(getattr(tc, "id", "") or ""),
+            name=str(name or ""),
+            arguments=arguments,
+            raw_arguments=str(raw_args),
+        ))
+    return calls
+
+
 class MockLLM:
     """
     Mock LLM for testing without API access.
 
     Accepts a list of responses that will be returned in order.
+    响应条目可以是 str（纯文本），也可以是 dict：
+    {"content": "...", "tool_calls": [{"name": "...", "arguments": {...}}]}
+    —— 用于测试 generate_with_tools 的 agent loop。
     """
 
-    def __init__(self, responses: Optional[list[str]] = None):
+    def __init__(self, responses: Optional[list] = None):
         self.responses = responses or ["<!-- Mock LLM response -->"]
         self.call_count = 0
         self.call_history: list[list[Message]] = []
 
-    def generate(self, messages: list[Message], **kwargs) -> LLMResponse:
+    def _next_response(self, messages: list) -> LLMResponse:
+        import json as _json
+
         self.call_history.append(messages)
         idx = min(self.call_count, len(self.responses) - 1)
-        content = self.responses[idx]
+        scripted = self.responses[idx]
         self.call_count += 1
+        if isinstance(scripted, dict):
+            tool_calls = [
+                ToolCall(
+                    id=tc.get("id", f"mock_call_{i}"),
+                    name=tc.get("name", ""),
+                    arguments=tc.get("arguments", {}) or {},
+                    raw_arguments=_json.dumps(tc.get("arguments", {}) or {}, ensure_ascii=False),
+                )
+                for i, tc in enumerate(scripted.get("tool_calls", []))
+            ]
+            return LLMResponse(
+                content=scripted.get("content", ""),
+                model="mock-model",
+                usage={"prompt_tokens": 100, "completion_tokens": 200},
+                finish_reason="tool_calls" if tool_calls else "stop",
+                tool_calls=tool_calls,
+            )
         return LLMResponse(
-            content=content,
+            content=scripted,
             model="mock-model",
             usage={"prompt_tokens": 100, "completion_tokens": 200},
             finish_reason="stop",
         )
+
+    def generate(self, messages: list[Message], **kwargs) -> LLMResponse:
+        return self._next_response(messages)
+
+    def generate_with_tools(self, messages: list, tools: list, **kwargs) -> LLMResponse:
+        return self._next_response(messages)
