@@ -202,6 +202,49 @@ def _derive_from_generated_page(fm: dict, body: str, slug: str) -> tuple[list[di
 
 
 _GDL_BLOCK_RE = re.compile(r"```gdl\s*\n(.*?)```", re.DOTALL)
+_ERROR_DOC_PATH = _KNOWLEDGE_DIR / "GDL_common_errors.md"
+_ERROR_SECTION_RE = re.compile(r"^## \d+\.\s*(.+)$", re.MULTILINE)
+_BACKTICK_PHRASE_RE = re.compile(r"`([^`]{6,80})`")
+
+
+def _derive_error_patterns(doc_path: Path = _ERROR_DOC_PATH) -> list[dict]:
+    """从 knowledge/GDL_common_errors.md 派生 known_error_patterns。
+
+    每节的「现象」行里反引号包住的报错短语 → pattern（诊断走子串匹配，小写）；
+    「原因」→ diagnosis；「修复」→ fix_hint。没有可匹配报错短语的节
+    （纯几何/语义问题，编译日志抓不到）跳过。
+    """
+    if not doc_path.exists():
+        return []
+    try:
+        text = doc_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    patterns: list[dict] = []
+    sections = _ERROR_SECTION_RE.split(text)
+    # split 结果：[前言, title1, body1, title2, body2, ...]
+    for title, body in zip(sections[1::2], sections[2::2]):
+        symptom = diagnosis = fix_hint = ""
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("**现象**"):
+                symptom = stripped
+            elif stripped.startswith("**原因**"):
+                diagnosis = stripped.split("：", 1)[-1].strip()
+            elif stripped.startswith("**修复**"):
+                fix_hint = stripped.split("：", 1)[-1].strip()
+        for phrase in _BACKTICK_PHRASE_RE.findall(symptom):
+            # 只收报错消息短语（含空格的英文句式），跳过纯命令名如 `ENDIF`
+            if " " not in phrase:
+                continue
+            patterns.append({
+                "pattern": phrase.lower(),
+                "diagnosis": f"{title.strip()}：{diagnosis}",
+                "fix_hint": fix_hint,
+                "source": "GDL_common_errors.md",
+            })
+    return patterns
 
 
 def _derive_from_concept_page(
@@ -347,7 +390,7 @@ def derive_graph(
                        "请勿手工编辑；手工条目放 gdl_graph.json（override 覆盖层）。",
         "api_functions": [api_entries[k] for k in sorted(api_entries)],
         "bim_concepts": list(concepts_by_name.values()),
-        "known_error_patterns": [],
+        "known_error_patterns": _derive_error_patterns(),
     }
 
 
@@ -376,6 +419,7 @@ def main() -> int:
     print(f"BIM 概念：{len(concepts)} 个")
     alias_total = sum(len(c["aliases"]) for c in concepts)
     print(f"概念别名：{alias_total} 个")
+    print(f"错误模式：{len(graph['known_error_patterns'])} 条")
     if not args.check:
         print(f"已写入：{DERIVED_GRAPH_PATH}")
     return 0

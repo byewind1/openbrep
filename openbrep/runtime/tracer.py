@@ -46,6 +46,8 @@ class Tracer:
             "knowledge_sources": (getattr(result, "object_plan", {}) or {}).get("knowledge_sources") or [],
             "has_compile": result.compile_result is not None,
             "compile_pass": result.compile_result.success if result.compile_result else None,
+            # 编译失败时保留报错摘录（错误模式收割的原料；可选字段，schema 向后兼容）
+            "compile_error_excerpt": _compile_error_excerpt(result.compile_result),
             "compile_comparison": _compile_comparison_trace(getattr(result, "compile_comparison", None)),
             "verification": _verification_trace(getattr(result, "verification", None)),
             "error": result.error,
@@ -60,6 +62,16 @@ class Tracer:
         except Exception as exc:
             logger.warning("Tracer: failed to write trace file: %s", exc)
         return path
+
+
+def _compile_error_excerpt(compile_result) -> str | None:
+    """编译失败时抽取报错摘录（errors 优先，其次 stderr），成功或无编译时为 None。"""
+    if compile_result is None or compile_result.success:
+        return None
+    errors = getattr(compile_result, "errors", None) or []
+    text = "\n".join(str(e) for e in errors) or str(getattr(compile_result, "stderr", "") or "")
+    text = text.strip()
+    return text[:500] if text else None
 
 
 def _compile_comparison_trace(comparison) -> dict | None:

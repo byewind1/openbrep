@@ -97,6 +97,12 @@ def select_gdl_knowledge(
             generation_parts.append(wiki_context)
             source_ids.extend(wiki_sources)
 
+    if task_type in {"create", "image", "modify"}:
+        example_context, example_sources = _load_examples(root, instruction, task_type, object_keys)
+        if example_context:
+            generation_parts.append(example_context)
+            source_ids.extend(example_sources)
+
     core_context = _compact_core_context(base_context, task_type=task_type)
     if core_context:
         generation_parts.append(core_context)
@@ -132,6 +138,63 @@ def _load_archetypes(root: Path, object_keys: list[str]) -> str:
         except Exception:
             continue
     return _join(parts)
+
+
+def _load_examples(
+    root: Path,
+    instruction: str,
+    task_type: str,
+    object_keys: list[str],
+    *,
+    max_examples: int = 2,
+) -> tuple[str, list[str]]:
+    """按 object_types / commands 匹配 knowledge/examples/ 里的案例，注入生成上下文。
+
+    评分：object_type 与检测到的 object key 相同 +3；object_type 直接出现在
+    指令文本里 +2；指令中的大写命令与案例 commands 重叠 +2。零分不注入。
+    """
+    ex_dir = root / "examples"
+    if not ex_dir.is_dir():
+        return "", []
+
+    text = (instruction or "").lower()
+    instruction_cmds = set(re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", instruction or ""))
+    scored: list[tuple[int, str, str]] = []
+
+    for fp in sorted(ex_dir.glob("*.md")):
+        try:
+            raw = fp.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        frontmatter, body = _split_frontmatter(raw)
+        if frontmatter and not _frontmatter_matches_task(frontmatter, task_type):
+            continue
+        object_types = [
+            t.strip().lower()
+            for t in frontmatter.get("object_types", "").strip("[]").split(",")
+            if t.strip()
+        ]
+        commands = {
+            c.strip()
+            for c in frontmatter.get("commands", "").strip("[]").split(",")
+            if c.strip()
+        }
+        score = 0
+        for obj_type in object_types:
+            if obj_type in object_keys:
+                score += 3
+            if obj_type and obj_type in text:
+                score += 2
+        score += 2 * len(commands & instruction_cmds)
+        if score > 0:
+            source_id = frontmatter.get("id") or f"example.{fp.stem}"
+            scored.append((score, source_id, _section(f"Example: {source_id}", body or raw)))
+
+    if not scored:
+        return "", []
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top = scored[:max_examples]
+    return _join(content for _, _, content in top), [source_id for _, source_id, _ in top]
 
 
 def _load_core_context(

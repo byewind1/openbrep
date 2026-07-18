@@ -1,0 +1,32 @@
+{
+ "description": "错误模式候选（半自动收割，待人工审核）。审核通过的条目请手工整理进 knowledge/gdl_graph.json 的 known_error_patterns，然后从本文件删除。",
+ "candidates": [
+  {
+   "fingerprint": "general_compile_error:506d178660aa",
+   "category": "general_compile_error",
+   "count": 820,
+   "example_excerpt": "Error in 3D script, line 12: Missing END",
+   "suggested_pattern": "error in 3d script, line <n>: missing end",
+   "suggested_fix_hint": "先定位文件和行号，做最小修复，再回归检查参数、结构闭合和变换平衡。",
+   "review": "pending"
+  },
+  {
+   "fingerprint": "general_compile_error:1e8b431ef706",
+   "category": "general_compile_error",
+   "count": 272,
+   "example_excerpt": "Error in 3D script, line 42",
+   "suggested_pattern": "error in 3d script, line <n>",
+   "suggested_fix_hint": "先定位文件和行号，做最小修复，再回归检查参数、结构闭合和变换平衡。",
+   "review": "pending"
+  },
+  {
+   "fingerprint": "variable_mapping:430f6d0ed8b9",
+   "category": "variable_mapping",
+   "count": 62,
+   "example_excerpt": "Error in 3D script, line 12: Undefined variable width",
+   "suggested_pattern": "error in 3d script, line <n>: undefined variable width",
+   "suggested_fix_hint": "所有变量必须来自 paramlist.xml 或先在 1d.gdl 中赋值；禁止 width/height/depth 等语义别名漂移。",
+   "review": "pending"
+  }
+ ]
+}

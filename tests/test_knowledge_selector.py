@@ -155,3 +155,53 @@ class TestKnowledgeBaseNoiseFiltering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── examples 注入（Phase 2b）──────────────────────────────
+
+
+def test_examples_injected_for_matching_object(tmp_path) -> None:
+    from openbrep.knowledge_selector import select_gdl_knowledge
+
+    selection = select_gdl_knowledge(
+        instruction="做一个宽600深300的书架",
+        intent="create",
+        knowledge_dir="./knowledge",
+    )
+    example_ids = [s for s in selection.source_ids if s.startswith("example.")]
+    assert "example.bookshelf_shelf_loop" in example_ids
+    assert "FOR" in selection.generation_context
+
+
+def test_examples_matched_by_command_token() -> None:
+    from openbrep.knowledge_selector import select_gdl_knowledge
+
+    selection = select_gdl_knowledge(
+        instruction="用 REVOLVE 做一个花瓶",
+        intent="create",
+        knowledge_dir="./knowledge",
+    )
+    assert "example.revolve_vase" in selection.source_ids
+
+
+def test_examples_not_injected_when_no_match() -> None:
+    from openbrep.knowledge_selector import select_gdl_knowledge
+
+    selection = select_gdl_knowledge(
+        instruction="完全无关的问题 qwerty",
+        intent="create",
+        knowledge_dir="./knowledge",
+    )
+    assert not [s for s in selection.source_ids if s.startswith("example.")]
+
+
+def test_examples_capped_at_two() -> None:
+    from openbrep.knowledge_selector import select_gdl_knowledge
+
+    selection = select_gdl_knowledge(
+        instruction="做一个书架、书柜、桌子、门、材质都要 REVOLVE PRISM_ CUTPLANE",
+        intent="create",
+        knowledge_dir="./knowledge",
+    )
+    example_ids = [s for s in selection.source_ids if s.startswith("example.")]
+    assert 0 < len(example_ids) <= 2

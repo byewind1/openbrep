@@ -502,7 +502,7 @@ class TaskPipeline:
         try:
             from openbrep.knowledge_graph import get_graph_manager
             _graph_mgr = get_graph_manager()
-            _graph_constraint = _graph_mgr.build_constraint_prompt(enriched_instruction)
+            _graph_constraint = _graph_mgr.build_constraint_prompt(enriched_instruction, log_miss=True)
             if _graph_constraint:
                 enriched_instruction = f"{enriched_instruction}\n\n{_graph_constraint}"
                 on_event("status", {"message": "📐 图谱概念约束已注入"})

@@ -264,3 +264,105 @@ def test_real_repo_high_frequency_intents_hit() -> None:
     for intent in intents:
         prompt = m.build_constraint_prompt(intent)
         assert prompt != "", f"意图未命中概念注入: {intent}"
+
+
+# ── 错误模式派生（GDL_common_errors.md → known_error_patterns）──
+
+
+def test_derive_error_patterns_from_common_errors_doc(tmp_path: Path) -> None:
+    from openbrep.graph_derivation import _derive_error_patterns
+
+    doc = tmp_path / "GDL_common_errors.md"
+    doc.write_text(
+        "# GDL 常见错误\n\n"
+        "## 1. 多行 IF 缺少 ENDIF\n\n"
+        "**现象**：Archicad 报错 `ENDIF expected` 或 `Syntax error near IF block`。\n\n"
+        "**原因**：多行 IF 代码块没有闭合。\n\n"
+        "**修复**：每个多行 IF 都补齐 ENDIF。\n\n"
+        "## 2. 几何位置错乱\n\n"
+        "**现象**：几何位置错乱、对象漂移。\n\n"
+        "**原因**：变换层数不一致。\n\n"
+        "**修复**：严格配平。\n",
+        encoding="utf-8",
+    )
+    patterns = _derive_error_patterns(doc)
+    # 第 1 节两条报错短语；第 2 节无可匹配短语被跳过
+    assert len(patterns) == 2
+    assert patterns[0]["pattern"] == "endif expected"
+    assert "没有闭合" in patterns[0]["diagnosis"]
+    assert patterns[0]["fix_hint"]
+
+
+def test_real_repo_error_patterns_derived() -> None:
+    from openbrep.graph_derivation import _derive_error_patterns
+
+    patterns = _derive_error_patterns()
+    assert len(patterns) >= 10
+    # 派生 + 手工层合计应超过历史 9 条
+    m = GDLGraphManager()
+    m.load()
+    assert len(m.error_patterns) >= 20
+
+
+def test_derived_error_pattern_reachable_via_diagnose() -> None:
+    m = GDLGraphManager()
+    m.load()
+    result = m.diagnose_error("3D script failed: ENDWHILE expected near line 4")
+    assert "ENDWHILE" in result or "endwhile" in result
+
+
+# ── 词法回退匹配 + 未命中落 trace ─────────────────────────
+
+
+def test_fuzzy_fallback_matches_token_overlap(tmp_path: Path) -> None:
+    manual = {
+        "version": "1.0",
+        "api_functions": [],
+        "bim_concepts": [
+            {
+                "name": "Bookshelf",
+                "aliases": ["parametric bookshelf", "书架"],
+                "description": "参数化书架",
+                "required_apis": [],
+            },
+        ],
+        "known_error_patterns": [],
+    }
+    path = tmp_path / "gdl_graph.json"
+    path.write_text(json.dumps(manual), encoding="utf-8")
+    m = GDLGraphManager(graph_path=path)
+    m.load()
+    # "parametric bookshelf" 整体不在文本里，但两个词都各自出现 → 词法回退命中
+    c = m._find_concept("i want a bookshelf that is parametric")
+    assert c is not None and c.name == "Bookshelf"
+    # 不相关文本不应误命中
+    assert m._find_concept("完全无关的东西 qwerty") is None
+
+
+def test_constraint_prompt_miss_logged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manual = {"version": "1.0", "api_functions": [], "bim_concepts": [], "known_error_patterns": []}
+    path = tmp_path / "gdl_graph.json"
+    path.write_text(json.dumps(manual), encoding="utf-8")
+    m = GDLGraphManager(graph_path=path)
+    m.load()
+
+    monkeypatch.chdir(tmp_path)
+    result = m.build_constraint_prompt("完全无关的意图 qwerty", log_miss=True)
+    assert result == ""
+    miss_log = tmp_path / "traces" / "graph_misses.jsonl"
+    assert miss_log.exists()
+    record = json.loads(miss_log.read_text(encoding="utf-8").splitlines()[0])
+    assert "qwerty" in record["intent"]
+    assert record["timestamp"]
+
+
+def test_constraint_prompt_miss_not_logged_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manual = {"version": "1.0", "api_functions": [], "bim_concepts": [], "known_error_patterns": []}
+    path = tmp_path / "gdl_graph.json"
+    path.write_text(json.dumps(manual), encoding="utf-8")
+    m = GDLGraphManager(graph_path=path)
+    m.load()
+
+    monkeypatch.chdir(tmp_path)
+    m.build_constraint_prompt("完全无关的意图 qwerty")
+    assert not (tmp_path / "traces" / "graph_misses.jsonl").exists()

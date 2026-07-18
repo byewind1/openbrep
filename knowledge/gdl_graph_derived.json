@@ -5656,5 +5656,90 @@
    "source": "archetypes/window.md"
   }
  ],
- "known_error_patterns": []
+ "known_error_patterns": [
+  {
+   "pattern": "endif expected",
+   "diagnosis": "多行 IF 缺少 ENDIF：多行 `IF ... THEN` 代码块没有闭合。",
+   "fix_hint": "每个多行 `IF` 都补齐 `ENDIF`。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "syntax error near if block",
+   "diagnosis": "多行 IF 缺少 ENDIF：多行 `IF ... THEN` 代码块没有闭合。",
+   "fix_hint": "每个多行 `IF` 都补齐 `ENDIF`。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "unexpected endif",
+   "diagnosis": "单行 IF 误加 ENDIF：单行 `IF ... THEN statement` 本身不需要 `ENDIF`。",
+   "fix_hint": "删掉多余 `ENDIF`，或改成多行结构。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "next expected",
+   "diagnosis": "FOR 与 NEXT 不配对：循环结构未闭合，或写了 `NEXT` 但没有对应 `FOR`。",
+   "fix_hint": "保证每个 `FOR` 有同层 `NEXT`。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "next without for",
+   "diagnosis": "FOR 与 NEXT 不配对：循环结构未闭合，或写了 `NEXT` 但没有对应 `FOR`。",
+   "fix_hint": "保证每个 `FOR` 有同层 `NEXT`。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "endwhile expected",
+   "diagnosis": "WHILE 与 ENDWHILE 不配对：`WHILE` 循环未正确结束。",
+   "fix_hint": "补齐 `ENDWHILE`，并确保循环条件可退出。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "undefined label",
+   "diagnosis": "GOSUB 名称未加引号：`GOSUB` 目标名缺少引号。",
+   "fix_hint": "`GOSUB \"Label\"`，并确保标签存在。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "syntax error in gosub",
+   "diagnosis": "GOSUB 名称未加引号：`GOSUB` 目标名缺少引号。",
+   "fix_hint": "`GOSUB \"Label\"`，并确保标签存在。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "end expected",
+   "diagnosis": "3D 主脚本缺少 END：3D 主流程没有终止语句。",
+   "fix_hint": "在主 3D 脚本末尾增加 `END`。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "wrong number of arguments",
+   "diagnosis": "PRISM_ 漏写高度参数：`PRISM_` 第二参数高度 `h` 被省略。",
+   "fix_hint": "使用 `PRISM_ n, h, ...` 完整语法。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "parameter count mismatch",
+   "diagnosis": "PRISM 顶点数量与 n 不一致：`n` 与实际点数量不匹配。",
+   "fix_hint": "确保 `n` 与顶点对数量一致。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "undefined variable",
+   "diagnosis": "参数名拼写漂移（未定义变量）：`paramlist.xml` 与脚本中的变量名不一致。",
+   "fix_hint": "统一参数命名，避免 `seatH/seat_h` 混用。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "division by zero",
+   "diagnosis": "除零错误：分母变量可能为 0（例如数量参数）。",
+   "fix_hint": "分母前做保护分支。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "unexpected token",
+   "diagnosis": "Markdown 反引号混入 GDL 脚本：从 AI 回复复制代码时把 Markdown fence 一起复制。",
+   "fix_hint": "删除所有 ``` 行，仅保留纯 GDL 代码。",
+   "source": "GDL_common_errors.md"
+  }
+ ]
 }

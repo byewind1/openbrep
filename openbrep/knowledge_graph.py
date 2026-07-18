@@ -247,27 +247,48 @@ class GDLGraphManager:
                 return ep
         return None
 
-    def build_constraint_prompt(self, intent: str) -> str:
+    def build_constraint_prompt(self, intent: str, *, log_miss: bool = False) -> str:
         """根据用户意图构建 API 约束提示，注入 CREATE 路径 prompt。
 
-        返回空字符串表示无图谱约束可注入。
+        返回空字符串表示无图谱约束可注入。log_miss=True 时未命中会落
+        traces/graph_misses.jsonl 供后续分析（补别名/概念的原料），不再静默跳过。
         """
         self.load()
         intent_lower = intent.lower()
         matched_concept = self._find_concept(intent_lower)
         if matched_concept is None:
+            logger.info("[graph] build_constraint_prompt miss for '%s'", intent)
+            if log_miss:
+                self._log_concept_miss(intent)
             return ""
         prompt = matched_concept.to_constraint_prompt(self.api_map)
         logger.info("[graph] build_constraint_prompt for '%s' → concept=%s", intent, matched_concept.name)
         return prompt
 
+    def _log_concept_miss(self, intent: str, miss_log_path: Path | None = None) -> None:
+        """把概念未命中的意图追加到 miss 日志（best-effort，失败不影响主流程）。"""
+        import datetime as _dt
+
+        path = miss_log_path or Path("./traces") / "graph_misses.jsonl"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                "intent": str(intent)[:200],
+                "timestamp": _dt.datetime.now().isoformat(timespec="seconds"),
+            }
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            logger.debug("[graph] failed to log concept miss: %s", exc)
+
     # ── 内部工具 ─────────────────────────────────────────
 
     def _find_concept(self, text_lower: str) -> Optional[BIMConcept]:
-        """在别名表中查找与文本匹配的 BIM 概念。
+        """在别名表中查找与文本匹配的 BIM 概念（两级：精确别名 → 词法回退）。
 
-        ASCII 别名按词边界匹配（避免 "arc" 命中 "search"），中文别名子串匹配；
+        一级：ASCII 别名按词边界匹配（避免 "arc" 命中 "search"），中文别名子串匹配；
         多个命中时取最长别名（更具体的概念优先）。
+        二级：无精确命中时做词法重叠打分（前缀亲缘 + 描述词命中），过阈值才返回。
         """
         best_name: Optional[str] = None
         best_len = -1
@@ -277,7 +298,48 @@ class GDLGraphManager:
             if len(alias) > best_len:
                 best_name = concept_name
                 best_len = len(alias)
-        return self.concept_map.get(best_name) if best_name else None
+        if best_name:
+            return self.concept_map.get(best_name)
+        return self._find_concept_fuzzy(text_lower)
+
+    def _find_concept_fuzzy(self, text_lower: str) -> Optional[BIMConcept]:
+        """词法回退匹配：意图 token 与概念别名/描述的重叠打分。
+
+        评分：别名词完全相等 +3；前缀亲缘（≥4 字符，一方是另一方前缀）+2；
+        描述含 token +1。总分 ≥3 才算命中，保守避免误注入。
+        """
+        tokens = _intent_tokens(text_lower)
+        if not tokens:
+            return None
+        best_concept: Optional[BIMConcept] = None
+        best_score = 0
+        for name, concept in self.concept_map.items():
+            alias_tokens: set[str] = set()
+            for alias, concept_name in self.alias_map.items():
+                if concept_name != name:
+                    continue
+                if alias.isascii():
+                    alias_tokens.update(alias.split())
+                else:
+                    alias_tokens.add(alias)
+            desc_lower = (concept.description or "").lower()
+            score = 0
+            for token in tokens:
+                if token in alias_tokens:
+                    score += 3
+                elif len(token) >= 4 and any(
+                    len(a) >= 4 and (a.startswith(token) or token.startswith(a))
+                    for a in alias_tokens
+                ):
+                    score += 2
+                elif desc_lower and token in desc_lower:
+                    score += 1
+            if score > best_score:
+                best_concept = concept
+                best_score = score
+        if best_score >= 3:
+            return best_concept
+        return None
 
     def _diagnose_variable(self, var_name: str) -> str:
         """对单个未定义变量名查图谱，返回归因文本。"""
@@ -329,6 +391,13 @@ def reset_graph_manager(path: Path | None = None) -> None:
 
 
 # ── 辅助函数 ─────────────────────────────────────────────
+
+def _intent_tokens(text_lower: str) -> set[str]:
+    """从意图文本提取匹配 token：ASCII 单词（≥3 字符）+ 中文连续串（≥2 字符）。"""
+    eng = {w for w in re.findall(r"[a-z][a-z0-9_]*", text_lower) if len(w) >= 3}
+    chn = {c for c in re.findall(r"[一-鿿]+", text_lower) if len(c) >= 2}
+    return eng | chn
+
 
 def _alias_in_text(alias: str, text_lower: str) -> bool:
     """别名是否出现在文本中。ASCII 别名要求词边界，非 ASCII（中文）子串即可。"""
