@@ -1,6 +1,8 @@
 """GDL 领域知识图谱管理器。
 
-基于 dict 的轻量图存储，无外部依赖。图数据从 knowledge/gdl_graph.json 加载。
+基于 dict 的轻量图存储，无外部依赖。图数据分两层加载：
+1. knowledge/gdl_graph_derived.json — 由 wiki→图谱派生管道自动生成（openbrep/graph_derivation.py）
+2. knowledge/gdl_graph.json — 手工 override 覆盖层，同名条目覆盖派生层（别名做并集）
 
 主要能力：
 - query_api()        — 查验 API 是否存在，返回签名和约束
@@ -22,6 +24,7 @@ from openbrep.graph_schema import APIFunction, BIMConcept
 logger = logging.getLogger(__name__)
 
 _GRAPH_JSON_PATH = Path(__file__).parent.parent / "knowledge" / "gdl_graph.json"
+_DERIVED_GRAPH_FILENAME = "gdl_graph_derived.json"
 
 
 class GDLGraphManager:
@@ -45,25 +48,34 @@ class GDLGraphManager:
     # ── 加载 ──────────────────────────────────────────────
 
     def load(self) -> None:
-        """从 JSON 文件加载图数据。可多次调用（幂等）。"""
+        """加载图数据：先派生层（若存在），再手工 override 层。可多次调用（幂等）。"""
         if self._loaded:
             return
-        if not self._path.exists():
+        derived_path = self._path.parent / _DERIVED_GRAPH_FILENAME
+        if not self._path.exists() and not derived_path.exists():
             logger.warning("GDL graph file not found: %s — graph features disabled", self._path)
             self._loaded = True
             return
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-            self._load_apis(data.get("api_functions", []))
-            self._load_concepts(data.get("bim_concepts", []))
-            self.error_patterns = data.get("known_error_patterns", [])
+            if derived_path.exists():
+                derived = json.loads(derived_path.read_text(encoding="utf-8"))
+                self._load_apis(derived.get("api_functions", []))
+                self._load_concepts(derived.get("bim_concepts", []))
+                self.error_patterns = derived.get("known_error_patterns", [])
+            if self._path.exists():
+                data = json.loads(self._path.read_text(encoding="utf-8"))
+                self._load_apis(data.get("api_functions", []))
+                self._load_concepts(data.get("bim_concepts", []))
+                # 手工层错误规则追加在派生层之后（当前派生层不产错误规则）
+                self.error_patterns = self.error_patterns + data.get("known_error_patterns", [])
             self._validate_error_patterns()
             self._loaded = True
             logger.info(
-                "GDL graph loaded: %d APIs, %d concepts, %d aliases",
+                "GDL graph loaded: %d APIs, %d concepts, %d aliases (derived=%s)",
                 len(self.api_map),
                 len(self.concept_map),
                 len(self.alias_map),
+                derived_path.exists(),
             )
         except Exception:
             logger.exception("Failed to load GDL graph from %s", self._path)
@@ -96,7 +108,7 @@ class GDLGraphManager:
                 init_pattern=item.get("init_pattern", ""),
             )
             self.concept_map[name] = concept
-            # 主名称本身也作为别名
+            # 主名称本身也作为别名；同名覆盖时旧别名保留（并集），同别名后写入者赢
             self.alias_map[name.lower()] = name
             for alias in item.get("aliases", []):
                 self.alias_map[alias.lower()] = name
@@ -252,11 +264,20 @@ class GDLGraphManager:
     # ── 内部工具 ─────────────────────────────────────────
 
     def _find_concept(self, text_lower: str) -> Optional[BIMConcept]:
-        """在别名表中查找与文本匹配的 BIM 概念。"""
+        """在别名表中查找与文本匹配的 BIM 概念。
+
+        ASCII 别名按词边界匹配（避免 "arc" 命中 "search"），中文别名子串匹配；
+        多个命中时取最长别名（更具体的概念优先）。
+        """
+        best_name: Optional[str] = None
+        best_len = -1
         for alias, concept_name in self.alias_map.items():
-            if alias in text_lower:
-                return self.concept_map.get(concept_name)
-        return None
+            if not _alias_in_text(alias, text_lower):
+                continue
+            if len(alias) > best_len:
+                best_name = concept_name
+                best_len = len(alias)
+        return self.concept_map.get(best_name) if best_name else None
 
     def _diagnose_variable(self, var_name: str) -> str:
         """对单个未定义变量名查图谱，返回归因文本。"""
@@ -308,6 +329,16 @@ def reset_graph_manager(path: Path | None = None) -> None:
 
 
 # ── 辅助函数 ─────────────────────────────────────────────
+
+def _alias_in_text(alias: str, text_lower: str) -> bool:
+    """别名是否出现在文本中。ASCII 别名要求词边界，非 ASCII（中文）子串即可。"""
+    if not alias:
+        return False
+    if alias.isascii():
+        pattern = rf"(?<![a-z0-9_]){re.escape(alias)}(?![a-z0-9_])"
+        return re.search(pattern, text_lower) is not None
+    return alias in text_lower
+
 
 def _extract_undefined_names(error_msg: str) -> list[str]:
     """从编译错误消息中提取未定义变量/标识符名称。"""

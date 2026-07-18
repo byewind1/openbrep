@@ -1,0 +1,5660 @@
+{
+ "version": "1.0",
+ "description": "由 openbrep/graph_derivation.py 从 knowledge/wiki/ 与 knowledge/archetypes/ 自动派生。请勿手工编辑；手工条目放 gdl_graph.json（override 覆盖层）。",
+ "api_functions": [
+  {
+   "name": "ACS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/acs.md"
+  },
+  {
+   "name": "ADD",
+   "signature": "dx, dy, dz",
+   "return_type": "void",
+   "description": "Replaces the sequence ADDX dx: ADDY dy: ADDZ dz.",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "3d",
+   "source": "wiki/add.md"
+  },
+  {
+   "name": "ADD2",
+   "signature": "x, y",
+   "return_type": "void",
+   "description": "Example: ADD2 a",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "3d",
+   "source": "wiki/add2.md"
+  },
+  {
+   "name": "ADDGROUP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/addgroup.md"
+  },
+  {
+   "name": "ADDITIONAL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/additional.md"
+  },
+  {
+   "name": "ADDX",
+   "signature": "dx",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/addx.md"
+  },
+  {
+   "name": "ADDY",
+   "signature": "dy",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/addy.md"
+  },
+  {
+   "name": "ADDZ",
+   "signature": "dz",
+   "return_type": "void",
+   "description": "Moves the local coordinate system along the given axis by dx",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/addz.md"
+  },
+  {
+   "name": "ANCESTRY_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ancestry_info.md"
+  },
+  {
+   "name": "ANGULAR_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/angular_dimension.md"
+  },
+  {
+   "name": "ANGULAR_LENGTH_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/angular_length_dimension.md"
+  },
+  {
+   "name": "APPLICATION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/application.md"
+  },
+  {
+   "name": "APPLICATION_QUERY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/application_query.md"
+  },
+  {
+   "name": "ARC",
+   "signature": "r, alpha, beta",
+   "return_type": "void",
+   "description": "An arc (in Wireframe mode) or sector (in other modes) in the x-y plane with its center at the origin from angle alpha to beta with a radius of r. alpha and beta are in degrees.",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "3d",
+   "source": "wiki/arc.md"
+  },
+  {
+   "name": "ARC2",
+   "signature": "x, y, r, alpha, beta",
+   "return_type": "void",
+   "description": "An arc with its centerpoint at (x",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "3d",
+   "source": "wiki/arc2.md"
+  },
+  {
+   "name": "AREA_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/area_dimension.md"
+  },
+  {
+   "name": "ARMC",
+   "signature": "r1, r2, l, h, d, alpha",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 6,
+   "param_count_max": 6,
+   "category": "other",
+   "source": "wiki/armc.md"
+  },
+  {
+   "name": "ARME",
+   "signature": "l, r1, r2, h, d",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/arme.md"
+  },
+  {
+   "name": "ASN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/asn.md"
+  },
+  {
+   "name": "ASSOCEL_PROPERTIES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/assocel_properties.md"
+  },
+  {
+   "name": "ASSOCLP_NAME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/assoclp_name.md"
+  },
+  {
+   "name": "ASSOCLP_PARVALUE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/assoclp_parvalue.md"
+  },
+  {
+   "name": "ASSOCLP_PARVALUE_WITH_DESCRIPTION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/assoclp_parvalue_with_description.md"
+  },
+  {
+   "name": "ATN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/atn.md"
+  },
+  {
+   "name": "AUTOTEXT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/autotext.md"
+  },
+  {
+   "name": "AUTOTEXT_LIST",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/autotext_list.md"
+  },
+  {
+   "name": "BASE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/base.md"
+  },
+  {
+   "name": "BASIC",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/basic.md"
+  },
+  {
+   "name": "BEAM",
+   "signature": "left_material, right_material, vertical_material, top_material, bottom_material, height",
+   "return_type": "void",
+   "description": "Beam definition. Parameters are similar to those of the XWALL_ element. top_material, bottom_material: top and bottom materials.",
+   "param_count_min": 6,
+   "param_count_max": 6,
+   "category": "other",
+   "source": "wiki/beam.md"
+  },
+  {
+   "name": "BEAM_AXES_LINETYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/beam_axes_linetype.md"
+  },
+  {
+   "name": "BEAM_CROSSSECTION_TYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/beam_crosssection_type.md"
+  },
+  {
+   "name": "BEAM_FILL_PEN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/beam_fill_pen.md"
+  },
+  {
+   "name": "BEAM_HOLES_VOLUME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/beam_holes_volume.md"
+  },
+  {
+   "name": "BEAM_OUTLINE_LINETYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/beam_outline_linetype.md"
+  },
+  {
+   "name": "BEAM_VOLUME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/beam_volume.md"
+  },
+  {
+   "name": "BINARY",
+   "signature": "mode",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/binary.md"
+  },
+  {
+   "name": "BINARYPROP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/binaryprop.md"
+  },
+  {
+   "name": "BITSET",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/bitset.md"
+  },
+  {
+   "name": "BLOCK",
+   "signature": "a, b, c",
+   "return_type": "void",
+   "description": "BRICK a, b, c   ! identical",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "",
+   "source": "wiki/BLOCK.md"
+  },
+  {
+   "name": "BODY",
+   "signature": "status",
+   "return_type": "void",
+   "description": "Composes a body defined with the above primitives. status: Status bits:",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/body.md"
+  },
+  {
+   "name": "BPRISM_",
+   "signature": "top_material, bottom_material, side_material, n, h, radius, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "A smooth curved prism, based on the same data structure as the straight CPRISM_ element. The only additional parameter is radius. Derived from the corresponding CPRISM_ by bending the x-y plane onto a",
+   "param_count_min": 9,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/bprism_.md"
+  },
+  {
+   "name": "BREAKPOINT",
+   "signature": "expression",
+   "return_type": "void",
+   "description": "With this command, you can specify a breakpoint in the GDL script. The GDL debugger will stop at this command if the value of the parameter (a numeric expression) is true (1) and the Enable Breakpoint",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "control",
+   "source": "wiki/breakpoint.md"
+  },
+  {
+   "name": "BRICK",
+   "signature": "a, b, c",
+   "return_type": "void",
+   "description": "The first corner of the block is in the local origin and the edges with lengths a, b and c are along the x-, y- and z-axes, respectively. Zero values create degenerated blocks (rectangle or line). Res",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "3d",
+   "source": "wiki/brick.md"
+  },
+  {
+   "name": "BUILDING_MATERIAL_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/building_material_info.md"
+  },
+  {
+   "name": "BUILT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/built.md"
+  },
+  {
+   "name": "BWALL_",
+   "signature": "left_material, right_material, side_material, height, x1, x2, x3, x4, t, radius, mask1, mask2, mask3, mask4, n, x_start1, y_low1, x_end1, y_high1, frame_shown1, ...",
+   "return_type": "void",
+   "description": "A smooth curved wall based on the same data structure as the straight wall CWALL_ element. The only additional parameter is radius. Derived from the corresponding CWALL_ by bending the x-z plane onto ",
+   "param_count_min": 20,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/bwall_.md"
+  },
+  {
+   "name": "CALC_ANGLE_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/calc_angle_unit.md"
+  },
+  {
+   "name": "CALC_AREA_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/calc_area_unit.md"
+  },
+  {
+   "name": "CALC_LENGTH_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/calc_length_unit.md"
+  },
+  {
+   "name": "CALC_VOLUME_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/calc_volume_unit.md"
+  },
+  {
+   "name": "CALL",
+   "signature": "macro_name_string",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "control",
+   "source": "wiki/call.md"
+  },
+  {
+   "name": "CALLFUNCTION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/callfunction.md"
+  },
+  {
+   "name": "CEIL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ceil.md"
+  },
+  {
+   "name": "CHARACTERS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/characters.md"
+  },
+  {
+   "name": "CIRCLE",
+   "signature": "r",
+   "return_type": "void",
+   "description": "A circle in the x-y plane with its center at the origin and with a radius of r.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/circle.md"
+  },
+  {
+   "name": "CIRCLE2",
+   "signature": "x, y, r",
+   "return_type": "void",
+   "description": "A circle with its center at (x",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "3d",
+   "source": "wiki/circle2.md"
+  },
+  {
+   "name": "CLASS_OF_FILL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/class_of_fill.md"
+  },
+  {
+   "name": "CLEAN_INTERSECTIONS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/clean_intersections.md"
+  },
+  {
+   "name": "CLOSE",
+   "signature": "channel",
+   "return_type": "void",
+   "description": "Closes the file identified by the channel value.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/close.md"
+  },
+  {
+   "name": "CLOSEADDONSCOPE",
+   "signature": "channel",
+   "return_type": "void",
+   "description": "Closes the connection identified by the channel value.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/closeaddonscope.md"
+  },
+  {
+   "name": "CODING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/coding.md"
+  },
+  {
+   "name": "COLU_CORE_FILL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_core_fill.md"
+  },
+  {
+   "name": "COLU_CORE_GROSS_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_core_gross_surf.md"
+  },
+  {
+   "name": "COLU_CORE_GROSS_VOL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_core_gross_vol.md"
+  },
+  {
+   "name": "COLU_GROSS_VOLUME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_gross_volume.md"
+  },
+  {
+   "name": "COLU_LINETYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_linetype.md"
+  },
+  {
+   "name": "COLU_PERIMETER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_perimeter.md"
+  },
+  {
+   "name": "COLU_VENEER_FILL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_veneer_fill.md"
+  },
+  {
+   "name": "COLU_VENEER_FILL_PEN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_veneer_fill_pen.md"
+  },
+  {
+   "name": "COLU_VENEER_GROSS_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_veneer_gross_surf.md"
+  },
+  {
+   "name": "COLU_VENEER_WIDTH",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/colu_veneer_width.md"
+  },
+  {
+   "name": "COMPONENT",
+   "signature": "name, quantity, unit",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/component.md"
+  },
+  {
+   "name": "COMPONENT_IDS_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/component_ids_of_parent.md"
+  },
+  {
+   "name": "COMPONENT_PROJECTED_AREA",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/component_projected_area.md"
+  },
+  {
+   "name": "COMPONENT_PROPERTIES_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/component_properties_of_parent.md"
+  },
+  {
+   "name": "COMPONENT_PROPERTY_TREE_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/component_property_tree_of_parent.md"
+  },
+  {
+   "name": "COMPONENT_PROPERTY_VALUES_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/component_property_values_of_parent.md"
+  },
+  {
+   "name": "COMPONENT_VOLUME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/component_volume.md"
+  },
+  {
+   "name": "CONE",
+   "signature": "h, r1, r2, alpha1, alpha2",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "3d",
+   "source": "wiki/cone.md"
+  },
+  {
+   "name": "CONFIGURATION_NUMBER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/configuration_number.md"
+  },
+  {
+   "name": "CONSTR_FILLS_DISPLAY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/constr_fills_display.md"
+  },
+  {
+   "name": "CONVENTIONS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/conventions.md"
+  },
+  {
+   "name": "COONS",
+   "signature": "n, m, mask, x11, y11, z11, ...",
+   "return_type": "void",
+   "description": "A Coons patch generated from four boundary curves. mask:",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/coons.md"
+  },
+  {
+   "name": "COOR",
+   "signature": "wrap, vert1, vert2, vert3, vert4",
+   "return_type": "void",
+   "description": "Deprecated. See the COOR{3} command. Local coordinate system of a BODY for the fill and texture mapping. wrap: wrapping mode + projection type Wrapping modes:",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "3d",
+   "source": "wiki/coor.md"
+  },
+  {
+   "name": "COS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/cos.md"
+  },
+  {
+   "name": "CPRISM_",
+   "signature": "top_material, bottom_material, side_material, n, h, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "Extension of the PRISM_ command. The first three parameters are used for the material name/index of the top, bottom and side surfaces. The other parameters are the same as above in the PRISM_ command.",
+   "param_count_min": 8,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/cprism_.md"
+  },
+  {
+   "name": "CREATEGROUPWITHMATERIAL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/creategroupwithmaterial.md"
+  },
+  {
+   "name": "CROOF_",
+   "signature": "top_material, bottom_material, side_material, n, xb, yb, xe, ye, height, angle, thickness, x1, y1, alpha1, s1, ...",
+   "return_type": "void",
+   "description": "A sloped roof pitch with custom angle ridges. top_material, bottom_material, side_material: name/index of the top, bottom and side material.",
+   "param_count_min": 15,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/croof_.md"
+  },
+  {
+   "name": "CSLAB_",
+   "signature": "top_material, bottom_material, side_material, n, h, x1, y1, z1, s1, ...",
+   "return_type": "void",
+   "description": "Extension of the SLAB_ command; the first three parameters are used for the material name/index of the top, bottom and side surfaces. The other parameters are the same as above in the SLAB_ command. s",
+   "param_count_min": 9,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/cslab_.md"
+  },
+  {
+   "name": "CUSTOM_AUTO_LABEL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/custom_auto_label.md"
+  },
+  {
+   "name": "CUTFORM",
+   "signature": "n, method, status, rx, ry, rz, d, x1, y1, mask1",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 10,
+   "param_count_max": 10,
+   "category": "other",
+   "source": "wiki/cutform.md"
+  },
+  {
+   "name": "CUTPOLY",
+   "signature": "n, x1, y1, ...",
+   "return_type": "void",
+   "description": "Similarly to the CUTPLANE command, parameters of CUTPOLY refer to the current coordinate system. The polygon cannot be selfintersecting. The direction of cutting is the Z axis or an optional (x, y, z)",
+   "param_count_min": 3,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/cutpoly.md"
+  },
+  {
+   "name": "CUTPOLYA",
+   "signature": "n, status, d, x1, y1, mask1, ...",
+   "return_type": "void",
+   "description": "Similar to the CUTPOLY command, but with the possibility to control the visibility of the edges of the generated polygons. The cutting form is a half-infinite tube with the defined polygonal cross-sec",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/cutpolya.md"
+  },
+  {
+   "name": "CUTSHAPE",
+   "signature": "d",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/cutshape.md"
+  },
+  {
+   "name": "CWALL_",
+   "signature": "left_material, right_material, side_material, height, x1, x2, x3, x4, t, mask1, mask2, mask3, mask4, n, x_start1, y_low1, x_end1, y_high1, frame_shown1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 19,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/cwall_.md"
+  },
+  {
+   "name": "CWFRAME_DIRECTION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/cwframe_direction.md"
+  },
+  {
+   "name": "CWJUNC_TYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/cwjunc_type.md"
+  },
+  {
+   "name": "CWPANEL_VERTICAL_DIRECTION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/cwpanel_vertical_direction.md"
+  },
+  {
+   "name": "CW_BOUNDARY_PLACEMENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/cw_boundary_placement.md"
+  },
+  {
+   "name": "CYLIND",
+   "signature": "h, r",
+   "return_type": "void",
+   "description": "The base circle is centered on the local origin in the x-y plane. Move or rotate the cylinder with the transformation stack (`ADD`, `ROTX`, `ROTY`, `ROTZ`, `DEL`).",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "",
+   "source": "wiki/CYLIND.md"
+  },
+  {
+   "name": "DATABASE_SET",
+   "signature": "set_name",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/database_set.md"
+  },
+  {
+   "name": "DATETIME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/datetime.md"
+  },
+  {
+   "name": "DEL",
+   "signature": "n",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/del.md"
+  },
+  {
+   "name": "DELETED_PAR_VALUE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/deleted_par_value.md"
+  },
+  {
+   "name": "DERIVED",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/derived.md"
+  },
+  {
+   "name": "DESCRIPTOR",
+   "signature": "name",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/descriptor.md"
+  },
+  {
+   "name": "DICT",
+   "signature": "_dictForReceivedData",
+   "return_type": "void",
+   "description": "call \"macroname\" parameters all myDictionary = _myDictionary",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/dict.md"
+  },
+  {
+   "name": "DIM",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/dim.md"
+  },
+  {
+   "name": "DIRECTIVES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/directives.md"
+  },
+  {
+   "name": "DOORS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/doors.md"
+  },
+  {
+   "name": "DOOR_SHOW_DIM",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/door_show_dim.md"
+  },
+  {
+   "name": "DRAWING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/drawing.md"
+  },
+  {
+   "name": "DRAWING2",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "2d",
+   "source": "wiki/drawing2.md"
+  },
+  {
+   "name": "DRAWING3",
+   "signature": "projection_code, angle, method",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/drawing3.md"
+  },
+  {
+   "name": "DRAWINGS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/drawings.md"
+  },
+  {
+   "name": "EDGE",
+   "signature": "vert1, vert2, pgon1, pgon2, status",
+   "return_type": "void",
+   "description": "Definition of an edge.",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "3d",
+   "source": "wiki/edge.md"
+  },
+  {
+   "name": "ELBOW",
+   "signature": "r1, alpha, r2",
+   "return_type": "void",
+   "description": "A segmented elbow in the x-z plane. The radius of the arc is r1",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/elbow.md"
+  },
+  {
+   "name": "ELEVATION_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/elevation_dimension.md"
+  },
+  {
+   "name": "ELLIPS",
+   "signature": "h, r",
+   "return_type": "void",
+   "description": "Half ellipsoid. Its cross-section in the x-y plane is a circle with a radius of r centered at the origin. The length of the half axis along the z-axis is h.",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "3d",
+   "source": "wiki/ellips.md"
+  },
+  {
+   "name": "END",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/end.md"
+  },
+  {
+   "name": "ENDPARAGRAPH",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/endparagraph.md"
+  },
+  {
+   "name": "ENDWHILE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/endwhile.md"
+  },
+  {
+   "name": "EXPRESSIONS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/expressions.md"
+  },
+  {
+   "name": "EXTRUDE",
+   "signature": "n, dx, dy, dz, mask, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 8,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/extrude.md"
+  },
+  {
+   "name": "EXTRUDEDSHELL",
+   "signature": "topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, offset, thickness, flipped, trimmingBody, x_tb, y_tb, x_te, y_te, topz, tangle, x_bb, y_bb, x_be, y_be, bottomz, bangle, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThicakenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, x_1, y_1, s_1, ...",
+   "return_type": "void",
+   "description": "Surface created by first extruding a polyline, then adding thickness to it. topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4: Materials on the top, bottom and four sides",
+   "param_count_min": 39,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/extrudedshell.md"
+  },
+  {
+   "name": "FILE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/file.md"
+  },
+  {
+   "name": "FILE_DEPENDENCE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/file_dependence.md"
+  },
+  {
+   "name": "FIX",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/fix.md"
+  },
+  {
+   "name": "FLOOR_PLAN_OPTION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/floor_plan_option.md"
+  },
+  {
+   "name": "FONTNAMES_LIST",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/fontnames_list.md"
+  },
+  {
+   "name": "FOR",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/for.md"
+  },
+  {
+   "name": "FPRISM_",
+   "signature": "top_material, bottom_material, side_material, hill_material, n, thickness, angle, hill_height, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "Similar to the PRISM_ command, with the additional hill_material, angle and hill_height parameters for forming a ramp on the top. hill_material: the side material of the ramp part. angle: the inclinat",
+   "param_count_min": 11,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/fprism_.md"
+  },
+  {
+   "name": "FRA",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/fra.md"
+  },
+  {
+   "name": "FRAGMENT2",
+   "signature": "fragment_index, use_current_attributes_flag",
+   "return_type": "void",
+   "description": "FRAGMENT2 ALL",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "2d",
+   "source": "wiki/fragment2.md"
+  },
+  {
+   "name": "FULL_ID_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/full_id_of_parent.md"
+  },
+  {
+   "name": "GDL",
+   "signature": "warnings",
+   "return_type": "void",
+   "description": "Like any other programming language, GDL has a syntax and logic to be followed. If there is a mistake in syntax, the programmer gets an error message. If there is something confusing, or some unexpect",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/gdl_2.md"
+  },
+  {
+   "name": "GET",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/get.md"
+  },
+  {
+   "name": "GLOBAL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/global.md"
+  },
+  {
+   "name": "GLOB_MVO_RAILING_PLAN_COMP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/glob_mvo_railing_plan_comp.md"
+  },
+  {
+   "name": "GLOB_MVO_STAIR_FLOOR_PLAN_COMP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/glob_mvo_stair_floor_plan_comp.md"
+  },
+  {
+   "name": "GLOB_SCRIPT_TYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/glob_script_type.md"
+  },
+  {
+   "name": "GLOB_SEO_TOOL_MODE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/glob_seo_tool_mode.md"
+  },
+  {
+   "name": "GOSUB",
+   "signature": "label",
+   "return_type": "void",
+   "description": "Internal subroutine call where the label is the entry point of the subroutine. Label value can be any numerical or string expression. Variable label expressions can slow down interpretation due to run",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "control",
+   "source": "wiki/gosub.md"
+  },
+  {
+   "name": "GOTO",
+   "signature": "label",
+   "return_type": "void",
+   "description": "Unconditional jump statement. The program executes a branch to the statement denoted by the value of the label (numerical or string). Variable label expressions can slow down interpretation due to run",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "control",
+   "source": "wiki/goto.md"
+  },
+  {
+   "name": "GSID_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/gsid_info.md"
+  },
+  {
+   "name": "HASKEY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/haskey.md"
+  },
+  {
+   "name": "HEIGHT_OF_STYLE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/height_of_style.md"
+  },
+  {
+   "name": "HIDEPARAMETER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/hideparameter.md"
+  },
+  {
+   "name": "HOMEDB_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/homedb_info.md"
+  },
+  {
+   "name": "HOME_STORY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/home_story.md"
+  },
+  {
+   "name": "HOME_STORY_OF_OPENING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/home_story_of_opening.md"
+  },
+  {
+   "name": "HOTARC",
+   "signature": "r, alpha, beta, unID",
+   "return_type": "void",
+   "description": "A status arc in the x-y plane with its center at the origin from angle alpha to beta with a radius of r. Alpha and beta are in degrees.",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/hotarc.md"
+  },
+  {
+   "name": "HOTARC2",
+   "signature": "x, y, r, startangle, endangle, unID",
+   "return_type": "void",
+   "description": "Status arc definition with its centerpoint at (x",
+   "param_count_min": 6,
+   "param_count_max": 6,
+   "category": "other",
+   "source": "wiki/hotarc2.md"
+  },
+  {
+   "name": "HOTLINE",
+   "signature": "x1, y1, z1, x2, y2, z2, unID",
+   "return_type": "void",
+   "description": "A status line segment between the points P1 (x1,y1,z1) and P2 (x2,y2,z2).",
+   "param_count_min": 7,
+   "param_count_max": 7,
+   "category": "other",
+   "source": "wiki/hotline.md"
+  },
+  {
+   "name": "HOTLINE2",
+   "signature": "x1, y1, x2, y2, unID",
+   "return_type": "void",
+   "description": "Status line definition between two points. Status line is a line which is recognized by the intelligent cursor but it is not visible in itself. Can have a unique ID for associative dimensioning purpos",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/hotline2.md"
+  },
+  {
+   "name": "HOTSPOT",
+   "signature": "x, y, z",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "3d",
+   "source": "wiki/hotspot.md"
+  },
+  {
+   "name": "HOTSPOT2",
+   "signature": "x, y",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "",
+   "source": "wiki/HOTSPOT2.md"
+  },
+  {
+   "name": "HPRISM_",
+   "signature": "top_mat, bottom_mat, side_mat, hill_mat, n, thickness, angle, hill_height, status, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "Similar to FPRISM_, with an additional parameter controlling the visibility of the hill edges. status: controls the visibility of the hill edges:",
+   "param_count_min": 12,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/hprism_.md"
+  },
+  {
+   "name": "HSF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/hsf.md"
+  },
+  {
+   "name": "IDENTIFIERS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/identifiers.md"
+  },
+  {
+   "name": "ID_OF_MAIN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/id_of_main.md"
+  },
+  {
+   "name": "IND",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ind.md"
+  },
+  {
+   "name": "INITADDONSCOPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/initaddonscope.md"
+  },
+  {
+   "name": "INLINE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/inline.md"
+  },
+  {
+   "name": "INPUT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/input.md"
+  },
+  {
+   "name": "INT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/int.md"
+  },
+  {
+   "name": "INTERNAL_ID",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/internal_id.md"
+  },
+  {
+   "name": "ISECTGROUP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/isectgroup.md"
+  },
+  {
+   "name": "ISECTLINES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/isectlines.md"
+  },
+  {
+   "name": "KEYNOTE_FOLDER_TREE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/keynote_folder_tree.md"
+  },
+  {
+   "name": "KEYNOTE_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/keynote_info.md"
+  },
+  {
+   "name": "KILLGROUP",
+   "signature": "g_expr",
+   "return_type": "void",
+   "description": "Clears the bodies of the specified group from the memory. After a KILLGROUP operation the group becomes empty. The names of killed groups cannot be reused in the same script. Clearing is executed auto",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/killgroup.md"
+  },
+  {
+   "name": "LABEL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/label.md"
+  },
+  {
+   "name": "LABEL_ASSOC_ELEM_GEOMETRY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/label_assoc_elem_geometry.md"
+  },
+  {
+   "name": "LABEL_ASSOC_ELEM_ORIENTATION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/label_assoc_elem_orientation.md"
+  },
+  {
+   "name": "LABEL_FONT_STYLE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/label_font_style.md"
+  },
+  {
+   "name": "LABEL_POSITION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/label_position.md"
+  },
+  {
+   "name": "LABEL_TEXT_WRAP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/label_text_wrap.md"
+  },
+  {
+   "name": "LAYOUT_LENGTH_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/layout_length_unit.md"
+  },
+  {
+   "name": "LAYOUT_TEXT_SIZE_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/layout_text_size_unit.md"
+  },
+  {
+   "name": "LEVEL_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/level_dimension.md"
+  },
+  {
+   "name": "LGT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/lgt.md"
+  },
+  {
+   "name": "LIBRARYGLOBAL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/libraryglobal.md"
+  },
+  {
+   "name": "LIGHT",
+   "signature": "red, green, blue, shadow, radius, alpha, beta, angle_falloff, distance1, distance2, distance_falloff",
+   "return_type": "void",
+   "description": "[[",
+   "param_count_min": 11,
+   "param_count_max": 11,
+   "category": "other",
+   "source": "wiki/light.md"
+  },
+  {
+   "name": "LIGHT_ON",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/light_on.md"
+  },
+  {
+   "name": "LINE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/line.md"
+  },
+  {
+   "name": "LINE2",
+   "signature": "x1, y1, x2, y2",
+   "return_type": "void",
+   "description": "Line definition between two points.",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "3d",
+   "source": "wiki/line2.md"
+  },
+  {
+   "name": "LINEAR_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/linear_dimension.md"
+  },
+  {
+   "name": "LINE_PROPERTY",
+   "signature": "expr",
+   "return_type": "void",
+   "description": "Defines the property for all subsequently generated lines in the 2D script (RECT2",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/line_property.md"
+  },
+  {
+   "name": "LIN_",
+   "signature": "x1, y1, z1, x2, y2, z2",
+   "return_type": "void",
+   "description": "A line segment between the points P1 (x1",
+   "param_count_min": 6,
+   "param_count_max": 6,
+   "category": "other",
+   "source": "wiki/lin_.md"
+  },
+  {
+   "name": "LISTING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/listing.md"
+  },
+  {
+   "name": "LOCK",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "param",
+   "source": "wiki/lock.md"
+  },
+  {
+   "name": "LOG",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/log.md"
+  },
+  {
+   "name": "MACRO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/macro.md"
+  },
+  {
+   "name": "MASS",
+   "signature": "top_material, bottom_material, side_material, n, m, mask, h, x1, y1, z1, s1, ...",
+   "return_type": "void",
+   "description": "The equivalent of the shape generated by the Mesh tool in Archicad. top_material, bottom_material, side_material: name/index of the top, bottom and side materials.",
+   "param_count_min": 11,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/mass.md"
+  },
+  {
+   "name": "MATCHING_PROPERTIES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/matching_properties.md"
+  },
+  {
+   "name": "MATERIAL_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/material_info.md"
+  },
+  {
+   "name": "MAX",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/max.md"
+  },
+  {
+   "name": "MEP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/mep.md"
+  },
+  {
+   "name": "MEP_ROUTE_ATTRIBUTES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/mep_route_attributes.md"
+  },
+  {
+   "name": "MESH",
+   "signature": "a, b, m, n, mask, z11, z12, ...",
+   "return_type": "void",
+   "description": "A simple smooth mesh based on a rectangle with an equidistant net. The sides of the base rectangle are a and b; the m and n points are along the x and y axes respectively; zij is the height of the nod",
+   "param_count_min": 7,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/mesh.md"
+  },
+  {
+   "name": "MESH_TYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/mesh_type.md"
+  },
+  {
+   "name": "MODEL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/model.md"
+  },
+  {
+   "name": "MODEL_LENGTH_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/model_length_unit.md"
+  },
+  {
+   "name": "MODEL_TEXT_SIZE_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/model_text_size_unit.md"
+  },
+  {
+   "name": "MUL",
+   "signature": "mx, my, mz",
+   "return_type": "void",
+   "description": "Replaces the sequence MULX mx: MULY my: MULZ mz. It has only one entry in the stack",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "3d",
+   "source": "wiki/mul.md"
+  },
+  {
+   "name": "MUL2",
+   "signature": "x, y",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "3d",
+   "source": "wiki/mul2.md"
+  },
+  {
+   "name": "MULX",
+   "signature": "mx",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/mulx.md"
+  },
+  {
+   "name": "MULY",
+   "signature": "my",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/muly.md"
+  },
+  {
+   "name": "MULZ",
+   "signature": "mz",
+   "return_type": "void",
+   "description": "Scales the local coordinate system along the given axis. Negative mx",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/mulz.md"
+  },
+  {
+   "name": "NAME_OF_BUILDING_MATERIAL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_building_material.md"
+  },
+  {
+   "name": "NAME_OF_FILL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_fill.md"
+  },
+  {
+   "name": "NAME_OF_LINE_TYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_line_type.md"
+  },
+  {
+   "name": "NAME_OF_LISTED",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_listed.md"
+  },
+  {
+   "name": "NAME_OF_MACRO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_macro.md"
+  },
+  {
+   "name": "NAME_OF_MAIN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_main.md"
+  },
+  {
+   "name": "NAME_OF_MATERIAL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_material.md"
+  },
+  {
+   "name": "NAME_OF_PLAN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_plan.md"
+  },
+  {
+   "name": "NAME_OF_PROFILE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_profile.md"
+  },
+  {
+   "name": "NAME_OF_PROGRAM",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_program.md"
+  },
+  {
+   "name": "NAME_OF_STYLE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/name_of_style.md"
+  },
+  {
+   "name": "NEWPARAMETER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/newparameter.md"
+  },
+  {
+   "name": "NEXT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/for.md"
+  },
+  {
+   "name": "NSP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/nsp.md"
+  },
+  {
+   "name": "NTR",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ntr.md"
+  },
+  {
+   "name": "NURBS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/nurbs.md"
+  },
+  {
+   "name": "NURBSBODY",
+   "signature": "shadowStatus, smoothnessMin, smoothnessMax",
+   "return_type": "void",
+   "description": "Composes a NURBS body defined with the above NURBS primitives. shadowStatus: status for shadow control:",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/nurbsbody.md"
+  },
+  {
+   "name": "NURBSCURVE2D",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/nurbscurve2d.md"
+  },
+  {
+   "name": "NURBSCURVE3D",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/nurbscurve3d.md"
+  },
+  {
+   "name": "NURBSEDGE",
+   "signature": "vert1, vert2, curve, curveDomainBeg, curveDomainEnd, status, tolerance",
+   "return_type": "void",
+   "description": "Edge of a NURBS body. Different from any edge created by the EDGE command",
+   "param_count_min": 7,
+   "param_count_max": 7,
+   "category": "other",
+   "source": "wiki/nurbsedge.md"
+  },
+  {
+   "name": "NURBSFACE",
+   "signature": "n, surface, tolerance, trim1, trim2, ...",
+   "return_type": "void",
+   "description": "n: number of bounding edges (including optional hole-separator zeros). surface: gdl-index of a NURBS surface supporting the face. Positive index, orientation of face is always identical to the orienta",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/nurbsface.md"
+  },
+  {
+   "name": "NURBSLUMP",
+   "signature": "n, face1, face2, ...",
+   "return_type": "void",
+   "description": "n: number of bounding faces (including optional void-separator zeros). facei: gdl-index of NURBS face bounding the lump",
+   "param_count_min": 3,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/nurbslump.md"
+  },
+  {
+   "name": "NURBSSURFACE",
+   "signature": "degree_u, degree_v, nu, nv, knot_u_1, knot_u_2, ...",
+   "return_type": "void",
+   "description": "3-dimensional NURBS surface with u-v parameter space, given degree, knotvectors in u and v directions and given controlpoint, weigth net. Degrees are one less than orders of surface (order_u = degree_",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/nurbssurface.md"
+  },
+  {
+   "name": "NURBSTRIM",
+   "signature": "edge, curve, curveDomainBeg, curveDomainEnd, tolerance",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/nurbstrim.md"
+  },
+  {
+   "name": "NURBSTRIMSINGULAR",
+   "signature": "vertex, curve, curveDomainBeg, curveDomainEnd, tolerance",
+   "return_type": "void",
+   "description": "A bounding edge of a face. Used for trimming a face in the parameter space of the surface of the face. NURBSTRIMSINGULAR is used along singular sides of the surface (which side is contracted to one po",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/nurbstrimsingular.md"
+  },
+  {
+   "name": "NURBSVERT",
+   "signature": "x, y, z, hard, tolerance",
+   "return_type": "void",
+   "description": "Vertex",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/nurbsvert.md"
+  },
+  {
+   "name": "OPEN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/open.md"
+  },
+  {
+   "name": "OPERATORS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/operators.md"
+  },
+  {
+   "name": "OUTPUT",
+   "signature": "channel, recordID, fieldID, expression1",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/output.md"
+  },
+  {
+   "name": "PARAGRAPH",
+   "signature": "name",
+   "return_type": "void",
+   "description": "alignment",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/paragraph.md"
+  },
+  {
+   "name": "PARAMETER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/parameter.md"
+  },
+  {
+   "name": "PARAMETERS",
+   "signature": "name1",
+   "return_type": "void",
+   "description": "= expression1 [",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "param",
+   "source": "wiki/parameters_2.md"
+  },
+  {
+   "name": "PARVALUE_DESCRIPTION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/parvalue_description.md"
+  },
+  {
+   "name": "PEN",
+   "signature": "n",
+   "return_type": "void",
+   "description": "Sets the color. Restriction of parameters:",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/pen.md"
+  },
+  {
+   "name": "PEN_OF_RGB",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/pen_of_rgb.md"
+  },
+  {
+   "name": "PGON",
+   "signature": "n, vect, status, edge1, edge2, ...",
+   "return_type": "void",
+   "description": "edge1, edge2, ..., edgen: these indices must refer to previously defined EDGEs. A zero value means the beginning or the end of a hole definition. A negative index changes the direction of the stored n",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/pgon.md"
+  },
+  {
+   "name": "PICTURE",
+   "signature": "expression, a, b, mask",
+   "return_type": "void",
+   "description": "A picture element for photorendering.",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/picture.md"
+  },
+  {
+   "name": "PICTURE2",
+   "signature": "expression, a, b, mask",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "2d",
+   "source": "wiki/picture2.md"
+  },
+  {
+   "name": "PIPG",
+   "signature": "expression, a, b, mask, n, vect, status, edge1, edge2, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 9,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/pipg.md"
+  },
+  {
+   "name": "PLACEGROUP",
+   "signature": "g_expr",
+   "return_type": "void",
+   "description": "Placing a group is the operation in which bodies are actually generated. Cutplanes and transformations are effective",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/placegroup.md"
+  },
+  {
+   "name": "PLANAR",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/planar.md"
+  },
+  {
+   "name": "PLANE",
+   "signature": "n, x1, y1, z1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 4,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/plane.md"
+  },
+  {
+   "name": "PLANE_",
+   "signature": "n, x1, y1, z1, s1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/plane_.md"
+  },
+  {
+   "name": "POINTCLOUD",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/pointcloud.md"
+  },
+  {
+   "name": "POLY",
+   "signature": "n, x1, y1, ...",
+   "return_type": "void",
+   "description": "A polygon with n edges in the x-y plane. The coordinates of nodei are (xi, yi, 0). Restriction of parameters:",
+   "param_count_min": 3,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/poly.md"
+  },
+  {
+   "name": "POLY2",
+   "signature": "n, frame_fill, x1, y1, ...",
+   "return_type": "void",
+   "description": "An open or closed polygon with n nodes.",
+   "param_count_min": 4,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/poly2.md"
+  },
+  {
+   "name": "POLY2_",
+   "signature": "n, frame_fill, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "Similar to the POLY2 command, but any of the edges can be omitted. If si = 0, the edge starting from the (xi,yi) apex will be omitted. If si = 1, the vertex should be shown. si = -1 is used to define ",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/poly2_.md"
+  },
+  {
+   "name": "POLY2_A",
+   "signature": "n, frame_fill, fill_pen, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/poly2_a.md"
+  },
+  {
+   "name": "POLY2_B",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/poly2_b.md"
+  },
+  {
+   "name": "POLYGON",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/polygon.md"
+  },
+  {
+   "name": "POLYROOF",
+   "signature": "defaultMat, k, m, n, offset, thickness, applyContourInsidePivot, z_1, ...",
+   "return_type": "void",
+   "description": "... contourX_n, contourY_n, contourMask_n, edgeTrim_n, edgeAngle_n, edgeMat_n",
+   "param_count_min": 8,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/polyroof.md"
+  },
+  {
+   "name": "POLY_",
+   "signature": "n, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "and arcs in the polyline using special constraints. si = 0: the edge starting from the (xi,yi) apex will be omitted, si = 1: the edge will be shown, si = -1: is used to define holes directly.",
+   "param_count_min": 4,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/poly_.md"
+  },
+  {
+   "name": "POSITION",
+   "signature": "position_keyword",
+   "return_type": "void",
+   "description": "Effective only in the Component List.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/position.md"
+  },
+  {
+   "name": "PREPAREFUNCTION",
+   "signature": "channel, function_name, expression1",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/preparefunction.md"
+  },
+  {
+   "name": "PRIMITIVE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/primitive.md"
+  },
+  {
+   "name": "PRINT",
+   "signature": "expression",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "control",
+   "source": "wiki/print.md"
+  },
+  {
+   "name": "PRISM",
+   "signature": "n, h, x1, y1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 4,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/prism.md"
+  },
+  {
+   "name": "PRISM_",
+   "signature": "n, h, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "The `s` parameter controls both edge visibility and contour nesting:",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "",
+   "source": "wiki/PRISM_.md"
+  },
+  {
+   "name": "PROFILE_COMPONENTS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/profile_components.md"
+  },
+  {
+   "name": "PROFILE_COMPONENT_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/profile_component_info.md"
+  },
+  {
+   "name": "PROFILE_DEFAULT_BOUNDINGBOX",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/profile_default_boundingbox.md"
+  },
+  {
+   "name": "PROFILE_DEFAULT_GEOMETRY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/profile_default_geometry.md"
+  },
+  {
+   "name": "PROGRAM_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/program_info.md"
+  },
+  {
+   "name": "PROJECT2",
+   "signature": "projection_code, angle, method",
+   "return_type": "void",
+   "description": "PROJECT2{2} projection_code, angle, method [, backgroundColor, fillOrigoX, fillOrigoY, filldirection]",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "",
+   "source": "wiki/PROJECT2.md"
+  },
+  {
+   "name": "PROPERTIES_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/properties_of_parent.md"
+  },
+  {
+   "name": "PROPERTY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/property.md"
+  },
+  {
+   "name": "PROPERTY_NAME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/property_name.md"
+  },
+  {
+   "name": "PROPERTY_TREE_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/property_tree_of_parent.md"
+  },
+  {
+   "name": "PROPERTY_VALUES_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/property_values_of_parent.md"
+  },
+  {
+   "name": "PROPERTY_VALUE_OF_PARENT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/property_value_of_parent.md"
+  },
+  {
+   "name": "PUT",
+   "signature": "expression",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/put.md"
+  },
+  {
+   "name": "PYRAMID",
+   "signature": "n, h, mask, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/pyramid.md"
+  },
+  {
+   "name": "RADIAL_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/radial_dimension.md"
+  },
+  {
+   "name": "RADIUS",
+   "signature": "radius_min, radius_max",
+   "return_type": "void",
+   "description": "Sets smoothness for cylindrical elements and arcs in polylines. A circle with a radius of r is represented:",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "other",
+   "source": "wiki/radius.md"
+  },
+  {
+   "name": "RECT",
+   "signature": "a, b",
+   "return_type": "void",
+   "description": "A rectangle in the x-y plane with sides a and b. Restriction of parameters:",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "other",
+   "source": "wiki/rect.md"
+  },
+  {
+   "name": "RECT2",
+   "signature": "x1, y1, x2, y2",
+   "return_type": "void",
+   "description": "Rectangle definition by two nodes. The two points are on the diagonal of the rectangle",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "2d",
+   "source": "wiki/rect2.md"
+  },
+  {
+   "name": "REF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ref.md"
+  },
+  {
+   "name": "REFERENCE_LEVEL_DATA",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/reference_level_data.md"
+  },
+  {
+   "name": "REMOVEKEY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/removekey.md"
+  },
+  {
+   "name": "REPEAT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/repeat.md"
+  },
+  {
+   "name": "REQ",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/req.md"
+  },
+  {
+   "name": "REQUEST",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "param",
+   "source": "wiki/request.md"
+  },
+  {
+   "name": "RESOL",
+   "signature": "n",
+   "return_type": "void",
+   "description": "Sets smoothness for cylindrical elements and arcs in polylines. Circles are converted to regular polygons having n sides. Arc conversion is proportional to this. After a RESOL statement",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/resol.md"
+  },
+  {
+   "name": "RETURN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "control",
+   "source": "wiki/return.md"
+  },
+  {
+   "name": "REVOLVE",
+   "signature": "n, alpha, mask, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "REVOLVE{2} n, alphaOffset, alpha, mask, sideMat,",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "",
+   "source": "wiki/REVOLVE.md"
+  },
+  {
+   "name": "REVOLVEDSHELL",
+   "signature": "topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, offset, thickness, flipped, trimmingBody, alphaOffset, alpha, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThickenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, x_1, y_1, s_1, ...",
+   "return_type": "void",
+   "description": "Surface created by rotating a polyline defined in the x-y plane around the x axis, then adding thickness to it. topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4: Materials on the top, bot",
+   "param_count_min": 29,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/revolvedshell.md"
+  },
+  {
+   "name": "REVOLVEDSHELLANGULAR",
+   "signature": "topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, offset, thickness, flipped, trimmingBody, alphaOffset, alpha, segmentationType, nOfSegments, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThickenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, x_1, y_1, s_1, ...",
+   "return_type": "void",
+   "description": "An angular variant of the REVOLVEDSHELL command. Parameters are the same with the addition of the following extra parameters: segmentationType: Must be either 1 or 2.",
+   "param_count_min": 31,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/revolvedshellangular.md"
+  },
+  {
+   "name": "RGB_OF_MATERIAL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/rgb_of_material.md"
+  },
+  {
+   "name": "RGB_OF_PEN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/rgb_of_pen.md"
+  },
+  {
+   "name": "RICHTEXT",
+   "signature": "x, y, height",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/richtext.md"
+  },
+  {
+   "name": "RICHTEXT2",
+   "signature": "x, y, textblock_name",
+   "return_type": "void",
+   "description": "Place a previously defined TEXTBLOCK. For more details",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "2d",
+   "source": "wiki/richtext2.md"
+  },
+  {
+   "name": "RISER_SLANT_ANGLE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/riser_slant_angle.md"
+  },
+  {
+   "name": "RND",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/rnd.md"
+  },
+  {
+   "name": "ROOF_BOTTOM_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/roof_bottom_surf.md"
+  },
+  {
+   "name": "ROOF_FILL",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/roof_fill.md"
+  },
+  {
+   "name": "ROOF_GROSS_BOTTOM_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/roof_gross_bottom_surf.md"
+  },
+  {
+   "name": "ROOF_GROSS_EDGE_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/roof_gross_edge_surf.md"
+  },
+  {
+   "name": "ROOF_GROSS_TOP_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/roof_gross_top_surf.md"
+  },
+  {
+   "name": "ROOF_GROSS_VOLUME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/roof_gross_volume.md"
+  },
+  {
+   "name": "ROOF_VIEW_PEN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/roof_view_pen.md"
+  },
+  {
+   "name": "ROT",
+   "signature": "x, y, z, alpha",
+   "return_type": "void",
+   "description": "Rotates the local coordinate system around the axis defined by the vector (x",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "3d",
+   "source": "wiki/rot.md"
+  },
+  {
+   "name": "ROT2",
+   "signature": "alpha",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/rot2.md"
+  },
+  {
+   "name": "ROTX",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/rotx.md"
+  },
+  {
+   "name": "ROTZ",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/rotz.md"
+  },
+  {
+   "name": "ROUND_INT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/round_int.md"
+  },
+  {
+   "name": "RULED",
+   "signature": "n, mask, u1, v1, s1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/ruled.md"
+  },
+  {
+   "name": "RULEDSEGMENTED",
+   "signature": "n, mask, x11, y11, z11, s1, ...",
+   "return_type": "void",
+   "description": "Compatibility: introduced in Archicad 21.",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/ruledsegmented.md"
+  },
+  {
+   "name": "RULEDSHELL",
+   "signature": "topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, m, g, offset, thickness, flipped, trimmingBody, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThickenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, firstpolyX_1, firstpolyY_1, firstpolyS_1, ...",
+   "return_type": "void",
+   "description": "Surface created by connecting two polylines. topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4: Materials on the top, bottom and four sides",
+   "param_count_min": 29,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/ruledshell.md"
+  },
+  {
+   "name": "RULES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/rules.md"
+  },
+  {
+   "name": "SCRIPTING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/scripting.md"
+  },
+  {
+   "name": "SECT_ATTRS",
+   "signature": "fill, fill_background_pen, fill_pen, contour_pen",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/sect_attrs.md"
+  },
+  {
+   "name": "SECT_FILL",
+   "signature": "fill, fill_background_pen, fill_pen, contour_pen",
+   "return_type": "void",
+   "description": "or",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/sect_fill.md"
+  },
+  {
+   "name": "SETMIGRATIONGUID",
+   "signature": "guid",
+   "return_type": "void",
+   "description": "The command tells the running environment, which element will be the matching migration element for the current object. If the returned ID belongs to the current element, the migration of the object g",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/setmigrationguid.md"
+  },
+  {
+   "name": "SGN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/sgn.md"
+  },
+  {
+   "name": "SHADOW",
+   "signature": "casting",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/shadow.md"
+  },
+  {
+   "name": "SHAPES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shapes.md"
+  },
+  {
+   "name": "SHELLBASE_COND_REFERENCE_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_cond_reference_surf.md"
+  },
+  {
+   "name": "SHELLBASE_EAVES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_eaves.md"
+  },
+  {
+   "name": "SHELLBASE_GABLE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_gable.md"
+  },
+  {
+   "name": "SHELLBASE_GROSS_EDGE_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_gross_edge_surf.md"
+  },
+  {
+   "name": "SHELLBASE_GROSS_REFERENCE_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_gross_reference_surf.md"
+  },
+  {
+   "name": "SHELLBASE_HIP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_hip.md"
+  },
+  {
+   "name": "SHELLBASE_HOLES_NR",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_holes_nr.md"
+  },
+  {
+   "name": "SHELLBASE_HOLES_PRM",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_holes_prm.md"
+  },
+  {
+   "name": "SHELLBASE_HOLES_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_holes_surf.md"
+  },
+  {
+   "name": "SHELLBASE_LINETYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_linetype.md"
+  },
+  {
+   "name": "SHELLBASE_PEAK",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_peak.md"
+  },
+  {
+   "name": "SHELLBASE_PERIMETER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_perimeter.md"
+  },
+  {
+   "name": "SHELLBASE_REFERENCE_SURF",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_reference_surf.md"
+  },
+  {
+   "name": "SHELLBASE_RIDGE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_ridge.md"
+  },
+  {
+   "name": "SHELLBASE_THICKNESS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_thickness.md"
+  },
+  {
+   "name": "SHELLBASE_TRANSITION_DOME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_transition_dome.md"
+  },
+  {
+   "name": "SHELLBASE_TRANSITION_HOLLOW",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_transition_hollow.md"
+  },
+  {
+   "name": "SHELLBASE_VALLEY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_valley.md"
+  },
+  {
+   "name": "SHELLBASE_VOLUME",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/shellbase_volume.md"
+  },
+  {
+   "name": "SILL_HEIGHT_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/sill_height_dimension.md"
+  },
+  {
+   "name": "SIMPLE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/simple.md"
+  },
+  {
+   "name": "SIN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/sin.md"
+  },
+  {
+   "name": "SLAB",
+   "signature": "n, h, x1, y1, z1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/slab.md"
+  },
+  {
+   "name": "SLAB_",
+   "signature": "n, h, x1, y1, z1, s1, ...",
+   "return_type": "void",
+   "description": "and arcs in the polyline using special constraints. See Status Codes for details.",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/slab_.md"
+  },
+  {
+   "name": "SOLID",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/solid.md"
+  },
+  {
+   "name": "SPHERE",
+   "signature": "r",
+   "return_type": "void",
+   "description": "A sphere with its center at the origin and with a radius of r.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "3d",
+   "source": "wiki/sphere.md"
+  },
+  {
+   "name": "SPLINE2",
+   "signature": "n, status, x1, y1, angle1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "2d",
+   "source": "wiki/spline2.md"
+  },
+  {
+   "name": "SPLINE2A",
+   "signature": "n, status, x1, y1, angle1, length_previous1, length_next1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 7,
+   "param_count_max": 0,
+   "category": "2d",
+   "source": "wiki/spline2a.md"
+  },
+  {
+   "name": "SPLIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/split.md"
+  },
+  {
+   "name": "SPRISM_",
+   "signature": "top_material, bottom_material, side_material, n, xb, yb, xe, ye, h, angle, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "Extension of the CPRISM_ command, with the possibility of setting the upper polygon non-parallel with the x-y plane. The upper plane definition is similar to the plane definition of the CROOF_ command",
+   "param_count_min": 13,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/sprism_.md"
+  },
+  {
+   "name": "SQR",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/sqr.md"
+  },
+  {
+   "name": "STAIR_BREAKMARK_GEOMETRY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/stair_breakmark_geometry.md"
+  },
+  {
+   "name": "STARTING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/starting.md"
+  },
+  {
+   "name": "STATEMENTS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/statements.md"
+  },
+  {
+   "name": "STATUS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/status.md"
+  },
+  {
+   "name": "STORED_PAR_VALUE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/stored_par_value.md"
+  },
+  {
+   "name": "STORY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/story.md"
+  },
+  {
+   "name": "STORY_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/story_info.md"
+  },
+  {
+   "name": "STRINGS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/strings.md"
+  },
+  {
+   "name": "STRLEN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/strlen.md"
+  },
+  {
+   "name": "STRSTR",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/strstr.md"
+  },
+  {
+   "name": "STRSUB",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/strsub.md"
+  },
+  {
+   "name": "STRTOLOWER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/strtolower.md"
+  },
+  {
+   "name": "STRTOUPPER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/strtoupper.md"
+  },
+  {
+   "name": "STRUCTURED",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "string",
+   "source": "wiki/structured.md"
+  },
+  {
+   "name": "STW",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/stw.md"
+  },
+  {
+   "name": "STYLE_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/style_info.md"
+  },
+  {
+   "name": "SUBGROUP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/subgroup.md"
+  },
+  {
+   "name": "SUM_WITH_ROUNDING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/sum_with_rounding.md"
+  },
+  {
+   "name": "SURFACE3D",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/surface3d.md"
+  },
+  {
+   "name": "SWEEP",
+   "signature": "n, m, alpha, scale, mask, u1, v1, s1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "",
+   "source": "wiki/SWEEP.md"
+  },
+  {
+   "name": "SWEEPGROUP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/sweepgroup.md"
+  },
+  {
+   "name": "SYNTAX",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/syntax.md"
+  },
+  {
+   "name": "TAN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "math",
+   "source": "wiki/tan.md"
+  },
+  {
+   "name": "TEVE",
+   "signature": "x, y, z, u, v",
+   "return_type": "void",
+   "description": "Extension of the VERT command including a texture coordinate definition. Can be used instead of the VERT command if user-defined texture coordinates are required instead of the automatic texture wrapp",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "3d",
+   "source": "wiki/teve.md"
+  },
+  {
+   "name": "TEXT",
+   "signature": "d",
+   "return_type": "void",
+   "description": "DEFINE STYLE \"aa\" \"New York\", 3, 7, 0 SET STYLE \"aa\" TEXT 0.005, 0, \"3D Text\"",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/text.md"
+  },
+  {
+   "name": "TEXT2",
+   "signature": "x, y, expression",
+   "return_type": "void",
+   "description": "The value of the calculated numerical or string type expression is written in the set style at the x",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "2d",
+   "source": "wiki/text2.md"
+  },
+  {
+   "name": "TEXTBLOCK",
+   "signature": "name",
+   "return_type": "void",
+   "description": "width",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/textblock.md"
+  },
+  {
+   "name": "TEXTBLOCK_",
+   "signature": "name",
+   "return_type": "void",
+   "description": "width",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/textblock_.md"
+  },
+  {
+   "name": "TEXTBLOCK_INFO",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/textblock_info.md"
+  },
+  {
+   "name": "THE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/the.md"
+  },
+  {
+   "name": "TOLER",
+   "signature": "d",
+   "return_type": "void",
+   "description": "Sets smoothness for cylindrical elements and arcs in polylines. The error of the arc approximation (i.e.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/toler.md"
+  },
+  {
+   "name": "TUBE",
+   "signature": "n, m, mask, u1, w1, s1, ...",
+   "return_type": "void",
+   "description": "Surface generated by a polyline sweeping along a space curve path without distortion of the generating cross-section. The internal connection surfaces are rotatable in the U-W plane of the instantaneo",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/tube.md"
+  },
+  {
+   "name": "TUBEA",
+   "signature": "n, m, mask, u1, w1, s1, ...",
+   "return_type": "void",
+   "description": "TUBEA is a surface generated by a polyline sweeping along a space curve path with a different algorithm than that of the TUBE command.",
+   "param_count_min": 6,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/tubea.md"
+  },
+  {
+   "name": "UI_BUTTON",
+   "signature": "type, text, x, y",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/ui_button.md"
+  },
+  {
+   "name": "UI_COLORPICKER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ui_colorpicker.md"
+  },
+  {
+   "name": "UI_CURRENT_PAGE",
+   "signature": "index",
+   "return_type": "void",
+   "description": "Definition of the current tabpage to display. Warning: Jumping to a non-existent page forces the insertion of a new page without buttons and controls",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/ui_current_page.md"
+  },
+  {
+   "name": "UI_CUSTOM_POPUP_INFIELD",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ui_custom_popup_infield.md"
+  },
+  {
+   "name": "UI_CUSTOM_POPUP_LISTITEM",
+   "signature": "itemID, fieldID",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "other",
+   "source": "wiki/ui_custom_popup_listitem.md"
+  },
+  {
+   "name": "UI_DIALOG",
+   "signature": "title",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/ui_dialog.md"
+  },
+  {
+   "name": "UI_GROUPBOX",
+   "signature": "text, x, y, width, height",
+   "return_type": "void",
+   "description": "A groupbox is a rectangular separator with caption text. It can be used to visually group logically related parameters.",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/ui_groupbox.md"
+  },
+  {
+   "name": "UI_INFIELD",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ui_infield.md"
+  },
+  {
+   "name": "UI_LISTFIELD",
+   "signature": "fieldID, x, y, width, height",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/ui_listfield.md"
+  },
+  {
+   "name": "UI_LISTITEM",
+   "signature": "itemID, fieldID",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "other",
+   "source": "wiki/ui_listitem.md"
+  },
+  {
+   "name": "UI_OUTFIELD",
+   "signature": "expression, x, y",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/ui_outfield.md"
+  },
+  {
+   "name": "UI_PAGE",
+   "signature": "page_number",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/ui_page.md"
+  },
+  {
+   "name": "UI_PICT",
+   "signature": "picture_reference, x, y",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/ui_pict.md"
+  },
+  {
+   "name": "UI_PICT_BUTTON",
+   "signature": "type, text, picture_reference, x, y, width, height",
+   "return_type": "void",
+   "description": "[",
+   "param_count_min": 7,
+   "param_count_max": 7,
+   "category": "other",
+   "source": "wiki/ui_pict_button.md"
+  },
+  {
+   "name": "UI_PICT_PUSHCHECKBUTTON",
+   "signature": "name, text, picture_reference, frameFlag, x, y, width, height",
+   "return_type": "void",
+   "description": "[UI_TOOLTIP tooltip]",
+   "param_count_min": 8,
+   "param_count_max": 8,
+   "category": "other",
+   "source": "wiki/ui_pict_pushcheckbutton.md"
+  },
+  {
+   "name": "UI_PICT_RADIOBUTTON",
+   "signature": "name, value, text, picture_reference, x, y, width, height",
+   "return_type": "void",
+   "description": "[UI_TOOLTIP tooltip]",
+   "param_count_min": 8,
+   "param_count_max": 8,
+   "category": "other",
+   "source": "wiki/ui_pict_radiobutton.md"
+  },
+  {
+   "name": "UI_RADIOBUTTON",
+   "signature": "name, value, text, x, y, width, height",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 7,
+   "param_count_max": 7,
+   "category": "other",
+   "source": "wiki/ui_radiobutton.md"
+  },
+  {
+   "name": "UI_SEPARATOR",
+   "signature": "x1, y1, x2, y2",
+   "return_type": "void",
+   "description": "Generates a separator rectangle. The rectangle becomes a single (vertical or horizontal) separator line if x1 = x2 or y1 = y2",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/ui_separator.md"
+  },
+  {
+   "name": "UI_SLIDER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ui_slider.md"
+  },
+  {
+   "name": "UI_STYLE",
+   "signature": "fontsize, face_code",
+   "return_type": "void",
+   "description": "All the UI_OUTFIELDs and UI_INFIELDs generated after this keyword will represent this style until the next UI_STYLE statement. fontsize: one of the following font size values:",
+   "param_count_min": 2,
+   "param_count_max": 2,
+   "category": "other",
+   "source": "wiki/ui_style.md"
+  },
+  {
+   "name": "UI_TEXTSTYLE_INFIELD",
+   "signature": "name, faceCodeMask, x, y, buttonWidth",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/ui_textstyle_infield.md"
+  },
+  {
+   "name": "UI_TOOLTIP",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/ui_tooltip.md"
+  },
+  {
+   "name": "UNTIL",
+   "signature": "condition",
+   "return_type": "void",
+   "description": "The statements between the keywords are executed until the condition becomes true. The condition is checked after each execution of the statements.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "other",
+   "source": "wiki/repeat.md"
+  },
+  {
+   "name": "USE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/use.md"
+  },
+  {
+   "name": "USING",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/using.md"
+  },
+  {
+   "name": "VALUES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "param",
+   "source": "wiki/values.md"
+  },
+  {
+   "name": "VARDIM1",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/vardim1.md"
+  },
+  {
+   "name": "VARIABLES",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/variables.md"
+  },
+  {
+   "name": "VARTYPE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/vartype.md"
+  },
+  {
+   "name": "VECT",
+   "signature": "x, y, z",
+   "return_type": "void",
+   "description": "Definition of the normal vector of a polygon by three coordinates. In case of a simplified definition (vect=0 in a PGON)",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "other",
+   "source": "wiki/vect.md"
+  },
+  {
+   "name": "VERT",
+   "signature": "x, y, z",
+   "return_type": "void",
+   "description": "A node in the x-y-z space",
+   "param_count_min": 3,
+   "param_count_max": 3,
+   "category": "3d",
+   "source": "wiki/vert.md"
+  },
+  {
+   "name": "VIEW_ROTANGLE",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/view_rotangle.md"
+  },
+  {
+   "name": "VOLUME3D",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/volume3d.md"
+  },
+  {
+   "name": "WALLARC2",
+   "signature": "x, y, r, alpha, beta",
+   "return_type": "void",
+   "description": "An arc with its centerpoint at (x, y) from the angle alpha to beta, with a radius of r, which is drawn by the containing wall. Wall openings defined via WALLHOLE2 in another window/door object cut the",
+   "param_count_min": 5,
+   "param_count_max": 5,
+   "category": "other",
+   "source": "wiki/wallarc2.md"
+  },
+  {
+   "name": "WALLBLOCK2",
+   "signature": "n, fill_control, fill_pen, fill_background_pen, fillOrigoX, fillOrigoY, fillAngle, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 10,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/wallblock2.md"
+  },
+  {
+   "name": "WALLHOLE",
+   "signature": "n, status, x1, y1, mask1, ...",
+   "return_type": "void",
+   "description": "n: the number of polygon nodes. status:",
+   "param_count_min": 5,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/wallhole.md"
+  },
+  {
+   "name": "WALLHOLE2",
+   "signature": "n, fill_control, fill_pen, fill_background_pen, fillOrigoX, fillOrigoY, fillAngle, x1, y1, s1, ...",
+   "return_type": "void",
+   "description": "Wall opening definition for the plan view coupled with a cover polygon. Only the cut part of the wall is affected, view wall polygons stay intact. The cover polygon has no contour.",
+   "param_count_min": 10,
+   "param_count_max": 0,
+   "category": "2d",
+   "source": "wiki/wallhole2.md"
+  },
+  {
+   "name": "WALLLINE2",
+   "signature": "x1, y1, x2, y2",
+   "return_type": "void",
+   "description": "Wall line (extension) definition between two points for the plan view. Wall openings defined via WALLHOLE2 in another window/door object cut the line generated by this command",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "other",
+   "source": "wiki/wallline2.md"
+  },
+  {
+   "name": "WALLNICHE",
+   "signature": "n, method, status, rx, ry, rz, d, x1, y1, mask1",
+   "return_type": "void",
+   "description": "... xn, yn, maskn[, matn]",
+   "param_count_min": 10,
+   "param_count_max": 10,
+   "category": "other",
+   "source": "wiki/wallniche.md"
+  },
+  {
+   "name": "WALL_FILL_PEN",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/wall_fill_pen.md"
+  },
+  {
+   "name": "WALL_HEIGHT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/wall_height.md"
+  },
+  {
+   "name": "WALL_THICKNESS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "3d",
+   "source": "wiki/wall_thickness.md"
+  },
+  {
+   "name": "WHILE",
+   "signature": "condition",
+   "return_type": "void",
+   "description": "The statements between the keywords are executed as long as the condition is true. The condition is checked after each execution of the statements.",
+   "param_count_min": 1,
+   "param_count_max": 1,
+   "category": "control",
+   "source": "wiki/do.md"
+  },
+  {
+   "name": "WIDO_FRAME_THICKNESS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/wido_frame_thickness.md"
+  },
+  {
+   "name": "WINDOW_DOOR_DIMENSION",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/window_door_dimension.md"
+  },
+  {
+   "name": "WINDOW_DOOR_SHOW_DIM",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/window_door_show_dim.md"
+  },
+  {
+   "name": "WINDOW_DOOR_ZONE_RELEV",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/window_door_zone_relev.md"
+  },
+  {
+   "name": "WINDOW_DOOR_ZONE_RELEV_OF_OWNER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/window_door_zone_relev_of_owner.md"
+  },
+  {
+   "name": "WINDOW_SHOW_DIM",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/window_show_dim.md"
+  },
+  {
+   "name": "WORKING_ANGLE_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/working_angle_unit.md"
+  },
+  {
+   "name": "WORKING_LENGTH_UNIT",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/working_length_unit.md"
+  },
+  {
+   "name": "XFORM",
+   "signature": "newx_x, newy_x, newz_x, offset_x",
+   "return_type": "void",
+   "description": "Defines a complete transformation matrix. It is mainly used in automatic GDL code generation. It has only one entry in the stack.",
+   "param_count_min": 4,
+   "param_count_max": 4,
+   "category": "3d",
+   "source": "wiki/xform.md"
+  },
+  {
+   "name": "XWALL_",
+   "signature": "left_material, right_material, vertical_material, horizontal_material, height, x1, x2, x3, x4, y1, y2, y3, y4, t, radius, log_height, log_offset, mask1, mask2, mask3, mask4, n, x_start1, y_low1, x_end1, y_high1, frame_shown1, ...",
+   "return_type": "void",
+   "description": "Extended wall definition based on the same data structure as the BWALL_ element. vertical_material, horizontal_material: name or index of the vertical/horizontal side materials.",
+   "param_count_min": 27,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/xwall_.md"
+  },
+  {
+   "name": "ZONE_CATEGORY",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/zone_category.md"
+  },
+  {
+   "name": "ZONE_COLUS_AREA",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/zone_colus_area.md"
+  },
+  {
+   "name": "ZONE_RELATIONS",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/zone_relations.md"
+  },
+  {
+   "name": "ZONE_RELATIONS_OF_OWNER",
+   "signature": "",
+   "return_type": "void",
+   "description": "",
+   "param_count_min": 0,
+   "param_count_max": 0,
+   "category": "other",
+   "source": "wiki/zone_relations_of_owner.md"
+  }
+ ],
+ "bim_concepts": [
+  {
+   "name": "Add2",
+   "aliases": [
+    "add2"
+   ],
+   "description": "Example: ADD2 a",
+   "required_apis": [
+    "ADD2"
+   ],
+   "init_pattern": "ADD2 x, y",
+   "source": "wiki/add2.md"
+  },
+  {
+   "name": "Addx",
+   "aliases": [
+    "addx"
+   ],
+   "description": "GDL ADDX 命令",
+   "required_apis": [
+    "ADDX"
+   ],
+   "init_pattern": "ADDX dx",
+   "source": "wiki/addx.md"
+  },
+  {
+   "name": "Addy",
+   "aliases": [
+    "addy"
+   ],
+   "description": "GDL ADDY 命令",
+   "required_apis": [
+    "ADDY"
+   ],
+   "init_pattern": "ADDY dy",
+   "source": "wiki/addy.md"
+  },
+  {
+   "name": "Addz",
+   "aliases": [
+    "addz"
+   ],
+   "description": "Moves the local coordinate system along the given axis by dx",
+   "required_apis": [
+    "ADDZ"
+   ],
+   "init_pattern": "ADDZ dz",
+   "source": "wiki/addz.md"
+  },
+  {
+   "name": "Arc2",
+   "aliases": [
+    "arc2"
+   ],
+   "description": "An arc with its centerpoint at (x",
+   "required_apis": [
+    "ARC2"
+   ],
+   "init_pattern": "ARC2 x, y, r, alpha, beta",
+   "source": "wiki/arc2.md"
+  },
+  {
+   "name": "Body",
+   "aliases": [
+    "body"
+   ],
+   "description": "Composes a body defined with the above primitives. status: Status bits:",
+   "required_apis": [
+    "BODY"
+   ],
+   "init_pattern": "BODY status",
+   "source": "wiki/body.md"
+  },
+  {
+   "name": "Bprism",
+   "aliases": [
+    "bprism ",
+    "bprism_"
+   ],
+   "description": "A smooth curved prism, based on the same data structure as the straight CPRISM_ element. The only additional parameter is radius. Derived from the corresponding CPRISM_ by bending the x-y plane onto a",
+   "required_apis": [
+    "BPRISM_"
+   ],
+   "init_pattern": "BPRISM_ top_material, bottom_material, side_material, n, h, radius, x1, y1, s1, ...",
+   "source": "wiki/bprism_.md"
+  },
+  {
+   "name": "Brick",
+   "aliases": [
+    "brick"
+   ],
+   "description": "The first corner of the block is in the local origin and the edges with lengths a, b and c are along the x-, y- and z-axes, respectively. Zero values create degenerated blocks (rectangle or line). Res",
+   "required_apis": [
+    "BRICK"
+   ],
+   "init_pattern": "BRICK a, b, c",
+   "source": "wiki/brick.md"
+  },
+  {
+   "name": "Circle",
+   "aliases": [
+    "circle"
+   ],
+   "description": "A circle in the x-y plane with its center at the origin and with a radius of r.",
+   "required_apis": [
+    "CIRCLE"
+   ],
+   "init_pattern": "CIRCLE r",
+   "source": "wiki/circle.md"
+  },
+  {
+   "name": "Circle2",
+   "aliases": [
+    "circle2"
+   ],
+   "description": "A circle with its center at (x",
+   "required_apis": [
+    "CIRCLE2"
+   ],
+   "init_pattern": "CIRCLE2 x, y, r",
+   "source": "wiki/circle2.md"
+  },
+  {
+   "name": "Cone",
+   "aliases": [
+    "cone"
+   ],
+   "description": "GDL CONE 命令",
+   "required_apis": [
+    "CONE"
+   ],
+   "init_pattern": "CONE h, r1, r2, alpha1, alpha2",
+   "source": "wiki/cone.md"
+  },
+  {
+   "name": "Coor",
+   "aliases": [
+    "coor"
+   ],
+   "description": "Deprecated. See the COOR{3} command. Local coordinate system of a BODY for the fill and texture mapping. wrap: wrapping mode + projection type Wrapping modes:",
+   "required_apis": [
+    "COOR"
+   ],
+   "init_pattern": "COOR wrap, vert1, vert2, vert3, vert4",
+   "source": "wiki/coor.md"
+  },
+  {
+   "name": "Cutpoly",
+   "aliases": [
+    "cutpoly"
+   ],
+   "description": "Similarly to the CUTPLANE command, parameters of CUTPOLY refer to the current coordinate system. The polygon cannot be selfintersecting. The direction of cutting is the Z axis or an optional (x, y, z)",
+   "required_apis": [
+    "CUTPOLY"
+   ],
+   "init_pattern": "CUTPOLY n, x1, y1, ...",
+   "source": "wiki/cutpoly.md"
+  },
+  {
+   "name": "Cutpolya",
+   "aliases": [
+    "cutpolya"
+   ],
+   "description": "Similar to the CUTPOLY command, but with the possibility to control the visibility of the edges of the generated polygons. The cutting form is a half-infinite tube with the defined polygonal cross-sec",
+   "required_apis": [
+    "CUTPOLYA"
+   ],
+   "init_pattern": "CUTPOLYA n, status, d, x1, y1, mask1, ...",
+   "source": "wiki/cutpolya.md"
+  },
+  {
+   "name": "Edge",
+   "aliases": [
+    "edge"
+   ],
+   "description": "Definition of an edge.",
+   "required_apis": [
+    "EDGE"
+   ],
+   "init_pattern": "EDGE vert1, vert2, pgon1, pgon2, status",
+   "source": "wiki/edge.md"
+  },
+  {
+   "name": "Ellips",
+   "aliases": [
+    "ellips"
+   ],
+   "description": "Half ellipsoid. Its cross-section in the x-y plane is a circle with a radius of r centered at the origin. The length of the half axis along the z-axis is h.",
+   "required_apis": [
+    "ELLIPS"
+   ],
+   "init_pattern": "ELLIPS h, r",
+   "source": "wiki/ellips.md"
+  },
+  {
+   "name": "Extrude",
+   "aliases": [
+    "extrude"
+   ],
+   "description": "GDL EXTRUDE 命令",
+   "required_apis": [
+    "EXTRUDE"
+   ],
+   "init_pattern": "EXTRUDE n, dx, dy, dz, mask, x1, y1, s1, ...",
+   "source": "wiki/extrude.md"
+  },
+  {
+   "name": "Extrudedshell",
+   "aliases": [
+    "extrudedshell"
+   ],
+   "description": "Surface created by first extruding a polyline, then adding thickness to it. topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4: Materials on the top, bottom and four sides",
+   "required_apis": [
+    "EXTRUDEDSHELL"
+   ],
+   "init_pattern": "EXTRUDEDSHELL topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, offset, thickness, flipped, trimmingBody, x_tb, y_tb, x_te, y_te, topz, tangle, x_bb, y_bb, x_be, y_be, bottomz, bangle, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThicakenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, x_1, y_1, s_1, ...",
+   "source": "wiki/extrudedshell.md"
+  },
+  {
+   "name": "Fragment2",
+   "aliases": [
+    "fragment2"
+   ],
+   "description": "FRAGMENT2 ALL",
+   "required_apis": [
+    "FRAGMENT2"
+   ],
+   "init_pattern": "FRAGMENT2 fragment_index, use_current_attributes_flag",
+   "source": "wiki/fragment2.md"
+  },
+  {
+   "name": "Hotspot",
+   "aliases": [
+    "hotspot"
+   ],
+   "description": "[",
+   "required_apis": [
+    "HOTSPOT"
+   ],
+   "init_pattern": "HOTSPOT x, y, z",
+   "source": "wiki/hotspot.md"
+  },
+  {
+   "name": "Line2",
+   "aliases": [
+    "line2"
+   ],
+   "description": "Line definition between two points.",
+   "required_apis": [
+    "LINE2"
+   ],
+   "init_pattern": "LINE2 x1, y1, x2, y2",
+   "source": "wiki/line2.md"
+  },
+  {
+   "name": "LineProperty",
+   "aliases": [
+    "line property",
+    "line_property"
+   ],
+   "description": "Defines the property for all subsequently generated lines in the 2D script (RECT2",
+   "required_apis": [
+    "LINE_PROPERTY"
+   ],
+   "init_pattern": "LINE_PROPERTY expr",
+   "source": "wiki/line_property.md"
+  },
+  {
+   "name": "Mass",
+   "aliases": [
+    "mass"
+   ],
+   "description": "The equivalent of the shape generated by the Mesh tool in Archicad. top_material, bottom_material, side_material: name/index of the top, bottom and side materials.",
+   "required_apis": [
+    "MASS"
+   ],
+   "init_pattern": "MASS top_material, bottom_material, side_material, n, m, mask, h, x1, y1, z1, s1, ...",
+   "source": "wiki/mass.md"
+  },
+  {
+   "name": "Mesh",
+   "aliases": [
+    "mesh"
+   ],
+   "description": "A simple smooth mesh based on a rectangle with an equidistant net. The sides of the base rectangle are a and b; the m and n points are along the x and y axes respectively; zij is the height of the nod",
+   "required_apis": [
+    "MESH"
+   ],
+   "init_pattern": "MESH a, b, m, n, mask, z11, z12, ...",
+   "source": "wiki/mesh.md"
+  },
+  {
+   "name": "Mul2",
+   "aliases": [
+    "mul2"
+   ],
+   "description": "GDL MUL2 命令",
+   "required_apis": [
+    "MUL2"
+   ],
+   "init_pattern": "MUL2 x, y",
+   "source": "wiki/mul2.md"
+  },
+  {
+   "name": "Mulx",
+   "aliases": [
+    "mulx"
+   ],
+   "description": "GDL MULX 命令",
+   "required_apis": [
+    "MULX"
+   ],
+   "init_pattern": "MULX mx",
+   "source": "wiki/mulx.md"
+  },
+  {
+   "name": "Muly",
+   "aliases": [
+    "muly"
+   ],
+   "description": "GDL MULY 命令",
+   "required_apis": [
+    "MULY"
+   ],
+   "init_pattern": "MULY my",
+   "source": "wiki/muly.md"
+  },
+  {
+   "name": "Mulz",
+   "aliases": [
+    "mulz"
+   ],
+   "description": "Scales the local coordinate system along the given axis. Negative mx",
+   "required_apis": [
+    "MULZ"
+   ],
+   "init_pattern": "MULZ mz",
+   "source": "wiki/mulz.md"
+  },
+  {
+   "name": "Pgon",
+   "aliases": [
+    "pgon"
+   ],
+   "description": "edge1, edge2, ..., edgen: these indices must refer to previously defined EDGEs. A zero value means the beginning or the end of a hole definition. A negative index changes the direction of the stored n",
+   "required_apis": [
+    "PGON"
+   ],
+   "init_pattern": "PGON n, vect, status, edge1, edge2, ...",
+   "source": "wiki/pgon.md"
+  },
+  {
+   "name": "Picture2",
+   "aliases": [
+    "picture2"
+   ],
+   "description": "GDL PICTURE2 命令",
+   "required_apis": [
+    "PICTURE2"
+   ],
+   "init_pattern": "PICTURE2 expression, a, b, mask",
+   "source": "wiki/picture2.md"
+  },
+  {
+   "name": "Plane",
+   "aliases": [
+    "plane ",
+    "plane_"
+   ],
+   "description": "GDL PLANE_ 命令",
+   "required_apis": [
+    "PLANE_"
+   ],
+   "init_pattern": "PLANE_ n, x1, y1, z1, s1, ...",
+   "source": "wiki/plane_.md"
+  },
+  {
+   "name": "Poly",
+   "aliases": [
+    "poly ",
+    "poly_"
+   ],
+   "description": "and arcs in the polyline using special constraints. si = 0: the edge starting from the (xi,yi) apex will be omitted, si = 1: the edge will be shown, si = -1: is used to define holes directly.",
+   "required_apis": [
+    "POLY_"
+   ],
+   "init_pattern": "POLY_ n, x1, y1, s1, ...",
+   "source": "wiki/poly_.md"
+  },
+  {
+   "name": "Poly2",
+   "aliases": [
+    "poly2 ",
+    "poly2_"
+   ],
+   "description": "Similar to the POLY2 command, but any of the edges can be omitted. If si = 0, the edge starting from the (xi,yi) apex will be omitted. If si = 1, the vertex should be shown. si = -1 is used to define ",
+   "required_apis": [
+    "POLY2_"
+   ],
+   "init_pattern": "POLY2_ n, frame_fill, x1, y1, s1, ...",
+   "source": "wiki/poly2_.md"
+  },
+  {
+   "name": "Poly2A",
+   "aliases": [
+    "poly2 a",
+    "poly2_a"
+   ],
+   "description": "GDL POLY2_A 命令",
+   "required_apis": [
+    "POLY2_A"
+   ],
+   "init_pattern": "POLY2_A n, frame_fill, fill_pen, x1, y1, s1, ...",
+   "source": "wiki/poly2_a.md"
+  },
+  {
+   "name": "Polyroof",
+   "aliases": [
+    "polyroof"
+   ],
+   "description": "... contourX_n, contourY_n, contourMask_n, edgeTrim_n, edgeAngle_n, edgeMat_n",
+   "required_apis": [
+    "POLYROOF"
+   ],
+   "init_pattern": "POLYROOF defaultMat, k, m, n, offset, thickness, applyContourInsidePivot, z_1, ...",
+   "source": "wiki/polyroof.md"
+  },
+  {
+   "name": "Prism",
+   "aliases": [
+    "prism"
+   ],
+   "description": "GDL PRISM 命令",
+   "required_apis": [
+    "PRISM"
+   ],
+   "init_pattern": "PRISM n, h, x1, y1, ...",
+   "source": "wiki/prism.md"
+  },
+  {
+   "name": "Pyramid",
+   "aliases": [
+    "pyramid"
+   ],
+   "description": "GDL PYRAMID 命令",
+   "required_apis": [
+    "PYRAMID"
+   ],
+   "init_pattern": "PYRAMID n, h, mask, x1, y1, s1, ...",
+   "source": "wiki/pyramid.md"
+  },
+  {
+   "name": "Rect2",
+   "aliases": [
+    "rect2"
+   ],
+   "description": "Rectangle definition by two nodes. The two points are on the diagonal of the rectangle",
+   "required_apis": [
+    "RECT2"
+   ],
+   "init_pattern": "RECT2 x1, y1, x2, y2",
+   "source": "wiki/rect2.md"
+  },
+  {
+   "name": "Revolvedshell",
+   "aliases": [
+    "revolvedshell"
+   ],
+   "description": "Surface created by rotating a polyline defined in the x-y plane around the x axis, then adding thickness to it. topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4: Materials on the top, bot",
+   "required_apis": [
+    "REVOLVEDSHELL"
+   ],
+   "init_pattern": "REVOLVEDSHELL topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, offset, thickness, flipped, trimmingBody, alphaOffset, alpha, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThickenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, x_1, y_1, s_1, ...",
+   "source": "wiki/revolvedshell.md"
+  },
+  {
+   "name": "Revolvedshellangular",
+   "aliases": [
+    "revolvedshellangular"
+   ],
+   "description": "An angular variant of the REVOLVEDSHELL command. Parameters are the same with the addition of the following extra parameters: segmentationType: Must be either 1 or 2.",
+   "required_apis": [
+    "REVOLVEDSHELLANGULAR"
+   ],
+   "init_pattern": "REVOLVEDSHELLANGULAR topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, offset, thickness, flipped, trimmingBody, alphaOffset, alpha, segmentationType, nOfSegments, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThickenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, x_1, y_1, s_1, ...",
+   "source": "wiki/revolvedshellangular.md"
+  },
+  {
+   "name": "Richtext2",
+   "aliases": [
+    "richtext2"
+   ],
+   "description": "Place a previously defined TEXTBLOCK. For more details",
+   "required_apis": [
+    "RICHTEXT2"
+   ],
+   "init_pattern": "RICHTEXT2 x, y, textblock_name",
+   "source": "wiki/richtext2.md"
+  },
+  {
+   "name": "Rot2",
+   "aliases": [
+    "rot2"
+   ],
+   "description": "GDL ROT2 命令",
+   "required_apis": [
+    "ROT2"
+   ],
+   "init_pattern": "ROT2 alpha",
+   "source": "wiki/rot2.md"
+  },
+  {
+   "name": "Ruled",
+   "aliases": [
+    "ruled"
+   ],
+   "description": "GDL RULED 命令",
+   "required_apis": [
+    "RULED"
+   ],
+   "init_pattern": "RULED n, mask, u1, v1, s1, ...",
+   "source": "wiki/ruled.md"
+  },
+  {
+   "name": "Ruledsegmented",
+   "aliases": [
+    "ruledsegmented"
+   ],
+   "description": "Compatibility: introduced in Archicad 21.",
+   "required_apis": [
+    "RULEDSEGMENTED"
+   ],
+   "init_pattern": "RULEDSEGMENTED n, mask, x11, y11, z11, s1, ...",
+   "source": "wiki/ruledsegmented.md"
+  },
+  {
+   "name": "Ruledshell",
+   "aliases": [
+    "ruledshell"
+   ],
+   "description": "Surface created by connecting two polylines. topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4: Materials on the top, bottom and four sides",
+   "required_apis": [
+    "RULEDSHELL"
+   ],
+   "init_pattern": "RULEDSHELL topMat, bottomMat, sideMat_1, sideMat_2, sideMat_3, sideMat_4, defaultMat, n, m, g, offset, thickness, flipped, trimmingBody, preThickenTran_11, preThickenTran_12, preThickenTran_13, preThickenTran_14, preThickenTran_21, preThickenTran_22, preThickenTran_23, preThickenTran_24, preThickenTran_31, preThickenTran_32, preThickenTran_33, preThickenTran_34, firstpolyX_1, firstpolyY_1, firstpolyS_1, ...",
+   "source": "wiki/ruledshell.md"
+  },
+  {
+   "name": "Slab",
+   "aliases": [
+    "slab ",
+    "slab_"
+   ],
+   "description": "and arcs in the polyline using special constraints. See Status Codes for details.",
+   "required_apis": [
+    "SLAB_"
+   ],
+   "init_pattern": "SLAB_ n, h, x1, y1, z1, s1, ...",
+   "source": "wiki/slab_.md"
+  },
+  {
+   "name": "Sphere",
+   "aliases": [
+    "sphere"
+   ],
+   "description": "A sphere with its center at the origin and with a radius of r.",
+   "required_apis": [
+    "SPHERE"
+   ],
+   "init_pattern": "SPHERE r",
+   "source": "wiki/sphere.md"
+  },
+  {
+   "name": "Spline2",
+   "aliases": [
+    "spline2"
+   ],
+   "description": "GDL SPLINE2 命令",
+   "required_apis": [
+    "SPLINE2"
+   ],
+   "init_pattern": "SPLINE2 n, status, x1, y1, angle1, ...",
+   "source": "wiki/spline2.md"
+  },
+  {
+   "name": "Spline2A",
+   "aliases": [
+    "spline2a"
+   ],
+   "description": "GDL SPLINE2A 命令",
+   "required_apis": [
+    "SPLINE2A"
+   ],
+   "init_pattern": "SPLINE2A n, status, x1, y1, angle1, length_previous1, length_next1, ...",
+   "source": "wiki/spline2a.md"
+  },
+  {
+   "name": "Teve",
+   "aliases": [
+    "teve"
+   ],
+   "description": "Extension of the VERT command including a texture coordinate definition. Can be used instead of the VERT command if user-defined texture coordinates are required instead of the automatic texture wrapp",
+   "required_apis": [
+    "TEVE"
+   ],
+   "init_pattern": "TEVE x, y, z, u, v",
+   "source": "wiki/teve.md"
+  },
+  {
+   "name": "Text2",
+   "aliases": [
+    "text2"
+   ],
+   "description": "The value of the calculated numerical or string type expression is written in the set style at the x",
+   "required_apis": [
+    "TEXT2"
+   ],
+   "init_pattern": "TEXT2 x, y, expression",
+   "source": "wiki/text2.md"
+  },
+  {
+   "name": "Tube",
+   "aliases": [
+    "tube"
+   ],
+   "description": "Surface generated by a polyline sweeping along a space curve path without distortion of the generating cross-section. The internal connection surfaces are rotatable in the U-W plane of the instantaneo",
+   "required_apis": [
+    "TUBE"
+   ],
+   "init_pattern": "TUBE n, m, mask, u1, w1, s1, ...",
+   "source": "wiki/tube.md"
+  },
+  {
+   "name": "Tubea",
+   "aliases": [
+    "tubea"
+   ],
+   "description": "TUBEA is a surface generated by a polyline sweeping along a space curve path with a different algorithm than that of the TUBE command.",
+   "required_apis": [
+    "TUBEA"
+   ],
+   "init_pattern": "TUBEA n, m, mask, u1, w1, s1, ...",
+   "source": "wiki/tubea.md"
+  },
+  {
+   "name": "Vert",
+   "aliases": [
+    "vert"
+   ],
+   "description": "A node in the x-y-z space",
+   "required_apis": [
+    "VERT"
+   ],
+   "init_pattern": "VERT x, y, z",
+   "source": "wiki/vert.md"
+  },
+  {
+   "name": "Wallhole2",
+   "aliases": [
+    "wallhole2"
+   ],
+   "description": "Wall opening definition for the plan view coupled with a cover polygon. Only the cut part of the wall is affected, view wall polygons stay intact. The cover polygon has no contour.",
+   "required_apis": [
+    "WALLHOLE2"
+   ],
+   "init_pattern": "WALLHOLE2 n, fill_control, fill_pen, fill_background_pen, fillOrigoX, fillOrigoY, fillAngle, x1, y1, s1, ...",
+   "source": "wiki/wallhole2.md"
+  },
+  {
+   "name": "Xform",
+   "aliases": [
+    "xform"
+   ],
+   "description": "Defines a complete transformation matrix. It is mainly used in automatic GDL code generation. It has only one entry in the stack.",
+   "required_apis": [
+    "XFORM"
+   ],
+   "init_pattern": "XFORM newx_x, newy_x, newz_x, offset_x",
+   "source": "wiki/xform.md"
+  },
+  {
+   "name": "2D_Primitives",
+   "aliases": [
+    "2d primitives",
+    "arc",
+    "arc2",
+    "circle",
+    "circle2",
+    "line",
+    "line2",
+    "poly",
+    "poly2",
+    "rect2"
+   ],
+   "description": "2D primitives are used in the 2D script to draw plan symbols, annotations, and manual 2D fallback graphics.",
+   "required_apis": [
+    "LINE2",
+    "RECT2",
+    "CIRCLE2",
+    "ARC2",
+    "POLY2"
+   ],
+   "init_pattern": "LINE2 x1, y1, x2, y2\nRECT2 x1, y1, x2, y2\nCIRCLE2 x, y, r\nARC2 x, y, r, start_angle, end_angle\nPOLY2 n, status, x1, y1, s1, ..., xn, yn, sn",
+   "source": "wiki/2D_Primitives.md"
+  },
+  {
+   "name": "ADD_DEL",
+   "aliases": [
+    "add",
+    "add del",
+    "addx",
+    "addy",
+    "addz",
+    "del",
+    "push pop",
+    "stack management"
+   ],
+   "description": "`ADD`/`DEL` is the fundamental push/pop pair for managing the [[Transformation_Stack]] in GDL. `ADD` pushes a new transform, commands between `ADD` and `DEL` run in that local space, and `DEL` restore",
+   "required_apis": [
+    "ADD",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "DEL",
+    "NTR",
+    "ROTZ",
+    "FOR"
+   ],
+   "init_pattern": "ADD dx, dy, dz\nADDX dx\nADDY dy\nADDZ dz",
+   "source": "wiki/ADD_DEL.md"
+  },
+  {
+   "name": "BLOCK",
+   "aliases": [
+    "block",
+    "box command",
+    "brick",
+    "gdl block"
+   ],
+   "description": "`BLOCK` creates an axis-aligned rectangular box (cuboid) in 3D space. Its synonym `BRICK` is identical in every respect.",
+   "required_apis": [
+    "BLOCK",
+    "BRICK",
+    "ADD",
+    "DEL"
+   ],
+   "init_pattern": "BLOCK a, b, c\nBRICK a, b, c   ! identical",
+   "source": "wiki/BLOCK.md"
+  },
+  {
+   "name": "BODY_EDGE_PGON",
+   "aliases": [
+    "body",
+    "body edge pgon",
+    "edge",
+    "gdl mesh",
+    "mesh commands",
+    "pgon",
+    "primitive elements",
+    "vert"
+   ],
+   "description": "`VERT`, `EDGE`, `PGON`, and `BODY` are GDL primitive elements for low-level boundary representation. They are powerful but fragile. OpenBrep must not use them as default generation commands for ordina",
+   "required_apis": [
+    "VERT",
+    "EDGE",
+    "PGON",
+    "BODY",
+    "VECT"
+   ],
+   "init_pattern": "VERT x, y, z\n\nEDGE vert1, vert2, pgon1, pgon2, status\n\nPGON n, vect, status, edge1, edge2, ..., edgen\n\nBODY status",
+   "source": "wiki/BODY_EDGE_PGON.md"
+  },
+  {
+   "name": "CUTPLANE",
+   "aliases": [
+    "cut plane",
+    "cutend",
+    "cutplane",
+    "cutplane2",
+    "cutplane3"
+   ],
+   "description": "`CUTPLANE` is a 3D cutting command. It removes parts of enclosed 3D shapes between `CUTPLANE` and `CUTEND`. It is not a floor-plan projection setting and should not be used as a substitute for [[PROJE",
+   "required_apis": [],
+   "init_pattern": "CUTPLANE [x [, y [, z [, side [, status]]]]]\n    statement1\n    ...\nCUTEND\n\nCUTPLANE{2} angle [, status]\n    statement1\n    ...\nCUTEND\n\nCUTPLANE{3} [x [, y [, z [, side [, status]]]]]\n    statement1\n    ...\nCUTEND",
+   "source": "wiki/CUTPLANE.md"
+  },
+  {
+   "name": "CYLIND",
+   "aliases": [
+    "cyl",
+    "cylind",
+    "cylinder",
+    "cylindrical primitive"
+   ],
+   "description": "`CYLIND` creates a right circular cylinder aligned to the local Z axis. Use it for simple round legs, posts, rods, columns, pins, and similar circular primitives.",
+   "required_apis": [
+    "CYLIND",
+    "ADD",
+    "DEL"
+   ],
+   "init_pattern": "CYLIND h, r",
+   "source": "wiki/CYLIND.md"
+  },
+  {
+   "name": "DEFINE",
+   "aliases": [
+    "define",
+    "define fill",
+    "define line_type",
+    "define material",
+    "define style",
+    "inline attribute definition"
+   ],
+   "description": "`DEFINE` is not a GDL subroutine mechanism. In official GDL syntax, `DEFINE` belongs to inline attribute definition: surfaces, fills, line types, styles, textures, and related attributes.",
+   "required_apis": [
+    "PARAMETERS",
+    "GOSUB",
+    "ADD",
+    "DEL",
+    "END",
+    "RETURN"
+   ],
+   "init_pattern": "DEFINE MATERIAL name type, surface_red, surface_green, surface_blue\nDEFINE MATERIAL name [,] BASED_ON orig_name [,] PARAMETERS name1 = expr1 [, ...]\nDEFINE FILL name [[,] FILLTYPES_MASK fill_types,] ...\nDEFINE LINE_TYPE name spacing, n, length1, ..., lengthn\nDEFINE STYLE name font_family, size, anchor, face_code\nDEFINE TEXTURE name expression, x, y, mask, angle",
+   "source": "wiki/DEFINE.md"
+  },
+  {
+   "name": "FOR_NEXT",
+   "aliases": [
+    "for",
+    "for loop",
+    "for next",
+    "gdl for",
+    "iteration",
+    "loop",
+    "next"
+   ],
+   "description": "`FOR`/`NEXT` is GDL's looping construct. It repeats a block of code with a counter variable stepping through a numeric range.",
+   "required_apis": [
+    "FOR",
+    "NEXT",
+    "ADD",
+    "DEL",
+    "GOSUB"
+   ],
+   "init_pattern": "FOR variable_name = initial_value TO end_value [ STEP step_value ]\n    ! repeated code block\nNEXT variable_name",
+   "source": "wiki/FOR_NEXT.md"
+  },
+  {
+   "name": "GLOBALS",
+   "aliases": [
+    "glob_scale",
+    "glob_view_type",
+    "global variables",
+    "globals",
+    "symb_pos_x",
+    "wall_thickness"
+   ],
+   "description": "GDL global variables are built-in variables supplied by Archicad. They expose view, project, placement, host element, and environment context to a library part.",
+   "required_apis": [
+    "GLOB_SEO_TOOL_MODE",
+    "WALL_THICKNESS",
+    "WALL_HEIGHT",
+    "LINE2",
+    "RESOL"
+   ],
+   "init_pattern": "GLOB_SCALE\nGLOB_VIEW_TYPE\nGLOB_PREVIEW_MODE\nGLOB_FEEDBACK_MODE\nGLOB_SEO_TOOL_MODE\nSYMB_POS_X\nSYMB_POS_Y\nSYMB_ROTANGLE\nWALL_THICKNESS\nWALL_HEIGHT",
+   "source": "wiki/GLOBALS.md"
+  },
+  {
+   "name": "GROUP",
+   "aliases": [
+    "addgroup",
+    "endgroup",
+    "group",
+    "isectgroup",
+    "isectlines",
+    "killgroup",
+    "placegroup",
+    "subgroup",
+    "sweepgroup"
+   ],
+   "description": "`GROUP` / `ENDGROUP` defines a named group of 3D bodies for solid geometry operations. The bodies inside the group are not generated in the model until the group is explicitly placed with `PLACEGROUP`",
+   "required_apis": [
+    "ADDGROUP",
+    "SUBGROUP",
+    "ISECTGROUP",
+    "ISECTLINES",
+    "PLACEGROUP",
+    "KILLGROUP",
+    "SWEEPGROUP",
+    "ADD"
+   ],
+   "init_pattern": "GROUP \"name\"\n    statement1\n    ...\nENDGROUP",
+   "source": "wiki/GROUP.md"
+  },
+  {
+   "name": "HOTSPOT2",
+   "aliases": [
+    "2d hotspot",
+    "hotspot",
+    "hotspot2",
+    "stretch hotspot"
+   ],
+   "description": "`HOTSPOT2` defines a 2D interactive hotspot. It is used in the 2D script to support graphical editing of length and angle parameters.",
+   "required_apis": [
+    "HOTSPOT2"
+   ],
+   "init_pattern": "HOTSPOT2 x, y [, unID [, paramReference [, flags [, displayParam [, \"customDescription\"]]]]]",
+   "source": "wiki/HOTSPOT2.md"
+  },
+  {
+   "name": "IF_ENDIF",
+   "aliases": [
+    "branch",
+    "conditional",
+    "else",
+    "elsif",
+    "endif",
+    "gdl if",
+    "if endif"
+   ],
+   "description": "`IF`/`ENDIF` is GDL's conditional branching construct. It evaluates a condition and executes the corresponding block when the result is true.",
+   "required_apis": [
+    "ADD",
+    "DEL",
+    "GOSUB",
+    "GDL"
+   ],
+   "init_pattern": "IF expression THEN\n    ! code to execute when expression ≠ 0\nENDIF",
+   "source": "wiki/IF_ENDIF.md"
+  },
+  {
+   "name": "PRISM_",
+   "aliases": [
+    "gdl prism",
+    "prism",
+    "prism ",
+    "prism command"
+   ],
+   "description": "`PRISM_` creates a right prism from a 2D polygon profile in the local x-y plane. It is the default OpenBrep command for extruded profiles that are more complex than a simple [[BLOCK]].",
+   "required_apis": [
+    "PRISM_"
+   ],
+   "init_pattern": "PRISM_ n, h, x1, y1, s1, ..., xn, yn, sn",
+   "source": "wiki/PRISM_.md"
+  },
+  {
+   "name": "PROJECT2",
+   "aliases": [
+    "2d projection",
+    "gdl projection",
+    "plan projection",
+    "project2",
+    "projection"
+   ],
+   "description": "`PROJECT2` generates a 2D projection from the 3D geometry of a GDL object. OpenBrep uses it as the default way to derive a plan symbol from 3D script output when manual 2D drawing is not needed.",
+   "required_apis": [
+    "PROJECT2",
+    "PARAMETERS",
+    "LINE2"
+   ],
+   "init_pattern": "PROJECT2 projection_code, angle, method\nPROJECT2{2} projection_code, angle, method [, backgroundColor, fillOrigoX, fillOrigoY, filldirection]\nPROJECT2{3} projection_code, angle, method, parts [, backgroundColor, fillOrigoX, fillOrigoY, filldirection] [[,] PARAMETERS name1=value1, ..., namen=valuen]",
+   "source": "wiki/PROJECT2.md"
+  },
+  {
+   "name": "Paramlist_XML",
+   "aliases": [
+    "gdl parameters",
+    "hsf parameters",
+    "parameters xml",
+    "paramlist",
+    "paramlist xml",
+    "paramlist.xml"
+   ],
+   "description": "`paramlist.xml` is the HSF parameter definition file for a GDL library part. OpenBrep treats it as part of source state together with `scripts/*.gdl`.",
+   "required_apis": [],
+   "init_pattern": "",
+   "source": "wiki/Paramlist_XML.md"
+  },
+  {
+   "name": "REVOLVE",
+   "aliases": [
+    "lathe",
+    "revolve",
+    "rotational sweep"
+   ],
+   "description": "`REVOLVE` creates a 3D surface or body by rotating a polyline defined in the x-y plane around the x-axis. This is the GDL equivalent of a lathe operation — useful for balusters, vases, domes, turned c",
+   "required_apis": [
+    "REVOLVE"
+   ],
+   "init_pattern": "REVOLVE n, alpha, mask, x1, y1, s1, ..., xn, yn, sn\nREVOLVE{2} n, alphaOffset, alpha, mask, sideMat,\n        x1, y1, s1, mat1, ..., xn, yn, sn, matn",
+   "source": "wiki/REVOLVE.md"
+  },
+  {
+   "name": "SWEEP",
+   "aliases": [
+    "extrude along path",
+    "sweep"
+   ],
+   "description": "`SWEEP` generates a surface or body by sweeping a 2D profile polyline along a 3D path polyline. Unlike [[PRISM_]], which extrudes straight along Z, `SWEEP` can follow a path in space, making it useful",
+   "required_apis": [
+    "SWEEP"
+   ],
+   "init_pattern": "SWEEP n, m, alpha, scale, mask,\n        u1, v1, s1, ..., un, vn, sn,\n        x1, y1, z1, ..., xm, ym, zm",
+   "source": "wiki/SWEEP.md"
+  },
+  {
+   "name": "Transformation_Stack",
+   "aliases": [
+    "coordinate stack",
+    "gdl transform",
+    "transform stack",
+    "transformation stack"
+   ],
+   "description": "The transformation stack is GDL's mechanism for positioning, rotating, and scaling geometry. Every `ADD`, `ROT`, or `MUL` pushes a new transformation onto the stack, and `DEL` pops locally defined tra",
+   "required_apis": [
+    "ADD",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "ROT",
+    "ROTX",
+    "ROTZ",
+    "MUL"
+   ],
+   "init_pattern": "ADD x, y, z        ! push translation\nADDX x             ! translate X only\nADDY y             ! translate Y only\nADDZ z             ! translate Z only",
+   "source": "wiki/Transformation_Stack.md"
+  },
+  {
+   "name": "Bookshelf",
+   "aliases": [
+    "bookcase",
+    "bookshelf",
+    "shelf",
+    "书架",
+    "书柜"
+   ],
+   "description": "参数化书架",
+   "required_apis": [
+    "BLOCK",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "DEL",
+    "FOR",
+    "NEXT",
+    "MATERIAL",
+    "PROJECT2",
+    "HOTSPOT2"
+   ],
+   "init_pattern": "",
+   "source": "archetypes/bookshelf.md"
+  },
+  {
+   "name": "Cabinet",
+   "aliases": [
+    "cabinet",
+    "cupboard",
+    "收纳柜",
+    "柜",
+    "柜体",
+    "橱柜",
+    "鞋柜"
+   ],
+   "description": "参数化柜体",
+   "required_apis": [
+    "BLOCK",
+    "PRISM_",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "DEL",
+    "FOR",
+    "NEXT",
+    "MATERIAL",
+    "PROJECT2",
+    "HOTSPOT2"
+   ],
+   "init_pattern": "",
+   "source": "archetypes/cabinet.md"
+  },
+  {
+   "name": "Door",
+   "aliases": [
+    "door",
+    "门",
+    "门扇",
+    "门框"
+   ],
+   "description": "参数化门",
+   "required_apis": [
+    "BLOCK",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "ROTZ",
+    "DEL",
+    "MATERIAL",
+    "PROJECT2",
+    "HOTSPOT2"
+   ],
+   "init_pattern": "",
+   "source": "archetypes/door.md"
+  },
+  {
+   "name": "Profile_Object",
+   "aliases": [
+    "extrusion",
+    "profile",
+    "revolve",
+    "sweep",
+    "剖面",
+    "异形板",
+    "放样",
+    "旋转体"
+   ],
+   "description": "剖面/旋转/放样构件",
+   "required_apis": [
+    "PRISM_",
+    "REVOLVE",
+    "SWEEP",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "DEL",
+    "MATERIAL",
+    "PROJECT2",
+    "HOTSPOT2"
+   ],
+   "init_pattern": "",
+   "source": "archetypes/profile_object.md"
+  },
+  {
+   "name": "Table",
+   "aliases": [
+    "desk",
+    "table",
+    "书桌",
+    "会议桌",
+    "桌",
+    "桌子",
+    "餐桌"
+   ],
+   "description": "参数化桌子",
+   "required_apis": [
+    "BLOCK",
+    "CYLIND",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "DEL",
+    "FOR",
+    "NEXT",
+    "MATERIAL",
+    "PROJECT2",
+    "HOTSPOT2"
+   ],
+   "init_pattern": "",
+   "source": "archetypes/table.md"
+  },
+  {
+   "name": "Window",
+   "aliases": [
+    "window",
+    "窗",
+    "窗户",
+    "窗框"
+   ],
+   "description": "参数化窗",
+   "required_apis": [
+    "BLOCK",
+    "ADDX",
+    "ADDY",
+    "ADDZ",
+    "DEL",
+    "MATERIAL",
+    "PROJECT2",
+    "HOTSPOT2"
+   ],
+   "init_pattern": "",
+   "source": "archetypes/window.md"
+  }
+ ],
+ "known_error_patterns": []
+}
