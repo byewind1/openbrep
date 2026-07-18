@@ -21,6 +21,8 @@ function renderSettingsDrawer(
       memoryBusy={false}
       gitStatus={null}
       gitBusy={false}
+      knowledgeStatus={null}
+      knowledgeBusy={false}
       onClose={vi.fn()}
       onCompilerSettingsChange={vi.fn(async (settings) => settings)}
       onOpenConfig={vi.fn()}
@@ -35,6 +37,8 @@ function renderSettingsDrawer(
       onInitializeProjectGit={vi.fn()}
       onSetProjectGitEnabled={vi.fn()}
       onCommitProjectGit={vi.fn()}
+      onLoadKnowledgeStatus={vi.fn()}
+      onReloadKnowledge={vi.fn()}
       onLoadMemoryLessons={vi.fn()}
       onSummarizeProjectMemory={vi.fn()}
       onUpdateMemoryLesson={vi.fn()}
@@ -63,11 +67,30 @@ describe('SettingsDrawer AI model settings', () => {
 
     expect(screen.getByText('Model')).toBeTruthy()
     expect(screen.getByText('Mock')).toBeTruthy()
-    expect(screen.getByText('0 recent')).toBeTruthy()
+    expect(screen.getByText('最近 0 个')).toBeTruthy()
     expect(screen.queryByText('LP_XMLConverter')).toBeNull()
     expect(screen.queryByText('Recent HSF projects')).toBeNull()
     expect(screen.queryByText('Project Git')).toBeNull()
     expect(screen.queryByText('Learned error lessons')).toBeNull()
+  })
+
+  test('shows an interface section for language selection, collapsed by default', () => {
+    renderSettingsDrawer({
+      model: 'deepseek-chat',
+      models: ['deepseek-chat'],
+      model_groups: { custom: [], official: [] },
+      api_key: '',
+      api_base: '',
+      max_retries: 5,
+      assistant_settings: '',
+    })
+
+    expect(screen.getByRole('button', { name: /界面/ })).toBeTruthy()
+    expect(screen.queryByText('语言')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /界面/ }))
+    expect(screen.getByText('语言')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: '中文' })).toHaveProperty('checked', true)
   })
 
   test('saves compiler settings and reloads on Save', async () => {
@@ -80,13 +103,13 @@ describe('SettingsDrawer AI model settings', () => {
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Compiler/ }))
+    fireEvent.click(screen.getByRole('button', { name: /编译器/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
-    expect(screen.getByText('Unsaved')).toBeTruthy()
+    expect(screen.getByText('未保存')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('已保存')).toBeTruthy())
     expect(onCompilerSettingsChange).toHaveBeenCalledWith({ mode: 'lp', converter_path: '', output_dir: '' })
     expect(saveOrder).toEqual(['compiler', 'reload'])
   })
@@ -100,13 +123,13 @@ describe('SettingsDrawer AI model settings', () => {
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Compiler/ }))
+    fireEvent.click(screen.getByRole('button', { name: /编译器/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(screen.getByTitle('Compiler settings were not saved')).toBeTruthy())
-    expect(screen.queryByText('Saved')).toBeNull()
-    expect(screen.getByText('Unsaved')).toBeTruthy()
+    expect(screen.queryByText('已保存')).toBeNull()
+    expect(screen.getByText('未保存')).toBeTruthy()
     expect(onReloadRuntimeSettings).not.toHaveBeenCalled()
   })
 
@@ -124,8 +147,8 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     })
 
-    const drawer = screen.getByLabelText('Workbench settings')
-    const handle = screen.getByRole('separator', { name: 'Resize settings panel' })
+    const drawer = screen.getByLabelText('工作台设置')
+    const handle = screen.getByRole('separator', { name: '调整设置面板宽度' })
 
     expect(drawer.style.width).toBe('430px')
 
@@ -205,6 +228,8 @@ describe('SettingsDrawer AI model settings', () => {
         memoryBusy={false}
         gitStatus={null}
         gitBusy={false}
+        knowledgeStatus={null}
+        knowledgeBusy={false}
         onClose={vi.fn()}
         onCompilerSettingsChange={vi.fn(async (settings) => settings)}
         onOpenConfig={vi.fn()}
@@ -219,6 +244,8 @@ describe('SettingsDrawer AI model settings', () => {
         onInitializeProjectGit={vi.fn()}
         onSetProjectGitEnabled={vi.fn()}
         onCommitProjectGit={vi.fn()}
+        onLoadKnowledgeStatus={vi.fn()}
+        onReloadKnowledge={vi.fn()}
         onLoadMemoryLessons={loadMemory}
         onSummarizeProjectMemory={vi.fn()}
         onUpdateMemoryLesson={vi.fn()}

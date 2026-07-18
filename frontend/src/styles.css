@@ -2133,6 +2133,31 @@ button:focus-visible {
   gap: 7px;
 }
 
+.settings-description {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.settings-radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-radio-option input[type='radio'] {
+  margin: 0;
+}
+
 .settings-field-hint {
   color: var(--muted);
   font-size: 11px;

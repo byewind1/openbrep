@@ -10,9 +10,12 @@ import type {
   RecentProject,
   UpdateMemoryLessonRequest,
 } from '../../api/types'
+import { useT } from '../../i18n'
+import { useUiPrefsStore } from '../../state/uiPrefsStore'
 import { AiSettingsPanel } from './AiSettingsPanel'
 import { CompilerSettingsPanel } from './CompilerSettingsPanel'
 import { GitSettingsPanel } from './GitSettingsPanel'
+import { InterfaceSettingsPanel, interfaceSummary } from './InterfaceSettingsPanel'
 import { KnowledgePanel } from './KnowledgePanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
 import { SettingsSection } from './SettingsSection'
@@ -24,9 +27,10 @@ const SETTINGS_DRAWER_MAX_WIDTH = 760
 const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
 const SETTINGS_DRAWER_KEY_STEP = 24
 
-type SettingsSectionId = 'ai' | 'compiler' | 'workspace' | 'git' | 'memory' | 'knowledge'
+type SettingsSectionId = 'interface' | 'ai' | 'compiler' | 'workspace' | 'git' | 'memory' | 'knowledge'
 
 const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
+  interface: false,
   ai: true,
   compiler: false,
   workspace: false,
@@ -108,6 +112,9 @@ export function SettingsDrawer({
   onIgnoreMemoryLesson,
   onClearProjectMemory,
 }: SettingsDrawerProps) {
+  const t = useT()
+  const locale = useUiPrefsStore((state) => state.locale)
+  const setLocale = useUiPrefsStore((state) => state.setLocale)
   const [compilerDraft, setCompilerDraft] = useState(compilerSettings)
   const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty' | 'saving' | null>(null)
   const [settingsSaveError, setSettingsSaveError] = useState('')
@@ -215,17 +222,24 @@ export function SettingsDrawer({
 
   return (
     <>
-      {open ? <button className="settings-scrim" type="button" aria-label="Close settings" onClick={onClose} /> : null}
+      {open ? (
+        <button
+          className="settings-scrim"
+          type="button"
+          aria-label={t('settings.header.closeAriaLabel')}
+          onClick={onClose}
+        />
+      ) : null}
       <aside
         className={`settings-drawer${open ? ' open' : ''}`}
         style={{ width: drawerWidth }}
         aria-hidden={!open}
-        aria-label="Workbench settings"
+        aria-label={t('settings.header.drawerAriaLabel')}
       >
         <div
           className="settings-resize-handle"
           role="separator"
-          aria-label="Resize settings panel"
+          aria-label={t('settings.header.resizeAriaLabel')}
           aria-orientation="vertical"
           aria-valuemin={SETTINGS_DRAWER_MIN_WIDTH}
           aria-valuemax={getSettingsDrawerMaxWidth()}
@@ -251,28 +265,28 @@ export function SettingsDrawer({
         />
         <div className="settings-header">
           <div>
-            <strong>Settings</strong>
+            <strong>{t('settings.header.title')}</strong>
             <span>config.toml</span>
           </div>
           <div className="settings-header-actions">
             {settingsSaveState === 'saving' && (
-              <span className="settings-saving-state">Saving</span>
+              <span className="settings-saving-state">{t('settings.header.saving')}</span>
             )}
             {settingsSaveState === 'dirty' && (
-              <span className="settings-dirty-state">Unsaved</span>
+              <span className="settings-dirty-state">{t('settings.header.unsaved')}</span>
             )}
             {settingsSaveState === 'saved' && (
-              <span className="settings-saved-state">Saved</span>
+              <span className="settings-saved-state">{t('settings.header.saved')}</span>
             )}
             {settingsSaveError && (
               <span className="settings-save-error" title={settingsSaveError}>
-                Error
+                {t('settings.header.error')}
               </span>
             )}
             <button
               type="button"
               className="settings-icon-btn"
-              title="Reload config from disk"
+              title={t('settings.header.reloadTitle')}
               onClick={() => void reloadRuntimeSettings()}
             >
               ↺
@@ -283,18 +297,28 @@ export function SettingsDrawer({
               disabled={settingsSaveState === 'saving'}
               onClick={() => void saveSettings()}
             >
-              {settingsSaveState === 'saving' ? '…' : 'Save'}
+              {settingsSaveState === 'saving' ? '…' : t('settings.header.saveButton')}
             </button>
-            <button type="button" className="settings-icon-btn" title="Close" onClick={onClose}>
+            <button type="button" className="settings-icon-btn" title={t('settings.header.closeTitle')} onClick={onClose}>
               ✕
             </button>
           </div>
         </div>
 
         <SettingsSection
+          id="interface"
+          title={t('settings.section.interface')}
+          summary={interfaceSummary(locale)}
+          expanded={expandedSections.interface}
+          onToggle={toggleSection}
+        >
+          <InterfaceSettingsPanel locale={locale} onLocaleChange={setLocale} />
+        </SettingsSection>
+
+        <SettingsSection
           id="ai"
-          title="AI"
-          summary={aiSummary(llmSettings)}
+          title={t('settings.section.ai')}
+          summary={aiSummary(t, llmSettings)}
           expanded={expandedSections.ai}
           onToggle={toggleSection}
         >
@@ -307,8 +331,8 @@ export function SettingsDrawer({
 
         <SettingsSection
           id="compiler"
-          title="Compiler"
-          summary={compilerSummary(compilerDraft)}
+          title={t('settings.section.compiler')}
+          summary={compilerSummary(t, compilerDraft)}
           modified={isCompilerDirty}
           expanded={expandedSections.compiler}
           onToggle={toggleSection}
@@ -323,8 +347,8 @@ export function SettingsDrawer({
 
         <SettingsSection
           id="workspace"
-          title="Workspace"
-          summary={workspaceSummary(recentProjects)}
+          title={t('settings.section.workspace')}
+          summary={workspaceSummary(t, recentProjects)}
           expanded={expandedSections.workspace}
           onToggle={toggleSection}
         >
@@ -338,8 +362,8 @@ export function SettingsDrawer({
 
         <SettingsSection
           id="git"
-          title="Git"
-          summary={gitSummary(gitStatus)}
+          title={t('settings.section.git')}
+          summary={gitSummary(t, gitStatus)}
           expanded={expandedSections.git}
           onToggle={toggleSection}
         >
@@ -357,8 +381,8 @@ export function SettingsDrawer({
 
         <SettingsSection
           id="memory"
-          title="Memory"
-          summary={memorySummary(memoryStatus, memoryLessons.length)}
+          title={t('settings.section.memory')}
+          summary={memorySummary(t, memoryStatus, memoryLessons.length)}
           expanded={expandedSections.memory}
           onToggle={toggleSection}
         >
@@ -379,8 +403,8 @@ export function SettingsDrawer({
 
         <SettingsSection
           id="knowledge"
-          title="Knowledge"
-          summary={knowledgeSummary(knowledgeStatus)}
+          title={t('settings.section.knowledge')}
+          summary={knowledgeSummary(t, knowledgeStatus)}
           expanded={expandedSections.knowledge}
           onToggle={toggleSection}
         >
@@ -397,33 +421,37 @@ export function SettingsDrawer({
   )
 }
 
-function compilerSummary(settings: CompilerSettings) {
-  return settings.mode === 'lp' ? 'LP' : 'Mock'
+function compilerSummary(t: ReturnType<typeof useT>, settings: CompilerSettings) {
+  return settings.mode === 'lp' ? t('settings.summary.compilerLp') : t('settings.summary.compilerMock')
 }
 
-function aiSummary(settings: LlmSettings) {
-  return settings.model || 'No model'
+function aiSummary(t: ReturnType<typeof useT>, settings: LlmSettings) {
+  return settings.model || t('settings.summary.aiNoModel')
 }
 
-function workspaceSummary(recentProjects: RecentProject[]) {
-  return `${recentProjects.length} recent`
+function workspaceSummary(t: ReturnType<typeof useT>, recentProjects: RecentProject[]) {
+  return t('settings.summary.workspaceRecentCount', { count: recentProjects.length })
 }
 
-function gitSummary(gitStatus: ProjectGitStatus | null) {
-  if (!gitStatus?.initialized) return 'Not initialized'
-  return gitStatus.enabled ? 'Enabled' : 'Disabled'
+function gitSummary(t: ReturnType<typeof useT>, gitStatus: ProjectGitStatus | null) {
+  if (!gitStatus?.initialized) return t('settings.summary.gitNotInitialized')
+  return gitStatus.enabled ? t('settings.summary.gitEnabled') : t('settings.summary.gitDisabled')
 }
 
-function memorySummary(memoryStatus: ProjectMemoryStatus | null, fallbackLessonCount: number) {
+function memorySummary(
+  t: ReturnType<typeof useT>,
+  memoryStatus: ProjectMemoryStatus | null,
+  fallbackLessonCount: number,
+) {
   const lessonCount = memoryStatus?.lesson_count ?? fallbackLessonCount
-  return `${lessonCount} lessons`
+  return t('settings.summary.memoryLessonCount', { count: lessonCount })
 }
 
-function knowledgeSummary(status: KnowledgeStatus | null) {
-  if (!status?.ok) return '—'
+function knowledgeSummary(t: ReturnType<typeof useT>, status: KnowledgeStatus | null) {
+  if (!status?.ok) return t('settings.summary.knowledgeDash')
   return status.has_pro
-    ? `Free ${status.free_doc_count} · Pro ${status.pro_doc_count}`
-    : `Free ${status.free_doc_count} · No Pro`
+    ? t('settings.summary.knowledgeFreePro', { free: status.free_doc_count, pro: status.pro_doc_count })
+    : t('settings.summary.knowledgeFreeNoPro', { free: status.free_doc_count })
 }
 
 function compilerDirty(a: CompilerSettings, b: CompilerSettings) {

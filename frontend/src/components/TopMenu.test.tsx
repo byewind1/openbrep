@@ -32,22 +32,22 @@ describe('TopMenu', () => {
     renderTopMenu({ lastSavedAt: '10:32' })
 
     expect(screen.getByText('/workspace/Shelf')).toBeTruthy()
-    expect(screen.getByText('Saved 10:32')).toBeTruthy()
+    expect(screen.getByText('已保存 10:32')).toBeTruthy()
   })
 
   test('hides last saved pill when nothing has been saved yet', () => {
     renderTopMenu({ lastSavedAt: null })
 
-    expect(screen.queryByText(/^Saved \d/)).toBeNull()
+    expect(screen.queryByText(/^已保存 \d/)).toBeNull()
   })
 
   test('keeps primary workbench actions directly available in one toolbar', () => {
     const props = renderTopMenu()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
     fireEvent.click(screen.getByTestId('compile-button'))
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
 
     expect(props.onSave).toHaveBeenCalledTimes(1)
     expect(props.onCompile).toHaveBeenCalledTimes(1)
@@ -60,7 +60,7 @@ describe('TopMenu', () => {
 
     expect(screen.queryByTestId('mock-compile-button')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Build' }))
+    fireEvent.click(screen.getByRole('button', { name: '构建' }))
     fireEvent.click(screen.getByTestId('mock-compile-button'))
 
     expect(props.onMockCompile).toHaveBeenCalledTimes(1)

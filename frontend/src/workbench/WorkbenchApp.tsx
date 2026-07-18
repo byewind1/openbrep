@@ -3,6 +3,7 @@ import { BottomDrawer } from '../components/BottomDrawer'
 import { TopMenu } from '../components/TopMenu'
 import type { CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
+import { useUiPrefsStore } from '../state/uiPrefsStore'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
 import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
@@ -15,6 +16,11 @@ const RevisionPanel = lazy(() => import('./diagnostics/RevisionPanel').then((m) 
 const SettingsDrawer = lazy(() => import('./settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })))
 
 export function WorkbenchApp() {
+  const locale = useUiPrefsStore((state) => state.locale)
+  useEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
+
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
   const [previewWorkspaceOpen, setPreviewWorkspaceOpen] = useState(false)
