@@ -1,8 +1,19 @@
+<p align="center">
+  <img src="assets/logo.jpg" width="1525" alt="logo">
+</p>
+
 # OpenBrep
 
-**OpenBrep — 面向 ArchiCAD 高阶用户和 GDL 开发者的 AI 工作台。编译验证、知识驱动、资产可追溯。**
+## 快速开始
+
+1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载 `OpenBrep-*-macOS.zip` 或 `OpenBrep-*-Windows.zip`
+2. 解压后运行 `OpenBrep`
+3. 命令行 / 开发者用户再使用 `git clone` 或 `pipx` 安装
+
 
 [English](README.md) | 简体中文
+
+**OpenBrep — 面向 ArchiCAD 高阶用户和 GDL 开发者的 AI 工作台。编译验证、知识驱动、资产可追溯。**
 
 > **Code Your Boundaries**
 
@@ -28,9 +39,7 @@
 
 ---
 
-## 安装
-
-详见 **[安装指南（INSTALL_CN.md）](INSTALL_CN.md)** — 推荐普通用户优先下载 GitHub Release 桌面包；命令行用户可选 pipx / uv；开发者再使用源码安装。
+## 安装与启动
 
 ### 推荐：下载桌面包（普通用户）
 
@@ -39,25 +48,25 @@
 - macOS：`OpenBrep-free-macOS.zip`
 - Windows：`OpenBrep-free-Windows.zip`
 
-当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 14 Sonoma 或更高版本；当前 zip 不覆盖 Intel Mac。
+Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 14 Sonoma or later. Intel Mac is not covered by the current macOS zip.
 
-macOS 解压后进入 `OpenBrep` 文件夹，双击 `OpenBrep.command`；Windows 解压后运行 `OpenBrep.exe`。这种方式不要求用户先学会 `git clone`、`git pull` 或手动安装 Python 依赖。
+On macOS, unzip it, open the `OpenBrep` folder, and double-click `OpenBrep.command`. On Windows, unzip it and run `OpenBrep.exe`. This path does not require users to learn `git clone`, `git pull`, or manual Python dependency installation first.
 
-macOS Gatekeeper 临时处理办法：
+Temporary macOS Gatekeeper workaround:
 
-当前 macOS zip 还没有完成 Developer ID 签名和 Apple 公证。如果 macOS 提示“无法验证开发者”、出现多个安全提示，或确认后仍然打不开，请先对解压后的 `OpenBrep` 文件夹移除隔离属性：
+The current macOS zip is not yet Developer ID signed and notarized. If macOS shows security warnings or blocks the app even after you confirm the prompts, remove the quarantine flag from the unzipped folder:
 
 ```bash
 xattr -dr com.apple.quarantine /path/to/OpenBrep
 ```
 
-也可以在终端里先输入 `xattr -dr com.apple.quarantine `，保留最后的空格，然后把解压后的 `OpenBrep` 文件夹拖进终端，回车执行。执行后再运行 `OpenBrep.command`。
+Tip: type `xattr -dr com.apple.quarantine ` in Terminal, keep the trailing space, drag the unzipped `OpenBrep` folder into Terminal, then press Enter. After that, run `OpenBrep.command` again.
 
-我们会准备正式签名并公证的 macOS 包，届时不再需要这个手动步骤。
+We are preparing a properly signed and notarized macOS package so this manual step will not be needed.
 
 ### 命令行安装（高级用户）
 
-正式发布到 PyPI 后，推荐用隔离工具安装：
+OpenBrep 是 Python 应用。正式发布到 PyPI 后，推荐用隔离工具安装：
 
 ```bash
 pipx install "openbrep[ui]"
@@ -95,36 +104,49 @@ obr
 
 > 个人配置（config.toml / API Key）升级后保持不变，无需重新配置。
 
-真实编译（.gsm 输出）需要 ArchiCAD 28/29。
+需要 Python 3.10+。真实编译（.gsm 输出）需要安装 ArchiCAD 28/29。
 
 ---
 
-## 启动
+## 工作台架构
 
-### React Workbench（开发者预览）
+OpenBrep v1.0 采用全栈桌面架构：
 
-`react-workbench-poc` 分支提供新的代码优先工作台：
-
-```bash
-./obr7
+```
+React 前端 (Vite + Monaco + Three.js)
+        ↕  HTTP/API
+Python 后端 (ThreadingHTTPServer + Agent Runtime)
+        ↕  stdout 握手协议
+Tauri 桌面壳 (Rust/Tauri v2)
 ```
 
-它会同时启动本地 Python API 和 React/Vite 前端，并打印实际访问地址。
-默认端口被占用时会自动换端口；如果显式设置了 `OBR7_API_PORT` /
-`OBR7_WEB_PORT` 或 `--api-port` / `--web-port`，端口会严格按指定值使用。
-如果提示 `frontend/node_modules not found`，先运行 `cd frontend && npm install`。
-
-当前 React Workbench 适合 HSF/GDL 源码编辑、Monaco 脚本编辑、mock 编译、
-预览、参数和记忆等 code-first 工作流。Streamlit 仍保留为 Tapir/Archicad
-实时联动、Pro UX 和剩余兼容路径的 fallback。
-
-### Streamlit UI（稳定 fallback）
+### 开发模式
 
 ```bash
-streamlit run ui/app.py
+# 启动 React 开发服务器 + Python API（热重载）
+obr
+
+# 或等价命令
+python3 scripts/obr7.py
 ```
 
-浏览器自动打开。侧边栏配置 LLM 模型和 API Key 后即可使用。
+默认端口被占用时会自动换端口。如果提示 `frontend/node_modules not found`，先运行 `cd frontend && npm install`。
+
+### Tauri 桌面模式
+
+```bash
+# 单端口模式：Python 同时服务 API + 前端静态资源
+python3 scripts/obr7.py --tauri
+
+# 完整 Tauri 桌面应用（开发模式）
+PATH="$HOME/.cargo/bin:$PATH" npx @tauri-apps/cli@2 dev
+
+# 打包 Tauri 桌面安装包
+cd frontend && npm run build && cd ..
+PATH="$HOME/.cargo/bin:$PATH" npx @tauri-apps/cli@2 build
+```
+
+Tauri 模式下，Rust 壳负责 spawn Python 进程、捕获 `OBR7_READY_URL` 信号、打开 Webview 窗口，关窗时发送 `/api/shutdown` 并等待 Python 进程退出。
 
 ---
 
@@ -147,6 +169,8 @@ openbrep --help
 每次修改都读取完整项目状态，精确修改而非重写，自动编译验证。
 
 > 开发者说明：如果你当前使用的是 `pip install -e "."` / `pip install -e ".[ui]"` 的 editable install，修改仓库源码后通常会立即生效，不需要重新安装；只有在变更 `pyproject.toml`、依赖、命令入口（如 `obr` / `obrcli`）或打包规则时，才建议重新安装一次。
+
+---
 
 ## 功能一览
 
@@ -227,27 +251,36 @@ openbrep 以 HSF 为原生格式，每个脚本独立处理，AI 只读取与当
 
 面向维护者和 AI 开发工具的架构规范见：
 
-- [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md)
-- [docs/AI_DEVELOPMENT_GUIDE.zh-CN.md](docs/AI_DEVELOPMENT_GUIDE.zh-CN.md)
-- 英文版：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、[docs/AI_DEVELOPMENT_GUIDE.md](docs/AI_DEVELOPMENT_GUIDE.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/AI_DEVELOPMENT_GUIDE.md](docs/AI_DEVELOPMENT_GUIDE.md)
+- 中文版：[docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md)、[docs/AI_DEVELOPMENT_GUIDE.zh-CN.md](docs/AI_DEVELOPMENT_GUIDE.zh-CN.md)
 
 ```
 openbrep/
 ├── openbrep/
-│   ├── hsf_project.py       # HSF 数据模型
-│   ├── paramlist_builder.py # paramlist.xml 强类型生成
-│   ├── gdl_parser.py        # .gdl → HSFProject
-│   ├── compiler.py          # LP_XMLConverter 封装
-│   ├── core.py              # Agent 主循环 + generate_only
+│   ├── workbench/           # React 工作台服务层
+│   │   ├── assistant_service.py
+│   │   ├── compiler_service.py
+│   │   ├── preview_service.py
+│   │   ├── three_preview.py # Three.js payload 转换
+│   │   └── view_models.py   # LLM 输出分类 / 错误分类
+│   ├── workbench_api.py     # ThreadingHTTPServer API + SPA 静态服务
+│   ├── core.py              # Agent 主循环
 │   ├── llm.py               # 多模型统一接口
+│   ├── compiler.py          # LP_XMLConverter 封装
+│   ├── local_file_dialog.py # macOS/Tk 原生文件选择器
 │   ├── knowledge.py         # 知识库加载
 │   └── skills_loader.py     # 任务策略加载
-├── ui/
-│   └── app.py               # Streamlit Web 界面
+├── frontend/                # React + Vite + Monaco + Three.js 工作台
+│   ├── src/
+│   └── dist/                # npm run build 产物（Tauri 单端口模式）
+├── src-tauri/               # Tauri v2 桌面壳（Rust）
+│   ├── src/main.rs          # spawn Python → 捕获信号 → Webview
+│   └── tauri.conf.json
+├── scripts/
+│   └── obr7.py              # 启动编排（dev / tauri 双模式）
 ├── knowledge/               # GDL 参考文档（可自行扩充）
 ├── skills/                  # 任务策略（可自行扩充）
-├── docs/
-│   └── manual.md            # 详细用户手册
 ├── tests/                   # 单元测试
 ├── config.example.toml
 └── pyproject.toml
@@ -259,7 +292,7 @@ openbrep/
 
 复制 `config.example.toml` 为 `config.toml`（已 .gitignore），按需填写。
 
-### 1) 官方供应商（`provider_keys`）
+### 1) 官方 provider（`provider_keys`）
 
 ```toml
 [llm]
@@ -308,8 +341,8 @@ model = "gpt-5.3-codex"       # 实际请求给 provider 的模型名
 
 ### 3) 路由优先级（重要）
 
-请求时模型与凭据解析顺序：
-1. `custom_providers`（优先按 alias/model 命中）
+请求时模型与凭据的解析顺序：
+1. `custom_providers`（先按 alias/model 命中）
 2. `provider_keys`（按模型前缀匹配）
 3. `[llm]` 顶层 `api_key` / `api_base`（兜底）
 
@@ -317,7 +350,7 @@ model = "gpt-5.3-codex"       # 实际请求给 provider 的模型名
 
 ### 4) 常见坑
 
-- 只写 `models = ["ymg-gpt-5.3-codex"]`，不写 `{alias, model}` 对象，容易 alias 和真实模型混淆。
+- 只写 `models = ["ymg-gpt-5.3-codex"]`，不写 `{alias, model}` 对象，容易造成 alias 与真实模型名混淆。
 - `base_url` 不是 OpenAI 兼容入口（常见是缺 `/v1`）。
 - 切换模型后未确认 `[llm].model/api_key/api_base` 是否与当前 provider 成组一致。
 
@@ -334,14 +367,15 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 ## 文档
 
 - **[用户手册 →](docs/manual.md)** — UI 每个功能的详细说明、工作流、常见问题
-- **[安装指南 →](INSTALL_CN.md)** — Python 设置、GitHub 访问（VPN/代理/镜像）、依赖安装、LLM 配置、troubleshooting
 
 ---
+
 
 ## 版本历史
 
 | 版本 | 主要内容 |
 |---|---|
+| v1.0.0 | Tauri 桌面工作台正式落地：彻底退役 Streamlit（79 个文件 + 24 个 UI 测试），迁移域逻辑至 `openbrep/workbench/`，初始化 Rust/Tauri v2 桌面壳，实现 Python sidecar 启动握手、stderr relay、SPA 静态服务、关窗孤儿进程防护；674 测试全绿（见 docs/releases/v1.0.0.md） |
 | v0.8.0 | React 工作台成为默认 UI：合并 react-workbench 分支，`obr` 默认启动 React + Monaco + Three.js 工作台，Streamlit 降级为 fallback；新增 Verification 一等 seam（`openbrep/verification.py`），把散落的 static/lint/compile/plan_checks 聚合成统一验证报告，AI 生成后展示置信度、检查结果、残余风险；CREATE 路径 compile 状态显式可见，MODIFY 路径含 compile + auto-repair 证据（见 docs/releases/v0.8.0.md） |
 | v0.7.0 | GDL 资产生命周期里程碑：新增 modify / repair 前后 revision 快照、`obr history` / `obr rollback`、工程级变更摘要、GDLContractChecker 合规检查输出，以及 `--compare mock|real` 对比编译（见 docs/releases/v0.7.0.md） |
 | v0.6.12 | GDL 知识库校准收口：完成 P0-P6 批次的官方文档/社区/本地知识交叉校验，修正核心命令语义、参数结构、2D/3D 投影与高级几何边界，并补充 Pro 层商业化 Skill 开发方向（见 docs/releases/v0.6.12.md） |
@@ -363,6 +397,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 | v0.5.4 | validator 分层重构：error/warning 分开，硬错误白名单收紧；跨脚本检查器；debug 最小改动；生成过程实时显示；生成中禁用 widget（见 docs/releases/v0.5.4.md） |
 | **v0.5.3** | 知识库升级与文档品牌增强：整合拆书增量（含 2D 高级与可编译示例）、新增命令索引与命令级精准路由、README 顶部加入 logo（见 `docs/releases/v0.5.3.md`）。 |
 | **v0.5.2** | 版本标注与发布归档规范化：UI 版本号统一读取代码版本；README 标题去版本；新增发布说明文档（见 `docs/releases/v0.5.2.md`） |
+| **v0.5.1** | 安装包发布准备：新增 macOS/Windows 打包脚本与 GitHub Actions 构建流程（PyInstaller） |
 | **v0.5** | **OpenBrep 品牌发布** — 项目更名为 OpenBrep；稳定版本发布；Gitee 镜像支持（国内用户快速访问） |
 | v0.5 pre | 统一编辑器 UI；**图片即意图**（上传图片 → AI 生成 GDL）；AI 对话修改脚本；确认写入流程；paramlist.xml 自动注入；GSM 导入（AC29）；streamlit-ace 语法高亮；全屏编辑；多模型支持 |
 | v0.4.0 | HSF-native 架构重构；Streamlit Web UI；强类型 paramlist；44 项单元测试 |
