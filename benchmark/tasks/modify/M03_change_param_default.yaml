@@ -1,0 +1,20 @@
+---
+id: M03
+category: modify
+complexity: low
+description: "把层板厚度参数 shelf_thk 的默认值从 18mm 改为 25mm（即 0.025 米），参数名和其他内容保持不变"
+fixture: benchmark/fixtures/modify/M03
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "层板厚度参数驱动几何，改默认值后几何仍与参数联动"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: shelf_thk
+    - type: semantic_verification
+    - type: param_responsive
+      param: shelf_thk
+expected_difficulty: easy
+expected_pass: true

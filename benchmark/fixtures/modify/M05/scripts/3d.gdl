@@ -1,0 +1,8 @@
+﻿BLOCK A, B, 0.018
+ADDZ shelf_h
+BLOCK A, B, 0.018
+DEL 1
+ADDZ ZZYZX - shelf_h - 0.036
+BLOCK A, B, 0.018
+DEL 1
+END

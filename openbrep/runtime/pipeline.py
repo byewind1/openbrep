@@ -136,6 +136,8 @@ class TaskRequest:
     assistant_settings: str = ""           # injected into GDL system prompt
     on_event: Optional[Callable] = None    # progress callback (event_type, data) -> None
     compare_compile: str = "off"           # off / mock / real
+    agent_loop: bool = False               # 实验：MODIFY/DEBUG/REPAIR 走预算制 agent loop 新路径
+    agent_loop_budget: int = 0             # agent loop 工具调用预算，0 = 用默认值 6
 
 
 @dataclass
@@ -247,6 +249,9 @@ class TaskPipeline:
         try:
             if request.intent == "CHAT":
                 result = self._handle_chat(request)
+            elif request.intent in ("MODIFY", "DEBUG", "REPAIR") and request.agent_loop:
+                # 实验新路径：预算制 agent loop（默认关闭，TaskRequest.agent_loop=True 启用）
+                result = self._handle_modify_agent_loop(request)
             elif request.intent == "REPAIR":
                 result = self._handle_repair(request)
             elif request.intent in ("MODIFY", "DEBUG"):
@@ -791,6 +796,15 @@ class TaskPipeline:
         - Attempts compile validation (real or mock)
         """
         return self._handle_script_update(request)
+
+    def _handle_modify_agent_loop(self, request: TaskRequest) -> TaskResult:
+        """实验新路径：预算制、工具调用驱动的 MODIFY agent loop。
+
+        与 `_handle_script_update` 完全独立；仅 `TaskRequest.agent_loop=True`
+        时由 execute() 路由至此。实现见 runtime/modify_agent_loop.py。
+        """
+        from openbrep.runtime.modify_agent_loop import run_modify_agent_loop
+        return run_modify_agent_loop(self, request)
 
     def _handle_repair(self, request: TaskRequest) -> TaskResult:
         """Repair an existing GDL project using compile/runtime error context."""

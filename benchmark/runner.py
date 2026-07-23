@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import platform
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -86,6 +87,10 @@ class BenchmarkRunner:
                 "environment": self._environment_metadata(),
             }
 
+        # fixture 非空 = MODIFY 类任务：走 TaskPipeline 生产 MODIFY 路径（旧路径）
+        if task.fixture:
+            return self._run_modify_task(task, start)
+
         project = HSFProject.create_new(task_id, work_dir=str(self.work_dir))
         output_gsm = str(self.results_dir / f"{task_id}.gsm")
         result = self.agent.run(
@@ -129,6 +134,82 @@ class BenchmarkRunner:
             "elapsed_sec": round(elapsed, 1),
             "error_summary": result.error_summary,
             "trace": result.history,
+            "environment": self._environment_metadata(),
+        }
+
+    def _run_modify_task(self, task, start: float) -> dict:
+        """MODIFY 类任务：加载 fixture"改动前"工程，走 TaskPipeline 的 MODIFY 生产路径。
+
+        fixture 目录先复制到 benchmark/workdir/<task_id>/ 再加载，避免
+        pipeline 编译时的 save_to_disk 污染仓库里签入的 fixture 原件。
+        """
+        from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+
+        task_id = task.id
+        fixture_src = PROJECT_ROOT / task.fixture
+        work_copy = self.work_dir / task_id
+        if work_copy.exists():
+            shutil.rmtree(work_copy)
+        shutil.copytree(fixture_src, work_copy)
+        project = HSFProject.load_from_disk(str(work_copy))
+
+        # 与 CREATE 路径共用同一份 config/LLM/compiler；TaskPipeline 内部按
+        # config 自建 LLM/compiler，这里覆盖为 runner 实例，保证 mock/real
+        # 语义与现有 benchmark 完全一致。
+        pipeline = TaskPipeline(config=self.config, trace_dir="./traces")
+        pipeline._make_llm = lambda _req: self.llm
+        pipeline._make_compiler = lambda: self.compiler
+
+        request = TaskRequest(
+            user_input=task.description,
+            intent="MODIFY",
+            project=project,
+            work_dir=str(self.work_dir),
+            output_dir=str(self.results_dir),
+            gsm_name=task_id,
+        )
+        result = pipeline.execute(request)
+
+        elapsed = time.time() - start
+        compile_pass = bool(result.compile_result and result.compile_result.success)
+        final_project = result.project or project
+        static_result = StaticChecker().check(final_project)
+        contract_result = GDLContractChecker().check(final_project)
+        criteria_result = assert_success_criteria(final_project, task.success_criteria)
+        success = compile_pass and static_result.passed and contract_result.passed and criteria_result.passed
+        compile_stderr = ""
+        if result.compile_result is not None and not result.compile_result.success:
+            compile_stderr = result.compile_result.stderr or ""
+
+        return {
+            "task_id": task_id,
+            "success": success,
+            "skipped": False,
+            "mode": self.mode,
+            "effective_mode": self.effective_mode,
+            "fixture": task.fixture,
+            "compile_pass": compile_pass,
+            "compile_mode": self.effective_mode,
+            "compile_exit_code": getattr(result.compile_result, "exit_code", None),
+            "compile_stderr": compile_stderr,
+            "static_pass": static_result.passed,
+            "contract_pass": contract_result.passed,
+            "contract_failures": [
+                {
+                    "type": issue.check_type,
+                    "file": issue.file,
+                    "severity": issue.severity,
+                    "detail": issue.detail,
+                }
+                for issue in contract_result.issues
+            ],
+            "criteria_pass": criteria_result.passed,
+            "criteria_failures": criteria_result.failures,
+            # 旧路径是"一次性生成 + 内部最多 2 轮修复"，TaskResult 不暴露轮次，记 1
+            "attempts": 1,
+            "elapsed_sec": round(elapsed, 1),
+            "error_summary": "" if success else (result.error or compile_stderr),
+            "trace": [],
             "environment": self._environment_metadata(),
         }
 

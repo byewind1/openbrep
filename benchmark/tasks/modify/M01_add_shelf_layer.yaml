@@ -1,0 +1,23 @@
+---
+id: M01
+category: modify
+complexity: low
+description: "在现有书架的基础上再加一层层板（把层板数量从 2 层增加到 3 层），保持层板在柜体内均匀分布，其余结构不变"
+fixture: benchmark/fixtures/modify/M01
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "层板用循环均匀分布，数量由参数驱动"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: shelf_count
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+expected_difficulty: easy
+expected_pass: true

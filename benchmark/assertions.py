@@ -102,6 +102,10 @@ def _commands_implied_by_geometry_check(check: str) -> list[str]:
     return commands
 
 
+# 几何类断言类型（走 semantic_verifier），A/B 对照报告按此拆分"几何断言通过率"
+GEOMETRIC_ASSERTION_TYPES = ("semantic_verification", "param_responsive")
+
+
 def _assert_semantic_assertions(
     project: "HSFProject",
     assertions: list[SemanticAssertion],
@@ -110,44 +114,62 @@ def _assert_semantic_assertions(
     semantic_result_cache: list = []  # lazy, memoized SemanticVerificationResult (0 or 1 item)
 
     for assertion in assertions:
-        script_name = _normalize_script_name(assertion.script or "3d.gdl")
-        script = _script_text(project, script_name)
-        script_upper = script.upper()
-        assertion_type = assertion.type
-
-        if assertion_type == "command_present":
-            if not assertion.command:
-                failures.append("semantic_assertion: command_present missing command")
-            elif not _contains_command(script_upper, assertion.command):
-                failures.append(f"semantic_assertion: scripts/{script_name} missing command {assertion.command}")
-        elif assertion_type == "param_used":
-            if not assertion.param:
-                failures.append("semantic_assertion: param_used missing param")
-            elif not re.search(rf"\b{re.escape(assertion.param)}\b", script):
-                failures.append(f"semantic_assertion: scripts/{script_name} does not use param {assertion.param}")
-        elif assertion_type == "expression_present":
-            if not assertion.contains:
-                failures.append("semantic_assertion: expression_present missing contains")
-            elif _compact(assertion.contains) not in _compact(script):
-                failures.append(
-                    f"semantic_assertion: scripts/{script_name} missing expression containing {assertion.contains!r}"
-                )
-        elif assertion_type == "transform_balanced":
-            failures.extend(_assert_transform_balanced(script, script_name))
-        elif assertion_type == "semantic_verification":
-            failures.extend(_assert_semantic_verification(_get_semantic_result(project, semantic_result_cache)))
-        elif assertion_type == "param_responsive":
-            if not assertion.param:
-                failures.append("semantic_assertion: param_responsive missing param")
-            else:
-                failures.extend(
-                    _assert_param_responsive(
-                        _get_semantic_result(project, semantic_result_cache), assertion.param,
-                    )
-                )
-        else:
-            failures.append(f"semantic_assertion: unsupported type {assertion_type!r}")
+        failures.extend(evaluate_semantic_assertion(project, assertion, semantic_result_cache))
     return failures
+
+
+def evaluate_semantic_assertion(
+    project: "HSFProject",
+    assertion: SemanticAssertion,
+    semantic_result_cache: list | None = None,
+) -> list[str]:
+    """评估单条语义断言，返回失败原因列表（空列表 = 通过）。
+
+    semantic_result_cache 传入同一个 list 可在多条几何断言间复用一次
+    verify_semantics() 结果（与 _assert_semantic_assertions 的 memoize 行为一致）；
+    传 None 时按需自建。
+    """
+    cache = semantic_result_cache if semantic_result_cache is not None else []
+    failures: list[str] = []
+    script_name = _normalize_script_name(assertion.script or "3d.gdl")
+    script = _script_text(project, script_name)
+    script_upper = script.upper()
+    assertion_type = assertion.type
+
+    if assertion_type == "command_present":
+        if not assertion.command:
+            failures.append("semantic_assertion: command_present missing command")
+        elif not _contains_command(script_upper, assertion.command):
+            failures.append(f"semantic_assertion: scripts/{script_name} missing command {assertion.command}")
+    elif assertion_type == "param_used":
+        if not assertion.param:
+            failures.append("semantic_assertion: param_used missing param")
+        elif not re.search(rf"\b{re.escape(assertion.param)}\b", script):
+            failures.append(f"semantic_assertion: scripts/{script_name} does not use param {assertion.param}")
+    elif assertion_type == "expression_present":
+        if not assertion.contains:
+            failures.append("semantic_assertion: expression_present missing contains")
+        elif _compact(assertion.contains) not in _compact(script):
+            failures.append(
+                f"semantic_assertion: scripts/{script_name} missing expression containing {assertion.contains!r}"
+            )
+    elif assertion_type == "transform_balanced":
+        failures.extend(_assert_transform_balanced(script, script_name))
+    elif assertion_type == "semantic_verification":
+        failures.extend(_assert_semantic_verification(_get_semantic_result(project, cache)))
+    elif assertion_type == "param_responsive":
+        if not assertion.param:
+            failures.append("semantic_assertion: param_responsive missing param")
+        else:
+            failures.extend(
+                _assert_param_responsive(
+                    _get_semantic_result(project, cache), assertion.param,
+                )
+            )
+    else:
+        failures.append(f"semantic_assertion: unsupported type {assertion_type!r}")
+    return failures
+
 
 
 def _get_semantic_result(project: "HSFProject", cache: list):

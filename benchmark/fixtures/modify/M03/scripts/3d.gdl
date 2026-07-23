@@ -1,0 +1,8 @@
+﻿BLOCK A, B, shelf_thk
+ADDZ ZZYZX - shelf_thk
+BLOCK A, B, shelf_thk
+DEL 1
+ADDZ -ZZYZX / 2
+BLOCK A - 0.036, B, shelf_thk
+DEL 1
+END

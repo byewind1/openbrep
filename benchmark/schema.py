@@ -34,6 +34,7 @@ class BenchmarkTask:
     success_criteria: SuccessCriteria
     expected_difficulty: str = ""
     expected_pass: str | bool | None = None
+    fixture: str = ""   # MODIFY 类任务的"改动前" HSF 工程目录（相对仓库根目录），空 = CREATE
 
 
 def load_benchmark_task(path: str | Path) -> BenchmarkTask:
@@ -61,6 +62,7 @@ def benchmark_task_from_dict(data: dict[str, Any]) -> BenchmarkTask:
         ),
         expected_difficulty=str(data.get("expected_difficulty") or ""),
         expected_pass=data.get("expected_pass"),
+        fixture=str(data.get("fixture") or ""),
     )
 
 

@@ -1,0 +1,21 @@
+---
+id: M04
+category: modify
+complexity: low_medium
+description: "为书架定义一个名为 wood_mat 的木纹材质（DEFINE MATERIAL），并让 3D 脚本中的几何体使用该材质（MATERIAL 引用），其余结构不变"
+fixture: benchmark/fixtures/modify/M04
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "几何保持底板+顶板+中层板，仅新增材质定义与引用"
+  semantic_assertions:
+    - type: expression_present
+      script: 3d.gdl
+      contains: DEFINE MATERIAL
+    - type: command_present
+      script: 3d.gdl
+      command: MATERIAL
+    - type: semantic_verification
+expected_difficulty: low_medium
+expected_pass: true

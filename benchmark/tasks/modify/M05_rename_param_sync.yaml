@@ -1,0 +1,18 @@
+---
+id: M05
+category: modify
+complexity: low_medium
+description: "把参数 shelf_h 改名为 board_h：paramlist.xml 中的参数名改为 board_h，3d.gdl 里所有引用同步更新，默认值保持 0.9 米不变"
+fixture: benchmark/fixtures/modify/M05
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, board_h]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "改名后中层板仍由 board_h 定位，几何不变"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: board_h
+    - type: semantic_verification
+expected_difficulty: low_medium
+expected_pass: true

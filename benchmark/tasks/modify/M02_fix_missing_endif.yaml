@@ -1,0 +1,20 @@
+---
+id: M02
+category: modify
+complexity: low
+description: "该对象编译失败：Error in 3d.gdl: IF/ENDIF mismatch (IF: 1, ENDIF: 0)。请定位并修复 3d 脚本中的错误，使编译通过，不要做其他结构性改动"
+fixture: benchmark/fixtures/modify/M02
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "修复 IF/ENDIF 配对后几何保持底板+顶板+中层板"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: ENDIF
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+expected_difficulty: easy
+expected_pass: true

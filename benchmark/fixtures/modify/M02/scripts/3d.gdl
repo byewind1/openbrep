@@ -1,0 +1,11 @@
+﻿BLOCK A, B, shelf_thk
+ADDZ ZZYZX - shelf_thk
+BLOCK A, B, shelf_thk
+DEL 1
+
+IF A > 0.4 THEN
+    ADDZ -ZZYZX / 2
+    BLOCK A, B, shelf_thk
+    DEL 1
+
+END
