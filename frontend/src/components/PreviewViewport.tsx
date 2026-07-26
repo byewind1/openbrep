@@ -3,7 +3,8 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveCamera as PerspectiveCameraType } from 'three'
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, ShaderMaterial, Vector3 } from 'three'
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, PMREMGenerator, ShaderMaterial, Vector3 } from 'three'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload } from '../api/types'
 import {
@@ -152,10 +153,11 @@ export function PreviewViewport({
             <OrthographicCamera makeDefault near={0.001} far={100000} />
           )}
           <PreviewCameraRig bounds={bounds} mode={cameraMode} preset={viewPreset} fitNonce={fitNonce} />
-          <color attach="background" args={['#05070d']} />
-          <ambientLight intensity={0.7} />
-          <directionalLight position={[3, -4, 5]} intensity={2.2} />
-          <directionalLight position={[-4, 2, 3]} intensity={0.72} color="#38bdf8" />
+          <color attach="background" args={['#0a0e14']} />
+          <StudioEnvironment />
+          <ambientLight intensity={0.25} />
+          <directionalLight position={[3, -4, 5]} intensity={1.1} />
+          <directionalLight position={[-4, 2, 3]} intensity={0.5} color="#7cc7f5" />
           {/* 大坐标模型（毫米级脚本）居中渲染，避免 float32 抖动与深度量化闪烁 */}
           <group position={bounds.center}>
             {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
@@ -264,16 +266,49 @@ function fitCamera(
   projectionCamera.updateProjectionMatrix()
 }
 
-// Uniform default + deterministic per-part colors in random mode.
-// Golden-angle hue rotation keeps neighbouring parts well separated
-// without flickering between renders.
-const SOLID_COLOR = '#c0b49e'
-const MONO_COLOR = '#b9c2cc'
-const WIRE_COLOR = '#7dd3fc'
+// Uniform default + categorical per-part palette in random mode.
+// Colors chosen for contrast on the dark viewport background.
+const SOLID_COLOR = '#8595ab'
+const MONO_COLOR = '#a89e92'
+const EDGE_COLOR = '#1c2530'
+const WIRE_COLOR = '#86d4f8'
 const XRAY_COLOR = '#6fd3ff'
 
-function partColor(index: number): Color {
-  return new Color().setHSL(((index * 137.508) % 360) / 360, 0.58, 0.6)
+// 12 色分类调色板（高区分度，按部件序号确定性取用，不闪烁）
+const PART_PALETTE = [
+  '#e8a33d', '#5fb4e8', '#7ed491', '#e87d7d',
+  '#b39de8', '#e8d05f', '#5fe8d0', '#e88fc0',
+  '#a5c66f', '#7d9be8', '#e8975f', '#63c7e8',
+]
+
+/** 面级连通域编号（并查集）：共享顶点的面归一部件，按出现顺序编 0..K-1 */
+function computeFaceComponents(faces: number[][], vertCount: number): number[] {
+  const parent = new Int32Array(vertCount)
+  for (let i = 0; i < vertCount; i++) parent[i] = i
+  const find = (x: number): number => {
+    let r = x
+    while (parent[r] !== r) r = parent[r]
+    while (parent[x] !== r) {
+      const next = parent[x]
+      parent[x] = r
+      x = next
+    }
+    return r
+  }
+  const unite = (a: number, b: number) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[rb] = ra
+  }
+  for (const tri of faces) {
+    for (let k = 1; k < tri.length; k++) unite(tri[0], tri[k])
+  }
+  const remap = new Map<number, number>()
+  return faces.map((tri) => {
+    const root = find(tri[0])
+    if (!remap.has(root)) remap.set(root, remap.size)
+    return remap.get(root) as number
+  })
 }
 
 // X-ray ghost material: fragment-level fresnel so edge falloff survives
@@ -320,6 +355,23 @@ const xrayMaterial = new ShaderMaterial({
   side: DoubleSide,
 })
 
+function StudioEnvironment() {
+  // model-viewer 同款做法：RoomEnvironment 经 PMREM 生成 IBL，
+  // 无需 HDR 资源文件即可获得工作室级反射光照
+  const { gl, scene } = useThree()
+  useEffect(() => {
+    const pmrem = new PMREMGenerator(gl)
+    const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    scene.environment = envMap
+    return () => {
+      scene.environment = null
+      envMap.dispose()
+      pmrem.dispose()
+    }
+  }, [gl, scene])
+  return null
+}
+
 function MeshView({
   mesh,
   index,
@@ -348,6 +400,26 @@ function MeshView({
     return next
   }, [mesh.faces, mesh.vertices, offset])
 
+  // 随机分色：BS2G 产物常是单一合并 mesh（放样链/拓扑体），按 mesh 分色
+  // 会退化成一色；改为按面连通域拆成子 mesh，各自独立的调色板颜色材质
+  const partGeometries = useMemo(() => {
+    if (displayMode !== 'random') return []
+    const comp = computeFaceComponents(mesh.faces, mesh.vertices.length)
+    const byComp = new Map<number, number[]>()
+    mesh.faces.forEach((tri, fi) => {
+      const arr = byComp.get(comp[fi]) ?? []
+      arr.push(...tri)
+      byComp.set(comp[fi], arr)
+    })
+    return [...byComp.entries()].map(([compId, indices]) => {
+      const g = new BufferGeometry()
+      g.setAttribute('position', geometry.getAttribute('position'))
+      g.setIndex(new BufferAttribute(new Uint32Array(indices), 1))
+      g.computeVertexNormals()
+      return { compId, geometry: g }
+    })
+  }, [displayMode, mesh.faces, mesh.vertices.length, geometry])
+
   if (displayMode === 'wire') {
     // Hidden-line: only feature/boundary edges. A full triangle
     // wireframe collapses to a white blob on dense meshes.
@@ -366,25 +438,35 @@ function MeshView({
   if (displayMode === 'mono') {
     return (
       <mesh geometry={geometry}>
-        <meshBasicMaterial color={MONO_COLOR} />
-        {showEdges ? <Edges color="#334155" threshold={18} /> : null}
+        <meshStandardMaterial color={MONO_COLOR} roughness={0.7} metalness={0.0} envMapIntensity={0.6} side={DoubleSide} />
+        {showEdges ? <Edges color={EDGE_COLOR} threshold={18} /> : null}
       </mesh>
     )
   }
 
   if (displayMode === 'random') {
     return (
-      <mesh geometry={geometry}>
-        <meshStandardMaterial color={partColor(index)} roughness={0.62} metalness={0.04} side={DoubleSide} />
-        {showEdges ? <Edges color="#334155" threshold={18} /> : null}
-      </mesh>
+      <>
+        {partGeometries.map((part) => (
+          <mesh key={part.compId} geometry={part.geometry}>
+            <meshStandardMaterial
+              color={PART_PALETTE[part.compId % PART_PALETTE.length]}
+              roughness={0.5}
+              metalness={0.05}
+              envMapIntensity={0.75}
+              side={DoubleSide}
+            />
+            {showEdges ? <Edges color={EDGE_COLOR} threshold={18} /> : null}
+          </mesh>
+        ))}
+      </>
     )
   }
 
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color={SOLID_COLOR} roughness={0.62} metalness={0.04} side={DoubleSide} />
-      {showEdges ? <Edges color="#334155" threshold={18} /> : null}
+      <meshStandardMaterial color={SOLID_COLOR} roughness={0.5} metalness={0.05} envMapIntensity={0.75} side={DoubleSide} />
+      {showEdges ? <Edges color={EDGE_COLOR} threshold={18} /> : null}
     </mesh>
   )
 }
