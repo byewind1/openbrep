@@ -3,7 +3,7 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveCamera as PerspectiveCameraType } from 'three'
-import { BufferAttribute, BufferGeometry, DoubleSide, Vector3 } from 'three'
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, ShaderMaterial, Vector3 } from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload } from '../api/types'
 import {
@@ -30,6 +30,16 @@ interface PreviewViewportProps {
   hasDirtyScripts?: boolean
 }
 
+type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
+
+const DISPLAY_MODES: Array<{ id: PreviewDisplayMode; label: string; title: string }> = [
+  { id: 'solid', label: '实体', title: 'Solid shaded, uniform color' },
+  { id: 'random', label: '随机', title: 'Each part gets a distinct color' },
+  { id: 'wire', label: '线框', title: 'Feature edges only (hidden line)' },
+  { id: 'xray', label: 'X光', title: 'X-ray fresnel ghost' },
+  { id: 'mono', label: '单色', title: 'Flat unlit single color' },
+]
+
 export function PreviewViewport({
   preview,
   warnings,
@@ -46,6 +56,7 @@ export function PreviewViewport({
   const [fitNonce, setFitNonce] = useState(0)
   const [showEdges, setShowEdges] = useState(true)
   const [showGrid, setShowGrid] = useState(true)
+  const [displayMode, setDisplayMode] = useState<PreviewDisplayMode>('solid')
   const bounds = useMemo(() => computePreviewBounds(preview), [preview])
   const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
 
@@ -58,6 +69,7 @@ export function PreviewViewport({
     setViewPreset('iso')
     setShowEdges(true)
     setShowGrid(true)
+    setDisplayMode('solid')
     fitView()
   }
 
@@ -69,6 +81,18 @@ export function PreviewViewport({
           <span>{preview?.meshes.length ?? 0} meshes</span>
         </div>
         <div className="viewport-toolbar-actions">
+          {DISPLAY_MODES.map((mode) => (
+            <button
+              key={mode.id}
+              type="button"
+              className={`viewport-action-button${displayMode === mode.id ? ' active' : ''}`}
+              onClick={() => setDisplayMode(mode.id)}
+              title={mode.title}
+            >
+              {mode.label}
+            </button>
+          ))}
+          <span className="viewport-toolbar-sep" aria-hidden="true" />
           <button type="button" className="viewport-action-button" onClick={fitView} title="Fit model to view">
             Fit
           </button>
@@ -129,13 +153,13 @@ export function PreviewViewport({
           )}
           <PreviewCameraRig bounds={bounds} mode={cameraMode} preset={viewPreset} fitNonce={fitNonce} />
           <color attach="background" args={['#05070d']} />
-          <ambientLight intensity={0.58} />
-          <directionalLight position={[3, -4, 5]} intensity={2.7} />
+          <ambientLight intensity={0.7} />
+          <directionalLight position={[3, -4, 5]} intensity={2.2} />
           <directionalLight position={[-4, 2, 3]} intensity={0.72} color="#38bdf8" />
           {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
           <axesHelper args={[1.4]} />
           {preview?.meshes.map((mesh, index) => (
-            <MeshView key={`${mesh.name}-${index}`} mesh={mesh} index={index} showEdges={showEdges} />
+            <MeshView key={`${mesh.name}-${index}`} mesh={mesh} index={index} showEdges={showEdges} displayMode={displayMode} />
           ))}
         </Canvas>
       </div>
@@ -235,7 +259,66 @@ function fitCamera(
   projectionCamera.updateProjectionMatrix()
 }
 
-function MeshView({ mesh, index, showEdges }: { mesh: PreviewMesh; index: number; showEdges: boolean }) {
+// Uniform default + deterministic per-part colors in random mode.
+// Golden-angle hue rotation keeps neighbouring parts well separated
+// without flickering between renders.
+const SOLID_COLOR = '#c0b49e'
+const MONO_COLOR = '#b9c2cc'
+const WIRE_COLOR = '#7dd3fc'
+const XRAY_COLOR = '#6fd3ff'
+
+function partColor(index: number): Color {
+  return new Color().setHSL(((index * 137.508) % 360) / 360, 0.58, 0.6)
+}
+
+// X-ray ghost material: fragment-level fresnel so edge falloff survives
+// interpolation on large faces. f = (base + (1-base)·fresnel^sharp) × gain.
+const xrayMaterial = new ShaderMaterial({
+  uniforms: {
+    uColor: { value: new Color(XRAY_COLOR) },
+    uGain: { value: 0.85 },
+    uSharpness: { value: 1.6 },
+    uBase: { value: 0.06 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec3 vNormal;
+    varying vec3 vViewDir;
+    void main() {
+      vec4 worldPos = modelMatrix * vec4(position, 1.0);
+      vNormal = normalize(mat3(modelMatrix) * normal);
+      vViewDir = normalize(cameraPosition - worldPos.xyz);
+      gl_Position = projectionMatrix * viewMatrix * worldPos;
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform vec3 uColor;
+    uniform float uGain;
+    uniform float uSharpness;
+    uniform float uBase;
+    varying vec3 vNormal;
+    varying vec3 vViewDir;
+    void main() {
+      float fresnel = pow(1.0 - abs(dot(normalize(vNormal), normalize(vViewDir))), uSharpness);
+      float alpha = clamp((uBase + (1.0 - uBase) * fresnel) * uGain, 0.0, 1.0);
+      gl_FragColor = vec4(uColor, alpha);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  side: DoubleSide,
+})
+
+function MeshView({
+  mesh,
+  index,
+  showEdges,
+  displayMode,
+}: {
+  mesh: PreviewMesh
+  index: number
+  showEdges: boolean
+  displayMode: PreviewDisplayMode
+}) {
   const geometry = useMemo(() => {
     const next = new BufferGeometry()
     next.setAttribute('position', new BufferAttribute(new Float32Array(mesh.vertices.flat()), 3))
@@ -244,11 +327,43 @@ function MeshView({ mesh, index, showEdges }: { mesh: PreviewMesh; index: number
     return next
   }, [mesh.faces, mesh.vertices])
 
-  const colors = ['#d6a04f', '#a8a29e', '#94a3b8', '#64748b', '#8b7355']
+  if (displayMode === 'wire') {
+    // Hidden-line: only feature/boundary edges. A full triangle
+    // wireframe collapses to a white blob on dense meshes.
+    return (
+      <mesh geometry={geometry}>
+        <meshBasicMaterial visible={false} />
+        <Edges color={WIRE_COLOR} threshold={8} />
+      </mesh>
+    )
+  }
+
+  if (displayMode === 'xray') {
+    return <mesh geometry={geometry} material={xrayMaterial} />
+  }
+
+  if (displayMode === 'mono') {
+    return (
+      <mesh geometry={geometry}>
+        <meshBasicMaterial color={MONO_COLOR} />
+        {showEdges ? <Edges color="#334155" threshold={18} /> : null}
+      </mesh>
+    )
+  }
+
+  if (displayMode === 'random') {
+    return (
+      <mesh geometry={geometry}>
+        <meshStandardMaterial color={partColor(index)} roughness={0.62} metalness={0.04} side={DoubleSide} />
+        {showEdges ? <Edges color="#334155" threshold={18} /> : null}
+      </mesh>
+    )
+  }
+
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color={colors[index % colors.length]} roughness={0.68} metalness={0.02} side={DoubleSide} />
-      {showEdges ? <Edges color="#111827" threshold={18} /> : null}
+      <meshStandardMaterial color={SOLID_COLOR} roughness={0.62} metalness={0.04} side={DoubleSide} />
+      {showEdges ? <Edges color="#334155" threshold={18} /> : null}
     </mesh>
   )
 }
