@@ -118,7 +118,9 @@ class WorkbenchBlenderImportService:
         scripts), deduplicated against existing sibling directories
         (same rule as GDL import).
         """
-        base_name = probe_object_name(script_content, function_name)
+        base_name = probe_object_name(
+            script_content, function_name, script_path=str(source_file)
+        )
         if base_name.startswith("<"):
             base_name = source_file.stem
         object_name = unique_project_name(
@@ -129,6 +131,7 @@ class WorkbenchBlenderImportService:
             output_dir=str(source_file.parent),
             function_name=function_name,
             object_name=object_name,
+            script_path=str(source_file),
         )
 
     def _run_llm_completion(self, project: Any, ir: Any) -> None:

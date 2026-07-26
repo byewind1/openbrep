@@ -234,5 +234,85 @@ class TestConverterRouting(unittest.TestCase):
             self.assertEqual(len(ir.warnings), 0)
 
 
+# ── Arbitrary-mesh fallback (VERT/EDGE/PGON/BODY) ───────────
+
+
+NON_LOFT_CODE = """
+import bpy, bmesh
+
+mesh = bpy.data.meshes.new("T")
+bm = bmesh.new()
+v = [bm.verts.new(p) for p in [(0,0,0),(1,0,0),(1,1,0),(0,1,0),(0.5,0.5,1)]]
+bm.faces.new([v[0], v[3], v[2], v[1]])
+bm.faces.new([v[0], v[1], v[4]])
+bm.faces.new([v[1], v[2], v[4]])
+bm.faces.new([v[2], v[3], v[4]])
+bm.faces.new([v[3], v[0], v[4]])
+bm.to_mesh(mesh)
+bm.free()
+"""
+
+
+class TestArbitraryMeshFallback(unittest.TestCase):
+
+    def test_emit_topology_body(self):
+        from openbrep.importers.blender_script.mesh_gdl import generate_mesh_3d
+
+        mesh = run_mesh_capture(NON_LOFT_CODE)
+        gdl = generate_mesh_3d(mesh, source_name="T")
+        # 5 verts, 5 faces (1 quad + 4 tris), 8 unique edges
+        self.assertEqual(gdl.count("\nVERT "), 5)
+        self.assertEqual(gdl.count("\nEDGE "), 8)
+        self.assertEqual(gdl.count("\nPGON "), 5)
+        self.assertIn("PGON 4, 0, -1,", gdl)
+        self.assertIn("PGON 3, 0, -1,", gdl)
+        self.assertIn("BODY -1", gdl)
+        self.assertTrue(gdl.rstrip().endswith("END"))
+        # Interior edges (quad↔tri) are used once forward and once reversed
+        self._assert_manifold_signs(gdl)
+
+    def _assert_manifold_signs(self, gdl: str):
+        import re
+        usage: dict[int, int] = {}
+        for m in re.finditer(r"^PGON \d+, 0, -1, (.+)$", gdl, re.MULTILINE):
+            for tok in m.group(1).split(","):
+                eid = int(tok.strip())
+                usage[abs(eid)] = usage.get(abs(eid), 0) + (1 if eid > 0 else -1)
+        self.assertIn(0, usage.values())
+
+    def test_fallback_preview_roundtrip(self):
+        from openbrep.importers.blender_script.mesh_gdl import generate_mesh_3d
+        from openbrep.gdl_previewer import preview_3d_script
+
+        mesh = run_mesh_capture(NON_LOFT_CODE)
+        res = preview_3d_script(generate_mesh_3d(mesh, source_name="T"))
+        self.assertEqual(len(res.meshes), 1)
+        # 1 quad (2 tris) + 4 tris = 6 triangles
+        self.assertEqual(len(res.meshes[0].i), 6)
+        self.assertEqual(res.warnings, [])
+
+    def test_converter_falls_back_for_non_loft(self):
+        from openbrep.hsf_project import ScriptType
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _ir = convert_blender_script(NON_LOFT_CODE, output_dir=tmp)
+            gdl = project.get_script(ScriptType.SCRIPT_3D)
+            self.assertIn("VERT ", gdl)
+            self.assertIn("BODY -1", gdl)
+            self.assertIn("非放样结构", gdl)
+            from openbrep.static_checker import StaticChecker
+            result = StaticChecker().check(project)
+            self.assertEqual(result.errors, [])
+
+    def test_loft_still_preferred_over_fallback(self):
+        code = (FIXTURES_DIR / "loft_mini.py").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _ir = convert_blender_script(code, output_dir=tmp)
+            from openbrep.hsf_project import ScriptType
+            gdl = project.get_script(ScriptType.SCRIPT_3D)
+            self.assertIn("RULED{2}", gdl)
+            self.assertNotIn("PGON", gdl)
+
+
 if __name__ == "__main__":
     unittest.main()

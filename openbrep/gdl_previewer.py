@@ -775,10 +775,11 @@ class _PreviewRuntime:
             vals = self._eval_args(args_raw, line_no)
             if vals is not None and len(vals) >= 3:
                 n_edges = int(round(float(vals[0])))
-                if n_edges >= 3 and n_edges <= len(vals) - 2:
+                # PGON n, vect, status, edge1..edgen — edges start at index 3
+                if n_edges >= 3 and n_edges <= len(vals) - 3:
                     edge_ids: list[int] = []
                     for i in range(n_edges):
-                        eid = int(round(float(vals[2 + i])))
+                        eid = int(round(float(vals[3 + i])))
                         if abs(eid) - 1 < len(self._edges):
                             edge_ids.append(eid)
                         else:

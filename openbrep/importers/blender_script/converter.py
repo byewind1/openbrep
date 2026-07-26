@@ -45,6 +45,7 @@ def convert_blender_script(
     function_name: Optional[str] = None,
     object_name: Optional[str] = None,
     scale: float = 1.0,
+    script_path: Optional[str] = None,
 ) -> tuple[HSFProject, IRScript]:
     """
     Convert a Blender Python script to an HSF project on disk.
@@ -56,6 +57,8 @@ def convert_blender_script(
         object_name: HSF object name (None → derived from script).
         scale: Coordinate multiplier for mesh/loft mode (e.g. 0.001
             for millimetre-based scripts). Primitive mode is unaffected.
+        script_path: Source file path when known — mesh/loft mode uses
+            it to resolve sibling imports during shim execution.
 
     Returns:
         (project, ir) — the saved HSFProject and the IRScript.
@@ -69,7 +72,7 @@ def convert_blender_script(
 
     if not _has_primitive(ir.body):
         if _has_bmesh_marker(code):
-            return _convert_mesh_loft(code, output_dir, object_name, scale)
+            return _convert_mesh_loft(code, output_dir, object_name, scale, script_path)
         raise ValueError(
             f"函数 {ir.function_name} 中没有可转换的几何操作"
             "（需要 bpy.ops.mesh.primitive_*_add 图元调用，"
@@ -106,16 +109,26 @@ def convert_blender_script(
     return project, ir
 
 
-def probe_object_name(code: str, function_name: Optional[str] = None) -> str:
+def probe_object_name(
+    code: str,
+    function_name: Optional[str] = None,
+    script_path: Optional[str] = None,
+) -> str:
     """Best-effort object name for *code* without full conversion.
 
     Primitive mode → target function name; mesh/loft mode → the
-    script's ``OBJ_NAME`` constant (or ``bs2g_mesh``).
+    script's ``OBJ_NAME`` constant, else the source file stem, else
+    ``bs2g_mesh``.
     """
     ir = parse_blender_script(code, target_function=function_name)
     if _has_primitive(ir.body) or not _has_bmesh_marker(code):
         return ir.function_name
-    return _mesh_object_name(code) or "bs2g_mesh"
+    name = _mesh_object_name(code)
+    if name:
+        return name
+    if script_path:
+        return Path(script_path).stem
+    return "bs2g_mesh"
 
 
 # ── Mode routing helpers ────────────────────────────────────
@@ -151,35 +164,62 @@ def _convert_mesh_loft(
     output_dir: str,
     object_name: Optional[str],
     scale: float,
+    script_path: Optional[str] = None,
 ) -> tuple[HSFProject, IRScript]:
-    """Convert a bmesh-based script: execute → detect loft → RULED GDL."""
-    from openbrep.importers.blender_script.loft_detect import detect_loft
+    """Convert a bmesh-based script: execute → loft or mesh dump → GDL.
+
+    Recognisable loft structure → RULED{2} chain (editable geometry).
+    Anything else → VERT/EDGE/PGON/BODY topology dump (baked but
+    universal), with a header note explaining the fallback.
+    """
+    from openbrep.importers.blender_script.loft_detect import (
+        LoftDetectError,
+        detect_loft,
+    )
     from openbrep.importers.blender_script.loft_gdl import (
         generate_loft_3d,
         loft_bbox_params,
     )
     from openbrep.importers.blender_script.mesh_capture import run_mesh_capture
+    from openbrep.importers.blender_script.mesh_gdl import (
+        generate_mesh_3d,
+        mesh_bbox_params,
+    )
 
-    mesh = run_mesh_capture(code)
-    model = detect_loft(mesh)
+    mesh = run_mesh_capture(code, script_path=script_path)
 
-    name = object_name or _mesh_object_name(code) or "bs2g_mesh"
+    name = object_name or _mesh_object_name(code)
+    if name is None and script_path:
+        name = Path(script_path).stem
+    if not name:
+        name = "bs2g_mesh"
     if name.startswith("<"):
         name = "bs2g_mesh"
 
+    try:
+        model = detect_loft(mesh)
+    except LoftDetectError as exc:
+        gdl_3d = generate_mesh_3d(
+            mesh,
+            scale=scale,
+            source_name=name,
+            note=f"非放样结构（{exc}），已用任意网格拓扑兜底（几何烤死）",
+        )
+        bbox = mesh_bbox_params(mesh, scale)
+    else:
+        gdl_3d = generate_loft_3d(model, scale=scale, source_name=name)
+        bbox = loft_bbox_params(model, scale)
+
     project = HSFProject(name=name, work_dir=output_dir)
 
-    a, b, h = loft_bbox_params(model, scale)
+    a, b, h = bbox
     project.parameters = [
         GDLParameter("A", "Length", "Width", a, is_fixed=True),
         GDLParameter("B", "Length", "Depth", b, is_fixed=True),
         GDLParameter("ZZYZX", "Length", "Height", h, is_fixed=True),
     ]
 
-    project.set_script(
-        ScriptType.SCRIPT_3D,
-        generate_loft_3d(model, scale=scale, source_name=name),
-    )
+    project.set_script(ScriptType.SCRIPT_3D, gdl_3d)
     project.set_script(ScriptType.SCRIPT_2D, generate_fallback_2d())
 
     project.save_to_disk()
@@ -193,6 +233,7 @@ def convert_blender_file(
     output_dir: str,
     function_name: Optional[str] = None,
     object_name: Optional[str] = None,
+    scale: float = 1.0,
 ) -> tuple[HSFProject, IRScript]:
     """Convenience wrapper: read a .py file and convert it."""
     code = Path(script_path).read_text(encoding="utf-8")
@@ -201,4 +242,6 @@ def convert_blender_file(
         output_dir=output_dir,
         function_name=function_name,
         object_name=object_name,
+        scale=scale,
+        script_path=script_path,
     )
