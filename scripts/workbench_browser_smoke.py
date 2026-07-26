@@ -211,6 +211,7 @@ def run_smoke(
         compile_interaction_ok = False
         preview_interaction_ok = False
         resize_interaction_ok = False
+        resize_debug: dict = {}
         if api_ready and project_loaded and web_ready:
             try:
                 with sync_playwright() as p:
@@ -280,6 +281,18 @@ def run_smoke(
                                     and widened_toolbar_rows < initial_toolbar_rows
                                     and narrowed_toolbar_rows >= widened_toolbar_rows
                                 )
+                                resize_debug = {
+                                    "initial_right_w": initial_right_box["width"],
+                                    "widened_right_w": widened_right_box["width"],
+                                    "narrowed_right_w": narrowed_right_box["width"] if narrowed_right_box else None,
+                                    "initial_editor_w": initial_editor_box["width"],
+                                    "narrowed_editor_w": narrowed_editor_box["width"],
+                                    "widened_editor_w": widened_editor_box["width"] if widened_editor_box else None,
+                                    "initial_toolbar_w": initial_toolbar_actions_box["width"],
+                                    "widened_toolbar_w": widened_toolbar_actions_box["width"],
+                                    "narrowed_toolbar_w": narrowed_toolbar_actions_box["width"] if narrowed_toolbar_actions_box else None,
+                                    "rows": [initial_toolbar_rows, widened_toolbar_rows, narrowed_toolbar_rows],
+                                }
                         preview_controls_ok = body_has_preview_controls(body)
                         page.get_by_role("button", name=re.compile(r"Expand|展开")).click()
                         page.wait_for_function(
@@ -347,6 +360,7 @@ def run_smoke(
             "title": title,
             "body_prefix": body[:800],
             "browser_error": browser_error,
+            "resize_debug": resize_debug,
             "command": command,
             "output": output[-4000:],
         }
