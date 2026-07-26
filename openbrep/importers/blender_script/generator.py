@@ -236,9 +236,11 @@ def _emit_node(node: IRNode, indent: int) -> list[str]:
 def _emit_loop(node: IRLoop, indent: int) -> list[str]:
     """Emit a FOR/NEXT loop with balanced transforms inside."""
     pad = "    " * indent
-    inner = "    " * (indent + 1)
 
-    lines = [f"{pad}FOR {node.var_name} = {node.start} TO {node.end}"]
+    header = f"{pad}FOR {node.var_name} = {node.start} TO {node.end}"
+    if node.step:
+        header += f" STEP {node.step}"
+    lines = [header]
 
     # Group and emit body
     groups = _group_nodes(node.body)

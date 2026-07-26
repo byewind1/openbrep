@@ -109,7 +109,7 @@ def f():
         transforms = [n for n in ir.body if isinstance(n, IRTransform)]
         self.assertEqual(len(transforms), 1)
         self.assertEqual(transforms[0].kind, "translate")
-        self.assertIn("1", transforms[0].value)
+        self.assertEqual(transforms[0].components, ("1", "2", "3"))
 
     def test_scale_transform(self):
         code = '''
@@ -149,8 +149,8 @@ def f(n=4):
         loops = [n for n in ir.body if isinstance(n, IRLoop)]
         self.assertEqual(len(loops), 1)
         self.assertEqual(loops[0].var_name, "i")
-        self.assertEqual(loops[0].start, "1")
-        self.assertEqual(loops[0].end, "n")
+        self.assertEqual(loops[0].start, "0")
+        self.assertEqual(loops[0].end, "n - 1")
         # Loop body contains a primitive
         prims = [n for n in loops[0].body if isinstance(n, IRPrimitive)]
         self.assertEqual(len(prims), 1)
@@ -164,7 +164,7 @@ def f():
         ir = parse_blender_script(code)
         loops = [n for n in ir.body if isinstance(n, IRLoop)]
         self.assertEqual(loops[0].start, "2")
-        self.assertEqual(loops[0].end, "10")
+        self.assertEqual(loops[0].end, "9")
 
     def test_parse_if_condition(self):
         code = '''
@@ -693,6 +693,147 @@ def f(height=2.0, n=4):
             from openbrep.hsf_project import ScriptType
             master = project.get_script(ScriptType.MASTER)
             self.assertIn("spacing", master)
+
+
+# ── P1-P4 correctness: range / unroll / vec3 ───────────────
+
+
+class TestRangeMapping(unittest.TestCase):
+
+    def test_range_maps_to_zero_based_for(self):
+        """range(4) must generate FOR i = 0 TO 3."""
+        code = '''
+def f():
+    for i in range(4):
+        bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        loops = [n for n in ir.body if isinstance(n, IRLoop)]
+        self.assertEqual(loops[0].start, "0")
+        self.assertEqual(loops[0].end, "3")
+
+    def test_loop_expression_needs_no_adjustment(self):
+        """spacing * (i + 1) must be emitted verbatim, no ±1 rewrite."""
+        code = '''
+def f(n=4, height=2.0):
+    spacing = height / (n + 1)
+    for i in range(n):
+        bpy.ops.mesh.primitive_cube_add(size=1)
+        obj = bpy.context.object
+        obj.location = (0, 0, spacing * (i + 1))
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("spacing * (i + 1)", gdl)
+
+    def test_range_with_start_stop(self):
+        """range(2, 6) generates FOR i = 2 TO 5."""
+        code = '''
+def f():
+    for i in range(2, 6):
+        bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        loops = [n for n in ir.body if isinstance(n, IRLoop)]
+        self.assertEqual(loops[0].start, "2")
+        self.assertEqual(loops[0].end, "5")
+
+    def test_range_with_step(self):
+        """range(0, 10, 2) generates FOR i = 0 TO 9 STEP 2."""
+        code = '''
+def f():
+    for i in range(0, 10, 2):
+        bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        loops = [n for n in ir.body if isinstance(n, IRLoop)]
+        self.assertEqual(loops[0].start, "0")
+        self.assertEqual(loops[0].end, "9")
+        self.assertEqual(loops[0].step, "2")
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("STEP 2", gdl)
+
+    def test_nested_loop_indices_independent(self):
+        """Nested loops keep their own index variables."""
+        code = '''
+def f():
+    for i in range(3):
+        for j in range(2):
+            bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        outer = [n for n in ir.body if isinstance(n, IRLoop)]
+        self.assertEqual(outer[0].var_name, "i")
+        inner = [n for n in outer[0].body if isinstance(n, IRLoop)]
+        self.assertEqual(inner[0].var_name, "j")
+        self.assertEqual(inner[0].start, "0")
+        self.assertEqual(inner[0].end, "1")
+
+
+class TestListUnroll(unittest.TestCase):
+
+    def test_list_literal_unrolled(self):
+        """for side in [-1, 1] must produce two body copies, no FOR."""
+        code = '''
+def f(width=1.0):
+    for side in [-1, 1]:
+        bpy.ops.mesh.primitive_cube_add(size=1)
+        obj = bpy.context.object
+        obj.location = (side * width / 2, 0, 0)
+'''
+        ir = parse_blender_script(code)
+        # No IRLoop in body — it was unrolled
+        loops = [n for n in ir.body if isinstance(n, IRLoop)]
+        self.assertEqual(len(loops), 0)
+        # Two primitives (one per unrolled iteration)
+        prims = [n for n in ir.body if isinstance(n, IRPrimitive)]
+        self.assertEqual(len(prims), 2)
+        # GDL must not contain FOR side
+        gdl = generate_gdl_3d(ir)
+        self.assertNotIn("FOR side", gdl)
+        # Substituted values present
+        self.assertIn("-1 * width / 2", gdl)
+        self.assertIn("1 * width / 2", gdl)
+
+    def test_non_range_non_list_degrades(self):
+        """for x in some_func() must degrade to IRUnsupported."""
+        code = '''
+def f():
+    for x in enumerate([1, 2, 3]):
+        bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        unsupported = [n for n in ir.body if isinstance(n, IRUnsupported)]
+        self.assertTrue(len(unsupported) >= 1)
+
+
+class TestVec3Transforms(unittest.TestCase):
+
+    def test_add_no_parentheses(self):
+        """ADD must not have tuple parentheses."""
+        code = '''
+def f():
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.location = (1, 2, 3)
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ADD 1, 2, 3", gdl)
+        self.assertNotIn("ADD (", gdl)
+
+    def test_mul_no_parentheses(self):
+        """MUL must not have tuple parentheses."""
+        code = '''
+def f(w=1.0, d=0.5, h=2.0):
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.scale = (w, d, h)
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("MUL w, d, h", gdl)
+        self.assertNotIn("MUL (", gdl)
 
 
 if __name__ == "__main__":

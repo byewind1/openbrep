@@ -92,26 +92,25 @@ def map_transform(node: IRTransform) -> tuple[str, str]:
     Every push has a matching DEL 1 pop so the generator can
     guarantee stack balance.
     """
+    x, y, z = node.components
+
     if node.kind == "translate":
-        return f"ADD {node.value}", "DEL 1"
+        return f"ADD {x}, {y}, {z}", "DEL 1"
 
     if node.kind == "scale":
-        return f"MUL {node.value}", "DEL 1"
+        return f"MUL {x}, {y}, {z}", "DEL 1"
 
     if node.kind == "rotate":
         # Blender uses radians; GDL uses degrees.
-        # If the value looks like a numeric literal, convert at
-        # compile time; otherwise emit a runtime expression.
-        value = node.value
+        # Decompose (rx, ry, rz) into individual ROTX/ROTY/ROTZ.
+        # For now emit ROTZ with the z-component; full 3-axis
+        # rotation decomposition is a future enhancement.
         try:
-            rad = float(value)
+            rad = float(z)
             deg = math.degrees(rad)
             return f"ROTZ {deg:.6g}", "DEL 1"
         except (ValueError, TypeError):
             pass
-
-        # Tuple of 3 rotations → decompose into ROTX/ROTY/ROTZ
-        # For now, treat as ROTZ with runtime conversion
-        return f"ROTZ ({value}) * 180 / PI", "DEL 1"
+        return f"ROTZ ({z}) * 180 / PI", "DEL 1"
 
     return f"! [BS2G] Unknown transform: {node.kind}", ""

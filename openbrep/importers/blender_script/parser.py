@@ -19,6 +19,7 @@ Supported patterns (v1):
 from __future__ import annotations
 
 import ast
+import re
 from typing import Optional
 
 from openbrep.importers.blender_script.ir import (
@@ -134,6 +135,10 @@ def _parse_body(
     """Parse a list of statements into IR nodes."""
     nodes: list[IRNode] = []
     for stmt in stmts:
+        # Short list-literal for-loops get unrolled (e.g. for side in [-1, 1])
+        if isinstance(stmt, ast.For) and _is_short_list_literal(stmt.iter):
+            nodes.extend(_unroll_for(stmt, source, warnings))
+            continue
         node = _parse_stmt(stmt, source, warnings)
         if node is not None:
             nodes.append(node)
@@ -247,8 +252,8 @@ def _parse_assign(
     # obj.location = (...) / obj.scale = (...) / obj.rotation_euler = (...)
     if isinstance(target, ast.Attribute) and target.attr in _TRANSFORM_ATTRS:
         kind = _TRANSFORM_ATTRS[target.attr]
-        value = ast.unparse(stmt.value)
-        return IRTransform(kind=kind, axis=None, value=value, line=stmt.lineno)
+        components = _extract_vec3(stmt.value)
+        return IRTransform(kind=kind, components=components, line=stmt.lineno)
 
     # obj.attr = value (non-transform attribute)
     if isinstance(target, ast.Attribute):
@@ -283,40 +288,158 @@ def _parse_for(
     source: str,
     warnings: WarningCollector,
 ) -> IRNode:
-    """Parse a for loop."""
+    """Parse a for loop.  Only ``range()`` iterators are supported."""
     # Loop variable
     if isinstance(stmt.target, ast.Name):
         var_name = stmt.target.id
     else:
         var_name = ast.unparse(stmt.target)
 
-    # range(n) / range(start, end) / range(start, end, step)
-    start, end = _extract_range(stmt.iter)
+    # Only range() calls produce GDL FOR loops
+    if not _is_range_call(stmt.iter):
+        src_line = _get_source_line(source, stmt.lineno)
+        return warnings.add(
+            operation="for_non_range",
+            reason=f"Non-range iterator not supported: {ast.unparse(stmt.iter)}",
+            line=stmt.lineno,
+            source_line=src_line,
+        )
 
+    start, end, step = _extract_range(stmt.iter)
     body = _parse_body(stmt.body, source, warnings)
 
     return IRLoop(
         var_name=var_name,
         start=start,
         end=end,
+        step=step,
         body=body,
         line=stmt.lineno,
     )
 
 
-def _extract_range(iter_node: ast.expr) -> tuple[str, str]:
-    """Extract (start, end) from a range() call or other iterable."""
-    if isinstance(iter_node, ast.Call):
-        func_name = _dotted_name(iter_node.func)
-        if func_name == "range":
-            args = iter_node.args
-            if len(args) == 1:
-                return "1", ast.unparse(args[0])
-            if len(args) >= 2:
-                return ast.unparse(args[0]), ast.unparse(args[1])
+# ── List-literal loop unrolling ─────────────────────────────
 
-    # Fallback: use the expression as-is for the end
-    return "1", ast.unparse(iter_node)
+_MAX_UNROLL = 8
+
+
+def _is_short_list_literal(node: ast.expr) -> bool:
+    """True if *node* is a list/tuple literal with ≤ _MAX_UNROLL elements."""
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return False
+    return len(node.elts) <= _MAX_UNROLL
+
+
+def _is_range_call(node: ast.expr) -> bool:
+    """True if *node* is a ``range(...)`` call."""
+    if not isinstance(node, ast.Call):
+        return False
+    return _dotted_name(node.func) == "range"
+
+
+def _unroll_for(
+    stmt: ast.For,
+    source: str,
+    warnings: WarningCollector,
+) -> list[IRNode]:
+    """Unroll ``for x in [a, b, c]:`` into repeated body blocks.
+
+    Each occurrence of the loop variable in expression strings is
+    replaced with the corresponding literal value.
+    """
+    if isinstance(stmt.target, ast.Name):
+        var_name = stmt.target.id
+    else:
+        var_name = ast.unparse(stmt.target)
+
+    assert isinstance(stmt.iter, (ast.List, ast.Tuple))
+    literals = [ast.unparse(elt) for elt in stmt.iter.elts]
+
+    nodes: list[IRNode] = []
+    for lit in literals:
+        body = _parse_body(stmt.body, source, warnings)
+        nodes.extend(_substitute_var(body, var_name, lit))
+    return nodes
+
+
+def _substitute_var(
+    nodes: list[IRNode],
+    var_name: str,
+    value: str,
+) -> list[IRNode]:
+    """Replace bare *var_name* references with *value* in expression strings."""
+    pattern = re.compile(rf"\b{re.escape(var_name)}\b")
+
+    def sub(expr: str) -> str:
+        return pattern.sub(value, expr)
+
+    result: list[IRNode] = []
+    for node in nodes:
+        if isinstance(node, IRPrimitive):
+            new_args = {k: sub(v) for k, v in node.args.items()}
+            result.append(IRPrimitive(kind=node.kind, args=new_args, line=node.line))
+        elif isinstance(node, IRTransform):
+            result.append(IRTransform(
+                kind=node.kind,
+                components=tuple(sub(c) for c in node.components),
+                line=node.line,
+            ))
+        elif isinstance(node, IRAssignment):
+            result.append(IRAssignment(name=node.name, value=sub(node.value), line=node.line))
+        elif isinstance(node, IRLoop):
+            result.append(IRLoop(
+                var_name=node.var_name,
+                start=sub(node.start),
+                end=sub(node.end),
+                step=sub(node.step) if node.step else None,
+                body=_substitute_var(node.body, var_name, value),
+                line=node.line,
+            ))
+        elif isinstance(node, IRCondition):
+            result.append(IRCondition(
+                condition=sub(node.condition),
+                then_body=_substitute_var(node.then_body, var_name, value),
+                else_body=_substitute_var(node.else_body, var_name, value),
+                line=node.line,
+            ))
+        else:
+            result.append(node)
+    return result
+
+
+def _extract_range(iter_node: ast.expr) -> tuple[str, str, str | None]:
+    """Extract (start, inclusive_end, step) from a ``range()`` call.
+
+    Python ``range`` uses exclusive end; GDL ``FOR`` uses inclusive end.
+    We convert: ``range(n)`` → ``FOR i = 0 TO n - 1``.
+
+    Returns:
+        (start, end, step) where *end* is the inclusive GDL bound and
+        *step* is ``None`` when the step is 1.
+    """
+    assert isinstance(iter_node, ast.Call)
+    args = iter_node.args
+
+    if len(args) == 1:
+        # range(n) → 0 TO n-1
+        return "0", _minus_one(ast.unparse(args[0])), None
+
+    start = ast.unparse(args[0])
+    end = _minus_one(ast.unparse(args[1]))
+
+    step: str | None = None
+    if len(args) >= 3:
+        step = ast.unparse(args[2])
+
+    return start, end, step
+
+
+def _minus_one(expr: str) -> str:
+    """Produce ``expr - 1``, collapsing pure integer literals."""
+    try:
+        return str(int(expr) - 1)
+    except ValueError:
+        return f"{expr} - 1"
 
 
 def _parse_if(
@@ -358,6 +481,21 @@ def _get_source_line(source: str, lineno: int) -> str:
     if 0 < lineno <= len(lines):
         return lines[lineno - 1].strip()
     return ""
+
+
+def _extract_vec3(node: ast.expr) -> tuple[str, str, str]:
+    """Extract (x, y, z) expression strings from a tuple/list literal.
+
+    ``(width, depth, height)`` → ``("width", "depth", "height")``
+    Falls back to ``("expr", "0", "0")`` for non-tuple values.
+    """
+    if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 3:
+        return (
+            ast.unparse(node.elts[0]),
+            ast.unparse(node.elts[1]),
+            ast.unparse(node.elts[2]),
+        )
+    return (ast.unparse(node), "0", "0")
 
 
 def _collect_locals(nodes: list[IRNode], out: dict[str, str]) -> None:

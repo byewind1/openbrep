@@ -37,8 +37,7 @@ class IRTransform:
     """A transform assignment (location / scale / rotation_euler)."""
 
     kind: str               # "translate" | "scale" | "rotate"
-    axis: str | None        # "x" | "y" | "z" | None (all axes)
-    value: str              # expression string, may reference parameters
+    components: tuple[str, str, str]  # (x, y, z) expression strings
     line: int
 
 
@@ -47,8 +46,9 @@ class IRLoop:
     """A ``for`` loop (``for i in range(n)`` or ``for x in list``)."""
 
     var_name: str
-    start: str              # "1" for range(n), or literal
-    end: str                # expression string
+    start: str              # "0" for range(n)
+    end: str                # inclusive end expression (Python exclusive end - 1)
+    step: str | None = None # STEP value, None means step 1
     body: list[IRNode] = field(default_factory=list)
     line: int = 0
 
