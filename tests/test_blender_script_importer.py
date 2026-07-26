@@ -632,16 +632,16 @@ class TestWorkbenchBlenderImport(unittest.TestCase):
             {"script_content": "def f(w=1.0):\n    bpy.ops.mesh.primitive_cube_add(size=1)\n"},
         )
         self.assertTrue(result.get("ok"), f"Import failed: {result}")
-        self.assertIn("snapshot", result)
+        # Flat snapshot shape (same as import-gdl) for the frontend store
+        self.assertIn("project", result)
         self.assertIn("warnings", result)
         self.assertIn("parameters", result)
 
     def test_import_blender_empty_content(self):
+        """Empty content + no path falls through to the file chooser;
+        a cancelled chooser returns not-ok with cancelled=True."""
         from openbrep.workbench_api import WorkbenchSession
 
-        # Regression guard: empty content must be rejected BEFORE any
-        # file-chooser logic runs (an interim file-selector version of
-        # the import service broke this test by reaching the chooser).
         chooser_calls: list = []
         session = WorkbenchSession(
             config_path="nonexistent.toml",
@@ -654,7 +654,8 @@ class TestWorkbenchBlenderImport(unittest.TestCase):
         )
         self.assertFalse(result.get("ok"))
         self.assertIn("error", result)
-        self.assertEqual(chooser_calls, [])
+        self.assertTrue(result.get("cancelled"))
+        self.assertEqual(len(chooser_calls), 1)
 
     def test_import_blender_with_warnings(self):
         from openbrep.workbench_api import WorkbenchSession
@@ -668,6 +669,78 @@ class TestWorkbenchBlenderImport(unittest.TestCase):
         )
         self.assertTrue(result.get("ok"))
         self.assertTrue(len(result["warnings"]) >= 1)
+        self.assertIn("modifier_add", result["warnings"][0])
+
+    def test_import_blender_via_path_persists_next_to_file(self):
+        """File import must produce a durable project dir next to the script."""
+        from openbrep.workbench_api import WorkbenchSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "my_box.py"
+            script.write_text(
+                "def make_box(w=1.0):\n    bpy.ops.mesh.primitive_cube_add(size=w)\n",
+                encoding="utf-8",
+            )
+            session = WorkbenchSession(config_path=str(Path(tmp) / "config.toml"))
+            result = session.route(
+                "POST",
+                "/api/project/import-blender",
+                {"path": str(script)},
+            )
+            self.assertTrue(result.get("ok"), f"Import failed: {result}")
+            self.assertEqual(result["project"]["name"], "make_box")
+            self.assertEqual(result.get("imported_from"), str(script.resolve()))
+            project_dir = Path(tmp) / "make_box"
+            self.assertTrue((project_dir / "scripts" / "3d.gdl").exists())
+            self.assertTrue((project_dir / "paramlist.xml").exists())
+
+    def test_import_blender_via_file_chooser(self):
+        """No content and no path → native chooser supplies the .py file."""
+        from openbrep.workbench_api import WorkbenchSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "door.py"
+            script.write_text(
+                "def make_door(w=0.9):\n    bpy.ops.mesh.primitive_cube_add(size=w)\n",
+                encoding="utf-8",
+            )
+            purposes: list = []
+            session = WorkbenchSession(
+                config_path=str(Path(tmp) / "config.toml"),
+                file_chooser=lambda purpose: purposes.append(purpose)
+                or (str(script) if purpose == "blender" else ""),
+            )
+            result = session.route("POST", "/api/project/import-blender", {})
+            self.assertTrue(result.get("ok"), f"Import failed: {result}")
+            self.assertEqual(result["project"]["name"], "make_door")
+            self.assertEqual(purposes, ["blender"])
+
+    def test_import_blender_rejects_non_python_file(self):
+        from openbrep.workbench_api import WorkbenchSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "notes.txt"
+            script.write_text("def f():\n    pass\n", encoding="utf-8")
+            session = WorkbenchSession(config_path=str(Path(tmp) / "config.toml"))
+            result = session.route(
+                "POST",
+                "/api/project/import-blender",
+                {"path": str(script)},
+            )
+            self.assertFalse(result.get("ok"))
+            self.assertIn("Unsupported file type", result.get("error", ""))
+
+    def test_import_blender_missing_file(self):
+        from openbrep.workbench_api import WorkbenchSession
+
+        session = WorkbenchSession(config_path="nonexistent.toml")
+        result = session.route(
+            "POST",
+            "/api/project/import-blender",
+            {"path": "/nonexistent/ghost_script.py"},
+        )
+        self.assertFalse(result.get("ok"))
+        self.assertIn("not found", result.get("error", ""))
 
 
 # ── Converter edge cases ────────────────────────────────────
@@ -684,15 +757,15 @@ class TestConverterEdgeCases(unittest.TestCase):
     def test_convert_syntax_error_script(self):
         code = "def f(:\n    pass"
         with tempfile.TemporaryDirectory() as tmp:
-            project, ir = convert_blender_script(code, output_dir=tmp)
-            # Should not crash
-            self.assertTrue(len(ir.warnings) > 0)
+            # Guard: no convertible geometry → clear error, not an empty shell
+            with self.assertRaises(ValueError):
+                convert_blender_script(code, output_dir=tmp)
 
     def test_convert_no_function_script(self):
         code = "x = 1\ny = 2\n"
         with tempfile.TemporaryDirectory() as tmp:
-            project, ir = convert_blender_script(code, output_dir=tmp)
-            self.assertTrue(len(ir.warnings) > 0)
+            with self.assertRaises(ValueError):
+                convert_blender_script(code, output_dir=tmp)
 
     def test_master_script_generated_for_locals(self):
         code = '''

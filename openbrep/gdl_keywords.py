@@ -23,7 +23,7 @@ GROUP_COMMANDS: frozenset[str] = frozenset({
 GEOMETRY_COMMANDS: frozenset[str] = frozenset({
     "BLOCK", "SPHERE", "CONE", "CYLINDER", "CYLIND", "CYLIND_",
     "PRISM", "PRISM_", "BPRISM_", "CPRISM_", "FPRISM_", "SPRISM_",
-    "PYRAMID", "REVOLVE", "REVOLVE_", "EXTRUDE", "EXTRUDE_", "RULED_",
+    "PYRAMID", "REVOLVE", "REVOLVE_", "EXTRUDE", "EXTRUDE_", "RULED", "RULED_",
     "MESH", "COONS", "TUBE", "TUBEA", "TUBEB", "TUBE_", "PLANE", "PLANE_",
     "PGON", "PGON_", "POLY", "POLY_", "POLY2_", "POLY2_B", "POLYROOF_",
     "MASS_", "XFORMR", "XFORM",

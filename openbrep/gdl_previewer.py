@@ -828,6 +828,58 @@ class _PreviewRuntime:
             self.result_3d.wires.extend(wires)
             return True
 
+        if cmd == "RULED":
+            # Optional version tag: RULED{2} — treat the same for preview
+            rest = re.sub(r"^\{\d+\}\s*", "", args_text)
+            vals = self._eval_args(_split_args(rest), line_no)
+            if vals is None or len(vals) < 2:
+                self._warn(line_no, "RULED 参数解析失败")
+                return True
+            n = int(round(vals[0]))
+            mask = int(round(vals[1]))
+            need = 2 + 3 * n + 3 * n
+            if n < 2 or len(vals) < need:
+                self._warn(line_no, "RULED 节点数据不足，已跳过")
+                return True
+            base = [
+                (float(vals[2 + 3 * i]), float(vals[2 + 3 * i + 1]), 0.0)
+                for i in range(n)
+            ]
+            top_off = 2 + 3 * n
+            top = [
+                (
+                    float(vals[top_off + 3 * i]),
+                    float(vals[top_off + 3 * i + 1]),
+                    float(vals[top_off + 3 * i + 2]),
+                )
+                for i in range(n)
+            ]
+            # Open polylines are closed by the j3 side surface; closed
+            # polylines (first == last node) must not be closed twice.
+            first_b, last_b = base[0], base[-1]
+            first_t, last_t = top[0], top[-1]
+            tol = 1e-9
+            already_closed = (
+                abs(first_b[0] - last_b[0]) <= tol
+                and abs(first_b[1] - last_b[1]) <= tol
+                and abs(first_t[0] - last_t[0]) <= tol
+                and abs(first_t[1] - last_t[1]) <= tol
+                and abs(first_t[2] - last_t[2]) <= tol
+            )
+            mesh, wires = _make_ruled_mesh(
+                base,
+                top,
+                self._offset(),
+                closed=not already_closed,
+                cap_base=bool(mask & 1),
+                cap_top=bool(mask & 2),
+                transform=self._A,
+                source_ref=_source_ref_3d(line_no, cmd),
+            )
+            self.result_3d.meshes.append(mesh)
+            self.result_3d.wires.extend(wires)
+            return True
+
         return False
 
     def _eval_args(self, args_raw: list[str], line_no: int) -> list[float] | None:
@@ -1337,6 +1389,70 @@ def _make_sphere_mesh(
     wires.append(equator + [equator[0]])
 
     return _build_mesh("SPHERE", verts, faces, source_ref=source_ref), wires
+
+
+def _make_ruled_mesh(
+    base: list[Point3D],
+    top: list[Point3D],
+    offset: Point3D,
+    *,
+    closed: bool = True,
+    cap_base: bool = False,
+    cap_top: bool = False,
+    transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+    source_ref: PreviewSourceRef | None = None,
+) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
+    """Ruled surface between two polylines of equal length (GDL RULED).
+
+    ``base`` nodes are given in the local x-y plane (z=0), ``top`` nodes
+    are a space curve.  Quads connect corresponding nodes; caps (when the
+    RULED mask requests them) are centroid fans, valid for star-shaped
+    polylines such as airfoil profiles.
+    """
+    A = transform or _identity3()
+    n = len(base)
+
+    verts = [_apply_affine(p, A, offset) for p in base + top]
+
+    faces: list[tuple[int, int, int]] = []
+    span = n if closed else n - 1
+    for i in range(span):
+        j = (i + 1) % n
+        b1, b2 = i, j
+        t1, t2 = n + i, n + j
+        faces.append((b1, b2, t2))
+        faces.append((b1, t2, t1))
+
+    if cap_base:
+        cx = sum(p[0] for p in base) / n
+        cy = sum(p[1] for p in base) / n
+        cz = sum(p[2] for p in base) / n
+        verts.append(_apply_affine((cx, cy, cz), A, offset))
+        c = len(verts) - 1
+        for i in range(span):
+            j = (i + 1) % n
+            faces.append((c, j, i))
+
+    if cap_top:
+        cx = sum(p[0] for p in top) / n
+        cy = sum(p[1] for p in top) / n
+        cz = sum(p[2] for p in top) / n
+        verts.append(_apply_affine((cx, cy, cz), A, offset))
+        c = len(verts) - 1
+        for i in range(span):
+            j = (i + 1) % n
+            faces.append((c, n + i, n + j))
+
+    wires: list[list[Point3D]] = []
+    base_loop = [verts[i] for i in range(n)]
+    top_loop = [verts[n + i] for i in range(n)]
+    if closed:
+        base_loop = base_loop + [base_loop[0]]
+        top_loop = top_loop + [top_loop[0]]
+    wires.append(base_loop)
+    wires.append(top_loop)
+
+    return _build_mesh("RULED", verts, faces, source_ref=source_ref), wires
 
 
 def _make_prism_mesh(

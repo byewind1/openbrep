@@ -11,19 +11,17 @@ import re
 import tempfile
 from pathlib import Path
 
+from openbrep.hsf_project import ScriptType
 from openbrep.importers.blender_script.converter import convert_blender_script
-from openbrep.importers.blender_script.generator import generate_gdl_3d
-from openbrep.importers.blender_script.parser import parse_blender_script
 from openbrep.static_checker import StaticChecker
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "blender"
 
 
 def generate_3d_for_fixture(fixture_name: str) -> str:
-    """Parse a fixture script and return its generated 3d.gdl text."""
-    code = (FIXTURES_DIR / fixture_name).read_text(encoding="utf-8")
-    ir = parse_blender_script(code)
-    return generate_gdl_3d(ir)
+    """Convert a fixture script and return its generated 3d.gdl text."""
+    project = convert_fixture_to_project(fixture_name)
+    return project.get_script(ScriptType.SCRIPT_3D)
 
 
 def convert_fixture_to_project(fixture_name: str):
@@ -35,7 +33,7 @@ def convert_fixture_to_project(fixture_name: str):
 
 def test_no_python_leakage_in_generated_gdl():
     """生成的 GDL 不能包含 Python API 调用"""
-    for fixture in ["simple_box.py", "bookshelf.py", "with_unsupported.py", "rotated_box.py"]:
+    for fixture in ["simple_box.py", "bookshelf.py", "with_unsupported.py", "rotated_box.py", "loft_mini.py"]:
         gdl = generate_3d_for_fixture(fixture)
         assert "bpy." not in gdl, f"{fixture} 泄漏 bpy"
         assert "bmesh." not in gdl, f"{fixture} 泄漏 bmesh"
@@ -46,7 +44,7 @@ def test_no_python_leakage_in_generated_gdl():
 
 def test_generated_gdl_passes_static_checker():
     """生成的 GDL 必须通过 StaticChecker 的 undefined_var 检查"""
-    for fixture in ["simple_box.py", "bookshelf.py", "rotated_box.py"]:
+    for fixture in ["simple_box.py", "bookshelf.py", "rotated_box.py", "loft_mini.py"]:
         project = convert_fixture_to_project(fixture)
         result = StaticChecker().check(project)
         undefined = [e for e in result.errors if e.check_type == "undefined_var"]

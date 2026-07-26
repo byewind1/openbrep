@@ -18,10 +18,10 @@ from openbrep.static_checker import StaticChecker
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "blender"
 
 # All fixtures must not crash
-ALL_FIXTURES = ["simple_box.py", "bookshelf.py", "with_unsupported.py", "rotated_box.py"]
+ALL_FIXTURES = ["simple_box.py", "bookshelf.py", "with_unsupported.py", "rotated_box.py", "loft_mini.py"]
 
 # Fixtures that must compile cleanly (no Python code leakage)
-COMPILE_FIXTURES = ["simple_box.py", "bookshelf.py", "rotated_box.py"]
+COMPILE_FIXTURES = ["simple_box.py", "bookshelf.py", "rotated_box.py", "loft_mini.py"]
 
 # Fixtures that only need to not crash (they contain unsupported ops)
 NOCAHS_FIXTURES = ["with_unsupported.py"]

@@ -263,6 +263,78 @@ DEL 3
         self.assertLess(max(max(abs(y) for y in mesh.y) for mesh in res.meshes), 1.0)
 
 
+class TestRuledPreview(unittest.TestCase):
+
+    def test_ruled_basic_square_loft(self):
+        """RULED{2} between two squares → one mesh, closed quad strip."""
+        script = """\
+RULED{2} 4, 52,
+    0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+    0, 0, 2, 1, 0, 2, 1, 1, 2, 0, 1, 2
+"""
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        mesh = res.meshes[0]
+        self.assertEqual(mesh.name, "RULED")
+        self.assertEqual(len(mesh.x), 8)
+        # Closed strip: 4 quads → 8 triangles, no caps (mask 52 = j3+j5+j6)
+        self.assertEqual(len(mesh.i), 8)
+        self.assertEqual(res.warnings, [])
+
+    def test_ruled_caps_add_centroid_fans(self):
+        """Mask j1+j2 adds base/top cap fans with centroid vertices."""
+        script = """\
+RULED{2} 4, 55,
+    0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+    0, 0, 2, 1, 0, 2, 1, 1, 2, 0, 1, 2
+"""
+        res = preview_3d_script(script)
+        mesh = res.meshes[0]
+        # 8 ring verts + 2 cap centroids
+        self.assertEqual(len(mesh.x), 10)
+        # 8 side tris + 4 base cap + 4 top cap
+        self.assertEqual(len(mesh.i), 16)
+
+    def test_ruled_multiline_continuation_and_addz(self):
+        """Trailing-comma continuation + ADDZ offset apply."""
+        script = """\
+ADDZ 100
+RULED 4, 52,
+    0, 0, 0,
+    1, 0, 0,
+    1, 1, 0,
+    0, 1, 0,
+    0, 0, 2,
+    1, 0, 2,
+    1, 1, 2,
+    0, 1, 2
+DEL 1
+"""
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(min(res.meshes[0].z), 100.0)
+        self.assertAlmostEqual(max(res.meshes[0].z), 102.0)
+
+    def test_ruled_no_more_unsupported_warning(self):
+        """Generated loft GDL (BS2G mesh mode) previews without warnings."""
+        from pathlib import Path
+        from openbrep.importers.blender_script.converter import convert_blender_script
+        import tempfile
+
+        code = (Path(__file__).parent / "fixtures" / "blender" / "loft_mini.py").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _ir = convert_blender_script(code, output_dir=tmp)
+            from openbrep.hsf_project import ScriptType
+            res = preview_3d_script(project.get_script(ScriptType.SCRIPT_3D))
+        # loft_mini: 3 rings → 2 RULED segments
+        self.assertEqual(len(res.meshes), 2)
+        self.assertEqual(res.warnings, [])
+        # 8 pts/ring, closed, caps on first/last segment
+        self.assertEqual(len(res.meshes[0].x), 17)  # 16 ring verts + base centroid
+        self.assertEqual(len(res.meshes[1].x), 17)  # 16 + top centroid
+        self.assertAlmostEqual(min(res.meshes[0].z), 0.0)
+        self.assertAlmostEqual(max(res.meshes[-1].z), 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -626,11 +626,13 @@ def _choose_file(purpose: str = "openbrep") -> str:
         "compiler": "Choose LP_XMLConverter",
         "gdl": "Import GDL script",
         "gsm": "Import GSM object",
+        "blender": "Import Blender script",
     }
     extensions = {
         "compiler": [],
         "gdl": ["gdl"],
         "gsm": ["gsm"],
+        "blender": ["py"],
     }
     return str(choose_file(title=titles.get(purpose, "Choose OpenBrep file"), extensions=extensions.get(purpose)) or "")
 
