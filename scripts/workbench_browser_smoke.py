@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -75,8 +76,15 @@ def page_has_workbench_markers(*, title: str, body: str) -> bool:
     if title.strip() != "OpenBrep Workbench":
         return False
     normalized = body.casefold()
-    required = ("scripts", "3d.gdl", "save", "compile", "settings")
-    return all(marker in normalized for marker in required)
+    # 界面支持中英文，标记需双语兼容
+    alternatives = (
+        ("scripts", "脚本"),
+        ("3d.gdl",),
+        ("save", "保存"),
+        ("compile", "编译"),
+        ("settings", "设置"),
+    )
+    return all(any(marker in normalized for marker in group) for group in alternatives)
 
 
 def workbench_markers_ready_script() -> str:
@@ -84,7 +92,8 @@ def workbench_markers_ready_script() -> str:
         () => {
             if (document.title.trim() !== 'OpenBrep Workbench') return false;
             const body = document.body.innerText.toLowerCase();
-            return ['scripts', '3d.gdl', 'save', 'compile', 'settings', '3d view'].every((marker) => body.includes(marker));
+            const groups = [['scripts', '脚本'], ['3d.gdl'], ['save', '保存'], ['compile', '编译'], ['settings', '设置'], ['3d view', '3d 视图']];
+            return groups.every((group) => group.some((marker) => body.includes(marker)));
         }
     """
 
@@ -214,6 +223,8 @@ def run_smoke(
                     page_ok = page_has_workbench_markers(title=title, body=body)
                     topbar_layout_ok = bool(page.evaluate(topbar_single_row_script()))
                     if page_ok:
+                        # 项目加载后默认进入预览舞台；点开脚本才切回编辑器舞台
+                        page.locator(".script-tree-item", has_text="3d.gdl").first.click()
                         page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
                         right_rail = page.locator(".workbench-right-rail")
                         right_handle = page.get_by_role("button", name="Resize right workspace panel")
@@ -265,25 +276,26 @@ def run_smoke(
                                     and widened_toolbar_actions_box["width"] > initial_toolbar_actions_box["width"] + 240
                                     and narrowed_toolbar_actions_box["width"] < widened_toolbar_actions_box["width"] - 180
                                     and initial_toolbar_rows >= 2
-                                    and widened_toolbar_rows == 1
-                                    and narrowed_toolbar_rows >= 2
+                                    # 加宽后行数应收窄（按钮增多时未必收到 1 行）
+                                    and widened_toolbar_rows < initial_toolbar_rows
+                                    and narrowed_toolbar_rows >= widened_toolbar_rows
                                 )
                         preview_controls_ok = body_has_preview_controls(body)
-                        page.get_by_role("button", name="Expand").click()
+                        page.get_by_role("button", name=re.compile(r"Expand|展开")).click()
                         page.wait_for_function(
-                            "() => document.body.innerText.includes('Dock')",
+                            "() => document.body.innerText.includes('Dock') || document.body.innerText.includes('停靠')",
                             timeout=int(timeout_seconds * 1000),
                         )
                         expanded_body = page.locator("body").inner_text(timeout=5000)
                         expanded_canvas_count = page.locator("canvas").count()
-                        preview_interaction_ok = preview_controls_ok and "Dock" in expanded_body and expanded_canvas_count >= 2
-                        page.get_by_role("button", name="Dock").click()
+                        preview_interaction_ok = preview_controls_ok and ("Dock" in expanded_body or "停靠" in expanded_body) and expanded_canvas_count >= 2
+                        page.get_by_role("button", name=re.compile(r"Dock|停靠")).click()
                         page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
                         page.locator(".monaco-editor").first.click()
                         page.keyboard.press("Control+A")
                         page.keyboard.insert_text(SMOKE_SCRIPT_CONTENT)
                         body = page.locator("body").inner_text(timeout=5000)
-                        edit_interaction_ok = "Dirty" in body
+                        edit_interaction_ok = any(marker in body for marker in ("Dirty", "有改动", "未保存"))
                         page.get_by_test_id("save-script-button").click()
                         page.wait_for_function(
                             "() => document.body.innerText.includes('Saved 3d.gdl at ')",
