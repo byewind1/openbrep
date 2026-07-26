@@ -14,11 +14,15 @@ Supported patterns (v1):
   - ``for i in range(n):``
   - ``if cond: / else:``
   - simple variable assignments
+  - ``math.`` calls translated to GDL equivalents (SIN/COS/PI/…);
+    unmappable math degrades to IRUnsupported instead of silent drop
+  - dead-store elimination: assignments never referenced are dropped
 """
 
 from __future__ import annotations
 
 import ast
+import copy
 import re
 from typing import Optional
 
@@ -99,9 +103,11 @@ def parse_blender_script(
     params = extract_parameters(func_def)
     body = _parse_body(func_def.body, code, warnings)
 
-    # Collect local variable assignments for the local_vars dict
+    # Collect local variable assignments for the local_vars dict,
+    # then drop assignments whose value is never referenced.
     local_vars: dict[str, str] = {}
     _collect_locals(body, local_vars)
+    _eliminate_dead_vars(body, local_vars)
 
     return IRScript(
         function_name=func_def.name,
@@ -168,6 +174,10 @@ def _parse_stmt(
     if isinstance(stmt, ast.If):
         return _parse_if(stmt, source, warnings)
 
+    # ── import math — supported implicitly (math.* is translated) ──
+    if isinstance(stmt, ast.Import) and any(a.name == "math" for a in stmt.names):
+        return None
+
     # ── Fallback: unsupported ───────────────────────────────
     src_line = _get_source_line(source, stmt.lineno)
     return warnings.add(
@@ -193,7 +203,15 @@ def _parse_call_stmt(
         func_name = parts[-1]
 
         if func_name in _PRIMITIVE_KINDS:
-            return _parse_primitive(call, _PRIMITIVE_KINDS[func_name], lineno)
+            try:
+                return _parse_primitive(call, _PRIMITIVE_KINDS[func_name], lineno)
+            except _UnmappableMath as exc:
+                return warnings.add(
+                    operation=f"primitive({func_name})",
+                    reason=str(exc),
+                    line=lineno,
+                    source_line=_get_source_line(source, lineno),
+                )
 
         # bpy.ops.object.modifier_add(...) and other bpy.ops calls
         if "bpy" in parts and "ops" in parts:
@@ -225,10 +243,10 @@ def _parse_primitive(
     args: dict[str, str] = {}
     for kw in call.keywords:
         if kw.arg is not None:
-            args[kw.arg] = ast.unparse(kw.value)
+            args[kw.arg] = _unparse_gdl(kw.value)
     # Positional args (rare but possible)
     for i, pos in enumerate(call.args):
-        args[f"_pos{i}"] = ast.unparse(pos)
+        args[f"_pos{i}"] = _unparse_gdl(pos)
     return IRPrimitive(kind=kind, args=args, line=lineno)
 
 
@@ -252,7 +270,20 @@ def _parse_assign(
     # obj.location = (...) / obj.scale = (...) / obj.rotation_euler = (...)
     if isinstance(target, ast.Attribute) and target.attr in _TRANSFORM_ATTRS:
         kind = _TRANSFORM_ATTRS[target.attr]
-        components = _extract_vec3(stmt.value)
+        try:
+            if kind == "rotate":
+                # Angle units are resolved parser-side (radians → degrees);
+                # the mapper emits ROT verbatim and never converts.
+                components = _extract_rotation_vec3(stmt.value)
+            else:
+                components = _extract_vec3(stmt.value)
+        except _UnmappableMath as exc:
+            return warnings.add(
+                operation=f"transform({target.attr})",
+                reason=str(exc),
+                line=stmt.lineno,
+                source_line=_get_source_line(source, stmt.lineno),
+            )
         return IRTransform(kind=kind, components=components, line=stmt.lineno)
 
     # obj.attr = value (non-transform attribute)
@@ -267,9 +298,22 @@ def _parse_assign(
 
     # Simple variable: name = expr
     if isinstance(target, ast.Name):
+        try:
+            value_str = _unparse_gdl(stmt.value)
+        except _UnmappableMath as exc:
+            # Unmappable math.* — degrade to a warning, never silently drop
+            return warnings.add(
+                operation=f"assign({target.id})",
+                reason=str(exc),
+                line=stmt.lineno,
+                source_line=_get_source_line(source, stmt.lineno),
+            )
+        # Filter Blender API references (bpy, bmesh) — not GDL
+        if _has_blender_api_ref(value_str):
+            return None
         return IRAssignment(
             name=target.id,
-            value=ast.unparse(stmt.value),
+            value=value_str,
             line=stmt.lineno,
         )
 
@@ -305,7 +349,15 @@ def _parse_for(
             source_line=src_line,
         )
 
-    start, end, step = _extract_range(stmt.iter)
+    try:
+        start, end, step = _extract_range(stmt.iter)
+    except _UnmappableMath as exc:
+        return warnings.add(
+            operation="for_range",
+            reason=str(exc),
+            line=stmt.lineno,
+            source_line=_get_source_line(source, stmt.lineno),
+        )
     body = _parse_body(stmt.body, source, warnings)
 
     return IRLoop(
@@ -422,14 +474,14 @@ def _extract_range(iter_node: ast.expr) -> tuple[str, str, str | None]:
 
     if len(args) == 1:
         # range(n) → 0 TO n-1
-        return "0", _minus_one(ast.unparse(args[0])), None
+        return "0", _minus_one(_unparse_gdl(args[0])), None
 
-    start = ast.unparse(args[0])
-    end = _minus_one(ast.unparse(args[1]))
+    start = _unparse_gdl(args[0])
+    end = _minus_one(_unparse_gdl(args[1]))
 
     step: str | None = None
     if len(args) >= 3:
-        step = ast.unparse(args[2])
+        step = _unparse_gdl(args[2])
 
     return start, end, step
 
@@ -448,7 +500,15 @@ def _parse_if(
     warnings: WarningCollector,
 ) -> IRNode:
     """Parse an if/else block."""
-    condition = ast.unparse(stmt.test)
+    try:
+        condition = _unparse_gdl(stmt.test)
+    except _UnmappableMath as exc:
+        return warnings.add(
+            operation="if_condition",
+            reason=str(exc),
+            line=stmt.lineno,
+            source_line=_get_source_line(source, stmt.lineno),
+        )
     then_body = _parse_body(stmt.body, source, warnings)
     else_body = _parse_body(stmt.orelse, source, warnings) if stmt.orelse else []
 
@@ -491,11 +551,175 @@ def _extract_vec3(node: ast.expr) -> tuple[str, str, str]:
     """
     if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 3:
         return (
-            ast.unparse(node.elts[0]),
-            ast.unparse(node.elts[1]),
-            ast.unparse(node.elts[2]),
+            _unparse_gdl(node.elts[0]),
+            _unparse_gdl(node.elts[1]),
+            _unparse_gdl(node.elts[2]),
         )
-    return (ast.unparse(node), "0", "0")
+    return (_unparse_gdl(node), "0", "0")
+
+
+# ── Rotation components: radians → degrees ──────────────────
+
+_ATOMIC_EXPR_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|-?\d+(?:\.\d+)?")
+
+
+def _is_math_call(node: ast.expr, fn: str) -> bool:
+    """True if *node* is ``math.<fn>(<single positional arg>)``."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "math"
+        and node.func.attr == fn
+        and len(node.args) == 1
+        and not node.keywords
+    )
+
+
+def _rotation_component(node: ast.expr) -> str:
+    """Convert one rotation_euler component to a GDL degrees expression.
+
+    Blender angles are radians, GDL angles are degrees.  The conversion
+    happens here (parser side) because only the parser can still see
+    whether the source expression was wrapped in ``math.radians()`` or
+    ``math.degrees()`` — both already denote degrees and pass through.
+    Everything else (literals, variables, complex expressions) is
+    conservatively treated as Blender-native radians.
+    """
+    if _is_math_call(node, "radians") or _is_math_call(node, "degrees"):
+        return _unparse_gdl(node.args[0])
+    text = _unparse_gdl(node)
+    # 0 radians == 0 degrees — keep it plain
+    if text in ("0", "0.0"):
+        return "0"
+    if _ATOMIC_EXPR_RE.fullmatch(text):
+        return f"{text} * 180 / PI"
+    return f"({text}) * 180 / PI"
+
+
+def _extract_rotation_vec3(node: ast.expr) -> tuple[str, str, str]:
+    """``rotation_euler`` tuple → (rx, ry, rz) degree expression strings."""
+    if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 3:
+        return (
+            _rotation_component(node.elts[0]),
+            _rotation_component(node.elts[1]),
+            _rotation_component(node.elts[2]),
+        )
+    return (_rotation_component(node), "0", "0")
+
+
+# ── math.* → GDL translation ────────────────────────────────
+
+
+class _UnmappableMath(Exception):
+    """A ``math.`` call/attribute has no GDL equivalent."""
+
+    def __init__(self, name: str):
+        self.name = name
+        super().__init__(f"No GDL equivalent for {name}")
+
+
+# math.<fn>(x) with a direct one-argument GDL equivalent
+_MATH_FUNC_MAP = {
+    "sin": "SIN",
+    "cos": "COS",
+    "tan": "TAN",
+    "sqrt": "SQR",
+    "floor": "INT",
+}
+
+# math.<fn> names rewritten by _MathRewriter (bare references are
+# left in place and caught by the leftover check in _unparse_gdl)
+_MATH_KNOWN_FUNCS = frozenset(_MATH_FUNC_MAP) | {"radians", "degrees", "ceil"}
+
+_LEFTOVER_MATH_RE = re.compile(r"\bmath\.")
+
+
+class _MathRewriter(ast.NodeTransformer):
+    """Rewrite ``math.`` calls/attributes to GDL equivalents.
+
+    GDL angles are degrees, so ``math.radians(x)`` collapses to ``x``.
+    Raises :class:`_UnmappableMath` for math members with no mapping.
+    """
+
+    def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+        self.generic_visit(node)
+        if isinstance(node.value, ast.Name) and node.value.id == "math":
+            if node.attr == "pi":
+                return ast.copy_location(ast.Name(id="PI", ctx=ast.Load()), node)
+            if node.attr in _MATH_KNOWN_FUNCS:
+                # Function reference — handled by the enclosing visit_Call.
+                return node
+            raise _UnmappableMath(f"math.{node.attr}")
+        return node
+
+    def visit_Call(self, node: ast.Call) -> ast.expr:
+        self.generic_visit(node)
+        func = node.func
+        if not (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "math"
+        ):
+            return node
+        if len(node.args) != 1 or node.keywords:
+            raise _UnmappableMath(f"math.{func.attr}")
+        arg = node.args[0]
+        if func.attr == "radians":
+            return arg
+        if func.attr == "degrees":
+            inner = ast.unparse(arg)
+            if not isinstance(arg, (ast.Name, ast.Constant)):
+                inner = f"({inner})"
+            return _expr_template(f"{inner} * 180 / PI", node)
+        if func.attr == "ceil":
+            a = ast.unparse(arg)
+            return _expr_template(f"INT({a}) + (FRA({a}) > 0)", node)
+        if func.attr in _MATH_FUNC_MAP:
+            return ast.copy_location(
+                ast.Call(
+                    func=ast.Name(id=_MATH_FUNC_MAP[func.attr], ctx=ast.Load()),
+                    args=[arg],
+                    keywords=[],
+                ),
+                node,
+            )
+        raise _UnmappableMath(f"math.{func.attr}")
+
+
+def _expr_template(template: str, ref: ast.AST) -> ast.expr:
+    """Parse a small GDL expression template back into an AST node."""
+    return ast.copy_location(ast.parse(template, mode="eval").body, ref)
+
+
+def _unparse_gdl(node: ast.expr) -> str:
+    """Unparse *node* with ``math.`` translated to GDL equivalents.
+
+    Raises:
+        _UnmappableMath: the expression uses a math member with no GDL
+            equivalent, or a bare ``math.`` reference survives rewriting.
+    """
+    rewritten = _MathRewriter().visit(copy.deepcopy(node))
+    text = ast.unparse(rewritten)
+    if _LEFTOVER_MATH_RE.search(text):
+        raise _UnmappableMath("math.*")
+    return text
+
+
+# ── Blender API filtering ───────────────────────────────────
+
+_BLENDER_API_RE = re.compile(r'\b(bpy|bmesh)\.')
+
+
+def _has_blender_api_ref(expr_str: str) -> bool:
+    """Return True if *expr_str* references Blender APIs (bpy, bmesh)
+    that cannot appear in GDL.
+
+    ``math.`` is deliberately NOT filtered — it is translated to GDL
+    equivalents by :func:`_unparse_gdl`; dropping it would leave later
+    references to the variable undefined.
+    """
+    return bool(_BLENDER_API_RE.search(expr_str))
 
 
 def _collect_locals(nodes: list[IRNode], out: dict[str, str]) -> None:
@@ -508,3 +732,80 @@ def _collect_locals(nodes: list[IRNode], out: dict[str, str]) -> None:
         elif isinstance(node, IRCondition):
             _collect_locals(node.then_body, out)
             _collect_locals(node.else_body, out)
+
+
+# ── Dead-store elimination ──────────────────────────────────
+
+_IDENT_TOKEN_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+
+
+def _eliminate_dead_vars(body: list[IRNode], local_vars: dict[str, str]) -> None:
+    """Drop assignments whose value is never referenced (dead stores).
+
+    A variable is live when referenced by a non-assignment expression
+    (primitive arg, transform component, loop bound, condition) or by
+    the value of another live assignment (fixpoint).  Dead IRAssignment
+    nodes are pruned from *body* (in place) and from *local_vars*.
+    """
+    if not local_vars:
+        return
+    assigned = set(local_vars)
+
+    def refs(expr: str) -> set[str]:
+        return set(_IDENT_TOKEN_RE.findall(expr)) & assigned
+
+    live: set[str] = set()
+
+    def scan(nodes: list[IRNode]) -> None:
+        for node in nodes:
+            if isinstance(node, IRPrimitive):
+                for v in node.args.values():
+                    live.update(refs(v))
+            elif isinstance(node, IRTransform):
+                for c in node.components:
+                    live.update(refs(c))
+            elif isinstance(node, IRLoop):
+                live.update(refs(node.start))
+                live.update(refs(node.end))
+                if node.step:
+                    live.update(refs(node.step))
+                scan(node.body)
+            elif isinstance(node, IRCondition):
+                live.update(refs(node.condition))
+                scan(node.then_body)
+                scan(node.else_body)
+
+    scan(body)
+
+    # Propagate liveness through assignment values until fixpoint
+    changed = True
+    while changed:
+        changed = False
+        for name, value in local_vars.items():
+            if name not in live:
+                continue
+            for ref in refs(value):
+                if ref not in live:
+                    live.add(ref)
+                    changed = True
+
+    dead = assigned - live
+    if not dead:
+        return
+
+    for name in dead:
+        del local_vars[name]
+
+    def prune(nodes: list[IRNode]) -> None:
+        nodes[:] = [
+            node for node in nodes
+            if not (isinstance(node, IRAssignment) and node.name in dead)
+        ]
+        for node in nodes:
+            if isinstance(node, IRLoop):
+                prune(node.body)
+            elif isinstance(node, IRCondition):
+                prune(node.then_body)
+                prune(node.else_body)
+
+    prune(body)

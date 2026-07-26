@@ -8,6 +8,8 @@ transform stack is always balanced regardless of nesting depth.
 
 from __future__ import annotations
 
+import re
+
 from openbrep.hsf_project import GDLParameter
 from openbrep.importers.blender_script.ir import (
     IRAssignment,
@@ -45,15 +47,17 @@ def generate_gdl_3d(ir: IRScript) -> str:
     ]
 
     # Emit local variable assignments (derived values)
+    emitted_vars: set[str] = set()
     for name, value in ir.local_vars.items():
         lines.append(f"{name} = {value}")
+        emitted_vars.add(name)
     if ir.local_vars:
         lines.append("")
 
     # Group body nodes: associate transforms with their preceding primitive
     groups = _group_nodes(ir.body)
     for group in groups:
-        lines.extend(_emit_group(group, indent=0))
+        lines.extend(_emit_group(group, indent=0, emitted_vars=emitted_vars))
 
     lines.append("")
     lines.append("END")
@@ -124,14 +128,14 @@ def _group_nodes(nodes: list[IRNode]) -> list[_Group]:
 # ── Emission ────────────────────────────────────────────────
 
 
-def _emit_group(group: _Group, indent: int) -> list[str]:
+def _emit_group(group: _Group, indent: int, emitted_vars: set[str]) -> list[str]:
     """Emit a grouped or standalone node."""
     if isinstance(group, _PrimitiveGroup):
-        return _emit_primitive_group(group, indent)
-    return _emit_node(group.node, indent)
+        return _emit_primitive_group(group, indent, emitted_vars)
+    return _emit_node(group.node, indent, emitted_vars)
 
 
-def _emit_primitive_group(group: _PrimitiveGroup, indent: int) -> list[str]:
+def _emit_primitive_group(group: _PrimitiveGroup, indent: int, emitted_vars: set[str]) -> list[str]:
     """
     Emit a primitive with its transforms as a scoped block.
 
@@ -192,7 +196,7 @@ def _emit_primitive_group(group: _PrimitiveGroup, indent: int) -> list[str]:
     return lines
 
 
-def _emit_node(node: IRNode, indent: int) -> list[str]:
+def _emit_node(node: IRNode, indent: int, emitted_vars: set[str]) -> list[str]:
     """Emit a single IR node as GDL lines."""
     pad = "    " * indent
 
@@ -214,26 +218,41 @@ def _emit_node(node: IRNode, indent: int) -> list[str]:
         # Skip bpy.context bookkeeping
         if "bpy.context" in node.value:
             return []
+        # Skip already-emitted vars (dedup local_vars declarations)
+        if node.name in emitted_vars:
+            return []
+        emitted_vars.add(node.name)
         return [f"{pad}{node.name} = {node.value}"]
 
     if isinstance(node, IRLoop):
-        return _emit_loop(node, indent)
+        return _emit_loop(node, indent, emitted_vars)
 
     if isinstance(node, IRCondition):
-        return _emit_condition(node, indent)
+        return _emit_condition(node, indent, emitted_vars)
 
     if isinstance(node, IRUnsupported):
         return [
-            f"{pad}! [BS2G-UNSUPPORTED] {node.operation}",
-            f"{pad}! Reason: {node.reason}",
-            f"{pad}! Source line {node.line}: {node.source_line}",
+            f"{pad}! [BS2G-UNSUPPORTED] {_sanitize_comment(node.operation)}",
+            f"{pad}! Reason: {_sanitize_comment(node.reason)}",
+            f"{pad}! Source line {node.line}: {_sanitize_comment(node.source_line)}",
             f"{pad}! This section requires manual implementation",
         ]
 
     return [f"{pad}! [BS2G] Unhandled node: {type(node).__name__}"]
 
 
-def _emit_loop(node: IRLoop, indent: int) -> list[str]:
+# Dotted Python attribute paths (bpy.ops.x, math.log, …) must not appear
+# anywhere in generated GDL — not even in comments: the purity gate scans
+# the whole file for them.
+_PY_PATH_RE = re.compile(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b")
+
+
+def _sanitize_comment(text: str) -> str:
+    """Rewrite dotted Python paths in comment text as spaced words."""
+    return _PY_PATH_RE.sub(lambda m: m.group(0).replace(".", " "), text)
+
+
+def _emit_loop(node: IRLoop, indent: int, emitted_vars: set[str]) -> list[str]:
     """Emit a FOR/NEXT loop with balanced transforms inside."""
     pad = "    " * indent
 
@@ -245,13 +264,13 @@ def _emit_loop(node: IRLoop, indent: int) -> list[str]:
     # Group and emit body
     groups = _group_nodes(node.body)
     for group in groups:
-        lines.extend(_emit_group(group, indent + 1))
+        lines.extend(_emit_group(group, indent + 1, emitted_vars))
 
     lines.append(f"{pad}NEXT {node.var_name}")
     return lines
 
 
-def _emit_condition(node: IRCondition, indent: int) -> list[str]:
+def _emit_condition(node: IRCondition, indent: int, emitted_vars: set[str]) -> list[str]:
     """Emit an IF/THEN/ELSE/ENDIF block."""
     pad = "    " * indent
     inner = "    " * (indent + 1)
@@ -260,13 +279,13 @@ def _emit_condition(node: IRCondition, indent: int) -> list[str]:
 
     groups = _group_nodes(node.then_body)
     for group in groups:
-        lines.extend(_emit_group(group, indent + 1))
+        lines.extend(_emit_group(group, indent + 1, emitted_vars))
 
     if node.else_body:
         lines.append(f"{pad}ELSE")
         groups = _group_nodes(node.else_body)
         for group in groups:
-            lines.extend(_emit_group(group, indent + 1))
+            lines.extend(_emit_group(group, indent + 1, emitted_vars))
 
     lines.append(f"{pad}ENDIF")
     return lines

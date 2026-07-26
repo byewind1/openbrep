@@ -186,6 +186,8 @@ def f(flag=True):
 def f(height=2.0, n=4):
     spacing = height / (n + 1)
     bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.location = (0, 0, spacing)
 '''
         ir = parse_blender_script(code)
         assigns = [n for n in ir.body if isinstance(n, IRAssignment)]
@@ -380,6 +382,8 @@ def f(flag=True):
 def f(height=2.0, n=4):
     spacing = height / (n + 1)
     bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.location = (0, 0, spacing)
 '''
         ir = parse_blender_script(code)
         gdl = generate_gdl_3d(ir)
@@ -635,7 +639,14 @@ class TestWorkbenchBlenderImport(unittest.TestCase):
     def test_import_blender_empty_content(self):
         from openbrep.workbench_api import WorkbenchSession
 
-        session = WorkbenchSession(config_path="nonexistent.toml")
+        # Regression guard: empty content must be rejected BEFORE any
+        # file-chooser logic runs (an interim file-selector version of
+        # the import service broke this test by reaching the chooser).
+        chooser_calls: list = []
+        session = WorkbenchSession(
+            config_path="nonexistent.toml",
+            file_chooser=lambda *a, **k: chooser_calls.append(a) or "",
+        )
         result = session.route(
             "POST",
             "/api/project/import-blender",
@@ -643,6 +654,7 @@ class TestWorkbenchBlenderImport(unittest.TestCase):
         )
         self.assertFalse(result.get("ok"))
         self.assertIn("error", result)
+        self.assertEqual(chooser_calls, [])
 
     def test_import_blender_with_warnings(self):
         from openbrep.workbench_api import WorkbenchSession
@@ -687,6 +699,8 @@ class TestConverterEdgeCases(unittest.TestCase):
 def f(height=2.0, n=4):
     spacing = height / (n + 1)
     bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.location = (0, 0, spacing)
 '''
         with tempfile.TemporaryDirectory() as tmp:
             project, ir = convert_blender_script(code, output_dir=tmp)
@@ -834,6 +848,269 @@ def f(w=1.0, d=0.5, h=2.0):
         gdl = generate_gdl_3d(ir)
         self.assertIn("MUL w, d, h", gdl)
         self.assertNotIn("MUL (", gdl)
+
+
+# ── math.* → GDL translation ────────────────────────────────
+
+
+class TestMathTranslation(unittest.TestCase):
+
+    def test_math_pi_maps_to_PI(self):
+        code = '''
+def f():
+    p = math.pi
+    bpy.ops.mesh.primitive_cube_add(size=p)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(ir.local_vars.get("p"), "PI")
+
+    def test_math_radians_collapses_to_degrees(self):
+        """math.radians(x) → x (GDL angles are already degrees)."""
+        code = '''
+def f(a=30.0):
+    angle = math.radians(a)
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.rotation_euler = (0, 0, angle)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(ir.local_vars.get("angle"), "a")
+        transforms = [n for n in ir.body if isinstance(n, IRTransform)]
+        # Bare variable in rotation context: assumed radians (parser-side)
+        self.assertEqual(transforms[0].components[2], "angle * 180 / PI")
+
+    def test_math_degrees_maps_to_formula(self):
+        code = '''
+def f(a=1.5):
+    d = math.degrees(a)
+    bpy.ops.mesh.primitive_cube_add(size=d)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(ir.local_vars.get("d"), "a * 180 / PI")
+
+    def test_math_function_map(self):
+        """sin/cos/tan/sqrt/floor/ceil map to their GDL equivalents."""
+        for py_fn, gdl in [
+            ("sin", "SIN"), ("cos", "COS"), ("tan", "TAN"),
+            ("sqrt", "SQR"), ("floor", "INT"),
+        ]:
+            with self.subTest(fn=py_fn):
+                code = f'''
+def f(x=1.0):
+    v = math.{py_fn}(x)
+    bpy.ops.mesh.primitive_cube_add(size=v)
+'''
+                ir = parse_blender_script(code)
+                self.assertEqual(ir.local_vars.get("v"), f"{gdl}(x)")
+
+    def test_math_ceil_maps_to_int_fra(self):
+        code = '''
+def f(x=1.0):
+    v = math.ceil(x)
+    bpy.ops.mesh.primitive_cube_add(size=v)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(ir.local_vars.get("v"), "INT(x) + (FRA(x) > 0)")
+
+    def test_math_nested_calls(self):
+        code = '''
+def f():
+    v = math.sqrt(math.pi)
+    bpy.ops.mesh.primitive_cube_add(size=v)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(ir.local_vars.get("v"), "SQR(PI)")
+
+    def test_unmappable_math_degrades_to_warning(self):
+        """math.log has no GDL equivalent — warn, never silently drop."""
+        code = '''
+def f():
+    y = math.log(2)
+    bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(len(ir.warnings), 1)
+        self.assertIn("math.log", ir.warnings[0].reason)
+        self.assertNotIn("y", ir.local_vars)
+
+    def test_math_assignment_keeps_downstream_refs_defined(self):
+        """Regression: filtering math.* used to drop the assignment and
+        leave later references undefined."""
+        from openbrep.static_checker import StaticChecker
+
+        code = '''
+def f(a=30.0):
+    angle = math.radians(a)
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.rotation_euler = (0, 0, angle)
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            project, ir = convert_blender_script(code, output_dir=tmp)
+            result = StaticChecker().check(project)
+            undefined = [
+                e for e in result.errors if e.check_type == "undefined_var"
+            ]
+            self.assertEqual(undefined, [])
+
+    def test_import_math_inside_function_accepted(self):
+        code = '''
+def f():
+    import math
+    p = math.pi
+    bpy.ops.mesh.primitive_cube_add(size=p)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(len(ir.warnings), 0)
+        self.assertEqual(ir.local_vars.get("p"), "PI")
+
+
+# ── Dead-store elimination ──────────────────────────────────
+
+
+class TestDeadVarElimination(unittest.TestCase):
+
+    def test_unused_assignment_dropped(self):
+        code = '''
+def f():
+    unused = 123
+    bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(ir.local_vars, {})
+        assigns = [n for n in ir.body if isinstance(n, IRAssignment)]
+        self.assertEqual(assigns, [])
+        gdl = generate_gdl_3d(ir)
+        self.assertNotIn("unused", gdl)
+
+    def test_dead_chain_fully_dropped(self):
+        """a feeds only dead b → both dropped."""
+        code = '''
+def f():
+    a = 1
+    b = a + 1
+    bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(ir.local_vars, {})
+
+    def test_live_chain_fully_kept(self):
+        """a feeds live b → both kept."""
+        code = '''
+def f():
+    a = 1
+    b = a + 1
+    bpy.ops.mesh.primitive_cube_add(size=b)
+'''
+        ir = parse_blender_script(code)
+        self.assertEqual(set(ir.local_vars), {"a", "b"})
+
+
+# ── Literal extent simplification ───────────────────────────
+
+
+class TestLiteralExtentSimplification(unittest.TestCase):
+
+    def test_cylinder_literal_extents_computed(self):
+        """-(1)/2 style offsets must be computed to plain numbers."""
+        code = '''
+def f():
+    bpy.ops.mesh.primitive_cylinder_add(radius=1, depth=2)
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ADD -1, -1, -1", gdl)
+        self.assertNotIn("-(1)", gdl)
+        self.assertNotIn("/2", gdl)
+
+    def test_cube_literal_half_computed(self):
+        code = '''
+def f():
+    bpy.ops.mesh.primitive_cube_add(size=1)
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ADD -0.5, -0.5, -0.5", gdl)
+
+    def test_parametric_extent_keeps_parentheses(self):
+        """-(w)/2 stays as-is for parametric expressions."""
+        code = '''
+def f(w=1.0):
+    bpy.ops.mesh.primitive_cube_add(size=w)
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ADD -(w)/2, -(w)/2, -(w)/2", gdl)
+
+
+# ── Rotation units (parser-side radians → degrees) ─────────
+
+
+class TestRotationUnits(unittest.TestCase):
+
+    def test_math_radians_not_double_converted(self):
+        """rotation_euler = (0, 0, math.radians(30)) → ROTZ 30"""
+        code = '''
+def f():
+    import math
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.rotation_euler = (0, 0, math.radians(30))
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ROTZ 30", gdl)
+        self.assertNotIn("180 / PI", gdl)
+
+    def test_raw_radian_literal_converted_to_degrees(self):
+        """rotation_euler = (0, 0, 1.5708) → ROTZ 1.5708 * 180 / PI"""
+        code = '''
+def f():
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.rotation_euler = (0, 0, 1.5708)
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ROTZ 1.5708 * 180 / PI", gdl)
+
+    def test_math_degrees_passthrough(self):
+        """rotation_euler = (0, 0, math.degrees(x)) → ROTZ x"""
+        code = '''
+def f(x=1.5):
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.rotation_euler = (0, 0, math.degrees(x))
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ROTZ x", gdl)
+        self.assertNotIn("180 / PI", gdl)
+
+    def test_variable_rotation_assumes_radians(self):
+        """rotation_euler = (0, 0, angle) → ROTZ angle * 180 / PI"""
+        code = '''
+def f(angle=0.5):
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.rotation_euler = (0, 0, angle)
+'''
+        ir = parse_blender_script(code)
+        gdl = generate_gdl_3d(ir)
+        self.assertIn("ROTZ angle * 180 / PI", gdl)
+
+    def test_zero_rotation_stays_zero(self):
+        """0 radians == 0 degrees — no conversion noise."""
+        code = '''
+def f():
+    import math
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    obj = bpy.context.object
+    obj.rotation_euler = (0, 0, math.radians(45))
+'''
+        ir = parse_blender_script(code)
+        transforms = [n for n in ir.body if isinstance(n, IRTransform)]
+        self.assertEqual(transforms[0].components, ("0", "0", "45"))
 
 
 if __name__ == "__main__":

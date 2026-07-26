@@ -64,6 +64,9 @@ Your tasks:
    - MUST include HOTSPOT2 at corners (0,0), (A,0), (0,B), (A,B)
    - Use LINE2, RECT2, CIRCLE2 for additional 2D detail as appropriate
    - Reference parameters from the paramlist (A, B, ZZYZX, and user params)
+   - Comment rules: describe what the code does, not how you think about it.
+     No reasoning, no uncertainty ("为简化起见", "或者...？"), no self-
+     commentary. One comment per line, max 60 characters.
 
 2. If there are derived variables that need calculation, generate a
    Master script (scripts/1d.gdl) with those calculations.
