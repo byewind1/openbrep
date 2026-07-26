@@ -1332,6 +1332,7 @@ def help():
     table.add_row("obr memory export <dir>", "导出工作区记忆")
     table.add_row("obr memory clear", "清除工作区记忆")
     table.add_row("obr repair <project_dir>", "按错误日志修复脚本")
+    table.add_row("obr import-blender <script.py>", "从 Blender 脚本导入 HSF 项目")
     table.add_row("obr chat", "交互式聊天（可选带 --project）")
     table.add_row("obr --help", "查看完整参数帮助")
     console.print(table)
@@ -1354,6 +1355,120 @@ def benchmark(
     """运行 benchmark 测试套件"""
     console.print(f"[yellow]benchmark 命令暂未实现（suite={suite}）[/yellow]")
     console.print("请直接运行 tests/ 目录下的测试文件。")
+
+
+@app.command("import-blender")
+def import_blender(
+    script_path: str = typer.Argument(..., help="Blender Python 脚本路径 (.py)"),
+    output: str = typer.Option("./output", "--output", "-o", help="输出根目录"),
+    function: Optional[str] = typer.Option(None, "--function", "-f", help="要转换的函数名（默认取第一个）"),
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="HSF 对象名称（默认取函数名）"),
+    no_llm: bool = typer.Option(False, "--no-llm", help="跳过 LLM 补全，只生成 3D + paramlist"),
+    compile_after: bool = typer.Option(False, "--compile", help="转换后立即编译验证"),
+):
+    """从 Blender Python 脚本导入并转换为 HSF 项目"""
+    from openbrep.importers.blender_script.converter import convert_blender_file
+
+    script_file = Path(script_path)
+    if not script_file.exists():
+        err_console.print(f"[red]❌ 文件不存在：{script_path}[/red]")
+        raise typer.Exit(1)
+
+    if not script_file.suffix == ".py":
+        err_console.print(f"[yellow]⚠️  文件不是 .py 格式：{script_path}[/yellow]")
+
+    output_root = Path(output).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"\n[bold]OpenBrep BS2G[/bold] — Blender Script → GDL")
+    console.print(f"脚本: [cyan]{script_path}[/cyan]")
+    console.print(f"输出: [dim]{output_root}[/dim]\n")
+
+    try:
+        project, ir = convert_blender_file(
+            str(script_file),
+            output_dir=str(output_root),
+            function_name=function,
+            object_name=name,
+        )
+    except Exception as exc:
+        err_console.print(f"[red]❌ 转换失败：{exc}[/red]")
+        raise typer.Exit(1)
+
+    # Report parsing results
+    console.print(f"[green]✅ 解析完成[/green]")
+    console.print(f"   函数: [cyan]{ir.function_name}[/cyan]")
+    console.print(f"   参数: {len(ir.parameters)} 个")
+    for p in ir.parameters:
+        console.print(f"     [dim]{p.gdl_type:10s}[/dim] {p.name} = {p.default_value}")
+
+    if ir.warnings:
+        console.print(f"\n[yellow]⚠️  {len(ir.warnings)} 个不支持的操作：[/yellow]")
+        for w in ir.warnings:
+            console.print(f"     [dim]行 {w.line}:[/dim] {w.operation} — {w.reason}")
+
+    # LLM completion for 2D
+    if not no_llm:
+        try:
+            from openbrep.config import GDLAgentConfig
+            from openbrep.llm import LLMAdapter
+            from openbrep.importers.blender_script.llm_completion import complete_with_llm
+            from openbrep.paramlist_builder import build_paramlist_xml
+            from openbrep.hsf_project import ScriptType
+
+            config = GDLAgentConfig.load()
+            api_key = config.llm.resolve_api_key()
+            if api_key:
+                console.print("\n[dim]正在用 LLM 生成 2D 脚本...[/dim]")
+                llm = LLMAdapter(config.llm)
+                paramlist_xml = build_paramlist_xml(project.parameters)
+                gdl_3d = project.get_script(ScriptType.SCRIPT_3D)
+                scripts = complete_with_llm(ir, gdl_3d, paramlist_xml, llm)
+
+                for filename, content in scripts.items():
+                    script_name = filename.replace("scripts/", "")
+                    for st in ScriptType:
+                        if st.value == script_name:
+                            project.set_script(st, content)
+                            break
+
+                project.save_to_disk()
+                console.print("[green]✅ LLM 2D 补全完成[/green]")
+            else:
+                console.print("[yellow]⚠️  未配置 API Key，跳过 LLM 补全（使用保底 2D）[/yellow]")
+        except Exception as exc:
+            console.print(f"[yellow]⚠️  LLM 补全失败（使用保底 2D）：{exc}[/yellow]")
+    else:
+        console.print("[dim]已跳过 LLM 补全（--no-llm）[/dim]")
+
+    console.print(f"\n[green]📁 项目目录：{project.root}[/green]")
+    console.print(f"[dim]结构: {project.root}/scripts/  +  paramlist.xml  +  libpartdata.xml[/dim]\n")
+
+    # Optional compile
+    if compile_after:
+        _try_compile(project)
+
+
+def _try_compile(project):
+    """Attempt to compile the project and report results."""
+    try:
+        from openbrep.compiler import Compiler
+        from openbrep.config import GDLAgentConfig
+
+        config = GDLAgentConfig.load()
+        converter = config.converter_path or ""
+        if not converter:
+            console.print("[yellow]⚠️  未配置 LP_XMLConverter，跳过编译[/yellow]")
+            return
+
+        compiler = Compiler(converter)
+        result = compiler.compile(str(project.root))
+        if result.success:
+            console.print(f"[green]✅ 编译成功：{result.output_path}[/green]")
+        else:
+            err_console.print(f"[red]❌ 编译失败：{result.error}[/red]")
+    except Exception as exc:
+        console.print(f"[yellow]⚠️  编译跳过：{exc}[/yellow]")
 
 
 app.add_typer(revision_app, name="revision")

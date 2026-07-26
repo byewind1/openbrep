@@ -14,6 +14,7 @@ from openbrep.hsf_project import HSFProject
 from openbrep.llm import LLMAdapter
 from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
+from openbrep.workbench.blender_import_service import WorkbenchBlenderImportService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
 from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
@@ -94,6 +95,7 @@ class WorkbenchSession:
             real_compiler_factory=lambda converter_path: HSFCompiler(converter_path),
         )
         self.git_service = WorkbenchGitService(self)
+        self.blender_import_service = WorkbenchBlenderImportService(self)
         self.assistant_service = WorkbenchAssistantService(self)
         self.memory_service = WorkbenchMemoryService(self)
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
@@ -165,6 +167,9 @@ class WorkbenchSession:
 
     def import_gsm_file(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.import_gsm_file(body)
+
+    def import_blender_script(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.blender_import_service.import_blender_script(body)
 
     def create_project_from_prompt(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.create_project_from_prompt(body)
@@ -411,6 +416,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/import-gsm":
             return self.import_gsm_file(body)
 
+        if normalized_method == "POST" and route == "/api/project/import-blender":
+            return self.import_blender_script(body)
+
         if normalized_method == "POST" and route == "/api/project/create":
             return self.create_project_from_prompt(body)
 
@@ -465,6 +473,9 @@ class WorkbenchSession:
         if normalized_method == "GET" and route == "/api/settings/runtime":
             return self.settings_service.reload_runtime_settings()
 
+        if normalized_method == "GET" and route == "/api/settings/config-revision":
+            return self.settings_service.config_revision()
+
         if normalized_method == "POST" and route == "/api/settings/open-config":
             return self.open_config()
 
@@ -473,6 +484,9 @@ class WorkbenchSession:
 
         if normalized_method in ("PATCH", "PUT") and route == "/api/settings/llm/model":
             return self.settings_service.update_llm_model_only(body)
+
+        if normalized_method in ("PATCH", "PUT", "POST") and route == "/api/settings/llm/api-key":
+            return self.settings_service.update_llm_api_key(body)
 
         if normalized_method == "POST" and route == "/api/settings/llm":
             return self.update_llm_settings(body)
