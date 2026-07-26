@@ -316,7 +316,8 @@ DEL 1
         self.assertAlmostEqual(max(res.meshes[0].z), 102.0)
 
     def test_ruled_no_more_unsupported_warning(self):
-        """Generated loft GDL (BS2G mesh mode) previews without warnings."""
+        """Generated loft GDL (BS2G mesh mode) previews without warnings,
+        and consecutive segments weld into ONE smooth mesh."""
         from pathlib import Path
         from openbrep.importers.blender_script.converter import convert_blender_script
         import tempfile
@@ -326,14 +327,15 @@ DEL 1
             project, _ir = convert_blender_script(code, output_dir=tmp)
             from openbrep.hsf_project import ScriptType
             res = preview_3d_script(project.get_script(ScriptType.SCRIPT_3D))
-        # loft_mini: 3 rings → 2 RULED segments
-        self.assertEqual(len(res.meshes), 2)
+        # loft_mini: 3 rings → 2 RULED segments welded into one chain mesh
+        self.assertEqual(len(res.meshes), 1)
         self.assertEqual(res.warnings, [])
-        # 8 pts/ring, closed, caps on first/last segment
-        self.assertEqual(len(res.meshes[0].x), 17)  # 16 ring verts + base centroid
-        self.assertEqual(len(res.meshes[1].x), 17)  # 16 + top centroid
+        # 3 rings x 8 pts + base/top cap centroids
+        self.assertEqual(len(res.meshes[0].x), 26)
+        # 2 segments x 8 quads x 2 tris + 2 caps x 8 tris
+        self.assertEqual(len(res.meshes[0].i), 48)
         self.assertAlmostEqual(min(res.meshes[0].z), 0.0)
-        self.assertAlmostEqual(max(res.meshes[-1].z), 1.0)
+        self.assertAlmostEqual(max(res.meshes[0].z), 1.0)
 
 
 if __name__ == "__main__":

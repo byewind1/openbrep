@@ -145,7 +145,7 @@ export function PreviewViewport({
         </div>
       </div>
       <div className="canvas-wrap">
-        <Canvas>
+        <Canvas gl={{ logarithmicDepthBuffer: true }}>
           {cameraMode === 'perspective' ? (
             <PerspectiveCamera makeDefault fov={38} near={0.001} far={100000} />
           ) : (
@@ -156,11 +156,14 @@ export function PreviewViewport({
           <ambientLight intensity={0.7} />
           <directionalLight position={[3, -4, 5]} intensity={2.2} />
           <directionalLight position={[-4, 2, 3]} intensity={0.72} color="#38bdf8" />
-          {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
-          <axesHelper args={[1.4]} />
-          {preview?.meshes.map((mesh, index) => (
-            <MeshView key={`${mesh.name}-${index}`} mesh={mesh} index={index} showEdges={showEdges} displayMode={displayMode} />
-          ))}
+          {/* 大坐标模型（毫米级脚本）居中渲染，避免 float32 抖动与深度量化闪烁 */}
+          <group position={bounds.center}>
+            {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
+            <axesHelper args={[1.4]} />
+            {preview?.meshes.map((mesh, index) => (
+              <MeshView key={`${mesh.name}-${index}`} mesh={mesh} index={index} showEdges={showEdges} displayMode={displayMode} offset={bounds.center} />
+            ))}
+          </group>
         </Canvas>
       </div>
       <footer className="viewport-footer">
@@ -254,8 +257,10 @@ function fitCamera(
     perspective.fov = PREVIEW_CAMERA_FOV_DEGREES
   }
 
-  projectionCamera.near = 0.001
-  projectionCamera.far = Math.max(100000, distance * 100)
+  // Tight depth range around the model: with logarithmicDepthBuffer this
+  // mostly guards the ortho path; the far plane must still cover the model.
+  projectionCamera.near = Math.max(distance / 1000, 0.001)
+  projectionCamera.far = Math.max(distance * 20, 100)
   projectionCamera.updateProjectionMatrix()
 }
 
@@ -273,6 +278,7 @@ function partColor(index: number): Color {
 
 // X-ray ghost material: fragment-level fresnel so edge falloff survives
 // interpolation on large faces. f = (base + (1-base)·fresnel^sharp) × gain.
+// logdepthbuf chunks keep it consistent with logarithmicDepthBuffer.
 const xrayMaterial = new ShaderMaterial({
   uniforms: {
     uColor: { value: new Color(XRAY_COLOR) },
@@ -281,6 +287,8 @@ const xrayMaterial = new ShaderMaterial({
     uBase: { value: 0.06 },
   },
   vertexShader: /* glsl */ `
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
     varying vec3 vNormal;
     varying vec3 vViewDir;
     void main() {
@@ -288,9 +296,12 @@ const xrayMaterial = new ShaderMaterial({
       vNormal = normalize(mat3(modelMatrix) * normal);
       vViewDir = normalize(cameraPosition - worldPos.xyz);
       gl_Position = projectionMatrix * viewMatrix * worldPos;
+      #include <logdepthbuf_vertex>
     }
   `,
   fragmentShader: /* glsl */ `
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
     uniform vec3 uColor;
     uniform float uGain;
     uniform float uSharpness;
@@ -298,6 +309,7 @@ const xrayMaterial = new ShaderMaterial({
     varying vec3 vNormal;
     varying vec3 vViewDir;
     void main() {
+      #include <logdepthbuf_fragment>
       float fresnel = pow(1.0 - abs(dot(normalize(vNormal), normalize(vViewDir))), uSharpness);
       float alpha = clamp((uBase + (1.0 - uBase) * fresnel) * uGain, 0.0, 1.0);
       gl_FragColor = vec4(uColor, alpha);
@@ -313,19 +325,28 @@ function MeshView({
   index,
   showEdges,
   displayMode,
+  offset,
 }: {
   mesh: PreviewMesh
   index: number
   showEdges: boolean
   displayMode: PreviewDisplayMode
+  offset: [number, number, number]
 }) {
   const geometry = useMemo(() => {
     const next = new BufferGeometry()
-    next.setAttribute('position', new BufferAttribute(new Float32Array(mesh.vertices.flat()), 3))
+    const [ox, oy, oz] = offset
+    next.setAttribute(
+      'position',
+      new BufferAttribute(
+        new Float32Array(mesh.vertices.map(([x, y, z]) => [x - ox, y - oy, z - oz]).flat()),
+        3,
+      ),
+    )
     next.setIndex(new BufferAttribute(new Uint32Array(mesh.faces.flat()), 1))
     next.computeVertexNormals()
     return next
-  }, [mesh.faces, mesh.vertices])
+  }, [mesh.faces, mesh.vertices, offset])
 
   if (displayMode === 'wire') {
     // Hidden-line: only feature/boundary edges. A full triangle

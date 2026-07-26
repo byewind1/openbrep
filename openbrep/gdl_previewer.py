@@ -199,6 +199,14 @@ class _PreviewRuntime:
         self._edges: list[tuple[int, int]] = []  # (p1, p2) 0-based vertex indices
         self._pgons: list[list[int]] = []  # each is a list of signed edge IDs
 
+        # RULED chain welding state — consecutive RULED segments whose
+        # base ring coincides with the previous segment's top ring are
+        # merged into ONE mesh so vertex normals average smoothly across
+        # the joint (no visible banding on lofts).
+        self._ruled_chain_mesh: PreviewMesh3D | None = None
+        self._ruled_chain_top: list[Point3D] | None = None
+        self._ruled_chain_top_idx: list[int] | None = None
+
         self.result_2d = Preview2DResult()
         self.result_3d = Preview3DResult()
         self._warnings: list[str] = []
@@ -658,6 +666,8 @@ class _PreviewRuntime:
         cmd = m.group(1).upper()
         args_text = (m.group(2) or "").strip()
         args_raw = _split_args(args_text)
+        if cmd != "RULED":
+            self._reset_ruled_chain()
 
         if cmd in {"BLOCK", "BRICK"}:
             vals = self._eval_args(args_raw, line_no)
@@ -867,21 +877,125 @@ class _PreviewRuntime:
                 and abs(first_t[1] - last_t[1]) <= tol
                 and abs(first_t[2] - last_t[2]) <= tol
             )
-            mesh, wires = _make_ruled_mesh(
+            self._emit_ruled(
                 base,
                 top,
-                self._offset(),
+                mask=mask,
                 closed=not already_closed,
-                cap_base=bool(mask & 1),
-                cap_top=bool(mask & 2),
-                transform=self._A,
-                source_ref=_source_ref_3d(line_no, cmd),
+                line_no=line_no,
+                cmd=cmd,
             )
-            self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(wires)
             return True
 
         return False
+
+    # ── RULED chain welding ──────────────────────────────────
+
+    def _reset_ruled_chain(self) -> None:
+        self._ruled_chain_mesh = None
+        self._ruled_chain_top = None
+        self._ruled_chain_top_idx = None
+
+    def _emit_ruled(
+        self,
+        base: list[Point3D],
+        top: list[Point3D],
+        *,
+        mask: int,
+        closed: bool,
+        line_no: int,
+        cmd: str,
+    ) -> None:
+        """Emit RULED, welding onto the open chain mesh when the new base
+        ring coincides with the previous segment's top ring."""
+        n = len(base)
+        base_world = [_apply_affine(p, self._A, self._t) for p in base]
+        top_world = [_apply_affine(p, self._A, self._t) for p in top]
+
+        if self._try_weld_ruled(base_world, top_world, mask=mask, closed=closed):
+            return
+
+        mesh, wires = _make_ruled_mesh(
+            base,
+            top,
+            self._offset(),
+            closed=closed,
+            cap_base=bool(mask & 1),
+            cap_top=bool(mask & 2),
+            transform=self._A,
+            source_ref=_source_ref_3d(line_no, cmd),
+        )
+        self.result_3d.meshes.append(mesh)
+        self.result_3d.wires.extend(wires)
+        # Top ring world coords are the last n vertices before any cap centroid
+        self._ruled_chain_mesh = mesh
+        self._ruled_chain_top = top_world
+        self._ruled_chain_top_idx = list(range(n, 2 * n))
+
+    def _try_weld_ruled(
+        self,
+        base_world: list[Point3D],
+        top_world: list[Point3D],
+        *,
+        mask: int,
+        closed: bool,
+    ) -> bool:
+        """Append a segment to the open chain when rings coincide."""
+        mesh = self._ruled_chain_mesh
+        prev_top = self._ruled_chain_top
+        prev_idx = self._ruled_chain_top_idx
+        if mesh is None or prev_top is None or prev_idx is None:
+            return False
+        if len(prev_top) != len(base_world):
+            return False
+        for a, b in zip(base_world, prev_top):
+            if not (
+                math.isclose(a[0], b[0], rel_tol=1e-9, abs_tol=1e-12)
+                and math.isclose(a[1], b[1], rel_tol=1e-9, abs_tol=1e-12)
+                and math.isclose(a[2], b[2], rel_tol=1e-9, abs_tol=1e-12)
+            ):
+                return False
+
+        n = len(base_world)
+        idx_base = prev_idx
+        idx_top: list[int] = []
+        for p in top_world:
+            idx_top.append(len(mesh.x))
+            mesh.x.append(p[0])
+            mesh.y.append(p[1])
+            mesh.z.append(p[2])
+
+        span = n if closed else n - 1
+        for i in range(span):
+            j = (i + 1) % n
+            b1, b2 = idx_base[i], idx_base[j]
+            t1, t2 = idx_top[i], idx_top[j]
+            mesh.i.extend((b1, b1))
+            mesh.j.extend((b2, t2))
+            mesh.k.extend((t2, t1))
+
+        if mask & 2:  # top cap centroid fan on the new top ring
+            cx = sum(p[0] for p in top_world) / n
+            cy = sum(p[1] for p in top_world) / n
+            cz = sum(p[2] for p in top_world) / n
+            c = len(mesh.x)
+            mesh.x.append(cx)
+            mesh.y.append(cy)
+            mesh.z.append(cz)
+            for i in range(span):
+                j = (i + 1) % n
+                mesh.i.append(c)
+                mesh.j.append(idx_top[i])
+                mesh.k.append(idx_top[j])
+
+        top_loop = [(mesh.x[i], mesh.y[i], mesh.z[i]) for i in idx_top]
+        if closed:
+            top_loop = top_loop + [top_loop[0]]
+        self.result_3d.wires.append(top_loop)
+
+        self._ruled_chain_top = top_world
+        self._ruled_chain_top_idx = idx_top
+        return True
 
     def _eval_args(self, args_raw: list[str], line_no: int) -> list[float] | None:
         vals: list[float] = []
