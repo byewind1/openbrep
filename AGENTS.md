@@ -97,15 +97,23 @@ before opening large files.
 
 ## Non-Negotiable Rules
 
-1. Do not add substantial new logic to `ui/app.py`.
+1. Do not reintroduce imports of the retired Streamlit `ui/` package. It was
+   removed from the repo; code and tests must import from `openbrep.*` and pass
+   in a clean environment (CI). Local site-packages leftovers are not a safety net.
 2. Do not treat `.gsm` as editable source. HSF project directories are source.
 3. Do not bypass `HSFProject` for source state.
-4. Do not duplicate chat bubble rendering. Use `ui/chat_render.py`.
-5. Do not scatter new `st.session_state` defaults. Use `ui/session_defaults.py`.
-6. Do not rewrite `run_agent_generate` behavior without tests.
-7. Do not change generation intent routing order without updating tests.
-8. Do not remove compatibility wrappers in `ui/app.py` unless all callers/tests are migrated.
-9. Do not make Streamlit views instantiate LLMs, compilers, or pipelines.
+4. Do not rewrite `run_agent_generate` behavior without tests.
+5. Do not change generation intent routing order without updating tests.
+6. Do not silently drop geometry in the Blender importer — unsupported
+   operations degrade to explicit warnings or clear errors, never to silent
+   empty output.
+7. Keep bpy/bmesh/mathutils stubs in one place
+   (`openbrep/importers/blender_script/mesh_capture.py`, `mathutils_shim.py`).
+   Do not scatter ad-hoc fake modules.
+8. Do not add runtime dependencies without declaring them in `pyproject.toml`
+   (CI installs only declared deps).
+9. Do not silently write user configuration from incidental UI changes (draft
+   state + explicit save — see Project Mission).
 10. Do not break the current flat workspace layout.
 
 ## Architecture Hygiene
@@ -119,13 +127,15 @@ AI Workbench
 Preview Verification
 Knowledge Memory
 Archicad Adapter
-Streamlit Shell
+Blender Importer (BS2G)
+React Workbench Shell
 ```
 
 Rules:
 
-- `ui/app.py` is a composition root. Keep real behavior in testable modules.
-- Do not grow a controller by mixing unrelated seams. Split when a module starts
+- `openbrep/workbench_api.py` (`WorkbenchSession`) is the composition root.
+  Keep real behavior in testable service modules (`openbrep/workbench/*_service.py`).
+- Do not grow a service by mixing unrelated seams. Split when a module starts
   combining chat routing, source mutation, preview, knowledge, and adapter
   behavior.
 - Every extracted module needs a small contract test for its public interface.
@@ -134,47 +144,38 @@ Rules:
 ## Where Code Belongs
 
 ```text
-Streamlit page shell / CSS / optional dependency probing
-  ui/app_shell.py
+React workbench UI (pages, panels, store, actions)
+  frontend/src/workbench/*
+  frontend/src/components/*
+  frontend/src/state/*
 
-Streamlit panels
-  ui/views/*
-
-Chat turn orchestration
-  ui/chat_controller.py
-  ui/chat_runtime.py
-  ui/chat_paths.py
-
-Chat rendering
-  ui/chat_render.py
-
-Project import / load / compile workflow
-  ui/project_service.py
-  ui/project_io.py
-
-AI generation workflow
-  ui/generation_service.py
-  openbrep/runtime/pipeline.py
-
-Vision/image workflow
-  ui/chat_paths.py
-  ui/vision_controller.py
+Local API session (composition root) + backend services
+  openbrep/workbench_api.py
+  openbrep/workbench/*_service.py
 
 Tapir/Archicad workflow
-  ui/chat_tapir_events.py
-  ui/tapir_controller.py
-  ui/tapir_views.py
   openbrep/tapir_bridge.py
+  openbrep/tapir_controller.py
+  openbrep/workbench/tapir_service.py
+  openbrep/workbench_tapir.py
 
-UI formatting/parsing helpers
-  ui/view_models.py
+AI generation workflow
+  openbrep/runtime/pipeline.py
+
+Blender script → GDL importer (BS2G)
+  openbrep/importers/blender_script/*
+  primitive mode: parser.py / mapper.py / generator.py
+  mesh mode: mesh_capture.py / loft_detect.py / loft_gdl.py / mesh_gdl.py
+
+CLI (obr)
+  cli/main.py
 
 Domain logic
   openbrep/*
 ```
 
-If unsure, keep `ui/app.py` as a thin adapter and place real behavior in a
-testable module.
+If unsure, keep `workbench_api.py` as a thin adapter and place real behavior in
+a testable module.
 
 ## Required Tests
 
@@ -184,34 +185,49 @@ Run targeted tests while editing, then full tests before merge:
 python -m pytest tests/ -q
 ```
 
+Frontend (when touching `frontend/`):
+
+```bash
+cd frontend
+npx vitest run
+npx tsc --noEmit -p tsconfig.app.json
+```
+
 Common targeted sets:
 
 ```bash
-python -m pytest tests/test_generation_service.py tests/test_llm.py tests/test_llm_adapter.py tests/test_config_service.py -q
-python -m pytest tests/test_project_service.py tests/test_project_io.py tests/test_project_io_compile.py -q
-python -m pytest tests/test_chat_flow.py tests/test_chat_controller_single_panel.py -q
-python -m pytest tests/test_app_shell.py tests/test_session_defaults.py -q
+python -m pytest tests/test_blender_script_importer.py tests/test_bs2g_mesh_loft.py tests/test_bs2g_shim.py -q
+python -m pytest tests/test_bs2g_gdl_purity.py tests/test_bs2g_compile_gate.py -q
+python -m pytest tests/test_workbench_api.py tests/test_workbench_services.py -q
+python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.py -q
 ```
 
 ## Current Baseline
 
-As of 2026-04-27:
+As of 2026-07-26:
 
 ```text
-ui/app.py: 1588 lines
-test baseline: 474 passed, 6 subtests passed
+python tests: 950 passed, 28 subtests passed
+frontend: 153 passed (vitest) + tsc clean
+CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
 ```
+
+Architecture notes:
+
+- The Streamlit `ui/` package was retired (see `40aa6af` and later cleanup) and
+  must not be imported or resurrected. The shell is the React workbench
+  (`frontend/`) talking to a local API (`openbrep/workbench_api.py`), packaged
+  with a Tauri desktop shell (`src-tauri/`).
 
 Important architecture boundaries already exist:
 
 ```text
-ui/project_service.py
-ui/generation_service.py
-ui/app_shell.py
-ui/chat_controller.py
-ui/chat_render.py
-ui/session_defaults.py
-ui/views/*
+openbrep/workbench_api.py
+openbrep/workbench/*_service.py
+openbrep/runtime/pipeline.py
+openbrep/importers/blender_script/*
+frontend/src/workbench/*
+frontend/src/state/*
 ```
 
 ## Default Finish Sequence
@@ -246,6 +262,11 @@ working tree is clean
 ```
 
 ## Release / Installer SOP
+
+> ⚠️ 本节写于 Streamlit/PyInstaller 时代，安装包流水线正在向 Tauri
+> （`.github/workflows/release-tauri.yml`）迁移；涉及 Streamlit 打包的段落
+> （如 "Known PyInstaller/Streamlit packaging requirements"）已过期，发布前
+> 请与维护者确认当前流程。
 
 Only run this section when the user explicitly asks for a release, installer
 build, version bump, or public package update. Do not tag or publish a release
@@ -410,19 +431,20 @@ operation.
 
 ## Manual Risk
 
-Unit tests do not fully cover Streamlit UI behavior or real Archicad/Tapir
+Unit tests do not fully cover React workbench behavior or real Archicad/Tapir
 integration. For changes touching UI, compile, generation, vision, or Tapir,
 perform or clearly request manual smoke testing:
 
 ```text
-streamlit run ui/app.py
-generate simple object
+obr                                  # launch the workbench UI
+create simple object
 modify existing object
 explain without mutation
 import .gdl
 import .gsm if LP_XMLConverter is available
+import Blender .py (primitive script + bmesh loft script)
 load HSF directory
-preview 2D/3D
+preview 2D/3D (all display modes)
 compile versioned .gsm
 test Tapir/Archicad when available
 ```
