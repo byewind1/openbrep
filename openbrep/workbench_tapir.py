@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from ui import tapir_controller
+from openbrep import tapir_controller
 
 
 class TapirSessionState(dict):
