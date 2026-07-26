@@ -7,6 +7,7 @@ interface TopMenuProps {
   project: WorkbenchProject | null
   projectControls: ReactNode
   hasDraftChanges: boolean
+  currentModel?: string
   onApply: () => void
   onCompile: () => void
   onMockCompile: () => void
@@ -26,6 +27,7 @@ export function TopMenu({
   project,
   projectControls,
   hasDraftChanges,
+  currentModel,
   onApply,
   onCompile,
   onMockCompile,
@@ -105,6 +107,18 @@ export function TopMenu({
         </button>
       </nav>
       <div className="topbar-status">
+        {currentModel ? (
+          <button
+            type="button"
+            className="model-pill"
+            data-testid="current-model-pill"
+            title={t('topMenu.status.modelTitle')}
+            onClick={onOpenSettings}
+          >
+            <span className="model-pill-dot" aria-hidden="true" />
+            <span className="model-pill-name">{currentModel}</span>
+          </button>
+        ) : null}
         {lastError ? (
           <button type="button" className="error-pill" title={lastError} onClick={onClearError}>
             {lastError}

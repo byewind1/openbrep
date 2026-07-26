@@ -1365,6 +1365,7 @@ def import_blender(
     name: Optional[str] = typer.Option(None, "--name", "-n", help="HSF 对象名称（默认取函数名）"),
     no_llm: bool = typer.Option(False, "--no-llm", help="跳过 LLM 补全，只生成 3D + paramlist"),
     compile_after: bool = typer.Option(False, "--compile", help="转换后立即编译验证"),
+    mock: bool = typer.Option(False, "--mock", help="编译使用 Mock 模式（无需 LP_XMLConverter）"),
 ):
     """从 Blender Python 脚本导入并转换为 HSF 项目"""
     from openbrep.importers.blender_script.converter import convert_blender_file
@@ -1446,29 +1447,53 @@ def import_blender(
 
     # Optional compile
     if compile_after:
-        _try_compile(project)
+        # Inject mock flag into config for this compile run if --mock was passed
+        _try_compile(project, mock=mock)
 
 
-def _try_compile(project):
+def _try_compile(project, mock: bool = False):
     """Attempt to compile the project and report results."""
+    from openbrep.compiler import HSFCompiler, MockHSFCompiler
+    from openbrep.config import GDLAgentConfig
+
     try:
-        from openbrep.compiler import Compiler
-        from openbrep.config import GDLAgentConfig
-
         config = GDLAgentConfig.load()
-        converter = config.converter_path or ""
-        if not converter:
-            console.print("[yellow]⚠️  未配置 LP_XMLConverter，跳过编译[/yellow]")
-            return
-
-        compiler = Compiler(converter)
-        result = compiler.compile(str(project.root))
-        if result.success:
-            console.print(f"[green]✅ 编译成功：{result.output_path}[/green]")
-        else:
-            err_console.print(f"[red]❌ 编译失败：{result.error}[/red]")
     except Exception as exc:
-        console.print(f"[yellow]⚠️  编译跳过：{exc}[/yellow]")
+        console.print(f"[yellow]⚠️  无法加载配置：{exc}[/yellow]")
+        return
+
+    compiler_path = config.compiler.path or ""
+    compiler_mode = config.compiler.mode or "mock"
+
+    if mock or compiler_mode == "mock" or not compiler_path or not Path(compiler_path).is_file():
+        if not mock and (not compiler_path or not Path(compiler_path).is_file()):
+            console.print("[yellow]⚠️  未配置 LP_XMLConverter，已降级为 Mock 编译[/yellow]")
+            console.print("[yellow]   仅做语法检查，未产出可安装的 .gsm[/yellow]")
+            console.print("[yellow]   配置真实编译器：在 config.toml 设置 compiler.path[/yellow]")
+        compiler = MockHSFCompiler()
+    else:
+        try:
+            compiler = HSFCompiler(converter_path=compiler_path)
+        except Exception as exc:
+            console.print(f"[yellow]⚠️  编译器初始化失败，使用 Mock 模式：{exc}[/yellow]")
+            compiler = MockHSFCompiler()
+
+    hsf_dir = project.save_to_disk()
+    output_gsm = str(Path(hsf_dir) / "out.gsm")
+
+    try:
+        result = compiler.hsf2libpart(hsf_dir, output_gsm)
+    except Exception as exc:
+        console.print(f"[yellow]⚠️  编译异常：{exc}[/yellow]")
+        return
+
+    if result.success:
+        if compiler_mode == "mock" or mock:
+            console.print(f"[green]✅ Mock 编译通过（仅语法检查）[/green]")
+        else:
+            console.print(f"[green]✅ 编译成功[/green]")
+    else:
+        err_console.print(f"[red]❌ 编译失败：{result.stderr}[/red]")
 
 
 app.add_typer(revision_app, name="revision")

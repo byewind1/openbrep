@@ -1,7 +1,7 @@
 import type { CompilerSettings } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 
-export function createSettingsActions({ api, set }: WorkbenchActionContext) {
+export function createSettingsActions({ api, set, get }: WorkbenchActionContext) {
   function applyGitResult(result: Awaited<ReturnType<typeof api.fetchProjectGitStatus>>) {
     if (!result.ok) {
       set({ lastError: result.error ?? 'Git operation failed.', gitBusy: false })
@@ -51,15 +51,48 @@ export function createSettingsActions({ api, set }: WorkbenchActionContext) {
       const result = await api.updateLlmModel(model)
       if (result.ok && result.llm) {
         set({ llmSettings: result.llm })
-      } else {
-        set({ lastError: result.error ?? 'Model switch failed.' })
+        return
       }
+      // 抛给调用方（设置面板内联展示），同时写 lastError 供顶栏兜底
+      const error = result.error ?? 'Model switch failed.'
+      set({ lastError: error })
+      throw new Error(error)
+    },
+
+    async saveLlmApiKey(model: string, apiKey: string) {
+      const result = await api.updateLlmApiKey(model, apiKey)
+      if (result.ok && result.llm) {
+        set({ llmSettings: result.llm, lastError: null })
+        return result.llm
+      }
+      const error = result.error ?? 'API key was not saved.'
+      set({ lastError: error })
+      throw new Error(error)
     },
 
     async reloadRuntimeSettings() {
       const result = await api.fetchRuntimeSettings()
       set((state) => ({
         compilerSettings: result.compiler ?? state.compilerSettings,
+        llmSettings: result.llm ?? state.llmSettings,
+      }))
+    },
+
+    async pollConfigRevision() {
+      const revision = await api.fetchConfigRevision()
+      if (!revision.ok || !revision.revision) return
+      const previous = get().configRevision
+      if (previous === null) {
+        set({ configRevision: revision.revision })
+        return
+      }
+      if (revision.revision === previous) return
+      // config.toml was edited outside the workbench (e.g. adding a model/provider
+      // in a text editor). Re-read settings, but only apply the LLM slice so a
+      // background refresh never clobbers an unsaved compiler draft in the drawer.
+      const result = await api.fetchRuntimeSettings()
+      set((state) => ({
+        configRevision: revision.revision,
         llmSettings: result.llm ?? state.llmSettings,
       }))
     },

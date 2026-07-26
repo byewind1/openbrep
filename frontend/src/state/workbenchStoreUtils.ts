@@ -5,6 +5,7 @@ export const SCRIPT_FALLBACK_ORDER = ['3d.gdl', '2d.gdl', '1d.gdl', 'vl.gdl', 'p
 export function defaultLlmSettings(): LlmSettings {
   return {
     model: 'glm-4-flash',
+    model_available: true,
     models: ['glm-4-flash'],
     api_key: '',
     api_base: '',

@@ -11,6 +11,7 @@ interface ProjectOpenControlsProps {
   onBrowseProjectDirectory: () => void
   onImportGdlFile: () => void
   onImportGsmFile: () => void
+  onImportBlenderScript: () => void
   onSaveProjectAs: () => void
 }
 
@@ -23,6 +24,7 @@ export function ProjectOpenControls({
   onBrowseProjectDirectory,
   onImportGdlFile,
   onImportGsmFile,
+  onImportBlenderScript,
   onSaveProjectAs,
 }: ProjectOpenControlsProps) {
   const [path, setPath] = useState(project?.path ?? '')
@@ -115,6 +117,9 @@ export function ProjectOpenControls({
             </button>
             <button type="button" disabled={loading} onClick={() => runProjectAction(onImportGsmFile)}>
               Import GSM
+            </button>
+            <button type="button" disabled={loading} onClick={() => runProjectAction(onImportBlenderScript)}>
+              Import Blender
             </button>
           </div>
           <button type="button" disabled={loading || !project} onClick={() => runProjectAction(onSaveProjectAs)}>

@@ -19,6 +19,7 @@ describe('ProjectOpenControls', () => {
         onBrowseProjectDirectory={vi.fn()}
         onImportGdlFile={vi.fn()}
         onImportGsmFile={vi.fn()}
+        onImportBlenderScript={vi.fn()}
         onSaveProjectAs={vi.fn()}
       />,
     )
@@ -46,6 +47,7 @@ describe('ProjectOpenControls', () => {
         onBrowseProjectDirectory={vi.fn()}
         onImportGdlFile={vi.fn()}
         onImportGsmFile={vi.fn()}
+        onImportBlenderScript={vi.fn()}
         onSaveProjectAs={onSaveProjectAs}
       />,
     )
@@ -70,6 +72,7 @@ describe('ProjectOpenControls', () => {
         onBrowseProjectDirectory={vi.fn()}
         onImportGdlFile={vi.fn()}
         onImportGsmFile={vi.fn()}
+        onImportBlenderScript={vi.fn()}
         onSaveProjectAs={vi.fn()}
       />,
     )

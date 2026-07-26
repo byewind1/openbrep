@@ -56,6 +56,8 @@ interface SettingsDrawerProps {
   onCompilerSettingsChange: (settings: CompilerSettings) => Promise<CompilerSettings>
   onOpenConfig: () => void
   onTestLlmConnection: () => Promise<LlmConnectionTestResult>
+  onModelChange?: (model: string) => Promise<void>
+  onSaveLlmApiKey?: (model: string, apiKey: string) => Promise<unknown>
   onReloadRuntimeSettings: () => Promise<void>
   onBrowseCompilerFile: () => Promise<CompilerSettings | null>
   onBrowseOutputDirectory: () => Promise<CompilerSettings | null>
@@ -93,6 +95,8 @@ export function SettingsDrawer({
   onCompilerSettingsChange,
   onOpenConfig,
   onTestLlmConnection,
+  onModelChange,
+  onSaveLlmApiKey,
   onReloadRuntimeSettings,
   onBrowseCompilerFile,
   onBrowseOutputDirectory,
@@ -326,6 +330,8 @@ export function SettingsDrawer({
             llmSettings={llmSettings}
             onOpenConfig={onOpenConfig}
             onTestConnection={onTestLlmConnection}
+            onModelChange={onModelChange}
+            onSaveApiKey={onSaveLlmApiKey}
           />
         </SettingsSection>
 

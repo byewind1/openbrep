@@ -146,6 +146,7 @@ export function AssistantPanel({
     if (!onModelChange) return
     setModelSwitching(true)
     try { await onModelChange(model) }
+    catch { /* 切换失败已写入 store.lastError，由顶栏 error pill 展示 */ }
     finally {
       setModelSwitching(false); setPickerMode(null); setDraft('')
       textareaRef.current?.focus()

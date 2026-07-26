@@ -443,6 +443,56 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.model-pill {
+  max-width: 220px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.08);
+  color: var(--info);
+  padding: 0 9px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.model-pill:hover:not(:disabled) {
+  border-color: var(--info);
+  background: rgba(56, 189, 248, 0.16);
+  color: #7dd3fc;
+}
+
+.model-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-pill-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--info);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.9);
+  animation: model-pill-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes model-pill-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.72);
+  }
+}
+
 .primary-action {
   border-color: var(--accent);
   background: var(--accent);
@@ -1037,6 +1087,14 @@ button:focus-visible {
   border-color: var(--accent);
   background: var(--accent-muted);
   color: var(--accent-soft);
+}
+
+.viewport-toolbar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin-inline: 2px;
+  align-self: center;
 }
 
 .viewport-surface-rail .viewport-toolbar {
@@ -2223,6 +2281,22 @@ button:focus-visible {
   min-width: 0;
 }
 
+.settings-apikey-row {
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.settings-apikey-row > input {
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-apikey-row > button {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
 .settings-model-list {
   min-width: 0;
   max-height: 110px;
@@ -2244,12 +2318,73 @@ button:focus-visible {
   font-size: 11px;
   padding: 0 7px;
   border-radius: 3px;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 
 .settings-model-list button.active {
-  border-color: rgba(125, 211, 252, 0.72);
-  background: rgba(14, 165, 233, 0.2);
-  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent-soft);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.settings-model-list button.pending {
+  border: 1px dashed var(--accent);
+  color: var(--accent-soft);
+}
+
+.settings-model-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent-muted);
+  font-size: 12px;
+}
+
+.settings-model-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-model-confirm-actions button {
+  min-height: 22px;
+  font-size: 11px;
+  padding: 0 8px;
+}
+
+.settings-test-error-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-test-detail {
+  margin: 0;
+  padding: 8px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+  color: var(--status-error-text);
+  border: 1px solid var(--status-error-text);
+  border-radius: 5px;
+  background: rgba(2, 6, 23, 0.34);
+}
+
+.settings-copy-error-btn {
+  align-self: flex-start;
+  min-height: 22px;
+  font-size: 11px;
+  padding: 0 8px;
 }
 
 .settings-model-display {
@@ -2262,6 +2397,16 @@ button:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-model-display.valid {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.settings-model-display.invalid {
+  color: var(--status-error-text);
+  font-weight: 600;
 }
 
 .settings-open-config-btn {

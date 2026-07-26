@@ -21,6 +21,7 @@ export const en: Record<LocaleKey, string> = {
   'topMenu.status.params': 'Params',
   'topMenu.status.stable': 'Stable',
   'topMenu.status.savedAt': 'Saved {time}',
+  'topMenu.status.modelTitle': 'Current AI model · click to switch',
 
   // SettingsDrawer header
   'settings.header.title': 'Settings',
@@ -56,6 +57,26 @@ export const en: Record<LocaleKey, string> = {
   'settings.summary.knowledgeDash': '—',
   'settings.summary.knowledgeFreePro': 'Free {free} · Pro {pro}',
   'settings.summary.knowledgeFreeNoPro': 'Free {free} · No Pro',
+
+  // AiSettingsPanel
+  'settings.ai.modelLabel': 'Model',
+  'settings.ai.searchPlaceholder': 'Search models…',
+  'settings.ai.groupCustom': 'Custom',
+  'settings.ai.groupOfficial': 'Official',
+  'settings.ai.noMatch': 'No matching models',
+  'settings.ai.modelUnavailable': 'Current model is unavailable (missing API key or incomplete config). Use “Edit config.toml” below to set it up.',
+  'settings.ai.apiKeyLabel': 'API Key',
+  'settings.ai.apiKeyPlaceholder': 'Enter the API key for this model',
+  'settings.ai.apiKeyReplacePlaceholder': 'Key saved — enter a new one to replace',
+  'settings.ai.saveKey': 'Save key',
+  'settings.ai.keySaved': 'API key saved.',
+  'settings.ai.keySaveFailed': 'Failed to save API key.',
+  'settings.ai.confirmSwitch': 'Switch to {model}?',
+  'settings.ai.confirmYes': 'Confirm',
+  'settings.ai.confirmNo': 'Cancel',
+  'settings.ai.switchFailed': 'Model switch failed.',
+  'settings.ai.copyError': 'Copy error details',
+  'settings.ai.copied': 'Copied',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': 'Language',

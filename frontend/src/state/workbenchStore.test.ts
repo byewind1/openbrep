@@ -41,6 +41,14 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: ['decompiled'],
       compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
     }),
+    importBlenderScript: async () => ({
+      ok: true,
+      project: { name: 'blender box', source: 'blender_import', path: '/workspace/blender box' },
+      parameters: [],
+      preview: { meshes: [], wires: [], warnings: [] },
+      warnings: [],
+      compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+    }),
     exportHsfProject: async () => ({
       ok: true,
       saved_to: '/exports/Chair',
@@ -191,6 +199,25 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         max_retries: 5,
         assistant_settings: '',
       },
+    }),
+    fetchConfigRevision: async () => ({ ok: true, revision: 'rev-0' }),
+    fetchKnowledgeStatus: async () => ({
+      ok: true,
+      has_pro: false,
+      free_doc_count: 0,
+      pro_doc_count: 0,
+      pro_doc_names: [],
+      pro_dir: '',
+      pro_dir_exists: false,
+    }),
+    reloadKnowledge: async () => ({
+      ok: true,
+      has_pro: false,
+      free_doc_count: 0,
+      pro_doc_count: 0,
+      pro_doc_names: [],
+      pro_dir: '',
+      pro_dir_exists: false,
     }),
     openConfig: async () => ({ ok: true }),
     testLlmConnection: async () => ({ ok: true, message: 'LLM connection OK', model: 'glm-4-flash', duration_ms: 12 }),
@@ -354,6 +381,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     applyTapirParameterEdits: async () => ({ ok: true, message: '参数已应用到 1 个对象' }),
     reloadTapirLibraries: async () => ({ ok: false, message: 'Archicad 未运行或 Tapir 未安装' }),
     updateLlmModel: async () => ({ ok: true }),
+    updateLlmApiKey: async () => ({ ok: true }),
     ...overrides,
   }
 }
@@ -988,6 +1016,70 @@ test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
   expect(store.getState().compilerSettings.mode).toBe('lp')
   expect(store.getState().llmSettings.model).toBe('gpt-4.1-mini')
   expect(store.getState().llmSettings.assistant_settings).toBe('short answers')
+})
+
+test('pollConfigRevision records the revision on first poll without reloading', async () => {
+  const fetchRuntimeSettings = vi.fn(async () => ({ ok: true }))
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchConfigRevision: async () => ({ ok: true, revision: 'rev-1' }),
+      fetchRuntimeSettings,
+    }),
+  )
+
+  await store.getState().pollConfigRevision()
+
+  expect(store.getState().configRevision).toBe('rev-1')
+  expect(fetchRuntimeSettings).not.toHaveBeenCalled()
+})
+
+test('pollConfigRevision refreshes llm settings but not compiler when config file changes', async () => {
+  let revision = 'rev-1'
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchConfigRevision: async () => ({ ok: true, revision }),
+      fetchRuntimeSettings: async () => ({
+        ok: true,
+        compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
+        llm: {
+          model: 'deepseek-chat',
+          models: ['deepseek-chat'],
+          api_key: 'deepseek-key',
+          api_base: '',
+          max_retries: 5,
+          assistant_settings: '',
+        },
+      }),
+    }),
+  )
+
+  await store.getState().pollConfigRevision()
+  expect(store.getState().llmSettings.model).toBe('glm-4-flash') // untouched yet
+
+  // Simulate an external edit of config.toml.
+  revision = 'rev-2'
+  await store.getState().pollConfigRevision()
+
+  expect(store.getState().configRevision).toBe('rev-2')
+  expect(store.getState().llmSettings.model).toBe('deepseek-chat')
+  expect(store.getState().llmSettings.api_key).toBe('deepseek-key')
+  // Compiler settings must not be clobbered by a background refresh.
+  expect(store.getState().compilerSettings.mode).toBe('mock')
+})
+
+test('pollConfigRevision is a no-op when the revision is unchanged', async () => {
+  const fetchRuntimeSettings = vi.fn(async () => ({ ok: true }))
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchConfigRevision: async () => ({ ok: true, revision: 'rev-1' }),
+      fetchRuntimeSettings,
+    }),
+  )
+
+  await store.getState().pollConfigRevision()
+  await store.getState().pollConfigRevision()
+
+  expect(fetchRuntimeSettings).not.toHaveBeenCalled()
 })
 
 test('browses for LP_XMLConverter and returns draft compiler settings without saving', async () => {

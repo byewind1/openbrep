@@ -15,6 +15,7 @@ import type {
   MockCompileResponse,
   CompilerSettings,
   CompilerSettingsResult,
+  ConfigRevisionResult,
   DirectoryChoiceResult,
   FileChoiceResult,
   GenerateResult,
@@ -151,6 +152,18 @@ export async function importGdlFile(path = ''): Promise<WorkbenchSnapshot> {
 export async function importGsmFile(path = ''): Promise<WorkbenchSnapshot> {
   return requestJson<WorkbenchSnapshot>(
     '/api/project/import-gsm',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function importBlenderScript(path = ''): Promise<WorkbenchSnapshot> {
+  return requestJson<WorkbenchSnapshot>(
+    '/api/project/import-blender',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -406,6 +419,14 @@ export async function fetchRuntimeSettings(): Promise<RuntimeSettingsResult> {
   )
 }
 
+export async function fetchConfigRevision(): Promise<ConfigRevisionResult> {
+  return requestJson<ConfigRevisionResult>(
+    '/api/settings/config-revision',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
 export async function openConfig(): Promise<{ ok: boolean; error?: string }> {
   return requestJson(
     '/api/settings/open-config',
@@ -429,6 +450,18 @@ export async function updateLlmModel(model: string): Promise<LlmSettingsResult> 
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function updateLlmApiKey(model: string, apiKey: string): Promise<LlmSettingsResult> {
+  return requestJson<LlmSettingsResult>(
+    '/api/settings/llm/api-key',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, api_key: apiKey }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )

@@ -11,6 +11,7 @@ import type {
   CompileResult,
   CompilerSettings,
   CompilerSettingsResult,
+  ConfigRevisionResult,
   CreateProjectResult,
   DeleteMemoryLessonResult,
   DirectoryChoiceResult,
@@ -67,6 +68,7 @@ export interface WorkbenchApi {
   newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
+  importBlenderScript: (path?: string) => Promise<WorkbenchSnapshot>
   exportHsfProject: (parentDir?: string, name?: string) => Promise<HsfExportResult>
   saveProject: () => Promise<HsfExportResult>
   closeProject: () => Promise<WorkbenchSnapshot>
@@ -95,9 +97,11 @@ export interface WorkbenchApi {
   revealArtifact: (path?: string) => Promise<RevealArtifactResult>
   updateCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettingsResult>
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
+  fetchConfigRevision: () => Promise<ConfigRevisionResult>
   openConfig: () => Promise<{ ok: boolean; error?: string }>
   testLlmConnection: () => Promise<LlmConnectionTestResult>
   updateLlmModel: (model: string) => Promise<LlmSettingsResult>
+  updateLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettingsResult>
   fetchTapirStatus: () => Promise<TapirStatusResult>
   reloadTapirLibraries: () => Promise<TapirActionResult>
   syncTapirSelection: () => Promise<TapirActionResult>
@@ -150,6 +154,7 @@ export interface WorkbenchState {
   compileLog: string[]
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
+  configRevision: string | null
   chatAbortController: AbortController | null
   interruptedContext: { message: string; intent: string } | null
   activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
@@ -182,6 +187,7 @@ export interface WorkbenchState {
   newProject: () => Promise<void>
   importGdlFile: (path?: string) => Promise<void>
   importGsmFile: (path?: string) => Promise<void>
+  importBlenderScript: (path?: string) => Promise<void>
   exportHsfProject: (parentDir?: string, name?: string) => Promise<void>
   saveProject: () => Promise<void>
   saveProjectAs: (parentDir?: string, name?: string) => Promise<void>
@@ -193,9 +199,11 @@ export interface WorkbenchState {
   openConfig: () => Promise<void>
   testLlmConnection: () => Promise<LlmConnectionTestResult>
   switchLlmModel: (model: string) => Promise<void>
+  saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
   sendChat: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
   stopChat: () => void
   reloadRuntimeSettings: () => Promise<void>
+  pollConfigRevision: () => Promise<void>
   refreshTapirStatus: () => Promise<void>
   reloadTapirLibraries: () => Promise<void>
   syncTapirSelection: () => Promise<void>

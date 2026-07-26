@@ -43,6 +43,231 @@ def test_settings_service_updates_compiler_settings_and_persists_config(tmp_path
     assert reloaded.output_dir == str(tmp_path / "out")
 
 
+def test_settings_service_model_switch_resolves_api_key_for_new_model(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    config.llm.provider_keys = {"deepseek": "dk-old", "zhipu": "zk-new"}
+    session = SimpleNamespace(
+        llm_model="deepseek-chat",
+        llm_api_key="dk-old",
+        llm_api_base="",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=config_path,
+    )
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    response = service.update_llm_model_only({"model": "glm-4-flash"})
+
+    assert response["ok"] is True
+    assert session.llm_model == "glm-4-flash"
+    assert session.llm_api_key == "zk-new"
+    assert response["llm"]["model"] == "glm-4-flash"
+    assert response["llm"]["api_key"] == "zk-new"
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.llm.model == "glm-4-flash"
+
+
+def _clear_llm_env_keys(monkeypatch):
+    for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
+        monkeypatch.delenv(name, raising=False)
+
+
+def _make_settings_session(config, config_path):
+    return SimpleNamespace(
+        llm_model=config.llm.model,
+        llm_api_key=config.llm.resolve_api_key() or "",
+        llm_api_base=config.llm.resolve_api_base() or "",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=config_path,
+    )
+
+
+def test_settings_service_model_switch_reports_availability(tmp_path, monkeypatch):
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    config.llm.provider_keys = {"deepseek": "dk-old"}
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    available = service.update_llm_model_only({"model": "deepseek-chat"})
+    assert available["ok"] is True
+    assert available["llm"]["model_available"] is True
+
+    unavailable = service.update_llm_model_only({"model": "glm-4-flash"})
+    assert unavailable["ok"] is True
+    assert unavailable["llm"]["model"] == "glm-4-flash"
+    assert unavailable["llm"]["model_available"] is False
+    # 写回设置文件后，重新加载仍能看到新模型
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.llm.model == "glm-4-flash"
+
+
+def test_settings_service_ollama_model_available_without_api_key(tmp_path, monkeypatch):
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    response = service.update_llm_model_only({"model": "ollama/qwen3:8b"})
+    assert response["ok"] is True
+    assert response["llm"]["model_available"] is True
+
+
+def test_settings_service_update_api_key_official_model(tmp_path, monkeypatch):
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    assert service.llm_settings()["model_available"] is False
+    response = service.update_llm_api_key({"model": "glm-4-flash", "api_key": "zk-123"})
+    assert response["ok"] is True
+    assert response["llm"]["model_available"] is True
+    assert session.llm_api_key == "zk-123"
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.llm.provider_keys["zhipu"] == "zk-123"
+
+
+def test_settings_service_update_api_key_custom_provider(tmp_path, monkeypatch):
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "gpt-5.5"
+    config.llm.custom_providers = [{
+        "name": "ymg",
+        "protocol": "openai",
+        "base_url": "https://proxy.example.com/v1",
+        "api_key": "old-key",
+        "models": ["gpt-5.5"],
+    }]
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    response = service.update_llm_api_key({"model": "gpt-5.5", "api_key": "new-key"})
+    assert response["ok"] is True
+    assert session.llm_api_key == "new-key"
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.llm.custom_providers[0]["api_key"] == "new-key"
+    assert "openai" not in reloaded.llm.provider_keys
+
+
+def test_settings_service_update_api_key_rejects_bad_input(tmp_path, monkeypatch):
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    assert service.update_llm_api_key({"model": "glm-4-flash", "api_key": ""})["ok"] is False
+    assert service.update_llm_api_key({"model": "totally-unknown-model-x", "api_key": "k"})["ok"] is False
+    assert not config_path.exists()
+
+
+def test_settings_service_connection_test_preserves_custom_provider_credentials(tmp_path, monkeypatch):
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "gpt-5.5"
+    config.llm.custom_providers = [{
+        "name": "ymg",
+        "protocol": "openai",
+        "base_url": "https://proxy.example.com/v1",
+        "api_key": "stored-key",
+        "models": ["gpt-5.5"],
+    }]
+    session = _make_settings_session(config, config_path)
+    seen: dict[str, str] = {}
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            return SimpleNamespace(model="gpt-5.5")
+
+    def factory(llm_config):
+        seen["api_key"] = llm_config.api_key
+        seen["api_base"] = llm_config.resolve_api_base("gpt-5.5")
+        return _FakeAdapter()
+
+    service = WorkbenchSettingsService(session, llm_adapter_factory=factory)
+    response = service.test_llm_settings({"model": "gpt-5.5"})
+
+    # 连接测试不带凭据调用时必须沿用 custom provider 已保存的 key/base，不能抹掉
+    assert response["ok"] is True
+    assert seen["api_key"] == "stored-key"
+    assert seen["api_base"] == "https://proxy.example.com/v1"
+    assert config.llm.custom_providers[0]["api_key"] == "stored-key"
+    assert config.llm.custom_providers[0]["base_url"] == "https://proxy.example.com/v1"
+
+
+def test_settings_service_connection_test_failure_returns_full_detail(tmp_path, monkeypatch):
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    session = _make_settings_session(config, config_path)
+
+    server_body = '{"error":{"message":"Incorrect API key provided","type":"invalid_request_error","code":"invalid_api_key"}}'
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            root = RuntimeError("AuthenticationError - 401")
+            root.response = SimpleNamespace(status_code=401, text=server_body)
+            raise RuntimeError("LLM 认证失败：API Key 可能无效") from root
+
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: _FakeAdapter())
+    response = service.test_llm_settings({"model": "deepseek-chat"})
+
+    assert response["ok"] is False
+    # error 保留摘要，detail 串起异常链 + 服务器响应体原文，全量不截断
+    assert response["error"] == "LLM 认证失败：API Key 可能无效"
+    assert "AuthenticationError - 401" in response["detail"]
+    assert "HTTP 401 响应原文" in response["detail"]
+    assert server_body in response["detail"]
+
+
+def test_format_llm_exception_detail_handles_plain_exception():
+    from openbrep.workbench.settings_service import format_llm_exception_detail
+
+    detail = format_llm_exception_detail(ValueError("bad input"))
+    assert detail == "ValueError: bad input"
+
+
+def test_settings_service_config_revision_changes_when_file_is_edited(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[llm]\nmodel = \"deepseek-chat\"\n", encoding="utf-8")
+    session = SimpleNamespace(config_path=config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    first = service.config_revision()
+    assert first["ok"] is True
+    assert first["revision"] != "missing"
+
+    # Same file, no write -> stable revision.
+    assert service.config_revision()["revision"] == first["revision"]
+
+    config_path.write_text("[llm]\nmodel = \"glm-4-flash\"\n", encoding="utf-8")
+    second = service.config_revision()
+    assert second["revision"] != first["revision"]
+
+
+def test_settings_service_config_revision_reports_missing_file(tmp_path):
+    session = SimpleNamespace(config_path=tmp_path / "does-not-exist.toml")
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    assert service.config_revision() == {"ok": True, "revision": "missing"}
+
+
 def test_workbench_config_path_defaults_to_main_worktree_config(monkeypatch, tmp_path):
     main_root = tmp_path / "repo"
     worktree_root = main_root / ".worktrees" / "react-workbench"

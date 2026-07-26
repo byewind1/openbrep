@@ -65,4 +65,20 @@ describe('TopMenu', () => {
 
     expect(props.onMockCompile).toHaveBeenCalledTimes(1)
   })
+
+  test('shows the current model pill and opens settings on click', () => {
+    const props = renderTopMenu({ currentModel: 'deepseek-chat' })
+
+    const pill = screen.getByTestId('current-model-pill')
+    expect(pill.textContent).toContain('deepseek-chat')
+
+    fireEvent.click(pill)
+    expect(props.onOpenSettings).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides the model pill when no model is configured', () => {
+    renderTopMenu({ currentModel: '' })
+
+    expect(screen.queryByTestId('current-model-pill')).toBeNull()
+  })
 })

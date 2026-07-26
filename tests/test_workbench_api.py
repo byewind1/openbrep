@@ -896,6 +896,26 @@ timeout = 60
     assert "glm-4-flash" in response["llm"]["models"]
 
 
+def test_workbench_session_saves_api_key_via_settings_route(tmp_path, monkeypatch):
+    for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
+        monkeypatch.delenv(name, raising=False)
+    config_path = tmp_path / "config.toml"
+    session = WorkbenchSession(config_path=config_path)
+
+    switched = session.route("PATCH", "/api/settings/llm/model", {"model": "glm-4-flash"})
+    assert switched["ok"] is True
+    assert switched["llm"]["model_available"] is False
+
+    saved = session.route("POST", "/api/settings/llm/api-key", {"model": "glm-4-flash", "api_key": "zk-route"})
+    assert saved["ok"] is True
+    assert saved["llm"]["model"] == "glm-4-flash"
+    assert saved["llm"]["model_available"] is True
+
+    reloaded = WorkbenchSession(config_path=config_path)
+    assert reloaded.llm_model == "glm-4-flash"
+    assert reloaded.llm_api_key == "zk-route"
+
+
 def test_workbench_session_reload_runtime_settings_reads_updated_config_file(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

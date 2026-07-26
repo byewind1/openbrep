@@ -91,6 +91,7 @@ export interface CompilerSettings {
 
 export interface LlmSettings {
   model: string
+  model_available?: boolean
   models: string[]
   model_options?: LlmModelOption[]
   model_groups?: {
@@ -231,6 +232,12 @@ export interface RuntimeSettingsResult {
   error?: string
 }
 
+export interface ConfigRevisionResult {
+  ok: boolean
+  revision?: string
+  error?: string
+}
+
 export interface TapirStatus {
   import_ok: boolean
   available: boolean
@@ -269,6 +276,7 @@ export interface LlmConnectionTestResult {
   duration_ms?: number
   category?: string
   error?: string
+  detail?: string
 }
 
 export interface DirectoryChoiceResult extends Partial<WorkbenchSnapshot> {

@@ -18,6 +18,7 @@ export const zh = {
   'topMenu.status.params': '参数改动',
   'topMenu.status.stable': '参数稳定',
   'topMenu.status.savedAt': '已保存 {time}',
+  'topMenu.status.modelTitle': '当前 AI 模型 · 点击切换',
 
   // SettingsDrawer header
   'settings.header.title': '设置',
@@ -53,6 +54,26 @@ export const zh = {
   'settings.summary.knowledgeDash': '—',
   'settings.summary.knowledgeFreePro': '免费 {free} · 专业 {pro}',
   'settings.summary.knowledgeFreeNoPro': '免费 {free} · 无专业版',
+
+  // AiSettingsPanel
+  'settings.ai.modelLabel': '模型',
+  'settings.ai.searchPlaceholder': '搜索模型…',
+  'settings.ai.groupCustom': '自定义',
+  'settings.ai.groupOfficial': '官方',
+  'settings.ai.noMatch': '无匹配模型',
+  'settings.ai.modelUnavailable': '当前模型不可用（缺少 API Key 或配置不完整）。请点击下方「Edit config.toml」设置该模型。',
+  'settings.ai.apiKeyLabel': 'API Key',
+  'settings.ai.apiKeyPlaceholder': '输入该模型的 API Key',
+  'settings.ai.apiKeyReplacePlaceholder': '已保存 Key，输入新值可替换',
+  'settings.ai.saveKey': '保存 Key',
+  'settings.ai.keySaved': 'API Key 已保存',
+  'settings.ai.keySaveFailed': 'API Key 保存失败',
+  'settings.ai.confirmSwitch': '切换到 {model}？',
+  'settings.ai.confirmYes': '确认切换',
+  'settings.ai.confirmNo': '取消',
+  'settings.ai.switchFailed': '模型切换失败',
+  'settings.ai.copyError': '复制错误信息',
+  'settings.ai.copied': '已复制',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': '语言',

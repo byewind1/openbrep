@@ -97,6 +97,25 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: false })
     },
 
+    async importBlenderScript(path = '') {
+      set({ loading: true, lastError: null })
+      const snapshot = await api.importBlenderScript(path)
+      if (snapshot.ok === false) {
+        set({
+          loading: false,
+          lastError: snapshot.error ?? 'Failed to import Blender script.',
+        })
+        return
+      }
+      set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      await get().loadRecentProjects()
+      await get().loadScripts()
+      await get().loadRevisions()
+      await get().loadAssistantHistory()
+      await get().loadMemoryStatus()
+      set({ loading: false })
+    },
+
     async exportHsfProject(parentDir = '', name = '') {
       set({ loading: true, lastError: null })
       const result = await api.exportHsfProject(parentDir, name)

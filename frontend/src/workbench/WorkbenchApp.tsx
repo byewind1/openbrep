@@ -11,6 +11,7 @@ import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
+import { useConfigAutoRefresh } from './useConfigAutoRefresh'
 
 const RevisionPanel = lazy(() => import('./diagnostics/RevisionPanel').then((m) => ({ default: m.RevisionPanel })))
 const SettingsDrawer = lazy(() => import('./settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })))
@@ -75,6 +76,7 @@ export function WorkbenchApp() {
   const newProject = useWorkbenchStore((state) => state.newProject)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
   const importGsmFile = useWorkbenchStore((state) => state.importGsmFile)
+  const importBlenderScript = useWorkbenchStore((state) => state.importBlenderScript)
   const exportHsfProject = useWorkbenchStore((state) => state.exportHsfProject)
   const saveProject = useWorkbenchStore((state) => state.saveProject)
   const closeProject = useWorkbenchStore((state) => state.closeProject)
@@ -83,6 +85,7 @@ export function WorkbenchApp() {
   const openConfig = useWorkbenchStore((state) => state.openConfig)
   const testLlmConnection = useWorkbenchStore((state) => state.testLlmConnection)
   const switchLlmModel = useWorkbenchStore((state) => state.switchLlmModel)
+  const saveLlmApiKey = useWorkbenchStore((state) => state.saveLlmApiKey)
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
   const reloadTapirLibraries = useWorkbenchStore((state) => state.reloadTapirLibraries)
@@ -132,6 +135,9 @@ export function WorkbenchApp() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // Keep the active model in sync when config.toml is edited outside the app.
+  useConfigAutoRefresh()
 
   useEffect(() => {
     if (activeRailPanel === 'inspect') {
@@ -245,10 +251,12 @@ export function WorkbenchApp() {
             onBrowseProjectDirectory={() => void browseProjectDirectory()}
             onImportGdlFile={() => void importGdlFile()}
             onImportGsmFile={() => void importGsmFile()}
+            onImportBlenderScript={() => void importBlenderScript()}
             onSaveProjectAs={() => void saveProjectAsWithPrompt()}
           />
         }
         hasDraftChanges={hasDraftChanges()}
+        currentModel={llmSettings.model}
         onApply={() => void applyDraftParameters()}
         onCompile={() => void compileCurrentProject()}
         onMockCompile={() => void runMockCompile()}
@@ -383,6 +391,8 @@ export function WorkbenchApp() {
         onCompilerSettingsChange={setCompilerSettings}
         onOpenConfig={() => void openConfig()}
         onTestLlmConnection={testLlmConnection}
+        onModelChange={switchLlmModel}
+        onSaveLlmApiKey={saveLlmApiKey}
         onReloadRuntimeSettings={reloadRuntimeSettings}
         onBrowseCompilerFile={browseCompilerFile}
         onBrowseOutputDirectory={browseOutputDirectory}

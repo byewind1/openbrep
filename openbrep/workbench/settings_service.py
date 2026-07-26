@@ -57,10 +57,14 @@ def apply_llm_credentials_to_config(
     if custom_match is not None:
         provider = custom_match.get("provider")
         if isinstance(provider, dict):
-            provider["api_key"] = api_key
-            provider["base_url"] = api_base
-        config.llm.api_key = api_key
-        config.llm.api_base = api_base
+            # 空值表示"沿用已保存的配置"，不能覆盖 custom provider 里已有的 key/base，
+            # 否则连接测试（不带凭据调用）会把已保存的 key 抹掉。
+            if api_key:
+                provider["api_key"] = api_key
+            if api_base:
+                provider["base_url"] = api_base
+        config.llm.api_key = api_key or str(custom_match.get("api_key", "") or "")
+        config.llm.api_base = api_base or str(custom_match.get("base_url", "") or "")
         return
 
     provider_name = model_to_provider(model)
@@ -72,6 +76,46 @@ def apply_llm_credentials_to_config(
             resolved_api_key = str(config.llm.provider_keys.get(provider_name, "") or "")
     config.llm.api_key = resolved_api_key
     config.llm.api_base = api_base
+
+
+def format_llm_exception_detail(exc: BaseException) -> str:
+    """串起完整异常链与服务器响应体原文，供前端全量明文展示排错。
+
+    llm.py 会把 litellm 异常包装成 RuntimeError（摘要），原始响应体挂在
+    __cause__ 链上；这里沿链逐层收集 类名+消息+HTTP 响应体，不做截断。
+    """
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current).strip() or "(no message)"
+        parts.append(f"{current.__class__.__name__}: {message}")
+        response = getattr(current, "response", None)
+        if response is not None:
+            status = getattr(response, "status_code", None)
+            try:
+                text = getattr(response, "text", None)
+            except Exception:
+                text = None
+            if isinstance(text, str) and text.strip() and text.strip() not in message:
+                header = f"HTTP {status} 响应原文：" if status is not None else "HTTP 响应原文："
+                parts.append(f"{header}\n{text.strip()}")
+        body = getattr(current, "body", None)
+        if body and str(body) not in message:
+            parts.append(f"body: {body}")
+        current = current.__cause__ or current.__context__
+    return "\n\n".join(parts)
+
+
+def llm_model_available(config: GDLAgentConfig, model: str | None = None) -> bool:
+    """判断当前模型是否可立即调用：本地 ollama 无需 key，其余需要可解析的 API key。"""
+    target = str(model if model is not None else config.llm.model or "").strip()
+    if not target:
+        return False
+    if model_to_provider(target) == "ollama":
+        return True
+    return bool(config.llm.resolve_api_key(target))
 
 
 def llm_model_groups(config: GDLAgentConfig) -> dict[str, list[dict[str, Any]]]:
@@ -153,6 +197,7 @@ class WorkbenchSettingsService:
         models = [option["id"] for option in model_options]
         return {
             "model": self.session.llm_model,
+            "model_available": llm_model_available(self.session.config, self.session.llm_model),
             "models": models,
             "model_options": model_options,
             "model_groups": groups,
@@ -161,6 +206,19 @@ class WorkbenchSettingsService:
             "max_retries": self.session.max_retries,
             "assistant_settings": self.session.assistant_settings,
         }
+
+    def config_revision(self) -> dict[str, Any]:
+        """Return a cheap fingerprint of config.toml so the UI can detect external edits.
+
+        The revision changes whenever the file is written (mtime_ns or size differs).
+        Reading it has no side effects and does not reload session state.
+        """
+        path = Path(self.session.config_path)
+        try:
+            stat = path.stat()
+        except OSError:
+            return {"ok": True, "revision": "missing"}
+        return {"ok": True, "revision": f"{stat.st_mtime_ns}:{stat.st_size}"}
 
     def reload_runtime_settings(self) -> dict[str, Any]:
         self.session.config = load_workbench_config(self.session.config_path)
@@ -182,12 +240,38 @@ class WorkbenchSettingsService:
         }
 
     def update_llm_model_only(self, body: dict[str, Any]) -> dict[str, Any]:
-        """只切换 model 字段，不触碰 api_key / api_base。"""
+        """只切换 model 字段，不修改用户配置的 key，但会重新解析当前模型对应的 key。"""
         model = str(body.get("model") or "").strip()
         if not model:
             return {"ok": False, "error": "Model is required."}
         self.session.llm_model = model
         self.session.config.llm.model = model
+        self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
+        self.session.llm_api_base = self.session.config.llm.resolve_api_base(model) or ""
+        save_workbench_config(self.session.config, self.session.config_path)
+        return {"ok": True, "llm": self.llm_settings()}
+
+    def update_llm_api_key(self, body: dict[str, Any]) -> dict[str, Any]:
+        """保存模型的 API key：官方模型写入 provider_keys，自定义代理写入对应 custom_providers 条目。"""
+        model = str(body.get("model") or self.session.llm_model).strip()
+        api_key = str(body.get("api_key") or "").strip()
+        if not model:
+            return {"ok": False, "error": "Model is required."}
+        if not api_key:
+            return {"ok": False, "error": "API key is required."}
+        custom_match = self.session.config.llm._find_custom_provider_match(model)
+        if custom_match is not None:
+            provider = custom_match.get("provider")
+            if isinstance(provider, dict):
+                provider["api_key"] = api_key
+        else:
+            provider_name = model_to_provider(model)
+            if not provider_name or provider_name == "custom":
+                return {"ok": False, "error": f"Unknown provider for model: {model}"}
+            self.session.config.llm.provider_keys[provider_name] = api_key
+        # 重新解析当前会话模型的凭据，保存后立即可用
+        self.session.llm_api_key = self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
+        self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
         save_workbench_config(self.session.config, self.session.config_path)
         return {"ok": True, "llm": self.llm_settings()}
 
@@ -247,6 +331,7 @@ class WorkbenchSettingsService:
             return {
                 "ok": False,
                 "error": str(exc) or exc.__class__.__name__,
+                "detail": format_llm_exception_detail(exc),
                 "category": "llm_configuration",
                 "model": model,
                 "duration_ms": int((time.perf_counter() - start) * 1000),
