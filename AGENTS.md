@@ -204,10 +204,10 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 
 ## Current Baseline
 
-As of 2026-07-26:
+As of 2026-07-28:
 
 ```text
-python tests: 950 passed, 28 subtests passed
+python tests: 971 passed, 28 subtests passed
 frontend: 153 passed (vitest) + tsc clean
 CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
 ```
@@ -218,13 +218,27 @@ Architecture notes:
   must not be imported or resurrected. The shell is the React workbench
   (`frontend/`) talking to a local API (`openbrep/workbench_api.py`), packaged
   with a Tauri desktop shell (`src-tauri/`).
+- Semantic repair loop (2026-07-28): after compile succeeds, CREATE and
+  MODIFY/DEBUG/REPAIR run `verify_semantics`; blocking issues trigger bounded
+  accept/rollback repair rounds in `openbrep/runtime/semantic_repair.py`.
+  `TaskResult.success` is the verification report's `passed` (delivery gate) —
+  do not hardcode it back to `True`.
+- Benchmark CREATE tasks run through the production `TaskPipeline` path (not
+  the legacy `GDLAgent.run`); `benchmark/runner.py --jobs N` parallelizes
+  suites (default 4, 1 = serial).
+- The workbench API serializes mutating requests through a session-level lock
+  (`openbrep/workbench/request_gate.py`); new routes default to locked.
+- Tests must stay isolated from the developer's real `./config.toml` via
+  `tests/conftest.py` (`GDL_AGENT_CONFIG` points at a tmp copy).
 
 Important architecture boundaries already exist:
 
 ```text
 openbrep/workbench_api.py
 openbrep/workbench/*_service.py
+openbrep/workbench/request_gate.py
 openbrep/runtime/pipeline.py
+openbrep/runtime/semantic_repair.py
 openbrep/importers/blender_script/*
 frontend/src/workbench/*
 frontend/src/state/*
