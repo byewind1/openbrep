@@ -243,15 +243,76 @@ class BenchmarkRunner:
             "environment": self._environment_metadata(),
         }
 
-    def run_suite(self, suite_dir: str) -> list:
-        results = []
-        for task_file in sorted(Path(suite_dir).glob("*.yaml")):
-            print(f"Running {task_file.name}...")
-            result = self.run_task(str(task_file))
-            results.append(result)
-            status = "⏭" if result.get("skipped") else ("✅" if result["success"] else "❌")
-            print(f"  {status} {result['task_id']}: {result['elapsed_sec']}s")
-        return results
+    def _run_task_guarded(self, task_file: str) -> dict:
+        """run_task 的异常兜底：单个任务崩溃只记为失败，不拖垮整批。"""
+        try:
+            return self.run_task(task_file)
+        except Exception as exc:
+            try:
+                task_id = load_benchmark_task(task_file).id
+            except Exception:
+                task_id = Path(task_file).stem
+            return {
+                "task_id": task_id,
+                "success": False,
+                "skipped": False,
+                "mode": self.mode,
+                "effective_mode": self.effective_mode,
+                "compile_pass": False,
+                "compile_mode": self.effective_mode,
+                "compile_exit_code": None,
+                "compile_stderr": "",
+                "static_pass": False,
+                "contract_pass": False,
+                "contract_failures": [],
+                "criteria_pass": False,
+                "criteria_failures": [],
+                "attempts": 0,
+                "elapsed_sec": 0.0,
+                "error_summary": f"task crashed: {exc}",
+                "trace": [],
+                "environment": self._environment_metadata(),
+            }
+
+    @staticmethod
+    def _print_task_status(result: dict) -> None:
+        status = "⏭" if result.get("skipped") else ("✅" if result["success"] else "❌")
+        print(f"  {status} {result['task_id']}: {result['elapsed_sec']}s")
+
+    def run_suite(self, suite_dir: str, jobs: int = 4) -> list:
+        """跑整个 suite。jobs=1 完全串行（调试/回归兜底）；jobs>1 线程池并行。
+
+        隔离性：每个任务有独立 workdir/<task_id>、独立产物 <task_id>.gsm、
+        独立 TaskPipeline（_make_pipeline per task）；共享的 llm/compiler 是
+        无状态包装（HTTP 调用 / 子进程），线程安全。瓶颈是等 LLM 响应，
+        I/O-bound，线程池不受 GIL 影响。
+        """
+        task_files = sorted(Path(suite_dir).glob("*.yaml"))
+        if jobs <= 1:
+            results = []
+            for task_file in task_files:
+                print(f"Running {task_file.name}...")
+                result = self._run_task_guarded(str(task_file))
+                results.append(result)
+                self._print_task_status(result)
+            return results
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        print(f"Running {len(task_files)} tasks with {jobs} workers...")
+        records: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = {
+                executor.submit(self._run_task_guarded, str(task_file)): task_file
+                for task_file in task_files
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                records[result["task_id"]] = result
+                self._print_task_status(result)
+
+        # 输出顺序按任务文件名排序，保证报告可 diff
+        return [records[load_benchmark_task(str(f)).id] for f in task_files]
 
     def report(self, results: list) -> str:
         passed = sum(1 for r in results if r["success"])
@@ -395,10 +456,11 @@ if __name__ == "__main__":
     parser.add_argument("--suite", default="benchmark/tasks/create/", help="benchmark task directory")
     parser.add_argument("--mode", default="auto", choices=["mock", "real", "auto"], help="compiler mode")
     parser.add_argument("--config", default="config.toml", help="OpenBrep config path")
+    parser.add_argument("--jobs", type=int, default=4, help="并发任务数；1 = 完全串行")
     args = parser.parse_args()
 
     runner = BenchmarkRunner(config_path=args.config, mode=args.mode)
-    results = runner.run_suite(args.suite)
+    results = runner.run_suite(args.suite, jobs=args.jobs)
     print(runner.report(results))
 
     paths = runner.write_results(results, suite_name=Path(args.suite).name or "create")
