@@ -207,7 +207,7 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-07-28:
 
 ```text
-python tests: 990 passed, 28 subtests passed
+python tests: 1007 passed, 28 subtests passed
 frontend: 153 passed (vitest) + tsc clean
 CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
 ```
@@ -227,11 +227,19 @@ Architecture notes:
   parameters to a pluggable naming convention (synonym dictionary + role-aware
   reserved-name rules; A/B/ZZYZX/AC_* are never rename sources; string-literal
   references like `VALUES "name"` are replaced only on whole-string match).
-  Currently consumed by the benchmark runner; production wiring
+  Renaming is currently consumed by the benchmark runner; production wiring
   (project-level `naming_convention.toml`) is deliberately not done yet.
-- Benchmark CREATE tasks run through the production `TaskPipeline` path (not
-  the legacy `GDLAgent.run`); `benchmark/runner.py --jobs N` parallelizes
-  suites (default 4, 1 = serial).
+  `detect_reserved_param_misuse()` from the same module runs in both CREATE
+  and MODIFY verification stages: reserved names used in the wrong dimensional
+  role (height stuffed into A/B, or ZZYZX as width/depth) become blocking
+  `reserved_param_semantic_bug` checks — the artifact is delivered with the
+  warning, not auto-repaired.
+- Benchmark determinism (2026-07-28): hosted LLMs are nondeterministic even at
+  temperature=0, so effect verification uses golden-corpus record/replay —
+  `benchmark/runner.py --llm-record corpus.jsonl` once, then
+  `--llm-replay corpus.jsonl` for deterministic offline reruns
+  (`benchmark/llm_replay.py`). CREATE tasks run through the production
+  `TaskPipeline` path; `--jobs N` parallelizes suites (default 4, 1 = serial).
 - The workbench API serializes mutating requests through a session-level lock
   (`openbrep/workbench/request_gate.py`); new routes default to locked.
 - Tests must stay isolated from the developer's real `./config.toml` via
@@ -246,6 +254,7 @@ openbrep/workbench/request_gate.py
 openbrep/runtime/pipeline.py
 openbrep/runtime/semantic_repair.py
 openbrep/naming_alignment.py
+benchmark/llm_replay.py
 openbrep/importers/blender_script/*
 frontend/src/workbench/*
 frontend/src/state/*
