@@ -207,7 +207,7 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-07-28:
 
 ```text
-python tests: 971 passed, 28 subtests passed
+python tests: 990 passed, 28 subtests passed
 frontend: 153 passed (vitest) + tsc clean
 CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
 ```
@@ -223,6 +223,12 @@ Architecture notes:
   accept/rollback repair rounds in `openbrep/runtime/semantic_repair.py`.
   `TaskResult.success` is the verification report's `passed` (delivery gate) —
   do not hardcode it back to `True`.
+- Naming alignment (2026-07-28): `openbrep/naming_alignment.py` renames
+  parameters to a pluggable naming convention (synonym dictionary + role-aware
+  reserved-name rules; A/B/ZZYZX/AC_* are never rename sources; string-literal
+  references like `VALUES "name"` are replaced only on whole-string match).
+  Currently consumed by the benchmark runner; production wiring
+  (project-level `naming_convention.toml`) is deliberately not done yet.
 - Benchmark CREATE tasks run through the production `TaskPipeline` path (not
   the legacy `GDLAgent.run`); `benchmark/runner.py --jobs N` parallelizes
   suites (default 4, 1 = serial).
@@ -239,6 +245,7 @@ openbrep/workbench/*_service.py
 openbrep/workbench/request_gate.py
 openbrep/runtime/pipeline.py
 openbrep/runtime/semantic_repair.py
+openbrep/naming_alignment.py
 openbrep/importers/blender_script/*
 frontend/src/workbench/*
 frontend/src/state/*
