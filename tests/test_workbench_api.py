@@ -1736,6 +1736,64 @@ def test_workbench_session_generate_reports_pipeline_failure(tmp_path):
     assert "missing API key" in response["error"]
 
 
+def test_workbench_session_generate_delivers_output_when_verification_fails(tmp_path):
+    """验证未过（success=False）但有产出时照常交付并挂载，不丢用户的生成结果。"""
+    project = HSFProject.create_new("ShelfWithIssue", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            pass
+
+        def execute(self, request):
+            request.project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            return TaskResult(
+                success=False,
+                intent="MODIFY",
+                scripts={"scripts/3d.gdl": "BLOCK A, B, ZZYZX\n"},
+                plain_text="已修改，但几何验证未通过",
+                project=request.project,
+                verification={"passed": False, "checks": []},
+            )
+
+    session = WorkbenchSession(pipeline_class=FakePipeline)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/assistant/generate", {"message": "修改"})
+
+    assert response["ok"] is True
+    assert response["assistant"]["verification"]["passed"] is False
+    assert "几何验证未通过" in response["assistant"]["reply"]
+
+
+def test_workbench_session_create_delivers_output_when_verification_fails(tmp_path):
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            return TaskResult(
+                success=False,
+                intent="CREATE",
+                scripts={"scripts/3d.gdl": "BLOCK A, B, ZZYZX\n"},
+                plain_text="已创建，但验证未通过",
+                project=project,
+                verification={"passed": False, "checks": []},
+            )
+
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "create a bookshelf", "output_dir": str(tmp_path)},
+    )
+
+    assert response["ok"] is True
+    assert response["assistant"]["verification"]["passed"] is False
+    assert response["project"]["source"] == "hsf"
+
+
 def test_workbench_session_snapshot_carries_session_identity_and_epoch(tmp_path):
     session = WorkbenchSession(config_path=tmp_path / "config.toml")
 

@@ -834,7 +834,7 @@ class TaskPipeline:
         # ─────────────────────────────────────────────────────────────────────
 
         return TaskResult(
-            success=True,
+            success=verification_report.passed,
             intent=request.intent or "CREATE",
             scripts=cleaned,
             plain_text="\n\n".join(create_text_parts),
@@ -1206,7 +1206,7 @@ class TaskPipeline:
         # ─────────────────────────────────────────────────────────────────────
 
         return TaskResult(
-            success=True,
+            success=verification_report.passed,
             intent=request.intent or "MODIFY",
             scripts=cleaned,
             plain_text="\n\n".join(output_parts),

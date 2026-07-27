@@ -201,7 +201,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     output_parts.append(verification_report.to_summary_text())
 
     return TaskResult(
-        success=True,
+        success=verification_report.passed,
         intent=intent,
         scripts=registry.changed_files,
         plain_text="\n\n".join(part for part in output_parts if part),

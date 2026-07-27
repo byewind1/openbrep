@@ -165,7 +165,9 @@ class WorkbenchAssistantService:
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
             pipeline.config.agent.max_iterations = self.session.max_retries
         result = pipeline.execute(request)
-        if not result.success:
+        # success=False 只在"无可交付物"时才视为硬失败；验证未过但有产出时
+        # 照常交付（verification 报告会如实显示 FAIL），避免丢掉用户的生成结果
+        if not result.success and result.project is None and not (result.plain_text or result.scripts):
             error = result.error or "Generation failed."
             if image_payload["image_b64"]:
                 error = classify_vision_error(Exception(error))

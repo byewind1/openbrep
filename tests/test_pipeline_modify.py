@@ -250,7 +250,9 @@ class TestModifyApply(unittest.TestCase):
                     work_dir="./workdir",
                 ))
 
-        self.assertTrue(result.success)
+        # StaticChecker 被 patch 为始终失败 → 交付门禁下 success=False 是诚实结果；
+        # 本测试的关注点是"静态修复产物会被重新 lint"，与门禁语义无关
+        self.assertFalse(result.success)
         self.assertIn("scripts/2d.gdl", result.scripts)
         self.assertIn("ARC2 0, 0, 1, 0, 360", result.scripts["scripts/2d.gdl"])
         self.assertIn("RULE-002", result.lint_summary)
@@ -294,7 +296,7 @@ class TestModifyApply(unittest.TestCase):
 
 class TestAutoRevisions(unittest.TestCase):
     def test_modify_creates_before_revision_before_apply_and_after_only_on_compile_success(self):
-        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nADDZ 0.1\nEND\n")
+        pipeline = _make_pipeline("[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nADDZ 0.1\nDEL 1\nEND\n")
         calls = []
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -354,7 +356,9 @@ class TestAutoRevisions(unittest.TestCase):
                     output_dir=str(Path(tmpdir) / "out"),
                 ))
 
-        self.assertTrue(result.success)
+        # 编译失败 → 交付门禁下 success=False（本测试即验证编译失败场景）；
+        # 关注点：编译失败时不创建 after revision
+        self.assertFalse(result.success)
         self.assertIn("auto: before modify", calls)
         self.assertNotIn("auto: after modify (compile ok)", calls)
 

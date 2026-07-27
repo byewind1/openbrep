@@ -201,7 +201,9 @@ class WorkbenchProjectSessionService:
                 on_event=on_event,
             )
         )
-        if not result.success or result.project is None:
+        # 验证未过（success=False）但有 project 产出时照常交付并挂载，
+        # verification 报告会如实显示 FAIL；只有无产出才算硬失败
+        if result.project is None:
             error = result.error or "Create failed."
             if image_payload["image_b64"]:
                 error = classify_vision_error(Exception(error))

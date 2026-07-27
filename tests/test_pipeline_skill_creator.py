@@ -100,7 +100,9 @@ class TestPipelineSkillCreator(unittest.TestCase):
             ))
             captured["skills"] = mock_agent.generate_only.call_args.kwargs["skills"]
 
-        self.assertTrue(result.success)
+        # generate_only 返回空 changes：CREATE 零产出在交付门禁下是诚实失败；
+        # 本测试的关注点是新技能文件无需文件名约定即可被加载
+        self.assertFalse(result.success)
         self.assertIn("project_style", captured["skills"])
         self.assertIn("铝合金窗框", captured["skills"])
 

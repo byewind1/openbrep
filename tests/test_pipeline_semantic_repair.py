@@ -82,8 +82,14 @@ def _blocking(code: str = "mesh_empty") -> SemanticIssue:
     )
 
 
-GDL_REPLY = "[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n"
-GDL_REPAIR_REPLY = "[FILE: scripts/3d.gdl]\nADDX 0.1\nBLOCK A, B, ZZYZX\nDEL 1\nEND\n"
+GDL_REPLY = (
+    "[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n"
+    "[FILE: scripts/2d.gdl]\nPROJECT2 3, -1, 2\nEND\n"
+)
+GDL_REPAIR_REPLY = (
+    "[FILE: scripts/3d.gdl]\nADDX 0.1\nBLOCK A, B, ZZYZX\nDEL 1\nEND\n"
+    "[FILE: scripts/2d.gdl]\nPROJECT2 3, -1, 2\nEND\n"
+)
 
 
 def _run_create(pipeline: TaskPipeline, tmp_path: Path) -> object:
@@ -167,6 +173,7 @@ class TestNoRepairWhenClean:
         assert "几何语义验证" not in _llm_texts(mock_llm)
         check = _semantic_check(result)
         assert check is not None and check["status"] == "pass"
+        assert result.success is True
 
 
 # ── 3. no improvement → rollback ──
@@ -198,6 +205,8 @@ class TestRollbackOnNoImprovement:
         # 未解决的 blocking issue 如实出现在报告里
         check = _semantic_check(result)
         assert check is not None and check["status"] == "fail"
+        # 交付门禁：blocking 验证失败 → success=False
+        assert result.success is False
 
 
 # ── 4. repair breaks compile → rollback ──
@@ -279,6 +288,7 @@ class TestSkipWhenCompileBroken:
         assert "几何语义验证" not in _llm_texts(mock_llm)
         check = _semantic_check(result)
         assert check is not None and check["status"] == "fail"
+        assert result.success is False
 
 
 # ── MODIFY 路径：同一实现，对称行为 ──
@@ -310,6 +320,7 @@ class TestModifySemanticWiring:
         assert sem_mock.call_count == 1
         check = _semantic_check(result)
         assert check is not None and check["status"] == "pass"
+        assert result.success is True
 
     def test_modify_blocking_issue_triggers_repair(self, tmp_path: Path):
         compiler_mock = MagicMock()
@@ -350,3 +361,4 @@ class TestModifySemanticWiring:
         assert "已回退" in result.plain_text
         check = _semantic_check(result)
         assert check is not None and check["status"] == "fail"
+        assert result.success is False
