@@ -92,22 +92,32 @@ class BenchmarkRunner:
             return self._run_modify_task(task, start)
         return self._run_create_task(task, start)
 
+    def _make_pipeline(self):
+        """构造走生产路径的 TaskPipeline。
+
+        TaskPipeline 内部按 config 自建 LLM/compiler，这里覆盖为 runner 实例，
+        保证 mock/real 语义与现有 benchmark 完全一致。抽成独立方法是为了让
+        测试可以用假 pipeline 替换（见 tests/test_benchmark_assertions.py）。
+        """
+        from openbrep.runtime.pipeline import TaskPipeline
+
+        pipeline = TaskPipeline(config=self.config, trace_dir="./traces")
+        pipeline._make_llm = lambda _req: self.llm
+        pipeline._make_compiler = lambda: self.compiler
+        return pipeline
+
     def _run_create_task(self, task, start: float) -> dict:
         """CREATE 类任务：走 TaskPipeline 的 CREATE 生产路径。
 
         与生产一致：知识注入 / linter / StaticChecker / 编译自动修复 / 语义验证
         全部生效（旧 GDLAgent.run 路径无知识注入，benchmark 结果不代表生产质量）。
         """
-        from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+        from openbrep.runtime.pipeline import TaskRequest
 
         task_id = task.id
         project = HSFProject.create_new(task_id, work_dir=str(self.work_dir))
 
-        # 与 MODIFY 分支相同：TaskPipeline 内部按 config 自建 LLM/compiler，这里
-        # 覆盖为 runner 实例，保证 mock/real 语义与现有 benchmark 完全一致。
-        pipeline = TaskPipeline(config=self.config, trace_dir="./traces")
-        pipeline._make_llm = lambda _req: self.llm
-        pipeline._make_compiler = lambda: self.compiler
+        pipeline = self._make_pipeline()
 
         request = TaskRequest(
             user_input=task.description,
@@ -167,7 +177,7 @@ class BenchmarkRunner:
         fixture 目录先复制到 benchmark/workdir/<task_id>/ 再加载，避免
         pipeline 编译时的 save_to_disk 污染仓库里签入的 fixture 原件。
         """
-        from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+        from openbrep.runtime.pipeline import TaskRequest
 
         task_id = task.id
         fixture_src = PROJECT_ROOT / task.fixture
@@ -177,12 +187,8 @@ class BenchmarkRunner:
         shutil.copytree(fixture_src, work_copy)
         project = HSFProject.load_from_disk(str(work_copy))
 
-        # 与 CREATE 路径共用同一份 config/LLM/compiler；TaskPipeline 内部按
-        # config 自建 LLM/compiler，这里覆盖为 runner 实例，保证 mock/real
-        # 语义与现有 benchmark 完全一致。
-        pipeline = TaskPipeline(config=self.config, trace_dir="./traces")
-        pipeline._make_llm = lambda _req: self.llm
-        pipeline._make_compiler = lambda: self.compiler
+        # 与 CREATE 分支相同：注入 runner 的 llm/compiler，mock/real 语义一致
+        pipeline = self._make_pipeline()
 
         request = TaskRequest(
             user_input=task.description,

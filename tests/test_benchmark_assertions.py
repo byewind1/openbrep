@@ -6,8 +6,9 @@ from unittest.mock import patch
 from benchmark.assertions import assert_success_criteria
 from benchmark.runner import BenchmarkRunner, build_summary, render_markdown_summary
 from benchmark.schema import SemanticAssertion, SuccessCriteria, load_benchmark_task
-from openbrep.core import AgentResult, Status
+from openbrep.compiler import CompileResult
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.runtime.pipeline import TaskResult
 
 
 class TestBenchmarkAssertions(unittest.TestCase):
@@ -300,18 +301,23 @@ class TestGeometricSemanticAssertions(unittest.TestCase):
         self.assertEqual(call_count["n"], 1)
 
 
-class _FakeBenchmarkAgent:
+class _FakePipeline:
+    """替换 runner._make_pipeline 的假 TaskPipeline：直接按 configure_project
+    布置工程并返回编译通过的 TaskResult，不走 LLM。"""
+
     def __init__(self, configure_project):
         self.configure_project = configure_project
 
-    def run(self, instruction, project, output_gsm):
-        self.configure_project(project)
-        return AgentResult(
-            status=Status.SUCCESS,
-            attempts=1,
-            output_path=output_gsm,
-            project=project,
-            history=[{"attempt": 1, "stage": "compile", "result": "success"}],
+    def execute(self, request):
+        self.configure_project(request.project)
+        return TaskResult(
+            success=True,
+            intent="CREATE",
+            project=request.project,
+            compile_result=CompileResult(
+                success=True, stdout="", stderr="", mode="mock",
+                output_path=str(request.output_dir), exit_code=0,
+            ),
         )
 
 
@@ -335,13 +341,13 @@ class TestBenchmarkRunnerCriteria(unittest.TestCase):
 
     def _runner(self, tmpdir: str, configure_project) -> BenchmarkRunner:
         runner = BenchmarkRunner.__new__(BenchmarkRunner)
-        runner.agent = _FakeBenchmarkAgent(configure_project)
         runner.results_dir = Path(tmpdir) / "results"
         runner.work_dir = Path(tmpdir) / "workdir"
         runner.mode = "mock"
         runner.effective_mode = "mock"
         runner.compiler_skip_reason = ""
         runner.compiler = None
+        runner._make_pipeline = lambda: _FakePipeline(configure_project)
         return runner
 
     def test_runner_outputs_structured_criteria_fields(self):
@@ -358,7 +364,7 @@ class TestBenchmarkRunnerCriteria(unittest.TestCase):
             self.assertTrue(result["success"], result)
             self.assertTrue(result["compile_pass"])
             self.assertEqual(result["compile_mode"], "mock")
-            self.assertIsNone(result["compile_exit_code"])
+            self.assertEqual(result["compile_exit_code"], 0)
             self.assertEqual(result["compile_stderr"], "")
             self.assertTrue(result["static_pass"])
             self.assertTrue(result["contract_pass"])
