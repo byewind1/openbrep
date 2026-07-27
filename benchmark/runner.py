@@ -152,7 +152,9 @@ class BenchmarkRunner:
         """
         from openbrep.runtime.pipeline import TaskPipeline
 
-        pipeline = TaskPipeline(config=self.config, trace_dir="./traces")
+        # benchmark 关闭学习记忆注入：prompt 只取决于代码与静态知识，
+        # 保证黄金语料可复现（详见 benchmark/llm_replay.py 的设计说明）
+        pipeline = TaskPipeline(config=self.config, trace_dir="./traces", include_learned_skills=False)
         pipeline._make_llm = lambda _req: self.llm
         pipeline._make_compiler = lambda: self.compiler
         return pipeline
@@ -354,12 +356,20 @@ class BenchmarkRunner:
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        print(f"Running {len(task_files)} tasks with {jobs} workers...")
-        records: dict[str, dict] = {}
+        # 暖场：首题先在主线程串行跑。知识/检索等子系统的"首次使用"可能写共享
+        # 缓存文件，直接并行会在全新环境（如 CI 首跑）竞争，导致首题 prompt
+        # 与后续运行不一致（黄金语料未命中）。实测过一次，根因未完全定位，
+        # 串行暖场可确定性规避。
+        print(f"Running {task_files[0].name}... (warm-up)")
+        warmup_result = self._run_task_guarded(str(task_files[0]))
+        self._print_task_status(warmup_result)
+
+        print(f"Running {len(task_files) - 1} tasks with {jobs} workers...")
+        records: dict[str, dict] = {warmup_result["task_id"]: warmup_result}
         with ThreadPoolExecutor(max_workers=jobs) as executor:
             futures = {
                 executor.submit(self._run_task_guarded, str(task_file)): task_file
-                for task_file in task_files
+                for task_file in task_files[1:]
             }
             for future in as_completed(futures):
                 result = future.result()

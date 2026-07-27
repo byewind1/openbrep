@@ -212,10 +212,14 @@ class TaskPipeline:
         config: Optional[GDLAgentConfig] = None,
         config_path: Optional[str] = None,
         trace_dir: str = "./traces",
+        include_learned_skills: bool = True,
     ):
         self.config = config or GDLAgentConfig.load(config_path)
         self.router = IntentRouter()
         self.tracer = Tracer(trace_dir=trace_dir)
+        # benchmark 传 False：错误学习记忆是累积态，会让 prompt 随运行历史漂移，
+        # 破坏黄金语料可复现性；生产默认 True，行为不变
+        self.include_learned_skills = include_learned_skills
         # Cached after first load (knowledge can be large)
         self._knowledge_text: Optional[str] = None
         self._skills_loader: Optional[SkillsLoader] = None
@@ -1298,10 +1302,12 @@ class TaskPipeline:
         skill_parts = [
             _MODIFY_SKILLS_PROMPT if include_modify_rules else "",
             self._load_skills_for_request(instruction or request.user_input, task_request, context=project_context),
+            # benchmark 需要 prompt 可复现：学习记忆是累积态，会污染黄金语料，
+            # include_learned_skills=False 时不注入（生产默认 True 不受影响）
             self._build_learned_error_skill_prompt(
                 work_dir=request.work_dir,
                 project=project,
-            ),
+            ) if self.include_learned_skills else "",
         ]
         return AssembledContext(
             project_context=project_context,

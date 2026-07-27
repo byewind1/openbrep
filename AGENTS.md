@@ -240,6 +240,45 @@ Architecture notes:
   `--llm-replay corpus.jsonl` for deterministic offline reruns
   (`benchmark/llm_replay.py`). CREATE tasks run through the production
   `TaskPipeline` path; `--jobs N` parallelizes suites (default 4, 1 = serial).
+
+## benchmark 黄金语料规范（corpus maintenance）
+
+CI 的 `benchmark-replay` job 用入库语料离线回放 create + modify 套件，
+并与 `benchmark/baseline.json` 比较：PASS→FAIL、criteria_failures 增加、
+pass 数下降都会红灯。
+
+语料文件：`benchmark/fixtures/llm_corpus/{create,modify}.jsonl`
+基线文件：`benchmark/baseline.json`（只能往好的方向更新）
+
+**判断要不要重录语料的唯一依据：改动会不会影响送给 LLM 的 prompt。**
+
+必须重录（prompt 会变化）：
+- `knowledge/`、`user_knowledge/`、`skills/` 目录内容变更
+- prompt 构建逻辑变更（pipeline 的指令拼装、object_planner、图谱注入、
+  knowledge_selector.py 的选择逻辑、skills_loader）
+- LLM model 或 provider 变更
+- TaskPipeline 的学习记忆注入策略变更（`include_learned_skills`）
+
+不需要重录（prompt 不变，直接回放验证）：
+- 生成后的处理逻辑：linter、static checker、naming_alignment、
+  semantic_verifier、semantic_repair 的接受/回退判定
+- verification / 报告逻辑（build_verification_report 及各类 check）
+- 编译链路（compiler、hsf2libpart 调用方式）
+- benchmark 断言逻辑（assertions.py、check_baseline.py）
+
+重录命令（真实 LLM，消耗 token）：
+
+```bash
+python -m benchmark.runner --suite benchmark/tasks/create/ --mode auto --jobs 4 --llm-record benchmark/fixtures/llm_corpus/create.jsonl
+python -m benchmark.runner --suite benchmark/tasks/modify/ --mode auto --jobs 4 --llm-record benchmark/fixtures/llm_corpus/modify.jsonl
+python -m benchmark.update_baseline --init --confirm   # 重建/刷新基线
+```
+
+基线更新（改进落地后）：`python -m benchmark.update_baseline --confirm`。
+脚本会拒绝任何退化方向的更新；写盘必须在 commit message 里说明原因。
+
+注意：回放未命中（prompt 流与语料不一致）会报错并提示重录——
+这是特性不是故障：它拦住"悄悄改变 prompt 却不重录"的情况。
 - The workbench API serializes mutating requests through a session-level lock
   (`openbrep/workbench/request_gate.py`); new routes default to locked.
 - Tests must stay isolated from the developer's real `./config.toml` via

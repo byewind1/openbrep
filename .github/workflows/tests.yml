@@ -29,6 +29,25 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -q
 
+  benchmark-replay:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Benchmark replay vs baseline
+        # 黄金语料离线回放（无需 API key / LP_XMLConverter），
+        # 任何题 PASS→FAIL、criteria_failures 增加、pass 数下降都会红灯。
+        # 语料失效与基线更新规则见 AGENTS.md「benchmark 黄金语料规范」。
+        run: python -m benchmark.check_baseline
+
   react-workbench:
     runs-on: ubuntu-latest
 
