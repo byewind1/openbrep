@@ -157,6 +157,7 @@ class TaskResult:
     revision_warnings: list[str] = field(default_factory=list)
     compile_comparison: Optional[CompileComparison] = None
     verification: Optional[dict] = None          # unified VerificationReport (Phase 3/4)
+    semantic_repair: dict = field(default_factory=dict)  # {"attempted": n, "accepted": m}（S1 可观测性）
 
 
 @dataclass(frozen=True)
@@ -849,6 +850,10 @@ class TaskPipeline:
             lint_summary=lint_summary,
             object_plan=object_plan.to_dict() if object_plan is not None else {},
             verification=verification_report.to_dict(),
+            semantic_repair={
+                "attempted": _sem_outcome.rounds_attempted,
+                "accepted": _sem_outcome.accepted_rounds,
+            },
         )
 
     def _handle_modify(self, request: TaskRequest) -> TaskResult:
@@ -1224,6 +1229,10 @@ class TaskPipeline:
             revision_warnings=revision_warnings,
             compile_comparison=compile_comparison,
             verification=verification_report.to_dict(),
+            semantic_repair={
+                "attempted": _sem_outcome.rounds_attempted,
+                "accepted": _sem_outcome.accepted_rounds,
+            },
         )
 
     # ── Initialization Helpers ────────────────────────────

@@ -36,6 +36,7 @@ class SemanticRepairOutcome:
     lint_summary: str
     auto_repair_info: str
     accepted_rounds: int
+    rounds_attempted: int = 0
 
 
 def _join_info(*parts: str) -> str:
@@ -205,4 +206,5 @@ def run_semantic_repair_loop(
         lint_summary=lint_summary,
         auto_repair_info=auto_repair_info,
         accepted_rounds=accepted,
+        rounds_attempted=round_no,
     )

@@ -224,6 +224,7 @@ class BenchmarkRunner:
             "criteria_pass": criteria_result.passed,
             "criteria_failures": criteria_result.failures,
             "naming_alignment": naming_alignment,
+            "semantic_repair": result.semantic_repair or {},
             # TaskResult 不暴露内部修复轮次，记 1
             "attempts": 1,
             "elapsed_sec": round(elapsed, 1),
@@ -298,6 +299,7 @@ class BenchmarkRunner:
             "criteria_pass": criteria_result.passed,
             "criteria_failures": criteria_result.failures,
             "naming_alignment": naming_alignment,
+            "semantic_repair": result.semantic_repair or {},
             # 旧路径是"一次性生成 + 内部最多 2 轮修复"，TaskResult 不暴露轮次，记 1
             "attempts": 1,
             "elapsed_sec": round(elapsed, 1),

@@ -277,3 +277,106 @@ def _call(name: str, arguments: dict):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── S3：完成门禁 ──────────────────────────────────────────
+
+from unittest.mock import patch  # noqa: E402
+
+from openbrep.semantic_verifier import (  # noqa: E402
+    SemanticIssue,
+    SemanticVerificationResult,
+)
+
+
+def _blocking_semantic():
+    return SemanticVerificationResult(
+        passed=False,
+        issues=[SemanticIssue(check_type="mesh_empty", detail="几何为空", blocking=True)],
+    )
+
+
+class TestCompletionGate(unittest.TestCase):
+    """AI 宣称完成时的结构化核验：编译 + 语义证据，未过打回（有界）。"""
+
+    def test_gate_rejects_false_done_claim_then_accepts(self):
+        """谎报完成 → 门禁打回（证据注入对话）→ 修复后再确认 → 放行。"""
+        mock_llm = MockLLM(responses=[
+            {"content": "改完了，没有问题。", "tool_calls": []},
+            {"content": "这次真的修好了。", "tool_calls": []},
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            side_effect=[_blocking_semantic(), SemanticVerificationResult(passed=True)],
+        ):
+            with __import__("tempfile").TemporaryDirectory() as tmp:
+                from pathlib import Path
+                tmp_path = Path(tmp)
+                pipeline = _make_pipeline(mock_llm, tmp_path)
+                result = pipeline.execute(_make_request(_make_project(tmp_path), tmp_path))
+
+        self.assertEqual(mock_llm.call_count, 2)  # 第一次被打回，没有直接交付
+        convo = str(mock_llm.call_history)
+        self.assertIn("完成门禁未通过", convo)      # 证据打回了对话
+        self.assertIn("mesh_empty", convo)
+        self.assertIn("打回 1 次", result.plain_text)
+        self.assertTrue(result.success)
+
+    def test_gate_rejections_bounded(self):
+        """连续谎报：打回 MAX_GATE_REJECTIONS 次后强制交付并如实标注。"""
+        mock_llm = MockLLM(responses=[
+            {"content": "完成了1", "tool_calls": []},
+            {"content": "完成了2", "tool_calls": []},
+            {"content": "完成了3", "tool_calls": []},
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_blocking_semantic(),
+        ):
+            with __import__("tempfile").TemporaryDirectory() as tmp:
+                from pathlib import Path
+                tmp_path = Path(tmp)
+                pipeline = _make_pipeline(mock_llm, tmp_path)
+                result = pipeline.execute(_make_request(_make_project(tmp_path), tmp_path))
+
+        self.assertEqual(mock_llm.call_count, 3)
+        self.assertIn("打回 2 次", result.plain_text)
+        self.assertFalse(result.success)  # 语义失败如实进报告
+
+    def test_gate_passes_clean_claim_without_rejection(self):
+        mock_llm = MockLLM(responses=[{"content": "完成了", "tool_calls": []}])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=SemanticVerificationResult(passed=True),
+        ):
+            with __import__("tempfile").TemporaryDirectory() as tmp:
+                from pathlib import Path
+                tmp_path = Path(tmp)
+                pipeline = _make_pipeline(mock_llm, tmp_path)
+                result = pipeline.execute(_make_request(_make_project(tmp_path), tmp_path))
+
+        self.assertEqual(mock_llm.call_count, 1)
+        self.assertNotIn("打回", result.plain_text)
+        self.assertTrue(result.success)
+
+    def test_no_rejection_when_budget_cannot_fix(self):
+        """预算已用尽时宣称完成：不再打回（没有预算修复），如实交付失败状态。"""
+        mock_llm = MockLLM(responses=[
+            {"content": "", "tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            {"content": "完成了", "tool_calls": []},
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_blocking_semantic(),
+        ):
+            with __import__("tempfile").TemporaryDirectory() as tmp:
+                from pathlib import Path
+                tmp_path = Path(tmp)
+                pipeline = _make_pipeline(mock_llm, tmp_path)
+                result = pipeline.execute(
+                    _make_request(_make_project(tmp_path), tmp_path, agent_loop_budget=1)
+                )
+
+        self.assertNotIn("打回", result.plain_text)
+        self.assertIn("完成门禁未通过", result.plain_text)
+        self.assertFalse(result.success)
