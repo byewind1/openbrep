@@ -279,3 +279,74 @@ class TestSkipWhenCompileBroken:
         assert "几何语义验证" not in _llm_texts(mock_llm)
         check = _semantic_check(result)
         assert check is not None and check["status"] == "fail"
+
+
+# ── MODIFY 路径：同一实现，对称行为 ──
+
+
+def _run_modify(pipeline: TaskPipeline, tmp_path: Path) -> object:
+    project = _make_project(tmp_path)
+    req = TaskRequest(
+        user_input="把书架加一层", intent="MODIFY",
+        project=project, work_dir=str(tmp_path), output_dir=str(tmp_path),
+    )
+    return pipeline.execute(req)
+
+
+class TestModifySemanticWiring:
+    """MODIFY / DEBUG / REPAIR 此前零几何验证：报告里必须出现 semantic check。"""
+
+    def test_modify_verification_report_includes_semantic(self, tmp_path: Path):
+        compiler_mock = MagicMock()
+        compiler_mock.hsf2libpart.return_value = _ok_compile()
+        pipeline, _ = _make_pipeline(GDL_REPLY, compiler_mock)
+
+        with patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_sem(),
+        ) as sem_mock:
+            result = _run_modify(pipeline, tmp_path)
+
+        assert sem_mock.call_count == 1
+        check = _semantic_check(result)
+        assert check is not None and check["status"] == "pass"
+
+    def test_modify_blocking_issue_triggers_repair(self, tmp_path: Path):
+        compiler_mock = MagicMock()
+        compiler_mock.hsf2libpart.return_value = _ok_compile()
+        pipeline, mock_llm = _make_pipeline(GDL_REPAIR_REPLY, compiler_mock)
+
+        with patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            side_effect=[_sem(_blocking()), _sem()],
+        ):
+            result = _run_modify(pipeline, tmp_path)
+
+        assert "几何语义验证" in _llm_texts(mock_llm)
+        assert "语义修复" in result.plain_text
+        check = _semantic_check(result)
+        assert check is not None and check["status"] == "pass"
+
+    def test_modify_rolls_back_when_no_improvement(self, tmp_path: Path):
+        compiler_mock = MagicMock()
+        compiler_mock.hsf2libpart.return_value = _ok_compile()
+        pipeline, mock_llm = _make_pipeline(GDL_REPLY, compiler_mock)
+
+        def _gen(messages, **kwargs):
+            if "几何语义验证" in str(messages):
+                return _mock_llm_response(GDL_REPAIR_REPLY)
+            return _mock_llm_response(GDL_REPLY)
+
+        mock_llm.generate.side_effect = _gen
+
+        with patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            side_effect=[_sem(_blocking()), _sem(_blocking())],
+        ):
+            result = _run_modify(pipeline, tmp_path)
+
+        script_3d = result.project.get_script(ScriptType.SCRIPT_3D)
+        assert "ADDX" not in script_3d
+        assert "已回退" in result.plain_text
+        check = _semantic_check(result)
+        assert check is not None and check["status"] == "fail"

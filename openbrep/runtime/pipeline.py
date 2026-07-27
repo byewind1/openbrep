@@ -1072,6 +1072,39 @@ class TaskPipeline:
                 auto_repair_info = f"🔧 第 {_modify_repair_round} 轮自动修复尝试失败：{exc}"
                 break
 
+        # ── 语义验证 + 语义修复闭环（S1，与 CREATE 共用同一实现）────────────
+        # MODIFY / DEBUG / REPAIR 此前完全没有几何验证：编译通过但几何为空 /
+        # 尺寸错 / 参数是哑的都会直接交付。判决者 verify_semantics 是纯确定性
+        # previewer，与生成上下文独立（防自我确认）；修复轮接受/回退语义与
+        # CREATE 一致：编译（若配置）仍通过且 blocking issue 数严格下降。
+        from openbrep.semantic_verifier import verify_semantics
+        from openbrep.runtime.semantic_repair import run_semantic_repair_loop
+        semantic_result = verify_semantics(project)
+        _sem_outcome = run_semantic_repair_loop(
+            agent=agent,
+            project=project,
+            cleaned=cleaned,
+            compile_result=compile_result,
+            semantic_result=semantic_result,
+            instruction=clean_instruction,
+            knowledge=knowledge,
+            skills_text=skills_text,
+            history=request.history,
+            compiler=compiler,
+            compiler_configured=bool(self.config.compiler.path),
+            gsm_path=gsm_path,
+            lint_summary=lint_summary,
+            auto_repair_info=auto_repair_info,
+            on_event=on_event,
+            lint_fn=_run_gdl_linter,
+        )
+        cleaned = _sem_outcome.cleaned
+        compile_result = _sem_outcome.compile_result
+        semantic_result = _sem_outcome.semantic_result
+        lint_summary = _sem_outcome.lint_summary
+        auto_repair_info = _sem_outcome.auto_repair_info
+        # ─────────────────────────────────────────────────────────────────────
+
         compile_comparison: CompileComparison | None = None
         if before_compile_snapshot is not None:
             after_compile_snapshot = _compile_snapshot_from_result(
@@ -1163,6 +1196,7 @@ class TaskPipeline:
             project=project,
             object_plan=None,
             static_result=static_result,
+            semantic_result=semantic_result,
             lint_summary=lint_summary,
             compile_result=compile_result,
             auto_repair_info=auto_repair_info,
