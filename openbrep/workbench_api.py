@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform
 import re
 import subprocess
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -26,6 +27,7 @@ from openbrep.workbench.project_service import (
     build_demo_snapshot,
     project_to_snapshot,
 )
+from openbrep.workbench.request_gate import is_lock_free_route
 from openbrep.workbench.settings_service import (
     WorkbenchSettingsService,
     load_workbench_config,
@@ -36,6 +38,7 @@ from openbrep.workbench_tapir import WorkbenchTapirAdapter, default_tapir_bridge
 
 
 _DEFAULT_SESSION: WorkbenchSession | None = None
+_DEFAULT_SESSION_LOCK = threading.Lock()
 
 
 SCRIPT_ROUTE_RE = re.compile(r"^/api/project/script/([^/]+)$")
@@ -81,6 +84,9 @@ class WorkbenchSession:
         self.assistant_settings = self.config.llm.assistant_settings or ""
         self.recent_project_paths: list[str] = list(self.config.recent_projects or [])
         self.last_compile_output_path = ""
+        # 串行化变更类请求：ThreadingHTTPServer 每请求一个线程，而 session 是全局
+        # 单例；慢操作（AI 生成）与快操作（编译/保存）不能在同一 project 上交错。
+        self._op_lock = threading.RLock()
         self.settings_service = WorkbenchSettingsService(
             self,
             llm_adapter_factory=lambda config: LLMAdapter(config),
@@ -402,6 +408,17 @@ class WorkbenchSession:
     ) -> dict[str, Any]:
         normalized_method = method.upper()
         route = urlparse(path).path
+        if is_lock_free_route(normalized_method, route):
+            return self._dispatch(normalized_method, route, body)
+        with self._op_lock:
+            return self._dispatch(normalized_method, route, body)
+
+    def _dispatch(
+        self,
+        normalized_method: str,
+        route: str,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         body = body or {}
 
         if normalized_method == "GET" and route == "/api/snapshot":
@@ -601,7 +618,9 @@ class WorkbenchSession:
 def _default_session() -> WorkbenchSession:
     global _DEFAULT_SESSION
     if _DEFAULT_SESSION is None:
-        _DEFAULT_SESSION = WorkbenchSession()
+        with _DEFAULT_SESSION_LOCK:
+            if _DEFAULT_SESSION is None:
+                _DEFAULT_SESSION = WorkbenchSession()
     return _DEFAULT_SESSION
 
 
