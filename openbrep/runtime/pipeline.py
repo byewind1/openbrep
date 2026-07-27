@@ -779,6 +779,7 @@ class TaskPipeline:
             scripts=cleaned,
             plain_text="\n\n".join(create_text_parts),
             project=project,
+            compile_result=compile_result,
             lint_summary=lint_summary,
             object_plan=object_plan.to_dict() if object_plan is not None else {},
             verification=verification_report.to_dict(),

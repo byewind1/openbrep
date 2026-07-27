@@ -17,7 +17,7 @@ from benchmark.assertions import assert_success_criteria
 from benchmark.schema import load_benchmark_task
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
-from openbrep.core import GDLAgent, Status
+from openbrep.core import GDLAgent
 from openbrep.gdl_contract_checker import GDLContractChecker
 from openbrep.hsf_project import HSFProject
 from openbrep.static_checker import StaticChecker
@@ -90,22 +90,45 @@ class BenchmarkRunner:
         # fixture 非空 = MODIFY 类任务：走 TaskPipeline 生产 MODIFY 路径（旧路径）
         if task.fixture:
             return self._run_modify_task(task, start)
+        return self._run_create_task(task, start)
 
+    def _run_create_task(self, task, start: float) -> dict:
+        """CREATE 类任务：走 TaskPipeline 的 CREATE 生产路径。
+
+        与生产一致：知识注入 / linter / StaticChecker / 编译自动修复 / 语义验证
+        全部生效（旧 GDLAgent.run 路径无知识注入，benchmark 结果不代表生产质量）。
+        """
+        from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+
+        task_id = task.id
         project = HSFProject.create_new(task_id, work_dir=str(self.work_dir))
-        output_gsm = str(self.results_dir / f"{task_id}.gsm")
-        result = self.agent.run(
-            instruction=task.description,
+
+        # 与 MODIFY 分支相同：TaskPipeline 内部按 config 自建 LLM/compiler，这里
+        # 覆盖为 runner 实例，保证 mock/real 语义与现有 benchmark 完全一致。
+        pipeline = TaskPipeline(config=self.config, trace_dir="./traces")
+        pipeline._make_llm = lambda _req: self.llm
+        pipeline._make_compiler = lambda: self.compiler
+
+        request = TaskRequest(
+            user_input=task.description,
+            intent="CREATE",
             project=project,
-            output_gsm=output_gsm,
+            work_dir=str(self.work_dir),
+            output_dir=str(self.results_dir),
+            gsm_name=task_id,
         )
+        result = pipeline.execute(request)
 
         elapsed = time.time() - start
-        compile_pass = result.status == Status.SUCCESS
+        compile_pass = bool(result.compile_result and result.compile_result.success)
         final_project = result.project or project
         static_result = StaticChecker().check(final_project)
         contract_result = GDLContractChecker().check(final_project)
         criteria_result = assert_success_criteria(final_project, task.success_criteria)
         success = compile_pass and static_result.passed and contract_result.passed and criteria_result.passed
+        compile_stderr = ""
+        if result.compile_result is not None and not result.compile_result.success:
+            compile_stderr = result.compile_result.stderr or ""
 
         return {
             "task_id": task_id,
@@ -115,8 +138,8 @@ class BenchmarkRunner:
             "effective_mode": self.effective_mode,
             "compile_pass": compile_pass,
             "compile_mode": self.effective_mode,
-            "compile_exit_code": None,
-            "compile_stderr": "" if compile_pass else result.error_summary,
+            "compile_exit_code": getattr(result.compile_result, "exit_code", None),
+            "compile_stderr": compile_stderr,
             "static_pass": static_result.passed,
             "contract_pass": contract_result.passed,
             "contract_failures": [
@@ -130,10 +153,11 @@ class BenchmarkRunner:
             ],
             "criteria_pass": criteria_result.passed,
             "criteria_failures": criteria_result.failures,
-            "attempts": result.attempts,
+            # TaskResult 不暴露内部修复轮次，记 1
+            "attempts": 1,
             "elapsed_sec": round(elapsed, 1),
-            "error_summary": result.error_summary,
-            "trace": result.history,
+            "error_summary": "" if success else (result.error or compile_stderr),
+            "trace": [],
             "environment": self._environment_metadata(),
         }
 
