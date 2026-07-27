@@ -54,15 +54,33 @@ def _apply_naming_alignment(task, final_project: HSFProject) -> dict:
 
 
 class BenchmarkRunner:
-    def __init__(self, config_path: str = "config.toml", mode: str = "auto", temperature: float = 0.0):
+    def __init__(
+        self,
+        config_path: str = "config.toml",
+        mode: str = "auto",
+        temperature: float = 0.0,
+        llm_record: str | None = None,
+        llm_replay: str | None = None,
+    ):
         if mode not in {"mock", "real", "auto"}:
             raise ValueError("mode must be one of: mock, real, auto")
         self.config = GDLAgentConfig.load(config_path)
         # benchmark 需要确定性判断"改动有没有效果"：默认强制 temperature=0
-        # （--temperature 可显式覆盖，供分布测试用），随结果元数据记录可追溯
+        # （--temperature 可显式覆盖，供分布测试用），随结果元数据记录可追溯。
+        # 注意：实测 deepseek 在 temperature=0 下仍非确定（服务端因素），
+        # 真确定性用 --llm-record / --llm-replay 黄金语料。
         self.temperature = temperature
         self.config.llm.temperature = temperature
         self.llm = LLMAdapter(self.config.llm)
+        self.llm_source = "live"
+        if llm_replay:
+            from benchmark.llm_replay import ReplayLLM
+            self.llm = ReplayLLM(llm_replay)
+            self.llm_source = f"replay:{llm_replay}"
+        elif llm_record:
+            from benchmark.llm_replay import RecordingLLM
+            self.llm = RecordingLLM(self.llm, llm_record)
+            self.llm_source = f"record:{llm_record}"
         self.mode = mode
         self.compiler_skip_reason = ""
         if mode == "mock":
@@ -401,6 +419,7 @@ class BenchmarkRunner:
             "effective_mode": self.effective_mode,
             "model": getattr(self.config.llm, "model", ""),
             "temperature": getattr(self.config.llm, "temperature", None),
+            "llm_source": getattr(self, "llm_source", "live"),
             "max_iterations": getattr(self.config.agent, "max_iterations", None),
             "environment": self._environment_metadata(),
         }
@@ -496,9 +515,15 @@ if __name__ == "__main__":
     parser.add_argument("--config", default="config.toml", help="OpenBrep config path")
     parser.add_argument("--jobs", type=int, default=4, help="并发任务数；1 = 完全串行")
     parser.add_argument("--temperature", type=float, default=0.0, help="LLM 温度；默认 0 保证确定性，分布测试时显式覆盖")
+    parser.add_argument("--llm-record", default=None, metavar="CORPUS.jsonl", help="真实 LLM 跑并把响应录制成黄金语料")
+    parser.add_argument("--llm-replay", default=None, metavar="CORPUS.jsonl", help="离线回放黄金语料（完全确定，零 token）")
     args = parser.parse_args()
 
-    runner = BenchmarkRunner(config_path=args.config, mode=args.mode, temperature=args.temperature)
+    runner = BenchmarkRunner(
+        config_path=args.config, mode=args.mode,
+        temperature=args.temperature,
+        llm_record=args.llm_record, llm_replay=args.llm_replay,
+    )
     results = runner.run_suite(args.suite, jobs=args.jobs)
     print(runner.report(results))
 
