@@ -54,10 +54,14 @@ def _apply_naming_alignment(task, final_project: HSFProject) -> dict:
 
 
 class BenchmarkRunner:
-    def __init__(self, config_path: str = "config.toml", mode: str = "auto"):
+    def __init__(self, config_path: str = "config.toml", mode: str = "auto", temperature: float = 0.0):
         if mode not in {"mock", "real", "auto"}:
             raise ValueError("mode must be one of: mock, real, auto")
         self.config = GDLAgentConfig.load(config_path)
+        # benchmark 需要确定性判断"改动有没有效果"：默认强制 temperature=0
+        # （--temperature 可显式覆盖，供分布测试用），随结果元数据记录可追溯
+        self.temperature = temperature
+        self.config.llm.temperature = temperature
         self.llm = LLMAdapter(self.config.llm)
         self.mode = mode
         self.compiler_skip_reason = ""
@@ -370,6 +374,7 @@ class BenchmarkRunner:
             "platform": platform.platform(),
             "system": platform.system(),
             "converter_path": getattr(self.compiler, "converter_path", None),
+            "temperature": getattr(self, "temperature", None),
         }
 
     def write_results(self, results: list, *, suite_name: str = "create") -> dict[str, str]:
@@ -490,9 +495,10 @@ if __name__ == "__main__":
     parser.add_argument("--mode", default="auto", choices=["mock", "real", "auto"], help="compiler mode")
     parser.add_argument("--config", default="config.toml", help="OpenBrep config path")
     parser.add_argument("--jobs", type=int, default=4, help="并发任务数；1 = 完全串行")
+    parser.add_argument("--temperature", type=float, default=0.0, help="LLM 温度；默认 0 保证确定性，分布测试时显式覆盖")
     args = parser.parse_args()
 
-    runner = BenchmarkRunner(config_path=args.config, mode=args.mode)
+    runner = BenchmarkRunner(config_path=args.config, mode=args.mode, temperature=args.temperature)
     results = runner.run_suite(args.suite, jobs=args.jobs)
     print(runner.report(results))
 
