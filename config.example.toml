@@ -85,9 +85,11 @@ auto_version = true
 # 编译模式：mock 或 lp
 mode = "mock"
 # LP_XMLConverter 路径（配置一次永久生效）
-# macOS:   /Applications/GRAPHISOFT/Archicad 29/Archicad 29.app/Contents/MacOS/LP_XMLConverter
+# macOS:   /Applications/GRAPHISOFT/Archicad 29/Archicad 29.app/Contents/MacOS/LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter
 # Windows: C:\Program Files\GRAPHISOFT\ArchiCAD 29\LP_XMLConverter.exe
-path = "/path/to/LP_XMLConverter"
+# 留空 → 启动时自动探测；探测不到则编译验证干净跳过（SKIPPED_NO_COMPILER）。
+# 不要填占位路径：非空路径会触发真实编译调用，占位路径只会让编译失败。
+path = ""
 timeout = 60
 
 [paths]

@@ -209,6 +209,10 @@ class TestProjectContext(unittest.TestCase):
             )
 
             pipeline = TaskPipeline(trace_dir="./traces")
+            # 测试关注知识/技能注入，与编译器可用性无关：
+            # 显式置空编译路径，编译验证干净跳过（SKIPPED_NO_COMPILER），
+            # 避免示例配置的占位 converter 路径或本机 Archicad 影响结果
+            pipeline.config.compiler.path = ""
             pipeline._load_knowledge = lambda: "GLOBAL_KNOWLEDGE"
             pipeline._resolve_skills_dir = lambda: Path(tmpdir) / "empty-skills"
 

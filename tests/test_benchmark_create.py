@@ -45,6 +45,9 @@ class TestCreateRunnerBranch(unittest.TestCase):
 
     def _make_runner(self, tmp_path) -> BenchmarkRunner:
         runner = BenchmarkRunner(config_path=str(tmp_path / "config.toml"), mode="mock")
+        # 让 pipeline 的 CREATE 编译段真正执行（由注入的 MockHSFCompiler 通过），
+        # 不依赖 config.example.toml 的默认 compiler.path
+        runner.config.compiler.path = "/fake/LP_XMLConverter"
         runner.llm = MockLLM(responses=[_GDL_REPLY])
         runner.results_dir = tmp_path / "results"
         runner.work_dir = tmp_path / "workdir"
