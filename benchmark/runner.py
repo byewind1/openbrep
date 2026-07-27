@@ -100,6 +100,12 @@ class BenchmarkRunner:
             else:
                 self.compiler = MockHSFCompiler()
         self.effective_mode = "real" if isinstance(self.compiler, HSFCompiler) else "mock"
+        # pipeline 的 CREATE 编译开关看 config.compiler.path 是否非空；
+        # benchmark 无论 mock/real 都注入了 compiler，编译流程必须真正执行。
+        # mock 回退时给路径一个哨兵值，否则无 converter 的环境（CI）会
+        # SKIPPED_NO_COMPILER → compile_pass 全灭，与本地结果不一致。
+        if self.effective_mode == "mock" and not self.config.compiler.path:
+            self.config.compiler.path = "/benchmark/mock-converter"
         self.agent = GDLAgent(
             self.llm,
             compiler=self.compiler,
