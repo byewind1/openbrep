@@ -120,7 +120,26 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     try {
       await onSaveApiKey(llmSettings.model, apiKey)
       setApiKeyInput('')
-      setKeyFeedback({ ok: true, text: t('settings.ai.keySaved') })
+      // 保存后自动验证连接。key 始终保留——验证结果只是提示，
+      // 用户可能在离线环境配置，不能因为验证失败拒绝保存。
+      setKeyFeedback({ ok: true, text: t('settings.ai.savingAndVerifying') })
+      setTesting(true)
+      setTestResult(null)
+      setErrorCopied(false)
+      try {
+        const result = await onTestConnection()
+        setTestResult(result)
+        if (result.ok) {
+          setKeyFeedback({
+            ok: true,
+            text: t('settings.ai.keySavedConnectionOk', { ms: result.duration_ms ?? '—' }),
+          })
+        } else {
+          setKeyFeedback({ ok: false, text: t('settings.ai.keySavedConnectionFailed') })
+        }
+      } finally {
+        setTesting(false)
+      }
     } catch (error) {
       setKeyFeedback({
         ok: false,
@@ -155,7 +174,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
             }}
           />
           <button type="button" disabled={!apiKeyInput.trim() || savingKey} onClick={() => void saveApiKey()}>
-            {savingKey ? '…' : t('settings.ai.saveKey')}
+            {savingKey ? t('settings.ai.savingAndVerifying') : t('settings.ai.saveKey')}
           </button>
         </div>
       ) : null}
@@ -221,6 +240,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
           {testing ? 'Testing…' : 'Test connection'}
         </button>
       </div>
+      <p className="settings-test-result">{t('settings.ai.officialBaseNote')}</p>
       {testResult ? (
         testResult.ok ? (
           <p className="settings-test-result success">

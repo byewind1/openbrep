@@ -281,7 +281,8 @@ describe('SettingsDrawer AI model settings', () => {
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } })
     fireEvent.click(screen.getByRole('button', { name: '保存 Key' }))
     await waitFor(() => expect(onSaveLlmApiKey).toHaveBeenCalledWith('gpt-4o', 'sk-test'))
-    await waitFor(() => expect(screen.getByText('API Key 已保存')).toBeTruthy())
+    // 断点 3 后：保存成功会自动验证连接并显示验证结果，不再只提示"已保存"
+    await waitFor(() => expect(screen.getByText(/连接正常/)).toBeTruthy())
   })
 
   test('hides the API key editor for custom provider models', () => {

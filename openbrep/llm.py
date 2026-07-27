@@ -105,6 +105,80 @@ def assistant_tool_calls_message(response: "LLMResponse") -> dict:
     }
 
 
+# ── 错误分类辅助（断点 1/2 修复）──────────────────────────────
+
+# 认证特征：deepseek 等 provider 的 401 会被 litellm 映射成 BadRequestError，
+# 只看异常类型会把"key 无效"误诊为"模型名不对"（2026-07-28 实测踩坑），
+# 所以先匹配错误内容，再看异常类型。
+_AUTH_PATTERNS = (
+    "authentication",
+    "api key",
+    "api_key",
+    "invalid key",
+    "unauthorized",
+    "401",
+    "incorrect api key",
+    "no api key",
+)
+
+
+def _looks_like_auth_error(exc_text: str) -> bool:
+    text = exc_text.lower()
+    return any(p in text for p in _AUTH_PATTERNS)
+
+
+# 各 provider 的 key 控制台，放进"key 无效"的引导文案里
+_PROVIDER_CONSOLE_URLS = {
+    "deepseek": "https://platform.deepseek.com/api_keys",
+    "openai": "https://platform.openai.com/api-keys",
+    "gpt": "https://platform.openai.com/api-keys",
+    "o1": "https://platform.openai.com/api-keys",
+    "o3": "https://platform.openai.com/api-keys",
+    "o4": "https://platform.openai.com/api-keys",
+    "anthropic": "https://console.anthropic.com/settings/keys",
+    "claude": "https://console.anthropic.com/settings/keys",
+    "gemini": "https://aistudio.google.com/app/apikey",
+    "google": "https://aistudio.google.com/app/apikey",
+    "glm": "https://open.bigmodel.cn/usercenter/apikeys",
+    "zhipu": "https://open.bigmodel.cn/usercenter/apikeys",
+    "zai": "https://open.bigmodel.cn/usercenter/apikeys",
+}
+
+
+def _console_url_for(provider_name: str | None, model: str | None) -> str:
+    text = f"{provider_name or ''} {model or ''}".lower()
+    for key, url in _PROVIDER_CONSOLE_URLS.items():
+        if key in text:
+            return url
+    return ""
+
+
+def _classify_network_error(exc: BaseException) -> str | None:
+    """沿异常链识别网络类错误：connection | timeout | bad_gateway | ssl | None。"""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = current.__class__.__name__.lower()
+        text = str(current).lower()
+        if "ssl" in name or "certificate" in text:
+            return "ssl"
+        if "timeout" in name or "timed out" in text:
+            return "timeout"
+        if (
+            "badgateway" in name
+            or "bad gateway" in text
+            or "502" in text
+            or "503" in text
+            or "serviceunavailable" in name
+        ):
+            return "bad_gateway"
+        if "connection" in name or "connect" in name:
+            return "connection"
+        current = current.__cause__ or current.__context__
+    return None
+
+
 class LLMAdapter:
     """
     Unified LLM interface.
@@ -112,7 +186,6 @@ class LLMAdapter:
     Uses litellm under the hood for cross-provider compatibility.
     Falls back to a mock mode when litellm is not available (for testing).
     """
-
     def __init__(self, config: LLMConfig):
         self.config = config
         self._litellm = None
@@ -154,7 +227,11 @@ class LLMAdapter:
                 f"LLM 账户余额或额度不足：模型 `{configured_model}` 所属 provider "
                 f"`{provider_name or configured_model}` 返回余额不足，请充值或切换到有额度的模型/provider。"
             )
-        elif auth_error and isinstance(exc, auth_error):
+        elif (auth_error and isinstance(exc, auth_error)) or _looks_like_auth_error(exc_text):
+            # 判定顺序关键：先看内容里的认证特征再看异常类型——
+            # deepseek 等 provider 的 401 会被 litellm 映射成 BadRequestError，
+            # 只看类型会把"key 无效"误诊成"模型名不对"（实测踩过）
+            console_url = _console_url_for(provider_name, configured_model)
             if not resolved_api_key:
                 summary = (
                     f"LLM 配置错误：当前模型 `{configured_model}` 未找到可用 API Key。"
@@ -162,8 +239,10 @@ class LLMAdapter:
                 )
             else:
                 summary = (
-                    f"LLM 认证失败：模型 `{configured_model}` 的 API Key 可能无效、已过期，"
-                    "或与当前 provider 不匹配。"
+                    f"LLM API Key 无效或被拒绝：当前模型 `{configured_model}`"
+                    f"（provider `{provider_name or configured_model}`）的认证未通过。\n"
+                    "→ 检查 config.toml 中该 provider 的 key 是否完整、是否已过期"
+                    + (f"\n→ {provider_name or configured_model} 控制台：{console_url}" if console_url else "")
                 )
         elif bad_request and isinstance(exc, bad_request):
             if resolved.is_custom_provider_request and not resolved_api_base:
@@ -202,6 +281,42 @@ class LLMAdapter:
         auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
         if (bad_request and isinstance(exc, bad_request)) or (auth_error and isinstance(exc, auth_error)):
             raise RuntimeError(self._build_config_error_message(exc, resolved)) from exc
+        network_kind = _classify_network_error(exc)
+        if network_kind is not None:
+            raise RuntimeError(self._build_network_error_message(exc, resolved, network_kind)) from exc
+
+    def _build_network_error_message(self, exc: Exception, resolved: _ResolvedModelTarget, kind: str) -> str:
+        configured_model = resolved.configured_model or self.config.model or resolved.litellm_model
+        api_base = self.config.resolve_api_base(configured_model) or "(provider 默认端点)"
+        provider_name = resolved.provider_name or configured_model
+        exc_text = str(exc).strip() or exc.__class__.__name__
+
+        if kind == "connection":
+            summary = (
+                f"无法连接到 {api_base}：\n"
+                "→ 检查网络连接\n"
+                "→ 如果使用代理，检查代理设置\n"
+                "→ 检查 api_base 拼写是否正确"
+            )
+        elif kind == "timeout":
+            summary = (
+                f"连接 {api_base} 超时（{self.config.timeout} 秒）：\n"
+                "→ 网络可能不稳定，稍后重试\n"
+                "→ 或在 config.toml 增大 timeout 值"
+            )
+        elif kind == "bad_gateway":
+            summary = (
+                f"provider `{provider_name}` 服务端错误：\n"
+                "→ 这通常是服务商临时故障，稍后重试\n"
+                "→ 如果持续出现，检查 api_base 是否指向正确的端点"
+            )
+        else:  # ssl
+            summary = (
+                "SSL 证书验证失败：\n"
+                "→ 如果在公司网络，可能需要配置代理证书\n"
+                "→ 检查 api_base 的协议是否正确（http/https）"
+            )
+        return f"{summary}\n底层错误：{exc_text}"
 
     def _setup(self):
         """Initialize litellm with config."""

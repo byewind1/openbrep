@@ -56,8 +56,8 @@ class TestLLMAdapterVision(unittest.TestCase):
             adapter.generate_with_image("describe", "YWJj")
         message = str(cm.exception)
         self.assertIn("API Key", message)
-        self.assertIn("LLM 认证失败", message)
-        self.assertIn("无效、已过期", message)
+        self.assertIn("API Key 无效或被拒绝", message)
+        self.assertIn("已过期", message)
         self.assertIn("底层错误：bad key", message)
         self.assertIn("resolved_model=openai/gpt-4o", message)
 
@@ -75,8 +75,8 @@ class TestLLMAdapterVision(unittest.TestCase):
         with self.assertRaises(RuntimeError) as cm:
             adapter.generate([{"role": "user", "content": "hi"}])
         message = str(cm.exception)
-        self.assertIn("LLM 认证失败", message)
-        self.assertIn("无效、已过期", message)
+        self.assertIn("API Key 无效或被拒绝", message)
+        self.assertIn("已过期", message)
         self.assertIn("resolved_model=openai/gpt-4o", message)
 
     def test_generate_wraps_bad_request_for_builtin_model_with_model_hint(self):
@@ -440,3 +440,150 @@ class TestLLMAdapterVision(unittest.TestCase):
         self.assertEqual(kwargs["temperature"], 0.2)
         self.assertTrue(kwargs["drop_params"])
 
+
+
+class TestLLMErrorClassification(unittest.TestCase):
+    """断点 1/2 修复：认证特征优先于异常类型；网络类异常给中文引导。"""
+
+    def _adapter(self, model="deepseek-chat", api_key="sk-test", api_base=None):
+        config = LLMConfig(model=model, api_key=api_key, api_base=api_base, timeout=20)
+        adapter = LLMAdapter(config)
+        adapter._litellm = MagicMock()
+        return adapter
+
+    def test_bad_request_with_auth_signature_points_to_key_not_model(self):
+        """deepseek 式 401（BadRequestError 外壳）必须指向 key。"""
+        adapter = self._adapter()
+
+        class FakeBadRequestError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=FakeBadRequestError
+        )
+        adapter._litellm.completion.side_effect = FakeBadRequestError(
+            'DeepseekException - {"error":{"message":"Authentication Fails, '
+            'Your api key: ****fake is invalid","code":"invalid_request_error"}}'
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("API Key 无效或被拒绝", message)
+        self.assertIn("platform.deepseek.com/api_keys", message)
+        self.assertNotIn("model 名称填写不正确", message)
+
+    def test_bad_request_model_not_found_still_points_to_model(self):
+        """真·模型名错误不能被断点 1 的改动误伤。"""
+        adapter = self._adapter()
+
+        class FakeBadRequestError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=FakeBadRequestError
+        )
+        adapter._litellm.completion.side_effect = FakeBadRequestError(
+            "DeepseekException - model_not_found: The model `deepseek-chat-999` does not exist"
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("model 名称填写不正确", message)
+        self.assertNotIn("API Key 无效或被拒绝", message)
+
+    def test_missing_key_message_preserved(self):
+        import os
+        env_names = (
+            "ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY",
+        )
+        snapshot = {n: os.environ.get(n) for n in env_names}
+        for n in env_names:
+            os.environ.pop(n, None)
+        try:
+            adapter = self._adapter(api_key=None)
+
+            class FakeAuthError(Exception):
+                pass
+
+            adapter._litellm.exceptions = MagicMock(
+                AuthenticationError=FakeAuthError, BadRequestError=ValueError
+            )
+            adapter._litellm.completion.side_effect = FakeAuthError("no api key provided")
+            with self.assertRaises(RuntimeError) as cm:
+                adapter.generate([{"role": "user", "content": "hi"}])
+            self.assertIn("未找到可用 API Key", str(cm.exception))
+        finally:
+            for n, v in snapshot.items():
+                if v is None:
+                    os.environ.pop(n, None)
+                else:
+                    os.environ[n] = v
+
+    def test_bad_gateway_gets_chinese_network_guidance(self):
+        adapter = self._adapter()
+
+        class BadGatewayError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        adapter._litellm.completion.side_effect = BadGatewayError(
+            "OpenAIException - Error code: 502"
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("服务端错误", message)
+        self.assertIn("服务商临时故障", message)
+
+    def test_connection_error_gets_network_guidance_with_api_base(self):
+        adapter = self._adapter(api_base="http://proxy.example.com/v1")
+
+        class APIConnectionError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        adapter._litellm.completion.side_effect = APIConnectionError(
+            "Connection error."
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("无法连接到 http://proxy.example.com/v1", message)
+        self.assertIn("检查网络连接", message)
+        self.assertIn("检查代理设置", message)
+
+    def test_timeout_gets_retry_and_config_guidance(self):
+        adapter = self._adapter()
+
+        class ReadTimeoutError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        adapter._litellm.completion.side_effect = ReadTimeoutError("timed out")
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("超时", message)
+        self.assertIn("稍后重试", message)
+        self.assertIn("增大 timeout", message)
+
+    def test_ssl_error_gets_certificate_guidance(self):
+        adapter = self._adapter()
+
+        class SSLError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        adapter._litellm.completion.side_effect = SSLError("certificate verify failed")
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        self.assertIn("SSL 证书验证失败", str(cm.exception))
