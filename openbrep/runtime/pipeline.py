@@ -744,6 +744,174 @@ class TaskPipeline:
         semantic_result = verify_semantics(project)
         # ─────────────────────────────────────────────────────────────────────
 
+        # ── 语义修复闭环（S1）─────────────────────────────────────────────
+        # 编译通过但几何语义验证存在 blocking issue 时，把确定性证据
+        # （check_type + detail，来自纯本地 previewer，与生成上下文完全独立，
+        # 天然防自我确认）喂回 LLM 做最小改动修复。每轮采用"接受/回退"判定：
+        # 修复后编译（若配置）必须仍通过，且 blocking issue 数必须严格下降，
+        # 否则回退到修复前状态——保证交付不会比不修复更差。
+        _MAX_SEMANTIC_REPAIR = 2
+        _semantic_repair_round = 0
+        _semantic_accepted = 0
+        _compile_gate_ok = (
+            not self.config.compiler.path
+            or (compile_result is not None and compile_result.success)
+        )
+        while (
+            _compile_gate_ok
+            and cleaned
+            and any(issue.blocking for issue in semantic_result.issues)
+            and _semantic_repair_round < _MAX_SEMANTIC_REPAIR
+        ):
+            _semantic_repair_round += 1
+            _prev_blocking = [i for i in semantic_result.issues if i.blocking]
+            _prev_scripts = dict(project.scripts)
+            _prev_params = deepcopy(project.parameters)
+            _prev_cleaned = dict(cleaned)
+            _prev_compile_result = compile_result
+
+            _issue_lines = "\n".join(
+                f"- [{i.check_type}] {i.detail}" for i in _prev_blocking
+            )
+            _hint_issues = [
+                i for i in semantic_result.issues
+                if not i.blocking and i.check_type == "sweep_unresponsive"
+            ]
+            _hint_block = ""
+            if _hint_issues:
+                _hint_block = "\n附带提示（非阻断，能改则改）：\n" + "\n".join(
+                    f"- [{i.check_type}] {i.detail}" for i in _hint_issues
+                )
+            on_event("status", {
+                "message": f"🧩 几何语义验证未过（第 {_semantic_repair_round} 轮），正在自动修复…"
+            })
+            logger.info(
+                "CREATE semantic repair round %d; blocking=%d",
+                _semantic_repair_round, len(_prev_blocking),
+            )
+            _semantic_instruction = (
+                f"{enriched_instruction}\n\n"
+                f"脚本已能编译，但几何语义验证发现以下问题（第 {_semantic_repair_round} 轮），"
+                f"请基于当前脚本进行最小改动修复：\n{_issue_lines}{_hint_block}"
+            )
+
+            def _rollback_semantic_round() -> None:
+                project.scripts.clear()
+                project.scripts.update(_prev_scripts)
+                project.parameters = _prev_params
+                cleaned.clear()
+                cleaned.update(_prev_cleaned)
+
+            try:
+                _sem_changes, _sem_plain = agent.generate_only(
+                    instruction=_semantic_instruction,
+                    project=project,
+                    knowledge=knowledge,
+                    skills=skills_text,
+                    include_all_scripts=True,
+                    history=request.history,
+                )
+                _sem_cleaned = (
+                    {k: sanitize_llm_script_output(v, k) for k, v in _sem_changes.items()}
+                    if _sem_changes else {}
+                )
+                _sem_cleaned, _sem_lint = _run_gdl_linter(_sem_cleaned, on_event=on_event)
+                if _sem_lint:
+                    lint_summary = "\n\n".join(p for p in [lint_summary, _sem_lint] if p)
+                if not _sem_cleaned:
+                    auto_repair_info = "\n\n".join(p for p in [
+                        auto_repair_info,
+                        f"🧩 第 {_semantic_repair_round} 轮几何语义修复未产出可应用的修改，停止重试",
+                    ] if p)
+                    break
+                agent._apply_changes(project, _sem_cleaned)
+
+                # 编译门：配置编译器时，修复后必须仍通过编译
+                _round_compile_ok = True
+                if self.config.compiler.path:
+                    _sem_out_dir = Path(request.output_dir) if request.output_dir else Path(
+                        tempfile.mkdtemp(prefix="obr_create_sem_")
+                    )
+                    _sem_out_dir.mkdir(parents=True, exist_ok=True)
+                    _sem_gsm_path = str(_sem_out_dir / f"{request.gsm_name or project.name}.gsm")
+                    compile_result = compiler.hsf2libpart(
+                        str(project.save_to_disk()), _sem_gsm_path
+                    )
+                    on_event("compile_result", {
+                        "success": compile_result.success,
+                        "error": compile_result.stderr if not compile_result.success else "",
+                    })
+                    _round_compile_ok = compile_result.success
+
+                _new_semantic = verify_semantics(project)
+                _new_blocking = [i for i in _new_semantic.issues if i.blocking]
+                if _round_compile_ok and len(_new_blocking) < len(_prev_blocking):
+                    # 接受本轮修复
+                    cleaned.update(_sem_cleaned)
+                    semantic_result = _new_semantic
+                    _semantic_accepted += 1
+                    auto_repair_info = "\n\n".join(p for p in [
+                        auto_repair_info,
+                        f"🧩 第 {_semantic_repair_round} 轮几何语义修复生效："
+                        f"阻断问题 {len(_prev_blocking)} → {len(_new_blocking)}",
+                    ] if p)
+                else:
+                    # 未改善或改坏编译：回退并恢复编译产物，保证交付不劣化
+                    _rollback_semantic_round()
+                    if self.config.compiler.path:
+                        compile_result = compiler.hsf2libpart(
+                            str(project.save_to_disk()), _sem_gsm_path
+                        )
+                    else:
+                        project.save_to_disk()
+                        compile_result = _prev_compile_result
+                    _reject_reason = (
+                        "修复后编译失败" if not _round_compile_ok else "阻断问题数未下降"
+                    )
+                    auto_repair_info = "\n\n".join(p for p in [
+                        auto_repair_info,
+                        f"🧩 第 {_semantic_repair_round} 轮几何语义修复{_reject_reason}，已回退",
+                    ] if p)
+                    break
+            except Exception as exc:
+                _rollback_semantic_round()
+                compile_result = _prev_compile_result
+                logger.warning(
+                    "CREATE semantic repair round %d exception: %s",
+                    _semantic_repair_round, exc,
+                )
+                auto_repair_info = "\n\n".join(p for p in [
+                    auto_repair_info,
+                    f"🧩 第 {_semantic_repair_round} 轮几何语义修复异常：{exc}",
+                ] if p)
+                break
+
+        # 语义修复被接受后补一个 revision（编译成功时的主 revision 已在前面创建）
+        if (
+            _semantic_accepted > 0
+            and self.config.compiler.path
+            and compile_result is not None
+            and compile_result.success
+            and cleaned
+        ):
+            _create_auto_revision(
+                project,
+                message="auto: after create (semantic repair)",
+                trigger="create",
+                intent=request.intent or "CREATE",
+                user_instruction=request.user_input,
+                changed_files=list(cleaned.keys()),
+                parent_revision_id=(
+                    get_latest_revision_id(project.root)
+                    if _can_revision_project(project) else None
+                ),
+                metadata={
+                    "compile": _compile_revision_metadata(compile_result, project),
+                    "explanation": "",
+                },
+            )
+        # ─────────────────────────────────────────────────────────────────────
+
         create_text_parts = []
         if object_plan is not None:
             create_text_parts.append(object_plan.to_user_summary())
