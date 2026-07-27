@@ -87,7 +87,9 @@ class VerificationReport:
         NOT_RUN do not fail the report (they lower confidence instead).
         """
         for c in self.checks:
-            if c.status == CheckStatus.FAIL and c.check_type in ("static", "compile", "plan_check", "semantic"):
+            if c.status == CheckStatus.FAIL and c.check_type in (
+                "static", "compile", "plan_check", "semantic", "reserved_param_semantic_bug",
+            ):
                 return False
         return True
 
@@ -293,6 +295,34 @@ def run_plan_validation_checks(
 
 # ── Report builder ─────────────────────────────────────────────────────────
 
+_RESERVED_ROLE_CN = {"A": "宽度", "B": "深度", "ZZYZX": "高度"}
+
+
+def _format_reserved_bug_detail(conflict) -> str:
+    """保留名误用的说人话版本：谁被错用、正确槽位是什么、影响、建议。"""
+    reserved = conflict.reserved_name
+    expected = conflict.expected_name
+    reserved_role = _RESERVED_ROLE_CN.get(reserved, reserved)
+    expected_role = _RESERVED_ROLE_CN.get(expected, expected)
+    evidence = conflict.role_in_script or "脚本角色位"
+    if expected == "ZZYZX":
+        # 高度语义被塞进了宽度/深度槽位
+        return (
+            f"高度语义被赋给了保留参数 {reserved}（{reserved} 在 ArchiCAD 中是{reserved_role}）；"
+            f"期望参数：ZZYZX（高度），实际使用：{reserved}（出现于{evidence}）。"
+            f"影响：此对象在 ArchiCAD 中拖拽{reserved_role}控制点会改变高度，"
+            f"尺寸标注会显示错误的维度。"
+            f"建议：将高度相关的几何改为使用 ZZYZX。"
+        )
+    # ZZYZX 被当成宽度/深度用
+    return (
+        f"{expected_role}语义被赋给了保留参数 ZZYZX（ZZYZX 在 ArchiCAD 中是高度）；"
+        f"期望参数：{expected}（{expected_role}），实际使用：ZZYZX（出现于{evidence}）。"
+        f"影响：此对象在 ArchiCAD 中拖拽高度控制点会改变{expected_role}，"
+        f"尺寸标注会显示错误的维度。"
+        f"建议：将{expected_role}相关的几何改为使用 {expected}。"
+    )
+
 
 def build_verification_report(
     *,
@@ -308,6 +338,7 @@ def build_verification_report(
     static_repair_triggered: bool = False,
     auto_repair_info: str = "",
     graph_powered: bool = False,
+    reserved_conflicts: list | None = None,
 ) -> VerificationReport:
     """Aggregate scattered checks into one :class:`VerificationReport`.
 
@@ -403,6 +434,24 @@ def build_verification_report(
                 name="语义验证", check_type="semantic", status=CheckStatus.FAIL,
                 detail=f"{len(blocking_issues)} 个问题",
             ))
+
+    # 4c. reserved-param semantic bug（保留名被误用到错误维度角色：
+    # 高度塞进 A/B 宽度/深度槽位，或 ZZYZX 被当宽度/深度用。
+    # 这类对象在 ArchiCAD 里是真的坏——拖一个维度的控制点会改到另一个维度。
+    # blocking FAIL，产物照常交付（见 S2 门禁语义）。
+    for _conflict in (reserved_conflicts or []):
+        if getattr(_conflict, "severity", "") != "semantic_bug":
+            continue
+        detail = _format_reserved_bug_detail(_conflict)
+        report.errors_caught.append(
+            f"[reserved_param_semantic_bug] {_conflict.expected_name}↔{_conflict.reserved_name}"
+        )
+        checks.append(VerificationCheck(
+            name="保留参数语义",
+            check_type="reserved_param_semantic_bug",
+            status=CheckStatus.FAIL,
+            detail=detail,
+        ))
 
     # 5. fixes applied
     if static_repair_triggered:

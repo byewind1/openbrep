@@ -242,6 +242,45 @@ def _is_height_name(name: str) -> bool:
     return "height" in _canon_tokens(name)
 
 
+# ── 保留名语义误用检测（生产路径用，只检测不重命名）──────────
+
+_ROLE_EXPECTED = {"a": "A", "b": "B", "zzyzx": "ZZYZX"}
+_ROLE_NAME_CN = {"a": "宽度", "b": "深度", "zzyzx": "高度"}
+
+
+def detect_reserved_param_misuse(project) -> list[ReservedConflict]:
+    """只检测保留参数的语义误用，不做任何重命名，不需要 convention 输入。
+
+    判定（v1 只查高度通道错配，A↔B 宽深互换暂不报）：
+    - A 或 B 出现在高度角色位（BLOCK 第 3 维 / ADDZ 的裸标识符参数）
+      → 高度语义被塞进宽度/深度槽位，semantic_bug
+    - ZZYZX 出现在宽度/深度角色位（BLOCK 第 1/2 维、ADDX/ADDY）
+      → 宽度/深度语义被塞进高度槽位，semantic_bug
+
+    这类对象在 ArchiCAD 里是坏的：用户拖某个维度的控制点会改到另一个维度。
+    Never raises；无脚本/无参数的项目返回空列表。
+    """
+    conflicts: list[ReservedConflict] = []
+    try:
+        for role in ("a", "b", "zzyzx"):
+            _cands, reserved_seen = _scan_role_usage(project, role)
+            for reserved, evidence in reserved_seen.items():
+                if reserved.lower() == role:
+                    continue  # 正确定位：ZZYZX 在高度位、A 在宽度位等
+                # v1 只报高度通道错配：高度位被非高度保留名占，或 ZZYZX 占非高度位
+                if role != "zzyzx" and reserved.lower() != "zzyzx":
+                    continue
+                conflicts.append(ReservedConflict(
+                    expected_name=_ROLE_EXPECTED[role],
+                    reserved_name=reserved,
+                    role_in_script=evidence,
+                    severity="semantic_bug",
+                ))
+    except Exception as exc:  # Never raises
+        logger.warning("detect_reserved_param_misuse degraded: %s", exc)
+    return conflicts
+
+
 # 规则 2 的候选闸门：防止把有语义的名字推断成高度
 # （两起实测事故：blade_thickness=片厚、tf=t_flange 被改名为 ZZYZX，
 # 反而制造 bbox_mismatch）。只接受：

@@ -816,6 +816,7 @@ class TaskPipeline:
 
         # ── Verification report ──────────────────────────────────────────────
         from openbrep.verification import build_verification_report
+        from openbrep.naming_alignment import detect_reserved_param_misuse
         verification_report = build_verification_report(
             intent=request.intent or "CREATE",
             user_input=request.user_input,
@@ -829,6 +830,7 @@ class TaskPipeline:
             static_repair_triggered=bool(undef_errors),
             auto_repair_info=auto_repair_info,
             graph_powered=_graph_constraint_injected or _graph_powered_repair,
+            reserved_conflicts=detect_reserved_param_misuse(project),
         )
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
@@ -1190,6 +1192,7 @@ class TaskPipeline:
         # ── Verification report (Phase 3/4): aggregate static/lint/compile
         # (and any compile auto-repair) into a proof-oriented report. ────────
         from openbrep.verification import build_verification_report
+        from openbrep.naming_alignment import detect_reserved_param_misuse
         verification_report = build_verification_report(
             intent=request.intent or "MODIFY",
             user_input=request.user_input,
@@ -1201,6 +1204,7 @@ class TaskPipeline:
             compile_result=compile_result,
             auto_repair_info=auto_repair_info,
             graph_powered=_graph_powered_repair,
+            reserved_conflicts=detect_reserved_param_misuse(project),
         )
         output_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
