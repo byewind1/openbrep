@@ -22,6 +22,35 @@ from openbrep.gdl_contract_checker import GDLContractChecker
 from openbrep.hsf_project import HSFProject
 from openbrep.static_checker import StaticChecker
 from openbrep.llm import LLMAdapter
+from openbrep.naming_alignment import align_parameter_names
+
+
+def _apply_naming_alignment(task, final_project: HSFProject) -> dict:
+    """命名规范对齐：以 task yaml 的 required_params 为规范，重命名对齐
+    paramlist + 全脚本符号替换（保留名规则见 openbrep/naming_alignment.py）。
+
+    在断言（static/contract/criteria）之前执行，对齐结果写回磁盘并随
+    record 返回，供失败归因与后续规范库建设使用。任何异常都不阻断任务。
+    """
+    required = list(getattr(task.success_criteria, "required_params", None) or [])
+    if not required:
+        return {}
+    try:
+        convention = {name: None for name in required}
+        result = align_parameter_names(final_project, convention)
+        if result.renamed:
+            final_project.save_to_disk()
+        return {
+            "renamed": [f"{r.from_name}→{r.to_name}" for r in result.renamed],
+            "reserved_conflicts": [
+                f"{c.expected_name}↔{c.reserved_name}({c.severity})"
+                for c in result.reserved_conflicts
+            ],
+            "skipped": list(result.skipped),
+            "missing_concepts": list(result.missing_concepts),
+        }
+    except Exception as exc:  # 对齐层永远不阻断 benchmark
+        return {"error": str(exc)}
 
 
 class BenchmarkRunner:
@@ -132,6 +161,7 @@ class BenchmarkRunner:
         elapsed = time.time() - start
         compile_pass = bool(result.compile_result and result.compile_result.success)
         final_project = result.project or project
+        naming_alignment = _apply_naming_alignment(task, final_project)
         static_result = StaticChecker().check(final_project)
         contract_result = GDLContractChecker().check(final_project)
         criteria_result = assert_success_criteria(final_project, task.success_criteria)
@@ -163,6 +193,7 @@ class BenchmarkRunner:
             ],
             "criteria_pass": criteria_result.passed,
             "criteria_failures": criteria_result.failures,
+            "naming_alignment": naming_alignment,
             # TaskResult 不暴露内部修复轮次，记 1
             "attempts": 1,
             "elapsed_sec": round(elapsed, 1),
@@ -203,6 +234,7 @@ class BenchmarkRunner:
         elapsed = time.time() - start
         compile_pass = bool(result.compile_result and result.compile_result.success)
         final_project = result.project or project
+        naming_alignment = _apply_naming_alignment(task, final_project)
         static_result = StaticChecker().check(final_project)
         contract_result = GDLContractChecker().check(final_project)
         criteria_result = assert_success_criteria(final_project, task.success_criteria)
@@ -235,6 +267,7 @@ class BenchmarkRunner:
             ],
             "criteria_pass": criteria_result.passed,
             "criteria_failures": criteria_result.failures,
+            "naming_alignment": naming_alignment,
             # 旧路径是"一次性生成 + 内部最多 2 轮修复"，TaskResult 不暴露轮次，记 1
             "attempts": 1,
             "elapsed_sec": round(elapsed, 1),
