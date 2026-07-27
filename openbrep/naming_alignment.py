@@ -242,9 +242,11 @@ def _is_height_name(name: str) -> bool:
     return "height" in _canon_tokens(name)
 
 
-# 规则 2 的候选闸门：防止把 blade_thickness 这类有明确语义的名字推断成高度
-# （benchmark 实测事故：百叶片厚被改名为 ZZYZX，反而制造 bbox_mismatch）。
-# 只接受：a) 高度语义名；b) 无尺寸语义的裸名（如 C、H 这类单字母/短码）。
+# 规则 2 的候选闸门：防止把有语义的名字推断成高度
+# （两起实测事故：blade_thickness=片厚、tf=t_flange 被改名为 ZZYZX，
+# 反而制造 bbox_mismatch）。只接受：
+#   a) 高度语义名（base_height、h_frame）；
+#   b) 单字母裸名（C、H）——多字母短码可能是语义缩写（tf），不放行。
 _DIM_SEMANTIC_TOKENS = frozenset({
     "width", "thickness", "depth", "diameter", "length", "count", "spacing",
 })
@@ -253,7 +255,10 @@ _DIM_SEMANTIC_TOKENS = frozenset({
 def _renameable_to_reserved(source: str) -> bool:
     if _is_height_name(source):
         return True
-    return not (_canon_tokens(source) & _DIM_SEMANTIC_TOKENS)
+    if _canon_tokens(source) & _DIM_SEMANTIC_TOKENS:
+        return False
+    s = source.strip()
+    return len(s) == 1 and s.isalpha()
 
 
 # ── 主入口 ────────────────────────────────────────────────

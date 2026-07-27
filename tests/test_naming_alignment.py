@@ -252,7 +252,31 @@ def test_role_gate_rejects_semantic_name_for_height(tmp_path):
 
 
 def test_role_gate_allows_bare_letter_for_height(tmp_path):
-    """裸名（无语义）出现在高度角色位仍允许改名（C15 场景保持）。"""
+    """裸名单字母（无语义）出现在高度角色位仍允许改名（C15 场景保持）。"""
     proj = _project(tmp_path, [_p("A"), _p("B"), _p("C")], "BLOCK A, B, C\n")
     result = align_parameter_names(proj, {"ZZYZX": None})
     assert [(r.from_name, r.to_name) for r in result.renamed] == [("C", "ZZYZX")]
+
+
+def test_role_gate_rejects_multiletter_code_for_height(tmp_path):
+    """多字母短码（tf=t_flange 事故）即使出现在高度角色位也不准改名。"""
+    proj = _project(
+        tmp_path,
+        [_p("A"), _p("B"), _p("tf")],
+        "BLOCK A, B, tf\n",
+    )
+    result = align_parameter_names(proj, {"ZZYZX": None})
+    assert result.renamed == []
+    assert "tf" in [p.name for p in proj.parameters]
+    assert "ZZYZX" in result.missing_concepts
+
+
+def test_role_gate_allows_height_semantic_name(tmp_path):
+    """高度语义名（base_height）允许改名为 ZZYZX。"""
+    proj = _project(
+        tmp_path,
+        [_p("A"), _p("B"), _p("base_height")],
+        "BLOCK A, B, base_height\n",
+    )
+    result = align_parameter_names(proj, {"ZZYZX": None})
+    assert [(r.from_name, r.to_name) for r in result.renamed] == [("base_height", "ZZYZX")]
