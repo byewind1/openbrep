@@ -207,7 +207,7 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-07-28:
 
 ```text
-python tests: 1021 passed, 28 subtests passed
+python tests: 1025 passed, 28 subtests passed
 frontend: 153 passed (vitest) + tsc clean
 CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
 ```
