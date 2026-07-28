@@ -65,6 +65,18 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self) -> None:
+        self._handle_with_body("POST")
+
+    def do_PATCH(self) -> None:
+        self._handle_with_body("PATCH")
+
+    def do_PUT(self) -> None:
+        self._handle_with_body("PUT")
+
+    def do_DELETE(self) -> None:
+        self._handle_with_body("DELETE")
+
+    def _handle_with_body(self, method: str) -> None:
         import threading
 
         raw_len = self.headers.get("Content-Length", "0")
@@ -84,7 +96,7 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
 
-        self._send(route_rpc("POST", self.path, body))
+        self._send(route_rpc(method, self.path, body))
 
     def do_OPTIONS(self) -> None:
         self._send({}, status=204)
@@ -99,7 +111,7 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
         self.send_response(response_status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
