@@ -240,7 +240,14 @@ class WorkbenchSettingsService:
         }
 
     def update_llm_model_only(self, body: dict[str, Any]) -> dict[str, Any]:
-        """只切换 model 字段，不修改用户配置的 key，但会重新解析当前模型对应的 key。"""
+        """只切换 model 字段，不修改用户配置的 key，但会重新解析当前模型对应的 key。
+
+        凭据模型（与 update_llm_settings 不同，这里不写顶层 api_key/api_base）：
+        顶层 api_key/api_base 是全局兜底；provider_keys / custom_providers
+        才是按模型的凭据表，运行时 resolve_api_key/api_base(model) 按模型解析。
+        把解析结果写回顶层会让旧模型的 key 通过兜底逻辑"继承"给下一个模型
+        （实测：deepseek→dk-old 后切 glm 会被误判为可用），所以不写。
+        """
         model = str(body.get("model") or "").strip()
         if not model:
             return {"ok": False, "error": "Model is required."}

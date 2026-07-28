@@ -483,3 +483,38 @@ def test_git_service_respects_project_level_enabled_switch(tmp_path):
     assert disabled["git"]["enabled"] is False
     assert committed["ok"] is False
     assert "Enable Git" in committed["error"]
+
+
+def test_update_llm_model_only_custom_provider_resolves_without_top_level_pollution(tmp_path, monkeypatch):
+    """切到自定义 provider：session 拿解析后的 key/base，但顶层兜底字段不被污染。
+
+    顶层 api_key/api_base 是全局兜底，provider_keys / custom_providers 才是按模型
+    的凭据表；把解析结果写回顶层会让旧模型的 key 通过兜底"继承"给下一个模型。
+    """
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    config.llm.api_key = "dk-top"
+    config.llm.custom_providers = [{
+        "name": "qwen",
+        "protocol": "openai",
+        "base_url": "https://token-plan.example.com/compatible-mode/v1",
+        "api_key": "sk-qwen-key",
+        "models": ["qwen3.8-max-preview"],
+    }]
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    response = service.update_llm_model_only({"model": "qwen3.8-max-preview"})
+
+    assert response["ok"] is True
+    assert session.llm_api_key == "sk-qwen-key"
+    assert session.llm_api_base == "https://token-plan.example.com/compatible-mode/v1"
+    assert response["llm"]["api_key"] == "sk-qwen-key"
+
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.llm.model == "qwen3.8-max-preview"
+    assert reloaded.llm.api_key == "dk-top"  # 顶层兜底不被切换改写
+    assert reloaded.llm.custom_providers[0]["api_key"] == "sk-qwen-key"
+    assert reloaded.llm.custom_providers[0]["base_url"] == "https://token-plan.example.com/compatible-mode/v1"
