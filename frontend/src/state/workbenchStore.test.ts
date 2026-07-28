@@ -618,6 +618,7 @@ test('saveRevision refreshes revision history and records a log entry', async ()
     }),
   )
 
+  await store.getState().load()  // 先加载项目：无项目时 revisions 刷新按修复 3 会被跳过
   await store.getState().saveRevision('manual save')
 
   expect(store.getState().latestRevisionId).toBe('r0002')

@@ -431,6 +431,12 @@ button:focus-visible {
   color: var(--accent-soft);
 }
 
+.status-pill.recovered {
+  border-color: var(--success);
+  background: var(--status-success-bg);
+  color: var(--success);
+}
+
 .error-pill {
   max-width: 180px;
   height: 24px;
@@ -1048,11 +1054,16 @@ button:focus-visible {
 .viewport-surface {
   min-width: 0;
   display: grid;
-  grid-template-rows: 40px minmax(0, 1fr) 28px;
+  /* 工具栏行必须是 auto。固定行高时换行的按钮会溢出到 canvas 区域，
+     而 .canvas-wrap 在 DOM 中排在后面会直接盖住第二行（Reset 完全不可见） */
+  grid-template-rows: auto minmax(0, 1fr) 28px;
   background: var(--bg-canvas);
 }
 
 .viewport-surface-rail {
+  /* .viewport-panel 是普通 block，rail 不写 height 的话高度就是内容高度，
+     画布区会塌到 canvas 的默认 150px（甚至 0）。workspace/floating 已有此规则 */
+  height: 100%;
   container-type: inline-size;
   grid-template-rows: auto minmax(0, 1fr) 28px;
 }
@@ -1060,9 +1071,15 @@ button:focus-visible {
 .viewport-surface-workspace,
 .viewport-surface-floating {
   height: 100%;
+  /* 工具栏按容器宽度降级，而不是按视口宽度：主区最窄 720px、
+     浮窗最窄 420px，媒体查询在这两种场景下都判断不出来 */
+  container-type: inline-size;
 }
 
 .viewport-toolbar {
+  min-width: 0;
+  min-height: 40px;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 8px;
   padding: 0 12px;
@@ -1071,6 +1088,7 @@ button:focus-visible {
 }
 
 .viewport-toolbar-actions {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1134,6 +1152,29 @@ button:focus-visible {
   min-height: 42px;
 }
 
+/* 主工作台/浮窗的工具栏共 17 个按钮，单行约需 1000px。容器变窄时按两档
+   收紧间距和内边距，尽量少换行；换行本身已经安全（工具栏行高为 auto） */
+@container (max-width: 1040px) {
+  .viewport-surface-workspace .viewport-toolbar-actions,
+  .viewport-surface-floating .viewport-toolbar-actions {
+    gap: 4px;
+  }
+
+  .viewport-surface-workspace .viewport-action-button,
+  .viewport-surface-floating .viewport-action-button {
+    padding-inline: 6px;
+  }
+}
+
+@container (max-width: 860px) {
+  .viewport-surface-workspace .viewport-action-button,
+  .viewport-surface-floating .viewport-action-button {
+    height: 22px;
+    padding-inline: 5px;
+    font-size: 11px;
+  }
+}
+
 .drawer-tabs button {
   height: 24px;
   font-size: 12px;
@@ -1146,8 +1187,15 @@ button:focus-visible {
   color: var(--accent-soft);
 }
 
+/* r3f 的 setSize 会给 <canvas> 写死内联 px 宽高。若 Canvas 留在常规流里，
+   这个 px 宽度会成为 grid item 的 min-content 下限，容器就再也缩不回去
+   （ResizeObserver 因此永不触发收缩，画面留在旧尺寸上形成残影）。
+   把 Canvas 绝对定位脱离常规流，尺寸只由 grid 轨道决定，单向不回灌。 */
 .canvas-wrap {
+  position: relative;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg-canvas);
 }
 
@@ -1187,10 +1235,27 @@ button:focus-visible {
 }
 
 .viewport-footer {
+  min-width: 0;
+  gap: 8px;
   justify-content: space-between;
+  /* 页脚轨道固定 28px：窄容器下三段文字必须截断，换行会溢出到画布上 */
+  overflow: hidden;
+  white-space: nowrap;
   padding: 0 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+.viewport-footer > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 窄容器下先舍弃保真度提示，保留视图状态和网格/警告计数 */
+@container (max-width: 620px) {
+  .viewport-fidelity-hint {
+    display: none;
+  }
 }
 
 .floating-preview-window {

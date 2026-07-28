@@ -13,6 +13,8 @@ import type {
   CompilerSettingsResult,
   ConfigRevisionResult,
   CreateProjectResult,
+
+
   DeleteMemoryLessonResult,
   DirectoryChoiceResult,
   DeleteParameterResult,
@@ -135,6 +137,8 @@ export interface WorkbenchApi {
   validateProjectParameters: () => Promise<ValidateParametersResult>
 }
 
+export type BackendErrorKind = 'down' | 'starting' | 'timeout'
+
 export interface WorkbenchState {
   // sessionId 标识 backend 进程；projectEpoch 在每次换项目时变化，
   // 长操作（AI 生成/创建）用它丢弃跨项目的过期结果。
@@ -151,6 +155,10 @@ export interface WorkbenchState {
   applying: boolean
   compiling: boolean
   lastError: string | null
+  /** 后端健康看门狗：非 null 表示后端处于故障态（详见 state/backendHealth.ts） */
+  backendError: { kind: BackendErrorKind; at: number } | null
+  /** 恢复后的一次性提示（"✅ 已恢复连接"），数秒后自动清除 */
+  backendNotice: string | null
   compileLog: string[]
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings

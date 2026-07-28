@@ -37,6 +37,7 @@ export function WorkbenchApp() {
   const applying = useWorkbenchStore((state) => state.applying)
   const compiling = useWorkbenchStore((state) => state.compiling)
   const lastError = useWorkbenchStore((state) => state.lastError)
+  const backendNotice = useWorkbenchStore((state) => state.backendNotice)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
   const compilerSettings = useWorkbenchStore((state) => state.compilerSettings)
   const llmSettings = useWorkbenchStore((state) => state.llmSettings)
@@ -269,6 +270,7 @@ export function WorkbenchApp() {
         hasDirtyScript={hasDirtyScript}
         lastSavedAt={lastSavedAt}
         lastError={lastError}
+        backendNotice={backendNotice}
         onClearError={clearLastError}
       />
       <ResizableWorkspaceGrid

@@ -129,3 +129,124 @@ def test_obr7_entrypoint_delegates_to_python_launcher():
     contents = entrypoint.read_text(encoding="utf-8")
 
     assert 'exec python "$APP_DIR/scripts/obr7.py" "$@"' in contents
+
+
+# ── daemon 模式 ───────────────────────────────────────────
+
+import json  # noqa: E402
+import os  # noqa: E402
+import socket  # noqa: E402
+
+
+def test_parse_args_daemon_flags():
+    launcher = load_launcher_module()
+    args = launcher.parse_args(["--daemon"])
+    assert args.daemon and not args.status and not args.stop and not args.restart
+    args = launcher.parse_args(["--restart"])
+    assert args.restart and not args.daemon
+
+
+def test_pid_alive():
+    launcher = load_launcher_module()
+    assert launcher._pid_alive(os.getpid()) is True
+    assert launcher._pid_alive(2**22) is False
+    assert launcher._pid_alive(-1) is False
+
+
+def test_tcp_open():
+    launcher = load_launcher_module()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        assert launcher._tcp_open(port) is True
+    assert launcher._tcp_open(port) is False
+    assert launcher._tcp_open(0) is False
+
+
+def test_state_roundtrip(tmp_path, monkeypatch):
+    launcher = load_launcher_module()
+    state_path = tmp_path / "run" / "obr7.json"
+    monkeypatch.setattr(launcher, "DAEMON_STATE_PATH", state_path)
+
+    assert launcher._read_state() is None
+    launcher._write_state(pid=123, ready=True, api_port=8765)
+    state = launcher._read_state()
+    assert state["pid"] == 123 and state["ready"] is True
+    assert launcher._daemon_running(state) is False  # pid 123 不存在
+    launcher._remove_state()
+    assert launcher._read_state() is None
+
+
+def test_daemon_status_reports_running(tmp_path, monkeypatch, capsys):
+    launcher = load_launcher_module()
+    state_path = tmp_path / "obr7.json"
+    log_path = tmp_path / "logs" / "obr7.log"
+    monkeypatch.setattr(launcher, "DAEMON_STATE_PATH", state_path)
+    monkeypatch.setattr(launcher, "DAEMON_LOG_PATH", log_path)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({
+            "pid": os.getpid(), "ready": True,
+            "api_port": port, "web_port": None,
+            "api_pid": os.getpid(), "config": "/tmp/cfg.toml",
+        }), encoding="utf-8")
+        rc = launcher.daemon_status()
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "运行中" in out
+    assert f"{port}" in out
+    assert "/tmp/cfg.toml" in out
+
+
+def test_daemon_status_not_running_cleans_stale_state(tmp_path, monkeypatch, capsys):
+    launcher = load_launcher_module()
+    state_path = tmp_path / "obr7.json"
+    monkeypatch.setattr(launcher, "DAEMON_STATE_PATH", state_path)
+    state_path.write_text(json.dumps({"pid": 2**22, "ready": True}), encoding="utf-8")
+
+    rc = launcher.daemon_status()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "未运行" in out
+    assert not state_path.exists()
+
+
+def test_daemon_spawn_refuses_duplicate(tmp_path, monkeypatch, capsys):
+    launcher = load_launcher_module()
+    state_path = tmp_path / "obr7.json"
+    monkeypatch.setattr(launcher, "DAEMON_STATE_PATH", state_path)
+    state_path.write_text(json.dumps({
+        "pid": os.getpid(), "ready": True, "api_port": 8765, "web_port": 5174,
+    }), encoding="utf-8")
+
+    popen_calls = []
+
+    class DummyPopen:
+        def __init__(self, *a, **k):
+            popen_calls.append((a, k))
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", DummyPopen)
+    args = launcher.parse_args(["--daemon"])
+    rc = launcher.daemon_spawn(args)
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "已在运行" in out
+    assert popen_calls == []  # 重复 --daemon 没有再拉起进程
+
+
+def test_daemon_stop_when_not_running(tmp_path, monkeypatch, capsys):
+    launcher = load_launcher_module()
+    state_path = tmp_path / "obr7.json"
+    monkeypatch.setattr(launcher, "DAEMON_STATE_PATH", state_path)
+
+    rc = launcher.daemon_stop()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "未在运行" in out

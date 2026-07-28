@@ -20,6 +20,7 @@ interface TopMenuProps {
   hasDirtyScript: boolean
   lastSavedAt: string | null
   lastError: string | null
+  backendNotice?: string | null
   onClearError: () => void
 }
 
@@ -40,6 +41,7 @@ export function TopMenu({
   hasDirtyScript,
   lastSavedAt,
   lastError,
+  backendNotice,
   onClearError,
 }: TopMenuProps) {
   const t = useT()
@@ -123,6 +125,9 @@ export function TopMenu({
           <button type="button" className="error-pill" title={lastError} onClick={onClearError}>
             {lastError}
           </button>
+        ) : null}
+        {backendNotice ? (
+          <span className="status-pill recovered" role="status">{backendNotice}</span>
         ) : null}
         <span className={projectStatusKey === 'unsaved' ? 'status-pill changed' : 'status-pill'}>{projectStatusLabel}</span>
         <span className={hasDirtyScript ? 'status-pill changed' : 'status-pill'}>

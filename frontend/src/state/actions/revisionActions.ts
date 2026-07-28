@@ -5,6 +5,12 @@ import type { WorkbenchSnapshot } from '../../api/types'
 export function createRevisionActions({ api, get, set }: WorkbenchActionContext) {
   return {
     async loadRevisions() {
+      // 未打开项目时不发请求：后端对无项目的 revisions 返回 404，
+      // 在 Console 刷无意义红错（修复 3）
+      if (!get().project) {
+        set({ revisionLoading: false, revisions: [], latestRevisionId: null })
+        return
+      }
       set({ revisionLoading: true })
       const result = await api.listProjectRevisions()
       if (!result.ok) {

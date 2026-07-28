@@ -53,6 +53,54 @@ import type {
 
 const API_BASE = import.meta.env.VITE_OPENBREP_API || ''
 
+// ── 后端健康事件 ────────────────────────────────────────────
+// 错误横幅的自愈机制：任何请求成功都清除"后端未运行"状态，
+// 失败按类型分类（拒绝连接=未运行 / 502-504=启动中 / 超时）。
+// store 侧通过 setApiHealthListener 挂载处理与 3s 恢复轮询。
+
+export type ApiHealthEvent =
+  | { kind: 'ok' }
+  | { kind: 'down' }
+  | { kind: 'starting'; status: number }
+  | { kind: 'timeout' }
+
+type ApiHealthListener = (event: ApiHealthEvent) => void
+let apiHealthListener: ApiHealthListener | null = null
+
+export function setApiHealthListener(listener: ApiHealthListener | null): void {
+  apiHealthListener = listener
+}
+
+function emitApiHealth(event: ApiHealthEvent): void {
+  apiHealthListener?.(event)
+}
+
+/** 恢复轮询专用探针：短超时直连 snapshot，成功/失败都会发健康事件。 */
+export async function probeBackend(timeoutMs: number): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE}/api/snapshot`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      emitApiHealth({ kind: 'starting', status: response.status })
+      return false
+    }
+    if (!response.ok) {
+      emitApiHealth({ kind: 'down' })
+      return false
+    }
+    emitApiHealth({ kind: 'ok' })
+    return true
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      emitApiHealth({ kind: 'timeout' })
+    } else {
+      emitApiHealth({ kind: 'down' })
+    }
+    return false
+  }
+}
+
 export async function fetchSnapshot(): Promise<WorkbenchSnapshot> {
   return requestJson<WorkbenchSnapshot>('/api/snapshot', { method: 'GET' }, fallbackSnapshot)
 }
@@ -753,11 +801,17 @@ export async function shutdownServer(): Promise<{ ok: boolean }> {
 async function requestJson<T>(path: string, init: RequestInit, fallback: T, signal?: AbortSignal): Promise<T> {
   try {
     const response = await fetch(`${API_BASE}${path}`, signal ? { ...init, signal } : init)
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      emitApiHealth({ kind: 'starting', status: response.status })
+      return fallback
+    }
     const payload = (await response.json()) as T
+    emitApiHealth({ kind: 'ok' })
     if (!response.ok) return payload ?? fallback
     return payload
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
+    emitApiHealth({ kind: 'down' })
     return fallback
   }
 }

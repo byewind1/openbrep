@@ -1,4 +1,5 @@
 import { createStore } from 'zustand/vanilla'
+import { createBackendHealth } from './backendHealth'
 import {
   addProjectParameter,
   applyParameters,
@@ -151,6 +152,8 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       get,
       set: set as WorkbenchSet,
     }
+    // 后端健康看门狗：失败分型 + 3s 恢复轮询 + 成功自动清横幅
+    createBackendHealth({ get, set: set as WorkbenchSet }).install()
     return {
       ...initialWorkbenchState(),
       ...createProjectActions(context),
@@ -188,6 +191,8 @@ function initialWorkbenchState() {
     applying: false,
     compiling: false,
     lastError: null,
+    backendError: null,
+    backendNotice: null,
     compileLog: [],
     compilerSettings: { mode: 'mock' as const, converter_path: '', output_dir: '' },
     llmSettings: defaultLlmSettings(),
