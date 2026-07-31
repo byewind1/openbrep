@@ -8,17 +8,18 @@ provider compatible with the OpenAI API format.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 import logging
 import time
 from typing import Optional
 import warnings
 
-from openbrep.config import LLMConfig
+from openbrep.config import LLMConfig, PROVIDER_PROFILES, provider_profile_for_model
 
 
 logger = logging.getLogger(__name__)
-_NATIVE_PROVIDERS = ("zai/", "deepseek/", "anthropic/", "claude/", "gemini/", "ollama/", "openai/")
+_NATIVE_PROVIDERS = tuple(p.native_prefix for p in PROVIDER_PROFILES if p.native_prefix)
 
 @dataclass
 class _ResolvedModelTarget:
@@ -127,30 +128,33 @@ def _looks_like_auth_error(exc_text: str) -> bool:
     return any(p in text for p in _AUTH_PATTERNS)
 
 
-# 各 provider 的 key 控制台，放进"key 无效"的引导文案里
-_PROVIDER_CONSOLE_URLS = {
-    "deepseek": "https://platform.deepseek.com/api_keys",
-    "openai": "https://platform.openai.com/api-keys",
-    "gpt": "https://platform.openai.com/api-keys",
-    "o1": "https://platform.openai.com/api-keys",
-    "o3": "https://platform.openai.com/api-keys",
-    "o4": "https://platform.openai.com/api-keys",
-    "anthropic": "https://console.anthropic.com/settings/keys",
-    "claude": "https://console.anthropic.com/settings/keys",
-    "gemini": "https://aistudio.google.com/app/apikey",
-    "google": "https://aistudio.google.com/app/apikey",
-    "glm": "https://open.bigmodel.cn/usercenter/apikeys",
-    "zhipu": "https://open.bigmodel.cn/usercenter/apikeys",
-    "zai": "https://open.bigmodel.cn/usercenter/apikeys",
-}
+def _looks_like_rate_limit(exc: BaseException, exc_text: str) -> bool:
+    """429 / 速率限制 / 周期配额耗尽（与 402 余额不足是两类）。"""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if "ratelimit" in current.__class__.__name__.lower():
+            return True
+        current = current.__cause__ or current.__context__
+    text = exc_text.lower()
+    return "429" in text or "rate limit" in text or "insufficient_quota" in text
 
 
+def _rate_limit_reset_hint(exc_text: str) -> str:
+    match = re.search(r"reset at ([0-9\-: ]+(?:UTC)?)", exc_text, re.IGNORECASE)
+    return f"配额将于 {match.group(1)} 重置。" if match else ""
+
+
+# 各 provider 的 key 控制台，放进"key 无效"的引导文案里（数据来自注册表）
 def _console_url_for(provider_name: str | None, model: str | None) -> str:
-    text = f"{provider_name or ''} {model or ''}".lower()
-    for key, url in _PROVIDER_CONSOLE_URLS.items():
-        if key in text:
-            return url
-    return ""
+    text = (provider_name or "").strip().lower()
+    if text:
+        for profile in PROVIDER_PROFILES:
+            if text == profile.name or text in profile.provider_key_names:
+                return profile.console_url
+    profile = provider_profile_for_model(model or "")
+    return profile.console_url if profile else ""
 
 
 def _classify_network_error(exc: BaseException) -> str | None:
@@ -227,6 +231,13 @@ class LLMAdapter:
                 f"LLM 账户余额或额度不足：模型 `{configured_model}` 所属 provider "
                 f"`{provider_name or configured_model}` 返回余额不足，请充值或切换到有额度的模型/provider。"
             )
+        elif _looks_like_rate_limit(exc, exc_text_lower):
+            summary = (
+                f"LLM 速率/周期配额已用尽：模型 `{configured_model}`"
+                f"（provider `{provider_name or configured_model}`）的调用额度已达上限。"
+                f"{_rate_limit_reset_hint(exc_text)}"
+                "→ 等配额重置，或切换到有额度的模型/provider。"
+            )
         elif (auth_error and isinstance(exc, auth_error)) or _looks_like_auth_error(exc_text):
             # 判定顺序关键：先看内容里的认证特征再看异常类型——
             # deepseek 等 provider 的 401 会被 litellm 映射成 BadRequestError，
@@ -281,6 +292,9 @@ class LLMAdapter:
         auth_error = getattr(litellm_exceptions, "AuthenticationError", None) if litellm_exceptions else None
         if (bad_request and isinstance(exc, bad_request)) or (auth_error and isinstance(exc, auth_error)):
             raise RuntimeError(self._build_config_error_message(exc, resolved)) from exc
+        if _looks_like_rate_limit(exc, str(exc).lower()):
+            # RateLimitError 不属于 BadRequest/Auth，需显式进入分类文案
+            raise RuntimeError(self._build_config_error_message(exc, resolved)) from exc
         network_kind = _classify_network_error(exc)
         if network_kind is not None:
             raise RuntimeError(self._build_network_error_message(exc, resolved, network_kind)) from exc
@@ -326,17 +340,14 @@ class LLMAdapter:
             self._litellm = litellm
 
             # Set API key env vars by provider so litellm can find them
+            # （走 PROVIDER_PROFILES 注册表，不再硬编码关键字链；
+            # 语义与旧版一致：已知 provider 覆盖写，未知走 OPENAI setdefault）
             api_key = self.config.resolve_api_key()
             if api_key:
-                model_lower = self.config.model.lower()
-                if "glm" in model_lower:
-                    os.environ["ZAI_API_KEY"] = api_key
-                elif "deepseek" in model_lower:
-                    os.environ["DEEPSEEK_API_KEY"] = api_key
-                elif "claude" in model_lower:
-                    os.environ["ANTHROPIC_API_KEY"] = api_key
-                elif "gemini" in model_lower:
-                    os.environ["GEMINI_API_KEY"] = api_key
+                profile = provider_profile_for_model(self.config.model)
+                if profile and profile.env_vars:
+                    for env_name in profile.env_vars:
+                        os.environ[env_name] = api_key
                 else:
                     os.environ.setdefault("OPENAI_API_KEY", api_key)
 
@@ -709,19 +720,14 @@ class LLMAdapter:
                 is_custom_provider_request=False,
             )
 
-        model_lower = configured_model.lower()
-        if "glm" in model_lower:
-            litellm_model = f"zai/{configured_model}"
-        elif "claude" in model_lower:
-            litellm_model = f"claude/{configured_model}" if "claude/" not in configured_model else configured_model
-        elif "deepseek" in model_lower:
-            litellm_model = f"deepseek/{configured_model}"
-        elif "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower:
-            litellm_model = f"openai/{configured_model}"
-        elif "gemini" in model_lower:
-            litellm_model = f"gemini/{configured_model}" if "gemini/" not in configured_model else configured_model
-        elif "ollama" in model_lower:
-            litellm_model = configured_model
+        # 官方模型 → litellm 原生前缀（走 PROVIDER_PROFILES 注册表）
+        profile = provider_profile_for_model(configured_model)
+        if profile and profile.native_prefix:
+            litellm_model = (
+                configured_model
+                if configured_model.startswith(profile.native_prefix)
+                else f"{profile.native_prefix}{configured_model}"
+            )
         else:
             litellm_model = configured_model
 

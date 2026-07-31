@@ -115,7 +115,7 @@ def llm_model_available(config: GDLAgentConfig, model: str | None = None) -> boo
         return False
     if model_to_provider(target) == "ollama":
         return True
-    return bool(config.llm.resolve_api_key(target))
+    return bool(config.llm.resolve_credentials(target).api_key)
 
 
 def llm_model_groups(config: GDLAgentConfig) -> dict[str, list[dict[str, Any]]]:

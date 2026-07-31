@@ -587,3 +587,66 @@ class TestLLMErrorClassification(unittest.TestCase):
         with self.assertRaises(RuntimeError) as cm:
             adapter.generate([{"role": "user", "content": "hi"}])
         self.assertIn("SSL 证书验证失败", str(cm.exception))
+
+    def test_rate_limit_error_gets_quota_guidance_with_reset_hint(self):
+        """429 / 周期配额耗尽必须指向配额，不能误诊为 key 或模型名问题。"""
+        adapter = self._adapter()
+
+        class FakeRateLimitError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        adapter._litellm.completion.side_effect = FakeRateLimitError(
+            "OpenAIException - Your token-plan 1-week quota has been exhausted. "
+            "The quota will reset at 07-28 18:37:00 UTC. "
+            "{'type': 'insufficient_quota', 'code': 'insufficient_quota'}"
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("配额已用尽", message)
+        self.assertIn("07-28 18:37:00 UTC", message)
+        self.assertIn("等配额重置", message)
+        self.assertNotIn("API Key 无效", message)
+        self.assertNotIn("model 名称填写不正确", message)
+
+    def test_rate_limit_text_signature_without_exception_type(self):
+        """异常类型不含 ratelimit 时，靠 429/insufficient_quota 文本特征也要识别。"""
+        adapter = self._adapter()
+
+        class GenericAPIError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        adapter._litellm.completion.side_effect = GenericAPIError(
+            "Client error '429 Too Many Requests' for url "
+            "'https://example.com/v1/chat/completions'"
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("配额已用尽", message)
+        self.assertNotIn("API Key 无效", message)
+
+    def test_insufficient_balance_still_distinct_from_rate_limit(self):
+        """402 余额不足是另一类，不能被 429 分支吞掉。"""
+        adapter = self._adapter()
+
+        class FakeRateLimitError(Exception):
+            pass
+
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        adapter._litellm.completion.side_effect = FakeRateLimitError(
+            'OpenAIException - insufficient balance, {"code":"402"}'
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("余额或额度不足", message)
+        self.assertNotIn("配额已用尽", message)

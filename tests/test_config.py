@@ -1,8 +1,39 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from openbrep.config import GDLAgentConfig, LLMConfig
+from openbrep.config import (
+    GDLAgentConfig,
+    LLMConfig,
+    PROVIDER_PROFILES,
+    provider_profile_for_model,
+    model_to_provider,
+)
+
+_LLM_ENV_VARS = (
+    "ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY",
+    "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY",
+)
+
+
+class _CleanEnvMixin:
+    """屏蔽真实环境变量，避免开发机上的 key 污染断言。"""
+
+    def _clear_llm_env(self):
+        snapshot = {n: os.environ.get(n) for n in _LLM_ENV_VARS}
+        for n in _LLM_ENV_VARS:
+            os.environ.pop(n, None)
+        self.addCleanup(self._restore_env, snapshot)
+
+    @staticmethod
+    def _restore_env(snapshot):
+        for n, v in snapshot.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v
 
 
 class TestConfigAssistantSettings(unittest.TestCase):
@@ -244,3 +275,139 @@ protocol = "openai"
             self.assertIsNone(second.llm.api_key)
             self.assertEqual(second.llm.resolve_api_base(), "https://api.airsim.eu.cc/v1")
             self.assertEqual(second.llm.resolve_api_key(), "custom-key")
+
+
+class TestProviderRegistry(_CleanEnvMixin, unittest.TestCase):
+    """PROVIDER_PROFILES 注册表：LLM 链路"模型属于哪个 provider"的单一事实来源。"""
+
+    def test_profile_lookup_matrix(self):
+        cases = {
+            "glm-4-flash": "zhipu",
+            "glm-5.1": "zhipu",
+            "deepseek-chat": "deepseek",
+            "claude-sonnet-4-20250514": "anthropic",
+            "gpt-4o": "openai",
+            "o1-preview": "openai",
+            "o3-mini": "openai",
+            "o4-mini": "openai",
+            "gemini-2.5-pro": "google",
+            "gemini/gemini-2.5-flash": "google",
+            "qwen-max": "aliyun",
+            "qwq-32b": "aliyun",
+            "moonshot-v1-8k": "kimi",
+            "ollama/llama3.1": "ollama",
+        }
+        for model, expected in cases.items():
+            with self.subTest(model=model):
+                profile = provider_profile_for_model(model)
+                self.assertIsNotNone(profile)
+                self.assertEqual(profile.name, expected)
+
+    def test_unknown_model_returns_none(self):
+        self.assertIsNone(provider_profile_for_model("ymg/some-model"))
+        self.assertIsNone(provider_profile_for_model("some-random-model"))
+        self.assertIsNone(provider_profile_for_model(""))
+
+    def test_model_to_provider_falls_back_to_custom(self):
+        self.assertEqual(model_to_provider("glm-4-flash"), "zhipu")
+        self.assertEqual(model_to_provider("qwen-max"), "aliyun")
+        self.assertEqual(model_to_provider("ymg-gpt-5.3-codex"), "custom")
+
+    def test_anthropic_native_prefix_is_claude_slash(self):
+        # litellm 官方 claude 模型历史解析为 claude/claude-x，不能改成 anthropic/
+        profile = provider_profile_for_model("claude-sonnet-4-20250514")
+        self.assertEqual(profile.native_prefix, "claude/")
+
+    def test_short_openai_prefixes_do_not_overmatch(self):
+        # "o1"/"o3"/"o4" 是短前缀，长前缀优先排序必须保证它们不抢走 qwq/qwen
+        self.assertEqual(provider_profile_for_model("qwq-32b").name, "aliyun")
+        self.assertEqual(provider_profile_for_model("qwen-max").name, "aliyun")
+
+    def test_resolve_api_key_uses_registry_provider_key_names(self):
+        # 注册表修复的能力：qwen 官方模型能查到 aliyun/dashscope/qwen 键
+        self._clear_llm_env()
+        cfg = LLMConfig(model="qwen-max", provider_keys={"aliyun": "aliyun-key"})
+        self.assertEqual(cfg.resolve_api_key(), "aliyun-key")
+        cfg = LLMConfig(model="qwen-max", provider_keys={"dashscope": "dashscope-key"})
+        self.assertEqual(cfg.resolve_api_key(), "dashscope-key")
+
+    def test_every_profile_key_name_is_honored(self):
+        self._clear_llm_env()
+        for profile in PROVIDER_PROFILES:
+            if not profile.provider_key_names or profile.name == "ollama":
+                continue
+            model = next(p + "test-model" for p in profile.prefixes if not p.endswith("/"))
+            for key_name in profile.provider_key_names:
+                with self.subTest(profile=profile.name, key_name=key_name):
+                    cfg = LLMConfig(model=model, provider_keys={key_name: f"{key_name}-key"})
+                    self.assertEqual(cfg.resolve_api_key(), f"{key_name}-key")
+
+
+class TestResolveCredentials(_CleanEnvMixin, unittest.TestCase):
+    """resolve_credentials：读取侧统一入口，source 标注决定配置语义。"""
+
+    def test_custom_provider_match_wins_with_source_label(self):
+        cfg = LLMConfig(
+            model="ymg-gpt-5.3-codex",
+            api_key="test-top-level-key",
+            custom_providers=[
+                {
+                    "name": "ymg",
+                    "base_url": "https://api.ymg.com/v1",
+                    "api_key": "ymg-key",
+                    "models": [{"alias": "ymg-gpt-5.3-codex", "model": "gpt-5.3-codex"}],
+                }
+            ],
+        )
+        cred = cfg.resolve_credentials()
+        self.assertEqual(cred.source, "custom_provider")
+        self.assertEqual(cred.provider, "ymg")
+        self.assertEqual(cred.api_key, "ymg-key")
+        self.assertEqual(cred.api_base, "https://api.ymg.com/v1")
+
+    def test_provider_keys_source_carries_console_url(self):
+        self._clear_llm_env()
+        cfg = LLMConfig(model="qwen-max", provider_keys={"aliyun": "aliyun-key"})
+        cred = cfg.resolve_credentials()
+        self.assertEqual(cred.source, "provider_keys")
+        self.assertEqual(cred.provider, "aliyun")
+        self.assertEqual(cred.api_key, "aliyun-key")
+        self.assertEqual(cred.console_url, "https://bailian.console.aliyun.com/")
+
+    def test_top_level_source_for_known_provider(self):
+        self._clear_llm_env()
+        cfg = LLMConfig(model="deepseek-chat", api_key="top-key")
+        cred = cfg.resolve_credentials()
+        self.assertEqual(cred.source, "top_level")
+        self.assertEqual(cred.provider, "deepseek")
+        self.assertEqual(cred.api_key, "top-key")
+        self.assertEqual(cred.console_url, "https://platform.deepseek.com/api_keys")
+
+    def test_env_source_for_known_provider(self):
+        self._clear_llm_env()
+        os.environ["DEEPSEEK_API_KEY"] = "env-key"
+        self.addCleanup(lambda: os.environ.pop("DEEPSEEK_API_KEY", None))
+        cfg = LLMConfig(model="deepseek-chat")
+        cred = cfg.resolve_credentials()
+        self.assertEqual(cred.source, "env")
+        self.assertEqual(cred.api_key, "env-key")
+
+    def test_none_source_when_no_credential_anywhere(self):
+        self._clear_llm_env()
+        cfg = LLMConfig(model="glm-4-flash")
+        cred = cfg.resolve_credentials()
+        self.assertEqual(cred.source, "none")
+        self.assertEqual(cred.api_key, "")
+        self.assertEqual(cred.provider, "zhipu")
+
+    def test_unknown_model_falls_back_to_top_level_then_none(self):
+        self._clear_llm_env()
+        cfg = LLMConfig(model="some-random-model", api_key="top-key")
+        cred = cfg.resolve_credentials()
+        self.assertEqual(cred.source, "top_level")
+        self.assertEqual(cred.provider, "custom")
+
+        cfg = LLMConfig(model="some-random-model")
+        cred = cfg.resolve_credentials()
+        self.assertEqual(cred.source, "none")
+        self.assertEqual(cred.api_key, "")

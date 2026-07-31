@@ -98,25 +98,120 @@ REASONING_MODELS = {
 }
 
 
-def model_to_provider(model: str) -> str:
+# ── Provider 注册表（LLM 链路单一事实来源）──────────────────────────────────
+# 历史上"模型属于哪个 provider"被编码在五处（resolve_api_key / model_to_provider /
+# llm.py _setup 的 env 映射 / llm.py _NATIVE_PROVIDERS / llm.py 控制台 URL 表），
+# 关键字表互不相同且命名不一致（glm/zhipu/zai），加 provider 要同步改多处。
+# 现在收敛为一张表：model_to_provider / resolve_api_key / _setup / native 判定 /
+# 控制台 URL 全部从这里取。加新 provider = 加一行。
+
+
+@dataclass(frozen=True)
+class ProviderProfile:
+    """一个官方 provider 的全部识别信息。"""
+
+    name: str                     # 规范名（model_to_provider 的返回值）
+    prefixes: tuple[str, ...]     # 模型名前缀（小写匹配）
+    env_vars: tuple[str, ...]     # 凭据对应的环境变量名（litellm 生态约定）
+    provider_key_names: tuple[str, ...]  # provider_keys 里的键名（按优先级）
+    console_url: str = ""         # key 控制台（错误引导文案用）
+    native_prefix: str = ""       # litellm 原生模型前缀（有则用官方端点，忽略 api_base 覆盖）
+
+
+PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
+    ProviderProfile(
+        name="zhipu",
+        prefixes=("glm-",),
+        env_vars=("ZAI_API_KEY", "ZHIPU_API_KEY"),
+        provider_key_names=("zhipu", "zai", "zai_api_key"),
+        console_url="https://open.bigmodel.cn/usercenter/apikeys",
+        native_prefix="zai/",
+    ),
+    ProviderProfile(
+        name="deepseek",
+        prefixes=("deepseek-",),
+        env_vars=("DEEPSEEK_API_KEY",),
+        provider_key_names=("deepseek", "deepseek_api_key"),
+        console_url="https://platform.deepseek.com/api_keys",
+        native_prefix="deepseek/",
+    ),
+    ProviderProfile(
+        name="anthropic",
+        prefixes=("claude-",),
+        env_vars=("ANTHROPIC_API_KEY",),
+        provider_key_names=("anthropic", "claude", "anthropic_api_key"),
+        console_url="https://console.anthropic.com/settings/keys",
+        native_prefix="claude/",
+    ),
+    ProviderProfile(
+        name="openai",
+        prefixes=("gpt-", "o1", "o3", "o4"),
+        env_vars=("OPENAI_API_KEY",),
+        provider_key_names=("openai", "openai_api_key"),
+        console_url="https://platform.openai.com/api-keys",
+        native_prefix="openai/",
+    ),
+    ProviderProfile(
+        name="google",
+        prefixes=("gemini/", "gemini-"),
+        env_vars=("GEMINI_API_KEY",),
+        provider_key_names=("google", "gemini", "gemini_api_key"),
+        console_url="https://aistudio.google.com/app/apikey",
+        native_prefix="gemini/",
+    ),
+    ProviderProfile(
+        name="aliyun",
+        prefixes=("qwen-", "qwq-"),
+        env_vars=("DASHSCOPE_API_KEY",),
+        provider_key_names=("aliyun", "dashscope", "qwen"),
+        console_url="https://bailian.console.aliyun.com/",
+        native_prefix="",
+    ),
+    ProviderProfile(
+        name="kimi",
+        prefixes=("moonshot-",),
+        env_vars=("MOONSHOT_API_KEY",),
+        provider_key_names=("moonshot", "kimi"),
+        console_url="https://platform.moonshot.cn/console/api-keys",
+        native_prefix="",
+    ),
+    ProviderProfile(
+        name="ollama",
+        prefixes=("ollama/",),
+        env_vars=(),
+        provider_key_names=("ollama",),
+        console_url="",
+        native_prefix="ollama/",
+    ),
+)
+
+# 前缀较长的排前面，避免 "o1" 之类短前缀误伤（先精确匹配）
+_PROFILES_BY_PREFIX_LEN = sorted(PROVIDER_PROFILES, key=lambda p: -max(len(x) for x in p.prefixes))
+
+
+def provider_profile_for_model(model: str) -> ProviderProfile | None:
+    """按模型名查官方 provider 档案；查不到（自定义/未知）返回 None。"""
     m = (model or "").lower()
-    if m.startswith("glm-"):
-        return "zhipu"
-    if m.startswith("deepseek-"):
-        return "deepseek"
-    if m.startswith("claude-"):
-        return "anthropic"
-    if m.startswith("gpt-") or m.startswith("o1") or m.startswith("o3") or m.startswith("o4"):
-        return "openai"
-    if m.startswith("gemini/") or m.startswith("gemini-"):
-        return "google"
-    if m.startswith("qwen-") or m.startswith("qwq-"):
-        return "aliyun"
-    if m.startswith("moonshot-"):
-        return "kimi"
-    if m.startswith("ollama/"):
-        return "ollama"
-    return "custom"
+    for profile in _PROFILES_BY_PREFIX_LEN:
+        if any(m.startswith(prefix) for prefix in profile.prefixes):
+            return profile
+    return None
+
+
+def model_to_provider(model: str) -> str:
+    profile = provider_profile_for_model(model)
+    return profile.name if profile else "custom"
+
+
+@dataclass(frozen=True)
+class ResolvedCredentials:
+    """resolve_credentials 的结构化结果：一个模型当前可用的凭据与来源。"""
+
+    provider: str           # provider 规范名（custom 表示自定义/未知）
+    api_key: str            # 解析结果（可能为空）
+    api_base: str           # 解析结果（可能为空）
+    source: str             # custom_provider | provider_keys | top_level | env | none
+    console_url: str = ""   # 对应 provider 的 key 控制台（可能为空）
 
 
 def _auto_detect_converter() -> Optional[str]:
@@ -233,33 +328,21 @@ class LLMConfig:
             custom_key = str(custom_match.get("api_key", "") or "").strip()
             return custom_key or None
 
-        model_lower = str(target_model or "").lower()
-        if "glm" in model_lower:
-            for key in ["zhipu", "zai", "zai_api_key"]:
-                if key in self.provider_keys and self.provider_keys[key]:
-                    return self.provider_keys[key]
-        elif "deepseek" in model_lower:
-            for key in ["deepseek", "deepseek_api_key"]:
-                if key in self.provider_keys and self.provider_keys[key]:
-                    return self.provider_keys[key]
-        elif "claude" in model_lower:
-            for key in ["anthropic", "claude", "anthropic_api_key"]:
-                if key in self.provider_keys and self.provider_keys[key]:
-                    return self.provider_keys[key]
-        elif "gemini" in model_lower:
-            for key in ["google", "gemini", "gemini_api_key"]:
-                if key in self.provider_keys and self.provider_keys[key]:
-                    return self.provider_keys[key]
-        elif "gpt" in model_lower or "o1" in model_lower or "o3" in model_lower or "o4" in model_lower:
-            for key in ["openai", "openai_api_key"]:
-                if key in self.provider_keys and self.provider_keys[key]:
+        profile = provider_profile_for_model(target_model)
+        if profile is not None:
+            for key in profile.provider_key_names:
+                if self.provider_keys.get(key):
                     return self.provider_keys[key]
 
         if self.api_key:
             return self.api_key
 
-        # Fallback to environment variables
-        for name in ["ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]:
+        # Fallback to environment variables（保持历史优先级顺序，新增的放后面）
+        for name in [
+            "ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
+            "GEMINI_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY",
+        ]:
             val = os.environ.get(name)
             if val:
                 return val
@@ -282,6 +365,76 @@ class LLMConfig:
         if self.api_base:
             return self.api_base
         return None
+
+    def resolve_credentials(self, model: str | None = None) -> "ResolvedCredentials":
+        """一个模型当前可用凭据的统一解析（单一事实来源）。
+
+        读取侧全部走这里：settings 展示、model_available、连接测试、pipeline 生成。
+        解析顺序：custom_providers 条目 → provider_keys（注册表）→ 顶层 → 环境变量。
+        """
+        target_model = model or self.model
+        custom_match = self._find_custom_provider_match(target_model)
+        if custom_match is not None:
+            key = str(custom_match.get("api_key", "") or "").strip()
+            base = str(custom_match.get("base_url", "") or "").strip() or (self.api_base or "")
+            return ResolvedCredentials(
+                provider=str(custom_match.get("provider_name", "custom") or "custom"),
+                api_key=key,
+                api_base=base,
+                source="custom_provider",
+                console_url="",
+            )
+
+        profile = provider_profile_for_model(target_model)
+        if profile is not None:
+            for key_name in profile.provider_key_names:
+                if self.provider_keys.get(key_name):
+                    return ResolvedCredentials(
+                        provider=profile.name,
+                        api_key=self.provider_keys[key_name],
+                        api_base=self.api_base or "",
+                        source="provider_keys",
+                        console_url=profile.console_url,
+                    )
+            if self.api_key:
+                return ResolvedCredentials(
+                    provider=profile.name,
+                    api_key=self.api_key,
+                    api_base=self.api_base or "",
+                    source="top_level",
+                    console_url=profile.console_url,
+                )
+            for env_name in profile.env_vars:
+                val = os.environ.get(env_name)
+                if val:
+                    return ResolvedCredentials(
+                        provider=profile.name,
+                        api_key=val,
+                        api_base=self.api_base or "",
+                        source="env",
+                        console_url=profile.console_url,
+                    )
+            return ResolvedCredentials(
+                provider=profile.name,
+                api_key="",
+                api_base=self.api_base or "",
+                source="none",
+                console_url=profile.console_url,
+            )
+
+        # 未知/自定义模型：只能依赖顶层与环境变量
+        if self.api_key:
+            return ResolvedCredentials(
+                provider="custom", api_key=self.api_key,
+                api_base=self.api_base or "", source="top_level",
+            )
+        env_key = self.resolve_api_key(target_model)
+        return ResolvedCredentials(
+            provider="custom",
+            api_key=env_key or "",
+            api_base=self.api_base or "",
+            source="env" if env_key else "none",
+        )
 
     def get_provider_for_model(self, model_name: str) -> dict:
         custom_match = self._find_custom_provider_match(model_name)
