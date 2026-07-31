@@ -204,10 +204,10 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 
 ## Current Baseline
 
-As of 2026-07-28:
+As of 2026-08-01:
 
 ```text
-python tests: 1033 passed, 28 subtests passed
+python tests: 1054 passed, 60 subtests passed
 frontend: 166 passed (vitest) + tsc clean
 CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
 ```
@@ -240,6 +240,17 @@ Architecture notes:
   `--llm-replay corpus.jsonl` for deterministic offline reruns
   (`benchmark/llm_replay.py`). CREATE tasks run through the production
   `TaskPipeline` path; `--jobs N` parallelizes suites (default 4, 1 = serial).
+- LLM provider registry (2026-08-01): "which provider owns this model" lives in
+  exactly one place — `PROVIDER_PROFILES` in `openbrep/config.py` (prefixes,
+  env vars, `provider_keys` names, console URL, litellm native prefix).
+  `model_to_provider`, `resolve_api_key`, `LLMAdapter._setup`,
+  `_NATIVE_PROVIDERS`, and error-message console URLs all derive from it;
+  adding a provider = adding one row. Reads go through
+  `LLMConfig.resolve_credentials(model)` (custom_providers → provider_keys →
+  top-level → env, with source labeling). Top-level `api_key`/`api_base` are
+  the global fallback — never write per-model resolution results back into
+  them when switching models. Anthropic's litellm native prefix stays
+  `claude/` (not `anthropic/`).
 
 ## benchmark 黄金语料规范（corpus maintenance）
 
