@@ -207,7 +207,7 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-08-01:
 
 ```text
-python tests: 1054 passed, 60 subtests passed
+python tests: 1078 passed, 64 subtests passed
 frontend: 166 passed (vitest) + tsc clean
 CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
 ```
@@ -251,6 +251,15 @@ Architecture notes:
   the global fallback — never write per-model resolution results back into
   them when switching models. Anthropic's litellm native prefix stays
   `claude/` (not `anthropic/`).
+- Deterministic micro-modify (2026-08-01, plan P2): pure parameter-value
+  changes ("把层板数改成 5" / "set shelf_count to 5") are intercepted before
+  the LLM MODIFY path — `openbrep/runtime/micro_modify.py` does high-precision
+  detection only (name/description resolution, Length unit conversion, boolean
+  words); anything ambiguous, compound, or question-shaped returns None and
+  falls through to `_handle_script_update` unchanged. The pipeline applies the
+  value, snapshots a before-revision (metadata records the change), persists
+  paramlist, and still runs compile; semantic verification is advisory only —
+  explicit user intent, same semantics as editing the parameter panel.
 
 ## benchmark 黄金语料规范（corpus maintenance）
 
