@@ -338,5 +338,176 @@ DEL 1
         self.assertAlmostEqual(max(res.meshes[0].z), 1.0)
 
 
+class TestGDLPreviewerStackAndSubroutines(unittest.TestCase):
+    def test_put_get_expands_into_prism_arguments(self):
+        script = """\
+PUT 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0
+PRISM_ 4, 0.5, GET(12)
+"""
+        res = preview_3d_script(script)
+
+        self.assertEqual(len(res.meshes), 1)
+        self.assertEqual(res.meshes[0].name, "PRISM_")
+        self.assertEqual(len(res.meshes[0].x), 8)  # 4 base + 4 top
+        self.assertEqual(len(res.meshes[0].i), 12)  # 4 side quads + 2 caps
+        self.assertEqual(res.warnings, [])
+
+    def test_use_peeks_stack_without_consuming(self):
+        script = """\
+PUT 1, 2, 3
+BLOCK USE(3)
+BLOCK GET(3)
+"""
+        res = preview_3d_script(script)
+
+        # USE peeks without popping, so GET can still retrieve the same values.
+        self.assertEqual(len(res.meshes), 2)
+        self.assertEqual(res.warnings, [])
+
+    def test_gosub_numeric_labels_and_return(self):
+        script = """\
+GOSUB 100
+GOSUB 200
+END
+100:
+    BLOCK 1, 1, 1
+    RETURN
+200:
+    ADDX 2
+    BLOCK 1, 1, 1
+    DEL 1
+    RETURN
+"""
+        res = preview_3d_script(script)
+
+        self.assertEqual(len(res.meshes), 2)
+        self.assertAlmostEqual(min(res.meshes[0].x), 0.0, places=6)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0, places=6)
+        self.assertAlmostEqual(min(res.meshes[1].x), 2.0, places=6)
+        self.assertAlmostEqual(max(res.meshes[1].x), 3.0, places=6)
+        self.assertFalse(any("GOSUB" in w or "RETURN" in w for w in res.warnings))
+
+    def test_gosub_string_labels(self):
+        script = '''\
+GOSUB "box"
+END
+"box":
+    BLOCK 2, 2, 2
+    RETURN
+'''
+        res = preview_3d_script(script)
+
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 2.0, places=6)
+
+    def test_end_terminates_script_no_double_subroutine_execution(self):
+        script = """\
+GOSUB 100
+END
+100:
+    BLOCK 1, 1, 1
+    RETURN
+"""
+        res = preview_3d_script(script)
+
+        self.assertEqual(len(res.meshes), 1)
+
+    def test_tube_helix_sweep(self):
+        script = """\
+PUT 0,0,0, 0,0,1, 0,0,2
+PUT 0.1,0, -0.1,0, 0,0.1, 0,-0.1
+TUBE_ 3, 4, 127, GET(17)
+"""
+        res = preview_3d_script(script)
+
+        self.assertEqual(len(res.meshes), 1)
+        self.assertEqual(res.meshes[0].name, "TUBE_")
+        # 3 path rings x 4 section verts + 2 cap centroids = 14
+        self.assertEqual(len(res.meshes[0].x), 14)
+        # 2 segments x 4 quads x 2 tris + 2 caps x 4 tris = 24
+        self.assertEqual(len(res.meshes[0].i), 24)
+        self.assertEqual(res.warnings, [])
+
+    def test_spiral_stair_put_get_gosub_tube(self):
+        script = """\
+TOLER 0.005
+PEN 1
+ADD A / 2, B / 2, 0
+GOSUB 1000
+GOSUB 2000
+GOSUB 3000
+GOSUB 4000
+DEL 1
+END
+
+1000:
+    CYLIND height, pole_radius
+RETURN
+
+2000:
+    FOR i = 0 TO num_steps - 1
+        ADDZ i * step_riser
+        ROTZ i * step_angle
+        FOR k = 0 TO _seg
+            PUT tread_outer_radius * COS(k * step_angle / _seg), tread_outer_radius * SIN(k * step_angle / _seg), 0
+        NEXT k
+        FOR k = _seg TO 0 STEP -1
+            PUT pole_radius * COS(k * step_angle / _seg), pole_radius * SIN(k * step_angle / _seg), 0
+        NEXT k
+        PRISM_ 2 * (_seg + 1), tread_thickness, GET(2 * (_seg + 1) * 3)
+        DEL 2
+    NEXT i
+RETURN
+
+3000:
+    _path_pts = num_steps + 1
+    _sec_pts = 8
+    _tube_vals = _path_pts * 3 + _sec_pts * 2
+    FOR i = 0 TO num_steps
+        PUT tread_outer_radius * COS((i + 0.5) * step_angle), tread_outer_radius * SIN((i + 0.5) * step_angle), (i + 1) * step_riser + handrail_height
+    NEXT i
+    FOR k = 0 TO 7
+        PUT _rail_r * COS(k * 45), _rail_r * SIN(k * 45)
+    NEXT k
+    TUBE_ _path_pts, _sec_pts, 127, GET(_tube_vals)
+RETURN
+
+4000:
+    MATERIAL mat_landing
+    ADDZ height - _landing_thk
+    ROTZ num_steps * step_angle
+    ADDY -_landing_wid / 2
+    BLOCK _landing_len, _landing_wid, _landing_thk
+    DEL 3
+RETURN
+"""
+        params = {
+            "A": 2.0,
+            "B": 2.0,
+            "height": 3.0,
+            "num_steps": 12,
+            "pole_radius": 0.06,
+            "tread_outer_radius": 0.8,
+            "step_riser": 0.25,
+            "step_angle": 30.0,
+            "tread_thickness": 0.04,
+            "_seg": 8,
+            "handrail_height": 0.9,
+            "_rail_r": 0.02,
+            "_landing_thk": 0.04,
+            "_landing_len": 1.0,
+            "_landing_wid": 0.8,
+        }
+        res = preview_3d_script(script, params)
+
+        commands = [m.source_ref.command for m in res.meshes]
+        # 1 pole + 12 treads + 1 handrail tube + 1 landing
+        self.assertEqual(commands.count("CYLIND"), 1)
+        self.assertEqual(commands.count("PRISM_"), 12)
+        self.assertEqual(commands.count("TUBE_"), 1)
+        self.assertEqual(commands.count("BLOCK"), 1)
+        self.assertEqual(res.warnings, [])
+
+
 if __name__ == "__main__":
     unittest.main()

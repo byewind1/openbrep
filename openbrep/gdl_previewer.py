@@ -169,6 +169,7 @@ class _PreviewRuntime:
         r"^FOR\s+([A-Za-z_]\w*)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$",
         re.IGNORECASE,
     )
+    _GET_USE_RE = re.compile(r"^(GET|USE)\s*\((.+)\)$", re.IGNORECASE)
 
     def __init__(
         self,
@@ -207,6 +208,14 @@ class _PreviewRuntime:
         self._ruled_chain_top: list[Point3D] | None = None
         self._ruled_chain_top_idx: list[int] | None = None
 
+        # PUT/GET value stack and GOSUB call stack.
+        self._put_stack: list[float] = []
+        self._gosub_stack: list[int] = []
+        self._label_map: dict[str, int] = {}
+
+        # Function dispatch table for expression evaluation.
+        self._funcs = dict(_ALLOWED_FUNCS)
+
         self.result_2d = Preview2DResult()
         self.result_3d = Preview3DResult()
         self._warnings: list[str] = []
@@ -214,6 +223,7 @@ class _PreviewRuntime:
 
     def execute(self, script: str, mode: str) -> None:
         lines = _logical_lines(script)
+        self._label_map = _build_label_map(lines)
         self._exec_block(lines, 0, len(lines), mode=mode)
 
     def finish(self) -> None:
@@ -306,13 +316,38 @@ class _PreviewRuntime:
                 idx += 1
                 continue
 
+            # GOSUB/RETURN subroutine calls
+            if re.match(r"^GOSUB\b", line, re.IGNORECASE):
+                target = self._resolve_gosub_target(line[5:], line_no)
+                if target is None:
+                    self._warn(line_no, "GOSUB 目标标签未找到，已跳过")
+                else:
+                    self._gosub_stack.append(idx + 1)
+                    idx = target
+                continue
+
+            if re.match(r"^RETURN\b", line, re.IGNORECASE):
+                if not self._gosub_stack:
+                    self._warn(line_no, "RETURN 没有对应 GOSUB，已忽略")
+                else:
+                    idx = self._gosub_stack.pop()
+                continue
+
             # Transform commands
             if self._handle_transform(line, line_no):
                 idx += 1
                 continue
 
-            # No-op commands in preview
-            if re.match(r"^(END|RETURN)\b", line, re.IGNORECASE):
+            # No-op / flow-control commands in preview
+            if re.match(r"^END\b", line, re.IGNORECASE):
+                # GDL END terminates script execution.
+                break
+
+            if re.match(r"^PUT\b", line, re.IGNORECASE):
+                args_text = (re.match(r"^PUT\b\s*(.*)$", line, re.IGNORECASE).group(1) or "").strip()
+                vals = self._eval_args(_split_args(args_text), line_no)
+                if vals is not None:
+                    self._put_stack.extend(vals)
                 idx += 1
                 continue
 
@@ -450,7 +485,7 @@ class _PreviewRuntime:
 
     def _eval_condition(self, condition: str, line_no: int) -> bool | None:
         try:
-            return _safe_eval_condition(condition, self.env)
+            return _safe_eval_condition(condition, self.env, funcs=self._funcs)
         except Exception as exc:
             self._warn(line_no, f"IF 条件解析失败 `{condition}`: {exc}")
             return None
@@ -887,6 +922,39 @@ class _PreviewRuntime:
             )
             return True
 
+        if cmd in {"TUBE", "TUBE_"}:
+            vals = self._eval_args(args_raw, line_no)
+            if vals is None or len(vals) < 3:
+                self._warn(line_no, f"{cmd} 参数不足或解析失败")
+                return True
+            n = int(round(vals[0]))
+            m = int(round(vals[1]))
+            mask = int(round(vals[2]))
+            need = 3 + n * 3 + m * 2
+            if n < 2 or m < 2 or len(vals) < need:
+                self._warn(line_no, f"{cmd} 路径/截面数据不足，已跳过")
+                return True
+            path = [
+                (float(vals[3 + 3 * i]), float(vals[3 + 3 * i + 1]), float(vals[3 + 3 * i + 2]))
+                for i in range(n)
+            ]
+            sec_off = 3 + n * 3
+            section = [
+                (float(vals[sec_off + 2 * i]), float(vals[sec_off + 2 * i + 1]))
+                for i in range(m)
+            ]
+            mesh, wires = _make_tube_mesh(
+                path,
+                section,
+                self._offset(),
+                mask=mask,
+                transform=self._A,
+                source_ref=_source_ref_3d(line_no, cmd),
+            )
+            self.result_3d.meshes.append(mesh)
+            self.result_3d.wires.extend(wires)
+            return True
+
         return False
 
     # ── RULED chain welding ──────────────────────────────────
@@ -1002,6 +1070,21 @@ class _PreviewRuntime:
         for arg in args_raw:
             if not arg:
                 continue
+            m = self._GET_USE_RE.match(arg)
+            if m:
+                func_name = m.group(1).upper()
+                count = self._eval_expr(m.group(2).strip(), line_no)
+                if count is None:
+                    return None
+                count_i = max(0, int(round(float(count))))
+                if func_name == "GET":
+                    items = self._put_get(count_i, line_no)
+                else:
+                    items = self._put_use(count_i, line_no)
+                if items is None:
+                    return None
+                vals.extend(items)
+                continue
             v = self._eval_expr(arg, line_no)
             if v is None:
                 return None
@@ -1016,10 +1099,49 @@ class _PreviewRuntime:
             self._warn(line_no, "空表达式")
             return None
         try:
-            return _safe_eval_expr(text, self.env)
+            return _safe_eval_expr(text, self.env, funcs=self._funcs)
         except Exception as exc:
             self._warn(line_no, f"表达式解析失败 `{text}`: {exc}")
             return None
+
+    def _put_get(self, n: int, line_no: int) -> list[float] | None:
+        if n > len(self._put_stack):
+            self._warn(line_no, f"GET({n}) 超出 PUT 栈深度 {len(self._put_stack)}，已跳过")
+            return None
+        if n <= 0:
+            return []
+        start = len(self._put_stack) - n
+        values = self._put_stack[start:]
+        del self._put_stack[start:]
+        return values
+
+    def _put_use(self, n: int, line_no: int) -> list[float] | None:
+        if n > len(self._put_stack):
+            self._warn(line_no, f"USE({n}) 超出 PUT 栈深度 {len(self._put_stack)}，已跳过")
+            return None
+        if n <= 0:
+            return []
+        return self._put_stack[-n:]
+
+    def _resolve_gosub_target(self, arg_text: str, line_no: int) -> int | None:
+        text = (arg_text or "").strip()
+        if not text:
+            self._warn(line_no, "GOSUB 缺少目标标签")
+            return None
+        # Numeric label: GOSUB 1000
+        if re.match(r"^\d+$", text):
+            return self._label_map.get(text)
+        # String label: GOSUB "label"
+        m = re.match(r'^"([^"]*)"$', text)
+        if m:
+            return self._label_map.get(m.group(1))
+        # Expression resolving to label name
+        try:
+            value = _safe_eval_expr(text, self.env, funcs=self._funcs, missing_names_zero=True)
+            key = str(int(round(float(value))))
+            return self._label_map.get(key)
+        except Exception:
+            return self._label_map.get(text.upper())
 
     def _offset(self) -> Point3D:
         return self._t
@@ -1173,6 +1295,24 @@ def _is_label_line(line: str) -> bool:
     if re.match(r'^"[^"]+"\s*:', line):
         return True
     return False
+
+
+def _extract_label_name(line: str) -> str | None:
+    m = re.match(r'^(\d+)\s*:', line)
+    if m:
+        return m.group(1)
+    m = re.match(r'^"([^"]+)"\s*:', line)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _build_label_map(lines: list[tuple[int, str]]) -> dict[str, int]:
+    return {
+        name: idx
+        for idx, (_, line) in enumerate(lines)
+        if (name := _extract_label_name(line)) is not None
+    }
 
 
 def _extract_command(line: str) -> str:
@@ -1612,6 +1752,116 @@ def _make_prism_mesh(
     return _build_mesh(name, verts, faces, source_ref=source_ref), wires
 
 
+def _make_tube_mesh(
+    path: list[Point3D],
+    section: list[Point2D],
+    offset: Point3D,
+    *,
+    mask: int = 127,
+    transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+    source_ref: PreviewSourceRef | None = None,
+) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
+    """Sweep a 2D section along a 3D path (GDL TUBE_).
+
+    ``path`` contains n 3D nodes. ``section`` contains m (u, v) points
+    describing the cross-section in the section's local plane.  Consecutive
+    section rings are connected by quads; caps are added when the mask bits
+    request them (j1 = start cap, j2 = end cap).
+    """
+    A = transform or _identity3()
+    n_path = len(path)
+    n_sec = len(section)
+
+    def _normalize(v: Point3D) -> Point3D:
+        length = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+        if length < 1e-12:
+            return (0.0, 0.0, 1.0)
+        return (v[0] / length, v[1] / length, v[2] / length)
+
+    def _cross(a: Point3D, b: Point3D) -> Point3D:
+        return (
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        )
+
+    def _frame(tangent: Point3D) -> tuple[Point3D, Point3D]:
+        tx, ty, tz = tangent
+        if abs(tz) < 0.99:
+            up = (0.0, 0.0, 1.0)
+        else:
+            up = (0.0, 1.0, 0.0)
+        ux, uy, uz = up
+        # x_axis = normalize(up - dot(up, tangent) * tangent)
+        dot = ux * tx + uy * ty + uz * tz
+        x_axis = _normalize((ux - dot * tx, uy - dot * ty, uz - dot * tz))
+        y_axis = _cross(tangent, x_axis)
+        return x_axis, y_axis
+
+    # Compute tangents at each path point.
+    tangents: list[Point3D] = []
+    for i in range(n_path):
+        if i == 0:
+            t = _normalize((path[1][0] - path[0][0], path[1][1] - path[0][1], path[1][2] - path[0][2]))
+        elif i == n_path - 1:
+            t = _normalize((path[-1][0] - path[-2][0], path[-1][1] - path[-2][1], path[-1][2] - path[-2][2]))
+        else:
+            t = _normalize((path[i + 1][0] - path[i - 1][0], path[i + 1][1] - path[i - 1][1], path[i + 1][2] - path[i - 1][2]))
+        tangents.append(t)
+
+    verts_local: list[Point3D] = []
+    for p, tangent in zip(path, tangents):
+        x_axis, y_axis = _frame(tangent)
+        for u, v in section:
+            px = p[0] + u * x_axis[0] + v * y_axis[0]
+            py = p[1] + u * x_axis[1] + v * y_axis[1]
+            pz = p[2] + u * x_axis[2] + v * y_axis[2]
+            verts_local.append((px, py, pz))
+
+    verts = [_apply_affine(p, A, offset) for p in verts_local]
+
+    faces: list[tuple[int, int, int]] = []
+    for i in range(n_path - 1):
+        for j in range(n_sec):
+            j_next = (j + 1) % n_sec
+            a = i * n_sec + j
+            b = i * n_sec + j_next
+            c = (i + 1) * n_sec + j_next
+            d = (i + 1) * n_sec + j
+            faces.append((a, b, c))
+            faces.append((a, c, d))
+
+    # Start cap (mask bit 1)
+    if mask & 1 and n_sec >= 3:
+        cx = sum(verts_local[j][0] for j in range(n_sec)) / n_sec
+        cy = sum(verts_local[j][1] for j in range(n_sec)) / n_sec
+        cz = sum(verts_local[j][2] for j in range(n_sec)) / n_sec
+        verts.append(_apply_affine((cx, cy, cz), A, offset))
+        c = len(verts) - 1
+        for j in range(n_sec):
+            j_next = (j + 1) % n_sec
+            faces.append((c, j_next, j))
+
+    # End cap (mask bit 2)
+    if mask & 2 and n_sec >= 3:
+        base = (n_path - 1) * n_sec
+        cx = sum(verts_local[base + j][0] for j in range(n_sec)) / n_sec
+        cy = sum(verts_local[base + j][1] for j in range(n_sec)) / n_sec
+        cz = sum(verts_local[base + j][2] for j in range(n_sec)) / n_sec
+        verts.append(_apply_affine((cx, cy, cz), A, offset))
+        c = len(verts) - 1
+        for j in range(n_sec):
+            j_next = (j + 1) % n_sec
+            faces.append((c, base + j, base + j_next))
+
+    wires: list[list[Point3D]] = []
+    wires.append([verts[j] for j in range(n_sec)] + [verts[0]])
+    wires.append([verts[(n_path - 1) * n_sec + j] for j in range(n_sec)] + [verts[(n_path - 1) * n_sec]])
+    wires.append([verts[i * n_sec] for i in range(n_path)])
+
+    return _build_mesh("TUBE_", verts, faces, source_ref=source_ref), wires
+
+
 _ALLOWED_FUNCS = {
     "ABS": lambda x: abs(x),
     "SQRT": lambda x: math.sqrt(x),
@@ -1625,14 +1875,25 @@ _ALLOWED_FUNCS = {
 }
 
 
-def _safe_eval_expr(expr: str, env: dict[str, float], *, missing_names_zero: bool = False) -> float:
+def _safe_eval_expr(
+    expr: str,
+    env: dict[str, float],
+    *,
+    funcs: dict[str, Any] | None = None,
+    missing_names_zero: bool = False,
+) -> float:
     """Evaluate numeric expression with a very small safe AST subset."""
     text = expr.strip().replace("^", "**")
     node = ast.parse(text, mode="eval")
-    return float(_eval_ast(node.body, env, missing_names_zero=missing_names_zero))
+    return float(_eval_ast(node.body, env, funcs=funcs, missing_names_zero=missing_names_zero))
 
 
-def _safe_eval_condition(condition: str, env: dict[str, float]) -> bool:
+def _safe_eval_condition(
+    condition: str,
+    env: dict[str, float],
+    *,
+    funcs: dict[str, Any] | None = None,
+) -> bool:
     text = (condition or "").strip()
     if not text:
         raise ValueError("空条件")
@@ -1642,15 +1903,15 @@ def _safe_eval_condition(condition: str, env: dict[str, float]) -> bool:
     for op in (" OR ", " AND "):
         parts = re.split(rf"\b{op.strip()}\b", text, flags=re.IGNORECASE)
         if len(parts) > 1:
-            values = [_safe_eval_condition(part, env) for part in parts]
+            values = [_safe_eval_condition(part, env, funcs=funcs) for part in parts]
             return any(values) if op.strip() == "OR" else all(values)
 
     m = re.match(r"^(.+?)\s*(<=|>=|<>|#|=|<|>)\s*(.+)$", text)
     if not m:
-        return abs(_safe_eval_expr(text, env, missing_names_zero=True)) > 1e-12
+        return abs(_safe_eval_expr(text, env, funcs=funcs, missing_names_zero=True)) > 1e-12
 
-    left = _safe_eval_expr(m.group(1), env, missing_names_zero=True)
-    right = _safe_eval_expr(m.group(3), env, missing_names_zero=True)
+    left = _safe_eval_expr(m.group(1), env, funcs=funcs, missing_names_zero=True)
+    right = _safe_eval_expr(m.group(3), env, funcs=funcs, missing_names_zero=True)
     op = m.group(2)
     if op == "=":
         return abs(left - right) <= 1e-9
@@ -1667,7 +1928,15 @@ def _safe_eval_condition(condition: str, env: dict[str, float]) -> bool:
     raise ValueError(f"条件运算符不支持: {op}")
 
 
-def _eval_ast(node: ast.AST, env: dict[str, float], *, missing_names_zero: bool = False) -> float:
+def _eval_ast(
+    node: ast.AST,
+    env: dict[str, float],
+    *,
+    funcs: dict[str, Any] | None = None,
+    missing_names_zero: bool = False,
+) -> float:
+    funcs = funcs if funcs is not None else _ALLOWED_FUNCS
+
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool):
             return 1.0 if node.value else 0.0
@@ -1684,8 +1953,8 @@ def _eval_ast(node: ast.AST, env: dict[str, float], *, missing_names_zero: bool 
         return float(env[key])
 
     if isinstance(node, ast.BinOp):
-        left = _eval_ast(node.left, env, missing_names_zero=missing_names_zero)
-        right = _eval_ast(node.right, env, missing_names_zero=missing_names_zero)
+        left = _eval_ast(node.left, env, funcs=funcs, missing_names_zero=missing_names_zero)
+        right = _eval_ast(node.right, env, funcs=funcs, missing_names_zero=missing_names_zero)
         if isinstance(node.op, ast.Add):
             return left + right
         if isinstance(node.op, ast.Sub):
@@ -1701,7 +1970,7 @@ def _eval_ast(node: ast.AST, env: dict[str, float], *, missing_names_zero: bool 
         raise ValueError("二元运算符不支持")
 
     if isinstance(node, ast.UnaryOp):
-        v = _eval_ast(node.operand, env, missing_names_zero=missing_names_zero)
+        v = _eval_ast(node.operand, env, funcs=funcs, missing_names_zero=missing_names_zero)
         if isinstance(node.op, ast.UAdd):
             return +v
         if isinstance(node.op, ast.USub):
@@ -1712,10 +1981,10 @@ def _eval_ast(node: ast.AST, env: dict[str, float], *, missing_names_zero: bool 
         if not isinstance(node.func, ast.Name):
             raise ValueError("函数调用不支持")
         fname = node.func.id.upper()
-        fn = _ALLOWED_FUNCS.get(fname)
+        fn = funcs.get(fname)
         if fn is None:
             raise ValueError(f"函数 {node.func.id} 不支持")
-        args = [_eval_ast(a, env, missing_names_zero=missing_names_zero) for a in node.args]
+        args = [_eval_ast(a, env, funcs=funcs, missing_names_zero=missing_names_zero) for a in node.args]
         return float(fn(*args))
 
     raise ValueError("表达式语法不支持")
