@@ -867,7 +867,114 @@ class TaskPipeline:
         - Runs preflight and StaticChecker after applying changes
         - Attempts compile validation (real or mock)
         """
+        micro_result = self._try_micro_modify(request)
+        if micro_result is not None:
+            return micro_result
         return self._handle_script_update(request)
+
+    def _try_micro_modify(self, request: TaskRequest) -> Optional[TaskResult]:
+        """P2 确定性微修改：纯参数值设置直接落 paramlist，不调用 LLM。
+
+        识别不出或场景不适用时返回 None，正常走 _handle_script_update。
+        语义与参数面板直接改值一致：值变更按用户显式意图落盘，
+        编译照常验证（benchmark 契约要求 compile_result），
+        几何语义验证只做 advisory 警告、不拦截。
+        """
+        from openbrep.runtime.micro_modify import detect_micro_modify
+
+        if (request.intent or "MODIFY") != "MODIFY":
+            return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
+        if request.agent_loop or request.image_path or request.image_b64:
+            return None
+        project = request.project
+        if project is None or not project.parameters:
+            return None
+        instruction = (request.user_input or "").strip()
+        if not instruction or instruction.startswith("["):
+            return None
+
+        micro = detect_micro_modify(instruction, project)
+        if micro is None:
+            return None
+        param = project.get_parameter(micro.param_name)
+        if param is None:
+            return None
+
+        on_event = request.on_event or (lambda *args: None)
+
+        # 快照"修改前"状态（与 LLM 路径同一机制）；revision 拷的是磁盘状态，
+        # 必须先于内存修改 + save_to_disk
+        revision_warnings: list[str] = []
+        _revision_id, revision_warning = _create_auto_revision(
+            project,
+            message="auto: before modify",
+            trigger="modify",
+            intent="MODIFY",
+            user_instruction=instruction,
+            changed_files=["paramlist.xml"],
+            parent_revision_id=get_latest_revision_id(project.root) if _can_revision_project(project) else None,
+            metadata={
+                "micro_modify": {
+                    "param": micro.param_name,
+                    "old_value": micro.old_value,
+                    "new_value": micro.new_value,
+                    "matched_via": micro.matched_via,
+                }
+            },
+        )
+        if revision_warning:
+            revision_warnings.append(revision_warning)
+
+        param.value = micro.new_value
+        project.save_to_disk()
+
+        compile_result: Optional[CompileResult] = None
+        try:
+            compiler = self._make_compiler()
+            out_dir = Path(request.output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            gsm_path = str(out_dir / f"{request.gsm_name or project.name}.gsm")
+            compile_result = compiler.hsf2libpart(str(project.root), gsm_path)
+            on_event("compile_result", {
+                "success": compile_result.success,
+                "error": compile_result.stderr if not compile_result.success else "",
+            })
+        except Exception as exc:
+            logger.warning("micro-modify compile failed: %s", exc)
+
+        semantic_note = ""
+        try:
+            from openbrep.semantic_verifier import verify_semantics
+
+            semantic_result = verify_semantics(project)
+            blocking = [issue for issue in semantic_result.issues if issue.blocking]
+            if blocking:
+                semantic_note = "⚠️ 几何验证警告：\n" + "\n".join(f"- {issue.detail}" for issue in blocking)
+        except Exception:
+            pass
+
+        output_parts = [
+            f"✅ 已将参数 `{micro.param_name}` 从 `{micro.old_value}` 改为 `{micro.new_value}`"
+            "（确定性微修改，未调用 LLM）",
+        ]
+        if compile_result is not None:
+            if compile_result.success:
+                output_parts.append("编译：✅ 通过")
+            else:
+                output_parts.append(f"编译：❌ 失败\n{compile_result.stderr[:800]}")
+        if semantic_note:
+            output_parts.append(semantic_note)
+        if revision_warnings:
+            output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {w}" for w in revision_warnings))
+
+        return TaskResult(
+            success=compile_result.success if compile_result is not None else True,
+            intent="MODIFY",
+            project=project,
+            compile_result=compile_result,
+            plain_text="\n\n".join(output_parts),
+            revision_warnings=revision_warnings,
+        )
 
     def _handle_modify_agent_loop(self, request: TaskRequest) -> TaskResult:
         """实验新路径：预算制、工具调用驱动的 MODIFY agent loop。

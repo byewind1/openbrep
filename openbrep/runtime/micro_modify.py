@@ -1,0 +1,183 @@
+"""确定性微修改（P2）：识别"把参数 X 改成值 V"并给出可直接落盘的修改指令。
+
+定位（见 Obsidian《GDL 生成架构精准迭代评估与方案 2026-08-01》）：
+高频小修改（改参数默认值）不经过 LLM——零 token、零"顺手改坏"风险。
+
+设计原则：
+
+- 高精度、零召回压力：识别不出就返回 None，请求回落正常 LLM MODIFY 路径，
+  行为与今天完全一致。宁可漏判（走 LLM），不可误判（改错参数）。
+- 只处理数值（Integer/RealNum/Length）和 Boolean 参数的值设置；
+  重命名、加/删参数、多参数同改、String 参数一律回落。
+- 单位换算只作用于 Length 类型（GDL 长度单位是米）；其他数值类型带长度
+  单位属于语义不明，回落 LLM。
+- 纯函数、无副作用：应用（写盘/快照/编译）由 pipeline 负责。
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Optional
+
+from openbrep.hsf_project import GDLParameter, HSFProject
+
+# 设置类动词 + 目标数值（可选长度单位）。只取第一处匹配作为目标值——
+# "从 18mm 改为 25mm" 中 18mm 前面没有动词，天然不会被误取。
+# 中文语序：把 X 改成 5（值紧跟动词）
+_SET_VALUE_RE = re.compile(
+    r"(?:改成|改为|设为|设置为|调整为|调成|变为)\s*"
+    r"(?:到|为|至)?\s*"
+    r"(-?\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?",
+    re.IGNORECASE,
+)
+# 英文语序：set X to 5（参数夹在动词和值之间）
+_SET_EN_RE = re.compile(
+    r"(?:set|change|update)\s+\S+\s+(?:to|=)\s*"
+    r"(-?\d+(?:\.\d+)?|true|false|yes|no|on|off)\s*(mm|cm|m)?(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+_SET_BOOL_RE = re.compile(
+    r"(?:改成|改为|设为|设置为|调整为|调成|变为|set)\s*"
+    r"(?:到|为|至|to)?\s*"
+    r"(开启|打开|启用|关闭|关掉|禁用|开|关|true|false|yes|no|on|off)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+
+_BOOL_TRUE = {"开启", "打开", "启用", "开", "true", "yes", "on"}
+_BOOL_FALSE = {"关闭", "关掉", "禁用", "关", "false", "no", "off"}
+
+# 明显是复合/多意图请求——保守回落 LLM
+_COMPOUND_HINTS = ("然后", "并且", "顺便", "还有", "另外", "同时", "再帮", "，再")
+# 疑问句不是修改指令
+_QUESTION_HINTS = ("为什么", "为啥", "怎么看", "吗？", "吗?", "？", "?")
+
+_NUMERIC_TYPES = {"Integer", "RealNum", "Length"}
+
+_LENGTH_FACTORS = {
+    "mm": 0.001, "毫米": 0.001,
+    "cm": 0.01, "厘米": 0.01,
+    "m": 1.0, "米": 1.0,
+    "": 1.0,
+}
+
+
+@dataclass(frozen=True)
+class MicroModify:
+    """一次确定性参数值修改。new_value 已按类型规整，可直接赋给 param.value。"""
+
+    param_name: str
+    old_value: str
+    new_value: str
+    matched_via: str  # "name" | "description"
+
+
+def detect_micro_modify(instruction: str, project: HSFProject) -> Optional[MicroModify]:
+    """识别"把参数 X 改成值 V"。识别不出返回 None（调用方回落 LLM 路径）。"""
+    text = (instruction or "").strip()
+    if not text or not project.parameters:
+        return None
+    if any(hint in text for hint in _COMPOUND_HINTS):
+        return None
+    if any(hint in text for hint in _QUESTION_HINTS):
+        return None
+
+    resolved = _resolve_param(text, project.parameters)
+    if resolved is None:
+        return None
+    param, matched_via = resolved
+
+    new_value = _extract_value(text, param)
+    if new_value is None:
+        return None
+
+    return MicroModify(
+        param_name=param.name,
+        old_value=param.value,
+        new_value=new_value,
+        matched_via=matched_via,
+    )
+
+
+def _resolve_param(text: str, params: list[GDLParameter]) -> Optional[tuple[GDLParameter, str]]:
+    """在指令文本里定位唯一参数：先按参数名（词边界），再按描述（最长匹配优先）。"""
+    name_hits = [
+        p for p in params
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(p.name)}(?![A-Za-z0-9_])",
+            text,
+            re.IGNORECASE,
+        )
+    ]
+    if len(name_hits) == 1:
+        return name_hits[0], "name"
+    if len(name_hits) > 1:
+        return None
+
+    desc_hits = [
+        p for p in params
+        if p.description and len(p.description.strip()) >= 2 and p.description.strip() in text
+    ]
+    if not desc_hits:
+        return None
+    # 描述可能互相包含（"深度" vs "深度方向间距"）：最长匹配唯一才接受
+    desc_hits.sort(key=lambda p: -len(p.description.strip()))
+    longest = len(desc_hits[0].description.strip())
+    if len(desc_hits) > 1 and len(desc_hits[1].description.strip()) == longest:
+        return None
+    return desc_hits[0], "description"
+
+
+def _extract_value(text: str, param: GDLParameter) -> Optional[str]:
+    """按参数类型提取并规整目标值；语义不明返回 None。"""
+    if param.type_tag == "Boolean":
+        bool_match = _SET_BOOL_RE.search(text)
+        if bool_match:
+            word = bool_match.group(1).lower()
+            if word in _BOOL_TRUE:
+                return "1"
+            if word in _BOOL_FALSE:
+                return "0"
+        # "把开关改成 1" 也允许，落到数值分支
+
+    if param.type_tag not in _NUMERIC_TYPES and param.type_tag != "Boolean":
+        return None  # String 等 v1 不处理
+
+    raw: float | None = None
+    unit = ""
+    match = _SET_VALUE_RE.search(text)
+    if match:
+        raw = float(match.group(1))
+        unit = (match.group(2) or "").lower()
+    else:
+        en_match = _SET_EN_RE.search(text)
+        if en_match:
+            token = en_match.group(1).lower()
+            if token in _BOOL_TRUE or token in _BOOL_FALSE:
+                if param.type_tag != "Boolean":
+                    return None
+                return "1" if token in _BOOL_TRUE else "0"
+            raw = float(token)
+            unit = (en_match.group(2) or "").lower()
+    if raw is None:
+        return None
+
+    if param.type_tag == "Boolean":
+        return "1" if raw != 0 else "0"
+
+    if param.type_tag == "Length":
+        if not unit and raw > 10:
+            # 无单位大数值更可能是 mm 意图（"把宽度改成 900"），
+            # 静默当米会差 1000 倍——回落 LLM 带上下文判断
+            return None
+        return str(raw * _LENGTH_FACTORS[unit])
+
+    if unit:
+        return None  # RealNum/Integer 带长度单位，语义不明
+
+    if param.type_tag == "Integer":
+        if raw != int(raw):
+            return None  # "层数改成 5.5" 不能静默截断
+        return str(int(raw))
+
+    return str(raw)  # RealNum
