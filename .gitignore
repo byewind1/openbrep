@@ -6,6 +6,7 @@ dist/
 build/
 .eggs/
 .venv/
+uv.lock
 node_modules/
 frontend/dist/
 .DS_Store
@@ -29,6 +30,8 @@ ui/app.py.backup_*
 
 # build artifacts
 release/
+src-tauri/target/
+src-tauri/gen/
 keys/
 licenses.csv
 releases/

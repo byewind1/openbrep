@@ -91,7 +91,7 @@ obr
 
 > 如果 `obr` 不可用，重开终端或运行 `source ~/.zshrc`
 > 
-> `obr` 默认仅在本机 `http://localhost:8501` 启动 UI，不会自动打开浏览器；请用你的常用浏览器手动访问或直接使用已收藏地址。
+> `obr` 默认启动本地 React 工作台（本地 API + Vite 前端）并自动打开浏览器，按 Ctrl+C 停止。默认端口被占用时自动更换，`--no-open` 可禁止自动打开浏览器。
 
 ### 源码升级
 
@@ -181,7 +181,7 @@ openbrep --help
 | 📂 **导入** | 拖入 `.gdl` / `.txt` / `.gsm` 文件；.gsm 经 LP_XMLConverter 解包为 HSF |
 | 🔧 **编译 GSM** | HSF → .gsm，支持 Mock 模式（无需 ArchiCAD）和真实 LP_XMLConverter 编译 |
 | 📥 **提取** | 从 AI 对话中扫描代码块，自动识别脚本类型（3D/2D/Param...）并写入编辑器 |
-| **脚本标签页** | 6 个独立脚本框（3D / 2D / Master / Param / UI / Properties），每个均支持 streamlit-ace 语法高亮和全屏编辑 |
+| **脚本标签页** | 6 个独立脚本框（3D / 2D / Master / Param / UI / Properties），每个均支持 Monaco 语法高亮和全屏编辑 |
 | **参数表** | 查看、手动添加参数；AI 生成的 paramlist.xml 可一键写入 |
 | 🔍 **语法检查** | IF/ENDIF、FOR/NEXT、ADD/DEL 匹配，3D 末尾 END，2D 必须有 PROJECT2 |
 
