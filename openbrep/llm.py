@@ -299,6 +299,24 @@ class LLMAdapter:
         if network_kind is not None:
             raise RuntimeError(self._build_network_error_message(exc, resolved, network_kind)) from exc
 
+    def _raise_if_reasoning_only(self, choice) -> None:
+        """检测模型把所有输出配额用于内部 reasoning、未生成可见内容的情况。
+
+        部分 provider 上的推理模型（如某些 deepseek-v4-flash 端点）在流式/非流式
+        返回中都会把全部 completion_tokens 填入 reasoning_content，导致 message.content
+        为空。此时需要给调用方清晰引导，而不是让它拿到空字符串后静默生成空文件。
+        """
+        reasoning = getattr(choice.message, "reasoning_content", None) or ""
+        if reasoning.strip():
+            raise RuntimeError(
+                f"LLM 模型 `{self.config.model}` 返回的内容为空，但 reasoning_content 非空"
+                "（模型把输出配额全部用于内部思考，未生成可见内容）。\n"
+                "→ 尝试切换其他模型/provider，或确认当前模型支持代码生成任务。"
+            )
+        raise RuntimeError(
+            "LLM 返回了空内容 — 可能是内容过滤、模型配置错误，或该模型不适合当前任务。"
+        )
+
     def _build_network_error_message(self, exc: Exception, resolved: _ResolvedModelTarget, kind: str) -> str:
         configured_model = resolved.configured_model or self.config.model or resolved.litellm_model
         api_base = self.config.resolve_api_base(configured_model) or "(provider 默认端点)"
@@ -444,8 +462,11 @@ class LLMAdapter:
             time.perf_counter() - start_time,
         )
         choice = response.choices[0]
+        content = choice.message.content or ""
+        if not content.strip():
+            self._raise_if_reasoning_only(choice)
         return LLMResponse(
-            content=choice.message.content or "",
+            content=content,
             model=response.model or self.config.model,
             usage=dict(response.usage) if response.usage else {},
             finish_reason=choice.finish_reason or "",
@@ -658,8 +679,11 @@ class LLMAdapter:
             time.perf_counter() - start_time,
         )
         choice = response.choices[0]
+        content = choice.message.content or ""
+        if not content.strip():
+            self._raise_if_reasoning_only(choice)
         return LLMResponse(
-            content=choice.message.content or "",
+            content=content,
             model=response.model or self.config.model,
             usage=dict(response.usage) if response.usage else {},
             finish_reason=choice.finish_reason or "",

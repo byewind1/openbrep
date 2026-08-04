@@ -367,6 +367,54 @@ class TestLLMAdapterVision(unittest.TestCase):
         self.assertFalse(kwargs["stream"])
         self.assertTrue(kwargs["drop_params"])
 
+    def _mock_response_with_reasoning(self, model_name="openai/gpt-5.4"):
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = ""
+        mock_choice.message.reasoning_content = "thinking only"
+        mock_choice.finish_reason = "length"
+        mock_response.choices = [mock_choice]
+        mock_response.model = model_name
+        mock_response.usage = {"prompt_tokens": 1, "completion_tokens": 10}
+        return mock_response
+
+    def test_generate_raises_when_model_outputs_only_reasoning(self):
+        """部分 deepseek-v4-flash 端点会把全部 token 用于 reasoning_content，导致 content 为空。"""
+        config = LLMConfig(model="deepseek-v4-flash", api_key="test-key", timeout=10)
+        adapter = LLMAdapter(config)
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = self._mock_response_with_reasoning(
+            model_name="openai/deepseek-v4-flash"
+        )
+
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "generate code"}])
+        message = str(cm.exception)
+        self.assertIn("返回的内容为空", message)
+        self.assertIn("reasoning_content 非空", message)
+        self.assertIn("切换其他模型", message)
+
+    def test_generate_raises_when_content_and_reasoning_are_both_empty(self):
+        """content 和 reasoning 都为空时给出通用错误提示。"""
+        config = LLMConfig(model="some-model", api_key="test-key", timeout=10)
+        adapter = LLMAdapter(config)
+        mock_response = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = ""
+        mock_choice.message.reasoning_content = ""
+        mock_choice.finish_reason = "stop"
+        mock_response.choices = [mock_choice]
+        mock_response.model = "openai/some-model"
+        mock_response.usage = {}
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = mock_response
+
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        self.assertIn("返回了空内容", str(cm.exception))
+
     def test_builtin_gpt5_vision_enables_stream_by_default(self):
         config = LLMConfig(
             model="gpt-5.4",
