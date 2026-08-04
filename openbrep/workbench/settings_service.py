@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from openbrep.config import ALL_MODELS, GDLAgentConfig, iter_custom_provider_model_entries, model_to_provider
+from openbrep.config import ALL_MODELS, GDLAgentConfig, iter_custom_provider_model_entries, model_to_provider, provider_templates
 
 
 def load_workbench_config(config_path: Path) -> GDLAgentConfig:
@@ -62,9 +62,10 @@ def apply_llm_credentials_to_config(
             if api_key:
                 provider["api_key"] = api_key
             if api_base:
+                provider["api"] = api_base
                 provider["base_url"] = api_base
         config.llm.api_key = api_key or str(custom_match.get("api_key", "") or "")
-        config.llm.api_base = api_base or str(custom_match.get("base_url", "") or "")
+        config.llm.api_base = api_base or str(custom_match.get("api", "") or custom_match.get("base_url", "") or "")
         return
 
     provider_name = model_to_provider(model)
@@ -141,7 +142,7 @@ def custom_model_options(config: GDLAgentConfig) -> list[dict[str, Any]]:
     for provider in config.llm.custom_providers or []:
         provider_name = str(provider.get("name", "") or "").strip() or "custom"
         protocol = str(provider.get("protocol", "openai") or "openai")
-        api_base = str(provider.get("base_url", "") or "")
+        api_base = str(provider.get("api", "") or provider.get("base_url", "") or "")
         has_api_key = bool(str(provider.get("api_key", "") or "").strip())
         for entry in iter_custom_provider_model_entries(provider):
             alias = entry["alias"]
@@ -201,6 +202,7 @@ class WorkbenchSettingsService:
             "models": models,
             "model_options": model_options,
             "model_groups": groups,
+            "provider_templates": provider_templates(),
             "api_key": self.session.llm_api_key,
             "api_base": self.session.llm_api_base,
             "max_retries": self.session.max_retries,

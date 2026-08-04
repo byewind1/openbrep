@@ -65,7 +65,7 @@ def _load_pipeline(work_dir: str, trace_dir: str):
     if not api_key:
         err_console.print(
             "[yellow]⚠️  未找到 API Key。\n"
-            "请编辑 config.toml，在 [llm.provider_keys] 或 [llm] 中填入有效的 API Key。[/yellow]"
+            "请编辑 config.toml，在 [[llm.providers]] 或 [llm.provider_keys] 中填入有效的 API Key。[/yellow]"
         )
         raise typer.Exit(1)
 
@@ -475,13 +475,13 @@ def _configure_custom_provider(config, model: str) -> None:
         show_default=True,
     ).strip()
     base_url = typer.prompt(
-        "base_url",
-        default=(matched or {}).get("base_url", "https://your-proxy.com/v1"),
+        "api（Base URL）",
+        default=(matched or {}).get("api", "") or (matched or {}).get("base_url", "https://your-proxy.com/v1"),
         show_default=True,
     ).strip()
     api_key = _prompt_secret("api_key", (matched or {}).get("api_key", ""))
     protocol_value = typer.prompt(
-        "protocol",
+        "protocol（openai=chat_completions / anthropic=anthropic_messages）",
         default=(matched or {}).get("protocol", "openai"),
         show_default=True,
     ).strip().lower()
@@ -490,10 +490,10 @@ def _configure_custom_provider(config, model: str) -> None:
 
     new_provider = {
         "name": provider_name,
-        "base_url": base_url,
+        "api": base_url,
         "api_key": api_key,
         "models": [model],
-        "protocol": protocol_value,
+        "api_mode": "anthropic_messages" if protocol_value == "anthropic" else "chat_completions",
     }
 
     remaining = [p for p in config.llm.custom_providers if model not in (p.get("models", []) or [])]
@@ -535,10 +535,10 @@ def _collect_config_issues(config) -> list[str]:
                 matched = custom
                 break
         if not matched:
-            issues.append(f"当前模型 {model} 未匹配任何 custom_providers")
+            issues.append(f"当前模型 {model} 未匹配任何 providers")
         else:
-            if not matched.get("base_url"):
-                issues.append(f"自定义 provider {matched.get('name', 'custom')} 缺少 base_url")
+            if not (matched.get("api") or matched.get("base_url")):
+                issues.append(f"自定义 provider {matched.get('name', 'custom')} 缺少 api（base_url）")
             if not matched.get("api_key"):
                 issues.append(f"自定义 provider {matched.get('name', 'custom')} 缺少 api_key")
             if not matched.get("protocol"):

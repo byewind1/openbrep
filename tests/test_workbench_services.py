@@ -518,3 +518,33 @@ def test_update_llm_model_only_custom_provider_resolves_without_top_level_pollut
     assert reloaded.llm.api_key == "dk-top"  # 顶层兜底不被切换改写
     assert reloaded.llm.custom_providers[0]["api_key"] == "sk-qwen-key"
     assert reloaded.llm.custom_providers[0]["base_url"] == "https://token-plan.example.com/compatible-mode/v1"
+
+
+def test_settings_service_update_api_key_saves_unified_providers_format(tmp_path, monkeypatch):
+    """保存即迁移：UI 存 key 后落盘为 [[llm.providers]] 新键名，不再有 custom_providers。"""
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-v4-flash"
+    config.llm.custom_providers = [{
+        "name": "opencode-go",
+        "base_url": "https://opencode.ai/zen/go/v1",
+        "api_key": "old-key",
+        "models": ["deepseek-v4-flash"],
+        "protocol": "openai",
+    }]
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    response = service.update_llm_api_key({"model": "deepseek-v4-flash", "api_key": "new-key"})
+    assert response["ok"] is True
+
+    saved_text = config_path.read_text(encoding="utf-8")
+    assert "[[llm.providers]]" in saved_text
+    assert "custom_providers" not in saved_text
+    assert 'api = "https://opencode.ai/zen/go/v1"' in saved_text
+    assert 'api_mode = "chat_completions"' in saved_text
+
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.llm.custom_providers[0]["api_key"] == "new-key"
+    assert reloaded.llm.resolve_api_key() == "new-key"

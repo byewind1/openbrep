@@ -285,7 +285,8 @@ describe('SettingsDrawer AI model settings', () => {
     await waitFor(() => expect(screen.getByText(/连接正常/)).toBeTruthy())
   })
 
-  test('hides the API key editor for custom provider models', () => {
+  test('shows the API key editor for custom provider models (unified registry)', async () => {
+    const onSaveLlmApiKey = vi.fn(async () => undefined)
     renderSettingsDrawer(
       {
         model: 'ymg/deepseek-v3',
@@ -301,10 +302,12 @@ describe('SettingsDrawer AI model settings', () => {
         assistant_settings: '',
       },
       undefined,
-      { onSaveLlmApiKey: vi.fn(async () => undefined) },
+      { onSaveLlmApiKey },
     )
 
-    expect(screen.queryByLabelText('API Key')).toBeNull()
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-ymg' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存 Key' }))
+    await waitFor(() => expect(onSaveLlmApiKey).toHaveBeenCalledWith('ymg/deepseek-v3', 'sk-ymg'))
   })
 
   test('asks for confirmation, then switches and auto-tests the connection', async () => {

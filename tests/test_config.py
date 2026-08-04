@@ -411,3 +411,192 @@ class TestResolveCredentials(_CleanEnvMixin, unittest.TestCase):
         cred = cfg.resolve_credentials()
         self.assertEqual(cred.source, "none")
         self.assertEqual(cred.api_key, "")
+
+
+class TestUnifiedProviders(_CleanEnvMixin, unittest.TestCase):
+    """[[llm.providers]] 统一注册表（Hermes 式）：新键名、显式引用、default_model、${VAR} 插值、保存即迁移。"""
+
+    def _load(self, tmpdir: str, text: str) -> GDLAgentConfig:
+        config_path = Path(tmpdir) / "config.toml"
+        config_path.write_text(text, encoding="utf-8")
+        return GDLAgentConfig.load(str(config_path))
+
+    def test_new_format_providers_load_and_resolve(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "deepseek-v4-flash"
+
+[[llm.providers]]
+name = "opencode-go"
+api = "https://opencode.ai/zen/go/v1"
+api_mode = "chat_completions"
+api_key = "oc-key"
+models = ["deepseek-v4-flash", "kimi-k3"]
+''')
+            self.assertEqual(config.llm.resolve_api_key(), "oc-key")
+            self.assertEqual(config.llm.resolve_api_base(), "https://opencode.ai/zen/go/v1")
+            cred = config.llm.resolve_credentials()
+            self.assertEqual(cred.source, "custom_provider")
+            self.assertEqual(cred.provider, "opencode-go")
+            # 归一化条目同时携带新旧两组键
+            entry = config.llm.providers[0]
+            self.assertEqual(entry["api"], entry["base_url"])
+            self.assertEqual(entry["api_mode"], "chat_completions")
+            self.assertEqual(entry["protocol"], "openai")
+
+    def test_explicit_provider_model_ref(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "opencode-go/kimi-k3"
+
+[[llm.providers]]
+name = "opencode-go"
+api = "https://opencode.ai/zen/go/v1"
+api_key = "oc-key"
+models = ["deepseek-v4-flash", "kimi-k3"]
+''')
+            self.assertEqual(config.llm.resolve_api_key(), "oc-key")
+            match = config.llm.get_provider_for_model("opencode-go/kimi-k3")
+            self.assertEqual(match.get("provider_name"), "opencode-go")
+            self.assertEqual(match.get("model"), "kimi-k3")
+
+    def test_explicit_ref_allows_model_not_in_models_list(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "opencode-go/some-new-model"
+
+[[llm.providers]]
+name = "opencode-go"
+api = "https://opencode.ai/zen/go/v1"
+api_key = "oc-key"
+models = ["deepseek-v4-flash"]
+''')
+            match = config.llm.get_provider_for_model("opencode-go/some-new-model")
+            self.assertEqual(match.get("model"), "some-new-model")
+            self.assertEqual(config.llm.resolve_api_key(), "oc-key")
+
+    def test_provider_name_ref_uses_default_model(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "opencode-go"
+
+[[llm.providers]]
+name = "opencode-go"
+api = "https://opencode.ai/zen/go/v1"
+api_key = "oc-key"
+default_model = "kimi-k3"
+models = ["deepseek-v4-flash", "kimi-k3"]
+''')
+            match = config.llm.get_provider_for_model("opencode-go")
+            self.assertEqual(match.get("model"), "kimi-k3")
+
+    def test_env_ref_interpolation_in_provider_api_key(self):
+        self._clear_llm_env()
+        os.environ["T_OCK"] = "env-oc-key"
+        self.addCleanup(lambda: os.environ.pop("T_OCK", None))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "deepseek-v4-flash"
+
+[[llm.providers]]
+name = "opencode-go"
+api = "https://opencode.ai/zen/go/v1"
+api_key = "${T_OCK}"
+models = ["deepseek-v4-flash"]
+''')
+            self.assertEqual(config.llm.resolve_api_key(), "env-oc-key")
+            self.assertEqual(config.llm.resolve_credentials().api_key, "env-oc-key")
+
+    def test_env_ref_interpolation_in_provider_keys_and_top_level(self):
+        self._clear_llm_env()
+        os.environ["T_ZK"] = "env-zhipu-key"
+        self.addCleanup(lambda: os.environ.pop("T_ZK", None))
+        cfg = LLMConfig(model="glm-4-flash", provider_keys={"zhipu": "${T_ZK}"})
+        self.assertEqual(cfg.resolve_api_key(), "env-zhipu-key")
+        cfg = LLMConfig(model="glm-4-flash", api_key="${T_ZK}")
+        self.assertEqual(cfg.resolve_api_key(), "env-zhipu-key")
+
+    def test_legacy_custom_providers_still_resolve(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "gpt-5.4"
+
+[[llm.custom_providers]]
+name = "ymg"
+base_url = "https://api.ymg.com/v1"
+api_key = "ymg-key"
+models = ["gpt-5.4"]
+protocol = "openai"
+''')
+            self.assertEqual(config.llm.resolve_api_key(), "ymg-key")
+            self.assertEqual(config.llm.resolve_api_base(), "https://api.ymg.com/v1")
+            entry = config.llm.custom_providers[0]
+            self.assertEqual(entry["api"], "https://api.ymg.com/v1")
+            self.assertEqual(entry["api_mode"], "chat_completions")
+
+    def test_save_migrates_to_providers_and_roundtrips(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "deepseek-v4-flash"
+
+[[llm.custom_providers]]
+name = "opencode-go"
+base_url = "https://opencode.ai/zen/go/v1"
+api_key = "oc-key"
+models = ["deepseek-v4-flash"]
+protocol = "openai"
+'''.strip(), encoding="utf-8")
+
+            config = GDLAgentConfig.load(str(config_path))
+            config.save(str(config_path))
+
+            saved_text = config_path.read_text(encoding="utf-8")
+            self.assertIn("[[llm.providers]]", saved_text)
+            self.assertNotIn("custom_providers", saved_text)
+            self.assertIn('api = "https://opencode.ai/zen/go/v1"', saved_text)
+            self.assertIn('api_mode = "chat_completions"', saved_text)
+
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.llm.resolve_api_key(), "oc-key")
+            self.assertEqual(reloaded.llm.resolve_api_base(), "https://opencode.ai/zen/go/v1")
+            self.assertEqual(reloaded.llm.custom_providers[0]["name"], "opencode-go")
+
+    def test_llm_default_alias_for_model(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+default = "deepseek-v4-flash"
+
+[[llm.providers]]
+name = "opencode-go"
+api = "https://opencode.ai/zen/go/v1"
+api_key = "oc-key"
+models = ["deepseek-v4-flash"]
+''')
+            self.assertEqual(config.llm.model, "deepseek-v4-flash")
+            self.assertEqual(config.llm.resolve_api_key(), "oc-key")
+
+    def test_anthropic_api_mode_normalizes_protocol(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "claude-fable-5"
+
+[[llm.providers]]
+name = "openmodel"
+api = "https://api.openmodel.ai/v1"
+api_mode = "anthropic_messages"
+api_key = "om-key"
+models = ["claude-fable-5"]
+''')
+            entry = config.llm.providers[0]
+            self.assertEqual(entry["api_mode"], "anthropic_messages")
+            self.assertEqual(entry["protocol"], "anthropic")

@@ -28,16 +28,16 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const officialModels = groups?.official ?? []
   const modelAvailable = llmSettings.model_available ?? true
 
-  // 官方模型（内置列表，只需在界面填 API Key）与自定义代理（在 config.toml 里维护）
-  // 是两套配置体系：只有官方模型在界面提供 Key 输入，自定义模型的 Key 走可编辑文件。
+  // 统一 provider 注册表后，官方模型与自定义 provider 的 Key 都可以在界面保存
+  // （写入 config.toml 的 provider_keys / [[llm.providers]]）；ollama 本地模型无需 Key。
   const currentOption = [...customModels, ...officialModels].find(
     (m) => m.id === llmSettings.model || m.target_model === llmSettings.model,
   )
   // config.toml 里的 model 可能写 alias 或 custom provider 的真实模型名，
   // 列表高亮必须与 currentOption 用同一套解析，否则 target_model 命中时列表不亮。
   const currentId = currentOption?.id ?? llmSettings.model
-  const isCustomModel = currentOption?.kind === 'custom'
-  const showKeyEditor = Boolean(onSaveApiKey) && !isCustomModel && Boolean(llmSettings.model)
+  const isOllamaModel = currentOption?.provider === 'ollama' || llmSettings.model.startsWith('ollama/')
+  const showKeyEditor = Boolean(onSaveApiKey) && !isOllamaModel && Boolean(llmSettings.model)
 
   useEffect(() => {
     setApiKeyInput('')

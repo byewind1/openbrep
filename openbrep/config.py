@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -189,6 +190,38 @@ PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
 _PROFILES_BY_PREFIX_LEN = sorted(PROVIDER_PROFILES, key=lambda p: -max(len(x) for x in p.prefixes))
 
 
+# 官方 provider 的默认端点模板（"从模板添加"数据源；litellm native 路由不依赖它，
+# 用户想用统一 [[llm.providers]] 格式配官方 provider 时从这里抄端点即可）
+PROVIDER_API_TEMPLATES = {
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "deepseek": "https://api.deepseek.com/v1",
+    "anthropic": "https://api.anthropic.com",
+    "openai": "https://api.openai.com/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "aliyun": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "kimi": "https://api.moonshot.cn/v1",
+    "ollama": "http://127.0.0.1:11434/v1",
+}
+
+
+def provider_templates() -> list[dict]:
+    """官方 provider 模板目录：预设端点 + 模型清单（数据，不参与解析逻辑）。"""
+    templates = []
+    for profile in PROVIDER_PROFILES:
+        templates.append({
+            "name": profile.name,
+            "api": PROVIDER_API_TEMPLATES.get(profile.name, ""),
+            "api_mode": "anthropic_messages" if profile.name == "anthropic" else "chat_completions",
+            "env_vars": list(profile.env_vars),
+            "console_url": profile.console_url,
+            "models": [
+                m for m in ALL_MODELS
+                if (mp := provider_profile_for_model(m)) is not None and mp.name == profile.name
+            ],
+        })
+    return templates
+
+
 def provider_profile_for_model(model: str) -> ProviderProfile | None:
     """按模型名查官方 provider 档案；查不到（自定义/未知）返回 None。"""
     m = (model or "").lower()
@@ -230,6 +263,82 @@ def _auto_detect_converter() -> Optional[str]:
     return None
 
 
+# ── ${ENV_VAR} 引用：api_key 等敏感字段可以写 "${VAR}"，运行时从环境变量取值 ──
+_ENV_REF_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def expand_env_ref(value) -> str:
+    """整串是 ${VAR} 形式时取环境变量，其余原样返回（去掉首尾空白）。"""
+    text = str(value or "").strip()
+    match = _ENV_REF_RE.match(text)
+    if match:
+        return os.environ.get(match.group(1), "")
+    return text
+
+
+def _normalize_api_mode(value) -> str:
+    """api_mode 归一化：chat_completions（默认）| anthropic_messages。兼容旧 protocol 写法。"""
+    text = str(value or "").strip().lower()
+    if text in {"anthropic", "claude", "anthropic_messages", "messages"}:
+        return "anthropic_messages"
+    return "chat_completions"
+
+
+def normalize_provider_entry(entry: dict | None) -> dict:
+    """把一条 provider 配置归一化为统一注册表格式（Hermes 式）。
+
+    规范键：name / api / api_mode / api_key / default_model / models。
+    旧键 base_url→api、protocol(openai|anthropic)→api_mode 在此收敛。
+    归一化条目同时携带新旧两组键（api+base_url、api_mode+protocol），
+    保证旧读者（pipeline / cli / 前端 API）与新读者都不需要分支。
+    """
+    raw = dict(entry or {})
+    name = str(raw.get("name") or "").strip()
+    api = str(raw.get("api") or raw.get("base_url") or "").strip()
+    api_mode = _normalize_api_mode(raw.get("api_mode") or raw.get("protocol"))
+    models = raw.get("models", []) or []
+    if not isinstance(models, list):
+        models = [models]
+    normalized = dict(raw)
+    normalized.update({
+        "name": name,
+        "api": api,
+        "base_url": api,
+        "api_mode": api_mode,
+        "protocol": "anthropic" if api_mode == "anthropic_messages" else "openai",
+        "api_key": str(raw.get("api_key") or "").strip(),
+        "models": models,
+        # 记录 api/base_url 是否在原始条目里显式出现（即使为空）：
+        # 显式为空 = 不回退顶层 api_base；未出现 = 允许顶层兜底（历史语义）。
+        # 已归一化过的条目保留原标记，避免二次归一化把"未出现"误判成"显式为空"。
+        "_explicit_base": raw.get("_explicit_base", "api" in raw or "base_url" in raw),
+    })
+    default_model = str(raw.get("default_model") or "").strip()
+    if default_model:
+        normalized["default_model"] = default_model
+    else:
+        normalized.pop("default_model", None)
+    return normalized
+
+
+def provider_entry_to_toml(entry: dict) -> dict:
+    """保存时只写规范键（新格式），实现"保存即迁移"。"""
+    normalized = normalize_provider_entry(entry)
+    out: dict = {
+        "name": normalized["name"],
+        "api": normalized["api"],
+        "api_mode": normalized["api_mode"],
+        "api_key": normalized["api_key"],
+    }
+    if normalized.get("default_model"):
+        out["default_model"] = normalized["default_model"]
+    out["models"] = normalized.get("models", [])
+    native_prefix = str(normalized.get("native_prefix") or "").strip()
+    if native_prefix:
+        out["native_prefix"] = native_prefix
+    return out
+
+
 def _normalize_custom_model_entry(entry) -> Optional[dict[str, str]]:
     if isinstance(entry, dict):
         alias = str(entry.get("alias", "") or entry.get("name", "") or entry.get("model", "") or "").strip()
@@ -260,42 +369,76 @@ def iter_custom_provider_model_entries(provider: dict | None) -> list[dict[str, 
     return entries
 
 
+def _build_provider_match(provider: dict, entry: dict, raw: dict | None = None) -> dict:
+    return {
+        # provider 回传原始条目（可变引用），UI/CLI 写入 api_key/api 才能落盘；
+        # _normalized 供读取侧取归一化视图（如 _explicit_base 标记）
+        "provider": raw if raw is not None else provider,
+        "_normalized": provider,
+        "provider_name": provider["name"],
+        "alias": entry["alias"],
+        "model": entry["model"],
+        "protocol": provider.get("protocol", "openai"),
+        "api_mode": provider.get("api_mode", "chat_completions"),
+        "api_key": str(provider.get("api_key", "") or ""),
+        "base_url": str(provider.get("api", "") or provider.get("base_url", "") or ""),
+        "api": str(provider.get("api", "") or provider.get("base_url", "") or ""),
+    }
+
+
+def _match_within_provider(pair: tuple[dict, dict], rest: str, *, explicit_ref: bool) -> Optional[dict]:
+    """provider 已确定时，在 provider 内部解析模型：rest 为空走 default_model/models[0]。"""
+    provider, raw = pair
+    entries = iter_custom_provider_model_entries(provider)
+    rest_lower = rest.strip().lower()
+    if rest_lower:
+        for entry in entries:
+            if rest_lower in {entry["alias"].lower(), entry["model"].lower()}:
+                return _build_provider_match(provider, entry, raw)
+        if explicit_ref:
+            # 显式 provider/model 引用：models 未列出的模型 id 也允许直连
+            return _build_provider_match(provider, {"alias": rest.strip(), "model": rest.strip()}, raw)
+        return None
+    default_model = str(provider.get("default_model") or "").strip()
+    if default_model:
+        for entry in entries:
+            if default_model.lower() in {entry["alias"].lower(), entry["model"].lower()}:
+                return _build_provider_match(provider, entry, raw)
+        return _build_provider_match(provider, {"alias": default_model, "model": default_model}, raw)
+    first = entries[0] if entries else {"alias": provider["name"], "model": provider["name"]}
+    return _build_provider_match(provider, first, raw)
+
+
 def find_custom_provider_match(
     custom_providers: list[dict] | None,
     target_model: str | None,
     *,
     include_provider_name: bool = True,
 ) -> Optional[dict]:
-    target = str(target_model or "").strip().lower()
+    target = str(target_model or "").strip()
     if not target:
         return None
+    target_lower = target.lower()
+    pairs = [(normalize_provider_entry(p), p) for p in custom_providers or [] if isinstance(p, dict)]
 
-    for provider in custom_providers or []:
-        provider_name = str(provider.get("name", "") or "").strip()
-        if include_provider_name and provider_name and provider_name.lower() == target:
-            entries = iter_custom_provider_model_entries(provider)
-            first = entries[0] if entries else {"alias": provider_name, "model": provider_name}
-            return {
-                "provider": provider,
-                "provider_name": provider_name,
-                "alias": first["alias"],
-                "model": first["model"],
-                "protocol": str(provider.get("protocol", "openai") or "openai"),
-                "api_key": str(provider.get("api_key", "") or ""),
-                "base_url": str(provider.get("base_url", "") or ""),
-            }
+    # provider/model 显式引用（如 "opencode-go/deepseek-v4-flash"）：先按 provider 名拆分
+    if "/" in target:
+        head, _, rest = target.partition("/")
+        head_lower = head.strip().lower()
+        if head_lower and rest.strip():
+            for pair in pairs:
+                if pair[0]["name"].lower() == head_lower:
+                    return _match_within_provider(pair, rest.strip(), explicit_ref=True)
+
+    for pair in pairs:
+        provider = pair[0]
+        provider_name = provider["name"]
+        if include_provider_name and provider_name and provider_name.lower() == target_lower:
+            return _match_within_provider(pair, "", explicit_ref=False)
 
         for entry in iter_custom_provider_model_entries(provider):
-            if target in {entry["alias"].lower(), entry["model"].lower()}:
-                return {
-                    "provider": provider,
-                    "provider_name": provider_name,
-                    "alias": entry["alias"],
-                    "model": entry["model"],
-                    "protocol": str(provider.get("protocol", "openai") or "openai"),
-                    "api_key": str(provider.get("api_key", "") or ""),
-                    "base_url": str(provider.get("base_url", "") or ""),
-                }
+            if target_lower in {entry["alias"].lower(), entry["model"].lower()}:
+                return _build_provider_match(provider, entry, pair[1])
     return None
 
 
@@ -311,6 +454,15 @@ class LLMConfig:
     custom_providers: list[dict] = field(default_factory=list)
     assistant_settings: str = ""
 
+    @property
+    def providers(self) -> list[dict]:
+        """统一 provider 注册表（Hermes 式）。"""
+        return self.custom_providers
+
+    @providers.setter
+    def providers(self, value: list[dict]) -> None:
+        self.custom_providers = value
+
     def _find_custom_provider_match(self, model: str | None = None, *, include_provider_name: bool = True) -> Optional[dict]:
         return find_custom_provider_match(
             self.custom_providers,
@@ -325,17 +477,17 @@ class LLMConfig:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
-            custom_key = str(custom_match.get("api_key", "") or "").strip()
+            custom_key = expand_env_ref(custom_match.get("api_key", ""))
             return custom_key or None
 
         profile = provider_profile_for_model(target_model)
         if profile is not None:
             for key in profile.provider_key_names:
                 if self.provider_keys.get(key):
-                    return self.provider_keys[key]
+                    return expand_env_ref(self.provider_keys[key]) or None
 
         if self.api_key:
-            return self.api_key
+            return expand_env_ref(self.api_key) or None
 
         # Fallback to environment variables（保持历史优先级顺序，新增的放后面）
         for name in [
@@ -352,15 +504,15 @@ class LLMConfig:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
-            provider = custom_match.get("provider") or {}
-            has_explicit_base = isinstance(provider, dict) and "base_url" in provider
-            custom_base = str(custom_match.get("base_url", "") or "").strip()
+            provider = custom_match.get("_normalized") or custom_match.get("provider") or {}
+            has_explicit_base = bool(provider.get("_explicit_base")) if isinstance(provider, dict) else False
+            custom_base = str(custom_match.get("api", "") or custom_match.get("base_url", "") or "").strip()
             if custom_base:
                 return custom_base
-            # Explicitly configured but empty base_url means "do not fallback"
+            # Explicitly configured but empty api/base_url means "do not fallback"
             if has_explicit_base:
                 return None
-            # If base_url key is absent in custom provider, allow top-level fallback
+            # If api/base_url key is absent in custom provider, allow top-level fallback
 
         if self.api_base:
             return self.api_base
@@ -375,8 +527,8 @@ class LLMConfig:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
-            key = str(custom_match.get("api_key", "") or "").strip()
-            base = str(custom_match.get("base_url", "") or "").strip() or (self.api_base or "")
+            key = expand_env_ref(custom_match.get("api_key", ""))
+            base = str(custom_match.get("api", "") or custom_match.get("base_url", "") or "").strip() or (self.api_base or "")
             return ResolvedCredentials(
                 provider=str(custom_match.get("provider_name", "custom") or "custom"),
                 api_key=key,
@@ -391,7 +543,7 @@ class LLMConfig:
                 if self.provider_keys.get(key_name):
                     return ResolvedCredentials(
                         provider=profile.name,
-                        api_key=self.provider_keys[key_name],
+                        api_key=expand_env_ref(self.provider_keys[key_name]),
                         api_base=self.api_base or "",
                         source="provider_keys",
                         console_url=profile.console_url,
@@ -399,7 +551,7 @@ class LLMConfig:
             if self.api_key:
                 return ResolvedCredentials(
                     provider=profile.name,
-                    api_key=self.api_key,
+                    api_key=expand_env_ref(self.api_key),
                     api_base=self.api_base or "",
                     source="top_level",
                     console_url=profile.console_url,
@@ -442,7 +594,9 @@ class LLMConfig:
             return {
                 "api_key": custom_match.get("api_key", ""),
                 "base_url": custom_match.get("base_url", ""),
+                "api": custom_match.get("api", ""),
                 "protocol": custom_match.get("protocol", "openai"),
+                "api_mode": custom_match.get("api_mode", "chat_completions"),
                 "provider_name": custom_match.get("provider_name", ""),
                 "alias": custom_match.get("alias", model_name),
                 "model": custom_match.get("model", model_name),
@@ -525,12 +679,18 @@ class GDLAgentConfig:
         llm_data = data.get("llm", {})
         custom_providers = []
         if isinstance(llm_data, dict):
-            raw_custom = llm_data.get("custom_providers", []) or []
-            if isinstance(raw_custom, list):
-                custom_providers = raw_custom
+            # [llm] default 是 model 的 Hermes 式别名（default 优先仅在 model 缺失时）
+            if "model" not in llm_data and llm_data.get("default"):
+                llm_data = dict(llm_data)
+                llm_data["model"] = llm_data["default"]
+            # 统一注册表：[[llm.providers]] 为规范格式，[[llm.custom_providers]] 为旧格式，合并归一化
+            for key in ("providers", "custom_providers"):
+                raw = llm_data.get(key, []) or []
+                if isinstance(raw, list):
+                    custom_providers.extend(raw)
 
         llm_cfg = pick(LLMConfig, llm_data)
-        llm_cfg.custom_providers = custom_providers
+        llm_cfg.custom_providers = [normalize_provider_entry(p) for p in custom_providers]
 
         raw_recent_projects = data.get("recent_projects", [])
         if not isinstance(raw_recent_projects, list):
@@ -584,7 +744,8 @@ class GDLAgentConfig:
                 "temperature": self.llm.temperature,
                 "max_tokens": self.llm.max_tokens,
                 "provider_keys": self.llm.provider_keys,
-                "custom_providers": self.llm.custom_providers,
+                # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
+                "providers": [provider_entry_to_toml(p) for p in self.llm.providers],
                 "assistant_settings": self.llm.assistant_settings or "",
             },
             "agent": {

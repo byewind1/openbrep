@@ -65,4 +65,60 @@ describe('AiSettingsPanel save-and-verify', () => {
 
     expect(await screen.findByText(/连接正常 \(88 ms\)/)).toBeTruthy()
   })
+
+  test('custom provider model also offers the key editor (unified registry)', async () => {
+    const onSaveApiKey = vi.fn().mockResolvedValue({ ok: true })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({
+          model: 'deepseek-v4-flash',
+          models: ['deepseek-v4-flash'],
+          model_groups: {
+            custom: [
+              {
+                id: 'deepseek-v4-flash',
+                label: 'deepseek-v4-flash',
+                kind: 'custom',
+                provider: 'opencode-go',
+                api_base: 'https://opencode.ai/zen/go/v1',
+                has_api_key: true,
+              },
+            ],
+            official: [],
+          },
+        })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn().mockResolvedValue({ ok: true, message: 'LLM connection OK' })}
+        onSaveApiKey={onSaveApiKey}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-oc' } })
+    fireEvent.click(screen.getByText('保存 Key'))
+
+    await waitFor(() => expect(onSaveApiKey).toHaveBeenCalledWith('deepseek-v4-flash', 'sk-oc'))
+  })
+
+  test('ollama model hides the key editor', () => {
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({
+          model: 'ollama/qwen3:8b',
+          models: ['ollama/qwen3:8b'],
+          model_groups: {
+            custom: [],
+            official: [
+              { id: 'ollama/qwen3:8b', label: 'ollama/qwen3:8b', kind: 'official', provider: 'ollama', has_api_key: true },
+            ],
+          },
+        })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+        onSaveApiKey={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByLabelText('API Key')).toBeNull()
+  })
 })

@@ -1,3 +1,4 @@
+import os
 import unittest
 import warnings
 from unittest.mock import MagicMock
@@ -650,3 +651,49 @@ class TestLLMErrorClassification(unittest.TestCase):
         message = str(cm.exception)
         self.assertIn("余额或额度不足", message)
         self.assertNotIn("配额已用尽", message)
+
+
+class TestUnifiedProviderResolution(unittest.TestCase):
+    """统一注册表（api/api_mode 新键名 + ${VAR} 插值）在 adapter 解析链路上的行为。"""
+
+    def test_anthropic_messages_api_mode_resolves_anthropic_prefix(self):
+        config = LLMConfig(
+            model="claude-fable-5",
+            custom_providers=[{
+                "name": "openmodel",
+                "api": "https://api.openmodel.ai/v1",
+                "api_mode": "anthropic_messages",
+                "api_key": "om-key",
+                "models": ["claude-fable-5"],
+            }],
+        )
+        adapter = LLMAdapter(config)
+        self.assertEqual(adapter._resolve_model_string(), "anthropic/claude-fable-5")
+
+    def test_explicit_provider_model_ref_resolves_to_target_model(self):
+        config = LLMConfig(
+            model="opencode-go/kimi-k3",
+            custom_providers=[{
+                "name": "opencode-go",
+                "api": "https://opencode.ai/zen/go/v1",
+                "api_key": "oc-key",
+                "models": ["deepseek-v4-flash", "kimi-k3"],
+            }],
+        )
+        adapter = LLMAdapter(config)
+        self.assertEqual(adapter._resolve_model_string(), "openai/kimi-k3")
+
+    def test_env_ref_api_key_is_expanded_for_completion_call(self):
+        os.environ["TEST_YMG_KEY"] = "env-ymg-key"
+        self.addCleanup(lambda: os.environ.pop("TEST_YMG_KEY", None))
+        config = LLMConfig(
+            model="ymg-chat",
+            custom_providers=[{
+                "name": "ymg",
+                "api": "https://api.ymg.com/v1",
+                "api_key": "${TEST_YMG_KEY}",
+                "models": ["ymg-chat"],
+            }],
+        )
+        adapter = LLMAdapter(config)
+        self.assertEqual(config.resolve_api_key(), "env-ymg-key")

@@ -98,10 +98,20 @@ export interface LlmSettings {
     custom: LlmModelOption[]
     official: LlmModelOption[]
   }
+  provider_templates?: LlmProviderTemplate[]
   api_key: string
   api_base: string
   max_retries: number
   assistant_settings: string
+}
+
+export interface LlmProviderTemplate {
+  name: string
+  api: string
+  api_mode: string
+  env_vars?: string[]
+  console_url?: string
+  models?: string[]
 }
 
 export interface LlmModelOption {

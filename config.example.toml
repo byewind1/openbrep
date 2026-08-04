@@ -2,35 +2,8 @@
 # Copy this to config.toml and fill in your own API keys and paths
 
 [llm]
-# 默认模型，支持下列所有 provider
-# 👁 = 支持图片分析  🧠 = 推理模型
-#
-# ── 智谱 GLM (bigmodel.cn) ──
-#   glm-5  glm-4-flash (★ 默认，免费)  glm-4-air  glm-4-plus  glm-4.6  glm-4.6v  glm-4.7  glm-5
-#
-# ── DeepSeek (api.deepseek.com) ──
-#   deepseek-chat  deepseek-reasoner 🧠
-#
-# ── 阿里通义 (dashscope.aliyuncs.com) ──
-#   qwen-max  qwen-plus  qwen-turbo  qwq-plus 🧠  qwen-vl-plus 👁
-#
-# ── 月之暗面 Kimi (api.moonshot.cn) ──
-#   moonshot-v1-8k  moonshot-v1-32k  moonshot-v1-128k
-#
-# ── OpenAI (api.openai.com) ──
-#   gpt-4.1 👁  gpt-4.1-mini 👁  gpt-5.4  gpt-4o 👁  gpt-4o-mini 👁
-#   o3 🧠  o3-mini 🧠  o4-mini 🧠
-#
-# ── Anthropic Claude (api.anthropic.com) ──
-#   claude-sonnet-4-6 👁  claude-opus-4-6 👁  claude-haiku-4-5-20251001 👁
-#
-# ── Google Gemini ──
-#   gemini/gemini-2.5-flash 👁  gemini/gemini-2.5-pro 👁
-#
-# ── Ollama 本地（无需 Key）──
-#   ollama/qwen2.5:14b  ollama/qwen3:8b  ollama/deepseek-coder-v2:16b
-#
-# 免费模型，只需 API Key，无需充值
+# 当前模型：写模型 id（命中某个 provider 的 models 列表），
+# 或写 provider/model 显式引用（如 "opencode-go/deepseek-v4-flash"）。
 model = "glm-4-flash"
 temperature = 0.2
 max_tokens = 4096
@@ -39,7 +12,43 @@ max_tokens = 4096
 # 可填写你的 GDL 经验、当前使用场景、沟通偏好、改动边界等；修改后会立即影响后续聊天与生成。
 # assistant_settings = "我是 GDL 初学者，请先解释再给最小修改。"
 
-# Provider API Keys — 按 provider 分开存，切换模型自动匹配对应 Key
+# ── 统一 Provider 注册表（推荐）──────────────────────────────
+# 每个 [[llm.providers]] = 一个 API 端点 + 它的模型列表，官方/自定义同一套机制。
+#   name:    provider 名（用于 provider/model 显式引用与按名匹配）
+#   api:     OpenAI/Anthropic 兼容端点（不要带 /chat/completions，会自动补）
+#   api_mode: chat_completions（OpenAI 兼容，默认）或 anthropic_messages
+#   api_key: 明文 Key，或 "${ENV_VAR}" 引用环境变量（避免明文落盘）
+#   default_model: 用 provider 名当模型时的默认模型（可选）
+#   models:  模型 id 列表；也支持 { alias = "别名", model = "真实模型id" }
+#
+# OpenCode Go 示例：
+# [[llm.providers]]
+# name = "opencode-go"
+# api = "https://opencode.ai/zen/go/v1"
+# api_mode = "chat_completions"
+# api_key = "${OPENCODE_GO_KEY}"        # 或直接写 "sk-..."
+# default_model = "deepseek-v4-flash"
+# models = ["deepseek-v4-flash", "kimi-k3", "glm-5.2"]
+#
+# 自定义 OpenAI 兼容代理示例：
+# [[llm.providers]]
+# name = "openai-proxy"
+# api = "https://your-proxy.com/v1"
+# api_key = "your-proxy-key"
+# models = ["gpt-5.4"]
+#
+# Anthropic 协议端点示例：
+# [[llm.providers]]
+# name = "openmodel"
+# api = "https://api.openmodel.ai/v1"
+# api_mode = "anthropic_messages"
+# api_key = "${OPENMODEL_API_KEY}"
+# models = ["deepseek-v4-flash"]
+
+# ── 官方 provider 快捷方式（可选，兼容旧配置）─────────────────
+# 内置官方模型（glm-* / deepseek-* / claude-* / gpt-* / qwen-* / moonshot-* /
+# gemini/* / ollama/*）可以只在这里填 Key，端点走官方默认。
+# 免费模型：glm-4-flash 只需 API Key，无需充值。
 [llm.provider_keys]
 zhipu     = "YOUR_ZHIPU_API_KEY"       # glm-*        https://bigmodel.cn/usercenter/apikeys
 deepseek  = "YOUR_DEEPSEEK_API_KEY"    # deepseek-*   https://platform.deepseek.com/api_keys
@@ -48,32 +57,6 @@ openai    = "YOUR_OPENAI_API_KEY"      # gpt-*, o3    https://platform.openai.co
 google    = "YOUR_GOOGLE_API_KEY"      # gemini-*     https://aistudio.google.com/apikey
 aliyun    = "YOUR_DASHSCOPE_API_KEY"   # qwen-*, qwq  https://dashscope.console.aliyun.com
 kimi      = "YOUR_KIMI_API_KEY"        # moonshot-*   https://platform.moonshot.cn/console/api-keys
-gpt54     = "your-openai-api-key"
-
-# OpenAI gpt-5.4，官方地址
-[llm.gpt54]
-base_url = "https://api.openai.com/v1"
-model = "gpt-5.4"
-
-[llm.glm46]
-api_key = "your-zhipuai-api-key"
-base_url = "https://open.bigmodel.cn/api/paas/v4"
-# glm-4.6：编程强化版
-
-[llm.glm46v]
-api_key = "your-zhipuai-api-key"
-base_url = "https://open.bigmodel.cn/api/paas/v4"
-# glm-4.6v：多模态视觉版，支持图像输入
-
-[llm.glm47]
-api_key = "your-zhipuai-api-key"
-base_url = "https://open.bigmodel.cn/api/paas/v4"
-# glm-4.7：编程SOTA（2025年12月）
-
-[llm.glm5]
-api_key = "your-zhipuai-api-key"
-base_url = "https://open.bigmodel.cn/api/paas/v4"
-# glm-5：旗舰版（2026年2月）
 
 [agent]
 max_iterations = 5
@@ -97,14 +80,3 @@ knowledge_dir = "./knowledge"
 templates_dir = "./templates"
 src_dir = "./src"
 output_dir = "./output"
-
-# ── 自定义代理 ──────────────────────────────
-# 配置后模型自动出现在 UI 下拉列表中
-# protocol: "openai"（兼容 OpenAI 接口）或 "anthropic"（兼容 Anthropic 接口）
-# 选中自定义模型时，UI 不会要求填写 API Key，请在此处配置
-[[llm.custom_providers]]
-name     = "openai-proxy"
-base_url = "https://your-proxy.com/v1"
-api_key  = "your-proxy-key"
-models   = ["gpt-5.4"]
-protocol = "openai"

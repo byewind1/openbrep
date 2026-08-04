@@ -695,7 +695,9 @@ class LLMAdapter:
             else:
                 protocol_prefix = {
                     "openai": "openai",
+                    "chat_completions": "openai",
                     "anthropic": "anthropic",
+                    "anthropic_messages": "anthropic",
                     "claude": "claude",
                     "gemini": "gemini",
                     "zai": "zai",

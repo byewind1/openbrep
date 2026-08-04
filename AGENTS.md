@@ -251,6 +251,23 @@ Architecture notes:
   the global fallback — never write per-model resolution results back into
   them when switching models. Anthropic's litellm native prefix stays
   `claude/` (not `anthropic/`).
+- Unified provider registry (2026-08-04): endpoint-style providers are one
+  mechanism now — `[[llm.providers]]` in `config.toml` with canonical keys
+  `name / api / api_mode / api_key / default_model / models`
+  (`api_mode`: `chat_completions` default, or `anthropic_messages`). Legacy
+  `[[llm.custom_providers]]` (`base_url`/`protocol`) is normalized at load by
+  `normalize_provider_entry()` (entries carry both old and new keys;
+  `_explicit_base` preserves the "absent api → top-level fallback" rule), and
+  `GDLAgentConfig.save()` writes only the new keys (save = migration).
+  `find_custom_provider_match()` returns the raw entry in `provider` so UI/CLI
+  credential writes propagate, plus a `_normalized` view for readers. New
+  capabilities: `provider/model` explicit refs (unlisted model ids allowed),
+  `default_model`, `${ENV_VAR}` interpolation in any api_key field, and
+  `[llm] default` as an alias of `model`. Official built-in models keep the
+  2026-08-01 `PROVIDER_PROFILES` + `provider_keys` path (preset data, not
+  resolution logic); `provider_templates()` exposes their default endpoints
+  (`PROVIDER_API_TEMPLATES`) for future "add from template" UI. The settings
+  UI key editor now works for custom providers too (ollama excluded).
 - Deterministic micro-modify (2026-08-01, plan P2): pure parameter-value
   changes ("把层板数改成 5" / "set shelf_count to 5") are intercepted before
   the LLM MODIFY path — `openbrep/runtime/micro_modify.py` does high-precision
