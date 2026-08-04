@@ -7,6 +7,7 @@ import type {
   AssistantImageAttachment,
   AssistantMessage,
   AssistantResult,
+  AssistantStreamEvent,
   ClearProjectMemoryResult,
   CompileResult,
   CreateProjectResult,
@@ -738,6 +739,93 @@ export async function generateWithAssistant(
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
     signal,
+  )
+}
+
+export async function generateWithAssistantStream(
+  message: string,
+  assistantSettings = '',
+  image?: AssistantImageAttachment | null,
+  onEvent?: (event: AssistantStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<GenerateResult> {
+  const response = await fetch(`${API_BASE}/api/assistant/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message,
+      assistant_settings: assistantSettings,
+      stream: true,
+      ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+    }),
+    signal,
+  })
+
+  if (!response.ok || !response.body) {
+    const text = await response.text().catch(() => 'Stream request failed.')
+    return { ok: false, error: text, assistant: null, preview: null, warnings: [], events: [] } as GenerateResult
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalResult: GenerateResult | null = null
+
+  try {
+    while (true) {
+      if (signal?.aborted) break
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      let currentEvent: AssistantStreamEvent | null = null
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = { type: line.slice(7).trim() as AssistantStreamEvent['type'], data: {} }
+        } else if (line.startsWith('data: ') && currentEvent) {
+          try {
+            currentEvent.data = JSON.parse(line.slice(6))
+          } catch {
+            currentEvent.data = { raw: line.slice(6) }
+          }
+        } else if (line === '' && currentEvent) {
+          if (currentEvent.type === 'done') {
+            finalResult = (currentEvent.data as unknown as GenerateResult) ?? null
+          } else if (currentEvent.type === 'error') {
+            finalResult = {
+              ok: false,
+              error: String((currentEvent.data as { error?: string }).error ?? 'Stream error'),
+              assistant: null,
+              preview: null,
+              warnings: [],
+              events: [],
+            } as GenerateResult
+          } else {
+            onEvent?.(currentEvent)
+          }
+          currentEvent = null
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  if (signal?.aborted) {
+    return { ok: false, error: 'Aborted.', assistant: null, preview: null, warnings: [], events: [] } as GenerateResult
+  }
+
+  return (
+    finalResult ?? ({
+      ok: false,
+      error: 'Stream ended without final result.',
+      assistant: null,
+      preview: null,
+      warnings: [],
+      events: [],
+    } as GenerateResult)
   )
 }
 

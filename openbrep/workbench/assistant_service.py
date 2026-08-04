@@ -142,30 +142,9 @@ class WorkbenchAssistantService:
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
 
-        pipeline = self.session.pipeline_class(trace_dir="./traces")
-        request = TaskRequest(
-            user_input=message,
-            intent=str(body.get("intent") or "MODIFY"),
-            project=self.session.project,
-            work_dir=str(self.session.source_path.parent),
-            output_dir=str(self.session.source_path.parent / "output"),
-            gsm_name=self.session.project.name,
-            image_b64=image_payload["image_b64"],
-            image_mime=image_payload["image_mime"],
-            assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
-            history=list(body.get("history") or []),
-            on_event=on_event,
-            # agent_loop 默认 None：由 pipeline 按 intent 默认策略启用
-            agent_loop=body.get("agent_loop") if "agent_loop" in body else None,
+        pipeline, request = self._build_generate_pipeline(
+            body, image_payload, on_event=on_event
         )
-        if hasattr(pipeline, "config"):
-            pipeline.config.llm.model = self.session.llm_model
-            if self.session.llm_api_key:
-                pipeline.config.llm.api_key = self.session.llm_api_key
-            if self.session.llm_api_base:
-                pipeline.config.llm.api_base = self.session.llm_api_base
-            pipeline.config.llm.assistant_settings = self.session.assistant_settings
-            pipeline.config.agent.max_iterations = self.session.max_retries
         result = pipeline.execute(request)
         # success=False 只在"无可交付物"时才视为硬失败；验证未过但有产出时
         # 照常交付（verification 报告会如实显示 FAIL），避免丢掉用户的生成结果
@@ -191,3 +170,121 @@ class WorkbenchAssistantService:
             "warnings": [],
             "events": events,
         }
+
+    def generate_with_assistant_stream(
+        self, body: dict[str, Any], cancel_event: Any | None = None
+    ):
+        """流式生成：通过 SSE 实时输出 agent loop 的每一步事件。
+
+        返回一个 generator，产出 `{type, data}` 事件。客户端断连后 generator
+        被 close()，finally 块设置 cancel_event，通知 agent loop 的 should_cancel。
+        """
+        import queue
+        import threading
+
+        message = str(body.get("message") or "").strip()
+        if not message:
+            yield {"type": "error", "data": {"error": "Generation message is empty."}}
+            return
+
+        if self.session.source_path is None:
+            yield {"type": "error", "data": {"error": "Load an HSF project before generating changes."}}
+            return
+        image_payload = validate_image_payload(body)
+        if not image_payload["ok"]:
+            yield {"type": "error", "data": {"error": image_payload["error"]}}
+            return
+
+        q: queue.Queue = queue.Queue()
+
+        def on_event(event_type, data):
+            q.put({"type": event_type, "data": data})
+
+        def should_cancel():
+            return cancel_event is not None and cancel_event.is_set()
+
+        def run_pipeline():
+            try:
+                pipeline, request = self._build_generate_pipeline(
+                    body, image_payload, on_event=on_event, should_cancel=should_cancel
+                )
+                result = pipeline.execute(request)
+                if not result.success and result.project is None and not (result.plain_text or result.scripts):
+                    error = result.error or "Generation failed."
+                    if image_payload["image_b64"]:
+                        error = classify_vision_error(Exception(error))
+                    q.put({"type": "error", "data": {"error": error}})
+                    return
+
+                if result.project is not None:
+                    self.session.project = result.project
+                self.session.project.save_to_disk()
+                q.put({
+                    "type": "done",
+                    "data": {
+                        "ok": True,
+                        "assistant": {
+                            "kind": "generate",
+                            "reply": result.plain_text,
+                            "changed_files": list((result.scripts or {}).keys()),
+                            "intent": result.intent,
+                            "verification": result.verification,
+                        },
+                        "preview": preview_payload(self.session.project),
+                        "warnings": [],
+                    },
+                })
+            except Exception as exc:
+                q.put({"type": "error", "data": {"error": str(exc)}})
+
+        threading.Thread(target=run_pipeline, daemon=True).start()
+
+        try:
+            while True:
+                try:
+                    event = q.get(timeout=0.5)
+                except queue.Empty:
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
+                    continue
+                yield event
+                if event["type"] in ("done", "error"):
+                    break
+        finally:
+            if cancel_event is not None:
+                cancel_event.set()
+
+    def _build_generate_pipeline(
+        self,
+        body: dict[str, Any],
+        image_payload: dict[str, Any],
+        on_event: Any,
+        should_cancel: Any | None = None,
+    ) -> tuple[Any, TaskRequest]:
+        """构造 generate 用的 pipeline 与 TaskRequest，供同步/流式复用。"""
+        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        request = TaskRequest(
+            user_input=str(body.get("message") or "").strip(),
+            intent=str(body.get("intent") or "MODIFY"),
+            project=self.session.project,
+            work_dir=str(self.session.source_path.parent),
+            output_dir=str(self.session.source_path.parent / "output"),
+            gsm_name=self.session.project.name,
+            image_b64=image_payload["image_b64"],
+            image_mime=image_payload["image_mime"],
+            assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
+            history=list(body.get("history") or []),
+            on_event=on_event,
+            should_cancel=should_cancel,
+            # agent_loop 默认 None：由 pipeline 按 intent 默认策略启用
+            agent_loop=body.get("agent_loop") if "agent_loop" in body else None,
+        )
+        if hasattr(pipeline, "config"):
+            pipeline.config.llm.model = self.session.llm_model
+            if self.session.llm_api_key:
+                pipeline.config.llm.api_key = self.session.llm_api_key
+            if self.session.llm_api_base:
+                pipeline.config.llm.api_base = self.session.llm_api_base
+            pipeline.config.llm.assistant_settings = self.session.assistant_settings
+            pipeline.config.agent.max_iterations = self.session.max_retries
+        return pipeline, request

@@ -276,6 +276,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       },
     }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
+    generateWithAssistantStream: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
       changed: parameters,

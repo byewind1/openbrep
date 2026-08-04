@@ -350,7 +350,11 @@ class WorkbenchSession:
     def clear_project_memory(self) -> dict[str, Any]:
         return self.memory_service.clear_project_memory()
 
-    def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
+    def generate_with_assistant(self, body: dict[str, Any]):
+        if body.get("stream"):
+            import threading
+            cancel_event = threading.Event()
+            return self.assistant_service.generate_with_assistant_stream(body, cancel_event=cancel_event)
         return self.assistant_service.generate_with_assistant(body)
 
     def _knowledge_status(self) -> dict[str, Any]:

@@ -130,6 +130,13 @@ export interface WorkbenchApi {
     image?: AssistantImageAttachment | null,
     signal?: AbortSignal,
   ) => Promise<GenerateResult>
+  generateWithAssistantStream: (
+    message: string,
+    assistantSettings?: string,
+    image?: AssistantImageAttachment | null,
+    onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
+    signal?: AbortSignal,
+  ) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>

@@ -104,7 +104,12 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args) -> None:
         return
 
-    def _send(self, payload: dict[str, Any], status: int | None = None) -> None:
+    def _send(self, payload, status: int | None = None) -> None:
+        # generator / iterator → SSE 流式响应
+        if hasattr(payload, "__iter__") and not isinstance(payload, (dict, list, str, bytes)):
+            self._send_stream(payload)
+            return
+
         ok = payload.get("ok", True)
         response_status = status or (200 if ok else 404)
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -117,6 +122,26 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if response_status != 204:
             self.wfile.write(data)
+
+    def _send_stream(self, generator) -> None:
+        """Send a generator as text/event-stream."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        try:
+            for event in generator:
+                event_type = event.get("type", "message")
+                data = json.dumps(event.get("data", {}), ensure_ascii=False)
+                self.wfile.write(f"event: {event_type}\ndata: {data}\n\n".encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # 客户端断连：generator.close() 会触发 finally 设置 cancel_event
+            pass
 
 
 def main() -> None:

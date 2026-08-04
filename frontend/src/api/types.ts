@@ -315,6 +315,21 @@ export interface AssistantMessage {
   interrupted?: boolean
 }
 
+// ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────
+export type AssistantStreamEventType =
+  | 'status'
+  | 'tool_call'
+  | 'compile_result'
+  | 'preview_result'
+  | 'assistant_delta'
+  | 'done'
+  | 'error'
+
+export interface AssistantStreamEvent {
+  type: AssistantStreamEventType
+  data: Record<string, unknown>
+}
+
 // ── Verification report (Phase 3/4/5 self-correcting agent evidence) ──────
 // Mirrors openbrep/verification.py VerificationReport.to_dict().
 export type VerificationConfidence = 'low' | 'medium' | 'high'
@@ -477,8 +492,8 @@ export interface GenerateResult {
     changed_files: string[]
     intent: string
     verification?: VerificationReport | null
-  }
-  preview?: PreviewPayload
+  } | null
+  preview?: PreviewPayload | null
   warnings?: string[]
   events?: Array<{ type: string; data: unknown }>
   error?: string

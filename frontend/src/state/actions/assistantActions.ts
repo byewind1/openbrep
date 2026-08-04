@@ -1,4 +1,4 @@
-import type { AssistantImageAttachment } from '../../api/types'
+import type { AssistantImageAttachment, AssistantStreamEvent } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -265,14 +265,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           // pass signal so the stop button can abort project creation too.
           await _createProject(finalMessage, image, controller.signal)
         } else if (intent === 'modify' || intent === 'debug') {
-          // inject signal via the API layer directly
+          // 默认走 agent loop 流式路径：实时把每一步事件显示在 LLM 框里
           const settings = get().llmSettings.assistant_settings ?? ''
+          const initialContent = pendingAssistantMessage('generate', image)
           set((state) => ({
             assistantBusy: true,
             assistantMessages: [
               ...state.assistantMessages,
               { role: 'user', content: userMessageContent(finalMessage, image) },
-              { role: 'assistant', content: pendingAssistantMessage('generate', image) },
+              { role: 'assistant', content: initialContent },
             ],
           }))
           const flushed = await get().flushDirtyScripts()
@@ -285,24 +286,54 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           const epoch = get().projectEpoch
-          const result = await api.generateWithAssistant(finalMessage, settings, image, controller.signal)
+          const thinkingLines: string[] = []
+
+          const result = await api.generateWithAssistantStream(
+            finalMessage,
+            settings,
+            image,
+            (event: AssistantStreamEvent) => {
+              if (event.type === 'status' && typeof event.data.message === 'string') {
+                thinkingLines.push(event.data.message)
+              } else if (event.type === 'tool_call' && typeof event.data.summary === 'string') {
+                const name = typeof event.data.name === 'string' ? event.data.name : 'tool'
+                const ok = event.data.ok ? '✅' : '❌'
+                thinkingLines.push(`${ok} ${name}: ${event.data.summary.split('\n')[0]}`)
+              } else if (event.type === 'assistant_delta' && typeof event.data.content === 'string') {
+                thinkingLines.push(`💭 ${event.data.content.split('\n')[0]}`)
+              }
+              // 实时更新最后一条 assistant message 的内容
+              set((state) => ({
+                assistantMessages: replacePendingAssistantMessage(
+                  state.assistantMessages,
+                  formatStreamingAssistantContent(initialContent, thinkingLines),
+                ),
+              }))
+            },
+            controller.signal,
+          )
+
           if (projectSwitchedSince(epoch)) {
             discardStaleResult('Generation result discarded: project switched during the request.')
             return
           }
           const changedFiles = result.assistant?.changed_files ?? []
           const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
-          const reply =
+          const finalReply =
             result.ok && result.assistant
-              ? `${result.assistant.reply}${suffix}${formatAssistantEventSummary(result.events)}`
+              ? `${result.assistant.reply}${suffix}`
               : formatAssistantRequestError(result.error, 'Generation request failed.')
           const replyExtras = result.ok
             ? { changedFiles, verification: result.assistant?.verification ?? undefined }
-            : { errorCategory: classifyAssistantError(reply) }
+            : { errorCategory: classifyAssistantError(finalReply) }
           set((state) => ({
             assistantBusy: false,
-            assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply, replyExtras),
-            lastError: result.ok ? null : reply,
+            assistantMessages: replacePendingAssistantMessage(
+              state.assistantMessages,
+              formatStreamingAssistantContent(finalReply, thinkingLines),
+              replyExtras,
+            ),
+            lastError: result.ok ? null : finalReply,
             preview: result.preview ?? state.preview,
             warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
             draftParameters: {},
@@ -402,6 +433,16 @@ function replacePendingAssistantMessage(messages: AssistantMessage[], reply: str
     return [...messages.slice(0, -1), replyMessage]
   }
   return [...messages, replyMessage]
+}
+
+function formatStreamingAssistantContent(finalReply: string, thinkingLines: string[]) {
+  if (thinkingLines.length === 0) return finalReply
+  const summary = thinkingLines
+    .filter((line, index, all) => all.indexOf(line) === index)
+    .slice(-8)
+    .map((line) => `- ${line}`)
+    .join('\n')
+  return `${finalReply}\n\n思考过程：\n${summary}`
 }
 
 function formatAssistantEventSummary(events?: Array<{ type: string; data: unknown }>) {

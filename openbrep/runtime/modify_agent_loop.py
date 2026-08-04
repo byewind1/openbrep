@@ -159,16 +159,23 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     gate_unresolved = False
     semantic_result = None
 
+    on_event("status", {"message": "🤔 正在分析你的修改意图…"})
+
     # ── 主循环：有 tool_calls 就执行并回填，没有（纯文本答复）即声
     # 称完成——声称完成要过完成门禁（S3）：编译 + 几何语义的结构核验，
     # 未过则把确定性证据打回对话让 AI 继续（有界打回，防止无限扯皮）。
     while True:
         if request.should_cancel and request.should_cancel():
             cancelled = True
+            on_event("status", {"message": "⏹ 任务已取消"})
             break
+        on_event("status", {"message": "🧠 AI 正在思考下一步…"})
         response = llm.generate_with_tools(messages, tools=tools)
         llm_calls += 1
+        if response.content:
+            on_event("assistant_delta", {"content": response.content})
         if not response.has_tool_calls:
+            on_event("status", {"message": "🔍 正在检查完成条件（编译 + 几何）…"})
             gate_ok, gate_feedback, semantic_result = _completion_gate(
                 project, registry, compiler, gsm_path,
             )
@@ -189,7 +196,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                 gate_rejections, MAX_GATE_REJECTIONS,
             )
             on_event("status", {
-                "message": f"🧩 完成门禁未过（第 {gate_rejections} 次），证据已打回，要求继续修复…"
+                "message": f"🧩 完成检查未通过（第 {gate_rejections} 次），让 AI 继续修复…"
             })
             messages.append({"role": "assistant", "content": response.content or ""})
             messages.append({"role": "user", "content": gate_feedback})
@@ -200,14 +207,17 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             if tool_calls_used >= budget:
                 budget_exhausted = True
                 break
+            on_event("status", {"message": f"🔧 调用工具：{call.name}…"})
             result = registry.execute(call)
             tool_calls_used += 1
             messages.append(tool_result_message(call.id, result.summary, name=call.name))
+            on_event("tool_call", {"name": call.name, "summary": result.summary, "ok": result.ok})
         if budget_exhausted:
             logger.info(
                 "agent loop budget exhausted: %d/%d tool calls, %d llm calls",
                 tool_calls_used, budget, llm_calls,
             )
+            on_event("status", {"message": "⚠️ 工具预算耗尽，停止迭代"})
             break
 
     compile_result = registry.last_compile_result
