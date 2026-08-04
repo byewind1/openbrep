@@ -6,7 +6,11 @@
 # 或写 provider/model 显式引用（如 "opencode-go/deepseek-v4-flash"）。
 model = "glm-4-flash"
 temperature = 0.2
-max_tokens = 4096
+max_tokens = 16384
+
+# 可选：透传给 LLM 的额外请求体字段（如 DeepSeek 关闭思考模式）。
+# 注意：benchmark 黄金语料录制会强制 thinking disabled，不依赖此配置。
+# extra_body = { thinking = { type = "disabled" } }
 
 # 可选：长期保存的 AI 协作上下文。
 # 可填写你的 GDL 经验、当前使用场景、沟通偏好、改动边界等；修改后会立即影响后续聊天与生成。

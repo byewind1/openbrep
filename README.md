@@ -206,7 +206,7 @@ openbrep --help
 | Anthropic | claude-haiku / sonnet / opus | 推荐首选 |
 | 智谱 | glm-5 / glm-4-flash | 国内可用，性价比高 |
 | OpenAI | gpt-4o / gpt-4o-mini / o3-mini | |
-| DeepSeek | deepseek-chat / deepseek-reasoner | |
+| DeepSeek | deepseek-v4-flash / deepseek-v4-pro | |
 | Google | gemini-2.5-flash / pro | |
 | Ollama | qwen2.5 / qwen3 / deepseek-coder | 本地，无需 API Key |
 

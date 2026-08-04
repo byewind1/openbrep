@@ -391,9 +391,10 @@ class TestLLMAdapterVision(unittest.TestCase):
         with self.assertRaises(RuntimeError) as cm:
             adapter.generate([{"role": "user", "content": "generate code"}])
         message = str(cm.exception)
-        self.assertIn("返回的内容为空", message)
-        self.assertIn("reasoning_content 非空", message)
-        self.assertIn("切换其他模型", message)
+        self.assertIn("只输出了思考过程", message)
+        self.assertIn("thinking 模式消耗了全部 output token", message)
+        self.assertIn("extra_body = { thinking = { type = \"disabled\" } }", message)
+        self.assertIn("max_tokens 提高到 16384", message)
 
     def test_generate_raises_when_content_and_reasoning_are_both_empty(self):
         """content 和 reasoning 都为空时给出通用错误提示。"""

@@ -59,7 +59,7 @@
 | claude-sonnet-4.5 | Anthropic | 综合最强，推荐首选 |
 | glm-4.7 / glm-4.7-flash | 智谱 | 国内免梯子，性价比高 |
 | gpt-4o / o3-mini | OpenAI | 国际通用 |
-| deepseek-chat / reasoner | DeepSeek | 推理能力强 |
+| deepseek-v4-flash / v4-pro | DeepSeek | 推理能力强 |
 | gemini-2.5-flash / pro | Google | 上下文超长 |
 | qwen / deepseek-coder (Ollama) | 本地 | 无 API Key，离线可用 |
 

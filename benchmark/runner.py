@@ -71,6 +71,10 @@ class BenchmarkRunner:
         # 真确定性用 --llm-record / --llm-replay 黄金语料。
         self.temperature = temperature
         self.config.llm.temperature = temperature
+        if llm_record:
+            # 黄金语料确定性：录制时强制关闭 thinking，不依赖用户 config 里的
+            # extra_body，避免不同环境录出的语料不一致。
+            self.config.llm.extra_body = {"thinking": {"type": "disabled"}}
         self.llm = LLMAdapter(self.config.llm)
         self.llm_source = "live"
         if llm_replay:

@@ -42,8 +42,8 @@ ALL_MODELS = [
     "glm-4.6v",
     "glm-4.7",
     # DeepSeek
-    "deepseek-chat",
-    "deepseek-reasoner",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
     # Alibaba Qwen
     "qwen-max",
     "qwen-plus",
@@ -91,7 +91,8 @@ VISION_MODELS = {
 }
 
 REASONING_MODELS = {
-    "deepseek-reasoner",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
     "qwq-plus",
     "o3",
     "o3-mini",
@@ -448,11 +449,12 @@ class LLMConfig:
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 16384
     timeout: int = 90
     provider_keys: dict[str, str] = field(default_factory=dict)
     custom_providers: list[dict] = field(default_factory=list)
     assistant_settings: str = ""
+    extra_body: dict = field(default_factory=dict)
 
     @property
     def providers(self) -> list[dict]:

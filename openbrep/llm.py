@@ -302,16 +302,23 @@ class LLMAdapter:
     def _raise_if_reasoning_only(self, choice) -> None:
         """检测模型把所有输出配额用于内部 reasoning、未生成可见内容的情况。
 
-        部分 provider 上的推理模型（如某些 deepseek-v4-flash 端点）在流式/非流式
+        部分 provider 上的推理模型（如 deepseek-v4-flash）在流式/非流式
         返回中都会把全部 completion_tokens 填入 reasoning_content，导致 message.content
         为空。此时需要给调用方清晰引导，而不是让它拿到空字符串后静默生成空文件。
         """
         reasoning = getattr(choice.message, "reasoning_content", None) or ""
         if reasoning.strip():
+            reasoning_tokens = 0
+            usage = getattr(choice, "usage", None)
+            if usage:
+                details = getattr(usage, "completion_tokens_details", None)
+                if details:
+                    reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
             raise RuntimeError(
-                f"LLM 模型 `{self.config.model}` 返回的内容为空，但 reasoning_content 非空"
-                "（模型把输出配额全部用于内部思考，未生成可见内容）。\n"
-                "→ 尝试切换其他模型/provider，或确认当前模型支持代码生成任务。"
+                f"LLM 只输出了思考过程，没有输出内容。\n"
+                f"原因：thinking 模式消耗了全部 output token（本次 reasoning 用了 {reasoning_tokens} token）\n"
+                f"→ 在 config.toml 设置 extra_body = {{ thinking = {{ type = \"disabled\" }} }}\n"
+                f"→ 或把 max_tokens 提高到 16384 以上"
             )
         raise RuntimeError(
             "LLM 返回了空内容 — 可能是内容过滤、模型配置错误，或该模型不适合当前任务。"
@@ -421,6 +428,11 @@ class LLMAdapter:
         if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
 
+        # 透传用户配置的 extra_body（如 DeepSeek 的 thinking={"type": "disabled"}）。
+        # 不传时行为不变。
+        if self.config.extra_body:
+            completion_kwargs["extra_body"] = self.config.extra_body
+
         # Pass API key and base URL
         api_key = self.config.resolve_api_key(resolved.configured_model)
         if api_key:
@@ -528,6 +540,9 @@ class LLMAdapter:
         if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
 
+        if self.config.extra_body:
+            completion_kwargs["extra_body"] = self.config.extra_body
+
         api_key = self.config.resolve_api_key(resolved.configured_model)
         if api_key:
             completion_kwargs["api_key"] = api_key
@@ -628,6 +643,9 @@ class LLMAdapter:
         model_lower = model.lower()
         if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
+
+        if self.config.extra_body:
+            completion_kwargs["extra_body"] = self.config.extra_body
 
         api_key = self.config.resolve_api_key(resolved.configured_model)
         if api_key:
