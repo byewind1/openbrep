@@ -1,10 +1,10 @@
 export type ChatIntent = 'explain' | 'create' | 'modify' | 'debug'
 
 export const INTENT_LABELS: Record<ChatIntent, string> = {
-  explain: '问答',
-  create: '生成项目',
-  modify: '修改代码',
-  debug: '调试',
+  explain: '问一问',
+  create: '新建物件',
+  modify: '改物件',
+  debug: '排查问题',
 }
 
 export function detectChatIntent(message: string, hasProject: boolean): ChatIntent {

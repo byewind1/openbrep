@@ -136,8 +136,8 @@ class TaskRequest:
     assistant_settings: str = ""           # injected into GDL system prompt
     on_event: Optional[Callable] = None    # progress callback (event_type, data) -> None
     compare_compile: str = "off"           # off / mock / real
-    agent_loop: bool = False               # 实验：MODIFY/DEBUG/REPAIR 走预算制 agent loop 新路径
-    agent_loop_budget: int = 0             # agent loop 工具调用预算，0 = 用默认值 6
+    agent_loop: Optional[bool] = None      # None = 按 intent 默认策略；True/False = 显式开关
+    agent_loop_budget: int = 0             # agent loop 工具调用预算，0 = 用默认值
 
 
 @dataclass
@@ -250,12 +250,17 @@ class TaskPipeline:
                 has_image=bool(request.image_path or request.image_b64),
             )
 
+        # 2. Apply agent-loop default policy
+        # MODIFY/DEBUG/REPAIR 默认启用预算制 agent loop；显式 False 可回退旧路径。
+        if request.agent_loop is None and request.intent in ("MODIFY", "DEBUG", "REPAIR"):
+            request.agent_loop = True
+
         # 2. Execute
         try:
             if request.intent == "CHAT":
                 result = self._handle_chat(request)
             elif request.intent in ("MODIFY", "DEBUG", "REPAIR") and request.agent_loop:
-                # 实验新路径：预算制 agent loop（默认关闭，TaskRequest.agent_loop=True 启用）
+                # 默认路径：预算制 agent loop（LLM 通过工具调用自主迭代）
                 result = self._handle_modify_agent_loop(request)
             elif request.intent == "REPAIR":
                 result = self._handle_repair(request)
@@ -977,10 +982,12 @@ class TaskPipeline:
         )
 
     def _handle_modify_agent_loop(self, request: TaskRequest) -> TaskResult:
-        """实验新路径：预算制、工具调用驱动的 MODIFY agent loop。
+        """默认路径：预算制、工具调用驱动的 MODIFY/DEBUG/REPAIR agent loop。
 
-        与 `_handle_script_update` 完全独立；仅 `TaskRequest.agent_loop=True`
-        时由 execute() 路由至此。实现见 runtime/modify_agent_loop.py。
+        LLM 通过 `update_script` / `compile_script` / `preview_geometry` 等工具
+        自主迭代，直到通过完成门禁（编译 + 几何语义）或预算耗尽。
+        与 `_handle_script_update` 完全独立；显式 `agent_loop=False` 可回退旧路径。
+        实现见 runtime/modify_agent_loop.py。
         """
         from openbrep.runtime.modify_agent_loop import run_modify_agent_loop
         return run_modify_agent_loop(self, request)

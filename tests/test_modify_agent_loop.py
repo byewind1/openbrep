@@ -84,7 +84,7 @@ class TestAgentLoopFlow(unittest.TestCase):
         self.assertIn("scripts/3d.gdl", result.scripts)
         self.assertIn("ADDZ ZZYZX", result.project.get_script(ScriptType.SCRIPT_3D))
         self.assertEqual(mock_llm.call_count, 3)
-        self.assertIn("工具调用 2/6 次", result.plain_text)
+        self.assertIn("工具调用 2/10 次", result.plain_text)
         self.assertIn("LLM 调用 3 次", result.plain_text)
         self.assertIn("✅ 编译通过", result.plain_text)
 
@@ -165,13 +165,23 @@ class TestAgentLoopToggle(unittest.TestCase):
     def tearDown(self):
         self._td.cleanup()
 
-    def test_agent_loop_defaults_off(self):
+    def test_agent_loop_defaults_to_none_and_modify_enables_it(self):
+        """TaskRequest 默认 agent_loop=None；pipeline 对 MODIFY 默认启用 agent loop。"""
         request = TaskRequest(user_input="x")
-        self.assertFalse(request.agent_loop)
+        self.assertIsNone(request.agent_loop)
         self.assertEqual(request.agent_loop_budget, 0)
 
-    def test_default_path_unchanged_when_toggle_off(self):
-        """不传开关：仍走 _handle_script_update 旧路径，不出现 agent loop 标记。"""
+        mock_llm = MockLLM(responses=["已分析，无需改动。"])
+        pipeline = _make_pipeline(mock_llm, self.tmp)
+        request = _make_request(_make_project(self.tmp), self.tmp)
+        request.agent_loop = None  # 显式用默认值
+
+        result = pipeline.execute(request)
+
+        self.assertIn("Agent loop（实验路径）", result.plain_text)
+
+    def test_default_path_unchanged_when_explicitly_off(self):
+        """显式 agent_loop=False：走 _handle_script_update 旧路径，不出现 agent loop 标记。"""
         mock_llm = MockLLM(responses=["[FILE: scripts/3d.gdl]\nBLOCK A, B, 0.5\nEND\n"])
         pipeline = _make_pipeline(mock_llm, self.tmp)
         request = _make_request(_make_project(self.tmp), self.tmp, agent_loop=False)

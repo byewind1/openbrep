@@ -187,6 +187,7 @@ class TestPipelineMicroModify(unittest.TestCase):
                 project=project,
                 work_dir=tmpdir,
                 output_dir=str(Path(tmpdir) / "out"),
+                agent_loop=False,  # 显式关闭，验证 micro-modify shortcut
             ))
 
             self.assertTrue(result.success)
@@ -220,6 +221,7 @@ class TestPipelineMicroModify(unittest.TestCase):
                     project=project,
                     work_dir=tmpdir,
                     output_dir=str(Path(tmpdir) / "out"),
+                    agent_loop=False,  # 显式关闭，验证 micro-modify shortcut
                 ))
 
         self.assertTrue(result.success)
@@ -245,6 +247,7 @@ class TestPipelineMicroModify(unittest.TestCase):
                 project=project,
                 work_dir=tmpdir,
                 output_dir=str(Path(tmpdir) / "out"),
+                agent_loop=False,  # 显式关闭，验证旧路径 fallback
             ))
 
         mock_llm.generate.assert_called()
@@ -264,6 +267,7 @@ class TestPipelineMicroModify(unittest.TestCase):
                 project=project,
                 work_dir=tmpdir,
                 output_dir=str(Path(tmpdir) / "out"),
+                agent_loop=False,  # 显式关闭，验证旧路径 fallback
             ))
 
         mock_llm.generate.assert_called()
@@ -290,6 +294,7 @@ class TestPipelineMicroModify(unittest.TestCase):
                 project=project,
                 work_dir=tmpdir,
                 output_dir=str(Path(tmpdir) / "out"),
+                agent_loop=False,  # 显式关闭，验证 micro-modify shortcut
             ))
 
         self.assertFalse(result.success)

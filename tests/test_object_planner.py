@@ -126,6 +126,7 @@ class TestObjectPlanner(unittest.TestCase):
                             intent="MODIFY",
                             project=project,
                             work_dir=tmpdir,
+                            agent_loop=False,  # 测试旧路径：object planner 不应运行
                         )
                     )
 

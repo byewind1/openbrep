@@ -155,6 +155,8 @@ class WorkbenchAssistantService:
             assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
             history=list(body.get("history") or []),
             on_event=on_event,
+            # agent_loop 默认 None：由 pipeline 按 intent 默认策略启用
+            agent_loop=body.get("agent_loop") if "agent_loop" in body else None,
         )
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model

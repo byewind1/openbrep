@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # 工具调用预算默认值与硬上限（防止异常配置导致失控循环）
-DEFAULT_AGENT_LOOP_BUDGET = 6
+DEFAULT_AGENT_LOOP_BUDGET = 10
 MAX_AGENT_LOOP_BUDGET = 20
 # 完成门禁：AI 宣称完成但证据未过时的最大打回次数
 # （打回本身不消耗工具预算，但修复需要预算内的工具调用）

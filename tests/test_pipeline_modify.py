@@ -58,7 +58,11 @@ def _mock_llm_response(content: str):
 
 
 def _make_pipeline(llm_content: str) -> TaskPipeline:
-    """Build a pipeline with a MockLLM that returns llm_content."""
+    """Build a pipeline with a MockLLM that returns llm_content.
+
+    本文件测试旧 MODIFY/DEBUG/REPAIR 路径（_handle_script_update）；
+    默认启用 agent loop 后，显式关闭以继续验证旧路径行为。
+    """
     cfg = GDLAgentConfig()  # default config, no real API key needed
     pipeline = TaskPipeline(config=cfg, trace_dir="./traces")
 
@@ -66,6 +70,12 @@ def _make_pipeline(llm_content: str) -> TaskPipeline:
     mock_llm = MagicMock()
     mock_llm.generate.return_value = _mock_llm_response(llm_content)
     pipeline._make_llm = lambda req: mock_llm
+
+    original_execute = pipeline.execute
+    def _execute_with_agent_loop_off(request):
+        request.agent_loop = False
+        return original_execute(request)
+    pipeline.execute = _execute_with_agent_loop_off
 
     return pipeline
 
