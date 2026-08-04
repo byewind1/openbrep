@@ -46,6 +46,16 @@ function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep
       detail: data.content,
     }
   }
+  if (type === 'compile_result') {
+    const success = data.success === true
+    return {
+      type: 'status',
+      stage: 'compile',
+      message: success ? '✅ 编译通过' : '❌ 编译失败',
+      detail: typeof data.error === 'string' && data.error ? data.error : undefined,
+      ok: success,
+    }
+  }
   return null
 }
 
