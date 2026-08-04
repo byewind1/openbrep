@@ -1027,7 +1027,7 @@ models = [{ alias = "ymg-gpt-5.3-codex", model = "gpt-5.3-codex" }]
             "has_api_key": True,
         }
     ]
-    assert any(option["id"] == "deepseek-chat" and option["kind"] == "official" for option in official)
+    assert any(option["id"] == "deepseek-v4-flash" and option["kind"] == "official" for option in official)
     assert response["llm"]["models"][0] == "ymg-gpt-5.3-codex"
     assert response["llm"]["model_options"][0]["kind"] == "custom"
 
