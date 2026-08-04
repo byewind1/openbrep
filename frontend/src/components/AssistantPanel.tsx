@@ -3,6 +3,7 @@ import type { FormEvent, KeyboardEvent } from 'react'
 import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, VerificationReport } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { validateAssistantImageFile } from './assistantImage'
+import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
 
 interface AssistantPanelProps {
   messages: AssistantMessage[]
@@ -219,6 +220,13 @@ export function AssistantPanel({
                 ) : null}
               </span>
               <p>{message.content}</p>
+              {message.role === 'assistant' && message.thinkingSteps ? (
+                <AssistantThinkingTimeline
+                  steps={message.thinkingSteps}
+                  busy={busy && index === messages.length - 1}
+                  interrupted={message.interrupted}
+                />
+              ) : null}
               {message.changedFiles?.length ? (
                 <div className="assistant-change-card">
                   <strong>Changed files</strong>

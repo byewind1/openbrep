@@ -170,7 +170,6 @@ class ModifyToolRegistry:
             "ok": result.ok,
             "summary": result.summary[:200],
         })
-        self.on_event("agent_tool_call", {"name": call.name, "ok": result.ok})
         return result
 
     # ── 各工具实现（薄封装） ───────────────────────────────
@@ -189,6 +188,7 @@ class ModifyToolRegistry:
         cleaned = sanitize_llm_script_output(content, file_path)
         self._apply_changes(self.project, {file_path: cleaned})
         self.changed_files[file_path] = cleaned
+        self.on_event("status", {"stage": "modify", "message": f"✏️ 已更新 {file_path}"})
         return ToolExecutionResult(
             name="update_script",
             ok=True,
@@ -200,7 +200,7 @@ class ModifyToolRegistry:
         hsf_dir = self.project.save_to_disk()
         self.last_compile_result = self.compiler.hsf2libpart(str(hsf_dir), self.output_gsm)
         if self.last_compile_result.success:
-            self.on_event("status", {"message": "✅ 编译通过"})
+            self.on_event("status", {"stage": "compile", "message": "✅ 编译通过"})
             return ToolExecutionResult(
                 name="compile_script",
                 ok=True,
@@ -210,7 +210,7 @@ class ModifyToolRegistry:
         error_text = "\n".join(
             part for part in [self.last_compile_result.stderr or "", self.last_compile_result.stdout or ""] if part.strip()
         )
-        self.on_event("status", {"message": "❌ 编译失败"})
+        self.on_event("status", {"stage": "compile", "message": "❌ 编译失败"})
         return ToolExecutionResult(
             name="compile_script",
             ok=False,
@@ -221,7 +221,7 @@ class ModifyToolRegistry:
     def _run_static_check(self, _args: dict) -> ToolExecutionResult:
         result = StaticChecker().check(self.project)
         if result.passed:
-            self.on_event("status", {"message": "✅ 静态检查通过"})
+            self.on_event("status", {"stage": "compile", "message": "✅ 静态检查通过"})
             return ToolExecutionResult(
                 name="run_static_check",
                 ok=True,
@@ -229,7 +229,7 @@ class ModifyToolRegistry:
                 data={"passed": True, "error_count": 0},
             )
         lines = [f"- [{e.check_type}] {e.file}: {e.detail}" for e in result.errors[:10]]
-        self.on_event("status", {"message": f"⚠️ 静态检查发现 {len(result.errors)} 个问题"})
+        self.on_event("status", {"stage": "compile", "message": f"⚠️ 静态检查发现 {len(result.errors)} 个问题"})
         return ToolExecutionResult(
             name="run_static_check",
             ok=False,
@@ -291,7 +291,7 @@ class ModifyToolRegistry:
             parts.append("包围盒：无（几何为空）")
         if result.warnings:
             parts.append("预览警告：\n" + "\n".join(f"- {w}" for w in result.warnings[:5]))
-        self.on_event("status", {"message": f"📐 几何预览：{parts[0]}"})
+        self.on_event("status", {"stage": "preview", "message": f"📐 几何预览：{parts[0]}"})
         return ToolExecutionResult(
             name="preview_geometry",
             ok=bool(result.meshes),

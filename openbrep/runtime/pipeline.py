@@ -138,6 +138,7 @@ class TaskRequest:
     compare_compile: str = "off"           # off / mock / real
     agent_loop: Optional[bool] = None      # None = 按 intent 默认策略；True/False = 显式开关
     agent_loop_budget: int = 0             # agent loop 工具调用预算，0 = 用默认值
+    agent_loop_plan: bool = False          # agent loop 是否先输出可审查计划（流式/SSE 默认开）
 
 
 @dataclass
@@ -261,7 +262,12 @@ class TaskPipeline:
                 result = self._handle_chat(request)
             elif request.intent in ("MODIFY", "DEBUG", "REPAIR") and request.agent_loop:
                 # 默认路径：预算制 agent loop（LLM 通过工具调用自主迭代）
-                result = self._handle_modify_agent_loop(request)
+                # 先尝试确定性微修改，命中则零 token 完成
+                micro_result = self._try_micro_modify(request)
+                if micro_result is not None:
+                    result = micro_result
+                else:
+                    result = self._handle_modify_agent_loop(request)
             elif request.intent == "REPAIR":
                 result = self._handle_repair(request)
             elif request.intent in ("MODIFY", "DEBUG"):
@@ -889,7 +895,7 @@ class TaskPipeline:
 
         if (request.intent or "MODIFY") != "MODIFY":
             return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
-        if request.agent_loop or request.image_path or request.image_b64:
+        if request.image_path or request.image_b64:
             return None
         project = request.project
         if project is None or not project.parameters:
@@ -906,6 +912,14 @@ class TaskPipeline:
             return None
 
         on_event = request.on_event or (lambda *args: None)
+        on_event("status", {"stage": "understand", "message": "🤔 正在理解你的修改意图…"})
+        on_event("status", {"stage": "locate", "message": f"🎯 定位到参数：{micro.param_name}"})
+        on_event("plan", {
+            "intent_summary": f"把参数 {micro.param_name} 从 {micro.old_value} 改为 {micro.new_value}",
+            "affected_files": ["paramlist.xml"],
+            "parameter_changes": [{"name": micro.param_name, "from": micro.old_value, "to": micro.new_value}],
+            "strategy": "直接修改参数默认值并编译验证",
+        })
 
         # 快照"修改前"状态（与 LLM 路径同一机制）；revision 拷的是磁盘状态，
         # 必须先于内存修改 + save_to_disk
@@ -932,6 +946,7 @@ class TaskPipeline:
 
         param.value = micro.new_value
         project.save_to_disk()
+        on_event("status", {"stage": "modify", "message": f"✏️ 已更新参数 {micro.param_name}"})
 
         compile_result: Optional[CompileResult] = None
         try:

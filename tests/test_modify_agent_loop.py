@@ -154,6 +154,44 @@ class TestAgentLoopFlow(unittest.TestCase):
         result = pipeline.execute(request)
         self.assertIn("Agent loop（实验路径）", result.plain_text)
 
+    def test_planning_stage_emits_plan_event_and_guided_execution(self):
+        """agent_loop_plan=True 时，LLM 先输出计划并流式发出 plan 事件，再执行修改。"""
+        plan_json = (
+            '{"intent_summary": "给书架加一层层板",'
+            ' "affected_files": ["scripts/3d.gdl"],'
+            ' "parameter_changes": [],'
+            ' "strategy": "在 3D 脚本中追加一层层板几何"}'
+        )
+        new_3d = "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.018\nDEL 1\nEND\n"
+        events: list[dict] = []
+
+        def on_event(event_type, data):
+            events.append({"type": event_type, "data": data})
+
+        mock_llm = MockLLM(responses=[
+            plan_json,
+            {"tool_calls": [{"name": "update_script", "arguments": {"file_path": "scripts/3d.gdl", "content": new_3d}}]},
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "已按 plans 加了一层。",
+        ])
+        pipeline = _make_pipeline(mock_llm, self.tmp)
+        request = _make_request(
+            _make_project(self.tmp), self.tmp, agent_loop_plan=True, on_event=on_event
+        )
+
+        result = pipeline.execute(request)
+
+        self.assertTrue(result.success)
+        self.assertIn("scripts/3d.gdl", result.scripts)
+        plan_events = [e for e in events if e["type"] == "plan"]
+        self.assertEqual(len(plan_events), 1)
+        self.assertEqual(plan_events[0]["data"].get("intent_summary"), "给书架加一层层板")
+        # planning + 3 轮主循环 = 4 次 LLM 调用
+        self.assertEqual(mock_llm.call_count, 4)
+        # plan 被注入对话历史，最后一次调用应包含计划文本
+        last_call_messages = mock_llm.call_history[-1]
+        self.assertTrue(any(plan_json in (m.get("content") or "") for m in last_call_messages))
+
 
 class TestAgentLoopToggle(unittest.TestCase):
     def setUp(self):

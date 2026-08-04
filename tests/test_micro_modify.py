@@ -160,6 +160,41 @@ class TestDetectMicroModify(unittest.TestCase):
         self.assertIsNone(self.detect("shelf_count 现在是 4"))
         self.assertIsNone(self.detect("给书架加一扇门"))
 
+    def test_relative_change_chinese(self):
+        micro = self.detect("把 shelf_count 增加 1")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "5")
+
+        micro = self.detect("把 A 减少 100mm")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "0.8")
+
+    def test_relative_change_english(self):
+        micro = self.detect("increase shelf_count by 1")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "5")
+
+        micro = self.detect("reduce A by 0.1")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "0.8")
+
+    def test_toggle_bool_word(self):
+        micro = self.detect("打开 show_frame")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "1")
+
+        micro = self.detect("关闭 show_frame")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "0")
+
+        micro = self.detect("enable show_frame")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "1")
+
+        micro = self.detect("disable show_frame")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "0")
+
 
 def _make_pipeline(llm_content: str) -> tuple[TaskPipeline, MagicMock]:
     cfg = GDLAgentConfig()
@@ -300,6 +335,40 @@ class TestPipelineMicroModify(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(project.get_parameter("shelf_count").value, "5")
         self.assertIn("编译：❌ 失败", result.plain_text)
+
+    def test_micro_modify_intercepts_when_agent_loop_is_default(self):
+        """agent_loop=True（默认）时，纯参数修改仍走微修改捷径并发出事件流。"""
+        pipeline, mock_llm = _make_pipeline("SHOULD NOT BE USED")
+        events: list[dict] = []
+
+        def on_event(event_type, data):
+            events.append({"type": event_type, "data": data})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = _make_project()
+            project.work_dir = Path(tmpdir)
+            project.root = Path(tmpdir) / project.name
+            project.save_to_disk()
+
+            result = pipeline.execute(TaskRequest(
+                user_input="把 shelf_count 改成 5",
+                intent="MODIFY",
+                project=project,
+                work_dir=tmpdir,
+                output_dir=str(Path(tmpdir) / "out"),
+                agent_loop=True,
+                on_event=on_event,
+            ))
+
+        self.assertTrue(result.success)
+        mock_llm.generate.assert_not_called()
+        self.assertEqual(project.get_parameter("shelf_count").value, "5")
+        status_events = [e for e in events if e["type"] == "status"]
+        plan_events = [e for e in events if e["type"] == "plan"]
+        self.assertTrue(any(e["data"].get("stage") == "understand" for e in status_events))
+        self.assertTrue(any(e["data"].get("stage") == "modify" for e in status_events))
+        self.assertEqual(len(plan_events), 1)
+        self.assertEqual(plan_events[0]["data"].get("parameter_changes", [{}])[0].get("name"), "shelf_count")
 
 
 if __name__ == "__main__":

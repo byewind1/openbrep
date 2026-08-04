@@ -1,4 +1,4 @@
-import type { AssistantImageAttachment, AssistantStreamEvent } from '../../api/types'
+import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -6,6 +6,48 @@ import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, n
 
 const ASSISTANT_PENDING_PREFIX = 'Thinking...'
 const INTERRUPTED_CONTENT = '⏹ 已中断'
+
+function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep | null {
+  const { type, data } = event
+  if (type === 'status' && typeof data.message === 'string') {
+    return {
+      type: 'status',
+      stage: typeof data.stage === 'string' ? data.stage : undefined,
+      message: data.message,
+    }
+  }
+  if (type === 'tool_call') {
+    const name = typeof data.display_name === 'string' ? data.display_name : String(data.name ?? 'tool')
+    const summary = typeof data.summary === 'string' ? data.summary : ''
+    return {
+      type: 'tool_call',
+      stage: typeof data.stage === 'string' ? data.stage : undefined,
+      message: name,
+      detail: summary,
+      ok: data.ok === true,
+    }
+  }
+  if (type === 'plan') {
+    return {
+      type: 'plan',
+      stage: 'plan',
+      message: 'AI 计划：' + (typeof data.intent_summary === 'string' ? data.intent_summary : '制定修改方案'),
+      intentSummary: typeof data.intent_summary === 'string' ? data.intent_summary : undefined,
+      affectedFiles: Array.isArray(data.affected_files) ? data.affected_files.filter((f): f is string => typeof f === 'string') : undefined,
+      parameterChanges: Array.isArray(data.parameter_changes) ? data.parameter_changes : undefined,
+      strategy: typeof data.strategy === 'string' ? data.strategy : undefined,
+    }
+  }
+  if (type === 'assistant_delta' && typeof data.content === 'string') {
+    return {
+      type: 'assistant_delta',
+      stage: 'think',
+      message: 'AI 思考中',
+      detail: data.content,
+    }
+  }
+  return null
+}
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
   function userMessageContent(message: string, image?: AssistantImageAttachment | null) {
@@ -273,7 +315,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             assistantMessages: [
               ...state.assistantMessages,
               { role: 'user', content: userMessageContent(finalMessage, image) },
-              { role: 'assistant', content: initialContent },
+              { role: 'assistant', content: initialContent, thinkingSteps: [] },
             ],
           }))
           const flushed = await get().flushDirtyScripts()
@@ -286,27 +328,23 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           const epoch = get().projectEpoch
-          const thinkingLines: string[] = []
+          const thinkingSteps: AssistantThinkingStep[] = []
 
           const result = await api.generateWithAssistantStream(
             finalMessage,
             settings,
             image,
             (event: AssistantStreamEvent) => {
-              if (event.type === 'status' && typeof event.data.message === 'string') {
-                thinkingLines.push(event.data.message)
-              } else if (event.type === 'tool_call' && typeof event.data.summary === 'string') {
-                const name = typeof event.data.name === 'string' ? event.data.name : 'tool'
-                const ok = event.data.ok ? '✅' : '❌'
-                thinkingLines.push(`${ok} ${name}: ${event.data.summary.split('\n')[0]}`)
-              } else if (event.type === 'assistant_delta' && typeof event.data.content === 'string') {
-                thinkingLines.push(`💭 ${event.data.content.split('\n')[0]}`)
+              const step = eventToThinkingStep(event)
+              if (step) {
+                thinkingSteps.push(step)
               }
-              // 实时更新最后一条 assistant message 的内容
+              // 实时更新最后一条 assistant message：保留最终回复 + 时间线步骤
               set((state) => ({
                 assistantMessages: replacePendingAssistantMessage(
                   state.assistantMessages,
-                  formatStreamingAssistantContent(initialContent, thinkingLines),
+                  initialContent,
+                  { thinkingSteps: [...thinkingSteps] },
                 ),
               }))
             },
@@ -324,13 +362,13 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
               ? `${result.assistant.reply}${suffix}`
               : formatAssistantRequestError(result.error, 'Generation request failed.')
           const replyExtras = result.ok
-            ? { changedFiles, verification: result.assistant?.verification ?? undefined }
-            : { errorCategory: classifyAssistantError(finalReply) }
+            ? { changedFiles, verification: result.assistant?.verification ?? undefined, thinkingSteps: [...thinkingSteps] }
+            : { errorCategory: classifyAssistantError(finalReply), thinkingSteps: [...thinkingSteps] }
           set((state) => ({
             assistantBusy: false,
             assistantMessages: replacePendingAssistantMessage(
               state.assistantMessages,
-              formatStreamingAssistantContent(finalReply, thinkingLines),
+              finalReply,
               replyExtras,
             ),
             lastError: result.ok ? null : finalReply,
@@ -388,7 +426,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
               i === state.assistantMessages.length - 1 &&
               m.role === 'assistant' &&
               m.content.startsWith(ASSISTANT_PENDING_PREFIX)
-                ? { ...m, content: INTERRUPTED_CONTENT, interrupted: true }
+                ? { ...m, content: INTERRUPTED_CONTENT, interrupted: true, thinkingSteps: m.thinkingSteps }
                 : m,
             ),
           }))
@@ -433,16 +471,6 @@ function replacePendingAssistantMessage(messages: AssistantMessage[], reply: str
     return [...messages.slice(0, -1), replyMessage]
   }
   return [...messages, replyMessage]
-}
-
-function formatStreamingAssistantContent(finalReply: string, thinkingLines: string[]) {
-  if (thinkingLines.length === 0) return finalReply
-  const summary = thinkingLines
-    .filter((line, index, all) => all.indexOf(line) === index)
-    .slice(-8)
-    .map((line) => `- ${line}`)
-    .join('\n')
-  return `${finalReply}\n\n思考过程：\n${summary}`
 }
 
 function formatAssistantEventSummary(events?: Array<{ type: string; data: unknown }>) {

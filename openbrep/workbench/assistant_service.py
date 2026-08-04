@@ -278,6 +278,8 @@ class WorkbenchAssistantService:
             should_cancel=should_cancel,
             # agent_loop 默认 None：由 pipeline 按 intent 默认策略启用
             agent_loop=body.get("agent_loop") if "agent_loop" in body else None,
+            # 流式请求默认开启 plan 阶段，让前端可展示可审查计划；非流式保持兼容
+            agent_loop_plan=body.get("agent_loop_plan", should_cancel is not None),
         )
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model

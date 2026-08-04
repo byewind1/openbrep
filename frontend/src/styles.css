@@ -2959,3 +2959,137 @@ button:focus-visible {
   padding-left: 16px;
   line-height: 1.7;
 }
+
+/* ── Assistant thinking timeline ───────────────────────────────────────── */
+.assistant-thinking-timeline {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+}
+
+.timeline-more {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0 6px;
+}
+
+.timeline-more:hover {
+  color: var(--text-primary);
+}
+
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.timeline-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.timeline-step.is-pending .timeline-label,
+.timeline-step.is-interrupted .timeline-label {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.timeline-icon {
+  flex: 0 0 18px;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.timeline-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.timeline-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.timeline-label {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.timeline-chevron {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.timeline-detail {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-panel, #fff);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-height: 160px;
+  overflow: auto;
+}
+
+.timeline-detail pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+
+.timeline-plan-detail {
+  display: grid;
+  gap: 6px;
+}
+
+.timeline-plan-strategy {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.timeline-plan-section {
+  display: grid;
+  gap: 2px;
+}
+
+.timeline-plan-section strong {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.timeline-plan-section ul {
+  margin: 0;
+  padding-left: 14px;
+}
+
+.timeline-plan-section li {
+  margin: 1px 0;
+}

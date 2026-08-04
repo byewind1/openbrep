@@ -44,6 +44,26 @@ _SET_BOOL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 开关词义：Boolean 参数可直接说「打开 X」「关闭 X」「enable X」「disable X」
+_BOOL_TOGGLE_RE = re.compile(
+    r"(?:打开|开启|启用|开|turn\s+on|enable)|"
+    r"(?:关闭|关掉|禁用|关|turn\s+off|disable)",
+    re.IGNORECASE,
+)
+
+# 相对修改：把 X 增加/减少 N（支持长度单位）
+_RELATIVE_VALUE_RE = re.compile(
+    r"(?:增加|减少|调大|调小|加大|减小|升高|降低|上调|下调|add|subtract|increase|decrease|reduce|raise|lower)\s*"
+    r"(-?\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?",
+    re.IGNORECASE,
+)
+# 英文相对语序：increase X by 50mm / reduce X by 2cm
+_RELATIVE_BY_RE = re.compile(
+    r"(?:add|subtract|increase|decrease|reduce|raise|lower)\s+\S+\s+by\s*"
+    r"(-?\d+(?:\.\d+)?)\s*(mm|cm|m)?(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
 _BOOL_TRUE = {"开启", "打开", "启用", "开", "true", "yes", "on"}
 _BOOL_FALSE = {"关闭", "关掉", "禁用", "关", "false", "no", "off"}
 
@@ -87,7 +107,7 @@ def detect_micro_modify(instruction: str, project: HSFProject) -> Optional[Micro
         return None
     param, matched_via = resolved
 
-    new_value = _extract_value(text, param)
+    new_value = _extract_value(text, param, param.value)
     if new_value is None:
         return None
 
@@ -128,7 +148,7 @@ def _resolve_param(text: str, params: list[GDLParameter]) -> Optional[tuple[GDLP
     return desc_hits[0], "description"
 
 
-def _extract_value(text: str, param: GDLParameter) -> Optional[str]:
+def _extract_value(text: str, param: GDLParameter, old_value: str) -> Optional[str]:
     """按参数类型提取并规整目标值；语义不明返回 None。"""
     if param.type_tag == "Boolean":
         bool_match = _SET_BOOL_RE.search(text)
@@ -138,6 +158,14 @@ def _extract_value(text: str, param: GDLParameter) -> Optional[str]:
                 return "1"
             if word in _BOOL_FALSE:
                 return "0"
+        # 开关词义：Boolean 参数可直接说「打开 X」「关闭 X」
+        toggle_match = _BOOL_TOGGLE_RE.search(text)
+        if toggle_match:
+            word = toggle_match.group(0).lower()
+            if word in _BOOL_TRUE or word in {"打开", "开启", "启用", "开", "enable", "turn on"}:
+                return "1"
+            if word in _BOOL_FALSE or word in {"关闭", "关掉", "禁用", "关", "disable", "turn off"}:
+                return "0"
         # "把开关改成 1" 也允许，落到数值分支
 
     if param.type_tag not in _NUMERIC_TYPES and param.type_tag != "Boolean":
@@ -145,6 +173,10 @@ def _extract_value(text: str, param: GDLParameter) -> Optional[str]:
 
     raw: float | None = None
     unit = ""
+    is_relative = False
+    relative_sign = 1.0
+
+    # 1. 绝对值设置
     match = _SET_VALUE_RE.search(text)
     if match:
         raw = float(match.group(1))
@@ -159,21 +191,44 @@ def _extract_value(text: str, param: GDLParameter) -> Optional[str]:
                 return "1" if token in _BOOL_TRUE else "0"
             raw = float(token)
             unit = (en_match.group(2) or "").lower()
+
+    # 2. 相对修改
+    if raw is None:
+        rel_match = _RELATIVE_VALUE_RE.search(text) or _RELATIVE_BY_RE.search(text)
+        if rel_match:
+            raw = float(rel_match.group(1))
+            unit = (rel_match.group(2) or "").lower()
+            is_relative = True
+            # 中文「减少/调小/降低/下调」与英文 decrease/reduce/lower/subtract 为减
+            rel_verb = rel_match.group(0).lower()
+            if any(v in rel_verb for v in ("减少", "调小", "降低", "下调", "减小", "subtract", "decrease", "reduce", "lower")):
+                relative_sign = -1.0
+
     if raw is None:
         return None
 
     if param.type_tag == "Boolean":
         return "1" if raw != 0 else "0"
 
+    # 单位规整：先把输入值换算为米（如果是 Length）
     if param.type_tag == "Length":
         if not unit and raw > 10:
             # 无单位大数值更可能是 mm 意图（"把宽度改成 900"），
             # 静默当米会差 1000 倍——回落 LLM 带上下文判断
             return None
-        return str(raw * _LENGTH_FACTORS[unit])
+        raw = raw * _LENGTH_FACTORS[unit]
 
-    if unit:
+    if is_relative:
+        try:
+            base = float(old_value)
+        except ValueError:
+            return None
+        raw = base + raw * relative_sign
+    elif unit and param.type_tag != "Length":
         return None  # RealNum/Integer 带长度单位，语义不明
+
+    if param.type_tag == "Length":
+        return str(raw)
 
     if param.type_tag == "Integer":
         if raw != int(raw):

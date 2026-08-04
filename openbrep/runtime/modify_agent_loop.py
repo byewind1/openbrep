@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Optional
 
@@ -27,6 +28,50 @@ if TYPE_CHECKING:
     from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
 
 logger = logging.getLogger(__name__)
+
+
+def _architect_status(stage: str, **ctx) -> dict[str, object]:
+    """把内部执行阶段翻译成建筑师可读的中文状态文案。
+
+    返回字典必须包含 "stage" 与 "message"，可直接传给 on_event("status", ...)。
+    """
+    labels: dict[str, str] = {
+        "understand": "🤔 正在理解你的修改意图…",
+        "think": "🧠 AI 正在思考下一步…",
+        "locate": "🎯 正在定位需要修改的位置…",
+        "plan": "📝 正在制定修改方案…",
+        "modify": "✏️ 正在修改代码…",
+        "compile": "🔨 正在编译验证…",
+        "preview": "📐 正在核对几何预览…",
+        "verify": "🔍 正在检查完成条件（编译 + 几何）…",
+        "retry": "🧩 验证未通过，AI 继续修复…",
+        "budget": "⚠️ 工具预算耗尽，停止迭代",
+        "cancel": "⏹ 任务已取消",
+        "done": "✅ 修改完成",
+    }
+    message = labels.get(stage, stage)
+    # 允许用简单模板替换少量上下文
+    if ctx:
+        try:
+            message = message.format(**ctx)
+        except (KeyError, ValueError):
+            pass
+    return {"stage": stage, "message": message}
+
+
+# 工具内部名 → 建筑师显示名 + 阶段
+_TOOL_DISPLAY: dict[str, tuple[str, str]] = {
+    "update_script": ("修改脚本", "modify"),
+    "compile_script": ("编译验证", "compile"),
+    "run_static_check": ("静态检查", "compile"),
+    "query_knowledge": ("查询 GDL 知识", "think"),
+    "preview_geometry": ("预览几何", "preview"),
+}
+
+
+def _tool_display(name: str) -> tuple[str, str]:
+    return _TOOL_DISPLAY.get(name, (name, "think"))
+
 
 # 工具调用预算默认值与硬上限（防止异常配置导致失控循环）
 DEFAULT_AGENT_LOOP_BUDGET = 10
@@ -81,6 +126,31 @@ _AGENT_LOOP_PROTOCOL = """
 3. 工具调用预算共 {budget} 次，请规划使用，不要重复调用同一工具空转；
 4. 确认完成后，直接以纯文本答复总结改动与编译结果（不再发起 tool_calls）；
 5. 若预算不足，如实说明当前进度与遗留问题，禁止谎报完成。
+"""
+
+# 计划阶段协议：让 LLM 先输出可审查的修改计划，再进入工具执行。
+_PLANNING_PROTOCOL = """
+
+---
+
+## 修改计划阶段（本次任务生效）
+
+在调用任何工具前，请先根据用户指令和项目上下文，输出一份修改计划。
+计划必须是合法 JSON，格式如下：
+
+{
+  "intent_summary": "一句话概括用户想做什么",
+  "affected_files": ["可能改动的文件，如 scripts/3d.gdl 或 paramlist.xml"],
+  "parameter_changes": [
+    {"name": "参数名", "from": "当前值（可选）", "to": "目标值（可选）"}
+  ],
+  "strategy": "简要说明修改策略，用建筑师能理解的中文"
+}
+
+要求：
+- 只输出 JSON，不要输出 Markdown 代码块标记；
+- 若无法确定参数当前值，可省略 from/to；
+- 输出计划后，系统会把计划展示给用户；用户未打断，你再按 plan 调用工具执行。
 """
 
 
@@ -159,7 +229,38 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     gate_unresolved = False
     semantic_result = None
 
-    on_event("status", {"message": "🤔 正在分析你的修改意图…"})
+    on_event("status", _architect_status("understand"))
+
+    # ── 计划阶段（可选）：LLM 先输出可审查的修改计划，用户 ESC 可打断 ──
+    plan_data: dict[str, object] | None = None
+    if request.agent_loop_plan:
+        try:
+            if request.should_cancel and request.should_cancel():
+                cancelled = True
+                on_event("status", _architect_status("cancel"))
+                return _build_cancelled_result(request, project, registry, gsm_path, compiler, intent)
+            on_event("status", _architect_status("plan"))
+            planning_messages = _inject_planning_prompt(messages)
+            plan_response = llm.generate(planning_messages)
+            llm_calls += 1
+            plan_data = _parse_plan_response(plan_response.content or "")
+            if plan_data:
+                on_event("plan", plan_data)
+            if request.should_cancel and request.should_cancel():
+                cancelled = True
+                on_event("status", _architect_status("cancel"))
+                return _build_cancelled_result(request, project, registry, gsm_path, compiler, intent)
+            # 把计划作为 assistant 回复注入历史，约束后续工具调用
+            plan_text = plan_response.content or ""
+            if plan_text:
+                messages.append({"role": "assistant", "content": plan_text})
+                messages.append({
+                    "role": "user",
+                    "content": "计划已收到。如果我没有打断，请严格按上述计划调用工具执行修改。",
+                })
+        except Exception as exc:
+            logger.warning("Planning stage failed: %s", exc)
+            # 计划阶段失败不阻塞执行，降级到无计划继续
 
     # ── 主循环：有 tool_calls 就执行并回填，没有（纯文本答复）即声
     # 称完成——声称完成要过完成门禁（S3）：编译 + 几何语义的结构核验，
@@ -167,15 +268,15 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     while True:
         if request.should_cancel and request.should_cancel():
             cancelled = True
-            on_event("status", {"message": "⏹ 任务已取消"})
+            on_event("status", _architect_status("cancel"))
             break
-        on_event("status", {"message": "🧠 AI 正在思考下一步…"})
+        on_event("status", _architect_status("think"))
         response = llm.generate_with_tools(messages, tools=tools)
         llm_calls += 1
         if response.content:
             on_event("assistant_delta", {"content": response.content})
         if not response.has_tool_calls:
-            on_event("status", {"message": "🔍 正在检查完成条件（编译 + 几何）…"})
+            on_event("status", _architect_status("verify"))
             gate_ok, gate_feedback, semantic_result = _completion_gate(
                 project, registry, compiler, gsm_path,
             )
@@ -195,9 +296,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                 "agent loop completion gate rejected (%d/%d)",
                 gate_rejections, MAX_GATE_REJECTIONS,
             )
-            on_event("status", {
-                "message": f"🧩 完成检查未通过（第 {gate_rejections} 次），让 AI 继续修复…"
-            })
+            on_event("status", _architect_status("retry", n=gate_rejections))
             messages.append({"role": "assistant", "content": response.content or ""})
             messages.append({"role": "user", "content": gate_feedback})
             continue
@@ -207,17 +306,24 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             if tool_calls_used >= budget:
                 budget_exhausted = True
                 break
-            on_event("status", {"message": f"🔧 调用工具：{call.name}…"})
+            display_name, tool_stage = _tool_display(call.name)
+            on_event("status", _architect_status(tool_stage, tool=display_name))
             result = registry.execute(call)
             tool_calls_used += 1
             messages.append(tool_result_message(call.id, result.summary, name=call.name))
-            on_event("tool_call", {"name": call.name, "summary": result.summary, "ok": result.ok})
+            on_event("tool_call", {
+                "name": call.name,
+                "display_name": display_name,
+                "stage": tool_stage,
+                "summary": result.summary,
+                "ok": result.ok,
+            })
         if budget_exhausted:
             logger.info(
                 "agent loop budget exhausted: %d/%d tool calls, %d llm calls",
                 tool_calls_used, budget, llm_calls,
             )
-            on_event("status", {"message": "⚠️ 工具预算耗尽，停止迭代"})
+            on_event("status", _architect_status("budget"))
             break
 
     compile_result = registry.last_compile_result
@@ -290,3 +396,89 @@ def _tool_digest(tool_log: list[dict]) -> str:
     for entry in tool_log:
         counts[entry["name"]] = counts.get(entry["name"], 0) + 1
     return ", ".join(f"{name}×{count}" for name, count in counts.items())
+
+
+def _inject_planning_prompt(messages: list[dict]) -> list[dict]:
+    """返回一份复制品：system prompt 追加 planning protocol。"""
+    copy = [dict(m) for m in messages]
+    if copy and copy[0].get("role") == "system":
+        copy[0]["content"] = (copy[0].get("content") or "") + _PLANNING_PROTOCOL
+    else:
+        copy.insert(0, {"role": "system", "content": _PLANNING_PROTOCOL})
+    return copy
+
+
+def _parse_plan_response(content: str) -> dict[str, object] | None:
+    """从 LLM 计划回复里提取 JSON plan。"""
+    if not content:
+        return None
+    text = content.strip()
+    # 允许模型把 JSON 包在 Markdown 代码块里
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        # 尝试从文本中提取第一个 { ... } 块
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    return {
+        "intent_summary": str(parsed.get("intent_summary") or "").strip(),
+        "affected_files": list(parsed.get("affected_files") or []),
+        "parameter_changes": list(parsed.get("parameter_changes") or []),
+        "strategy": str(parsed.get("strategy") or "").strip(),
+    }
+
+
+def _build_cancelled_result(
+    request: "TaskRequest",
+    project: HSFProject,
+    registry: ModifyToolRegistry,
+    gsm_path: str,
+    compiler,
+    intent: str,
+) -> "TaskResult":
+    """用户在计划阶段取消时，返回一个干净的 TaskResult（未开始修改）。"""
+    from openbrep.runtime.pipeline import TaskResult
+    from openbrep.verification import build_verification_report
+    from openbrep.static_checker import StaticChecker
+    from openbrep.naming_alignment import detect_reserved_param_misuse
+
+    hsf_dir = project.save_to_disk()
+    compile_result = compiler.hsf2libpart(str(hsf_dir), gsm_path)
+    registry.last_compile_result = compile_result
+    static_result = StaticChecker().check(project)
+    from openbrep.semantic_verifier import verify_semantics
+    semantic_result = verify_semantics(project)
+    verification_report = build_verification_report(
+        intent=intent,
+        user_input=request.user_input,
+        project=project,
+        object_plan=None,
+        static_result=static_result,
+        semantic_result=semantic_result,
+        lint_summary="",
+        compile_result=compile_result,
+        auto_repair_info="",
+        graph_powered=False,
+        reserved_conflicts=detect_reserved_param_misuse(project),
+    )
+    return TaskResult(
+        success=False,
+        intent=intent,
+        scripts={},
+        plain_text="⏹ 任务已取消：AI 在制定计划阶段被打断，尚未修改任何文件。",
+        project=project,
+        compile_result=compile_result,
+        verification=verification_report.to_dict(),
+    )

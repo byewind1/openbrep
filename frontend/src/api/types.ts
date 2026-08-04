@@ -313,21 +313,52 @@ export interface AssistantMessage {
   errorCategory?: 'llm' | 'compile' | 'general'
   verification?: VerificationReport
   interrupted?: boolean
+  // 流式生成过程中的结构化思考步骤，用于时间线展示
+  thinkingSteps?: AssistantThinkingStep[]
 }
 
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────
 export type AssistantStreamEventType =
   | 'status'
   | 'tool_call'
+  | 'plan'
   | 'compile_result'
   | 'preview_result'
   | 'assistant_delta'
   | 'done'
   | 'error'
 
+export type ThinkingStage =
+  | 'understand'
+  | 'think'
+  | 'locate'
+  | 'plan'
+  | 'modify'
+  | 'compile'
+  | 'preview'
+  | 'verify'
+  | 'retry'
+  | 'budget'
+  | 'cancel'
+  | 'done'
+  | string
+
 export interface AssistantStreamEvent {
   type: AssistantStreamEventType
   data: Record<string, unknown>
+}
+
+export interface AssistantThinkingStep {
+  type: 'status' | 'tool_call' | 'plan' | 'assistant_delta'
+  stage?: ThinkingStage
+  message: string
+  detail?: string
+  ok?: boolean
+  // plan 阶段专用
+  intentSummary?: string
+  affectedFiles?: string[]
+  parameterChanges?: Array<{ name: string; from?: string; to?: string }>
+  strategy?: string
 }
 
 // ── Verification report (Phase 3/4/5 self-correcting agent evidence) ──────
