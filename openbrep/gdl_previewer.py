@@ -321,6 +321,7 @@ class _PreviewRuntime:
                 target = self._resolve_gosub_target(line[5:], line_no)
                 if target is None:
                     self._warn(line_no, "GOSUB 目标标签未找到，已跳过")
+                    idx += 1
                 else:
                     self._gosub_stack.append(idx + 1)
                     idx = target
@@ -329,6 +330,7 @@ class _PreviewRuntime:
             if re.match(r"^RETURN\b", line, re.IGNORECASE):
                 if not self._gosub_stack:
                     self._warn(line_no, "RETURN 没有对应 GOSUB，已忽略")
+                    idx += 1
                 else:
                     idx = self._gosub_stack.pop()
                 continue
