@@ -56,6 +56,12 @@ def _make_pipeline(gdl_response: str = "[FILE: scripts/3d.gdl]\nBLOCK 1,1,1\nEND
     pipeline._make_llm = lambda req: mock_llm
     pipeline._load_knowledge = lambda: ""
     pipeline._load_skills = lambda inst: ""
+    # 本文件测试 vision 前置路由；默认启用 agent loop 后，显式关闭以继续验证旧路径。
+    original_execute = pipeline.execute
+    def _execute_with_agent_loop_off(request):
+        request.agent_loop = False
+        return original_execute(request)
+    pipeline.execute = _execute_with_agent_loop_off
     return pipeline
 
 

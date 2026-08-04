@@ -299,6 +299,7 @@ def _run_modify(pipeline: TaskPipeline, tmp_path: Path) -> object:
     req = TaskRequest(
         user_input="把书架加一层", intent="MODIFY",
         project=project, work_dir=str(tmp_path), output_dir=str(tmp_path),
+        agent_loop=False,
     )
     return pipeline.execute(req)
 
