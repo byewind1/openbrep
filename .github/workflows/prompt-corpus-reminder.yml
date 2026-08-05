@@ -1,0 +1,107 @@
+name: Prompt corpus reminder
+
+# 轻量提醒 job：检测 PR / push 是否命中 prompt 影响面（会导致黄金语料失效，
+# benchmark-replay 变红）。命中只输出醒目警告，绝不 fail CI —— 语料重录需要
+# 人工 + 真实 key，不能硬门禁。判定规则见 AGENTS.md「benchmark 黄金语料规范」。
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  prompt-corpus-reminder:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect prompt-affecting changes
+        shell: bash
+        run: |
+          set -u
+
+          # 触发范围：PR = base..head；push main = before..sha。
+          # before 为全零 = 仓库首次 push，退回对 HEAD 单提交列文件。
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+
+          if [[ -z "$BASE" || "$BASE" == "0000000000000000000000000000000000000000" ]]; then
+            CHANGED=$(git diff-tree --no-commit-id --name-only -r "$HEAD")
+          else
+            CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
+          fi
+
+          # ── prompt 影响面清单（与 AGENTS.md「benchmark 黄金语料规范」必须重录类目对齐）──
+          # knowledge/ / user_knowledge/ / skills/ / openbrep/prompts/：注入内容
+          # pipeline.py（指令拼装 + include_learned_skills）、object_planner、图谱注入、
+          # knowledge_selector 选择逻辑、skills_loader：prompt 构建逻辑
+          # knowledge/wiki/user_knowledge/learning：知识内容与学习记忆注入
+          # config.py（模型表）/ llm.py：LLM model / provider 变更
+          # benchmark/runner.py：录制时送出的 LLM 调用参数（含 extra_body）
+          cat > "$RUNNER_TEMP/prompt-paths.txt" <<'EOF'
+          ^knowledge/
+          ^user_knowledge/
+          ^skills/
+          ^openbrep/prompts/
+          ^openbrep/runtime/pipeline\.py$
+          ^openbrep/object_planner\.py$
+          ^openbrep/knowledge_selector\.py$
+          ^openbrep/skills_loader\.py$
+          ^openbrep/knowledge\.py$
+          ^openbrep/wiki_knowledge\.py$
+          ^openbrep/user_knowledge\.py$
+          ^openbrep/knowledge_graph\.py$
+          ^openbrep/graph_derivation\.py$
+          ^openbrep/graph_schema\.py$
+          ^openbrep/learning\.py$
+          ^openbrep/config\.py$
+          ^openbrep/llm\.py$
+          ^benchmark/runner\.py$
+          EOF
+
+          MATCHED=$(printf '%s\n' "$CHANGED" | grep -Ef "$RUNNER_TEMP/prompt-paths.txt" || true)
+
+          if [[ -z "$MATCHED" ]]; then
+            echo "No prompt-affecting changes detected."
+            exit 0
+          fi
+
+          echo "matches_found=true" >> "$GITHUB_OUTPUT"
+
+          # 逐文件发出 ::warning:: 注解（醒目、可点击，不阻断）
+          while IFS= read -r f; do
+            echo "::warning file=$f,title=prompt-corpus::命中 prompt 影响面，请重录黄金语料（命令见 AGENTS.md「benchmark 黄金语料规范」）"
+          done <<< "$MATCHED"
+
+          # job summary：写明后果与重录命令
+          {
+            echo "## ⚠️ 命中 prompt 影响面 —— 需要重录黄金语料"
+            echo ""
+            echo "以下变更会影响送给 LLM 的 prompt（或 LLM model/provider），**CI 的"
+            echo "benchmark-replay 会因此变红**。本 job 仅提醒，不阻塞合并。"
+            echo ""
+            echo "变更文件："
+            while IFS= read -r f; do
+              printf -- '- `%s`\n' "$f"
+            done <<< "$MATCHED"
+            echo ""
+            echo "重录命令（真实 LLM，消耗 token；语料与基线规则见 AGENTS.md）："
+            echo ""
+            echo '```bash'
+            echo 'python -m benchmark.runner --suite benchmark/tasks/create/ --mode auto --jobs 4 --llm-record benchmark/fixtures/llm_corpus/create.jsonl'
+            echo 'python -m benchmark.runner --suite benchmark/tasks/modify/ --mode auto --jobs 4 --llm-record benchmark/fixtures/llm_corpus/modify.jsonl'
+            echo 'python -m benchmark.update_baseline --confirm'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
