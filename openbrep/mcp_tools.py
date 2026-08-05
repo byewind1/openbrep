@@ -1,31 +1,36 @@
-"""MCP 工具契约层（Phase 1 / P1-b+d+e + Phase 2 / P2-b）。
+"""MCP 工具契约层（Phase 1 / P1-b+d+e + Phase 2 / P2-b+P2-c）。
 
 纯 Python，dict in / dict out。禁止 import 任何 mcp 库 —— 协议适配层后续才做。
 
 契约约定：
 - 项目类工具第一个参数是 HSF 项目目录绝对路径 path（字符串）；skill 类工具
-  （propose_skill / verify_skill）的参数是 skill 名 + skills_dir，不走 path。
+  （propose_skill / verify_skill / reuse_skill / list_skills / deprecate_skill）
+  的参数是 skill 名 / query + skills_dir，不走 path。
 - 成功返回：{ok: True, ..., trace_id}
 - 失败返回：{ok: False, error: {code, message, details?}, trace_id}
 - 任何异常都不许穿透：统一包成错误 dict 返回。
 - trace_id 格式：mcp-YYYYMMDD-NNNN（日内序号，模块级计数器）。
 - mutation 工具（apply_edit / rollback / propose_skill / verify_skill 的晋升
-  落盘）全程走 _locked()；只读工具 v1 也走它（串行最稳）。
+  落盘、deprecate_skill 的状态翻转）全程走 _locked()；只读工具 v1 也走它
+  （串行最稳）。
 
 错误 code 汇总（全部工具共用同一错误形态）：
 - project_not_found      path 不存在 / 不是合法 HSF 项目 / 项目加载失败 /
                          import_source 的源文件不存在
 - invalid_mode           compile_hsf 的 mode 非法 / import_source 的 kind 非法 /
-                         源文件后缀与 kind 不匹配 / apply_edit 的 mode 非法
+                         源文件后缀与 kind 不匹配 / apply_edit 的 mode 非法 /
+                         list_skills 的 status 非法
 - invalid_spec           apply_edit 的 spec 非法（未知 type / 参数不存在 /
                          非数值参数值 / 脚本类型非法 / content 非字符串）；
                          propose_skill 的 name 不合法（路径分隔符 / 首尾空白 /
-                         隐藏文件 / README 等）或 content 非字符串
+                         隐藏文件 / README 等）或 content 非字符串；
+                         reuse_skill 的 query 非字符串或空；
+                         deprecate_skill 的 name 不合法
 - invalid_revision       rollback 的 revision_id 不存在 / 无 parent 且无
                          倒数第二条可回滚
 - converter_unavailable  LP_XMLConverter 不可用（import_source kind="gsm"）
 - skill_exists           propose_skill 的目标 {name}.md 已存在（不覆盖）
-- skill_not_found        verify_skill 的 skill 不存在
+- skill_not_found        verify_skill / deprecate_skill 的 skill 不存在
 - mcp_internal_error     工具内部意外异常（预览、编译、导入、服务调用等）
 """
 
@@ -33,6 +38,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 import shutil
 import tempfile
 import threading
@@ -1309,3 +1315,160 @@ def verify_skill(name: str, skills_dir: str = "./skills") -> dict:
         if slice_data:
             return _verify_full_gate(name, target, meta, slice_data, trace_id)
         return _verify_structural_gate(name, target, meta, content, trace_id)
+
+
+# ── reuse_skill / list_skills / deprecate_skill（P2-c，skill 管理） ─────
+
+_VALID_SKILL_STATUSES = ("active", "verified", "proposed", "deprecated")
+
+
+def _skill_blocks_from_injected(loader: SkillsLoader, skills_text: str) -> list[tuple[str, str]]:
+    """从 get_for_task 的注入文本解析命中 skill 的 (name, 正文) 序列。
+
+    注入格式为 `## Skill: {name}\n\n{body}`，按 `## Skill: ` 头解析名字
+    （顺序即注入顺序）；正文取 loader 的 body（与注入内容同源）。
+    """
+    header_re = re.compile(r"^## Skill: ([^\n]+)$", re.MULTILINE)
+    blocks: list[tuple[str, str]] = []
+    for m in header_re.finditer(skills_text):
+        name = m.group(1).strip()
+        blocks.append((name, loader._skills.get(name, "")))
+    return blocks
+
+
+def reuse_skill(query: str, skills_dir: str = "./skills") -> dict:
+    """按任务描述检索可注入 skill 并返回注入文本（只读包装 SkillsLoader）。
+
+    get_for_task(query) 命中 active/verified 的 skill 并把拼接好的注入文本
+    原样返回给调用方使用——因此本工具"调用即计复用"：每次命中都会把该 skill
+    的 reuse_count +1、last_used 记为今天（P2-a 复用计数语义，属预期行为）。
+    docstring 注明：本工具返回的 skills_text 就是给调用方注入用的。
+
+    matched 为命中详情：{name, status, pattern_type, reuse_count, excerpt}
+    （excerpt 取正文前 200 字符）。proposed / deprecated 不会出现在 matched。
+
+    失败：query 非字符串或空 → code="invalid_spec"。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        if not isinstance(query, str) or not query:
+            return _make_error(
+                "invalid_spec",
+                f"query 必须是非空字符串，收到: {query!r}",
+                trace_id,
+                details={"query": query},
+            )
+        try:
+            skills_path = Path(skills_dir).expanduser().resolve()
+            loader = SkillsLoader(str(skills_path))
+            loader.load()
+            skills_text = loader.get_for_task(query)
+            matched = []
+            for name, body in _skill_blocks_from_injected(loader, skills_text):
+                meta = loader.skill_meta(name)
+                matched.append({
+                    "name": name,
+                    "status": meta.get("status"),
+                    "pattern_type": meta.get("pattern_type"),
+                    "reuse_count": meta.get("reuse_count"),
+                    "excerpt": body[:200],
+                })
+            return {
+                "ok": True,
+                "query": query,
+                "matched": matched,
+                "skills_text": skills_text,
+                "trace_id": trace_id,
+            }
+        except Exception as exc:
+            return _make_error("mcp_internal_error", f"reuse_skill 失败: {exc}", trace_id)
+
+
+def list_skills(status: str | None = None, skills_dir: str = "./skills") -> dict:
+    """列出全部 skill 及其元数据（含 proposed/deprecated，管理面视图）。
+
+    每条：{name, status, pattern_type, skill_version, reuse_count, last_used,
+    source_project}。status 非空时按状态过滤（active/verified/proposed/
+    deprecated）；status 非法值 → code="invalid_mode"。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        if status and status not in _VALID_SKILL_STATUSES:
+            return _make_error(
+                "invalid_mode",
+                f"非法 status: {status!r}（可选: {'/'.join(_VALID_SKILL_STATUSES)}）",
+                trace_id,
+                details={"status": status},
+            )
+        try:
+            skills_path = Path(skills_dir).expanduser().resolve()
+            loader = SkillsLoader(str(skills_path))
+            loader.load()
+            skills = []
+            for name in loader.skill_names:
+                meta = loader.skill_meta(name)
+                if status and meta.get("status") != status:
+                    continue
+                skills.append({
+                    "name": name,
+                    "status": meta.get("status"),
+                    "pattern_type": meta.get("pattern_type"),
+                    "skill_version": meta.get("skill_version"),
+                    "reuse_count": meta.get("reuse_count"),
+                    "last_used": meta.get("last_used"),
+                    "source_project": meta.get("source_project"),
+                })
+            return {
+                "ok": True,
+                "skills": skills,
+                "total": len(skills),
+                "trace_id": trace_id,
+            }
+        except Exception as exc:
+            return _make_error("mcp_internal_error", f"list_skills 失败: {exc}", trace_id)
+
+
+def deprecate_skill(name: str, skills_dir: str = "./skills") -> dict:
+    """把 skill 翻为 deprecated（不再注入，文件保留不删除，保留溯源）。
+
+    复用 skills_loader.rewrite_skill_frontmatter 行级写接口。翻完后
+    SkillsLoader 不再注入该 skill（_INJECTABLE_STATUSES 不含 deprecated）。
+    已是 deprecated 的重复调用幂等返回成功。
+
+    失败：name 不合法 → code="invalid_spec"；skill 不存在 → code="skill_not_found"；
+    写回失败 → code="mcp_internal_error"。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        if not _is_valid_skill_name(name):
+            return _make_error(
+                "invalid_spec",
+                f"非法 skill 名（拒绝路径分隔符/首尾空白/隐藏文件等）: {name!r}",
+                trace_id,
+                details={"name": name},
+            )
+        skills_path = Path(skills_dir).expanduser().resolve()
+        target = skills_path / f"{name}.md"
+        if not target.is_file():
+            return _make_error(
+                "skill_not_found",
+                f"skill 不存在: {name}",
+                trace_id,
+                details={"name": name, "skills_dir": str(skills_path)},
+            )
+        try:
+            loader = SkillsLoader(str(skills_path))
+            loader.load()
+            if loader.skill_meta(name).get("status") == "deprecated":
+                return {"ok": True, "name": name, "status": "deprecated", "trace_id": trace_id}
+            rewritten = rewrite_skill_frontmatter(target, updates={"status": "deprecated"})
+            if not rewritten:
+                return _make_error(
+                    "mcp_internal_error",
+                    f"翻 deprecated 写回失败（无 frontmatter 或写盘失败）: {name}",
+                    trace_id,
+                    details={"path": str(target)},
+                )
+            return {"ok": True, "name": name, "status": "deprecated", "trace_id": trace_id}
+        except Exception as exc:
+            return _make_error("mcp_internal_error", f"deprecate_skill 失败: {exc}", trace_id)

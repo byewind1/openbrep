@@ -17,10 +17,13 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.mcp_tools import (
     apply_edit,
     compile_hsf,
+    deprecate_skill,
     import_source,
+    list_skills,
     load_project,
     propose_skill,
     render_evidence,
+    reuse_skill,
     rollback,
     semantic_verify,
     verify_skill,
@@ -631,3 +634,172 @@ def test_verify_skill_missing_returns_skill_not_found(tmp_path):
     assert result["error"]["code"] == "skill_not_found"
     assert "message" in result["error"]
     assert TRACE_RE.match(result["trace_id"])
+
+
+# ── reuse_skill / list_skills / deprecate_skill（P2-c，skill 管理） ─────
+
+
+def _write_skill_file(skills_dir: Path, name: str, body: str, **fields) -> Path:
+    """写一个带 frontmatter 的 skill 文件（fields 覆盖默认值，用于构造状态）。"""
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    meta = {"status": "active", "reuse_count": 0, "last_used": "null"}
+    meta.update(fields)
+    lines = ["---"] + [f"{k}: {v}" for k, v in meta.items()] + ["---", "", body]
+    path = skills_dir / f"{name}.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_reuse_skill_matches_active_and_excludes_proposed(tmp_path):
+    skills_dir = tmp_path / "skills"
+    _write_skill_file(
+        skills_dir,
+        "create_object",
+        "# 创建对象策略\n\n## 触发关键词\n- 生成\n- 创建\n",
+        pattern_type="box",
+        reuse_count=3,
+        last_used="2026-01-01",
+    )
+    propose_skill(
+        "shelf_pattern",
+        "# 书架策略\n\n## 触发关键词\n- 书架\n",
+        skills_dir=str(skills_dir),
+    )
+
+    result = reuse_skill("生成一个书架", skills_dir=str(skills_dir))
+
+    assert result["ok"] is True
+    assert result["query"] == "生成一个书架"
+    names = [m["name"] for m in result["matched"]]
+    assert "create_object" in names
+    assert "shelf_pattern" not in names  # proposed 不参与注入
+    match = next(m for m in result["matched"] if m["name"] == "create_object")
+    assert match["status"] == "active"
+    assert match["pattern_type"] == "box"
+    assert match["reuse_count"] == 4  # 调用即计复用（P2-a 写回）
+    assert "创建对象策略" in match["excerpt"]
+    assert len(match["excerpt"]) <= 200
+    assert "## Skill: create_object" in result["skills_text"]
+    assert TRACE_RE.match(result["trace_id"])
+
+
+def test_list_skills_lists_all_filters_by_status_and_rejects_invalid(tmp_path):
+    skills_dir = tmp_path / "skills"
+    _write_skill_file(
+        skills_dir,
+        "active_one",
+        "active body",
+        pattern_type="box",
+        skill_version=2,
+        reuse_count=5,
+        last_used="2026-02-01",
+        source_project="ProjA",
+    )
+    _write_skill_file(
+        skills_dir,
+        "verified_one",
+        "verified body",
+        status="verified",
+        pattern_type="pattern",
+    )
+    propose_skill("proposed_one", "proposed body", skills_dir=str(skills_dir))
+    deprecate_skill("active_one", skills_dir=str(skills_dir))  # → deprecated
+
+    all_result = list_skills(skills_dir=str(skills_dir))
+    assert all_result["ok"] is True
+    assert all_result["total"] == 3
+    by_name = {s["name"]: s for s in all_result["skills"]}
+    assert by_name["active_one"]["status"] == "deprecated"
+    assert by_name["active_one"]["pattern_type"] == "box"
+    assert by_name["active_one"]["skill_version"] == 2
+    assert by_name["active_one"]["reuse_count"] == 5
+    assert by_name["active_one"]["last_used"] == "2026-02-01"
+    assert by_name["active_one"]["source_project"] == "ProjA"
+    assert by_name["verified_one"]["status"] == "verified"
+    assert by_name["proposed_one"]["status"] == "proposed"
+
+    active = list_skills(status="active", skills_dir=str(skills_dir))
+    assert active["total"] == 0  # active_one 已被翻 deprecated
+    verified = list_skills(status="verified", skills_dir=str(skills_dir))
+    assert [s["name"] for s in verified["skills"]] == ["verified_one"]
+    proposed = list_skills(status="proposed", skills_dir=str(skills_dir))
+    assert [s["name"] for s in proposed["skills"]] == ["proposed_one"]
+    deprecated = list_skills(status="deprecated", skills_dir=str(skills_dir))
+    assert [s["name"] for s in deprecated["skills"]] == ["active_one"]
+    assert TRACE_RE.match(all_result["trace_id"])
+
+    bad = list_skills(status="bogus", skills_dir=str(skills_dir))
+    assert bad["ok"] is False
+    assert bad["error"]["code"] == "invalid_mode"
+    assert "message" in bad["error"]
+    assert TRACE_RE.match(bad["trace_id"])
+
+
+def test_deprecate_skill_flips_status_stops_injection_and_is_idempotent(tmp_path):
+    skills_dir = tmp_path / "skills"
+    _write_skill_file(
+        skills_dir,
+        "create_object",
+        "# 创建对象策略\n\n## 触发关键词\n- 生成\n- 创建\n",
+        pattern_type="box",
+    )
+
+    result = deprecate_skill("create_object", skills_dir=str(skills_dir))
+    assert result["ok"] is True
+    assert result["name"] == "create_object"
+    assert result["status"] == "deprecated"
+    assert TRACE_RE.match(result["trace_id"])
+
+    on_disk = (skills_dir / "create_object.md").read_text(encoding="utf-8")
+    assert "status: deprecated" in on_disk
+
+    loader = SkillsLoader(str(skills_dir))
+    assert loader.skill_meta("create_object")["status"] == "deprecated"
+    assert "create_object" not in loader.get_for_task("生成一个书架")
+    assert loader.get_by_name("create_object") is None
+
+    again = deprecate_skill("create_object", skills_dir=str(skills_dir))
+    assert again["ok"] is True
+    assert again["status"] == "deprecated"
+
+    missing = deprecate_skill("ghost_skill", skills_dir=str(skills_dir))
+    assert missing["ok"] is False
+    assert missing["error"]["code"] == "skill_not_found"
+    assert "message" in missing["error"]
+    assert TRACE_RE.match(missing["trace_id"])
+
+
+def test_skill_lifecycle_propose_verify_reuse_deprecate(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skill_slice = {
+        "params": {"A": 2.0, "B": 3.0, "ZZYZX": 4.0},
+        "scripts": {"3d": "BLOCK A, B, ZZYZX\n"},
+    }
+    propose_skill(
+        "shelf_pattern",
+        "# 书架策略\n\n## 触发关键词\n- 书架\n",
+        pattern_type="box",
+        source_project="Demo",
+        slice=skill_slice,
+        skills_dir=str(skills_dir),
+    )
+    verified = verify_skill("shelf_pattern", skills_dir=str(skills_dir))
+    assert verified["ok"] is True
+    assert verified["status"] == "verified"
+
+    hit = reuse_skill("书架", skills_dir=str(skills_dir))
+    assert hit["ok"] is True
+    assert [m["name"] for m in hit["matched"]] == ["shelf_pattern"]
+    assert hit["skills_text"]
+    assert hit["matched"][0]["status"] == "verified"
+    assert hit["matched"][0]["excerpt"]
+
+    deprecate = deprecate_skill("shelf_pattern", skills_dir=str(skills_dir))
+    assert deprecate["ok"] is True
+    assert deprecate["status"] == "deprecated"
+
+    miss = reuse_skill("书架", skills_dir=str(skills_dir))
+    assert miss["ok"] is True
+    assert miss["matched"] == []
+    assert miss["skills_text"] == ""
+    assert TRACE_RE.match(miss["trace_id"])

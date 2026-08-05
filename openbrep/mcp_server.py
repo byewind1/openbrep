@@ -4,7 +4,7 @@
 协议皮（protocol skin），不含任何业务逻辑。mcp_tools.py 一行都不许动。
 
 职责：
-- 把 mcp_tools 的 7 个工具注册为 MCP 工具，工具名与函数名一致。
+- 把 mcp_tools 的 12 个工具注册为 MCP 工具，工具名与函数名一致。
 - 每个工具的 description 从 mcp_tools 对应函数的 docstring 提炼。
 - 工具返回值：mcp_tools 返回的 dict 直接 JSON 序列化为 text content 返回；
   异常不抛到协议层（mcp_tools 已保证不抛，这里再加一层兜底）。
@@ -42,6 +42,11 @@ _MCP_TOOL_NAMES = (
     "apply_edit",
     "rollback",
     "import_source",
+    "propose_skill",
+    "verify_skill",
+    "reuse_skill",
+    "list_skills",
+    "deprecate_skill",
 )
 
 
@@ -133,6 +138,62 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
             optional=(("name", "string"),),
         ),
     ),
+    (
+        "propose_skill",
+        mcp_tools.propose_skill,
+        "提出一个新 skill（写 {name}.md 到 skills_dir），不验证、不晋升；"
+        "同名已存在不覆盖。返回 {ok, skill, status, path, trace_id}。"
+        "参数 name: skill 名（string）；content: skill 正文（string）；"
+        "pattern_type / source_project / source_trace_id: 溯源字段（string，选填）；"
+        "slice: 跨脚本 feature slice 对象 {params, scripts}（object，选填）；"
+        "skills_dir: skills 目录，默认 ./skills（string，选填）。",
+        _schema(
+            required=(("name", "string"), ("content", "string")),
+            optional=(
+                ("pattern_type", "string"),
+                ("source_project", "string"),
+                ("source_trace_id", "string"),
+                ("slice", "object"),
+                ("skills_dir", "string"),
+            ),
+        ),
+    ),
+    (
+        "verify_skill",
+        mcp_tools.verify_skill,
+        "skill 晋升门禁：带 slice 走 full 门禁（mock 编译+语义验证），无 slice 走 "
+        "structural 门禁（frontmatter 完整+触发词小节）。通过则 status 翻 verified "
+        "并写 verified_evidence。返回 {ok, name, gate, passed, evidence, status, trace_id}。"
+        "参数 name: skill 名（string）；"
+        "skills_dir: skills 目录，默认 ./skills（string，选填）。",
+        _schema(required=(("name", "string"),), optional=(("skills_dir", "string"),)),
+    ),
+    (
+        "reuse_skill",
+        mcp_tools.reuse_skill,
+        "按任务描述检索可注入 skill 并返回注入文本（调用即计复用：命中把该 skill 的 "
+        "reuse_count+1）。返回 {ok, query, matched, skills_text, trace_id}。"
+        "参数 query: 任务描述（string）；"
+        "skills_dir: skills 目录，默认 ./skills（string，选填）。",
+        _schema(required=(("query", "string"),), optional=(("skills_dir", "string"),)),
+    ),
+    (
+        "list_skills",
+        mcp_tools.list_skills,
+        "列出全部 skill（含 proposed/deprecated）及元数据，status 非空时按状态过滤。"
+        "返回 {ok, skills, total, trace_id}。参数 status: "
+        "active/verified/proposed/deprecated（string，选填）；"
+        "skills_dir: skills 目录，默认 ./skills（string，选填）。",
+        _schema(required=(), optional=(("status", "string"), ("skills_dir", "string"))),
+    ),
+    (
+        "deprecate_skill",
+        mcp_tools.deprecate_skill,
+        "把 skill 翻为 deprecated（不再注入，文件保留不删除）；已是 deprecated 幂等成功。"
+        "返回 {ok, name, status, trace_id}。参数 name: skill 名（string）；"
+        "skills_dir: skills 目录，默认 ./skills（string，选填）。",
+        _schema(required=(("name", "string"),), optional=(("skills_dir", "string"),)),
+    ),
 )
 
 _TOOLS_BY_NAME: dict[str, dict[str, Any]] = {
@@ -221,7 +282,9 @@ def build_server() -> Server:
         version=__version__,
         instructions=(
             "OpenBrep MCP 工具层：加载 / 编译 / 语义验证 / 几何证据 / 编辑 / 回滚 / 导入 "
-            "HSF（ArchiCAD 库对象）项目。所有工具第一个参数都是 HSF 项目目录绝对路径 path；"
+            "HSF（ArchiCAD 库对象）项目；以及 propose/verify/reuse/list/deprecate 五个 "
+            "skill 管理工具。项目类工具第一个参数都是 HSF 项目目录绝对路径 path；"
+            "skill 类工具用 name/query + skills_dir。"
             "返回 {ok, ..., trace_id} 或 {ok: False, error: {code, message}, trace_id}。"
         ),
         on_list_tools=_on_list_tools,

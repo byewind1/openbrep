@@ -7,12 +7,14 @@ JSON-RPC（newline-delimited JSON）做协议级验证。
 步骤：
 1. 临时构造最小 HSF 项目（复用 HSFProject.create_new 手法）。
 2. initialize → notifications/initialized → tools/list → tools/call
-   load_project(path=项目) → tools/call compile_hsf(mode="mock")。
+   load_project(path=项目) → tools/call compile_hsf(mode="mock") →
+   tools/call list_skills(skills_dir=临时目录)。
 3. 断言：
    - initialize 响应含 protocolVersion；
-   - tools/list 恰好 7 个工具且名字正确；
+   - tools/list 恰好 12 个工具且名字正确；
    - load_project 返回 ok:True 且 name 正确；
-   - compile_hsf 返回 success:True。
+   - compile_hsf 返回 success:True；
+   - list_skills 返回 ok:True 且 skills 为列表。
 4. 全程 30s 超时保护；失败打印收到的原始字节便于排查。
 
 stdout 污染检查：server 进程任何 print/日志进 stdout 都会让这里的
@@ -57,6 +59,11 @@ EXPECTED_TOOLS = (
     "apply_edit",
     "rollback",
     "import_source",
+    "propose_skill",
+    "verify_skill",
+    "reuse_skill",
+    "list_skills",
+    "deprecate_skill",
 )
 
 
@@ -233,6 +240,31 @@ def _main() -> int:
         print(
             f"[6] compile_hsf OK · mode={compile_payload['mode']} "
             f"success={compile_payload['success']} exit_code={compile_payload['exit_code']}"
+        )
+
+        # ── tools/call list_skills(skills_dir=临时目录) ─────────────────
+        skills_dir = Path(tempfile.mkdtemp(prefix="mcp_skills_"))
+        skills_req = {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "list_skills",
+                "arguments": {"skills_dir": str(skills_dir)},
+            },
+        }
+        proc.stdin.write(json.dumps(skills_req) + "\n")
+        proc.stdin.flush()
+        skills_result = _expect_response(_read_json_line(lines, deadline), 5)
+        skills_text = (skills_result.get("content") or [{}])[0].get("text", "")
+        skills_payload = json.loads(skills_text)
+        if skills_payload.get("ok") is not True or not isinstance(
+            skills_payload.get("skills"), list
+        ):
+            _fail(f"list_skills 断言失败: {skills_payload}")
+        print(
+            f"[7] list_skills OK · total={skills_payload['total']} "
+            f"skills={len(skills_payload['skills'])} trace_id={skills_payload['trace_id']}"
         )
 
         print("\n[PASS] MCP stdio 冒烟全部通过")
