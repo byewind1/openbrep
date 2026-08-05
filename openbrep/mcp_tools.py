@@ -549,7 +549,11 @@ def _diff_dirs(original: Path, modified: Path) -> str:
 # ── render_evidence ──────────────────────────────────────
 
 
-def render_evidence(path: str, sweep_params: list[str] | None = None) -> dict:
+def render_evidence(
+    path: str,
+    sweep_params: list[str] | None = None,
+    tolerance: float = 0.05,
+) -> dict:
     """机器可读几何证据：包围盒、网格统计、参数扫掠响应（单位：米）。
 
     不是给人看的 Three.js payload，而是可供下游工具/LLM 判读的结构化证据：
@@ -559,6 +563,9 @@ def render_evidence(path: str, sweep_params: list[str] | None = None) -> dict:
     sweep_params 为空 = 不扫掠。预览内部异常降级为 warning + ok:True +
     mesh_stats 为空（参考 verify_semantics 的 preview_error 降级策略），
     不让工具整体失败。
+
+    tolerance 只影响 bbox_vs_declared 的 match 判定（默认 0.05，即 5%）；
+    不影响 semantic_verifier 的任何行为。deltas 照旧全量报告。
     """
     with _locked():
         trace_id = _next_trace_id()
@@ -567,10 +574,7 @@ def render_evidence(path: str, sweep_params: list[str] | None = None) -> dict:
             return loaded
         _root, project = loaded
 
-        from openbrep.semantic_verifier import (
-            DEFAULT_BBOX_TOLERANCE,
-            _scene_bbox,
-        )
+        from openbrep.semantic_verifier import _scene_bbox
         from openbrep.static_checker import RESERVED_PARAMS
         from openbrep.workbench.preview_service import preview_payload
         from openbrep.workbench.project_parameter_service import parameter_values
@@ -611,7 +615,7 @@ def render_evidence(path: str, sweep_params: list[str] | None = None) -> dict:
         bbox_vs_declared = None
         if bbox_info is not None and declared_dims:
             bbox_vs_declared = _bbox_vs_declared(
-                bbox_info["size"], declared_dims, tolerance=DEFAULT_BBOX_TOLERANCE
+                bbox_info["size"], declared_dims, tolerance=tolerance
             )
 
         return {
@@ -848,10 +852,11 @@ def _import_gdl(source: Path, target_dir: Path, name: str | None, trace_id: str)
             trace_id,
             details={"path": str(source)},
         )
+    warnings = list(result.get("warnings") or [])
     return {
         "ok": True,
         "project_path": str(session.source_path),
-        "warnings": [],
+        "warnings": warnings,
         "trace_id": trace_id,
     }
 

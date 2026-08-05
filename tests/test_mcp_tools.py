@@ -164,6 +164,30 @@ def test_render_evidence_degrades_when_preview_crashes(tmp_path, monkeypatch):
     assert TRACE_RE.match(result["trace_id"])
 
 
+def test_render_evidence_bbox_tolerance_controls_match(tmp_path):
+    # 声明 A=B=ZZYZX=1.0，几何画成 1.2,1.0,1.0 → 最大维度差 20%：
+    # tolerance=0.05 时 match=False，tolerance=0.5 时 match=True；deltas 全量报告。
+    project = HSFProject.create_new("TolBox", str(tmp_path))
+    project.scripts[ScriptType.SCRIPT_3D] = "BLOCK 1.2, 1.0, 1.0\n"
+    hsf_dir = project.save_to_disk()
+
+    strict = render_evidence(str(hsf_dir), tolerance=0.05)
+    assert strict["ok"] is True
+    assert strict["bbox_vs_declared"]["match"] is False
+    assert strict["bbox_vs_declared"]["deltas"]
+
+    loose = render_evidence(str(hsf_dir), tolerance=0.5)
+    assert loose["ok"] is True
+    assert loose["bbox_vs_declared"]["match"] is True
+    assert loose["bbox_vs_declared"]["deltas"] == strict["bbox_vs_declared"]["deltas"]
+
+    # 默认 tolerance=0.05（5%），与 semantic_verifier 的 0.5 无关。
+    default = render_evidence(str(hsf_dir))
+    assert default["bbox_vs_declared"]["match"] is False
+    assert default["bbox_vs_declared"]["deltas"] == strict["bbox_vs_declared"]["deltas"]
+    assert TRACE_RE.match(strict["trace_id"])
+
+
 def test_render_evidence_surfaces_preview_warnings(tmp_path):
     project = HSFProject.create_new("WarnBox", str(tmp_path))
     project.scripts[ScriptType.SCRIPT_3D] = "BLOCK x/0, 1, 1\n"
@@ -189,7 +213,56 @@ def test_import_source_gdl_creates_project(tmp_path):
     loaded = load_project(str(project_path))
     assert loaded["ok"] is True
     assert loaded["name"] == "Bookshelf"
+    assert loaded["parameter_count"] == 10
     assert TRACE_RE.match(result["trace_id"])
+
+
+def test_import_source_gdl_parses_parameters_and_sections(tmp_path):
+    src = Path(__file__).resolve().parents[1] / "examples" / "Bookshelf.gdl"
+    target = tmp_path / "imports"
+    result = import_source(str(src), "gdl", str(target))
+    assert result["ok"] is True
+
+    project = HSFProject.load_from_disk(str(Path(result["project_path"])))
+
+    # 参数注释块 → 真实 GDLParameter，类型映射正确（不再静默只剩 A/B/ZZYZX）
+    by_name = {p.name: p for p in project.parameters}
+    assert set(by_name) >= {"A", "B", "ZZYZX", "nShelves", "thickness", "sideW",
+                            "hasBack", "backThick", "frameMat", "shelfMat"}
+    assert by_name["nShelves"].type_tag == "Integer"
+    assert by_name["nShelves"].value == "4"
+    assert by_name["hasBack"].type_tag == "Boolean"
+    assert by_name["frameMat"].type_tag == "Material"
+
+    # MASTER SCRIPT 内容进 master（1d.gdl），而不是 3D
+    master = project.get_script(ScriptType.MASTER)
+    script_3d = project.get_script(ScriptType.SCRIPT_3D)
+    assert "IF A < 0.30" in master
+    assert "IF A < 0.30" not in script_3d
+    assert "BLOCK A, B, thickness" in script_3d
+
+
+def test_import_source_gdl_reports_unparseable_param_lines_with_line_number(tmp_path):
+    src = tmp_path / "BrokenParams.gdl"
+    src.write_text(
+        "! ====\n"
+        "! A           Length    0.80    书架宽度\n"
+        "! nShelves    Integer\n"
+        "! B           Length    0.30    书架深度\n"
+        "! ====\n"
+        "! 3D SCRIPT\n"
+        "BLOCK A, B, ZZYZX\n",
+        encoding="utf-8",
+    )
+    result = import_source(str(src), "gdl", str(tmp_path / "imports"))
+    assert result["ok"] is True
+    assert any("第 3 行" in w and "nShelves" in w for w in result["warnings"])
+
+    # 损坏行没有静默丢进项目，其余参数照常解析
+    project = HSFProject.load_from_disk(str(Path(result["project_path"])))
+    names = {p.name for p in project.parameters}
+    assert "A" in names and "B" in names
+    assert "nShelves" not in names
 
 
 def test_import_source_gsm_converter_unavailable_when_missing(tmp_path, monkeypatch):

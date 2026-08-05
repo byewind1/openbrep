@@ -91,8 +91,13 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
         mcp_tools.render_evidence,
         "生成机器可读几何证据：包围盒、网格统计、参数扫掠响应（单位：米）。"
         "参数 path: HSF 项目目录绝对路径（string）；"
-        "sweep_params: 要扫掠的参数名列表，空则跳过（array of string，选填）。",
-        _schema(required=(("path", "string"),), optional=(("sweep_params", "array"),)),
+        "sweep_params: 要扫掠的参数名列表，空则跳过（array of string，选填）；"
+        "tolerance: bbox_vs_declared 的 match 容差，默认 0.05（number，选填），"
+        "只影响 match 判定，不影响 semantic_verifier 行为。",
+        _schema(
+            required=(("path", "string"),),
+            optional=(("sweep_params", "array"), ("tolerance", "number")),
+        ),
     ),
     (
         "apply_edit",

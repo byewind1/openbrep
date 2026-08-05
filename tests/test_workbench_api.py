@@ -1,4 +1,5 @@
 import base64
+from pathlib import Path
 
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
@@ -15,6 +16,8 @@ from openbrep.workbench_api import (
     preview_payload,
     route_rpc,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_build_demo_snapshot_contains_project_parameters_and_preview():
@@ -355,6 +358,30 @@ def test_workbench_session_import_gdl_uses_gdl_file_chooser_purpose(tmp_path):
 
     assert response["ok"] is True
     assert purposes == ["gdl"]
+
+
+def test_workbench_session_import_gdl_parses_bookshelf_parameters_and_sections(tmp_path):
+    import shutil
+
+    bookshelf = tmp_path / "Bookshelf.gdl"
+    shutil.copy2(REPO_ROOT / "examples" / "Bookshelf.gdl", bookshelf)
+    session = WorkbenchSession()
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(bookshelf)})
+
+    assert response["ok"] is True
+    assert response["warnings"] == []
+
+    imported = HSFProject.load_from_disk(response["project"]["path"])
+    assert len(imported.parameters) == 10
+    by_name = {p.name: p for p in imported.parameters}
+    assert by_name["nShelves"].type_tag == "Integer"
+    assert by_name["nShelves"].value == "4"
+    assert by_name["hasBack"].type_tag == "Boolean"
+    assert by_name["frameMat"].type_tag == "Material"
+
+    master = imported.get_script(ScriptType.MASTER)
+    assert "IF A < 0.30" in master
+    assert "IF A < 0.30" not in imported.get_script(ScriptType.SCRIPT_3D)
 
 
 def test_workbench_session_rejects_non_gdl_import(tmp_path):

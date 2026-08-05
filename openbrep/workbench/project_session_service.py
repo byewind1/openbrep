@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
+from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
@@ -72,16 +73,40 @@ class WorkbenchProjectSessionService:
 
         content = source_file.read_text(encoding="utf-8-sig")
         project_name = unique_project_name(safe_project_name(source_file.stem), source_file.parent)
-        project = HSFProject.create_new(project_name, str(source_file.parent))
+
+        # 结构化解析：参数注释块 → GDLParameter；分节横幅 → 对应脚本；任何丢失
+        # 或无法识别的内容都会进 warnings（零静默）。
+        project, warnings = parse_gdl_source_with_warnings(content, project_name)
+
+        explicit_script = str(body.get("script_name") or "").strip()
+        if gdl_source_has_sections(content):
+            if explicit_script:
+                warnings.append(
+                    f"文件含可识别脚本分节，已按分节拆分到对应脚本，忽略目标脚本参数: {script_name}"
+                )
+        else:
+            # 未识别出分节：保持"全文进目标脚本"的导入语义（默认 3D），不猜分节；
+            # 已解析出的参数与 warnings 仍然保留。
+            if script_type != ScriptType.SCRIPT_3D:
+                project.scripts = {script_type: content}
+            elif not project.scripts:
+                project.scripts = {ScriptType.SCRIPT_3D: content}
+
+        project.name = project_name
+        project.work_dir = source_file.parent
+        project.root = source_file.parent / project_name
         project.description = f"Imported from {source_file.name}"
-        project.set_script(script_type, content)
         hsf_dir = project.save_to_disk()
 
         self.session.project = project
         self.session.source = "hsf"
         self.session.source_path = hsf_dir
         self.remember_project_path(hsf_dir)
-        return {"ok": True, "imported_from": str(source_file), **self.session.snapshot()}
+        result = self.session.snapshot()
+        result["ok"] = True
+        result["imported_from"] = str(source_file)
+        result["warnings"] = warnings
+        return result
 
     def import_gsm_file(self, body: dict[str, Any]) -> dict[str, Any]:
         raw_path = str(body.get("path") or "").strip()
