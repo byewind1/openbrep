@@ -1,11 +1,13 @@
 """MCP 工具契约层（openbrep.mcp_tools）契约测试。
 
 只读工具：load_project / compile_hsf / semantic_verify；
-证据/导入工具：render_evidence / import_source。
+证据/导入工具：render_evidence / import_source；
+mutation 工具：apply_edit（draft/apply）/ rollback。
 契约：dict in / dict out；异常不穿透；统一错误形态；trace_id = mcp-YYYYMMDD-NNNN。
 无网络、无 LLM、无 LP_XMLConverter（compile 走 mock，gsm 导入断言 converter_unavailable）。
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -13,12 +15,15 @@ import pytest
 
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.mcp_tools import (
+    apply_edit,
     compile_hsf,
     import_source,
     load_project,
     render_evidence,
+    rollback,
     semantic_verify,
 )
+from openbrep.revisions import get_latest_revision_id
 
 TRACE_RE = re.compile(r"^mcp-\d{8}-\d{4}$")
 
@@ -236,3 +241,127 @@ def test_import_source_unified_error_shape_for_bad_inputs(tmp_path):
     assert bad_suffix["ok"] is False
     assert bad_suffix["error"]["code"] == "invalid_mode"
     assert "message" in bad_suffix["error"]
+
+
+# ── apply_edit / rollback（P1-c，mutation） ────────────────
+
+
+def _make_editable_project(tmp_path, name="Shelf"):
+    """含已知参数值与 3D 脚本的项目，返回 (root, project)。"""
+    project = HSFProject.create_new(name, str(tmp_path))
+    project.get_parameter("A").value = "1.5"
+    project.get_parameter("B").value = "0.6"
+    project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+    root = project.save_to_disk()
+    return root, project
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {str(fp.relative_to(root)): fp.read_bytes() for fp in root.rglob("*") if fp.is_file()}
+
+
+def test_apply_edit_draft_is_zero_persistence(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+    before = _tree_bytes(root)
+    latest_before = get_latest_revision_id(root)
+
+    result = apply_edit(str(root), {"type": "set_parameters", "values": {"A": 2.5}}, mode="draft")
+
+    assert result["ok"] is True
+    assert result["mode"] == "draft"
+    assert result["diff"]
+    assert "paramlist.xml" in result["diff"]
+    assert result["compile"]["success"] is True
+    assert result["compile"]["mode"] == "mock"
+    assert result["verify"]["passed"] is True
+    assert TRACE_RE.match(result["trace_id"])
+
+    # 字节级零改动 + 最新 revision 不变
+    assert _tree_bytes(root) == before
+    assert get_latest_revision_id(root) == latest_before
+
+
+def test_apply_edit_apply_parameters_persists_and_records_trace_id(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+
+    result = apply_edit(str(root), {"type": "set_parameters", "values": {"A": 2.5}}, mode="apply")
+
+    assert result["ok"] is True
+    assert result["mode"] == "apply"
+    assert result["revision_id"]
+    assert result["diff"]
+    assert result["compile"]["success"] is True
+    assert result["recent_revisions"]  # 非空，最近 5 条
+
+    loaded = HSFProject.load_from_disk(str(root))
+    assert float(loaded.get_parameter("A").value) == pytest.approx(2.5)
+
+    manifest = json.loads(
+        (root / ".openbrep" / "revisions" / result["revision_id"] / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["metadata"]["trace_id"] == result["trace_id"]
+    assert manifest["metadata"]["tool_spec"]["type"] == "set_parameters"
+    assert manifest["metadata"]["tool_spec"]["values"] == {"A": 2.5}
+    assert TRACE_RE.match(result["trace_id"])
+
+
+def test_apply_edit_apply_script_replaces_content(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+    new_script = "BLOCK 2, 2, 2\n"
+
+    result = apply_edit(
+        str(root),
+        {"type": "set_script", "script_type": "3d", "content": new_script},
+        mode="apply",
+    )
+
+    assert result["ok"] is True
+    assert result["revision_id"]
+    assert "scripts/3d.gdl" in result["diff"]
+    loaded = HSFProject.load_from_disk(str(root))
+    assert loaded.get_script(ScriptType.SCRIPT_3D) == new_script
+    assert TRACE_RE.match(result["trace_id"])
+
+
+def test_apply_edit_apply_then_rollback_previous_restores(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+    apply_result = apply_edit(str(root), {"type": "set_parameters", "values": {"A": 2.5}}, mode="apply")
+    assert float(HSFProject.load_from_disk(str(root)).get_parameter("A").value) == pytest.approx(2.5)
+
+    result = rollback(str(root), "previous")
+
+    assert result["ok"] is True
+    assert result["restored_revision"] == apply_result["revision_id"]
+    assert result["new_revision_id"]
+    assert TRACE_RE.match(result["trace_id"])
+    # 恢复原值
+    assert float(HSFProject.load_from_disk(str(root)).get_parameter("A").value) == pytest.approx(1.5)
+    # 产生 trigger="rollback" 的 revision（manifest 与 recent_revisions 都能看到）
+    assert result["recent_revisions"][-1]["trigger"] == "rollback"
+    assert result["recent_revisions"][-1]["id"] == result["new_revision_id"]
+    rollback_manifest = json.loads(
+        (root / ".openbrep" / "revisions" / result["new_revision_id"] / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert rollback_manifest["trigger"] == "rollback"
+    assert rollback_manifest["metadata"]["restored_from"] == apply_result["revision_id"]
+
+
+def test_apply_edit_invalid_specs_return_unified_error(tmp_path):
+    root, _project = _make_editable_project(tmp_path)
+    bad_specs = [
+        {"type": "bogus"},  # 未知 type
+        {"type": "set_parameters", "values": {"nonexistent_param": 1.0}},  # 参数不存在
+        {"type": "set_script", "script_type": "bad", "content": "BLOCK 1, 1, 1\n"},  # 脚本类型非法
+    ]
+    for spec in bad_specs:
+        result = apply_edit(str(root), spec, mode="draft")
+        assert result["ok"] is False
+        assert result["error"]["code"] == "invalid_spec"
+        assert result["error"]["message"]
+        assert TRACE_RE.match(result["trace_id"])
+    # 原项目目录不受非法 spec 影响
+    assert float(HSFProject.load_from_disk(str(root)).get_parameter("A").value) == pytest.approx(1.5)

@@ -1,4 +1,4 @@
-"""MCP 工具契约层（Phase 1 / P1-b+d）。
+"""MCP 工具契约层（Phase 1 / P1-b+d+e）。
 
 纯 Python，dict in / dict out。禁止 import 任何 mcp 库 —— 协议适配层后续才做。
 
@@ -8,20 +8,25 @@
 - 失败返回：{ok: False, error: {code, message, details?}, trace_id}
 - 任何异常都不许穿透：统一包成错误 dict 返回。
 - trace_id 格式：mcp-YYYYMMDD-NNNN（日内序号，模块级计数器）。
-- mutation 工具本包不做（后续 P1-c），但骨架预留模块级 threading.RLock 与
-  _locked() 上下文管理器；只读工具 v1 也走它（串行最稳）。
+- mutation 工具（apply_edit / rollback）全程走 _locked()；只读工具 v1 也走它
+  （串行最稳）。
 
 错误 code 汇总（全部工具共用同一错误形态）：
 - project_not_found      path 不存在 / 不是合法 HSF 项目 / 项目加载失败 /
                          import_source 的源文件不存在
 - invalid_mode           compile_hsf 的 mode 非法 / import_source 的 kind 非法 /
-                         源文件后缀与 kind 不匹配
+                         源文件后缀与 kind 不匹配 / apply_edit 的 mode 非法
+- invalid_spec           apply_edit 的 spec 非法（未知 type / 参数不存在 /
+                         非数值参数值 / 脚本类型非法 / content 非字符串）
+- invalid_revision       rollback 的 revision_id 不存在 / 无 parent 且无
+                         倒数第二条可回滚
 - converter_unavailable  LP_XMLConverter 不可用（import_source kind="gsm"）
 - mcp_internal_error     工具内部意外异常（预览、编译、导入、服务调用等）
 """
 
 from __future__ import annotations
 
+import difflib
 import shutil
 import tempfile
 import threading
@@ -33,8 +38,14 @@ from typing import Any, Iterator
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
-from openbrep.hsf_project import HSFProject
-from openbrep.revisions import get_latest_revision_id, is_hsf_project_dir
+from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.revisions import (
+    create_revision,
+    get_latest_revision_id,
+    is_hsf_project_dir,
+    list_revisions,
+    restore_revision,
+)
 from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.workbench.project_session_service import safe_project_name, unique_project_name
 
@@ -128,6 +139,16 @@ def load_project(path: str) -> dict:
             return _make_error("mcp_internal_error", f"load_project 失败: {exc}", trace_id)
 
 
+def _resolve_compiler(mode: str) -> tuple[MockHSFCompiler | HSFCompiler, str]:
+    """按 compile_hsf 语义选择编译器：mock 固定 mock；auto/real 优先真实。"""
+    if mode == "mock":
+        return MockHSFCompiler(), "mock"
+    real = HSFCompiler()
+    if mode == "real" or real.is_available:
+        return real, "real"
+    return MockHSFCompiler(), "mock"
+
+
 def compile_hsf(path: str, mode: str = "auto") -> dict:
     """编译 HSF → .gsm（只读：产物写临时目录，不写进项目目录）。
 
@@ -148,17 +169,7 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
         except Exception as exc:
             return _make_error("project_not_found", str(exc), trace_id)
 
-        if mode == "mock":
-            compiler: MockHSFCompiler | HSFCompiler = MockHSFCompiler()
-            effective_mode = "mock"
-        else:
-            real = HSFCompiler()
-            if mode == "real" or real.is_available:
-                compiler = real
-                effective_mode = "real"
-            else:
-                compiler = MockHSFCompiler()
-                effective_mode = "mock"
+        compiler, effective_mode = _resolve_compiler(mode)
 
         try:
             out_dir = tempfile.mkdtemp(prefix="mcp_compile_")
@@ -202,6 +213,337 @@ def semantic_verify(path: str, sweep: bool = True) -> dict:
             }
         except Exception as exc:
             return _make_error("mcp_internal_error", f"semantic_verify 失败: {exc}", trace_id)
+
+
+# ── apply_edit / rollback（P1-c，mutation） ────────────────
+
+# spec script_type 别名 → ScriptType（1d 与 master 都指向 Master/1d.gdl）
+_SCRIPT_TYPE_MAP = {
+    "1d": ScriptType.MASTER,
+    "master": ScriptType.MASTER,
+    "2d": ScriptType.SCRIPT_2D,
+    "3d": ScriptType.SCRIPT_3D,
+    "vl": ScriptType.PARAM,
+    "ui": ScriptType.UI,
+}
+
+
+def apply_edit(path: str, spec: dict, mode: str = "draft") -> dict:
+    """应用编辑：set_parameters（改参数值）或 set_script（整脚本替换）。
+
+    spec 只支持两种（不做通用补丁语言）：
+    - {"type": "set_parameters", "values": {param_name: number}}
+    - {"type": "set_script", "script_type": "1d"|"2d"|"3d"|"vl"|"ui"|"master",
+       "content": str}
+
+    mode="draft"（试跑，零持久化）：
+    1. 整个项目目录复制到 tempfile.mkdtemp 里的副本。
+    2. 副本上应用 spec + save_to_disk。
+    3. 对副本跑 compile（mock）与 semantic_verify。
+    4. 生成原目录 vs 副本的 unified diff（只含变化源文件）。
+    原项目目录字节级零改动。
+
+    mode="apply"（落盘，可回滚）：
+    1. 先 create_revision 快照（metadata 记 {trace_id, tool_spec}，随
+       revisions.py 落进 manifest.json）。
+    2. 应用 spec + save_to_disk。
+    3. 编译（auto：真实可用走真实，否则 mock）。
+    返回 revision_id 与最近 5 条 revision。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        if mode not in ("draft", "apply"):
+            return _make_error(
+                "invalid_mode",
+                f"mode 必须是 draft/apply，收到: {mode!r}",
+                trace_id,
+                details={"mode": mode},
+            )
+        loaded = _load_project(path, trace_id)
+        if isinstance(loaded, dict):
+            return loaded
+        root, project = loaded
+
+        spec_error = _validate_spec(spec, project)
+        if spec_error:
+            return _make_error("invalid_spec", spec_error, trace_id, details={"spec": spec})
+
+        try:
+            if mode == "draft":
+                return _apply_edit_draft(root, spec, trace_id)
+            return _apply_edit_apply(root, project, spec, trace_id)
+        except Exception as exc:
+            return _make_error(
+                "mcp_internal_error",
+                f"apply_edit 失败: {exc}",
+                trace_id,
+                details={"mode": mode},
+            )
+
+
+def rollback(path: str, revision_id: str = "previous") -> dict:
+    """回滚项目到指定 revision，并记录一条 trigger="rollback" 的新 revision。
+
+    revision_id="previous" 的解析语义：回滚到最新 revision 的父版本——
+    优先用 list_revisions + manifest 的 parent_revision_id；取不到时用 list
+    倒数第二条；若项目只有一条 revision（父为空，例如刚 apply_edit 一次），
+    回滚到它本身，即撤销最近一次变更。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        loaded = _load_project(path, trace_id)
+        if isinstance(loaded, dict):
+            return loaded
+        root, _project = loaded
+
+        try:
+            revisions = list_revisions(root)
+            if not revisions:
+                return _make_error(
+                    "invalid_revision",
+                    "项目没有可回滚的 revision",
+                    trace_id,
+                    details={"revision_id": revision_id},
+                )
+            target_id = _resolve_rollback_target(root, revision_id, revisions)
+            if target_id is None:
+                return _make_error(
+                    "invalid_revision",
+                    f"找不到可回滚的版本: {revision_id}",
+                    trace_id,
+                    details={"revision_id": revision_id},
+                )
+            restored = restore_revision(root, target_id)
+            return {
+                "ok": True,
+                "restored_revision": target_id,
+                "new_revision_id": restored.revision_id,
+                "recent_revisions": _recent_revisions(root),
+                "trace_id": trace_id,
+            }
+        except Exception as exc:
+            return _make_error("mcp_internal_error", f"rollback 失败: {exc}", trace_id)
+
+
+# ── apply_edit 内部 ────────────────────────────────────────
+
+
+def _validate_spec(spec: Any, project: HSFProject) -> str | None:
+    """校验 apply_edit 的 spec；合法返回 None，否则返回错误消息。
+
+    非法判定：非对象 / 未知 type / set_parameters 的 values 非对象或参数不存在
+    或值非数值 / set_script 的 script_type 非法或 content 非字符串。
+    """
+    if not isinstance(spec, dict):
+        return f"spec 必须是对象，收到: {type(spec).__name__}"
+    stype = spec.get("type")
+    if stype not in ("set_parameters", "set_script"):
+        return f"未知 spec.type: {stype!r}"
+    if stype == "set_parameters":
+        values = spec.get("values")
+        if not isinstance(values, dict) or not values:
+            return "set_parameters 需要非空 values 对象"
+        for name, value in values.items():
+            if project.get_parameter(str(name)) is None:
+                return f"参数不存在: {name}"
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return f"参数 {name} 的值必须是数值: {value!r}"
+        return None
+    script_type = spec.get("script_type")
+    if script_type not in _SCRIPT_TYPE_MAP:
+        return f"非法的 script_type: {script_type!r}"
+    if not isinstance(spec.get("content"), str):
+        return "set_script 需要字符串 content"
+    return None
+
+
+def _apply_spec(project: HSFProject, spec: dict) -> None:
+    """把已校验的 spec 应用到内存项目（不落盘；落盘由调用方负责）。"""
+    if spec["type"] == "set_parameters":
+        for name, value in spec["values"].items():
+            project.get_parameter(str(name)).value = _format_number(value)
+        return
+    script_type = _SCRIPT_TYPE_MAP[spec["script_type"]]
+    project.set_script(script_type, spec["content"])
+
+
+def _spec_changed_files(spec: dict) -> list[str]:
+    """spec 影响的源文件相对路径（用于 revision changed_files）。"""
+    if spec["type"] == "set_parameters":
+        return ["paramlist.xml"]
+    script_type = _SCRIPT_TYPE_MAP[spec["script_type"]]
+    return [f"scripts/{script_type.value}"]
+
+
+def _format_number(value: int | float) -> str:
+    """数值 → GDL 参数值字符串（整数不带小数点；Boolean 按 0/1）。"""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _apply_edit_draft(root: Path, spec: dict, trace_id: str) -> dict:
+    """draft 模式：副本试跑，原项目目录字节级零改动。"""
+    tmp = Path(tempfile.mkdtemp(prefix="mcp_draft_"))
+    copy_dir = tmp / root.name
+    shutil.copytree(root, copy_dir)
+
+    copy_project = HSFProject.load_from_disk(str(copy_dir))
+    _apply_spec(copy_project, spec)
+    copy_project.save_to_disk()
+
+    return {
+        "ok": True,
+        "mode": "draft",
+        "diff": _diff_dirs(root, copy_dir),
+        "compile": _compile_project_result(copy_dir, "mock"),
+        "verify": _verify_project(copy_dir),
+        "trace_id": trace_id,
+    }
+
+
+def _apply_edit_apply(root: Path, project: HSFProject, spec: dict, trace_id: str) -> dict:
+    """apply 模式：快照"修改前"状态（metadata 记 {trace_id, tool_spec}）→
+    应用 spec → 落盘 → 编译。与 pipeline micro_modify 同一落盘语义。"""
+    revision = create_revision(
+        root,
+        message="mcp apply_edit",
+        gsm_name=project.name,
+        metadata={"trace_id": trace_id, "tool_spec": spec},
+        trigger="mcp",
+        intent="MCP",
+        user_instruction="",
+        changed_files=_spec_changed_files(spec),
+    )
+    _apply_spec(project, spec)
+    project.save_to_disk()
+    return {
+        "ok": True,
+        "mode": "apply",
+        "diff": _diff_dirs(revision.path, root),
+        "revision_id": revision.revision_id,
+        "compile": _compile_project_result(root, "auto"),
+        "recent_revisions": _recent_revisions(root),
+        "trace_id": trace_id,
+    }
+
+
+def _compile_project_result(root: Path, mode: str) -> dict:
+    """编译项目到临时目录并返回 compile 结果 dict（compile_hsf 同款逻辑）；
+    编译异常降级为 success=False，不抛给上层。"""
+    compiler, effective_mode = _resolve_compiler(mode)
+    try:
+        out_dir = tempfile.mkdtemp(prefix="mcp_compile_")
+        output_gsm = str(Path(out_dir) / f"{root.name}.gsm")
+        result = compiler.hsf2libpart(str(root), output_gsm)
+        return {
+            "mode": result.mode or effective_mode,
+            "success": result.success,
+            "errors": list(result.errors or []),
+            "warnings": list(result.warnings or []),
+            "exit_code": result.exit_code,
+            "output_path": result.output_path,
+        }
+    except Exception as exc:
+        return {
+            "mode": effective_mode,
+            "success": False,
+            "errors": [f"编译异常: {exc}"],
+            "warnings": [],
+            "exit_code": None,
+            "output_path": None,
+        }
+
+
+def _verify_project(root: Path, sweep: bool = True) -> dict:
+    """对项目目录做语义验证，返回 {passed, issues}；异常降级为 failed（advisory）。"""
+    from openbrep.semantic_verifier import verify_semantics
+
+    try:
+        project = HSFProject.load_from_disk(str(root))
+        result = verify_semantics(project, sweep=sweep)
+        issues = [
+            {"check_type": i.check_type, "detail": i.detail, "blocking": i.blocking}
+            for i in result.issues
+        ]
+        return {"passed": result.passed, "issues": issues}
+    except Exception as exc:
+        return {
+            "passed": False,
+            "issues": [
+                {"check_type": "verify_error", "detail": f"语义验证异常: {exc}", "blocking": True}
+            ],
+        }
+
+
+def _recent_revisions(root: Path, limit: int = 5) -> list[dict]:
+    revs = list_revisions(root)[-limit:]
+    return [{"id": r.revision_id, "message": r.message, "trigger": r.trigger} for r in revs]
+
+
+def _resolve_rollback_target(root: Path, revision_id: str, revisions: list) -> str | None:
+    """把 rollback 的 revision_id（含 "previous"）解析为实际要恢复的 revision id。"""
+    if revision_id != "previous":
+        return revision_id if any(r.revision_id == revision_id for r in revisions) else None
+
+    latest_id = get_latest_revision_id(root)
+    latest = next((r for r in revisions if r.revision_id == latest_id), None) or revisions[-1]
+    if latest.parent_revision_id:
+        parent = next(
+            (r for r in revisions if r.revision_id == latest.parent_revision_id), None
+        )
+        if parent is not None:
+            return parent.revision_id
+    if len(revisions) >= 2:
+        return revisions[-2].revision_id
+    # 单条 revision（如 apply_edit 快照"修改前"状态）：回滚到它本身 = 撤销最近一次变更
+    return latest.revision_id
+
+
+def _source_relative_files(root: Path) -> list[str]:
+    """项目源文件相对路径（*root*.xml + scripts/**），与 revisions 同口径。"""
+    files: list[str] = []
+    for path in sorted(root.glob("*.xml")):
+        if path.is_file():
+            files.append(path.name)
+    scripts_dir = root / "scripts"
+    if scripts_dir.is_dir():
+        for path in sorted(scripts_dir.rglob("*")):
+            if path.is_file():
+                files.append(path.relative_to(root).as_posix())
+    return files
+
+
+def _read_source_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8-sig", errors="replace")
+
+
+def _diff_dirs(original: Path, modified: Path) -> str:
+    """original vs modified 的 unified diff（只含变化源文件）。"""
+    files = sorted(
+        set(_source_relative_files(original)) | set(_source_relative_files(modified))
+    )
+    chunks: list[str] = []
+    for rel in files:
+        original_text = _read_source_text(original / rel)
+        modified_text = _read_source_text(modified / rel)
+        if original_text == modified_text:
+            continue
+        chunks.extend(
+            difflib.unified_diff(
+                original_text.splitlines(keepends=True),
+                modified_text.splitlines(keepends=True),
+                fromfile=f"a/{rel}",
+                tofile=f"b/{rel}",
+            )
+        )
+    return "".join(chunks)
 
 
 # ── render_evidence ──────────────────────────────────────

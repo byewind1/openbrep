@@ -12,14 +12,18 @@
 - 单位换算只作用于 Length 类型（GDL 长度单位是米）；其他数值类型带长度
   单位属于语义不明，回落 LLM。
 - 纯函数、无副作用：应用（写盘/快照/编译）由 pipeline 负责。
+- 落盘语义（快照→改值→save_to_disk）也收在这里（apply_parameter_value），
+  pipeline 微修改与 MCP apply_edit set_parameters 共用同一语义。
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from openbrep.hsf_project import GDLParameter, HSFProject
+from openbrep.revisions import get_latest_revision_id, is_hsf_project_dir
 
 # 设置类动词 + 目标数值（可选长度单位）。只取第一处匹配作为目标值——
 # "从 18mm 改为 25mm" 中 18mm 前面没有动词，天然不会被误取。
@@ -236,3 +240,72 @@ def _extract_value(text: str, param: GDLParameter, old_value: str) -> Optional[s
         return str(int(raw))
 
     return str(raw)  # RealNum
+
+
+# ── 参数值落盘（快照→改值→save_to_disk） ──────────────────
+
+
+def _project_on_disk(project: HSFProject) -> bool:
+    root = Path(getattr(project, "root", "") or "")
+    try:
+        return root.is_dir() and is_hsf_project_dir(root)
+    except Exception:
+        return False
+
+
+def apply_parameter_value(
+    project: HSFProject,
+    param_name: str,
+    new_value: str,
+    *,
+    user_instruction: str = "",
+    before_message: str = "auto: before modify",
+    trigger: str = "modify",
+    intent: str = "MODIFY",
+    changed_files: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    create_revision: Callable[..., Any] | None = None,
+) -> tuple[Optional[str], list[str]]:
+    """快照→改值→落盘：参数值变更的统一落盘语义。
+
+    pipeline 微修改（TaskPipeline._try_micro_modify）与 MCP apply_edit
+    set_parameters 共用，行为与微修改原内联流程完全一致：
+    - 项目未落盘为 HSF 目录 → 跳过快照，仅改值 + save_to_disk；
+    - create_revision 失败 → 记录警告，不阻断改值；
+    - 值变更始终落盘。
+
+    create_revision 由调用方注入（pipeline 传自己的模块级 create_revision，
+    MCP 传 openbrep.revisions.create_revision），本函数为纯函数、不依赖
+    pipeline 状态。返回 (revision_id | None, 警告列表)。
+    """
+    warnings: list[str] = []
+    revision_id: Optional[str] = None
+    if create_revision is None:
+        from openbrep.revisions import create_revision as _real_create_revision
+
+        create_revision = _real_create_revision
+
+    if not _project_on_disk(project):
+        warnings.append("项目尚未保存为 HSF 目录，已跳过自动版本快照")
+    else:
+        try:
+            revision = create_revision(
+                project.root,
+                message=before_message,
+                gsm_name=project.name,
+                metadata=metadata,
+                trigger=trigger,
+                intent=intent,
+                user_instruction=user_instruction,
+                changed_files=list(changed_files or []),
+                parent_revision_id=get_latest_revision_id(project.root),
+            )
+            revision_id = revision.revision_id
+        except Exception as exc:
+            warnings.append(f"自动版本快照失败：{exc}")
+
+    param = project.get_parameter(param_name)
+    if param is not None:
+        param.value = new_value
+    project.save_to_disk()
+    return revision_id, warnings

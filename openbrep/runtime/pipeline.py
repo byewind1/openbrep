@@ -891,7 +891,7 @@ class TaskPipeline:
         编译照常验证（benchmark 契约要求 compile_result），
         几何语义验证只做 advisory 警告、不拦截。
         """
-        from openbrep.runtime.micro_modify import detect_micro_modify
+        from openbrep.runtime.micro_modify import apply_parameter_value, detect_micro_modify
 
         if (request.intent or "MODIFY") != "MODIFY":
             return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
@@ -921,17 +921,15 @@ class TaskPipeline:
             "strategy": "直接修改参数默认值并编译验证",
         })
 
-        # 快照"修改前"状态（与 LLM 路径同一机制）；revision 拷的是磁盘状态，
-        # 必须先于内存修改 + save_to_disk
-        revision_warnings: list[str] = []
-        _revision_id, revision_warning = _create_auto_revision(
+        # 快照"修改前"状态 + 改值 + 落盘：复用与 MCP apply_edit 同一落盘语义
+        # （openbrep/runtime/micro_modify.apply_parameter_value）。
+        # revision 拷的是磁盘状态，必须先于内存修改 + save_to_disk。
+        _revision_id, revision_warnings = apply_parameter_value(
             project,
-            message="auto: before modify",
-            trigger="modify",
-            intent="MODIFY",
+            micro.param_name,
+            micro.new_value,
             user_instruction=instruction,
             changed_files=["paramlist.xml"],
-            parent_revision_id=get_latest_revision_id(project.root) if _can_revision_project(project) else None,
             metadata={
                 "micro_modify": {
                     "param": micro.param_name,
@@ -940,12 +938,8 @@ class TaskPipeline:
                     "matched_via": micro.matched_via,
                 }
             },
+            create_revision=create_revision,
         )
-        if revision_warning:
-            revision_warnings.append(revision_warning)
-
-        param.value = micro.new_value
-        project.save_to_disk()
         on_event("status", {"stage": "modify", "message": f"✏️ 已更新参数 {micro.param_name}"})
 
         compile_result: Optional[CompileResult] = None
