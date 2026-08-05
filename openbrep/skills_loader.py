@@ -232,6 +232,88 @@ def _rewrite_fm_lines(inner_lines: list[str], updates: dict[str, str]) -> list[s
     return inner_lines
 
 
+def _fm_scalar(value: Any) -> str:
+    """Python 标量 → 极简 YAML 标量文本（bool/null/int/float/str）。"""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return str(value)
+
+
+def _replace_or_append_nested_block(
+    inner_lines: list[str], key: str, block: dict[str, Any]
+) -> list[str]:
+    """整体替换或追加一个顶层嵌套块（如 verified_evidence）。
+
+    已存在的块会连旧缩进子行一起清掉再写新的，绝不留下悬挂缩进行
+    （悬挂行会让 _parse_frontmatter 判坏，必须避免）。
+    """
+    key_idx = None
+    for idx, line in enumerate(inner_lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or _indent_of(line) > 0:
+            continue
+        k, has_colon, _ = _split_kv(stripped)
+        if k == key and has_colon:
+            key_idx = idx
+            break
+    block_lines = [f"{key}:\n"] + [
+        f"  {sub_key}: {_fm_scalar(sub_value)}\n" for sub_key, sub_value in block.items()
+    ]
+    if key_idx is None:
+        inner_lines.extend(block_lines)
+        return inner_lines
+    j = key_idx + 1
+    while j < len(inner_lines) and _indent_of(inner_lines[j]) > 0:
+        j += 1
+    inner_lines[key_idx:j] = block_lines
+    return inner_lines
+
+
+def rewrite_skill_frontmatter(
+    file_path: Path,
+    updates: Optional[dict[str, str]] = None,
+    nested_blocks: Optional[dict[str, dict[str, Any]]] = None,
+) -> bool:
+    """公开写接口：把 frontmatter 顶层标量更新 + 嵌套块整体替换写回磁盘。
+
+    - updates: {顶层 key: 值文本}，复用 _rewrite_fm_lines 行级改写（已有行就地改值，
+      新行追加到块尾）。
+    - nested_blocks: {顶层 key: {子 key: 标量}}，写成缩进子行；已存在的块整块替换。
+    - 文件无 frontmatter / 缺闭合 --- / 读不出 → 返回 False，文件字节不动。
+    """
+    updates = updates or {}
+    nested_blocks = nested_blocks or {}
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return False
+    end = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            end = idx
+            break
+    if end is None:
+        return False
+    inner = _rewrite_fm_lines(list(lines[1:end]), updates)
+    for key, block in nested_blocks.items():
+        inner = _replace_or_append_nested_block(inner, key, block)
+    lines[1:end] = inner
+    try:
+        file_path.write_text("".join(lines), encoding="utf-8")
+    except Exception:
+        return False
+    return True
+
+
 class SkillsLoader:
     """
     Loads and manages prompt engineering skills.

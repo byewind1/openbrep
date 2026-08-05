@@ -247,6 +247,60 @@ class TestSkillsLoader(unittest.TestCase):
             self.assertEqual(skill_file.read_text(encoding="utf-8"), original)  # 字节级不变
             self.assertEqual(loader.skill_meta("legacy_meta_skill")["reuse_count"], 0)
 
+    def test_rewrite_skill_frontmatter_public_interface(self):
+        """公开写接口 rewrite_skill_frontmatter：标量更新 + 嵌套块整体替换；
+        无 frontmatter 文件不动；读回可解析。"""
+        from openbrep.skills_loader import rewrite_skill_frontmatter
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir)
+            skill_file = skills_dir / "rw_skill.md"
+            skill_file.write_text(
+                "---\nstatus: proposed\npattern_type: box\nreuse_count: 0\n---\n\n# Body\n",
+                encoding="utf-8",
+            )
+
+            ok = rewrite_skill_frontmatter(
+                skill_file,
+                updates={"status": "verified"},
+                nested_blocks={
+                    "verified_evidence": {
+                        "gate": "full",
+                        "compile_mode": "mock",
+                        "compile_success": True,
+                        "at": "2026-08-05",
+                    }
+                },
+            )
+            self.assertTrue(ok)
+            text = skill_file.read_text(encoding="utf-8")
+            self.assertIn("status: verified", text)
+            self.assertIn("verified_evidence:", text)
+            self.assertIn("  gate: full", text)
+            self.assertIn("  compile_success: true", text)
+
+            # 已有嵌套块再写 → 整块替换，无悬挂缩进行，frontmatter 仍可解析
+            rewrite_skill_frontmatter(
+                skill_file,
+                nested_blocks={"verified_evidence": {"gate": "structural", "at": "2026-08-06"}},
+            )
+            text2 = skill_file.read_text(encoding="utf-8")
+            self.assertIn("  gate: structural", text2)
+            self.assertNotIn("  gate: full", text2)
+
+            # 读回：status 与嵌套块都能正常解析
+            loader = SkillsLoader(str(skills_dir))
+            self.assertEqual(loader.skill_meta("rw_skill")["status"], "verified")
+            ev = loader.skill_meta("rw_skill")["verified_evidence"]
+            self.assertEqual(ev["gate"], "structural")
+            self.assertEqual(ev["at"], "2026-08-06")
+
+            # 无 frontmatter 的文件 → 不动、返回 False
+            plain = skills_dir / "plain.md"
+            plain.write_text("# Plain\n", encoding="utf-8")
+            self.assertFalse(rewrite_skill_frontmatter(plain, updates={"status": "verified"}))
+            self.assertEqual(plain.read_text(encoding="utf-8"), "# Plain\n")
+
 
 if __name__ == "__main__":
     unittest.main()

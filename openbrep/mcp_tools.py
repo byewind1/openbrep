@@ -1,15 +1,16 @@
-"""MCP 工具契约层（Phase 1 / P1-b+d+e）。
+"""MCP 工具契约层（Phase 1 / P1-b+d+e + Phase 2 / P2-b）。
 
 纯 Python，dict in / dict out。禁止 import 任何 mcp 库 —— 协议适配层后续才做。
 
 契约约定：
-- 每个工具函数第一个参数是 HSF 项目目录绝对路径 path（字符串）。
+- 项目类工具第一个参数是 HSF 项目目录绝对路径 path（字符串）；skill 类工具
+  （propose_skill / verify_skill）的参数是 skill 名 + skills_dir，不走 path。
 - 成功返回：{ok: True, ..., trace_id}
 - 失败返回：{ok: False, error: {code, message, details?}, trace_id}
 - 任何异常都不许穿透：统一包成错误 dict 返回。
 - trace_id 格式：mcp-YYYYMMDD-NNNN（日内序号，模块级计数器）。
-- mutation 工具（apply_edit / rollback）全程走 _locked()；只读工具 v1 也走它
-  （串行最稳）。
+- mutation 工具（apply_edit / rollback / propose_skill / verify_skill 的晋升
+  落盘）全程走 _locked()；只读工具 v1 也走它（串行最稳）。
 
 错误 code 汇总（全部工具共用同一错误形态）：
 - project_not_found      path 不存在 / 不是合法 HSF 项目 / 项目加载失败 /
@@ -17,28 +18,33 @@
 - invalid_mode           compile_hsf 的 mode 非法 / import_source 的 kind 非法 /
                          源文件后缀与 kind 不匹配 / apply_edit 的 mode 非法
 - invalid_spec           apply_edit 的 spec 非法（未知 type / 参数不存在 /
-                         非数值参数值 / 脚本类型非法 / content 非字符串）
+                         非数值参数值 / 脚本类型非法 / content 非字符串）；
+                         propose_skill 的 name 不合法（路径分隔符 / 首尾空白 /
+                         隐藏文件 / README 等）或 content 非字符串
 - invalid_revision       rollback 的 revision_id 不存在 / 无 parent 且无
                          倒数第二条可回滚
 - converter_unavailable  LP_XMLConverter 不可用（import_source kind="gsm"）
+- skill_exists           propose_skill 的目标 {name}.md 已存在（不覆盖）
+- skill_not_found        verify_skill 的 skill 不存在
 - mcp_internal_error     工具内部意外异常（预览、编译、导入、服务调用等）
 """
 
 from __future__ import annotations
 
 import difflib
+import json
 import shutil
 import tempfile
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
-from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.revisions import (
     create_revision,
     get_latest_revision_id,
@@ -46,6 +52,7 @@ from openbrep.revisions import (
     list_revisions,
     restore_revision,
 )
+from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.workbench.project_session_service import safe_project_name, unique_project_name
 
@@ -935,3 +942,370 @@ def _import_blender_py(source: Path, target_dir: Path, name: str | None, trace_i
         "warnings": warnings,
         "trace_id": trace_id,
     }
+
+
+# ── propose_skill / verify_skill（P2-b，skill 晋升门禁） ─────
+
+
+# slice.scripts 键名 → ScriptType（与 apply_edit 的 _SCRIPT_TYPE_MAP 同口径）
+_SKILL_SCRIPT_TYPE_MAP = {
+    "1d": ScriptType.MASTER,
+    "master": ScriptType.MASTER,
+    "2d": ScriptType.SCRIPT_2D,
+    "3d": ScriptType.SCRIPT_3D,
+    "vl": ScriptType.PARAM,
+    "ui": ScriptType.UI,
+}
+
+# structural 门禁要求的触发词小节标记（与 SkillsLoader 激活词提取同口径）
+_TRIGGER_SECTION_MARKERS = ("触发关键词", "activation keywords", "适用场景", "when to use")
+
+
+def _is_valid_skill_name(name: Any) -> bool:
+    """skill 名合法性：非空字符串、无首尾空白、非 ./.. /隐藏文件 /README、
+    不含路径分隔符或控制字符。"""
+    if not isinstance(name, str) or not name:
+        return False
+    if name != name.strip():
+        return False
+    if name in (".", ".."):
+        return False
+    if name.upper() == "README":
+        return False
+    if name[0] == ".":
+        return False
+    if any(ord(ch) < 32 for ch in name):
+        return False
+    if any(ch in name for ch in ('/', "\\", "\x00", "<", ">", ":", '"', "|", "?", "*")):
+        return False
+    return True
+
+
+def _fm_scalar_field(value: Any) -> str:
+    """frontmatter 标量字段的值文本：换行拍平成空格，去首尾空白。"""
+    return str(value).replace("\r", " ").replace("\n", " ").strip()
+
+
+def propose_skill(
+    name: str,
+    content: str,
+    pattern_type: str = "",
+    source_project: str = "",
+    source_trace_id: str = "",
+    slice=None,
+    skills_dir: str = "./skills",
+) -> dict:
+    """提出一个新 skill（写 {name}.md 到 skills_dir），不验证、不晋升。
+
+    frontmatter 含：status: proposed、skill_version: 1、pattern_type、
+    source_project、source_trace_id、reuse_count: 0、last_used: null（复用字段
+    提前带上，让复用计数门禁对它生效）；slice 非空时把 slice dict 以单行 JSON
+    存进 slice 字段（跨脚本 feature slice，极简 YAML 子集不支持任意深度嵌套）。
+
+    slice = {params: {name: value}, scripts: {"3d": "...", "2d": "...", ...}}，
+    脚本键名映射：1d/master→MASTER、2d→SCRIPT_2D、3d→SCRIPT_3D、vl→PARAM、
+    ui→UI。
+
+    失败：同名文件已存在 → code="skill_exists"（不覆盖）；name 不合法 →
+    code="invalid_spec"。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        if not _is_valid_skill_name(name):
+            return _make_error(
+                "invalid_spec",
+                f"非法 skill 名（拒绝路径分隔符/首尾空白/隐藏文件等）: {name!r}",
+                trace_id,
+                details={"name": name},
+            )
+        if not isinstance(content, str):
+            return _make_error(
+                "invalid_spec",
+                f"content 必须是字符串，收到: {type(content).__name__}",
+                trace_id,
+                details={"name": name},
+            )
+        skills_path = Path(skills_dir).expanduser().resolve()
+        try:
+            skills_path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return _make_error(
+                "mcp_internal_error",
+                f"无法创建 skills 目录: {exc}",
+                trace_id,
+                details={"skills_dir": skills_dir},
+            )
+        target = skills_path / f"{name}.md"
+        if target.exists():
+            return _make_error(
+                "skill_exists",
+                f"skill 已存在，不覆盖: {name}",
+                trace_id,
+                details={"name": name, "path": str(target)},
+            )
+
+        lines = [
+            "status: proposed",
+            "skill_version: 1",
+            f"pattern_type: {_fm_scalar_field(pattern_type)}",
+            f"source_project: {_fm_scalar_field(source_project)}",
+            f"source_trace_id: {_fm_scalar_field(source_trace_id)}",
+            "reuse_count: 0",
+            "last_used: null",
+        ]
+        if slice:
+            lines.append(f"slice: {json.dumps(slice, ensure_ascii=False, sort_keys=True)}")
+        text = f"---\n{chr(10).join(lines)}\n---\n\n{content}"
+        try:
+            target.write_text(text, encoding="utf-8")
+        except Exception as exc:
+            return _make_error(
+                "mcp_internal_error",
+                f"写入 skill 文件失败: {exc}",
+                trace_id,
+                details={"path": str(target)},
+            )
+        return {
+            "ok": True,
+            "skill": name,
+            "status": "proposed",
+            "path": str(target),
+            "trace_id": trace_id,
+        }
+
+
+def _slice_from_meta(meta: dict) -> dict | None:
+    """从 skill_meta 取回 slice dict；无 slice / 解析失败返回 None。
+
+    slice 在 frontmatter 里是单行 JSON 字符串（propose 时写入），读到的是原串；
+    也容忍直接 dict 形态。空 slice（无 params 且无 scripts）视为无 slice。
+    """
+    raw = meta.get("slice")
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        data = raw
+    elif isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+    else:
+        return None
+    if isinstance(data, dict) and (data.get("params") or data.get("scripts")):
+        return data
+    return None
+
+
+def _infer_param_type(value: Any) -> str:
+    """slice.params 的值 → GDLParameter 类型（按 Python 值类型推断）。"""
+    if isinstance(value, bool):
+        return "Boolean"
+    if isinstance(value, int):
+        return "Integer"
+    if isinstance(value, float):
+        return "RealNum"
+    return "String"
+
+
+def _param_value_text(value: Any) -> str:
+    """slice.params 的值 → GDLParameter.value 字符串。"""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _has_trigger_section(content: str) -> bool:
+    """正文含触发词小节（## 触发关键词 / ## When to Use 等，与 SkillsLoader 激活词
+    提取同口径）。"""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            lower = stripped.lower()
+            if any(marker in lower for marker in _TRIGGER_SECTION_MARKERS):
+                return True
+    return False
+
+
+def _write_verified_evidence(target: Path, block: dict) -> None:
+    """晋升落盘：status 翻 verified + 写 verified_evidence 块（复用 skills_loader
+    的公开行级写接口；失败静默——证据缺失不影响 status 已落盘）。"""
+    rewrite_skill_frontmatter(
+        target,
+        updates={"status": "verified"},
+        nested_blocks={"verified_evidence": block},
+    )
+
+
+def _verify_full_gate(
+    name: str, target: Path, meta: dict, slice_data: dict, trace_id: str
+) -> dict:
+    """full 门禁：把 slice 落成最小 HSF 项目（tempfile.mkdtemp 里），跑
+    compile_hsf(mock) + semantic_verify，两个都过才算过。"""
+    today = date.today().isoformat()
+    params = slice_data.get("params") or {}
+    scripts = slice_data.get("scripts") or {}
+    try:
+        with tempfile.TemporaryDirectory(prefix="skill_verify_") as tmp:
+            project = HSFProject.create_new(name, tmp)
+            for pname, pvalue in params.items():
+                p = project.get_parameter(str(pname))
+                if p is None:
+                    p = GDLParameter(str(pname), _infer_param_type(pvalue))
+                    project.add_parameter(p)
+                p.value = _param_value_text(pvalue)
+            unknown_scripts: list[str] = []
+            for key, script_content in scripts.items():
+                script_type = _SKILL_SCRIPT_TYPE_MAP.get(str(key).lower())
+                if script_type is None:
+                    unknown_scripts.append(str(key))
+                    continue
+                project.set_script(script_type, script_content)
+            project.save_to_disk()
+
+            compile_result = compile_hsf(str(project.root), mode="mock")
+            semantic_result = semantic_verify(str(project.root))
+
+        compile_mode = compile_result.get("mode")
+        compile_success = compile_result.get("success") is True
+        compile_errors = list(compile_result.get("errors") or [])
+        if unknown_scripts:
+            compile_success = False
+            compile_errors.extend(f"未知脚本类型: {key}" for key in unknown_scripts)
+        semantic_passed = semantic_result.get("passed") is True
+    except Exception as exc:
+        return {
+            "ok": True,
+            "name": name,
+            "gate": "full",
+            "passed": False,
+            "evidence": {
+                "gate": "full",
+                "compile": {"mode": "mock", "success": False, "errors": [f"验证构建失败: {exc}"]},
+                "semantic": {"passed": False},
+                "at": today,
+            },
+            "status": "proposed",
+            "trace_id": trace_id,
+        }
+
+    evidence: dict[str, Any] = {
+        "gate": "full",
+        "compile": {"mode": compile_mode, "success": compile_success},
+        "semantic": {"passed": semantic_passed},
+        "at": today,
+    }
+    if compile_errors:
+        evidence["compile"]["errors"] = compile_errors
+
+    passed = bool(compile_success and semantic_passed)
+    if passed:
+        _write_verified_evidence(
+            target,
+            {
+                "gate": "full",
+                "compile_mode": compile_mode,
+                "compile_success": compile_success,
+                "semantic_passed": semantic_passed,
+                "at": today,
+            },
+        )
+    return {
+        "ok": True,
+        "name": name,
+        "gate": "full",
+        "passed": passed,
+        "evidence": evidence,
+        "status": "verified" if passed else "proposed",
+        "trace_id": trace_id,
+    }
+
+
+def _verify_structural_gate(
+    name: str, target: Path, meta: dict, content: str, trace_id: str
+) -> dict:
+    """structural 门禁：frontmatter 完整（status/pattern_type 非空）+ 正文含
+    触发词小节。带 slice 的 skill 不走这里。"""
+    today = date.today().isoformat()
+    frontmatter_ok = bool(meta.get("status")) and bool(meta.get("pattern_type"))
+    trigger_section = _has_trigger_section(content)
+    passed = bool(frontmatter_ok and trigger_section)
+
+    evidence = {
+        "gate": "structural",
+        "structural": {
+            "frontmatter_complete": frontmatter_ok,
+            "pattern_type": meta.get("pattern_type"),
+            "trigger_section": trigger_section,
+        },
+        "at": today,
+    }
+    if passed:
+        _write_verified_evidence(
+            target,
+            {
+                "gate": "structural",
+                "pattern_type": meta.get("pattern_type"),
+                "trigger_section": True,
+                "at": today,
+            },
+        )
+    return {
+        "ok": True,
+        "name": name,
+        "gate": "structural",
+        "passed": passed,
+        "evidence": evidence,
+        "status": "verified" if passed else "proposed",
+        "trace_id": trace_id,
+    }
+
+
+def verify_skill(name: str, skills_dir: str = "./skills") -> dict:
+    """skill 晋升门禁（P2-b 心脏）。
+
+    双闸门，按 skill 是否带 slice 分流：
+    - 带 slice（gate="full"）：tempfile.mkdtemp 里 HSFProject.create_new 造最小
+      项目 → slice.params 按值类型推断写参数（bool→Boolean / int→Integer /
+      float→RealNum / str→String）→ slice.scripts 按脚本类型 set_script
+      （键名映射：1d/master→MASTER、2d→SCRIPT_2D、3d→SCRIPT_3D、vl→PARAM、
+      ui→UI）→ save_to_disk → compile_hsf(mock) + semantic_verify，两个都过才过。
+    - 不带 slice 的纯策略 skill（gate="structural"）：frontmatter 完整
+      （status/pattern_type 非空）+ 正文含触发词小节（## 触发关键词 / When to
+      Use）。
+
+    通过：写 verified_evidence 块 + status 翻 verified（verified 即可注入，即
+    自动 active）；失败：status 保持 proposed 不动。读 skill 内容直接读文件
+    （get_by_name 对 proposed 返回 None），元数据用 SkillsLoader.skill_meta。
+    失败：skill 不存在 → code="skill_not_found"。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        skills_path = Path(skills_dir).expanduser().resolve()
+        loader = SkillsLoader(str(skills_path))
+        loader.load()
+        if name not in loader.skill_names:
+            return _make_error(
+                "skill_not_found",
+                f"skill 不存在: {name}",
+                trace_id,
+                details={"name": name, "skills_dir": str(skills_path)},
+            )
+        meta = loader.skill_meta(name)
+        target = skills_path / f"{name}.md"
+        try:
+            content = target.read_text(encoding="utf-8")
+        except Exception as exc:
+            return _make_error(
+                "mcp_internal_error",
+                f"读取 skill 文件失败: {exc}",
+                trace_id,
+                details={"path": str(target)},
+            )
+
+        slice_data = _slice_from_meta(meta)
+        if slice_data:
+            return _verify_full_gate(name, target, meta, slice_data, trace_id)
+        return _verify_structural_gate(name, target, meta, content, trace_id)

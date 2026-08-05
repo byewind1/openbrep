@@ -19,11 +19,14 @@ from openbrep.mcp_tools import (
     compile_hsf,
     import_source,
     load_project,
+    propose_skill,
     render_evidence,
     rollback,
     semantic_verify,
+    verify_skill,
 )
 from openbrep.revisions import get_latest_revision_id
+from openbrep.skills_loader import SkillsLoader
 
 TRACE_RE = re.compile(r"^mcp-\d{8}-\d{4}$")
 
@@ -438,3 +441,193 @@ def test_apply_edit_invalid_specs_return_unified_error(tmp_path):
         assert TRACE_RE.match(result["trace_id"])
     # 原项目目录不受非法 spec 影响
     assert float(HSFProject.load_from_disk(str(root)).get_parameter("A").value) == pytest.approx(1.5)
+
+
+# ── propose_skill / verify_skill（P2-b，skill 晋升门禁） ─────
+
+
+def test_propose_skill_writes_file_with_full_frontmatter_and_never_overwrites(tmp_path):
+    skills_dir = tmp_path / "skills"
+    result = propose_skill(
+        "shelf_pattern",
+        "# 书架策略\n\n## 触发关键词\n- 书架\n",
+        pattern_type="box-geometry",
+        source_project="Demo",
+        source_trace_id="trace-1",
+        skills_dir=str(skills_dir),
+    )
+    assert result["ok"] is True
+    assert result["status"] == "proposed"
+    path = Path(result["path"])
+    assert path == skills_dir / "shelf_pattern.md"
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---")
+    for field in (
+        "status: proposed",
+        "skill_version: 1",
+        "pattern_type: box-geometry",
+        "source_project: Demo",
+        "source_trace_id: trace-1",
+        "reuse_count: 0",
+        "last_used: null",
+    ):
+        assert field in text
+    assert "## 触发关键词" in text  # 正文保留
+
+    # 同名再 propose → skill_exists，不覆盖
+    dup = propose_skill("shelf_pattern", "其他内容", skills_dir=str(skills_dir))
+    assert dup["ok"] is False
+    assert dup["error"]["code"] == "skill_exists"
+    assert TRACE_RE.match(dup["trace_id"])
+    assert "其他内容" not in path.read_text(encoding="utf-8")
+
+    # SkillsLoader 状态过滤端到端：proposed 不注入
+    loader = SkillsLoader(str(skills_dir))
+    injected = loader.get_for_task("生成一个书架")
+    assert "shelf_pattern" not in injected
+    assert loader.skill_names_by_status("proposed") == ["shelf_pattern"]
+    assert loader.get_by_name("shelf_pattern") is None
+
+
+def test_propose_skill_rejects_unsafe_names_and_non_string_content(tmp_path):
+    skills_dir = tmp_path / "skills"
+    for bad in ("", "   ", "a/b", "a\\b", " foo", "bar ", ".", "..", ".hidden", "README", "a:b"):
+        result = propose_skill(bad, "内容", skills_dir=str(skills_dir))
+        assert result["ok"] is False, bad
+        assert result["error"]["code"] == "invalid_spec", bad
+        assert TRACE_RE.match(result["trace_id"])
+    bad_content = propose_skill("good_name", 123, skills_dir=str(skills_dir))
+    assert bad_content["ok"] is False
+    assert bad_content["error"]["code"] == "invalid_spec"
+
+
+def test_verify_skill_with_compilable_slice_promotes_and_becomes_injectable(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skill_slice = {
+        "params": {
+            "A": 2.0, "B": 3.0, "ZZYZX": 4.0, "nShelves": 3, "hasBack": True, "label": "demo"
+        },
+        "scripts": {"3d": "BLOCK A, B, ZZYZX\n"},
+    }
+    propose_skill(
+        "shelf_pattern",
+        "# 书架策略\n\n## 触发关键词\n- 书架\n",
+        pattern_type="box",
+        source_project="Demo",
+        slice=skill_slice,
+        skills_dir=str(skills_dir),
+    )
+
+    result = verify_skill("shelf_pattern", skills_dir=str(skills_dir))
+
+    assert result["ok"] is True
+    assert result["gate"] == "full"
+    assert result["passed"] is True
+    assert result["status"] == "verified"
+    assert result["evidence"]["gate"] == "full"
+    assert result["evidence"]["compile"]["success"] is True
+    assert result["evidence"]["compile"]["mode"] == "mock"
+    assert result["evidence"]["semantic"]["passed"] is True
+    assert result["evidence"]["at"]
+    assert TRACE_RE.match(result["trace_id"])
+
+    # verified_evidence 落盘 + status 翻 verified
+    on_disk = (skills_dir / "shelf_pattern.md").read_text(encoding="utf-8")
+    assert "status: verified" in on_disk
+    assert "verified_evidence:" in on_disk
+    assert "gate: full" in on_disk
+
+    # 翻完 loader 能注入它
+    loader = SkillsLoader(str(skills_dir))
+    injected = loader.get_for_task("生成一个书架")
+    assert "## Skill: shelf_pattern" in injected
+    assert loader.skill_meta("shelf_pattern")["status"] == "verified"
+    ev = loader.skill_meta("shelf_pattern")["verified_evidence"]
+    assert ev["gate"] == "full"
+    assert ev["compile_success"] is True
+    assert ev["compile_mode"] == "mock"
+    assert ev["semantic_passed"] is True
+
+
+def test_verify_skill_with_broken_slice_fails_and_keeps_proposed(tmp_path):
+    skills_dir = tmp_path / "skills"
+    bad_slice = {
+        "params": {"A": 2.0, "B": 3.0, "ZZYZX": 4.0},
+        "scripts": {"3d": "FOR i = 1 TO 3\nBLOCK A, B, ZZYZX\n"},  # FOR/NEXT 不匹配 → mock 编译失败
+    }
+    propose_skill(
+        "broken_slice_skill",
+        "# 策略\n",
+        pattern_type="box",
+        slice=bad_slice,
+        skills_dir=str(skills_dir),
+    )
+
+    result = verify_skill("broken_slice_skill", skills_dir=str(skills_dir))
+
+    assert result["ok"] is True
+    assert result["gate"] == "full"
+    assert result["passed"] is False
+    assert result["status"] == "proposed"
+    assert result["evidence"]["compile"]["success"] is False
+    assert result["evidence"]["compile"]["errors"]
+    assert TRACE_RE.match(result["trace_id"])
+
+    on_disk = (skills_dir / "broken_slice_skill.md").read_text(encoding="utf-8")
+    assert "status: proposed" in on_disk
+    assert "verified_evidence:" not in on_disk
+    loader = SkillsLoader(str(skills_dir))
+    assert loader.skill_meta("broken_slice_skill")["status"] == "proposed"
+    assert loader.get_by_name("broken_slice_skill") is None
+
+
+def test_verify_skill_structural_gate_requires_trigger_section_and_pattern_type(tmp_path):
+    skills_dir = tmp_path / "skills"
+    propose_skill(
+        "strategy_skill",
+        "# 策略\n\n## 触发关键词\n- 书架\n",
+        pattern_type="structural-pattern",
+        skills_dir=str(skills_dir),
+    )
+    ok_result = verify_skill("strategy_skill", skills_dir=str(skills_dir))
+    assert ok_result["ok"] is True
+    assert ok_result["gate"] == "structural"
+    assert ok_result["passed"] is True
+    assert ok_result["status"] == "verified"
+    assert ok_result["evidence"]["structural"]["frontmatter_complete"] is True
+    assert ok_result["evidence"]["structural"]["trigger_section"] is True
+    assert ok_result["evidence"]["at"]
+
+    # 缺触发词 → 不通过，status 保持 proposed
+    propose_skill(
+        "no_trigger_skill",
+        "# 没有触发词小节\n",
+        pattern_type="structural-pattern",
+        skills_dir=str(skills_dir),
+    )
+    fail_result = verify_skill("no_trigger_skill", skills_dir=str(skills_dir))
+    assert fail_result["ok"] is True
+    assert fail_result["gate"] == "structural"
+    assert fail_result["passed"] is False
+    assert fail_result["status"] == "proposed"
+    assert fail_result["evidence"]["structural"]["trigger_section"] is False
+    assert "verified_evidence:" not in (
+        skills_dir / "no_trigger_skill.md"
+    ).read_text(encoding="utf-8")
+
+    # pattern_type 为空 → frontmatter 不完整 → 不通过
+    propose_skill(
+        "no_pattern_skill", "# 策略\n\n## 触发关键词\n- 书架\n", skills_dir=str(skills_dir)
+    )
+    no_pattern = verify_skill("no_pattern_skill", skills_dir=str(skills_dir))
+    assert no_pattern["ok"] is True
+    assert no_pattern["passed"] is False
+    assert no_pattern["evidence"]["structural"]["frontmatter_complete"] is False
+
+
+def test_verify_skill_missing_returns_skill_not_found(tmp_path):
+    result = verify_skill("ghost_skill", skills_dir=str(tmp_path / "skills"))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "skill_not_found"
+    assert "message" in result["error"]
+    assert TRACE_RE.match(result["trace_id"])
