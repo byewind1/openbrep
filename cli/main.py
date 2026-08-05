@@ -1311,6 +1311,17 @@ def cli_chat():
     _run_chat_repl(None)
 
 
+@app.command("mcp-server")
+def mcp_server():
+    """启动 MCP stdio server（供 MCP host，如 Claude Code，调用）"""
+    from openbrep.mcp_server import main as mcp_server_main
+
+    try:
+        raise typer.Exit(mcp_server_main())
+    except KeyboardInterrupt:
+        raise typer.Exit(0)
+
+
 @app.command()
 def help():
     """显示常用命令速查"""

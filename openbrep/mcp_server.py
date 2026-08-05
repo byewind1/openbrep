@@ -1,0 +1,259 @@
+"""MCP stdio server（Phase 1 / P1-e）。
+
+本文件是全仓库唯一允许 import mcp 库的模块：它只是 openbrep.mcp_tools 的
+协议皮（protocol skin），不含任何业务逻辑。mcp_tools.py 一行都不许动。
+
+职责：
+- 把 mcp_tools 的 7 个工具注册为 MCP 工具，工具名与函数名一致。
+- 每个工具的 description 从 mcp_tools 对应函数的 docstring 提炼。
+- 工具返回值：mcp_tools 返回的 dict 直接 JSON 序列化为 text content 返回；
+  异常不抛到协议层（mcp_tools 已保证不抛，这里再加一层兜底）。
+
+协议：stdio（stdout 是 JSON-RPC 通道，日志只写 stderr）。
+入口：`obr mcp-server`，或直接 `python -m openbrep.mcp_server`。
+
+依赖：官方 Python SDK（mcp >= 2.0.0）。注意 mcp 2.x 的 API 形态与 1.x 文档
+不同：handler 注册是构造器参数（on_list_tools / on_call_tool），返回类型为
+mcp_types 的 ListToolsResult / CallToolResult。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import sys
+from typing import Any
+
+import mcp.server.stdio as mcp_stdio
+from mcp.server import Server
+from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, TextContent, Tool
+
+import openbrep.mcp_tools as mcp_tools
+from openbrep import __version__
+
+logger = logging.getLogger(__name__)
+
+_MCP_TOOL_NAMES = (
+    "load_project",
+    "compile_hsf",
+    "semantic_verify",
+    "render_evidence",
+    "apply_edit",
+    "rollback",
+    "import_source",
+)
+
+
+def _schema(
+    required: tuple[tuple[str, str], ...],
+    optional: tuple[tuple[str, str], ...] = (),
+) -> dict[str, Any]:
+    """构造简单 JSON schema：required 必填，optional 选填（都进 properties）。
+
+    每个条目是 (参数名, JSON type)，type ∈ string/number/boolean/array/object。
+    """
+    props = {name: {"type": t} for name, t in (*required, *optional)}
+    return {"type": "object", "properties": props, "required": [n for n, _ in required]}
+
+
+# ── 工具清单：name → (mcp_tools 函数, description, input schema) ──────
+# description 从 mcp_tools 各函数 docstring 提炼：一句话 + 参数说明。
+
+_TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
+    (
+        "load_project",
+        mcp_tools.load_project,
+        "加载 HSF 项目，返回项目概貌（只读、幂等、无副作用）。"
+        "参数 path: HSF 项目目录绝对路径（string）。",
+        _schema(required=(("path", "string"),)),
+    ),
+    (
+        "compile_hsf",
+        mcp_tools.compile_hsf,
+        "编译 HSF → .gsm（只读：产物写临时目录，不写进项目目录）。"
+        "ok=True 表示工具执行成功，success 表示编译结果。"
+        "参数 path: HSF 项目目录绝对路径（string）；"
+        "mode: auto/mock/real，默认 auto（string，选填）。",
+        _schema(required=(("path", "string"),), optional=(("mode", "string"),)),
+    ),
+    (
+        "semantic_verify",
+        mcp_tools.semantic_verify,
+        "对项目 3D 脚本做几何级语义验证（不走 pipeline）。"
+        "返回 passed 与 issues（含 blocking 标记）。"
+        "参数 path: HSF 项目目录绝对路径（string）；"
+        "sweep: 是否做参数扫掠，默认 true（boolean，选填）。",
+        _schema(required=(("path", "string"),), optional=(("sweep", "boolean"),)),
+    ),
+    (
+        "render_evidence",
+        mcp_tools.render_evidence,
+        "生成机器可读几何证据：包围盒、网格统计、参数扫掠响应（单位：米）。"
+        "参数 path: HSF 项目目录绝对路径（string）；"
+        "sweep_params: 要扫掠的参数名列表，空则跳过（array of string，选填）。",
+        _schema(required=(("path", "string"),), optional=(("sweep_params", "array"),)),
+    ),
+    (
+        "apply_edit",
+        mcp_tools.apply_edit,
+        "应用编辑：set_parameters（改参数值）或 set_script（整脚本替换）。"
+        "mode=draft 试跑零持久化（返回 diff/compile/verify）；mode=apply 落盘并可回滚。"
+        "参数 path: HSF 项目目录绝对路径（string）；"
+        "spec: {'type':'set_parameters','values':{...}} 或 "
+        "{'type':'set_script','script_type':'1d'|'2d'|'3d'|'vl'|'ui'|'master','content':str}"
+        "（object）；mode: draft/apply，默认 draft（string，选填）。",
+        _schema(required=(("path", "string"), ("spec", "object")), optional=(("mode", "string"),)),
+    ),
+    (
+        "rollback",
+        mcp_tools.rollback,
+        "回滚项目到指定 revision，并记录一条 trigger=rollback 的新 revision。"
+        "revision_id=previous 回滚到最近变更的父版本。"
+        "参数 path: HSF 项目目录绝对路径（string）；"
+        "revision_id: 目标版本 id 或 previous，默认 previous（string，选填）。",
+        _schema(required=(("path", "string"),), optional=(("revision_id", "string"),)),
+    ),
+    (
+        "import_source",
+        mcp_tools.import_source,
+        "把外部源文件（gdl/gsm/blender_py）导入为 HSF 项目。"
+        "返回 {ok, project_path, warnings, trace_id}。"
+        "参数 source_path: 源文件绝对路径（string）；"
+        "kind: gdl|gsm|blender_py（string）；"
+        "target_dir: 目标项目父目录（string）；"
+        "name: 项目名，可选（string，选填）。",
+        _schema(
+            required=(("source_path", "string"), ("kind", "string"), ("target_dir", "string")),
+            optional=(("name", "string"),),
+        ),
+    ),
+)
+
+_TOOLS_BY_NAME: dict[str, dict[str, Any]] = {
+    name: {"fn": fn, "description": desc, "schema": schema}
+    for name, fn, desc, schema in _TOOL_SPECS
+}
+
+
+def _list_tools_result() -> ListToolsResult:
+    """由 _TOOL_SPECS 构建 ListToolsResult（工具名与 mcp_tools 函数名一致）。"""
+    tools = [
+        Tool(name=name, description=spec["description"], input_schema=spec["schema"])
+        for name, spec in _TOOLS_BY_NAME.items()
+    ]
+    return ListToolsResult(tools=tools)
+
+
+def _call_tool_result(name: str, arguments: dict[str, Any] | None) -> CallToolResult:
+    """分派到 mcp_tools 工具，把返回 dict JSON 序列化为 text content。
+
+    协议层失败（未知工具 / 异常 / 非 dict 返回）走 isError=True；
+    mcp_tools 的业务错误 dict（ok=False）按正常工具结果返回，由调用方判读。
+    """
+    tool = _TOOLS_BY_NAME.get(name)
+    if tool is None:
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "ok": False,
+                            "error": {"code": "method_not_found", "message": f"未知工具: {name}"},
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            ],
+            is_error=True,
+        )
+    try:
+        result = tool["fn"](**dict(arguments or {}))
+    except Exception as exc:
+        logger.exception("工具 %s 调用异常（协议层兜底）", name)
+        result = {
+            "ok": False,
+            "error": {
+                "code": "mcp_internal_error",
+                "message": f"{name} 调用异常: {exc}",
+                "details": {"tool": name},
+            },
+        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False))],
+            is_error=True,
+        )
+    if not isinstance(result, dict):
+        result = {
+            "ok": False,
+            "error": {
+                "code": "mcp_internal_error",
+                "message": f"{name} 返回非 dict: {type(result).__name__}",
+                "details": {"tool": name},
+            },
+        }
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False))],
+        is_error=False,
+    )
+
+
+async def _on_list_tools(ctx: Any, params: Any) -> ListToolsResult:
+    del ctx, params  # 无分页：直接返回全部工具
+    return _list_tools_result()
+
+
+async def _on_call_tool(ctx: Any, params: CallToolRequestParams) -> CallToolResult:
+    del ctx  # 业务状态全部在 mcp_tools 内部（_locked() 串行化）
+    return _call_tool_result(params.name, params.arguments)
+
+
+def build_server() -> Server:
+    """构造 mcp 2.x Server 实例（handler 注册走构造器参数）。"""
+    return Server(
+        name="openbrep",
+        version=__version__,
+        instructions=(
+            "OpenBrep MCP 工具层：加载 / 编译 / 语义验证 / 几何证据 / 编辑 / 回滚 / 导入 "
+            "HSF（ArchiCAD 库对象）项目。所有工具第一个参数都是 HSF 项目目录绝对路径 path；"
+            "返回 {ok, ..., trace_id} 或 {ok: False, error: {code, message}, trace_id}。"
+        ),
+        on_list_tools=_on_list_tools,
+        on_call_tool=_on_call_tool,
+    )
+
+
+async def _run_server() -> None:
+    """在 stdio 上驱动 server，直到读端关闭。"""
+    server = build_server()
+    async with mcp_stdio.stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options(),
+        )
+
+
+def main() -> int:
+    """MCP stdio server 前台入口；返回进程退出码。
+
+    日志只写 stderr——stdout 是 JSON-RPC 协议通道，一个字节的脏输出都会毁掉协议。
+    """
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    try:
+        asyncio.run(_run_server())
+    except KeyboardInterrupt:
+        return 0
+    except Exception:
+        logger.exception("MCP server 异常退出")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
