@@ -46,6 +46,13 @@ _GENERATE_PROMPT = (
     "基于以下对话中收集的信息，生成一个 GDL 技能文件。\n"
     "格式要求：\n"
     "```markdown\n"
+    "---\n"
+    "status: proposed\n"
+    "skill_version: 1\n"
+    "pattern_type:\n"
+    "source_project:\n"
+    "source_trace_id:\n"
+    "---\n\n"
     "# {{Skill Name}}\n\n"
     "## 适用场景 / When to Use\n"
     "{{natural-language requests that should activate this skill}}\n\n"
@@ -70,6 +77,18 @@ _GENERATE_PROMPT = (
     "FILENAME: {suggested_name}.md\n"
     "---\n"
     "[content here]"
+)
+
+# 生成的 skill 顶部 frontmatter 骨架。status=proposed 意味着新技能默认不注入
+# prompt（SkillsLoader 只注入 active/verified），经验证晋升后才可用。
+_FRONTMATTER_SKELETON = (
+    "---\n"
+    "status: proposed\n"
+    "skill_version: 1\n"
+    "pattern_type:\n"
+    "source_project:\n"
+    "source_trace_id:\n"
+    "---\n\n"
 )
 
 
@@ -215,6 +234,9 @@ class SkillCreator:
 
         file_path = self.skills_dir / name
 
+        # 顶部补 frontmatter 骨架（已有则原样保留）；status=proposed
+        content = self._ensure_frontmatter(content)
+
         # Write skill file
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
@@ -252,6 +274,13 @@ class SkillCreator:
             "finalize", "write it", "make it",
         ]
         return any(kw in text_lower for kw in generate_keywords) and len(text) < 9
+
+    @staticmethod
+    def _ensure_frontmatter(content: str) -> str:
+        """顶部补 frontmatter 骨架（status=proposed）；已有 frontmatter 则原样返回。"""
+        if content.lstrip().startswith("---"):
+            return content
+        return _FRONTMATTER_SKELETON + content
 
     @staticmethod
     def _parse_generation(raw: str) -> tuple[str, str]:

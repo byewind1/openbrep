@@ -185,3 +185,54 @@ class TestSkillCreator:
         assert result is not None
         assert Path(result.file_path).exists()
         assert "My Project Skill" in result.content
+
+    def test_generated_skill_proposed_frontmatter_not_injected_until_active(self, skills_dir):
+        """SkillCreator 模板产物带 status: proposed frontmatter，默认不被注入；
+        status 改 active 后即可注入（端到端小验证）。"""
+        from unittest.mock import MagicMock
+
+        def generate(messages):
+            resp = MagicMock()
+            resp.content = (
+                "FILENAME: window_skill.md\n"
+                "---\n"
+                "---\n"
+                "status: proposed\n"
+                "skill_version: 1\n"
+                "---\n"
+                "# Window Skill\n\n"
+                "## 触发关键词 / Activation Keywords\n"
+                "- 窗户\n"
+                "- window\n\n"
+                "## 项目描述\n"
+                "A window skill.\n"
+            )
+            return resp
+
+        llm = MagicMock()
+        llm.generate = generate
+        creator = SkillCreator(llm, str(skills_dir))
+        creator.conversation = [{"role": "user", "content": "门窗项目"}]
+        creator._ready_to_generate = True
+
+        result = creator.finalize()
+        assert result is not None
+        file_path = Path(result.file_path)
+
+        content = file_path.read_text(encoding="utf-8")
+        assert content.startswith("---\n")
+        assert "status: proposed" in content
+        assert "skill_version: 1" in content
+        assert "pattern_type:" in content
+
+        from openbrep.skills_loader import SkillsLoader
+
+        loader = SkillsLoader(str(skills_dir))
+        injected = loader.get_for_task("生成一个铝合金窗户")
+        assert "window_skill" not in injected
+        assert "window_skill" in loader.skill_names  # 管理面可见
+        assert loader.skill_meta("window_skill")["status"] == "proposed"
+
+        # 对照：status 改 active 后重载即可注入 → 证明过滤来自状态而非匹配落空
+        file_path.write_text(content.replace("status: proposed", "status: active"), encoding="utf-8")
+        assert "window_skill" in SkillsLoader(str(skills_dir)).get_for_task("生成一个铝合金窗户")
