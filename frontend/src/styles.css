@@ -606,7 +606,8 @@ button:focus-visible {
 .left-rail {
   min-width: 0;
   display: grid;
-  grid-template-rows: minmax(170px, 0.42fr) minmax(0, 0.58fr);
+  /* 布局零重排：工作区面板加在最上，脚本树/参数面板保持原位（比例略收） */
+  grid-template-rows: minmax(0, 0.30fr) minmax(170px, 0.36fr) minmax(0, 0.34fr);
   border-right: 1px solid var(--border);
 }
 
@@ -3092,4 +3093,206 @@ button:focus-visible {
 
 .timeline-plan-section li {
   margin: 1px 0;
+}
+
+
+/* ── Workspace panel（P3-d2） ───────────────────────────── */
+.workspace-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-panel-header {
+  justify-content: space-between;
+}
+
+.workspace-panel-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.workspace-icon-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.workspace-icon-button:hover {
+  color: var(--text-primary);
+}
+
+.workspace-icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.workspace-panel-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-empty {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.workspace-empty-text {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workspace-empty input,
+.workspace-search input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input, var(--bg-panel));
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.workspace-empty button,
+.workspace-search button {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.workspace-empty button:hover:not(:disabled),
+.workspace-search button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.workspace-empty button:disabled,
+.workspace-search button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.workspace-search {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-project-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-project-item.active {
+  border-left-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.workspace-project-item:hover {
+  color: var(--text-primary);
+}
+
+.workspace-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
+}
+
+.workspace-project-item.active .workspace-badge {
+  color: var(--text-secondary);
+}
+
+.workspace-search-results {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-search-results-title {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.workspace-search-hit {
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-search-hit:hover {
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.workspace-search-hit-title {
+  font-weight: 700;
+}
+
+.workspace-search-hit-snippet {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

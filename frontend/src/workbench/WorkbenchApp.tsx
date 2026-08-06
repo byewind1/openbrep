@@ -65,6 +65,15 @@ export function WorkbenchApp() {
   const lastSavedAt = useWorkbenchStore((state) => state.lastSavedAt)
   const scriptSaving = useWorkbenchStore((state) => state.scriptSaving)
   const mockCompileResult = useWorkbenchStore((state) => state.mockCompileResult)
+  const workspace = useWorkbenchStore((state) => state.workspace)
+  const workspaceBusy = useWorkbenchStore((state) => state.workspaceBusy)
+  const workspaceSearching = useWorkbenchStore((state) => state.workspaceSearching)
+  const workspaceSearchQuery = useWorkbenchStore((state) => state.workspaceSearchQuery)
+  const workspaceSearchHits = useWorkbenchStore((state) => state.workspaceSearchHits)
+  const openWorkspace = useWorkbenchStore((state) => state.openWorkspace)
+  const closeWorkspace = useWorkbenchStore((state) => state.closeWorkspace)
+  const refreshWorkspace = useWorkbenchStore((state) => state.refreshWorkspace)
+  const searchWorkspace = useWorkbenchStore((state) => state.searchWorkspace)
   const load = useWorkbenchStore((state) => state.load)
   const setDraftParameter = useWorkbenchStore((state) => state.setDraftParameter)
   const applyDraftParameters = useWorkbenchStore((state) => state.applyDraftParameters)
@@ -278,6 +287,16 @@ export function WorkbenchApp() {
         loading={loading}
         left={(
           <WorkbenchLeftRail
+            workspace={workspace}
+            workspaceBusy={workspaceBusy}
+            workspaceSearching={workspaceSearching}
+            workspaceSearchQuery={workspaceSearchQuery}
+            workspaceSearchHits={workspaceSearchHits}
+            onOpenWorkspace={(path) => void openWorkspace(path)}
+            onCloseWorkspace={() => void closeWorkspace()}
+            onRefreshWorkspace={() => void refreshWorkspace()}
+            onSearchWorkspace={(query) => void searchWorkspace(query)}
+            onSelectProjectPath={(path) => void loadProjectPath(path)}
             scripts={scripts}
             activeScriptName={activeScriptName}
             dirtyScripts={dirtyScripts}

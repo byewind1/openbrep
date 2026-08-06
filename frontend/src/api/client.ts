@@ -21,6 +21,8 @@ import type {
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  WorkspaceScanResult,
+  WorkspaceSearchResult,
   LlmSettings,
   LlmSettingsResult,
   LlmConnectionTestResult,
@@ -159,6 +161,59 @@ export async function closeProject(): Promise<WorkbenchSnapshot> {
       body: JSON.stringify({}),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
+  )
+}
+
+export async function workspaceInit(path: string): Promise<WorkspaceScanResult> {
+  return requestJson<WorkspaceScanResult>(
+    '/api/workspace/init',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', workspace: null },
+  )
+}
+
+export async function workspaceOpen(path: string): Promise<WorkspaceScanResult> {
+  return requestJson<WorkspaceScanResult>(
+    '/api/workspace/open',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', workspace: null },
+  )
+}
+
+export async function workspaceClose(): Promise<{ ok: boolean; error?: string; workspace: null }> {
+  return requestJson<{ ok: boolean; error?: string; workspace: null }>(
+    '/api/workspace/close',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', workspace: null },
+  )
+}
+
+export async function workspaceScan(): Promise<WorkspaceScanResult> {
+  return requestJson<WorkspaceScanResult>(
+    '/api/workspace/scan',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.', workspace: null },
+  )
+}
+
+export async function workspaceSearch(query: string): Promise<WorkspaceSearchResult> {
+  const q = encodeURIComponent(query)
+  return requestJson<WorkspaceSearchResult>(
+    `/api/workspace/search?q=${q}`,
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.', query, hits: [], hit_count: 0 },
   )
 }
 

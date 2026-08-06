@@ -125,6 +125,50 @@ export interface LlmModelOption {
   has_api_key?: boolean
 }
 
+export interface WorkspaceProject {
+  name: string
+  path: string
+  parameter_count: number
+  scripts_present: string[]
+  latest_revision_id: string | null
+  origin: { imported_from: string; imported_kind: string; imported_at: string } | null
+  artifact_count: number
+  active?: boolean
+}
+
+export interface WorkspaceInfo {
+  path: string
+  project_count: number
+  projects: WorkspaceProject[]
+}
+
+export interface WorkspaceScanResult {
+  ok?: boolean
+  error?: string
+  code?: string
+  workspace?: string | null
+  project_count?: number
+  projects?: WorkspaceProject[]
+  missing_zones?: string[]
+}
+
+export interface WorkspaceSearchHit {
+  project: string
+  location: string
+  line: number | null
+  snippet: string
+}
+
+export interface WorkspaceSearchResult {
+  ok?: boolean
+  error?: string
+  code?: string
+  query: string
+  hits: WorkspaceSearchHit[]
+  hit_count: number
+  workspace?: string
+}
+
 export interface WorkbenchSnapshot {
   ok?: boolean
   project: WorkbenchProject | null
@@ -136,6 +180,8 @@ export interface WorkbenchSnapshot {
   error?: string
   session_id?: string
   project_epoch?: number
+  /** 后端 snapshot 的工作区块：无附着为 null（P3-d1） */
+  workspace?: WorkspaceInfo | null
 }
 
 export interface HsfExportResult extends WorkbenchSnapshot {

@@ -10,6 +10,56 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       warnings: [],
       compiler: { mode: 'mock', converter_path: '', output_dir: '' },
     }),
+    workspaceInit: async (path: string) => ({
+      ok: true,
+      workspace: path,
+      project_count: 0,
+      projects: [],
+    }),
+    workspaceOpen: async (path: string) => ({
+      ok: true,
+      workspace: path,
+      project_count: 1,
+      projects: [
+        {
+          name: 'Chair',
+          path: `${path}/hsf/Chair`,
+          parameter_count: 3,
+          scripts_present: ['SCRIPT_3D'],
+          latest_revision_id: null,
+          origin: null,
+          artifact_count: 0,
+          active: false,
+        },
+      ],
+    }),
+    workspaceClose: async () => ({ ok: true, workspace: null }),
+    workspaceScan: async () => ({
+      ok: true,
+      workspace: '/workspace',
+      project_count: 1,
+      projects: [
+        {
+          name: 'Chair',
+          path: '/workspace/hsf/Chair',
+          parameter_count: 3,
+          scripts_present: ['SCRIPT_3D'],
+          latest_revision_id: 'r0001',
+          origin: { imported_from: '/workspace/sources/chair.gdl', imported_kind: 'gdl', imported_at: '2026-08-06T00:00:00' },
+          artifact_count: 2,
+          active: true,
+        },
+      ],
+    }),
+    workspaceSearch: async (query: string) => ({
+      ok: true,
+      query,
+      hits: [
+        { project: 'Chair', location: 'scripts/3d.gdl', line: 2, snippet: 'CYLIND 1, 1' },
+      ],
+      hit_count: 1,
+      workspace: '/workspace',
+    }),
     fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
     fetchPreview2D: async () => ({
       lines: [{ from: [0, 0], to: [1, 1] }],
@@ -24,6 +74,22 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       preview: { meshes: [], wires: [], warnings: ['loaded'] },
       warnings: ['loaded'],
       compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+      workspace: {
+        path: '/workspace',
+        project_count: 1,
+        projects: [
+          {
+            name: 'Chair',
+            path: '/workspace/hsf/Chair',
+            parameter_count: 3,
+            scripts_present: ['SCRIPT_3D'],
+            latest_revision_id: null,
+            origin: null,
+            artifact_count: 0,
+            active: true,
+          },
+        ],
+      },
     }),
     importGdlFile: async () => ({
       ok: true,
@@ -2137,4 +2203,119 @@ test('generateAssistantChanges discards results when the project switched mid-re
   expect(store.getState().preview?.meshes.some((mesh) => mesh.name === 'stale')).toBe(false)
   expect(store.getState().assistantMessages.at(-1)?.content ?? '').not.toContain('stale reply')
   expect(store.getState().compileLog[0]).toContain('discarded')
+})
+
+
+// ── Workspace 切片（P3-d2） ────────────────────────────────
+
+test('workspace slice: open workspace hydrates state from scan result', async () => {
+  const store = createWorkbenchStore(makeApi())
+  const initial = store.getState()
+  expect(initial.workspace).toBeNull()
+
+  await store.getState().openWorkspace('/workspace')
+
+  const state = store.getState()
+  expect(state.workspace?.path).toBe('/workspace')
+  expect(state.workspace?.project_count).toBe(1)
+  expect(state.workspace?.projects[0]?.name).toBe('Chair')
+  expect(state.workspaceBusy).toBe(false)
+})
+
+test('workspace slice: open failure surfaces lastError and keeps workspace null', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      workspaceOpen: async () => ({ ok: false, error: 'not a workspace', code: 'not_a_workspace', workspace: null }),
+    }),
+  )
+
+  await store.getState().openWorkspace('/nope')
+
+  const state = store.getState()
+  expect(state.workspace).toBeNull()
+  expect(state.lastError).toContain('not a workspace')
+  expect(state.workspaceBusy).toBe(false)
+})
+
+test('workspace slice: refresh keeps active flag from backend scan', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().openWorkspace('/workspace')
+
+  await store.getState().refreshWorkspace()
+
+  const state = store.getState()
+  expect(state.workspace?.path).toBe('/workspace')
+  const project = state.workspace?.projects[0]
+  expect(project?.active).toBe(true)
+  expect(project?.artifact_count).toBe(2)
+  expect(project?.origin?.imported_kind).toBe('gdl')
+})
+
+test('workspace slice: close clears workspace and search state', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().openWorkspace('/workspace')
+  await store.getState().searchWorkspace('cylind')
+
+  await store.getState().closeWorkspace()
+
+  const state = store.getState()
+  expect(state.workspace).toBeNull()
+  expect(state.workspaceSearchQuery).toBeNull()
+  expect(state.workspaceSearchHits).toEqual([])
+  expect(state.workspaceBusy).toBe(false)
+})
+
+test('workspace slice: search stores hits; empty query clears without API call', async () => {
+  let apiCalls = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      workspaceSearch: async (query: string) => {
+        apiCalls += 1
+        return {
+          ok: true,
+          query,
+          hits: [{ project: 'Chair', location: 'scripts/3d.gdl', line: 2, snippet: 'CYLIND 1, 1' }],
+          hit_count: 1,
+          workspace: '/workspace',
+        }
+      },
+    }),
+  )
+  await store.getState().openWorkspace('/workspace')
+
+  await store.getState().searchWorkspace('cylind')
+  expect(store.getState().workspaceSearchQuery).toBe('cylind')
+  expect(store.getState().workspaceSearchHits.length).toBe(1)
+
+  const callsAfterSearch = apiCalls
+  await store.getState().searchWorkspace('   ')
+  expect(apiCalls).toBe(callsAfterSearch)
+  expect(store.getState().workspaceSearchQuery).toBeNull()
+  expect(store.getState().workspaceSearchHits).toEqual([])
+})
+
+test('workspace slice: refresh is a no-op without attachment', async () => {
+  let scanCalls = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      workspaceScan: async () => {
+        scanCalls += 1
+        return { ok: true, workspace: null, project_count: 0, projects: [] }
+      },
+    }),
+  )
+
+  await store.getState().refreshWorkspace()
+  expect(scanCalls).toBe(0)
+  expect(store.getState().workspace).toBeNull()
+})
+
+test('workspace slice: project switching reuses loadProjectPath and epoch guard stays intact', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().openWorkspace('/workspace')
+
+  await store.getState().loadProjectPath('/workspace/hsf/Chair')
+
+  expect(store.getState().project?.path).toBe('/workspace/hsf/Chair')
+  expect(store.getState().workspace?.projects[0]?.name).toBe('Chair')
 })

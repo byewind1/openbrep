@@ -64,6 +64,11 @@ import {
   updateProjectParameter,
   validateProjectParameters,
   commitProjectGit,
+  workspaceInit,
+  workspaceOpen,
+  workspaceClose,
+  workspaceScan,
+  workspaceSearch,
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
@@ -76,6 +81,7 @@ import { createRevisionActions } from './actions/revisionActions'
 import { createScriptActions } from './actions/scriptActions'
 import { createSettingsActions } from './actions/settingsActions'
 import { createTapirActions } from './actions/tapirActions'
+import { createWorkspaceActions } from './actions/workspaceActions'
 import type { WorkbenchActionContext, WorkbenchApi, WorkbenchSet, WorkbenchState } from './workbenchStoreTypes'
 import { defaultLlmSettings } from './workbenchStoreUtils'
 
@@ -84,6 +90,11 @@ export type { WorkbenchApi, WorkbenchState } from './workbenchStoreTypes'
 const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
+  workspaceInit,
+  workspaceOpen,
+  workspaceClose,
+  workspaceScan,
+  workspaceSearch,
   fetchPreview2D,
   loadProjectPath,
   newProject,
@@ -161,6 +172,7 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       ...createProjectActions(context),
       ...createSettingsActions(context),
       ...createTapirActions(context),
+      ...createWorkspaceActions(context),
       ...createParameterActions(context),
       ...createPreviewActions(context),
       ...createCompileActions(context),
@@ -226,5 +238,11 @@ function initialWorkbenchState() {
     scriptLoading: false,
     scriptSaving: false,
     mockCompileResult: null,
+    workspace: null,
+    workspaceBusy: false,
+    workspaceSearching: false,
+    workspaceSearchQuery: null,
+    workspaceSearchHits: [],
+    workspaceSearchResult: null,
   }
 }

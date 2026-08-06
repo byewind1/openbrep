@@ -37,6 +37,12 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     latestRevisionId: null,
     revisionLoading: false,
     mockCompileResult: null,
+    // snapshot 的 workspace 块原样透传（无附着为 null）
+    workspace: snapshot.workspace ?? null,
+    workspaceSearching: false,
+    workspaceSearchQuery: null,
+    workspaceSearchHits: [],
+    workspaceSearchResult: null,
   }
 }
 

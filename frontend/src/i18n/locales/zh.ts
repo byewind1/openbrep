@@ -82,6 +82,22 @@ export const zh = {
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': '语言',
   'interfacePanel.description': '选择工作台显示语言，切换后立即生效',
+
+  // WorkspacePanel
+  'workspace.title': '工作区',
+  'workspace.notAttached': '未附着工作区',
+  'workspace.attachPlaceholder': '工作区目录路径',
+  'workspace.attach': '附着',
+  'workspace.searchPlaceholder': '跨项目搜索',
+  'workspace.search': '搜索',
+  'workspace.close': '解除附着',
+  'workspace.refresh': '刷新',
+  'workspace.projects': '{count} 个项目',
+  'workspace.noProjects': '暂无项目',
+  'workspace.searchResults': '搜索结果',
+  'workspace.searchEmpty': '无命中',
+  'workspace.badgeOrigin': '导入',
+  'workspace.badgeArtifacts': '{count} 成品',
 } as const
 
 export type LocaleKey = keyof typeof zh

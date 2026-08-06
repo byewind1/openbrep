@@ -60,10 +60,19 @@ import type {
   WorkbenchParameter,
   WorkbenchProject,
   WorkbenchSnapshot,
+  WorkspaceInfo,
+  WorkspaceScanResult,
+  WorkspaceSearchHit,
+  WorkspaceSearchResult,
 } from '../api/types'
 
 export interface WorkbenchApi {
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
+  workspaceInit: (path: string) => Promise<WorkspaceScanResult>
+  workspaceOpen: (path: string) => Promise<WorkspaceScanResult>
+  workspaceClose: () => Promise<{ ok: boolean; error?: string; workspace: null }>
+  workspaceScan: () => Promise<WorkspaceScanResult>
+  workspaceSearch: (query: string) => Promise<WorkspaceSearchResult>
   fetchPreview: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<PreviewPayload>
   fetchPreview2D: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
@@ -197,6 +206,12 @@ export interface WorkbenchState {
   scriptLoading: boolean
   scriptSaving: boolean
   mockCompileResult: MockCompileResponse | null
+  workspace: WorkspaceInfo | null
+  workspaceBusy: boolean
+  workspaceSearching: boolean
+  workspaceSearchQuery: string | null
+  workspaceSearchHits: WorkspaceSearchHit[]
+  workspaceSearchResult: WorkspaceSearchResult | null
   load: () => Promise<void>
   loadProjectPath: (path: string) => Promise<void>
   newProject: () => Promise<void>
@@ -265,6 +280,10 @@ export interface WorkbenchState {
   flushDirtyScripts: () => Promise<{ ok: boolean; didSave: boolean }>
   runMockCompile: () => Promise<void>
   revealCompileOutput: (path?: string) => Promise<void>
+  openWorkspace: (path: string) => Promise<void>
+  closeWorkspace: () => Promise<void>
+  refreshWorkspace: () => Promise<void>
+  searchWorkspace: (query: string) => Promise<void>
   loadPreview3D: () => Promise<void>
   loadPreview2D: () => Promise<void>
   clearLastError: () => void

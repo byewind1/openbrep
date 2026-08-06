@@ -85,4 +85,20 @@ export const en: Record<LocaleKey, string> = {
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': 'Language',
   'interfacePanel.description': 'Choose the workbench display language. Applies immediately.',
+
+  // WorkspacePanel
+  'workspace.title': 'Workspace',
+  'workspace.notAttached': 'No workspace attached',
+  'workspace.attachPlaceholder': 'Workspace directory path',
+  'workspace.attach': 'Attach',
+  'workspace.searchPlaceholder': 'Search across projects',
+  'workspace.search': 'Search',
+  'workspace.close': 'Detach',
+  'workspace.refresh': 'Refresh',
+  'workspace.projects': '{count} projects',
+  'workspace.noProjects': 'No projects',
+  'workspace.searchResults': 'Search results',
+  'workspace.searchEmpty': 'No matches',
+  'workspace.badgeOrigin': 'import',
+  'workspace.badgeArtifacts': '{count} artifacts',
 }
