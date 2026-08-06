@@ -1981,3 +1981,163 @@ def test_workbench_session_restore_keeps_empty_when_path_missing(tmp_path):
 
     assert result["restored"] is False
     assert session.project is None
+
+
+# ── Workspace 附着（P3-d1）──────────────────────────────────
+
+
+def _make_workspace_with_project(tmp_path, project_name="Shelf", source_name="shelf.gdl"):
+    """初始化工作区并导入一个 gdl 项目；返回 (workspace_root, project_dir)。"""
+    from openbrep.workbench.workspace_service import import_to_workspace, init_workspace
+
+    ws = tmp_path / "ws"
+    init_workspace(str(ws))
+    source = tmp_path / source_name
+    source.write_text("BLOCK A, B, ZZYZX\nEND\n", encoding="utf-8")
+    result = import_to_workspace(str(ws), str(source), "gdl")
+    assert result["ok"] is True
+    return ws, Path(result["project_path"])
+
+
+def test_workbench_session_independent_mode_workspace_is_none(tmp_path):
+    """独立项目模式：未附着工作区时 snapshot['workspace'] 为 None（现状行为）。"""
+    session = WorkbenchSession(config_path=str(tmp_path / "cfg.toml"))
+    snapshot = session.snapshot()
+    assert snapshot["ok"] is True
+    assert snapshot["workspace"] is None
+    assert session.workspace_path is None
+
+
+def test_workbench_session_implicitly_attaches_workspace_on_project_load(tmp_path):
+    """隐式附着：加载工作区 hsf/ 下项目 → workspace_path = 工作区根；工作区外 → None。"""
+    ws, project_dir = _make_workspace_with_project(tmp_path)
+
+    outside = HSFProject.create_new("Outside", str(tmp_path / "plain"))
+    outside.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+    outside_dir = outside.save_to_disk()
+
+    session = WorkbenchSession(config_path=str(tmp_path / "cfg.toml"))
+
+    loaded = session.route("POST", "/api/project/load", {"path": str(project_dir)})
+    assert loaded["ok"] is True
+    assert session.workspace_path == ws.resolve()
+
+    loaded_outside = session.route("POST", "/api/project/load", {"path": str(outside_dir)})
+    assert loaded_outside["ok"] is True
+    assert session.workspace_path is None
+
+
+def test_workbench_session_workspace_open_close_scan_search(tmp_path):
+    """显式 open/close/scan/search：正常与错误形态。"""
+    ws, project_dir = _make_workspace_with_project(tmp_path)
+    session = WorkbenchSession(config_path=str(tmp_path / "cfg.toml"))
+    session.route("POST", "/api/project/load", {"path": str(project_dir)})
+
+    # open 未初始化路径 → 统一错误 + 提示先 init
+    bad = session.route("POST", "/api/workspace/open", {"path": str(tmp_path / "nows")})
+    assert bad["ok"] is False
+    assert bad["code"] == "not_a_workspace"
+    assert "/api/workspace/init" in bad["error"]
+
+    # open 成功 → 返回 scan 结果
+    opened = session.route("POST", "/api/workspace/open", {"path": str(ws)})
+    assert opened["ok"] is True
+    assert opened["workspace"] == str(ws.resolve())
+    assert opened["project_count"] == 1
+    assert session.workspace_path == ws.resolve()
+
+    # scan
+    scanned = session.route("GET", "/api/workspace/scan")
+    assert scanned["ok"] is True
+    assert scanned["workspace"] == str(ws.resolve())
+    assert scanned["project_count"] == 1
+
+    # search（query 走 URL query 参数）
+    searched = session.route("GET", "/api/workspace/search?q=block")
+    assert searched["ok"] is True
+    assert searched["hit_count"] >= 1
+    assert searched["workspace"] == str(ws.resolve())
+
+    # close → 独立模式，项目保持打开
+    closed = session.route("POST", "/api/workspace/close")
+    assert closed["ok"] is True
+    assert closed["workspace"] is None
+    assert session.workspace_path is None
+    assert session.project is not None
+
+    # close 后 search → no_workspace；scan → {ok, workspace: null}
+    no_ws = session.route("GET", "/api/workspace/search", {"q": "x"})
+    assert no_ws["ok"] is False
+    assert no_ws["code"] == "no_workspace"
+    scanned_after = session.route("GET", "/api/workspace/scan")
+    assert scanned_after["ok"] is True
+    assert scanned_after["workspace"] is None
+
+
+def test_workbench_session_workspace_snapshot_block_active_flag(tmp_path):
+    """snapshot['workspace']：projects 带 active 标记且与当前项目一致。"""
+    ws, project_dir = _make_workspace_with_project(tmp_path)
+    # 第二个项目（不带 active）
+    from openbrep.workbench.workspace_service import import_to_workspace
+
+    source2 = tmp_path / "chair.gdl"
+    source2.write_text("BLOCK A, B, ZZYZX\nCYLIND 1, 1\n", encoding="utf-8")
+    import_to_workspace(str(ws), str(source2), "gdl")
+
+    session = WorkbenchSession(config_path=str(tmp_path / "cfg.toml"))
+    session.route("POST", "/api/project/load", {"path": str(project_dir)})
+    session.route("POST", "/api/workspace/open", {"path": str(ws)})
+
+    block = session.snapshot()["workspace"]
+    assert block is not None
+    assert block["path"] == str(ws.resolve())
+    assert block["project_count"] == 2
+    active = {p["name"]: p["active"] for p in block["projects"]}
+    assert active.get("Shelf") is True or active.get("shelf") is True
+    assert False in active.values()  # 至少一个非 active
+
+
+def test_workbench_session_workspace_init_route(tmp_path):
+    """POST /api/workspace/init：创建四区 + workspace.toml；重复调用幂等。"""
+    ws = tmp_path / "ws"
+    session = WorkbenchSession(config_path=str(tmp_path / "cfg.toml"))
+
+    first = session.route("POST", "/api/workspace/init", {"path": str(ws)})
+    assert first["ok"] is True
+    for zone in ("materials", "sources", "hsf", "artifacts"):
+        assert (ws / zone).is_dir()
+    assert (ws / ".openbrep" / "workspace.toml").is_file()
+
+    second = session.route("POST", "/api/workspace/init", {"path": str(ws)})
+    assert second["ok"] is True
+    assert second["idempotent"] is True
+
+
+def test_workbench_session_last_workspace_persist_and_restore(tmp_path):
+    """last_workspace：open 持久化到 config；restore 静默附着；失效降级独立模式。"""
+    ws, project_dir = _make_workspace_with_project(tmp_path)
+    config_path = tmp_path / "cfg.toml"
+
+    session = WorkbenchSession(config_path=str(config_path))
+    session.route("POST", "/api/project/load", {"path": str(project_dir)})
+    session.route("POST", "/api/workspace/open", {"path": str(ws)})
+    assert session.config.last_workspace == str(ws.resolve())
+
+    # 新会话 restore：recent_projects 有该项目 + last_workspace 有效 → 静默附着
+    restored = WorkbenchSession(config_path=str(config_path))
+    result = restored.restore_last_project()
+    assert result["restored"] is True
+    assert restored.workspace_path == ws.resolve()
+    assert restored.snapshot()["workspace"] is not None
+
+    # last_workspace 失效 → 降级独立模式（不报错）
+    stale_config = tmp_path / "stale.toml"
+    from openbrep.config import GDLAgentConfig
+
+    cfg = GDLAgentConfig.load(str(config_path))
+    cfg.last_workspace = str(tmp_path / "does-not-exist")
+    cfg.recent_projects = [str(project_dir)]
+    cfg.save(str(stale_config))
+    degraded = WorkbenchSession(config_path=str(stale_config))
+    degraded.restore_last_project()
+    assert degraded.workspace_path is None

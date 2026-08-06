@@ -69,6 +69,58 @@ def _unexpected_entries(root: Path) -> list[str]:
     return entries
 
 
+_WORKSPACE_AGENTS_MD = """# 工作区说明（由 OpenBrep 管理，可编辑）
+
+> 本工作区由 OpenBrep 管理。此文件是给 AI 助手/协作者的工作区自描述骨架，
+> 已存在的内容不会被覆盖；可自由编辑补充。
+
+## 业务背景
+<!-- 记录：这个工作区服务哪个客户/业务线？典型构件是什么？ -->
+
+## 构件清单
+<!-- 记录：hsf/ 下有哪些构件、各自用途。也可用 workspace scan 自动索引。 -->
+
+## 命名约定
+<!-- 记录：参数命名（长度前缀/单位）、文件命名、版本规范。 -->
+
+## 禁忌
+<!-- 记录：不允许做的事（如不改动 sources/ 原件、不删除某些文件）。 -->
+"""
+
+_PROJECT_AGENTS_MD = """# {project_name} 构件说明（由 OpenBrep 管理，可编辑）
+
+> 本文件由 OpenBrep 在导入时生成，已存在的内容不会被覆盖；可自由编辑补充。
+
+## 构件规格
+<!-- 记录：用途、几何组成、适用场景。 -->
+
+## 参数语义
+<!-- 记录：每个参数的含义/单位/取值范围（A/B/ZZYZX 为 ArchiCAD 保留尺寸参数）。 -->
+
+## 当前状态
+<!-- 记录：开发进度、已知问题、待办。 -->
+"""
+
+
+def _ensure_workspace_agents_md(root: Path) -> Path:
+    """生成 workspace/AGENTS.md 骨架；已存在则跳过（不覆盖用户内容）。"""
+    target = root / "AGENTS.md"
+    if not target.exists():
+        target.write_text(_WORKSPACE_AGENTS_MD.lstrip("\n"), encoding="utf-8")
+    return target
+
+
+def _ensure_project_agents_md(project_dir: Path) -> Path:
+    """生成 hsf/<项目>/AGENTS.md 骨架；已存在则跳过（不覆盖用户内容）。"""
+    target = Path(project_dir) / "AGENTS.md"
+    if not target.exists():
+        target.write_text(
+            _PROJECT_AGENTS_MD.format(project_name=Path(project_dir).name).lstrip("\n"),
+            encoding="utf-8",
+        )
+    return target
+
+
 def _write_workspace_toml(root: Path) -> Path:
     toml_path = _workspace_toml_path(root)
     toml_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +157,11 @@ def init_workspace(path: str) -> dict[str, Any]:
 
     if _is_workspace(root):
         missing_zones = [z for z in WORKSPACE_ZONES if not (root / z).is_dir()]
+        try:
+            _ensure_workspace_agents_md(root)
+            (root / WORKSPACE_META_DIR / "plans").mkdir(exist_ok=True)
+        except Exception:
+            pass  # 自描述/plans 生成失败不阻断幂等返回
         return {
             "ok": True,
             "initialized": True,
@@ -119,6 +176,8 @@ def init_workspace(path: str) -> dict[str, Any]:
         for zone in WORKSPACE_ZONES:
             (root / zone).mkdir(exist_ok=True)
         toml_path = _write_workspace_toml(root)
+        _ensure_workspace_agents_md(root)
+        (root / WORKSPACE_META_DIR / "plans").mkdir(exist_ok=True)
     except Exception as exc:
         return _error("workspace_error", f"初始化失败: {exc}", {"path": str(path)})
 
@@ -382,9 +441,129 @@ def import_to_workspace(path: str, source_path: str, kind: str) -> dict[str, Any
     except Exception:
         pass  # origin 写入失败不阻断导入结果
 
+    # 项目级 AGENTS.md 自描述骨架（已存在则跳过，不覆盖用户内容）
+    try:
+        if project_path:
+            _ensure_project_agents_md(project_path)
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "project_path": project_path,
         "source_path": str(archived_copy),
         "warnings": list(result.get("warnings") or []),
     }
+
+
+# ── 5. build_handoff ───────────────────────────────────────
+
+
+def build_handoff(workspace_path: str, limit: int = 10) -> dict[str, Any]:
+    """聚合各项目最近 revision 的 manifest，生成 .openbrep/handoff.md（全量重写）。
+
+    - 每个 hsf/ 项目取其最新一条 revision（created_at/trigger/intent/
+      user_instruction/trace_id；trace_id 为 manifest 保留位，当前 schema 无此
+      字段时为 None）；
+    - 按 created_at 倒序取前 limit 条；handoff.md 全量重写并标注生成时间；
+    - 只读聚合，不触碰项目内容；失败条目跳过。
+
+    纪律：自描述/交接文件生成只发生在用户工作区目录内；本函数没有任何
+    benchmark/workdir 等仓库内临时目录的调用方，将来也不得添加这类调用。
+    """
+    try:
+        root = Path(workspace_path).expanduser().resolve()
+    except Exception as exc:
+        return _error("workspace_error", f"无效路径: {exc}", {"path": str(workspace_path)})
+    if not root.is_dir() or not _is_workspace(root):
+        return _error(
+            "not_a_workspace",
+            f"不是已初始化的工作区（缺 {WORKSPACE_META_DIR}/{WORKSPACE_TOML}）: {workspace_path}",
+            {"path": str(workspace_path)},
+        )
+
+    from openbrep.revisions import list_revisions
+
+    entries: list[dict[str, Any]] = []
+    hsf_dir = root / "hsf"
+    if hsf_dir.is_dir():
+        for entry in sorted(hsf_dir.iterdir()):
+            if not entry.is_dir() or not is_hsf_project_dir(entry):
+                continue
+            try:
+                revisions = list_revisions(entry)
+                if not revisions:
+                    continue
+                latest = revisions[-1]
+                entries.append({
+                    "project": entry.name,
+                    "revision_id": latest.revision_id,
+                    "created_at": latest.created_at,
+                    "trigger": latest.trigger,
+                    "intent": latest.intent,
+                    "user_instruction": latest.user_instruction,
+                    "trace_id": None,
+                })
+            except Exception:
+                continue
+
+    entries.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    entries = entries[:limit]
+
+    lines = [
+        "# OpenBrep 工作区交接（handoff）",
+        "",
+        f"> 生成时间：{datetime.now(timezone.utc).isoformat(timespec='seconds')}（UTC）",
+        "> 由 workspace build_handoff 全量重写；后续可在此追加交接说明。",
+        "",
+    ]
+    if not entries:
+        lines.append("暂无带 revision 的项目。")
+    else:
+        lines.append("## 各项目最近版本")
+        lines.append("")
+        lines.append("| 项目 | revision | 触发 | 意图 | 时间 | 指令 |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for e in entries:
+            instruction = str(e["user_instruction"] or "").replace("|", "\|")[:60]
+            lines.append(
+                f"| {e['project']} | {e['revision_id']} | {e['trigger']} | "
+                f"{e['intent']} | {e['created_at']} | {instruction} |"
+            )
+
+    try:
+        handoff_path = root / WORKSPACE_META_DIR / "handoff.md"
+        handoff_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception as exc:
+        return _error("workspace_error", f"写入 handoff.md 失败: {exc}", {"path": str(root)})
+
+    return {
+        "ok": True,
+        "path": str(handoff_path),
+        "entries": entries,
+    }
+
+
+# ── 6. 会话附着判定（纯函数，供 WorkbenchSession 使用） ─────
+
+
+def workspace_root_for_project(project_dir: str | Path) -> Path | None:
+    """隐式附着判定：项目父目录的父目录若是工作区（含 .openbrep/workspace.toml），
+    返回工作区根；否则返回 None。只做判定，不改任何状态。"""
+    try:
+        project_dir = Path(project_dir).expanduser().resolve()
+        grandparent = project_dir.parent.parent
+        if _is_workspace(grandparent):
+            return grandparent
+    except Exception:
+        pass
+    return None
+
+
+def resolve_workspace(path: str | Path) -> Path | None:
+    """路径是已初始化工作区则返回其 resolve 后的根，否则 None（静默降级用）。"""
+    try:
+        root = Path(path).expanduser().resolve()
+    except Exception:
+        return None
+    return root if _is_workspace(root) else None

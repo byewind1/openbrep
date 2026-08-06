@@ -13,6 +13,7 @@ from pathlib import Path
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.workbench.workspace_service import (
+    build_handoff,
     import_to_workspace,
     init_workspace,
     scan_workspace,
@@ -253,5 +254,107 @@ class TestImportToWorkspace(unittest.TestCase):
             self.assertEqual(result["error"]["code"], "not_a_workspace")
 
 
+class TestWorkspaceSelfDescriptions(unittest.TestCase):
+    """自描述文件：工作区/项目 AGENTS.md 骨架 + build_handoff。"""
+
+    def test_init_generates_workspace_agents_md_with_four_sections(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            agents = ws / "AGENTS.md"
+            self.assertTrue(agents.is_file())
+            text = agents.read_text(encoding="utf-8")
+            for section in ("业务背景", "构件清单", "命名约定", "禁忌"):
+                self.assertIn(section, text)
+            self.assertIn("本工作区由 OpenBrep 管理", text)
+            # plans 目录已建
+            self.assertTrue((ws / ".openbrep" / "plans").is_dir())
+
+    def test_init_does_not_overwrite_existing_agents_md(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            agents = ws / "AGENTS.md"
+            agents.write_text("# 用户自写内容\n", encoding="utf-8")
+
+            result = init_workspace(str(ws))
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(agents.read_text(encoding="utf-8"), "# 用户自写内容\n")
+
+    def test_import_generates_project_agents_md_with_three_sections(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            source = Path(tmpdir) / "rack.gdl"
+            source.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            result = import_to_workspace(str(ws), str(source), "gdl")
+
+            self.assertTrue(result["ok"])
+            agents = Path(result["project_path"]) / "AGENTS.md"
+            self.assertTrue(agents.is_file())
+            text = agents.read_text(encoding="utf-8")
+            for section in ("构件规格", "参数语义", "当前状态"):
+                self.assertIn(section, text)
+
+    def test_import_does_not_overwrite_existing_project_agents_md(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            source = Path(tmpdir) / "rack.gdl"
+            source.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+            result = import_to_workspace(str(ws), str(source), "gdl")
+            agents = Path(result["project_path"]) / "AGENTS.md"
+            agents.write_text("# 已有项目说明\n", encoding="utf-8")
+
+            # 同名源重复导入（复用 sources 副本，项目名冲突会加后缀 → 新项目）
+            result2 = import_to_workspace(str(ws), str(source), "gdl")
+            self.assertTrue(result2["ok"])
+            if Path(result2["project_path"]) != Path(result["project_path"]):
+                agents2 = Path(result2["project_path"]) / "AGENTS.md"
+                self.assertIn("构件规格", agents2.read_text(encoding="utf-8"))
+            self.assertEqual(agents.read_text(encoding="utf-8"), "# 已有项目说明\n")
+
+    def test_build_handoff_aggregates_latest_revisions(self):
+        from openbrep.revisions import create_revision
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            # 两个项目，各造一条 revision
+            p1_dir = _make_project(ws, "ShelfA", ws / "hsf")
+            p2_dir = _make_project(ws, "ShelfB", ws / "hsf")
+            create_revision(p1_dir, message="a", trigger="create", intent="CREATE",
+                            user_instruction="生成 ShelfA")
+            create_revision(p2_dir, message="b", trigger="modify", intent="MODIFY",
+                            user_instruction="改 ShelfB 参数")
+
+            result = build_handoff(str(ws))
+
+            self.assertTrue(result["ok"])
+            handoff = Path(result["path"])
+            self.assertTrue(handoff.is_file())
+            text = handoff.read_text(encoding="utf-8")
+            self.assertIn("生成时间", text)
+            entries = {e["project"]: e for e in result["entries"]}
+            self.assertIn("ShelfA", entries)
+            self.assertIn("ShelfB", entries)
+            self.assertEqual(entries["ShelfA"]["trigger"], "create")
+            self.assertEqual(entries["ShelfB"]["intent"], "MODIFY")
+            self.assertIn("ShelfA", text)
+            self.assertIn("改 ShelfB 参数", text)
+
+    def test_build_handoff_limit_and_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            # 无 revision 的项目 → entries 为空但文件生成
+            result = build_handoff(str(ws), limit=5)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["entries"], [])
+            self.assertTrue(Path(result["path"]).is_file())
+
+            # 非工作区 → 统一错误
+            bad = build_handoff(str(Path(tmpdir) / "nows"))
+            self.assertFalse(bad["ok"])
+            self.assertEqual(bad["error"]["code"], "not_a_workspace")
+
+
 if __name__ == "__main__":
+
     unittest.main()

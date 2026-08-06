@@ -90,3 +90,7 @@ knowledge_dir = "./knowledge"
 templates_dir = "./templates"
 src_dir = "./src"
 output_dir = "./output"
+
+# 上次打开的工作区目录（open 时自动写入；restore 时静默附着，失效则降级独立项目模式）。
+# 留空 = 不自动附着工作区。
+# last_workspace = "/path/to/workspace"

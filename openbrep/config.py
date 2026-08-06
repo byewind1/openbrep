@@ -664,6 +664,7 @@ class GDLAgentConfig:
     src_dir: str = "./src"
     output_dir: str = "./output"
     recent_projects: list[str] = field(default_factory=list)
+    last_workspace: str = ""
 
     @classmethod
     def load(cls, config_path: Optional[str] = None, **overrides) -> GDLAgentConfig:
@@ -758,6 +759,7 @@ class GDLAgentConfig:
                 for path in raw_recent_projects
                 if isinstance(path, str) and path.strip()
             ],
+            last_workspace=str(data.get("last_workspace") or "").strip(),
         )
 
     def get_available_models(self) -> list[str]:
@@ -808,6 +810,7 @@ class GDLAgentConfig:
             "src_dir": self.src_dir,
             "output_dir": self.output_dir,
             "recent_projects": self.recent_projects,
+            "last_workspace": self.last_workspace,
         }
         Path(config_path).write_text(toml.dumps(data), encoding="utf-8")
 
@@ -849,6 +852,8 @@ class GDLAgentConfig:
             for path in self.recent_projects:
                 lines.append(f'  "{path}",')
             lines.append("]")
+        if self.last_workspace:
+            lines += ["", f'last_workspace = "{self.last_workspace}"']
         return "\n".join(lines) + "\n"
 
 
