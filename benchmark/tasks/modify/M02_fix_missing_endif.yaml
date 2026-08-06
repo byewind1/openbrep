@@ -2,7 +2,7 @@
 id: M02
 category: modify
 complexity: low
-description: "该对象编译失败：Error in 3d.gdl: IF/ENDIF mismatch (IF: 1, ENDIF: 0)。请定位并修复 3d 脚本中的错误，使编译通过，不要做其他结构性改动"
+description: "该对象编译失败：Error in 3d.gdl: IF/ENDIF mismatch (IF: 1, ENDIF: 0)。请定位并修复 3d 脚本中的错误，使编译通过，不要做其他结构性改动。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_thk（层板厚度）"
 fixture: benchmark/fixtures/modify/M02
 success_criteria:
   compile_pass: true

@@ -2,7 +2,7 @@
 id: M04
 category: modify
 complexity: low_medium
-description: "为书架定义一个名为 wood_mat 的木纹材质（DEFINE MATERIAL），并让 3D 脚本中的几何体使用该材质（MATERIAL 引用），其余结构不变"
+description: "为书架定义一个名为 wood_mat 的木纹材质（DEFINE MATERIAL），并让 3D 脚本中的几何体使用该材质（MATERIAL 引用），其余结构不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_thk（层板厚度）"
 fixture: benchmark/fixtures/modify/M04
 success_criteria:
   compile_pass: true

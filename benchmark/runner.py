@@ -264,9 +264,11 @@ class BenchmarkRunner:
             output_dir=str(self.results_dir),
             gsm_name=task_id,
         )
-        # 黄金语料在旧路径（非 agent_loop）下录制；replay 时强制走旧路径，
-        # 避免 ReplayLLM 未实现 generate_with_tools 导致崩溃。
-        if self.llm_source.startswith("replay:"):
+        # 黄金语料在旧路径（非 agent_loop）下录制与回放：
+        # - replay 强制旧路径，避免 ReplayLLM 未实现 generate_with_tools 崩溃；
+        # - record 同样强制旧路径——RecordingLLM 只录 generate()，agent_loop
+        #   会走 generate_with_tools，录出空语料（2026-08-06 实测踩坑）。
+        if self.llm_source.startswith(("replay:", "record:")):
             request.agent_loop = False
         result = pipeline.execute(request)
 

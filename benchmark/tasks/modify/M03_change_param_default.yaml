@@ -2,7 +2,7 @@
 id: M03
 category: modify
 complexity: low
-description: "把层板厚度参数 shelf_thk 的默认值从 18mm 改为 25mm（即 0.025 米），参数名和其他内容保持不变"
+description: "把层板厚度参数 shelf_thk 的默认值从 18mm 改为 25mm（即 0.025 米），参数名和其他内容保持不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_thk（层板厚度）"
 fixture: benchmark/fixtures/modify/M03
 success_criteria:
   compile_pass: true

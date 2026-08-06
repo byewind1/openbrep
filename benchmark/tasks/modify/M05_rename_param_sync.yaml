@@ -2,7 +2,7 @@
 id: M05
 category: modify
 complexity: low_medium
-description: "把参数 shelf_h 改名为 board_h：paramlist.xml 中的参数名改为 board_h，3d.gdl 里所有引用同步更新，默认值保持 0.9 米不变"
+description: "把参数 shelf_h 改名为 board_h：paramlist.xml 中的参数名改为 board_h，3d.gdl 里所有引用同步更新，默认值保持 0.9 米不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、board_h（中层板高度）"
 fixture: benchmark/fixtures/modify/M05
 success_criteria:
   compile_pass: true

@@ -313,6 +313,9 @@ python -m benchmark.runner --suite benchmark/tasks/modify/ --mode auto --jobs 4 
 python -m benchmark.update_baseline --init --confirm   # 重建/刷新基线
 ```
 
+- OpenRouter 等不需要 thinking 参数的端点，录制命令加 `GDL_BENCH_THINKING=bare` 前缀（完全不设 extra_body）。
+- 默认不设置该变量时行为不变：录制仍强制关闭 thinking。
+
 基线更新（改进落地后）：`python -m benchmark.update_baseline --confirm`。
 脚本会拒绝任何退化方向的更新；写盘必须在 commit message 里说明原因。
 

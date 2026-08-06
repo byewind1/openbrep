@@ -2,7 +2,7 @@
 id: M01
 category: modify
 complexity: low
-description: "在现有书架的基础上再加一层层板（把层板数量从 2 层增加到 3 层），保持层板在柜体内均匀分布，其余结构不变"
+description: "在现有书架的基础上再加一层层板（把层板数量从 2 层增加到 3 层），保持层板在柜体内均匀分布，其余结构不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_count（层板数量）、shelf_thk（层板厚度）"
 fixture: benchmark/fixtures/modify/M01
 success_criteria:
   compile_pass: true
