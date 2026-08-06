@@ -138,16 +138,18 @@ def test_render_evidence_reports_bbox_and_declared_dims_match(tmp_path):
 
 def test_render_evidence_sweep_reports_bbox_response(tmp_path):
     project = HSFProject.create_new("SweepBox", str(tmp_path))
-    project.get_parameter("A").value = "2.0"  # 非 boolean-ish，扰动走缩放而非翻转
+    # A=1.0（Length）扰动走缩放 1.0 -> 1.5，不再当布尔翻转成 0.0——
+    # 之前该怪癖把 1.0 一律翻成 0.0，测试被迫改用 2.0 绕过（P1-b+d）。
+    project.get_parameter("A").value = "1.0"
     hsf_dir = project.save_to_disk()
     result = render_evidence(str(hsf_dir), sweep_params=["A"])
     assert result["ok"] is True
     assert len(result["sweep"]) == 1
     entry = result["sweep"][0]
     assert entry["param"] == "A"
-    assert entry["base_value"] == 2.0
+    assert entry["base_value"] == 1.0
     assert entry["bbox_response"] is not None
-    assert entry["bbox_response"]["size"][0] == pytest.approx(3.0, abs=1e-6)
+    assert entry["bbox_response"]["size"][0] == pytest.approx(1.5, abs=1e-6)
     assert entry["passed"] is True
 
 

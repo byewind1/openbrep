@@ -9,6 +9,7 @@ import unittest
 from openbrep.gdl_previewer import PreviewMesh3D, Preview3DResult
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.semantic_verifier import (
+    _perturb_value,
     check_bounding_box_against_dimensions,
     check_mesh_health,
     sweep_parameters,
@@ -120,6 +121,40 @@ class TestSweepParameters(unittest.TestCase):
         matching = [i for i in issues if i.check_type == "sweep_unresponsive" and "N_SHELVES" in i.detail]
         self.assertEqual(len(matching), 1)
         self.assertFalse(matching[0].blocking)
+
+    def test_perturb_value_scales_non_boolean_1_0_by_ratio(self):
+        # Regression (P1-b+d): _perturb_value(1.0, ratio) used to flip 1.0 -> 0.0
+        # for ANY parameter whose current value happened to be 1.0, treating it
+        # as a boolean flag. A Length/RealNum at 1.0 must be scaled, not toggled.
+        self.assertEqual(_perturb_value(1.0, 0.5), 1.5)
+        self.assertNotEqual(_perturb_value(1.0, 0.5), 0.0)
+        self.assertEqual(_perturb_value(1.0, 0.0), 1.0)
+
+    def test_perturb_value_toggles_boolean_param(self):
+        # Boolean flags are still toggled 0 <-> 1 (scaling 0 would stay 0).
+        self.assertEqual(_perturb_value(1.0, 0.5, is_boolean=True), 0.0)
+        self.assertEqual(_perturb_value(0.0, 0.5, is_boolean=True), 1.0)
+
+    def test_length_param_at_1_0_is_scaled_not_toggled(self):
+        # End-to-end: a Length param whose current value is exactly 1.0 must be
+        # swept by ratio (1 -> 1.5), never flipped to 0.0.
+        project = self._project()
+        project.add_parameter(GDLParameter("dead_len", "Length", "", "1.0"))
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+        issues = sweep_parameters(project)
+        unresponsive = [i for i in issues if i.check_type == "sweep_unresponsive" and "DEAD_LEN" in i.detail]
+        self.assertEqual(len(unresponsive), 1)
+        self.assertIn("从 1 改为 1.5", unresponsive[0].detail)
+
+    def test_boolean_param_at_1_still_toggles_to_0(self):
+        # End-to-end: a genuinely Boolean param at 1 still toggles to 0.
+        project = self._project()
+        project.add_parameter(GDLParameter("dead_flag", "Boolean", "", "1"))
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+        issues = sweep_parameters(project)
+        unresponsive = [i for i in issues if i.check_type == "sweep_unresponsive" and "DEAD_FLAG" in i.detail]
+        self.assertEqual(len(unresponsive), 1)
+        self.assertIn("从 1 改为 0", unresponsive[0].detail)
 
     def test_toggling_hasxxx_flag_off_is_non_blocking(self):
         # Turning an optional feature OFF (1 -> 0) removing its geometry is

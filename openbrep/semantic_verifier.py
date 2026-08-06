@@ -125,14 +125,22 @@ def _mesh_signature(result: "Preview3DResult") -> tuple:
     return (len(result.meshes), vertex_count, rounded_scene_bbox, round(extent_sum, _BBOX_ROUND_NDIGITS))
 
 
-def _perturb_value(value: float, delta_ratio: float) -> float:
+def _perturb_value(value: float, delta_ratio: float, *, is_boolean: bool = False) -> float:
     """Return a different value to sweep a parameter to.
 
-    Values that look boolean-ish (exactly 0 or 1 — common for hasXxx flags in
-    these benchmark tasks) are toggled rather than scaled, since 0 * anything
-    is still 0. Everything else is scaled by delta_ratio.
+    Boolean parameters (0/1 hasXxx flags) are toggled rather than scaled,
+    since 0 * anything is still 0. The toggle must only apply when the
+    parameter is *semantically* Boolean (caller passes is_boolean=True from
+    the parameter's type_tag): a Length/RealNum whose current value happens to
+    be exactly 1.0 is NOT a flag, and flipping it to 0.0 collapses the bbox
+    and corrupts sweep evidence (P1-b+d regression, sweeping A=1.0).
+
+    Callers that cannot resolve the parameter type fall back to the minimal
+    assumption (is_boolean=False, numeric scaling): a wrong toggle destroys
+    the geometry, while a slightly-off scale only distorts it, so scaling is
+    the safer default.
     """
-    if value in (0.0, 1.0):
+    if is_boolean:
         return 1.0 - value
     return value * (1 + delta_ratio)
 
@@ -165,6 +173,13 @@ def sweep_parameters(
     if not baseline_params:
         return []
 
+    # Boolean-ness is a property of the parameter's declared type, never of
+    # its current numeric value. Only genuinely Boolean params get toggled by
+    # _perturb_value; a Length/RealNum sitting at exactly 1.0 must scale.
+    boolean_param_names = {
+        p.name.upper() for p in project.parameters if p.type_tag == "Boolean"
+    }
+
     try:
         baseline_result = preview_3d_script(
             script_3d, parameters=baseline_params, setup_script=setup_script,
@@ -182,8 +197,11 @@ def sweep_parameters(
 
     for name in sorted(baseline_params.keys())[:max_params]:
         baseline_value = baseline_params[name]
+        is_boolean = name in boolean_param_names
         perturbed_params = dict(baseline_params)
-        perturbed_params[name] = _perturb_value(baseline_value, delta_ratio)
+        perturbed_params[name] = _perturb_value(
+            baseline_value, delta_ratio, is_boolean=is_boolean
+        )
 
         try:
             perturbed_result = preview_3d_script(
@@ -200,12 +218,14 @@ def sweep_parameters(
 
         perturbed_bbox = _scene_bbox(perturbed_result.meshes)
         if perturbed_bbox is None:
-            # Toggling a boolean-ish "hasXxx" flag off (1 → 0) is *expected* to
+            # Toggling a Boolean "hasXxx" flag off (1 → 0) is *expected* to
             # remove optional geometry — that's what the flag is for. Only
             # treat vanishing as a real bug when it wasn't an intentional
             # off-switch: scaled params, or a flag turning ON that erases
-            # everything.
-            is_expected_toggle_off = baseline_value == 1.0
+            # everything. The exemption is type-gated: a Length/RealNum whose
+            # value happens to be 1.0 is not a toggle, so its vanishing is
+            # still treated as a real bug.
+            is_expected_toggle_off = is_boolean and baseline_value == 1.0
             issues.append(SemanticIssue(
                 check_type="sweep_mesh_vanished",
                 detail=f"参数 {name} 从 {baseline_value:.3g} 改为 "
