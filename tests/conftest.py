@@ -24,3 +24,12 @@ if _real_config.is_file():
     shutil.copy(_real_config, _tmp_config)
 
 os.environ.setdefault("GDL_AGENT_CONFIG", str(_tmp_config))
+
+# 全量测试统一禁用 rich 彩色/加粗输出：cli/main.py 的 ``console = Console()`` 在
+# 模块导入时做终端自动检测，tty / TTY_COMPATIBLE / FORCE_COLOR 任一命中都会启用
+# color_system，而 rich 默认 ``highlight=True`` 会把数字渲染成 \x1b[1m 加粗，
+# 打断 test_cli_main.py 对 CLI 输出的子串断言（同一 commit 时绿时红的根因）。
+# NO_COLOR 只剥颜色不剥 bold/dim，必须同时置 TERM=dumb 让 rich 直接判定
+# 无色彩系统（_detect_color_system 对 dumb terminal 返回 None）。
+os.environ["NO_COLOR"] = "1"
+os.environ["TERM"] = "dumb"

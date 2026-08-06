@@ -217,21 +217,29 @@ class TestProjectContext(unittest.TestCase):
             pipeline._resolve_skills_dir = lambda: Path(tmpdir) / "empty-skills"
 
             captured = {}
+            fake_llm = MagicMock()
+            # _handle_gdl 在 GDLAgent 之前先用 _make_llm() 建真实 LLM，并交给对象规划
+            # （plan_gdl_object → llm.generate，真实网络调用，曾导致本测试 224s 超时失败、
+            # 数小时后同 commit 又秒过：prompt 不变、端点可达性/响应内容决定成败）。
+            # 测试原只 mock 了 GDLAgent，漏掉了规划这一层；此处把 pipeline 的 LLM seam
+            # 一并替换：generate 返回空 JSON → parse 走确定性 infer_minimum_plan fallback，
+            # 断网也能跑，且 fallback 规划不含 2D 检查（不会因空 2D 脚本误报 blocking）。
+            fake_llm.generate.return_value = MagicMock(content="{}")
             with patch("openbrep.runtime.pipeline.GDLAgent") as mock_agent_cls:
                 mock_agent = MagicMock()
                 mock_agent.generate_only.return_value = ({}, "ok")
                 mock_agent_cls.return_value = mock_agent
-
-                result = pipeline.execute(
-                    TaskRequest(
-                        user_input="生成一个书架",
-                        intent="CREATE",
-                        project=project,
-                        work_dir=tmpdir,
+                with patch.object(pipeline, "_make_llm", return_value=fake_llm):
+                    result = pipeline.execute(
+                        TaskRequest(
+                            user_input="生成一个书架",
+                            intent="CREATE",
+                            project=project,
+                            work_dir=tmpdir,
+                        )
                     )
-                )
-                captured["knowledge"] = mock_agent.generate_only.call_args.kwargs["knowledge"]
-                captured["skills"] = mock_agent.generate_only.call_args.kwargs["skills"]
+                    captured["knowledge"] = mock_agent.generate_only.call_args.kwargs["knowledge"]
+                    captured["skills"] = mock_agent.generate_only.call_args.kwargs["skills"]
 
         self.assertTrue(result.success)
         self.assertIn("GLOBAL_KNOWLEDGE", captured["knowledge"])
