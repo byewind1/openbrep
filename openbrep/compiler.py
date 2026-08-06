@@ -396,9 +396,14 @@ class MockHSFCompiler:
                 f"(IF: {if_count}, ENDIF: {endif_count})"
             )
 
-        # Count FOR/NEXT
-        for_count = len(re.findall(r'\bFOR\b', script, re.IGNORECASE))
-        next_count = len(re.findall(r'\bNEXT\b', script, re.IGNORECASE))
+        # Count FOR/NEXT（先剔除注释：与上方 IF/ENDIF 检查口径一致。
+        # 不剔会把英文注释里的单词 "for"/"next" 误判为循环——
+        # 2026-08-06 modify 语料回放误报实测（M03/M05）。）
+        script_no_comments = "\n".join(
+            line.split("!", 1)[0] for line in lines
+        )
+        for_count = len(re.findall(r'\bFOR\b', script_no_comments, re.IGNORECASE))
+        next_count = len(re.findall(r'\bNEXT\b', script_no_comments, re.IGNORECASE))
         if for_count != next_count:
             errors.append(
                 f"Error in {filename}: FOR/NEXT mismatch "
