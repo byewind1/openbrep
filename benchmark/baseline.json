@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "generated_at": "2026-08-06T19:35:02",
-  "commit": "b2af9442999a9868ff9025ae0a91fd654283ae56",
+  "generated_at": "2026-08-06T19:55:13",
+  "commit": "56e495e52d37d5e54afc8031a452112b1fa08347",
   "mode": "mock",
   "suites": {
     "create": {
       "corpus": "benchmark/fixtures/llm_corpus/create.jsonl",
-      "pass": 8,
+      "pass": 12,
       "tasks": {
         "C01": {
           "success": true,
@@ -21,36 +21,36 @@
           "criteria_failures": 1
         },
         "C04": {
-          "success": true,
-          "criteria_failures": 0
+          "success": false,
+          "criteria_failures": 1
         },
         "C05": {
           "success": false,
           "criteria_failures": 1
         },
         "C06": {
-          "success": true,
-          "criteria_failures": 0
+          "success": false,
+          "criteria_failures": 1
         },
         "C07": {
           "success": true,
           "criteria_failures": 0
         },
         "C08": {
-          "success": false,
-          "criteria_failures": 2
+          "success": true,
+          "criteria_failures": 0
         },
         "C09": {
           "success": true,
           "criteria_failures": 0
         },
         "C10": {
-          "success": false,
+          "success": true,
           "criteria_failures": 0
         },
         "C11": {
-          "success": false,
-          "criteria_failures": 5
+          "success": true,
+          "criteria_failures": 0
         },
         "C12": {
           "success": true,
@@ -58,27 +58,27 @@
         },
         "C13": {
           "success": false,
-          "criteria_failures": 2
+          "criteria_failures": 3
         },
         "C14": {
-          "success": false,
-          "criteria_failures": 6
+          "success": true,
+          "criteria_failures": 0
         },
         "C15": {
-          "success": false,
-          "criteria_failures": 4
+          "success": true,
+          "criteria_failures": 0
         },
         "C16": {
           "success": false,
-          "criteria_failures": 5
+          "criteria_failures": 1
         },
         "C17": {
-          "success": false,
-          "criteria_failures": 5
+          "success": true,
+          "criteria_failures": 0
         },
         "C18": {
           "success": false,
-          "criteria_failures": 2
+          "criteria_failures": 3
         },
         "C19": {
           "success": true,
