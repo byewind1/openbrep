@@ -557,6 +557,113 @@ def test_verify_skill_with_compilable_slice_promotes_and_becomes_injectable(tmp_
     assert ev["semantic_passed"] is True
 
 
+def test_verify_skill_full_form_slice_preserves_declared_param_types(tmp_path, monkeypatch):
+    """完整形态 {name: {value, type}} 与简写 {name: value} 并存：
+
+    verify_skill 造临时项目时，完整形态的 Length 参数类型必须是 Length
+    （而非按 Python 值 2.0 推断的 RealNum），简写形态仍按值推断。
+    """
+    skills_dir = tmp_path / "skills"
+    skill_slice = {
+        "params": {
+            "width": {"value": 2.0, "type": "Length"},      # 完整形态：显式 Length
+            "hasBack": {"value": True, "type": "Boolean"},  # 完整形态：显式 Boolean
+            "nShelves": 3,                                  # 简写：按值推断 Integer
+        },
+        "scripts": {"3d": "BLOCK A, B, ZZYZX\n"},
+    }
+    propose_skill(
+        "typed_slice_skill",
+        "# 类型保真\n\n## 触发关键词\n- 参数\n",
+        pattern_type="box",
+        slice=skill_slice,
+        skills_dir=str(skills_dir),
+    )
+
+    # 捕获 full 门禁在 tempfile 里创建的 HSFProject，验证其参数类型
+    captured: dict = {}
+    original_create_new = HSFProject.create_new
+
+    def spy_create_new(name, work_dir, **kwargs):
+        project = original_create_new(name, work_dir, **kwargs)
+        captured["project"] = project
+        return project
+
+    monkeypatch.setattr("openbrep.mcp_tools.HSFProject.create_new", spy_create_new)
+
+    result = verify_skill("typed_slice_skill", skills_dir=str(skills_dir))
+
+    assert result["ok"] is True
+    assert result["gate"] == "full"
+    assert result["passed"] is True
+    assert result["status"] == "verified"
+
+    project = captured["project"]
+    assert project is not None
+    width = project.get_parameter("width")
+    assert width is not None
+    assert width.type_tag == "Length"          # 声明类型保真
+    assert width.type_tag != "RealNum"         # 不再按 2.0 压成 RealNum
+    assert width.value == "2"
+    back = project.get_parameter("hasBack")
+    assert back is not None
+    assert back.type_tag == "Boolean"
+    assert back.value == "1"
+    shelves = project.get_parameter("nShelves")
+    assert shelves is not None
+    assert shelves.type_tag == "Integer"       # 简写形态行为不变（按值推断）
+
+
+def test_propose_skill_rejects_slice_with_illegal_param_type(tmp_path):
+    """slice.params 声明非法 type → invalid_spec 统一错误（propose 阶段）。"""
+    skills_dir = tmp_path / "skills"
+    bad = propose_skill(
+        "bad_type_skill",
+        "# 策略\n",
+        pattern_type="box",
+        slice={"params": {"width": {"value": 2.0, "type": "Float"}}},  # 不在允许集
+        skills_dir=str(skills_dir),
+    )
+    assert bad["ok"] is False
+    assert bad["error"]["code"] == "invalid_spec"
+    assert TRACE_RE.match(bad["trace_id"])
+    # 完整形态缺 type 键也报错
+    missing = propose_skill(
+        "missing_type_skill",
+        "# 策略\n",
+        pattern_type="box",
+        slice={"params": {"width": {"value": 2.0}}},
+        skills_dir=str(skills_dir),
+    )
+    assert missing["ok"] is False
+    assert missing["error"]["code"] == "invalid_spec"
+
+
+def test_verify_skill_slice_with_illegal_param_type_returns_invalid_spec(tmp_path):
+    """手写 slice 文件里声明非法 type → verify_skill 返回 invalid_spec 统一错误。"""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    bad_slice = {"params": {"width": {"value": 2.0, "type": "Real"}}, "scripts": {"3d": "BLOCK A, B, ZZYZX\n"}}
+    (skills_dir / "bad_slice_skill.md").write_text(
+        "---\n"
+        "status: proposed\n"
+        "skill_version: 1\n"
+        "pattern_type: box\n"
+        "slice: " + json.dumps(bad_slice, ensure_ascii=False) + "\n"
+        "---\n\n"
+        "# 策略\n",
+        encoding="utf-8",
+    )
+    result = verify_skill("bad_slice_skill", skills_dir=str(skills_dir))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_spec"
+    assert "非法" in result["error"]["message"] or "slice" in result["error"]["message"]
+    assert TRACE_RE.match(result["trace_id"])
+    # 未被晋升
+    loader = SkillsLoader(str(skills_dir))
+    assert loader.skill_meta("bad_slice_skill")["status"] == "proposed"
+
+
 def test_verify_skill_with_broken_slice_fails_and_keeps_proposed(tmp_path):
     skills_dir = tmp_path / "skills"
     bad_slice = {

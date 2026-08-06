@@ -23,7 +23,10 @@
 - invalid_spec           apply_edit 的 spec 非法（未知 type / 参数不存在 /
                          非数值参数值 / 脚本类型非法 / content 非字符串）；
                          propose_skill 的 name 不合法（路径分隔符 / 首尾空白 /
-                         隐藏文件 / README 等）或 content 非字符串；
+                         隐藏文件 / README 等）或 content 非字符串、或
+                         slice.params 声明非法 type（不在 Length/Integer/
+                         RealNum/Boolean/Material/String/Angle）或缺
+                         value/type 键；verify_skill 的 slice 同样校验；
                          reuse_skill 的 query 非字符串或空；
                          deprecate_skill 的 name 不合法
 - invalid_revision       rollback 的 revision_id 不存在 / 无 parent 且无
@@ -1008,11 +1011,18 @@ def propose_skill(
     提前带上，让复用计数门禁对它生效）；slice 非空时把 slice dict 以单行 JSON
     存进 slice 字段（跨脚本 feature slice，极简 YAML 子集不支持任意深度嵌套）。
 
-    slice = {params: {name: value}, scripts: {"3d": "...", "2d": "...", ...}}，
+    slice.params 支持两种形态并存（写盘时按原样序列化，类型语义在 verify 时
+    落地）：
+    - 简写 {name: value}：按 Python 值类型推断（bool→Boolean / int→Integer /
+      float→RealNum / 其余→String）；
+    - 完整 {name: {value: v, type: "Length"|"Integer"|"RealNum"|"Boolean"|
+      "Material"|"String"|"Angle"}}：value 为参数值，type 为声明的 GDL 类型。
+    slice = {params: {...}, scripts: {"3d": "...", "2d": "...", ...}}，
     脚本键名映射：1d/master→MASTER、2d→SCRIPT_2D、3d→SCRIPT_3D、vl→PARAM、
     ui→UI。
 
     失败：同名文件已存在 → code="skill_exists"（不覆盖）；name 不合法 →
+    code="invalid_spec"；slice.params 声明非法 type 或缺 value/type 键 →
     code="invalid_spec"。
     """
     with _locked():
@@ -1031,6 +1041,15 @@ def propose_skill(
                 trace_id,
                 details={"name": name},
             )
+        if slice and isinstance(slice, dict) and slice.get("params"):
+            slice_err = _validate_slice_params(slice["params"])
+            if slice_err:
+                return _make_error(
+                    "invalid_spec",
+                    f"slice.params 非法: {slice_err}",
+                    trace_id,
+                    details={"name": name, "params": slice.get("params")},
+                )
         skills_path = Path(skills_dir).expanduser().resolve()
         try:
             skills_path.mkdir(parents=True, exist_ok=True)
@@ -1103,8 +1122,58 @@ def _slice_from_meta(meta: dict) -> dict | None:
     return None
 
 
+# slice.params 完整形态可声明的 GDL 参数类型（hsf_project.VALID_PARAM_TYPES 的子集，
+# 类型字符串→GDL 类型直接复用 hsf_project 的类型体系，不另建映射表）。
+_SLICE_PARAM_TYPES = ("Length", "Integer", "RealNum", "Boolean", "Material", "String", "Angle")
+
+
+def _is_full_param_spec(spec: Any) -> bool:
+    """完整形态判定：{value: v, type: t}（简写形态是裸标量）。"""
+    return isinstance(spec, dict) and "value" in spec and "type" in spec
+
+
+def _validate_slice_params(params: Any) -> str | None:
+    """校验 slice.params：简写 {name: value} 或完整 {name: {value, type}} 并存。
+
+    返回错误消息；合法返回 None。完整形态缺 value/type 键、或 type 不在
+    _SLICE_PARAM_TYPES 内 → 报错（调用方统一转 invalid_spec）。
+    """
+    if not params:
+        return None
+    if not isinstance(params, dict):
+        return f"slice.params 必须是 dict，收到: {type(params).__name__}"
+    for name, spec in params.items():
+        if isinstance(spec, dict):
+            if "value" not in spec or "type" not in spec:
+                return (
+                    f"参数 {name!r} 的完整形态必须同时含 'value' 与 'type' 键，"
+                    f"收到: {spec!r}"
+                )
+            ptype = spec["type"]
+            if ptype not in _SLICE_PARAM_TYPES:
+                return (
+                    f"参数 {name!r} 声明了非法类型 {ptype!r}，"
+                    f"可选: {'/'.join(_SLICE_PARAM_TYPES)}"
+                )
+    return None
+
+
+def _slice_param_type(spec: Any) -> str:
+    """单条 slice 参数的 GDL 类型：完整形态用声明的 type，简写按值推断。"""
+    if _is_full_param_spec(spec):
+        return spec["type"]
+    return _infer_param_type(spec)
+
+
+def _slice_param_value(spec: Any) -> Any:
+    """单条 slice 参数的实际值：完整形态取 value 字段，简写原样返回。"""
+    if _is_full_param_spec(spec):
+        return spec["value"]
+    return spec
+
+
 def _infer_param_type(value: Any) -> str:
-    """slice.params 的值 → GDLParameter 类型（按 Python 值类型推断）。"""
+    """slice.params 简写形态的值 → GDLParameter 类型（按 Python 值类型推断）。"""
     if isinstance(value, bool):
         return "Boolean"
     if isinstance(value, int):
@@ -1149,19 +1218,31 @@ def _verify_full_gate(
     name: str, target: Path, meta: dict, slice_data: dict, trace_id: str
 ) -> dict:
     """full 门禁：把 slice 落成最小 HSF 项目（tempfile.mkdtemp 里），跑
-    compile_hsf(mock) + semantic_verify，两个都过才算过。"""
+    compile_hsf(mock) + semantic_verify，两个都过才算过。
+
+    slice.params 简写形态按值推断类型，完整形态（{value, type}）用声明的 GDL
+    类型建 GDLParameter（类型字符串→GDL 类型复用 hsf_project 的类型体系）；
+    声明非法 type → code="invalid_spec"。"""
     today = date.today().isoformat()
     params = slice_data.get("params") or {}
     scripts = slice_data.get("scripts") or {}
+    slice_err = _validate_slice_params(params)
+    if slice_err:
+        return _make_error(
+            "invalid_spec",
+            f"skill slice 参数声明非法: {slice_err}",
+            trace_id,
+            details={"name": name, "params": params},
+        )
     try:
         with tempfile.TemporaryDirectory(prefix="skill_verify_") as tmp:
             project = HSFProject.create_new(name, tmp)
-            for pname, pvalue in params.items():
+            for pname, pspec in params.items():
                 p = project.get_parameter(str(pname))
                 if p is None:
-                    p = GDLParameter(str(pname), _infer_param_type(pvalue))
+                    p = GDLParameter(str(pname), _slice_param_type(pspec))
                     project.add_parameter(p)
-                p.value = _param_value_text(pvalue)
+                p.value = _param_value_text(_slice_param_value(pspec))
             unknown_scripts: list[str] = []
             for key, script_content in scripts.items():
                 script_type = _SKILL_SCRIPT_TYPE_MAP.get(str(key).lower())
@@ -1274,10 +1355,13 @@ def verify_skill(name: str, skills_dir: str = "./skills") -> dict:
 
     双闸门，按 skill 是否带 slice 分流：
     - 带 slice（gate="full"）：tempfile.mkdtemp 里 HSFProject.create_new 造最小
-      项目 → slice.params 按值类型推断写参数（bool→Boolean / int→Integer /
-      float→RealNum / str→String）→ slice.scripts 按脚本类型 set_script
-      （键名映射：1d/master→MASTER、2d→SCRIPT_2D、3d→SCRIPT_3D、vl→PARAM、
-      ui→UI）→ save_to_disk → compile_hsf(mock) + semantic_verify，两个都过才过。
+      项目 → slice.params 写参数（简写 {name: value} 按值类型推断：
+      bool→Boolean / int→Integer / float→RealNum / str→String；完整形态
+      {name: {value, type}} 用声明的 GDL 类型建 GDLParameter，类型字符串→GDL
+      类型复用 hsf_project 类型体系；声明非法 type → invalid_spec）→
+      slice.scripts 按脚本类型 set_script（键名映射：1d/master→MASTER、
+      2d→SCRIPT_2D、3d→SCRIPT_3D、vl→PARAM、ui→UI）→ save_to_disk →
+      compile_hsf(mock) + semantic_verify，两个都过才过。
     - 不带 slice 的纯策略 skill（gate="structural"）：frontmatter 完整
       （status/pattern_type 非空）+ 正文含触发词小节（## 触发关键词 / When to
       Use）。
@@ -1285,7 +1369,8 @@ def verify_skill(name: str, skills_dir: str = "./skills") -> dict:
     通过：写 verified_evidence 块 + status 翻 verified（verified 即可注入，即
     自动 active）；失败：status 保持 proposed 不动。读 skill 内容直接读文件
     （get_by_name 对 proposed 返回 None），元数据用 SkillsLoader.skill_meta。
-    失败：skill 不存在 → code="skill_not_found"。
+    失败：skill 不存在 → code="skill_not_found"；slice 声明非法 type →
+    code="invalid_spec"。
     """
     with _locked():
         trace_id = _next_trace_id()
