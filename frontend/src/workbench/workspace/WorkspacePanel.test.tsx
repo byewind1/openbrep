@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { WorkspacePanel } from './WorkspacePanel'
 import type { WorkspaceInfo, WorkspaceSearchHit } from '../../api/types'
@@ -39,10 +39,14 @@ function baseProps(overrides: Partial<Parameters<typeof WorkspacePanel>[0]> = {}
     searching: false,
     searchQuery: null,
     searchHits: [] as WorkspaceSearchHit[],
+    workspaceInitHint: null,
     onOpenWorkspace: vi.fn(),
+    onInitWorkspace: vi.fn(),
     onCloseWorkspace: vi.fn(),
     onRefreshWorkspace: vi.fn(),
     onSearchWorkspace: vi.fn(),
+    onBrowseDirectory: vi.fn(async () => '/picked'),
+    onDismissInitHint: vi.fn(),
     onLoadProjectPath: vi.fn(),
     ...overrides,
   }
@@ -138,5 +142,68 @@ describe('WorkspacePanel', () => {
     )
 
     expect(screen.getByText('暂无项目')).toBeTruthy()
+  })
+})
+
+
+describe('WorkspacePanel init flow (P3-d2b)', () => {
+  test('empty state renders attach and init-and-attach buttons', () => {
+    render(<WorkspacePanel {...baseProps()} />)
+
+    expect(screen.getByRole('button', { name: '附着' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '初始化并附着' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '浏览…' })).toBeTruthy()
+  })
+
+  test('init-and-attach button calls onInitWorkspace with the path', () => {
+    const props = baseProps()
+    render(<WorkspacePanel {...props} />)
+
+    fireEvent.change(screen.getByLabelText('工作区目录路径'), { target: { value: '/fresh' } })
+    fireEvent.click(screen.getByRole('button', { name: '初始化并附着' }))
+
+    expect(props.onInitWorkspace).toHaveBeenCalledWith('/fresh')
+  })
+
+  test('browse button fills the path input without submitting', async () => {
+    const props = baseProps({ onBrowseDirectory: vi.fn(async () => '/picked') })
+    render(<WorkspacePanel {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '浏览…' }))
+
+    expect(props.onBrowseDirectory).toHaveBeenCalled()
+    // 异步填路径：await 状态更新
+    await waitFor(() => {
+      const input = screen.getByLabelText('工作区目录路径') as HTMLInputElement
+      expect(input.value).toBe('/picked')
+    })
+    // 未自动提交
+    expect(props.onOpenWorkspace).not.toHaveBeenCalled()
+    expect(props.onInitWorkspace).not.toHaveBeenCalled()
+  })
+
+  test('hint bar renders with path and init action, dismiss clears', () => {
+    const props = baseProps({ workspaceInitHint: '/plain-dir' })
+    render(<WorkspacePanel {...props} />)
+
+    expect(screen.getByText('该目录还不是 OpenBrep 工作区')).toBeTruthy()
+    // 引导条按钮与空态主按钮同文案：取第一个（引导条在上方）
+    const initButtons = screen.getAllByRole('button', { name: '初始化并附着' })
+    expect(initButtons.length).toBeGreaterThanOrEqual(2)
+    fireEvent.click(initButtons[0])
+    expect(props.onInitWorkspace).toHaveBeenCalledWith('/plain-dir')
+
+    fireEvent.click(screen.getByLabelText('关闭'))
+    expect(props.onDismissInitHint).toHaveBeenCalled()
+  })
+
+  test('busy disables attach and init buttons', () => {
+    render(<WorkspacePanel {...baseProps({ busy: true, workspaceInitHint: '/x' })} />)
+
+    expect((screen.getByRole('button', { name: '附着' }) as HTMLButtonElement).disabled).toBe(true)
+    const initButtons = screen.getAllByRole('button', { name: '初始化并附着' })
+    for (const button of initButtons) {
+      expect((button as HTMLButtonElement).disabled).toBe(true)
+    }
   })
 })

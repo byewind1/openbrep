@@ -7,13 +7,17 @@ import type { AddParameterRequest, ProjectScript, UpdateParameterRequest, Workbe
 interface WorkbenchLeftRailProps {
   workspace: WorkspaceInfo | null
   workspaceBusy: boolean
+  workspaceInitHint: string | null
   workspaceSearching: boolean
   workspaceSearchQuery: string | null
   workspaceSearchHits: WorkspaceSearchHit[]
   onOpenWorkspace: (path: string) => void
+  onInitWorkspace: (path: string) => void
   onCloseWorkspace: () => void
   onRefreshWorkspace: () => void
   onSearchWorkspace: (query: string) => void
+  onBrowseDirectory: () => Promise<string | null>
+  onDismissInitHint: () => void
   scripts: ProjectScript[]
   activeScriptName: string | null
   dirtyScripts: Record<string, boolean>
@@ -38,13 +42,17 @@ interface WorkbenchLeftRailProps {
 export function WorkbenchLeftRail({
   workspace,
   workspaceBusy,
+  workspaceInitHint,
   workspaceSearching,
   workspaceSearchQuery,
   workspaceSearchHits,
   onOpenWorkspace,
+  onInitWorkspace,
   onCloseWorkspace,
   onRefreshWorkspace,
   onSearchWorkspace,
+  onBrowseDirectory,
+  onDismissInitHint,
   scripts,
   activeScriptName,
   dirtyScripts,
@@ -67,13 +75,17 @@ export function WorkbenchLeftRail({
       <WorkspacePanel
         workspace={workspace}
         busy={workspaceBusy}
+        workspaceInitHint={workspaceInitHint}
         searching={workspaceSearching}
         searchQuery={workspaceSearchQuery}
         searchHits={workspaceSearchHits}
         onOpenWorkspace={onOpenWorkspace}
+        onInitWorkspace={onInitWorkspace}
         onCloseWorkspace={onCloseWorkspace}
         onRefreshWorkspace={onRefreshWorkspace}
         onSearchWorkspace={onSearchWorkspace}
+        onBrowseDirectory={onBrowseDirectory}
+        onDismissInitHint={onDismissInitHint}
         onLoadProjectPath={onSelectProjectPath}
       />
       <ScriptTree scripts={scripts} activeScript={activeScriptName} dirtyScripts={dirtyScripts} onSelect={onSelectScript} />

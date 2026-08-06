@@ -9,24 +9,32 @@ interface WorkspacePanelProps {
   searching: boolean
   searchQuery: string | null
   searchHits: WorkspaceSearchHit[]
+  workspaceInitHint: string | null
   onOpenWorkspace: (path: string) => void
+  onInitWorkspace: (path: string) => void
   onCloseWorkspace: () => void
   onRefreshWorkspace: () => void
   onSearchWorkspace: (query: string) => void
+  onBrowseDirectory: () => Promise<string | null>
+  onDismissInitHint: () => void
   onLoadProjectPath: (path: string) => void
 }
 
-/** 工作区面板（P3-d2）：项目列表 + 跨项目搜索。放左侧栏顶部，其他面板不动。 */
+/** 工作区面板（P3-d2）：项目列表 + 跨项目搜索；空态支持浏览/初始化并附着（P3-d2b）。 */
 export function WorkspacePanel({
   workspace,
   busy,
   searching,
   searchQuery,
   searchHits,
+  workspaceInitHint,
   onOpenWorkspace,
+  onInitWorkspace,
   onCloseWorkspace,
   onRefreshWorkspace,
   onSearchWorkspace,
+  onBrowseDirectory,
+  onDismissInitHint,
   onLoadProjectPath,
 }: WorkspacePanelProps) {
   const t = useT()
@@ -38,6 +46,19 @@ export function WorkspacePanel({
     if (!attachPath.trim()) return
     onOpenWorkspace(attachPath)
     setAttachPath('')
+  }
+
+  function initAttach() {
+    if (!attachPath.trim()) return
+    onInitWorkspace(attachPath)
+    setAttachPath('')
+  }
+
+  async function browse() {
+    const path = await onBrowseDirectory()
+    if (path) {
+      setAttachPath(path)
+    }
   }
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
@@ -71,19 +92,51 @@ export function WorkspacePanel({
       </div>
 
       {!workspace ? (
-        <form className="workspace-empty" onSubmit={submitAttach}>
+        <div className="workspace-empty">
+          {workspaceInitHint ? (
+            <div className="workspace-init-hint">
+              <span className="workspace-init-hint-text">{t('workspace.notWorkspaceHint')}</span>
+              <button
+                type="button"
+                className="workspace-init-hint-action"
+                disabled={busy}
+                onClick={() => onInitWorkspace(workspaceInitHint)}
+              >
+                {t('workspace.initAttach')}
+              </button>
+              <button
+                type="button"
+                className="workspace-icon-button"
+                title={t('workspace.dismiss')}
+                aria-label={t('workspace.dismiss')}
+                onClick={onDismissInitHint}
+              >
+                ✕
+              </button>
+            </div>
+          ) : null}
           <span className="workspace-empty-text">{t('workspace.notAttached')}</span>
-          <input
-            type="text"
-            aria-label={t('workspace.attachPlaceholder')}
-            placeholder={t('workspace.attachPlaceholder')}
-            value={attachPath}
-            onChange={(event) => setAttachPath(event.currentTarget.value)}
-          />
-          <button type="submit" disabled={busy || !attachPath.trim()}>
-            {t('workspace.attach')}
-          </button>
-        </form>
+          <form id="workspace-attach-form" className="workspace-empty-row" onSubmit={submitAttach}>
+            <input
+              type="text"
+              aria-label={t('workspace.attachPlaceholder')}
+              placeholder={t('workspace.attachPlaceholder')}
+              value={attachPath}
+              onChange={(event) => setAttachPath(event.currentTarget.value)}
+            />
+            <button type="button" className="workspace-browse-button" disabled={busy} onClick={() => void browse()}>
+              {t('workspace.browse')}
+            </button>
+          </form>
+          <div className="workspace-empty-actions">
+            <button type="submit" form="workspace-attach-form" disabled={busy || !attachPath.trim()}>
+              {t('workspace.attach')}
+            </button>
+            <button type="button" disabled={busy || !attachPath.trim()} onClick={initAttach}>
+              {t('workspace.initAttach')}
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="workspace-panel-body">
           <form className="workspace-search" onSubmit={submitSearch}>

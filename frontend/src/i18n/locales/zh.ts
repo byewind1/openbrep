@@ -98,6 +98,10 @@ export const zh = {
   'workspace.searchEmpty': '无命中',
   'workspace.badgeOrigin': '导入',
   'workspace.badgeArtifacts': '{count} 成品',
+  'workspace.browse': '浏览…',
+  'workspace.initAttach': '初始化并附着',
+  'workspace.notWorkspaceHint': '该目录还不是 OpenBrep 工作区',
+  'workspace.dismiss': '关闭',
 } as const
 
 export type LocaleKey = keyof typeof zh

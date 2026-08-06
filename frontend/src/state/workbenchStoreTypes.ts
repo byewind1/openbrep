@@ -208,6 +208,8 @@ export interface WorkbenchState {
   mockCompileResult: MockCompileResponse | null
   workspace: WorkspaceInfo | null
   workspaceBusy: boolean
+  /** open 失败且 code=not_a_workspace 时记录尝试路径，面板据此显示引导条（P3-d2b） */
+  workspaceInitHint: string | null
   workspaceSearching: boolean
   workspaceSearchQuery: string | null
   workspaceSearchHits: WorkspaceSearchHit[]
@@ -281,9 +283,12 @@ export interface WorkbenchState {
   runMockCompile: () => Promise<void>
   revealCompileOutput: (path?: string) => Promise<void>
   openWorkspace: (path: string) => Promise<void>
+  initWorkspace: (path: string) => Promise<void>
   closeWorkspace: () => Promise<void>
   refreshWorkspace: () => Promise<void>
   searchWorkspace: (query: string) => Promise<void>
+  browseWorkspaceDirectory: () => Promise<string | null>
+  clearWorkspaceInitHint: () => void
   loadPreview3D: () => Promise<void>
   loadPreview2D: () => Promise<void>
   clearLastError: () => void

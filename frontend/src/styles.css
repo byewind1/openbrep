@@ -3169,6 +3169,67 @@ button:focus-visible {
   padding: 4px 6px;
 }
 
+.workspace-empty-row {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-empty-row input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.workspace-browse-button {
+  flex: 0 0 auto;
+}
+
+.workspace-empty-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-empty-actions button {
+  flex: 1 1 0;
+}
+
+.workspace-init-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent-muted);
+  padding: 6px 8px;
+}
+
+.workspace-init-hint-text {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.workspace-init-hint-action {
+  flex: 0 0 auto;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.workspace-init-hint-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.workspace-init-hint-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .workspace-empty button,
 .workspace-search button {
   border: 1px solid var(--border);

@@ -240,6 +240,7 @@ function initialWorkbenchState() {
     mockCompileResult: null,
     workspace: null,
     workspaceBusy: false,
+    workspaceInitHint: null,
     workspaceSearching: false,
     workspaceSearchQuery: null,
     workspaceSearchHits: [],

@@ -70,7 +70,11 @@ export function WorkbenchApp() {
   const workspaceSearching = useWorkbenchStore((state) => state.workspaceSearching)
   const workspaceSearchQuery = useWorkbenchStore((state) => state.workspaceSearchQuery)
   const workspaceSearchHits = useWorkbenchStore((state) => state.workspaceSearchHits)
+  const workspaceInitHint = useWorkbenchStore((state) => state.workspaceInitHint)
   const openWorkspace = useWorkbenchStore((state) => state.openWorkspace)
+  const initWorkspace = useWorkbenchStore((state) => state.initWorkspace)
+  const browseWorkspaceDirectory = useWorkbenchStore((state) => state.browseWorkspaceDirectory)
+  const clearWorkspaceInitHint = useWorkbenchStore((state) => state.clearWorkspaceInitHint)
   const closeWorkspace = useWorkbenchStore((state) => state.closeWorkspace)
   const refreshWorkspace = useWorkbenchStore((state) => state.refreshWorkspace)
   const searchWorkspace = useWorkbenchStore((state) => state.searchWorkspace)
@@ -289,13 +293,17 @@ export function WorkbenchApp() {
           <WorkbenchLeftRail
             workspace={workspace}
             workspaceBusy={workspaceBusy}
+            workspaceInitHint={workspaceInitHint}
             workspaceSearching={workspaceSearching}
             workspaceSearchQuery={workspaceSearchQuery}
             workspaceSearchHits={workspaceSearchHits}
             onOpenWorkspace={(path) => void openWorkspace(path)}
+            onInitWorkspace={(path) => void initWorkspace(path)}
             onCloseWorkspace={() => void closeWorkspace()}
             onRefreshWorkspace={() => void refreshWorkspace()}
             onSearchWorkspace={(query) => void searchWorkspace(query)}
+            onBrowseDirectory={() => browseWorkspaceDirectory()}
+            onDismissInitHint={clearWorkspaceInitHint}
             onSelectProjectPath={(path) => void loadProjectPath(path)}
             scripts={scripts}
             activeScriptName={activeScriptName}

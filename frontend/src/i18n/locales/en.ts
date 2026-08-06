@@ -101,4 +101,8 @@ export const en: Record<LocaleKey, string> = {
   'workspace.searchEmpty': 'No matches',
   'workspace.badgeOrigin': 'import',
   'workspace.badgeArtifacts': '{count} artifacts',
+  'workspace.browse': 'Browse…',
+  'workspace.initAttach': 'Init & attach',
+  'workspace.notWorkspaceHint': 'This directory is not an OpenBrep workspace yet',
+  'workspace.dismiss': 'Dismiss',
 }

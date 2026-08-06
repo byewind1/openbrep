@@ -2319,3 +2319,121 @@ test('workspace slice: project switching reuses loadProjectPath and epoch guard 
   expect(store.getState().project?.path).toBe('/workspace/hsf/Chair')
   expect(store.getState().workspace?.projects[0]?.name).toBe('Chair')
 })
+
+
+// ── Workspace 初始化一条龙（P3-d2b） ──────────────────────
+
+test('workspace slice: initWorkspace runs init then open and hydrates workspace', async () => {
+  const calls: string[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      workspaceInit: async (path: string) => {
+        calls.push('init')
+        return { ok: true, workspace: path, project_count: 0, projects: [] }
+      },
+      workspaceOpen: async (path: string) => {
+        calls.push('open')
+        return {
+          ok: true,
+          workspace: path,
+          project_count: 1,
+          projects: [
+            { name: 'Chair', path: `${path}/hsf/Chair`, parameter_count: 3, scripts_present: ['SCRIPT_3D'], latest_revision_id: null, origin: null, artifact_count: 0, active: false },
+          ],
+        }
+      },
+    }),
+  )
+
+  await store.getState().initWorkspace('/fresh')
+
+  expect(calls).toEqual(['init', 'open'])
+  const state = store.getState()
+  expect(state.workspace?.path).toBe('/fresh')
+  expect(state.workspace?.projects[0]?.name).toBe('Chair')
+  expect(state.workspaceBusy).toBe(false)
+  expect(state.workspaceInitHint).toBeNull()
+})
+
+test('workspace slice: initWorkspace failure sets lastError and does not call open', async () => {
+  const calls: string[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      workspaceInit: async () => {
+        calls.push('init')
+        return { ok: false, error: 'init failed', workspace: null }
+      },
+      workspaceOpen: async () => {
+        calls.push('open')
+        return { ok: true, workspace: '/x', project_count: 0, projects: [] }
+      },
+    }),
+  )
+
+  await store.getState().initWorkspace('/bad')
+
+  expect(calls).toEqual(['init'])
+  const state = store.getState()
+  expect(state.workspace).toBeNull()
+  expect(state.lastError).toContain('init failed')
+  expect(state.workspaceBusy).toBe(false)
+})
+
+test('workspace slice: open not_a_workspace records init hint path', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      workspaceOpen: async () => ({ ok: false, code: 'not_a_workspace', error: 'not initialized', workspace: null }),
+    }),
+  )
+
+  await store.getState().openWorkspace('/plain-dir')
+
+  const state = store.getState()
+  expect(state.workspace).toBeNull()
+  expect(state.workspaceInitHint).toBe('/plain-dir')
+  expect(state.lastError).toContain('not initialized')
+})
+
+test('workspace slice: open failure without not_a_workspace leaves hint null', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      workspaceOpen: async () => ({ ok: false, error: 'boom', workspace: null }),
+    }),
+  )
+
+  await store.getState().openWorkspace('/x')
+
+  expect(store.getState().workspaceInitHint).toBeNull()
+  expect(store.getState().lastError).toContain('boom')
+})
+
+test('workspace slice: successful open/close clear the init hint', async () => {
+  const failing = createWorkbenchStore(
+    makeApi({
+      workspaceOpen: async () => ({ ok: false, code: 'not_a_workspace', error: 'nope', workspace: null }),
+    }),
+  )
+  await failing.getState().openWorkspace('/hinted')
+  expect(failing.getState().workspaceInitHint).toBe('/hinted')
+
+  // 成功后 hint 清空
+  const ok = createWorkbenchStore(makeApi())
+  await ok.getState().openWorkspace('/ok')
+  expect(ok.getState().workspaceInitHint).toBeNull()
+
+  // close 也清空
+  await ok.getState().closeWorkspace()
+  expect(ok.getState().workspaceInitHint).toBeNull()
+})
+
+test('workspace slice: browseWorkspaceDirectory returns picked path or null', async () => {
+  const picked = createWorkbenchStore(
+    makeApi({ chooseOutputDirectory: async () => ({ ok: true, path: '/picked' }) }),
+  )
+  expect(await picked.getState().browseWorkspaceDirectory()).toBe('/picked')
+
+  const cancelled = createWorkbenchStore(
+    makeApi({ chooseOutputDirectory: async () => ({ ok: false, cancelled: true }) }),
+  )
+  expect(await cancelled.getState().browseWorkspaceDirectory()).toBeNull()
+})
