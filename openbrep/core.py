@@ -911,10 +911,20 @@ _SPLIT_HEADER_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# 无括号坏头变体：整行只有 "[FILE: path"、] 完全缺失（luna 第三变体，
+# 2026-08-06 六轮语料实测）。路径不含空白，取首个非空白 token。
+_BRACKETLESS_HEADER_RE = re.compile(
+    r'^\[FILE:[ \t]*([^\]\s]+)[ \t]*$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def _merge_split_file_headers(response: str) -> str:
-    """把跨行 [FILE: path\\n]（可带同行内容）归一化为单行 [FILE: path] 头。"""
-    return _SPLIT_HEADER_RE.sub(lambda m: f"[FILE: {m.group(1).strip()}]\n{m.group(2)}", response)
+    """把跨行 [FILE: path\\n]（可带同行内容）与无括号坏头归一化为单行头。"""
+    merged = _SPLIT_HEADER_RE.sub(
+        lambda m: f"[FILE: {m.group(1).strip()}]\n{m.group(2)}", response
+    )
+    return _BRACKETLESS_HEADER_RE.sub(r"[FILE: \1]", merged)
 
 
 _PARAM_TYPE_RE = re.compile(

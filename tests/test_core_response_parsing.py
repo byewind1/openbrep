@@ -87,6 +87,22 @@ PROJECT2 3, 270, 2
         self.assertEqual(set(changes), {"scripts/3d.gdl", "scripts/2d.gdl"})
         self.assertIn("HOTSPOT2 0, 0", changes["scripts/2d.gdl"])
 
+    def test_parser_merges_bracketless_file_header(self):
+        # 变体三：] 完全缺失，整行只有 "[FILE: path"（luna 六轮语料实测）
+        response = """\
+[FILE: scripts/3d.gdl]
+BLOCK A, B, ZZYZX
+[FILE: scripts/2d.gdl
+HOTSPOT2 0, 0
+PROJECT2 3, 270, 2
+"""
+
+        changes = GDLAgent(llm=MagicMock())._parse_response(response)
+
+        self.assertEqual(set(changes), {"scripts/3d.gdl", "scripts/2d.gdl"})
+        self.assertNotIn("PROJECT2", changes["scripts/3d.gdl"])
+        self.assertIn("PROJECT2 3, 270, 2", changes["scripts/2d.gdl"])
+
 
 if __name__ == "__main__":
     unittest.main()
