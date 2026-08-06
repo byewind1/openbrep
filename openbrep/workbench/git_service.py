@@ -30,8 +30,13 @@ GITIGNORE_ENTRIES: list[tuple[str, str]] = [
         "本地编译输出目录，不入源码库",
     ),
     (
+        "artifacts/",
+        "成品归档区（artifacts/ 下按版本或 unversioned 归档）：成品二进制不入源码库；"
+        "注意：本条只对后续 git init 生效，已有项目需重新 init 才会补齐",
+    ),
+    (
         "*.gsm",
-        "编译成品（.gsm）走成品归档区（归档区机制后续做，先占位注释），不入源码库",
+        "编译成品（.gsm）走成品归档区（artifacts/），不入源码库",
     ),
 ]
 

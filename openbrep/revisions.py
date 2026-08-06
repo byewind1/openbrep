@@ -15,6 +15,7 @@ REVISION_SCHEMA_VERSION = 1
 OPENBREP_DIR = ".openbrep"
 REVISIONS_DIR = "revisions"
 LATEST_FILE = "latest"
+ARTIFACTS_DIR = "artifacts"
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,19 @@ def create_revision(
         "compile_comparison": extra_metadata.get("compile_comparison"),
         "metadata": extra_metadata,
     }
+    # 成品归档：编译成功且产物存在时，把 .gsm 拷入 artifacts/<revision_id>/ 并让
+    # manifest 的 gsm_path 指向归档路径（修复旧版指向临时目录、运行后悬空的问题）。
+    # 归档失败只保持原路径，不阻断快照创建。
+    raw_gsm_path = compile_metadata.get("gsm_path")
+    if compile_metadata.get("success") and raw_gsm_path:
+        try:
+            archive_path = archive_artifact(root, raw_gsm_path, revision_id=revision_id)
+            manifest["compile"]["gsm_path"] = str(archive_path)
+        except Exception as _archive_exc:
+            import logging as _logging
+            _logging.getLogger(__name__).debug(
+                "Archive artifact failed, keeping raw gsm_path: %s", _archive_exc
+            )
     _write_json(tmp_dir / "manifest.json", manifest)
     _write_explanation_markdown(tmp_dir, manifest)
     tmp_dir.rename(revision_dir)
@@ -476,6 +490,75 @@ def _write_latest(project_root: Path, revision_id: str) -> None:
     latest_path = project_root / OPENBREP_DIR / LATEST_FILE
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     latest_path.write_text(f"{revision_id}\n", encoding="utf-8")
+
+
+def archive_artifact(
+    project_dir: str | Path,
+    gsm_path: str | Path,
+    revision_id: str | None = None,
+) -> Path:
+    """把编译成品 .gsm 拷入项目成品归档区。
+
+    归档约定：``<project>/artifacts/<revision_id 或 "unversioned">/<name>.gsm``。
+    - revision_id 给了就按版本归档，没给进 unversioned/；
+    - 同名不覆盖：目标已存在时追加短数字后缀（``name-1.gsm``、``name-2.gsm``…）；
+    - 归档是副本，源文件不动；返回归档后的实际路径。
+    """
+    root = _resolve_project_root(project_dir)
+    gsm = Path(gsm_path).expanduser().resolve()
+    if not gsm.is_file():
+        raise FileNotFoundError(f"Artifact source not found: {gsm}")
+
+    version = revision_id or "unversioned"
+    target_dir = root / ARTIFACTS_DIR / version
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    target = target_dir / gsm.name
+    if target.exists():
+        stem, suffix = gsm.stem, gsm.suffix
+        counter = 1
+        while target.exists():
+            target = target_dir / f"{stem}-{counter}{suffix}"
+            counter += 1
+    shutil.copy2(gsm, target)
+    return target
+
+
+def list_archived_artifacts(
+    project_dir: str | Path,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """列出项目 artifacts/ 下的归档成品（只读）。
+
+    Returns:
+        按 mtime 倒序的条目列表，每条含
+        {version, name, path, size_bytes, mtime_iso}。
+    """
+    root = _resolve_project_root(project_dir)
+    artifacts_root = root / ARTIFACTS_DIR
+    entries: list[dict[str, Any]] = []
+    if not artifacts_root.is_dir():
+        return entries
+    for version_dir in artifacts_root.iterdir():
+        if not version_dir.is_dir():
+            continue
+        for gsm in version_dir.glob("*.gsm"):
+            if not gsm.is_file():
+                continue
+            stat = gsm.stat()
+            entries.append({
+                "version": version_dir.name,
+                "name": gsm.name,
+                "path": str(gsm),
+                "size_bytes": stat.st_size,
+                "mtime_iso": datetime.fromtimestamp(
+                    stat.st_mtime, tz=timezone.utc
+                ).isoformat(),
+            })
+    entries.sort(key=lambda e: e["mtime_iso"], reverse=True)
+    if limit is not None:
+        entries = entries[:limit]
+    return entries
 
 
 def _auto_prune_keep_last_n() -> int:

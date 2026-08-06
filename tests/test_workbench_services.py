@@ -322,6 +322,77 @@ def test_compiler_service_compiles_loaded_project_with_injected_mock_compiler(tm
     assert session.last_compile_output_path == response["compile"]["output_path"]
 
 
+def test_compiler_service_archives_successful_compile_artifact(tmp_path):
+    project = HSFProject.create_new("ArchivedShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = SimpleNamespace(
+        project=project,
+        source_path=hsf_dir,
+        output_dir="",
+        compiler_mode="mock",
+        converter_path="",
+        last_compile_output_path="",
+    )
+
+    class FakeCompiler:
+        def hsf2libpart(self, _hsf_path, output_gsm):
+            Path(output_gsm).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_gsm).write_bytes(b"gsm")
+            return CompileResult(success=True, output_path=output_gsm, mode="mock")
+
+    service = WorkbenchCompilerService(
+        session,
+        real_compiler_factory=lambda _path: FakeCompiler(),
+        mock_compiler_factory=FakeCompiler,
+    )
+
+    response = service.compile_project({})
+
+    assert response["ok"] is True
+    artifact_path = response["compile"]["artifact_path"]
+    assert artifact_path
+    archive = Path(artifact_path)
+    assert archive.exists()
+    assert "artifacts" in artifact_path
+    assert "unversioned" in artifact_path
+
+
+def test_compiler_service_does_not_archive_failed_compile(tmp_path):
+    project = HSFProject.create_new("FailedShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = SimpleNamespace(
+        project=project,
+        source_path=hsf_dir,
+        output_dir="",
+        compiler_mode="mock",
+        converter_path="",
+        last_compile_output_path="",
+    )
+
+    class FailingCompiler:
+        def hsf2libpart(self, _hsf_path, output_gsm):
+            return CompileResult(success=False, output_path=None, mode="mock")
+
+    service = WorkbenchCompilerService(
+        session,
+        real_compiler_factory=lambda _path: FailingCompiler(),
+        mock_compiler_factory=FailingCompiler,
+    )
+
+    response = service.compile_project({})
+
+    assert response["ok"] is False
+    assert response["compile"]["artifact_path"] is None
+    assert not (hsf_dir / "artifacts").exists()
+
+
+def test_git_service_gitignore_entries_include_artifacts():
+    from openbrep.workbench.git_service import GITIGNORE_ENTRIES
+
+    patterns = [pattern for pattern, _comment in GITIGNORE_ENTRIES]
+    assert "artifacts/" in patterns
+
+
 def test_compiler_service_parses_lp_compile_issue_locations():
     script, line, message = parse_compile_issue("3d.gdl line 12: missing ENDIF")
 
@@ -498,13 +569,13 @@ def test_git_service_initialize_writes_gitignore_with_all_entries(tmp_path):
     gitignore_path = hsf_dir / ".gitignore"
     assert gitignore_path.exists()
     text = gitignore_path.read_text(encoding="utf-8")
-    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm"):
+    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "artifacts/", "*.gsm"):
         assert pattern in text
     # 每条带一行注释：快照=自动检查点、成品走归档区
     assert "自动检查点" in text
     assert "成品归档区" in text
     assert initialized["gitignore"]["added"] == [
-        ".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm",
+        ".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "artifacts/", "*.gsm",
     ]
     assert initialized["gitignore"]["present"] == []
 
@@ -525,7 +596,7 @@ def test_git_service_gitignore_appends_without_overwriting_user_content(tmp_path
     assert "custom-notes/" in text
     assert "*.log" in text
     assert text.index("custom-notes/") < text.index(".openbrep/revisions/")
-    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm"):
+    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "artifacts/", "*.gsm"):
         assert pattern in text
     assert text.count("*.gsm") == 1
 
@@ -545,7 +616,7 @@ def test_git_service_initialize_is_idempotent(tmp_path):
     assert second["ok"] is True
     assert second["gitignore"]["added"] == []
     assert second["gitignore"]["present"] == [
-        ".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm",
+        ".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "artifacts/", "*.gsm",
     ]
     assert text_after_second == text_after_first
     assert text_after_second.count(".openbrep/revisions/") == 1
@@ -563,7 +634,7 @@ def test_git_service_initialize_completes_gitignore_on_existing_repo(tmp_path):
 
     assert initialized["ok"] is True
     text = (hsf_dir / ".gitignore").read_text(encoding="utf-8")
-    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm"):
+    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "artifacts/", "*.gsm"):
         assert pattern in text
 
 

@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from openbrep.revisions import archive_artifact
+
 
 class WorkbenchCompilerService:
     def __init__(
@@ -38,6 +40,7 @@ class WorkbenchCompilerService:
         duration_ms = int((time.perf_counter() - start) * 1000)
         output_path = result.output_path or str(output_gsm)
         self.session.last_compile_output_path = output_path
+        artifact_path = _archive_compiled_artifact(hsf_dir, output_path) if result.success else None
         return {
             "ok": True,
             "success": bool(result.success),
@@ -45,6 +48,7 @@ class WorkbenchCompilerService:
             "issues": compile_issues_from_result(result),
             "duration_ms": duration_ms,
             "output_path": output_path,
+            "artifact_path": artifact_path,
             "gsm_size_bytes": file_size_or_none(output_gsm),
             "parameter_count": len(self.session.project.parameters or []),
         }
@@ -72,12 +76,18 @@ class WorkbenchCompilerService:
         result = compiler.hsf2libpart(str(self.session.source_path), str(output_gsm))
         output_path = result.output_path or str(output_gsm)
         self.session.last_compile_output_path = output_path
+        artifact_path = (
+            _archive_compiled_artifact(self.session.source_path, output_path)
+            if result.success
+            else None
+        )
         return {
             "ok": bool(result.success),
             "compile": {
                 "success": bool(result.success),
                 "mode": result.mode or ("lp" if compiler_mode == "lp" else "mock"),
                 "output_path": output_path,
+                "artifact_path": artifact_path,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "errors": result.errors,
@@ -108,6 +118,18 @@ def resolve_output_dir(body: dict[str, Any], session_output_dir: str, fallback: 
     if configured:
         return Path(configured)
     return fallback
+
+
+def _archive_compiled_artifact(project_dir: str | Path, gsm_path: str) -> str | None:
+    """编译成功后把产物拷入成品归档区（artifacts/unversioned/）。
+
+    非阻塞：归档失败返回 None，不阻断编译结果（fallback 输出文件仍在）。
+    """
+    try:
+        archive = archive_artifact(project_dir, gsm_path)
+        return str(archive)
+    except Exception:
+        return None
 
 
 def parse_compile_issue(raw: str) -> tuple[str, int | None, str]:

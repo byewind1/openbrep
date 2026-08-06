@@ -6,10 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from openbrep.revisions import (
+    archive_artifact,
     compare_revisions,
     copy_project_metadata,
     create_revision,
     get_latest_revision_id,
+    list_archived_artifacts,
     list_revisions,
     prune_revisions,
     restore_revision,
@@ -391,6 +393,109 @@ class TestPruneRevisions(unittest.TestCase):
             # 非法值（负数）回退默认 20：只留最新 20 条，不炸
             self.assertEqual(len(list_revisions(project)), 20)
             self.assertEqual(get_latest_revision_id(project), "r0021")
+
+    # ── 成品归档区（artifacts/）────────────────────────────
+
+    def _write_gsm(self, tmpdir: str, name: str = "Chair.gsm", data: bytes = b"GSM") -> Path:
+        gsm = Path(tmpdir) / name
+        gsm.write_bytes(data)
+        return gsm
+
+    def test_archive_artifact_versions_by_revision_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir).resolve()
+            gsm = self._write_gsm(tmpdir)
+
+            archive_path = archive_artifact(project, gsm, revision_id="r0007")
+
+            self.assertTrue(archive_path.exists())
+            self.assertEqual(archive_path.relative_to(project).as_posix(), "artifacts/r0007/Chair.gsm")
+            self.assertEqual(archive_path.read_bytes(), b"GSM")
+
+    def test_archive_artifact_unversioned_and_no_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir).resolve()
+            gsm = self._write_gsm(tmpdir)
+
+            first = archive_artifact(project, gsm)
+            second = archive_artifact(project, gsm)
+            third = archive_artifact(project, gsm, revision_id="r0001")
+            fourth = archive_artifact(project, gsm, revision_id="r0001")
+
+            self.assertEqual(first.relative_to(project).as_posix(), "artifacts/unversioned/Chair.gsm")
+            # 同名不覆盖：追加短数字后缀
+            self.assertEqual(second.relative_to(project).as_posix(), "artifacts/unversioned/Chair-1.gsm")
+            self.assertEqual(third.relative_to(project).as_posix(), "artifacts/r0001/Chair.gsm")
+            self.assertEqual(fourth.relative_to(project).as_posix(), "artifacts/r0001/Chair-1.gsm")
+            for p in (first, second, third, fourth):
+                self.assertTrue(p.exists())
+                self.assertEqual(p.read_bytes(), b"GSM")
+
+    def test_archive_artifact_missing_source_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            with self.assertRaises(FileNotFoundError):
+                archive_artifact(project, Path(tmpdir) / "nope.gsm")
+
+    def test_create_revision_manifest_gsm_path_points_to_archived_artifact(self):
+        """端到端：revision manifest 的 gsm_path 指向归档路径且文件真实存在（修悬空）。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            gsm = self._write_gsm(tmpdir, data=b"GSM-V1")
+            metadata = {
+                "compile": {
+                    "mode": "lp", "success": True,
+                    "gsm_size_bytes": gsm.stat().st_size,
+                    "gsm_path": str(gsm),
+                    "parameter_count": 0, "exit_code": 0,
+                }
+            }
+
+            revision = create_revision(project, "compiled", metadata=metadata)
+
+            self.assertIsNotNone(revision.compile)
+            gsm_path = revision.compile["gsm_path"]
+            self.assertIn("artifacts", gsm_path)
+            self.assertIn(revision.revision_id, gsm_path)
+            self.assertTrue(Path(gsm_path).exists())
+            self.assertEqual(Path(gsm_path).read_bytes(), b"GSM-V1")
+
+    def test_create_revision_does_not_archive_on_compile_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            metadata = {
+                "compile": {
+                    "mode": "lp", "success": False,
+                    "gsm_size_bytes": None,
+                    "gsm_path": None,
+                    "parameter_count": 0, "exit_code": 1,
+                }
+            }
+
+            revision = create_revision(project, "failed", metadata=metadata)
+
+            self.assertEqual(revision.compile["gsm_path"], None)
+            self.assertFalse((project / "artifacts").exists())
+
+    def test_list_archived_artifacts_returns_entries_newest_first(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            gsm = self._write_gsm(tmpdir)
+            archive_artifact(project, gsm, revision_id="r0001")
+            archive_artifact(project, gsm, revision_id="r0002")
+            archive_artifact(project, gsm)
+
+            entries = list_archived_artifacts(project)
+
+            self.assertEqual(len(entries), 3)
+            versions = {e["version"] for e in entries}
+            self.assertEqual(versions, {"r0001", "r0002", "unversioned"})
+            for e in entries:
+                self.assertTrue(Path(e["path"]).exists())
+                self.assertEqual(e["size_bytes"], 3)
+                self.assertIn("mtime_iso", e)
+            # limit 生效
+            self.assertEqual(len(list_archived_artifacts(project, limit=2)), 2)
 
 
 if __name__ == "__main__":

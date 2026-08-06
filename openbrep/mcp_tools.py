@@ -56,9 +56,11 @@ from openbrep.project_context import load_project_origin
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.revisions import (
+    archive_artifact,
     create_revision,
     get_latest_revision_id,
     is_hsf_project_dir,
+    list_archived_artifacts,
     list_revisions,
     restore_revision,
 )
@@ -151,6 +153,7 @@ def load_project(path: str) -> dict:
                 "ac_version": project.version,
                 "latest_revision_id": get_latest_revision_id(root),
                 "origin": load_project_origin(root),
+                "artifacts": list_archived_artifacts(root, limit=5),
                 "trace_id": trace_id,
             }
         except Exception as exc:
@@ -193,6 +196,15 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
             out_dir = tempfile.mkdtemp(prefix="mcp_compile_")
             output_gsm = str(Path(out_dir) / f"{root.name}.gsm")
             result = compiler.hsf2libpart(str(root), output_gsm)
+            # 成品归档：编译成功才归档（unversioned/），失败不归档且不阻断编译结果。
+            # 临时目录产物保留，归档是副本。
+            artifact_path: str | None = None
+            if result.success:
+                raw_output = result.output_path or output_gsm
+                try:
+                    artifact_path = str(archive_artifact(root, raw_output))
+                except Exception:
+                    artifact_path = None
             return {
                 "ok": True,
                 "mode": result.mode or effective_mode,
@@ -201,6 +213,7 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
                 "warnings": list(result.warnings or []),
                 "exit_code": result.exit_code,
                 "output_path": result.output_path,
+                "artifact_path": artifact_path,
                 "trace_id": trace_id,
             }
         except Exception as exc:

@@ -102,6 +102,42 @@ def test_compile_hsf_mock_mode_succeeds_on_valid_project(tmp_path):
     assert TRACE_RE.match(result["trace_id"])
 
 
+def test_compile_hsf_archives_successful_artifact(tmp_path):
+    _project, hsf_dir = _make_project(tmp_path)
+    result = compile_hsf(str(hsf_dir), mode="mock")
+
+    assert result["ok"] is True
+    assert result["success"] is True
+    artifact_path = result["artifact_path"]
+    assert artifact_path
+    archive = Path(artifact_path)
+    assert archive.exists()
+    assert archive.is_file()
+    assert archive.read_bytes() == Path(result["output_path"]).read_bytes()
+    # 归档位：项目目录下 artifacts/unversioned/
+    assert "artifacts" in artifact_path
+    assert "unversioned" in artifact_path
+
+
+def test_load_project_returns_artifacts_summary(tmp_path):
+    _project, hsf_dir = _make_project(tmp_path)
+    compile_hsf(str(hsf_dir), mode="mock")
+
+    loaded = load_project(str(hsf_dir))
+
+    assert loaded["ok"] is True
+    assert "artifacts" in loaded
+    assert len(loaded["artifacts"]) >= 1
+    latest = loaded["artifacts"][0]
+    assert latest["version"] == "unversioned"
+    assert latest["name"].endswith(".gsm")
+    assert Path(latest["path"]).exists()
+    assert latest["size_bytes"] >= 0
+    assert "mtime_iso" in latest
+    # 摘要上限 5 条
+    assert len(loaded["artifacts"]) <= 5
+
+
 def test_compile_hsf_missing_libpartdata_returns_unified_error(tmp_path):
     bad_dir = tmp_path / "bad"
     bad_dir.mkdir()
