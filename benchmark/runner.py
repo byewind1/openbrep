@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import platform
 import shutil
 import sys
@@ -71,9 +72,18 @@ class BenchmarkRunner:
         # 真确定性用 --llm-record / --llm-replay 黄金语料。
         self.temperature = temperature
         self.config.llm.temperature = temperature
-        if llm_record:
-            # 黄金语料确定性：录制时强制关闭 thinking，不依赖用户 config 里的
-            # extra_body，避免不同环境录出的语料不一致。
+        # 录制黄金语料时的 thinking 控制由 GDL_BENCH_THINKING 环境变量开关：
+        #   disabled —— 默认，录制时强制设置 extra_body 关闭 thinking（不依赖
+        #               用户 config，避免不同环境录出的语料不一致，现状行为）；
+        #   bare     —— 录制时不设 extra_body（OpenRouter 等不接受该参数的端点）。
+        # 取值在构造时校验，非法值报错退出，避免静默用错模式录出不可回放的语料。
+        bench_thinking = os.environ.get("GDL_BENCH_THINKING") or "disabled"
+        if bench_thinking not in {"disabled", "bare"}:
+            raise ValueError(
+                f"GDL_BENCH_THINKING 取值非法：{bench_thinking!r}；"
+                "合法取值：disabled（默认，强制关闭 thinking）/ bare（不设 extra_body）"
+            )
+        if llm_record and bench_thinking == "disabled":
             self.config.llm.extra_body = {"thinking": {"type": "disabled"}}
         self.llm = LLMAdapter(self.config.llm)
         self.llm_source = "live"
