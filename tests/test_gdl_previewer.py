@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
 
 from openbrep import gdl_previewer
-from openbrep.gdl_previewer import preview_3d_script
+from openbrep.gdl_parser import parse_gdl_source_with_warnings
+from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
+from openbrep.workbench.project_parameter_service import parameter_values
 
 
 class TestGDLPreviewerPhase1(unittest.TestCase):
@@ -507,6 +510,98 @@ RETURN
         self.assertEqual(commands.count("TUBE_"), 1)
         self.assertEqual(commands.count("BLOCK"), 1)
         self.assertEqual(res.warnings, [])
+
+
+class TestGDLPreviewer2DCommands(unittest.TestCase):
+    """2D 绘图命令：坐标级断言 + 无 unsupported 警告。"""
+
+    def test_2d_rect2_polygon_corners(self):
+        res = preview_2d_script("RECT2 0, 0, 4, 2\n")
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(
+            res.polygons[0],
+            [(0.0, 0.0), (4.0, 0.0), (4.0, 2.0), (0.0, 2.0)],
+        )
+        self.assertFalse(any("RECT2" in w for w in res.warnings))
+
+    def test_2d_line2_endpoints(self):
+        res = preview_2d_script("LINE2 1, 2, 3, 4\n")
+        self.assertEqual(len(res.lines), 1)
+        self.assertEqual(res.lines[0], ((1.0, 2.0), (3.0, 4.0)))
+        self.assertFalse(any("LINE2" in w for w in res.warnings))
+
+    def test_2d_circle2_center_radius(self):
+        res = preview_2d_script("CIRCLE2 0.5, 0.5, 0.3\n")
+        self.assertEqual(len(res.circles), 1)
+        self.assertEqual(res.circles[0], (0.5, 0.5, 0.3))
+        self.assertFalse(any("CIRCLE2" in w for w in res.warnings))
+
+    def test_2d_arc2_center_radius_angles(self):
+        res = preview_2d_script("ARC2 0.5, 0.5, 0.3, 0, 90\n")
+        self.assertEqual(len(res.arcs), 1)
+        self.assertEqual(res.arcs[0], (0.5, 0.5, 0.3, 0.0, 90.0))
+        self.assertFalse(any("ARC2" in w for w in res.warnings))
+
+    def test_2d_poly2_vertices(self):
+        res = preview_2d_script("POLY2 4, 0, 0, 1, 0, 1, 1, 0, 1\n")
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(
+            res.polygons[0],
+            [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+        )
+        self.assertFalse(any("POLY2" in w for w in res.warnings))
+
+    def test_2d_hotspot2_recognized_without_warning(self):
+        res = preview_2d_script(
+            "HOTSPOT2 0, 0, 1\nHOTSPOT2 A, 0, 2, A, 2\nRECT2 0, 0, A, B\n",
+            parameters={"A": 0.8, "B": 0.3},
+        )
+        # HOTSPOT2 是交互热点（非渲染几何）：识别为无副作用，不告警、不产生几何。
+        self.assertEqual(res.warnings, [])
+        self.assertEqual(len(res.polygons), 1)
+
+    def test_set_statement_no_side_effect_no_warning(self):
+        r2d = preview_2d_script("SET MATERIAL wood\nRECT2 0, 0, 1, 1\n")
+        self.assertFalse(any("SET" in w for w in r2d.warnings))
+        self.assertEqual(len(r2d.polygons), 1)
+
+        r3d = preview_3d_script("SET MATERIAL wood\nBLOCK 1, 1, 1\n")
+        self.assertFalse(any("SET" in w for w in r3d.warnings))
+        self.assertEqual(len(r3d.meshes), 1)
+
+    def test_values_silently_ignored_in_2d_and_3d(self):
+        values = 'VALUES "A" RANGE [0.30, 3.00]\n'
+        r2d = preview_2d_script(values + "RECT2 0, 0, 1, 1\n")
+        self.assertFalse(any("VALUES" in w for w in r2d.warnings))
+        self.assertEqual(len(r2d.polygons), 1)
+
+        r3d = preview_3d_script(values + "BLOCK 1, 1, 1\n")
+        self.assertFalse(any("VALUES" in w for w in r3d.warnings))
+        self.assertEqual(len(r3d.meshes), 1)
+
+    def test_bookshelf_scenario_warnings_single_digit(self):
+        """Bookshelf 场景验收：导入 examples/Bookshelf.gdl 后，2D+3D 预览
+        总 unsupported 警告数降到个位数（硬指标）。"""
+        bookshelf = Path(__file__).resolve().parents[1] / "examples" / "Bookshelf.gdl"
+        project, _ = parse_gdl_source_with_warnings(
+            bookshelf.read_text(encoding="utf-8"), "Bookshelf"
+        )
+        params = parameter_values(project)
+        scripts = {k.name: v for k, v in project.scripts.items()}
+
+        r2d = preview_2d_script(
+            scripts["SCRIPT_2D"], parameters=params, setup_script=scripts["MASTER"]
+        )
+        r3d = preview_3d_script(
+            scripts["SCRIPT_3D"], parameters=params, setup_script=scripts["MASTER"]
+        )
+
+        total = len(r2d.warnings) + len(r3d.warnings)
+        self.assertLess(total, 10)
+        # 几何不丢：2D 侧板线 + 外轮廓矩形，3D 框架/层板/背板网格。
+        self.assertEqual(len(r2d.lines), 3)
+        self.assertEqual(len(r2d.polygons), 1)
+        self.assertGreaterEqual(len(r3d.meshes), 8)
 
 
 if __name__ == "__main__":

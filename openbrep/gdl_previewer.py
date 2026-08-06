@@ -353,9 +353,12 @@ class _PreviewRuntime:
                 idx += 1
                 continue
 
-            # Recognized but non-renderable commands — suppress "未支持命令" warning
+            # Recognized but non-renderable commands — suppress "未支持命令" warning.
+            # SET（属性设置语句，如 SET MATERIAL x）与 VALUES（参数脚本构造，如
+            # VALUES "A" RANGE [..]）对预览无几何副作用：SET 无副作用处理，
+            # VALUES 属参数脚本范畴，在 2D/3D 中静默忽略，均不告警。
             if re.match(
-                r"^(RESOL|TOLER|MATERIAL|PEN|XFORM)\b",
+                r"^(RESOL|TOLER|MATERIAL|PEN|XFORM|SET|VALUES)\b",
                 line, re.IGNORECASE,
             ):
                 idx += 1
@@ -646,6 +649,11 @@ class _PreviewRuntime:
                 self._p2(x1, y2),
             ]
             self.result_2d.polygons.append(poly)
+            return True
+
+        if cmd == "HOTSPOT2":
+            # 交互拖拽热点（见 knowledge/GDL_2d_commands.md）：非渲染几何，
+            # 预览中识别为无副作用——不产生几何、不告警。
             return True
 
         if cmd == "POLY2":
