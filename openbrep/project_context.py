@@ -85,6 +85,21 @@ def load_project_toml(path: str | Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def load_project_origin(project_root: str | Path) -> dict[str, Any] | None:
+    """Return the [origin] table of <project>/.openbrep/project.toml (import provenance).
+
+    读取侧暴露：三个导入入口（gdl / gsm / blender_py）会把来源信息持久化到
+    ``.openbrep/project.toml`` 的 ``[origin]`` 节；此处统一暴露给 MCP / 上下文。
+    文件缺失、TOML 损坏或没有 [origin] 节时返回 None（只读，绝不抛异常）。
+    """
+    root = Path(project_root).expanduser()
+    data = load_project_toml(root / OPENBREP_DIR / PROJECT_TOML)
+    if not isinstance(data, dict):
+        return None
+    origin = data.get("origin")
+    return origin if isinstance(origin, dict) else None
+
+
 def build_project_context_prompt(context: ProjectContext | None) -> str:
     """Render project.toml as compact prompt context."""
     if context is None or not context.config:

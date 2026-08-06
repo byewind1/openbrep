@@ -7,6 +7,7 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import TaskResult
 import openbrep.workbench_api as workbench_api
+from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.workbench_api import (
     WorkbenchSession,
     apply_parameter_values,
@@ -346,6 +347,127 @@ def test_workbench_session_imports_single_gdl_file_as_hsf_project(tmp_path):
     imported = HSFProject.load_from_disk(response["project"]["path"])
     assert imported.get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
     assert session.route("GET", "/api/project/recent")["projects"][0]["path"] == response["project"]["path"]
+
+
+
+def _read_origin_toml(project_path):
+    toml = Path(project_path) / ".openbrep" / "project.toml"
+    return toml, toml.read_text(encoding="utf-8") if toml.exists() else None
+
+
+def test_workbench_session_import_gdl_persists_origin_in_project_toml(tmp_path):
+    """GDL 导入成功后 .openbrep/project.toml 写入 [origin]（imported_from/kind/at）。"""
+    gdl_path = tmp_path / "ShelfOrigin.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert response["ok"] is True
+    toml, text = _read_origin_toml(response["project"]["path"])
+    assert toml.exists()
+    assert "[origin]" in text
+    assert f'imported_from = "{gdl_path}"' in text
+    assert 'imported_kind = "gdl"' in text
+    assert 'imported_at = "' in text
+    assert text.count("[origin]") == 1
+    # 重复导入同名源：唯一化到 ShelfOrigin_2，各自 [origin] 只有一个节、不追加
+    response2 = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+    assert response2["ok"] is True
+    assert response2["project"]["path"].endswith("ShelfOrigin_2")
+    _, text2 = _read_origin_toml(response2["project"]["path"])
+    assert text2.count("[origin]") == 1
+    assert "imported_kind = \"gdl\"" in text2
+    # 第一次导入的项目文件保持不动
+    assert _read_origin_toml(response["project"]["path"])[1] == text
+
+
+def test_workbench_session_import_gsm_persists_origin_in_project_toml(tmp_path, monkeypatch):
+    """GSM 导入成功后 .openbrep/project.toml 写入 [origin]（imported_kind=gsm）。"""
+    gsm_path = tmp_path / "ImportedShelf.gsm"
+    gsm_path.write_bytes(b"fake gsm")
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+            self.timeout = timeout
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            project = HSFProject.create_new("ConverterOutput", output_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            project.save_to_disk()
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    monkeypatch.setattr(workbench_api, "HSFCompiler", FakeHSFCompiler)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route(
+        "POST",
+        "/api/settings/compiler",
+        {"mode": "lp", "converter_path": "/Applications/LP_XMLConverter"},
+    )
+
+    response = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert response["ok"] is True
+    toml, text = _read_origin_toml(response["project"]["path"])
+    assert toml.exists()
+    assert f'imported_from = "{gsm_path}"' in text
+    assert 'imported_kind = "gsm"' in text
+    assert 'imported_at = "' in text
+
+
+def test_write_project_origin_updates_in_place_preserving_other_sections(tmp_path):
+    """节级最小更新：已存在 [origin] 只覆盖三键，其他节/键逐字保留，不追加。"""
+    project = HSFProject.create_new("OriginUpdate", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    toml = Path(hsf_dir) / ".openbrep" / "project.toml"
+    toml.parent.mkdir(parents=True, exist_ok=True)
+    toml.write_text(
+        "# hand maintained\n"
+        "\n"
+        "[project]\n"
+        'name = "OriginUpdate"\n'
+        "\n"
+        "[origin]\n"
+        'imported_from = "OLD"\n'
+        'imported_kind = "gdl"\n'
+        'imported_at = "2020-01-01T00:00:00"\n'
+        "\n"
+        "[settings]\n"
+        "foo = [1, 2]\n",
+        encoding="utf-8",
+    )
+    before = toml.read_text(encoding="utf-8")
+
+    write_project_origin(hsf_dir, imported_from="/tmp/new.gsm", imported_kind="gsm")
+
+    after = toml.read_text(encoding="utf-8")
+    assert after.count("[origin]") == 1
+    assert "OLD" not in after
+    assert "imported_kind = \"gsm\"" in after
+    # 其他节与键逐字保留
+    for fragment in ["# hand maintained", "[project]", 'name = "OriginUpdate"', "[settings]", "foo = [1, 2]"]:
+        assert fragment in after
+    assert before.split("[origin]")[0] == after.split("[origin]")[0]
+    assert before.split("[settings]")[1] == after.split("[settings]")[1]
+
+
+def test_write_project_origin_skips_malformed_toml_without_crashing(tmp_path):
+    """坏 TOML：跳过写入（返回 None），原文件一个字节不动，不抛异常。"""
+    project = HSFProject.create_new("OriginBad", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    toml = Path(hsf_dir) / ".openbrep" / "project.toml"
+    toml.parent.mkdir(parents=True, exist_ok=True)
+    toml.write_text("this is { not [ valid toml", encoding="utf-8")
+
+    result = write_project_origin(hsf_dir, imported_from="/tmp/x.gdl", imported_kind="gdl")
+
+    assert result is None
+    assert toml.read_text(encoding="utf-8") == "this is { not [ valid toml"
 
 
 def test_workbench_session_import_gdl_uses_gdl_file_chooser_purpose(tmp_path):

@@ -52,6 +52,7 @@ from types import SimpleNamespace
 from typing import Any, Iterator
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
+from openbrep.project_context import load_project_origin
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.revisions import (
@@ -149,6 +150,7 @@ def load_project(path: str) -> dict:
                 "scripts_present": scripts_present,
                 "ac_version": project.version,
                 "latest_revision_id": get_latest_revision_id(root),
+                "origin": load_project_origin(root),
                 "trace_id": trace_id,
             }
         except Exception as exc:

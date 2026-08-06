@@ -27,6 +27,7 @@ from openbrep.importers.blender_script.converter import (
 from openbrep.workbench.project_session_service import (
     safe_project_name,
     unique_project_name,
+    write_project_origin,
 )
 
 if TYPE_CHECKING:
@@ -93,6 +94,11 @@ class WorkbenchBlenderImportService:
             self.session.source_path = project.root
             if source_file is not None:
                 self.session.project_service.remember_project_path(project.root)
+                write_project_origin(
+                    project.root,
+                    imported_from=str(source_file),
+                    imported_kind="blender_py",
+                )
 
             snapshot = self.session.snapshot()
             snapshot["warnings"] = [

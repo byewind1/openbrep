@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime as _dt
+import logging
 import re
 import shutil
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +25,101 @@ MAX_WORKBENCH_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_WORKBENCH_IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp"}
 _DEMO_PROJECT: HSFProject | None = None
 UNTITLED_PROJECT_NAME = "Untitled GDL Object"
+
+logger = logging.getLogger(__name__)
+
+
+_ORIGIN_HEADER_RE = re.compile(r"^\[origin\][ \t]*(?:#.*)?\r?$", re.MULTILINE)
+_SECTION_HEADER_RE = re.compile(r"^\[[^\]]+\][ \t]*(?:#.*)?\r?$", re.MULTILINE)
+_ORIGIN_KEYS = ("imported_from", "imported_kind", "imported_at")
+
+
+def _toml_basic_string(value: str) -> str:
+    """TOML 基本字符串转义（路径可能含反斜杠/引号/控制符）。"""
+    return '"' + (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    ) + '"'
+
+
+def _render_origin_section(origin: dict[str, str]) -> str:
+    lines = ["[origin]"]
+    for key in _ORIGIN_KEYS:
+        lines.append(f"{key} = {_toml_basic_string(origin[key])}")
+    return "\n".join(lines) + "\n"
+
+
+def _replace_origin_section(text: str, new_section: str) -> str:
+    """节级最小更新：只替换 [origin] 一节，其余字节逐字保留。
+
+    - 已有 [origin]：从该表头到下一个 [表头]（或文件尾）的整段被替换；
+      [origin.sub] 等子表视为下一个表头，保持不动。
+    - 没有 [origin]：在文件末尾追加新节（保证前有换行）。
+    """
+    header = _ORIGIN_HEADER_RE.search(text)
+    if header is None:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return text + new_section
+    start = header.start()
+    next_header = _SECTION_HEADER_RE.search(text, header.end())
+    if next_header is None:
+        return text[:start] + new_section
+    end = next_header.start()
+    # [origin] 最后一行自身的行尾由 new_section 自带；其后的空白行属于
+    # 节间分隔，不属于任何节，原样保留（0 个就 0 个，2 个就 2 个）。
+    trailing_newlines = 0
+    probe = end
+    while probe > start and text[probe - 1] == "\n":
+        probe -= 1
+        trailing_newlines += 1
+    blank_lines = max(trailing_newlines - 1, 0)
+    return text[:start] + new_section + "\n" * blank_lines + text[end:]
+
+
+def write_project_origin(
+    project_root: str | Path,
+    *,
+    imported_from: str,
+    imported_kind: str,
+) -> Path | None:
+    """把导入溯源持久化到 <project_root>/.openbrep/project.toml 的 [origin] 节。
+
+    - 三个键：imported_from（源文件绝对路径）、imported_kind（gdl/gsm/blender_py）、
+      imported_at（ISO 时间）；重复导入同名项目 = 覆盖这三个键，不追加。
+    - 已存在 [origin] 节则节级更新，其他节与其他字节一个不动（见
+      _replace_origin_section）；文件不存在则创建（含 .openbrep 目录）。
+    - 文件坏 TOML / 写失败：跳过写入并记 warning，绝不抛异常。
+    """
+    root = Path(project_root).expanduser().resolve()
+    toml_path = root / ".openbrep" / "project.toml"
+    origin = {
+        "imported_from": str(imported_from),
+        "imported_kind": str(imported_kind),
+        "imported_at": _dt.datetime.now().isoformat(timespec="seconds"),
+    }
+    new_section = _render_origin_section(origin)
+    try:
+        if toml_path.exists():
+            text = toml_path.read_text(encoding="utf-8")
+            try:
+                tomllib.loads(text)
+            except Exception as exc:
+                logger.warning("skip [origin] write: %s is not valid TOML: %s", toml_path, exc)
+                return None
+            updated = _replace_origin_section(text, new_section)
+        else:
+            updated = new_section
+        toml_path.parent.mkdir(parents=True, exist_ok=True)
+        toml_path.write_text(updated, encoding="utf-8")
+        return toml_path
+    except Exception as exc:
+        logger.warning("failed to persist [origin] to %s: %s", toml_path, exc)
+        return None
 
 
 class WorkbenchProjectSessionService:
@@ -102,6 +200,7 @@ class WorkbenchProjectSessionService:
         self.session.source = "hsf"
         self.session.source_path = hsf_dir
         self.remember_project_path(hsf_dir)
+        write_project_origin(hsf_dir, imported_from=str(source_file), imported_kind="gdl")
         result = self.session.snapshot()
         result["ok"] = True
         result["imported_from"] = str(source_file)
@@ -165,6 +264,7 @@ class WorkbenchProjectSessionService:
         self.session.source = "hsf"
         self.session.source_path = target_dir
         self.remember_project_path(target_dir)
+        write_project_origin(target_dir, imported_from=str(source_file), imported_kind="gsm")
         return {
             "ok": True,
             "imported_from": str(source_file),

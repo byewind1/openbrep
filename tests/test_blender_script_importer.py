@@ -693,6 +693,15 @@ class TestWorkbenchBlenderImport(unittest.TestCase):
             project_dir = Path(tmp) / "make_box"
             self.assertTrue((project_dir / "scripts" / "3d.gdl").exists())
             self.assertTrue((project_dir / "paramlist.xml").exists())
+            # 溯源持久化：.openbrep/project.toml [origin] 三键
+            origin_toml = project_dir / ".openbrep" / "project.toml"
+            self.assertTrue(origin_toml.exists())
+            origin_text = origin_toml.read_text(encoding="utf-8")
+            self.assertIn("[origin]", origin_text)
+            self.assertIn(f'imported_from = "{str(script.resolve())}"', origin_text)
+            self.assertIn('imported_kind = "blender_py"', origin_text)
+            self.assertIn('imported_at = "', origin_text)
+            self.assertEqual(origin_text.count("[origin]"), 1)
 
     def test_import_blender_via_file_chooser(self):
         """No content and no path → native chooser supplies the .py file."""

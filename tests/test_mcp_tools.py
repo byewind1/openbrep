@@ -29,6 +29,7 @@ from openbrep.mcp_tools import (
     verify_skill,
 )
 from openbrep.revisions import get_latest_revision_id
+from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.skills_loader import SkillsLoader
 
 TRACE_RE = re.compile(r"^mcp-\d{8}-\d{4}$")
@@ -50,6 +51,34 @@ def test_load_project_returns_full_profile(tmp_path):
     assert result["ac_version"] == 46
     assert result["latest_revision_id"] is None
     assert TRACE_RE.match(result["trace_id"])
+
+
+def test_load_project_returns_origin_when_project_toml_has_origin(tmp_path):
+    """load_project 返回 [origin]（导入溯源）；无则 None。"""
+    _project, hsf_dir = _make_project(tmp_path)
+    result = load_project(str(hsf_dir))
+    assert result["ok"] is True
+    assert result["origin"] is None
+
+    write_project_origin(hsf_dir, imported_from="/tmp/source.gdl", imported_kind="gdl")
+    result2 = load_project(str(hsf_dir))
+    assert result2["ok"] is True
+    assert result2["origin"]["imported_from"] == "/tmp/source.gdl"
+    assert result2["origin"]["imported_kind"] == "gdl"
+    assert "imported_at" in result2["origin"]
+
+
+def test_load_project_bad_project_toml_degrades_to_origin_none(tmp_path):
+    """坏 TOML 不炸：load_project 仍成功，origin 为 None。"""
+    _project, hsf_dir = _make_project(tmp_path)
+    bad = Path(hsf_dir) / ".openbrep" / "project.toml"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("this is { not [ valid toml", encoding="utf-8")
+
+    result = load_project(str(hsf_dir))
+
+    assert result["ok"] is True
+    assert result["origin"] is None
 
 
 def test_load_project_missing_path_returns_unified_error(tmp_path):
