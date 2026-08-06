@@ -2,7 +2,7 @@
 id: C12
 category: create
 complexity: medium
-description: "厨房吊柜，宽600mm深350mm高700mm，内部层板数量参数化（默认2层），柜门是否存在为布尔参数（默认有门），柜门厚度参数化，门铰链方向参数（左开/右开）"
+description: "厨房吊柜，宽600mm深350mm高700mm，内部层板数量参数化（默认2层），柜门是否存在为布尔参数（默认有门），柜门厚度参数化，门铰链方向参数（左开/右开）。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、n_shelves（层板数量）、has_door（柜门有无，布尔）、door_thk（柜门厚度）、hinge_side（门铰链方向，左开/右开）"
 success_criteria:
   compile_pass: true
   required_params: [A, B, ZZYZX, n_shelves, has_door, door_thk, hinge_side]

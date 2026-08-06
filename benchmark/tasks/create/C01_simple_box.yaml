@@ -2,7 +2,7 @@
 id: C01
 category: create
 complexity: low
-description: "做一个简单的长方体柜子，宽600mm，深400mm，高800mm，无任何附加构件"
+description: "做一个简单的长方体柜子，宽600mm，深400mm，高800mm，无任何附加构件。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）"
 success_criteria:
   compile_pass: true
   required_params: [A, B, ZZYZX]

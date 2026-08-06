@@ -2,7 +2,7 @@
 id: C19
 category: create
 complexity: medium_high
-description: "遮阳百叶板阵列，安装面宽度、高度参数化，百叶叶片数量参数化（默认8片），叶片倾斜角度参数化（默认30度），叶片进深参数化，叶片沿高度方向均匀排列"
+description: "遮阳百叶板阵列，安装面宽度、高度参数化，百叶叶片数量参数化（默认8片），叶片倾斜角度参数化（默认30度），叶片进深参数化，叶片沿高度方向均匀排列。参数必须使用这些名称：A（安装面宽度）、ZZYZX（安装面高度）、blade_count（叶片数量）、blade_angle（叶片倾斜角度）、blade_depth（叶片进深）"
 success_criteria:
   compile_pass: true
   required_params: [A, ZZYZX, blade_count, blade_angle, blade_depth]

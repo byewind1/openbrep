@@ -2,7 +2,7 @@
 id: C14
 category: create
 complexity: medium
-description: "扶手墙面支架（连接件），支架伸出长度参数化（默认80mm），固定螺栓数量参数化（默认2个），支架厚度参数化，圆形扶手抓握直径参数化"
+description: "扶手墙面支架（连接件），支架伸出长度参数化（默认80mm），固定螺栓数量参数化（默认2个），支架厚度参数化，圆形扶手抓握直径参数化。参数必须使用这些名称：arm_length（支架伸出长度）、bolt_count（固定螺栓数量）、bracket_thk（支架厚度）、rail_d（扶手抓握直径）"
 success_criteria:
   compile_pass: true
   required_params: [arm_length, bolt_count, bracket_thk, rail_d]

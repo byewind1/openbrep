@@ -2,7 +2,7 @@
 id: C20
 category: create
 complexity: very_high
-description: "空间网架球形节点连接件，球体节点直径参数化，辐射杆件数量参数化（默认6根，代表上弦/下弦/腹杆方向），杆件直径参数化，杆件伸出长度参数化，杆件均匀围绕球心辐射分布"
+description: "空间网架球形节点连接件，球体节点直径参数化，辐射杆件数量参数化（默认6根，代表上弦/下弦/腹杆方向），杆件直径参数化，杆件伸出长度参数化，杆件均匀围绕球心辐射分布。参数必须使用这些名称：node_r（球体节点直径）、strut_count（辐射杆件数量）、strut_d（杆件直径）、strut_length（杆件伸出长度）"
 success_criteria:
   compile_pass: true
   required_params: [node_r, strut_count, strut_d, strut_length]

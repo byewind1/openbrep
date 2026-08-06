@@ -2,7 +2,7 @@
 id: C13
 category: create
 complexity: medium
-description: "车削栏杆柱（旋木造型），总高度900mm，柱身分段数参数化（默认3段，每段直径不同模拟车削造型），柱身基础直径参数化，柱顶直径参数化"
+description: "车削栏杆柱（旋木造型），总高度900mm，柱身分段数参数化（默认3段，每段直径不同模拟车削造型），柱身基础直径参数化，柱顶直径参数化。参数必须使用这些名称：ZZYZX（总高度）、seg_count（柱身分段数）、base_d（基础直径）、top_d（柱顶直径）"
 success_criteria:
   compile_pass: true
   required_params: [ZZYZX, seg_count, base_d, top_d]

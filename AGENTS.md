@@ -291,6 +291,8 @@ pass 数下降都会红灯。
 
 必须重录（prompt 会变化）：
 - `knowledge/`、`user_knowledge/`、`skills/` 目录内容变更
+- `benchmark/tasks/` 任务文件的 `description` 变更（description 是发给 LLM 的
+  指令本体）
 - prompt 构建逻辑变更（pipeline 的指令拼装、object_planner、图谱注入、
   knowledge_selector.py 的选择逻辑、skills_loader）
 - LLM model 或 provider 变更

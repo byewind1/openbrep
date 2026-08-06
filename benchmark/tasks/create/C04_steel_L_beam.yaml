@@ -2,7 +2,7 @@
 id: C04
 category: create
 complexity: medium
-description: "L型钢截面构件，翼缘宽度/厚度/腹板高度/厚度全部参数化，长度参数化，材质参数"
+description: "L型钢截面构件，翼缘宽度/厚度/腹板高度/厚度全部参数化，长度参数化，材质参数。参数必须使用这些名称：A（构件长度）、ZZYZX（截面总高）、flange_w（翼缘宽度）、flange_t（翼缘厚度）、web_h（腹板高度）、web_t（腹板厚度）、mat_steel（钢材材质）"
 success_criteria:
   compile_pass: true
   required_params: [A, ZZYZX, flange_w, flange_t, web_h, web_t, mat_steel]

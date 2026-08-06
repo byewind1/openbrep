@@ -2,7 +2,7 @@
 id: C17
 category: create
 complexity: very_high
-description: "螺旋楼梯段，总步数参数化（默认16步），每步高度参数化，总旋转角度参数化（默认360度），踏板宽度参数化，每步绕中心柱旋转角度均分，用ROT堆叠实现螺旋上升"
+description: "螺旋楼梯段，总步数参数化（默认16步），每步高度参数化，总旋转角度参数化（默认360度），踏板宽度参数化，每步绕中心柱旋转角度均分，用ROT堆叠实现螺旋上升。参数必须使用这些名称：stair_steps（总步数）、riser_h（每步高度）、total_angle（总旋转角度）、tread_w（踏板宽度）"
 success_criteria:
   compile_pass: true
   required_params: [stair_steps, riser_h, total_angle, tread_w]

@@ -2,7 +2,7 @@
 id: C08
 category: create
 complexity: high
-description: "管道弯头，管道外径参数化，壁厚参数化，弯曲角度参数化（45/90/135度），弯曲半径参数化，用TUBE或REVOLVE实现弯管几何，材质参数"
+description: "管道弯头，管道外径参数化，壁厚参数化，弯曲角度参数化（45/90/135度），弯曲半径参数化，用TUBE或REVOLVE实现弯管几何，材质参数。参数必须使用这些名称：pipe_od（管道外径）、pipe_thk（壁厚）、bend_angle（弯曲角度）、bend_radius（弯曲半径）、mat_pipe（管材材质）"
 success_criteria:
   compile_pass: true
   required_params: [pipe_od, pipe_thk, bend_angle, bend_radius, mat_pipe]

@@ -2,7 +2,7 @@
 id: C06
 category: create
 complexity: medium_high
-description: "参数化窗户，窗宽1200mm窗高1500mm，窗框厚度参数化，玻璃厚度参数化，有可开启扇（单扇平开），开启扇宽度参数化，2D需要显示开启弧线，材质分区：框/扇/玻璃各独立"
+description: "参数化窗户，窗宽1200mm窗高1500mm，窗框厚度参数化，玻璃厚度参数化，有可开启扇（单扇平开），开启扇宽度参数化，2D需要显示开启弧线，材质分区：框/扇/玻璃各独立。参数必须使用这些名称：A（窗宽）、ZZYZX（窗高）、frame_w（窗框厚度）、glass_thk（玻璃厚度）、sash_w（开启扇宽度）、mat_frame（窗框材质）、mat_glass（玻璃材质）"
 success_criteria:
   compile_pass: true
   required_params: [A, ZZYZX, frame_w, glass_thk, sash_w, mat_frame, mat_glass]

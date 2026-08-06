@@ -2,7 +2,7 @@
 id: C11
 category: create
 complexity: low_medium
-description: "圆形餐桌，桌面直径800mm，桌面厚度参数化（默认30mm），桌腿数量参数化（默认4条），桌腿直径参数化，桌腿高度参数化（默认720mm）"
+description: "圆形餐桌，桌面直径800mm，桌面厚度参数化（默认30mm），桌腿数量参数化（默认4条），桌腿直径参数化，桌腿高度参数化（默认720mm）。参数必须使用这些名称：A（桌面直径）、ZZYZX（总高度）、top_thk（桌面厚度）、leg_count（桌腿数量）、leg_d（桌腿直径）"
 success_criteria:
   compile_pass: true
   required_params: [A, ZZYZX, top_thk, leg_count, leg_d]

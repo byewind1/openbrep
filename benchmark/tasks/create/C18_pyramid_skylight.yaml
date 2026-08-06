@@ -2,7 +2,7 @@
 id: C18
 category: create
 complexity: high
-description: "金字塔形采光顶，底部宽度、底部深度参数化，顶部高度（脊高）参数化，玻璃面板厚度参数化，四个坡面用PRISM_或倾斜BLOCK实现，框架材质与玻璃材质分区"
+description: "金字塔形采光顶，底部宽度、底部深度参数化，顶部高度（脊高）参数化，玻璃面板厚度参数化，四个坡面用PRISM_或倾斜BLOCK实现，框架材质与玻璃材质分区。参数必须使用这些名称：A（底部宽度）、B（底部深度）、ZZYZX（顶部脊高）、glass_thk（玻璃面板厚度）、mat_glass（玻璃材质）"
 success_criteria:
   compile_pass: true
   required_params: [A, B, ZZYZX, glass_thk, mat_glass]

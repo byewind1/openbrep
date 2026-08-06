@@ -69,6 +69,7 @@ jobs:
           ^openbrep/config\.py$
           ^openbrep/llm\.py$
           ^benchmark/runner\.py$
+          ^benchmark/tasks/
           EOF
 
           MATCHED=$(printf '%s\n' "$CHANGED" | grep -Ef "$RUNNER_TEMP/prompt-paths.txt" || true)

@@ -2,7 +2,7 @@
 id: C09
 category: create
 complexity: very_high
-description: "幕墙单元格，单元宽度/高度参数化，竖框/横框截面参数化，玻璃嵌入深度参数化，竖向分格数/横向分格数参数化（自动分割），材质分区：框/玻璃，2D需显示分格线"
+description: "幕墙单元格，单元宽度/高度参数化，竖框/横框截面参数化，玻璃嵌入深度参数化，竖向分格数/横向分格数参数化（自动分割），材质分区：框/玻璃，2D需显示分格线。参数必须使用这些名称：A（单元宽度）、ZZYZX（单元高度）、mullion_w（竖框截面宽度）、mullion_d（竖框截面深度）、glass_thk（玻璃嵌入深度）、v_divs（竖向分格数）、h_divs（横向分格数）"
 success_criteria:
   compile_pass: true
   required_params: [A, ZZYZX, mullion_w, mullion_d, glass_thk, v_divs, h_divs]

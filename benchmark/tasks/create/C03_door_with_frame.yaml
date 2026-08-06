@@ -2,7 +2,7 @@
 id: C03
 category: create
 complexity: medium
-description: "带门框的单扇门，门宽900mm门高2100mm，门框厚度参数化，门板厚度参数化，有门开启方向参数（左开/右开）"
+description: "带门框的单扇门，门宽900mm门高2100mm，门框厚度参数化，门板厚度参数化，有门开启方向参数（左开/右开）。参数必须使用这些名称：A（门宽）、ZZYZX（门高）、frame_w（门框厚度）、panel_thk（门板厚度）、open_direction（门开启方向）"
 success_criteria:
   compile_pass: true
   required_params: [A, ZZYZX, frame_w, panel_thk, open_direction]

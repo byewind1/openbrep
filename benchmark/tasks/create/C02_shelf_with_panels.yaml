@@ -2,7 +2,7 @@
 id: C02
 category: create
 complexity: low_medium
-description: "参数化书架，宽600mm深300mm高1200mm，层板数量可调（默认4层），层板厚度参数化"
+description: "参数化书架，宽600mm深300mm高1200mm，层板数量可调（默认4层），层板厚度参数化。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、n_shelves（层板数量）、shelf_thk（层板厚度）"
 success_criteria:
   compile_pass: true
   required_params: [A, B, ZZYZX, n_shelves, shelf_thk]

@@ -1,92 +1,92 @@
 {
   "version": 1,
-  "generated_at": "2026-08-06T11:26:50",
-  "commit": "ba78db559c2e03c98f7de237b82c961b588d9a70",
+  "generated_at": "2026-08-06T15:26:45",
+  "commit": "f5b17425c5429931d6d92e08f29972076d05ce52",
   "mode": "mock",
   "suites": {
     "create": {
       "corpus": "benchmark/fixtures/llm_corpus/create.jsonl",
-      "pass": 3,
+      "pass": 5,
       "tasks": {
         "C01": {
           "success": true,
           "criteria_failures": 0
         },
         "C02": {
-          "success": true,
-          "criteria_failures": 0
-        },
-        "C03": {
-          "success": false,
-          "criteria_failures": 6
-        },
-        "C04": {
-          "success": false,
-          "criteria_failures": 4
-        },
-        "C05": {
-          "success": false,
-          "criteria_failures": 7
-        },
-        "C06": {
-          "success": false,
-          "criteria_failures": 7
-        },
-        "C07": {
-          "success": false,
-          "criteria_failures": 9
-        },
-        "C08": {
-          "success": false,
-          "criteria_failures": 7
-        },
-        "C09": {
-          "success": false,
-          "criteria_failures": 13
-        },
-        "C10": {
-          "success": false,
-          "criteria_failures": 12
-        },
-        "C11": {
-          "success": true,
-          "criteria_failures": 0
-        },
-        "C12": {
           "success": false,
           "criteria_failures": 1
         },
-        "C13": {
+        "C03": {
+          "success": false,
+          "criteria_failures": 1
+        },
+        "C04": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "C05": {
+          "success": false,
+          "criteria_failures": 1
+        },
+        "C06": {
+          "success": false,
+          "criteria_failures": 1
+        },
+        "C07": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "C08": {
           "success": false,
           "criteria_failures": 5
         },
-        "C14": {
-          "success": false,
-          "criteria_failures": 5
+        "C09": {
+          "success": true,
+          "criteria_failures": 0
         },
-        "C15": {
+        "C10": {
+          "success": false,
+          "criteria_failures": 2
+        },
+        "C11": {
           "success": false,
           "criteria_failures": 6
         },
-        "C16": {
+        "C12": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "C13": {
           "success": false,
           "criteria_failures": 3
         },
+        "C14": {
+          "success": false,
+          "criteria_failures": 6
+        },
+        "C15": {
+          "success": false,
+          "criteria_failures": 4
+        },
+        "C16": {
+          "success": false,
+          "criteria_failures": 6
+        },
         "C17": {
           "success": false,
-          "criteria_failures": 8
+          "criteria_failures": 4
         },
         "C18": {
           "success": false,
-          "criteria_failures": 5
+          "criteria_failures": 2
         },
         "C19": {
           "success": false,
-          "criteria_failures": 8
+          "criteria_failures": 1
         },
         "C20": {
           "success": false,
-          "criteria_failures": 8
+          "criteria_failures": 3
         }
       }
     },

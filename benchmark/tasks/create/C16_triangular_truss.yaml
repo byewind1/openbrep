@@ -2,7 +2,7 @@
 id: C16
 category: create
 complexity: high
-description: "三角形桁架单元段，总跨度参数化，桁架高度（腹高）参数化，节间数量参数化（默认4个三角形单元），上下弦杆和斜腹杆均用圆管CYLIND表示，杆件直径参数化"
+description: "三角形桁架单元段，总跨度参数化，桁架高度（腹高）参数化，节间数量参数化（默认4个三角形单元），上下弦杆和斜腹杆均用圆管CYLIND表示，杆件直径参数化。参数必须使用这些名称：A（总跨度）、ZZYZX（桁架高度）、panel_count（节间数量）、chord_d（杆件直径）"
 success_criteria:
   compile_pass: true
   required_params: [A, ZZYZX, panel_count, chord_d]

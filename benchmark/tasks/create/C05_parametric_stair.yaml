@@ -2,7 +2,7 @@
 id: C05
 category: create
 complexity: medium_high
-description: "参数化直跑楼梯，步数参数化（默认12步），步高参数化，步宽参数化，踏板厚度参数化，有踢面/无踢面可选"
+description: "参数化直跑楼梯，步数参数化（默认12步），步高参数化，步宽参数化，踏板厚度参数化，有踢面/无踢面可选。参数必须使用这些名称：stair_steps（步数）、riser_h（步高）、tread_w（步宽）、tread_thk（踏板厚度）、has_riser（踢面有无，布尔）"
 success_criteria:
   compile_pass: true
   required_params: [stair_steps, riser_h, tread_w, tread_thk, has_riser]
