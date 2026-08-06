@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from benchmark.assertions import assert_success_criteria
+from benchmark.assertions import assert_success_criteria, evaluate_semantic_assertion
 from benchmark.runner import BenchmarkRunner, build_summary, render_markdown_summary
 from benchmark.schema import SemanticAssertion, SuccessCriteria, load_benchmark_task
 from openbrep.compiler import CompileResult
@@ -454,6 +454,128 @@ class TestBenchmarkRunnerCriteria(unittest.TestCase):
         self.assertEqual(summary["success"], 1)
         self.assertEqual(summary["skipped"], 1)
         self.assertIn("1/2 passed", markdown)
+
+
+
+
+    # ── param_used：直接引用 / Master 派生链 / 反例 ──────────────────────────
+
+    def _param_used_project(self):
+        """C02 式布局：param 只经 Master 派生，3D 用派生变量。"""
+        project = HSFProject.create_new("ParamUsedBench")
+        project.add_parameter(GDLParameter("n_shelves", "Integer", value="4"))
+        project.add_parameter(GDLParameter("shelf_thk", "Length", value="0.02"))
+        project.set_script(
+            ScriptType.MASTER,
+            "_safe_A = MAX(A, 0.001)\n"
+            "_safe_n = MAX(2, INT(n_shelves))\n"
+            "_shelf_step = _safe_A / (_safe_n - 1)\n",
+        )
+        project.set_script(
+            ScriptType.SCRIPT_3D,
+            "FOR i = 1 TO _safe_n\n"
+            "  ADDX _safe_A\n"
+            "  BLOCK _safe_A, B, shelf_thk\n"
+            "  DEL 1\n"
+            "NEXT i\n",
+        )
+        project.set_script(
+            ScriptType.SCRIPT_2D,
+            "HOTSPOT2 0, 0\nHOTSPOT2 _safe_A, 0\nPROJECT2 3, 270, 2\n",
+        )
+        return project
+
+    def test_param_used_direct_reference_passes(self):
+        """现状行为不变：参数名直接出现在目标脚本 → 通过。"""
+        project = self._param_used_project()
+        assertion = SemanticAssertion(type="param_used", script="3d.gdl", param="shelf_thk")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(failures, [])
+
+    def test_param_used_direct_reference_missing_fails(self):
+        """参数既不在目标脚本、也不在 Master → 失败（现状行为不变）。"""
+        project = self._param_used_project()
+        assertion = SemanticAssertion(type="param_used", script="3d.gdl", param="unwired_param")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(
+            failures,
+            ["semantic_assertion: scripts/3d.gdl does not use param unwired_param"],
+        )
+
+    def test_param_used_via_master_derivation_passes(self):
+        """纪律规则 4 派生链：param 在 1d 参与赋值派生、派生变量被 3d 引用 → 通过。"""
+        project = self._param_used_project()
+        assertion = SemanticAssertion(type="param_used", script="3d.gdl", param="n_shelves")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(failures, [])
+
+    def test_param_used_via_master_derivation_on_2d_target_passes(self):
+        """派生链同样适用于 2d 等其它目标脚本。"""
+        project = self._param_used_project()
+        assertion = SemanticAssertion(type="param_used", script="2d.gdl", param="n_shelves")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(failures, [])
+
+    def test_param_used_master_derived_var_not_used_fails(self):
+        """反例：param 在 1d 被派生，但派生变量没被目标脚本引用 → 仍失败。"""
+        project = self._param_used_project()
+        project.set_script(
+            ScriptType.SCRIPT_3D,
+            "BLOCK A, B, ZZYZX\n",  # 不用 _safe_n / _safe_A / _shelf_step
+        )
+        assertion = SemanticAssertion(type="param_used", script="3d.gdl", param="n_shelves")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(
+            failures,
+            ["semantic_assertion: scripts/3d.gdl does not use param n_shelves"],
+        )
+
+    def test_param_used_master_without_assignments_fails(self):
+        """反例：param 只出现在 1d 的裸引用/校验行、Master 无派生赋值 → 仍失败。"""
+        project = self._param_used_project()
+        project.set_script(
+            ScriptType.MASTER,
+            "IF n_shelves < 2 THEN\n"
+            "    n_shelves = 2\n"
+            "ENDIF\n",  # 无 LHS 派生变量赋值
+        )
+        project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+        assertion = SemanticAssertion(type="param_used", script="3d.gdl", param="n_shelves")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(
+            failures,
+            ["semantic_assertion: scripts/3d.gdl does not use param n_shelves"],
+        )
+
+    def test_param_used_master_comment_occurrence_counts(self):
+        """注释口径与现有实现一致：param 出现在 1d 注释也计为"出现在 Master"。"""
+        project = self._param_used_project()
+        project.set_script(
+            ScriptType.MASTER,
+            "! n_shelves controls the shelf count\n"
+            "_safe_n = MAX(2, INT(n_shelves))\n",
+        )
+        project.set_script(
+            ScriptType.SCRIPT_3D,
+            "FOR i = 1 TO _safe_n\nBLOCK A, B, ZZYZX\nNEXT i\n",
+        )
+        assertion = SemanticAssertion(type="param_used", script="3d.gdl", param="n_shelves")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(failures, [])
 
 
 if __name__ == "__main__":

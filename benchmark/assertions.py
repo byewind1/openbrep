@@ -118,6 +118,35 @@ def _assert_semantic_assertions(
     return failures
 
 
+# Master(1d.gdl) 赋值语句的 LHS 派生变量：行首标识符 + "="。
+# 覆盖缩进（IF/ELSE 块内）赋值；单行 IF-THEN 赋值（以 IF 开头）不算派生赋值。
+_ASSIGNMENT_LHS_RE = re.compile(r"(?m)^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=")
+
+
+def _param_used_via_master_derivation(project, param: str, target_script: str) -> bool:
+    """param_used 放宽：参数经 Master(1d.gdl) 派生、派生变量被目标脚本引用。
+
+    与 knowledge/core/gdl_generation_discipline.md 规则 4（"声明的参数必须驱动
+    几何：必须至少被 3D 脚本（或经 Master 派生后被 3D）实际引用一次"）对齐：
+
+      1. param 字面出现在 1d.gdl（注释同样计数，与现有 param_used 行为一致）；
+      2. 1d.gdl 存在赋值语句（LHS 派生变量）；
+      3. 至少一个赋值 LHS 变量名字面出现在目标脚本。
+
+    三条同时成立才视为派生链成立；任一缺失（空 Master / 无赋值 / 派生变量未被
+    目标引用）都返回 False，防止误放。大小写按字面匹配，与现有实现一致。
+    """
+    master = _script_text(project, "1d.gdl")
+    if not master:
+        return False
+    if not re.search(rf"\b{re.escape(param)}\b", master):
+        return False
+    lhs_vars = set(_ASSIGNMENT_LHS_RE.findall(master))
+    if not lhs_vars:
+        return False
+    return any(re.search(rf"\b{re.escape(var)}\b", target_script) for var in lhs_vars)
+
+
 def evaluate_semantic_assertion(
     project: "HSFProject",
     assertion: SemanticAssertion,
@@ -144,7 +173,10 @@ def evaluate_semantic_assertion(
     elif assertion_type == "param_used":
         if not assertion.param:
             failures.append("semantic_assertion: param_used missing param")
-        elif not re.search(rf"\b{re.escape(assertion.param)}\b", script):
+        elif not (
+            re.search(rf"\b{re.escape(assertion.param)}\b", script)
+            or _param_used_via_master_derivation(project, assertion.param, script)
+        ):
             failures.append(f"semantic_assertion: scripts/{script_name} does not use param {assertion.param}")
     elif assertion_type == "expression_present":
         if not assertion.contains:
