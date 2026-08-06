@@ -926,10 +926,17 @@ def _import_gsm(source: Path, target_dir: Path, name: str | None, trace_id: str)
     decompile = result.get("decompile") or {}
     stderr = str(decompile.get("stderr") or "").strip()
     warnings = [line.strip() for line in stderr.splitlines() if line.strip()][:20] if stderr else []
+    # 规范化结果透传：有损/异常时把保留原始文件的人话 warning 带给 MCP 调用方
+    normalization = result.get("normalization") or {}
+    if not normalization.get("lossless"):
+        warnings.append(
+            str(normalization.get("warning") or "GSM 导入规范化失败，已保留原始文件")
+        )
     return {
         "ok": True,
         "project_path": str(session.source_path),
         "warnings": warnings,
+        "normalization": normalization,
         "trace_id": trace_id,
     }
 

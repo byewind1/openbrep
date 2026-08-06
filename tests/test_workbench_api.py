@@ -556,6 +556,165 @@ def test_workbench_session_imports_gsm_file_with_lp_converter(tmp_path, monkeypa
     assert response["decompile"]["mode"] == "lp"
 
 
+def _write_noncanonical_hsf(root):
+    """LP_XMLConverter 风格原始输出：无 BOM、乱缩进（语义与规范等价、可无损往返）。"""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "scripts").mkdir(exist_ok=True)
+    (root / "libpartdata.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<LibpartData Version="27" Owner="0" Signature="0">\n'
+        "<Identification>\n"
+        "<MainGUID>12345678-ABCD-EF01-2345-6789ABCDEF01</MainGUID>\n"
+        "</Identification>\n"
+        "</LibpartData>\n",
+        encoding="utf-8",  # 无 BOM
+    )
+    (root / "paramlist.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<ParamSection>\n"
+        '  <Parameters SectVersion="27" SectionFlags="0" SubIdent="0">\n'
+        '    <Length Name="A">\n'
+        '      <Description><![CDATA["Width"]]></Description>\n'
+        "      <Fix/>\n"
+        "      <Value>1.5</Value>\n"
+        "    </Length>\n"
+        '    <Integer Name="shelf_count">\n'
+        '      <Description><![CDATA["层板数"]]></Description>\n'
+        "      <Value>3</Value>\n"
+        "    </Integer>\n"
+        "  </Parameters>\n"
+        "</ParamSection>\n",
+        encoding="utf-8",
+    )
+    (root / "scripts" / "3d.gdl").write_text("BLOCK A, B, ZZYZX\nADDZ 1\n", encoding="utf-8")
+
+
+def _make_gsm_session(tmp_path, monkeypatch, compiler_cls):
+    gsm_path = tmp_path / "RawObject.gsm"
+    gsm_path.write_bytes(b"fake gsm")
+
+    monkeypatch.setattr(workbench_api, "HSFCompiler", compiler_cls)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route(
+        "POST",
+        "/api/settings/compiler",
+        {"mode": "lp", "converter_path": "/Applications/LP_XMLConverter"},
+    )
+    return session, gsm_path
+
+
+def test_workbench_session_import_gsm_normalizes_noncanonical_output(tmp_path, monkeypatch):
+    """非规范 HSF（无 BOM/乱缩进）导入后立即规范化：BOM 到位、参数/脚本/GUID 逐项相等。"""
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+            self.timeout = timeout
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            _write_noncanonical_hsf(Path(output_dir) / "hsf_out")
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    session, gsm_path = _make_gsm_session(tmp_path, monkeypatch, FakeHSFCompiler)
+    response = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert response["ok"] is True
+    project_dir = Path(response["project"]["path"])
+    normalization = response["normalization"]
+    assert normalization["ok"] is True
+    assert normalization["lossless"] is True
+    assert "paramlist.xml" in normalization["changed_files"]
+    assert "libpartdata.xml" in normalization["changed_files"]
+
+    # 规范落地：BOM
+    assert project_dir.joinpath("paramlist.xml").read_bytes()[:3] == b"\xef\xbb\xbf"
+    # 语义逐项相等
+    imported = HSFProject.load_from_disk(str(project_dir))
+    assert imported.guid == "12345678-ABCD-EF01-2345-6789ABCDEF01"
+    assert imported.version == 27
+    params = [(p.name, p.type_tag, p.value) for p in imported.parameters]
+    assert params == [("A", "Length", "1.5"), ("shelf_count", "Integer", "3")]
+    assert imported.get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\nADDZ 1\n"
+
+
+def test_workbench_session_import_gsm_rolls_back_on_lossy_normalization(tmp_path, monkeypatch):
+    """无损守卫：写器丢参数 → 磁盘原文件字节不变 + warning + normalization 标记有损。"""
+    import openbrep.paramlist_builder as paramlist_builder
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+            self.timeout = timeout
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            _write_noncanonical_hsf(Path(output_dir) / "hsf_out")
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    real_build = paramlist_builder.build_paramlist_xml
+    monkeypatch.setattr(
+        paramlist_builder,
+        "build_paramlist_xml",
+        lambda parameters: real_build(parameters[:1]),  # 丢一个参数 → 有损
+    )
+
+    session, gsm_path = _make_gsm_session(tmp_path, monkeypatch, FakeHSFCompiler)
+    response = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert response["ok"] is True
+    normalization = response["normalization"]
+    assert normalization["lossless"] is False
+    assert "有损" in normalization["warning"]
+    # 原文件回滚：paramlist.xml 与导入时字节一致（无 BOM 的原始输出）
+    project_dir = Path(response["project"]["path"])
+    assert project_dir.joinpath("paramlist.xml").read_bytes()[:3] != b"\xef\xbb\xbf"
+    assert project_dir.joinpath("paramlist.xml").read_text(encoding="utf-8").count("<Integer") == 1
+    # 人话 warning 进 GUI warnings 通道
+    assert any("保留原始文件" in w for w in response["warnings"])
+
+
+def test_workbench_session_import_gsm_normalization_exception_keeps_original(tmp_path, monkeypatch):
+    """helper 抛异常 → 导入仍成功 + warning + 原文件不动。"""
+    import openbrep.hsf_project as hsf_project
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+            self.timeout = timeout
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            _write_noncanonical_hsf(Path(output_dir) / "hsf_out")
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    def boom(self):
+        raise RuntimeError("writer exploded")
+
+    monkeypatch.setattr(hsf_project.HSFProject, "save_to_disk", boom)
+
+    session, gsm_path = _make_gsm_session(tmp_path, monkeypatch, FakeHSFCompiler)
+    response = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert response["ok"] is True
+    normalization = response["normalization"]
+    assert normalization["lossless"] is False
+    assert "回滚" in normalization["warning"]
+    project_dir = Path(response["project"]["path"])
+    assert project_dir.joinpath("paramlist.xml").read_text(encoding="utf-8").count("<Integer") == 1
+    assert project_dir.joinpath("scripts/3d.gdl").read_text(encoding="utf-8") == "BLOCK A, B, ZZYZX\nADDZ 1\n"
+    # 人话 warning 进 GUI warnings 通道（异常路径的措辞是"已回滚原始文件"）
+    assert any(normalization["warning"] in w for w in response["warnings"])
+
+
 def test_workbench_session_import_gsm_uses_gsm_file_chooser_purpose(tmp_path, monkeypatch):
     gsm_path = tmp_path / "ChosenObject.gsm"
     gsm_path.write_bytes(b"fake gsm")

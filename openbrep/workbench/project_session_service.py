@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
-from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, normalize_project_after_import
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_parameter_service import parameter_to_dict
@@ -255,6 +255,11 @@ class WorkbenchProjectSessionService:
             target_dir = source_file.parent / target_name
             shutil.copytree(hsf_root, target_dir)
             project = HSFProject.load_from_disk(str(target_dir))
+            # GSM 导入落盘后立即做一次规范化重写（load→save 无损守卫 + 回滚）：
+            # LP_XMLConverter 原始输出与 OpenBrep 规范写器不一致，第一次保存会
+            # 产生一次性大 diff；把这次重写变成导入时的显式事件（P3-e）。
+            # 有损/异常时 helper 内部已回滚原始文件并返回 warning，绝不会把导入搞失败。
+            normalization = normalize_project_after_import(target_dir)
         except Exception as exc:
             return {"ok": False, "error": f"Failed to import GSM file: {exc}"}
         finally:
@@ -265,7 +270,7 @@ class WorkbenchProjectSessionService:
         self.session.source_path = target_dir
         self.remember_project_path(target_dir)
         write_project_origin(target_dir, imported_from=str(source_file), imported_kind="gsm")
-        return {
+        result = {
             "ok": True,
             "imported_from": str(source_file),
             "decompile": {
@@ -274,8 +279,16 @@ class WorkbenchProjectSessionService:
                 "stdout": result.stdout,
                 "stderr": result.stderr,
             },
+            "normalization": normalization,
             **self.session.snapshot(),
         }
+        if not normalization.get("lossless"):
+            warning_text = str(
+                normalization.get("warning")
+                or "GSM 导入规范化失败，已保留原始文件（未规范化）"
+            )
+            result["warnings"] = list(result.get("warnings") or []) + [warning_text]
+        return result
 
     def create_project_from_prompt(self, body: dict[str, Any]) -> dict[str, Any]:
         prompt = str(body.get("prompt") or body.get("message") or "").strip()
