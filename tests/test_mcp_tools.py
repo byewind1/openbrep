@@ -280,7 +280,10 @@ def test_import_source_gsm_converter_unavailable_when_missing(tmp_path, monkeypa
             return False
 
     monkeypatch.setattr("openbrep.mcp_tools.HSFCompiler", FakeCompiler)
-    src = Path(__file__).resolve().parents[1] / "examples" / "closet.gsm"
+    # 不依赖仓库里的 .gsm  fixture（*.gsm 在 .gitignore 中，CI 上不存在）；
+    # converter 可用性检查发生在读取文件内容之前，dummy 文件即可。
+    src = tmp_path / "dummy.gsm"
+    src.write_bytes(b"dummy")
     result = import_source(str(src), "gsm", str(tmp_path / "imports"))
     assert result["ok"] is False
     assert result["error"]["code"] == "converter_unavailable"
