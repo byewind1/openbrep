@@ -8,6 +8,69 @@ from typing import Any
 
 GIT_SETTINGS_PATH = Path(".openbrep") / "git.json"
 
+# OpenBrep 托管忽略条目：(pattern, 说明注释)。initialize 时按 pattern 行去重，
+# 只把缺失条目追加到 .gitignore 末尾，绝不覆盖用户已有内容。
+# 双版本系统设计共识：快照（.openbrep/revisions/）是自动检查点（零决策、与编译
+# 验证闭环绑定），git 是用户正式版本记录；二者互不污染。
+GITIGNORE_ENTRIES: list[tuple[str, str]] = [
+    (
+        ".openbrep/revisions/",
+        "快照系统是自动检查点（零决策、与编译验证闭环绑定），不进 git——git 是用户正式版本记录",
+    ),
+    (
+        ".openbrep/memory/",
+        "项目学习记忆（decisions.md 等）属运行态日志，不入源码库",
+    ),
+    (
+        ".openbrep/latest",
+        "最新快照指针，运行态元数据，不入源码库",
+    ),
+    (
+        "output/",
+        "本地编译输出目录，不入源码库",
+    ),
+    (
+        "*.gsm",
+        "编译成品（.gsm）走成品归档区（归档区机制后续做，先占位注释），不入源码库",
+    ),
+]
+
+
+def ensure_gitignore(project_path: Path) -> dict[str, Any]:
+    """确保 <project>/.gitignore 包含全部 OpenBrep 托管忽略条目。
+
+    - 已存在的条目（按 pattern 行精确匹配）跳过，不重复追加；
+    - 缺失条目追加到文件末尾，用户已有内容原样保留；
+    - 没有任何缺失条目时不写盘（幂等：重复 init 后文件字节不变）。
+
+    Returns:
+        {"path": str, "added": [本次追加的 pattern...], "present": [已存在的 pattern...]}
+    """
+    gitignore_path = project_path / ".gitignore"
+    existing_lines: list[str] = []
+    if gitignore_path.exists():
+        existing_lines = gitignore_path.read_text(encoding="utf-8").splitlines()
+    existing_patterns = {
+        line.strip()
+        for line in existing_lines
+        if line.strip() and not line.strip().startswith("#")
+    }
+
+    added: list[str] = []
+    present: list[str] = []
+    for pattern, comment in GITIGNORE_ENTRIES:
+        if pattern in existing_patterns:
+            present.append(pattern)
+            continue
+        added.append(pattern)
+        existing_lines.append(f"# {comment}")
+        existing_lines.append(pattern)
+
+    if added:
+        text = "\n".join(existing_lines) + "\n"
+        gitignore_path.write_text(text, encoding="utf-8")
+    return {"path": str(gitignore_path), "added": added, "present": present}
+
 
 class WorkbenchGitService:
     def __init__(self, session: Any) -> None:
@@ -26,8 +89,15 @@ class WorkbenchGitService:
         result = run_git(project_path, ["init"])
         if result.returncode != 0:
             return {"ok": False, "error": git_error(result), "git": git_status(project_path)}
+        # git init 幂等：已是 repo 时 exit 0（输出 Reinitialized...）。随后补齐
+        # .gitignore 缺失条目（已 init 过的项目没有 .gitignore 也只会补写，不报错）。
+        gitignore = ensure_gitignore(project_path)
         write_git_settings(project_path, enabled=True)
-        return {"ok": True, "git": git_status(project_path)}
+        return {
+            "ok": True,
+            "git": git_status(project_path),
+            "gitignore": gitignore,
+        }
 
     def set_enabled(self, body: dict[str, Any]) -> dict[str, Any]:
         project_path = self._project_path()

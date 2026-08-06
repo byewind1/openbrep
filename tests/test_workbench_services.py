@@ -6,7 +6,8 @@ from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService, parse_compile_issue
-from openbrep.workbench.git_service import WorkbenchGitService
+from openbrep.workbench.git_service import WorkbenchGitService, run_git
+from openbrep.revisions import create_revision
 from openbrep.workbench.memory_service import WorkbenchMemoryService
 from openbrep.workbench.preview_service import WorkbenchPreviewService
 from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService
@@ -483,6 +484,115 @@ def test_git_service_respects_project_level_enabled_switch(tmp_path):
     assert disabled["git"]["enabled"] is False
     assert committed["ok"] is False
     assert "Enable Git" in committed["error"]
+
+
+def test_git_service_initialize_writes_gitignore_with_all_entries(tmp_path):
+    """git init 时写 .gitignore，含全部 5 条托管忽略项及其说明注释。"""
+    project = HSFProject.create_new("GitIgnoreShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    service = WorkbenchGitService(SimpleNamespace(source_path=hsf_dir, project=project))
+
+    initialized = service.initialize()
+
+    assert initialized["ok"] is True
+    gitignore_path = hsf_dir / ".gitignore"
+    assert gitignore_path.exists()
+    text = gitignore_path.read_text(encoding="utf-8")
+    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm"):
+        assert pattern in text
+    # 每条带一行注释：快照=自动检查点、成品走归档区
+    assert "自动检查点" in text
+    assert "成品归档区" in text
+    assert initialized["gitignore"]["added"] == [
+        ".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm",
+    ]
+    assert initialized["gitignore"]["present"] == []
+
+
+def test_git_service_gitignore_appends_without_overwriting_user_content(tmp_path):
+    """已有自定义 .gitignore 时只追加缺失条目，用户内容原样保留且位于追加内容之前。"""
+    project = HSFProject.create_new("GitIgnoreCustomShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    custom = "# 用户自定义忽略\ncustom-notes/\n*.log\n"
+    (hsf_dir / ".gitignore").write_text(custom, encoding="utf-8")
+    service = WorkbenchGitService(SimpleNamespace(source_path=hsf_dir, project=project))
+
+    initialized = service.initialize()
+
+    assert initialized["ok"] is True
+    text = (hsf_dir / ".gitignore").read_text(encoding="utf-8")
+    assert "# 用户自定义忽略" in text
+    assert "custom-notes/" in text
+    assert "*.log" in text
+    assert text.index("custom-notes/") < text.index(".openbrep/revisions/")
+    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm"):
+        assert pattern in text
+    assert text.count("*.gsm") == 1
+
+
+def test_git_service_initialize_is_idempotent(tmp_path):
+    """重复 init：git init 幂等（exit 0），.gitignore 不重复追加、文件字节不变。"""
+    project = HSFProject.create_new("GitIgnoreIdemShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    service = WorkbenchGitService(SimpleNamespace(source_path=hsf_dir, project=project))
+
+    first = service.initialize()
+    text_after_first = (hsf_dir / ".gitignore").read_text(encoding="utf-8")
+    second = service.initialize()
+    text_after_second = (hsf_dir / ".gitignore").read_text(encoding="utf-8")
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["gitignore"]["added"] == []
+    assert second["gitignore"]["present"] == [
+        ".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm",
+    ]
+    assert text_after_second == text_after_first
+    assert text_after_second.count(".openbrep/revisions/") == 1
+
+
+def test_git_service_initialize_completes_gitignore_on_existing_repo(tmp_path):
+    """项目已是 git repo 但没有 .gitignore：initialize 只做 .gitignore 补齐，不报错。"""
+    project = HSFProject.create_new("GitExistingRepoShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    assert run_git(hsf_dir, ["init"]).returncode == 0
+    assert not (hsf_dir / ".gitignore").exists()
+    service = WorkbenchGitService(SimpleNamespace(source_path=hsf_dir, project=project))
+
+    initialized = service.initialize()
+
+    assert initialized["ok"] is True
+    text = (hsf_dir / ".gitignore").read_text(encoding="utf-8")
+    for pattern in (".openbrep/revisions/", ".openbrep/memory/", ".openbrep/latest", "output/", "*.gsm"):
+        assert pattern in text
+
+
+def test_git_service_commit_excludes_revisions_memory_and_artifacts(tmp_path):
+    """有了 .gitignore 后 add -A 自然干净：快照/memory/编译成品不进 git 历史。"""
+    project = HSFProject.create_new("GitCleanShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    # 制造旧行为会污染的三种内容：自动快照、项目记忆、编译成品
+    create_revision(hsf_dir, message="checkpoint")
+    memory_dir = hsf_dir / ".openbrep" / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "decisions.md").write_text("## decision\n", encoding="utf-8")
+    (hsf_dir / "output").mkdir()
+    (hsf_dir / "output" / "GitCleanShelf.gsm").write_bytes(b"MOCK-GSM")
+    service = WorkbenchGitService(SimpleNamespace(source_path=hsf_dir, project=project))
+
+    service.initialize()
+    committed = service.commit({"message": "source only"})
+
+    assert committed["ok"] is True
+    assert committed["git"]["last_commit"]
+    tracked = run_git(hsf_dir, ["ls-files"]).stdout.splitlines()
+    assert not any(".openbrep/revisions/" in line for line in tracked)
+    assert not any(".openbrep/memory/" in line for line in tracked)
+    assert not any("output/" in line for line in tracked)
+    assert not any(line.endswith(".gsm") for line in tracked)
+    # 源码本体正常入库
+    assert any(line.endswith("paramlist.xml") for line in tracked)
+    assert any(line.endswith("scripts/3d.gdl") for line in tracked)
 
 
 def test_update_llm_model_only_custom_provider_resolves_without_top_level_pollution(tmp_path, monkeypatch):
