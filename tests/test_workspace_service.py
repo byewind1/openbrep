@@ -18,6 +18,7 @@ from openbrep.workbench.workspace_service import (
     init_workspace,
     scan_workspace,
     search_workspace,
+    trash_project,
 )
 
 
@@ -354,6 +355,82 @@ class TestWorkspaceSelfDescriptions(unittest.TestCase):
             self.assertFalse(bad["ok"])
             self.assertEqual(bad["error"]["code"], "not_a_workspace")
 
+
+
+class TestTrashProject(unittest.TestCase):
+    """trash_project：删除 = 移入 .openbrep/trash/（可恢复），带路径安全闸。"""
+
+    def test_trash_moves_project_with_contents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            project_dir = _make_project(ws, "Shelf", ws / "hsf")
+            # 内容物随目录走：AGENTS.md / revisions / artifacts
+            (project_dir / "AGENTS.md").write_text("# shelf\n", encoding="utf-8")
+            (project_dir / ".openbrep" / "revisions").mkdir(parents=True)
+            (project_dir / "artifacts").mkdir()
+
+            result = trash_project(str(ws), str(project_dir))
+
+            self.assertTrue(result["ok"])
+            trashed = Path(result["trashed_to"])
+            self.assertTrue(trashed.is_dir())
+            self.assertEqual(trashed.parent, (ws / ".openbrep" / "trash").resolve())
+            self.assertTrue(trashed.name.endswith("-Shelf"))
+            self.assertTrue((trashed / "AGENTS.md").exists())
+            self.assertTrue((trashed / ".openbrep" / "revisions").is_dir())
+            self.assertTrue((trashed / "artifacts").is_dir())
+            self.assertTrue((trashed / "libpartdata.xml").exists())
+            self.assertFalse(project_dir.exists())
+
+    def test_trash_creates_trash_dir_and_avoids_same_name_collision(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            p1 = _make_project(ws, "Shelf", ws / "hsf")
+            p2 = _make_project(ws, "Chair", ws / "hsf")
+
+            first = trash_project(str(ws), str(p1))
+            second = trash_project(str(ws), str(p2))
+
+            self.assertTrue(first["ok"])
+            self.assertTrue(second["ok"])
+            # 时间戳前缀：两次同名删除不互相覆盖
+            self.assertNotEqual(Path(first["trashed_to"]).name, Path(second["trashed_to"]).name)
+            self.assertEqual(len(list((ws / ".openbrep" / "trash").iterdir())), 2)
+
+    def test_trash_rejects_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            outside = Path(tmpdir) / "outside"
+            outside.mkdir()
+
+            result = trash_project(str(ws), str(outside))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "outside_workspace")
+
+            # ../ 逃逸路径同样拒绝
+            escape = trash_project(str(ws), str((ws / "hsf" / ".." / ".." / "sources").resolve()))
+            self.assertFalse(escape["ok"])
+            self.assertEqual(escape["error"]["code"], "outside_workspace")
+
+            # hsf/ 本身不是合法目标
+            hsf_itself = trash_project(str(ws), str(ws / "hsf"))
+            self.assertFalse(hsf_itself["ok"])
+            self.assertEqual(hsf_itself["error"]["code"], "outside_workspace")
+
+    def test_trash_not_found(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            result = trash_project(str(ws), str(ws / "hsf" / "Nope"))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "not_found")
+
+    def test_trash_requires_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plain = Path(tmpdir) / "plain"
+            plain.mkdir()
+            result = trash_project(str(plain), str(plain))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "no_workspace")
 
 if __name__ == "__main__":
 

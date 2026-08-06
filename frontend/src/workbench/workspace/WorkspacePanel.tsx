@@ -17,6 +17,7 @@ interface WorkspacePanelProps {
   onSearchWorkspace: (query: string) => void
   onBrowseDirectory: () => Promise<string | null>
   onDismissInitHint: () => void
+  onTrashWorkspaceProject: (path: string) => void
   onLoadProjectPath: (path: string) => void
 }
 
@@ -35,6 +36,7 @@ export function WorkspacePanel({
   onSearchWorkspace,
   onBrowseDirectory,
   onDismissInitHint,
+  onTrashWorkspaceProject,
   onLoadProjectPath,
 }: WorkspacePanelProps) {
   const t = useT()
@@ -73,6 +75,13 @@ export function WorkspacePanel({
   function hitSummary(hit: WorkspaceSearchHit) {
     if (hit.line != null) return `${hit.project} · ${hit.location}:${hit.line}`
     return `${hit.project} · ${hit.location}`
+  }
+
+  function trashProject(project: WorkspaceProject) {
+    if (project.active) return
+    const confirmed = window.confirm(t('workspace.deleteConfirm', { name: project.name }))
+    if (!confirmed) return
+    onTrashWorkspaceProject(project.path)
   }
 
   return (
@@ -156,24 +165,38 @@ export function WorkspacePanel({
               <div className="workspace-empty-text">{t('workspace.noProjects')}</div>
             ) : (
               workspace.projects.map((project) => (
-                <button
-                  type="button"
+                <div
                   key={project.path}
-                  className={`workspace-project-item${project.active ? ' active' : ''}`}
-                  onClick={() => onLoadProjectPath(project.path)}
+                  className={`workspace-project-row${project.active ? ' active' : ''}`}
                 >
-                  <span className="workspace-project-name">{project.name}</span>
-                  {projectOriginKind(project) ? (
-                    <span className="workspace-badge" title="imported">
-                      {projectOriginKind(project)}
-                    </span>
-                  ) : null}
-                  {project.artifact_count > 0 ? (
-                    <span className="workspace-badge" title="artifacts">
-                      {project.artifact_count}
-                    </span>
-                  ) : null}
-                </button>
+                  <button
+                    type="button"
+                    className="workspace-project-item"
+                    onClick={() => onLoadProjectPath(project.path)}
+                  >
+                    <span className="workspace-project-name">{project.name}</span>
+                    {projectOriginKind(project) ? (
+                      <span className="workspace-badge" title="imported">
+                        {projectOriginKind(project)}
+                      </span>
+                    ) : null}
+                    {project.artifact_count > 0 ? (
+                      <span className="workspace-badge" title="artifacts">
+                        {project.artifact_count}
+                      </span>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="workspace-icon-button workspace-project-trash"
+                    disabled={project.active}
+                    title={project.active ? t('workspace.deleteActiveDisabled') : t('workspace.delete')}
+                    aria-label={t('workspace.delete')}
+                    onClick={() => trashProject(project)}
+                  >
+                    🗑
+                  </button>
+                </div>
               ))
             )}
           </div>

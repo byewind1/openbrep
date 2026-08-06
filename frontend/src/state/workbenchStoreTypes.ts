@@ -64,6 +64,7 @@ import type {
   WorkspaceScanResult,
   WorkspaceSearchHit,
   WorkspaceSearchResult,
+  WorkspaceTrashResult,
 } from '../api/types'
 
 export interface WorkbenchApi {
@@ -73,6 +74,7 @@ export interface WorkbenchApi {
   workspaceClose: () => Promise<{ ok: boolean; error?: string; workspace: null }>
   workspaceScan: () => Promise<WorkspaceScanResult>
   workspaceSearch: (query: string) => Promise<WorkspaceSearchResult>
+  trashWorkspaceProject: (path: string) => Promise<WorkspaceTrashResult>
   fetchPreview: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<PreviewPayload>
   fetchPreview2D: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
@@ -287,6 +289,7 @@ export interface WorkbenchState {
   closeWorkspace: () => Promise<void>
   refreshWorkspace: () => Promise<void>
   searchWorkspace: (query: string) => Promise<void>
+  trashWorkspaceProject: (path: string) => Promise<void>
   browseWorkspaceDirectory: () => Promise<string | null>
   clearWorkspaceInitHint: () => void
   loadPreview3D: () => Promise<void>

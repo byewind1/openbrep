@@ -23,6 +23,7 @@ import type {
   HsfExportResult,
   WorkspaceScanResult,
   WorkspaceSearchResult,
+  WorkspaceTrashResult,
   LlmSettings,
   LlmSettingsResult,
   LlmConnectionTestResult,
@@ -214,6 +215,18 @@ export async function workspaceSearch(query: string): Promise<WorkspaceSearchRes
     `/api/workspace/search?q=${q}`,
     { method: 'GET' },
     { ok: false, error: 'OpenBrep local API is not available.', query, hits: [], hit_count: 0 },
+  )
+}
+
+export async function trashWorkspaceProject(path: string): Promise<WorkspaceTrashResult> {
+  return requestJson<WorkspaceTrashResult>(
+    '/api/workspace/trash-project',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', code: 'no_workspace' },
   )
 }
 

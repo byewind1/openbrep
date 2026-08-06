@@ -69,6 +69,7 @@ import {
   workspaceClose,
   workspaceScan,
   workspaceSearch,
+  trashWorkspaceProject,
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
@@ -95,6 +96,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   workspaceClose,
   workspaceScan,
   workspaceSearch,
+  trashWorkspaceProject,
   fetchPreview2D,
   loadProjectPath,
   newProject,

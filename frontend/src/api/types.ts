@@ -159,6 +159,14 @@ export interface WorkspaceSearchHit {
   snippet: string
 }
 
+export interface WorkspaceTrashResult {
+  ok?: boolean
+  error?: string
+  code?: string
+  trashed_to?: string
+  workspace?: string
+}
+
 export interface WorkspaceSearchResult {
   ok?: boolean
   error?: string

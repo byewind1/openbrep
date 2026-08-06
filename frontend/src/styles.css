@@ -3280,10 +3280,35 @@ button:focus-visible {
   cursor: pointer;
 }
 
-.workspace-project-item.active {
+.workspace-project-row.active .workspace-project-item {
   border-left-color: var(--accent);
   background: var(--accent-muted);
   color: var(--text-primary);
+}
+
+.workspace-project-row {
+  display: flex;
+  align-items: center;
+}
+
+.workspace-project-row .workspace-project-item {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.workspace-project-trash {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  opacity: 0.6;
+}
+
+.workspace-project-trash:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.workspace-project-trash:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .workspace-project-item:hover {

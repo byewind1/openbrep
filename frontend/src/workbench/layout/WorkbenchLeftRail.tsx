@@ -18,6 +18,7 @@ interface WorkbenchLeftRailProps {
   onSearchWorkspace: (query: string) => void
   onBrowseDirectory: () => Promise<string | null>
   onDismissInitHint: () => void
+  onTrashWorkspaceProject: (path: string) => void
   scripts: ProjectScript[]
   activeScriptName: string | null
   dirtyScripts: Record<string, boolean>
@@ -53,6 +54,7 @@ export function WorkbenchLeftRail({
   onSearchWorkspace,
   onBrowseDirectory,
   onDismissInitHint,
+  onTrashWorkspaceProject,
   scripts,
   activeScriptName,
   dirtyScripts,
@@ -86,6 +88,7 @@ export function WorkbenchLeftRail({
         onSearchWorkspace={onSearchWorkspace}
         onBrowseDirectory={onBrowseDirectory}
         onDismissInitHint={onDismissInitHint}
+        onTrashWorkspaceProject={onTrashWorkspaceProject}
         onLoadProjectPath={onSelectProjectPath}
       />
       <ScriptTree scripts={scripts} activeScript={activeScriptName} dirtyScripts={dirtyScripts} onSelect={onSelectScript} />

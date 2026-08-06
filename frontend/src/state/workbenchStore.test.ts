@@ -51,6 +51,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         },
       ],
     }),
+    trashWorkspaceProject: async (path: string) => ({ ok: true, trashed_to: `/workspace/.openbrep/trash/${path.split('/').pop()}`, workspace: '/workspace' }),
     workspaceSearch: async (query: string) => ({
       ok: true,
       query,
@@ -2436,4 +2437,51 @@ test('workspace slice: browseWorkspaceDirectory returns picked path or null', as
     makeApi({ chooseOutputDirectory: async () => ({ ok: false, cancelled: true }) }),
   )
   expect(await cancelled.getState().browseWorkspaceDirectory()).toBeNull()
+})
+
+
+test('workspace slice: trashWorkspaceProject success refreshes the project list', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().openWorkspace('/workspace')
+  expect(store.getState().workspace?.project_count).toBe(1)
+
+  await store.getState().trashWorkspaceProject('/workspace/hsf/Chair')
+
+  // 成功后 refresh：scan 返回的列表仍在（mock scan 恒返回 Chair）
+  const state = store.getState()
+  expect(state.workspace?.project_count).toBe(1)
+  expect(state.workspaceBusy).toBe(false)
+  expect(state.lastError).toBeNull()
+})
+
+test('workspace slice: trashWorkspaceProject failure sets lastError', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      trashWorkspaceProject: async () => ({ ok: false, error: 'project active', code: 'project_active' }),
+    }),
+  )
+  await store.getState().openWorkspace('/workspace')
+
+  await store.getState().trashWorkspaceProject('/workspace/hsf/Chair')
+
+  const state = store.getState()
+  expect(state.lastError).toContain('project active')
+  expect(state.workspaceBusy).toBe(false)
+  expect(state.workspace?.project_count).toBe(1)  // 列表未变
+})
+
+test('workspace slice: trashWorkspaceProject no-op without attachment', async () => {
+  let calls = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      trashWorkspaceProject: async (path: string) => {
+        calls += 1
+        return { ok: true, trashed_to: path }
+      },
+    }),
+  )
+
+  await store.getState().trashWorkspaceProject('/hsf/x')
+
+  expect(calls).toBe(0)
 })

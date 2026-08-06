@@ -138,5 +138,20 @@ export function createWorkspaceActions({ api, get, set }: WorkbenchActionContext
     clearWorkspaceInitHint() {
       set({ workspaceInitHint: null })
     },
+
+    async trashWorkspaceProject(path: string) {
+      if (!get().workspace) return
+      set({ workspaceBusy: true, lastError: null })
+      const result = await api.trashWorkspaceProject(path)
+      if (result.ok === false) {
+        set({
+          workspaceBusy: false,
+          lastError: result.error ?? 'Failed to move project to trash.',
+        })
+        return
+      }
+      // 成功：刷新列表（scan）
+      await get().refreshWorkspace()
+    },
   }
 }

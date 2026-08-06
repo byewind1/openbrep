@@ -47,6 +47,7 @@ function baseProps(overrides: Partial<Parameters<typeof WorkspacePanel>[0]> = {}
     onSearchWorkspace: vi.fn(),
     onBrowseDirectory: vi.fn(async () => '/picked'),
     onDismissInitHint: vi.fn(),
+    onTrashWorkspaceProject: vi.fn(),
     onLoadProjectPath: vi.fn(),
     ...overrides,
   }
@@ -79,9 +80,9 @@ describe('WorkspacePanel', () => {
     expect(screen.getByText('gdl')).toBeTruthy()
     // artifact count badge
     expect(screen.getByText('2')).toBeTruthy()
-    // active 项目有 active class
-    const activeItem = screen.getByText('Chair').closest('button')
-    expect(activeItem?.className).toContain('active')
+    // active 项目有 active class（行容器上）
+    const activeRow = screen.getByText('Chair').closest('.workspace-project-row')
+    expect(activeRow?.className).toContain('active')
   })
 
   test('clicking a project loads it via the existing project action', () => {
@@ -205,5 +206,44 @@ describe('WorkspacePanel init flow (P3-d2b)', () => {
     for (const button of initButtons) {
       expect((button as HTMLButtonElement).disabled).toBe(true)
     }
+  })
+})
+
+
+describe('WorkspacePanel trash flow (P3-f)', () => {
+  test('trash button calls onTrashWorkspaceProject after confirm', () => {
+    const props = baseProps({ workspace: makeWorkspace() })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<WorkspacePanel {...props} />)
+
+    fireEvent.click(screen.getAllByTitle('移入回收站')[0])  // Shelf? Chair? order from makeWorkspace
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(props.onTrashWorkspaceProject).toHaveBeenCalledTimes(1)
+    confirmSpy.mockRestore()
+  })
+
+  test('trash button without confirm does not call callback', () => {
+    const props = baseProps({ workspace: makeWorkspace() })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<WorkspacePanel {...props} />)
+
+    fireEvent.click(screen.getAllByTitle('移入回收站')[0])
+
+    expect(props.onTrashWorkspaceProject).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  test('active project trash button is disabled with hint', () => {
+    const props = baseProps({ workspace: makeWorkspace() })
+    render(<WorkspacePanel {...props} />)
+
+    // makeWorkspace: Chair 是 active（第一项）
+    const activeTrash = screen.getByTitle('当前打开的项目：请先切换到其他项目再删除')
+    expect((activeTrash as HTMLButtonElement).disabled).toBe(true)
+    // 非 active 的可删（只有 Shelf 的删除按钮带"移入回收站" title）
+    const inactiveTrash = screen.getByTitle('移入回收站')
+    expect((inactiveTrash as HTMLButtonElement).disabled).toBe(false)
+    expect(props.onTrashWorkspaceProject).not.toHaveBeenCalled()
   })
 })

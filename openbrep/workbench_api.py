@@ -39,6 +39,7 @@ from openbrep.workbench.workspace_service import (
     resolve_workspace as ws_resolve_workspace,
     scan_workspace as ws_scan_workspace,
     search_workspace as ws_search_workspace,
+    trash_project as ws_trash_project,
     workspace_root_for_project as ws_root_for_project,
 )
 from openbrep.workbench_tapir import WorkbenchTapirAdapter, default_tapir_bridge_loader
@@ -283,6 +284,31 @@ class WorkbenchSession:
         result = ws_search_workspace(str(self.workspace_path), query)
         result["workspace"] = str(self.workspace_path)
         return result
+
+    def workspace_trash_project(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/workspace/trash-project：把工作区 hsf/ 下项目移入
+        .openbrep/trash/（可恢复，非删除）。路径安全闸在 workspace_service。"""
+        if self.workspace_path is None:
+            return {
+                "ok": False,
+                "code": "no_workspace",
+                "error": "尚未附着工作区。请先 /api/workspace/open 打开一个工作区。",
+            }
+        raw_path = str(body.get("path") or "").strip()
+        if not raw_path:
+            return {"ok": False, "code": "not_found", "error": "project path required."}
+        try:
+            resolved = Path(raw_path).expanduser().resolve()
+        except Exception as exc:
+            return {"ok": False, "code": "not_found", "error": f"无效项目路径: {exc}"}
+        # 安全闸 a：当前会话打开中的项目 → 拒绝（先切换项目再删）
+        if self.source_path is not None and resolved == Path(self.source_path).expanduser().resolve():
+            return {
+                "ok": False,
+                "code": "project_active",
+                "error": "请先切换到其他项目再删除",
+            }
+        return ws_trash_project(str(self.workspace_path), raw_path)
 
     def import_gdl_file(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.import_gdl_file(body)
@@ -565,6 +591,9 @@ class WorkbenchSession:
 
         if normalized_method == "GET" and route == "/api/workspace/search":
             return self.workspace_search(body)
+
+        if normalized_method == "POST" and route == "/api/workspace/trash-project":
+            return self.workspace_trash_project(body)
 
         if normalized_method == "POST" and route == "/api/project/import-gdl":
             return self.import_gdl_file(body)

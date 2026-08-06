@@ -105,4 +105,7 @@ export const en: Record<LocaleKey, string> = {
   'workspace.initAttach': 'Init & attach',
   'workspace.notWorkspaceHint': 'This directory is not an OpenBrep workspace yet',
   'workspace.dismiss': 'Dismiss',
+  'workspace.delete': 'Move to trash',
+  'workspace.deleteConfirm': 'Move project {name} to trash? It can be restored from .openbrep/trash/.',
+  'workspace.deleteActiveDisabled': 'This project is open: switch to another project first',
 }

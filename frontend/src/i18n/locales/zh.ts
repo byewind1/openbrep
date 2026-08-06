@@ -102,6 +102,9 @@ export const zh = {
   'workspace.initAttach': '初始化并附着',
   'workspace.notWorkspaceHint': '该目录还不是 OpenBrep 工作区',
   'workspace.dismiss': '关闭',
+  'workspace.delete': '移入回收站',
+  'workspace.deleteConfirm': '把项目 {name} 移入回收站？可从 .openbrep/trash/ 手动恢复。',
+  'workspace.deleteActiveDisabled': '当前打开的项目：请先切换到其他项目再删除',
 } as const
 
 export type LocaleKey = keyof typeof zh

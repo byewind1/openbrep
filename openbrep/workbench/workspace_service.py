@@ -29,6 +29,7 @@ WORKSPACE_SCHEMA_VERSION = 1
 WORKSPACE_ZONES = ("materials", "sources", "hsf", "artifacts")
 WORKSPACE_META_DIR = ".openbrep"
 WORKSPACE_TOML = "workspace.toml"
+TRASH_DIR = "trash"  # 回收站：.openbrep/trash/（删除 = 移动，可恢复）
 
 ZONE_DESCRIPTIONS = {
     "materials": "资料区：PDF/图片/文档（只读参考，不解析）",
@@ -567,3 +568,69 @@ def resolve_workspace(path: str | Path) -> Path | None:
     except Exception:
         return None
     return root if _is_workspace(root) else None
+
+
+# ── 7. trash_project（删除 = 移入回收站，P3-f） ─────────────
+
+
+def trash_project(workspace_path: str | Path, project_path: str | Path) -> dict[str, Any]:
+    """把工作区 hsf/ 下的项目目录移入 .openbrep/trash/（可恢复，不是 rm -rf）。
+
+    删除语义 = 移动：hsf/<项目>/ → <workspace>/.openbrep/trash/<YYYYMMDD-HHMMSS>-<项目名>/。
+    项目内 revisions/artifacts/AGENTS.md 全部随目录走；恢复 = 用户手动把目录挪回
+    hsf/（v1 不做 GUI 恢复）；彻底删除 = 用户自己清空 trash（v1 不做清空）。
+
+    安全闸（纯路径部分，会话相关校验在 workbench_api 层）：
+      - no_workspace: workspace 未初始化；
+      - outside_workspace: 目标不在 <workspace>/hsf/ 之内（resolve 后 prefix 判定，
+        防 ../ 注入；hsf/ 本身也不算合法目标）；
+      - not_found: 目录不存在。
+    trash 目录不存在则自动创建；同名冲突由时间戳前缀天然避免。
+    """
+    try:
+        root = Path(workspace_path).expanduser().resolve()
+    except Exception as exc:
+        return _error("no_workspace", f"无效工作区路径: {exc}", {"workspace_path": str(workspace_path)})
+    if not _is_workspace(root):
+        return _error(
+            "no_workspace",
+            f"不是已初始化的工作区（缺 {WORKSPACE_META_DIR}/{WORKSPACE_TOML}）: {workspace_path}",
+            {"workspace_path": str(workspace_path)},
+        )
+
+    try:
+        target = Path(project_path).expanduser().resolve()
+    except Exception as exc:
+        return _error("not_found", f"无效项目路径: {exc}", {"project_path": str(project_path)})
+    hsf_dir = root / "hsf"
+    if target == hsf_dir:
+        return _error(
+            "outside_workspace",
+            "目标不是 hsf/ 内的项目目录",
+            {"project_path": str(project_path)},
+        )
+    try:
+        target.relative_to(hsf_dir)
+    except ValueError:
+        return _error(
+            "outside_workspace",
+            f"项目不在工作区 hsf/ 内: {project_path}",
+            {"project_path": str(project_path)},
+        )
+    if not target.is_dir():
+        return _error("not_found", f"项目目录不存在: {project_path}", {"project_path": str(project_path)})
+
+    trash_dir = root / WORKSPACE_META_DIR / TRASH_DIR
+    try:
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        trashed = trash_dir / f"{stamp}-{target.name}"
+        shutil.move(str(target), str(trashed))
+    except Exception as exc:
+        return _error(
+            "workspace_error",
+            f"移入回收站失败: {exc}",
+            {"project_path": str(project_path)},
+        )
+
+    return {"ok": True, "trashed_to": str(trashed)}

@@ -2300,3 +2300,58 @@ def test_workbench_session_last_workspace_persist_and_restore(tmp_path):
     degraded = WorkbenchSession(config_path=str(stale_config))
     degraded.restore_last_project()
     assert degraded.workspace_path is None
+
+
+def test_workbench_session_trash_project_moves_to_workspace_trash(tmp_path):
+    """route 正常流：附着工作区 + 非当前项目 → 移入 .openbrep/trash/。"""
+    from openbrep.workbench.workspace_service import init_workspace
+
+    ws = tmp_path / "ws"
+    init_workspace(str(ws))
+    project = HSFProject.create_new("TrashShelf", str(ws / "hsf"))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    project_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "cfg.toml")
+    session.route("POST", "/api/workspace/open", {"path": str(ws)})
+    response = session.route("POST", "/api/workspace/trash-project", {"path": str(project_dir)})
+
+    assert response["ok"] is True
+    assert "trashed_to" in response
+    assert Path(response["trashed_to"]).is_dir()
+    assert not project_dir.exists()
+    assert (ws / ".openbrep" / "trash").is_dir()
+
+
+def test_workbench_session_trash_project_rejects_active_project(tmp_path):
+    """安全闸 a：当前会话打开中的项目 → project_active 拒绝。"""
+    from openbrep.workbench.workspace_service import init_workspace
+
+    ws = tmp_path / "ws"
+    init_workspace(str(ws))
+    project = HSFProject.create_new("ActiveShelf", str(ws / "hsf"))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    project_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "cfg.toml")
+    session.route("POST", "/api/workspace/open", {"path": str(ws)})
+    session.route("POST", "/api/project/load", {"path": str(project_dir)})
+
+    response = session.route("POST", "/api/workspace/trash-project", {"path": str(project_dir)})
+
+    assert response["ok"] is False
+    assert response["code"] == "project_active"
+    assert "先切换到其他项目" in response["error"]
+    assert project_dir.exists()  # 原封不动
+
+
+def test_workbench_session_trash_project_requires_attached_workspace(tmp_path):
+    """未附着工作区 → no_workspace。"""
+    project = HSFProject.create_new("LoneShelf", str(tmp_path))
+    project_dir = project.save_to_disk()
+
+    session = WorkbenchSession(config_path=tmp_path / "cfg.toml")
+    response = session.route("POST", "/api/workspace/trash-project", {"path": str(project_dir)})
+
+    assert response["ok"] is False
+    assert response["code"] == "no_workspace"
