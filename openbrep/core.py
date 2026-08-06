@@ -795,7 +795,7 @@ class GDLAgent:
         current_file = None
         current_lines = []
 
-        for line in response.splitlines():
+        for line in _merge_split_file_headers(response).splitlines():
             stripped = line.strip()
 
             # Check for file header
@@ -902,6 +902,19 @@ class GDLAgent:
 
 # Regex for [FILE: path] headers
 _FILE_HEADER_RE = re.compile(r'^\[FILE:\s*(.+?)\]\s*$', re.IGNORECASE)
+
+# 跨行坏头（LLM 偶发把 [FILE: path 与 ] 拆到两行）：合并为单行头。
+# 2026-08-06 任务 H 归因：gpt-5.6-luna 系统性产出 "[FILE: scripts/2d.gdl\n]"，
+# 单行正则漏匹配导致 2D 块被吞进上一个文件。
+_SPLIT_HEADER_RE = re.compile(
+    r'^\[FILE:\s*([^\]\n]+?)\s*\n\s*\][ \t]*(.*)$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _merge_split_file_headers(response: str) -> str:
+    """把跨行 [FILE: path\\n]（可带同行内容）归一化为单行 [FILE: path] 头。"""
+    return _SPLIT_HEADER_RE.sub(lambda m: f"[FILE: {m.group(1).strip()}]\n{m.group(2)}", response)
 
 
 _PARAM_TYPE_RE = re.compile(

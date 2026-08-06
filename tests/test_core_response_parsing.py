@@ -55,6 +55,38 @@ Integer shelf_count = 5 ! Shelves
         self.assertEqual(set(changes), {"paramlist.xml"})
         self.assertIn("Length A", changes["paramlist.xml"])
 
+    def test_parser_merges_split_file_header(self):
+        # LLM 偶发把 [FILE: path 与 ] 拆到两行（2026-08-06 任务 H 归因）：
+        # 2D 块不应被吞进上一个文件。
+        response = """\
+[FILE: scripts/3d.gdl]
+BLOCK A, B, ZZYZX
+[FILE: scripts/2d.gdl
+]
+PROJECT2 3, 270, 2
+"""
+
+        changes = GDLAgent(llm=MagicMock())._parse_response(response)
+
+        self.assertEqual(set(changes), {"scripts/3d.gdl", "scripts/2d.gdl"})
+        self.assertNotIn("PROJECT2", changes["scripts/3d.gdl"])
+        self.assertIn("PROJECT2 3, 270, 2", changes["scripts/2d.gdl"])
+
+    def test_parser_merges_split_file_header_with_trailing_content(self):
+        # 变体：] 与内容同行（] HOTSPOT2 ...）
+        response = """\
+[FILE: scripts/3d.gdl]
+BLOCK A, B, ZZYZX
+[FILE: scripts/2d.gdl
+] HOTSPOT2 0, 0
+PROJECT2 3, 270, 2
+"""
+
+        changes = GDLAgent(llm=MagicMock())._parse_response(response)
+
+        self.assertEqual(set(changes), {"scripts/3d.gdl", "scripts/2d.gdl"})
+        self.assertIn("HOTSPOT2 0, 0", changes["scripts/2d.gdl"])
+
 
 if __name__ == "__main__":
     unittest.main()
