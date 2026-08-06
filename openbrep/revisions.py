@@ -106,12 +106,15 @@ def create_revision(
     tmp_dir.rename(revision_dir)
     _write_latest(root, revision_id)
 
-    # Auto-prune: keep disk usage bounded (non-blocking; failure is logged, not raised)
-    try:
-        prune_revisions(root, keep_last_n=20)
-    except Exception as _prune_exc:
-        import logging as _logging
-        _logging.getLogger(__name__).debug("Auto-prune revisions failed: %s", _prune_exc)
+    # Auto-prune: keep disk usage bounded（[revisions] keep_last_n 可配置，0 = 禁用；
+    # 非阻塞：失败只记日志不上抛）
+    keep_last_n = _auto_prune_keep_last_n()
+    if keep_last_n > 0:
+        try:
+            prune_revisions(root, keep_last_n=keep_last_n)
+        except Exception as _prune_exc:
+            import logging as _logging
+            _logging.getLogger(__name__).debug("Auto-prune revisions failed: %s", _prune_exc)
 
     return _revision_from_manifest(revision_dir, manifest)
 
@@ -473,6 +476,29 @@ def _write_latest(project_root: Path, revision_id: str) -> None:
     latest_path = project_root / OPENBREP_DIR / LATEST_FILE
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     latest_path.write_text(f"{revision_id}\n", encoding="utf-8")
+
+
+def _auto_prune_keep_last_n() -> int:
+    """读取 [revisions] keep_last_n，决定 create_revision 尾部自动 prune 的保留数。
+
+    取舍：不向 create_revision 的调用方（pipeline / mcp_tools / workbench 多处）传参，
+    而是 create_revision 内部自行解析 config——改动只落在 revisions.py 单文件，调用链
+    零改动。代价是每次 create_revision 有一次 GDLAgentConfig.load() 的文件读取；
+    create_revision 属用户操作频次（非热循环），可接受。
+
+    返回 0 表示禁用自动 prune（git 化项目把历史完全交给 git）。解析失败或值非法
+    （负数/非整数）时回退默认 20，保证与旧版行为一致、绝不炸。
+    """
+    try:
+        from openbrep.config import GDLAgentConfig
+
+        config = GDLAgentConfig.load()
+        value = config.revisions.keep_last_n
+    except Exception:
+        return 20
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 20
+    return value
 
 
 def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> int:

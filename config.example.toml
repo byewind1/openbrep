@@ -79,6 +79,12 @@ mode = "mock"
 path = ""
 timeout = 60
 
+[revisions]
+# 自动 prune 保留的最新快照数（默认 20，保持现状行为）。
+# 0 = 禁用自动 prune：git 化项目把历史完全交给 git，快照只作自动检查点（不进 git）。
+# 非法值（负数/非整数）自动回退默认 20。
+keep_last_n = 20
+
 [paths]
 knowledge_dir = "./knowledge"
 templates_dir = "./templates"

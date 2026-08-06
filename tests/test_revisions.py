@@ -1,7 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openbrep.revisions import (
     compare_revisions,
@@ -347,6 +349,48 @@ class TestPruneRevisions(unittest.TestCase):
             # create_revision auto-prunes with keep_last_n=20 after every call.
             self.assertEqual(len(list_revisions(project)), 20)
             self.assertEqual(get_latest_revision_id(project), "r0023")
+
+    # ── [revisions] keep_last_n 可配置：自动 prune 读配置而非硬编码 20 ──
+
+    def _keep_last_n_env(self, value):
+        """写一个带 [revisions] keep_last_n 的临时 config 并指到 GDL_AGENT_CONFIG。"""
+        cfg_dir = Path(tempfile.mkdtemp(prefix="obr_rev_cfg_"))
+        cfg_path = cfg_dir / "config.toml"
+        cfg_path.write_text(f"[revisions]\nkeep_last_n = {value}\n", encoding="utf-8")
+        return patch.dict(os.environ, {"GDL_AGENT_CONFIG": str(cfg_path)})
+
+    def test_create_revision_auto_prune_uses_configured_keep_last_n(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            with self._keep_last_n_env(5):
+                for i in range(7):
+                    create_revision(project, f"rev {i}")
+
+            remaining_ids = {r.revision_id for r in list_revisions(project)}
+            self.assertEqual(remaining_ids, {"r0003", "r0004", "r0005", "r0006", "r0007"})
+            self.assertEqual(get_latest_revision_id(project), "r0007")
+
+    def test_create_revision_auto_prune_disabled_when_keep_last_n_zero(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            with self._keep_last_n_env(0):
+                for i in range(7):
+                    create_revision(project, f"rev {i}")
+
+            # keep_last_n=0 → 完全禁用自动 prune，历史一条不丢
+            self.assertEqual(len(list_revisions(project)), 7)
+            self.assertEqual(get_latest_revision_id(project), "r0007")
+
+    def test_create_revision_auto_prune_invalid_config_falls_back_to_twenty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            with self._keep_last_n_env(-3):
+                for i in range(21):
+                    create_revision(project, f"rev {i}")
+
+            # 非法值（负数）回退默认 20：只留最新 20 条，不炸
+            self.assertEqual(len(list_revisions(project)), 20)
+            self.assertEqual(get_latest_revision_id(project), "r0021")
 
 
 if __name__ == "__main__":

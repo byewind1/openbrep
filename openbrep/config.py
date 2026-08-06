@@ -7,6 +7,7 @@ Reads from config.toml, environment variables, and CLI overrides.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import re
@@ -14,7 +15,9 @@ import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+_LOGGER = logging.getLogger(__name__)
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -623,10 +626,38 @@ class CompilerConfig:
 
 
 @dataclass
+class RevisionsConfig:
+    """revisions 快照系统配置。
+
+    keep_last_n: 自动 prune 保留的最新快照数（默认 20，保持现状行为）；
+                 0 = 禁用自动 prune——git 化项目把历史完全交给 git，
+                 快照只作自动检查点。非法值（负数/非整数）回退默认 20。
+    """
+
+    keep_last_n: int = 20
+
+
+def _normalize_keep_last_n(value: Any) -> int:
+    """keep_last_n 校验：负数/非整数回退默认 20 并记 warning，不炸。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        _LOGGER.warning(
+            "config [revisions] keep_last_n 非法（%r），回退默认 20", value
+        )
+        return 20
+    if value < 0:
+        _LOGGER.warning(
+            "config [revisions] keep_last_n 为负数（%d），回退默认 20", value
+        )
+        return 20
+    return value
+
+
+@dataclass
 class GDLAgentConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     compiler: CompilerConfig = field(default_factory=CompilerConfig)
+    revisions: RevisionsConfig = field(default_factory=RevisionsConfig)
     knowledge_dir: str = "./knowledge"
     user_knowledge_dir: str = "./user_knowledge"
     templates_dir: str = "./templates"
@@ -706,10 +737,17 @@ class GDLAgentConfig:
         if "mode" not in compiler_data and compiler_cfg.path:
             compiler_cfg.mode = "lp"
 
+        revisions_data = data.get("revisions", {})
+        if not isinstance(revisions_data, dict):
+            revisions_data = {}
+        revisions_cfg = pick(RevisionsConfig, revisions_data)
+        revisions_cfg.keep_last_n = _normalize_keep_last_n(revisions_cfg.keep_last_n)
+
         return cls(
             llm=llm_cfg,
             agent=pick(AgentConfig, data.get("agent", {})),
             compiler=compiler_cfg,
+            revisions=revisions_cfg,
             knowledge_dir=data.get("knowledge_dir", "./knowledge"),
             user_knowledge_dir=data.get("user_knowledge_dir", "./user_knowledge"),
             templates_dir=data.get("templates_dir", "./templates"),
@@ -761,6 +799,9 @@ class GDLAgentConfig:
                 "path": self.compiler.path or "",
                 "timeout": self.compiler.timeout,
             },
+            "revisions": {
+                "keep_last_n": self.revisions.keep_last_n,
+            },
             "knowledge_dir": self.knowledge_dir,
             "user_knowledge_dir": self.user_knowledge_dir,
             "templates_dir": self.templates_dir,
@@ -797,6 +838,7 @@ class GDLAgentConfig:
             lines.append('# path = "/path/to/LP_XMLConverter"')
         lines += [
             f"timeout = {self.compiler.timeout}", "",
+            "[revisions]", f"keep_last_n = {self.revisions.keep_last_n}", "",
             f'knowledge_dir = "{self.knowledge_dir}"',
             f'user_knowledge_dir = "{self.user_knowledge_dir}"',
             f'templates_dir = "{self.templates_dir}"',

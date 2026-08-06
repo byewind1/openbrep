@@ -277,6 +277,42 @@ protocol = "openai"
             self.assertEqual(second.llm.resolve_api_key(), "custom-key")
 
 
+class TestRevisionsConfig(unittest.TestCase):
+    """[revisions] keep_last_n 配置解析与非法值回退。"""
+
+    def _load(self, toml_text: str) -> GDLAgentConfig:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(toml_text, encoding="utf-8")
+            return GDLAgentConfig.load(str(config_path))
+
+    def test_keep_last_n_defaults_to_twenty_when_section_missing(self):
+        self.assertEqual(self._load("").revisions.keep_last_n, 20)
+
+    def test_keep_last_n_parses_from_toml(self):
+        self.assertEqual(self._load("[revisions]\nkeep_last_n = 5\n").revisions.keep_last_n, 5)
+
+    def test_keep_last_n_zero_is_valid(self):
+        # 0 = 禁用自动 prune，是合法值，不能被误判为非法回退
+        self.assertEqual(self._load("[revisions]\nkeep_last_n = 0\n").revisions.keep_last_n, 0)
+
+    def test_keep_last_n_negative_falls_back_to_twenty(self):
+        self.assertEqual(self._load("[revisions]\nkeep_last_n = -3\n").revisions.keep_last_n, 20)
+
+    def test_keep_last_n_non_numeric_falls_back_to_twenty(self):
+        self.assertEqual(self._load('[revisions]\nkeep_last_n = "abc"\n').revisions.keep_last_n, 20)
+        self.assertEqual(self._load("[revisions]\nkeep_last_n = true\n").revisions.keep_last_n, 20)
+
+    def test_keep_last_n_roundtrips_through_save(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text("[revisions]\nkeep_last_n = 5\n", encoding="utf-8")
+            config = GDLAgentConfig.load(str(config_path))
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.revisions.keep_last_n, 5)
+
+
 class TestProviderRegistry(_CleanEnvMixin, unittest.TestCase):
     """PROVIDER_PROFILES 注册表：LLM 链路"模型属于哪个 provider"的单一事实来源。"""
 
