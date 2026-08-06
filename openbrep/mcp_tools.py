@@ -67,6 +67,11 @@ from openbrep.revisions import (
 from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.workbench.project_session_service import safe_project_name, unique_project_name
+from openbrep.workbench.workspace_service import (
+    init_workspace as _ws_init,
+    scan_workspace as _ws_scan,
+    search_workspace as _ws_search,
+)
 
 # ── 锁与 trace_id ─────────────────────────────────────────
 
@@ -966,6 +971,42 @@ def _import_blender_py(source: Path, target_dir: Path, name: str | None, trace_i
         "warnings": warnings,
         "trace_id": trace_id,
     }
+
+
+# ── 工作区工具（Workspace，只读/低变更） ────────────────────
+
+
+def workspace_init(path: str) -> dict:
+    """初始化工作区：创建四区目录（materials/sources/hsf/artifacts）+
+    .openbrep/workspace.toml。已存在则校验结构幂等返回；路径含非工作区内容
+    时不炸，报告 conflicts。参数 path: 工作区目录绝对路径（string）。"""
+    with _locked():
+        trace_id = _next_trace_id()
+        result = _ws_init(path)
+        result["trace_id"] = trace_id
+        return result
+
+
+def workspace_scan(path: str) -> dict:
+    """扫描工作区，返回索引：projects（hsf/ 下各 HSF 项目：名称/参数数/脚本清单/
+    最新 revision/origin/成品数）、sources 文件清单、materials 计数、zones 完整性。
+    参数 path: 工作区目录绝对路径（string）。"""
+    with _locked():
+        trace_id = _next_trace_id()
+        result = _ws_scan(path)
+        result["trace_id"] = trace_id
+        return result
+
+
+def workspace_search(path: str, query: str) -> dict:
+    """跨项目搜索（大小写不敏感子串）：项目名/参数名/脚本内容，返回命中
+    （项目、位置、行号、摘要行）。纯遍历不做索引。
+    参数 path: 工作区目录绝对路径（string）；query: 搜索词（string）。"""
+    with _locked():
+        trace_id = _next_trace_id()
+        result = _ws_search(path, query)
+        result["trace_id"] = trace_id
+        return result
 
 
 # ── propose_skill / verify_skill（P2-b，skill 晋升门禁） ─────

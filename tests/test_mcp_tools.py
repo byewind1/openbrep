@@ -27,6 +27,9 @@ from openbrep.mcp_tools import (
     rollback,
     semantic_verify,
     verify_skill,
+    workspace_init,
+    workspace_scan,
+    workspace_search,
 )
 from openbrep.revisions import get_latest_revision_id
 from openbrep.workbench.project_session_service import write_project_origin
@@ -100,6 +103,33 @@ def test_compile_hsf_mock_mode_succeeds_on_valid_project(tmp_path):
     assert result["output_path"].endswith(".gsm")
     assert not result["output_path"].startswith(str(hsf_dir))
     assert TRACE_RE.match(result["trace_id"])
+
+
+def test_workspace_init_scan_search_return_ok(tmp_path):
+    """工作区三工具经 mcp_tools 直接调用返回 ok（不起 server）。"""
+    ws = tmp_path / "ws"
+
+    init_result = workspace_init(str(ws))
+    assert init_result["ok"] is True
+    assert init_result["zones"] == ["materials", "sources", "hsf", "artifacts"]
+    assert TRACE_RE.match(init_result["trace_id"])
+
+    scan_result = workspace_scan(str(ws))
+    assert scan_result["ok"] is True
+    assert scan_result["project_count"] == 0
+    assert scan_result["missing_zones"] == []
+    assert TRACE_RE.match(scan_result["trace_id"])
+
+    search_result = workspace_search(str(ws), "nothing")
+    assert search_result["ok"] is True
+    assert search_result["hit_count"] == 0
+    assert TRACE_RE.match(search_result["trace_id"])
+
+    # 非工作区路径返回统一错误形态（不抛异常）
+    bad = workspace_scan(str(tmp_path / "not-a-ws"))
+    assert bad["ok"] is False
+    assert bad["error"]["code"] == "not_a_workspace"
+    assert TRACE_RE.match(bad["trace_id"])
 
 
 def test_compile_hsf_archives_successful_artifact(tmp_path):

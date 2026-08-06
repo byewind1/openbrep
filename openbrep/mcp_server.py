@@ -42,6 +42,9 @@ _MCP_TOOL_NAMES = (
     "apply_edit",
     "rollback",
     "import_source",
+    "workspace_init",
+    "workspace_scan",
+    "workspace_search",
     "propose_skill",
     "verify_skill",
     "reuse_skill",
@@ -137,6 +140,30 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
             required=(("source_path", "string"), ("kind", "string"), ("target_dir", "string")),
             optional=(("name", "string"),),
         ),
+    ),
+    (
+        "workspace_init",
+        mcp_tools.workspace_init,
+        "初始化工作区：创建四区目录（materials/sources/hsf/artifacts）+ "
+        ".openbrep/workspace.toml。已存在则校验结构幂等返回；路径含非工作区内容"
+        "时不炸，报告 conflicts。参数 path: 工作区目录绝对路径（string）。",
+        _schema(required=(("path", "string"),)),
+    ),
+    (
+        "workspace_scan",
+        mcp_tools.workspace_scan,
+        "扫描工作区，返回索引：projects（hsf/ 下各 HSF 项目：名称/参数数/脚本清单/"
+        "最新 revision/origin/成品数）、sources 文件清单、materials 计数、zones 完整性。"
+        "参数 path: 工作区目录绝对路径（string）。",
+        _schema(required=(("path", "string"),)),
+    ),
+    (
+        "workspace_search",
+        mcp_tools.workspace_search,
+        "跨项目搜索（大小写不敏感子串）：项目名/参数名/脚本内容，返回命中"
+        "（项目、位置、行号、摘要行）。纯遍历不做索引。"
+        "参数 path: 工作区目录绝对路径（string）；query: 搜索词（string）。",
+        _schema(required=(("path", "string"), ("query", "string"))),
     ),
     (
         "propose_skill",
