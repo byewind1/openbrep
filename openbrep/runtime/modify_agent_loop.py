@@ -62,6 +62,7 @@ def _architect_status(stage: str, **ctx) -> dict[str, object]:
 # 工具内部名 → 建筑师显示名 + 阶段
 _TOOL_DISPLAY: dict[str, tuple[str, str]] = {
     "update_script": ("修改脚本", "modify"),
+    "patch_script": ("局部编辑", "modify"),
     "compile_script": ("编译验证", "compile"),
     "run_static_check": ("静态检查", "compile"),
     "query_knowledge": ("查询 GDL 知识", "think"),
@@ -114,14 +115,15 @@ _AGENT_LOOP_PROTOCOL = """
 ## Agent Loop 工作模式（本次任务生效）
 
 你可以使用以下工具，通过 tool_calls 自主推进任务：
-- update_script：全量更新一个脚本/参数文件（改完必须编译验证）
+- patch_script：局部编辑（精确匹配替换若干段文本，diff 级最小改动；优先使用）
+- update_script：全量重写一个脚本/参数文件（仅当需要整文件重写时才用）
 - compile_script：编译当前工程，返回成功或错误信息
 - run_static_check：静态检查（未定义变量、变换栈配平等）
 - query_knowledge：查 GDL 命令签名 / 按意图推荐命令 / 诊断编译错误
 - preview_geometry：轻量渲染 3D 脚本，返回 mesh 数量与包围盒
 
 工作纪律：
-1. 先用 update_script 做出最小改动，再 compile_script 验证；
+1. 局部改动优先用 patch_script 做最小 diff，整文件重写才用 update_script；每次修改后调用 compile_script 验证；
 2. 编译失败时根据错误信息继续修复，可用 query_knowledge(mode=diagnose) 诊断；
 3. 工具调用预算共 {budget} 次，请规划使用，不要重复调用同一工具空转；
 4. 确认完成后，直接以纯文本答复总结改动与编译结果（不再发起 tool_calls）；
@@ -362,6 +364,14 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         status_lines.append(f"❌ 编译失败：\n```\n{short_err}\n```")
     output_parts.append("\n".join(status_lines))
 
+    # diff 范围护栏（v1 advisory）：update_script 全量替换且变更行 > 50% 时警告
+    diff_warnings, diff_ratios = registry.diff_scope_warnings()
+    if diff_warnings:
+        output_parts.append(
+            "⚠️ diff 范围护栏（advisory，不阻断）：\n"
+            + "\n".join(f"- {w}" for w in diff_warnings)
+        )
+
     static_result = StaticChecker().check(project)
     from openbrep.naming_alignment import detect_reserved_param_misuse
     verification_report = build_verification_report(
@@ -387,6 +397,15 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         project=project,
         compile_result=compile_result,
         verification=verification_report.to_dict(),
+        metadata={
+            "agent_loop": {
+                "diff_guardrail": {
+                    "warnings": diff_warnings,
+                    "ratios": diff_ratios,
+                    "write_methods": dict(registry.write_methods),
+                }
+            }
+        },
     )
 
 

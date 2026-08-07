@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -63,6 +65,33 @@ def _valid_file_paths() -> list[str]:
     return [f"scripts/{stype.value}" for stype in ScriptType] + [_PARAMLIST_NAME]
 
 
+# update_script/patch_script 对 paramlist.xml 用的简化参数行格式（与
+# GDLAgent._parse_param_text 的输入一致：`Length shelf_thk = 0.018 ! 描述`）。
+_PARAM_LINE_RE = re.compile(
+    r"^(Length|Angle|RealNum|Integer|Boolean|String|Material|"
+    r"FillPattern|LineType|PenColor)\s+\w+\s*=\s*\S+",
+    re.IGNORECASE,
+)
+
+
+def _render_param_text(parameters: list) -> str:
+    """把参数表渲染成 update_script/patch_script 使用的简化参数行文本。"""
+    lines: list[str] = []
+    for param in parameters:
+        value = param.value
+        if param.type_tag == "String" and (not value or " " in value or '"' in value):
+            value = f'"{value}"'
+        desc = f" ! {param.description}" if param.description else ""
+        lines.append(f"{param.type_tag} {param.name} = {value}{desc}")
+    return "\n".join(lines)
+
+
+def _param_text_ok(text: str) -> bool:
+    """补丁后的参数行文本是否仍是结构合法的简化格式（防静默丢参数）。"""
+    lines = [l for l in text.splitlines() if l.strip() and not l.strip().startswith("!")]
+    return bool(lines) and all(_PARAM_LINE_RE.match(l.strip()) for l in lines)
+
+
 class ModifyToolRegistry:
     """MODIFY 场景工具注册表：工具定义 + 分发执行 + 工具侧状态。
 
@@ -86,6 +115,11 @@ class ModifyToolRegistry:
         self._apply_changes = apply_changes
         self.on_event = on_event or (lambda *_: None)
         self.changed_files: dict[str, str] = {}
+        # diff 范围护栏：记录每个可写文件的修改前内容与最近一次写入方式
+        self._baseline_content: dict[str, str] = {
+            fp: self._current_file_content(fp) for fp in _valid_file_paths()
+        }
+        self.write_methods: dict[str, str] = {}  # file_path -> "update_script" | "patch_script"
         self.last_compile_result: Optional[CompileResult] = None
         self.tool_log: list[dict] = []
 
@@ -96,9 +130,10 @@ class ModifyToolRegistry:
             ToolDefinition(
                 name="update_script",
                 description=(
-                    "更新工程中的一个文件（全量替换内容）。file_path 取值为 "
+                    "全量重写工程中的一个文件（替换全部内容）。file_path 取值为 "
                     + ", ".join(_valid_file_paths())
-                    + "。改动立即生效，之后应调用 compile_script 验证。"
+                    + "。仅当需要整文件重写时使用；局部小改动请优先用 patch_script。"
+                    "改动立即生效，之后应调用 compile_script 验证。"
                 ),
                 parameters={
                     "type": "object",
@@ -107,6 +142,37 @@ class ModifyToolRegistry:
                         "content": {"type": "string", "description": "文件完整新内容（GDL 语句或参数行）"},
                     },
                     "required": ["file_path", "content"],
+                },
+            ),
+            ToolDefinition(
+                name="patch_script",
+                description=(
+                    "局部编辑工程中的一个文件：按精确文本匹配替换若干段（diff 级改动，"
+                    "比 update_script 的全量替换更安全、可审计）。file_path 取值为 "
+                    + ", ".join(_valid_file_paths())
+                    + "。每段 old 必须在当前文件内容中精确匹配且仅出现一次"
+                    "（匹配 0 次或多次都会拒绝）；patches 按顺序应用，任一段失败则"
+                    "本次调用整体不生效（全或无）。局部改动优先用本工具，"
+                    "整文件重写才用 update_script。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "目标文件，如 scripts/3d.gdl 或 paramlist.xml"},
+                        "patches": {
+                            "type": "array",
+                            "description": "按顺序应用的替换段列表；old 必须精确匹配且唯一",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "old": {"type": "string", "description": "要替换的精确原文（必须唯一出现；建议包含足够上下文）"},
+                                    "new": {"type": "string", "description": "替换后的内容"},
+                                },
+                                "required": ["old", "new"],
+                            },
+                        },
+                    },
+                    "required": ["file_path", "patches"],
                 },
             ),
             ToolDefinition(
@@ -147,6 +213,7 @@ class ModifyToolRegistry:
         """执行一次工具调用并记日志；任何异常都降级为 ok=False 的结果回填。"""
         handler = {
             "update_script": self._update_script,
+            "patch_script": self._patch_script,
             "compile_script": self._compile_script,
             "run_static_check": self._run_static_check,
             "query_knowledge": self._query_knowledge,
@@ -156,7 +223,7 @@ class ModifyToolRegistry:
             result = ToolExecutionResult(
                 name=call.name,
                 ok=False,
-                summary=f"未知工具：{call.name}。可用工具：update_script / compile_script / run_static_check / query_knowledge / preview_geometry",
+                summary=f"未知工具：{call.name}。可用工具：update_script / patch_script / compile_script / run_static_check / query_knowledge / preview_geometry",
             )
         else:
             try:
@@ -188,6 +255,7 @@ class ModifyToolRegistry:
         cleaned = sanitize_llm_script_output(content, file_path)
         self._apply_changes(self.project, {file_path: cleaned})
         self.changed_files[file_path] = cleaned
+        self.write_methods[file_path] = "update_script"
         self.on_event("status", {"stage": "modify", "message": f"✏️ 已更新 {file_path}"})
         return ToolExecutionResult(
             name="update_script",
@@ -195,6 +263,133 @@ class ModifyToolRegistry:
             summary=f"已更新 {file_path}（{len(cleaned)} 字符）。请调用 compile_script 验证。",
             data={"file_path": file_path},
         )
+
+    def _current_file_content(self, file_path: str) -> str:
+        """当前（内存）文件内容：脚本取 project.scripts，paramlist 渲染为简化参数行。"""
+        if file_path == _PARAMLIST_NAME:
+            return _render_param_text(self.project.parameters)
+        for stype in ScriptType:
+            if file_path == f"scripts/{stype.value}":
+                return self.project.get_script(stype) or ""
+        return ""
+
+    def _patch_script(self, args: dict) -> ToolExecutionResult:
+        """局部编辑：patches 按顺序精确匹配替换；任一段失败则整体不生效（全或无）。
+
+        每段 old 必须在当前内容中精确匹配且仅出现一次（0 次/N 次都拒绝并说明），
+        成功后在结果里报告每段替换的行数与起始行号。
+        """
+        file_path = normalize_script_path(str(args.get("file_path") or ""))
+        patches = args.get("patches")
+        if file_path not in _valid_file_paths():
+            return ToolExecutionResult(
+                name="patch_script",
+                ok=False,
+                summary=f"非法 file_path：{args.get('file_path')!r}。允许：{', '.join(_valid_file_paths())}",
+            )
+        if not isinstance(patches, list) or not patches:
+            return ToolExecutionResult(name="patch_script", ok=False, summary="patches 为空，未做任何改动")
+
+        normalized: list[dict] = []
+        for i, patch in enumerate(patches):
+            if not isinstance(patch, dict) or "old" not in patch or "new" not in patch:
+                return ToolExecutionResult(
+                    name="patch_script", ok=False,
+                    summary=f"patches[{i}] 缺少 old/new 字段，未做任何改动（全或无）",
+                )
+            old_text = str(patch.get("old") or "")
+            if not old_text.strip():
+                return ToolExecutionResult(
+                    name="patch_script", ok=False,
+                    summary=f"patches[{i}].old 为空文本，无法匹配，未做任何改动（全或无）",
+                )
+            normalized.append({"old": old_text, "new": str(patch.get("new") or "")})
+
+        # 全或无：先在副本上依次应用全部 patches，任一失败即整体拒绝
+        working = self._current_file_content(file_path)
+        applied: list[dict] = []
+        for i, patch in enumerate(normalized):
+            count = working.count(patch["old"])
+            if count == 0:
+                return ToolExecutionResult(
+                    name="patch_script", ok=False,
+                    summary=(
+                        f"patches[{i}] 在当前 {file_path} 中匹配 0 次，未做任何改动（全或无）。"
+                        f"请核对 old 文本与文件当前内容：{patch['old'][:80]!r}"
+                    ),
+                )
+            if count > 1:
+                return ToolExecutionResult(
+                    name="patch_script", ok=False,
+                    summary=(
+                        f"patches[{i}] 在当前 {file_path} 中匹配 {count} 次（非唯一），"
+                        f"未做任何改动（全或无）。请提供更长的上下文：{patch['old'][:80]!r}"
+                    ),
+                )
+            pos = working.find(patch["old"])
+            line_no = working[:pos].count("\n") + 1
+            old_lines = patch["old"].count("\n") + 1
+            new_lines = patch["new"].count("\n") + 1 if patch["new"] else 0
+            working = working[:pos] + patch["new"] + working[pos + len(patch["old"]):]
+            applied.append({
+                "index": i, "line": line_no, "old_lines": old_lines, "new_lines": new_lines,
+            })
+
+        cleaned = sanitize_llm_script_output(working, file_path)
+        if not cleaned.strip():
+            return ToolExecutionResult(name="patch_script", ok=False, summary="补丁后文件为空，未做任何改动")
+        if file_path == _PARAMLIST_NAME and not _param_text_ok(cleaned):
+            return ToolExecutionResult(
+                name="patch_script", ok=False,
+                summary="补丁后的参数行文本格式不合法（应为 `类型 名称 = 值 ! 描述` 每行一条），未做任何改动（全或无）",
+            )
+
+        self._apply_changes(self.project, {file_path: cleaned})
+        self.changed_files[file_path] = cleaned
+        self.write_methods[file_path] = "patch_script"
+        self.on_event("status", {"stage": "modify", "message": f"✏️ 已局部编辑 {file_path}（{len(applied)} 段）"})
+        detail = "；".join(
+            f"patches[{a['index']}]：第 {a['line']} 行起，old {a['old_lines']} 行 → new {a['new_lines']} 行"
+            for a in applied
+        )
+        return ToolExecutionResult(
+            name="patch_script",
+            ok=True,
+            summary=f"已应用 {len(applied)} 段补丁到 {file_path}。{detail}。请调用 compile_script 验证。",
+            data={"file_path": file_path, "patches_applied": len(applied)},
+        )
+
+    def change_ratios(self) -> dict[str, float]:
+        """每个已变更文件的变更行占比（0~1）：1 - 公共行数 / 总行数。
+
+        用 splitlines 消除首尾换行差异；空文件占比记 0。
+        """
+        ratios: dict[str, float] = {}
+        for file_path, after in self.changed_files.items():
+            before_lines = self._baseline_content.get(file_path, "").splitlines()
+            after_lines = (after or "").splitlines()
+            total = max(len(before_lines), len(after_lines))
+            if total == 0:
+                ratios[file_path] = 0.0
+                continue
+            matcher = difflib.SequenceMatcher(None, before_lines, after_lines)
+            matched = sum(block.size for block in matcher.get_matching_blocks())
+            ratios[file_path] = round(1.0 - matched / total, 4)
+        return ratios
+
+    def diff_scope_warnings(self) -> tuple[list[str], dict[str, float]]:
+        """diff 范围护栏（v1 advisory）：update_script 全量替换且变更行 > 50% 时警告。
+
+        不阻断、不回滚；返回 (警告列表, 各文件变更占比)。
+        """
+        warnings: list[str] = []
+        ratios = self.change_ratios()
+        for file_path, ratio in ratios.items():
+            if self.write_methods.get(file_path) == "update_script" and ratio > 0.5:
+                warnings.append(
+                    f"{file_path}：改动 {ratio:.0%} 行，超过文件一半，超出最小修改预期（update_script 全量替换）"
+                )
+        return warnings, ratios
 
     def _compile_script(self, _args: dict) -> ToolExecutionResult:
         hsf_dir = self.project.save_to_disk()
