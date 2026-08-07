@@ -3382,3 +3382,71 @@ button:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── 计划确认门（V3）：确认卡 ─────────────────────────── */
+.plan-confirm-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-muted, rgba(127, 127, 127, 0.08));
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-confirm-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plan-confirm-header strong {
+  font-size: 13px;
+}
+
+.plan-confirm-risk {
+  color: var(--text-muted);
+}
+
+.plan-confirm-intent {
+  font-weight: 600;
+}
+
+.plan-confirm-section ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.plan-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.plan-confirm-actions button {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.plan-confirm-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.plan-confirm-approve {
+  background: var(--accent);
+  color: var(--text-on-accent, #fff);
+}
+
+.plan-confirm-reject {
+  background: transparent;
+  border-color: var(--text-muted) !important;
+  color: var(--text-primary);
+}
+

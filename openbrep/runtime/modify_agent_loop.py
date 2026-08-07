@@ -130,6 +130,32 @@ _AGENT_LOOP_PROTOCOL = """
 5. 若预算不足，如实说明当前进度与遗留问题，禁止谎报完成。
 """
 
+# 计划确认门协议（V3）：confirm_plan=True 时，先做一次无工具的计划调用，
+# 产出面向用户的非代码语言计划；用户确认后才进入工具执行。
+_PLAN_CONFIRM_PROTOCOL = """
+
+---
+
+## 修改计划确认阶段（本次任务生效）
+
+在修改任何文件之前，先输出一份面向用户的修改计划。计划必须是合法 JSON，格式如下：
+
+{
+  "intent_summary": "一句话概括用户想做什么",
+  "user_visible_changes": [
+    "面向用户的改动描述（非代码语言：说明哪个参数会变、哪个几何行为会变；禁止行号与 diff）"
+  ],
+  "affected_files": ["可能改动的文件，如 scripts/3d.gdl"],
+  "risk": "改动风险（如：会改变默认尺寸 / 几何形状变化 / 无风险写 无）"
+}
+
+要求：
+- 只输出 JSON，不要输出 Markdown 代码块标记，不要任何解释文字；
+- user_visible_changes 必须用不懂代码的用户能理解的语言描述；
+- 本阶段只输出计划，绝不执行任何修改。
+"""
+
+
 # 计划阶段协议：让 LLM 先输出可审查的修改计划，再进入工具执行。
 _PLANNING_PROTOCOL = """
 
@@ -154,6 +180,96 @@ _PLANNING_PROTOCOL = """
 - 若无法确定参数当前值，可省略 from/to；
 - 输出计划后，系统会把计划展示给用户；用户未打断，你再按 plan 调用工具执行。
 """
+
+
+def _parse_confirm_plan(content: str) -> Optional[dict]:
+    """从计划确认调用输出里提取并校验严格 JSON 计划；不合法返回 None。"""
+    if not content:
+        return None
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    intent_summary = str(parsed.get("intent_summary") or "").strip()
+    user_visible_changes = parsed.get("user_visible_changes")
+    affected_files = parsed.get("affected_files")
+    risk = parsed.get("risk")
+    if not intent_summary:
+        return None
+    if not isinstance(user_visible_changes, list) or not user_visible_changes:
+        return None
+    if not all(isinstance(c, str) and c.strip() for c in user_visible_changes):
+        return None
+    if not isinstance(affected_files, list) or not all(isinstance(f, str) for f in affected_files):
+        return None
+    if risk is not None and not isinstance(risk, str):
+        return None
+    return {
+        "intent_summary": intent_summary,
+        "user_visible_changes": [c.strip() for c in user_visible_changes],
+        "affected_files": list(affected_files),
+        "risk": (risk or "").strip() or "无",
+    }
+
+
+def _request_confirmation_plan(messages: list[dict], llm) -> Optional[dict]:
+    """计划确认门：一次无工具 LLM 调用，产出待确认计划；失败返回 None（回落直接执行）。"""
+    copy = [dict(m) for m in messages]
+    if copy and copy[0].get("role") == "system":
+        copy[0]["content"] = (copy[0].get("content") or "") + _PLAN_CONFIRM_PROTOCOL
+    else:
+        copy.insert(0, {"role": "system", "content": _PLAN_CONFIRM_PROTOCOL})
+    try:
+        resp = llm.generate(copy, temperature=0.0, max_tokens=1024, stream=False)
+    except Exception as exc:
+        logger.warning("plan confirmation call failed, falling back to direct execution: %s", exc)
+        return None
+    return _parse_confirm_plan(resp.content or "")
+
+
+def _render_confirmed_plan(plan: dict) -> str:
+    """把已确认计划渲染成给执行 LLM 的可读文本。"""
+    parts = ["已确认的修改计划："]
+    parts.append(f"- 意图：{plan.get('intent_summary') or ''}")
+    for change in plan.get("user_visible_changes") or []:
+        parts.append(f"- 改动：{change}")
+    files = plan.get("affected_files") or []
+    if files:
+        parts.append("- 影响文件：" + ", ".join(files))
+    parts.append(f"- 风险：{plan.get('risk') or '无'}")
+    return "\n".join(parts)
+
+
+def _build_awaiting_confirmation_result(
+    request: "TaskRequest",
+    project: HSFProject,
+    intent: str,
+    plan: dict,
+) -> "TaskResult":
+    """计划确认门命中：返回携带 pending_plan 的结果，不执行任何修改。"""
+    from openbrep.runtime.pipeline import TaskResult
+
+    return TaskResult(
+        success=True,
+        intent=intent,
+        plain_text="📝 修改计划已生成，等待用户确认。",
+        project=project,
+        metadata={"awaiting_confirmation": True, "pending_plan": plan},
+    )
 
 
 def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "TaskResult":
@@ -233,9 +349,30 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
 
     on_event("status", _architect_status("understand"))
 
-    # ── 计划阶段（可选）：LLM 先输出可审查的修改计划，用户 ESC 可打断 ──
+    # ── 计划确认门（V3）：先出非代码语言计划，用户确认后才执行 ──
+    plan_failed_note = ""
+    if request.confirm_plan and intent == "MODIFY":
+        on_event("status", _architect_status("plan"))
+        confirm_plan = _request_confirmation_plan(messages, llm)
+        if confirm_plan is not None:
+            on_event("plan", confirm_plan)
+            return _build_awaiting_confirmation_result(request, project, intent, confirm_plan)
+        plan_failed_note = (
+            "⚠️ 修改计划生成失败（LLM 未返回合法 JSON），已按旧流程直接执行，未等待确认。"
+        )
+
+    # ── 计划阶段：已确认计划直接注入；否则 LLM 先输出可审查计划，用户 ESC 可打断 ──
     plan_data: dict[str, object] | None = None
-    if request.agent_loop_plan:
+    if request.confirmed_plan is not None:
+        # 确认门 approve 后：跳过重新规划，把已确认计划注入对话约束执行
+        plan_data = request.confirmed_plan
+        on_event("plan", plan_data)
+        messages.append({"role": "assistant", "content": _render_confirmed_plan(plan_data)})
+        messages.append({
+            "role": "user",
+            "content": "用户已确认上述计划。请严格按计划调用工具执行修改，不要偏离计划。",
+        })
+    elif request.agent_loop_plan:
         try:
             if request.should_cancel and request.should_cancel():
                 cancelled = True
@@ -363,6 +500,9 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         short_err = (compile_result.stderr or "")[:300].strip()
         status_lines.append(f"❌ 编译失败：\n```\n{short_err}\n```")
     output_parts.append("\n".join(status_lines))
+
+    if plan_failed_note:
+        output_parts.append(plan_failed_note)
 
     # diff 范围护栏（v1 advisory）：update_script 全量替换且变更行 > 50% 时警告
     diff_warnings, diff_ratios = registry.diff_scope_warnings()

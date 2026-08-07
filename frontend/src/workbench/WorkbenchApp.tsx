@@ -44,6 +44,7 @@ export function WorkbenchApp() {
   const activeRailPanel = useWorkbenchStore((state) => state.activeRailPanel)
   const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
+  const pendingPlan = useWorkbenchStore((state) => state.pendingPlan)
   const scripts = useWorkbenchStore((state) => state.scripts)
   const recentProjects = useWorkbenchStore((state) => state.recentProjects)
   const revisions = useWorkbenchStore((state) => state.revisions)
@@ -131,6 +132,7 @@ export function WorkbenchApp() {
   const commitProjectGit = useWorkbenchStore((state) => state.commitProjectGit)
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
   const sendChat = useWorkbenchStore((state) => state.sendChat)
+  const confirmPendingPlan = useWorkbenchStore((state) => state.confirmPendingPlan)
   const stopChat = useWorkbenchStore((state) => state.stopChat)
   const interruptedContext = useWorkbenchStore((state) => state.interruptedContext)
   const openScript = useWorkbenchStore((state) => state.openScript)
@@ -352,6 +354,8 @@ export function WorkbenchApp() {
             tapirBusy={tapirBusy}
             assistantMessages={assistantMessages}
             assistantBusy={assistantBusy}
+            pendingPlan={pendingPlan}
+            onConfirmPlan={(approve) => void confirmPendingPlan(approve)}
             onSetActiveRailPanel={setActiveRailPanel}
             onLoadPreview3D={() => void loadPreview3D()}
             onLoadPreview2D={() => void loadPreview2D()}

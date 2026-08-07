@@ -108,4 +108,12 @@ export const en: Record<LocaleKey, string> = {
   'workspace.delete': 'Move to trash',
   'workspace.deleteConfirm': 'Move project {name} to trash? It can be restored from .openbrep/trash/.',
   'workspace.deleteActiveDisabled': 'This project is open: switch to another project first',
+
+  // Assistant plan confirmation gate (V3)
+  'assistant.plan.title': 'Modification plan',
+  'assistant.plan.userChanges': 'Changes you will see',
+  'assistant.plan.affectedFiles': 'Affected files',
+  'assistant.plan.risk': 'Risk',
+  'assistant.plan.confirm': 'Confirm changes',
+  'assistant.plan.cancel': 'Cancel',
 }

@@ -127,3 +127,68 @@ describe('AssistantPanel', () => {
     expect(screen.getByText('已中断')).toBeTruthy()
   })
 })
+
+
+describe('AssistantPanel plan confirmation card (V3)', () => {
+  test('renders the pending plan with user-visible changes and confirm/cancel buttons', () => {
+    const onConfirmPlan = vi.fn()
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingPlan={{
+          intent_summary: '把书架加高',
+          user_visible_changes: ['高度默认值从 1 米改为 1.2 米'],
+          affected_files: ['paramlist.xml'],
+          risk: '会改变默认尺寸',
+        }}
+        onConfirmPlan={onConfirmPlan}
+      />,
+    )
+    expect(screen.getByText('修改计划')).toBeTruthy()
+    expect(screen.getByText('把书架加高')).toBeTruthy()
+    expect(screen.getByText('高度默认值从 1 米改为 1.2 米')).toBeTruthy()
+    expect(screen.getByText('paramlist.xml')).toBeTruthy()
+    expect(screen.getByText(/会改变默认尺寸/)).toBeTruthy()
+  })
+
+  test('confirm and cancel buttons call onConfirmPlan with the right flag', () => {
+    const onConfirmPlan = vi.fn()
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingPlan={{
+          intent_summary: '把书架加高',
+          user_visible_changes: ['高度默认值改为 1.2 米'],
+          affected_files: [],
+          risk: '无',
+        }}
+        onConfirmPlan={onConfirmPlan}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '确认修改' }))
+    expect(onConfirmPlan).toHaveBeenCalledWith(true)
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(onConfirmPlan).toHaveBeenCalledWith(false)
+  })
+
+  test('buttons are disabled while busy', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        busy
+        hasProject
+        pendingPlan={{
+          intent_summary: '把书架加高',
+          user_visible_changes: ['高度默认值改为 1.2 米'],
+          affected_files: [],
+          risk: '无',
+        }}
+        onConfirmPlan={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: '确认修改' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '取消' })).toHaveProperty('disabled', true)
+  })
+})

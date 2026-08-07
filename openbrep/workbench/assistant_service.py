@@ -131,6 +131,10 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Generation message is empty."}
 
+        # 计划确认门（V3）：仅 GUI MODIFY（非 DEBUG/REPAIR）请求，先出计划等确认
+        if body.get("confirm_plan") and str(body.get("intent") or "MODIFY") == "MODIFY":
+            return self._generate_with_confirmation(body)
+
         if self.session.source_path is None:
             return {"ok": False, "error": "Load an HSF project before generating changes."}
         image_payload = validate_image_payload(body)
@@ -170,6 +174,85 @@ class WorkbenchAssistantService:
             "warnings": [],
             "events": events,
         }
+
+    def _generate_with_confirmation(self, body: dict[str, Any]) -> dict[str, Any]:
+        """confirm_plan=True 的 MODIFY 请求：先做一次计划调用，返回 awaiting_confirmation。
+
+        计划调用失败/JSON 不合法 → pipeline 已回落为直接执行（旧行为），
+        本方法原样返回执行结果并带 plan_failed 标记，不卡死用户。
+        """
+        if self.session.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before generating changes."}
+        image_payload = validate_image_payload(body)
+        if not image_payload["ok"]:
+            return {"ok": False, "error": image_payload["error"]}
+
+        events: list[dict[str, Any]] = []
+
+        def on_event(event_type, data):
+            events.append({"type": event_type, "data": data})
+
+        pipeline, request = self._build_generate_pipeline(body, image_payload, on_event=on_event)
+        result = pipeline.execute(request)
+        if result.metadata.get("awaiting_confirmation"):
+            # 存 session pending_plan（含原始 body 与项目代次，确认时校验不跨项目）
+            self.session.pending_plan = {
+                "plan": result.metadata["pending_plan"],
+                "body": body,
+                "project_epoch": self.session.project_epoch,
+            }
+            return {
+                "ok": True,
+                "awaiting_confirmation": True,
+                "pending_plan": result.metadata["pending_plan"],
+                "events": events,
+            }
+
+        # 计划失败回落 / micro_modify / V1 DSL 命中：直接交付执行结果
+        if result.project is not None:
+            self.session.project = result.project
+        self.session.project.save_to_disk()
+        return {
+            "ok": True,
+            "assistant": {
+                "kind": "generate",
+                "reply": result.plain_text,
+                "changed_files": list((result.scripts or {}).keys()),
+                "intent": result.intent,
+                "verification": result.verification,
+            },
+            "preview": preview_payload(self.session.project),
+            "warnings": [],
+            "events": events,
+            "plan_failed": True,
+        }
+
+    def confirm_modify(self, body: dict[str, Any]):
+        """POST /api/modify/confirm：审批待确认计划。
+
+        approve=True → 清 pending_plan 并带已确认计划执行（stream=True 走 SSE）；
+        approve=False → 清 pending_plan 返回已取消；无 pending → NO_PENDING_PLAN。
+        """
+        pending = getattr(self.session, "pending_plan", None)
+        if pending is None:
+            return {"ok": False, "code": "NO_PENDING_PLAN", "error": "没有待确认的修改计划，请先发起一次修改。"}
+        if pending.get("project_epoch") != getattr(self.session, "project_epoch", None):
+            self.session.pending_plan = None
+            return {"ok": False, "code": "NO_PENDING_PLAN", "error": "待确认的修改计划已失效（项目已切换），请重新发起修改。"}
+        self.session.pending_plan = None
+        if body.get("approve") is not True:
+            return {"ok": True, "cancelled": True, "message": "已取消本次修改。"}
+
+        plan = pending["plan"]
+        request_body = dict(pending["body"])
+        request_body["confirm_plan"] = False
+        request_body["confirmed_plan"] = plan
+        if body.get("stream"):
+            import threading
+
+            cancel_event = threading.Event()
+            return self.generate_with_assistant_stream(request_body, cancel_event=cancel_event)
+        return self.generate_with_assistant(request_body)
 
     def generate_with_assistant_stream(
         self, body: dict[str, Any], cancel_event: Any | None = None
@@ -263,9 +346,10 @@ class WorkbenchAssistantService:
     ) -> tuple[Any, TaskRequest]:
         """构造 generate 用的 pipeline 与 TaskRequest，供同步/流式复用。"""
         pipeline = self.session.pipeline_class(trace_dir="./traces")
+        intent = str(body.get("intent") or "MODIFY")
         request = TaskRequest(
             user_input=str(body.get("message") or "").strip(),
-            intent=str(body.get("intent") or "MODIFY"),
+            intent=intent,
             project=self.session.project,
             work_dir=str(self.session.source_path.parent),
             output_dir=str(self.session.source_path.parent / "output"),
@@ -280,6 +364,9 @@ class WorkbenchAssistantService:
             agent_loop=body.get("agent_loop") if "agent_loop" in body else None,
             # 流式请求默认开启 plan 阶段，让前端可展示可审查计划；非流式保持兼容
             agent_loop_plan=body.get("agent_loop_plan", should_cancel is not None),
+            # 计划确认门（V3）：仅 GUI MODIFY 请求置 True；确认后经 confirmed_plan 注入
+            confirm_plan=bool(body.get("confirm_plan")) and intent == "MODIFY",
+            confirmed_plan=body.get("confirmed_plan") if isinstance(body.get("confirmed_plan"), dict) else None,
         )
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model

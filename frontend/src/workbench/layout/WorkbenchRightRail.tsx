@@ -24,6 +24,8 @@ interface WorkbenchRightRailProps {
   tapirBusy: boolean
   assistantMessages: AssistantMessage[]
   assistantBusy: boolean
+  pendingPlan: import('../../api/types').PendingPlan | null
+  onConfirmPlan: (approve: boolean) => void
   onSetActiveRailPanel: (panel: ActiveRailPanel) => void
   onLoadPreview3D: () => void
   onLoadPreview2D: () => void
@@ -59,6 +61,8 @@ export function WorkbenchRightRail({
   tapirBusy,
   assistantMessages,
   assistantBusy,
+  pendingPlan,
+  onConfirmPlan,
   onSetActiveRailPanel,
   onLoadPreview3D,
   onLoadPreview2D,
@@ -155,6 +159,8 @@ export function WorkbenchRightRail({
             modelOptions={modelOptions}
             currentModel={currentModel}
             onModelChange={onModelChange}
+            pendingPlan={pendingPlan}
+            onConfirmPlan={onConfirmPlan}
           />
         )}
       </div>

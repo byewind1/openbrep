@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, VerificationReport } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, PendingPlan, VerificationReport } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
+import { useT } from '../i18n'
 
 interface AssistantPanelProps {
   messages: AssistantMessage[]
@@ -20,6 +21,9 @@ interface AssistantPanelProps {
   modelOptions?: LlmModelOption[]
   currentModel?: string
   onModelChange?: (model: string) => Promise<void>
+  // 计划确认门（V3）：待确认计划 + 确认/取消回调
+  pendingPlan?: PendingPlan | null
+  onConfirmPlan?: (approve: boolean) => void
 }
 
 const SLASH_COMMANDS = [
@@ -41,6 +45,8 @@ export function AssistantPanel({
   modelOptions = [],
   currentModel = '',
   onModelChange,
+  pendingPlan = null,
+  onConfirmPlan,
 }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
   const [image, setImage] = useState<AssistantImageAttachment | null>(null)
@@ -227,6 +233,7 @@ export function AssistantPanel({
                   interrupted={message.interrupted}
                 />
               ) : null}
+
               {message.changedFiles?.length ? (
                 <div className="assistant-change-card">
                   <strong>Changed files</strong>
@@ -266,6 +273,7 @@ export function AssistantPanel({
         ) : (
           <p className="assistant-empty">Ready</p>
         )}
+        {pendingPlan ? <PlanConfirmCard plan={pendingPlan} busy={busy} onConfirm={onConfirmPlan} /> : null}
       </div>
       <form className="assistant-input" onSubmit={submitMessage}>
         <div className="assistant-input-wrap">
@@ -423,6 +431,55 @@ function revisionMessageFor(messages: AssistantMessage[], assistantIndex: number
     }
   }
   return 'AI generated changes'
+}
+
+function PlanConfirmCard({
+  plan,
+  busy,
+  onConfirm,
+}: {
+  plan: PendingPlan
+  busy: boolean
+  onConfirm?: (approve: boolean) => void
+}) {
+  const t = useT()
+  return (
+    <div className="plan-confirm-card" role="group" aria-label={t('assistant.plan.title')}>
+      <div className="plan-confirm-header">
+        <strong>{t('assistant.plan.title')}</strong>
+        <span className="plan-confirm-risk">{t('assistant.plan.risk')}: {plan.risk || '无'}</span>
+      </div>
+      <p className="plan-confirm-intent">{plan.intent_summary}</p>
+      {plan.user_visible_changes.length ? (
+        <div className="plan-confirm-section">
+          <strong>{t('assistant.plan.userChanges')}</strong>
+          <ul>
+            {plan.user_visible_changes.map((change, i) => (
+              <li key={i}>{change}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {plan.affected_files.length ? (
+        <div className="plan-confirm-section">
+          <strong>{t('assistant.plan.affectedFiles')}</strong>
+          <ul>
+            {plan.affected_files.map((file) => (
+              <li key={file}>{file}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="plan-confirm-actions">
+        <button type="button" className="plan-confirm-approve" disabled={busy} onClick={() => onConfirm?.(true)}>
+          {t('assistant.plan.confirm')}
+        </button>
+        <button type="button" className="plan-confirm-reject" disabled={busy} onClick={() => onConfirm?.(false)}>
+          {t('assistant.plan.cancel')}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function AssistantHistoryDrawer({

@@ -1,10 +1,14 @@
-import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep } from '../../api/types'
+import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingPlan } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
 import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 const ASSISTANT_PENDING_PREFIX = 'Thinking...'
+// 计划确认门（V3）的待确认/执行中内容：保留 Thinking... 前缀，
+// 让 replacePendingAssistantMessage 能正确替换上一条 pending 消息
+const PLAN_PENDING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n📝 修改计划已生成，请确认后执行。`
+const PLAN_EXECUTING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n⏳ 正在按已确认的计划执行修改…`
 const INTERRUPTED_CONTENT = '⏹ 已中断'
 
 function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep | null {
@@ -81,6 +85,44 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       assistantBusy: false,
       compileLog: [note, ...state.compileLog].slice(0, 20),
     }))
+  }
+  // 流式修改执行的统一收尾：最终答复 + 时间线 + 预览刷新 + 历史持久化
+  async function finishModifyStream(
+    result: GenerateResult,
+    epoch: number,
+    initialContent: string,
+    thinkingSteps: AssistantThinkingStep[],
+  ) {
+    if (projectSwitchedSince(epoch)) {
+      discardStaleResult('Generation result discarded: project switched during the request.')
+      return
+    }
+    const changedFiles = result.assistant?.changed_files ?? []
+    const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
+    const finalReply =
+      result.ok && result.assistant
+        ? `${result.assistant.reply}${suffix}`
+        : formatAssistantRequestError(result.error, 'Generation request failed.')
+    const replyExtras = result.ok
+      ? { changedFiles, verification: result.assistant?.verification ?? undefined, thinkingSteps: [...thinkingSteps] }
+      : { errorCategory: classifyAssistantError(finalReply), thinkingSteps: [...thinkingSteps] }
+    set((state) => ({
+      assistantBusy: false,
+      assistantMessages: replacePendingAssistantMessage(state.assistantMessages, finalReply, replyExtras),
+      lastError: result.ok ? null : finalReply,
+      preview: result.preview ?? state.preview,
+      warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
+      draftParameters: {},
+    }))
+    await persistAssistantHistory()
+    if (result.ok) {
+      await get().refreshProjectWorkspace({
+        preferredScriptName: changedFiles[0] ?? '',
+        refreshAllScripts: true,
+        refreshPreview: false,
+        runDiagnostics: true,
+      })
+    }
   }
 
   async function _createProject(message: string, image: AssistantImageAttachment | null = null, signal?: AbortSignal) {
@@ -316,8 +358,60 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           // createProjectFromPrompt manages its own pending messages;
           // pass signal so the stop button can abort project creation too.
           await _createProject(finalMessage, image, controller.signal)
-        } else if (intent === 'modify' || intent === 'debug') {
-          // 默认走 agent loop 流式路径：实时把每一步事件显示在 LLM 框里
+        } else if (intent === 'modify') {
+          // 计划确认门（V3）：MODIFY 先出非代码语言计划，用户确认后才执行
+          const settings = get().llmSettings.assistant_settings ?? ''
+          const initialContent = pendingAssistantMessage('generate', image)
+          set((state) => ({
+            assistantBusy: true,
+            assistantMessages: [
+              ...state.assistantMessages,
+              { role: 'user', content: userMessageContent(finalMessage, image) },
+              { role: 'assistant', content: initialContent, thinkingSteps: [] },
+            ],
+          }))
+          const flushed = await get().flushDirtyScripts()
+          if (!flushed.ok) {
+            const error = get().lastError ?? 'Failed to save scripts before generation.'
+            set((state) => ({
+              assistantBusy: false,
+              assistantMessages: replacePendingAssistantMessage(state.assistantMessages, error),
+            }))
+            return
+          }
+          const epoch = get().projectEpoch
+          const planResult = await api.requestModifyPlan(finalMessage, settings, image, controller.signal)
+          if (projectSwitchedSince(epoch)) {
+            discardStaleResult('Generation result discarded: project switched during the request.')
+            return
+          }
+          if (planResult.awaiting_confirmation && planResult.pending_plan) {
+            const plan: PendingPlan = planResult.pending_plan
+            set((state) => ({
+              assistantBusy: false,
+              pendingPlan: plan,
+              assistantMessages: replacePendingAssistantMessage(
+                state.assistantMessages,
+                PLAN_PENDING_CONTENT,
+                {
+                  thinkingSteps: [{
+                    type: 'plan',
+                    stage: 'plan',
+                    message: 'AI 计划：' + plan.intent_summary,
+                    intentSummary: plan.intent_summary,
+                    affectedFiles: plan.affected_files,
+                    userVisibleChanges: plan.user_visible_changes,
+                    risk: plan.risk,
+                  }],
+                },
+              ),
+            }))
+            return
+          }
+          // 计划失败回落 / micro_modify / V1 DSL 命中：直接展示执行结果
+          await finishModifyStream(planResult, epoch, pendingAssistantMessage('generate', image), [])
+        } else if (intent === 'debug') {
+          // DEBUG 不走确认门：默认走 agent loop 流式路径，实时显示每一步事件
           const settings = get().llmSettings.assistant_settings ?? ''
           const initialContent = pendingAssistantMessage('generate', image)
           set((state) => ({
@@ -349,7 +443,6 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
               if (step) {
                 thinkingSteps.push(step)
               }
-              // 实时更新最后一条 assistant message：保留最终回复 + 时间线步骤
               set((state) => ({
                 assistantMessages: replacePendingAssistantMessage(
                   state.assistantMessages,
@@ -360,41 +453,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             },
             controller.signal,
           )
-
-          if (projectSwitchedSince(epoch)) {
-            discardStaleResult('Generation result discarded: project switched during the request.')
-            return
-          }
-          const changedFiles = result.assistant?.changed_files ?? []
-          const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
-          const finalReply =
-            result.ok && result.assistant
-              ? `${result.assistant.reply}${suffix}`
-              : formatAssistantRequestError(result.error, 'Generation request failed.')
-          const replyExtras = result.ok
-            ? { changedFiles, verification: result.assistant?.verification ?? undefined, thinkingSteps: [...thinkingSteps] }
-            : { errorCategory: classifyAssistantError(finalReply), thinkingSteps: [...thinkingSteps] }
-          set((state) => ({
-            assistantBusy: false,
-            assistantMessages: replacePendingAssistantMessage(
-              state.assistantMessages,
-              finalReply,
-              replyExtras,
-            ),
-            lastError: result.ok ? null : finalReply,
-            preview: result.preview ?? state.preview,
-            warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
-            draftParameters: {},
-          }))
-          await persistAssistantHistory()
-          if (result.ok) {
-            await get().refreshProjectWorkspace({
-              preferredScriptName: changedFiles[0] ?? '',
-              refreshAllScripts: true,
-              refreshPreview: false,
-              runDiagnostics: true,
-            })
-          }
+          await finishModifyStream(result, epoch, initialContent, thinkingSteps)
         } else {
           // explain
           set((state) => ({
@@ -450,6 +509,45 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
 
     stopChat() {
       get().chatAbortController?.abort()
+    },
+
+    async confirmPendingPlan(approve: boolean) {
+      // 计划确认门（V3）：approve=true → 带已确认计划执行（SSE 接回进度流）；false → 取消
+      const plan = get().pendingPlan
+      if (!plan) {
+        set({ lastError: '没有待确认的修改计划，请先发起一次修改。' })
+        return
+      }
+      if (!approve) {
+        const result = await api.confirmModifyPlan(false)
+        set((state) => ({
+          pendingPlan: null,
+          assistantMessages: replacePendingAssistantMessage(state.assistantMessages, '⏹ 已取消本次修改。'),
+        }))
+        if (!result.ok && result.error) {
+          set({ lastError: result.error })
+        }
+        await persistAssistantHistory()
+        return
+      }
+      const lastMessage = get().assistantMessages[get().assistantMessages.length - 1]
+      const thinkingSteps: AssistantThinkingStep[] = [...(lastMessage?.thinkingSteps ?? [])]
+      set((state) => ({ pendingPlan: null, assistantBusy: true }))
+      const epoch = get().projectEpoch
+      const result = await api.confirmModifyPlan(true, true, (event: AssistantStreamEvent) => {
+        const step = eventToThinkingStep(event)
+        if (step) {
+          thinkingSteps.push(step)
+        }
+        set((state) => ({
+          assistantMessages: replacePendingAssistantMessage(
+            state.assistantMessages,
+            PLAN_EXECUTING_CONTENT,
+            { thinkingSteps: [...thinkingSteps] },
+          ),
+        }))
+      })
+      await finishModifyStream(result, epoch, '⏳ 正在按已确认的计划执行修改…', thinkingSteps)
     },
   }
 }

@@ -105,6 +105,14 @@ export const zh = {
   'workspace.delete': '移入回收站',
   'workspace.deleteConfirm': '把项目 {name} 移入回收站？可从 .openbrep/trash/ 手动恢复。',
   'workspace.deleteActiveDisabled': '当前打开的项目：请先切换到其他项目再删除',
+
+  // Assistant plan confirmation gate (V3)
+  'assistant.plan.title': '修改计划',
+  'assistant.plan.userChanges': '将要发生的改动',
+  'assistant.plan.affectedFiles': '影响文件',
+  'assistant.plan.risk': '风险',
+  'assistant.plan.confirm': '确认修改',
+  'assistant.plan.cancel': '取消',
 } as const
 
 export type LocaleKey = keyof typeof zh

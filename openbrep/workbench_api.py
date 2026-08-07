@@ -100,6 +100,8 @@ class WorkbenchSession:
         # 串行化变更类请求：ThreadingHTTPServer 每请求一个线程，而 session 是全局
         # 单例；慢操作（AI 生成）与快操作（编译/保存）不能在同一 project 上交错。
         self._op_lock = threading.RLock()
+        # 计划确认门（V3）：MODIFY 先出计划，用户确认后才执行；None = 无待确认计划
+        self.pending_plan: dict[str, Any] | None = None
         self.settings_service = WorkbenchSettingsService(
             self,
             llm_adapter_factory=lambda config: LLMAdapter(config),
@@ -499,6 +501,10 @@ class WorkbenchSession:
             return self.assistant_service.generate_with_assistant_stream(body, cancel_event=cancel_event)
         return self.assistant_service.generate_with_assistant(body)
 
+    def modify_confirm(self, body: dict[str, Any]):
+        """计划确认门：approve 后带已确认计划执行（stream 走 SSE）；拒绝/无 pending 各自返回。"""
+        return self.assistant_service.confirm_modify(body)
+
     def _knowledge_status(self) -> dict[str, Any]:
         """Return current knowledge base status (Free/Pro doc counts and path info)."""
         try:
@@ -773,6 +779,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/assistant/generate":
             return self.generate_with_assistant(body)
+
+        if normalized_method == "POST" and route == "/api/modify/confirm":
+            return self.modify_confirm(body)
 
         if normalized_method == "GET" and route == "/api/knowledge/status":
             return self._knowledge_status()

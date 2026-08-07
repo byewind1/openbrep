@@ -1,3 +1,4 @@
+import type { AssistantStreamEvent } from '../api/types'
 import type { WorkbenchApi } from './workbenchStore'
 import { createWorkbenchStore } from './workbenchStore'
 
@@ -344,6 +345,8 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     generateWithAssistantStream: async () => ({ ok: false, error: 'not loaded' }),
+    requestModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
+    confirmModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
       changed: parameters,
@@ -2484,4 +2487,113 @@ test('workspace slice: trashWorkspaceProject no-op without attachment', async ()
   await store.getState().trashWorkspaceProject('/hsf/x')
 
   expect(calls).toBe(0)
+})
+
+
+// ── 计划确认门（V3）：MODIFY 先出计划，用户确认后才执行 ─────────────────
+
+const PENDING_PLAN = {
+  intent_summary: '给书架加一层层板',
+  user_visible_changes: ['3D 几何会多出一层层板'],
+  affected_files: ['scripts/3d.gdl'],
+  risk: '几何形状变化',
+}
+
+test('sendChat modify requests plan and awaits confirmation (V3)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      requestModifyPlan: async () => ({ ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }),
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+
+  const state = store.getState()
+  expect(state.pendingPlan).toEqual(PENDING_PLAN)
+  expect(state.assistantBusy).toBe(false)
+  const last = state.assistantMessages.at(-1)
+  expect(last?.content).toContain('修改计划已生成')
+  expect(last?.thinkingSteps?.[0]?.type).toBe('plan')
+  expect(last?.thinkingSteps?.[0]?.userVisibleChanges).toEqual(PENDING_PLAN.user_visible_changes)
+})
+
+test('confirmPendingPlan(true) runs the confirmed execution stream (V3)', async () => {
+  let confirmArgs: [boolean, boolean] | null = null
+  const store = createWorkbenchStore(
+    makeApi({
+      requestModifyPlan: async () => ({ ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }),
+      confirmModifyPlan: async (approve: boolean, stream?: boolean, onEvent?: (event: AssistantStreamEvent) => void) => {
+        confirmArgs = [approve, !!stream]
+        onEvent?.({ type: 'status', data: { stage: 'compile', message: '编译中' } })
+        return {
+          ok: true,
+          assistant: { kind: 'generate', reply: '✅ 已按确认的计划执行完成。', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+          preview: null,
+          warnings: [],
+          events: [],
+        }
+      },
+      getProjectScript: async (scriptName: string) => ({
+        name: scriptName,
+        path: `scripts/${scriptName}`,
+        content: `updated ${scriptName}`,
+      }),
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+  await store.getState().confirmPendingPlan(true)
+
+  const state = store.getState()
+  expect(confirmArgs).toEqual([true, true])
+  expect(state.pendingPlan).toBeNull()
+  expect(state.assistantBusy).toBe(false)
+  expect(state.assistantMessages.at(-1)?.content).toContain('已按确认的计划执行完成')
+  // 计划步骤保留 + 执行流步骤追加
+  const steps = state.assistantMessages.at(-1)?.thinkingSteps ?? []
+  expect(steps.some((s) => s.type === 'plan')).toBe(true)
+  expect(steps.some((s) => s.message === '编译中')).toBe(true)
+})
+
+test('confirmPendingPlan(false) cancels and clears the pending plan (V3)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      requestModifyPlan: async () => ({ ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }),
+      confirmModifyPlan: async (approve: boolean) => ({ ok: true, cancelled: true }),
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+  expect(store.getState().pendingPlan).not.toBeNull()
+
+  await store.getState().confirmPendingPlan(false)
+
+  const state = store.getState()
+  expect(state.pendingPlan).toBeNull()
+  expect(state.assistantMessages.at(-1)?.content).toContain('已取消')
+})
+
+test('sendChat modify falls back to direct result when plan request fails (V3)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      requestModifyPlan: async () => ({
+        ok: true,
+        assistant: { kind: 'generate', reply: '计划失败，直接执行完成。', changed_files: [], intent: 'MODIFY' },
+        plan_failed: true,
+      }),
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+
+  const state = store.getState()
+  expect(state.pendingPlan).toBeNull()
+  expect(state.assistantMessages.at(-1)?.content).toContain('直接执行完成')
+})
+
+test('confirmPendingPlan without a pending plan sets lastError (V3)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  await store.getState().confirmPendingPlan(true)
+  expect(store.getState().lastError).toContain('没有待确认的修改计划')
 })

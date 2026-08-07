@@ -139,6 +139,8 @@ class TaskRequest:
     agent_loop: Optional[bool] = None      # None = 按 intent 默认策略；True/False = 显式开关
     agent_loop_budget: int = 0             # agent loop 工具调用预算，0 = 用默认值
     agent_loop_plan: bool = False          # agent loop 是否先输出可审查计划（流式/SSE 默认开）
+    confirm_plan: bool = False             # 计划确认门：GUI MODIFY 置 True（先出计划，确认后才执行）
+    confirmed_plan: Optional[dict] = None  # 已确认的计划（/api/modify/confirm approve 后注入 agent loop）
 
 
 @dataclass

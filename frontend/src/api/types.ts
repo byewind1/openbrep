@@ -413,6 +413,9 @@ export interface AssistantThinkingStep {
   affectedFiles?: string[]
   parameterChanges?: Array<{ name: string; from?: string; to?: string }>
   strategy?: string
+  // 计划确认门（V3）：面向用户的非代码语言改动描述与风险
+  userVisibleChanges?: string[]
+  risk?: string
 }
 
 // ── Verification report (Phase 3/4/5 self-correcting agent evidence) ──────
@@ -569,6 +572,14 @@ export interface IgnoreMemoryLessonResult {
   error?: string
 }
 
+// ── 计划确认门（V3）：MODIFY 先出非代码语言计划，用户确认后才执行 ─────────
+export interface PendingPlan {
+  intent_summary: string
+  user_visible_changes: string[]
+  affected_files: string[]
+  risk: string
+}
+
 export interface GenerateResult {
   ok: boolean
   assistant?: {
@@ -582,6 +593,10 @@ export interface GenerateResult {
   warnings?: string[]
   events?: Array<{ type: string; data: unknown }>
   error?: string
+  // 计划确认门（V3）
+  awaiting_confirmation?: boolean
+  pending_plan?: PendingPlan | null
+  plan_failed?: boolean
 }
 
 export interface CreateProjectResult extends WorkbenchSnapshot {

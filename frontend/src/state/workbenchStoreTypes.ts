@@ -148,6 +148,18 @@ export interface WorkbenchApi {
     onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
     signal?: AbortSignal,
   ) => Promise<GenerateResult>
+  requestModifyPlan: (
+    message: string,
+    assistantSettings?: string,
+    image?: AssistantImageAttachment | null,
+    signal?: AbortSignal,
+  ) => Promise<GenerateResult>
+  confirmModifyPlan: (
+    approve: boolean,
+    stream?: boolean,
+    onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
+    signal?: AbortSignal,
+  ) => Promise<GenerateResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>
@@ -186,6 +198,8 @@ export interface WorkbenchState {
   activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
+  /** 计划确认门（V3）：非 null = 有待用户确认的修改计划 */
+  pendingPlan: import('../api/types').PendingPlan | null
   scripts: ProjectScript[]
   recentProjects: RecentProject[]
   revisions: ProjectRevision[]
@@ -236,6 +250,7 @@ export interface WorkbenchState {
   saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
   sendChat: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
   stopChat: () => void
+  confirmPendingPlan: (approve: boolean) => Promise<void>
   reloadRuntimeSettings: () => Promise<void>
   pollConfigRevision: () => Promise<void>
   refreshTapirStatus: () => Promise<void>

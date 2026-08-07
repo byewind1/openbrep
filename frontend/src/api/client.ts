@@ -810,25 +810,11 @@ export async function generateWithAssistant(
   )
 }
 
-export async function generateWithAssistantStream(
-  message: string,
-  assistantSettings = '',
-  image?: AssistantImageAttachment | null,
+async function readAssistantStream(
+  response: Response,
   onEvent?: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<GenerateResult> {
-  const response = await fetch(`${API_BASE}/api/assistant/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message,
-      assistant_settings: assistantSettings,
-      stream: true,
-      ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
-    }),
-    signal,
-  })
-
   if (!response.ok || !response.body) {
     const text = await response.text().catch(() => 'Stream request failed.')
     return { ok: false, error: text, assistant: null, preview: null, warnings: [], events: [] } as GenerateResult
@@ -895,6 +881,76 @@ export async function generateWithAssistantStream(
       events: [],
     } as GenerateResult)
   )
+}
+
+export async function generateWithAssistantStream(
+  message: string,
+  assistantSettings = '',
+  image?: AssistantImageAttachment | null,
+  onEvent?: (event: AssistantStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<GenerateResult> {
+  const response = await fetch(`${API_BASE}/api/assistant/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message,
+      assistant_settings: assistantSettings,
+      stream: true,
+      ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+    }),
+    signal,
+  })
+  return readAssistantStream(response, onEvent, signal)
+}
+
+/** 计划确认门（V3）：先请求一份待确认的修改计划（不执行修改）。 */
+export async function requestModifyPlan(
+  message: string,
+  assistantSettings = '',
+  image?: AssistantImageAttachment | null,
+  signal?: AbortSignal,
+): Promise<GenerateResult> {
+  return requestJson<GenerateResult>(
+    '/api/assistant/generate',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        assistant_settings: assistantSettings,
+        intent: 'MODIFY',
+        confirm_plan: true,
+        stream: false,
+        ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+      }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+    signal,
+  )
+}
+
+/** 计划确认门（V3）：审批待确认计划；stream=true 时执行过程走 SSE。 */
+export async function confirmModifyPlan(
+  approve: boolean,
+  stream = false,
+  onEvent?: (event: AssistantStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<GenerateResult> {
+  const response = await fetch(`${API_BASE}/api/modify/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approve, stream }),
+    signal,
+  })
+  if (!stream) {
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Confirm request failed.')
+      return { ok: false, error: text, assistant: null, preview: null, warnings: [], events: [] } as GenerateResult
+    }
+    return (await response.json()) as GenerateResult
+  }
+  return readAssistantStream(response, onEvent, signal)
 }
 
 export async function listProjectScripts(): Promise<ProjectScriptsResponse> {
