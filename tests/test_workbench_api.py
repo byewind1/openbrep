@@ -2355,3 +2355,211 @@ def test_workbench_session_trash_project_requires_attached_workspace(tmp_path):
 
     assert response["ok"] is False
     assert response["code"] == "no_workspace"
+
+
+# ── 任务 U：GUI 导入收敛到工作区 ────────────────────────────────────
+
+
+def _attached_workspace_session(tmp_path):
+    """初始化工作区 + 显式附着的 WorkbenchSession；返回 (session, ws_root)。"""
+    from openbrep.workbench.workspace_service import init_workspace
+
+    ws = tmp_path / "ws"
+    init_workspace(str(ws))
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    opened = session.route("POST", "/api/workspace/open", {"path": str(ws)})
+    assert opened["ok"] is True
+    return session, ws
+
+
+def test_workbench_session_attached_workspace_import_gdl_routes_to_hsf(tmp_path):
+    """附着工作区时 GDL 导入：原件进 sources/、项目进 hsf/、origin 指向归档副本、
+    会话加载新项目、hsf/ 无 staged 残留、源文件旁不落项目。"""
+    gdl_path = tmp_path / "PlantPot.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\nEND\n", encoding="utf-8")
+    session, ws = _attached_workspace_session(tmp_path)
+
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert response["ok"] is True, response
+    project_path = Path(response["project"]["path"])
+    assert project_path.parent == (ws / "hsf").resolve()
+    assert project_path.name == "PlantPot"
+    # 会话加载新项目
+    assert session.source_path == project_path
+    # 结果字典：archived_source / project_path / imported_from
+    assert response["project_path"] == str(project_path)
+    assert response["imported_from"] == str(gdl_path)
+    # 归档副本在 sources/ 下
+    archived = Path(response["archived_source"])
+    assert archived.parent == (ws / "sources").resolve()
+    assert archived.read_text(encoding="utf-8") == gdl_path.read_text(encoding="utf-8")
+    # origin 指向 sources/ 归档副本
+    toml, text = _read_origin_toml(project_path)
+    assert toml.exists()
+    assert f'imported_from = "{response["archived_source"]}"' in text
+    assert 'imported_kind = "gdl"' in text
+    # hsf/ 无 staged 残留
+    assert not (ws / "hsf" / "PlantPot.gdl").exists()
+    # 源文件旁不落项目
+    assert not (gdl_path.parent / "PlantPot").exists()
+    # 附着保持同一工作区
+    assert session.workspace_path == ws.resolve()
+    assert response["workspace"]["path"] == str(ws.resolve())
+
+
+def test_workbench_session_attached_workspace_import_gsm_routes_to_hsf_with_normalization(
+    tmp_path, monkeypatch
+):
+    """附着工作区时 GSM 导入（fake compiler）：项目进 hsf/、normalization/decompile
+    透传、staged 清理、origin 指向 sources/ 副本。"""
+    gsm_path = tmp_path / "ImportedChair.gsm"
+    gsm_path.write_bytes(b"fake gsm")
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+            self.timeout = timeout
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            project = HSFProject.create_new("ConverterOutput", output_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            project.save_to_disk()
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    # 工作区路径走 import_source._import_gsm → openbrep.mcp_tools.HSFCompiler
+    monkeypatch.setattr("openbrep.mcp_tools.HSFCompiler", FakeHSFCompiler)
+    session, ws = _attached_workspace_session(tmp_path)
+
+    response = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert response["ok"] is True, response
+    project_path = Path(response["project"]["path"])
+    assert project_path.parent == (ws / "hsf").resolve()
+    assert project_path.name == "ImportedChair"
+    assert session.source_path == project_path
+    # normalization 透传（import_source 不产生 decompile，按设计不强求）
+    assert "normalization" in response
+    assert response["normalization"].get("lossless") is True
+    # hsf/ 无 staged 残留
+    assert not (ws / "hsf" / "ImportedChair.gsm").exists()
+    # origin 指向 sources/ 副本
+    toml, text = _read_origin_toml(project_path)
+    assert f'imported_from = "{response["archived_source"]}"' in text
+    assert 'imported_kind = "gsm"' in text
+
+
+def test_workbench_session_attached_workspace_import_same_gsm_twice_two_projects_one_archive(
+    tmp_path, monkeypatch
+):
+    """同名 GSM 导入两次 → hsf/ 两个项目目录、sources/ 只有一个归档件（字节相同复用）。"""
+    gsm_path = tmp_path / "Dup.gsm"
+    gsm_path.write_bytes(b"fake gsm dup")
+
+    class FakeHSFCompiler:
+        def __init__(self, converter_path=None, timeout=60):
+            self.converter_path = converter_path
+            self.timeout = timeout
+
+        @property
+        def is_available(self):
+            return True
+
+        def libpart2hsf(self, gsm_path_arg, output_dir):
+            project = HSFProject.create_new("ConverterOutput", output_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            project.save_to_disk()
+            return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+    monkeypatch.setattr("openbrep.mcp_tools.HSFCompiler", FakeHSFCompiler)
+    session, ws = _attached_workspace_session(tmp_path)
+
+    first = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+    second = session.route("POST", "/api/project/import-gsm", {"path": str(gsm_path)})
+
+    assert first["ok"] and second["ok"]
+    p1, p2 = Path(first["project"]["path"]), Path(second["project"]["path"])
+    assert p1 != p2
+    assert p1.name == "Dup"
+    assert p2.name == "Dup_2"
+    # sources/ 只有一个归档件（字节相同复用）
+    assert len(list((ws / "sources").glob("Dup*.gsm"))) == 1
+    # 两个项目 origin 指向同一个 sources 副本
+    assert first["archived_source"] == second["archived_source"]
+    _, t1 = _read_origin_toml(p1)
+    _, t2 = _read_origin_toml(p2)
+    assert f'imported_from = "{first["archived_source"]}"' in t1
+    assert f'imported_from = "{second["archived_source"]}"' in t2
+    # hsf/ 无 staged 残留
+    assert not (ws / "hsf" / "Dup.gsm").exists()
+
+
+def test_workbench_session_independent_import_gdl_stays_next_to_source(tmp_path):
+    """未附着工作区：GDL 导入落点仍在源文件旁边（现有独立行为不变）。"""
+    gdl_path = tmp_path / "Solo.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    assert session.workspace_path is None
+
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert response["ok"] is True
+    project_path = Path(response["project"]["path"])
+    assert project_path.parent == gdl_path.parent
+    assert project_path.name == "Solo"
+    assert session.workspace_path is None
+    assert "archived_source" not in response
+
+
+def test_workbench_session_broken_workspace_path_falls_back_to_independent(tmp_path):
+    """workspace_path 指向的目录不是有效工作区（缺 workspace.toml）→ 降级独立模式。"""
+    gdl_path = tmp_path / "Fallback.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.workspace_path = tmp_path / "broken_ws"  # 目录不存在，绕过 open 校验
+
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert response["ok"] is True
+    project_path = Path(response["project"]["path"])
+    assert project_path.parent == gdl_path.parent
+    assert "archived_source" not in response
+
+
+def test_import_session_fake_without_workspace_path_stays_independent(tmp_path):
+    """import_source 的 fake session 没有 workspace_path 属性 → 工作区分支不触发
+    （防递归前提：fake session 走原独立导入路径）。"""
+    from types import SimpleNamespace
+
+    from openbrep.config import GDLAgentConfig
+    from openbrep.workbench.project_session_service import WorkbenchProjectSessionService
+
+    gdl_path = tmp_path / "FakeSession.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+    config = GDLAgentConfig()
+    fake = SimpleNamespace(
+        project=None,
+        source="empty",
+        source_path=None,
+        recent_project_paths=[],
+        config=config,
+        config_path=tmp_path / "fake_config.toml",
+        snapshot=lambda: {"ok": True},
+        compiler_mode="mock",
+        converter_path="",
+        _choose_file_for_purpose=lambda purpose: None,
+    )
+    assert not hasattr(fake, "workspace_path")
+    service = WorkbenchProjectSessionService(fake, real_compiler_factory=lambda _path: None)
+
+    result = service.import_gdl_file({"path": str(gdl_path)})
+
+    assert result["ok"] is True
+    # 项目落在源文件旁边（独立路径），不经过工作区
+    assert (gdl_path.parent / "FakeSession").is_dir()
+    assert "archived_source" not in result

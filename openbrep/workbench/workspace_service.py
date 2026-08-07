@@ -428,6 +428,16 @@ def import_to_workspace(path: str, source_path: str, kind: str) -> dict[str, Any
             {"path": str(source), "kind": kind},
         )
 
+    # staged 清理：import_source 的 _stage_source 会把源文件复制进 hsf/ 根，
+    # 导入完成后该副本不再需要（项目已在 hsf/<名>/ 下）。只删 hsf/ 下的
+    # staged 文件，sources/ 归档件永不删；清理失败不阻断导入结果。
+    try:
+        staged = root / "hsf" / f"{archived_copy.stem}{archived_copy.suffix}"
+        if staged.is_file() and staged.resolve() != archived_copy.resolve():
+            staged.unlink()
+    except Exception:
+        pass
+
     # origin 指向 sources/ 内的归档副本（覆盖 import_source 写入的 staged 路径）
     project_path = result.get("project_path")
     try:
@@ -449,12 +459,17 @@ def import_to_workspace(path: str, source_path: str, kind: str) -> dict[str, Any
     except Exception:
         pass
 
-    return {
+    payload: dict[str, Any] = {
         "ok": True,
         "project_path": project_path,
         "source_path": str(archived_copy),
         "warnings": list(result.get("warnings") or []),
     }
+    # gsm 分支透传 decompile/normalization（GUI 工作区导入结果需要）
+    for key in ("decompile", "normalization"):
+        if result.get(key) is not None:
+            payload[key] = result[key]
+    return payload
 
 
 # ── 5. build_handoff ───────────────────────────────────────

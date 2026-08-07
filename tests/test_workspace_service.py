@@ -313,6 +313,56 @@ class TestWorkspaceSelfDescriptions(unittest.TestCase):
                 self.assertIn("构件规格", agents2.read_text(encoding="utf-8"))
             self.assertEqual(agents.read_text(encoding="utf-8"), "# 已有项目说明\n")
 
+    def test_import_removes_staged_source_copy_from_hsf(self):
+        """import_to_workspace 成功后 hsf/ 下不留 _stage_source 的源文件副本。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            source = Path(tmpdir) / "staged_clean.gdl"
+            source.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+            result = import_to_workspace(str(ws), str(source), "gdl")
+
+            self.assertTrue(result["ok"], result)
+            # hsf/ 根下无 staged 源文件副本
+            self.assertFalse((ws / "hsf" / "staged_clean.gdl").exists())
+            # sources/ 归档件保留
+            archived = Path(result["source_path"])
+            self.assertTrue(archived.exists())
+            self.assertEqual(archived.parent, (ws / "sources").resolve())
+
+    def test_import_gsm_cleans_staged_and_passes_decompile_normalization(self):
+        """gsm 导入：hsf/ 无 staged 残留；decompile/normalization 透传给调用方。"""
+        from unittest.mock import patch
+
+        from openbrep.compiler import CompileResult
+
+        class FakeHSFCompiler:
+            def __init__(self, converter_path=None, timeout=60):
+                self.converter_path = converter_path
+                self.timeout = timeout
+
+            @property
+            def is_available(self):
+                return True
+
+            def libpart2hsf(self, gsm_path_arg, output_dir):
+                project = HSFProject.create_new("ConverterOutput", output_dir)
+                project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+                project.save_to_disk()
+                return CompileResult(success=True, stdout="ok", exit_code=0, output_path=output_dir)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = _make_workspace(tmpdir)
+            source = Path(tmpdir) / "gsm_clean.gsm"
+            source.write_bytes(b"fake gsm")
+            with patch("openbrep.mcp_tools.HSFCompiler", FakeHSFCompiler):
+                result = import_to_workspace(str(ws), str(source), "gsm")
+
+            self.assertTrue(result["ok"], result)
+            self.assertFalse((ws / "hsf" / "gsm_clean.gsm").exists())
+            self.assertIn("normalization", result)
+            self.assertTrue(result["normalization"].get("lossless"))
+
     def test_build_handoff_aggregates_latest_revisions(self):
         from openbrep.revisions import create_revision
 

@@ -148,6 +148,77 @@ class WorkbenchProjectSessionService:
         self.remember_project_path(hsf_path)
         return {"ok": True, **self.session.snapshot()}
 
+    # ── 工作区附着导入（任务 U：GUI 导入收敛到工作区）─────────────────
+
+    def _workspace_import_root(self) -> Path | None:
+        """返回当前附着的有效工作区根；未附着或 workspace.toml 缺失 → None。
+
+        GUI 导入的分支开关：附着有效工作区时，GSM/GDL 导入收敛到工作区
+        （原件进 sources/ → 项目进 hsf/ → 会话加载新项目）；否则走原独立
+        路径，行为逐字节不变。判定与 workspace_open 同口径（检查
+        .openbrep/workspace.toml 存在）。
+        """
+        workspace = getattr(self.session, "workspace_path", None)
+        if not workspace:
+            return None
+        root = Path(workspace).expanduser().resolve()
+        if not (root / ".openbrep" / "workspace.toml").is_file():
+            return None
+        return root
+
+    def _import_via_workspace(
+        self, workspace_root: Path, source_file: Path, kind: str
+    ) -> dict[str, Any]:
+        """附着工作区时的导入路径：sources/ 归档 → hsf/ 项目 → 会话加载新项目。
+
+        复用 workspace_service.import_to_workspace（sources 归档 + import_source
+        + origin 指向归档副本）。失败返回与独立模式同形的错误字典；成功返回
+        ok/imported_from/archived_source/project_path/warnings + session snapshot，
+        gsm 分支额外透传 decompile 与 normalization。
+        """
+        from openbrep.workbench.workspace_service import import_to_workspace
+
+        result = import_to_workspace(str(workspace_root), str(source_file), kind)
+        if not result.get("ok"):
+            error = result.get("error") or {}
+            return {
+                "ok": False,
+                "code": str(error.get("code") or "import_failed"),
+                "error": str(error.get("message") or "导入失败"),
+            }
+
+        project_path = result.get("project_path")
+        loaded = self.load_hsf_directory(project_path)
+        if not loaded.get("ok"):
+            return {
+                "ok": False,
+                "error": f"导入成功但加载项目失败: {loaded.get('error')}",
+                "project_path": str(project_path) if project_path else None,
+            }
+
+        out: dict[str, Any] = {
+            "ok": True,
+            "imported_from": str(source_file),
+            "archived_source": str(result.get("source_path") or ""),
+            "project_path": str(project_path) if project_path else None,
+            "warnings": list(result.get("warnings") or []),
+            **self.session.snapshot(),
+        }
+        if kind == "gsm":
+            decompile = result.get("decompile")
+            if decompile is not None:
+                out["decompile"] = decompile
+            normalization = result.get("normalization")
+            if normalization is not None:
+                out["normalization"] = normalization
+                if not normalization.get("lossless"):
+                    warning_text = str(
+                        normalization.get("warning")
+                        or "GSM 导入规范化失败，已保留原始文件（未规范化）"
+                    )
+                    out["warnings"] = list(out["warnings"]) + [warning_text]
+        return out
+
     def import_gdl_file(self, body: dict[str, Any]) -> dict[str, Any]:
         raw_path = str(body.get("path") or "").strip()
         if not raw_path:
@@ -163,6 +234,12 @@ class WorkbenchProjectSessionService:
             return {"ok": False, "error": f"GDL file not found: {raw_path}"}
         if source_file.suffix.lower() != ".gdl":
             return {"ok": False, "error": f"Unsupported file type: {source_file.suffix or '(none)'}"}
+
+        # 工作区附着：导入收敛到工作区（sources/ 归档 + hsf/ 项目 + 自动加载）。
+        # 未附着/工作区无效时走下方原独立路径，行为逐字节不变。
+        workspace_root = self._workspace_import_root()
+        if workspace_root is not None:
+            return self._import_via_workspace(workspace_root, source_file, "gdl")
 
         script_name = str(body.get("script_name") or ScriptType.SCRIPT_3D.value)
         script_type = SCRIPT_NAME_TO_TYPE.get(script_name)
@@ -222,6 +299,13 @@ class WorkbenchProjectSessionService:
             return {"ok": False, "error": f"GSM file not found: {raw_path}"}
         if source_file.suffix.lower() != ".gsm":
             return {"ok": False, "error": f"Unsupported file type: {source_file.suffix or '(none)'}"}
+
+        # 工作区附着：导入收敛到工作区；compiler 由 import_source 内部解析
+        # （GSM 分支的 LP_XMLConverter 可用性检查在 import_source._import_gsm 内）。
+        workspace_root = self._workspace_import_root()
+        if workspace_root is not None:
+            return self._import_via_workspace(workspace_root, source_file, "gsm")
+
         if self.session.compiler_mode != "lp":
             return {
                 "ok": False,
