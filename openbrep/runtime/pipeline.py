@@ -159,6 +159,7 @@ class TaskResult:
     compile_comparison: Optional[CompileComparison] = None
     verification: Optional[dict] = None          # unified VerificationReport (Phase 3/4)
     semantic_repair: dict = field(default_factory=dict)  # {"attempted": n, "accepted": m}（S1 可观测性）
+    metadata: dict = field(default_factory=dict)  # 结构化元数据（如 param_modify 的 plan 与校验结果）
 
 
 @dataclass(frozen=True)
@@ -262,12 +263,17 @@ class TaskPipeline:
                 result = self._handle_chat(request)
             elif request.intent in ("MODIFY", "DEBUG", "REPAIR") and request.agent_loop:
                 # 默认路径：预算制 agent loop（LLM 通过工具调用自主迭代）
-                # 先尝试确定性微修改，命中则零 token 完成
+                # 先尝试确定性微修改（零 token），再试参数级修改 DSL（一次 LLM
+                # 意图解析 + 确定性应用），都不命中才进 agent loop
                 micro_result = self._try_micro_modify(request)
                 if micro_result is not None:
                     result = micro_result
                 else:
-                    result = self._handle_modify_agent_loop(request)
+                    dsl_result = self._try_param_modify(request)
+                    if dsl_result is not None:
+                        result = dsl_result
+                    else:
+                        result = self._handle_modify_agent_loop(request)
             elif request.intent == "REPAIR":
                 result = self._handle_repair(request)
             elif request.intent in ("MODIFY", "DEBUG"):
@@ -881,6 +887,9 @@ class TaskPipeline:
         micro_result = self._try_micro_modify(request)
         if micro_result is not None:
             return micro_result
+        dsl_result = self._try_param_modify(request)
+        if dsl_result is not None:
+            return dsl_result
         return self._handle_script_update(request)
 
     def _try_micro_modify(self, request: TaskRequest) -> Optional[TaskResult]:
@@ -988,6 +997,131 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=revision_warnings,
+        )
+
+    def _try_param_modify(self, request: TaskRequest) -> Optional[TaskResult]:
+        """V1 参数级修改 DSL：LLM 只做意图解析，应用全确定性。
+
+        顺序在正则 micro_modify 之后、agent loop / 全文改写之前：
+        micro_modify（单参数设值）→ param_modify DSL（参数操作 JSON）→ LLM 路径。
+        解析失败 / JSON 不合法 / 任一 op 校验不过 / 守护回滚 → 返回 None 回落。
+        语义与微修改一致：编译必跑（benchmark 契约要求 compile_result），
+        几何语义验证只做 advisory 警告、不拦截；plan 与校验结果写入
+        TaskResult.metadata 与版本快照 metadata。
+        """
+        from openbrep.runtime.param_modify import (
+            apply_param_modify,
+            format_op_summary,
+            parse_param_modify,
+        )
+
+        if (request.intent or "MODIFY") != "MODIFY":
+            return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
+        if request.image_path or request.image_b64:
+            return None
+        project = request.project
+        if project is None or not project.parameters:
+            return None
+        instruction = (request.user_input or "").strip()
+        if not instruction or instruction.startswith("["):
+            return None
+
+        on_event = request.on_event or (lambda *args: None)
+        on_event("status", {"stage": "understand", "message": "🤔 正在理解你的修改意图…"})
+
+        # 一次 LLM 调用做意图解析；失败/校验不过即回落，不重试
+        llm = self._make_llm(request)
+        plan = parse_param_modify(instruction, project, llm)
+        if plan is None:
+            return None
+
+        op_lines = [format_op_summary(op) for op in plan.operations]
+        on_event("status", {"stage": "locate", "message": "🎯 已解析为参数操作：" + "；".join(op_lines)})
+        on_event("plan", {
+            "intent_summary": "；".join(op_lines),
+            "affected_files": ["paramlist.xml"] + [
+                f"scripts/{st.value}" for op in plan.operations
+                if op.op == "rename_param"
+                for st in project.scripts
+            ],
+            "parameter_changes": [
+                {
+                    "name": op.param or op.from_name or op.name,
+                    "from": op.old_value or (op.from_name or ""),
+                    "to": op.value if op.value is not None else (op.name or ""),
+                }
+                for op in plan.operations
+            ],
+            "strategy": "确定性参数修改（LLM 仅做意图解析，未改写 GDL 代码）",
+        })
+
+        # 快照→应用→落盘（与微修改同一落盘语义）+ 变更守护；
+        # revision 拷的是磁盘状态，必须先于内存修改 + save_to_disk。
+        plan_metadata = {"param_modify": {"plan": plan.to_dict()}}
+        outcome = apply_param_modify(
+            project,
+            plan,
+            user_instruction=instruction,
+            metadata=plan_metadata,
+            create_revision=create_revision,
+        )
+        if not outcome.applied:
+            # 守护回滚：计划外文件被改动，按"识别不出"回落 LLM 路径
+            return None
+        on_event("status", {"stage": "modify", "message": "✏️ 已应用参数操作：" + "；".join(op_lines)})
+
+        compile_result: Optional[CompileResult] = None
+        try:
+            compiler = self._make_compiler()
+            out_dir = Path(request.output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            gsm_path = str(out_dir / f"{request.gsm_name or project.name}.gsm")
+            compile_result = compiler.hsf2libpart(str(project.root), gsm_path)
+            on_event("compile_result", {
+                "success": compile_result.success,
+                "error": compile_result.stderr if not compile_result.success else "",
+            })
+        except Exception as exc:
+            logger.warning("param-modify compile failed: %s", exc)
+
+        semantic_issues: list[str] = []
+        try:
+            from openbrep.semantic_verifier import verify_semantics
+
+            semantic_result = verify_semantics(project)
+            semantic_issues = [issue.detail for issue in semantic_result.issues if issue.blocking]
+        except Exception:
+            pass
+
+        output_parts = [
+            "✅ 已执行确定性参数修改（LLM 仅做意图解析，未改写 GDL 代码）",
+            "\n".join(f"- {line}" for line in op_lines),
+        ]
+        if compile_result is not None:
+            if compile_result.success:
+                output_parts.append("编译：✅ 通过")
+            else:
+                output_parts.append(f"编译：❌ 失败\n{compile_result.stderr[:800]}")
+        if semantic_issues:
+            output_parts.append("⚠️ 几何验证警告：\n" + "\n".join(f"- {detail}" for detail in semantic_issues))
+        if outcome.warnings:
+            output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {w}" for w in outcome.warnings))
+
+        return TaskResult(
+            success=compile_result.success if compile_result is not None else True,
+            intent="MODIFY",
+            project=project,
+            compile_result=compile_result,
+            plain_text="\n\n".join(output_parts),
+            revision_warnings=outcome.warnings,
+            metadata={
+                "param_modify": {
+                    "plan": plan.to_dict(),
+                    "compile_success": compile_result.success if compile_result is not None else None,
+                    "semantic_issues": semantic_issues,
+                    "changed_files": outcome.changed_files or [],
+                }
+            },
         )
 
     def _handle_modify_agent_loop(self, request: TaskRequest) -> TaskResult:
