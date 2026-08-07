@@ -116,4 +116,13 @@ export const en: Record<LocaleKey, string> = {
   'assistant.plan.risk': 'Risk',
   'assistant.plan.confirm': 'Confirm changes',
   'assistant.plan.cancel': 'Cancel',
+
+  // MODIFY acceptance report (V5)
+  'assistant.acceptance.title': 'Acceptance report',
+  'assistant.acceptance.geometry': 'Geometry comparison',
+  'assistant.acceptance.before': 'Before',
+  'assistant.acceptance.after': 'After',
+  'assistant.acceptance.meshCount': 'Mesh count',
+  'assistant.acceptance.bbox': 'Bounding box',
+  'assistant.acceptance.counts2d': '2D elements (lines/polygons/circles/arcs)',
 }

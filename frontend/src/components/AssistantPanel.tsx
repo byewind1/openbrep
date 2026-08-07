@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, PendingPlan, VerificationReport } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, VerificationReport } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
@@ -263,6 +263,7 @@ export function AssistantPanel({
                 </div>
               ) : null}
               {message.verification ? <VerificationCard report={message.verification} onRevealLine={onRevealLine} /> : null}
+              {message.acceptance ? <AcceptanceCard acceptance={message.acceptance} /> : null}
               {message.role === 'assistant' && message.content.includes('```') ? (
                 <button type="button" disabled={busy} onClick={() => onAdoptCode(index)}>
                   Adopt code
@@ -431,6 +432,100 @@ function revisionMessageFor(messages: AssistantMessage[], assistantIndex: number
     }
   }
   return 'AI generated changes'
+}
+
+function checkIcon(status: string): string {
+  if (status === 'pass') return '✅'
+  if (status === 'fail') return '❌'
+  if (status === 'warn') return '⚠️'
+  if (status === 'skipped') return '⏭'
+  return '•'
+}
+
+function AcceptanceCard({ acceptance }: { acceptance: ModifyAcceptance }) {
+  const t = useT()
+  const delta = acceptance.geometry_delta
+  const meshFrom = delta.mesh_count?.from
+  const meshTo = delta.mesh_count?.to
+  const bboxFrom = delta.bbox_size?.from
+  const bboxTo = delta.bbox_size?.to
+  const countsFrom = delta.counts_2d?.from
+  const countsTo = delta.counts_2d?.to
+  const hasGeometryCompare =
+    meshFrom !== undefined || meshTo !== undefined ||
+    bboxFrom !== undefined || bboxTo !== undefined ||
+    countsFrom !== undefined || countsTo !== undefined
+  return (
+    <div className="acceptance-card">
+      <strong className="acceptance-title">{t('assistant.acceptance.title')}</strong>
+      {acceptance.summary_lines?.length ? (
+        <ul className="acceptance-summary">
+          {acceptance.summary_lines.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
+      {hasGeometryCompare ? (
+        <div className="acceptance-geometry">
+          <strong>{t('assistant.acceptance.geometry')}</strong>
+          <table className="acceptance-geometry-table">
+            <thead>
+              <tr>
+                <th />
+                <th>{t('assistant.acceptance.before')}</th>
+                <th>{t('assistant.acceptance.after')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {meshFrom !== undefined || meshTo !== undefined ? (
+                <tr>
+                  <td>{t('assistant.acceptance.meshCount')}</td>
+                  <td>{meshFrom ?? '—'}</td>
+                  <td>{meshTo ?? '—'}</td>
+                </tr>
+              ) : null}
+              {bboxFrom !== undefined || bboxTo !== undefined ? (
+                <tr>
+                  <td>{t('assistant.acceptance.bbox')}</td>
+                  <td>{formatSize(bboxFrom)}</td>
+                  <td>{formatSize(bboxTo)}</td>
+                </tr>
+              ) : null}
+              {countsFrom !== undefined || countsTo !== undefined ? (
+                <tr>
+                  <td>{t('assistant.acceptance.counts2d')}</td>
+                  <td>{formatCounts(countsFrom)}</td>
+                  <td>{formatCounts(countsTo)}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+          {delta.reason ? <p className="acceptance-geometry-note">{delta.reason}</p> : null}
+        </div>
+      ) : null}
+      {acceptance.checks?.length ? (
+        <ul className="acceptance-checks">
+          {acceptance.checks.map((check, i) => (
+            <li key={i} className={`acceptance-check status-${check.status}`}>
+              <span className="acceptance-check-icon">{checkIcon(check.status)}</span>
+              <span className="acceptance-check-name">{check.name}</span>
+              <span className="acceptance-check-detail">{check.detail}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function formatSize(size?: number[] | null): string {
+  if (!size || !size.length) return '—'
+  return size.map((v) => Number(v.toFixed(3))).join('×')
+}
+
+function formatCounts(counts?: { lines: number; polygons: number; circles: number; arcs: number } | null): string {
+  if (!counts) return '—'
+  return `${counts.lines}/${counts.polygons}/${counts.circles}/${counts.arcs}`
 }
 
 function PlanConfirmCard({

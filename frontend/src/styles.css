@@ -3450,3 +3450,66 @@ button:focus-visible {
   color: var(--text-primary);
 }
 
+/* ── MODIFY 验收报告卡（V5） ─────────────────────────── */
+.acceptance-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 8px;
+  background: var(--bg-muted, rgba(127, 127, 127, 0.06));
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.acceptance-title {
+  font-size: 13px;
+}
+
+.acceptance-summary {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.acceptance-geometry-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.acceptance-geometry-table th,
+.acceptance-geometry-table td {
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  padding: 3px 8px;
+  text-align: left;
+}
+
+.acceptance-geometry-note {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+
+.acceptance-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.acceptance-check {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.acceptance-check-name {
+  font-weight: 600;
+}
+
+.acceptance-check.status-fail .acceptance-check-name {
+  color: var(--danger, #c0392b);
+}
+

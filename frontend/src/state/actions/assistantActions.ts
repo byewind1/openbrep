@@ -104,7 +104,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         ? `${result.assistant.reply}${suffix}`
         : formatAssistantRequestError(result.error, 'Generation request failed.')
     const replyExtras = result.ok
-      ? { changedFiles, verification: result.assistant?.verification ?? undefined, thinkingSteps: [...thinkingSteps] }
+      ? {
+          changedFiles,
+          verification: result.assistant?.verification ?? undefined,
+          acceptance: result.assistant?.acceptance ?? undefined,
+          thinkingSteps: [...thinkingSteps],
+        }
       : { errorCategory: classifyAssistantError(finalReply), thinkingSteps: [...thinkingSteps] }
     set((state) => ({
       assistantBusy: false,
@@ -311,7 +316,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           ? `${result.assistant.reply}${suffix}${eventSummary}`
           : formatAssistantRequestError(result.error, 'Generation request failed.')
       const replyExtras = result.ok
-        ? { changedFiles, verification: result.assistant?.verification ?? undefined }
+        ? { changedFiles, verification: result.assistant?.verification ?? undefined, acceptance: result.assistant?.acceptance ?? undefined }
         : { errorCategory: classifyAssistantError(reply) }
       set((state) => ({
         assistantBusy: false,

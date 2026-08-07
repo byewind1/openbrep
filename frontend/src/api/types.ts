@@ -358,6 +358,22 @@ export interface FileChoiceResult {
   error?: string
 }
 
+// ── MODIFY 验收报告（V5）：确定性自然语言摘要 + 前后几何对比 ─────────────
+export interface ModifyAcceptance {
+  summary_lines: string[]
+  geometry_delta: {
+    status: 'ok' | 'unchanged' | 'before_unavailable' | 'after_unavailable'
+    reason?: string
+    mesh_count?: { from: number | null; to: number | null }
+    bbox_size?: { from: number[] | null; to: number[] | null }
+    counts_2d?: {
+      from: { lines: number; polygons: number; circles: number; arcs: number } | null
+      to: { lines: number; polygons: number; circles: number; arcs: number } | null
+    }
+  }
+  checks: Array<{ name: string; status: string; detail: string }>
+}
+
 export interface AssistantMessage {
   role: 'user' | 'assistant'
   content: string
@@ -369,6 +385,8 @@ export interface AssistantMessage {
   interrupted?: boolean
   // 流式生成过程中的结构化思考步骤，用于时间线展示
   thinkingSteps?: AssistantThinkingStep[]
+  // MODIFY 验收报告（V5）：结果卡渲染摘要 + 前后几何对比
+  acceptance?: ModifyAcceptance
 }
 
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────
@@ -588,6 +606,7 @@ export interface GenerateResult {
     changed_files: string[]
     intent: string
     verification?: VerificationReport | null
+    acceptance?: ModifyAcceptance | null
   } | null
   preview?: PreviewPayload | null
   warnings?: string[]

@@ -338,6 +338,11 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     )
     tools = registry.definitions()
 
+    # 修改前状态（验收用）：参数值快照 + 预览几何摘要，必须在任何修改前取
+    from openbrep.runtime.modify_acceptance import build_modify_acceptance, preview_geometry_summary
+    before_params = [(p.name, p.value) for p in project.parameters]
+    before_preview = preview_geometry_summary(project)
+
     llm_calls = 0
     tool_calls_used = 0
     budget_exhausted = False
@@ -504,6 +509,24 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     if plan_failed_note:
         output_parts.append(plan_failed_note)
 
+    # ── 验收报告（V5）：参数 diff + 前后几何对比 + 验证结论（确定性，不调 LLM） ──
+    after_params = [(p.name, p.value) for p in project.parameters]
+    before_map = dict(before_params)
+    after_map = dict(after_params)
+    parameter_changes = [
+        {"name": name, "from": before_map.get(name), "to": after_map.get(name)}
+        for name in sorted(set(before_map) | set(after_map))
+        if before_map.get(name) != after_map.get(name)
+    ]
+    acceptance = build_modify_acceptance(
+        before=before_preview,
+        after=preview_geometry_summary(project),
+        parameter_changes=parameter_changes,
+        changed_files=list(registry.changed_files.keys()),
+        compile_result=compile_result,
+        semantic_issues=[issue.detail for issue in semantic_result.issues if issue.blocking],
+    )
+
     # diff 范围护栏（v1 advisory）：update_script 全量替换且变更行 > 50% 时警告
     diff_warnings, diff_ratios = registry.diff_scope_warnings()
     if diff_warnings:
@@ -544,7 +567,8 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                     "ratios": diff_ratios,
                     "write_methods": dict(registry.write_methods),
                 }
-            }
+            },
+            "acceptance": acceptance,
         },
     )
 

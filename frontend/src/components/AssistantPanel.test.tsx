@@ -192,3 +192,61 @@ describe('AssistantPanel plan confirmation card (V3)', () => {
     expect(screen.getByRole('button', { name: '取消' })).toHaveProperty('disabled', true)
   })
 })
+
+
+describe('AssistantPanel acceptance report card (V5)', () => {
+  const acceptance = {
+    summary_lines: ['参数 shelf_count 从 2 改为 5', '几何体数量从 1 变为 2'],
+    geometry_delta: {
+      status: 'ok' as const,
+      reason: '',
+      mesh_count: { from: 1, to: 2 },
+      bbox_size: { from: [1, 0.4, 1.8], to: [1, 0.4, 2] },
+    },
+    checks: [
+      { name: 'compile', status: 'pass', detail: '编译通过' },
+      { name: 'semantic', status: 'fail', detail: '1 个阻塞问题' },
+    ],
+  }
+
+  test('renders summary lines, before/after geometry comparison and checks', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        messages={[{ role: 'assistant', content: '改好了。', acceptance }]}
+      />,
+    )
+    expect(screen.getByText('验收报告')).toBeTruthy()
+    expect(screen.getByText('参数 shelf_count 从 2 改为 5')).toBeTruthy()
+    expect(screen.getByText('几何体数量从 1 变为 2')).toBeTruthy()
+    // 前后对比表
+    expect(screen.getByText('修改前')).toBeTruthy()
+    expect(screen.getByText('修改后')).toBeTruthy()
+    expect(screen.getByText('1×0.4×1.8')).toBeTruthy()
+    expect(screen.getByText('1×0.4×2')).toBeTruthy()
+    // checks
+    expect(screen.getByText('编译通过')).toBeTruthy()
+    expect(screen.getByText('1 个阻塞问题')).toBeTruthy()
+  })
+
+  test('does not render geometry table when no computable delta', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        messages={[{
+          role: 'assistant',
+          content: '改好了。',
+          acceptance: {
+            summary_lines: ['几何未发生变化'],
+            geometry_delta: { status: 'unchanged' },
+            checks: [{ name: 'compile', status: 'pass', detail: '编译通过' }],
+          },
+        }]}
+      />,
+    )
+    expect(screen.getByText('几何未发生变化')).toBeTruthy()
+    expect(screen.queryByText('修改前')).toBeNull()
+  })
+})

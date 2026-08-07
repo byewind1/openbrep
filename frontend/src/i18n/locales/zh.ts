@@ -113,6 +113,15 @@ export const zh = {
   'assistant.plan.risk': '风险',
   'assistant.plan.confirm': '确认修改',
   'assistant.plan.cancel': '取消',
+
+  // MODIFY acceptance report (V5)
+  'assistant.acceptance.title': '验收报告',
+  'assistant.acceptance.geometry': '几何对比',
+  'assistant.acceptance.before': '修改前',
+  'assistant.acceptance.after': '修改后',
+  'assistant.acceptance.meshCount': '几何体数量',
+  'assistant.acceptance.bbox': '包围盒尺寸',
+  'assistant.acceptance.counts2d': '平面元素（线/多边形/圆/弧）',
 } as const
 
 export type LocaleKey = keyof typeof zh

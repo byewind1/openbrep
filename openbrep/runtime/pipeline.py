@@ -935,6 +935,8 @@ class TaskPipeline:
         # 快照"修改前"状态 + 改值 + 落盘：复用与 MCP apply_edit 同一落盘语义
         # （openbrep/runtime/micro_modify.apply_parameter_value）。
         # revision 拷的是磁盘状态，必须先于内存修改 + save_to_disk。
+        from openbrep.runtime.modify_acceptance import preview_geometry_summary
+        before_preview = preview_geometry_summary(project)  # before 预览必须在应用前取
         _revision_id, revision_warnings = apply_parameter_value(
             project,
             micro.param_name,
@@ -953,6 +955,10 @@ class TaskPipeline:
         )
         on_event("status", {"stage": "modify", "message": f"✏️ 已更新参数 {micro.param_name}"})
 
+        # 修改后预览摘要（before 已在应用前取）
+        from openbrep.runtime.modify_acceptance import preview_geometry_summary
+        after_preview = preview_geometry_summary(project)
+
         compile_result: Optional[CompileResult] = None
         try:
             compiler = self._make_compiler()
@@ -968,15 +974,30 @@ class TaskPipeline:
             logger.warning("micro-modify compile failed: %s", exc)
 
         semantic_note = ""
+        semantic_issues: list[str] = []
         try:
             from openbrep.semantic_verifier import verify_semantics
 
             semantic_result = verify_semantics(project)
             blocking = [issue for issue in semantic_result.issues if issue.blocking]
+            semantic_issues = [issue.detail for issue in blocking]
             if blocking:
                 semantic_note = "⚠️ 几何验证警告：\n" + "\n".join(f"- {issue.detail}" for issue in blocking)
         except Exception:
             pass
+
+        # 确定性验收摘要（不调 LLM）：参数变更 + 前后几何对比 + 验证结论
+        from openbrep.runtime.modify_acceptance import build_modify_acceptance
+        acceptance = build_modify_acceptance(
+            before=before_preview,
+            after=after_preview,
+            parameter_changes=[{"name": micro.param_name, "from": micro.old_value, "to": micro.new_value}],
+            changed_files=["paramlist.xml"],
+            compile_result=compile_result,
+            semantic_issues=semantic_issues,
+            revision_id=_revision_id,
+            revision_warnings=revision_warnings,
+        )
 
         output_parts = [
             f"✅ 已将参数 `{micro.param_name}` 从 `{micro.old_value}` 改为 `{micro.new_value}`"
@@ -999,6 +1020,7 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=revision_warnings,
+            metadata={"acceptance": acceptance},
         )
 
     def _try_param_modify(self, request: TaskRequest) -> Optional[TaskResult]:
@@ -1059,6 +1081,8 @@ class TaskPipeline:
 
         # 快照→应用→落盘（与微修改同一落盘语义）+ 变更守护；
         # revision 拷的是磁盘状态，必须先于内存修改 + save_to_disk。
+        from openbrep.runtime.modify_acceptance import preview_geometry_summary
+        before_preview = preview_geometry_summary(project)  # before 预览必须在应用前取
         plan_metadata = {"param_modify": {"plan": plan.to_dict()}}
         outcome = apply_param_modify(
             project,
@@ -1095,6 +1119,27 @@ class TaskPipeline:
         except Exception:
             pass
 
+        # 确定性验收摘要（不调 LLM）：参数变更 + 前后几何对比 + 验证结论
+        from openbrep.runtime.modify_acceptance import build_modify_acceptance, preview_geometry_summary
+        after_preview = preview_geometry_summary(project)
+        acceptance = build_modify_acceptance(
+            before=before_preview,
+            after=after_preview,
+            parameter_changes=[
+                {
+                    "name": op.param or op.from_name or op.name,
+                    "from": op.old_value or (op.from_name or ""),
+                    "to": op.value if op.value is not None else (op.name or ""),
+                }
+                for op in plan.operations
+            ],
+            changed_files=outcome.changed_files or [],
+            compile_result=compile_result,
+            semantic_issues=semantic_issues,
+            revision_id=outcome.revision_id,
+            revision_warnings=outcome.warnings,
+        )
+
         output_parts = [
             "✅ 已执行确定性参数修改（LLM 仅做意图解析，未改写 GDL 代码）",
             "\n".join(f"- {line}" for line in op_lines),
@@ -1122,7 +1167,8 @@ class TaskPipeline:
                     "compile_success": compile_result.success if compile_result is not None else None,
                     "semantic_issues": semantic_issues,
                     "changed_files": outcome.changed_files or [],
-                }
+                },
+                "acceptance": acceptance,
             },
         )
 
