@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from openbrep.compiler import CompileResult
+from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import ToolCall, ToolDefinition
@@ -311,6 +312,17 @@ class ModifyToolRegistry:
         for i, patch in enumerate(normalized):
             count = working.count(patch["old"])
             if count == 0:
+                # 反馈信号采集（best-effort，不改判定）：匹配 0 次 → patch_failure
+                append_feedback(self.project.root, {
+                    "kind": "patch_failure",
+                    "summary": f"patch_script 匹配 0 次：{file_path}",
+                    "detail": {
+                        "file_path": file_path,
+                        "match_count": 0,
+                        "patch_index": i,
+                        "old_excerpt": patch["old"],
+                    },
+                })
                 return ToolExecutionResult(
                     name="patch_script", ok=False,
                     summary=(
@@ -319,6 +331,17 @@ class ModifyToolRegistry:
                     ),
                 )
             if count > 1:
+                # 反馈信号采集（best-effort，不改判定）：匹配多次（非唯一）→ patch_failure
+                append_feedback(self.project.root, {
+                    "kind": "patch_failure",
+                    "summary": f"patch_script 匹配 {count} 次（非唯一）：{file_path}",
+                    "detail": {
+                        "file_path": file_path,
+                        "match_count": count,
+                        "patch_index": i,
+                        "old_excerpt": patch["old"],
+                    },
+                })
                 return ToolExecutionResult(
                     name="patch_script", ok=False,
                     summary=(

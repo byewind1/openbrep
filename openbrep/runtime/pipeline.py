@@ -38,6 +38,7 @@ from openbrep.explainer.service import explain_parameter_context, explain_projec
 from openbrep.compiler import CompileComparison, CompileResult, CompileSnapshot, HSFCompiler, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
+from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
@@ -828,6 +829,22 @@ class TaskPipeline:
             )
         # ─────────────────────────────────────────────────────────────────────
 
+        # 反馈信号采集（只采集，best-effort；不改判定）：
+        # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
+        if _sem_outcome.rounds_attempted > 0:
+            append_feedback(project.root, {
+                "kind": "semantic_repair_outcome",
+                "summary": (
+                    f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"
+                    f"接受 {_sem_outcome.accepted_rounds} 轮"
+                ),
+                "detail": {
+                    "attempted": _sem_outcome.rounds_attempted,
+                    "accepted": _sem_outcome.accepted_rounds,
+                    "intent": request.intent or "CREATE",
+                },
+            })
+
         create_text_parts = []
         if object_plan is not None:
             create_text_parts.append(object_plan.to_user_summary())
@@ -1055,8 +1072,16 @@ class TaskPipeline:
 
         # 一次 LLM 调用做意图解析；失败/校验不过即回落，不重试
         llm = self._make_llm(request)
-        plan = parse_param_modify(instruction, project, llm)
+        fallback_reasons: list[str] = []
+        plan = parse_param_modify(instruction, project, llm, on_fallback=fallback_reasons.append)
         if plan is None:
+            # 采集 DSL 回落信号（best-effort；reason 由 parse_param_modify 透出）
+            reason = fallback_reasons[-1] if fallback_reasons else "unknown"
+            append_feedback(project.root, {
+                "kind": "dsl_fallback",
+                "summary": f"参数级修改 DSL 回落 LLM 路径（{reason}）",
+                "detail": {"reason": reason, "instruction": instruction},
+            })
             return None
 
         op_lines = [format_op_summary(op) for op in plan.operations]
@@ -1420,6 +1445,22 @@ class TaskPipeline:
         lint_summary = _sem_outcome.lint_summary
         auto_repair_info = _sem_outcome.auto_repair_info
         # ─────────────────────────────────────────────────────────────────────
+
+        # 反馈信号采集（只采集，best-effort；不改判定）：
+        # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
+        if _sem_outcome.rounds_attempted > 0:
+            append_feedback(project.root, {
+                "kind": "semantic_repair_outcome",
+                "summary": (
+                    f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"
+                    f"接受 {_sem_outcome.accepted_rounds} 轮"
+                ),
+                "detail": {
+                    "attempted": _sem_outcome.rounds_attempted,
+                    "accepted": _sem_outcome.accepted_rounds,
+                    "intent": request.intent or "MODIFY",
+                },
+            })
 
         compile_comparison: CompileComparison | None = None
         if before_compile_snapshot is not None:

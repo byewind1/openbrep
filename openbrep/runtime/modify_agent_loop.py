@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Optional
 
 from openbrep.compiler import CompileResult
 from openbrep.core import GDLAgent
+from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject
 from openbrep.llm import assistant_tool_calls_message, tool_result_message
@@ -480,6 +481,28 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         # 预算耗尽/取消导致门禁未运行：为报告补一次语义验证（never raises）
         from openbrep.semantic_verifier import verify_semantics
         semantic_result = verify_semantics(project)
+
+    # ── 反馈信号采集（只采集，best-effort；不改变任何判定/交付语义）──
+    if not cancelled:
+        blocking_issues = [issue for issue in semantic_result.issues if issue.blocking]
+        if gate_unresolved and compile_result is not None and not compile_result.success:
+            append_feedback(project.root, {
+                "kind": "compile_failure",
+                "summary": (compile_result.stderr or compile_result.stdout or "compile failed"),
+                "detail": {
+                    "stage": "completion_gate",
+                    "error": (compile_result.stderr or "")[:600],
+                },
+            })
+        if blocking_issues:
+            append_feedback(project.root, {
+                "kind": "semantic_blocking",
+                "summary": "；".join(issue.detail for issue in blocking_issues),
+                "detail": {
+                    "stage": "completion_gate",
+                    "checks": [issue.check_type for issue in blocking_issues],
+                },
+            })
 
     # ── 组装输出：AI 总结 + loop 状态块（预算/工具记录/编译结果） ──
     output_parts: list[str] = []

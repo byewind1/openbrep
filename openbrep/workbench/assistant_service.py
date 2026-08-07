@@ -16,6 +16,7 @@ from openbrep.explainer.service import (
     explain_project_context,
     explain_script_context,
 )
+from openbrep.feedback import append_feedback
 from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
@@ -243,6 +244,14 @@ class WorkbenchAssistantService:
             return {"ok": False, "code": "NO_PENDING_PLAN", "error": "待确认的修改计划已失效（项目已切换），请重新发起修改。"}
         self.session.pending_plan = None
         if body.get("approve") is not True:
+            # 反馈信号采集（best-effort，不改判定）：用户拒绝计划 → plan_rejected
+            plan = pending.get("plan") or {}
+            intent_summary = str(plan.get("intent_summary") or "").strip()
+            append_feedback(self.session.source_path, {
+                "kind": "plan_rejected",
+                "summary": intent_summary or "用户拒绝了修改计划",
+                "detail": {"intent_summary": intent_summary},
+            })
             return {"ok": True, "cancelled": True, "message": "已取消本次修改。"}
 
         plan = pending["plan"]

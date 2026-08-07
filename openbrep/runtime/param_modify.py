@@ -356,24 +356,47 @@ def _extract_json(text: str) -> Optional[Any]:
     return None
 
 
+def _notify_fallback(on_fallback, reason: str) -> None:
+    """把回落 reason 透出给调用方（question/compound/non_param/…）。
+
+    best-effort：回调自身抛异常也不影响回落语义（调用方只用于采集）。
+    """
+    if on_fallback is None:
+        return
+    try:
+        on_fallback(reason)
+    except Exception:
+        logger.warning("param_modify fallback callback failed for %r", reason, exc_info=True)
+
+
 def parse_param_modify(
     instruction: str,
     project: HSFProject,
     llm: Any,
+    *,
+    on_fallback=None,
 ) -> Optional[ParamModifyPlan]:
     """一次 LLM 调用把自然语言解析成 ParamModifyPlan；任何失败返回 None 回落。
 
     llm 需有 generate(messages, **kwargs) -> LLMResponse（content 字段）。
     温度 0 / max_tokens 1024 / 非流式：从简、失败不重试（省 token）。
+
+    on_fallback：可选回调，每次回落返回 None 前以 reason 字符串调用一次
+    （question / compound / non_param / bad_json / validation / llm_error）；
+    返回 None 的回落语义不变，调用方可用它采集 dsl_fallback 信号。
     """
     text = (instruction or "").strip()
     if not text or not project.parameters:
+        _notify_fallback(on_fallback, "non_param")
         return None
     if any(hint in text for hint in _QUESTION_HINTS):
+        _notify_fallback(on_fallback, "question")
         return None  # 疑问句不是修改指令
     if any(hint in text for hint in _EXTRA_WORK_HINTS):
+        _notify_fallback(on_fallback, "compound")
         return None  # "顺便/再帮"带额外非参数工作，直接回落
     if not _mentions_param_level(text, project):
+        _notify_fallback(on_fallback, "non_param")
         return None  # 非参数级请求，不浪费一次 LLM 调用
 
     try:
@@ -381,13 +404,16 @@ def parse_param_modify(
         resp = llm.generate(messages, temperature=0.0, max_tokens=1024, stream=False)
     except Exception as exc:
         logger.warning("param_modify 意图解析 LLM 调用失败，回落: %s", exc)
+        _notify_fallback(on_fallback, "llm_error")
         return None
 
     data = _extract_json(getattr(resp, "content", "") or "")
     if not isinstance(data, dict):
+        _notify_fallback(on_fallback, "bad_json")
         return None  # JSON 不合法
     ops = _validate_ops(data.get("operations"), project)
     if ops is None:
+        _notify_fallback(on_fallback, "validation")
         return None  # 空操作或任一 op 校验不过
     return ParamModifyPlan(operations=ops, raw=data)
 
