@@ -3450,6 +3450,78 @@ button:focus-visible {
   color: var(--text-primary);
 }
 
+/* ── 模式级 skill 提案卡（P2-d） ──────────────────────── */
+.skill-proposal-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-muted, rgba(127, 127, 127, 0.08));
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-proposal-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.skill-proposal-header strong {
+  font-size: 13px;
+}
+
+.skill-proposal-type {
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+.skill-proposal-name {
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+}
+
+.skill-proposal-content {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(127, 127, 127, 0.08);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.skill-proposal-section ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.skill-proposal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.skill-proposal-actions button {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.skill-proposal-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── MODIFY 验收报告卡（V5） ─────────────────────────── */
 .acceptance-card {
   margin-top: 10px;

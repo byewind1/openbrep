@@ -439,7 +439,16 @@ class WorkbenchProjectSessionService:
         self.session.source = "hsf"
         self.session.source_path = hsf_dir
         self.remember_project_path(hsf_dir)
-        return {
+        # 模式级 skill 提案（GUI 侧通道，best-effort；提炼失败不影响交付）
+        proposal = None
+        try:
+            if getattr(self.session, "skill_harvest_enabled", True):
+                from openbrep.runtime.skill_harvest import harvest_for_session
+
+                proposal = harvest_for_session(self.session, result, prompt)
+        except Exception:
+            logger.warning("skill harvest skipped after create (best-effort)", exc_info=True)
+        response: dict[str, Any] = {
             "ok": True,
             "assistant": {
                 "kind": "create",
@@ -451,6 +460,9 @@ class WorkbenchProjectSessionService:
             "events": events,
             **self.session.snapshot(),
         }
+        if proposal:
+            response["skill_proposal"] = proposal
+        return response
 
     def new_project(self) -> dict[str, Any]:
         project = HSFProject.create_new(UNTITLED_PROJECT_NAME)

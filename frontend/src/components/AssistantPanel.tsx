@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, VerificationReport } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, SkillProposal, VerificationReport } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
@@ -24,6 +24,9 @@ interface AssistantPanelProps {
   // 计划确认门（V3）：待确认计划 + 确认/取消回调
   pendingPlan?: PendingPlan | null
   onConfirmPlan?: (approve: boolean) => void
+  // 模式级 skill 提案（P2-d）：待确认提案 + 沉淀/忽略回调
+  pendingSkillProposal?: SkillProposal | null
+  onConfirmSkillProposal?: (approve: boolean) => void
 }
 
 const SLASH_COMMANDS = [
@@ -47,6 +50,8 @@ export function AssistantPanel({
   onModelChange,
   pendingPlan = null,
   onConfirmPlan,
+  pendingSkillProposal = null,
+  onConfirmSkillProposal,
 }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
   const [image, setImage] = useState<AssistantImageAttachment | null>(null)
@@ -275,6 +280,9 @@ export function AssistantPanel({
           <p className="assistant-empty">Ready</p>
         )}
         {pendingPlan ? <PlanConfirmCard plan={pendingPlan} busy={busy} onConfirm={onConfirmPlan} /> : null}
+        {pendingSkillProposal ? (
+          <SkillProposalCard proposal={pendingSkillProposal} busy={busy} onConfirm={onConfirmSkillProposal} />
+        ) : null}
       </div>
       <form className="assistant-input" onSubmit={submitMessage}>
         <div className="assistant-input-wrap">
@@ -571,6 +579,58 @@ function PlanConfirmCard({
         </button>
         <button type="button" className="plan-confirm-reject" disabled={busy} onClick={() => onConfirm?.(false)}>
           {t('assistant.plan.cancel')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SkillProposalCard({
+  proposal,
+  busy,
+  onConfirm,
+}: {
+  proposal: SkillProposal
+  busy: boolean
+  onConfirm?: (approve: boolean) => void
+}) {
+  const t = useT()
+  const evidence = proposal.evidence ?? null
+  return (
+    <div className="skill-proposal-card" role="group" aria-label={t('assistant.skillProposal.title')}>
+      <div className="skill-proposal-header">
+        <strong>{t('assistant.skillProposal.title')}</strong>
+        <span className="skill-proposal-type">{proposal.pattern_type}</span>
+      </div>
+      <p className="skill-proposal-name">{proposal.name}</p>
+      <pre className="skill-proposal-content">{proposal.content}</pre>
+      {evidence && (evidence.changed_files?.length || evidence.project) ? (
+        <div className="skill-proposal-section">
+          <strong>{t('assistant.skillProposal.evidence')}</strong>
+          <ul>
+            {evidence.project ? <li>{t('assistant.skillProposal.project')}: {evidence.project}</li> : null}
+            {(evidence.changed_files ?? []).map((file, i) => (
+              <li key={`${file}-${i}`}>{file}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="skill-proposal-actions">
+        <button
+          type="button"
+          className="plan-confirm-approve"
+          disabled={busy}
+          onClick={() => onConfirm?.(true)}
+        >
+          {t('assistant.skillProposal.approve')}
+        </button>
+        <button
+          type="button"
+          className="plan-confirm-reject"
+          disabled={busy}
+          onClick={() => onConfirm?.(false)}
+        >
+          {t('assistant.skillProposal.ignore')}
         </button>
       </div>
     </div>

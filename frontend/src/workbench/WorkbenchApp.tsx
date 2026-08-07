@@ -45,6 +45,7 @@ export function WorkbenchApp() {
   const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
   const pendingPlan = useWorkbenchStore((state) => state.pendingPlan)
+  const pendingSkillProposal = useWorkbenchStore((state) => state.pendingSkillProposal)
   const scripts = useWorkbenchStore((state) => state.scripts)
   const recentProjects = useWorkbenchStore((state) => state.recentProjects)
   const revisions = useWorkbenchStore((state) => state.revisions)
@@ -133,6 +134,7 @@ export function WorkbenchApp() {
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
   const sendChat = useWorkbenchStore((state) => state.sendChat)
   const confirmPendingPlan = useWorkbenchStore((state) => state.confirmPendingPlan)
+  const confirmPendingSkillProposal = useWorkbenchStore((state) => state.confirmPendingSkillProposal)
   const stopChat = useWorkbenchStore((state) => state.stopChat)
   const interruptedContext = useWorkbenchStore((state) => state.interruptedContext)
   const openScript = useWorkbenchStore((state) => state.openScript)
@@ -356,6 +358,8 @@ export function WorkbenchApp() {
             assistantBusy={assistantBusy}
             pendingPlan={pendingPlan}
             onConfirmPlan={(approve) => void confirmPendingPlan(approve)}
+            pendingSkillProposal={pendingSkillProposal}
+            onConfirmSkillProposal={(approve) => void confirmPendingSkillProposal(approve)}
             onSetActiveRailPanel={setActiveRailPanel}
             onLoadPreview3D={() => void loadPreview3D()}
             onLoadPreview2D={() => void loadPreview2D()}

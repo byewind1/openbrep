@@ -347,6 +347,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     generateWithAssistantStream: async () => ({ ok: false, error: 'not loaded' }),
     requestModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
     confirmModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
+    confirmSkillProposal: async () => ({ ok: false, error: 'not loaded' }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
       changed: parameters,
@@ -2596,4 +2597,96 @@ test('confirmPendingPlan without a pending plan sets lastError (V3)', async () =
   await store.getState().load()
   await store.getState().confirmPendingPlan(true)
   expect(store.getState().lastError).toContain('没有待确认的修改计划')
+})
+// ── 模式级 skill 提案（P2-d） ─────────────────────────────
+
+const SKILL_PROPOSAL = {
+  name: 'shelf_loop_pattern',
+  pattern_type: 'shelf_loop',
+  content: '## 适用场景 / When to Use\n层板循环对象。\n\n## 写法要点\n- FOR 循环 + ADD/DEL 配对。',
+  evidence: { intent: 'MODIFY', changed_files: ['scripts/3d.gdl'], project: 'Shelf' },
+}
+
+test('sendChat stores skill proposal from generate result (P2-d)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      requestModifyPlan: async () => ({
+        ok: true,
+        assistant: { kind: 'generate', reply: '修改完成。', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+        skill_proposal: SKILL_PROPOSAL,
+        plan_failed: true,
+      }),
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+
+  expect(store.getState().pendingSkillProposal).toEqual(SKILL_PROPOSAL)
+})
+
+test('successful generate without proposal clears stale skill proposal (P2-d)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      requestModifyPlan: async () => ({
+        ok: true,
+        assistant: { kind: 'generate', reply: '修改完成。', changed_files: [], intent: 'MODIFY' },
+        skill_proposal: null,
+        plan_failed: true,
+      }),
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+  await store.getState().sendChat('给书架加一层层板')
+
+  expect(store.getState().pendingSkillProposal).toBeNull()
+})
+
+test('confirmPendingSkillProposal(true) approves and clears the proposal (P2-d)', async () => {
+  let approveArg: boolean | null = null
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async (approve: boolean) => {
+        approveArg = approve
+        return { ok: true, skill: 'shelf_loop_pattern', verified: true, gate: 'structural', status: 'verified' }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+
+  await store.getState().confirmPendingSkillProposal(true)
+
+  const state = store.getState()
+  expect(approveArg).toBe(true)
+  expect(state.pendingSkillProposal).toBeNull()
+  expect(state.assistantMessages.at(-1)?.content).toContain('已沉淀并通过验证')
+})
+
+test('confirmPendingSkillProposal(false) discards the proposal (P2-d)', async () => {
+  let approveArg: boolean | null = null
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async (approve: boolean) => {
+        approveArg = approve
+        return { ok: true, discarded: true, message: '已丢弃 skill 提案。' }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+
+  await store.getState().confirmPendingSkillProposal(false)
+
+  const state = store.getState()
+  expect(approveArg).toBe(false)
+  expect(state.pendingSkillProposal).toBeNull()
+  expect(state.assistantMessages.at(-1)?.content).toContain('已丢弃')
+})
+
+test('confirmPendingSkillProposal without a pending proposal sets lastError (P2-d)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  await store.getState().confirmPendingSkillProposal(true)
+  expect(store.getState().lastError).toContain('没有待确认的 skill 提案')
 })

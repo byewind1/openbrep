@@ -42,6 +42,7 @@ import type {
   SaveAssistantHistoryResult,
   SaveScriptResponse,
   SaveRevisionResponse,
+  SkillProposalConfirmResult,
   SummarizeMemoryResult,
   TapirActionResult,
   TapirStatusResult,
@@ -951,6 +952,23 @@ export async function confirmModifyPlan(
     return (await response.json()) as GenerateResult
   }
   return readAssistantStream(response, onEvent, signal)
+}
+
+/** 模式级 skill 提案（P2-d）：审批待确认提案；approve → propose+verify 双闸晋升。 */
+export async function confirmSkillProposal(
+  approve: boolean,
+  signal?: AbortSignal,
+): Promise<SkillProposalConfirmResult> {
+  return requestJson<SkillProposalConfirmResult>(
+    '/api/skill/confirm',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approve }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+    signal,
+  )
 }
 
 export async function listProjectScripts(): Promise<ProjectScriptsResponse> {

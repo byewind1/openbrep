@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_service import validate_image_payload
 from openbrep.workbench.view_models import classify_code_blocks, classify_vision_error
+
+logger = logging.getLogger(__name__)
 
 
 class WorkbenchAssistantService:
@@ -162,7 +165,9 @@ class WorkbenchAssistantService:
         if result.project is not None:
             self.session.project = result.project
         self.session.project.save_to_disk()
-        return {
+        # 模式级 skill 提案（GUI 侧通道，best-effort；提炼失败不影响交付）
+        proposal = self._safe_harvest(result, message)
+        response: dict[str, Any] = {
             "ok": True,
             "assistant": {
                 "kind": "generate",
@@ -176,6 +181,9 @@ class WorkbenchAssistantService:
             "warnings": [],
             "events": events,
         }
+        if proposal:
+            response["skill_proposal"] = proposal
+        return response
 
     def _generate_with_confirmation(self, body: dict[str, Any]) -> dict[str, Any]:
         """confirm_plan=True 的 MODIFY 请求：先做一次计划调用，返回 awaiting_confirmation。
@@ -214,7 +222,10 @@ class WorkbenchAssistantService:
         if result.project is not None:
             self.session.project = result.project
         self.session.project.save_to_disk()
-        return {
+        # 模式级 skill 提案（best-effort；提炼失败不影响交付）
+        instruction = str(body.get("message") or "").strip()
+        proposal = self._safe_harvest(result, instruction)
+        response: dict[str, Any] = {
             "ok": True,
             "assistant": {
                 "kind": "generate",
@@ -229,6 +240,9 @@ class WorkbenchAssistantService:
             "events": events,
             "plan_failed": True,
         }
+        if proposal:
+            response["skill_proposal"] = proposal
+        return response
 
     def confirm_modify(self, body: dict[str, Any]):
         """POST /api/modify/confirm：审批待确认计划。
@@ -264,6 +278,41 @@ class WorkbenchAssistantService:
             cancel_event = threading.Event()
             return self.generate_with_assistant_stream(request_body, cancel_event=cancel_event)
         return self.generate_with_assistant(request_body)
+
+    # ── 模式级 skill 提案（GUI 侧通道，best-effort；不进 pipeline 默认路径）──
+
+    def _safe_harvest(self, result, instruction: str) -> dict[str, Any] | None:
+        """调用边界兜底：提炼任何异常都静默，绝不阻塞已完成的修改交付。"""
+        try:
+            return self._harvest_skill_proposal(result, instruction)
+        except Exception as exc:
+            logger.warning("skill harvest skipped (best-effort): %s", exc)
+            return None
+
+    def _harvest_skill_proposal(self, result, instruction: str) -> dict[str, Any] | None:
+        """成功 TaskResult → 提炼模式级 skill 提案并存 session.pending_skill_proposal。
+
+        返回提案（响应携带 skill_proposal 字段）；门禁不过/提炼失败/去重命中
+        返回 None。任何异常静默，绝不阻塞已完成的修改交付。
+        """
+        from openbrep.runtime.skill_harvest import harvest_for_session
+
+        return harvest_for_session(self.session, result, instruction)
+
+    def confirm_skill_proposal(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/skill/confirm：审批待确认 skill 提案。
+
+        approve=True → propose_skill 落盘（status=proposed）→ 立即 verify_skill
+        双闸晋升 → 结果进响应；approve=False → 丢弃。两种结局都写
+        skill_proposal_outcome 反馈事件。无 pending / 跨项目失效 → 明确错误码。
+        """
+        try:
+            from openbrep.runtime.skill_harvest import confirm_skill_proposal as _confirm
+
+            return _confirm(self.session, body)
+        except Exception as exc:
+            logger.warning("skill proposal confirm failed: %s", exc)
+            return {"ok": False, "error": f"Skill proposal confirm failed: {exc}"}
 
     def generate_with_assistant_stream(
         self, body: dict[str, Any], cancel_event: Any | None = None
@@ -313,22 +362,24 @@ class WorkbenchAssistantService:
                 if result.project is not None:
                     self.session.project = result.project
                 self.session.project.save_to_disk()
-                q.put({
-                    "type": "done",
-                    "data": {
-                        "ok": True,
-                        "assistant": {
-                            "kind": "generate",
-                            "reply": result.plain_text,
-                            "changed_files": list((result.scripts or {}).keys()),
-                            "intent": result.intent,
-                            "verification": result.verification,
-                            "acceptance": result.metadata.get("acceptance"),
-                        },
-                        "preview": preview_payload(self.session.project),
-                        "warnings": [],
+                done_data: dict[str, Any] = {
+                    "ok": True,
+                    "assistant": {
+                        "kind": "generate",
+                        "reply": result.plain_text,
+                        "changed_files": list((result.scripts or {}).keys()),
+                        "intent": result.intent,
+                        "verification": result.verification,
+                        "acceptance": result.metadata.get("acceptance"),
                     },
-                })
+                    "preview": preview_payload(self.session.project),
+                    "warnings": [],
+                }
+                # 模式级 skill 提案（best-effort；提炼失败不影响交付）
+                proposal = self._safe_harvest(result, message)
+                if proposal:
+                    done_data["skill_proposal"] = proposal
+                q.put({"type": "done", "data": done_data})
             except Exception as exc:
                 q.put({"type": "error", "data": {"error": str(exc)}})
 

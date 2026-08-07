@@ -114,6 +114,13 @@ export const zh = {
   'assistant.plan.confirm': '确认修改',
   'assistant.plan.cancel': '取消',
 
+  // 模式级 skill 提案（P2-d）
+  'assistant.skillProposal.title': '沉淀为 skill 提案',
+  'assistant.skillProposal.evidence': '证据',
+  'assistant.skillProposal.project': '来源项目',
+  'assistant.skillProposal.approve': '批准沉淀',
+  'assistant.skillProposal.ignore': '忽略',
+
   // MODIFY acceptance report (V5)
   'assistant.acceptance.title': '验收报告',
   'assistant.acceptance.geometry': '几何对比',

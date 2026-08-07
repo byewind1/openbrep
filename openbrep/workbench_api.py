@@ -102,6 +102,9 @@ class WorkbenchSession:
         self._op_lock = threading.RLock()
         # 计划确认门（V3）：MODIFY 先出计划，用户确认后才执行；None = 无待确认计划
         self.pending_plan: dict[str, Any] | None = None
+        # 模式级 skill 提案（P2-d）：成功 CREATE/MODIFY 后提炼，用户确认后才落盘晋升
+        self.pending_skill_proposal: dict[str, Any] | None = None
+        self.skill_harvest_enabled: bool = True
         self.settings_service = WorkbenchSettingsService(
             self,
             llm_adapter_factory=lambda config: LLMAdapter(config),
@@ -505,6 +508,13 @@ class WorkbenchSession:
         """计划确认门：approve 后带已确认计划执行（stream 走 SSE）；拒绝/无 pending 各自返回。"""
         return self.assistant_service.confirm_modify(body)
 
+    def skill_confirm(self, body: dict[str, Any]):
+        """POST /api/skill/confirm：审批待确认 skill 提案（薄转发，request_gate 锁内）。
+
+        approve → propose_skill 落盘 + 立即 verify_skill 双闸晋升；reject → 丢弃。
+        """
+        return self.assistant_service.confirm_skill_proposal(body)
+
     def _knowledge_status(self) -> dict[str, Any]:
         """Return current knowledge base status (Free/Pro doc counts and path info)."""
         try:
@@ -782,6 +792,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/modify/confirm":
             return self.modify_confirm(body)
+
+        if normalized_method == "POST" and route == "/api/skill/confirm":
+            return self.skill_confirm(body)
 
         if normalized_method == "GET" and route == "/api/knowledge/status":
             return self._knowledge_status()

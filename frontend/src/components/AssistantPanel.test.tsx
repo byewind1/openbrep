@@ -194,6 +194,65 @@ describe('AssistantPanel plan confirmation card (V3)', () => {
 })
 
 
+describe('AssistantPanel skill proposal card (P2-d)', () => {
+  const proposal = {
+    name: 'shelf_loop_pattern',
+    pattern_type: 'shelf_loop',
+    content: '## 适用场景 / When to Use\n层板循环对象。\n\n## 写法要点\n- FOR 循环 + ADD/DEL 配对。',
+    evidence: {
+      intent: 'MODIFY',
+      changed_files: ['scripts/3d.gdl'],
+      project: 'Shelf',
+    },
+  }
+
+  test('renders name, pattern_type, content and evidence', () => {
+    render(<AssistantPanel {...baseProps} hasProject pendingSkillProposal={proposal} onConfirmSkillProposal={vi.fn()} />)
+    expect(screen.getByText('沉淀为 skill 提案')).toBeTruthy()
+    expect(screen.getByText('shelf_loop_pattern')).toBeTruthy()
+    expect(screen.getByText('shelf_loop')).toBeTruthy()
+    expect(screen.getByText(/层板循环对象/)).toBeTruthy()
+    expect(screen.getByText(/Shelf/)).toBeTruthy()
+    expect(screen.getByText('scripts/3d.gdl')).toBeTruthy()
+  })
+
+  test('approve and ignore buttons call onConfirmSkillProposal with the right flag', () => {
+    const onConfirm = vi.fn()
+    render(<AssistantPanel {...baseProps} hasProject pendingSkillProposal={proposal} onConfirmSkillProposal={onConfirm} />)
+    fireEvent.click(screen.getByRole('button', { name: '批准沉淀' }))
+    expect(onConfirm).toHaveBeenCalledWith(true)
+    fireEvent.click(screen.getByRole('button', { name: '忽略' }))
+    expect(onConfirm).toHaveBeenCalledWith(false)
+  })
+
+  test('buttons are disabled while busy', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        busy
+        hasProject
+        pendingSkillProposal={proposal}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: '批准沉淀' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: '忽略' })).toHaveProperty('disabled', true)
+  })
+
+  test('renders without evidence section when evidence is absent', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{ name: 'n', pattern_type: 'panel', content: '## 适用场景 / When to Use\n正文。' }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('n')).toBeTruthy()
+  })
+})
+
+
 describe('AssistantPanel acceptance report card (V5)', () => {
   const acceptance = {
     summary_lines: ['参数 shelf_count 从 2 改为 5', '几何体数量从 1 变为 2'],

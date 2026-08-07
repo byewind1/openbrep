@@ -160,6 +160,7 @@ export interface WorkbenchApi {
     onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
     signal?: AbortSignal,
   ) => Promise<GenerateResult>
+  confirmSkillProposal: (approve: boolean, signal?: AbortSignal) => Promise<import('../api/types').SkillProposalConfirmResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>
@@ -200,6 +201,8 @@ export interface WorkbenchState {
   assistantMessages: AssistantMessage[]
   /** 计划确认门（V3）：非 null = 有待用户确认的修改计划 */
   pendingPlan: import('../api/types').PendingPlan | null
+  /** 模式级 skill 提案（P2-d）：非 null = 有待用户确认的 skill 提案 */
+  pendingSkillProposal: import('../api/types').SkillProposal | null
   scripts: ProjectScript[]
   recentProjects: RecentProject[]
   revisions: ProjectRevision[]
@@ -251,6 +254,7 @@ export interface WorkbenchState {
   sendChat: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
   stopChat: () => void
   confirmPendingPlan: (approve: boolean) => Promise<void>
+  confirmPendingSkillProposal: (approve: boolean) => Promise<void>
   reloadRuntimeSettings: () => Promise<void>
   pollConfigRevision: () => Promise<void>
   refreshTapirStatus: () => Promise<void>

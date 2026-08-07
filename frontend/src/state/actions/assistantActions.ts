@@ -118,6 +118,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       preview: result.preview ?? state.preview,
       warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
       draftParameters: {},
+      // 模式级 skill 提案（P2-d）：成功交付后弹"沉淀提案"确认卡；无提案则清掉旧的
+      pendingSkillProposal: result.ok ? (result.skill_proposal ?? null) : state.pendingSkillProposal,
     }))
     await persistAssistantHistory()
     if (result.ok) {
@@ -173,6 +175,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         `${result.assistant?.reply ?? 'Project created.'}${formatAssistantEventSummary(result.events)}`,
         { verification: result.assistant?.verification ?? undefined },
       ),
+      // 模式级 skill 提案（P2-d）：CREATE 成功交付后弹"沉淀提案"确认卡
+      pendingSkillProposal: result.skill_proposal ?? null,
     }))
     await persistAssistantHistory()
   }
@@ -553,6 +557,38 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         }))
       })
       await finishModifyStream(result, epoch, '⏳ 正在按已确认的计划执行修改…', thinkingSteps)
+    },
+
+    async confirmPendingSkillProposal(approve: boolean) {
+      // 模式级 skill 提案（P2-d）：approve → propose+verify 双闸晋升；false → 丢弃
+      const proposal = get().pendingSkillProposal
+      if (!proposal) {
+        set({ lastError: '没有待确认的 skill 提案。' })
+        return
+      }
+      const epoch = get().projectEpoch
+      const result = await api.confirmSkillProposal(approve)
+      if (projectSwitchedSince(epoch)) {
+        discardStaleResult('Skill proposal result discarded: project switched during the request.')
+        return
+      }
+      set((state) => ({
+        pendingSkillProposal: null,
+        assistantMessages: replacePendingAssistantMessage(
+          state.assistantMessages,
+          approve
+            ? result.ok
+              ? result.verified
+                ? `✅ skill「${proposal.name}」已沉淀并通过验证（${result.gate} 门禁）`
+                : `📝 skill「${proposal.name}」已落盘为 proposed（验证未过，暂不注入）`
+              : `❌ skill「${proposal.name}」沉淀失败：${result.error ?? '未知错误'}`
+            : `🗑 已丢弃 skill 提案「${proposal.name}」。`,
+        ),
+      }))
+      if (!result.ok && result.error) {
+        set({ lastError: result.error })
+      }
+      await persistAssistantHistory()
     },
   }
 }

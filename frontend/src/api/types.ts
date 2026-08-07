@@ -598,6 +598,35 @@ export interface PendingPlan {
   risk: string
 }
 
+// ── 模式级 skill 提案（P2-d）：成功 CREATE/MODIFY 后提炼，用户确认后才落盘晋升 ──
+export interface SkillProposal {
+  name: string
+  pattern_type: string
+  content: string
+  slice?: {
+    params?: Record<string, unknown>
+    scripts?: Record<string, string>
+  } | null
+  evidence?: {
+    intent?: string
+    changed_files?: string[]
+    project?: string
+  } | null
+}
+
+export interface SkillProposalConfirmResult {
+  ok: boolean
+  skill?: string
+  verified?: boolean
+  gate?: string
+  status?: string
+  path?: string
+  discarded?: boolean
+  message?: string
+  code?: string
+  error?: string
+}
+
 export interface GenerateResult {
   ok: boolean
   assistant?: {
@@ -616,6 +645,8 @@ export interface GenerateResult {
   awaiting_confirmation?: boolean
   pending_plan?: PendingPlan | null
   plan_failed?: boolean
+  // 模式级 skill 提案（P2-d）
+  skill_proposal?: SkillProposal | null
 }
 
 export interface CreateProjectResult extends WorkbenchSnapshot {
@@ -629,6 +660,7 @@ export interface CreateProjectResult extends WorkbenchSnapshot {
   }
   events?: Array<{ type: string; data: unknown }>
   error?: string
+  skill_proposal?: SkillProposal | null
 }
 
 export interface ProjectScriptsResponse {

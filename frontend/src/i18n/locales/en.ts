@@ -117,6 +117,13 @@ export const en: Record<LocaleKey, string> = {
   'assistant.plan.confirm': 'Confirm changes',
   'assistant.plan.cancel': 'Cancel',
 
+  // Skill harvest proposal (P2-d)
+  'assistant.skillProposal.title': 'Save as skill proposal',
+  'assistant.skillProposal.evidence': 'Evidence',
+  'assistant.skillProposal.project': 'Source project',
+  'assistant.skillProposal.approve': 'Approve & save',
+  'assistant.skillProposal.ignore': 'Ignore',
+
   // MODIFY acceptance report (V5)
   'assistant.acceptance.title': 'Acceptance report',
   'assistant.acceptance.geometry': 'Geometry comparison',
