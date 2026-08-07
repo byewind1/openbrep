@@ -1,0 +1,39 @@
+﻿! =========================================================
+! Master Script - Spiral Staircase
+! Validates inputs and derives all proportional dimensions.
+! =========================================================
+
+! --- Input validation (single-line IF, no ENDIF needed) ---
+IF num_steps < 2 THEN num_steps = 2
+IF num_steps > 60 THEN num_steps = 60
+IF step_riser < 0.05 THEN step_riser = 0.05 ! Fixed: renamed from riser_height to avoid global RISER_HEIGHT conflict
+IF step_riser > 0.30 THEN step_riser = 0.30 ! Fixed: renamed from riser_height to avoid global RISER_HEIGHT conflict
+IF diameter < 0.60 THEN diameter = 0.60
+IF diameter > 4.00 THEN diameter = 4.00
+IF height < 1.00 THEN height = 1.00
+IF total_rotation < 90 THEN total_rotation = 90
+IF total_rotation > 1080 THEN total_rotation = 1080
+
+! Fixed: sync step_riser to height / num_steps, otherwise treads do not reach landing
+IF num_steps > 0 THEN step_riser = height / num_steps
+
+! --- Derived proportional quantities ---
+stair_radius = diameter / 2  ! Fixed: renamed from radius because radius is a GDL keyword
+pole_radius = stair_radius * 0.06  ! Fixed: use stair_radius
+handrail_height = step_riser * 5.30 ! Fixed: renamed from riser_height
+tread_thickness = step_riser * 0.25 ! Fixed: renamed from riser_height
+step_angle = total_rotation / num_steps
+tread_outer_radius = stair_radius * 0.98  ! Fixed: use stair_radius
+
+! --- Internal (non-parameter) build constants ---
+_seg = 6              ! arc subdivisions per tread outer edge
+_rail_r = 0.025       ! handrail tube radius
+_bal_r = 0.012        ! baluster (vertical post) radius
+_landing_thk = 0.12   ! landing plate thickness
+_landing_len = stair_radius + 0.30  ! landing reach beyond centre - Fixed: use stair_radius
+_landing_wid = 0.80   ! landing plate width
+
+! --- Sync reserved bounding box to circular footprint ---
+A = diameter
+B = diameter
+ZZYZX = height

@@ -1,0 +1,20 @@
+---
+id: M07
+category: modify
+complexity: low
+description: "Change the default value of the shelf thickness parameter shelf_thk from 18mm to 20mm (0.020 m), keeping everything else unchanged. Use these parameter names: A (width), B (depth), ZZYZX (height), shelf_count (number of shelves), shelf_thk (shelf thickness)"
+fixture: benchmark/fixtures/modify/Shelf
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "层板厚度参数驱动几何"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: shelf_thk
+    - type: param_responsive
+      param: shelf_thk
+    - type: semantic_verification
+expected_difficulty: easy
+expected_pass: true

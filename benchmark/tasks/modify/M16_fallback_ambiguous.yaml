@@ -1,0 +1,16 @@
+---
+id: M16
+category: modify
+complexity: medium
+description: "把书架改得更高一些"
+fixture: benchmark/fixtures/modify/Shelf
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "书架结构保持完整"
+  semantic_assertions:
+    - type: transform_balanced
+      script: 3d.gdl
+expected_difficulty: medium
+expected_pass: true

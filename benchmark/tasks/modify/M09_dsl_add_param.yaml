@@ -1,0 +1,17 @@
+---
+id: M09
+category: modify
+complexity: low
+description: "新增一个参数 tolerance（板厚公差），类型 Length，默认值 0.001 米。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_count（层板数量）、shelf_thk（层板厚度）"
+fixture: benchmark/fixtures/modify/Shelf
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, tolerance]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "书架几何保持不变"
+  semantic_assertions:
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+expected_difficulty: low
+expected_pass: true

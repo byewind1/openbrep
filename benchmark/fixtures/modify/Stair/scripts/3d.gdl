@@ -1,0 +1,97 @@
+﻿! =========================================================
+! 3D Script - Spiral Staircase around a central pole
+! Layers (bottom to top): pole -> treads -> handrail -> landing
+! Origin is shifted to bounding-box centre so the circular
+! geometry sits inside [0,A] x [0,B].
+! =========================================================
+TOLER 0.005
+PEN 1
+
+ADD A / 2, B / 2, 0
+
+! Fixed: use numeric GOSUB labels to avoid missing CALL keyword warning
+GOSUB 1000
+GOSUB 2000
+GOSUB 3000
+GOSUB 4000
+
+DEL 1
+END
+
+! ---------------------------------------------------------
+! 1. Central pole - full height vertical axis
+! ---------------------------------------------------------
+1000:
+    MATERIAL mat_pole
+    CYLIND height, pole_radius
+RETURN
+
+! ---------------------------------------------------------
+! 2. Wedge treads - ring-sector prisms spiralling upward
+!    Each tread is rotated by i*step_angle and lifted by
+!    i*step_riser. Profile = inner arc + outer arc.
+! ---------------------------------------------------------
+2000:
+    MATERIAL mat_tread
+    FOR i = 0 TO num_steps - 1
+        ADDZ i * step_riser
+        ROTZ i * step_angle
+        ! Fixed: outer arc first, then inner arc reversed for consistent polygon orientation
+        ! Fixed: PRISM_ base z coordinate set to 0 (was 1, which lifted treads)
+        FOR k = 0 TO _seg
+            PUT tread_outer_radius * COS(k * step_angle / _seg), tread_outer_radius * SIN(k * step_angle / _seg), 0
+        NEXT k
+        FOR k = _seg TO 0 STEP -1
+            PUT pole_radius * COS(k * step_angle / _seg), pole_radius * SIN(k * step_angle / _seg), 0
+        NEXT k
+        PRISM_ 2 * (_seg + 1), tread_thickness, GET(2 * (_seg + 1) * 3)
+        DEL 2
+    NEXT i
+RETURN
+
+! ---------------------------------------------------------
+! 3. Handrail - vertical balusters + spiral tube rail
+!    TUBE_ sweeps a circular section along the helix path.
+! ---------------------------------------------------------
+3000:
+    MATERIAL mat_rail
+    ! vertical balusters at each tread outer mid-angle
+    FOR i = 0 TO num_steps - 1
+        ADD tread_outer_radius * COS((i + 0.5) * step_angle), tread_outer_radius * SIN((i + 0.5) * step_angle), (i + 1) * step_riser
+        CYLIND handrail_height, _bal_r
+        DEL 1
+    NEXT i
+
+    ! Fixed: use local counts for TUBE_ to avoid ambiguous argument parsing
+    _path_pts = num_steps + 1
+    _sec_pts = 8
+    _tube_vals = _path_pts * 3 + _sec_pts * 2
+
+    ! helix path points (one per tread + landing end)
+    ! Fixed: TUBE_ path points are x,y,z only; removed extra per-point status value
+    FOR i = 0 TO num_steps
+        PUT tread_outer_radius * COS((i + 0.5) * step_angle), tread_outer_radius * SIN((i + 0.5) * step_angle), (i + 1) * step_riser + handrail_height
+    NEXT i
+
+    ! circular cross section (8-gon)
+    ! Fixed: TUBE_ section points are u,v only; removed extra per-point status value
+    FOR k = 0 TO 7
+        PUT _rail_r * COS(k * 45), _rail_r * SIN(k * 45)
+    NEXT k
+
+    ! Fixed: use variables and GET(_tube_vals) for TUBE_ arguments
+    TUBE_ _path_pts, _sec_pts, 127, GET(_tube_vals)
+RETURN
+
+! ---------------------------------------------------------
+! 4. Top landing plate - connects to floor (PISO)
+!    Oriented along the exit direction after last tread.
+! ---------------------------------------------------------
+4000:
+    MATERIAL mat_landing
+    ADDZ height - _landing_thk
+    ROTZ num_steps * step_angle
+    ADDY -_landing_wid / 2
+    BLOCK _landing_len, _landing_wid, _landing_thk
+    DEL 3
+RETURN

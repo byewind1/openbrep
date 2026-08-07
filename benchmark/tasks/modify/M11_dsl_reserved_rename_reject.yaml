@@ -1,0 +1,19 @@
+---
+id: M11
+category: modify
+complexity: low_medium
+description: "把参数 A 改名为 width（宽度），其他参数保持原名。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_count（层板数量）、shelf_thk（层板厚度）"
+fixture: benchmark/fixtures/modify/Shelf
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "书架几何不变，A 仍作为宽度参数"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: A
+    - type: transform_balanced
+      script: 3d.gdl
+expected_difficulty: low_medium
+expected_pass: true

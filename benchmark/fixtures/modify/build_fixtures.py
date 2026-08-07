@@ -34,9 +34,29 @@ def _base_project(task_id: str) -> HSFProject:
 def _save(proj: HSFProject) -> None:
     dest = FIXTURE_ROOT / proj.name
     if dest.exists():
+        _preserve_guid(proj, dest)
         shutil.rmtree(dest)
     proj.save_to_disk()
     print(f"fixture written: {dest.relative_to(PROJECT_ROOT)}")
+
+
+def _preserve_guid(proj: HSFProject, dest: Path) -> None:
+    """重建 fixture 时保留已有 libpartdata.xml 的 MainGUID，避免随机 GUID 造成 git 噪音。
+
+    （V4 顺手修：HSFProject.save_to_disk 每次生成新 GUID，重跑 build_fixtures
+    会让已签入的 M01-M05 libpartdata.xml 无故变动。）
+    """
+    lp = dest / "libpartdata.xml"
+    if not lp.exists():
+        return
+    import re
+
+    match = re.search(
+        r"<MainGUID>([0-9A-Fa-f-]+)</MainGUID>",
+        lp.read_text(encoding="utf-8-sig"),
+    )
+    if match:
+        proj.guid = match.group(1).upper()
 
 
 def build_m01() -> None:
@@ -149,6 +169,72 @@ def build_m05() -> None:
     )
     _save(proj)
 
+def build_shelf() -> None:
+    """Shelf（V4 共享夹具）：shelf_count/shelf_thk 驱动的 FOR 循环层板书架。
+
+    供 DSL/micro/回落类任务复用：3d 用 FOR 循环 + shelf_gap 公式，改
+    shelf_count/shelf_thk 会真实改变几何（param_responsive 可测）。
+    """
+    proj = _base_project("Shelf")
+    proj.parameters += [
+        GDLParameter("shelf_count", "Integer", "层板数量", "2"),
+        GDLParameter("shelf_thk", "Length", "层板厚度", "0.018"),
+    ]
+    proj.scripts[ScriptType.SCRIPT_3D] = (
+        "! 书架：两侧板 + 顶底板 + 循环层板\n"
+        "shelf_gap = (ZZYZX - shelf_thk * (shelf_count + 1)) / (shelf_count + 1)\n"
+        "\n"
+        "BLOCK shelf_thk, B, ZZYZX\n"
+        "ADDX A - shelf_thk\n"
+        "BLOCK shelf_thk, B, ZZYZX\n"
+        "DEL 1\n"
+        "\n"
+        "BLOCK A, B, shelf_thk\n"
+        "ADDZ ZZYZX - shelf_thk\n"
+        "BLOCK A, B, shelf_thk\n"
+        "DEL 1\n"
+        "\n"
+        "FOR i = 1 TO shelf_count\n"
+        "    ADDZ i * (shelf_gap + shelf_thk)\n"
+        "    BLOCK A - 2 * shelf_thk, B, shelf_thk\n"
+        "    DEL 1\n"
+        "NEXT i\n"
+        "\n"
+        "END\n"
+    )
+    _save(proj)
+
+
+def build_shelf_leg() -> None:
+    """ShelfLeg（V4）：Shelf + 一个未被脚本引用的多余参数 leg_style（供删除）。"""
+    proj = _base_project("ShelfLeg")
+    proj.parameters += [
+        GDLParameter("shelf_count", "Integer", "层板数量", "2"),
+        GDLParameter("shelf_thk", "Length", "层板厚度", "0.018"),
+        GDLParameter("leg_style", "String", "支腿样式", "straight"),
+    ]
+    proj.scripts[ScriptType.SCRIPT_3D] = (
+        "BLOCK A, B, ZZYZX\n"
+        "ADDZ ZZYZX\n"
+        "BLOCK A, B, 0.018\n"
+        "DEL 1\n"
+        "END\n"
+    )
+    _save(proj)
+
+
+def build_stair() -> None:
+    """Stair（V4 真实物件夹具）：旋转楼梯，来自 output/gdl_2（真实 HSF）。"""
+    src = PROJECT_ROOT / "output" / "gdl_2"
+    if not src.is_dir():
+        print(f"WARN: 真实物件源 {src.relative_to(PROJECT_ROOT)} 不存在，跳过 Stair")
+        return
+    dest = FIXTURE_ROOT / "Stair"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest)
+    print(f"fixture written: {dest.relative_to(PROJECT_ROOT)}")
+
 
 def main() -> None:
     FIXTURE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -157,6 +243,9 @@ def main() -> None:
     build_m03()
     build_m04()
     build_m05()
+    build_shelf()
+    build_shelf_leg()
+    build_stair()
 
 
 if __name__ == "__main__":

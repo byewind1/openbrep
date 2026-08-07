@@ -1,0 +1,20 @@
+﻿! 书架：两侧板 + 顶底板 + 循环层板
+shelf_gap = (ZZYZX - shelf_thk * (shelf_count + 1)) / (shelf_count + 1)
+
+BLOCK shelf_thk, B, ZZYZX
+ADDX A - shelf_thk
+BLOCK shelf_thk, B, ZZYZX
+DEL 1
+
+BLOCK A, B, shelf_thk
+ADDZ ZZYZX - shelf_thk
+BLOCK A, B, shelf_thk
+DEL 1
+
+FOR i = 1 TO shelf_count
+    ADDZ i * (shelf_gap + shelf_thk)
+    BLOCK A - 2 * shelf_thk, B, shelf_thk
+    DEL 1
+NEXT i
+
+END

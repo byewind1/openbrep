@@ -1,0 +1,17 @@
+---
+id: M19
+category: modify
+complexity: low
+description: "把旋转楼梯的台阶数从 16 改成 12，其余结构不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、num_steps（台阶数）、total_rotation（旋转角度）"
+fixture: benchmark/fixtures/modify/Stair
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, num_steps]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "台阶数由参数驱动，用循环生成"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: num_steps
+expected_difficulty: easy
+expected_pass: true

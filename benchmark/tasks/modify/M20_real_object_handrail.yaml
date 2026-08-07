@@ -1,0 +1,20 @@
+---
+id: M20
+category: modify
+complexity: medium
+description: "把 Master 脚本里扶手高度公式的系数从 5.3 改成 6（handrail_height = step_riser * 5.30 这一行），其余结构不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、num_steps（台阶数）"
+fixture: benchmark/fixtures/modify/Stair
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, num_steps, handrail_height]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "扶手高度仍由参数驱动"
+  semantic_assertions:
+    - type: expression_present
+      script: 1d.gdl
+      contains: "step_riser * 6"
+    - type: param_used
+      script: 3d.gdl
+      param: handrail_height
+expected_difficulty: medium
+expected_pass: true

@@ -1,0 +1,17 @@
+---
+id: M10
+category: modify
+complexity: low
+description: "删除参数表里不再使用的支腿样式参数 leg_style，其他参数保持不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_count（层板数量）、shelf_thk（层板厚度）"
+fixture: benchmark/fixtures/modify/ShelfLeg
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "书架几何保持不变"
+  semantic_assertions:
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: semantic_verification
+expected_difficulty: low
+expected_pass: true

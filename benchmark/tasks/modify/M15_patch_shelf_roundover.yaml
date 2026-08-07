@@ -1,0 +1,17 @@
+---
+id: M15
+category: modify
+complexity: medium
+description: "给每层层板的四个角加圆角：在 3D 脚本里用 CYLIND 生成半径 0.01 的竖向倒角圆柱（保持书架整体尺寸 A×B×ZZYZX 不变），其余结构不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_count（层板数量）、shelf_thk（层板厚度）"
+fixture: benchmark/fixtures/modify/Shelf
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "层板圆角用 CYLIND 实现"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: CYLIND
+expected_difficulty: medium
+expected_pass: false  # 录制冻结的样例变换栈未闭合（contract transform_stack_unclosed），生成质量不稳定

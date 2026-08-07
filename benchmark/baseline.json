@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generated_at": "2026-08-08T00:39:21",
-  "commit": "4c35294827e3edc48570e26ffe82e9571bdd03d1",
+  "generated_at": "2026-08-08T01:42:13",
+  "commit": "4e1072c79d5db679937893407e949027f3d9cdc8",
   "mode": "mock",
   "suites": {
     "create": {
@@ -92,7 +92,7 @@
     },
     "modify": {
       "corpus": "benchmark/fixtures/llm_corpus/modify.jsonl",
-      "pass": 5,
+      "pass": 19,
       "tasks": {
         "M01": {
           "success": true,
@@ -111,6 +111,66 @@
           "criteria_failures": 0
         },
         "M05": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M06": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M07": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M08": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M09": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M10": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M11": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M12": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M13": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M14": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M15": {
+          "success": false,
+          "criteria_failures": 0
+        },
+        "M16": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M17": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M18": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M19": {
+          "success": true,
+          "criteria_failures": 0
+        },
+        "M20": {
           "success": true,
           "criteria_failures": 0
         }

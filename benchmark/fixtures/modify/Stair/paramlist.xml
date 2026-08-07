@@ -1,0 +1,81 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<ParamSection>
+	<ParamSectHeader>
+		<AutoHotspots>false</AutoHotspots>
+		<StatBits>
+			<STBit_FixSize/>
+		</StatBits>
+		<WDLeftFrame>0</WDLeftFrame>
+		<WDRightFrame>0</WDRightFrame>
+		<WDTopFrame>0</WDTopFrame>
+		<WDBotFrame>0</WDBotFrame>
+		<LayFlags>65535</LayFlags>
+		<WDMirrorThickness>0</WDMirrorThickness>
+		<WDWallInset>0</WDWallInset>
+	</ParamSectHeader>
+	<Parameters SectVersion="27" SectionFlags="0" SubIdent="0">
+		<Length Name="A">
+			<Description><![CDATA["Overall width (synced to diameter) [FIXED] [FIXED]"]]></Description>
+			<Fix/>
+			<Value>1.6</Value>
+		</Length>
+		<Length Name="B">
+			<Description><![CDATA["Overall depth (synced to diameter) [FIXED] [FIXED]"]]></Description>
+			<Fix/>
+			<Value>1.6</Value>
+		</Length>
+		<Length Name="ZZYZX">
+			<Description><![CDATA["Overall height (synced to height) [FIXED] [FIXED]"]]></Description>
+			<Fix/>
+			<Value>2.9</Value>
+		</Length>
+		<Length Name="diameter">
+			<Description><![CDATA["Staircase outer diameter"]]></Description>
+			<Value>1.6</Value>
+		</Length>
+		<Length Name="stair_radius">
+			<Description><![CDATA["Staircase radius (derived, locked) - Fixed: radius is a GDL keyword, renamed to stair_radius"]]></Description>
+			<Value>0.8</Value>
+		</Length>
+		<Length Name="height">
+			<Description><![CDATA["Total stair height floor to floor"]]></Description>
+			<Value>2.9</Value>
+		</Length>
+		<Integer Name="num_steps">
+			<Description><![CDATA["Number of wedge treads (01-16)"]]></Description>
+			<Value>16</Value>
+		</Integer>
+		<Length Name="step_riser">
+			<Description><![CDATA["Vertical rise per step (derived, locked) - Fixed: renamed from riser_height to avoid global RISER_HEIGHT conflict"]]></Description>
+			<Value>0.17</Value>
+		</Length>
+		<Angle Name="total_rotation">
+			<Description><![CDATA["Total spiral wrap angle in degrees"]]></Description>
+			<Value>360</Value>
+		</Angle>
+		<Length Name="pole_radius">
+			<Description><![CDATA["Central pole radius (derived, locked)"]]></Description>
+			<Value>0.048</Value>
+		</Length>
+		<Length Name="handrail_height">
+			<Description><![CDATA["Handrail height above tread nose (derived, locked)"]]></Description>
+			<Value>0.9</Value>
+		</Length>
+		<Material Name="mat_pole">
+			<Description><![CDATA["Central pole material"]]></Description>
+			<Value>0</Value>
+		</Material>
+		<Material Name="mat_tread">
+			<Description><![CDATA["Tread material"]]></Description>
+			<Value>0</Value>
+		</Material>
+		<Material Name="mat_rail">
+			<Description><![CDATA["Handrail and baluster material"]]></Description>
+			<Value>0</Value>
+		</Material>
+		<Material Name="mat_landing">
+			<Description><![CDATA["Top landing plate material"]]></Description>
+			<Value>0</Value>
+		</Material>
+	</Parameters>
+</ParamSection>

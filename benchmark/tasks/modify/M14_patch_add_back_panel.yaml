@@ -1,0 +1,20 @@
+---
+id: M14
+category: modify
+complexity: medium
+description: "给书架加一块后背板：在 3D 脚本里补一个紧贴背面的 BLOCK（宽度 A、高度 ZZYZX、厚度取 0.018），其余结构不变。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）、shelf_count（层板数量）、shelf_thk（层板厚度）"
+fixture: benchmark/fixtures/modify/Shelf
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "书架几何增加后背板"
+  semantic_assertions:
+    - type: transform_balanced
+      script: 3d.gdl
+    - type: param_used
+      script: 3d.gdl
+      param: shelf_count
+    - type: semantic_verification
+expected_difficulty: medium
+expected_pass: true

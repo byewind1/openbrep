@@ -1,0 +1,19 @@
+---
+id: M12
+category: modify
+complexity: low
+description: "把层板厚度参数 shelf_thk 改成 22mm"
+fixture: benchmark/fixtures/modify/Shelf
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX, shelf_count, shelf_thk]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "层板厚度参数驱动几何"
+  semantic_assertions:
+    - type: param_used
+      script: 3d.gdl
+      param: shelf_thk
+    - type: param_responsive
+      param: shelf_thk
+expected_difficulty: easy
+expected_pass: true
