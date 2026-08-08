@@ -271,17 +271,21 @@ class TaskPipeline:
                 result = self._handle_chat(request)
             elif request.intent in ("MODIFY", "DEBUG", "REPAIR") and request.agent_loop:
                 # 默认路径：预算制 agent loop（LLM 通过工具调用自主迭代）
-                # 先尝试确定性微修改（零 token），再试参数级修改 DSL（一次 LLM
-                # 意图解析 + 确定性应用），都不命中才进 agent loop
+                # 先试确定性微修改（零 token）、再试结构化 skill 模板、再试参数级
+                # 修改 DSL（一次 LLM 意图解析 + 确定性应用），都不命中才进 agent loop
                 micro_result = self._try_micro_modify(request)
                 if micro_result is not None:
                     result = micro_result
                 else:
-                    dsl_result = self._try_param_modify(request)
-                    if dsl_result is not None:
-                        result = dsl_result
+                    skill_ops_result = self._try_skill_ops(request)
+                    if skill_ops_result is not None:
+                        result = skill_ops_result
                     else:
-                        result = self._handle_modify_agent_loop(request)
+                        dsl_result = self._try_param_modify(request)
+                        if dsl_result is not None:
+                            result = dsl_result
+                        else:
+                            result = self._handle_modify_agent_loop(request)
             elif request.intent == "REPAIR":
                 result = self._handle_repair(request)
             elif request.intent in ("MODIFY", "DEBUG"):
@@ -924,6 +928,9 @@ class TaskPipeline:
         micro_result = self._try_micro_modify(request)
         if micro_result is not None:
             return micro_result
+        skill_ops_result = self._try_skill_ops(request)
+        if skill_ops_result is not None:
+            return skill_ops_result
         dsl_result = self._try_param_modify(request)
         if dsl_result is not None:
             return dsl_result
@@ -1061,8 +1068,9 @@ class TaskPipeline:
     def _try_param_modify(self, request: TaskRequest) -> Optional[TaskResult]:
         """V1 参数级修改 DSL：LLM 只做意图解析，应用全确定性。
 
-        顺序在正则 micro_modify 之后、agent loop / 全文改写之前：
-        micro_modify（单参数设值）→ param_modify DSL（参数操作 JSON）→ LLM 路径。
+        顺序在正则 micro_modify / skill_ops 之后、agent loop / 全文改写之前：
+        micro_modify（单参数设值）→ skill_ops（结构化 skill 模板）→
+        param_modify DSL（参数操作 JSON）→ LLM 路径。
         解析失败 / JSON 不合法 / 任一 op 校验不过 / 守护回滚 → 返回 None 回落。
         语义与微修改一致：编译必跑（benchmark 契约要求 compile_result），
         几何语义验证只做 advisory 警告、不拦截；plan 与校验结果写入
@@ -1103,6 +1111,102 @@ class TaskPipeline:
             return None
 
         op_lines = [format_op_summary(op) for op in plan.operations]
+        revision_metadata = {"param_modify": {"plan": plan.to_dict()}}
+        return self._finish_param_plan(
+            request,
+            project,
+            plan,
+            instruction=instruction,
+            on_event=on_event,
+            op_lines=op_lines,
+            revision_metadata=revision_metadata,
+            output_header="✅ 已执行确定性参数修改（LLM 仅做意图解析，未改写 GDL 代码）",
+        )
+
+    def _try_skill_ops(self, request: TaskRequest) -> Optional[TaskResult]:
+        """结构化 skill operations 模板走确定性路径（S3）。
+
+        插在 micro_modify 之后、param_modify DSL 之前：micro → skill_ops → DSL → LLM。
+        恰好一个带 operations 模板的 active/verified skill 高精度命中指令，且
+        占位符填值 + param_modify 校验全过 → 应用 ParamModifyPlan（与 DSL 路径
+        完全同码：快照/守护/编译/语义 advisory）；任何一步失败 → None 回落。
+        result.metadata 记 {"modify_path": "skill_ops", "skill": <name>}。
+        """
+        from openbrep.runtime.param_modify import format_op_summary
+        from openbrep.runtime.skill_ops import try_skill_ops
+
+        if (request.intent or "MODIFY") != "MODIFY":
+            return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
+        if request.image_path or request.image_b64:
+            return None
+        project = request.project
+        if project is None or not project.parameters:
+            return None
+        instruction = (request.user_input or "").strip()
+        if not instruction or instruction.startswith("["):
+            return None
+
+        on_event = request.on_event or (lambda *args: None)
+        on_event("status", {"stage": "understand", "message": "🤔 正在检索技能模板…"})
+
+        # loader 未建则惰性建（与 _load_skills 同源）；LLM 只在占位符需要填值时构造
+        if self._skills_loader is None:
+            sk_dir = self._resolve_skills_dir()
+            from openbrep.skills_loader import SkillsLoader
+
+            self._skills_loader = SkillsLoader(str(sk_dir))
+            self._skills_loader.load()
+        loader = self._skills_loader
+
+        hit = try_skill_ops(
+            instruction,
+            project,
+            loader,
+            make_llm=lambda: self._make_llm(request),
+        )
+        if hit is None:
+            return None  # 无命中 / 歧义 / 填值或校验不过 → 回落原路径
+
+        plan, skill_name = hit
+        op_lines = [format_op_summary(op) for op in plan.operations]
+        revision_metadata = {
+            "param_modify": {"plan": plan.to_dict()},
+            "skill_ops": {"skill": skill_name},
+        }
+        return self._finish_param_plan(
+            request,
+            project,
+            plan,
+            instruction=instruction,
+            on_event=on_event,
+            op_lines=op_lines,
+            revision_metadata=revision_metadata,
+            result_metadata_extra={"modify_path": "skill_ops", "skill": skill_name},
+            output_header=f"✅ 已按 skill 模板「{skill_name}」执行确定性参数修改（未改写 GDL 代码）",
+        )
+
+    def _finish_param_plan(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        plan: Any,
+        *,
+        instruction: str,
+        on_event,
+        op_lines: list[str],
+        revision_metadata: dict,
+        output_header: str,
+        result_metadata_extra: Optional[dict] = None,
+    ) -> Optional[TaskResult]:
+        """DSL / skill_ops 共用：快照→应用→守护→编译→语义 advisory→验收→TaskResult。
+
+        快照（create_revision）→ apply_param_modify（守护回滚）→ 编译（必跑，
+        benchmark 契约）→ 几何语义仅 advisory → 确定性验收摘要 → TaskResult。
+        守护回滚（计划外文件变更）返回 None（调用方回落 LLM 路径）。
+        result_metadata_extra 并入 result.metadata（skill_ops 记 modify_path/skill）。
+        """
+        from openbrep.runtime.param_modify import apply_param_modify
+
         on_event("status", {"stage": "locate", "message": "🎯 已解析为参数操作：" + "；".join(op_lines)})
         on_event("plan", {
             "intent_summary": "；".join(op_lines),
@@ -1119,19 +1223,18 @@ class TaskPipeline:
                 }
                 for op in plan.operations
             ],
-            "strategy": "确定性参数修改（LLM 仅做意图解析，未改写 GDL 代码）",
+            "strategy": "确定性参数修改（未改写 GDL 代码）",
         })
 
         # 快照→应用→落盘（与微修改同一落盘语义）+ 变更守护；
         # revision 拷的是磁盘状态，必须先于内存修改 + save_to_disk。
         from openbrep.runtime.modify_acceptance import preview_geometry_summary
         before_preview = preview_geometry_summary(project)  # before 预览必须在应用前取
-        plan_metadata = {"param_modify": {"plan": plan.to_dict()}}
         outcome = apply_param_modify(
             project,
             plan,
             user_instruction=instruction,
-            metadata=plan_metadata,
+            metadata=revision_metadata,
             create_revision=create_revision,
         )
         if not outcome.applied:
@@ -1184,7 +1287,7 @@ class TaskPipeline:
         )
 
         output_parts = [
-            "✅ 已执行确定性参数修改（LLM 仅做意图解析，未改写 GDL 代码）",
+            output_header,
             "\n".join(f"- {line}" for line in op_lines),
         ]
         if compile_result is not None:
@@ -1212,6 +1315,7 @@ class TaskPipeline:
                     "changed_files": outcome.changed_files or [],
                 },
                 "acceptance": acceptance,
+                **(result_metadata_extra or {}),
             },
         )
 
