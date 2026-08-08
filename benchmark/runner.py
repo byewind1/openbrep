@@ -62,6 +62,7 @@ class BenchmarkRunner:
         temperature: float = 0.0,
         llm_record: str | None = None,
         llm_replay: str | None = None,
+        agent_loop: bool = False,
     ):
         if mode not in {"mock", "real", "auto"}:
             raise ValueError("mode must be one of: mock, real, auto")
@@ -95,6 +96,11 @@ class BenchmarkRunner:
             from benchmark.llm_replay import RecordingLLM
             self.llm = RecordingLLM(self.llm, llm_record)
             self.llm_source = f"record:{llm_record}"
+        # 黄金语料 record/replay 默认强制 MODIFY 走旧路径（非 agent_loop）：
+        # 历史语料只覆盖 generate()，agent loop 的 generate_with_tools 会录出空
+        # 语料/回放崩。--agent-loop 开启后解除强制（agent loop 工具调用链现在
+        # 可录制/回放），默认关闭，现有语料/baseline 行为零变化。
+        self.allow_agent_loop = agent_loop
         self.mode = mode
         self.compiler_skip_reason = ""
         if mode == "mock":
@@ -247,6 +253,15 @@ class BenchmarkRunner:
             "environment": self._environment_metadata(),
         }
 
+    def _modify_request_agent_loop(self) -> bool | None:
+        """MODIFY 请求的 agent_loop 值：黄金语料默认强制旧路径；--agent-loop 解除。
+
+        返回 None = 不指定（pipeline 按 intent 默认策略启用 agent loop）。
+        """
+        if self.llm_source.startswith(("replay:", "record:")) and not self.allow_agent_loop:
+            return False
+        return None
+
     def _run_modify_task(self, task, start: float) -> dict:
         """MODIFY 类任务：加载 fixture"改动前"工程，走 TaskPipeline 的 MODIFY 生产路径。
 
@@ -274,12 +289,11 @@ class BenchmarkRunner:
             output_dir=str(self.results_dir),
             gsm_name=task_id,
         )
-        # 黄金语料在旧路径（非 agent_loop）下录制与回放：
-        # - replay 强制旧路径，避免 ReplayLLM 未实现 generate_with_tools 崩溃；
-        # - record 同样强制旧路径——RecordingLLM 只录 generate()，agent_loop
-        #   会走 generate_with_tools，录出空语料（2026-08-06 实测踩坑）。
-        if self.llm_source.startswith(("replay:", "record:")):
-            request.agent_loop = False
+        # 黄金语料默认强制 MODIFY 走旧路径（非 agent_loop）：入库语料在旧路径
+        # 下录制，回放必须与录制同路径才能命中（2026-08-06 实测踩坑：路径不一致
+        # 会录出空语料/回放 miss）。
+        # --agent-loop 开启后解除（generate_with_tools 已可录制/回放，S4 前置）。
+        request.agent_loop = self._modify_request_agent_loop()
         result = pipeline.execute(request)
 
         elapsed = time.time() - start
@@ -555,12 +569,15 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=0.0, help="LLM 温度；默认 0 保证确定性，分布测试时显式覆盖")
     parser.add_argument("--llm-record", default=None, metavar="CORPUS.jsonl", help="真实 LLM 跑并把响应录制成黄金语料")
     parser.add_argument("--llm-replay", default=None, metavar="CORPUS.jsonl", help="离线回放黄金语料（完全确定，零 token）")
+    parser.add_argument("--agent-loop", action="store_true", default=False,
+                        help="黄金语料 record/replay 不再强制 MODIFY 走旧路径（agent_loop 工具链可录制/回放）；默认关，旧语料/baseline 零变化")
     args = parser.parse_args()
 
     runner = BenchmarkRunner(
         config_path=args.config, mode=args.mode,
         temperature=args.temperature,
         llm_record=args.llm_record, llm_replay=args.llm_replay,
+        agent_loop=args.agent_loop,
     )
     results = runner.run_suite(args.suite, jobs=args.jobs)
     print(runner.report(results))
