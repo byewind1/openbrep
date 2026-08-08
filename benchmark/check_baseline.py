@@ -30,8 +30,12 @@ from benchmark.runner import BenchmarkRunner  # noqa: E402
 BASELINE_PATH = PROJECT_ROOT / "benchmark" / "baseline.json"
 
 SUITES = {
-    "create": ("benchmark/tasks/create/", "benchmark/fixtures/llm_corpus/create.jsonl"),
-    "modify": ("benchmark/tasks/modify/", "benchmark/fixtures/llm_corpus/modify.jsonl"),
+    # (task_dir, corpus, use_agent_loop)
+    # modify 自 S4 起在 agent loop 路径（patch_script 工具链）录制/回放：
+    # 回放必须开 agent_loop=True，否则 runner 默认强制旧路径 → 每个 agent loop
+    # 条目都 miss。create 套件不受 --agent-loop 影响，保持 False。
+    "create": ("benchmark/tasks/create/", "benchmark/fixtures/llm_corpus/create.jsonl", False),
+    "modify": ("benchmark/tasks/modify/", "benchmark/fixtures/llm_corpus/modify.jsonl", True),
 }
 
 
@@ -39,13 +43,14 @@ def run_suites(suites: dict | None = None) -> dict[str, list]:
     """回放全部套件（mock 编译器 + 黄金语料 + temp workdir），返回 {suite: results}。"""
     suites = suites or SUITES
     out: dict[str, list] = {}
-    for name, (suite_dir, corpus) in suites.items():
+    for name, (suite_dir, corpus, use_agent_loop) in suites.items():
         with tempfile.TemporaryDirectory() as td:
             runner = BenchmarkRunner(
                 config_path=str(PROJECT_ROOT / "config.toml"),
                 mode="mock",
                 temperature=0.0,
                 llm_replay=str(PROJECT_ROOT / corpus),
+                agent_loop=use_agent_loop,
             )
             runner.results_dir = Path(td) / "results"
             runner.work_dir = Path(td) / "workdir"

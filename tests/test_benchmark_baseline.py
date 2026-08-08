@@ -69,5 +69,36 @@ class TestCompareSuite(unittest.TestCase):
         self.assertEqual(improvements, [])
 
 
+class TestSuiteAgentLoopFlag(unittest.TestCase):
+    """锁定 check_baseline 的套件回放配置：modify 开 agent_loop=True（防回归成
+    旧路径强制造假的"绿"），create 保持 False（--agent-loop 不碰 CREATE）。"""
+
+    def test_modify_agent_loop_true_create_false(self):
+        from unittest.mock import patch
+
+        from benchmark.check_baseline import PROJECT_ROOT, run_suites
+
+        captured: dict[str, bool | None] = {}
+
+        class _FakeRunner:
+            def __init__(self, **kwargs):
+                captured[str(kwargs.get("llm_replay"))] = kwargs.get("agent_loop")
+
+            def run_suite(self, suite_dir, jobs=4):
+                return []
+
+        with patch("benchmark.check_baseline.BenchmarkRunner", _FakeRunner):
+            run_suites()
+
+        self.assertIs(captured[str(PROJECT_ROOT / "benchmark/fixtures/llm_corpus/modify.jsonl")], True)
+        self.assertIs(captured[str(PROJECT_ROOT / "benchmark/fixtures/llm_corpus/create.jsonl")], False)
+
+    def test_modify_agent_loop_false_is_a_regression_guard(self):
+        """如果 modify 套件被改成 agent_loop=False，直接红灯（旧路径强制造假绿）。"""
+        from benchmark.check_baseline import SUITES
+
+        self.assertTrue(SUITES["modify"][2], "modify 套件必须开 agent_loop=True")
+
+
 if __name__ == "__main__":
     unittest.main()

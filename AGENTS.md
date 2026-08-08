@@ -309,9 +309,17 @@ pass 数下降都会红灯。
 
 ```bash
 python -m benchmark.runner --suite benchmark/tasks/create/ --mode auto --jobs 4 --llm-record benchmark/fixtures/llm_corpus/create.jsonl
-python -m benchmark.runner --suite benchmark/tasks/modify/ --mode auto --jobs 4 --llm-record benchmark/fixtures/llm_corpus/modify.jsonl
+python -m benchmark.runner --suite benchmark/tasks/modify/ --mode mock --jobs 4 --agent-loop --llm-record benchmark/fixtures/llm_corpus/modify.jsonl
 python -m benchmark.update_baseline --init --confirm   # 重建/刷新基线
 ```
+
+- modify 语料自 S4（2026-08-08）起在 **agent loop 路径**录制/回放
+  （`--agent-loop`，patch_script 等工具链首次进入 benchmark 度量）；
+  create 套件不受影响（`--agent-loop` 只作用于 MODIFY）。
+- modify 录制必须用 `--mode mock`（而非 auto）：agent loop 的 prompt 里嵌了
+  编译反馈（compile_script 工具结果 / 完成门禁），而 check_baseline 回放统一用
+  mock 编译器——若录制用真机编译器，回放时 mock 的编译结果与录制不一致，
+  后续轮次 prompt 全 miss（实测 M02 的 IF/ENDIF 边界即崩）。
 
 - OpenRouter 等不需要 thinking 参数的端点，录制命令加 `GDL_BENCH_THINKING=bare` 前缀（完全不设 extra_body）。
 - 默认不设置该变量时行为不变：录制仍强制关闭 thinking。
