@@ -21,6 +21,7 @@ kind 枚举：
 - patch_failure           局部编辑匹配 0 次 / 多次
 - plan_rejected           用户拒绝了修改计划
 - skill_proposal_outcome  技能提案结果（后续任务使用，仅定义）
+- skill_injection_outcome 技能注入任务结局（pass/fail，驱动 fail_count 治理）
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from openbrep.revisions import is_hsf_project_dir
 
 logger = logging.getLogger(__name__)
 
-# kind 枚举（skill_proposal_outcome 仅定义，后续任务使用）
+# kind 枚举（skill_proposal_outcome / skill_injection_outcome 由 GUI 侧写入）
 FEEDBACK_KINDS: frozenset[str] = frozenset({
     "compile_failure",
     "semantic_blocking",
@@ -44,6 +45,7 @@ FEEDBACK_KINDS: frozenset[str] = frozenset({
     "patch_failure",
     "plan_rejected",
     "skill_proposal_outcome",
+    "skill_injection_outcome",
 })
 
 # 字段长度纪律

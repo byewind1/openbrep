@@ -260,6 +260,11 @@ class TaskPipeline:
         if request.agent_loop is None and request.intent in ("MODIFY", "DEBUG", "REPAIR"):
             request.agent_loop = True
 
+        # 注入侧通道清零（不调用 get_for_task 的任务不会残留上一任务的注入名单；
+        # get_for_task 每次调用也会在开头重置，这里是双保险）
+        if self._skills_loader is not None:
+            self._skills_loader.last_injected = []
+
         # 2. Execute
         try:
             if request.intent == "CHAT":
@@ -291,7 +296,20 @@ class TaskPipeline:
                 error=str(exc),
             )
 
-        # 3. Trace (never blocks execution)
+        # 3. 注入名单透出（只加 metadata、不改任何 prompt）：把本次实际注入的
+        # skill 名写入 TaskResult.metadata["injected_skills"]（无注入记 []）。
+        # 只在内存旁路记录；fail_count 回写由 GUI 侧通道完成，绝不经此路径。
+        try:
+            injected: list[str] = []
+            if self._skills_loader is not None:
+                injected = list(self._skills_loader.last_injected or [])
+            merged = dict(result.metadata or {})
+            merged["injected_skills"] = injected
+            result.metadata = merged
+        except Exception:
+            pass
+
+        # 4. Trace (never blocks execution)
         try:
             trace_path = self.tracer.record(request, result)
             result.trace_path = str(trace_path)

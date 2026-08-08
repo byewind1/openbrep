@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -586,6 +587,208 @@ class TestAssistantServiceIntegration(unittest.TestCase):
         resp = session.route("POST", "/api/skill/confirm", {"approve": True})
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["code"], "NO_PENDING_SKILL_PROPOSAL")
+
+
+# ── 6. fail_count 效果回写（record_skill_outcome，S2） ───
+
+def _outcome_skill_file(skills_dir: Path, name: str, **fields) -> Path:
+    """写带计数类 frontmatter 的 skill 文件（fields 覆盖默认值）。"""
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    meta = {"status": "active", "reuse_count": 3, "fail_count": 0, "last_failed": "null"}
+    meta.update(fields)
+    lines = ["---"] + [f"{k}: {v}" for k, v in meta.items()] + ["---", "", "# body"]
+    path = skills_dir / f"{name}.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _injected_result(project, *, success=True, skills=None, verification=None) -> TaskResult:
+    return TaskResult(
+        success=success,
+        intent="CREATE",
+        project=project,
+        scripts={"scripts/3d.gdl": "BLOCK A, B, ZZYZX\n"},
+        metadata={"injected_skills": skills if skills is not None else ["tok_skill"]},
+        verification=verification or {"passed": True, "checks": []},
+    )
+
+
+class TestSkillOutcome(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.project = _make_project(self.tmp)
+        self.skills_dir = str(self.tmp / "skills")
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _session(self, source_path=None):
+        if source_path is None:
+            return SimpleNamespace(source_path=self.project.root)
+        return SimpleNamespace(source_path=source_path)
+
+    def _record(self, result, session=None):
+        with patch.object(skill_harvest, "resolve_skills_dir", return_value=self.skills_dir):
+            skill_harvest.record_skill_outcome(session or self._session(), result)
+
+    def test_fail_task_increments_fail_count_and_writes_last_failed(self):
+        path = _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        self._record(_injected_result(self.project, success=False))
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("fail_count: 1", text)
+        self.assertIn(f"last_failed: {date.today().isoformat()}", text)
+        self.assertIn("reuse_count: 3", text)  # 其余字段不动
+
+    def test_compile_or_semantic_blocking_counts_as_fail_even_if_success(self):
+        path = _outcome_skill_file(Path(self.skills_dir), "tok_skill", fail_count=1)
+        result = _injected_result(
+            self.project,
+            success=True,
+            verification={
+                "passed": False,
+                "checks": [{"check_type": "compile", "status": "fail", "detail": "bad"}],
+            },
+        )
+        self._record(result)
+        self.assertIn("fail_count: 2", path.read_text(encoding="utf-8"))
+
+    def test_pass_task_no_writeback(self):
+        path = _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        before = path.read_bytes()
+        self._record(_injected_result(self.project, success=True))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_no_frontmatter_file_skipped(self):
+        skills_dir = Path(self.skills_dir)
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        path = skills_dir / "plain_skill.md"
+        path.write_text("# plain\n\n## 触发关键词\n- 门窗\n", encoding="utf-8")
+        before = path.read_bytes()
+        self._record(_injected_result(self.project, success=False, skills=["plain_skill"]))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_frontmatter_without_counting_fields_skipped(self):
+        skills_dir = Path(self.skills_dir)
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        path = skills_dir / "meta_only.md"
+        path.write_text("---\ntitle: X\nstatus: active\n---\n\n# body\n", encoding="utf-8")
+        before = path.read_bytes()
+        self._record(_injected_result(self.project, success=False, skills=["meta_only"]))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_same_skill_only_counts_once_per_task(self):
+        path = _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        self._record(_injected_result(self.project, success=False, skills=["tok_skill", "tok_skill"]))
+        self.assertIn("fail_count: 1", path.read_text(encoding="utf-8"))
+
+    def test_feedback_event_written_on_fail(self):
+        _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        self._record(_injected_result(self.project, success=False))
+        events = _read_feedback(self.project)
+        so = [e for e in events if e["kind"] == "skill_injection_outcome"]
+        self.assertEqual(len(so), 1)
+        self.assertEqual(so[0]["detail"]["injected"], ["tok_skill"])
+        self.assertEqual(so[0]["detail"]["outcome"], "fail")
+        self.assertEqual(so[0]["detail"]["failed"], ["tok_skill"])
+
+    def test_feedback_event_written_on_pass(self):
+        _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        self._record(_injected_result(self.project, success=True))
+        events = _read_feedback(self.project)
+        so = [e for e in events if e["kind"] == "skill_injection_outcome"]
+        self.assertEqual(len(so), 1)
+        self.assertEqual(so[0]["detail"]["outcome"], "pass")
+        self.assertEqual(so[0]["detail"]["failed"], [])
+
+    def test_no_injected_skills_no_write_no_event(self):
+        path = _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        before = path.read_bytes()
+        self._record(_injected_result(self.project, success=False, skills=[]))
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(_read_feedback(self.project), [])
+
+    def test_awaiting_confirmation_middle_state_not_counted_as_fail(self):
+        """计划确认门中间态（success=False 但 awaiting_confirmation）不是任务失败。"""
+        path = _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        before = path.read_bytes()
+        result = _injected_result(self.project, success=False)
+        result.metadata["awaiting_confirmation"] = True
+        self._record(result)
+        self.assertEqual(path.read_bytes(), before)  # 不写 fail_count
+        self.assertEqual(_read_feedback(self.project), [])  # 不写反馈事件
+
+    def test_feedback_skipped_when_project_not_on_disk_but_count_still_written(self):
+        path = _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        self._record(
+            _injected_result(self.project, success=False),
+            session=SimpleNamespace(source_path=None),  # 项目未落盘
+        )
+        self.assertIn("fail_count: 1", path.read_text(encoding="utf-8"))  # 计数照写
+        self.assertEqual(_read_feedback(self.project), [])  # feedback 未落盘跳过
+
+    def test_never_raises(self):
+        _outcome_skill_file(Path(self.skills_dir), "tok_skill")
+        with patch.object(skill_harvest, "resolve_skills_dir", side_effect=RuntimeError("boom")):
+            skill_harvest.record_skill_outcome(self._session(), _injected_result(self.project, success=False))
+
+
+# ── 7. assistant_service 集成：record_skill_outcome 挂点 ──
+
+class TestAssistantServiceSkillOutcome(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.project = _make_project(self.tmp)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _session(self, pipeline_result: TaskResult):
+        class _FakePipeline:
+            def __init__(self, *a, **k):
+                pass
+
+            def execute(self, request):
+                return pipeline_result
+
+        return SimpleNamespace(
+            source_path=self.project.root,
+            project=self.project,
+            project_epoch=1,
+            pipeline_class=_FakePipeline,
+            llm_model="mock",
+            llm_api_key="",
+            llm_api_base="",
+            assistant_settings="",
+            max_retries=5,
+            pending_plan=None,
+            pending_skill_proposal=None,
+            skill_harvest_enabled=True,
+        )
+
+    def test_generate_records_skill_outcome_via_harvest_hook(self):
+        result = _injected_result(self.project, success=False, skills=["tok_skill"])
+        session = self._session(result)
+        service = WorkbenchAssistantService(session)
+        with patch(
+            "openbrep.workbench.assistant_service.WorkbenchAssistantService._safe_skill_outcome",
+        ) as hook:
+            service.generate_with_assistant({"message": "给书架加三层板"})
+        hook.assert_called_once()
+        self.assertEqual(hook.call_args.args[0], result)
+
+    def test_stream_records_skill_outcome_via_harvest_hook(self):
+        result = _injected_result(self.project, success=False, skills=["tok_skill"])
+        session = self._session(result)
+        service = WorkbenchAssistantService(session)
+        with patch(
+            "openbrep.workbench.assistant_service.WorkbenchAssistantService._safe_skill_outcome",
+        ) as hook:
+            events = list(service.generate_with_assistant_stream({"message": "修改", "stream": True}))
+        self.assertEqual(events[-1]["type"], "done")
+        hook.assert_called_once()
+        self.assertEqual(hook.call_args.args[0], result)
 
 
 if __name__ == "__main__":

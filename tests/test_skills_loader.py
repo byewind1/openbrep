@@ -247,6 +247,42 @@ class TestSkillsLoader(unittest.TestCase):
             self.assertEqual(skill_file.read_text(encoding="utf-8"), original)  # 字节级不变
             self.assertEqual(loader.skill_meta("legacy_meta_skill")["reuse_count"], 0)
 
+    def test_last_injected_records_actually_injected_and_resets_per_call(self):
+        """注入侧通道：get_for_task 记录本次实际注入的 skill 名，每次调用开头重置；
+        proposed/deprecated 不记录。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir)
+            (skills_dir / "a_style.md").write_text(
+                "---\nstatus: active\n---\n\n# A\n\n## 触发关键词\n- 门窗\n",
+                encoding="utf-8",
+            )
+            (skills_dir / "b_style.md").write_text(
+                "---\nstatus: active\n---\n\n# B\n\n## 触发关键词\n- 门窗\n",
+                encoding="utf-8",
+            )
+            (skills_dir / "c_style.md").write_text(
+                "---\nstatus: proposed\n---\n\n# C\n\n## 触发关键词\n- 门窗\n",
+                encoding="utf-8",
+            )
+            loader = SkillsLoader(str(skills_dir))
+
+            text = loader.get_for_task("生成一个铝合金门窗")
+            self.assertIn("a_style", text)
+            self.assertIn("b_style", text)
+            self.assertEqual(sorted(loader.last_injected), ["a_style", "b_style"])
+            self.assertNotIn("c_style", loader.last_injected)  # proposed 不注入
+
+            # 每次调用开头重置
+            loader.get_for_task("完全无关的内容")
+            self.assertEqual(loader.last_injected, [])
+
+    def test_last_injected_empty_when_no_skills(self):
+        """无 skill 可注入（空目录）→ last_injected 为空列表。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            loader = SkillsLoader(str(tmpdir))
+            self.assertEqual(loader.get_for_task("生成一个书架"), "")
+            self.assertEqual(loader.last_injected, [])
+
     def test_rewrite_skill_frontmatter_public_interface(self):
         """公开写接口 rewrite_skill_frontmatter：标量更新 + 嵌套块整体替换；
         无 frontmatter 文件不动；读回可解析。"""

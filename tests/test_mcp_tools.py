@@ -573,6 +573,8 @@ def test_propose_skill_writes_file_with_full_frontmatter_and_never_overwrites(tm
         "source_trace_id: trace-1",
         "reuse_count: 0",
         "last_used: null",
+        "fail_count: 0",
+        "last_failed: null",
     ):
         assert field in text
     assert "## 触发关键词" in text  # 正文保留
@@ -940,6 +942,53 @@ def test_list_skills_lists_all_filters_by_status_and_rejects_invalid(tmp_path):
     assert bad["error"]["code"] == "invalid_mode"
     assert "message" in bad["error"]
     assert TRACE_RE.match(bad["trace_id"])
+
+
+def test_list_skills_governance_annotation_threshold_boundaries(tmp_path):
+    """治理标注（只标注，不动作）：deprecation_candidate 阈值边界与字段透出。"""
+    skills_dir = tmp_path / "skills"
+    _write_skill_file(
+        skills_dir, "clean_skill", "body",
+        reuse_count=3, fail_count=0, last_failed="null",
+    )
+    _write_skill_file(
+        skills_dir, "below_ratio", "body",
+        reuse_count=3, fail_count=1, last_failed="2026-08-01",
+    )
+    _write_skill_file(
+        skills_dir, "candidate_ratio", "body",
+        reuse_count=3, fail_count=2, last_failed="2026-08-02",
+    )
+    _write_skill_file(
+        skills_dir, "candidate_many", "body",
+        reuse_count=10, fail_count=5, last_failed="2026-08-03",
+    )
+    _write_skill_file(
+        skills_dir, "too_young", "body",
+        reuse_count=2, fail_count=2, last_failed="2026-08-04",
+    )
+
+    result = list_skills(skills_dir=str(skills_dir))
+    assert result["ok"] is True
+    by_name = {s["name"]: s for s in result["skills"]}
+
+    # 字段透出：fail_count / last_failed / deprecation_candidate
+    assert by_name["candidate_ratio"]["fail_count"] == 2
+    assert by_name["candidate_ratio"]["last_failed"] == "2026-08-02"
+    assert by_name["clean_skill"]["fail_count"] == 0
+    assert by_name["clean_skill"]["last_failed"] is None
+
+    # 阈值边界：reuse>=3 且 fail/reuse>=0.5
+    assert by_name["candidate_ratio"]["deprecation_candidate"] is True   # 3 次中 2 次失败
+    assert by_name["candidate_many"]["deprecation_candidate"] is True    # 10 次中 5 次失败
+    assert by_name["clean_skill"]["deprecation_candidate"] is False      # 0 失败
+    assert by_name["below_ratio"]["deprecation_candidate"] is False      # 1/3 < 0.5
+    assert by_name["too_young"]["deprecation_candidate"] is False        # reuse < 3，比例不作数
+
+    # 只标注不动作：status 未被翻 deprecated、注入不受影响
+    assert by_name["candidate_ratio"]["status"] == "active"
+    loader = SkillsLoader(str(skills_dir))
+    assert loader.get_by_name("candidate_ratio") is not None
 
 
 def test_deprecate_skill_flips_status_stops_injection_and_is_idempotent(tmp_path):

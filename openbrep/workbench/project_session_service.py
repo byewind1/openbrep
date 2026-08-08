@@ -439,6 +439,13 @@ class WorkbenchProjectSessionService:
         self.session.source = "hsf"
         self.session.source_path = hsf_dir
         self.remember_project_path(hsf_dir)
+        # skill 效果回写（GUI 侧通道，best-effort）：失败任务按注入 skill 计 fail_count
+        try:
+            from openbrep.runtime.skill_harvest import record_skill_outcome
+
+            record_skill_outcome(self.session, result)
+        except Exception:
+            logger.warning("skill outcome record skipped after create (best-effort)", exc_info=True)
         # 模式级 skill 提案（GUI 侧通道，best-effort；提炼失败不影响交付）
         proposal = None
         try:

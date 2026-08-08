@@ -154,6 +154,8 @@ class WorkbenchAssistantService:
             body, image_payload, on_event=on_event
         )
         result = pipeline.execute(request)
+        # skill 效果回写（GUI 侧通道，best-effort）：失败任务按注入 skill 计 fail_count
+        self._safe_skill_outcome(result)
         # success=False 只在"无可交付物"时才视为硬失败；验证未过但有产出时
         # 照常交付（verification 报告会如实显示 FAIL），避免丢掉用户的生成结果
         if not result.success and result.project is None and not (result.plain_text or result.scripts):
@@ -219,6 +221,8 @@ class WorkbenchAssistantService:
             }
 
         # 计划失败回落 / micro_modify / V1 DSL 命中：直接交付执行结果
+        # skill 效果回写（GUI 侧通道，best-effort）
+        self._safe_skill_outcome(result)
         if result.project is not None:
             self.session.project = result.project
         self.session.project.save_to_disk()
@@ -280,6 +284,18 @@ class WorkbenchAssistantService:
         return self.generate_with_assistant(request_body)
 
     # ── 模式级 skill 提案（GUI 侧通道，best-effort；不进 pipeline 默认路径）──
+
+    def _safe_skill_outcome(self, result) -> None:
+        """best-effort：任务结束时按注入 skill 回写 fail_count / last_failed。
+
+        与 _safe_harvest 同落点，任何异常静默，绝不阻塞已完成的修改交付。
+        """
+        try:
+            from openbrep.runtime.skill_harvest import record_skill_outcome
+
+            record_skill_outcome(self.session, result)
+        except Exception as exc:
+            logger.warning("skill outcome record skipped (best-effort): %s", exc)
 
     def _safe_harvest(self, result, instruction: str) -> dict[str, Any] | None:
         """调用边界兜底：提炼任何异常都静默，绝不阻塞已完成的修改交付。"""
@@ -358,6 +374,9 @@ class WorkbenchAssistantService:
                         error = classify_vision_error(Exception(error))
                     q.put({"type": "error", "data": {"error": error}})
                     return
+
+                # skill 效果回写（GUI 侧通道，best-effort）
+                self._safe_skill_outcome(result)
 
                 if result.project is not None:
                     self.session.project = result.project

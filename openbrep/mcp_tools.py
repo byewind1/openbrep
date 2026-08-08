@@ -1071,8 +1071,10 @@ def propose_skill(
 
     frontmatter 含：status: proposed、skill_version: 1、pattern_type、
     source_project、source_trace_id、reuse_count: 0、last_used: null（复用字段
-    提前带上，让复用计数门禁对它生效）；slice 非空时把 slice dict 以单行 JSON
-    存进 slice 字段（跨脚本 feature slice，极简 YAML 子集不支持任意深度嵌套）。
+    提前带上，让复用计数门禁对它生效）、fail_count: 0、last_failed: null（效果
+    治理字段提前带上，让 fail/reuse 比门禁对它生效）；slice 非空时把 slice dict
+    以单行 JSON 存进 slice 字段（跨脚本 feature slice，极简 YAML 子集不支持任意
+    深度嵌套）。
 
     slice.params 支持两种形态并存（写盘时按原样序列化，类型语义在 verify 时
     落地）：
@@ -1140,6 +1142,8 @@ def propose_skill(
             f"source_trace_id: {_fm_scalar_field(source_trace_id)}",
             "reuse_count: 0",
             "last_used: null",
+            "fail_count: 0",
+            "last_failed: null",
         ]
         if slice:
             lines.append(f"slice: {json.dumps(slice, ensure_ascii=False, sort_keys=True)}")
@@ -1532,12 +1536,26 @@ def reuse_skill(query: str, skills_dir: str = "./skills") -> dict:
             return _make_error("mcp_internal_error", f"reuse_skill 失败: {exc}", trace_id)
 
 
+def _deprecation_candidate(meta: dict) -> bool:
+    """治理标注（只标注，不动作）：reuse_count >= 3 且 fail/reuse 比 >= 0.5。"""
+    try:
+        reuse = int(meta.get("reuse_count") or 0)
+        fail = int(meta.get("fail_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if reuse < 3:
+        return False
+    return fail / reuse >= 0.5
+
+
 def list_skills(status: str | None = None, skills_dir: str = "./skills") -> dict:
     """列出全部 skill 及其元数据（含 proposed/deprecated，管理面视图）。
 
     每条：{name, status, pattern_type, skill_version, reuse_count, last_used,
-    source_project}。status 非空时按状态过滤（active/verified/proposed/
-    deprecated）；status 非法值 → code="invalid_mode"。
+    source_project, fail_count, last_failed, deprecation_candidate}。
+    deprecation_candidate 为计算字段（只标注、不自动 deprecate）：reuse_count
+    >= 3 且 fail_count/reuse_count >= 0.5。status 非空时按状态过滤
+    （active/verified/proposed/deprecated）；status 非法值 → code="invalid_mode"。
     """
     with _locked():
         trace_id = _next_trace_id()
@@ -1565,6 +1583,9 @@ def list_skills(status: str | None = None, skills_dir: str = "./skills") -> dict
                     "reuse_count": meta.get("reuse_count"),
                     "last_used": meta.get("last_used"),
                     "source_project": meta.get("source_project"),
+                    "fail_count": meta.get("fail_count"),
+                    "last_failed": meta.get("last_failed"),
+                    "deprecation_candidate": _deprecation_candidate(meta),
                 })
             return {
                 "ok": True,

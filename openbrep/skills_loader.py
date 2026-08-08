@@ -37,6 +37,11 @@ Skill files may carry an optional YAML frontmatter block at the top:
   Only files whose frontmatter already carries a reuse field
   (reuse_count / last_used) are counted — files that never opted into the
   reuse metadata are left byte-identical on disk (存量文件不被强行加头).
+- Injection side channel: every get_for_task call records the names it
+  actually injected into ``self.last_injected`` (reset at call start; pure
+  in-memory, injected text unchanged). The pipeline reads this to expose
+  ``metadata["injected_skills"]`` so the GUI channel can write back
+  fail_count — fail_count itself is NEVER written here.
 """
 
 from __future__ import annotations
@@ -86,6 +91,8 @@ _DEFAULT_META: dict[str, Any] = {
     "verified_evidence": None,
     "reuse_count": 0,
     "last_used": None,
+    "fail_count": 0,
+    "last_failed": None,
 }
 
 
@@ -331,6 +338,10 @@ class SkillsLoader:
         self._has_frontmatter: set[str] = set()
         self._reuse_counted: set[str] = set()
         self._loaded = False
+        # 注入侧通道（纯内存旁路，不改注入文本）：每次 get_for_task 调用开头
+        # 重置，记录本次实际注入的 skill 名。pipeline 在任务结束时读取它并写进
+        # TaskResult.metadata["injected_skills"]；fail_count 回写在 GUI 侧完成。
+        self.last_injected: list[str] = []
 
     def load(self) -> None:
         """Load all .md files from the skills directory (excluding README).
@@ -402,6 +413,8 @@ class SkillsLoader:
         if not self._loaded:
             self.load()
 
+        self.last_injected = []  # 本次调用开头重置注入侧通道
+
         if not self._skills:
             return ""
 
@@ -436,6 +449,7 @@ class SkillsLoader:
                 parts.append(f"## Skill: {name}\n\n{self._skills[name]}")
                 seen.add(name)
                 self._count_reuse(name)
+                self.last_injected.append(name)
 
         return "\n\n---\n\n".join(parts)
 

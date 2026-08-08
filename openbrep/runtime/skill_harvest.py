@@ -16,17 +16,24 @@ GUI 弹"沉淀提案"确认卡 → 用户批准走 propose_skill + verify_skill 
 - 输出纪律：pattern_type 限于枚举；content 为模式级 Markdown 抽象，
   禁贴实例代码（[FILE: 块）、禁含项目名；严格 JSON {name, pattern_type,
   content, slice?}；解析失败/校验不过 → None 静默。
+
+本模块还承载 fail_count 效果回写（record_skill_outcome，本单 S2）：
+任务失败时对 metadata["injected_skills"] 里的每个 skill 计 fail_count+1 /
+last_failed=今天；治理面据此按 fail/reuse 比标注 deprecated 候选。回写同样
+只在 GUI 侧通道（assistant_service / project create 拿到 TaskResult 后调用），
+benchmark 直接调 pipeline 不触发任何回写。
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
 from openbrep.feedback import append_feedback
-from openbrep.skills_loader import SkillsLoader
+from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -483,3 +490,95 @@ def harvest_for_session(session, result, instruction: str) -> Optional[dict]:
 def confirm_skill_proposal(session, body: dict[str, Any]) -> dict[str, Any]:
     """session 级入口：审批待确认 skill 提案（skills_dir 自动解析）。"""
     return _confirm_skill_proposal_impl(session, body, resolve_skills_dir())
+
+
+# ── fail_count 效果回写（GUI 侧通道，不进 pipeline 默认路径） ──
+
+def _task_failed(result) -> bool:
+    """任务最终失败判定：success=False，或 verification 有 compile/semantic blocking。"""
+    try:
+        if not getattr(result, "success", True):
+            return True
+        verification = result.verification or {}
+        for check in verification.get("checks") or []:
+            check_type = check.get("check_type")
+            status = check.get("status")
+            if check_type in ("compile", "semantic") and status not in (None, "pass"):
+                return True
+        return False
+    except Exception:
+        logger.warning("skill_harvest task_failed check failed", exc_info=True)
+        return False
+
+
+def _unique_injected(result) -> list[str]:
+    """metadata.injected_skills 去重（同一任务同一 skill 只计一次）。"""
+    injected = (result.metadata or {}).get("injected_skills") or []
+    if isinstance(injected, list):
+        return list(dict.fromkeys(str(n) for n in injected if n))
+    return []
+
+
+def _bump_fail_count(loader: SkillsLoader, name: str) -> None:
+    """单个 skill：fail_count += 1、last_failed=今天，写回 frontmatter。
+
+    计数纪律对齐 reuse：只回写 frontmatter 已带计数类字段
+    （reuse_count / last_used / fail_count 任一）的文件——无 frontmatter 或
+    未接入计数的存量文件跳过（不强行加头）。写回失败静默降级。
+    """
+    try:
+        if name not in loader._file_paths:
+            return
+        raw = loader._raw_meta.get(name, {})
+        if not any(key in raw for key in ("reuse_count", "last_used", "fail_count")):
+            return  # 未接入计数类元数据：不计数、不改写
+        fail_count = int(loader._meta[name].get("fail_count") or 0) + 1
+        today = date.today().isoformat()
+        rewritten = rewrite_skill_frontmatter(
+            loader._file_paths[name],
+            updates={"fail_count": str(fail_count), "last_failed": today},
+        )
+        if rewritten:
+            loader._meta[name]["fail_count"] = fail_count
+            loader._meta[name]["last_failed"] = today
+    except Exception:
+        logger.debug("skill %s fail_count 回写失败，静默降级", name)
+
+
+def record_skill_outcome(session, result) -> None:
+    """任务结束时按注入 skill 回写 fail_count / last_failed（GUI 侧通道）。
+
+    与 S1 的 harvest 钩子同落点：assistant_service 三条交付路径 +
+    project_session_service create 路径拿到 TaskResult 后调用，绝不进 pipeline
+    默认路径（benchmark/CI 回放直接调 pipeline，不会触发任何回写）。
+
+    - 任务失败（success=False 或 verification 有 compile/semantic blocking）：
+      对 metadata["injected_skills"] 每个 skill 计 fail_count += 1 并写
+      last_failed=今天；任务全过不动。
+    - 计数纪律对齐 reuse：只回写已带计数类字段的文件，无 frontmatter 的存量
+      文件跳过；同一任务同一 skill 只计一次。
+    - 每任务写一条 skill_injection_outcome 反馈事件（best-effort，项目未落盘跳过）。
+    - best-effort：任何异常 logger.warning 静默，绝不影响交付。
+    """
+    try:
+        injected = _unique_injected(result)
+        if not injected:
+            return
+        if (result.metadata or {}).get("awaiting_confirmation"):
+            return  # 计划确认门中间态：任务未完成，不计结局、不写反馈
+        failed = _task_failed(result)
+        failed_list = list(injected) if failed else []
+        if failed:
+            loader = SkillsLoader(resolve_skills_dir())
+            loader.load()
+            for name in injected:
+                _bump_fail_count(loader, name)
+        append_feedback(getattr(session, "source_path", None), {
+            "kind": "skill_injection_outcome",
+            "summary": (
+                f"skill 注入任务{'失败' if failed else '通过'}：{len(injected)} 个 skill"
+            ),
+            "detail": {"injected": injected, "outcome": "fail" if failed else "pass", "failed": failed_list},
+        })
+    except Exception as exc:
+        logger.warning("skill_harvest record_skill_outcome skipped (best-effort): %s", exc)
