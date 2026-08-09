@@ -67,6 +67,7 @@ EXPECTED_TOOLS = (
     "reuse_skill",
     "list_skills",
     "deprecate_skill",
+    "distill_feedback",
 )
 
 

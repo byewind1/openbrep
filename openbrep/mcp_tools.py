@@ -51,6 +51,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
 
+from openbrep import feedback_distill
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.project_context import load_project_origin
 from openbrep.config import GDLAgentConfig
@@ -1641,3 +1642,43 @@ def deprecate_skill(name: str, skills_dir: str = "./skills") -> dict:
             return {"ok": True, "name": name, "status": "deprecated", "trace_id": trace_id}
         except Exception as exc:
             return _make_error("mcp_internal_error", f"deprecate_skill 失败: {exc}", trace_id)
+
+
+# ── distill_feedback（F2，反馈事件 → proposed 态教训候选） ─────────────
+
+def distill_feedback(
+    path: str,
+    work_dir: str | None = None,
+    llm: Any = None,
+) -> dict:
+    """把项目/工作区的反馈事件（.openbrep/feedback.jsonl）提炼成 proposed 态教训候选。
+
+    加工链：确定性预聚类（(kind, 规范化签名)）→ 一次 LLM 语义提炼（温度 0 /
+    小 max_tokens / 非流式）→ 写入 <work_dir>/.openbrep/memory/learnings/
+    distilled_lessons.jsonl（proposed 态，**不注入、不晋升**——F3 才入闸）。
+    增量：watermark 按文件行数只处理新增事件；零事件/零增量不建 LLM。
+    LLM 构建失败 / 调用异常 / 坏 JSON / 空候选 → 静默 new_lessons=0（绝不抛出）。
+    work_dir 缺省：path 是工作区（含 hsf/）→ path 本身；是项目 → 其父目录。
+    llm 可注入（测试用）；缺省从 GDLAgentConfig 构建。
+    失败：path 不存在 / 既不是项目也不是工作区 → code="project_not_found"。
+    返回 {ok, new_lessons, total_lessons, clusters, trace_id}。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        root = Path(path)
+        if not root.is_dir():
+            return _make_error("project_not_found", f"目录不存在: {root}", trace_id)
+        if not ((root / ".openbrep" / "feedback.jsonl").is_file() or (root / "hsf").is_dir()):
+            return _make_error(
+                "project_not_found",
+                f"path 既不是 HSF 项目目录（无 .openbrep/feedback.jsonl）"
+                f"也不是工作区目录（无 hsf/）: {root}",
+                trace_id,
+                details={"path": str(root)},
+            )
+        try:
+            result = feedback_distill.distill(root, work_dir=work_dir, llm=llm)
+            result["trace_id"] = trace_id
+            return result
+        except Exception as exc:
+            return _make_error("mcp_internal_error", f"distill_feedback 失败: {exc}", trace_id)

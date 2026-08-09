@@ -4,7 +4,7 @@
 协议皮（protocol skin），不含任何业务逻辑。mcp_tools.py 一行都不许动。
 
 职责：
-- 把 mcp_tools 的 12 个工具注册为 MCP 工具，工具名与函数名一致。
+- 把 mcp_tools 的工具注册为 MCP 工具（工具名与函数名一致）。
 - 每个工具的 description 从 mcp_tools 对应函数的 docstring 提炼。
 - 工具返回值：mcp_tools 返回的 dict 直接 JSON 序列化为 text content 返回；
   异常不抛到协议层（mcp_tools 已保证不抛，这里再加一层兜底）。
@@ -50,6 +50,7 @@ _MCP_TOOL_NAMES = (
     "reuse_skill",
     "list_skills",
     "deprecate_skill",
+    "distill_feedback",
 )
 
 
@@ -221,6 +222,16 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
         "skills_dir: skills 目录，默认 ./skills（string，选填）。",
         _schema(required=(("name", "string"),), optional=(("skills_dir", "string"),)),
     ),
+    (
+        "distill_feedback",
+        mcp_tools.distill_feedback,
+        "把项目/工作区的反馈事件（.openbrep/feedback.jsonl）提炼成 proposed 态教训候选"
+        "（写入 <work_dir>/.openbrep/memory/learnings/distilled_lessons.jsonl，"
+        "不注入、不晋升）。返回 {ok, new_lessons, total_lessons, clusters, trace_id}。"
+        "参数 path: HSF 项目目录或工作区目录绝对路径（string）；"
+        "work_dir: 教训库所在工作区，默认 = path（工作区）或其父目录（项目）（string，选填）。",
+        _schema(required=(("path", "string"),), optional=(("work_dir", "string"),)),
+    ),
 )
 
 _TOOLS_BY_NAME: dict[str, dict[str, Any]] = {
@@ -309,8 +320,9 @@ def build_server() -> Server:
         version=__version__,
         instructions=(
             "OpenBrep MCP 工具层：加载 / 编译 / 语义验证 / 几何证据 / 编辑 / 回滚 / 导入 "
-            "HSF（ArchiCAD 库对象）项目；以及 propose/verify/reuse/list/deprecate 五个 "
-            "skill 管理工具。项目类工具第一个参数都是 HSF 项目目录绝对路径 path；"
+            "HSF（ArchiCAD 库对象）项目；propose/verify/reuse/list/deprecate 五个 "
+            "skill 管理工具；以及 distill_feedback（反馈事件 → proposed 态教训候选，"
+            "不注入、不晋升）。项目类工具第一个参数都是 HSF 项目目录绝对路径 path；"
             "skill 类工具用 name/query + skills_dir。"
             "返回 {ok, ..., trace_id} 或 {ok: False, error: {code, message}, trace_id}。"
         ),
