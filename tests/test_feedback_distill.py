@@ -474,3 +474,359 @@ class TestMcpDistillFeedback(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── F3：教训晋升入闸（状态机 + active 注入 + pipeline 闸 + 循环 import 防线） ──
+
+def _seed_lessons(work_dir: Path, lessons: list[dict]) -> Path:
+    """写入教训库（用 sort_keys 与 save_lessons 同构；直接写便于构造任意状态）。"""
+    path = work_dir / ".openbrep" / "memory" / "learnings" / fd.DISTILLED_LESSONS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        for lesson in lessons:
+            fh.write(json.dumps(lesson, ensure_ascii=False, sort_keys=True) + "\n")
+    return path
+
+
+def _lesson(fingerprint: str, status: str = "proposed", count: int = 1, pattern: str = "P") -> dict:
+    return {
+        "fingerprint": fingerprint,
+        "pattern": pattern,
+        "guidance": "G",
+        "evidence_kinds": ["compile_failure"],
+        "count": count,
+        "first_seen": "2026-08-01T00:00:00+00:00",
+        "last_seen": "2026-08-02T00:00:00+00:00",
+        "status": status,
+    }
+
+
+class TestLessonStateMachine(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.work_dir = self.tmp / "ws"
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_promote_proposed_to_active_persists(self):
+        _seed_lessons(self.work_dir, [_lesson("distill:compile_failure:aa")])
+        result = fd.set_lesson_status(self.work_dir, "distill:compile_failure:aa", "promote")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "active")
+        self.assertTrue(result["changed"])
+        saved = fd.load_lessons(self.work_dir)[0]
+        self.assertEqual(saved["status"], "active")
+        self.assertIn("status_changed_at", saved)
+        self.assertRegex(saved["status_changed_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+
+    def test_reject_and_demote_legal(self):
+        _seed_lessons(self.work_dir, [
+            _lesson("distill:compile_failure:aa"),
+            _lesson("distill:compile_failure:bb", status="active"),
+        ])
+        r1 = fd.set_lesson_status(self.work_dir, "distill:compile_failure:aa", "reject")
+        self.assertTrue(r1["ok"])
+        self.assertEqual(r1["status"], "rejected")
+        r2 = fd.set_lesson_status(self.work_dir, "distill:compile_failure:bb", "demote")
+        self.assertTrue(r2["ok"])
+        self.assertEqual(r2["status"], "proposed")
+        by_fp = {lesson["fingerprint"]: lesson for lesson in fd.load_lessons(self.work_dir)}
+        self.assertEqual(by_fp["distill:compile_failure:aa"]["status"], "rejected")
+        self.assertEqual(by_fp["distill:compile_failure:bb"]["status"], "proposed")
+
+    def test_illegal_transitions_error(self):
+        _seed_lessons(self.work_dir, [
+            _lesson("distill:compile_failure:rej", status="rejected"),
+            _lesson("distill:compile_failure:prop"),
+            _lesson("distill:compile_failure:act", status="active"),
+        ])
+        # rejected → active 非法；demote 一个 proposed 非法；reject 一个 active 非法
+        bad = [
+            ("distill:compile_failure:rej", "promote"),
+            ("distill:compile_failure:prop", "demote"),
+            ("distill:compile_failure:act", "reject"),
+        ]
+        for fp, decision in bad:
+            result = fd.set_lesson_status(self.work_dir, fp, decision)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "invalid_transition")
+
+    def test_unknown_fingerprint_and_bad_decision_error(self):
+        result = fd.set_lesson_status(self.work_dir, "ghost", "promote")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "lesson_not_found")
+        _seed_lessons(self.work_dir, [_lesson("distill:compile_failure:aa")])
+        result2 = fd.set_lesson_status(self.work_dir, "distill:compile_failure:aa", "fly")
+        self.assertFalse(result2["ok"])
+        self.assertEqual(result2["error"]["code"], "invalid_decision")
+
+    def test_idempotent_promote_active_and_reject_rejected(self):
+        _seed_lessons(self.work_dir, [
+            _lesson("distill:compile_failure:aa", status="active"),
+            _lesson("distill:compile_failure:bb", status="rejected"),
+        ])
+        r1 = fd.set_lesson_status(self.work_dir, "distill:compile_failure:aa", "promote")
+        self.assertTrue(r1["ok"])
+        self.assertFalse(r1["changed"])
+        self.assertEqual(r1["status"], "active")
+        r2 = fd.set_lesson_status(self.work_dir, "distill:compile_failure:bb", "reject")
+        self.assertTrue(r2["ok"])
+        self.assertFalse(r2["changed"])
+        self.assertEqual(r2["status"], "rejected")
+        # 幂等不写 status_changed_at（保持首次迁移时间）
+        saved = fd.load_lessons(self.work_dir)
+        self.assertEqual(len(saved), 2)
+        self.assertEqual([lesson["status"] for lesson in saved], ["active", "rejected"])
+
+    def test_list_lessons_view_sort_and_filter(self):
+        _seed_lessons(self.work_dir, [
+            _lesson("distill:compile_failure:aa", status="active", count=1),
+            _lesson("distill:compile_failure:bb", status="active", count=5),
+            _lesson("distill:compile_failure:cc", status="proposed", count=9),
+            _lesson("distill:compile_failure:dd", status="rejected", count=2),
+        ])
+        view = fd.list_lessons_view(self.work_dir)
+        # 按 (status, -count, last_seen) 稳定排序
+        self.assertEqual([v["status"] for v in view], ["active", "active", "proposed", "rejected"])
+        self.assertEqual([v["count"] for v in view[:2]], [5, 1])
+        filtered = fd.list_lessons_view(self.work_dir, status="active")
+        self.assertEqual(len(filtered), 2)
+        self.assertTrue(all(v["status"] == "active" for v in filtered))
+        # 视图字段固定（不含 samples/status_changed_at 等内部字段）
+        self.assertEqual(
+            set(filtered[0].keys()),
+            {
+                "fingerprint", "pattern", "guidance", "evidence_kinds",
+                "count", "status", "first_seen", "last_seen",
+            },
+        )
+
+
+class TestRejectedNotRevivedByMerge(unittest.TestCase):
+    def test_merge_keeps_rejected_status(self):
+        existing = [_lesson("distill:compile_failure:aa", status="rejected", count=2)]
+        new_lessons = [_lesson("distill:compile_failure:aa", status="proposed", count=3)]
+        merged = fd.merge_lessons(existing, new_lessons)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["status"], "rejected")  # 不被复活
+        self.assertEqual(merged[0]["count"], 5)            # count 仍累加
+        self.assertEqual(merged[0]["pattern"], "P")
+
+    def test_distill_does_not_revive_rejected(self):
+        """完整链路：同 fingerprint 被拒绝后再提炼 → 仍是 rejected。"""
+        wd = self.tmp / "ws"
+        _seed_lessons(wd, [_lesson("distill:compile_failure:aa", status="rejected")])
+        new_lessons = [{
+            "fingerprint": "distill:compile_failure:aa",
+            "pattern": "新提炼",
+            "guidance": "新指引",
+            "evidence_kinds": ["compile_failure"],
+            "count": 2,
+            "first_seen": "2026-08-03T00:00:00+00:00",
+            "last_seen": "2026-08-04T00:00:00+00:00",
+            "status": fd.PROPOSED_STATUS,
+        }]
+        lessons = fd.merge_lessons(fd.load_lessons(wd), new_lessons)
+        fd.save_lessons(wd, lessons)
+        saved = fd.load_lessons(wd)[0]
+        self.assertEqual(saved["status"], "rejected")
+        self.assertEqual(saved["count"], 3)
+        self.assertEqual(saved["pattern"], "新提炼")
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+
+class TestDistilledInjection(unittest.TestCase):
+    """active 进 build_skill_prompt；proposed/rejected 不进；层消失/limit/坏文件。"""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.work_dir = self.tmp / "ws"
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_active_injected_proposed_rejected_excluded(self):
+        _seed_lessons(self.work_dir, [
+            _lesson(
+                "distill:compile_failure:aa", status="active",
+                pattern="ACTIVE_CANARY_7f", count=3,
+            ),
+            _lesson("distill:compile_failure:bb", status="proposed", pattern="PROPOSED_CANARY_9a"),
+            _lesson("distill:compile_failure:cc", status="rejected", pattern="REJECTED_CANARY_2c"),
+        ])
+        prompt = ErrorLearningStore(self.work_dir).build_skill_prompt()
+        self.assertIn("ACTIVE_CANARY_7f", prompt)
+        self.assertIn("workspace_distilled_lessons", prompt)
+        self.assertNotIn("PROPOSED_CANARY_9a", prompt)
+        self.assertNotIn("REJECTED_CANARY_2c", prompt)
+
+    def test_layer_disappears_when_no_active(self):
+        _seed_lessons(self.work_dir, [
+            _lesson("distill:compile_failure:bb", status="proposed", pattern="PROPOSED_CANARY_9a"),
+        ])
+        prompt = ErrorLearningStore(self.work_dir).build_skill_prompt()
+        self.assertNotIn("workspace_distilled_lessons", prompt)
+        self.assertNotIn("PROPOSED_CANARY_9a", prompt)
+
+    def test_build_distilled_prompt_limit_truncation_and_order(self):
+        _seed_lessons(self.work_dir, [
+            _lesson("distill:compile_failure:aa", status="active", pattern="LOW_COUNT", count=1),
+            _lesson("distill:compile_failure:bb", status="active", pattern="HIGH_COUNT", count=9),
+        ])
+        text = fd.build_distilled_lessons_prompt(self.work_dir, limit=1)
+        self.assertIn("HIGH_COUNT", text)
+        self.assertNotIn("LOW_COUNT", text)
+        # 排序：-count → HIGH_COUNT 在前
+        text_all = fd.build_distilled_lessons_prompt(self.work_dir, limit=8)
+        self.assertLess(text_all.index("HIGH_COUNT"), text_all.index("LOW_COUNT"))
+
+    def test_bad_file_silent_empty(self):
+        _seed_lessons(self.work_dir, [_lesson("distill:compile_failure:aa", status="active")])
+        path = self.work_dir / ".openbrep" / "memory" / "learnings" / fd.DISTILLED_LESSONS_FILE
+        path.write_text("{broken json\n", encoding="utf-8")
+        self.assertEqual(fd.build_distilled_lessons_prompt(self.work_dir), "")
+        self.assertEqual(fd.list_lessons_view(self.work_dir), [])
+        # build_skill_prompt 也不抛（best-effort）
+        prompt = ErrorLearningStore(self.work_dir).build_skill_prompt()
+        self.assertNotIn("workspace_distilled_lessons", prompt)
+
+
+class TestPipelineLearnedGate(unittest.TestCase):
+    """include_learned_skills=False（benchmark 复现性闸门）时 active 教训不注入。"""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.work_dir = self.tmp / "ws"
+        _seed_lessons(self.work_dir, [
+            _lesson(
+                "distill:compile_failure:aa", status="active",
+                pattern="GATE_CANARY_3f9a", count=5,
+            ),
+        ])
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _assemble(self, include_learned_skills: bool):
+        from openbrep.config import GDLAgentConfig
+        from openbrep.hsf_project import HSFProject
+        from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+
+        pipeline = TaskPipeline(
+            config=GDLAgentConfig(),
+            trace_dir=str(self.tmp / "traces"),
+            include_learned_skills=include_learned_skills,
+        )
+        project = HSFProject.create_new("Shelf", work_dir=str(self.tmp / "proj"))
+        request = TaskRequest(user_input="改一下书架", work_dir=str(self.work_dir), project=project)
+        assembled = pipeline._assemble_context(request, project, instruction="改一下书架")
+        return assembled.skills_text
+
+    def test_gate_off_blocks_active_lesson(self):
+        skills_text = self._assemble(include_learned_skills=False)
+        self.assertNotIn("GATE_CANARY_3f9a", skills_text)
+
+    def test_gate_on_injects_active_lesson(self):
+        skills_text = self._assemble(include_learned_skills=True)
+        self.assertIn("GATE_CANARY_3f9a", skills_text)
+
+
+class TestNoCircularImport(unittest.TestCase):
+    def test_learning_import_does_not_load_feedback_distill(self):
+        """防循环 import：learning.py 只在函数内局部 import feedback_distill。"""
+        import sys
+
+        saved_fd = sys.modules.pop("openbrep.feedback_distill", None)
+        saved_learning = sys.modules.pop("openbrep.learning", None)
+        try:
+            import importlib
+            importlib.import_module("openbrep.learning")
+            self.assertNotIn("openbrep.feedback_distill", sys.modules)
+        finally:
+            if saved_fd is not None:
+                sys.modules["openbrep.feedback_distill"] = saved_fd
+            if saved_learning is not None:
+                sys.modules["openbrep.learning"] = saved_learning
+
+
+class TestMcpLessonTools(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.work_dir = self.tmp / "ws"
+        _seed_lessons(self.work_dir, [
+            _lesson("distill:compile_failure:aa", status="proposed", count=3),
+            _lesson("distill:compile_failure:bb", status="active", count=1),
+            _lesson("distill:compile_failure:cc", status="proposed", count=1),
+        ])
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_list_lessons_contract(self):
+        from openbrep.mcp_tools import list_lessons
+
+        result = list_lessons(work_dir=str(self.work_dir))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["total"], 3)
+        self.assertRegex(result["trace_id"], r"^mcp-\d{8}-\d{4}$")
+        by_fp = {lesson["fingerprint"]: lesson for lesson in result["lessons"]}
+        self.assertEqual(by_fp["distill:compile_failure:aa"]["status"], "proposed")
+        self.assertEqual(by_fp["distill:compile_failure:bb"]["status"], "active")
+
+        filtered = list_lessons(work_dir=str(self.work_dir), status="active")
+        self.assertEqual(filtered["total"], 1)
+        self.assertEqual(filtered["lessons"][0]["fingerprint"], "distill:compile_failure:bb")
+
+        bad = list_lessons(work_dir=str(self.work_dir), status="nope")
+        self.assertFalse(bad["ok"])
+        self.assertEqual(bad["error"]["code"], "invalid_mode")
+
+    def test_promote_lesson_contract(self):
+        from openbrep.mcp_tools import promote_lesson
+
+        ok = promote_lesson(
+            work_dir=str(self.work_dir),
+            fingerprint="distill:compile_failure:aa",
+            decision="promote",
+        )
+        self.assertTrue(ok["ok"])
+        self.assertEqual(ok["status"], "active")
+        self.assertEqual(ok["decision"], "promote")
+        self.assertRegex(ok["trace_id"], r"^mcp-\d{8}-\d{4}$")
+        saved = fd.load_lessons(self.work_dir)
+        self.assertEqual([lesson["status"] for lesson in saved], ["active", "active", "proposed"])
+
+        missing = promote_lesson(
+            work_dir=str(self.work_dir), fingerprint="ghost", decision="promote",
+        )
+        self.assertFalse(missing["ok"])
+        self.assertEqual(missing["error"]["code"], "lesson_not_found")
+
+        # demote 一个 still-proposed 的教训 = 非法迁移
+        illegal = promote_lesson(
+            work_dir=str(self.work_dir),
+            fingerprint="distill:compile_failure:cc",
+            decision="demote",
+        )
+        self.assertFalse(illegal["ok"])
+        self.assertEqual(illegal["error"]["code"], "invalid_transition")
+
+        # active → proposed 撤回是合法迁移
+        demote_ok = promote_lesson(
+            work_dir=str(self.work_dir),
+            fingerprint="distill:compile_failure:bb",
+            decision="demote",
+        )
+        self.assertTrue(demote_ok["ok"])
+        self.assertEqual(demote_ok["status"], "proposed")

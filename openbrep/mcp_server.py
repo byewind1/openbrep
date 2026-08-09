@@ -51,6 +51,8 @@ _MCP_TOOL_NAMES = (
     "list_skills",
     "deprecate_skill",
     "distill_feedback",
+    "list_lessons",
+    "promote_lesson",
 )
 
 
@@ -232,6 +234,30 @@ _TOOL_SPECS: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
         "work_dir: 教训库所在工作区，默认 = path（工作区）或其父目录（项目）（string，选填）。",
         _schema(required=(("path", "string"),), optional=(("work_dir", "string"),)),
     ),
+    (
+        "list_lessons",
+        mcp_tools.list_lessons,
+        "列出教训库（distilled_lessons.jsonl）的教训视图：{fingerprint, pattern, guidance, "
+        "evidence_kinds, count, status, first_seen, last_seen}，按 (status, -count, last_seen) "
+        "排序。status 可选 proposed/active/rejected。返回 {ok, lessons, total, trace_id}。"
+        "参数 work_dir: 教训库所在工作区（string，选填，默认 ./workdir）；"
+        "status: 状态过滤（string，选填）。",
+        _schema(required=(), optional=(("work_dir", "string"), ("status", "string"))),
+    ),
+    (
+        "promote_lesson",
+        mcp_tools.promote_lesson,
+        "教训状态机迁移：promote（proposed→active 晋升）/ reject（proposed→rejected 拒绝）/ "
+        "demote（active→proposed 撤回）。幂等：promote 已 active / reject 已 rejected → ok 但不变。"
+        "非法迁移 / 未知 fingerprint / 非法 decision → 错误不静默。"
+        "返回 {ok, fingerprint, decision, status, trace_id}。"
+        "参数 work_dir: 教训库所在工作区（string，选填，默认 ./workdir）；"
+        "fingerprint: 教训指纹（string）；decision: promote/reject/demote（string）。",
+        _schema(
+            required=(("fingerprint", "string"), ("decision", "string")),
+            optional=(("work_dir", "string"),),
+        ),
+    ),
 )
 
 _TOOLS_BY_NAME: dict[str, dict[str, Any]] = {
@@ -321,8 +347,9 @@ def build_server() -> Server:
         instructions=(
             "OpenBrep MCP 工具层：加载 / 编译 / 语义验证 / 几何证据 / 编辑 / 回滚 / 导入 "
             "HSF（ArchiCAD 库对象）项目；propose/verify/reuse/list/deprecate 五个 "
-            "skill 管理工具；以及 distill_feedback（反馈事件 → proposed 态教训候选，"
-            "不注入、不晋升）。项目类工具第一个参数都是 HSF 项目目录绝对路径 path；"
+            "skill 管理工具；以及 distill_feedback（反馈事件 → 教训候选）与 "
+            "list_lessons / promote_lesson（教训状态机：proposed 过闸才 active 进注入）。"
+            "项目类工具第一个参数都是 HSF 项目目录绝对路径 path；"
             "skill 类工具用 name/query + skills_dir。"
             "返回 {ok, ..., trace_id} 或 {ok: False, error: {code, message}, trace_id}。"
         ),

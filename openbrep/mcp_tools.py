@@ -1682,3 +1682,62 @@ def distill_feedback(
             return result
         except Exception as exc:
             return _make_error("mcp_internal_error", f"distill_feedback 失败: {exc}", trace_id)
+
+
+# ── list_lessons / promote_lesson（F3，教训状态机管理面） ────────────
+
+def list_lessons(work_dir: str = "./workdir", status: str | None = None) -> dict:
+    """列出教训库（distilled_lessons.jsonl）的教训视图（薄转发 list_lessons_view）。
+
+    每条 {fingerprint, pattern, guidance, evidence_kinds, count, status,
+    first_seen, last_seen}，按 (status, -count, last_seen) 稳定排序。
+    status 可选 proposed/active/rejected，缺省全部；非法值 → code="invalid_mode"。
+    返回 {ok, lessons, total, trace_id}。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        if status is not None and status not in feedback_distill.ALL_STATUSES:
+            valid_statuses = "/".join(sorted(feedback_distill.ALL_STATUSES))
+            return _make_error(
+                "invalid_mode",
+                f"非法 status: {status!r}（可选: {valid_statuses}）",
+                trace_id,
+                details={"status": status},
+            )
+        try:
+            lessons = feedback_distill.list_lessons_view(work_dir, status=status)
+            return {
+                "ok": True,
+                "lessons": lessons,
+                "total": len(lessons),
+                "trace_id": trace_id,
+            }
+        except Exception as exc:
+            return _make_error("mcp_internal_error", f"list_lessons 失败: {exc}", trace_id)
+
+
+def promote_lesson(work_dir: str = "./workdir", fingerprint: str = "", decision: str = "") -> dict:
+    """教训状态机迁移（薄转发 set_lesson_status）。
+
+    decision: promote（proposed→active 晋升）/ reject（proposed→rejected 拒绝）/
+    demote（active→proposed 撤回）。幂等：promote 已 active / reject 已 rejected
+    → ok 但不变。非法迁移 / 未知 fingerprint / 非法 decision → 错误不静默。
+    迁移成功写 status_changed_at（ISO 秒级）。
+    返回 {ok, fingerprint, decision, status, trace_id}。
+    """
+    with _locked():
+        trace_id = _next_trace_id()
+        try:
+            result = feedback_distill.set_lesson_status(work_dir, fingerprint, decision)
+        except Exception as exc:
+            return _make_error("mcp_internal_error", f"promote_lesson 失败: {exc}", trace_id)
+        if not result.get("ok"):
+            err = result.get("error") or {}
+            return _make_error(
+                str(err.get("code") or "mcp_internal_error"),
+                str(err.get("message") or "迁移失败"),
+                trace_id,
+                err.get("details"),
+            )
+        result["trace_id"] = trace_id
+        return result

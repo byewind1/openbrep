@@ -1,4 +1,4 @@
-"""反馈事件 → proposed 态教训候选的加工层（F2，自我优化系统）。
+"""反馈事件 → 教训候选的加工层（F2 提炼 + F3 状态机/注入查询，自我优化系统）。
 
 输入：F1 采集的项目级反馈事件（<project_root>/.openbrep/feedback.jsonl，8 种 kind）。
 加工链：确定性预聚类（按 (kind, 规范化签名) 分组计数）→ 一次 LLM 语义提炼
@@ -6,10 +6,19 @@
 <work_dir>/.openbrep/memory/learnings/distilled_lessons.jsonl
 （与 ErrorLearningStore 同目录、独立新文件）。
 
-纪律（本单红线）：
-- proposed 教训**不进任何 prompt**：本模块与注入链路（build_skill_prompt /
-  pipeline / knowledge_selector）零耦合，distilled_lessons.jsonl 注入层不读；
-  晋升/入闸是 F3 的事，本单不做。
+教训生命周期（F3 状态机）：
+- 任何自动提炼产物一律 proposed；**过闸才 active**——晋升是人工/调用方
+  显式决策（set_lesson_status），本模块没有任何自动晋升逻辑（防自我污染红线）。
+- proposed → active（promote 晋升）/ proposed → rejected（reject 拒绝，永久
+  不再浮现）/ active → proposed（demote 撤回）。rejected 是终态：merge_lessons
+  同 fingerprint 合并只刷新 count/pattern/guidance，**status 字段不动**，
+  被拒绝的教训不会被再提炼复活。
+
+注入纪律：
+- proposed / rejected 教训**不进任何 prompt**；只有 active 教训经
+  build_distilled_lessons_prompt 渲染、由 learning.build_skill_prompt 的
+  distilled 层注入，且仍受 pipeline include_learned_skills 闸控制
+  （benchmark 关闭，生产默认开）。
 - 增量提炼：watermark 按文件行数记录已处理进度，只把新事件送提炼；
   零事件/零增量 → 不建 LLM 直接返回。
 - 宁缺毋滥：LLM 调用失败/超时、坏 JSON、形态非法、空候选 → 静默返回空
@@ -42,6 +51,33 @@ MAX_SAMPLES_PER_CLUSTER = 3   # 每簇保留 ≤3 条截断样本
 SAMPLE_MAX_CHARS = 240        # 单条样本截断长度
 SIGNATURE_MAX_CHARS = 500     # 规范化签名上限
 PROPOSED_STATUS = "proposed"
+ACTIVE_STATUS = "active"
+REJECTED_STATUS = "rejected"
+ALL_STATUSES: frozenset[str] = frozenset({PROPOSED_STATUS, ACTIVE_STATUS, REJECTED_STATUS})
+
+# 状态机：decision → {from: 合法出发状态, to: 目标状态, idempotent_with: 幂等状态}
+# - promote: proposed→active 晋升；已是 active → 幂等 ok（不变）
+# - reject:  proposed→rejected 拒绝（永久）；已是 rejected → 幂等 ok（不变）
+# - demote:  active→proposed 撤回；proposed/rejected 都不是合法出发态（报错）
+_LESSON_DECISIONS: dict[str, dict[str, str | None]] = {
+    "promote": {"from": PROPOSED_STATUS, "to": ACTIVE_STATUS, "idempotent_with": ACTIVE_STATUS},
+    "reject": {"from": PROPOSED_STATUS, "to": REJECTED_STATUS, "idempotent_with": REJECTED_STATUS},
+    "demote": {"from": ACTIVE_STATUS, "to": PROPOSED_STATUS, "idempotent_with": None},
+}
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _lesson_error(code: str, message: str, details: Any = None) -> dict:
+    """统一错误形态（与 mcp_tools._make_error 同构，保持模块独立）。"""
+    error = {"code": code, "message": message}
+    if details is not None:
+        error["details"] = details
+    return {"ok": False, "error": error}
 
 
 def _lessons_path(work_dir: str | Path) -> Path:
@@ -419,6 +455,136 @@ def save_watermark(work_dir: str | Path, watermark: dict[str, int]) -> bool:
     except Exception as exc:
         logger.warning("feedback_distill save_watermark failed (best-effort): %s", exc)
         return False
+
+
+# ── 4.5 状态机与注入查询（F3：晋升/拒绝/撤回 + active 注入视图） ──
+
+def set_lesson_status(
+    work_dir: str | Path,
+    fingerprint: str,
+    decision: str,
+) -> dict:
+    """状态机迁移：proposed→active（promote）/ proposed→rejected（reject）/
+    active→proposed（demote）。
+
+    幂等：promote 一个已 active / reject 一个已 rejected → ok 但不变。
+    非法迁移（如 rejected→active、demote 一个 proposed）→ 返回错误（不静默）；
+    未知 fingerprint / 非法 decision / 写盘失败 → 返回错误。
+    迁移成功写 status_changed_at（ISO 秒级），写盘走 save_lessons（原子）。
+
+    返回 {ok, fingerprint, decision, status, changed} 或
+    {ok: False, error: {code, message, details?}}。
+    """
+    if decision not in _LESSON_DECISIONS:
+        return _lesson_error(
+            "invalid_decision",
+            f"非法 decision: {decision!r}（可选: promote / reject / demote）",
+            details={"decision": decision},
+        )
+    lessons = load_lessons(work_dir)
+    target = next((lesson for lesson in lessons if lesson.get("fingerprint") == fingerprint), None)
+    if target is None:
+        return _lesson_error(
+            "lesson_not_found",
+            f"教训不存在: {fingerprint}",
+            details={"fingerprint": fingerprint},
+        )
+    current = str(target.get("status") or PROPOSED_STATUS)
+    spec = _LESSON_DECISIONS[decision]
+    target_status = str(spec["to"])
+    if current == target_status and spec["idempotent_with"] == current:
+        # 幂等：状态已是该 decision 的结果状态，ok 但不变
+        return {
+            "ok": True,
+            "fingerprint": fingerprint,
+            "decision": decision,
+            "status": current,
+            "changed": False,
+        }
+    if current != spec["from"]:
+        return _lesson_error(
+            "invalid_transition",
+            f"非法迁移: {current} --{decision}--> {target_status}",
+            details={
+                "fingerprint": fingerprint,
+                "decision": decision,
+                "from": current,
+                "to": target_status,
+            },
+        )
+    target["status"] = target_status
+    target["status_changed_at"] = _now_iso()
+    if not save_lessons(work_dir, lessons):
+        return _lesson_error("write_failed", "教训库写盘失败")
+    return {
+        "ok": True,
+        "fingerprint": fingerprint,
+        "decision": decision,
+        "status": target_status,
+        "changed": True,
+    }
+
+
+def list_lessons_view(
+    work_dir: str | Path,
+    status: str | None = None,
+) -> list[dict]:
+    """读库过滤返回视图行（不含样本等内部字段）。
+
+    每条 {fingerprint, pattern, guidance, evidence_kinds, count, status,
+    first_seen, last_seen}；按 (status, -count, last_seen) 稳定排序。
+    status 非法值 → 返回空列表（由 MCP 层做参数校验）。
+    """
+    lessons = load_lessons(work_dir)
+    if status is not None:
+        lessons = [
+            lesson for lesson in lessons
+            if (lesson.get("status") or PROPOSED_STATUS) == status
+        ]
+    lessons.sort(
+        key=lambda lesson: (
+            str(lesson.get("status") or PROPOSED_STATUS),
+            -int(lesson.get("count") or 0),
+            str(lesson.get("last_seen") or ""),
+        )
+    )
+    fields = (
+        "fingerprint", "pattern", "guidance", "evidence_kinds",
+        "count", "status", "first_seen", "last_seen",
+    )
+    return [{field: lesson.get(field) for field in fields} for lesson in lessons]
+
+
+def build_distilled_lessons_prompt(work_dir: str | Path, limit: int = 8) -> str:
+    """渲染 active 教训为注入用 prompt 层文本（learning.build_skill_prompt 的
+    distilled 层消费）。
+
+    只取 active；按 (-count, last_seen) 排序取前 limit 条；每条渲染为
+    "- <pattern>：<guidance>"。零 active / 文件缺失 / 任何异常 → 返回 ""
+    （best-effort，不抛）。proposed / rejected 一律不进。
+    """
+    try:
+        lessons = [
+            lesson for lesson in load_lessons(work_dir)
+            if (lesson.get("status") or PROPOSED_STATUS) == ACTIVE_STATUS
+        ]
+    except Exception:
+        return ""
+    if not lessons:
+        return ""
+    lessons.sort(
+        key=lambda lesson: (
+            -int(lesson.get("count") or 0),
+            str(lesson.get("last_seen") or ""),
+        )
+    )
+    selected = lessons[: max(0, int(limit))]
+    lines = [
+        f"- {str(lesson.get('pattern') or '').strip()}：{str(lesson.get('guidance') or '').strip()}"
+        for lesson in selected
+        if (lesson.get("pattern") or "").strip()
+    ]
+    return "\n".join(lines)
 
 
 # ── 5. 主入口 ─────────────────────────────────────────────

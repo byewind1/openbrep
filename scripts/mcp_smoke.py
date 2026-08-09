@@ -68,6 +68,8 @@ EXPECTED_TOOLS = (
     "list_skills",
     "deprecate_skill",
     "distill_feedback",
+    "list_lessons",
+    "promote_lesson",
 )
 
 

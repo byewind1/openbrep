@@ -231,6 +231,9 @@ class ErrorLearningStore:
             layer_name="workspace_gdl_error_avoidance",
             layer_description="这些规则来自当前 OpenBrep 个人工作空间的真实聊天、编译和纠错记录。",
         )
+        # F3：distilled 层——只有 active 教训进注入（proposed/rejected 不进）；
+        # 函数内局部 import 防循环（feedback_distill 顶部 import 本模块的 LEARNINGS_DIR）。
+        distilled = self._build_distilled_lessons_layer(limit=limit)
         developer_baseline = build_error_learning_skill(
             developer_error_lessons(),
             project_name="",
@@ -239,7 +242,24 @@ class ErrorLearningStore:
             layer_description="这些规则来自 OpenBrep 源码随附的开发者基线经验，作为所有用户的兜底约束。",
         )
         return "\n\n---\n\n".join(
-            part for part in (compacted, workspace_recent, developer_baseline) if part
+            part for part in (compacted, workspace_recent, distilled, developer_baseline) if part
+        )
+
+    def _build_distilled_lessons_layer(self, *, limit: int = 8) -> str:
+        """渲染 distilled 注入层（active 教训）；零 active/异常 → ""（层自动消失）。"""
+        try:
+            from openbrep.feedback_distill import build_distilled_lessons_prompt
+
+            text = build_distilled_lessons_prompt(self.work_dir, limit=limit)
+        except Exception:
+            return ""
+        if not text:
+            return ""
+        return (
+            "## Skill: workspace_distilled_lessons\n"
+            "这些规则来自反馈事件提炼、经人工确认晋升的教训。\n"
+            "生成或修复 GDL 时必须优先规避这些已发生过的问题。\n\n"
+            f"{text}"
         )
 
     def load_learned_skill(self) -> str:
