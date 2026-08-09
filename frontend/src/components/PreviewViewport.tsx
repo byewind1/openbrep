@@ -9,6 +9,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload } from '../api/types'
 import {
   computePreviewBounds,
+  isFittableViewport,
   orthographicZoomForBounds,
   perspectiveDistanceForBounds,
   PREVIEW_CAMERA_FOV_DEGREES,
@@ -146,7 +147,9 @@ export function PreviewViewport({
         </div>
       </div>
       <div className="canvas-wrap">
-        <Canvas gl={{ logarithmicDepthBuffer: true }}>
+        {/* absolute + inset:0：见 styles.css .canvas-wrap 注释，
+            防止 canvas 的内联 px 宽度反向撑住容器导致无法收缩 */}
+        <Canvas gl={{ logarithmicDepthBuffer: true }} style={{ position: 'absolute', inset: 0 }}>
           {cameraMode === 'perspective' ? (
             <PerspectiveCamera makeDefault fov={38} near={0.001} far={100000} />
           ) : (
@@ -225,6 +228,8 @@ function PreviewCameraRig({
   const { camera, size } = useThree()
 
   useEffect(() => {
+    // 舞台被 display:none 隐藏时 r3f 上报 0×0，此时 fit 会写坏相机
+    if (!isFittableViewport(size.width, size.height)) return
     fitCamera(camera, bounds, preset, mode, size.width, size.height)
     controlsRef.current?.target.set(...bounds.center)
     controlsRef.current?.update()

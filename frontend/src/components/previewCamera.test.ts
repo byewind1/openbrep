@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   computePreviewBounds,
+  isFittableViewport,
   orthographicZoomForBounds,
   perspectiveDistanceForBounds,
   type PreviewBounds,
@@ -56,5 +57,28 @@ describe('preview camera helpers', () => {
     const wideZoom = orthographicZoomForBounds(bounds, 640, 640)
 
     expect(narrowZoom).toBeLessThan(wideZoom)
+  })
+})
+
+describe('viewport fit guard', () => {
+  test('accepts a viewport that has real pixels', () => {
+    expect(isFittableViewport(720, 480)).toBe(true)
+    expect(isFittableViewport(1, 1)).toBe(true)
+  })
+
+  test('rejects the 0×0 size reported by a display:none stage', () => {
+    expect(isFittableViewport(0, 0)).toBe(false)
+    expect(isFittableViewport(720, 0)).toBe(false)
+    expect(isFittableViewport(0, 480)).toBe(false)
+  })
+
+  test('rejects non-finite sizes so aspect never becomes NaN', () => {
+    expect(isFittableViewport(Number.NaN, 480)).toBe(false)
+    expect(isFittableViewport(720, Number.NaN)).toBe(false)
+    expect(isFittableViewport(Number.POSITIVE_INFINITY, 480)).toBe(false)
+  })
+
+  test('rejects negative sizes', () => {
+    expect(isFittableViewport(-720, 480)).toBe(false)
   })
 })

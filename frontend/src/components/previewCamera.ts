@@ -11,6 +11,17 @@ export interface PreviewBounds {
 
 export const PREVIEW_CAMERA_FOV_DEGREES = 38
 
+/**
+ * 视口是否有真实尺寸，可以据此 fit 相机。
+ *
+ * 预览舞台常驻 DOM、靠 `display: none` 切换，隐藏时 r3f 上报 0×0：
+ * 此时 aspect 退化成 NaN、fit 距离按兜底宽高算错，会把相机写坏。
+ * 尺寸恢复后 r3f 会重新上报，fit 自然重跑，所以直接跳过即可。
+ */
+export function isFittableViewport(width: number, height: number): boolean {
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+}
+
 export function perspectiveDistanceForBounds(bounds: PreviewBounds, viewportWidth: number, viewportHeight: number): number {
   const safeWidth = Math.max(viewportWidth, 1)
   const safeHeight = Math.max(viewportHeight, 1)
