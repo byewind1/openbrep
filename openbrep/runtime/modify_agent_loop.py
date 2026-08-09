@@ -81,6 +81,12 @@ MAX_AGENT_LOOP_BUDGET = 20
 # 完成门禁：AI 宣称完成但证据未过时的最大打回次数
 # （打回本身不消耗工具预算，但修复需要预算内的工具调用）
 MAX_GATE_REJECTIONS = 2
+# B（温和强制）：零工具调用 + 文本夹带变更的"未验证交付"打回消息。
+# 改动已应用，不撤；只指引回工具链（compile_script 验证 / patch_script 调整）。
+_UNVERIFIED_DELIVERY_FEEDBACK = (
+    "你的改动已落盘但未经工具链验证（本轮未调用任何工具）。"
+    "请调用 compile_script 验证，若需调整请用 patch_script。"
+)
 
 
 def _completion_gate(project, registry, compiler, gsm_path: str):
@@ -128,7 +134,9 @@ _AGENT_LOOP_PROTOCOL = """
 2. 编译失败时根据错误信息继续修复，可用 query_knowledge(mode=diagnose) 诊断；
 3. 工具调用预算共 {budget} 次，请规划使用，不要重复调用同一工具空转；
 4. 确认完成后，直接以纯文本答复总结改动与编译结果（不再发起 tool_calls）；
-5. 若预算不足，如实说明当前进度与遗留问题，禁止谎报完成。
+5. 若预算不足，如实说明当前进度与遗留问题，禁止谎报完成；
+6. 本次任务不使用 [FILE:] 交付格式：改动必须通过工具调用落盘
+   （patch_script / update_script），[FILE:] 块仅作兼容兜底，不作为交付通道。
 """
 
 # 计划确认门协议（V3）：confirm_plan=True 时，先做一次无工具的计划调用，
@@ -422,28 +430,46 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             on_event("assistant_delta", {"content": response.content})
         if not response.has_tool_calls:
             on_event("status", _architect_status("verify"))
+            # A（门禁时序）：先把纯文本答复里的 [FILE:] 块解析并应用
+            # （沿用旧兜底语义：sanitize → _apply_changes → 登记 changed_files），
+            # 再跑完成门禁——门禁必须评估**改动后的项目**，否则纯文本交付
+            # 零验证（旧行为：门禁先跑在未修改项目上，通过后才应用改动）。
+            final_text = response.content or ""
+            fallback_changes = agent._parse_response(final_text)
+            applied_changes: dict[str, str] = {}
+            if fallback_changes:
+                cleaned = {k: sanitize_llm_script_output(v, k) for k, v in fallback_changes.items()}
+                agent._apply_changes(project, cleaned)
+                registry.changed_files.update(cleaned)
+                applied_changes = cleaned
             gate_ok, gate_feedback, semantic_result = _completion_gate(
                 project, registry, compiler, gsm_path,
             )
             can_fix = tool_calls_used < budget
-            if gate_ok or gate_rejections >= MAX_GATE_REJECTIONS or not can_fix:
+            # B（温和强制）：零工具调用 + 本轮文本夹带变更 = "未验证交付"
+            # （绕过工具链落盘）。复用有界打回计数，反馈指引回工具链；
+            # 改动保持已应用状态。打回耗尽/无预算时照常放行，不无限扯皮。
+            unverified_delivery = tool_calls_used == 0 and bool(applied_changes)
+            if gate_ok and not unverified_delivery:
+                break
+            if gate_rejections >= MAX_GATE_REJECTIONS or not can_fix:
                 gate_unresolved = not gate_ok
-                final_text = response.content or ""
-                # 兜底：最终答复里若夹带 [FILE:] 块（旧 prompt 习惯），同样解析应用
-                fallback_changes = agent._parse_response(final_text)
-                if fallback_changes:
-                    cleaned = {k: sanitize_llm_script_output(v, k) for k, v in fallback_changes.items()}
-                    agent._apply_changes(project, cleaned)
-                    registry.changed_files.update(cleaned)
                 break
             gate_rejections += 1
             logger.info(
-                "agent loop completion gate rejected (%d/%d)",
+                "agent loop completion gate rejected (%d/%d)%s",
                 gate_rejections, MAX_GATE_REJECTIONS,
+                " (unverified text delivery)" if unverified_delivery else "",
             )
             on_event("status", _architect_status("retry", n=gate_rejections))
             messages.append({"role": "assistant", "content": response.content or ""})
-            messages.append({"role": "user", "content": gate_feedback})
+            if unverified_delivery:
+                feedback_parts = [_UNVERIFIED_DELIVERY_FEEDBACK]
+                if not gate_ok and gate_feedback:
+                    feedback_parts.append(gate_feedback)
+                messages.append({"role": "user", "content": "\n\n".join(feedback_parts)})
+            else:
+                messages.append({"role": "user", "content": gate_feedback})
             continue
 
         messages.append(assistant_tool_calls_message(response))
@@ -512,7 +538,9 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         f"**Agent loop（实验路径）**：工具调用 {tool_calls_used}/{budget} 次，LLM 调用 {llm_calls} 次",
     ]
     if gate_rejections:
-        status_lines.append(f"🧩 完成门禁打回 {gate_rejections} 次（AI 宣称完成但证据未过）")
+        status_lines.append(
+            f"🧩 完成门禁打回 {gate_rejections} 次（宣称完成但证据未过，或改动未经工具链验证）"
+        )
     if gate_unresolved:
         status_lines.append("⚠️ 完成门禁未通过（编译/语义证据仍有问题），如实交付当前状态。")
     if budget_exhausted:

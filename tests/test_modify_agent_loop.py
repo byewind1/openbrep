@@ -428,3 +428,146 @@ class TestCompletionGate(unittest.TestCase):
         self.assertNotIn("打回", result.plain_text)
         self.assertIn("完成门禁未通过", result.plain_text)
         self.assertFalse(result.success)
+
+
+# ── T1：纯文本逃逸舱修复（门禁时序 A + 温和强制 B + 提示词消歧 C） ─────────
+
+def _passing_semantics():
+    from openbrep.semantic_verifier import SemanticVerificationResult
+    return SemanticVerificationResult(passed=True)
+
+
+class TestTextDeliveryEscapeHatch(unittest.TestCase):
+    """纯文本夹带 [FILE:] 的逃逸舱修复：门禁评估改动后项目 + 零工具未验证打回。
+
+    A：先应用 [FILE:] 再跑完成门禁（门禁评估改动后的项目）；
+    B：零工具 + 文本夹带变更 = 未验证交付，复用有界打回并指引工具链；
+    M18 类纯问答（无变更）不触发 B，照常交付。
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _run(self, mock_llm, **overrides):
+        pipeline = _make_pipeline(mock_llm, self.tmp)
+        return pipeline.execute(_make_request(_make_project(self.tmp), self.tmp, **overrides))
+
+    def test_text_file_changes_applied_before_gate_compile_break_rejected(self):
+        """A：破坏编译的 [FILE:] 文本交付先落盘、再被门禁打回（含编译证据）。"""
+        mock_llm = MockLLM(responses=[
+            # 第一轮：纯文本夹带 [FILE:]，内容 IF/ENDIF 失配 → 落盘后编译必失败
+            "修好了。\n[FILE: scripts/3d.gdl]\nIF A > 0.4 THEN\nBLOCK A, B, ZZYZX\nEND\n",
+            # 第二轮：被迫回工具链，用 update_script + compile_script 修复
+            {"tool_calls": [
+                {"name": "update_script", "arguments": {
+                    "file_path": "scripts/3d.gdl",
+                    "content": "IF A > 0.4 THEN\nBLOCK A, B, ZZYZX\nENDIF\nEND\n",
+                }},
+                {"name": "compile_script", "arguments": {}},
+            ]},
+            "修复完成，编译通过。",
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_passing_semantics(),
+        ):
+            result = self._run(mock_llm)
+
+        # 门禁评估的是改动后的项目：编译错误证据（IF/ENDIF mismatch）被打回对话
+        convo = str(mock_llm.call_history)
+        self.assertIn("完成门禁未通过", convo)
+        self.assertIn("IF/ENDIF mismatch", convo)
+        # 未验证交付提示与门禁证据合并打回
+        self.assertIn("未经工具链验证", convo)
+        self.assertEqual(mock_llm.call_count, 3)  # 没在第一轮放行
+        self.assertTrue(result.success)
+        self.assertIn("ENDIF", result.project.get_script(ScriptType.SCRIPT_3D))
+        self.assertIn("打回 1 次", result.plain_text)
+
+    def test_zero_tools_with_file_blocks_rejected_with_toolchain_guidance(self):
+        """B：零工具 + [FILE:] 变更 → 打回一次并指引工具链；第二轮纯问答放行。"""
+        mock_llm = MockLLM(responses=[
+            # 第一轮：纯文本夹带 [FILE:]，改动本身能编译过——B 依然打回（未验证交付）
+            "改好了。\n[FILE: scripts/3d.gdl]\nBLOCK A, B, 0.5\nEND\n",
+            # 第二轮：纯文本无变更（问答式）→ 门禁过且非未验证交付 → 放行
+            "好的，已确认。",
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_passing_semantics(),
+        ):
+            result = self._run(mock_llm)
+
+        convo = str(mock_llm.call_history)
+        self.assertIn("未经工具链验证", convo)
+        self.assertIn("compile_script", convo)
+        self.assertIn("patch_script", convo)
+        # 门禁本身通过了，打回纯粹因为"未验证交付"（温和强制，不含门禁失败证据）
+        self.assertNotIn("完成门禁未通过", convo)
+        self.assertEqual(mock_llm.call_count, 2)
+        self.assertIn("打回 1 次", result.plain_text)
+        self.assertTrue(result.success)
+        self.assertIn("BLOCK A, B, 0.5", result.project.get_script(ScriptType.SCRIPT_3D))
+
+    def test_unverified_delivery_rejection_bounded_releases(self):
+        """B：未验证交付打回有界（MAX_GATE_REJECTIONS），耗尽后照常放行。"""
+        mock_llm = MockLLM(responses=[
+            "改好了。\n[FILE: scripts/3d.gdl]\nBLOCK A, B, 0.5\nEND\n",
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_passing_semantics(),
+        ):
+            result = self._run(mock_llm)
+
+        self.assertEqual(mock_llm.call_count, 3)  # 打回 2 次 + 第 3 轮放行
+        self.assertIn("打回 2 次", result.plain_text)
+        self.assertTrue(result.success)
+        self.assertIn("BLOCK A, B, 0.5", result.project.get_script(ScriptType.SCRIPT_3D))
+
+    def test_plain_qa_answer_without_changes_not_rejected(self):
+        """M18 类：纯文本问答（无 [FILE:] 无变更）不触发 B，第一轮直接交付。"""
+        mock_llm = MockLLM(responses=[
+            "书架的高度由参数 ZZYZX 决定，默认值为 1.8 米，几何按该参数拉伸。",
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_passing_semantics(),
+        ):
+            result = self._run(mock_llm)
+
+        self.assertEqual(mock_llm.call_count, 1)
+        self.assertNotIn("打回", result.plain_text)
+        self.assertTrue(result.success)
+        self.assertEqual(result.scripts, {})  # 零变更
+
+    def test_file_changes_applied_exactly_once_no_reapply_at_release(self):
+        """改动只应用一次：每轮 [FILE:] 恰好应用一次，放行轮不重复应用。"""
+        from openbrep.runtime import modify_agent_loop as mal
+
+        real_apply = mal.GDLAgent._apply_changes
+        counter = {"n": 0}
+
+        def counting_apply(self, project, changes):
+            counter["n"] += 1
+            return real_apply(self, project, changes)
+
+        mock_llm = MockLLM(responses=[
+            "改好了。\n[FILE: scripts/3d.gdl]\nBLOCK A, B, 0.5\nEND\n",
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_passing_semantics(),
+        ), unittest.mock.patch.object(mal.GDLAgent, "_apply_changes", counting_apply):
+            result = self._run(mock_llm)
+
+        # 三轮文本答复（打回 2 次 + 放行），每轮恰好应用一次，放行轮不重复应用
+        self.assertEqual(mock_llm.call_count, 3)
+        self.assertEqual(counter["n"], 3)
+        self.assertTrue(result.success)
