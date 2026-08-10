@@ -24,6 +24,9 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     parameters: snapshot.parameters,
     preview: snapshot.preview,
     preview2d: null,
+    // P2a：ghost 锚定"任务前"版本，换项目即失效（load/打开/新建/导入/关闭都走这里）
+    previewGhost: null,
+    previewGhostLabel: null,
     warnings: snapshot.warnings ?? snapshot.preview?.warnings ?? [],
     compilerSettings: snapshot.compiler ?? fallbackCompiler,
     llmSettings: snapshot.llm ?? fallbackLlm,

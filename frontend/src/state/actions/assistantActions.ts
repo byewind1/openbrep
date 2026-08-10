@@ -1,8 +1,11 @@
 import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingPlan } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
-import type { WorkbenchActionContext } from '../workbenchStoreTypes'
+import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
 import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
+
+/** P2a ghost 快照原因：任务前（i18n key，zh/en 见 locales） */
+const PREVIEW_GHOST_LABEL_PRE_TASK: PreviewGhostLabel = 'preview.ghost.preTask'
 
 const ASSISTANT_PENDING_PREFIX = 'Thinking...'
 // 计划确认门（V3）的待确认/执行中内容：保留 Thinking... 前缀，
@@ -358,6 +361,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         finalMessage = interrupted.message
         intent = detectChatIntent(interrupted.message, hasProject)
       }
+
+      // P2a ghost：任务发起时快照"任务前"预览（修改前后对比用）。
+      // CREATE（无项目）时 preview 为 null → ghost 置 null；参数防抖刷新 /
+      // 手动 Update / 质量档切换都不覆盖；项目切换经 hydrateSnapshot 清空。
+      const previewAtTaskStart = get().preview
+      set({
+        previewGhost: previewAtTaskStart,
+        previewGhostLabel: previewAtTaskStart ? PREVIEW_GHOST_LABEL_PRE_TASK : null,
+      })
 
       const controller = new AbortController()
       set({ chatAbortController: controller, interruptedContext: null })

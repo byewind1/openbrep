@@ -179,6 +179,9 @@ export interface WorkbenchApi {
 
 export type BackendErrorKind = 'down' | 'starting' | 'timeout'
 
+/** P2a ghost 快照原因（i18n key）；扩展新原因时保持该 union 与 zh/en 文案同步 */
+export type PreviewGhostLabel = 'preview.ghost.preTask'
+
 export interface WorkbenchState {
   // sessionId 标识 backend 进程；projectEpoch 在每次换项目时变化，
   // 长操作（AI 生成/创建）用它丢弃跨项目的过期结果。
@@ -192,6 +195,12 @@ export interface WorkbenchState {
   preview2d: Preview2DPayload | null
   /** 预览质量档（P1b）：会话态，不持久化到用户配置 */
   previewQuality: PreviewQuality
+  /** P2a 修改前后对比 ghost：最近一次 AI 任务发起时的预览快照（"任务前"版本）。
+   *  仅 sendChat 捕获；参数防抖刷新 / 手动 Update / 质量档切换不覆盖；
+   *  项目切换 / 新建 / 关闭经 hydrateSnapshot 清空。 */
+  previewGhost: PreviewPayload | null
+  /** ghost 快照原因（i18n key，目前只有"任务前"）；与 previewGhost 同生共死 */
+  previewGhostLabel: PreviewGhostLabel | null
   warnings: string[]
   loading: boolean
   applying: boolean

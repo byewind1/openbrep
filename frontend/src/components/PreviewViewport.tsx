@@ -8,12 +8,16 @@ import { BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerat
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
+import type { PreviewGhostLabel } from '../state/workbenchStoreTypes'
 import { useT } from '../i18n'
+import { PreviewGhostOverlay } from './PreviewGhostOverlay'
+import { PreviewGhostToggle } from './PreviewGhostToggle'
 import { PreviewPickingBar } from './PreviewPickingBar'
 import { PreviewPartsPanel } from './PreviewPartsPanel'
 import { SectionControls } from './SectionControls'
 import { SectionHandle } from './SectionHandle'
 import { QualityToggle, ShadowsToggle } from './ViewportVisualControls'
+import { buildMeshGeometry, isGhostAvailable } from './previewGhost'
 import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
 import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
@@ -48,6 +52,11 @@ interface PreviewViewportProps {
   /** 预览质量档（P1b）：与 onQualityChange 同时提供才显示切换按钮 */
   quality?: PreviewQuality
   onQualityChange?: (quality: PreviewQuality) => void
+  /** P2a 修改前后对比：任务前预览快照（store 只读消费，不走倒灌）。
+   *  null = 无可对比版本 → 对比按钮 disabled */
+  previewGhost?: PreviewPayload | null
+  /** ghost 快照原因（i18n key），视口角落标签用 */
+  previewGhostLabel?: PreviewGhostLabel | null
 }
 
 type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
@@ -73,6 +82,8 @@ export function PreviewViewport({
   onRevealSource,
   quality,
   onQualityChange,
+  previewGhost,
+  previewGhostLabel,
 }: PreviewViewportProps) {
   const t = useT()
   const [cameraMode, setCameraMode] = useState<PreviewCameraMode>('perspective')
@@ -93,6 +104,8 @@ export function PreviewViewport({
   const [section, setSection] = useState<SectionState | null>(null)
   // TransformControls gizmo 交互标记：gizmo 点击不算"空白点击"，不清选中
   const gizmoActiveRef = useRef(false)
+  // 对比叠加（P2a）：纯视图态每实例独立；ghost 消失（换项目）时强制关闭
+  const [showGhost, setShowGhost] = useState(false)
   // fit 只看可见部件：隐藏的 mesh 不进 bounds（computePreviewBounds 签名不变）
   const bounds = useMemo(() => computePreviewBounds(filterVisibleMeshes(preview, hiddenParts)), [preview, hiddenParts])
   // clippingPlanes 数组：内容只在 section/bounds 变化时改变（材质不逐帧重编译）
@@ -129,6 +142,11 @@ export function PreviewViewport({
   useEffect(() => {
     xrayMaterial.clippingPlanes = sectionPlanes
   }, [xrayMaterial, sectionPlanes])
+
+  // P2a：ghost 不可用（换项目清空快照）时，本实例的对比开关回到关闭态
+  useEffect(() => {
+    if (!isGhostAvailable(previewGhost)) setShowGhost(false)
+  }, [previewGhost])
 
   function revealSource(source: PreviewSelection['source']) {
     if (!source) return
@@ -223,6 +241,11 @@ export function PreviewViewport({
             onAxisChange={(axis) => setSection((current) => (current ? { ...current, axis } : current))}
             onTChange={(t) => setSection((current) => (current ? { ...current, t } : current))}
           />
+          <PreviewGhostToggle
+            available={isGhostAvailable(previewGhost)}
+            active={showGhost}
+            onToggle={() => setShowGhost((value) => !value)}
+          />
           {onFloat ? (
             <button type="button" className="viewport-action-button" onClick={onFloat} title="Open floating preview">
               Float
@@ -315,6 +338,9 @@ export function PreviewViewport({
               gizmoActiveRef={gizmoActiveRef}
             />
           ) : null}
+          {/* P2a 对比叠加：任务前版本半透明 ghost；offset 用当前 bounds.center
+              （同世界坐标系，减同一中心即对齐） */}
+          {showGhost && previewGhost ? <PreviewGhostOverlay ghost={previewGhost} boundsCenter={bounds.center} /> : null}
         </Canvas>
         {selection ? (
           <PreviewPickingBar
@@ -347,6 +373,11 @@ export function PreviewViewport({
               })
             }
           />
+        ) : null}
+        {showGhost && previewGhost && previewGhostLabel ? (
+          <div className="viewport-ghost-tag">
+            {t('preview.ghost.cornerTag', { label: t(previewGhostLabel) })}
+          </div>
         ) : null}
       </div>
       <footer className="viewport-footer">
@@ -600,20 +631,8 @@ function MeshView({
   onSelect: () => void
   onJump: () => void
 }) {
-  const geometry = useMemo(() => {
-    const next = new BufferGeometry()
-    const [ox, oy, oz] = offset
-    next.setAttribute(
-      'position',
-      new BufferAttribute(
-        new Float32Array(mesh.vertices.map(([x, y, z]) => [x - ox, y - oy, z - oz]).flat()),
-        3,
-      ),
-    )
-    next.setIndex(new BufferAttribute(new Uint32Array(mesh.faces.flat()), 1))
-    next.computeVertexNormals()
-    return next
-  }, [mesh.faces, mesh.vertices, offset])
+  // 几何构建共用（P2a）：与 PreviewGhostOverlay 同源，见 previewGhost.buildMeshGeometry
+  const geometry = useMemo(() => buildMeshGeometry(mesh, offset), [mesh, offset])
 
   // 随机分色：BS2G 产物常是单一合并 mesh（放样链/拓扑体），按 mesh 分色
   // 会退化成一色；改为按面连通域拆成子 mesh，各自按 identity hash 取色

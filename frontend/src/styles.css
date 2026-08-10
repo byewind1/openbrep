@@ -1237,6 +1237,22 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.viewport-ghost-tag {
+  /* P2a 对比叠加说明标签：canvas 右上角浮层，只读不拦截点击 */
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(5, 7, 13, 0.86);
+  color: var(--text-secondary);
+  font-size: 11px;
+  pointer-events: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
 .viewport-pick-bar .pick-source {
   color: var(--accent-soft);
   max-width: 300px;

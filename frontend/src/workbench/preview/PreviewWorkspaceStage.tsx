@@ -45,6 +45,9 @@ export function PreviewWorkspaceStage({
   // P1b：质量档从 store 取，不经过 props 倒灌
   const previewQuality = useWorkbenchStore((state) => state.previewQuality)
   const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
+  // P2a：任务前版本 ghost 快照，视口只读消费
+  const previewGhost = useWorkbenchStore((state) => state.previewGhost)
+  const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
   // 两个舞台常驻 DOM、用 display 切换：保证来回切换不丢 3D 相机视角和编辑器滚动位置
   return (
     <>
@@ -61,6 +64,8 @@ export function PreviewWorkspaceStage({
             onRevealSource={onRevealSource}
             quality={previewQuality}
             onQualityChange={(quality) => void setPreviewQuality(quality)}
+            previewGhost={previewGhost}
+            previewGhostLabel={previewGhostLabel}
             actions={
               onRefreshPreview ? (
                 <button

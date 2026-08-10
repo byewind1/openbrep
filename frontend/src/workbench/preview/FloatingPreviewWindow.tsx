@@ -18,6 +18,9 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
   // P1b：质量档从 store 取，不经过 props 倒灌
   const previewQuality = useWorkbenchStore((state) => state.previewQuality)
   const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
+  // P2a：任务前版本 ghost 快照，视口只读消费
+  const previewGhost = useWorkbenchStore((state) => state.previewGhost)
+  const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [fullscreen, setFullscreen] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
@@ -106,6 +109,8 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
             onRevealSource={onRevealSource}
             quality={previewQuality}
             onQualityChange={(quality) => void setPreviewQuality(quality)}
+            previewGhost={previewGhost}
+            previewGhostLabel={previewGhostLabel}
           />
         </Suspense>
       </div>

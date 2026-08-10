@@ -209,6 +209,8 @@ function initialWorkbenchState() {
     preview: null,
     preview2d: null,
     previewQuality: 'fast' as const,
+    previewGhost: null,
+    previewGhostLabel: null,
     warnings: [],
     loading: false,
     applying: false,

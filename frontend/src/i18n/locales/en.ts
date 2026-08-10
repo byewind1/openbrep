@@ -158,4 +158,11 @@ export const en: Record<LocaleKey, string> = {
   'preview.section.axisTitle': 'Section axis',
   'preview.section.sliderTitle': 'Section position',
   'preview.section.sliderAria': 'Section position',
+
+  // P2a before/after compare: pre-task version ghost overlay
+  'preview.ghost.toggle': 'Compare',
+  'preview.ghost.toggleTitle': 'Overlay the pre-task version (translucent)',
+  'preview.ghost.unavailableTitle': 'No pre-task version to compare: start an AI task first',
+  'preview.ghost.preTask': 'pre-task',
+  'preview.ghost.cornerTag': 'Translucent = {label} version',
 }

@@ -155,6 +155,13 @@ export const zh = {
   'preview.section.axisTitle': '剖切轴向',
   'preview.section.sliderTitle': '剖切面位置',
   'preview.section.sliderAria': '剖切面位置',
+
+  // P2a 修改前后对比：任务前版本 ghost 叠加
+  'preview.ghost.toggle': '对比',
+  'preview.ghost.toggleTitle': '叠加任务前版本（半透明）',
+  'preview.ghost.unavailableTitle': '无任务前版本可对比：先发起一次 AI 修改',
+  'preview.ghost.preTask': '任务前',
+  'preview.ghost.cornerTag': '半透明 = {label} 版本',
 } as const
 
 export type LocaleKey = keyof typeof zh

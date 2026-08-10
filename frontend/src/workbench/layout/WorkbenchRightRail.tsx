@@ -95,6 +95,9 @@ export function WorkbenchRightRail({
   // P1b：预览质量档是 store 会话态，视口只消费，不走 props 倒灌
   const previewQuality = useWorkbenchStore((state) => state.previewQuality)
   const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
+  // P2a：任务前版本 ghost 快照，视口只读消费
+  const previewGhost = useWorkbenchStore((state) => state.previewGhost)
+  const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
   return (
     <aside className="workbench-right-rail right-rail">
       <div className="rail-tabs" role="tablist" aria-label="Right rail panels">
@@ -130,6 +133,8 @@ export function WorkbenchRightRail({
               onRevealSource={onRevealLine}
               quality={previewQuality}
               onQualityChange={(quality) => void setPreviewQuality(quality)}
+              previewGhost={previewGhost}
+              previewGhostLabel={previewGhostLabel}
               actions={(
                 <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
                   Update

@@ -2772,3 +2772,73 @@ test('confirmPendingSkillProposal without a pending proposal sets lastError (P2-
   await store.getState().confirmPendingSkillProposal(true)
   expect(store.getState().lastError).toContain('没有待确认的 skill 提案')
 })
+
+// ── P2a：修改前后对比 ghost 快照 ─────────────────────────────────────────
+// ghost 锚定"最近一次 AI 任务发起时的预览"：sendChat 捕获；参数防抖刷新 /
+// 手动 Update / 质量档切换不覆盖；项目切换清空。
+
+const GHOST_REFRESHED_PREVIEW = {
+  meshes: [{ name: 'after', vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], faces: [[0, 1, 2]] }],
+  wires: [],
+  warnings: [],
+}
+
+test('sendChat snapshots the pre-task preview as ghost (P2a)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  expect(store.getState().preview).not.toBeNull()
+
+  await store.getState().sendChat('给书架加一层层板')
+
+  const state = store.getState()
+  expect(state.previewGhost).toEqual(state.preview)
+  expect(state.previewGhostLabel).toBe('preview.ghost.preTask')
+})
+
+test('sendChat with no preview leaves ghost null (P2a, CREATE path)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  store.setState({ preview: null })
+
+  await store.getState().sendChat('给书架加一层层板')
+
+  expect(store.getState().previewGhost).toBeNull()
+  expect(store.getState().previewGhostLabel).toBeNull()
+})
+
+test('preview refresh (debounce / manual update / quality switch) does not overwrite ghost (P2a)', async () => {
+  const store = createWorkbenchStore(makeApi({ fetchPreview: async () => GHOST_REFRESHED_PREVIEW }))
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+  const ghost = store.getState().previewGhost
+  expect(ghost).not.toBeNull()
+
+  // 防抖刷新 / 手动 Update 最终都走 loadPreview3D；质量档切换也同链
+  await store.getState().loadPreview3D()
+  expect(store.getState().preview).toEqual(GHOST_REFRESHED_PREVIEW)
+  expect(store.getState().previewGhost).toEqual(ghost)
+
+  await store.getState().setPreviewQuality('accurate')
+  expect(store.getState().preview).toEqual(GHOST_REFRESHED_PREVIEW)
+  expect(store.getState().previewGhost).toEqual(ghost)
+  expect(store.getState().previewGhostLabel).toBe('preview.ghost.preTask')
+})
+
+test('project switch clears the ghost snapshot (P2a)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+  expect(store.getState().previewGhost).not.toBeNull()
+
+  await store.getState().loadProjectPath('/workspace/Other')
+
+  expect(store.getState().previewGhost).toBeNull()
+  expect(store.getState().previewGhostLabel).toBeNull()
+})
+
+test('loading the app (fetchSnapshot) starts with no ghost (P2a)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  expect(store.getState().previewGhost).toBeNull()
+  expect(store.getState().previewGhostLabel).toBeNull()
+})
