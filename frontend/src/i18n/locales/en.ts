@@ -165,4 +165,10 @@ export const en: Record<LocaleKey, string> = {
   'preview.ghost.unavailableTitle': 'No pre-task version to compare: start an AI task first',
   'preview.ghost.preTask': 'pre-task',
   'preview.ghost.cornerTag': 'Translucent = {label} version',
+
+  // P2b explode view: spread parts along "part centroid − overall centroid"
+  'preview.explode.toggle': 'Explode',
+  'preview.explode.toggleTitle': 'Spread parts apart (slider controls amount, 0 = off)',
+  'preview.explode.sliderAria': 'Explosion amount',
+  'preview.explode.sliderTitle': 'Explosion amount (0 = off)',
 }

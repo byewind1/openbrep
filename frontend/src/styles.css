@@ -1387,8 +1387,9 @@ button:focus-visible {
   color: var(--text-primary);
 }
 
-/* 3D 预览剖切面位置滑杆（P1c）：精调辅助，主交互在视口手柄 */
-.section-slider {
+/* 3D 预览位置/程度滑杆：剖切（P1c）与爆炸（P2b）共用一套样式 */
+.section-slider,
+.explode-slider {
   height: 20px;
   width: 90px;
   margin: 0;
@@ -1397,7 +1398,8 @@ button:focus-visible {
 }
 
 @container (max-width: 860px) {
-  .section-slider {
+  .section-slider,
+  .explode-slider {
     width: 64px;
   }
 }

@@ -162,6 +162,12 @@ export const zh = {
   'preview.ghost.unavailableTitle': '无任务前版本可对比：先发起一次 AI 修改',
   'preview.ghost.preTask': '任务前',
   'preview.ghost.cornerTag': '半透明 = {label} 版本',
+
+  // P2b 爆炸图：按部件沿"部件质心 − 整体质心"方向散开
+  'preview.explode.toggle': '爆炸',
+  'preview.explode.toggleTitle': '按部件散开模型（滑杆控制程度，0 关闭）',
+  'preview.explode.sliderAria': '爆炸程度',
+  'preview.explode.sliderTitle': '爆炸程度（0 = 关闭）',
 } as const
 
 export type LocaleKey = keyof typeof zh

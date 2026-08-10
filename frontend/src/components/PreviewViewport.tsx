@@ -10,6 +10,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
 import type { PreviewGhostLabel } from '../state/workbenchStoreTypes'
 import { useT } from '../i18n'
+import { ExplodeControls } from './ExplodeControls'
 import { PreviewGhostOverlay } from './PreviewGhostOverlay'
 import { PreviewGhostToggle } from './PreviewGhostToggle'
 import { PreviewPickingBar } from './PreviewPickingBar'
@@ -18,6 +19,8 @@ import { SectionControls } from './SectionControls'
 import { SectionHandle } from './SectionHandle'
 import { QualityToggle, ShadowsToggle } from './ViewportVisualControls'
 import { buildMeshGeometry, isGhostAvailable } from './previewGhost'
+import { buildExplodedParts, explodeOffset, overallCentroid as computeOverallCentroid, shouldSplitParts } from './previewExplode'
+import type { ExplodedPart } from './previewExplode'
 import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
 import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
@@ -106,6 +109,8 @@ export function PreviewViewport({
   const gizmoActiveRef = useRef(false)
   // 对比叠加（P2a）：纯视图态每实例独立；ghost 消失（换项目）时强制关闭
   const [showGhost, setShowGhost] = useState(false)
+  // 爆炸图（P2b）：0 = 关闭；滑杆 0–1 控制散开程度。纯视图态每实例独立
+  const [explodeFactor, setExplodeFactor] = useState(0)
   // fit 只看可见部件：隐藏的 mesh 不进 bounds（computePreviewBounds 签名不变）
   const bounds = useMemo(() => computePreviewBounds(filterVisibleMeshes(preview, hiddenParts)), [preview, hiddenParts])
   // clippingPlanes 数组：内容只在 section/bounds 变化时改变（材质不逐帧重编译）
@@ -114,6 +119,12 @@ export function PreviewViewport({
     const { normal, constant } = sectionPlaneParams(bounds, section)
     return [new Plane(new Vector3(...normal), constant)]
   }, [section, bounds])
+  // 爆炸整体质心（P2b）：可见 mesh 顶点均值，centered 坐标；fit bounds 不含
+  // 爆炸位移（保持现状语义，用户自己缩放）
+  const overallCentroid = useMemo(
+    () => computeOverallCentroid(filterVisibleMeshes(preview, hiddenParts)?.meshes ?? [], bounds.center),
+    [preview, hiddenParts, bounds],
+  )
   const parts = useMemo(() => {
     // wire 与 random 同为逐部件 hash 取色（chip 色与渲染一致）
     if (displayMode === 'random' || displayMode === 'wire') return buildPartsView(preview, 'random', null, hiddenParts)
@@ -166,6 +177,7 @@ export function PreviewViewport({
     setHiddenParts(new Set())
     setShowShadows(null)
     setSection(null)
+    setExplodeFactor(0)
     fitView()
   }
 
@@ -246,6 +258,7 @@ export function PreviewViewport({
             active={showGhost}
             onToggle={() => setShowGhost((value) => !value)}
           />
+          <ExplodeControls factor={explodeFactor} onChange={setExplodeFactor} />
           {onFloat ? (
             <button type="button" className="viewport-action-button" onClick={onFloat} title="Open floating preview">
               Float
@@ -320,6 +333,8 @@ export function PreviewViewport({
                   selected={selection?.meshIndex === index}
                   clippingPlanes={sectionPlanes}
                   xrayMaterial={xrayMaterial}
+                  explodeFactor={explodeFactor}
+                  overallCentroid={overallCentroid}
                   onSelect={() => setSelection(makeSelection(index, mesh))}
                   onJump={() => {
                     const next = makeSelection(index, mesh)
@@ -498,36 +513,6 @@ const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random' | 'wire'>, string>
   xray: XRAY_COLOR,
 }
 
-/** 面级连通域编号（并查集）：共享顶点的面归一部件，按出现顺序编 0..K-1 */
-function computeFaceComponents(faces: number[][], vertCount: number): number[] {
-  const parent = new Int32Array(vertCount)
-  for (let i = 0; i < vertCount; i++) parent[i] = i
-  const find = (x: number): number => {
-    let r = x
-    while (parent[r] !== r) r = parent[r]
-    while (parent[x] !== r) {
-      const next = parent[x]
-      parent[x] = r
-      x = next
-    }
-    return r
-  }
-  const unite = (a: number, b: number) => {
-    const ra = find(a)
-    const rb = find(b)
-    if (ra !== rb) parent[rb] = ra
-  }
-  for (const tri of faces) {
-    for (let k = 1; k < tri.length; k++) unite(tri[0], tri[k])
-  }
-  const remap = new Map<number, number>()
-  return faces.map((tri) => {
-    const root = find(tri[0])
-    if (!remap.has(root)) remap.set(root, remap.size)
-    return remap.get(root) as number
-  })
-}
-
 // X-ray ghost material: fragment-level fresnel so edge falloff survives
 // interpolation on large faces. f = (base + (1-base)·fresnel^sharp) × gain.
 // logdepthbuf chunks keep it consistent with logarithmicDepthBuffer.
@@ -615,6 +600,8 @@ function MeshView({
   selected,
   clippingPlanes,
   xrayMaterial,
+  explodeFactor,
+  overallCentroid,
   onSelect,
   onJump,
 }: {
@@ -628,32 +615,103 @@ function MeshView({
   clippingPlanes: Plane[]
   /** 视口实例级 xray 材质（不能模块级共享，剖切状态会互相覆盖） */
   xrayMaterial: ShaderMaterial
+  /** P2b 爆炸：>0 时按连通域拆件并沿质心方向散开；0 = 关闭（渲染路径不变） */
+  explodeFactor: number
+  /** P2b 整体质心（centered 坐标，可见 mesh 顶点均值） */
+  overallCentroid: [number, number, number]
   onSelect: () => void
   onJump: () => void
 }) {
   // 几何构建共用（P2a）：与 PreviewGhostOverlay 同源，见 previewGhost.buildMeshGeometry
   const geometry = useMemo(() => buildMeshGeometry(mesh, offset), [mesh, offset])
 
-  // 随机分色：BS2G 产物常是单一合并 mesh（放样链/拓扑体），按 mesh 分色
-  // 会退化成一色；改为按面连通域拆成子 mesh，各自按 identity hash 取色
-  const partGeometries = useMemo(() => {
-    if (displayMode !== 'random') return []
-    const comp = computeFaceComponents(mesh.faces, mesh.vertices.length)
-    const byComp = new Map<number, number[]>()
-    mesh.faces.forEach((tri, fi) => {
-      const arr = byComp.get(comp[fi]) ?? []
-      arr.push(...tri)
-      byComp.set(comp[fi], arr)
-    })
-    return [...byComp.entries()].map(([compId, indices]) => {
-      const g = new BufferGeometry()
-      g.setAttribute('position', geometry.getAttribute('position'))
-      g.setIndex(new BufferAttribute(new Uint32Array(indices), 1))
-      g.computeVertexNormals()
-      return { compId, geometry: g }
-    })
-  }, [displayMode, mesh.faces, mesh.vertices.length, geometry])
+  // 拆件（P2b）：random 取色与爆炸共用同一次 computeFaceComponents
+  // （见 previewExplode.buildExplodedParts）；factor=0 且非 random 时不拆，
+  // 走整 mesh 渲染路径，与 P2b 之前像素级一致
+  const parts = useMemo(() => {
+    if (!shouldSplitParts(explodeFactor, displayMode)) return []
+    return buildExplodedParts(mesh, offset, geometry)
+  }, [explodeFactor, displayMode, mesh, offset, geometry])
 
+  const exploded = explodeFactor > 0
+
+  // 拆件路径：random 恒拆（逐件取色）；爆炸开启时五档全拆，每件外套 group
+  // 位移（位移走 group，不改几何数据）。选中高亮该 mesh 的全部 part。
+  if (exploded || displayMode === 'random') {
+    return (
+      <>
+        {parts.map((part) => (
+          <group
+            key={part.compId}
+            position={exploded ? explodeOffset(part.centroid, overallCentroid, explodeFactor) : undefined}
+          >
+            <PartMesh
+              part={part}
+              mesh={mesh}
+              index={index}
+              showEdges={showEdges}
+              displayMode={displayMode}
+              selected={selected}
+              clippingPlanes={clippingPlanes}
+              xrayMaterial={xrayMaterial}
+              colorCompId={part.compId}
+              onSelect={onSelect}
+              onJump={onJump}
+            />
+          </group>
+        ))}
+      </>
+    )
+  }
+
+  // 整 mesh 路径：与 P2b 之前完全一致（PartMesh 单件渲染，参数逐模式保留）
+  return (
+    <PartMesh
+      part={{ compId: 0, geometry, centroid: [0, 0, 0] }}
+      mesh={mesh}
+      index={index}
+      showEdges={showEdges}
+      displayMode={displayMode}
+      selected={selected}
+      clippingPlanes={clippingPlanes}
+      xrayMaterial={xrayMaterial}
+      colorCompId={0}
+      onSelect={onSelect}
+      onJump={onJump}
+    />
+  )
+}
+
+/**
+ * 单个 mesh/part 的渲染（P2b）：五档显示模式的材质/Edges/选中高亮逐模式保留
+ * 原语义。random 模式按 colorCompId 取色；其余模式整 mesh 一色
+ * （wire 恒用 comp 0 identity，保持"wire 每 mesh 一色"）。
+ */
+function PartMesh({
+  part,
+  mesh,
+  index,
+  showEdges,
+  displayMode,
+  selected,
+  clippingPlanes,
+  xrayMaterial,
+  colorCompId,
+  onSelect,
+  onJump,
+}: {
+  part: ExplodedPart
+  mesh: PreviewMesh
+  index: number
+  showEdges: boolean
+  displayMode: PreviewDisplayMode
+  selected: boolean
+  clippingPlanes: Plane[]
+  xrayMaterial: ShaderMaterial
+  colorCompId: number
+  onSelect: () => void
+  onJump: () => void
+}) {
   // r3f 事件自带 delta（pointerdown→click 位移）；拖拽旋转结束时也会派发
   // click，超过 2px 一律不算点击，避免转视角误选中
   function handleClick(event: ThreeEvent<MouseEvent>) {
@@ -674,7 +732,7 @@ function MeshView({
     // 每 mesh 按 identity hash 取色（与 random 模式同一套色，一眼认出同一构件）。
     const wireColor = hashColor(componentColorIdentity(mesh.name, index, 0))
     return (
-      <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+      <mesh geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
         <meshBasicMaterial
           color={CANVAS_BG_COLOR}
           side={DoubleSide}
@@ -691,59 +749,30 @@ function MeshView({
   if (displayMode === 'xray') {
     // ShaderMaterial 不吃 emissive：选中靠 Edges 琥珀叠加（本模式无 showEdges 开关）
     return (
-      <mesh geometry={geometry} material={xrayMaterial} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+      <mesh geometry={part.geometry} material={xrayMaterial} onClick={handleClick} onDoubleClick={handleDoubleClick}>
         {selected ? <Edges color={SELECTION_COLOR} threshold={8} clippingPlanes={clippingPlanes} /> : null}
       </mesh>
     )
   }
 
-  if (displayMode === 'mono') {
-    return (
-      <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
-        <meshStandardMaterial
-          color={MONO_COLOR}
-          roughness={0.7}
-          metalness={0.0}
-          envMapIntensity={0.6}
-          side={DoubleSide}
-          emissive={selected ? SELECTION_COLOR : '#000000'}
-          emissiveIntensity={0.4}
-          clippingPlanes={clippingPlanes}
-        />
-        {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} clippingPlanes={clippingPlanes} /> : null}
-      </mesh>
-    )
-  }
-
-  if (displayMode === 'random') {
-    return (
-      <>
-        {partGeometries.map((part) => (
-          <mesh key={part.compId} geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
-            <meshStandardMaterial
-              color={hashColor(componentColorIdentity(mesh.name, index, part.compId))}
-              roughness={0.5}
-              metalness={0.05}
-              envMapIntensity={0.75}
-              side={DoubleSide}
-              emissive={selected ? SELECTION_COLOR : '#000000'}
-              emissiveIntensity={0.4}
-              clippingPlanes={clippingPlanes}
-            />
-            {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} clippingPlanes={clippingPlanes} /> : null}
-          </mesh>
-        ))}
-      </>
-    )
-  }
-
+  const isMono = displayMode === 'mono'
+  const color =
+    displayMode === 'random'
+      ? hashColor(componentColorIdentity(mesh.name, index, colorCompId))
+      : isMono
+        ? MONO_COLOR
+        : SOLID_COLOR
+  // mono 的材质参数与原分支一致（roughness/metalness/envMapIntensity 不同）
+  const shading = isMono
+    ? { roughness: 0.7, metalness: 0.0, envMapIntensity: 0.6 }
+    : { roughness: 0.5, metalness: 0.05, envMapIntensity: 0.75 }
   return (
-    <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+    <mesh geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
       <meshStandardMaterial
-        color={SOLID_COLOR}
-        roughness={0.5}
-        metalness={0.05}
-        envMapIntensity={0.75}
+        color={color}
+        roughness={shading.roughness}
+        metalness={shading.metalness}
+        envMapIntensity={shading.envMapIntensity}
         side={DoubleSide}
         emissive={selected ? SELECTION_COLOR : '#000000'}
         emissiveIntensity={0.4}
