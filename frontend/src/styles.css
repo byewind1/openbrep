@@ -1265,6 +1265,106 @@ button:focus-visible {
   line-height: 1;
 }
 
+/* 3D 预览部件面板（P1d）：canvas 左上角浮层，Blender outliner 式，
+   不占网格行；列表超长时内部滚动 */
+.viewport-parts-panel {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 10;
+  width: min(260px, calc(100% - 20px));
+  max-height: calc(100% - 60px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.92);
+  color: var(--text-primary);
+  font-size: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.parts-panel-header {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.parts-panel-list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 2px;
+}
+
+.parts-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.parts-row:hover {
+  background: var(--bg-hover);
+}
+
+.parts-row.selected {
+  background: var(--accent-muted);
+  outline: 1px solid var(--accent);
+}
+
+.parts-row.hidden .parts-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.parts-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.parts-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parts-source {
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parts-action {
+  height: 20px;
+  width: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.parts-action:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .preview2d-surface {
   min-height: 0;
   display: grid;

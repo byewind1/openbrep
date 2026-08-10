@@ -8,9 +8,12 @@ import { BufferAttribute, BufferGeometry, Color, DoubleSide, PMREMGenerator, Sha
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload } from '../api/types'
+import { useT } from '../i18n'
 import { PreviewPickingBar } from './PreviewPickingBar'
+import { PreviewPartsPanel } from './PreviewPartsPanel'
 import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
+import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
 import {
   computePreviewBounds,
   isFittableViewport,
@@ -60,6 +63,7 @@ export function PreviewViewport({
   hasDirtyScripts = false,
   onRevealSource,
 }: PreviewViewportProps) {
+  const t = useT()
   const [cameraMode, setCameraMode] = useState<PreviewCameraMode>('perspective')
   const [viewPreset, setViewPreset] = useState<PreviewViewPreset>('iso')
   const [fitNonce, setFitNonce] = useState(0)
@@ -67,13 +71,22 @@ export function PreviewViewport({
   const [showGrid, setShowGrid] = useState(true)
   const [displayMode, setDisplayMode] = useState<PreviewDisplayMode>('solid')
   const [selection, setSelection] = useState<PreviewSelection | null>(null)
-  const bounds = useMemo(() => computePreviewBounds(preview), [preview])
+  // 部件隐藏是纯视图态：不进 store、不持久化，预览刷新后重置
+  const [hiddenParts, setHiddenParts] = useState<ReadonlySet<number>>(new Set())
+  const [partsOpen, setPartsOpen] = useState(false)
+  // fit 只看可见部件：隐藏的 mesh 不进 bounds（computePreviewBounds 签名不变）
+  const bounds = useMemo(() => computePreviewBounds(filterVisibleMeshes(preview, hiddenParts)), [preview, hiddenParts])
+  const parts = useMemo(() => {
+    if (displayMode === 'random') return buildPartsView(preview, 'random', null, hiddenParts)
+    return buildPartsView(preview, 'flat', MODE_COLOR[displayMode], hiddenParts)
+  }, [preview, displayMode, hiddenParts])
   const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
 
   // 预览数据更新（Update / 重新编译）后，旧下标可能指向别的 mesh：清空选中；
-  // Esc 取消选中（单击空白由 Canvas onPointerMissed 处理）
+  // 隐藏状态一并重置；Esc 取消选中（单击空白由 Canvas onPointerMissed 处理）
   useEffect(() => {
     setSelection(null)
+    setHiddenParts(new Set())
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') setSelection(null)
     }
@@ -96,6 +109,7 @@ export function PreviewViewport({
     setShowEdges(true)
     setShowGrid(true)
     setDisplayMode('solid')
+    setHiddenParts(new Set())
     fitView()
   }
 
@@ -153,6 +167,14 @@ export function PreviewViewport({
           >
             Grid
           </button>
+          <button
+            type="button"
+            className={`viewport-action-button${partsOpen ? ' active' : ''}`}
+            onClick={() => setPartsOpen((value) => !value)}
+            title={t('preview.parts.toggle')}
+          >
+            {t('preview.parts.title')}
+          </button>
           {onFloat ? (
             <button type="button" className="viewport-action-button" onClick={onFloat} title="Open floating preview">
               Float
@@ -189,23 +211,25 @@ export function PreviewViewport({
           <group position={bounds.center}>
             {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
             <axesHelper args={[1.4]} />
-            {preview?.meshes.map((mesh, index) => (
-              <MeshView
-                key={`${mesh.name}-${index}`}
-                mesh={mesh}
-                index={index}
-                showEdges={showEdges}
-                displayMode={displayMode}
-                offset={bounds.center}
-                selected={selection?.meshIndex === index}
-                onSelect={() => setSelection(makeSelection(index, mesh))}
-                onJump={() => {
-                  const next = makeSelection(index, mesh)
-                  setSelection(next)
-                  revealSource(next.source)
-                }}
-              />
-            ))}
+            {preview?.meshes.map((mesh, index) =>
+              hiddenParts.has(index) ? null : (
+                <MeshView
+                  key={`${mesh.name}-${index}`}
+                  mesh={mesh}
+                  index={index}
+                  showEdges={showEdges}
+                  displayMode={displayMode}
+                  offset={bounds.center}
+                  selected={selection?.meshIndex === index}
+                  onSelect={() => setSelection(makeSelection(index, mesh))}
+                  onJump={() => {
+                    const next = makeSelection(index, mesh)
+                    setSelection(next)
+                    revealSource(next.source)
+                  }}
+                />
+              ),
+            )}
           </group>
         </Canvas>
         {selection ? (
@@ -213,6 +237,31 @@ export function PreviewViewport({
             selection={selection}
             onJump={() => revealSource(selection.source)}
             onDismiss={() => setSelection(null)}
+          />
+        ) : null}
+        {partsOpen && parts.length > 0 ? (
+          <PreviewPartsPanel
+            parts={parts}
+            selectedIndex={selection?.meshIndex ?? null}
+            onSelect={(meshIndex) => {
+              const mesh = preview?.meshes[meshIndex]
+              if (mesh) setSelection(makeSelection(meshIndex, mesh))
+            }}
+            onJump={(meshIndex) => {
+              const mesh = preview?.meshes[meshIndex]
+              if (!mesh) return
+              const next = makeSelection(meshIndex, mesh)
+              setSelection(next)
+              revealSource(next.source)
+            }}
+            onToggleHidden={(meshIndex) =>
+              setHiddenParts((current) => {
+                const next = new Set(current)
+                if (next.has(meshIndex)) next.delete(meshIndex)
+                else next.add(meshIndex)
+                return next
+              })
+            }
           />
         ) : null}
       </div>
@@ -326,12 +375,13 @@ const XRAY_COLOR = '#6fd3ff'
 // 选中强调色（琥珀，与 --accent 同族）：线框/Edges 叠加在五种显示模式下均可辨认
 const SELECTION_COLOR = '#ffc94d'
 
-// 12 色分类调色板（高区分度，按部件序号确定性取用，不闪烁）
-const PART_PALETTE = [
-  '#e8a33d', '#5fb4e8', '#7ed491', '#e87d7d',
-  '#b39de8', '#e8d05f', '#5fe8d0', '#e88fc0',
-  '#a5c66f', '#7d9be8', '#e8975f', '#63c7e8',
-]
+// 非 random 模式的统一显示色（部件面板 chip 与渲染共用）
+const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random'>, string> = {
+  solid: SOLID_COLOR,
+  mono: MONO_COLOR,
+  wire: WIRE_COLOR,
+  xray: XRAY_COLOR,
+}
 
 /** 面级连通域编号（并查集）：共享顶点的面归一部件，按出现顺序编 0..K-1 */
 function computeFaceComponents(faces: number[][], vertCount: number): number[] {
@@ -459,7 +509,7 @@ function MeshView({
   }, [mesh.faces, mesh.vertices, offset])
 
   // 随机分色：BS2G 产物常是单一合并 mesh（放样链/拓扑体），按 mesh 分色
-  // 会退化成一色；改为按面连通域拆成子 mesh，各自独立的调色板颜色材质
+  // 会退化成一色；改为按面连通域拆成子 mesh，各自按 identity hash 取色
   const partGeometries = useMemo(() => {
     if (displayMode !== 'random') return []
     const comp = computeFaceComponents(mesh.faces, mesh.vertices.length)
@@ -534,7 +584,7 @@ function MeshView({
         {partGeometries.map((part) => (
           <mesh key={part.compId} geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
             <meshStandardMaterial
-              color={PART_PALETTE[part.compId % PART_PALETTE.length]}
+              color={hashColor(componentColorIdentity(mesh.name, index, part.compId))}
               roughness={0.5}
               metalness={0.05}
               envMapIntensity={0.75}

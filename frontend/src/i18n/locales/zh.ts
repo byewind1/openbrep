@@ -135,6 +135,12 @@ export const zh = {
   'preview.pick.jumpToSource': '跳转到源码',
   'preview.pick.dismiss': '取消选中',
   'preview.pick.barAriaLabel': '选中构件信息',
+
+  // 3D 预览部件面板（P1d）：Blender outliner 式部件列表
+  'preview.parts.title': '部件',
+  'preview.parts.toggle': '切换部件面板',
+  'preview.parts.hide': '隐藏部件',
+  'preview.parts.show': '显示部件',
 } as const
 
 export type LocaleKey = keyof typeof zh

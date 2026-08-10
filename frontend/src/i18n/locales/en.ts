@@ -138,4 +138,10 @@ export const en: Record<LocaleKey, string> = {
   'preview.pick.jumpToSource': 'Jump to source',
   'preview.pick.dismiss': 'Clear selection',
   'preview.pick.barAriaLabel': 'Selected part info',
+
+  // 3D preview parts panel (P1d): Blender-outliner style part list
+  'preview.parts.title': 'Parts',
+  'preview.parts.toggle': 'Toggle parts panel',
+  'preview.parts.hide': 'Hide part',
+  'preview.parts.show': 'Show part',
 }
