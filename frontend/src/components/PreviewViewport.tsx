@@ -120,11 +120,15 @@ export function PreviewViewport({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [preview])
 
-  // xray 共享 ShaderMaterial 的 clippingPlanes：平面数组是 uniform，
+  // xray ShaderMaterial 按视口实例一份（共享会被多视口的剖切状态互相覆盖）；
+  // 卸载时 dispose（浮动窗会反复开关）
+  const xrayMaterial = useMemo(() => createXrayMaterial(), [])
+  useEffect(() => () => xrayMaterial.dispose(), [xrayMaterial])
+  // xray ShaderMaterial 的 clippingPlanes：平面数组是 uniform，
   // 内容变化无需 needsUpdate（material.clipping 恒为 true）
   useEffect(() => {
     xrayMaterial.clippingPlanes = sectionPlanes
-  }, [sectionPlanes])
+  }, [xrayMaterial, sectionPlanes])
 
   function revealSource(source: PreviewSelection['source']) {
     if (!source) return
@@ -292,6 +296,7 @@ export function PreviewViewport({
                   offset={bounds.center}
                   selected={selection?.meshIndex === index}
                   clippingPlanes={sectionPlanes}
+                  xrayMaterial={xrayMaterial}
                   onSelect={() => setSelection(makeSelection(index, mesh))}
                   onJump={() => {
                     const next = makeSelection(index, mesh)
@@ -495,7 +500,11 @@ function computeFaceComponents(faces: number[][], vertCount: number): number[] {
 // X-ray ghost material: fragment-level fresnel so edge falloff survives
 // interpolation on large faces. f = (base + (1-base)·fresnel^sharp) × gain.
 // logdepthbuf chunks keep it consistent with logarithmicDepthBuffer.
-const xrayMaterial = new ShaderMaterial({
+// 注意：必须是每个视口实例一份（createXrayMaterial 工厂），不能模块级共享——
+// clippingPlanes 是按实例状态（剖切）写入材质的，共享会让多个同时挂载的
+// 视口（右栏 / expand 舞台 / 浮动窗）互相覆盖剖切状态。
+function createXrayMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
   uniforms: {
     uColor: { value: new Color(XRAY_COLOR) },
     uGain: { value: 0.85 },
@@ -546,7 +555,8 @@ const xrayMaterial = new ShaderMaterial({
   transparent: true,
   depthWrite: false,
   side: DoubleSide,
-})
+  })
+}
 
 function StudioEnvironment() {
   // model-viewer 同款做法：RoomEnvironment 经 PMREM 生成 IBL，
@@ -573,6 +583,7 @@ function MeshView({
   offset,
   selected,
   clippingPlanes,
+  xrayMaterial,
   onSelect,
   onJump,
 }: {
@@ -584,6 +595,8 @@ function MeshView({
   selected: boolean
   /** P1c 剖切面：挂到该 mesh 的所有渲染材质（含 Edges/xray）上 */
   clippingPlanes: Plane[]
+  /** 视口实例级 xray 材质（不能模块级共享，剖切状态会互相覆盖） */
+  xrayMaterial: ShaderMaterial
   onSelect: () => void
   onJump: () => void
 }) {
