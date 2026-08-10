@@ -1,5 +1,6 @@
 import { Edges, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
 import { Canvas, useThree } from '@react-three/fiber'
+import type { ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveCamera as PerspectiveCameraType } from 'three'
@@ -7,6 +8,9 @@ import { BufferAttribute, BufferGeometry, Color, DoubleSide, PMREMGenerator, Sha
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload } from '../api/types'
+import { PreviewPickingBar } from './PreviewPickingBar'
+import { makeSelection } from './previewPicking'
+import type { PreviewSelection } from './previewPicking'
 import {
   computePreviewBounds,
   isFittableViewport,
@@ -30,6 +34,8 @@ interface PreviewViewportProps {
   onCollapse?: () => void
   onFloat?: () => void
   hasDirtyScripts?: boolean
+  /** 选中 mesh 后跳转到 GDL 脚本对应行（scriptName 如 "3d.gdl"） */
+  onRevealSource?: (scriptName: string, lineNumber: number) => void
 }
 
 type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
@@ -52,6 +58,7 @@ export function PreviewViewport({
   onCollapse,
   onFloat,
   hasDirtyScripts = false,
+  onRevealSource,
 }: PreviewViewportProps) {
   const [cameraMode, setCameraMode] = useState<PreviewCameraMode>('perspective')
   const [viewPreset, setViewPreset] = useState<PreviewViewPreset>('iso')
@@ -59,8 +66,25 @@ export function PreviewViewport({
   const [showEdges, setShowEdges] = useState(true)
   const [showGrid, setShowGrid] = useState(true)
   const [displayMode, setDisplayMode] = useState<PreviewDisplayMode>('solid')
+  const [selection, setSelection] = useState<PreviewSelection | null>(null)
   const bounds = useMemo(() => computePreviewBounds(preview), [preview])
   const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
+
+  // 预览数据更新（Update / 重新编译）后，旧下标可能指向别的 mesh：清空选中；
+  // Esc 取消选中（单击空白由 Canvas onPointerMissed 处理）
+  useEffect(() => {
+    setSelection(null)
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setSelection(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [preview])
+
+  function revealSource(source: PreviewSelection['source']) {
+    if (!source) return
+    onRevealSource?.(source.scriptName, source.line)
+  }
 
   function fitView() {
     setFitNonce((value) => value + 1)
@@ -149,7 +173,7 @@ export function PreviewViewport({
       <div className="canvas-wrap">
         {/* absolute + inset:0：见 styles.css .canvas-wrap 注释，
             防止 canvas 的内联 px 宽度反向撑住容器导致无法收缩 */}
-        <Canvas gl={{ logarithmicDepthBuffer: true }} style={{ position: 'absolute', inset: 0 }}>
+        <Canvas gl={{ logarithmicDepthBuffer: true }} style={{ position: 'absolute', inset: 0 }} onPointerMissed={() => setSelection(null)}>
           {cameraMode === 'perspective' ? (
             <PerspectiveCamera makeDefault fov={38} near={0.001} far={100000} />
           ) : (
@@ -166,10 +190,31 @@ export function PreviewViewport({
             {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
             <axesHelper args={[1.4]} />
             {preview?.meshes.map((mesh, index) => (
-              <MeshView key={`${mesh.name}-${index}`} mesh={mesh} index={index} showEdges={showEdges} displayMode={displayMode} offset={bounds.center} />
+              <MeshView
+                key={`${mesh.name}-${index}`}
+                mesh={mesh}
+                index={index}
+                showEdges={showEdges}
+                displayMode={displayMode}
+                offset={bounds.center}
+                selected={selection?.meshIndex === index}
+                onSelect={() => setSelection(makeSelection(index, mesh))}
+                onJump={() => {
+                  const next = makeSelection(index, mesh)
+                  setSelection(next)
+                  revealSource(next.source)
+                }}
+              />
             ))}
           </group>
         </Canvas>
+        {selection ? (
+          <PreviewPickingBar
+            selection={selection}
+            onJump={() => revealSource(selection.source)}
+            onDismiss={() => setSelection(null)}
+          />
+        ) : null}
       </div>
       <footer className="viewport-footer">
         <span>
@@ -278,6 +323,8 @@ const MONO_COLOR = '#a89e92'
 const EDGE_COLOR = '#1c2530'
 const WIRE_COLOR = '#86d4f8'
 const XRAY_COLOR = '#6fd3ff'
+// 选中强调色（琥珀，与 --accent 同族）：线框/Edges 叠加在五种显示模式下均可辨认
+const SELECTION_COLOR = '#ffc94d'
 
 // 12 色分类调色板（高区分度，按部件序号确定性取用，不闪烁）
 const PART_PALETTE = [
@@ -383,12 +430,18 @@ function MeshView({
   showEdges,
   displayMode,
   offset,
+  selected,
+  onSelect,
+  onJump,
 }: {
   mesh: PreviewMesh
   index: number
   showEdges: boolean
   displayMode: PreviewDisplayMode
   offset: [number, number, number]
+  selected: boolean
+  onSelect: () => void
+  onJump: () => void
 }) {
   const geometry = useMemo(() => {
     const next = new BufferGeometry()
@@ -425,26 +478,52 @@ function MeshView({
     })
   }, [displayMode, mesh.faces, mesh.vertices.length, geometry])
 
+  // r3f 事件自带 delta（pointerdown→click 位移）；拖拽旋转结束时也会派发
+  // click，超过 2px 一律不算点击，避免转视角误选中
+  function handleClick(event: ThreeEvent<MouseEvent>) {
+    if (event.delta > 2) return
+    event.stopPropagation()
+    onSelect()
+  }
+
+  function handleDoubleClick(event: ThreeEvent<MouseEvent>) {
+    event.stopPropagation()
+    onJump()
+  }
+
   if (displayMode === 'wire') {
     // Hidden-line: only feature/boundary edges. A full triangle
     // wireframe collapses to a white blob on dense meshes.
     return (
-      <mesh geometry={geometry}>
+      <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
         <meshBasicMaterial visible={false} />
-        <Edges color={WIRE_COLOR} threshold={8} />
+        <Edges color={selected ? SELECTION_COLOR : WIRE_COLOR} threshold={8} />
       </mesh>
     )
   }
 
   if (displayMode === 'xray') {
-    return <mesh geometry={geometry} material={xrayMaterial} />
+    // ShaderMaterial 不吃 emissive：选中靠 Edges 琥珀叠加（本模式无 showEdges 开关）
+    return (
+      <mesh geometry={geometry} material={xrayMaterial} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+        {selected ? <Edges color={SELECTION_COLOR} threshold={8} /> : null}
+      </mesh>
+    )
   }
 
   if (displayMode === 'mono') {
     return (
-      <mesh geometry={geometry}>
-        <meshStandardMaterial color={MONO_COLOR} roughness={0.7} metalness={0.0} envMapIntensity={0.6} side={DoubleSide} />
-        {showEdges ? <Edges color={EDGE_COLOR} threshold={18} /> : null}
+      <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+        <meshStandardMaterial
+          color={MONO_COLOR}
+          roughness={0.7}
+          metalness={0.0}
+          envMapIntensity={0.6}
+          side={DoubleSide}
+          emissive={selected ? SELECTION_COLOR : '#000000'}
+          emissiveIntensity={0.4}
+        />
+        {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} /> : null}
       </mesh>
     )
   }
@@ -453,15 +532,17 @@ function MeshView({
     return (
       <>
         {partGeometries.map((part) => (
-          <mesh key={part.compId} geometry={part.geometry}>
+          <mesh key={part.compId} geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
             <meshStandardMaterial
               color={PART_PALETTE[part.compId % PART_PALETTE.length]}
               roughness={0.5}
               metalness={0.05}
               envMapIntensity={0.75}
               side={DoubleSide}
+              emissive={selected ? SELECTION_COLOR : '#000000'}
+              emissiveIntensity={0.4}
             />
-            {showEdges ? <Edges color={EDGE_COLOR} threshold={18} /> : null}
+            {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} /> : null}
           </mesh>
         ))}
       </>
@@ -469,9 +550,17 @@ function MeshView({
   }
 
   return (
-    <mesh geometry={geometry}>
-      <meshStandardMaterial color={SOLID_COLOR} roughness={0.5} metalness={0.05} envMapIntensity={0.75} side={DoubleSide} />
-      {showEdges ? <Edges color={EDGE_COLOR} threshold={18} /> : null}
+    <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+      <meshStandardMaterial
+        color={SOLID_COLOR}
+        roughness={0.5}
+        metalness={0.05}
+        envMapIntensity={0.75}
+        side={DoubleSide}
+        emissive={selected ? SELECTION_COLOR : '#000000'}
+        emissiveIntensity={0.4}
+      />
+      {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} /> : null}
     </mesh>
   )
 }

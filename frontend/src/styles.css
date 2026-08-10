@@ -1204,6 +1204,67 @@ button:focus-visible {
   display: block;
 }
 
+/* 3D 预览拾取信息条（P1a）：canvas 左下角浮层，不占网格行、三种挂载点通用 */
+.viewport-pick-bar {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 20px);
+  padding: 5px 8px 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: rgba(5, 7, 13, 0.86);
+  color: var(--text-primary);
+  font-size: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.viewport-pick-bar .pick-mesh-name {
+  color: var(--text-muted);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewport-pick-bar .pick-source {
+  color: var(--accent-soft);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewport-pick-bar .pick-no-source {
+  color: var(--text-secondary);
+}
+
+.viewport-pick-bar .pick-jump {
+  height: 22px;
+  padding-inline: 8px;
+  font-size: 11px;
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent-soft);
+}
+
+.viewport-pick-bar .pick-jump:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.viewport-pick-bar .pick-dismiss {
+  height: 22px;
+  width: 22px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
 .preview2d-surface {
   min-height: 0;
   display: grid;

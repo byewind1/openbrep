@@ -56,10 +56,20 @@ export interface ProjectRevision {
   is_latest: boolean
 }
 
+export interface PreviewSourceRef {
+  script_type: string
+  line: number
+  command: string
+  label: string
+}
+
 export interface PreviewMesh {
   name: string
   vertices: number[][]
   faces: number[][]
+  /** 生成该 mesh 的 GDL 命令打点（openbrep/gdl_previewer.py 逐命令记录）；
+   *  RULED 焊接合并等产物可能没有，此时无法溯源跳转 */
+  source_ref?: PreviewSourceRef | null
 }
 
 export interface PreviewPayload {

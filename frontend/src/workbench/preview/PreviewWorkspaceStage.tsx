@@ -18,6 +18,8 @@ interface PreviewWorkspaceStageProps {
   onFloatPreview: () => void
   onChangeScript: (content: string) => void
   onRefreshPreview?: () => void
+  /** 3D 预览选中 mesh 后跳转 GDL 源码行（scriptName 如 "3d.gdl"） */
+  onRevealSource?: (scriptName: string, lineNumber: number) => void
 }
 
 export function PreviewWorkspaceStage({
@@ -34,6 +36,7 @@ export function PreviewWorkspaceStage({
   onFloatPreview,
   onChangeScript,
   onRefreshPreview,
+  onRevealSource,
 }: PreviewWorkspaceStageProps) {
   // 两个舞台常驻 DOM、用 display 切换：保证来回切换不丢 3D 相机视角和编辑器滚动位置
   return (
@@ -48,6 +51,7 @@ export function PreviewWorkspaceStage({
             hasDirtyScripts={hasDirtyScripts}
             onCollapse={onCollapsePreview}
             onFloat={onFloatPreview}
+            onRevealSource={onRevealSource}
             actions={
               onRefreshPreview ? (
                 <button

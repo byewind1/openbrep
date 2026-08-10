@@ -129,6 +129,12 @@ export const zh = {
   'assistant.acceptance.meshCount': '几何体数量',
   'assistant.acceptance.bbox': '包围盒尺寸',
   'assistant.acceptance.counts2d': '平面元素（线/多边形/圆/弧）',
+
+  // 3D 预览拾取（P1a）：点击 mesh 高亮 + 溯源跳转
+  'preview.pick.noSource': '无源码溯源',
+  'preview.pick.jumpToSource': '跳转到源码',
+  'preview.pick.dismiss': '取消选中',
+  'preview.pick.barAriaLabel': '选中构件信息',
 } as const
 
 export type LocaleKey = keyof typeof zh

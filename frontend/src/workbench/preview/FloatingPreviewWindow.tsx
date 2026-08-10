@@ -9,9 +9,11 @@ interface FloatingPreviewWindowProps {
   warnings: string[]
   hasDirtyScripts: boolean
   onClose: () => void
+  /** 3D 预览选中 mesh 后跳转 GDL 源码行（scriptName 如 "3d.gdl"） */
+  onRevealSource?: (scriptName: string, lineNumber: number) => void
 }
 
-export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts, onClose }: FloatingPreviewWindowProps) {
+export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts, onClose, onRevealSource }: FloatingPreviewWindowProps) {
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [fullscreen, setFullscreen] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
@@ -92,7 +94,13 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
       </header>
       <div className="floating-preview-body">
         <Suspense fallback={<div className="viewport-loading" />}>
-          <PreviewViewport preview={preview} warnings={warnings} variant="floating" hasDirtyScripts={hasDirtyScripts} />
+          <PreviewViewport
+            preview={preview}
+            warnings={warnings}
+            variant="floating"
+            hasDirtyScripts={hasDirtyScripts}
+            onRevealSource={onRevealSource}
+          />
         </Suspense>
       </div>
     </aside>

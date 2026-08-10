@@ -123,6 +123,7 @@ export function WorkbenchRightRail({
               hasDirtyScripts={hasDirtyScripts}
               onExpand={onExpandPreview}
               onFloat={onFloatPreview}
+              onRevealSource={onRevealLine}
               actions={(
                 <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
                   Update

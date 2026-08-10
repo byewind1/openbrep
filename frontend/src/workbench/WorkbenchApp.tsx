@@ -343,6 +343,7 @@ export function WorkbenchApp() {
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onChangeScript={updateActiveScriptContent}
             onRefreshPreview={() => void loadPreview3D()}
+            onRevealSource={(scriptName, lineNumber) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' })}
           />
         )}
         right={(
@@ -411,6 +412,7 @@ export function WorkbenchApp() {
         warnings={warnings}
         hasDirtyScripts={hasAnyDirtyScript}
         onClose={() => setFloatingPreviewOpen(false)}
+        onRevealSource={(scriptName, lineNumber) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' })}
       />
       <Suspense fallback={null}>
       <SettingsDrawer

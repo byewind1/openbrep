@@ -132,4 +132,10 @@ export const en: Record<LocaleKey, string> = {
   'assistant.acceptance.meshCount': 'Mesh count',
   'assistant.acceptance.bbox': 'Bounding box',
   'assistant.acceptance.counts2d': '2D elements (lines/polygons/circles/arcs)',
+
+  // 3D preview picking (P1a): click mesh to highlight + jump to source
+  'preview.pick.noSource': 'No source trace',
+  'preview.pick.jumpToSource': 'Jump to source',
+  'preview.pick.dismiss': 'Clear selection',
+  'preview.pick.barAriaLabel': 'Selected part info',
 }
