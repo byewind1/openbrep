@@ -77,7 +77,8 @@ export function PreviewViewport({
   // fit 只看可见部件：隐藏的 mesh 不进 bounds（computePreviewBounds 签名不变）
   const bounds = useMemo(() => computePreviewBounds(filterVisibleMeshes(preview, hiddenParts)), [preview, hiddenParts])
   const parts = useMemo(() => {
-    if (displayMode === 'random') return buildPartsView(preview, 'random', null, hiddenParts)
+    // wire 与 random 同为逐部件 hash 取色（chip 色与渲染一致）
+    if (displayMode === 'random' || displayMode === 'wire') return buildPartsView(preview, 'random', null, hiddenParts)
     return buildPartsView(preview, 'flat', MODE_COLOR[displayMode], hiddenParts)
   }, [preview, displayMode, hiddenParts])
   const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
@@ -370,16 +371,16 @@ function fitCamera(
 const SOLID_COLOR = '#8595ab'
 const MONO_COLOR = '#a89e92'
 const EDGE_COLOR = '#1c2530'
-const WIRE_COLOR = '#86d4f8'
 const XRAY_COLOR = '#6fd3ff'
+// 画布底色（= styles/tokens.css --bg-canvas）：线框模式的消隐遮挡填充色，必须与 token 一致
+const CANVAS_BG_COLOR = '#05070d'
 // 选中强调色（琥珀，与 --accent 同族）：线框/Edges 叠加在五种显示模式下均可辨认
 const SELECTION_COLOR = '#ffc94d'
 
-// 非 random 模式的统一显示色（部件面板 chip 与渲染共用）
-const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random'>, string> = {
+// 统一单色模式的显示色（部件面板 chip 与渲染共用；random/wire 为逐部件 hash 色，不在此列）
+const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random' | 'wire'>, string> = {
   solid: SOLID_COLOR,
   mono: MONO_COLOR,
-  wire: WIRE_COLOR,
   xray: XRAY_COLOR,
 }
 
@@ -542,12 +543,15 @@ function MeshView({
   }
 
   if (displayMode === 'wire') {
-    // Hidden-line: only feature/boundary edges. A full triangle
-    // wireframe collapses to a white blob on dense meshes.
+    // 消隐线框：三角面用画布底色填充（遮挡背面边线），Edges 只画特征/边界边——
+    // 全三角线框在密 mesh 上会糊成一团。填充色必须等于 tokens.css --bg-canvas，
+    // 否则遮挡体会在背景上显形；polygonOffset 把填充微微推后，让表面边线压过填充。
+    // 每 mesh 按 identity hash 取色（与 random 模式同一套色，一眼认出同一构件）。
+    const wireColor = hashColor(componentColorIdentity(mesh.name, index, 0))
     return (
       <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
-        <meshBasicMaterial visible={false} />
-        <Edges color={selected ? SELECTION_COLOR : WIRE_COLOR} threshold={8} />
+        <meshBasicMaterial color={CANVAS_BG_COLOR} side={DoubleSide} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
+        <Edges color={selected ? SELECTION_COLOR : wireColor} threshold={8} />
       </mesh>
     )
   }
