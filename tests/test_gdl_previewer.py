@@ -604,5 +604,198 @@ class TestGDLPreviewer2DCommands(unittest.TestCase):
         self.assertGreaterEqual(len(r3d.meshes), 8)
 
 
+class TestPreviewSourceSegment(unittest.TestCase):
+    """P1e 相关代码段：source_ref 的 segment_start/segment_end 语义。
+
+    区间均为真实脚本行号、含端点；嵌套取数值上包含命令行的最内层区间。
+    """
+
+    def _segments(self, script, **kwargs):
+        res = preview_3d_script(script, **kwargs)
+        return [(m.source_ref.line, m.source_ref.segment_start, m.source_ref.segment_end) for m in res.meshes]
+
+    def test_top_level_command_segment_is_its_own_line(self):
+        script = """\
+! comment
+ADDZ 1
+BLOCK 1, 2, 3
+"""
+        self.assertEqual(self._segments(script), [(3, 3, 3)])
+
+    def test_for_body_mesh_gets_whole_for_next_range(self):
+        script = """\
+FOR i = 1 TO 3
+    ADDX i
+    CYLIND 1, 0.5
+NEXT i
+"""
+        # 3 次迭代共享同一个 FOR…NEXT 段（含头尾）
+        self.assertEqual(self._segments(script), [(3, 1, 4), (3, 1, 4), (3, 1, 4)])
+
+    def test_if_branch_mesh_gets_whole_if_endif_range_including_else(self):
+        script = """\
+A = 2
+IF A > 1 THEN
+    PRISM_ 4, 2,
+        0, 0,
+        1, 0,
+        1, 1,
+        0, 1
+ELSE
+    BLOCK 1, 1, 1
+ENDIF
+"""
+        # PRISM 在 IF 分支内：段 = IF 行 2 到 ENDIF 行 10（含 ELSE 段）
+        self.assertEqual(self._segments(script), [(3, 2, 10)])
+
+        # 同一脚本换条件走 ELSE 分支：BLOCK 行 9，段仍是整个 IF…ENDIF
+        script_else = script.replace("A = 2", "A = 0")
+        self.assertEqual(self._segments(script_else), [(9, 2, 10)])
+
+    def test_gosub_subroutine_mesh_gets_label_to_return_range(self):
+        script = """\
+GOSUB 100
+END
+100:
+    BLOCK 1, 1, 1
+    RETURN
+"""
+        # BLOCK 行 4：段 = 标签 100（行 3）到 RETURN（行 5）
+        self.assertEqual(self._segments(script), [(4, 3, 5)])
+
+    def test_string_label_subroutine_range(self):
+        script = """\
+GOSUB "box"
+END
+"box":
+    CYLIND 1, 0.5
+    RETURN
+"""
+        self.assertEqual(self._segments(script), [(4, 3, 5)])
+
+    def test_nested_blocks_take_innermost_range(self):
+        script = """\
+IF 1 THEN
+    FOR i = 1 TO 2
+        CYLIND 1, 0.5
+    NEXT i
+ENDIF
+"""
+        # CYLIND 行 3 同时位于 IF（1..6）和 FOR（2..4）内 → 取最内层 FOR
+        self.assertEqual(self._segments(script), [(3, 2, 4), (3, 2, 4)])
+
+    def test_gosub_inside_if_reports_subroutine_not_if_block(self):
+        script = """\
+IF 1 THEN
+    GOSUB 100
+ENDIF
+100:
+    BLOCK 1, 1, 1
+    RETURN
+"""
+        # 第一次执行经 GOSUB：BLOCK 行 5 在子程序（4..6）内，IF 段（1..3）
+        # 不包含该行号 → 段 = 子程序区间
+        segments = self._segments(script)
+        self.assertEqual(segments[0], (5, 4, 6))
+        # 预既有解释器行为：ENDIF 后回落到标签处会再执行一次子程序体，
+        # 第二次为顶层单行段 —— 本单只保证第一次溯源正确。
+        self.assertIn((5, 5, 5), segments)
+
+    def test_nested_gosub_chain_uses_innermost_subroutine(self):
+        script = """\
+GOSUB 100
+END
+100:
+    GOSUB 200
+    BLOCK 1, 1, 1
+    RETURN
+200:
+    CYLIND 1, 0.5
+    RETURN
+"""
+        # 执行顺序：GOSUB 100 → GOSUB 200 → CYLIND（子程序 200：标签行 7..RETURN 行 9）
+        # → RETURN 回 100 体 → BLOCK（子程序 100：标签行 3..RETURN 行 6）
+        self.assertEqual(self._segments(script), [(8, 7, 9), (5, 3, 6)])
+
+    def test_for_inside_subroutine_takes_for_range(self):
+        script = """\
+GOSUB 100
+END
+100:
+    FOR i = 1 TO 2
+        CYLIND 1, 0.5
+    NEXT i
+    RETURN
+"""
+        # FOR 段（4..6）比子程序段（3..7）更内层
+        self.assertEqual(self._segments(script), [(5, 4, 6), (5, 4, 6)])
+
+    def test_source_ref_still_backwards_compatible_without_segment(self):
+        # 手工构造的 PreviewSourceRef（如测试 fixture）不填段字段 → None，不报错
+        from openbrep.gdl_previewer import PreviewSourceRef
+
+        ref = PreviewSourceRef(script_type="3d", line=1, command="BLOCK", label="x")
+        self.assertIsNone(ref.segment_start)
+        self.assertIsNone(ref.segment_end)
+
+    def test_geometry_unchanged_by_segment_metadata(self):
+        # 几何不变锁定：P1e 只加 source_ref 元数据，mesh 几何逐字节一致。
+        # 黄金值已用入库前（8d5bcd1）的解释器逐字节比对确认（见 P1e 报告），
+        # 任何几何漂移都会红灯。段区间同时验证：BLOCK 顶层单行 (1,1)，
+        # PRISM 在子程序 50 内 → (标签 4, RETURN 9)。
+        script = """\
+BLOCK 1, 2, 3
+GOSUB 50
+END
+50:
+    PRISM_ 3, 1,
+        0, 0,
+        1, 0,
+        0, 1
+    RETURN
+"""
+        res = preview_3d_script(script)
+        canonical = [
+            {
+                "name": m.name,
+                "x": [round(v, 9) for v in m.x],
+                "y": [round(v, 9) for v in m.y],
+                "z": [round(v, 9) for v in m.z],
+                "i": m.i,
+                "j": m.j,
+                "k": m.k,
+            }
+            for m in res.meshes
+        ]
+        self.assertEqual(
+            canonical,
+            [
+                {
+                    "name": "BLOCK",
+                    "x": [0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+                    "y": [0.0, 0.0, 2.0, 2.0, 0.0, 0.0, 2.0, 2.0],
+                    "z": [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 3.0, 3.0],
+                    "i": [0, 0, 4, 4, 0, 0, 1, 1, 2, 2, 3, 3],
+                    "j": [1, 2, 6, 7, 5, 4, 6, 5, 7, 6, 4, 7],
+                    "k": [2, 3, 5, 6, 1, 5, 2, 6, 3, 7, 0, 4],
+                },
+                {
+                    "name": "PRISM_",
+                    "x": [0.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+                    "y": [0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+                    "z": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                    "i": [0, 0, 1, 1, 2, 2, 0, 3],
+                    "j": [1, 4, 2, 5, 0, 3, 2, 4],
+                    "k": [4, 3, 5, 4, 3, 5, 1, 5],
+                },
+            ],
+        )
+        self.assertEqual(
+            [(m.source_ref.line, m.source_ref.segment_start, m.source_ref.segment_end) for m in res.meshes],
+            [(1, 1, 1), (5, 4, 9)],
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()

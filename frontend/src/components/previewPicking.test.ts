@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { PreviewMesh } from '../api/types'
-import { makeSelection, resolveSourceRef, sourceScriptName } from './previewPicking'
+import { focusRangeEnd, makeSelection, resolveSourceRef, sourceScriptName } from './previewPicking'
 
 describe('sourceScriptName (script_type → 脚本文件名)', () => {
   test('maps script types to .gdl filenames like diagnostics jump', () => {
@@ -45,6 +45,33 @@ describe('resolveSourceRef (source_ref → 跳转目标)', () => {
     expect(resolved?.summary).toBe('3d.gdl:9')
   })
 
+  test('carries the related code segment (P1e) when the backend provides it', () => {
+    const resolved = resolveSourceRef({
+      script_type: '3d',
+      line: 7,
+      command: 'CYLIND',
+      label: '',
+      segment_start: 1,
+      segment_end: 12,
+    })
+    expect(resolved?.segment).toEqual({ start: 1, end: 12 })
+  })
+
+  test('top-level command gets a single-line segment (line, line)', () => {
+    const resolved = resolveSourceRef({ script_type: '3d', line: 42, command: 'BLOCK', label: '', segment_start: 42, segment_end: 42 })
+    expect(resolved?.segment).toEqual({ start: 42, end: 42 })
+  })
+
+  test('segment stays null for missing or invalid segment fields (backwards compatible)', () => {
+    const base = { script_type: '3d', line: 5, command: 'BLOCK', label: '' }
+    expect(resolveSourceRef(base)?.segment).toBeNull()
+    expect(resolveSourceRef({ ...base, segment_start: null, segment_end: null })?.segment).toBeNull()
+    expect(resolveSourceRef({ ...base, segment_start: undefined, segment_end: undefined })?.segment).toBeNull()
+    expect(resolveSourceRef({ ...base, segment_start: 0, segment_end: 5 })?.segment).toBeNull()
+    expect(resolveSourceRef({ ...base, segment_start: 5, segment_end: 3 })?.segment).toBeNull()
+    expect(resolveSourceRef({ ...base, segment_start: Number.NaN, segment_end: 5 })?.segment).toBeNull()
+  })
+
   test('returns null for null/undefined source_ref (RULED 焊接合并等产物)', () => {
     expect(resolveSourceRef(null)).toBeNull()
     expect(resolveSourceRef(undefined)).toBeNull()
@@ -83,5 +110,19 @@ describe('makeSelection (选中状态构造)', () => {
     const selection = makeSelection(1, { name: 'RULED_0', vertices: [], faces: [] })
     expect(selection.meshName).toBe('RULED_0')
     expect(selection.source).toBeNull()
+  })
+})
+
+describe('focusRangeEnd (P1e 聚焦区间归一化)', () => {
+  test('uses the segment end when it is valid and covers the line', () => {
+    expect(focusRangeEnd(3, 12)).toBe(12)
+    expect(focusRangeEnd(3, 3)).toBe(3)
+  })
+
+  test('degrades to single line for null/undefined/too-short end', () => {
+    expect(focusRangeEnd(3, null)).toBe(3)
+    expect(focusRangeEnd(3, undefined)).toBe(3)
+    expect(focusRangeEnd(3, 2)).toBe(3)
+    expect(focusRangeEnd(3, 0)).toBe(3)
   })
 })

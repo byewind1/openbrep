@@ -34,7 +34,15 @@ class TestThreePreview(unittest.TestCase):
         self.assertEqual(payload["meshes"][0]["faces"], [[0, 1, 2]])
         self.assertEqual(
             payload["meshes"][0]["source_ref"],
-            {"script_type": "3d", "line": 7, "command": "BLOCK", "label": "3D line 7 BLOCK"},
+            {
+                "script_type": "3d",
+                "line": 7,
+                "command": "BLOCK",
+                "label": "3D line 7 BLOCK",
+                # P1e 可选段字段：未设置时为 None（向后兼容）
+                "segment_start": None,
+                "segment_end": None,
+            },
         )
         self.assertEqual(payload["wires"], [[[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]])
 
@@ -72,7 +80,10 @@ class TestThreePreview(unittest.TestCase):
         self.assertIn("pickSolid", html)
         self.assertIn("sourceRefText", html)
         self.assertIn("solid.userData.sourceRef", html)
-        self.assertIn('"source_ref":{"script_type":"3d","line":11,"command":"BLOCK","label":"3D line 11 BLOCK"}', html)
+        self.assertIn(
+            '"source_ref":{"script_type":"3d","line":11,"command":"BLOCK","label":"3D line 11 BLOCK","segment_start":null,"segment_end":null}',
+            html,
+        )
 
 
 if __name__ == "__main__":

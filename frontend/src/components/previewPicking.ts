@@ -18,8 +18,16 @@ export interface ResolvedSource {
   command: string
   /** 后端打点的 label（如 "3D line 42 BLOCK"）；空串归一为 null */
   label: string | null
-  /** 信息条主文案：`3d.gdl:42 · BLOCK`（label 存在时追加 ` · label`） */
+  /** 相关代码段（含端点，P1e）：FOR…NEXT / IF…ENDIF / GOSUB 子程序；
+   *  null = 单行定位（顶层命令或后端未提供段） */
+  segment: { start: number; end: number } | null
+  /** 信息条主文案：`3d.gdl:42 · BLOCK`（label 冗余于前两者，不进 summary） */
   summary: string
+}
+
+/** 聚焦区间归一化（P1e）：无 endLine 或 endLine < line 时退化为单行 */
+export function focusRangeEnd(line: number, endLine: number | null | undefined): number {
+  return endLine && endLine >= line ? endLine : line
 }
 
 /**
@@ -33,11 +41,19 @@ export function resolveSourceRef(sourceRef: PreviewSourceRef | null | undefined)
   if (!scriptName || !Number.isFinite(line) || line <= 0) return null
   const command = (sourceRef.command ?? '').trim()
   const label = sourceRef.label && sourceRef.label.trim() ? sourceRef.label.trim() : null
+  // 段区间（P1e）：后端 segment_start/end 均为有效且 end >= start 才采纳，
+  // 否则按单行处理（向后兼容旧 payload）
+  const segStart = Number(sourceRef.segment_start)
+  const segEnd = Number(sourceRef.segment_end)
+  const segment =
+    Number.isFinite(segStart) && Number.isFinite(segEnd) && segStart >= 1 && segEnd >= segStart
+      ? { start: segStart, end: segEnd }
+      : null
   // label 不进 summary：后端打点恒为 "3D line N CMD"（gdl_previewer._source_ref_3d），
   // 与 script:line · command 完全重复；保留字段供 tooltip 等用途
   const parts = [`${scriptName}:${line}`]
   if (command) parts.push(command)
-  return { scriptName, line, command, label, summary: parts.join(' · ') }
+  return { scriptName, line, command, label, segment, summary: parts.join(' · ') }
 }
 
 export interface PreviewSelection {

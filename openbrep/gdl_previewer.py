@@ -31,6 +31,10 @@ class PreviewSourceRef:
     line: int
     command: str
     label: str
+    # P1e 相关代码段：生成该 mesh 的外围块区间（FOR…NEXT / IF…ENDIF / GOSUB
+    # 子程序），行号含端点；顶层命令为单行 (line, line)。可选字段向后兼容。
+    segment_start: int | None = None
+    segment_end: int | None = None
 
 
 @dataclass
@@ -213,6 +217,14 @@ class _PreviewRuntime:
         self._gosub_stack: list[int] = []
         self._label_map: dict[str, int] = {}
 
+        # P1e 相关代码段追踪：_block_stack 存进入中的 IF/FOR 块区间
+        # （(start_line, end_line)，含端点）；_subroutine_stack 与 _gosub_stack
+        # 平行，存 GOSUB 目标的子程序区间（未知时为 None）。_source_ref_3d
+        # 取"数值上包含命令行的最内层区间"作为 segment。
+        self._block_stack: list[tuple[int, int]] = []
+        self._subroutine_stack: list[tuple[int, int] | None] = []
+        self._subroutine_extents: dict[int, tuple[int, int]] = {}
+
         # Function dispatch table for expression evaluation.
         self._funcs = dict(_ALLOWED_FUNCS)
 
@@ -224,6 +236,9 @@ class _PreviewRuntime:
     def execute(self, script: str, mode: str) -> None:
         lines = _logical_lines(script)
         self._label_map = _build_label_map(lines)
+        self._subroutine_extents = _build_subroutine_extents(lines)
+        self._block_stack.clear()
+        self._subroutine_stack.clear()
         self._exec_block(lines, 0, len(lines), mode=mode)
 
     def finish(self) -> None:
@@ -271,11 +286,17 @@ class _PreviewRuntime:
                 if should_run is None:
                     idx = endif_idx + 1
                     continue
-                if should_run:
-                    body_end = else_idx if else_idx is not None else endif_idx
-                    self._exec_block(lines, idx + 1, body_end, mode=mode)
-                elif else_idx is not None:
-                    self._exec_block(lines, else_idx + 1, endif_idx, mode=mode)
+                # P1e：IF…ENDIF 整块（含 ELSE 段）作为段区间
+                if_block = (lines[idx][0], lines[endif_idx][0])
+                self._block_stack.append(if_block)
+                try:
+                    if should_run:
+                        body_end = else_idx if else_idx is not None else endif_idx
+                        self._exec_block(lines, idx + 1, body_end, mode=mode)
+                    elif else_idx is not None:
+                        self._exec_block(lines, else_idx + 1, endif_idx, mode=mode)
+                finally:
+                    self._block_stack.pop()
                 idx = endif_idx + 1
                 continue
 
@@ -306,7 +327,13 @@ class _PreviewRuntime:
                     idx += 1
                     continue
 
-                self._execute_for(line, line_no, lines, idx + 1, next_idx, mode)
+                # P1e：FOR…NEXT 整块（含头尾）作为段区间
+                for_block = (lines[idx][0], lines[next_idx][0])
+                self._block_stack.append(for_block)
+                try:
+                    self._execute_for(line, line_no, lines, idx + 1, next_idx, mode)
+                finally:
+                    self._block_stack.pop()
                 idx = next_idx + 1
                 continue
 
@@ -324,6 +351,8 @@ class _PreviewRuntime:
                     idx += 1
                 else:
                     self._gosub_stack.append(idx + 1)
+                    # P1e：GOSUB 子程序区间（标签到 RETURN），未知时 None
+                    self._subroutine_stack.append(self._subroutine_extents.get(lines[target][0]))
                     idx = target
                 continue
 
@@ -333,6 +362,7 @@ class _PreviewRuntime:
                     idx += 1
                 else:
                     idx = self._gosub_stack.pop()
+                    self._subroutine_stack.pop()
                 continue
 
             # Transform commands
@@ -725,7 +755,7 @@ class _PreviewRuntime:
                 vals[2],
                 self._offset(),
                 transform=self._A,
-                source_ref=_source_ref_3d(line_no, cmd),
+                source_ref=self._source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -749,7 +779,7 @@ class _PreviewRuntime:
                 name="CYLIND",
                 seg=_quality_frustum_seg(self.quality),
                 transform=self._A,
-                source_ref=_source_ref_3d(line_no, cmd),
+                source_ref=self._source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -774,7 +804,7 @@ class _PreviewRuntime:
                 name="CONE",
                 seg=_quality_frustum_seg(self.quality),
                 transform=self._A,
-                source_ref=_source_ref_3d(line_no, cmd),
+                source_ref=self._source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -795,7 +825,7 @@ class _PreviewRuntime:
                 lat_steps=_quality_sphere_steps(self.quality)[0],
                 lon_steps=_quality_sphere_steps(self.quality)[1],
                 transform=self._A,
-                source_ref=_source_ref_3d(line_no, cmd),
+                source_ref=self._source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -878,7 +908,7 @@ class _PreviewRuntime:
                 self._offset(),
                 transform=self._A,
                 name=cmd,
-                source_ref=_source_ref_3d(line_no, cmd),
+                source_ref=self._source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -959,7 +989,7 @@ class _PreviewRuntime:
                 self._offset(),
                 mask=mask,
                 transform=self._A,
-                source_ref=_source_ref_3d(line_no, cmd),
+                source_ref=self._source_ref_3d(line_no, cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -1001,7 +1031,7 @@ class _PreviewRuntime:
             cap_base=bool(mask & 1),
             cap_top=bool(mask & 2),
             transform=self._A,
-            source_ref=_source_ref_3d(line_no, cmd),
+            source_ref=self._source_ref_3d(line_no, cmd),
         )
         self.result_3d.meshes.append(mesh)
         self.result_3d.wires.extend(wires)
@@ -1152,6 +1182,38 @@ class _PreviewRuntime:
             return self._label_map.get(key)
         except Exception:
             return self._label_map.get(text.upper())
+
+    def _source_ref_3d(self, line_no: int, command: str) -> PreviewSourceRef:
+        cmd = (command or "").upper()
+        segment_start, segment_end = self._current_segment(int(line_no))
+        return PreviewSourceRef(
+            script_type="3d",
+            line=int(line_no),
+            command=cmd,
+            label=f"3D line {int(line_no)} {cmd}",
+            segment_start=segment_start,
+            segment_end=segment_end,
+        )
+
+    def _current_segment(self, line_no: int) -> tuple[int, int]:
+        """命令行的相关代码段：数值上包含该行的最内层区间。
+
+        候选 = 进行中的 IF/FOR 块栈 + 当前 GOSUB 子程序区间。GOSUB 调用点
+        可能位于某个 IF/FOR 块内，但 mesh 命令在子程序体内执行、其行号不在
+        那个块的区间里，所以必须按"包含命令行"过滤而不是简单取栈顶。
+        无候选（顶层命令或区间未知）→ 单行。
+        """
+        candidates: list[tuple[int, int]] = list(self._block_stack)
+        if self._subroutine_stack and self._subroutine_stack[-1] is not None:
+            candidates.append(self._subroutine_stack[-1])
+        containing = [
+            (start, end)
+            for (start, end) in candidates
+            if start is not None and end is not None and start <= line_no <= end
+        ]
+        if not containing:
+            return (line_no, line_no)
+        return max(containing, key=lambda item: item[0])
 
     def _offset(self) -> Point3D:
         return self._t
@@ -1325,6 +1387,24 @@ def _build_label_map(lines: list[tuple[int, str]]) -> dict[str, int]:
     }
 
 
+def _build_subroutine_extents(lines: list[tuple[int, str]]) -> dict[int, tuple[int, int]]:
+    """标签行号 → 子程序区间 (label_line, return_line)。
+
+    标签与 RETURN 按"先进先配"配对：遇到标签压栈，遇到 RETURN 弹出最近未配
+    的标签并记录区间。顺序子程序（label…RETURN, label…RETURN）天然正确；
+    罕见嵌套标签（前一子程序体内再声明标签）也按栈序配对。
+    """
+    extents: dict[int, tuple[int, int]] = {}
+    pending: list[int] = []
+    for line_no, line in lines:
+        if _is_label_line(line):
+            pending.append(line_no)
+        elif pending and re.match(r"^RETURN\b", line, re.IGNORECASE):
+            label_line = pending.pop()
+            extents[label_line] = (label_line, line_no)
+    return extents
+
+
 def _extract_command(line: str) -> str:
     m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\b", line)
     return m.group(1).upper() if m else ""
@@ -1481,16 +1561,6 @@ def _apply_affine(
 ) -> Point3D:
     x, y, z = _m_mul_v(A, p)
     return (x + t[0], y + t[1], z + t[2])
-
-
-def _source_ref_3d(line_no: int, command: str) -> PreviewSourceRef:
-    cmd = (command or "").upper()
-    return PreviewSourceRef(
-        script_type="3d",
-        line=int(line_no),
-        command=cmd,
-        label=f"3D line {int(line_no)} {cmd}",
-    )
 
 
 def _build_mesh(

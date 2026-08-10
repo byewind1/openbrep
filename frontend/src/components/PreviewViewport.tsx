@@ -37,8 +37,9 @@ interface PreviewViewportProps {
   onCollapse?: () => void
   onFloat?: () => void
   hasDirtyScripts?: boolean
-  /** 选中 mesh 后跳转到 GDL 脚本对应行（scriptName 如 "3d.gdl"） */
-  onRevealSource?: (scriptName: string, lineNumber: number) => void
+  /** 选中 mesh 后跳转到 GDL 脚本对应段（scriptName 如 "3d.gdl"；endLine 为
+   *  相关代码段末行，单行定位时为 null/缺省，见 P1e） */
+  onRevealSource?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
 }
 
 type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
@@ -97,7 +98,7 @@ export function PreviewViewport({
 
   function revealSource(source: PreviewSelection['source']) {
     if (!source) return
-    onRevealSource?.(source.scriptName, source.line)
+    onRevealSource?.(source.scriptName, source.line, source.segment?.end ?? null)
   }
 
   function fitView() {

@@ -61,6 +61,10 @@ export interface PreviewSourceRef {
   line: number
   command: string
   label: string
+  /** 相关代码段（P1e）：生成该 mesh 的外围块区间（FOR…NEXT / IF…ENDIF /
+   *  GOSUB 子程序），行号含端点；顶层命令为单行 (line, line)。可选，向后兼容 */
+  segment_start?: number | null
+  segment_end?: number | null
 }
 
 export interface PreviewMesh {

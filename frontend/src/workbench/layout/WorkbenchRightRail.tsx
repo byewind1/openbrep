@@ -47,7 +47,7 @@ interface WorkbenchRightRailProps {
   onAdoptAssistantCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => void
-  onRevealLine?: (scriptName: string, lineNumber: number) => void
+  onRevealLine?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
   modelOptions?: import('../../api/types').LlmModelOption[]
   currentModel?: string
   onModelChange?: (model: string) => Promise<void>

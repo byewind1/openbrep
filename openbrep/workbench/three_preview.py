@@ -30,6 +30,9 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
                 "line": mesh.source_ref.line,
                 "command": mesh.source_ref.command,
                 "label": mesh.source_ref.label,
+                # P1e 相关代码段（可选字段，向后兼容）：无则为 None
+                "segment_start": mesh.source_ref.segment_start,
+                "segment_end": mesh.source_ref.segment_end,
             }
         meshes.append(item)
 

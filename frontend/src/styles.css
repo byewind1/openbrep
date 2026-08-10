@@ -735,6 +735,12 @@ button:focus-visible {
   overflow: hidden;
 }
 
+/* P1e：跳源码后相关代码段整段亮显（Monaco deltaDecorations isWholeLine） */
+.preview-source-segment {
+  background: rgba(245, 158, 11, 0.14);
+  box-shadow: inset 3px 0 0 rgba(245, 158, 11, 0.55);
+}
+
 .workbench-right-rail,
 .right-rail {
   min-width: 0;   /* grid item 必须能收缩 */

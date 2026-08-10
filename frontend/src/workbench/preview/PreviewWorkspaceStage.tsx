@@ -13,13 +13,15 @@ interface PreviewWorkspaceStageProps {
   hasDirtyScript: boolean
   hasDirtyScripts: boolean
   activeFocusLine: number | null
+  /** P1e：相关代码段末行（整段亮显用），单行定位为 null */
+  activeFocusEndLine: number | null
   activeFocusKey: number | null
   onCollapsePreview: () => void
   onFloatPreview: () => void
   onChangeScript: (content: string) => void
   onRefreshPreview?: () => void
-  /** 3D 预览选中 mesh 后跳转 GDL 源码行（scriptName 如 "3d.gdl"） */
-  onRevealSource?: (scriptName: string, lineNumber: number) => void
+  /** 3D 预览选中 mesh 后跳转 GDL 源码段（scriptName 如 "3d.gdl"；endLine 相关段末行） */
+  onRevealSource?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
 }
 
 export function PreviewWorkspaceStage({
@@ -31,6 +33,7 @@ export function PreviewWorkspaceStage({
   hasDirtyScript,
   hasDirtyScripts,
   activeFocusLine,
+  activeFocusEndLine,
   activeFocusKey,
   onCollapsePreview,
   onFloatPreview,
@@ -76,6 +79,7 @@ export function PreviewWorkspaceStage({
               onChange={onChangeScript}
               isDirty={hasDirtyScript}
               focusLine={activeFocusLine}
+              focusEndLine={activeFocusEndLine}
               focusKey={activeFocusKey}
             />
           </Suspense>

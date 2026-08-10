@@ -25,7 +25,13 @@ export function WorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
   const [previewWorkspaceOpen, setPreviewWorkspaceOpen] = useState(false)
-  const [editorFocus, setEditorFocus] = useState<{ scriptName: string; line: number | null; token: number } | null>(null)
+  const [editorFocus, setEditorFocus] = useState<{
+    scriptName: string
+    line: number | null
+    /** 相关代码段末行（P1e）：整段亮显；单行定位时为 null */
+    endLine: number | null
+    token: number
+  } | null>(null)
   const project = useWorkbenchStore((state) => state.project)
   const parameters = useWorkbenchStore((state) => state.parameters)
   const parameterIssues = useWorkbenchStore((state) => state.parameterIssues)
@@ -149,6 +155,7 @@ export function WorkbenchApp() {
   const hasDirtyScript = activeScriptName ? Boolean(dirtyScripts[activeScriptName]) : false
   const hasAnyDirtyScript = Object.values(dirtyScripts).some(Boolean)
   const activeFocusLine = editorFocus?.scriptName === activeScriptName ? editorFocus.line : null
+  const activeFocusEndLine = editorFocus?.scriptName === activeScriptName ? editorFocus.endLine : null
   const activeFocusKey = editorFocus?.scriptName === activeScriptName ? editorFocus.token : null
 
   useEffect(() => {
@@ -245,13 +252,15 @@ export function WorkbenchApp() {
     return () => window.removeEventListener('keydown', handleShortcut, true)
   }, [project, loading, hasAnyDirtyScript, dirtyScripts, draftParameters, closeProject])
 
-  function focusDiagnosticIssue(issue: CompileIssue) {
+  function focusDiagnosticIssue(issue: CompileIssue, endLine?: number | null) {
     const scriptName = issue.script.split('/').pop() ?? issue.script
     if (!scriptName) return
     openScriptInEditor(scriptName)
     setEditorFocus({
       scriptName,
       line: issue.line && issue.line > 0 ? issue.line : null,
+      // 诊断跳转不带 endLine → 单行定位，行为不变（P1e）
+      endLine: endLine ?? null,
       token: Date.now(),
     })
   }
@@ -338,12 +347,13 @@ export function WorkbenchApp() {
             hasDirtyScript={hasDirtyScript}
             hasDirtyScripts={hasAnyDirtyScript}
             activeFocusLine={activeFocusLine}
+            activeFocusEndLine={activeFocusEndLine}
             activeFocusKey={activeFocusKey}
             onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onChangeScript={updateActiveScriptContent}
             onRefreshPreview={() => void loadPreview3D()}
-            onRevealSource={(scriptName, lineNumber) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' })}
+            onRevealSource={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine)}
           />
         )}
         right={(
@@ -380,7 +390,7 @@ export function WorkbenchApp() {
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
             onOpenScript={openScriptInEditor}
             onSaveRevision={(message) => void saveRevision(message)}
-            onRevealLine={(scriptName, lineNumber) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' })}
+            onRevealLine={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine ?? null)}
             modelOptions={llmSettings.model_options ?? []}
             currentModel={llmSettings.model}
             onModelChange={switchLlmModel}
@@ -412,7 +422,7 @@ export function WorkbenchApp() {
         warnings={warnings}
         hasDirtyScripts={hasAnyDirtyScript}
         onClose={() => setFloatingPreviewOpen(false)}
-        onRevealSource={(scriptName, lineNumber) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' })}
+        onRevealSource={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine)}
       />
       <Suspense fallback={null}>
       <SettingsDrawer

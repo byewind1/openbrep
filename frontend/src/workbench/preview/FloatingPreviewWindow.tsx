@@ -9,8 +9,8 @@ interface FloatingPreviewWindowProps {
   warnings: string[]
   hasDirtyScripts: boolean
   onClose: () => void
-  /** 3D 预览选中 mesh 后跳转 GDL 源码行（scriptName 如 "3d.gdl"） */
-  onRevealSource?: (scriptName: string, lineNumber: number) => void
+  /** 3D 预览选中 mesh 后跳转 GDL 源码段（scriptName 如 "3d.gdl"；endLine 相关段末行） */
+  onRevealSource?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
 }
 
 export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts, onClose, onRevealSource }: FloatingPreviewWindowProps) {
