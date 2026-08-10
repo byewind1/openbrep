@@ -1371,6 +1371,21 @@ button:focus-visible {
   color: var(--text-primary);
 }
 
+/* 3D 预览剖切面位置滑杆（P1c）：精调辅助，主交互在视口手柄 */
+.section-slider {
+  height: 20px;
+  width: 90px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+@container (max-width: 860px) {
+  .section-slider {
+    width: 64px;
+  }
+}
+
 .preview2d-surface {
   min-height: 0;
   display: grid;

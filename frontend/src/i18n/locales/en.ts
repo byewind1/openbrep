@@ -151,4 +151,11 @@ export const en: Record<LocaleKey, string> = {
   'preview.quality.fast': 'Fast',
   'preview.quality.accurate': 'Accurate',
   'preview.quality.toggleTitle': 'Toggle preview quality (accurate doubles tessellation)',
+
+  // 3D preview section plane (P1c): drag the handle to slice
+  'preview.section.toggle': 'Section',
+  'preview.section.toggleTitle': 'Toggle section plane (drag the handle in the viewport)',
+  'preview.section.axisTitle': 'Section axis',
+  'preview.section.sliderTitle': 'Section position',
+  'preview.section.sliderAria': 'Section position',
 }

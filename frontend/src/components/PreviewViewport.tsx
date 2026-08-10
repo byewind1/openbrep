@@ -4,17 +4,21 @@ import type { ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveCamera as PerspectiveCameraType } from 'three'
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, PMREMGenerator, ShaderMaterial, Vector3 } from 'three'
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerator, ShaderMaterial, Vector3 } from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
 import { useT } from '../i18n'
 import { PreviewPickingBar } from './PreviewPickingBar'
 import { PreviewPartsPanel } from './PreviewPartsPanel'
+import { SectionControls } from './SectionControls'
+import { SectionHandle } from './SectionHandle'
 import { QualityToggle, ShadowsToggle } from './ViewportVisualControls'
 import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
 import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
+import { sectionPlaneParams } from './previewSection'
+import type { SectionState } from './previewSection'
 import {
   computePreviewBounds,
   isFittableViewport,
@@ -85,8 +89,18 @@ export function PreviewViewport({
   // 用户手动切换后覆盖；纯视图态，不持久化
   const [showShadows, setShowShadows] = useState<boolean | null>(null)
   const shadowsEnabled = showShadows ?? !(displayMode === 'wire' || displayMode === 'xray')
+  // 剖切面（P1c）：null = 关闭；{axis, t} 为当前剖切配置。纯视图态不持久化
+  const [section, setSection] = useState<SectionState | null>(null)
+  // TransformControls gizmo 交互标记：gizmo 点击不算"空白点击"，不清选中
+  const gizmoActiveRef = useRef(false)
   // fit 只看可见部件：隐藏的 mesh 不进 bounds（computePreviewBounds 签名不变）
   const bounds = useMemo(() => computePreviewBounds(filterVisibleMeshes(preview, hiddenParts)), [preview, hiddenParts])
+  // clippingPlanes 数组：内容只在 section/bounds 变化时改变（材质不逐帧重编译）
+  const sectionPlanes = useMemo(() => {
+    if (!section) return []
+    const { normal, constant } = sectionPlaneParams(bounds, section)
+    return [new Plane(new Vector3(...normal), constant)]
+  }, [section, bounds])
   const parts = useMemo(() => {
     // wire 与 random 同为逐部件 hash 取色（chip 色与渲染一致）
     if (displayMode === 'random' || displayMode === 'wire') return buildPartsView(preview, 'random', null, hiddenParts)
@@ -106,6 +120,12 @@ export function PreviewViewport({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [preview])
 
+  // xray 共享 ShaderMaterial 的 clippingPlanes：平面数组是 uniform，
+  // 内容变化无需 needsUpdate（material.clipping 恒为 true）
+  useEffect(() => {
+    xrayMaterial.clippingPlanes = sectionPlanes
+  }, [sectionPlanes])
+
   function revealSource(source: PreviewSelection['source']) {
     if (!source) return
     onRevealSource?.(source.scriptName, source.line, source.segment?.end ?? null)
@@ -123,6 +143,7 @@ export function PreviewViewport({
     setDisplayMode('solid')
     setHiddenParts(new Set())
     setShowShadows(null)
+    setSection(null)
     fitView()
   }
 
@@ -190,6 +211,14 @@ export function PreviewViewport({
           </button>
           <ShadowsToggle enabled={shadowsEnabled} onToggle={() => setShowShadows(!shadowsEnabled)} />
           {quality && onQualityChange ? <QualityToggle quality={quality} onChange={onQualityChange} /> : null}
+          <SectionControls
+            active={section !== null}
+            axis={section?.axis ?? 'z'}
+            t={section?.t ?? 0.5}
+            onToggle={() => setSection((current) => (current ? null : { axis: 'z', t: 0.5 }))}
+            onAxisChange={(axis) => setSection((current) => (current ? { ...current, axis } : current))}
+            onTChange={(t) => setSection((current) => (current ? { ...current, t } : current))}
+          />
           {onFloat ? (
             <button type="button" className="viewport-action-button" onClick={onFloat} title="Open floating preview">
               Float
@@ -210,7 +239,19 @@ export function PreviewViewport({
       <div className="canvas-wrap">
         {/* absolute + inset:0：见 styles.css .canvas-wrap 注释，
             防止 canvas 的内联 px 宽度反向撑住容器导致无法收缩 */}
-        <Canvas gl={{ logarithmicDepthBuffer: true }} style={{ position: 'absolute', inset: 0 }} onPointerMissed={() => setSelection(null)}>
+        <Canvas
+          gl={{ logarithmicDepthBuffer: true }}
+          style={{ position: 'absolute', inset: 0 }}
+          onCreated={({ gl }) => {
+            // P1c：材质 clippingPlanes（局部剖切）依赖渲染器开关
+            gl.localClippingEnabled = true
+          }}
+          onPointerMissed={() => {
+            // TransformControls gizmo 的点击不算空白：不清选中
+            if (gizmoActiveRef.current) return
+            setSelection(null)
+          }}
+        >
           {cameraMode === 'perspective' ? (
             <PerspectiveCamera makeDefault fov={38} near={0.001} far={100000} />
           ) : (
@@ -250,6 +291,7 @@ export function PreviewViewport({
                   displayMode={displayMode}
                   offset={bounds.center}
                   selected={selection?.meshIndex === index}
+                  clippingPlanes={sectionPlanes}
                   onSelect={() => setSelection(makeSelection(index, mesh))}
                   onJump={() => {
                     const next = makeSelection(index, mesh)
@@ -260,6 +302,14 @@ export function PreviewViewport({
               ),
             )}
           </group>
+          {section ? (
+            <SectionHandle
+              section={section}
+              bounds={bounds}
+              onTChange={(t) => setSection((current) => (current ? { ...current, t } : current))}
+              gizmoActiveRef={gizmoActiveRef}
+            />
+          ) : null}
         </Canvas>
         {selection ? (
           <PreviewPickingBar
@@ -452,8 +502,13 @@ const xrayMaterial = new ShaderMaterial({
     uSharpness: { value: 1.6 },
     uBase: { value: 0.06 },
   },
+  // P1c 剖切：clipping=true 让 three 注入 clippingPlanes uniform，shader 内
+  // 手动挂 clipping chunks（与 logdepthbuf 同模式）；平面是 uniform，
+  // 内容变化无需 needsUpdate 重编译。
+  clipping: true,
   vertexShader: /* glsl */ `
     #include <common>
+    #include <clipping_planes_pars_vertex>
     #include <logdepthbuf_pars_vertex>
     varying vec3 vNormal;
     varying vec3 vViewDir;
@@ -463,10 +518,12 @@ const xrayMaterial = new ShaderMaterial({
       vViewDir = normalize(cameraPosition - worldPos.xyz);
       gl_Position = projectionMatrix * viewMatrix * worldPos;
       #include <logdepthbuf_vertex>
+      #include <clipping_planes_vertex>
     }
   `,
   fragmentShader: /* glsl */ `
     #include <common>
+    #include <clipping_planes_pars_fragment>
     #include <logdepthbuf_pars_fragment>
     uniform vec3 uColor;
     uniform float uGain;
@@ -475,6 +532,7 @@ const xrayMaterial = new ShaderMaterial({
     varying vec3 vNormal;
     varying vec3 vViewDir;
     void main() {
+      #include <clipping_planes_fragment>
       #include <logdepthbuf_fragment>
       float fresnel = pow(1.0 - abs(dot(normalize(vNormal), normalize(vViewDir))), uSharpness);
       float alpha = clamp((uBase + (1.0 - uBase) * fresnel) * uGain, 0.0, 1.0);
@@ -510,6 +568,7 @@ function MeshView({
   displayMode,
   offset,
   selected,
+  clippingPlanes,
   onSelect,
   onJump,
 }: {
@@ -519,6 +578,8 @@ function MeshView({
   displayMode: PreviewDisplayMode
   offset: [number, number, number]
   selected: boolean
+  /** P1c 剖切面：挂到该 mesh 的所有渲染材质（含 Edges/xray）上 */
+  clippingPlanes: Plane[]
   onSelect: () => void
   onJump: () => void
 }) {
@@ -578,8 +639,15 @@ function MeshView({
     const wireColor = hashColor(componentColorIdentity(mesh.name, index, 0))
     return (
       <mesh geometry={geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
-        <meshBasicMaterial color={CANVAS_BG_COLOR} side={DoubleSide} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
-        <Edges color={selected ? SELECTION_COLOR : wireColor} threshold={8} />
+        <meshBasicMaterial
+          color={CANVAS_BG_COLOR}
+          side={DoubleSide}
+          polygonOffset
+          polygonOffsetFactor={1}
+          polygonOffsetUnits={1}
+          clippingPlanes={clippingPlanes}
+        />
+        <Edges color={selected ? SELECTION_COLOR : wireColor} threshold={8} clippingPlanes={clippingPlanes} />
       </mesh>
     )
   }
@@ -588,7 +656,7 @@ function MeshView({
     // ShaderMaterial 不吃 emissive：选中靠 Edges 琥珀叠加（本模式无 showEdges 开关）
     return (
       <mesh geometry={geometry} material={xrayMaterial} onClick={handleClick} onDoubleClick={handleDoubleClick}>
-        {selected ? <Edges color={SELECTION_COLOR} threshold={8} /> : null}
+        {selected ? <Edges color={SELECTION_COLOR} threshold={8} clippingPlanes={clippingPlanes} /> : null}
       </mesh>
     )
   }
@@ -604,8 +672,9 @@ function MeshView({
           side={DoubleSide}
           emissive={selected ? SELECTION_COLOR : '#000000'}
           emissiveIntensity={0.4}
+          clippingPlanes={clippingPlanes}
         />
-        {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} /> : null}
+        {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} clippingPlanes={clippingPlanes} /> : null}
       </mesh>
     )
   }
@@ -623,8 +692,9 @@ function MeshView({
               side={DoubleSide}
               emissive={selected ? SELECTION_COLOR : '#000000'}
               emissiveIntensity={0.4}
+              clippingPlanes={clippingPlanes}
             />
-            {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} /> : null}
+            {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} clippingPlanes={clippingPlanes} /> : null}
           </mesh>
         ))}
       </>
@@ -641,8 +711,9 @@ function MeshView({
         side={DoubleSide}
         emissive={selected ? SELECTION_COLOR : '#000000'}
         emissiveIntensity={0.4}
+        clippingPlanes={clippingPlanes}
       />
-      {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} /> : null}
+      {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} clippingPlanes={clippingPlanes} /> : null}
     </mesh>
   )
 }

@@ -148,6 +148,13 @@ export const zh = {
   'preview.quality.fast': '快速',
   'preview.quality.accurate': '精细',
   'preview.quality.toggleTitle': '切换预览质量档（accurate 分段翻倍）',
+
+  // 3D 预览剖切（P1c）：剖切面推拉
+  'preview.section.toggle': '剖切',
+  'preview.section.toggleTitle': '开启/关闭剖切面（视口内拖手柄推拉）',
+  'preview.section.axisTitle': '剖切轴向',
+  'preview.section.sliderTitle': '剖切面位置',
+  'preview.section.sliderAria': '剖切面位置',
 } as const
 
 export type LocaleKey = keyof typeof zh
