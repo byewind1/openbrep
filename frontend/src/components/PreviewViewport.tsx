@@ -516,7 +516,11 @@ const xrayMaterial = new ShaderMaterial({
       vec4 worldPos = modelMatrix * vec4(position, 1.0);
       vNormal = normalize(mat3(modelMatrix) * normal);
       vViewDir = normalize(cameraPosition - worldPos.xyz);
-      gl_Position = projectionMatrix * viewMatrix * worldPos;
+      // clipping_planes_vertex chunk 引用 mvPosition（视图空间坐标），
+      // 必须显式定义，否则开启剖切（NUM_CLIPPING_PLANES>0）时编译失败、
+      // mesh 整体不可见
+      vec4 mvPosition = viewMatrix * worldPos;
+      gl_Position = projectionMatrix * mvPosition;
       #include <logdepthbuf_vertex>
       #include <clipping_planes_vertex>
     }
