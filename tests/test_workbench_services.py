@@ -465,6 +465,55 @@ def test_preview_service_returns_3d_payload_for_project(tmp_path):
     assert response["preview"]["meshes"]
 
 
+def test_preview_quality_accurate_doubles_frustum_tessellation(tmp_path):
+    project = HSFProject.create_new("QualityShelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_3D, "CYLIND 1, 0.5\n")
+    session = SimpleNamespace(project=project)
+    service = WorkbenchPreviewService(session)
+
+    fast = service.preview({"quality": "fast"})
+    accurate = service.preview({"quality": "accurate"})
+
+    # fast = 24 段圆柱（50 顶点 / 96 面）；accurate = 48 段（98 顶点 / 192 面）
+    fast_mesh = fast["preview"]["meshes"][0]
+    acc_mesh = accurate["preview"]["meshes"][0]
+    assert len(fast_mesh["vertices"]) == 50
+    assert len(acc_mesh["vertices"]) == 98
+    assert len(acc_mesh["faces"]) == 2 * len(fast_mesh["faces"])
+
+
+def test_preview_quality_whitelist_falls_back_to_fast():
+    from openbrep.workbench.preview_service import normalize_quality, split_preview_request
+
+    assert normalize_quality("accurate") == "accurate"
+    assert normalize_quality("fast") == "fast"
+    assert normalize_quality("ultra") == "fast"
+    assert normalize_quality(None) == "fast"
+    assert normalize_quality(42) == "fast"
+    assert normalize_quality("") == "fast"
+
+    # split_preview_request 三元素：parameters / scripts / quality
+    assert split_preview_request({"quality": "accurate"})[2] == "accurate"
+    assert split_preview_request({"quality": "bogus"})[2] == "fast"
+    assert split_preview_request(None)[2] == "fast"
+    # 裸参数 dict（legacy 形态）同样回退 fast
+    assert split_preview_request({"A": 2.0})[2] == "fast"
+
+
+def test_preview_2d_quality_chain_accepts_quality(tmp_path):
+    project = HSFProject.create_new("Quality2D", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_2D, "LINE2 0, 0, A, B\nCIRCLE2 A / 2, B / 2, 0.1\n")
+    session = SimpleNamespace(project=project)
+    service = WorkbenchPreviewService(session)
+
+    response = service.preview_2d({"quality": "accurate"})
+
+    assert response["ok"] is True
+    # create_new 默认 A=B=1.0：quality 透传不改 2D 几何
+    assert response["preview"]["lines"] == [{"from": [0.0, 0.0], "to": [1.0, 1.0]}]
+    assert response["preview"]["circles"][0]["r"] == 0.1
+
+
 def test_preview_service_can_verify_dirty_editor_buffer_without_saving(tmp_path):
     project = HSFProject.create_new("DirtyPreviewShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK 1, 1, 1\n")

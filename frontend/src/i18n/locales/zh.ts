@@ -141,6 +141,13 @@ export const zh = {
   'preview.parts.toggle': '切换部件面板',
   'preview.parts.hide': '隐藏部件',
   'preview.parts.show': '显示部件',
+
+  // 3D 预览视觉（P1b）：接地阴影 + 质量档
+  'preview.shadows.toggle': '阴影',
+  'preview.shadows.toggleTitle': '接地软阴影（wire/xray 模式默认关）',
+  'preview.quality.fast': '快速',
+  'preview.quality.accurate': '精细',
+  'preview.quality.toggleTitle': '切换预览质量档（accurate 分段翻倍）',
 } as const
 
 export type LocaleKey = keyof typeof zh

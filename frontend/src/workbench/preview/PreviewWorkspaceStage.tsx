@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
 import type { PreviewPayload } from '../../api/types'
+import { useWorkbenchStore } from '../../state/useWorkbenchStore'
 
 const ScriptEditor = lazy(() => import('../../components/ScriptEditor').then((m) => ({ default: m.ScriptEditor })))
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
@@ -41,6 +42,9 @@ export function PreviewWorkspaceStage({
   onRefreshPreview,
   onRevealSource,
 }: PreviewWorkspaceStageProps) {
+  // P1b：质量档从 store 取，不经过 props 倒灌
+  const previewQuality = useWorkbenchStore((state) => state.previewQuality)
+  const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
   // 两个舞台常驻 DOM、用 display 切换：保证来回切换不丢 3D 相机视角和编辑器滚动位置
   return (
     <>
@@ -55,6 +59,8 @@ export function PreviewWorkspaceStage({
             onCollapse={onCollapsePreview}
             onFloat={onFloatPreview}
             onRevealSource={onRevealSource}
+            quality={previewQuality}
+            onQualityChange={(quality) => void setPreviewQuality(quality)}
             actions={
               onRefreshPreview ? (
                 <button

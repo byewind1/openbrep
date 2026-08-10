@@ -144,4 +144,11 @@ export const en: Record<LocaleKey, string> = {
   'preview.parts.toggle': 'Toggle parts panel',
   'preview.parts.hide': 'Hide part',
   'preview.parts.show': 'Show part',
+
+  // 3D preview visuals (P1b): ground shadow + quality tier
+  'preview.shadows.toggle': 'Shadows',
+  'preview.shadows.toggleTitle': 'Ground contact shadow (off by default in wire/xray modes)',
+  'preview.quality.fast': 'Fast',
+  'preview.quality.accurate': 'Accurate',
+  'preview.quality.toggleTitle': 'Toggle preview quality (accurate doubles tessellation)',
 }

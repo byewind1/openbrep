@@ -18,7 +18,7 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
     draftPreviewTimer = setTimeout(() => {
       draftPreviewTimer = null
       void (async () => {
-        const preview = await api.fetchPreview(draftParameters)
+        const preview = await api.fetchPreview(draftParameters, undefined, get().previewQuality)
         if (requestId !== draftPreviewSeq) return
         set({ preview, warnings: preview.warnings ?? [] })
         if (get().activeRailPanel === '2d') {

@@ -993,6 +993,88 @@ test('runMockCompile stores diagnostics result', async () => {
   expect(store.getState().compileLog[0]).toContain('1 errors')
 })
 
+test('setPreviewQuality updates state and refetches 3D preview with the tier', async () => {
+  const calls: unknown[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async (_parameters, _scripts, quality) => {
+        calls.push(quality)
+        return { meshes: [{ name: 'quality-block', vertices: [], faces: [] }], wires: [], warnings: [] }
+      },
+    }),
+  )
+
+  expect(store.getState().previewQuality).toBe('fast')
+  await store.getState().setPreviewQuality('accurate')
+
+  expect(store.getState().previewQuality).toBe('accurate')
+  expect(calls).toEqual(['accurate'])
+  expect(store.getState().preview?.meshes[0]?.name).toBe('quality-block')
+})
+
+test('setPreviewQuality refreshes 2D preview too when the 2D tab is active', async () => {
+  const preview3d: unknown[] = []
+  const preview2d: unknown[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async (_p, _s, quality) => {
+        preview3d.push(quality)
+        return { meshes: [], wires: [], warnings: [] }
+      },
+      fetchPreview2D: async (_p, _s, quality) => {
+        preview2d.push(quality)
+        return { lines: [], polygons: [], circles: [], arcs: [], warnings: [] }
+      },
+    }),
+  )
+  store.setState({ activeRailPanel: '2d' })
+
+  await store.getState().setPreviewQuality('accurate')
+
+  expect(preview3d).toEqual(['accurate'])
+  expect(preview2d).toEqual(['accurate'])
+})
+
+test('loadPreview3D carries the current store quality', async () => {
+  const calls: unknown[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async (_p, _s, quality) => {
+        calls.push(quality)
+        return { meshes: [], wires: [], warnings: [] }
+      },
+    }),
+  )
+  store.setState({ previewQuality: 'accurate' })
+
+  await store.getState().loadPreview3D()
+
+  expect(calls).toEqual(['accurate'])
+})
+
+test('debounced draft preview carries the current quality tier', async () => {
+  vi.useFakeTimers()
+  try {
+    const calls: unknown[] = []
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchPreview: async (_p, _s, quality) => {
+          calls.push(quality)
+          return { meshes: [], wires: [], warnings: [] }
+        },
+      }),
+    )
+    store.setState({ previewQuality: 'accurate' })
+
+    await store.getState().setDraftParameter('A', 1.1)
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(calls).toEqual(['accurate'])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('loadPreview2D stores plan preview geometry', async () => {
   const store = createWorkbenchStore(makeApi())
 

@@ -1,4 +1,4 @@
-import { Edges, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
+import { ContactShadows, Edges, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
 import { Canvas, useThree } from '@react-three/fiber'
 import type { ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -7,10 +7,11 @@ import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveC
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, PMREMGenerator, ShaderMaterial, Vector3 } from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import type { PreviewMesh, PreviewPayload } from '../api/types'
+import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
 import { useT } from '../i18n'
 import { PreviewPickingBar } from './PreviewPickingBar'
 import { PreviewPartsPanel } from './PreviewPartsPanel'
+import { QualityToggle, ShadowsToggle } from './ViewportVisualControls'
 import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
 import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
@@ -40,6 +41,9 @@ interface PreviewViewportProps {
   /** 选中 mesh 后跳转到 GDL 脚本对应段（scriptName 如 "3d.gdl"；endLine 为
    *  相关代码段末行，单行定位时为 null/缺省，见 P1e） */
   onRevealSource?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
+  /** 预览质量档（P1b）：与 onQualityChange 同时提供才显示切换按钮 */
+  quality?: PreviewQuality
+  onQualityChange?: (quality: PreviewQuality) => void
 }
 
 type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
@@ -63,6 +67,8 @@ export function PreviewViewport({
   onFloat,
   hasDirtyScripts = false,
   onRevealSource,
+  quality,
+  onQualityChange,
 }: PreviewViewportProps) {
   const t = useT()
   const [cameraMode, setCameraMode] = useState<PreviewCameraMode>('perspective')
@@ -75,6 +81,10 @@ export function PreviewViewport({
   // 部件隐藏是纯视图态：不进 store、不持久化，预览刷新后重置
   const [hiddenParts, setHiddenParts] = useState<ReadonlySet<number>>(new Set())
   const [partsOpen, setPartsOpen] = useState(false)
+  // 接地阴影（P1b）：null = 跟随模式默认（solid/mono/random 开，wire/xray 关），
+  // 用户手动切换后覆盖；纯视图态，不持久化
+  const [showShadows, setShowShadows] = useState<boolean | null>(null)
+  const shadowsEnabled = showShadows ?? !(displayMode === 'wire' || displayMode === 'xray')
   // fit 只看可见部件：隐藏的 mesh 不进 bounds（computePreviewBounds 签名不变）
   const bounds = useMemo(() => computePreviewBounds(filterVisibleMeshes(preview, hiddenParts)), [preview, hiddenParts])
   const parts = useMemo(() => {
@@ -112,6 +122,7 @@ export function PreviewViewport({
     setShowGrid(true)
     setDisplayMode('solid')
     setHiddenParts(new Set())
+    setShowShadows(null)
     fitView()
   }
 
@@ -177,6 +188,8 @@ export function PreviewViewport({
           >
             {t('preview.parts.title')}
           </button>
+          <ShadowsToggle enabled={shadowsEnabled} onToggle={() => setShowShadows(!shadowsEnabled)} />
+          {quality && onQualityChange ? <QualityToggle quality={quality} onChange={onQualityChange} /> : null}
           {onFloat ? (
             <button type="button" className="viewport-action-button" onClick={onFloat} title="Open floating preview">
               Float
@@ -209,6 +222,20 @@ export function PreviewViewport({
           <ambientLight intensity={0.25} />
           <directionalLight position={[3, -4, 5]} intensity={1.1} />
           <directionalLight position={[-4, 2, 3]} intensity={0.5} color="#7cc7f5" />
+          {/* 接地软阴影（P1b）：落在 bounds 底面；frames 默认每帧重捕，
+              隐藏舞台（display:none）恢复后自愈。wire/xray 默认关（消隐线框下
+              阴影是噪声），用户可手动开。 */}
+          {shadowsEnabled && (preview?.meshes.length ?? 0) > 0 ? (
+            <ContactShadows
+              position={[bounds.center[0], bounds.center[1] - bounds.size[1] / 2, bounds.center[2]]}
+              scale={Math.max(bounds.size[0], bounds.size[2]) * 1.6}
+              far={Math.max(bounds.size[1] * 1.5, 4)}
+              opacity={0.55}
+              blur={2}
+              resolution={256}
+              color="#000000"
+            />
+          ) : null}
           {/* 大坐标模型（毫米级脚本）居中渲染，避免 float32 抖动与深度量化闪烁 */}
           <group position={bounds.center}>
             {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}

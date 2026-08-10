@@ -1,3 +1,6 @@
+/** 预览质量档（P1b）：fast 分段少、accurate 分段翻倍（后端白名单校验） */
+export type PreviewQuality = 'fast' | 'accurate'
+
 export type ParameterType =
   | 'Length'
   | 'Angle'

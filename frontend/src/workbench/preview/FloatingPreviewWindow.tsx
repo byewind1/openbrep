@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { PreviewPayload } from '../../api/types'
+import { useWorkbenchStore } from '../../state/useWorkbenchStore'
 
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
 
@@ -14,6 +15,9 @@ interface FloatingPreviewWindowProps {
 }
 
 export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts, onClose, onRevealSource }: FloatingPreviewWindowProps) {
+  // P1b：质量档从 store 取，不经过 props 倒灌
+  const previewQuality = useWorkbenchStore((state) => state.previewQuality)
+  const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [fullscreen, setFullscreen] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
@@ -100,6 +104,8 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
             variant="floating"
             hasDirtyScripts={hasDirtyScripts}
             onRevealSource={onRevealSource}
+            quality={previewQuality}
+            onQualityChange={(quality) => void setPreviewQuality(quality)}
           />
         </Suspense>
       </div>

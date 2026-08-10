@@ -7,6 +7,7 @@ import type {
   PreviewPayload,
   TapirStatus,
 } from '../../api/types'
+import { useWorkbenchStore } from '../../state/useWorkbenchStore'
 
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
 const Preview2DViewport = lazy(() => import('../../components/Preview2DViewport').then((m) => ({ default: m.Preview2DViewport })))
@@ -91,6 +92,9 @@ export function WorkbenchRightRail({
   currentModel,
   onModelChange,
 }: WorkbenchRightRailProps) {
+  // P1b：预览质量档是 store 会话态，视口只消费，不走 props 倒灌
+  const previewQuality = useWorkbenchStore((state) => state.previewQuality)
+  const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
   return (
     <aside className="workbench-right-rail right-rail">
       <div className="rail-tabs" role="tablist" aria-label="Right rail panels">
@@ -124,6 +128,8 @@ export function WorkbenchRightRail({
               onExpand={onExpandPreview}
               onFloat={onFloatPreview}
               onRevealSource={onRevealLine}
+              quality={previewQuality}
+              onQualityChange={(quality) => void setPreviewQuality(quality)}
               actions={(
                 <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
                   Update

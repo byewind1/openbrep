@@ -15,30 +15,37 @@ class WorkbenchPreviewService:
     def preview(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": True, "preview": empty_preview_payload()}
-        parameters, scripts = split_preview_request(request)
+        parameters, scripts, quality = split_preview_request(request)
         return {
             "ok": True,
-            "preview": preview_payload(self.session.project, parameters, scripts),
+            "preview": preview_payload(self.session.project, parameters, scripts, quality=quality),
         }
 
     def preview_2d(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": True, "preview": empty_preview_2d_payload()}
-        parameters, scripts = split_preview_request(request)
+        parameters, scripts, quality = split_preview_request(request)
         return {
             "ok": True,
-            "preview": preview_2d_payload(self.session.project, parameters, scripts),
+            "preview": preview_2d_payload(self.session.project, parameters, scripts, quality=quality),
         }
 
 
-def split_preview_request(request: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, str]]:
+def normalize_quality(quality: Any) -> str:
+    """预览质量档白名单：fast/accurate，非法值回退 fast（P1b）。"""
+    return quality if isinstance(quality, str) and quality in {"fast", "accurate"} else "fast"
+
+
+def split_preview_request(
+    request: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, str], str]:
     if not request:
-        return {}, {}
-    if "parameters" in request or "scripts" in request:
+        return {}, {}, "fast"
+    if "parameters" in request or "scripts" in request or "quality" in request:
         parameters = request.get("parameters") if isinstance(request.get("parameters"), dict) else {}
         scripts = request.get("scripts") if isinstance(request.get("scripts"), dict) else {}
-        return parameters, normalize_script_overrides(scripts)
-    return request, {}
+        return parameters, normalize_script_overrides(scripts), normalize_quality(request.get("quality"))
+    return request, {}, "fast"
 
 
 def normalize_script_overrides(scripts: dict[Any, Any]) -> dict[str, str]:
@@ -54,6 +61,7 @@ def preview_payload(
     project: HSFProject,
     overrides: dict[str, Any] | None = None,
     script_overrides: dict[str, str] | None = None,
+    quality: str = "fast",
 ) -> dict[str, Any]:
     scripts = script_overrides or {}
     result = preview_3d_script(
@@ -61,7 +69,7 @@ def preview_payload(
         parameters=parameter_values(project, overrides),
         setup_script=script_for(project, ScriptType.MASTER, scripts),
         unknown_command_policy="warn",
-        quality="fast",
+        quality=normalize_quality(quality),
     )
     payload = preview_3d_to_three_payload(result)
     payload["warnings"] = result.warnings
@@ -82,6 +90,7 @@ def preview_2d_payload(
     project: HSFProject,
     overrides: dict[str, Any] | None = None,
     script_overrides: dict[str, str] | None = None,
+    quality: str = "fast",
 ) -> dict[str, Any]:
     scripts = script_overrides or {}
     result = preview_2d_script(
@@ -89,7 +98,7 @@ def preview_2d_payload(
         parameters=parameter_values(project, overrides),
         setup_script=script_for(project, ScriptType.MASTER, scripts),
         unknown_command_policy="warn",
-        quality="fast",
+        quality=normalize_quality(quality),
     )
     return {
         "lines": [{"from": list(p1), "to": list(p2)} for p1, p2 in result.lines],

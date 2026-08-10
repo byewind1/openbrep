@@ -208,6 +208,7 @@ function initialWorkbenchState() {
     draftParameters: {},
     preview: null,
     preview2d: null,
+    previewQuality: 'fast' as const,
     warnings: [],
     loading: false,
     applying: false,

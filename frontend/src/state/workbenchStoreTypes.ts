@@ -13,6 +13,7 @@ import type {
   CompilerSettingsResult,
   ConfigRevisionResult,
   CreateProjectResult,
+  PreviewQuality,
 
 
   DeleteMemoryLessonResult,
@@ -75,8 +76,16 @@ export interface WorkbenchApi {
   workspaceScan: () => Promise<WorkspaceScanResult>
   workspaceSearch: (query: string) => Promise<WorkspaceSearchResult>
   trashWorkspaceProject: (path: string) => Promise<WorkspaceTrashResult>
-  fetchPreview: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<PreviewPayload>
-  fetchPreview2D: (parameters: Record<string, unknown>, scripts?: Record<string, string>) => Promise<Preview2DPayload>
+  fetchPreview: (
+    parameters: Record<string, unknown>,
+    scripts?: Record<string, string>,
+    quality?: PreviewQuality,
+  ) => Promise<PreviewPayload>
+  fetchPreview2D: (
+    parameters: Record<string, unknown>,
+    scripts?: Record<string, string>,
+    quality?: PreviewQuality,
+  ) => Promise<Preview2DPayload>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
@@ -181,6 +190,8 @@ export interface WorkbenchState {
   draftParameters: Record<string, unknown>
   preview: PreviewPayload | null
   preview2d: Preview2DPayload | null
+  /** 预览质量档（P1b）：会话态，不持久化到用户配置 */
+  previewQuality: PreviewQuality
   warnings: string[]
   loading: boolean
   applying: boolean
@@ -313,6 +324,8 @@ export interface WorkbenchState {
   clearWorkspaceInitHint: () => void
   loadPreview3D: () => Promise<void>
   loadPreview2D: () => Promise<void>
+  /** 切换预览质量档并立即重取预览（2D tab 活跃时一并刷新） */
+  setPreviewQuality: (quality: PreviewQuality) => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean
 }
