@@ -56,6 +56,3 @@ test_shelf/
 scripts/gen_keys.py
 scripts/gen_license.py
 scripts/pack_pro.py
-
-# user workspaces (test projects, downloaded materials)
-workspace-*/
