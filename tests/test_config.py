@@ -331,6 +331,8 @@ class TestProviderRegistry(_CleanEnvMixin, unittest.TestCase):
             "qwen-max": "aliyun",
             "qwq-32b": "aliyun",
             "moonshot-v1-8k": "kimi",
+            "kimi-k2.6": "kimi",
+            "kimi-k2.7-code": "kimi",
             "ollama/llama3.1": "ollama",
         }
         for model, expected in cases.items():

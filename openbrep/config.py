@@ -57,6 +57,8 @@ ALL_MODELS = [
     "moonshot-v1-8k",
     "moonshot-v1-32k",
     "moonshot-v1-128k",
+    "kimi-k2.6",
+    "kimi-k2.7-code",
     # OpenAI
     "gpt-4.1",
     "gpt-4.1-mini",
@@ -174,7 +176,7 @@ PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
     ),
     ProviderProfile(
         name="kimi",
-        prefixes=("moonshot-",),
+        prefixes=("moonshot-", "kimi-"),
         env_vars=("MOONSHOT_API_KEY",),
         provider_key_names=("moonshot", "kimi"),
         console_url="https://platform.moonshot.cn/console/api-keys",
