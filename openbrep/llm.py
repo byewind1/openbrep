@@ -429,9 +429,10 @@ class LLMAdapter:
             completion_kwargs["drop_params"] = True
 
         # 透传用户配置的 extra_body（如 DeepSeek 的 thinking={"type": "disabled"}）。
-        # 不传时行为不变。
-        if self.config.extra_body:
-            completion_kwargs["extra_body"] = self.config.extra_body
+        # provider 条目级 extra_body 覆盖顶层；不传时行为不变。
+        extra_body = self._effective_extra_body(resolved)
+        if extra_body:
+            completion_kwargs["extra_body"] = extra_body
 
         # Pass API key and base URL
         api_key = self.config.resolve_api_key(resolved.configured_model)
@@ -540,8 +541,9 @@ class LLMAdapter:
         if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
 
-        if self.config.extra_body:
-            completion_kwargs["extra_body"] = self.config.extra_body
+        extra_body = self._effective_extra_body(resolved)
+        if extra_body:
+            completion_kwargs["extra_body"] = extra_body
 
         api_key = self.config.resolve_api_key(resolved.configured_model)
         if api_key:
@@ -672,8 +674,9 @@ class LLMAdapter:
         if "gpt-5" in model_lower or "codex" in model_lower:
             completion_kwargs["drop_params"] = True
 
-        if self.config.extra_body:
-            completion_kwargs["extra_body"] = self.config.extra_body
+        extra_body = self._effective_extra_body(resolved)
+        if extra_body:
+            completion_kwargs["extra_body"] = extra_body
 
         api_key = self.config.resolve_api_key(resolved.configured_model)
         if api_key:
@@ -735,6 +738,13 @@ class LLMAdapter:
             usage=dict(response.usage) if response.usage else {},
             finish_reason=choice.finish_reason or "",
         )
+
+    def _effective_extra_body(self, resolved: _ResolvedModelTarget) -> dict:
+        """本次调用生效的 extra_body：provider 条目级覆盖顶层（config.resolve_extra_body）。"""
+        try:
+            return self.config.resolve_extra_body(resolved.configured_model)
+        except Exception:
+            return dict(self.config.extra_body or {})
 
     def _resolve_model_target(self, model: str | None = None) -> _ResolvedModelTarget:
         configured_model = str(model or self.config.model or "").strip()

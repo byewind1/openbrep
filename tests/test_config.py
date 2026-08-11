@@ -638,3 +638,70 @@ models = ["claude-fable-5"]
             entry = config.llm.providers[0]
             self.assertEqual(entry["api_mode"], "anthropic_messages")
             self.assertEqual(entry["protocol"], "anthropic")
+
+    def test_provider_extra_body_overrides_top_level(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "kimi-k2.6"
+extra_body = { thinking = { type = "enabled" } }
+
+[[llm.providers]]
+name = "kimi"
+api = "https://api.moonshot.cn/v1"
+api_key = "ms-key"
+models = ["kimi-k2.6", "kimi-k2.7-code"]
+extra_body = { thinking = { type = "disabled" } }
+''')
+            # provider 条目级整体覆盖顶层
+            self.assertEqual(
+                config.llm.resolve_extra_body("kimi-k2.6"),
+                {"thinking": {"type": "disabled"}},
+            )
+
+    def test_top_level_extra_body_when_provider_has_none(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "kimi-k2.7-code"
+extra_body = { thinking = { type = "disabled" } }
+
+[[llm.providers]]
+name = "kimi-code"
+api = "https://api.moonshot.cn/v1"
+api_key = "ms-key"
+models = ["kimi-k2.7-code"]
+''')
+            # 条目无 extra_body → 回退顶层
+            self.assertEqual(
+                config.llm.resolve_extra_body("kimi-k2.7-code"),
+                {"thinking": {"type": "disabled"}},
+            )
+
+    def test_provider_extra_body_save_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "kimi-k2.6"
+
+[[llm.providers]]
+name = "kimi"
+api = "https://api.moonshot.cn/v1"
+api_key = "ms-key"
+models = ["kimi-k2.6"]
+extra_body = { thinking = { type = "disabled" } }
+'''.strip(), encoding="utf-8")
+
+            config = GDLAgentConfig.load(str(config_path))
+            config.save(str(config_path))
+
+            saved_text = config_path.read_text(encoding="utf-8")
+            self.assertIn("extra_body", saved_text)
+            self.assertIn("disabled", saved_text)
+
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(
+                reloaded.llm.resolve_extra_body("kimi-k2.6"),
+                {"thinking": {"type": "disabled"}},
+            )

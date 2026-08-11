@@ -746,3 +746,36 @@ class TestUnifiedProviderResolution(unittest.TestCase):
         )
         adapter = LLMAdapter(config)
         self.assertEqual(config.resolve_api_key(), "env-ymg-key")
+
+    def test_provider_level_extra_body_overrides_top_level_in_adapter(self):
+        """adapter 侧生效逻辑：provider 条目级 extra_body 覆盖顶层（如 kimi-k2.6 关思考）。"""
+        config = LLMConfig(
+            model="kimi-k2.6",
+            extra_body={"thinking": {"type": "enabled"}},
+            custom_providers=[{
+                "name": "kimi",
+                "api": "https://api.moonshot.cn/v1",
+                "api_key": "ms-key",
+                "models": ["kimi-k2.6", "kimi-k2.7-code"],
+                "extra_body": {"thinking": {"type": "disabled"}},
+            }],
+        )
+        adapter = LLMAdapter(config)
+        resolved = adapter._resolve_model_target("kimi-k2.6")
+        self.assertEqual(adapter._effective_extra_body(resolved), {"thinking": {"type": "disabled"}})
+
+    def test_adapter_falls_back_to_top_level_extra_body(self):
+        """provider 条目无 extra_body 时回退顶层（如 deepseek 顶层关思考不变）。"""
+        config = LLMConfig(
+            model="deepseek-v4-flash",
+            extra_body={"thinking": {"type": "disabled"}},
+            custom_providers=[{
+                "name": "deepseek",
+                "api": "https://api.deepseek.com/v1",
+                "api_key": "ds-key",
+                "models": ["deepseek-v4-flash"],
+            }],
+        )
+        adapter = LLMAdapter(config)
+        resolved = adapter._resolve_model_target("deepseek-v4-flash")
+        self.assertEqual(adapter._effective_extra_body(resolved), {"thinking": {"type": "disabled"}})

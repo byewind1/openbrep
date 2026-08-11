@@ -342,6 +342,9 @@ def provider_entry_to_toml(entry: dict) -> dict:
     native_prefix = str(normalized.get("native_prefix") or "").strip()
     if native_prefix:
         out["native_prefix"] = native_prefix
+    extra_body = normalized.get("extra_body")
+    if isinstance(extra_body, dict) and extra_body:
+        out["extra_body"] = extra_body
     return out
 
 
@@ -524,6 +527,23 @@ class LLMConfig:
         if self.api_base:
             return self.api_base
         return None
+
+    def resolve_extra_body(self, model: str | None = None) -> dict:
+        """解析某次调用生效的 extra_body：provider 条目级 > 顶层。
+
+        条目级存在即整体覆盖顶层（不做深合并——thinking 类嵌套字典的合并
+        语义容易混淆，覆盖语义一眼可见）。典型用法：同端点拆两条 provider，
+        一条带 extra_body = { thinking = { type = "disabled" } }（kimi-k2.6
+        等可关思考的模型），一条不带（kimi-k2.7-code 等强制思考的模型）。
+        """
+        target_model = model or self.model
+        custom_match = self._find_custom_provider_match(target_model)
+        if custom_match is not None:
+            provider = custom_match.get("provider") or {}
+            entry_extra = provider.get("extra_body") if isinstance(provider, dict) else None
+            if isinstance(entry_extra, dict) and entry_extra:
+                return dict(entry_extra)
+        return dict(self.extra_body or {})
 
     def resolve_credentials(self, model: str | None = None) -> "ResolvedCredentials":
         """一个模型当前可用凭据的统一解析（单一事实来源）。
