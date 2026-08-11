@@ -1,11 +1,10 @@
 import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CompileIssue, MockCompileResponse } from '../api/types'
-import {
-  countGroupedStackedIssues,
-  groupCompileIssuesByScript,
-  stackGroupedIssues,
-} from '../state/diagnostics'
+import { countGroupedStackedIssues, groupCompileIssuesByScript, stackGroupedIssues } from '../state/diagnostics'
+import { useT } from '../i18n'
+import { DrawerResizeHandle } from './DrawerResizeHandle'
+import { useDrawerLayout } from './useDrawerLayout'
 
 interface BottomDrawerProps {
   warnings: string[]
@@ -26,7 +25,11 @@ export function BottomDrawer({
   onIssueSelect,
   onRevealOutput,
 }: BottomDrawerProps) {
+  const t = useT()
   const [activeTab, setActiveTab] = useState<'compile' | 'preview' | 'revision'>('compile')
+  // P4-D 抽屉高度/折叠态（hook 内含 localStorage 持久化 + app-shell 内联 style）
+  const { height, collapsed, setCollapsed, applyHeight, resetHeight, shellRef } = useDrawerLayout()
+
   // Track the last result we already reacted to by reference, so a stale or
   // repeated result never drags the user off the Revision/Preview tab.
   const lastResultRef = useRef<MockCompileResponse | null>(null)
@@ -34,12 +37,21 @@ export function BottomDrawer({
     lastResultRef.current = mockCompileResult
     if (mockCompileResult && mockCompileResult.success === false) {
       setActiveTab('compile')
+      // P4-D：复用同一新到达判定点——新失败同时自动展开抽屉
+      setCollapsed(false)
     }
   }
   const issueGroups = groupCompileIssuesByScript(mockCompileResult?.issues ?? [])
 
   return (
-    <section className="bottom-drawer">
+    <section className="bottom-drawer" ref={shellRef}>
+      {!collapsed ? (
+        <DrawerResizeHandle
+          height={height}
+          onHeightChange={applyHeight}
+          onReset={resetHeight}
+        />
+      ) : null}
       <div className="drawer-tabs">
         <button className={activeTab === 'compile' ? 'active' : ''} onClick={() => setActiveTab('compile')}>
           Compile
@@ -49,6 +61,16 @@ export function BottomDrawer({
         </button>
         <button className={activeTab === 'revision' ? 'active' : ''} onClick={() => setActiveTab('revision')}>
           Revision
+        </button>
+        <span className="drawer-tabs-spacer" aria-hidden="true" />
+        <button
+          type="button"
+          className="drawer-collapse-toggle"
+          title={collapsed ? t('drawer.expandTitle') : t('drawer.collapseTitle')}
+          aria-label={collapsed ? t('drawer.expandTitle') : t('drawer.collapseTitle')}
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          {collapsed ? '▲' : '▼'}
         </button>
       </div>
       <div className="drawer-content">

@@ -186,4 +186,12 @@ export const en: Record<LocaleKey, string> = {
   'assistant.empty.example.generate': 'Generate a parametric bookshelf',
   'assistant.empty.example.modify': 'Change the shelf count to 5',
   'assistant.empty.example.explain': 'Explain what this GDL code does',
+
+  // P4-D column collapse / bottom drawer
+  'layout.collapseLeft': 'Collapse left panel',
+  'layout.collapseRight': 'Collapse right panel',
+  'layout.expandLeft': 'Expand left panel',
+  'layout.expandRight': 'Expand right panel',
+  'drawer.collapseTitle': 'Collapse bottom drawer',
+  'drawer.expandTitle': 'Expand bottom drawer',
 }

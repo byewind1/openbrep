@@ -183,6 +183,14 @@ export const zh = {
   'assistant.empty.example.generate': '生成一个参数化书架',
   'assistant.empty.example.modify': '把层板数改成 5',
   'assistant.empty.example.explain': '解释这段 GDL 代码是什么意思',
+
+  // P4-D 左右栏折叠 / 底部抽屉
+  'layout.collapseLeft': '收起左栏',
+  'layout.collapseRight': '收起右栏',
+  'layout.expandLeft': '展开左栏',
+  'layout.expandRight': '展开右栏',
+  'drawer.collapseTitle': '收起底部抽屉',
+  'drawer.expandTitle': '展开底部抽屉',
 } as const
 
 export type LocaleKey = keyof typeof zh

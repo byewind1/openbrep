@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { BottomDrawer } from './BottomDrawer'
+import { DRAWER_STATE_STORAGE_KEY } from '../workbench/layout/resizableWorkspace'
 import type { MockCompileResponse } from '../api/types'
 
 function makeResult(overrides: Partial<MockCompileResponse> = {}): MockCompileResponse {
@@ -157,5 +158,66 @@ describe('BottomDrawer diagnostic pills and stacking', () => {
     fireEvent.click(screen.getByText('scripts/3d.gdl:12 - FOR/NEXT mismatch'))
     expect(onIssueSelect).toHaveBeenCalledTimes(1)
     expect(onIssueSelect).toHaveBeenCalledWith(duplicate)
+  })
+})
+
+describe('BottomDrawer collapse and resizing (P4-D)', () => {
+  test('collapsed drawer shrinks to the tab strip and expands back to the stored height', () => {
+    window.localStorage.setItem(DRAWER_STATE_STORAGE_KEY, JSON.stringify({ height: 240, collapsed: true }))
+    const { container } = render(<BottomDrawer warnings={[]} compileLog={[]} mockCompileResult={null} />)
+
+    const section = container.querySelector('.bottom-drawer') as HTMLElement
+    // 折叠 = --bottom-drawer-height 收成 tab 条（34px），内容行归零但保持挂载
+    expect(section.parentElement?.style.getPropertyValue('--bottom-drawer-height')).toBe('34px')
+    expect(screen.getByRole('button', { name: '展开底部抽屉' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开底部抽屉' }))
+
+    expect(section.parentElement?.style.getPropertyValue('--bottom-drawer-height')).toBe('240px')
+  })
+
+  test('collapsing persists to localStorage', () => {
+    render(<BottomDrawer warnings={[]} compileLog={[]} mockCompileResult={null} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '收起底部抽屉' }))
+
+    const stored = JSON.parse(window.localStorage.getItem(DRAWER_STATE_STORAGE_KEY) ?? '{}')
+    expect(stored.collapsed).toBe(true)
+  })
+
+  test('new failed result auto-expands a collapsed drawer and switches to Compile', () => {
+    window.localStorage.setItem(DRAWER_STATE_STORAGE_KEY, JSON.stringify({ height: 200, collapsed: true }))
+    const { rerender, container } = render(
+      <BottomDrawer warnings={['preview warn']} compileLog={[]} mockCompileResult={null} />,
+    )
+    const section = container.querySelector('.bottom-drawer') as HTMLElement
+    expect(section.parentElement?.style.getPropertyValue('--bottom-drawer-height')).toBe('34px')
+
+    // 折叠态下用户切到 Preview tab
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(screen.getByText(/preview warn/)).toBeTruthy()
+
+    // 新失败结果到达：自动展开（恢复存储高度）+ 切 Compile tab
+    rerender(
+      <BottomDrawer
+        warnings={['preview warn']}
+        compileLog={[]}
+        mockCompileResult={makeResult({ success: false, error: 'boom' })}
+      />,
+    )
+
+    expect(section.parentElement?.style.getPropertyValue('--bottom-drawer-height')).toBe('200px')
+    expect(screen.getByText('✗ Failed')).toBeTruthy()
+    expect(screen.getByText('boom')).toBeTruthy()
+  })
+
+  test('successful result does not auto-expand a collapsed drawer', () => {
+    window.localStorage.setItem(DRAWER_STATE_STORAGE_KEY, JSON.stringify({ height: 200, collapsed: true }))
+    const { rerender, container } = render(<BottomDrawer warnings={[]} compileLog={[]} mockCompileResult={null} />)
+    const section = container.querySelector('.bottom-drawer') as HTMLElement
+
+    rerender(<BottomDrawer warnings={[]} compileLog={[]} mockCompileResult={makeResult()} />)
+
+    expect(section.parentElement?.style.getPropertyValue('--bottom-drawer-height')).toBe('34px')
   })
 })
