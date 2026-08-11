@@ -10,6 +10,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
 import type { PreviewGhostLabel } from '../state/workbenchStoreTypes'
 import { useT } from '../i18n'
+import { PanelEmpty } from './PanelEmpty'
 import { ExplodeControls } from './ExplodeControls'
 import { PreviewGhostOverlay } from './PreviewGhostOverlay'
 import { PreviewGhostToggle } from './PreviewGhostToggle'
@@ -131,6 +132,8 @@ export function PreviewViewport({
     return buildPartsView(preview, 'flat', MODE_COLOR[displayMode], hiddenParts)
   }, [preview, displayMode, hiddenParts])
   const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
+  // P4-C 空态：真的没内容（未编译 / 空网格）才显示，加载中由 Suspense fallback 管
+  const isEmpty = preview === null || preview.meshes.length === 0
 
   // 预览数据更新（Update / 重新编译）后，旧下标可能指向别的 mesh：清空选中；
   // 隐藏状态一并重置；Esc 取消选中（单击空白由 Canvas onPointerMissed 处理）
@@ -235,30 +238,34 @@ export function PreviewViewport({
           >
             Grid
           </button>
-          <button
-            type="button"
-            className={`viewport-action-button${partsOpen ? ' active' : ''}`}
-            onClick={() => setPartsOpen((value) => !value)}
-            title={t('preview.parts.toggle')}
-          >
-            {t('preview.parts.title')}
-          </button>
           <ShadowsToggle enabled={shadowsEnabled} onToggle={() => setShowShadows(!shadowsEnabled)} />
           {quality && onQualityChange ? <QualityToggle quality={quality} onChange={onQualityChange} /> : null}
-          <SectionControls
-            active={section !== null}
-            axis={section?.axis ?? 'z'}
-            t={section?.t ?? 0.5}
-            onToggle={() => setSection((current) => (current ? null : { axis: 'z', t: 0.5 }))}
-            onAxisChange={(axis) => setSection((current) => (current ? { ...current, axis } : current))}
-            onTChange={(t) => setSection((current) => (current ? { ...current, t } : current))}
-          />
-          <PreviewGhostToggle
-            available={isGhostAvailable(previewGhost)}
-            active={showGhost}
-            onToggle={() => setShowGhost((value) => !value)}
-          />
-          <ExplodeControls factor={explodeFactor} onChange={setExplodeFactor} />
+          {!isEmpty ? (
+            <>
+              <button
+                type="button"
+                className={`viewport-action-button${partsOpen ? ' active' : ''}`}
+                onClick={() => setPartsOpen((value) => !value)}
+                title={t('preview.parts.toggle')}
+              >
+                {t('preview.parts.title')}
+              </button>
+              <SectionControls
+                active={section !== null}
+                axis={section?.axis ?? 'z'}
+                t={section?.t ?? 0.5}
+                onToggle={() => setSection((current) => (current ? null : { axis: 'z', t: 0.5 }))}
+                onAxisChange={(axis) => setSection((current) => (current ? { ...current, axis } : current))}
+                onTChange={(t) => setSection((current) => (current ? { ...current, t } : current))}
+              />
+              <PreviewGhostToggle
+                available={isGhostAvailable(previewGhost)}
+                active={showGhost}
+                onToggle={() => setShowGhost((value) => !value)}
+              />
+              <ExplodeControls factor={explodeFactor} onChange={setExplodeFactor} />
+            </>
+          ) : null}
           {onFloat ? (
             <button type="button" className="viewport-action-button" onClick={onFloat} title="Open floating preview">
               Float
@@ -277,6 +284,10 @@ export function PreviewViewport({
         </div>
       </div>
       <div className="canvas-wrap">
+        {/* 空态层：浮在 canvas 上（pointer-events: none），有内容时不渲染 */}
+        {isEmpty ? (
+          <PanelEmpty overlay icon="◻" title={t('preview.empty.title')} hint={t('preview.empty.hint')} />
+        ) : null}
         {/* absolute + inset:0：见 styles.css .canvas-wrap 注释，
             防止 canvas 的内联 px 宽度反向撑住容器导致无法收缩 */}
         <Canvas

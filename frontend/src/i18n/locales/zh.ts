@@ -172,6 +172,17 @@ export const zh = {
   // ThemedDialog (P4-B)
   'dialog.confirm': '确定',
   'dialog.cancel': '取消',
+
+  // P4-C 空态
+  'preview.empty.title': '还没有可预览的模型',
+  'preview.empty.hint': '打开/新建项目，或在 AI 面板描述一个构件',
+  'editor.empty.title': '未打开脚本',
+  'editor.empty.hint': '从工作区打开项目，或用 AI 生成',
+  'assistant.empty.title': '开始你的 GDL 工作流',
+  'assistant.empty.hint': '用自然语言生成或修改 Archicad 构件',
+  'assistant.empty.example.generate': '生成一个参数化书架',
+  'assistant.empty.example.modify': '把层板数改成 5',
+  'assistant.empty.example.explain': '解释这段 GDL 代码是什么意思',
 } as const
 
 export type LocaleKey = keyof typeof zh

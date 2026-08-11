@@ -175,4 +175,15 @@ export const en: Record<LocaleKey, string> = {
   // ThemedDialog (P4-B)
   'dialog.confirm': 'Confirm',
   'dialog.cancel': 'Cancel',
+
+  // P4-C empty states
+  'preview.empty.title': 'No model to preview yet',
+  'preview.empty.hint': 'Open or create a project, or describe a component in the AI panel',
+  'editor.empty.title': 'No script loaded',
+  'editor.empty.hint': 'Open a project from the workspace, or generate with AI',
+  'assistant.empty.title': 'Start your GDL workflow',
+  'assistant.empty.hint': 'Generate or modify Archicad components in natural language',
+  'assistant.empty.example.generate': 'Generate a parametric bookshelf',
+  'assistant.empty.example.modify': 'Change the shelf count to 5',
+  'assistant.empty.example.explain': 'Explain what this GDL code does',
 }

@@ -253,6 +253,36 @@ describe('AssistantPanel skill proposal card (P2-d)', () => {
 })
 
 
+describe('AssistantPanel empty state (P4-C)', () => {
+  test('shows guidance and example chips when there are no messages', () => {
+    render(<AssistantPanel {...baseProps} />)
+
+    expect(screen.getByText('开始你的 GDL 工作流')).toBeTruthy()
+    expect(screen.getByText(/用自然语言生成或修改 Archicad 构件/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '生成一个参数化书架' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '把层板数改成 5' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '解释这段 GDL 代码是什么意思' })).toBeTruthy()
+  })
+
+  test('clicking an example chip fills the draft without sending', () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '生成一个参数化书架' }))
+
+    const textarea = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    expect(textarea.value).toBe('生成一个参数化书架')
+    expect(onChat).not.toHaveBeenCalled()
+  })
+
+  test('does not show empty guidance once messages exist', () => {
+    render(<AssistantPanel {...baseProps} messages={[{ role: 'user', content: 'hi' }]} />)
+
+    expect(screen.queryByText('开始你的 GDL 工作流')).toBeNull()
+  })
+})
+
+
 describe('AssistantPanel acceptance report card (V5)', () => {
   const acceptance = {
     summary_lines: ['参数 shelf_count 从 2 改为 5', '几何体数量从 1 变为 2'],

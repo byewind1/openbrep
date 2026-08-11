@@ -4,6 +4,7 @@ import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, Modify
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
+import { PanelEmpty } from './PanelEmpty'
 import { useT } from '../i18n'
 
 interface AssistantPanelProps {
@@ -57,6 +58,7 @@ export function AssistantPanel({
   const [image, setImage] = useState<AssistantImageAttachment | null>(null)
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const t = useT()
 
   // slash command state
   const [pickerMode, setPickerMode] = useState<null | 'commands' | 'models'>(null)
@@ -96,6 +98,12 @@ export function AssistantPanel({
     setDraft('')
     onChat(message, image)
     setImage(null)
+  }
+
+  // P4-C 空态：示例提示词只填入输入框，不自动发送
+  function fillExample(example: string) {
+    setDraft(example)
+    textareaRef.current?.focus()
   }
 
   // ── Keyboard ─────────────────────────────────────────────────────────────
@@ -277,7 +285,19 @@ export function AssistantPanel({
             </article>
           ))
         ) : (
-          <p className="assistant-empty">Ready</p>
+          <PanelEmpty icon="✦" title={t('assistant.empty.title')} hint={t('assistant.empty.hint')}>
+            <div className="panel-empty-examples">
+              <button type="button" onClick={() => fillExample(t('assistant.empty.example.generate'))}>
+                {t('assistant.empty.example.generate')}
+              </button>
+              <button type="button" onClick={() => fillExample(t('assistant.empty.example.modify'))}>
+                {t('assistant.empty.example.modify')}
+              </button>
+              <button type="button" onClick={() => fillExample(t('assistant.empty.example.explain'))}>
+                {t('assistant.empty.example.explain')}
+              </button>
+            </div>
+          </PanelEmpty>
         )}
         {pendingPlan ? <PlanConfirmCard plan={pendingPlan} busy={busy} onConfirm={onConfirmPlan} /> : null}
         {pendingSkillProposal ? (

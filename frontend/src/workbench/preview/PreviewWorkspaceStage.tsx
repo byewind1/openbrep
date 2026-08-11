@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react'
 import type { PreviewPayload } from '../../api/types'
 import { useWorkbenchStore } from '../../state/useWorkbenchStore'
+import { PanelEmpty } from '../../components/PanelEmpty'
+import { useT } from '../../i18n'
 
 const ScriptEditor = lazy(() => import('../../components/ScriptEditor').then((m) => ({ default: m.ScriptEditor })))
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
@@ -42,6 +44,7 @@ export function PreviewWorkspaceStage({
   onRefreshPreview,
   onRevealSource,
 }: PreviewWorkspaceStageProps) {
+  const t = useT()
   // P1b：质量档从 store 取，不经过 props 倒灌
   const previewQuality = useWorkbenchStore((state) => state.previewQuality)
   const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
@@ -95,7 +98,7 @@ export function PreviewWorkspaceStage({
             />
           </Suspense>
         ) : (
-          <div className="editor-empty">No script loaded</div>
+          <PanelEmpty icon="✎" title={t('editor.empty.title')} hint={t('editor.empty.hint')} />
         )}
       </section>
     </>
