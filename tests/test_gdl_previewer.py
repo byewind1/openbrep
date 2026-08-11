@@ -429,7 +429,12 @@ TUBE_ 3, 4, 127, GET(17)
         self.assertEqual(len(res.meshes[0].x), 14)
         # 2 segments x 4 quads x 2 tris + 2 caps x 4 tris = 24
         self.assertEqual(len(res.meshes[0].i), 24)
-        self.assertEqual(res.warnings, [])
+        # P3c：截面 (0.1,0),(-0.1,0),(0,0.1),(0,-0.1) 是自交蝴蝶结（零面积）
+        # 退化轮廓 → 盖帽回退扇形 + 明确警告（不再静默）。几何不变。
+        self.assertTrue(
+            any("TUBE 截面轮廓退化" in w for w in res.warnings),
+            f"应警告退化截面，实际: {res.warnings}",
+        )
 
     def test_spiral_stair_put_get_gosub_tube(self):
         script = """\
@@ -1010,3 +1015,299 @@ END
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestP3cConcaveCapTriangulation(unittest.TestCase):
+    """P3c：凹多边形盖帽耳切三角化 + 凸轮廓逐字节不变 + 退化回退警告。"""
+
+    # 凹 L 形轮廓（CCW），面积 3.0：2x2 方块切掉右上 1x1
+    L_SHAPE = [(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0)]
+
+    @staticmethod
+    def _tri_area(p0, p1, p2):
+        return abs(
+            (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0])
+        ) / 2.0
+
+    @staticmethod
+    def _polygon_area(pts):
+        return abs(gdl_previewer._polygon_signed_area2(pts))
+
+    @staticmethod
+    def _point_in_polygon(px, py, pts):
+        """Ray-casting point-in-polygon."""
+        inside = False
+        n = len(pts)
+        j = n - 1
+        for i in range(n):
+            xi, yi = pts[i]
+            xj, yj = pts[j]
+            if (yi > py) != (yj > py):
+                x_cross = (xj - xi) * (py - yi) / (yj - yi) + xi
+                if px < x_cross:
+                    inside = not inside
+            j = i
+        return inside
+
+    def _cap_faces(self, mesh, n_side):
+        """Split mesh faces into (side, bottom, top) by 0-based index ranges."""
+        return mesh.i, mesh.j, mesh.k
+
+    def test_concave_prism_l_shape_triangulation_correct(self):
+        script = "PRISM_ 6, 1, " + ", ".join(
+            f"{x},{y}" for x, y in self.L_SHAPE
+        ) + "\n"
+        res = preview_3d_script(script)
+        mesh = res.meshes[0]
+        self.assertEqual(len(mesh.x), 12)  # 6 base + 6 top
+        # 6 side quads x2 + 4 bottom + 4 top = 20 faces
+        self.assertEqual(len(mesh.i), 20)
+        self.assertEqual(res.warnings, [])
+
+        pts = self.L_SHAPE
+        n = len(pts)
+        area = self._polygon_area(pts)
+        self.assertAlmostEqual(area, 3.0, places=6)
+
+        # 底盖与顶盖逐三角形校验（face 顺序：每个耳切三角形先底后顶交错）：
+        # 面积和 = 多边形面积，且每个三角形质心在多边形内（无越界三角形）。
+        side = 2 * n
+        bottom = mesh.i[side::2]
+        top = mesh.i[side + 1 :: 2]
+        self.assertEqual(len(bottom), n - 2)
+        self.assertEqual(len(top), n - 2)
+
+        def check_cap(face_idx_triples, z):
+            total = 0.0
+            for i, j, k in face_idx_triples:
+                p0 = (mesh.x[i], mesh.y[i])
+                p1 = (mesh.x[j], mesh.y[j])
+                p2 = (mesh.x[k], mesh.y[k])
+                total += self._tri_area(p0, p1, p2)
+                cx = (p0[0] + p1[0] + p2[0]) / 3
+                cy = (p0[1] + p1[1] + p2[1]) / 3
+                self.assertTrue(
+                    self._point_in_polygon(cx, cy, pts),
+                    f"三角形质心 ({cx},{cy}) 越出多边形",
+                )
+                self.assertAlmostEqual(mesh.z[i], z, places=6)
+                self.assertAlmostEqual(mesh.z[j], z, places=6)
+                self.assertAlmostEqual(mesh.z[k], z, places=6)
+            self.assertAlmostEqual(total, area, places=6)
+
+        bottom_tris = [(bottom[t], mesh.j[side + 2 * t], mesh.k[side + 2 * t]) for t in range(len(bottom))]
+        top_tris = [(top[t], mesh.j[side + 2 * t + 1], mesh.k[side + 2 * t + 1]) for t in range(len(top))]
+        check_cap(bottom_tris, 0.0)
+        check_cap(top_tris, 1.0)
+
+    def test_convex_prism_byte_identical_to_old_fan(self):
+        # 凸矩形：顶点 0 扇形（旧行为）逐字节不变 —— 与旧代码路径公式逐字段比对
+        pts = [(0.0, 0.0), (3.0, 0.0), (3.0, 2.0), (0.0, 2.0)]
+        n = len(pts)
+        res = preview_3d_script("PRISM 4, 2, 0,0, 3,0, 3,2, 0,2\n")
+        mesh = res.meshes[0]
+
+        expected_i = []
+        expected_j = []
+        expected_k = []
+        for i in range(n):
+            j = (i + 1) % n
+            expected_i.extend((i, i))
+            expected_j.extend((j, n + j))
+            expected_k.extend((n + j, n + i))
+        # Bottom fan (0, i+1, i)
+        for i in range(1, n - 1):
+            expected_i.append(0)
+            expected_j.append(i + 1)
+            expected_k.append(i)
+        # Top fan (n, n+i, n+i+1)
+        for i in range(1, n - 1):
+            expected_i.append(n)
+            expected_j.append(n + i)
+            expected_k.append(n + i + 1)
+
+        self.assertEqual(mesh.i, expected_i)
+        self.assertEqual(mesh.j, expected_j)
+        self.assertEqual(mesh.k, expected_k)
+        self.assertEqual(res.warnings, [])
+
+    def test_degenerate_prism_contours_warn_and_fallback_to_fan(self):
+        # 重复顶点 / 共线 / 自交轮廓 → 警告 + 回退旧扇形（几何与旧扇形逐字节一致）
+        cases = {
+            "dup": ([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (1.0, 1.0), (0.0, 1.0)], "重复"),
+            "collinear": ([(0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)], "共线"),
+            "self_intersect": ([(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)], "自交"),
+        }
+        for key, (pts, _tag) in cases.items():
+            n = len(pts)
+            script = "PRISM " + str(n) + ", 1, " + ", ".join(
+                f"{x},{y}" for x, y in pts
+            ) + "\n"
+            res = preview_3d_script(script)
+            mesh = res.meshes[0]
+            self.assertTrue(
+                any("轮廓退化" in w for w in res.warnings),
+                f"{key}: 应警告退化轮廓，实际 {res.warnings}",
+            )
+            # 回退旧扇形：底盖 (0, i+1, i)，顶盖 (n, n+i, n+i+1)
+            side = 2 * n
+            self.assertEqual(len(mesh.i), side + 2 * (n - 2))
+            for t in range(n - 2):
+                self.assertEqual((mesh.i[side + t], mesh.j[side + t], mesh.k[side + t]),
+                                 (0, t + 2, t + 1))
+            for t in range(n - 2):
+                self.assertEqual((mesh.i[side + n - 2 + t], mesh.j[side + n - 2 + t], mesh.k[side + n - 2 + t]),
+                                 (n, n + t + 1, n + t + 2))
+
+    def test_concave_ruled_caps_earclipped(self):
+        # RULED：L 形底盖 + L 形顶盖（mask 55 = j1+j2）→ 耳切，面积和 = 3.0
+        script = "RULED 6, 55, " + ", ".join(
+            f"{x},{y},0" for x, y in self.L_SHAPE
+        ) + ", " + ", ".join(
+            f"{x},{y},2" for x, y in self.L_SHAPE
+        ) + "\n"
+        res = preview_3d_script(script)
+        mesh = res.meshes[0]
+        # 12 ring verts（耳切盖帽不加质心顶点）
+        self.assertEqual(len(mesh.x), 12)
+        # 6 quads x2 side + 4 + 4 cap tris = 20
+        self.assertEqual(len(mesh.i), 20)
+        self.assertEqual(res.warnings, [])
+        # 两端盖（底 + 顶）共 8 个三角形：面积和 = 2 × 多边形面积，
+        # 每个三角形质心在多边形内（无越界三角形）。
+        n = 6
+        side = 2 * n
+        cap_faces = [
+            (mesh.i[t], mesh.j[t], mesh.k[t])
+            for t in range(side, len(mesh.i))
+        ]
+        total = 0.0
+        for i, j, k in cap_faces:
+            p0 = (mesh.x[i], mesh.y[i])
+            p1 = (mesh.x[j], mesh.y[j])
+            p2 = (mesh.x[k], mesh.y[k])
+            total += self._tri_area(p0, p1, p2)
+            cx = (p0[0] + p1[0] + p2[0]) / 3
+            cy = (p0[1] + p1[1] + p2[1]) / 3
+            self.assertTrue(self._point_in_polygon(cx, cy, self.L_SHAPE))
+        self.assertAlmostEqual(total, 2 * self._polygon_area(self.L_SHAPE), places=6)
+
+    def test_concave_tube_caps_earclipped(self):
+        # TUBE：L 形截面沿竖直路径扫掠（mask 127 = 两端盖）→ 耳切
+        path = "0,0,0, 0,0,3"
+        sec = ", ".join(f"{x},{y}" for x, y in self.L_SHAPE)
+        script = f"TUBE_ 2, 6, 127, {path}, {sec}\n"
+        res = preview_3d_script(script)
+        mesh = res.meshes[0]
+        # 2 rings x 6 verts（耳切盖帽不加质心顶点）
+        self.assertEqual(len(mesh.x), 12)
+        # 1 segment x 6 quads x2 side + 4 + 4 cap tris = 20
+        self.assertEqual(len(mesh.i), 20)
+        self.assertEqual(res.warnings, [])
+        # 两端盖共 8 个三角形：面积和 = 2 × 多边形面积，无越界三角形。
+        # 盖帽落在截面局部平面（竖直线路径的 frame 会旋转截面），所以用实际
+        # 截面环的 world 顶点构造多边形来做质心包含判断。
+        n = 6
+        side = 2 * n
+        ring0 = [(mesh.x[i], mesh.y[i]) for i in range(n)]
+        cap_faces = [
+            (mesh.i[t], mesh.j[t], mesh.k[t])
+            for t in range(side, len(mesh.i))
+        ]
+        total = 0.0
+        for i, j, k in cap_faces:
+            p0 = (mesh.x[i], mesh.y[i])
+            p1 = (mesh.x[j], mesh.y[j])
+            p2 = (mesh.x[k], mesh.y[k])
+            total += self._tri_area(p0, p1, p2)
+            cx = (p0[0] + p1[0] + p2[0]) / 3
+            cy = (p0[1] + p1[1] + p2[1]) / 3
+            self.assertTrue(
+                self._point_in_polygon(cx, cy, ring0),
+                f"盖帽三角形质心 ({cx:.3f},{cy:.3f}) 越出截面",
+            )
+        self.assertAlmostEqual(total, 2 * self._polygon_area(ring0), places=6)
+    def test_concave_ruled_welded_chain_top_cap_earclipped(self):
+        # RULED 链式焊接（ADDZ 抬升后续段）+ 每段凹 L 形轮廓：焊接后新增的
+        # 顶盖也走耳切（_try_weld_ruled 的 mask&2 路径）。
+        script = """\
+RULED 6, 55,
+    0,0,0, 2,0,0, 2,1,0, 1,1,0, 1,2,0, 0,2,0,
+    0,0,1, 2,0,1, 2,1,1, 1,1,1, 1,2,1, 0,2,1
+ADDZ 1
+RULED 6, 2,
+    0,0,0, 2,0,0, 2,1,0, 1,1,0, 1,2,0, 0,2,0,
+    0,0,1, 2,0,1, 2,1,1, 1,1,1, 1,2,1, 0,2,1
+DEL 1
+"""
+        res = preview_3d_script(script)
+        self.assertEqual(res.warnings, [])
+        self.assertEqual(len(res.meshes), 1)
+        mesh = res.meshes[0]
+        # 12 + 6 环顶点（耳切盖帽不加质心），face 36 = 24 侧面 + 12 盖帽
+        self.assertEqual(len(mesh.x), 18)
+        self.assertEqual(len(mesh.i), 36)
+        # 盖帽三角形（seg1 底/顶盖 + seg2 顶盖）质心均在 L 形内，面积和 = 3×3
+        pts = self.L_SHAPE
+        total = 0.0
+        for t in [*range(12, 20), *range(32, 36)]:
+            i, j, k = mesh.i[t], mesh.j[t], mesh.k[t]
+            p0 = (mesh.x[i], mesh.y[i])
+            p1 = (mesh.x[j], mesh.y[j])
+            p2 = (mesh.x[k], mesh.y[k])
+            total += self._tri_area(p0, p1, p2)
+            cx = (p0[0] + p1[0] + p2[0]) / 3
+            cy = (p0[1] + p1[1] + p2[1]) / 3
+            self.assertTrue(self._point_in_polygon(cx, cy, pts))
+        self.assertAlmostEqual(total, 3 * self._polygon_area(pts), places=6)
+
+
+class TestP3cForDoubleGate(unittest.TestCase):
+    """P3c：FOR 双闸门——迭代上限（默认 5000）+ wall-clock 上限（默认 10s）。"""
+
+    def test_default_for_limit_raised_to_5000(self):
+        from openbrep.gdl_previewer import DEFAULT_FOR_LIMIT
+        self.assertEqual(DEFAULT_FOR_LIMIT, 5000)
+        # 600 次迭代的循环在旧上限 500 下会被截断；新默认下完整执行
+        script = "FOR i = 1 TO 600\nBLOCK 0.01, 0.01, 0.01\nNEXT i\n"
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 600)
+        self.assertFalse(any("提前终止" in w for w in res.warnings))
+
+    def test_iteration_gate_warns_and_stops(self):
+        script = "FOR i = 1 TO 100\nBLOCK 0.01, 0.01, 0.01\nNEXT i\n"
+        res = preview_3d_script(script, for_limit=10)
+        self.assertTrue(
+            any("FOR 迭代超过上限 10" in w for w in res.warnings),
+            f"应触发迭代闸门，实际 {res.warnings}",
+        )
+        self.assertFalse(any("耗时上限" in w for w in res.warnings))
+        # 只执行了 10 次迭代
+        self.assertEqual(len(res.meshes), 10)
+        self.assertTrue(
+            any("FOR 迭代超过上限 10" in w.message for w in res.warnings_structured)
+        )
+
+    def test_wall_clock_gate_warns_and_stops(self):
+        # 迭代上限设很大，耗时闸门极小 → 触发的是耗时闸门而不是迭代闸门
+        script = "FOR i = 1 TO 100000\nBLOCK 0.01, 0.01, 0.01\nNEXT i\n"
+        res = preview_3d_script(
+            script, for_limit=100000, wall_clock_limit=1e-9
+        )
+        self.assertTrue(
+            any("FOR 执行超过耗时上限" in w for w in res.warnings),
+            f"应触发耗时闸门，实际 {res.warnings}",
+        )
+        self.assertFalse(any("迭代超过上限" in w for w in res.warnings))
+        self.assertLess(len(res.meshes), 100000)
+        self.assertTrue(
+            any("FOR 执行超过耗时上限" in w.message for w in res.warnings_structured)
+        )
+
+    def test_wall_clock_limit_zero_disables_time_gate(self):
+        # wall_clock_limit=0 关闭耗时闸门：仅迭代闸门生效
+        script = "FOR i = 1 TO 100\nBLOCK 0.01, 0.01, 0.01\nNEXT i\n"
+        res = preview_3d_script(script, for_limit=10, wall_clock_limit=0.0)
+        self.assertTrue(any("FOR 迭代超过上限 10" in w for w in res.warnings))
+        self.assertFalse(any("耗时上限" in w for w in res.warnings))
+

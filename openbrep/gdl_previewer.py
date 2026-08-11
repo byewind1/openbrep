@@ -14,11 +14,13 @@ from __future__ import annotations
 import ast
 import math
 import re
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
-DEFAULT_FOR_LIMIT = 500
+DEFAULT_FOR_LIMIT = 5000
+DEFAULT_WALL_CLOCK_LIMIT = 10.0  # seconds; wall-clock gate for FOR loops
 
 
 Point2D = tuple[float, float]
@@ -92,6 +94,7 @@ def preview_2d_script(
     unknown_command_policy: str = "warn",
     quality: str = "fast",
     script_3d: str | None = None,
+    wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
 ) -> Preview2DResult:
     """Preview a 2D GDL script using MVP command subset.
 
@@ -108,6 +111,7 @@ def preview_2d_script(
         quality=quality,
         setup_script=setup_script or "",
         script_3d=script_3d,
+        wall_clock_limit=wall_clock_limit,
     )
     if setup_script:
         runtime.execute(setup_script or "", mode="setup")
@@ -124,6 +128,7 @@ def preview_3d_script(
     strict: bool = False,
     unknown_command_policy: str = "warn",
     quality: str = "fast",
+    wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
 ) -> Preview3DResult:
     """Preview a 3D GDL script using MVP command subset."""
     runtime = _PreviewRuntime(
@@ -132,6 +137,7 @@ def preview_3d_script(
         strict=strict,
         unknown_command_policy=unknown_command_policy,
         quality=quality,
+        wall_clock_limit=wall_clock_limit,
     )
     if setup_script:
         runtime.execute(setup_script or "", mode="setup")
@@ -149,6 +155,7 @@ def preview_scripts(
     strict: bool = False,
     unknown_command_policy: str = "warn",
     quality: str = "fast",
+    wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
 ) -> PreviewResult:
     """Preview both 2D and 3D scripts and merge warnings."""
     p2d = preview_2d_script(
@@ -160,6 +167,7 @@ def preview_scripts(
         unknown_command_policy=unknown_command_policy,
         quality=quality,
         script_3d=script_3d,
+        wall_clock_limit=wall_clock_limit,
     )
     p3d = preview_3d_script(
         script_3d,
@@ -169,6 +177,7 @@ def preview_scripts(
         strict=strict,
         unknown_command_policy=unknown_command_policy,
         quality=quality,
+        wall_clock_limit=wall_clock_limit,
     )
     return PreviewResult(
         preview_2d=p2d,
@@ -194,6 +203,7 @@ class _PreviewRuntime:
         quality: str = "fast",
         setup_script: str = "",
         script_3d: str | None = None,
+        wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
     ):
         self.env = _normalize_parameters(parameters or {})
         # P3a：PROJECT2 顶视图投影——内部 3D runtime 需要的 setup/3D 脚本
@@ -203,7 +213,11 @@ class _PreviewRuntime:
         self._project2_meshes: list[PreviewMesh3D] | None = None
         self._project2_method_warned = False
         self.for_limit = max(1, int(for_limit))
+        # 双闸门：迭代上限（for_limit）+ wall-clock 上限（秒）。wall_clock_limit
+        # <= 0 表示关闭耗时闸门（仅迭代闸门生效）。
+        self.wall_clock_limit = max(0.0, float(wall_clock_limit))
         self.loop_iterations = 0
+        self._start_time = time.monotonic()
         self.strict = bool(strict)
         self.unknown_command_policy = (unknown_command_policy or "warn").strip().lower()
         if self.unknown_command_policy not in {"warn", "ignore", "error"}:
@@ -472,6 +486,14 @@ class _PreviewRuntime:
             self.loop_iterations += 1
             if self.loop_iterations > self.for_limit:
                 self._warn(line_no, f"FOR 迭代超过上限 {self.for_limit}，提前终止")
+                return
+            if self.wall_clock_limit > 0 and (
+                time.monotonic() - self._start_time
+            ) > self.wall_clock_limit:
+                self._warn(
+                    line_no,
+                    f"FOR 执行超过耗时上限 {self.wall_clock_limit:g} 秒，提前终止",
+                )
                 return
 
             self.env[var_name] = v
@@ -829,6 +851,7 @@ class _PreviewRuntime:
                 strict=self.strict,
                 unknown_command_policy=self.unknown_command_policy,
                 quality=self.quality,
+                wall_clock_limit=self.wall_clock_limit,
             )
             if self._setup_script:
                 inner.execute(self._setup_script, mode="setup")
@@ -1034,6 +1057,7 @@ class _PreviewRuntime:
                 transform=self._A,
                 name=cmd,
                 source_ref=self._source_ref_3d(line_no, cmd),
+                warn=lambda msg: self._warn(line_no, msg, command=cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -1115,6 +1139,7 @@ class _PreviewRuntime:
                 mask=mask,
                 transform=self._A,
                 source_ref=self._source_ref_3d(line_no, cmd),
+                warn=lambda msg: self._warn(line_no, msg, command=cmd),
             )
             self.result_3d.meshes.append(mesh)
             self.result_3d.wires.extend(wires)
@@ -1157,6 +1182,7 @@ class _PreviewRuntime:
             cap_top=bool(mask & 2),
             transform=self._A,
             source_ref=self._source_ref_3d(line_no, cmd),
+            warn=lambda msg: self._warn(line_no, msg, command=cmd),
         )
         self.result_3d.meshes.append(mesh)
         self.result_3d.wires.extend(wires)
@@ -1207,19 +1233,31 @@ class _PreviewRuntime:
             mesh.j.extend((b2, t2))
             mesh.k.extend((t2, t1))
 
-        if mask & 2:  # top cap centroid fan on the new top ring
-            cx = sum(p[0] for p in top_world) / n
-            cy = sum(p[1] for p in top_world) / n
-            cz = sum(p[2] for p in top_world) / n
-            c = len(mesh.x)
-            mesh.x.append(cx)
-            mesh.y.append(cy)
-            mesh.z.append(cz)
-            for i in range(span):
-                j = (i + 1) % n
-                mesh.i.append(c)
-                mesh.j.append(idx_top[i])
-                mesh.k.append(idx_top[j])
+        if mask & 2:  # top cap on the new top ring (凸→旧扇形 / 凹→耳切，P3c)
+            top2d = _project_polygon_to_plane(top_world)
+            use_earclip, tris, degraded = (False, [], False)
+            if top2d is not None:
+                use_earclip, tris, degraded = _plan_cap_triangulation(top2d)
+            if use_earclip:
+                for a, b, c in tris:
+                    mesh.i.append(idx_top[a])
+                    mesh.j.append(idx_top[b])
+                    mesh.k.append(idx_top[c])
+            else:
+                cx = sum(p[0] for p in top_world) / n
+                cy = sum(p[1] for p in top_world) / n
+                cz = sum(p[2] for p in top_world) / n
+                c = len(mesh.x)
+                mesh.x.append(cx)
+                mesh.y.append(cy)
+                mesh.z.append(cz)
+                for i in range(span):
+                    j = (i + 1) % n
+                    mesh.i.append(c)
+                    mesh.j.append(idx_top[i])
+                    mesh.k.append(idx_top[j])
+                if degraded:
+                    self._warn(0, "RULED 顶面盖帽轮廓退化（重复顶点/共线/自交），回退扇形三角化", command="RULED")
 
         top_loop = [(mesh.x[i], mesh.y[i], mesh.z[i]) for i in idx_top]
         if closed:
@@ -1859,6 +1897,240 @@ def _make_sphere_mesh(
     return _build_mesh("SPHERE", verts, faces, source_ref=source_ref), wires
 
 
+# ── 多边形盖帽三角化：凸→旧扇形 / 凹→耳切（P3c）────────────
+# 自包含、零第三方依赖（AGENTS.md 规则 8）。凸轮廓保持旧扇形逐字节不变；
+# 凹轮廓改用耳切三角化；退化轮廓（重复顶点/共线/自交）警告 + 回退旧扇形。
+
+_POLY_EPS = 1e-9
+
+
+def _orient2(a: Point2D, b: Point2D, c: Point2D) -> int:
+    """2D orientation of (a, b, c): 1 = CCW, -1 = CW, 0 = collinear."""
+    val = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    if abs(val) < _POLY_EPS:
+        return 0
+    return 1 if val > 0 else -1
+
+
+def _on_segment2(a: Point2D, b: Point2D, p: Point2D) -> bool:
+    return (
+        min(a[0], b[0]) - _POLY_EPS <= p[0] <= max(a[0], b[0]) + _POLY_EPS
+        and min(a[1], b[1]) - _POLY_EPS <= p[1] <= max(a[1], b[1]) + _POLY_EPS
+    )
+
+
+def _segments_intersect2(
+    p1: Point2D, p2: Point2D, p3: Point2D, p4: Point2D
+) -> bool:
+    """True when segments (p1,p2) and (p3,p4) cross or touch (incl. collinear
+    overlap)."""
+    d1 = _orient2(p3, p4, p1)
+    d2 = _orient2(p3, p4, p2)
+    d3 = _orient2(p1, p2, p3)
+    d4 = _orient2(p1, p2, p4)
+    if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and (
+        (d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)
+    ):
+        return True
+    if d1 == 0 and _on_segment2(p3, p4, p1):
+        return True
+    if d2 == 0 and _on_segment2(p3, p4, p2):
+        return True
+    if d3 == 0 and _on_segment2(p1, p2, p3):
+        return True
+    if d4 == 0 and _on_segment2(p1, p2, p4):
+        return True
+    return False
+
+
+def _polygon_self_intersects2(points: list[Point2D]) -> bool:
+    """O(n²) self-intersection / self-touch detection for a closed contour."""
+    n = len(points)
+    for i in range(n):
+        a1, a2 = points[i], points[(i + 1) % n]
+        for j in range(i + 1, n):
+            if j == i or (j + 1) % n == i or (i + 1) % n == j:
+                continue  # adjacent edges share an endpoint by construction
+            if _segments_intersect2(a1, a2, points[j], points[(j + 1) % n]):
+                return True
+    return False
+
+
+def _polygon_signed_area2(points: list[Point2D]) -> float:
+    """Signed shoelace area (positive = CCW in standard math coordinates)."""
+    n = len(points)
+    if n < 3:
+        return 0.0
+    total = 0.0
+    for i in range(n):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % n]
+        total += x1 * y2 - x2 * y1
+    return total / 2.0
+
+
+def _classify_polygon2(points: list[Point2D]) -> str:
+    """Classify a 2D contour.
+
+    Returns 'convex' (strictly convex: every adjacent-edge cross product has
+    the same sign and none is zero), 'concave' (simple polygon with at least
+    one reflex vertex), or 'degenerate' (duplicate vertex, collinear vertex,
+    self-intersecting contour, or zero area).
+    """
+    n = len(points)
+    if n < 3:
+        return "degenerate"
+
+    # 重复顶点（相邻，含首尾闭合重复）→ 退化
+    for i in range(n):
+        a = points[i]
+        b = points[(i + 1) % n]
+        if abs(a[0] - b[0]) <= _POLY_EPS and abs(a[1] - b[1]) <= _POLY_EPS:
+            return "degenerate"
+
+    # 共线顶点（任一相邻边叉积为零）→ 退化
+    crosses: list[float] = []
+    for i in range(n):
+        a, b, c = points[i], points[(i + 1) % n], points[(i + 2) % n]
+        cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        if abs(cross) <= _POLY_EPS:
+            return "degenerate"
+        crosses.append(cross)
+
+    if abs(_polygon_signed_area2(points)) <= _POLY_EPS:
+        return "degenerate"
+
+    if _polygon_self_intersects2(points):
+        return "degenerate"
+
+    signs = {1 if c > 0 else -1 for c in crosses}
+    if len(signs) == 1:
+        return "convex"
+    return "concave"
+
+
+def _point_in_triangle2(
+    p0: Point2D, p1: Point2D, p2: Point2D, p: Point2D
+) -> bool:
+    """True when p lies inside the triangle or on its boundary (conservative:
+    boundary counts as blocking for the ear test)."""
+    d1 = _orient2(p0, p1, p)
+    d2 = _orient2(p1, p2, p)
+    d3 = _orient2(p2, p0, p)
+    has_neg = d1 < 0 or d2 < 0 or d3 < 0
+    has_pos = d1 > 0 or d2 > 0 or d3 > 0
+    return not (has_neg and has_pos)
+
+
+def _triangulate_polygon(
+    points: list[Point2D],
+) -> list[tuple[int, int, int]] | None:
+    """Ear-clipping triangulation of a simple polygon (O(n²), fine for GDL
+    contour sizes). Returns index triples into ``points`` in CCW coordinate
+    order, or None when the polygon cannot be triangulated."""
+    n = len(points)
+    if n < 3:
+        return None
+    if abs(_polygon_signed_area2(points)) <= _POLY_EPS:
+        return None
+
+    remaining = list(range(n))
+    if _polygon_signed_area2(points) < 0:
+        remaining.reverse()  # walk CCW in coordinate space
+
+    triangles: list[tuple[int, int, int]] = []
+    guard = 0
+    max_guard = 4 * n * n + 128
+    while len(remaining) > 3:
+        guard += 1
+        if guard > max_guard:
+            return None
+        m = len(remaining)
+        clipped = False
+        for pos in range(m):
+            i0 = remaining[(pos - 1) % m]
+            i1 = remaining[pos]
+            i2 = remaining[(pos + 1) % m]
+            p0, p1, p2 = points[i0], points[i1], points[i2]
+            if _orient2(p0, p1, p2) <= 0:
+                continue  # reflex or collinear → not an ear
+            blocked = False
+            for idx in remaining:
+                if idx in (i0, i1, i2):
+                    continue
+                if _point_in_triangle2(p0, p1, p2, points[idx]):
+                    blocked = True
+                    break
+            if blocked:
+                continue
+            triangles.append((i0, i1, i2))
+            remaining.pop(pos)
+            clipped = True
+            break
+        if not clipped:
+            return None  # numerical pathology → caller falls back to fan
+    triangles.append((remaining[0], remaining[1], remaining[2]))
+    return triangles
+
+
+def _plan_cap_triangulation(
+    points2d: list[Point2D],
+) -> tuple[bool, list[tuple[int, int, int]], bool]:
+    """Decide how to triangulate a cap contour.
+
+    Returns (use_earclip, triples, degraded):
+    - use_earclip=True: triples are CCW index triples into points2d.
+    - use_earclip=False: caller must keep the old fan; degraded=True means a
+      warning should be emitted (duplicate/collinear/self-intersecting contour
+      or the ear clipping itself failed).
+    """
+    kind = _classify_polygon2(points2d)
+    if kind == "convex":
+        return False, [], False
+    if kind == "concave":
+        tris = _triangulate_polygon(points2d)
+        if tris is not None:
+            return True, tris, False
+    return False, [], True
+
+
+def _project_polygon_to_plane(
+    points3d: list[Point3D],
+) -> list[Point2D] | None:
+    """Project a (near-planar) 3D polygon onto its Newell best-fit plane.
+    Returns 2D coordinates, or None when the polygon has no definable plane
+    (zero area / collinear / too few points)."""
+    n = len(points3d)
+    if n < 3:
+        return None
+    nx = ny = nz = 0.0
+    for i in range(n):
+        p1 = points3d[i]
+        p2 = points3d[(i + 1) % n]
+        nx += (p1[1] - p2[1]) * (p1[2] + p2[2])
+        ny += (p1[2] - p2[2]) * (p1[0] + p2[0])
+        nz += (p1[0] - p2[0]) * (p1[1] + p2[1])
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if length <= _POLY_EPS:
+        return None
+    nx, ny, nz = nx / length, ny / length, nz / length
+    if abs(nx) < abs(ny) and abs(nx) < abs(nz):
+        u = (0.0, -nz, ny)
+    elif abs(ny) < abs(nz):
+        u = (nz, 0.0, -nx)
+    else:
+        u = (-ny, nx, 0.0)
+    ul = math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2])
+    if ul <= _POLY_EPS:
+        return None
+    u = (u[0] / ul, u[1] / ul, u[2] / ul)
+    v = (ny * u[2] - nz * u[1], nz * u[0] - nx * u[2], nx * u[1] - ny * u[0])
+    return [
+        (p[0] * u[0] + p[1] * u[1] + p[2] * u[2], p[0] * v[0] + p[1] * v[1] + p[2] * v[2])
+        for p in points3d
+    ]
+
+
 def _make_ruled_mesh(
     base: list[Point3D],
     top: list[Point3D],
@@ -1869,13 +2141,14 @@ def _make_ruled_mesh(
     cap_top: bool = False,
     transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
     source_ref: PreviewSourceRef | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
     """Ruled surface between two polylines of equal length (GDL RULED).
 
     ``base`` nodes are given in the local x-y plane (z=0), ``top`` nodes
     are a space curve.  Quads connect corresponding nodes; caps (when the
-    RULED mask requests them) are centroid fans, valid for star-shaped
-    polylines such as airfoil profiles.
+    RULED mask requests them) are centroid fans on convex contours and
+    ear-clipped on concave contours (P3c).
     """
     A = transform or _identity3()
     n = len(base)
@@ -1891,25 +2164,54 @@ def _make_ruled_mesh(
         faces.append((b1, b2, t2))
         faces.append((b1, t2, t1))
 
+    # 盖帽三角化计划：凸→旧扇形；凹→耳切（base 在 z=0 平面直接取 (x,y)；
+    # top 是空间曲线，投影到 Newell 拟合平面再判）。
+    cap_base_earclip, cap_base_tris, cap_base_degraded = (False, [], False)
     if cap_base:
-        cx = sum(p[0] for p in base) / n
-        cy = sum(p[1] for p in base) / n
-        cz = sum(p[2] for p in base) / n
-        verts.append(_apply_affine((cx, cy, cz), A, offset))
-        c = len(verts) - 1
-        for i in range(span):
-            j = (i + 1) % n
-            faces.append((c, j, i))
+        cap_base_earclip, cap_base_tris, cap_base_degraded = _plan_cap_triangulation(
+            [(p[0], p[1]) for p in base]
+        )
+    cap_top_earclip, cap_top_tris, cap_top_degraded = (False, [], False)
+    if cap_top:
+        top2d = _project_polygon_to_plane(top)
+        if top2d is not None:
+            cap_top_earclip, cap_top_tris, cap_top_degraded = _plan_cap_triangulation(
+                top2d
+            )
+        else:
+            cap_top_degraded = True
+
+    if cap_base:
+        if cap_base_earclip:
+            for a, b, c in cap_base_tris:
+                faces.append((a, c, b))  # 底盖：法向朝下（与旧扇形一致）
+        else:
+            cx = sum(p[0] for p in base) / n
+            cy = sum(p[1] for p in base) / n
+            cz = sum(p[2] for p in base) / n
+            verts.append(_apply_affine((cx, cy, cz), A, offset))
+            c = len(verts) - 1
+            for i in range(span):
+                j = (i + 1) % n
+                faces.append((c, j, i))
+            if cap_base_degraded and warn is not None:
+                warn("RULED 底面盖帽轮廓退化（重复顶点/共线/自交），回退扇形三角化")
 
     if cap_top:
-        cx = sum(p[0] for p in top) / n
-        cy = sum(p[1] for p in top) / n
-        cz = sum(p[2] for p in top) / n
-        verts.append(_apply_affine((cx, cy, cz), A, offset))
-        c = len(verts) - 1
-        for i in range(span):
-            j = (i + 1) % n
-            faces.append((c, n + i, n + j))
+        if cap_top_earclip:
+            for a, b, c in cap_top_tris:
+                faces.append((n + a, n + b, n + c))  # 顶盖：法向朝上
+        else:
+            cx = sum(p[0] for p in top) / n
+            cy = sum(p[1] for p in top) / n
+            cz = sum(p[2] for p in top) / n
+            verts.append(_apply_affine((cx, cy, cz), A, offset))
+            c = len(verts) - 1
+            for i in range(span):
+                j = (i + 1) % n
+                faces.append((c, n + i, n + j))
+            if cap_top_degraded and warn is not None:
+                warn("RULED 顶面盖帽轮廓退化（重复顶点/共线/自交），回退扇形三角化")
 
     wires: list[list[Point3D]] = []
     base_loop = [verts[i] for i in range(n)]
@@ -1930,6 +2232,7 @@ def _make_prism_mesh(
     transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
     name: str = "PRISM_",
     source_ref: PreviewSourceRef | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
     A = transform or _identity3()
     n = len(points)
@@ -1948,13 +2251,22 @@ def _make_prism_mesh(
         faces.append((bi, bj, tj))
         faces.append((bi, tj, ti))
 
-    # Bottom fan
-    for i in range(1, n - 1):
-        faces.append((0, i + 1, i))
+    # 盖帽：凸轮廓保持旧扇形逐字节不变；凹轮廓耳切（P3c）。
+    use_earclip, tris, degraded = _plan_cap_triangulation(points)
+    if use_earclip:
+        for a, b, c in tris:
+            faces.append((a, c, b))  # 底盖：法向朝下
+            faces.append((n + a, n + b, n + c))  # 顶盖：法向朝上
+    else:
+        # Bottom fan
+        for i in range(1, n - 1):
+            faces.append((0, i + 1, i))
 
-    # Top fan
-    for i in range(1, n - 1):
-        faces.append((n, n + i, n + i + 1))
+        # Top fan
+        for i in range(1, n - 1):
+            faces.append((n, n + i, n + i + 1))
+        if degraded and warn is not None:
+            warn(f"{name} 轮廓退化（重复顶点/共线/自交），盖帽回退扇形三角化")
 
     wires: list[list[Point3D]] = []
     wires.append(base + [base[0]])
@@ -1973,6 +2285,7 @@ def _make_tube_mesh(
     mask: int = 127,
     transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
     source_ref: PreviewSourceRef | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
     """Sweep a 2D section along a 3D path (GDL TUBE_).
 
@@ -2044,28 +2357,43 @@ def _make_tube_mesh(
             faces.append((a, b, c))
             faces.append((a, c, d))
 
+    # 盖帽三角化计划：凸→旧质心扇形；凹→耳切（section 是局部 2D 轮廓，直接
+    # 在 (u,v) 空间判定，索引映射回截面环顶点）。
+    use_earclip, tris, degraded = _plan_cap_triangulation(section)
+
     # Start cap (mask bit 1)
     if mask & 1 and n_sec >= 3:
-        cx = sum(verts_local[j][0] for j in range(n_sec)) / n_sec
-        cy = sum(verts_local[j][1] for j in range(n_sec)) / n_sec
-        cz = sum(verts_local[j][2] for j in range(n_sec)) / n_sec
-        verts.append(_apply_affine((cx, cy, cz), A, offset))
-        c = len(verts) - 1
-        for j in range(n_sec):
-            j_next = (j + 1) % n_sec
-            faces.append((c, j_next, j))
+        if use_earclip:
+            for a, b, c in tris:
+                faces.append((a, c, b))  # 起始盖：与旧扇形同向（法向朝内）
+        else:
+            cx = sum(verts_local[j][0] for j in range(n_sec)) / n_sec
+            cy = sum(verts_local[j][1] for j in range(n_sec)) / n_sec
+            cz = sum(verts_local[j][2] for j in range(n_sec)) / n_sec
+            verts.append(_apply_affine((cx, cy, cz), A, offset))
+            c = len(verts) - 1
+            for j in range(n_sec):
+                j_next = (j + 1) % n_sec
+                faces.append((c, j_next, j))
 
     # End cap (mask bit 2)
+    base = (n_path - 1) * n_sec
     if mask & 2 and n_sec >= 3:
-        base = (n_path - 1) * n_sec
-        cx = sum(verts_local[base + j][0] for j in range(n_sec)) / n_sec
-        cy = sum(verts_local[base + j][1] for j in range(n_sec)) / n_sec
-        cz = sum(verts_local[base + j][2] for j in range(n_sec)) / n_sec
-        verts.append(_apply_affine((cx, cy, cz), A, offset))
-        c = len(verts) - 1
-        for j in range(n_sec):
-            j_next = (j + 1) % n_sec
-            faces.append((c, base + j, base + j_next))
+        if use_earclip:
+            for a, b, c in tris:
+                faces.append((base + a, base + b, base + c))
+        else:
+            cx = sum(verts_local[base + j][0] for j in range(n_sec)) / n_sec
+            cy = sum(verts_local[base + j][1] for j in range(n_sec)) / n_sec
+            cz = sum(verts_local[base + j][2] for j in range(n_sec)) / n_sec
+            verts.append(_apply_affine((cx, cy, cz), A, offset))
+            c = len(verts) - 1
+            for j in range(n_sec):
+                j_next = (j + 1) % n_sec
+                faces.append((c, base + j, base + j_next))
+
+    if degraded and warn is not None and (mask & 1 or mask & 2) and n_sec >= 3:
+        warn("TUBE 截面轮廓退化（重复顶点/共线/自交），盖帽回退扇形三角化")
 
     wires: list[list[Point3D]] = []
     wires.append([verts[j] for j in range(n_sec)] + [verts[0]])
