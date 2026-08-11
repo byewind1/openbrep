@@ -418,7 +418,7 @@ class LLMAdapter:
         completion_kwargs = {
             "model": model,
             "messages": msg_dicts,
-            "temperature": self.config.temperature,
+            "temperature": self._effective_temperature(resolved),
             "max_tokens": self.config.max_tokens,
             "timeout": self.config.timeout,
             "stream": True,
@@ -529,7 +529,7 @@ class LLMAdapter:
         completion_kwargs = {
             "model": model,
             "messages": msg_dicts,
-            "temperature": self.config.temperature,
+            "temperature": self._effective_temperature(resolved),
             "max_tokens": self.config.max_tokens,
             "timeout": self.config.timeout,
             "stream": False,
@@ -664,7 +664,7 @@ class LLMAdapter:
         completion_kwargs = {
             "model": model,
             "messages": messages,
-            "temperature": self.config.temperature,
+            "temperature": self._effective_temperature(resolved),
             "max_tokens": self.config.max_tokens,
             "timeout": self.config.timeout,
             "stream": True,
@@ -745,6 +745,13 @@ class LLMAdapter:
             return self.config.resolve_extra_body(resolved.configured_model)
         except Exception:
             return dict(self.config.extra_body or {})
+
+    def _effective_temperature(self, resolved: _ResolvedModelTarget) -> float:
+        """本次调用生效的 temperature：provider 条目级覆盖顶层（config.resolve_temperature）。"""
+        try:
+            return self.config.resolve_temperature(resolved.configured_model)
+        except Exception:
+            return float(self.config.temperature)
 
     def _resolve_model_target(self, model: str | None = None) -> _ResolvedModelTarget:
         configured_model = str(model or self.config.model or "").strip()

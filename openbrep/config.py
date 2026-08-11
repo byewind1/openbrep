@@ -342,6 +342,9 @@ def provider_entry_to_toml(entry: dict) -> dict:
     native_prefix = str(normalized.get("native_prefix") or "").strip()
     if native_prefix:
         out["native_prefix"] = native_prefix
+    temperature = normalized.get("temperature")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        out["temperature"] = temperature
     extra_body = normalized.get("extra_body")
     if isinstance(extra_body, dict) and extra_body:
         out["extra_body"] = extra_body
@@ -527,6 +530,22 @@ class LLMConfig:
         if self.api_base:
             return self.api_base
         return None
+
+    def resolve_temperature(self, model: str | None = None) -> float:
+        """解析某次调用生效的 temperature：provider 条目级 > 顶层。
+
+        端点对 temperature 的约束可能与 thinking 模式绑定（实测：kimi-k2.6
+        关思考时只允许 0.6、开思考只允许 1；k2.7-code 只允许 1），
+        条目级 temperature 与 extra_body 配套配置。
+        """
+        target_model = model or self.model
+        custom_match = self._find_custom_provider_match(target_model)
+        if custom_match is not None:
+            provider = custom_match.get("provider") or {}
+            entry_temp = provider.get("temperature") if isinstance(provider, dict) else None
+            if isinstance(entry_temp, (int, float)) and not isinstance(entry_temp, bool):
+                return float(entry_temp)
+        return float(self.temperature)
 
     def resolve_extra_body(self, model: str | None = None) -> dict:
         """解析某次调用生效的 extra_body：provider 条目级 > 顶层。

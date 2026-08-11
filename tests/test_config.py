@@ -705,3 +705,36 @@ extra_body = { thinking = { type = "disabled" } }
                 reloaded.llm.resolve_extra_body("kimi-k2.6"),
                 {"thinking": {"type": "disabled"}},
             )
+
+    def test_provider_temperature_overrides_top_level(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "kimi-k2.6"
+temperature = 0.2
+
+[[llm.providers]]
+name = "kimi-vision"
+api = "https://api.moonshot.cn/v1"
+api_key = "ms-key"
+models = ["kimi-k2.6"]
+temperature = 0.6
+extra_body = { thinking = { type = "disabled" } }
+
+[[llm.providers]]
+name = "kimi-code"
+api = "https://api.moonshot.cn/v1"
+api_key = "ms-key"
+models = ["kimi-k2.7-code"]
+'''.strip(), encoding="utf-8")
+
+            config = GDLAgentConfig.load(str(config_path))
+            # 条目级 temperature 覆盖顶层（kimi 端点 thinking 模式绑定 temperature 约束）
+            self.assertEqual(config.llm.resolve_temperature("kimi-k2.6"), 0.6)
+            # 条目无 temperature → 回退顶层
+            self.assertEqual(config.llm.resolve_temperature("kimi-k2.7-code"), 0.2)
+
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.llm.resolve_temperature("kimi-k2.6"), 0.6)

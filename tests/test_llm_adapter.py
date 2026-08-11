@@ -779,3 +779,21 @@ class TestUnifiedProviderResolution(unittest.TestCase):
         adapter = LLMAdapter(config)
         resolved = adapter._resolve_model_target("deepseek-v4-flash")
         self.assertEqual(adapter._effective_extra_body(resolved), {"thinking": {"type": "disabled"}})
+
+    def test_provider_level_temperature_overrides_top_level_in_adapter(self):
+        """adapter 侧生效逻辑：provider 条目级 temperature 覆盖顶层（kimi 端点约束配套）。"""
+        config = LLMConfig(
+            model="kimi-k2.6",
+            temperature=0.2,
+            custom_providers=[{
+                "name": "kimi-vision",
+                "api": "https://api.moonshot.cn/v1",
+                "api_key": "ms-key",
+                "models": ["kimi-k2.6"],
+                "temperature": 0.6,
+                "extra_body": {"thinking": {"type": "disabled"}},
+            }],
+        )
+        adapter = LLMAdapter(config)
+        resolved = adapter._resolve_model_target("kimi-k2.6")
+        self.assertEqual(adapter._effective_temperature(resolved), 0.6)
