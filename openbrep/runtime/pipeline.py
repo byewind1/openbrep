@@ -66,6 +66,19 @@ from openbrep.revisions import create_revision, get_latest_revision_id, is_hsf_p
 from openbrep.vision.image_to_plan import analyze_reference_image, visual_structure_to_gdl_hint
 
 
+# ── 多图摄取通道（Vision Harness S0，P5a）──────────────────
+# ImageRef 契约见设计文档 §6：token 与用户文本中的 [图N] 引用对应；
+# path 由后端读取后置 None（防泄露进 prompt）；b64/mime 为预处理后的字节。
+
+
+@dataclass
+class ImageRef:
+    token: str = ""                  # "图1" / "图2"，与用户文本中的 [图N] 引用对应
+    path: Optional[str] = None       # 本地路径来源（后端读取后置 None，防泄露进 prompt）
+    b64: str = ""                    # base64 图像字节（预处理后）
+    mime: str = "image/png"          # MIME（image/png / image/jpeg / image/webp）
+
+
 # ── Modify-specific skill instructions ───────────────────
 # These are prepended to skills_text for MODIFY/DEBUG tasks.
 # They ride in the ## TASK STRATEGY section of the system prompt.
@@ -134,6 +147,7 @@ class TaskRequest:
     should_cancel: Optional[Callable[[], bool]] = None
     image_b64: Optional[str] = None
     image_mime: str = "image/png"
+    images: list[ImageRef] = field(default_factory=list)  # 新：有序多图（P5a），仅非空时走多图通道
     assistant_settings: str = ""           # injected into GDL system prompt
     on_event: Optional[Callable] = None    # progress callback (event_type, data) -> None
     compare_compile: str = "off"           # off / mock / real
@@ -252,7 +266,7 @@ class TaskPipeline:
             request.intent = self.router.classify(
                 request.user_input,
                 has_project=request.project is not None,
-                has_image=bool(request.image_path or request.image_b64),
+                has_image=bool(request.image_path or request.image_b64 or request.images),
             )
 
         # 2. Apply agent-loop default policy
@@ -457,6 +471,14 @@ class TaskPipeline:
                 if img_path.suffix.lower() in (".jpg", ".jpeg"):
                     image_mime = "image/jpeg"
 
+        # ── 多图通道（P5a）：仅当 request.images 非空时生效的新路径 ────────
+        # 单图旧字段（image_b64 / image_path）存在时完全走旧路径，不经过这里。
+        multi_images: list[ImageRef] = []
+        if request.images and not image_b64:
+            from openbrep.vision.multi_image import resolve_and_preprocess
+
+            multi_images = resolve_and_preprocess(request.images)
+
         on_event = request.on_event or (lambda *_: None)
         debug_mode = request.intent == "DEBUG"
 
@@ -475,6 +497,29 @@ class TaskPipeline:
             except Exception as exc:
                 logger.warning("Vision pre-analysis failed, falling back to direct vision: %s", exc)
                 # fallback: 原始 instruction + image，行为与 Phase 1 之前一致
+        elif multi_images and request.intent in ("CREATE", "IMAGE"):
+            # 多图：对每张图顺序调用现有 analyze_reference_image（prompt 一字不改），
+            # 各图 hint 以 【图N】 前缀标注后拼入 enriched_instruction。
+            try:
+                on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
+                hint_parts: list[str] = []
+                for idx, img in enumerate(multi_images, start=1):
+                    if not img.b64:
+                        logger.warning("multi_image: skip image %s (no bytes after read)", img.token or idx)
+                        continue
+                    try:
+                        vs = analyze_reference_image(img.b64, img.mime, request.user_input, llm)
+                        gdl_hint = visual_structure_to_gdl_hint(vs)
+                        hint_parts.append(f"【图{idx}】\n{gdl_hint}")
+                        on_event("vision_analysis_done", {"component_type": vs.component_type, "image_index": idx})
+                        logger.info("Vision pre-analysis done for image %d: %s", idx, vs.component_type)
+                    except Exception as exc:
+                        logger.warning("Vision pre-analysis failed for image %d: %s", idx, exc)
+                        # 该图降级为直传，其余图照常
+                if hint_parts:
+                    enriched_instruction = f"{request.user_input}\n\n" + "\n\n".join(hint_parts)
+            except Exception as exc:
+                logger.warning("Multi-image pre-analysis failed, falling back to direct vision: %s", exc)
         # ─────────────────────────────────────────────────────────────────────
 
         object_plan = None
@@ -591,6 +636,8 @@ class TaskPipeline:
             history=request.history,
             image_b64=image_b64,
             image_mime=image_mime,
+            # 多图通道：仅 images 非空时生效（生成调用改用多图 content 数组）
+            images=[{"b64": img.b64, "mime": img.mime, "token": img.token} for img in multi_images if img.b64],
         )
 
         # Strip markdown fences the LLM sometimes leaks into scripts
@@ -948,7 +995,7 @@ class TaskPipeline:
 
         if (request.intent or "MODIFY") != "MODIFY":
             return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
-        if request.image_path or request.image_b64:
+        if request.image_path or request.image_b64 or request.images:
             return None
         project = request.project
         if project is None or not project.parameters:
@@ -1084,7 +1131,7 @@ class TaskPipeline:
 
         if (request.intent or "MODIFY") != "MODIFY":
             return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
-        if request.image_path or request.image_b64:
+        if request.image_path or request.image_b64 or request.images:
             return None
         project = request.project
         if project is None or not project.parameters:
@@ -1137,7 +1184,7 @@ class TaskPipeline:
 
         if (request.intent or "MODIFY") != "MODIFY":
             return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
-        if request.image_path or request.image_b64:
+        if request.image_path or request.image_b64 or request.images:
             return None
         project = request.project
         if project is None or not project.parameters:
@@ -1370,6 +1417,13 @@ class TaskPipeline:
 
         on_event = request.on_event or (lambda *_: None)
 
+        # 多图通道（P5a）：路径来源读取 + 预处理（仅 images 非空时生效；旧字段不受影响）
+        multi_images: list[ImageRef] = []
+        if request.images and not request.image_b64:
+            from openbrep.vision.multi_image import resolve_and_preprocess
+
+            multi_images = resolve_and_preprocess(request.images)
+
         agent = GDLAgent(
             llm=llm,
             compiler=compiler,
@@ -1391,6 +1445,12 @@ class TaskPipeline:
             last_code_context=request.last_code_context,
             image_b64=request.image_b64,
             image_mime=request.image_mime,
+            # MODIFY/DEBUG：维持现状语义（图作上下文直传），扩为多图数组
+            images=[
+                {"b64": img.b64, "mime": img.mime, "token": img.token}
+                for img in multi_images
+                if img.b64
+            ],
         )
 
         cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}

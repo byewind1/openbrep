@@ -26,6 +26,7 @@ dependencies = [
     "tomli>=2.0.0; python_version < '3.11'",
     "toml>=0.10.2",
     "mcp>=2.0.0",
+    "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]

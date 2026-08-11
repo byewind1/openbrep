@@ -404,6 +404,8 @@ export interface AssistantMessage {
   thinkingSteps?: AssistantThinkingStep[]
   // MODIFY 验收报告（V5）：结果卡渲染摘要 + 前后几何对比
   acceptance?: ModifyAcceptance
+  // 已发送图片（仅当前会话内存活，与 changedFiles 同语义；用于消息气泡缩略 chip）
+  images?: AssistantImageAttachment[]
 }
 
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────
@@ -490,6 +492,8 @@ export interface AssistantImageAttachment {
   name: string
   mime: string
   b64: string
+  /** 本地路径来源（如 /Users/ren/pic.jpg）；前端不校验，发送后由后端报错指名路径 */
+  path?: string
 }
 
 export interface AssistantResult {

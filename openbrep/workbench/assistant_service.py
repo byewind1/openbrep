@@ -19,7 +19,7 @@ from openbrep.explainer.service import (
 )
 from openbrep.feedback import append_feedback
 from openbrep.learning import ErrorLearningStore
-from openbrep.runtime.pipeline import TaskRequest
+from openbrep.runtime.pipeline import ImageRef, TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_service import validate_image_payload
 from openbrep.workbench.view_models import classify_code_blocks, classify_vision_error
@@ -160,7 +160,7 @@ class WorkbenchAssistantService:
         # 照常交付（verification 报告会如实显示 FAIL），避免丢掉用户的生成结果
         if not result.success and result.project is None and not (result.plain_text or result.scripts):
             error = result.error or "Generation failed."
-            if image_payload["image_b64"]:
+            if image_payload["image_b64"] or image_payload.get("images"):
                 error = classify_vision_error(Exception(error))
             return {"ok": False, "error": error, "events": events}
 
@@ -370,7 +370,7 @@ class WorkbenchAssistantService:
                 result = pipeline.execute(request)
                 if not result.success and result.project is None and not (result.plain_text or result.scripts):
                     error = result.error or "Generation failed."
-                    if image_payload["image_b64"]:
+                    if image_payload["image_b64"] or image_payload.get("images"):
                         error = classify_vision_error(Exception(error))
                     q.put({"type": "error", "data": {"error": error}})
                     return
@@ -438,6 +438,10 @@ class WorkbenchAssistantService:
             gsm_name=self.session.project.name,
             image_b64=image_payload["image_b64"],
             image_mime=image_payload["image_mime"],
+            images=[
+                ImageRef(token=str(img["token"]), path=img["path"], b64=str(img["b64"]), mime=str(img["mime"]))
+                for img in image_payload.get("images") or []
+            ],
             assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
             history=list(body.get("history") or []),
             on_event=on_event,

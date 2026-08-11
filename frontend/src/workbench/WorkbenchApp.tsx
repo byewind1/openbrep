@@ -395,7 +395,7 @@ export function WorkbenchApp() {
             onApplyTapirParameters={() => void applyTapirParameters()}
             hasProject={!!project}
             interruptedContext={interruptedContext}
-            onChat={(message, image) => void sendChat(message, image)}
+            onChat={(message, images) => void sendChat(message, images)}
             onStop={stopChat}
             onClearAssistantHistory={() => void clearAssistantHistory()}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}

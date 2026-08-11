@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useMemo } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, SkillProposal, VerificationReport } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
-import { validateAssistantImageFile } from './assistantImage'
+import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
 import { PanelEmpty } from './PanelEmpty'
 import { useT } from '../i18n'
@@ -12,7 +12,7 @@ interface AssistantPanelProps {
   busy: boolean
   hasProject: boolean
   interruptedContext?: { message: string; intent: string } | null
-  onChat: (message: string, image?: AssistantImageAttachment | null) => void
+  onChat: (message: string, images?: AssistantImageAttachment[]) => void
   onStop: () => void
   onClearHistory: () => void
   onAdoptCode: (index: number) => void
@@ -28,6 +28,11 @@ interface AssistantPanelProps {
   // 模式级 skill 提案（P2-d）：待确认提案 + 沉淀/忽略回调
   pendingSkillProposal?: SkillProposal | null
   onConfirmSkillProposal?: (approve: boolean) => void
+}
+
+/** 面板内带 token 的已贴图片（token 与草稿里的 [图N] 对应，按 attach 顺序递增）。 */
+interface AttachedImage extends AssistantImageAttachment {
+  token: string
 }
 
 const SLASH_COMMANDS = [
@@ -55,7 +60,7 @@ export function AssistantPanel({
   onConfirmSkillProposal,
 }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
-  const [image, setImage] = useState<AssistantImageAttachment | null>(null)
+  const [attachments, setAttachments] = useState<AttachedImage[]>([])
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const t = useT()
@@ -96,8 +101,11 @@ export function AssistantPanel({
     const message = draft.trim()
     if (!message) return
     setDraft('')
-    onChat(message, image)
-    setImage(null)
+    onChat(
+      message,
+      attachments.map(({ token: _token, ...img }) => img),
+    )
+    setAttachments([])
   }
 
   // P4-C 空态：示例提示词只填入输入框，不自动发送
@@ -146,6 +154,13 @@ export function AssistantPanel({
     } else {
       setPickerMode(null)
     }
+    // 输入本地路径文本：拖尾为完整绝对路径（/ ~ 或盘符开头 + 图片扩展名）→ 转 chip
+    const trimmed = value.trim()
+    const trailing = trimmed.split(/\s+/).pop() ?? ''
+    if (trailing && isImagePathText(trailing)) {
+      setDraft(trimmed.slice(0, -trailing.length).trimEnd())
+      attachPathImage(trailing)
+    }
   }
 
   // ── Picker helpers ────────────────────────────────────────────────────────
@@ -185,27 +200,114 @@ export function AssistantPanel({
     }
   }
 
-  function attachImage(file: File | null) {
+  // ── 多图贴图（P5a）：粘贴 / 拖入 / 本地路径 ─────────────────────────────
+  /** 下一个 token 编号：取现存 token 数字后缀的最大值 + 1（删除中间项后不复用编号，避免 token 撞车）。 */
+  function nextTokenBase(): number {
+    return attachments.reduce((max, a) => {
+      const n = Number(a.token.replace('图', ''))
+      return Number.isFinite(n) ? Math.max(max, n) : max
+    }, 0)
+  }
+
+  function attachPathImage(pathText: string) {
     setImageError('')
-    if (!file) return
-    const error = validateAssistantImageFile(file)
-    if (error) {
-      setImageError(error)
+    if (attachments.length >= MAX_ASSISTANT_IMAGES) {
+      setImageError(`最多 ${MAX_ASSISTANT_IMAGES} 张图片。`)
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = String(reader.result || '')
-      const comma = result.indexOf(',')
-      setImage({
-        name: file.name,
-        mime: file.type || 'image/png',
-        b64: comma >= 0 ? result.slice(comma + 1) : result,
-      })
-    }
-    reader.onerror = () => setImageError('Image read failed')
-    reader.readAsDataURL(file)
+    const trimmed = pathText.trim()
+    const token = `图${nextTokenBase() + 1}`
+    setAttachments((prev) => [
+      ...prev,
+      { name: trimmed, path: trimmed, mime: '', b64: '', token },
+    ])
+    setDraft((prev) => `${prev}[${token}]`)
   }
+
+  async function attachFiles(files: File[] | null) {
+    if (!files || !files.length) return
+    setImageError('')
+    const room = MAX_ASSISTANT_IMAGES - attachments.length
+    if (files.length > room) {
+      setImageError(
+        `最多 ${MAX_ASSISTANT_IMAGES} 张图片（已有 ${attachments.length} 张，最多再添 ${room} 张）。`,
+      )
+      return
+    }
+    const validated: AssistantImageAttachment[] = []
+    for (const file of files) {
+      const error = validateAssistantImageFile(file)
+      if (error) {
+        setImageError(`${file.name}: ${error}`)
+        continue
+      }
+      const attachment = await readFileAsAttachment(file)
+      if (attachment) validated.push(attachment)
+    }
+    if (!validated.length) return
+    const base = nextTokenBase()
+    const tokens = validated.map((_, i) => `图${base + i + 1}`)
+    setAttachments((prev) => [...prev, ...validated.map((img, i) => ({ ...img, token: tokens[i] }))])
+    setDraft((prev) => prev + tokens.map((token) => `[${token}]`).join(''))
+  }
+
+  function readFileAsAttachment(file: File): Promise<AssistantImageAttachment | null> {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = String(reader.result || '')
+        const comma = result.indexOf(',')
+        resolve({
+          name: file.name,
+          mime: file.type || 'image/png',
+          b64: comma >= 0 ? result.slice(comma + 1) : result,
+        })
+      }
+      reader.onerror = () => {
+        setImageError('Image read failed')
+        resolve(null)
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  function removeAttachment(token: string) {
+    setAttachments((prev) => prev.filter((a) => a.token !== token))
+    setDraft((prev) => prev.replace(`[${token}]`, ''))
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = event.clipboardData?.items
+    if (!items) return
+    const imageFiles: File[] = []
+    for (const item of items) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (file) imageFiles.push(file)
+      }
+    }
+    if (imageFiles.length) {
+      event.preventDefault()
+      void attachFiles(imageFiles)
+      return
+    }
+    const text = event.clipboardData.getData('text/plain')
+    if (isImagePathText(text)) {
+      event.preventDefault()
+      attachPathImage(text)
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent) {
+    event.preventDefault()
+  }
+
+  function handleDrop(event: React.DragEvent) {
+    event.preventDefault()
+    const files = Array.from(event.dataTransfer?.files ?? [])
+    if (files.length) void attachFiles(files)
+  }
+
 
   return (
     <aside className="assistant-panel">
@@ -239,6 +341,20 @@ export function AssistantPanel({
                 ) : null}
               </span>
               <p>{message.content}</p>
+              {message.role === 'user' && message.images?.length ? (
+                <div className="assistant-message-images">
+                  {message.images.map((img, i) => (
+                    <span className="assistant-message-image-chip" key={`${attachmentLabel(img)}-${i}`} title={attachmentLabel(img)}>
+                      {img.b64 ? (
+                        <img src={`data:${img.mime || 'image/png'};base64,${img.b64}`} alt={attachmentLabel(img)} />
+                      ) : (
+                        <span className="assistant-message-image-icon">📁</span>
+                      )}
+                      <em>{attachmentLabel(img)}</em>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {message.role === 'assistant' && message.thinkingSteps ? (
                 <AssistantThinkingTimeline
                   steps={message.thinkingSteps}
@@ -304,7 +420,7 @@ export function AssistantPanel({
           <SkillProposalCard proposal={pendingSkillProposal} busy={busy} onConfirm={onConfirmSkillProposal} />
         ) : null}
       </div>
-      <form className="assistant-input" onSubmit={submitMessage}>
+      <form className="assistant-input" aria-label="Assistant input" onSubmit={submitMessage} onDragOver={handleDragOver} onDrop={handleDrop}>
         <div className="assistant-input-wrap">
           {pickerMode === 'commands' && visibleCommands.length > 0 && (
             <div className="slash-picker" role="listbox" aria-label="命令列表">
@@ -379,8 +495,39 @@ export function AssistantPanel({
             disabled={modelSwitching}
             onChange={(event) => handleDraftChange(event.currentTarget.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
           />
         </div>
+        {attachments.length ? (
+          <div className="assistant-attachment-chips">
+            {attachments.map((img) => (
+              <span className={`assistant-image-chip${img.path ? ' is-path' : ''}`} key={img.token}>
+                {img.b64 ? (
+                  <img
+                    className="assistant-image-chip-thumb"
+                    src={`data:${img.mime || 'image/png'};base64,${img.b64}`}
+                    alt=""
+                  />
+                ) : (
+                  <span className="assistant-image-chip-icon">📁</span>
+                )}
+                <span className="assistant-image-chip-label">
+                  {img.token}: {attachmentLabel(img)}
+                </span>
+                <button
+                  type="button"
+                  className="assistant-image-chip-remove"
+                  disabled={busy}
+                  aria-label={`Remove image ${img.token}`}
+                  title={`移除 ${img.token}`}
+                  onClick={() => removeAttachment(img.token)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div className="assistant-attachment-row">
           <label className="assistant-attach-button">
             Attach image
@@ -389,22 +536,18 @@ export function AssistantPanel({
               aria-label="Attach image"
               accept="image/png,image/jpeg,image/webp"
               disabled={busy}
-              onChange={(event) => attachImage(event.currentTarget.files?.[0] ?? null)}
+              onChange={(event) => {
+                void attachFiles(Array.from(event.currentTarget.files ?? []))
+                event.currentTarget.value = ''
+              }}
             />
           </label>
-          {image ? (
-            <button
-              type="button"
-              className="assistant-image-chip"
-              disabled={busy}
-              aria-label={`Remove image ${image.name}`}
-              onClick={() => setImage(null)}
-            >
-              {image.name}
-            </button>
+          {attachments.length ? (
+            <span className="assistant-attach-count">{attachments.length}/{MAX_ASSISTANT_IMAGES}</span>
           ) : (
-            <span>{imageError || 'No image'}</span>
+            <span>{'Paste, drop, or type a local image path'}</span>
           )}
+          {imageError ? <span className="assistant-attach-error">{imageError}</span> : null}
         </div>
         <div className="assistant-footer-row">
           {detectedIntent && !busy && (

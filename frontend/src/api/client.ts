@@ -309,7 +309,7 @@ export async function exportHsfProject(parentDir = '', name = ''): Promise<HsfEx
 export async function createProjectFromPrompt(
   message: string,
   assistantSettings = '',
-  image?: AssistantImageAttachment | null,
+  images: AssistantImageAttachment[] = [],
   signal?: AbortSignal,
 ): Promise<CreateProjectResult> {
   return requestJson<CreateProjectResult>(
@@ -320,7 +320,7 @@ export async function createProjectFromPrompt(
       body: JSON.stringify({
         prompt: message,
         assistant_settings: assistantSettings,
-        ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+        ...assistantImagesPayload(images),
       }),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
@@ -795,7 +795,7 @@ export async function clearProjectMemory(): Promise<ClearProjectMemoryResult> {
 export async function generateWithAssistant(
   message: string,
   assistantSettings = '',
-  image?: AssistantImageAttachment | null,
+  images: AssistantImageAttachment[] = [],
   signal?: AbortSignal,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
@@ -806,7 +806,7 @@ export async function generateWithAssistant(
       body: JSON.stringify({
         message,
         assistant_settings: assistantSettings,
-        ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+        ...assistantImagesPayload(images),
       }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
@@ -890,7 +890,7 @@ async function readAssistantStream(
 export async function generateWithAssistantStream(
   message: string,
   assistantSettings = '',
-  image?: AssistantImageAttachment | null,
+  images: AssistantImageAttachment[] = [],
   onEvent?: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<GenerateResult> {
@@ -901,7 +901,7 @@ export async function generateWithAssistantStream(
       message,
       assistant_settings: assistantSettings,
       stream: true,
-      ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+      ...assistantImagesPayload(images),
     }),
     signal,
   })
@@ -912,7 +912,7 @@ export async function generateWithAssistantStream(
 export async function requestModifyPlan(
   message: string,
   assistantSettings = '',
-  image?: AssistantImageAttachment | null,
+  images: AssistantImageAttachment[] = [],
   signal?: AbortSignal,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
@@ -926,7 +926,7 @@ export async function requestModifyPlan(
         intent: 'MODIFY',
         confirm_plan: true,
         stream: false,
-        ...(image ? { image_b64: image.b64, image_mime: image.mime } : {}),
+        ...assistantImagesPayload(images),
       }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
@@ -1083,4 +1083,20 @@ export const fallbackProjectGitStatus = {
   dirty: false,
   changes: [],
   last_commit: '',
+}
+
+/**
+ * 多图请求体序列化（P5a）：有序 images 数组 [{b64?, mime?, path?}]。
+ * 旧 image_b64/image_mime 字段逻辑保留在后端（旧字段存在时行为与现在完全一致）；
+ * 新前端只发 images。空数组时不带任何图片字段（与旧无图请求一致）。
+ */
+function assistantImagesPayload(images: AssistantImageAttachment[]) {
+  if (!images.length) return {}
+  return {
+    images: images.map((img) => ({
+      ...(img.b64 ? { b64: img.b64 } : {}),
+      ...(img.mime ? { mime: img.mime } : {}),
+      ...(img.path ? { path: img.path } : {}),
+    })),
+  }
 }

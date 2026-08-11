@@ -329,6 +329,7 @@ class GDLAgent:
         history: Optional[list] = None,
         image_b64: Optional[str] = None,
         image_mime: str = "image/png",
+        images: Optional[list] = None,
     ) -> tuple[dict, str]:
         """
         Generate code changes OR plain-text analysis WITHOUT compiling.
@@ -379,6 +380,28 @@ class GDLAgent:
                 text_prompt=image_prompt,
                 image_b64=image_b64,
                 image_mime=image_mime,
+                system_prompt=messages[0]["content"],
+                max_tokens=4096,
+            )
+        elif images:
+            # 多图通道（P5a）：图作上下文直传（CREATE 已含 hint，此处双通道送原图），
+            # 上下文压平方式与单图路径一致，生成调用改用多图 content 数组。
+            flattened_parts = []
+            for msg in messages[1:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if content:
+                    flattened_parts.append(f"[{role}]\n{content}")
+
+            image_prompt = "\n\n".join(flattened_parts + [
+                "请结合以上参考图与上下文进行分析，并按用户要求生成/修改 GDL 源码。"
+            ])
+            raw = self.llm.generate_with_images(
+                text_prompt=image_prompt,
+                images=[
+                    {"b64": str(img.get("b64") or ""), "mime": str(img.get("mime") or "image/png")}
+                    for img in images
+                ],
                 system_prompt=messages[0]["content"],
                 max_tokens=4096,
             )

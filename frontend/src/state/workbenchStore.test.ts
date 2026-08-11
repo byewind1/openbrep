@@ -1931,8 +1931,8 @@ test('createProjectFromPrompt passes image attachments to the API', async () => 
   let capturedImage = null
   const store = createWorkbenchStore(
     makeApi({
-      createProjectFromPrompt: async (_message, _assistantSettings, image) => {
-        capturedImage = image
+      createProjectFromPrompt: async (_message, _assistantSettings, images) => {
+        capturedImage = images
         return {
           ok: true,
           assistant: {
@@ -1951,18 +1951,14 @@ test('createProjectFromPrompt passes image attachments to the API', async () => 
     }),
   )
 
-  await store.getState().createProjectFromPrompt('照图生成书架', {
-    name: 'shelf.png',
-    mime: 'image/png',
-    b64: 'ZmFrZS1pbWFnZQ==',
-  })
+  await store.getState().createProjectFromPrompt('照图生成书架', [
+    { name: 'shelf.png', mime: 'image/png', b64: 'ZmFrZS1pbWFnZQ==' },
+  ])
 
-  expect(capturedImage).toEqual({
-    name: 'shelf.png',
-    mime: 'image/png',
-    b64: 'ZmFrZS1pbWFnZQ==',
-  })
-  expect(store.getState().assistantMessages[0].content).toContain('[image: shelf.png]')
+  expect(capturedImage).toEqual([
+    { name: 'shelf.png', mime: 'image/png', b64: 'ZmFrZS1pbWFnZQ==' },
+  ])
+  expect(store.getState().assistantMessages[0].content).toContain('[图: shelf.png]')
 })
 
 test('generate assistant message refreshes preview and records changed files', async () => {
@@ -2012,8 +2008,8 @@ test('generateAssistantChanges passes image attachments to the API', async () =>
   let capturedImage = null
   const store = createWorkbenchStore(
     makeApi({
-      generateWithAssistant: async (_message, _assistantSettings, image) => {
-        capturedImage = image
+      generateWithAssistant: async (_message, _assistantSettings, images) => {
+        capturedImage = images
         return {
           ok: true,
           assistant: {
@@ -2029,18 +2025,14 @@ test('generateAssistantChanges passes image attachments to the API', async () =>
     }),
   )
 
-  await store.getState().generateAssistantChanges('按图调整', {
-    name: 'chair.jpg',
-    mime: 'image/jpeg',
-    b64: 'ZmFrZS1pbWFnZQ==',
-  })
+  await store.getState().generateAssistantChanges('按图调整', [
+    { name: 'chair.jpg', mime: 'image/jpeg', b64: 'ZmFrZS1pbWFnZQ==' },
+  ])
 
-  expect(capturedImage).toEqual({
-    name: 'chair.jpg',
-    mime: 'image/jpeg',
-    b64: 'ZmFrZS1pbWFnZQ==',
-  })
-  expect(store.getState().assistantMessages[0].content).toContain('[image: chair.jpg]')
+  expect(capturedImage).toEqual([
+    { name: 'chair.jpg', mime: 'image/jpeg', b64: 'ZmFrZS1pbWFnZQ==' },
+  ])
+  expect(store.getState().assistantMessages[0].content).toContain('[图: chair.jpg]')
 })
 
 test('generateAssistantChanges shows an explicit thinking message while the request is running', async () => {
@@ -2054,11 +2046,9 @@ test('generateAssistantChanges shows an explicit thinking message while the requ
     }),
   )
 
-  const turn = store.getState().generateAssistantChanges('按图调整', {
-    name: 'chair.jpg',
-    mime: 'image/jpeg',
-    b64: 'ZmFrZS1pbWFnZQ==',
-  })
+  const turn = store.getState().generateAssistantChanges('按图调整', [
+    { name: 'chair.jpg', mime: 'image/jpeg', b64: 'ZmFrZS1pbWFnZQ==' },
+  ])
 
   expect(store.getState().assistantBusy).toBe(true)
   expect(store.getState().assistantMessages.at(-1)?.content).toContain('Thinking...')
@@ -2092,11 +2082,9 @@ test('generateAssistantChanges exposes image generation failures as lastError', 
     }),
   )
 
-  await store.getState().generateAssistantChanges('按图调整', {
-    name: 'chair.png',
-    mime: 'image/png',
-    b64: 'ZmFrZS1pbWFnZQ==',
-  })
+  await store.getState().generateAssistantChanges('按图调整', [
+    { name: 'chair.png', mime: 'image/png', b64: 'ZmFrZS1pbWFnZQ==' },
+  ])
 
   expect(store.getState().lastError).toBe(error)
   expect(store.getState().assistantMessages.at(-1)).toEqual({
@@ -2118,6 +2106,26 @@ test('generateAssistantChanges labels llm configuration errors', async () => {
 
   expect(store.getState().lastError).toBe(`LLM settings error: ${error}`)
   expect(store.getState().assistantMessages.at(-1)?.content).toBe(`LLM settings error: ${error}`)
+})
+
+test('path image backend error surfaces with the named path (P5a)', async () => {
+  const pathError = 'Image path does not exist: /Users/ren/missing.png'
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async (_message, _settings, images) => {
+        // 路径贴图前端无法预校验，后端报错必须指名路径
+        expect(images).toEqual([{ name: '/Users/ren/missing.png', mime: '', b64: '', path: '/Users/ren/missing.png' }])
+        return { ok: false, error: pathError }
+      },
+    }),
+  )
+
+  await store.getState().generateAssistantChanges('按这张图改', [
+    { name: '/Users/ren/missing.png', mime: '', b64: '', path: '/Users/ren/missing.png' },
+  ])
+
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('/Users/ren/missing.png')
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('Image path does not exist')
 })
 
 test('generateAssistantChanges saves dirty editor buffers before calling the LLM', async () => {

@@ -20,14 +20,14 @@ describe('AssistantPanel', () => {
     render(<AssistantPanel {...baseProps} hasProject onChat={onChat} />)
 
     fireEvent.change(screen.getByLabelText('Attach image'), { target: { files: [file] } })
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove image shelf.png' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove image 图1' })).toBeTruthy())
 
-    fireEvent.change(screen.getByLabelText('Ask or generate'), { target: { value: '按图调整比例' } })
+    fireEvent.change(screen.getByLabelText('Ask or generate'), { target: { value: '按图调整比例[图1]' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     expect(onChat).toHaveBeenCalledWith(
-      '按图调整比例',
-      expect.objectContaining({ name: 'shelf.png', mime: 'image/png', b64: expect.any(String) }),
+      '按图调整比例[图1]',
+      [expect.objectContaining({ name: 'shelf.png', mime: 'image/png', b64: expect.any(String) })],
     )
   })
 
@@ -41,7 +41,7 @@ describe('AssistantPanel', () => {
     expect(onChat).not.toHaveBeenCalled()
 
     fireEvent.keyDown(ta, { key: 'Enter', shiftKey: false })
-    expect(onChat).toHaveBeenCalledWith('测试消息', null)
+    expect(onChat).toHaveBeenCalledWith('测试消息', [])
   })
 
   test('shows stop button when busy and ESC calls onStop', () => {
@@ -125,6 +125,133 @@ describe('AssistantPanel', () => {
     )
     expect(screen.getByText('LLM settings')).toBeTruthy()
     expect(screen.getByText('已中断')).toBeTruthy()
+  })
+})
+
+
+describe('AssistantPanel multi-image intake (P5a)', () => {
+  test('paste image data appends [图1] token and renders a chip', async () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    const ta = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    const file = new File(['png-bytes'], 'pasted.png', { type: 'image/png' })
+    fireEvent.paste(ta, {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+    })
+    await waitFor(() => expect(screen.getByText(/图1: pasted.png/)).toBeTruthy())
+    expect(ta.value).toContain('[图1]')
+  })
+
+  test('drag-and-drop files append ordered tokens and chips', async () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    const form = screen.getByRole('form')
+    const files = [
+      new File(['a'], 'a.png', { type: 'image/png' }),
+      new File(['b'], 'b.jpg', { type: 'image/jpeg' }),
+    ]
+    fireEvent.drop(form, { dataTransfer: { files } })
+
+    await waitFor(() => expect(screen.getByText(/图1: a.png/)).toBeTruthy())
+    expect(screen.getByText(/图2: b.jpg/)).toBeTruthy()
+    const ta = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    expect(ta.value).toBe('[图1][图2]')
+  })
+
+  test('pasting a local absolute path attaches a path chip', async () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    const ta = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    fireEvent.paste(ta, {
+      clipboardData: { getData: () => '/Users/ren/pic.jpg', items: [] },
+    })
+    await waitFor(() => expect(screen.getByText(/图1: \/Users\/ren\/pic\.jpg/)).toBeTruthy())
+    expect(ta.value).toContain('[图1]')
+  })
+
+  test('typing a local absolute path converts to a path chip', async () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    const ta = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/Users/ren/pic.jpg' } })
+    await waitFor(() => expect(screen.getByText(/图1: \/Users\/ren\/pic\.jpg/)).toBeTruthy())
+    expect(ta.value).not.toContain('/Users/ren/pic.jpg')
+    expect(ta.value).toContain('[图1]')
+  })
+
+  test('rejects more than 4 attachments', async () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    const ta = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    const files = Array.from({ length: 5 }, (_, i) => new File([`${i}`], `f${i}.png`, { type: 'image/png' }))
+    fireEvent.change(screen.getByLabelText('Attach image'), { target: { files } })
+
+    await waitFor(() => expect(screen.getByText(/最多 4 张图片（已有 0 张，最多再添 4 张）。/)).toBeTruthy())
+    expect(ta.value).not.toContain('[图5]')
+  })
+
+  test('removing a chip strips its [图N] token from the draft', async () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    const ta = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    const files = [
+      new File(['a'], 'a.png', { type: 'image/png' }),
+      new File(['b'], 'b.png', { type: 'image/png' }),
+    ]
+    fireEvent.change(screen.getByLabelText('Attach image'), { target: { files } })
+    await waitFor(() => expect(screen.getByText(/图2: b.png/)).toBeTruthy())
+    expect(ta.value).toBe('[图1][图2]')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove image 图1' }))
+    expect(ta.value).toBe('[图2]')
+    expect(screen.queryByText(/图1: a.png/)).toBeNull()
+  })
+
+  test('send payload keeps attach order', async () => {
+    const onChat = vi.fn()
+    render(<AssistantPanel {...baseProps} onChat={onChat} />)
+
+    const files = [
+      new File(['a'], 'first.png', { type: 'image/png' }),
+      new File(['b'], 'second.png', { type: 'image/png' }),
+    ]
+    fireEvent.change(screen.getByLabelText('Attach image'), { target: { files } })
+    await waitFor(() => expect(screen.getByText(/图2: second.png/)).toBeTruthy())
+
+    fireEvent.change(screen.getByLabelText('Ask or generate'), { target: { value: '[图1][图2] 按图2的纹样做' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    const [sentMessage, sentImages] = onChat.mock.calls[0] as [string, Array<{ name: string }>]
+    expect(sentMessage).toContain('[图1]')
+    expect(sentMessage).toContain('[图2]')
+    expect(sentImages.map((img) => img.name)).toEqual(['first.png', 'second.png'])
+  })
+
+  test('renders read-only thumbnail chips on user messages with images', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        messages={[
+          {
+            role: 'user',
+            content: '按图2的纹样做[图1][图2]',
+            images: [
+              { name: 'outline.png', mime: 'image/png', b64: 'aGVsbG8=' },
+              { name: '/Users/ren/pattern.jpg', mime: '', b64: '', path: '/Users/ren/pattern.jpg' },
+            ],
+          },
+        ]}
+      />,
+    )
+    expect(screen.getByText('outline.png')).toBeTruthy()
+    expect(screen.getByText('/Users/ren/pattern.jpg')).toBeTruthy()
+    expect(screen.getByAltText('outline.png')).toBeTruthy()
   })
 })
 

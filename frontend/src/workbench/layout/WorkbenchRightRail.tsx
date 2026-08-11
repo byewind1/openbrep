@@ -42,7 +42,7 @@ interface WorkbenchRightRailProps {
   onApplyTapirParameters: () => void
   hasProject: boolean
   interruptedContext?: { message: string; intent: string } | null
-  onChat: (message: string, image?: AssistantImageAttachment | null) => void
+  onChat: (message: string, images?: AssistantImageAttachment[]) => void
   onStop: () => void
   onClearAssistantHistory: () => void
   onAdoptAssistantCode: (index: number) => void

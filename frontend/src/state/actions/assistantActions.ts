@@ -2,6 +2,7 @@ import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingS
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
+import { attachmentLabel } from '../../components/assistantImage'
 import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 /** P2a ghost 快照原因：任务前（i18n key，zh/en 见 locales） */
@@ -67,8 +68,9 @@ function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep
 }
 
 export function createAssistantActions({ api, get, set }: WorkbenchActionContext) {
-  function userMessageContent(message: string, image?: AssistantImageAttachment | null) {
-    return image ? `${message}\n[image: ${image.name}]` : message
+  function userMessageContent(message: string, images?: AssistantImageAttachment[] | null) {
+    const labels = (images ?? []).map((img) => attachmentLabel(img)).join(', ')
+    return images && images.length ? `${message}\n[图: ${labels}]` : message
   }
 
   async function persistAssistantHistory() {
@@ -135,19 +137,23 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     }
   }
 
-  async function _createProject(message: string, image: AssistantImageAttachment | null = null, signal?: AbortSignal) {
+  async function _createProject(
+    message: string,
+    images: AssistantImageAttachment[] = [],
+    signal?: AbortSignal,
+  ) {
     const trimmed = message.trim()
     if (!trimmed) return
     set((state) => ({
       assistantBusy: true,
       assistantMessages: [
         ...state.assistantMessages,
-        { role: 'user', content: userMessageContent(trimmed, image) },
-        { role: 'assistant', content: pendingAssistantMessage('create', image) },
+        { role: 'user', content: userMessageContent(trimmed, images), images: images.length ? images : undefined },
+        { role: 'assistant', content: pendingAssistantMessage('create', images) },
       ],
     }))
     const epoch = get().projectEpoch
-    const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, image, signal)
+    const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, images, signal)
     if (projectSwitchedSince(epoch)) {
       discardStaleResult(
         result.ok && result.project
@@ -284,19 +290,19 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       await persistAssistantHistory()
     },
 
-    async createProjectFromPrompt(message: string, image: AssistantImageAttachment | null = null) {
-      return _createProject(message, image)
+    async createProjectFromPrompt(message: string, images: AssistantImageAttachment[] = []) {
+      return _createProject(message, images)
     },
 
-    async generateAssistantChanges(message: string, image: AssistantImageAttachment | null = null) {
+    async generateAssistantChanges(message: string, images: AssistantImageAttachment[] = []) {
       const trimmed = message.trim()
       if (!trimmed) return
       set((state) => ({
         assistantBusy: true,
         assistantMessages: [
           ...state.assistantMessages,
-          { role: 'user', content: userMessageContent(trimmed, image) },
-          { role: 'assistant', content: pendingAssistantMessage('generate', image) },
+          { role: 'user', content: userMessageContent(trimmed, images), images: images.length ? images : undefined },
+          { role: 'assistant', content: pendingAssistantMessage('generate', images) },
         ],
       }))
       // 生成基于磁盘上的 HSF，先把编辑器手改落盘，否则会被生成结果静默覆盖
@@ -310,7 +316,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       const epoch = get().projectEpoch
-      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, image)
+      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, images)
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Generation result discarded: project switched during the request.')
         return
@@ -347,7 +353,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // ── Unified chat entry point ───────────────────────────────────────────
     // Detects intent → routes to explain / generate / create.
     // Supports AbortController for ESC / stop-button interruption.
-    async sendChat(message: string, image: AssistantImageAttachment | null = null) {
+    async sendChat(message: string, images: AssistantImageAttachment[] = []) {
       const trimmed = message.trim()
       if (!trimmed) return
 
@@ -378,16 +384,16 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         if (intent === 'create') {
           // createProjectFromPrompt manages its own pending messages;
           // pass signal so the stop button can abort project creation too.
-          await _createProject(finalMessage, image, controller.signal)
+          await _createProject(finalMessage, images, controller.signal)
         } else if (intent === 'modify') {
           // 计划确认门（V3）：MODIFY 先出非代码语言计划，用户确认后才执行
           const settings = get().llmSettings.assistant_settings ?? ''
-          const initialContent = pendingAssistantMessage('generate', image)
+          const initialContent = pendingAssistantMessage('generate', images)
           set((state) => ({
             assistantBusy: true,
             assistantMessages: [
               ...state.assistantMessages,
-              { role: 'user', content: userMessageContent(finalMessage, image) },
+              { role: 'user', content: userMessageContent(finalMessage, images), images: images.length ? images : undefined },
               { role: 'assistant', content: initialContent, thinkingSteps: [] },
             ],
           }))
@@ -401,7 +407,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           const epoch = get().projectEpoch
-          const planResult = await api.requestModifyPlan(finalMessage, settings, image, controller.signal)
+          const planResult = await api.requestModifyPlan(finalMessage, settings, images, controller.signal)
           if (projectSwitchedSince(epoch)) {
             discardStaleResult('Generation result discarded: project switched during the request.')
             return
@@ -430,16 +436,16 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           // 计划失败回落 / micro_modify / V1 DSL 命中：直接展示执行结果
-          await finishModifyStream(planResult, epoch, pendingAssistantMessage('generate', image), [])
+          await finishModifyStream(planResult, epoch, pendingAssistantMessage('generate', images), [])
         } else if (intent === 'debug') {
           // DEBUG 不走确认门：默认走 agent loop 流式路径，实时显示每一步事件
           const settings = get().llmSettings.assistant_settings ?? ''
-          const initialContent = pendingAssistantMessage('generate', image)
+          const initialContent = pendingAssistantMessage('generate', images)
           set((state) => ({
             assistantBusy: true,
             assistantMessages: [
               ...state.assistantMessages,
-              { role: 'user', content: userMessageContent(finalMessage, image) },
+              { role: 'user', content: userMessageContent(finalMessage, images), images: images.length ? images : undefined },
               { role: 'assistant', content: initialContent, thinkingSteps: [] },
             ],
           }))
@@ -458,7 +464,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           const result = await api.generateWithAssistantStream(
             finalMessage,
             settings,
-            image,
+            images,
             (event: AssistantStreamEvent) => {
               const step = eventToThinkingStep(event)
               if (step) {
@@ -605,18 +611,20 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
   }
 }
 
-function pendingAssistantMessage(action: 'explain' | 'create' | 'generate', image?: AssistantImageAttachment | null) {
+function pendingAssistantMessage(action: 'explain' | 'create' | 'generate', images?: AssistantImageAttachment[] | null) {
+  const labels = (images ?? []).map((img) => attachmentLabel(img)).join(', ')
+  const imageStep = images && images.length ? `Reading the attached reference image: ${labels}.` : null
   const steps =
     action === 'generate'
       ? [
           'Inspecting the loaded HSF project.',
-          image ? `Reading the attached reference image: ${image.name}.` : 'Preparing generation context.',
+          imageStep ?? 'Preparing generation context.',
           'Calling the configured LLM.',
           'Applying returned GDL changes and refreshing preview.',
         ]
       : action === 'create'
         ? [
-            image ? `Reading the attached reference image: ${image.name}.` : 'Preparing a new HSF project plan.',
+            imageStep ?? 'Preparing a new HSF project plan.',
             'Calling the configured LLM.',
             'Writing generated HSF source.',
             'Building the initial preview.',

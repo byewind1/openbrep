@@ -22,6 +22,7 @@ from openbrep.workbench.view_models import classify_vision_error
 
 
 MAX_WORKBENCH_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_WORKBENCH_IMAGES = 4
 SUPPORTED_WORKBENCH_IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp"}
 _DEMO_PROJECT: HSFProject | None = None
 UNTITLED_PROJECT_NAME = "Untitled GDL Object"
@@ -412,12 +413,13 @@ class WorkbenchProjectSessionService:
         result = pipeline.execute(
             TaskRequest(
                 user_input=prompt,
-                intent="IMAGE" if image_payload["image_b64"] else "CREATE",
+                intent="IMAGE" if (image_payload["image_b64"] or image_payload["images"]) else "CREATE",
                 work_dir=str(output_root),
                 output_dir=str(output_root),
                 gsm_name=project_name,
                 image_b64=image_payload["image_b64"],
                 image_mime=image_payload["image_mime"],
+                images=_image_refs_from_payload(image_payload["images"]),
                 assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
                 history=list(body.get("history") or []),
                 on_event=on_event,
@@ -427,7 +429,7 @@ class WorkbenchProjectSessionService:
         # verification 报告会如实显示 FAIL；只有无产出才算硬失败
         if result.project is None:
             error = result.error or "Create failed."
-            if image_payload["image_b64"]:
+            if image_payload["image_b64"] or image_payload["images"]:
                 error = classify_vision_error(Exception(error))
             return {"ok": False, "error": error, "events": events}
 
@@ -680,27 +682,97 @@ def project_name_from_prompt(prompt: str) -> str:
 
 
 def validate_image_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """校验请求体中的图片负载。
+
+    旧单图字段（image_b64 / image_mime）：原样保留、原逻辑、逐字节零变化——
+    只要旧字段存在就走旧路径，不经过任何新逻辑。
+
+    新多图通道（images 数组，仅当旧字段不存在时生效）：逐张校验
+    （b64 合法 / mime ∈ png,jpeg,webp / 解码后 ≤5MB / path 存在且可读 / 总数 ≤4），
+    路径不存在时 error 指名具体路径。
+    """
     image_b64 = str(body.get("image_b64") or "").strip()
-    if not image_b64:
-        return {"ok": True, "image_b64": None, "image_mime": "image/png"}
-
     image_mime = str(body.get("image_mime") or "image/png").strip().lower()
-    if image_mime not in SUPPORTED_WORKBENCH_IMAGE_MIMES:
-        supported = ", ".join(sorted(SUPPORTED_WORKBENCH_IMAGE_MIMES))
-        return {"ok": False, "error": f"Unsupported image type: {image_mime}. Supported: {supported}."}
 
-    try:
-        raw = base64.b64decode(image_b64, validate=True)
-    except (binascii.Error, ValueError):
-        return {"ok": False, "error": "Invalid image data: expected base64 payload."}
+    if image_b64:
+        if image_mime not in SUPPORTED_WORKBENCH_IMAGE_MIMES:
+            supported = ", ".join(sorted(SUPPORTED_WORKBENCH_IMAGE_MIMES))
+            return {"ok": False, "error": f"Unsupported image type: {image_mime}. Supported: {supported}."}
 
-    if len(raw) > MAX_WORKBENCH_IMAGE_BYTES:
-        size_mb = len(raw) / (1024 * 1024)
+        try:
+            raw = base64.b64decode(image_b64, validate=True)
+        except (binascii.Error, ValueError):
+            return {"ok": False, "error": "Invalid image data: expected base64 payload."}
+
+        if len(raw) > MAX_WORKBENCH_IMAGE_BYTES:
+            size_mb = len(raw) / (1024 * 1024)
+            return {
+                "ok": False,
+                "error": f"Image is too large ({size_mb:.1f} MB). Please compress it to 5 MB or less.",
+            }
+        return {"ok": True, "image_b64": image_b64, "image_mime": image_mime, "images": []}
+
+    # ── 新多图通道（旧字段不存在时才生效）──
+    raw_images = body.get("images")
+    if not isinstance(raw_images, list) or not raw_images:
+        return {"ok": True, "image_b64": None, "image_mime": "image/png", "images": []}
+
+    if len(raw_images) > MAX_WORKBENCH_IMAGES:
         return {
             "ok": False,
-            "error": f"Image is too large ({size_mb:.1f} MB). Please compress it to 5 MB or less.",
+            "error": f"Too many images: {len(raw_images)}. Max {MAX_WORKBENCH_IMAGES} images per request.",
         }
-    return {"ok": True, "image_b64": image_b64, "image_mime": image_mime}
+
+    validated: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_images, start=1):
+        if not isinstance(item, dict):
+            return {"ok": False, "error": f"Invalid image entry #{index}: expected an object."}
+        path = str(item.get("path") or "").strip()
+        b64 = str(item.get("b64") or "").strip()
+        mime = str(item.get("mime") or "image/png").strip().lower()
+
+        if path:
+            # 路径来源：webview 无 fs 权限，读取发生在 Python 侧；这里先做存在性/可读性校验
+            img_path = Path(path).expanduser()
+            if not img_path.exists():
+                return {"ok": False, "error": f"Image path does not exist: {path}"}
+            if not img_path.is_file():
+                return {"ok": False, "error": f"Image path is not a file: {path}"}
+            try:
+                with img_path.open("rb") as fh:
+                    fh.read(1)
+            except OSError as exc:
+                return {"ok": False, "error": f"Image path is not readable: {path} ({exc})"}
+            validated.append({"token": f"图{index}", "path": path, "b64": "", "mime": mime})
+        else:
+            if not b64:
+                return {"ok": False, "error": f"Image #{index}: missing both b64 and path."}
+            if mime not in SUPPORTED_WORKBENCH_IMAGE_MIMES:
+                supported = ", ".join(sorted(SUPPORTED_WORKBENCH_IMAGE_MIMES))
+                return {"ok": False, "error": f"Unsupported image type: {mime}. Supported: {supported}."}
+            try:
+                raw = base64.b64decode(b64, validate=True)
+            except (binascii.Error, ValueError):
+                return {"ok": False, "error": f"Invalid image data for image #{index}: expected base64 payload."}
+            if len(raw) > MAX_WORKBENCH_IMAGE_BYTES:
+                size_mb = len(raw) / (1024 * 1024)
+                return {
+                    "ok": False,
+                    "error": f"Image #{index} is too large ({size_mb:.1f} MB). Please compress it to 5 MB or less.",
+                }
+            validated.append({"token": f"图{index}", "path": None, "b64": b64, "mime": mime})
+
+    return {"ok": True, "image_b64": None, "image_mime": "image/png", "images": validated}
+
+
+def _image_refs_from_payload(validated_images: list[dict[str, Any]]) -> list:
+    """校验后的 images 数组 → TaskRequest.images（ImageRef 列表）。"""
+    from openbrep.runtime.pipeline import ImageRef
+
+    return [
+        ImageRef(token=str(img.get("token") or ""), path=img.get("path"), b64=str(img.get("b64") or ""), mime=str(img.get("mime") or "image/png"))
+        for img in validated_images
+    ]
 
 
 def unique_project_name(base_name: str, work_dir: Path) -> str:

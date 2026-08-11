@@ -607,6 +607,34 @@ class LLMAdapter:
             image_mime:  MIME type, e.g. "image/jpeg", "image/png".
             system_prompt: Optional system message prepended to the call.
         """
+        # 薄封装：单图调用方零改动；实际实现为多图通道的单个元素调用。
+        return self.generate_with_images(
+            text_prompt=text_prompt,
+            images=[{"b64": image_b64, "mime": image_mime}],
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+    def generate_with_images(
+        self,
+        text_prompt: str,
+        images: list,
+        system_prompt: str | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """
+        Call LLM with an ordered list of base64-encoded images + text prompt.
+
+        content 数组按序拼多个 image_url + text（litellm 原生支持，同一
+        OpenAI-compatible 格式；providers 的翻译逻辑与 generate_with_image
+        完全一致）。单图调用（images 长度为 1）产出的消息与旧
+        generate_with_image 逐字节一致。
+
+        Args:
+            text_prompt: User text accompanying the images.
+            images:      Ordered list of {"b64": str, "mime": str} dicts.
+            system_prompt: Optional system message prepended to the call.
+        """
         if self._litellm is None:
             raise RuntimeError(
                 "litellm is not installed. Install it with: pip install litellm"
@@ -620,16 +648,16 @@ class LLMAdapter:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
 
-        messages.append({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
-                },
-                {"type": "text", "text": text_prompt},
-            ],
-        })
+        content: list = []
+        for img in images:
+            image_b64 = str(img.get("b64") or "")
+            image_mime = str(img.get("mime") or "image/jpeg").strip().lower()
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
+            })
+        content.append({"type": "text", "text": text_prompt})
+        messages.append({"role": "user", "content": content})
 
         completion_kwargs = {
             "model": model,
@@ -659,11 +687,12 @@ class LLMAdapter:
         completion_kwargs.update(kwargs)
 
         start_time = time.perf_counter()
+        total_b64_len = sum(len(str(img.get("b64") or "")) for img in images)
         logger.info(
-            "LLM vision call started model=%s image_mime=%s image_b64_len=%d prompt_len=%d",
+            "LLM vision call started model=%s image_count=%d image_b64_len=%d prompt_len=%d",
             model,
-            image_mime,
-            len(image_b64),
+            len(images),
+            total_b64_len,
             len(text_prompt or ""),
         )
         try:
@@ -671,10 +700,10 @@ class LLMAdapter:
         except Exception as exc:
             elapsed = time.perf_counter() - start_time
             logger.warning(
-                "LLM vision call failed model=%s image_mime=%s image_b64_len=%d prompt_len=%d elapsed=%.2fs error=%s",
+                "LLM vision call failed model=%s image_count=%d image_b64_len=%d prompt_len=%d elapsed=%.2fs error=%s",
                 model,
-                image_mime,
-                len(image_b64),
+                len(images),
+                total_b64_len,
                 len(text_prompt or ""),
                 elapsed,
                 exc.__class__.__name__,
@@ -689,19 +718,19 @@ class LLMAdapter:
         if not response.choices:
             raise RuntimeError("LLM returned empty choices list — possible rate limit or content filter")
         logger.info(
-            "LLM vision call finished model=%s image_mime=%s image_b64_len=%d prompt_len=%d elapsed=%.2fs",
+            "LLM vision call finished model=%s image_count=%d image_b64_len=%d prompt_len=%d elapsed=%.2fs",
             model,
-            image_mime,
-            len(image_b64),
+            len(images),
+            total_b64_len,
             len(text_prompt or ""),
             time.perf_counter() - start_time,
         )
         choice = response.choices[0]
-        content = choice.message.content or ""
-        if not content.strip():
+        content_text = choice.message.content or ""
+        if not content_text.strip():
             self._raise_if_reasoning_only(choice)
         return LLMResponse(
-            content=content,
+            content=content_text,
             model=response.model or self.config.model,
             usage=dict(response.usage) if response.usage else {},
             finish_reason=choice.finish_reason or "",

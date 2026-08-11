@@ -101,7 +101,7 @@ export interface WorkbenchApi {
   createProjectFromPrompt: (
     message: string,
     assistantSettings?: string,
-    image?: AssistantImageAttachment | null,
+    images?: AssistantImageAttachment[],
     signal?: AbortSignal,
   ) => Promise<CreateProjectResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
@@ -147,20 +147,20 @@ export interface WorkbenchApi {
   generateWithAssistant: (
     message: string,
     assistantSettings?: string,
-    image?: AssistantImageAttachment | null,
+    images?: AssistantImageAttachment[],
     signal?: AbortSignal,
   ) => Promise<GenerateResult>
   generateWithAssistantStream: (
     message: string,
     assistantSettings?: string,
-    image?: AssistantImageAttachment | null,
+    images?: AssistantImageAttachment[],
     onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
     signal?: AbortSignal,
   ) => Promise<GenerateResult>
   requestModifyPlan: (
     message: string,
     assistantSettings?: string,
-    image?: AssistantImageAttachment | null,
+    images?: AssistantImageAttachment[],
     signal?: AbortSignal,
   ) => Promise<GenerateResult>
   confirmModifyPlan: (
@@ -271,7 +271,7 @@ export interface WorkbenchState {
   testLlmConnection: () => Promise<LlmConnectionTestResult>
   switchLlmModel: (model: string) => Promise<void>
   saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
-  sendChat: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
+  sendChat: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   stopChat: () => void
   confirmPendingPlan: (approve: boolean) => Promise<void>
   confirmPendingSkillProposal: (approve: boolean) => Promise<void>
@@ -289,8 +289,8 @@ export interface WorkbenchState {
   clearAssistantHistory: () => Promise<void>
   adoptAssistantMessageCode: (index: number) => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
-  createProjectFromPrompt: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
-  generateAssistantChanges: (message: string, image?: AssistantImageAttachment | null) => Promise<void>
+  createProjectFromPrompt: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
+  generateAssistantChanges: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   setDraftParameter: (name: string, value: unknown) => Promise<void>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<boolean>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<boolean>
