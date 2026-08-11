@@ -319,7 +319,9 @@ class WorkbenchSettingsService:
         test_config = copy.deepcopy(self.session.config)
         test_config.llm.model = model
         test_config.llm.assistant_settings = str(body.get("assistant_settings") or self.session.assistant_settings)
-        test_config.llm.max_tokens = min(test_config.llm.max_tokens, 16)
+        # 连接测试省 token 但不能砍太狠：强制思考的模型（如 kimi-k2.7-code）
+        # 需要 reasoning 余量，max_tokens=8/16 会只出思考不出正文，误报失败
+        test_config.llm.max_tokens = min(test_config.llm.max_tokens, 1024)
         test_config.llm.timeout = min(test_config.llm.timeout, 20)
         apply_llm_credentials_to_config(
             test_config,
@@ -330,10 +332,11 @@ class WorkbenchSettingsService:
 
         start = time.perf_counter()
         try:
+            # 不压 temperature=0：端点约束与 thinking 模式绑定（kimi-k2.6 关思考
+            # 只允许 0.6、k2.7-code 只允许 1），硬塞 0 会 400 误报。temperature
+            # 交给 adapter 按 provider 条目级/顶层解析（与生产调用同一行为）。
             response = self.llm_adapter_factory(test_config.llm).generate(
                 [{"role": "user", "content": "Reply with OK."}],
-                temperature=0,
-                max_tokens=8,
                 timeout=20,
             )
         except Exception as exc:
