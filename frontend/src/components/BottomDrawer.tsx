@@ -1,7 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CompileIssue, MockCompileResponse } from '../api/types'
-import { countGroupedIssues, groupCompileIssuesByScript } from '../state/diagnostics'
+import {
+  countGroupedStackedIssues,
+  groupCompileIssuesByScript,
+  stackGroupedIssues,
+} from '../state/diagnostics'
 
 interface BottomDrawerProps {
   warnings: string[]
@@ -22,7 +26,16 @@ export function BottomDrawer({
   onIssueSelect,
   onRevealOutput,
 }: BottomDrawerProps) {
-  const [activeTab, setActiveTab] = useState<'compile' | 'diagnostics' | 'preview' | 'revision'>('compile')
+  const [activeTab, setActiveTab] = useState<'compile' | 'preview' | 'revision'>('compile')
+  // Track the last result we already reacted to by reference, so a stale or
+  // repeated result never drags the user off the Revision/Preview tab.
+  const lastResultRef = useRef<MockCompileResponse | null>(null)
+  if (mockCompileResult !== lastResultRef.current) {
+    lastResultRef.current = mockCompileResult
+    if (mockCompileResult && mockCompileResult.success === false) {
+      setActiveTab('compile')
+    }
+  }
   const issueGroups = groupCompileIssuesByScript(mockCompileResult?.issues ?? [])
 
   return (
@@ -30,9 +43,6 @@ export function BottomDrawer({
       <div className="drawer-tabs">
         <button className={activeTab === 'compile' ? 'active' : ''} onClick={() => setActiveTab('compile')}>
           Compile
-        </button>
-        <button className={activeTab === 'diagnostics' ? 'active' : ''} onClick={() => setActiveTab('diagnostics')}>
-          Diagnostics
         </button>
         <button className={activeTab === 'preview' ? 'active' : ''} onClick={() => setActiveTab('preview')}>
           Preview
@@ -44,7 +54,7 @@ export function BottomDrawer({
       <div className="drawer-content">
         {activeTab === 'revision' ? revisionPanel : null}
         {activeTab === 'preview' ? <PreviewLog warnings={warnings} /> : null}
-        {activeTab === 'compile' || activeTab === 'diagnostics' ? (
+        {activeTab === 'compile' ? (
           <CompileDiagnostics
             compileLog={compileLog}
             compiling={compiling}
@@ -89,8 +99,10 @@ function CompileDiagnostics({
   onIssueSelect?: (issue: CompileIssue) => void
   onRevealOutput?: (path: string) => void
 }) {
-  const errorCount = countGroupedIssues(issueGroups, 'error')
-  const warningCount = countGroupedIssues(issueGroups, 'warning')
+  const stackedGroups = stackGroupedIssues(issueGroups)
+  const errorCount = countGroupedStackedIssues(stackedGroups, 'error')
+  const warningCount = countGroupedStackedIssues(stackedGroups, 'warning')
+  const infoCount = countGroupedStackedIssues(stackedGroups, 'info')
   const statusBadge = compiling
     ? { className: 'compile-status running', label: '● Compiling…' }
     : success === true
@@ -106,11 +118,13 @@ function CompileDiagnostics({
         <span>{duration !== null ? `${duration} ms` : 'Not compiled'}</span>
       </div>
       {!compiling && error ? <p className="diagnostic-line diagnostic-error">{error}</p> : null}
-      {success && issueGroups.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
-      {issueGroups.length ? (
-        <p>
-          Diagnostics: {errorCount} errors · {warningCount} warnings · {issueGroups.length} groups
-        </p>
+      {success && stackedGroups.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
+      {stackedGroups.length ? (
+        <div className="diagnostic-pills">
+          {errorCount ? <span className="diagnostic-pill error">{plural(errorCount, 'error')}</span> : null}
+          {warningCount ? <span className="diagnostic-pill warning">{plural(warningCount, 'warning')}</span> : null}
+          {infoCount ? <span className="diagnostic-pill info">{plural(infoCount, 'info')}</span> : null}
+        </div>
       ) : null}
       {outputPath ? (
         <div className="diagnostic-output-row">
@@ -127,20 +141,23 @@ function CompileDiagnostics({
           {parameterCount !== null ? `Parameters: ${parameterCount}` : ''}
         </p>
       ) : null}
-      {issueGroups.map((group) => (
+      {stackedGroups.map((group) => (
         <div className="diagnostic-group" key={group.script}>
           <div className="diagnostic-group-heading">
             <strong>{group.script}</strong>
-            <span>{group.errors.length} errors · {group.warnings.length} warnings</span>
+            <span>
+              {plural(group.errors.length, 'error')} · {plural(group.warnings.length, 'warning')}
+            </span>
           </div>
-          {[...group.errors, ...group.warnings, ...group.infos].map((issue, index) => (
+          {[...group.errors, ...group.warnings, ...group.infos].map((entry) => (
             <button
               type="button"
-              className={`diagnostic-line ${issue.severity === 'error' ? 'diagnostic-error' : 'diagnostic-warning'}`}
-              key={`${issue.script}-${issue.line}-${index}`}
-              onClick={() => onIssueSelect?.(issue)}
+              className={`diagnostic-line ${severityClass(entry.issue.severity)}`}
+              key={`${entry.issue.script}-${entry.issue.line}-${entry.issue.message}`}
+              onClick={() => onIssueSelect?.(entry.issue)}
             >
-              {formatIssue(issue)}
+              {formatIssue(entry.issue)}
+              {entry.count > 1 ? <span className="diagnostic-stack-count">×{entry.count}</span> : null}
             </button>
           ))}
         </div>
@@ -148,6 +165,16 @@ function CompileDiagnostics({
       {compileLog.length ? compileLog.map((entry) => <p key={entry}>{entry}</p>) : null}
     </>
   )
+}
+
+function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`
+}
+
+function severityClass(severity: string) {
+  if (severity === 'error') return 'diagnostic-error'
+  if (severity === 'warning') return 'diagnostic-warning'
+  return 'diagnostic-info'
 }
 
 function formatBytes(bytes: number) {
