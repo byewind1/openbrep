@@ -514,6 +514,32 @@ def test_preview_2d_quality_chain_accepts_quality(tmp_path):
     assert response["preview"]["circles"][0]["r"] == 0.1
 
 
+def test_preview_2d_payload_includes_project2_projected_lines(tmp_path):
+    # P3a：preview_2d_payload 把 3D 脚本传进 preview_2d_script，PROJECT2
+    # 顶视图投影进入 2D payload（前端零改动，lines 直接可渲染）。
+    project = HSFProject.create_new("Project2Shelf", str(tmp_path))
+    project.set_script(ScriptType.SCRIPT_2D, "PROJECT2 3, 0, 2\n")
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK 1, 2, 3\n")
+    session = SimpleNamespace(project=project)
+    service = WorkbenchPreviewService(session)
+
+    response = service.preview_2d({})
+
+    assert response["ok"] is True
+    lines = response["preview"]["lines"]
+    # BLOCK 1,2,3 顶视图：12 棱边 + 6 三角化面对角线 = 18 条投影线
+    assert len(lines) == 18
+    assert {"from": [0.0, 0.0], "to": [1.0, 0.0]} in lines
+    assert {"from": [0.0, 0.0], "to": [1.0, 2.0]} in lines
+    # method 一次性警告走既有 warnings 通道
+    assert any("method" in w for w in response["preview"]["warnings"])
+    # 3D 脚本覆盖（editor buffer）同样流入投影
+    response = service.preview_2d({"scripts": {"3d.gdl": "BLOCK 2, 1, 1\n"}})
+    lines = response["preview"]["lines"]
+    assert {"from": [0.0, 0.0], "to": [2.0, 0.0]} in lines
+    assert all(len(line["from"]) == 2 and len(line["to"]) == 2 for line in lines)
+
+
 def test_preview_service_can_verify_dirty_editor_buffer_without_saving(tmp_path):
     project = HSFProject.create_new("DirtyPreviewShelf", str(tmp_path))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK 1, 1, 1\n")

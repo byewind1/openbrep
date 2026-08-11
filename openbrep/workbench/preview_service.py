@@ -99,6 +99,8 @@ def preview_2d_payload(
         setup_script=script_for(project, ScriptType.MASTER, scripts),
         unknown_command_policy="warn",
         quality=normalize_quality(quality),
+        # P3a：PROJECT2 顶视图投影需要 3D 脚本执行结果（同一组 scripts 覆盖）
+        script_3d=script_for(project, ScriptType.SCRIPT_3D, scripts),
     )
     return {
         "lines": [{"from": list(p1), "to": list(p2)} for p1, p2 in result.lines],

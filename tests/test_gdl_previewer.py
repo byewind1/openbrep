@@ -3,7 +3,7 @@ from pathlib import Path
 
 from openbrep import gdl_previewer
 from openbrep.gdl_parser import parse_gdl_source_with_warnings
-from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
+from openbrep.gdl_previewer import preview_2d_script, preview_3d_script, preview_scripts
 from openbrep.workbench.project_parameter_service import parameter_values
 
 
@@ -602,6 +602,217 @@ class TestGDLPreviewer2DCommands(unittest.TestCase):
         self.assertEqual(len(r2d.lines), 3)
         self.assertEqual(len(r2d.polygons), 1)
         self.assertGreaterEqual(len(r3d.meshes), 8)
+
+
+class TestGDLPreviewerProject2(unittest.TestCase):
+    """P3a：PROJECT2 顶视图投影 MVP。
+
+    语义锁定（写入代码注释的同一套）：
+    - 只支持 projection_code=3（顶视图），其他值明确警告"暂不支持"。
+    - angle：视角旋转 = 投影点反向旋转 angle 度（即旋转 −angle，
+      标准数学逆时针为正；angle=90 时投影点旋转 −90°）。
+    - method：MVP 无 hidden-line，忽略 + 一次性警告。
+    - PROJECT2{n} 扩展形态 → 明确警告，不静默。
+    - 投影算法：每 mesh 面边按顶点索引对 (min,max) 去重后投影（丢 z），
+      过 _p2 应用当前 2D 变换（ADD2/ROT2/MUL2）。MVP 不做轮廓并集 /
+      hidden-line；三角化网格的面对角线按"面边去重"规则保留。
+    - 不传 script_3d 时行为与 P3a 前逐字节一致（占位警告）。
+    """
+
+    @staticmethod
+    def _seg(line: tuple[tuple[float, float], tuple[float, float]], nd: int = 9):
+        p1 = tuple(round(v, nd) for v in line[0])
+        p2 = tuple(round(v, nd) for v in line[1])
+        return (min(p1, p2), max(p1, p2))
+
+    @staticmethod
+    def _seg_set(lines):
+        return {TestGDLPreviewerProject2._seg(line) for line in lines}
+
+    def test_project2_block_top_view_edge_count_and_coords(self):
+        # BLOCK 1,2,3：12 条真实棱边 + 6 条三角化面对角线（面边去重规则，
+        # MVP 明确保留）= 18 条线；投影矩形 (0,0)-(1,2)，4 条竖直棱退化。
+        res = preview_2d_script(
+            "PROJECT2 3, 0, 2\n", script_3d="BLOCK 1, 2, 3\n"
+        )
+        self.assertEqual(len(res.lines), 18)
+        segs = self._seg_set(res.lines)
+        # 底面/顶面矩形四条边（顶面与底面投影重合，均出现）
+        for seg in [
+            ((0.0, 0.0), (1.0, 0.0)),
+            ((1.0, 0.0), (1.0, 2.0)),
+            ((1.0, 2.0), (0.0, 2.0)),
+            ((0.0, 2.0), (0.0, 0.0)),
+        ]:
+            self.assertIn(self._seg(seg), segs)
+        # 三角化面对角线（MVP 面边去重规则保留）：底面与顶面三角化
+        # 都取 (0,0)-(1,2) 这条对角，投影后出现 2 次
+        self.assertIn(self._seg(((0.0, 0.0), (1.0, 2.0))), segs)
+        # 竖直棱投影退化：4 条零长线段
+        degenerate = [line for line in res.lines if line[0] == line[1]]
+        self.assertEqual(len(degenerate), 4)
+        # 顶视图投影不含 z 信息：无任何 y<0 或 y>2 的坐标
+        for line in res.lines:
+            for px, py in line:
+                self.assertGreaterEqual(py, 0.0)
+                self.assertLessEqual(py, 2.0)
+
+    def test_project2_angle_rotates_projection_backwards(self):
+        # 选 Archicad 语义：视角旋转 = 投影点反向旋转 angle 度（−angle）。
+        # BLOCK 1,1,1 底边 (0,0)-(1,0)：
+        #   angle=90  → (0,0)-(0,−1)
+        #   angle=270 → (0,0)-(0,1)
+        #   angle=180 → (0,0)-(−1,0)
+        for angle, expected in [
+            (90, ((0.0, 0.0), (0.0, -1.0))),
+            (270, ((0.0, 0.0), (0.0, 1.0))),
+            (180, ((0.0, 0.0), (-1.0, 0.0))),
+        ]:
+            res = preview_2d_script(
+                f"PROJECT2 3, {angle}, 2\n", script_3d="BLOCK 1, 1, 1\n"
+            )
+            self.assertIn(
+                self._seg(expected),
+                self._seg_set(res.lines),
+                f"angle={angle} 旋转语义错误",
+            )
+
+    def test_project2_respects_prior_2d_transforms(self):
+        # PROJECT2 前 ADD2/ROT2/MUL2 生效：投影点过 _p2 应用当前 2D 变换。
+        # BLOCK 1,1,1 底边 (0,0)-(1,0)。
+        res = preview_2d_script(
+            "ADD2 100, 50\nPROJECT2 3, 0, 2\n", script_3d="BLOCK 1, 1, 1\n"
+        )
+        self.assertIn(self._seg(((100.0, 50.0), (101.0, 50.0))), self._seg_set(res.lines))
+
+        # ROT2 90：逆时针旋转 90°（_rot_z_deg 标准数学方向）
+        res = preview_2d_script(
+            "ROT2 90\nPROJECT2 3, 0, 2\n", script_3d="BLOCK 1, 1, 1\n"
+        )
+        self.assertIn(self._seg(((0.0, 0.0), (0.0, 1.0))), self._seg_set(res.lines))
+
+        # ADD2 平移 + ROT2 旋转组合：先旋转后平移
+        res = preview_2d_script(
+            "ADD2 100, 50\nROT2 90\nPROJECT2 3, 0, 2\n",
+            script_3d="BLOCK 1, 1, 1\n",
+        )
+        self.assertIn(self._seg(((100.0, 50.0), (100.0, 51.0))), self._seg_set(res.lines))
+
+        # MUL2 缩放
+        res = preview_2d_script(
+            "MUL2 2, 1\nPROJECT2 3, 0, 2\n", script_3d="BLOCK 1, 1, 1\n"
+        )
+        self.assertIn(self._seg(((0.0, 0.0), (2.0, 0.0))), self._seg_set(res.lines))
+
+        # ADD2/DEL2 配对：栈平衡，无"栈未平衡"警告，投影不被平移
+        res = preview_2d_script(
+            "ADD2 100, 50\nDEL2\nPROJECT2 3, 0, 2\n",
+            script_3d="BLOCK 1, 1, 1\n",
+        )
+        self.assertIn(self._seg(((0.0, 0.0), (1.0, 0.0))), self._seg_set(res.lines))
+        self.assertFalse(any("栈未平衡" in w for w in res.warnings))
+
+    def test_project2_non_top_code_warns_not_silent(self):
+        # projection_code 只支持 3（顶视图）；其他值明确警告且不投影。
+        for code in (1, 2, 4, 5):
+            res = preview_2d_script(
+                f"PROJECT2 {code}, 0, 2\n", script_3d="BLOCK 1, 1, 1\n"
+            )
+            self.assertEqual(res.lines, [])
+            self.assertTrue(
+                any(f"投影方式 {code} 暂不支持" in w for w in res.warnings),
+                f"code={code} 应明确警告",
+            )
+            self.assertTrue(
+                any(
+                    f"投影方式 {code} 暂不支持" in w.message
+                    for w in res.warnings_structured
+                )
+            )
+
+    def test_project2_braced_extension_warns_not_silent(self):
+        # PROJECT2{2}/{3} 扩展形态：明确警告、不静默、不投影。
+        for braced in ("PROJECT2{2} 3, 0, 2", "PROJECT2{3} 3, 0, 2"):
+            res = preview_2d_script(
+                braced + "\n", script_3d="BLOCK 1, 1, 1\n"
+            )
+            self.assertEqual(res.lines, [])
+            self.assertTrue(
+                any("扩展形态暂不支持" in w for w in res.warnings)
+            )
+
+    def test_project2_method_warned_once(self):
+        # method（hidden-line 等）忽略 + 一次性警告；后续 PROJECT2 仍投影。
+        res = preview_2d_script(
+            "PROJECT2 3, 0, 2\nPROJECT2 3, 45, 3\n",
+            script_3d="BLOCK 1, 1, 1\n",
+        )
+        method_warns = [w for w in res.warnings if "method" in w]
+        self.assertEqual(len(method_warns), 1)
+        self.assertEqual(
+            len([w for w in res.warnings_structured if "method" in w.message]), 1
+        )
+        self.assertGreater(len(res.lines), 0)
+        # 第二个 PROJECT2 的 angle=45 生效：底边 (0,0)-(1,0) 反向旋转 45°
+        self.assertIn(
+            ((0.0, 0.0), (0.707106781, -0.707106781)),
+            self._seg_set(res.lines),
+        )
+
+    def test_project2_without_script_3d_keeps_placeholder_byte_identical(self):
+        # 不传 script_3d（semantic_verifier / 验收等旧调用方）：占位警告原样。
+        res = preview_2d_script("PROJECT2 3, 0, 2\n")
+        self.assertEqual(res.lines, [])
+        self.assertEqual(
+            res.warnings, ["line 1: PROJECT2 暂为占位预览（未实现真实投影）"]
+        )
+        self.assertEqual(len(res.warnings_structured), 1)
+        self.assertEqual(
+            res.warnings_structured[0].message,
+            "PROJECT2 暂为占位预览（未实现真实投影）",
+        )
+        self.assertEqual(res.warnings_structured[0].command, "")
+        # 扩展形态无 script_3d 时同样保持占位警告原样
+        res = preview_2d_script("PROJECT2{2} 3, 0, 2\n")
+        self.assertEqual(
+            res.warnings, ["line 1: PROJECT2 暂为占位预览（未实现真实投影）"]
+        )
+
+    def test_project2_does_not_merge_inner_3d_warnings(self):
+        # 内部 3D 执行的 warnings 不并入 2D 结果（3D 预览路径已展示）。
+        res = preview_2d_script(
+            "PROJECT2 3, 0, 2\n",
+            script_3d="BLOCK 1, 1, 1\nFOOBAR 7\n",
+        )
+        self.assertGreater(len(res.lines), 0)
+        self.assertFalse(any("FOOBAR" in w for w in res.warnings))
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+
+    def test_project2_parameters_and_setup_flow_into_3d_execution(self):
+        # 内部 3D runtime 复用同一组 parameters/setup：3D 脚本可用参数与
+        # setup 赋值。BLOCK A,B,ZZYZX = 1,2,3 → 顶视图矩形 (0,0)-(1,2)。
+        res = preview_2d_script(
+            "PROJECT2 3, 0, 2\n",
+            parameters={"A": 1.0, "B": 2.0, "ZZYZX": 3.0},
+            script_3d="BLOCK A, B, ZZYZX\n",
+        )
+        self.assertIn(self._seg(((0.0, 0.0), (1.0, 2.0))), self._seg_set(res.lines))
+        # setup 赋值变量在 3D 中可用：d=1.5 → 1.5 立方体
+        res = preview_2d_script(
+            "PROJECT2 3, 0, 2\n",
+            setup_script="d = 1.5\n",
+            script_3d="BLOCK d, d, d\n",
+        )
+        self.assertIn(self._seg(((0.0, 0.0), (1.5, 0.0))), self._seg_set(res.lines))
+
+    def test_preview_scripts_passes_script_3d_to_2d_path(self):
+        # combined 入口：preview_scripts 同样传递 script_3d，2D 含投影 lines。
+        res = preview_scripts("PROJECT2 3, 0, 2\n", "BLOCK 1, 1, 1\n")
+        self.assertEqual(len(res.preview_2d.lines), 18)
+        self.assertEqual(len(res.preview_3d.meshes), 1)
+        self.assertIn(
+            ((0.0, 0.0), (1.0, 0.0)), self._seg_set(res.preview_2d.lines)
+        )
 
 
 class TestPreviewSourceSegment(unittest.TestCase):

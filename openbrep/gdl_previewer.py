@@ -91,14 +91,23 @@ def preview_2d_script(
     strict: bool = False,
     unknown_command_policy: str = "warn",
     quality: str = "fast",
+    script_3d: str | None = None,
 ) -> Preview2DResult:
-    """Preview a 2D GDL script using MVP command subset."""
+    """Preview a 2D GDL script using MVP command subset.
+
+    script_3d（可选，P3a）：PROJECT2 顶视图投影需要 3D 模型的执行结果。
+    首次遇到 PROJECT2 时用同一组 parameters/setup/for_limit/quality/
+    unknown_command_policy 起内部 runtime 执行 3D 脚本并缓存 meshes；
+    不传 script_3d 时 PROJECT2 行为与 P3a 前逐字节一致（占位警告）。
+    """
     runtime = _PreviewRuntime(
         parameters=parameters,
         for_limit=for_limit,
         strict=strict,
         unknown_command_policy=unknown_command_policy,
         quality=quality,
+        setup_script=setup_script or "",
+        script_3d=script_3d,
     )
     if setup_script:
         runtime.execute(setup_script or "", mode="setup")
@@ -150,6 +159,7 @@ def preview_scripts(
         strict=strict,
         unknown_command_policy=unknown_command_policy,
         quality=quality,
+        script_3d=script_3d,
     )
     p3d = preview_3d_script(
         script_3d,
@@ -182,8 +192,16 @@ class _PreviewRuntime:
         strict: bool = False,
         unknown_command_policy: str = "warn",
         quality: str = "fast",
+        setup_script: str = "",
+        script_3d: str | None = None,
     ):
         self.env = _normalize_parameters(parameters or {})
+        # P3a：PROJECT2 顶视图投影——内部 3D runtime 需要的 setup/3D 脚本
+        # 与缓存。_script_3d 为 None 时 PROJECT2 保持占位警告（行为不变）。
+        self._setup_script = setup_script or ""
+        self._script_3d = script_3d
+        self._project2_meshes: list[PreviewMesh3D] | None = None
+        self._project2_method_warned = False
         self.for_limit = max(1, int(for_limit))
         self.loop_iterations = 0
         self.strict = bool(strict)
@@ -534,7 +552,7 @@ class _PreviewRuntime:
         arg_text = (m.group(2) or "").strip()
         args = _split_args(arg_text)
 
-        if cmd in {"ADD", "ADDX", "ADDY", "ADDZ"}:
+        if cmd in {"ADD", "ADDX", "ADDY", "ADDZ", "ADD2"}:
             vals = [self._eval_expr(a, line_no) for a in args] if args else []
             if any(v is None for v in vals):
                 self._warn(line_no, f"{cmd} 参数解析失败，已跳过")
@@ -548,6 +566,13 @@ class _PreviewRuntime:
                 dx = float(vals[0] or 0.0)
                 dy = float(vals[1] or 0.0)
                 dz = float(vals[2] or 0.0) if len(vals) >= 3 else 0.0
+            elif cmd == "ADD2":
+                # 2D 平移：等价于 ADD dx, dy（z 不影响 2D 平面）。
+                if not vals:
+                    self._warn(line_no, "ADD2 缺少参数，已跳过")
+                    return True
+                dx = float(vals[0] or 0.0)
+                dy = float(vals[1] or 0.0) if len(vals) >= 2 else 0.0
             elif cmd == "ADDX":
                 if not vals:
                     self._warn(line_no, "ADDX 缺少参数，已跳过")
@@ -569,7 +594,7 @@ class _PreviewRuntime:
             self._push_transform(self._A, next_t)
             return True
 
-        if cmd in {"ROTX", "ROTY", "ROTZ", "ROT"}:
+        if cmd in {"ROTX", "ROTY", "ROTZ", "ROT", "ROT2"}:
             vals = [self._eval_expr(a, line_no) for a in args] if args else []
             if not vals:
                 self._warn(line_no, f"{cmd} 缺少角度参数，已跳过")
@@ -580,11 +605,12 @@ class _PreviewRuntime:
             elif cmd == "ROTY":
                 M = _rot_y_deg(deg)
             else:
+                # ROT / ROTZ / ROT2 → 绕 Z 轴旋转（2D 平面旋转）
                 M = _rot_z_deg(deg)
             self._push_transform(_m_mul(M, self._A), self._t)
             return True
 
-        if cmd in {"MUL", "MULX", "MULY", "MULZ"}:
+        if cmd in {"MUL", "MULX", "MULY", "MULZ", "MUL2"}:
             vals = [self._eval_expr(a, line_no) for a in args] if args else []
             if any(v is None for v in vals):
                 self._warn(line_no, f"{cmd} 参数解析失败，已跳过")
@@ -600,6 +626,16 @@ class _PreviewRuntime:
                     sz = float(vals[2] or 1.0)
                 else:
                     self._warn(line_no, "MUL 参数需 1 或 3 个，已跳过")
+                    return True
+            elif cmd == "MUL2":
+                # 2D 缩放：MUL2 s（等比）或 MUL2 sx, sy
+                if len(vals) == 1:
+                    sx = sy = float(vals[0] or 1.0)
+                elif len(vals) >= 2:
+                    sx = float(vals[0] or 1.0)
+                    sy = float(vals[1] or 1.0)
+                else:
+                    self._warn(line_no, "MUL2 参数需 1 或 2 个，已跳过")
                     return True
             elif cmd == "MULX":
                 if not vals:
@@ -621,13 +657,13 @@ class _PreviewRuntime:
             self._push_transform(_m_mul(M, self._A), self._t)
             return True
 
-        if cmd == "DEL":
+        if cmd in {"DEL", "DEL2"}:
             if not args:
                 del_count = 1
             else:
                 val = self._eval_expr(args[0], line_no)
                 if val is None:
-                    self._warn(line_no, "DEL 参数解析失败，按 1 处理")
+                    self._warn(line_no, f"{cmd} 参数解析失败，按 1 处理")
                     del_count = 1
                 else:
                     del_count = max(1, int(round(float(val))))
@@ -728,10 +764,99 @@ class _PreviewRuntime:
             return True
 
         if cmd == "PROJECT2":
-            self._warn(line_no, "PROJECT2 暂为占位预览（未实现真实投影）")
+            # 未持有 3D 脚本（semantic_verifier / 验收等旧调用方）：行为与
+            # P3a 前逐字节一致——原样占位警告，不做任何新解析/新警告。
+            if self._script_3d is None:
+                self._warn(line_no, "PROJECT2 暂为占位预览（未实现真实投影）")
+                return True
+            # PROJECT2{n} 扩展形态（ARCHICAD 限定面/体投影）：MVP 不支持，
+            # 明确警告、不静默（_split_args 会把 {n} 当参数吃掉，先拦截原文）。
+            if re.match(r"^PROJECT2\{", line, re.IGNORECASE):
+                self._warn(
+                    line_no,
+                    "PROJECT2{n} 扩展形态暂不支持（MVP 仅支持基本形态）",
+                )
+                return True
+            self._handle_project2(args_raw, line_no)
             return True
 
         return False
+
+    def _handle_project2(self, args_raw: list[str], line_no: int) -> None:
+        """PROJECT2 顶视图投影（MVP，P3a）。
+
+        GDL 形态：``PROJECT2 projection_code, angle, method``
+        - projection_code：只支持 3（顶视图）。其他值 → 明确警告"暂不支持"，
+          不静默、不投影。
+        - angle：投影后绕原点旋转。选 Archicad 语义——"视角旋转 = 投影点
+          反向旋转 angle 度"，即旋转 −angle（标准数学逆时针为正；angle=90
+          时投影点旋转 −90°）。投影点先旋转、再过 _p2 应用当前 2D 变换
+          （ADD2/ROT2 等，见测试锁定）。
+        - method（hidden-line 等）：MVP 无 hidden-line，忽略 + 一次性警告。
+        - PROJECT2{2}/{3} 扩展形态在 _handle_2d 中先拦截 → 明确警告。
+
+        投影算法（MVP 线框）：每 mesh 收集去重边（面边按顶点索引对
+        (min,max) 去重），投影 = 丢 z 取 (x, y)，过 _p2 后写入
+        result_2d.lines。不做轮廓并集、不做 hidden-line。3D mesh 顶点已是
+        世界坐标（3D 变换在建 mesh 时应用完毕），投影直接取最终顶点。
+        """
+        vals = self._eval_args(args_raw, line_no)
+        if vals is None or not vals:
+            self._warn(line_no, "PROJECT2 参数不足或解析失败")
+            return
+
+        code = int(round(float(vals[0])))
+        angle = float(vals[1]) if len(vals) >= 2 else 0.0
+        if len(vals) >= 3 and not self._project2_method_warned:
+            self._warn(line_no, "PROJECT2 method 参数暂忽略（无 hidden-line）")
+            self._project2_method_warned = True
+
+        if code != 3:
+            self._warn(
+                line_no,
+                f"PROJECT2 投影方式 {code} 暂不支持（当前仅支持 3=顶视图）",
+            )
+            return
+
+        # 惰性投影：首次 PROJECT2 时用同一组 parameters/setup/for_limit/
+        # quality/unknown_command_policy 起内部 runtime 执行 3D 脚本，缓存
+        # meshes 供本 runtime 内后续 PROJECT2 复用。内部 3D 执行的 warnings
+        # 不并入 2D 结果——3D 预览路径已展示，避免重复告警。
+        if self._project2_meshes is None:
+            inner = _PreviewRuntime(
+                parameters=self.env,
+                for_limit=self.for_limit,
+                strict=self.strict,
+                unknown_command_policy=self.unknown_command_policy,
+                quality=self.quality,
+            )
+            if self._setup_script:
+                inner.execute(self._setup_script, mode="setup")
+            inner.execute(self._script_3d, mode="3d")
+            inner.finish()
+            self._project2_meshes = inner.result_3d.meshes
+
+        rad = math.radians(-angle)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        for mesh in self._project2_meshes:
+            verts = list(zip(mesh.x, mesh.y, mesh.z))
+            edges: set[tuple[int, int]] = set()
+            for a, b, c in zip(mesh.i, mesh.j, mesh.k):
+                for p, q in ((a, b), (b, c), (c, a)):
+                    if p != q:
+                        edges.add((min(p, q), max(p, q)))
+            for p, q in edges:
+                x1, y1, _ = verts[p]
+                x2, y2, _ = verts[q]
+                # 投影（丢 z）后绕原点反向旋转 angle 度
+                px1 = x1 * cos_a - y1 * sin_a
+                py1 = x1 * sin_a + y1 * cos_a
+                px2 = x2 * cos_a - y2 * sin_a
+                py2 = x2 * sin_a + y2 * cos_a
+                self.result_2d.lines.append(
+                    (self._p2(px1, py1), self._p2(px2, py2))
+                )
 
     def _handle_3d(self, line: str, line_no: int) -> bool:
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\b\s*(.*)$", line)
@@ -1219,8 +1344,16 @@ class _PreviewRuntime:
         return self._t
 
     def _p2(self, x: float, y: float) -> Point2D:
+        # 2D 仿射变换：_A 的左上 2×2（ROT2/MUL2 的旋转/缩放）+ _t 平移
+        # （ADD2）。PROJECT2 投影点同样过 _p2，因此 PROJECT2 前的
+        # ADD2/ROT2/MUL2 自动作用于投影结果。
+        a11, a12, _ = self._A[0]
+        a21, a22, _ = self._A[1]
         ox, oy, _ = self._t
-        return (float(x) + ox, float(y) + oy)
+        return (
+            float(x) * a11 + float(y) * a12 + ox,
+            float(x) * a21 + float(y) * a22 + oy,
+        )
 
     def _push_transform(
         self,
