@@ -171,4 +171,8 @@ export const en: Record<LocaleKey, string> = {
   'preview.explode.toggleTitle': 'Spread parts apart (slider controls amount, 0 = off)',
   'preview.explode.sliderAria': 'Explosion amount',
   'preview.explode.sliderTitle': 'Explosion amount (0 = off)',
+
+  // ThemedDialog (P4-B)
+  'dialog.confirm': 'Confirm',
+  'dialog.cancel': 'Cancel',
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useT } from '../../i18n'
+import { useThemedDialog } from '../../components/ThemedDialog'
 import type { WorkspaceInfo, WorkspaceProject, WorkspaceSearchHit } from '../../api/types'
 
 interface WorkspacePanelProps {
@@ -40,6 +41,7 @@ export function WorkspacePanel({
   onLoadProjectPath,
 }: WorkspacePanelProps) {
   const t = useT()
+  const { confirm, dialogNode } = useThemedDialog()
   const [attachPath, setAttachPath] = useState('')
   const [query, setQuery] = useState('')
 
@@ -77,9 +79,13 @@ export function WorkspacePanel({
     return `${hit.project} · ${hit.location}`
   }
 
-  function trashProject(project: WorkspaceProject) {
+  async function trashProject(project: WorkspaceProject) {
     if (project.active) return
-    const confirmed = window.confirm(t('workspace.deleteConfirm', { name: project.name }))
+    const confirmed = await confirm({
+      title: t('workspace.delete'),
+      message: t('workspace.deleteConfirm', { name: project.name }),
+      danger: true,
+    })
     if (!confirmed) return
     onTrashWorkspaceProject(project.path)
   }
@@ -229,6 +235,7 @@ export function WorkspacePanel({
           ) : null}
         </div>
       )}
+      {dialogNode}
     </section>
   )
 }

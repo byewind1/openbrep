@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { ProjectRevision } from '../../api/types'
+import { useThemedDialog } from '../../components/ThemedDialog'
 
 interface RevisionPanelProps {
   revisions: ProjectRevision[]
@@ -17,14 +18,20 @@ export function RevisionPanel({
   onRestore,
 }: RevisionPanelProps) {
   const [message, setMessage] = useState('')
+  const { confirm, dialogNode } = useThemedDialog()
 
   function saveRevision() {
     onSave(message)
     setMessage('')
   }
 
-  function restoreRevision(revisionId: string) {
-    if (!window.confirm(`Restore ${revisionId}? Current source files will be replaced.`)) return
+  async function restoreRevision(revisionId: string) {
+    const ok = await confirm({
+      title: 'Restore revision',
+      message: `Restore ${revisionId}? Current source files will be replaced.`,
+      danger: true,
+    })
+    if (!ok) return
     onRestore(revisionId)
   }
 
@@ -62,6 +69,7 @@ export function RevisionPanel({
           </article>
         ))}
       </div>
+      {dialogNode}
     </div>
   )
 }

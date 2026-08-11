@@ -211,27 +211,30 @@ describe('WorkspacePanel init flow (P3-d2b)', () => {
 
 
 describe('WorkspacePanel trash flow (P3-f)', () => {
-  test('trash button calls onTrashWorkspaceProject after confirm', () => {
+  test('trash button calls onTrashWorkspaceProject after themed confirm', async () => {
     const props = baseProps({ workspace: makeWorkspace() })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    render(<WorkspacePanel {...props} />)
-
-    fireEvent.click(screen.getAllByTitle('移入回收站')[0])  // Shelf? Chair? order from makeWorkspace
-
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(props.onTrashWorkspaceProject).toHaveBeenCalledTimes(1)
-    confirmSpy.mockRestore()
-  })
-
-  test('trash button without confirm does not call callback', () => {
-    const props = baseProps({ workspace: makeWorkspace() })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<WorkspacePanel {...props} />)
 
     fireEvent.click(screen.getAllByTitle('移入回收站')[0])
 
+    // 主题对话框出现，确认文案保留原 i18n 插值（workspace.deleteConfirm）
+    expect(screen.getByText(/把项目 Shelf 移入回收站/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '确定' }))
+
+    await waitFor(() => {
+      expect(props.onTrashWorkspaceProject).toHaveBeenCalledTimes(1)
+    })
+    expect(props.onTrashWorkspaceProject).toHaveBeenCalledWith('/workspace/hsf/Shelf')
+  })
+
+  test('trash button cancelled in themed dialog does not call callback', () => {
+    const props = baseProps({ workspace: makeWorkspace() })
+    render(<WorkspacePanel {...props} />)
+
+    fireEvent.click(screen.getAllByTitle('移入回收站')[0])
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
     expect(props.onTrashWorkspaceProject).not.toHaveBeenCalled()
-    confirmSpy.mockRestore()
   })
 
   test('active project trash button is disabled with hint', () => {

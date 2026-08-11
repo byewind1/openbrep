@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { BottomDrawer } from '../components/BottomDrawer'
 import { TopMenu } from '../components/TopMenu'
+import { useThemedDialog } from '../components/ThemedDialog'
 import type { CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useUiPrefsStore } from '../state/uiPrefsStore'
@@ -21,6 +22,8 @@ export function WorkbenchApp() {
   useEffect(() => {
     document.documentElement.lang = locale
   }, [locale])
+
+  const { confirm, prompt, dialogNode } = useThemedDialog()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
@@ -188,26 +191,34 @@ export function WorkbenchApp() {
   function resetCurrentProject() {
     if (!project || loading) return
     const hasUnsavedDraft = hasAnyDirtyScript || hasDraftChanges()
-    if (
-      hasUnsavedDraft &&
-      !window.confirm('Reset current project? Unsaved script edits or parameter drafts will be discarded unless saved first.')
-    ) {
+    if (!hasUnsavedDraft) {
+      void closeProject()
       return
     }
-    void closeProject()
+    void confirm({
+      title: 'Reset current project',
+      message: 'Reset current project? Unsaved script edits or parameter drafts will be discarded unless saved first.',
+      danger: true,
+    }).then((ok) => {
+      if (ok) void closeProject()
+    })
   }
 
   function hasMeaningfulProjectContent() {
     return Object.values(scriptContents).some((content) => content.trim().length > 0)
   }
 
-  function confirmDiscardUnsavedChanges(action: string) {
+  async function confirmDiscardUnsavedChanges(action: string) {
     const hasUnsavedDraft = hasAnyDirtyScript || hasDraftChanges()
-    return !hasUnsavedDraft || window.confirm(`${action}? Unsaved script edits or parameter drafts will be discarded unless saved first.`)
+    if (!hasUnsavedDraft) return true
+    return confirm({
+      title: action,
+      message: `${action}? Unsaved script edits or parameter drafts will be discarded unless saved first.`,
+    })
   }
 
-  function createNewProject() {
-    if (loading || !confirmDiscardUnsavedChanges('Create a new project')) return
+  async function createNewProject() {
+    if (loading || !(await confirmDiscardUnsavedChanges('Create a new project'))) return
     void newProject()
   }
 
@@ -217,7 +228,7 @@ export function WorkbenchApp() {
       window.alert('Nothing to save yet. Add GDL code or generate an object first.')
       return
     }
-    const name = window.prompt('Project name', project.name || 'Untitled GDL Object')
+    const name = await prompt({ title: 'Project name', defaultValue: project.name || 'Untitled GDL Object' })
     if (name === null) return
     const cleanedName = name.trim()
     if (!cleanedName) {
@@ -464,6 +475,7 @@ export function WorkbenchApp() {
         onClearProjectMemory={clearProjectMemory}
       />
       </Suspense>
+      {dialogNode}
     </main>
   )
 }

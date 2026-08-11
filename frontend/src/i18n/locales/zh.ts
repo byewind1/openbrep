@@ -168,6 +168,10 @@ export const zh = {
   'preview.explode.toggleTitle': '按部件散开模型（滑杆控制程度，0 关闭）',
   'preview.explode.sliderAria': '爆炸程度',
   'preview.explode.sliderTitle': '爆炸程度（0 = 关闭）',
+
+  // ThemedDialog (P4-B)
+  'dialog.confirm': '确定',
+  'dialog.cancel': '取消',
 } as const
 
 export type LocaleKey = keyof typeof zh
