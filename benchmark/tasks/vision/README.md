@@ -61,6 +61,14 @@ PY
   （回放报"未命中"是特性：证明悄悄改 prompt 会被拦住）。合并后由监控方用
   `--mode auto --jobs 1 --llm-record` 重录（见上），录制命令不变。
 
+## 次轮录制结果（2026-08-12，P5c critic 链路，kimi-k2.6，14 条语料）
+
+1/3 PASS（回放闭环验证通过，失败原因逐字复现）：
+- V01 海棠纹 ✅（首轮 ❌ transform 不平衡 → 本轮通过，critic 核对后改善）
+- V02 冰裂纹 ❌：criteria/contract/编译全过，挂在 static_pass（静态检查）
+- V03 圆洞冰裂 ❌：2d.gdl 缺失/空、缺 CIRCLE、transform stack 未闭合
+  （5 push / 4 pop）
+
 ## 首轮录制结果（2026-08-12，kimi-k2.6，13 条语料）
 
 0/3 PASS——回放已逐字复现失败原因（闭环验证通过），失败全部是生成质量问题
