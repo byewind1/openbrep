@@ -207,7 +207,7 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-08-13:
 
 ```text
-python tests: 1727 passed, 66 subtests passed
+python tests: 1733 passed, 66 subtests passed
 frontend: 429 passed (vitest) + tsc clean
 benchmark replay: create/modify zero regression; vision suite 1/3 (recorded baseline)
 ```
@@ -320,8 +320,9 @@ Architecture notes:
   block-IF depth, inline-IF GOSUB runs in full script context, `SQR` allowed.
   String parameters survive the production path
   (`project_parameter_service.parameter_values`); numeric sweeps skip them.
-  Note: FOR-body GOSUB to labels outside the body scope and `:` multi-statements
-  in inline IFs are still unsupported (菱花 lattice blocked on this).
+  FOR-body cross-scope GOSUB and `:` multi-statements in inline IFs were added
+  on 2026-08-13 (P10, same None-sentinel full-script-context pattern); remaining
+  known limits: `IF x THEN RETURN` early-return semantics and END-only-ends-block.
 
 ## benchmark 黄金语料规范（corpus maintenance）
 
