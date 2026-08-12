@@ -564,21 +564,31 @@ class ModifyToolRegistry:
 
     def _run_static_check(self, _args: dict) -> ToolExecutionResult:
         result = StaticChecker().check(self.project)
+        warn_lines = [
+            f"- [warning:{w.check_type}] {w.file}: {w.detail}" for w in result.warnings[:10]
+        ]
         if result.passed:
+            summary = "静态检查通过，未发现问题。"
+            if warn_lines:
+                # P13：unknown_command 等 warning 级结果——不阻断，但浮出水面
+                summary = "静态检查通过（有警告）：\n" + "\n".join(warn_lines)
             self.on_event("status", {"stage": "compile", "message": "✅ 静态检查通过"})
             return ToolExecutionResult(
                 name="run_static_check",
                 ok=True,
-                summary="静态检查通过，未发现问题。",
-                data={"passed": True, "error_count": 0},
+                summary=summary,
+                data={"passed": True, "error_count": 0, "warning_count": len(result.warnings)},
             )
         lines = [f"- [{e.check_type}] {e.file}: {e.detail}" for e in result.errors[:10]]
+        if warn_lines:
+            lines.append("--- 警告（不阻断）---")
+            lines.extend(warn_lines)
         self.on_event("status", {"stage": "compile", "message": f"⚠️ 静态检查发现 {len(result.errors)} 个问题"})
         return ToolExecutionResult(
             name="run_static_check",
             ok=False,
             summary=f"静态检查发现 {len(result.errors)} 个问题：\n" + "\n".join(lines),
-            data={"passed": False, "error_count": len(result.errors)},
+            data={"passed": False, "error_count": len(result.errors), "warning_count": len(result.warnings)},
         )
 
     def _query_knowledge(self, args: dict) -> ToolExecutionResult:

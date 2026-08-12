@@ -72,6 +72,9 @@ class VerificationReport:
     goal: str = ""
     checks: list[VerificationCheck] = field(default_factory=list)
     errors_caught: list[str] = field(default_factory=list)
+    # P13：warning 级证据（unknown_command 等）。与 errors_caught 分开，
+    # 不参与 passed 判定——Archicad 只当 "not recommended" 警告。
+    warnings_caught: list[str] = field(default_factory=list)
     fixes_applied: list[str] = field(default_factory=list)
     remaining_risks: list[str] = field(default_factory=list)
     confidence: str = "low"     # low | medium | high
@@ -125,6 +128,7 @@ class VerificationReport:
                 for c in self.checks
             ],
             "errors_caught": list(self.errors_caught),
+            "warnings_caught": list(self.warnings_caught),
             "fixes_applied": list(self.fixes_applied),
             "remaining_risks": list(self.remaining_risks),
         }
@@ -160,6 +164,13 @@ class VerificationReport:
                     f"- 静态检查：{_status_icon(first.status)} "
                     f"{first.detail or first.status.value}"
                 )
+
+        if self.warnings_caught:
+            # P13：warning 级证据（unknown_command 等）——不阻断交付但浮出水面
+            warn_lines = "；".join(
+                w.split(": ", 1)[-1][:120] for w in self.warnings_caught
+            )
+            lines.append(f"- 静态警告：⚠️ {warn_lines}")
 
         lint_chk = _find(self.checks, "lint")
         if lint_chk:
@@ -372,6 +383,9 @@ def build_verification_report(
 
     # 2. static check overview
     if static_result is not None:
+        # P13：warning 级检查结果（unknown_command 等）——进报告但不阻断。
+        for w in static_result.warnings:
+            report.warnings_caught.append(f"[{w.check_type}] {w.file}: {w.detail}")
         if static_result.passed:
             checks.append(VerificationCheck(
                 name="静态检查", check_type="static",

@@ -1,21 +1,32 @@
 """
 GDL static checker — runs before compilation.
 
-Five checks (all regex/count-based, no LLM):
-  1. undefined_var   — script variables not declared in paramlist.xml
-  2. forward_decl    — _underscore vars in 3d/2d not assigned in 1d.gdl
-  3. stack_imbalance — ADD*/ROT*/MUL push count != DEL pop count in 3d.gdl
-  4. block_mismatch  — unmatched IF/ENDIF or FOR/NEXT across any .gdl file
-  5. ellipsis_stub   — standalone .../… line (model-degeneration stub marker)
+Seven checks (all regex/count-based, no LLM):
+  1. undefined_var     — script variables not declared in paramlist.xml
+  2. forward_decl      — _underscore vars in 3d/2d not assigned in 1d.gdl
+  3. stack_imbalance   — ADD*/ROT*/MUL push count != DEL pop count in 3d.gdl
+  4. block_mismatch    — unmatched IF/ENDIF or FOR/NEXT across any .gdl file
+  5. ellipsis_stub     — standalone .../… line (model-degeneration stub marker)
+  6. unknown_command   — statement first word not in the known GDL command set
+                         (warning level; Archicad treats it as a CALL-less macro,
+                         "Missing CALL keyword (not recommended)")
+  7. bare_not          — NOT used without its required parentheses NOT (x)
+                         (error level; Archicad reports "Missing parameter(s)
+                         after function")
 
 StaticChecker.check(project) returns StaticCheckResult immediately.
 Returns passed=True when project is None (safe no-op).
+
+unknown_command 是 warning：写入 StaticCheckResult.warnings，不阻断交付；
+bare_not 是 error：写入 StaticCheckResult.errors，阻断交付（与 ellipsis_stub
+同级）。命令集合来源 openbrep/data/gdl_commands.txt（静态入库，见文件头）。
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 from openbrep.gdl_keywords import (
@@ -28,12 +39,34 @@ from openbrep.gdl_ast import parse_gdl_script, ControlBlock, TransformFrame
 __all__ = [
     "GDL_BUILTINS",
     "GLOBAL_PREFIXES",
+    "GDL_COMMANDS",
     "StaticChecker",
     "StaticCheckResult",
     "StaticError",
     "ProseLeakHit",
     "find_prose_leaks",
 ]
+
+
+# ── 已知 GDL 命令集（unknown_command 检查用）───────────────────────────────
+# 静态入库文件 openbrep/data/gdl_commands.txt（生成来源与日期见文件头），
+# 打包/CI 环境不依赖 knowledge/ 目录。加载失败时回退到 gdl_keywords 的
+# GDL_BUILTINS（保证检查器可用，只是召回略低）。
+def _load_gdl_commands() -> frozenset[str]:
+    path = Path(__file__).resolve().parent / "data" / "gdl_commands.txt"
+    commands = set(GDL_BUILTINS)
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            commands.add(line.upper())
+    except OSError:
+        pass
+    return frozenset(commands)
+
+
+GDL_COMMANDS: frozenset[str] = _load_gdl_commands()
 
 if TYPE_CHECKING:
     from openbrep.hsf_project import HSFProject, ScriptType
@@ -69,6 +102,9 @@ class StaticError:
 class StaticCheckResult:
     passed: bool
     errors: list[StaticError] = field(default_factory=list)
+    # P13：warning 级检查结果（unknown_command 等）。不参与 passed 判定，
+    # 仅供上层展示/提示——与 errors 分开，避免误阻断交付。
+    warnings: list[StaticError] = field(default_factory=list)
 
 
 class StaticChecker:
@@ -84,14 +120,21 @@ class StaticChecker:
             return StaticCheckResult(passed=True)
 
         errors: list[StaticError] = []
+        warnings: list[StaticError] = []
         errors.extend(self._check_undefined_var(project))
         errors.extend(self._check_forward_decl(project))
         errors.extend(self._check_stack_imbalance(project))
         errors.extend(self._check_stack_imbalance_branches(project))
         errors.extend(self._check_block_mismatch(project))
         errors.extend(self._check_ellipsis_stub(project))
+        # P13：裸 NOT 是 Archicad 必炸错误 → error；未知命令首词是 Archicad
+        # 警告（无 CALL 的宏调用）→ warning，不阻断交付。
+        errors.extend(self._check_bare_not(project))
+        warnings.extend(self._check_unknown_command(project))
 
-        return StaticCheckResult(passed=len(errors) == 0, errors=errors)
+        return StaticCheckResult(
+            passed=len(errors) == 0, errors=errors, warnings=warnings
+        )
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -435,6 +478,170 @@ class StaticChecker:
                         "疑似模型退化输出，请补全脚本内容"
                     ),
                 ))
+        return errors
+
+
+    # ── check 6: unknown_command（P13，warning 级）───────────────────────────
+
+    # GDL 语句行首词判定辅助：行内注释与字符串字面量遮蔽（字符串整体换成 ""，
+    # 注释截断），供首词/NOT 扫描使用。GDL 字符串不跨行。
+    @staticmethod
+    def _mask_line(line: str) -> str:
+        out: list[str] = []
+        in_string = False
+        i = 0
+        n = len(line)
+        while i < n:
+            ch = line[i]
+            if ch == '"':
+                if not in_string:
+                    in_string = True
+                    out.append('""')
+                    i += 1
+                    while i < n and line[i] != '"':
+                        i += 1
+                    continue  # i 停在闭合引号或行尾，下一轮处理
+                in_string = False
+                i += 1
+                continue
+            if ch == "!" and not in_string:
+                break  # 行内注释截断
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+    # 行尾是否为 `,`（引号外）——多行语句 continuation 标记
+    @staticmethod
+    def _ends_with_comma(code: str) -> bool:
+        return code.rstrip().endswith(",")
+
+    def _statement_first_words(
+        self, code: str
+    ) -> list[tuple[int, str]]:
+        """逐行取 GDL 语句首词（1-based 行号, 大写首词）。
+
+        跳过：空行、注释行、标签行（"name":）、赋值行（含数组下标赋值
+        name[i] = ...）、多行语句 continuation 行（上一语句行尾逗号）。
+        """
+        hits: list[tuple[int, str]] = []
+        prev_cont = False
+        for idx, raw in enumerate(code.splitlines(), start=1):
+            line = raw.strip()
+            if not line or line.startswith("!"):
+                continue
+            masked = self._mask_line(line)
+            clean = masked.strip()
+            if not clean:
+                continue
+            if prev_cont:
+                prev_cont = self._ends_with_comma(clean)
+                continue
+            # 标签行："PatternZhileng": / "bar":
+            if re.match(r'^""\s*:$', clean):
+                prev_cont = False
+                continue
+            m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$", clean)
+            if not m:
+                # 行首不是标识符（数字/括号/运算符）→ continuation 数据行
+                prev_cont = self._ends_with_comma(clean)
+                continue
+            first, rest = m.group(1), m.group(2).strip()
+            # 赋值行：name = ... / name[i] = ... / name[i + 1] = ...（排除 ==）
+            if re.match(r"(\s*\[[^\]]*\])?\s*=(?!=)", rest):
+                prev_cont = self._ends_with_comma(clean)
+                continue
+            hits.append((idx, first.upper()))
+            prev_cont = self._ends_with_comma(clean)
+        return hits
+
+    def _check_unknown_command(self, project: "HSFProject") -> list[StaticError]:
+        """语句首词不在已知 GDL 命令集 → warning（Archicad 当作无 CALL 的
+        宏调用，"Missing CALL keyword (not recommended)"）。
+
+        已知集合来自 openbrep/data/gdl_commands.txt（wiki frontmatter +
+        gdl_keywords GDL_BUILTINS + 预览器分发表 + 命令索引 + 控制流补全，
+        见文件头）。UNLOCK 这类臆造命令由此浮出水面。
+        """
+        warnings: list[StaticError] = []
+        for gdl_file in ("3d.gdl", "2d.gdl", "1d.gdl", "ui.gdl", "vl.gdl"):
+            code = self._get_script(project, gdl_file) or ""
+            if not code.strip():
+                continue
+            by_cmd: dict[str, list[int]] = {}
+            for line_no, first in self._statement_first_words(code):
+                if first not in GDL_COMMANDS:
+                    by_cmd.setdefault(first, []).append(line_no)
+            if not by_cmd:
+                continue
+            file_path = f"scripts/{gdl_file}"
+            for first, line_nos in sorted(by_cmd.items()):
+                warnings.append(StaticError(
+                    check_type="unknown_command",
+                    file=file_path,
+                    detail=(
+                        f"第 {'、'.join(str(n) for n in line_nos)} 行出现未知命令 "
+                        f"'{first}'：Archicad 会将其当作无 CALL 的宏调用"
+                        "（'Missing CALL keyword (not recommended)'）。"
+                        " 若是笔误请更正；若确为宏调用请改用 CALL。"
+                    ),
+                ))
+        return warnings
+
+    # ── check 7: bare_not（P13，error 级）────────────────────────────────────
+
+    # NOT 是布尔**函数** NOT (x)（GDL Reference Guide Functions），不是裸
+    # 运算符：语句中 NOT 后面必须紧跟 `(`，否则 Archicad 报
+    # "Missing parameter(s) after function"。字符串字面量与注释内不判。
+    _NOT_RE = re.compile(r"\bNOT\b", re.IGNORECASE)
+
+    # NOT 前的上下文必须是运算符/控制流位置（表达式里的 NOT 只能以函数形态
+    # NOT (x) 出现）。排除散文里的英文 "not"（如录制的 LLM 输出残留在脚本
+    # 中的 "commands not whitelist"）——那既不是语句也不是 GDL。
+    _BARE_NOT_PREV_WORDS: frozenset[str] = frozenset({
+        "IF", "THEN", "ELSE", "ELSIF", "ELSEIF", "AND", "OR", "EXOR",
+        "NOT", "MOD", "DIV",
+    })
+    _BARE_NOT_PREV_CHARS: frozenset[str] = frozenset("( = , : + - * / < > & | ;".split())
+
+    def _not_in_operator_position(self, masked: str, start: int) -> bool:
+        before = masked[:start].rstrip()
+        if not before:
+            return True  # 行首（语句以 NOT 开头本身就是裸 NOT）
+        last = before[-1]
+        if last.isalnum() or last == "_":
+            m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*$", before)
+            return bool(m and m.group(1).upper() in self._BARE_NOT_PREV_WORDS)
+        return last in self._BARE_NOT_PREV_CHARS
+
+    def _check_bare_not(self, project: "HSFProject") -> list[StaticError]:
+        errors: list[StaticError] = []
+        for gdl_file in ("3d.gdl", "2d.gdl", "1d.gdl", "ui.gdl", "vl.gdl"):
+            code = self._get_script(project, gdl_file) or ""
+            if not code.strip():
+                continue
+            hit_lines: list[int] = []
+            for idx, raw in enumerate(code.splitlines(), start=1):
+                masked = self._mask_line(raw)
+                for m in self._NOT_RE.finditer(masked):
+                    after = masked[m.end():].lstrip()
+                    if after.startswith("("):
+                        continue  # NOT (x) / NOT(x) 合法
+                    if not self._not_in_operator_position(masked, m.start()):
+                        continue  # 散文里的英文 "not"，非 GDL 运算符位置
+                    hit_lines.append(idx)
+                    break  # 一行最多报一次
+            if not hit_lines:
+                continue
+            errors.append(StaticError(
+                check_type="bare_not",
+                file=f"scripts/{gdl_file}",
+                detail=(
+                    f"第 {'、'.join(str(n) for n in hit_lines)} 行出现裸 NOT："
+                    "NOT 是布尔函数，必须写作 NOT (x)（或 NOT(x)），"
+                    "裸 NOT 会让 Archicad 报 'Missing parameter(s) after "
+                    "function'。请改为 NOT (condition) 或等效的 = 0 比较。"
+                ),
+            ))
         return errors
 
 

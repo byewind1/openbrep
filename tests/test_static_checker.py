@@ -559,3 +559,190 @@ class TestEllipsisStub(unittest.TestCase):
         stub = [e for e in result.errors if e.check_type == "ellipsis_stub"]
         self.assertEqual(stub, [])
 
+
+class TestUnknownCommand(unittest.TestCase):
+    """P13：语句首词不在已知 GDL 命令集 → warning（不阻断交付）。
+
+    事故背景：漏窗 GSM 里的 `UNLOCK "inner_frame_width"` 是臆造命令，GDL 没有
+    UNLOCK（wiki/lock.md 只有 LOCK / LOCK ALL）；Archicad 把它当无 CALL 的宏
+    调用报 "Missing CALL keyword (not recommended)"。此前静态检查无感知。
+    """
+
+    def test_unlock_invented_command_warns(self):
+        """UNLOCK 臆造命令 → unknown_command warning（不在 errors，不阻断）。
+
+        放在 ui.gdl 验证——undefined_var/forward_decl 从不扫描 ui/vl 脚本
+        （事故中 UNLOCK 正是从这类脚本漏过），只有本检查能拦。
+        """
+        proj = FakeProject(
+            scripts={"ui.gdl": 'UNLOCK "inner_frame_width"\n'},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        self.assertTrue(result.passed, msg=f"warning 不应阻断交付: {result.errors}")
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(len(warns), 1, msg=f"Unexpected: {result.warnings}")
+        self.assertIn("UNLOCK", warns[0].detail)
+        self.assertIn("scripts/ui.gdl", warns[0].file)
+
+    def test_unlock_in_3d_script_warns_too(self):
+        """UNLOCK 出现在 3d.gdl 同样报 unknown_command warning（undefined_var
+        另行拦截属既有行为，两者并存不冲突）。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": 'UNLOCK "inner_frame_width"\nBLOCK A, B, ZZYZX\nEND\n'},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(len(warns), 1, msg=f"Unexpected: {result.warnings}")
+        self.assertIn("scripts/3d.gdl", warns[0].file)
+
+    def test_label_line_not_flagged(self):
+        """标签行 "PatternZhileng": 不误报。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": '"PatternZhileng":\nBLOCK A, B, ZZYZX\nEND\n'},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(warns, [], msg=f"Unexpected: {warns}")
+
+    def test_gosub_not_flagged(self):
+        """子程序调用 GOSUB "..." 不误报。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": 'GOSUB "sub"\nEND\n"sub":\nBLOCK 1, 1, 1\nRETURN\n'},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(warns, [], msg=f"Unexpected: {warns}")
+
+    def test_assignment_lines_not_flagged(self):
+        """赋值行不误报：普通赋值 + 数组下标赋值（name[i] = ...）。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "x = 1\n_path[1] = 2\n_pts[i + 1] = 3\nBLOCK A, B, ZZYZX\nEND\n"},
+            param_names=["x"],
+        )
+        result = StaticChecker().check(proj)
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(warns, [], msg=f"Unexpected: {warns}")
+
+    def test_case_insensitive_commands_not_flagged(self):
+        """大小写不敏感：block/BLOCK 均不误报。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "block 1, 1, 1\nBLOCK 2, 2, 2\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(warns, [], msg=f"Unexpected: {warns}")
+
+    def test_continuation_lines_not_flagged(self):
+        """多行语句 continuation 行不误报（行尾逗号 + 数据行）。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "PRISM_ 4, 1,\n    0, 0, 0,\n    1, 0, 0,\n    A, B, 0,\n    0, B, 0\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(warns, [], msg=f"Unexpected: {warns}")
+
+    def test_ui_and_vl_scripts_checked(self):
+        """unknown_command 覆盖 ui.gdl / vl.gdl（臆造命令可能出现在任何脚本）。"""
+        proj = FakeProject(
+            scripts={
+                "ui.gdl": 'UNLOCK "frame_width"\n',
+                "vl.gdl": 'UNLOCK "sill_height"\n',
+            },
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        warns = [w for w in result.warnings if w.check_type == "unknown_command"]
+        self.assertEqual(len(warns), 2)
+        files = {w.file for w in warns}
+        self.assertEqual(files, {"scripts/ui.gdl", "scripts/vl.gdl"})
+
+
+class TestBareNot(unittest.TestCase):
+    """P13：裸 NOT → error（Archicad 必炸，"Missing parameter(s) after
+    function"）。NOT 是布尔**函数** NOT (x)，不是裸运算符。
+
+    事故背景：漏窗 GSM 里的 `IF NOT show_in_3d THEN END`——Archicad 报错，
+    此前静态检查无感知。
+    """
+
+    def test_bare_not_error(self):
+        """IF NOT show THEN END → bare_not error，阻断交付。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "IF NOT show_in_3d THEN END\nEND\n"},
+            param_names=["show_in_3d"],
+        )
+        result = StaticChecker().check(proj)
+        self.assertFalse(result.passed)
+        nots = [e for e in result.errors if e.check_type == "bare_not"]
+        self.assertEqual(len(nots), 1, msg=f"Unexpected: {result.errors}")
+        self.assertIn("scripts/3d.gdl", nots[0].file)
+        self.assertIn("1", nots[0].detail)
+
+    def test_not_with_parens_allowed(self):
+        """NOT (x) / NOT(x) 放行。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "IF NOT (show_in_3d) THEN END\nIF NOT(show_in_2d) THEN END\nEND\n"},
+            param_names=["show_in_3d", "show_in_2d"],
+        )
+        result = StaticChecker().check(proj)
+        nots = [e for e in result.errors if e.check_type == "bare_not"]
+        self.assertEqual(nots, [], msg=f"Unexpected: {nots}")
+
+    def test_not_in_comment_allowed(self):
+        """注释里的 NOT 不判（! NOT 注释）。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "! NOT show_in_3d 是注释\nBLOCK A, B, ZZYZX\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        nots = [e for e in result.errors if e.check_type == "bare_not"]
+        self.assertEqual(nots, [], msg=f"Unexpected: {nots}")
+
+    def test_not_in_string_allowed(self):
+        """字符串字面量里的 NOT 放行（a = "NOT"）。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": 'a = "NOT"\nBLOCK A, B, ZZYZX\nEND\n'},
+            param_names=["a"],
+        )
+        result = StaticChecker().check(proj)
+        nots = [e for e in result.errors if e.check_type == "bare_not"]
+        self.assertEqual(nots, [], msg=f"Unexpected: {nots}")
+
+    def test_not_inside_longer_word_allowed(self):
+        """词边界：NOTES/notify 里的 NOT 不判。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "notes = 1\nBLOCK A, B, ZZYZX\nEND\n"},
+            param_names=["notes"],
+        )
+        result = StaticChecker().check(proj)
+        nots = [e for e in result.errors if e.check_type == "bare_not"]
+        self.assertEqual(nots, [], msg=f"Unexpected: {nots}")
+
+    def test_prose_english_not_not_flagged(self):
+        """散文里的英文 not（非 GDL 运算符位置）不判——录制的 LLM 输出可能把
+        自述残留在脚本里（如 "commands not whitelist"），那不是 GDL 语句。
+        C01 语料回归：ui.gdl 第 10 行散文 'not' 曾误报裸 NOT 导致 PASS→FAIL。"""
+        proj = FakeProject(
+            scripts={"ui.gdl": "કરી. Need issue UI commands not whitelist! User says only whitelist\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        nots = [e for e in result.errors if e.check_type == "bare_not"]
+        self.assertEqual(nots, [], msg=f"Unexpected: {nots}")
+
+    def test_assignment_not_operand_flagged(self):
+        """x = NOT y：NOT 处于运算符位置（= 之后）且后无括号 → 报错。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "x = NOT y\nBLOCK A, B, ZZYZX\nEND\n"},
+            param_names=["x", "y"],
+        )
+        result = StaticChecker().check(proj)
+        nots = [e for e in result.errors if e.check_type == "bare_not"]
+        self.assertEqual(len(nots), 1, msg=f"Unexpected: {result.errors}")
+

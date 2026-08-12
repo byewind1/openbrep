@@ -207,7 +207,7 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-08-13:
 
 ```text
-python tests: 1758 passed, 66 subtests passed
+python tests: 1785 passed, 66 subtests passed
 frontend: 442 passed (vitest) + tsc clean
 benchmark replay: create/modify zero regression; vision suite 1/3 (recorded baseline)
 ```
@@ -333,6 +333,26 @@ Architecture notes:
   String-value changes are blocked when old value is still referenced by scripts
   and the new value is not (直棂→zhileng incident); empty compile errors get a
   fallback message. Guards only return error text in tool results — replay-safe.
+- String paramlist CDATA (2026-08-13): String parameter values are serialized as
+  quoted CDATA (`<Value><![CDATA["直棂"]]></Value>`) — unquoted CDATA triggers
+  Archicad "String value error", bare text triggers "Missing CDATA section".
+  Compile diagnostics also parse hsf2libpart stdout, not just stderr.
+- GSM registration magic (2026-08-13): `Owner`/`Signature` default to the
+  Graphisoft constants (MYSGCASG header magic); without them Archicad refuses to
+  open the .gsm. Normalization happens at compile time in `compiler.py`
+  (`_normalize_registration`, before hsf2libpart, BOM preserved) — do NOT move it
+  back to load-time self-healing: that trips the param_modify guard rollback
+  (guard only allows paramlist.xml + scripts/* changes) and breaks replay.
+- Previewer colon semantics + new static checks (2026-08-13, P13): single-line
+  IF allows only ONE conditional statement per Archicad (GDL Reference Guide
+  p323) — `IF c THEN s1 : s2` executes s1 conditionally and s2 unconditionally;
+  the previewer matches. `static_checker` gains `unknown_command` (warning
+  level, statement first word not in `openbrep/data/gdl_commands.txt` — a static
+  598-entry union list, never read from knowledge/ at runtime; surfaces invented
+  commands like UNLOCK, incl. ui.gdl/vl.gdl) and `bare_not` (error level — NOT
+  is a function requiring `NOT (x)`; operator-position heuristic avoids flagging
+  English prose "not"). Warnings flow into `VerificationReport.warnings_caught`
+  and the `run_static_check` tool summary without blocking delivery.
 
 ## benchmark 黄金语料规范（corpus maintenance）
 

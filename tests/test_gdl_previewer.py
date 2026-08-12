@@ -449,8 +449,8 @@ NEXT i
         self.assertFalse(any("栈未平衡" in w for w in res.warnings))
 
     def test_inline_if_colon_multi_statement(self):
-        """单行 IF 内 `:` 多语句：IF f = 1 THEN _a = 1 : _b = 2 两个赋值都
-        生效（GDL 的 `:` 是语句分隔符）。"""
+        """单行 IF 内 `:` 多语句（条件为真）：IF f = 1 THEN _a = 1 : _b = 2
+        首句条件执行，`:` 后语句无条件执行——条件为真时两个赋值都生效。"""
         script = """f = 1
 IF f = 1 THEN _a = 1 : _b = 2
 BLOCK _a, _b, 1
@@ -463,6 +463,85 @@ BLOCK _a, _b, 1
         self.assertAlmostEqual(min(mesh.y), 0.0, places=6)
         self.assertAlmostEqual(max(mesh.y), 2.0, places=6)
         self.assertEqual(res.warnings, [])
+
+    def test_inline_if_colon_archicad_semantics_condition_false(self):
+        """P13 Archicad 语义：单行 IF 同行只允许一条条件语句（GDL Reference
+        Guide AC23 p323）；`:` 是行内语句分隔符，其后的语句**无条件执行**。
+        条件为假时：首句不执行、`:` 后语句照跑。
+
+        `IF f = 0 THEN _a = 1 : _b = 2`，f=1（条件为假）→ _a 保持初始值 5，
+        _b=2 仍生效。P10 旧语义（整条当作条件执行）在此用例下 _b 不会赋值
+        ——本用例盯死 Archicad 语义。"""
+        script = """f = 1
+_a = 5
+IF f = 0 THEN _a = 1 : _b = 2
+BLOCK _a, _b, 1
+"""
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        mesh = res.meshes[0]
+        # _a 保持 5（条件为假，首句不执行）；_b = 2 无条件执行
+        self.assertAlmostEqual(min(mesh.x), 0.0, places=6)
+        self.assertAlmostEqual(max(mesh.x), 5.0, places=6)
+        self.assertAlmostEqual(min(mesh.y), 0.0, places=6)
+        self.assertAlmostEqual(max(mesh.y), 2.0, places=6)
+        self.assertEqual(res.warnings, [])
+
+    def test_inline_if_colon_condition_true_both_execute(self):
+        """P13 Archicad 语义补充：条件为真时首句与 `:` 后语句都执行。
+
+        `IF f = 0 THEN _a = 1 : _b = 2`，f=0（条件为真）→ _a=1 与 _b=2
+        都生效。"""
+        script = """f = 0
+_a = 5
+IF f = 0 THEN _a = 1 : _b = 2
+BLOCK _a, _b, 1
+"""
+        res = preview_3d_script(script)
+        mesh = res.meshes[0]
+        self.assertAlmostEqual(max(mesh.x), 1.0, places=6)
+        self.assertAlmostEqual(max(mesh.y), 2.0, places=6)
+        self.assertEqual(res.warnings, [])
+
+    def test_inline_if_colon_clip_subroutine_equals_block_if_form(self):
+        """P13 漏窗事故形状回归：裁剪子程序的
+        `IF _pts_count = 1 THEN _px1 = 0 : _py1 = _ty`
+        在预览器里与"块 IF 展开版"产出完全一致的几何（两种写法等价呈现），
+        `:` 语义对齐 Archicad 后不再是"条件为假也覆写交点"的污染源。"""
+        def run(pts_count: int, block_form: bool):
+            if block_form:
+                s = """_ty = 0.8
+_pts_count = %d
+_px1 = 9
+_py1 = 9
+IF _pts_count = 1 THEN
+    _px1 = 0
+ENDIF
+_py1 = _ty
+BLOCK _px1, _py1, 1
+""" % pts_count
+            else:
+                s = """_ty = 0.8
+_pts_count = %d
+_px1 = 9
+_py1 = 9
+IF _pts_count = 1 THEN _px1 = 0 : _py1 = _ty
+BLOCK _px1, _py1, 1
+""" % pts_count
+            return preview_3d_script(s)
+
+        for pts_count in (1, 2):
+            colon_res = run(pts_count, False)
+            block_res = run(pts_count, True)
+            self.assertEqual(len(colon_res.meshes), 1)
+            self.assertEqual(len(block_res.meshes), 1)
+            c, b = colon_res.meshes[0], block_res.meshes[0]
+            self.assertAlmostEqual(min(c.x), min(b.x), places=6)
+            self.assertAlmostEqual(max(c.x), max(b.x), places=6)
+            self.assertAlmostEqual(min(c.y), min(b.y), places=6)
+            self.assertAlmostEqual(max(c.y), max(b.y), places=6)
+            self.assertEqual(colon_res.warnings, [])
+            self.assertEqual(block_res.warnings, [])
 
     def test_inline_if_colon_string_literal_not_split(self):
         """字符串字面量含 `:` 不误拆：条件里的 `"a:b"` 正常字符串比较；

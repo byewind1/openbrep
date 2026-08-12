@@ -297,8 +297,12 @@ class _PreviewRuntime:
             if inline_if is not None:
                 condition, statement = inline_if
                 should_run = self._eval_condition(condition, line_no)
-                if should_run:
-                    self._exec_inline_statement(statement, line_no, lines, idx, mode)
+                # P13：Archicad 语义对齐——单行 IF 同行只允许一条条件语句
+                # （GDL Reference Guide AC23 p323）；`:` 后的语句无条件执行，
+                # 由 _exec_inline_statement 的 condition_true 门控首句。
+                self._exec_inline_statement(
+                    statement, line_no, lines, idx, mode, condition_true=should_run
+                )
                 idx += 1
                 continue
 
@@ -469,11 +473,18 @@ class _PreviewRuntime:
         lines: list[tuple[int, str]],
         idx: int,
         mode: str,
+        condition_true: bool | None = True,
     ) -> None:
         """执行单行 IF（IF cond THEN stmt）的语句部分。
 
         GDL 的 `:` 是语句分隔符：语句部分先按 `:` 拆成多条独立语句（引号
         "..." 内的 `:` 不拆）逐条执行；单语句无 `:` 时行为逐字节不变。
+
+        P13（Archicad 语义对齐）：单行 IF 同行只允许**一条**条件语句——
+        GDL Reference Guide（AC23 官方 PDF p323）原文 "A command after THEN
+        in the same row means a definite ENDIF."。因此 `IF cond THEN s1 : s2`
+        等价于 `IF cond THEN s1`（条件执行）再接 `s2`（无条件执行）：
+        `condition_true` 只门控首句；`:` 后的语句无论条件真假都执行。
 
         GOSUB 语句特殊处理：子程序在脚本后方（标签位置），单元素子块无法
         跳到那里。这里直接在完整脚本上下文中从标签执行到 RETURN（RETURN 用
@@ -482,10 +493,16 @@ class _PreviewRuntime:
         """
         parts = _split_colon_statements(statement)
         if len(parts) > 1:
-            # P10：`:` 多语句——拆成多元素子块复用 _exec_block 既有语句分发
-            # （赋值/变换/GOSUB 等；跨作用域 GOSUB 由 _exec_block 的 P10
-            # None 哨兵分支处理）。
-            self._exec_block([(line_no, part) for part in parts], 0, len(parts), mode=mode)
+            # P13：`:` 多语句——首句由条件门控，其余无条件执行（拆成单元素
+            # 子块复用 _exec_block 既有语句分发：赋值/变换/GOSUB 等；跨作用域
+            # GOSUB 由 _exec_block 的 P10 None 哨兵分支处理）。
+            if condition_true:
+                self._exec_block([(line_no, parts[0])], 0, 1, mode=mode)
+            self._exec_block(
+                [(line_no, part) for part in parts[1:]], 0, len(parts) - 1, mode=mode
+            )
+            return
+        if not condition_true:
             return
         m = re.match(r"^GOSUB\b\s*(.+)$", statement, re.IGNORECASE)
         if m:
