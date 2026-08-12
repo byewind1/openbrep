@@ -207,8 +207,8 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-08-13:
 
 ```text
-python tests: 1733 passed, 66 subtests passed
-frontend: 429 passed (vitest) + tsc clean
+python tests: 1758 passed, 66 subtests passed
+frontend: 442 passed (vitest) + tsc clean
 benchmark replay: create/modify zero regression; vision suite 1/3 (recorded baseline)
 ```
 
@@ -323,6 +323,16 @@ Architecture notes:
   FOR-body cross-scope GOSUB and `:` multi-statements in inline IFs were added
   on 2026-08-13 (P10, same None-sentinel full-script-context pattern); remaining
   known limits: `IF x THEN RETURN` early-return semantics and END-only-ends-block.
+- Parameter UI mode (2026-08-13, P11): `parse_values_declarations` parses vl.gdl
+  VALUES (enum/RANGE) into the parameter payload (`options`/`range`); ParameterRail
+  renders a `<select>` for enum params (out-of-list current value gets a non-writing
+  fallback entry) and has a 参数/参数脚本 tab pair (script tab embeds the lazy
+  ScriptEditor on vl.gdl, saves re-pull the snapshot to refresh enums).
+- Agent-loop write guards (2026-08-13, P12): `static_checker.find_prose_leaks`
+  (markdown prose in .gdl) blocks `update_script`/`patch_script` writes; paramlist
+  String-value changes are blocked when old value is still referenced by scripts
+  and the new value is not (直棂→zhileng incident); empty compile errors get a
+  fallback message. Guards only return error text in tool results — replay-safe.
 
 ## benchmark 黄金语料规范（corpus maintenance）
 
