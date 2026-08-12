@@ -67,7 +67,7 @@ from openbrep.revisions import (
 )
 from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 from openbrep.workbench.project_service import WorkbenchProjectService
-from openbrep.workbench.project_session_service import safe_project_name, unique_project_name
+from openbrep.naming import safe_project_name, unique_project_name
 from openbrep.workbench.workspace_service import (
     init_workspace as _ws_init,
     scan_workspace as _ws_scan,

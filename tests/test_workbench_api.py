@@ -372,10 +372,10 @@ def test_workbench_session_import_gdl_persists_origin_in_project_toml(tmp_path):
     assert 'imported_kind = "gdl"' in text
     assert 'imported_at = "' in text
     assert text.count("[origin]") == 1
-    # 重复导入同名源：唯一化到 ShelfOrigin_2，各自 [origin] 只有一个节、不追加
+    # 重复导入同名源：唯一化到 ShelfOrigin_v2（P7a 起后缀统一 _vN），各自 [origin] 只有一个节、不追加
     response2 = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
     assert response2["ok"] is True
-    assert response2["project"]["path"].endswith("ShelfOrigin_2")
+    assert response2["project"]["path"].endswith("ShelfOrigin_v2")
     _, text2 = _read_origin_toml(response2["project"]["path"])
     assert text2.count("[origin]") == 1
     assert "imported_kind = \"gdl\"" in text2
@@ -2619,7 +2619,7 @@ def test_workbench_session_attached_workspace_import_same_gsm_twice_two_projects
     p1, p2 = Path(first["project"]["path"]), Path(second["project"]["path"])
     assert p1 != p2
     assert p1.name == "Dup"
-    assert p2.name == "Dup_2"
+    assert p2.name == "Dup_v2"
     # sources/ 只有一个归档件（字节相同复用）
     assert len(list((ws / "sources").glob("Dup*.gsm"))) == 1
     # 两个项目 origin 指向同一个 sources 副本
@@ -2647,6 +2647,58 @@ def test_workbench_session_independent_import_gdl_stays_next_to_source(tmp_path)
     assert project_path.name == "Solo"
     assert session.workspace_path is None
     assert "archived_source" not in response
+
+
+def test_workbench_session_independent_import_chinese_filename_keeps_chinese_dir_name(tmp_path):
+    """P7a 独立导入：中文文件名 .gdl 导入 → 项目目录名保持中文（不再剥成 Imported_GDL）。"""
+    gdl_path = tmp_path / "书架.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert response["ok"] is True, response
+    project_path = Path(response["project"]["path"])
+    assert project_path.parent == gdl_path.parent
+    assert project_path.name == "书架"
+    assert session.workspace_path is None
+
+
+def test_workbench_session_attached_workspace_import_chinese_filename_keeps_chinese_dir_name(tmp_path):
+    """P7a 工作区导入：中文文件名 .gdl → 项目目录为中文、sources/ 归档件保留中文名。"""
+    gdl_path = tmp_path / "新中式椅子.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\nEND\n", encoding="utf-8")
+    session, ws = _attached_workspace_session(tmp_path)
+
+    response = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert response["ok"] is True, response
+    project_path = Path(response["project"]["path"])
+    assert project_path.parent == (ws / "hsf").resolve()
+    assert project_path.name == "新中式椅子"
+    archived = Path(response["archived_source"])
+    assert archived.parent == (ws / "sources").resolve()
+    assert archived.name == "新中式椅子.gdl"
+    toml, text = _read_origin_toml(project_path)
+    assert toml.exists()
+    assert f'imported_from = "{response["archived_source"]}"' in text
+
+
+def test_workbench_session_attached_workspace_import_chinese_filename_twice_gets_vN(tmp_path):
+    """P7a 工作区导入：同名中文 .gdl 导入两次 → 第一个保持原名、第二个 _v2（_vN 后缀）。"""
+    gdl_path = tmp_path / "书架.gdl"
+    gdl_path.write_text("BLOCK A, B, ZZYZX\nEND\n", encoding="utf-8")
+    session, ws = _attached_workspace_session(tmp_path)
+
+    first = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+    second = session.route("POST", "/api/project/import-gdl", {"path": str(gdl_path)})
+
+    assert first["ok"] and second["ok"]
+    p1, p2 = Path(first["project"]["path"]), Path(second["project"]["path"])
+    assert p1.name == "书架"
+    assert p2.name == "书架_v2"
+    # sources/ 只有一个归档件（字节相同复用）
+    assert len(list((ws / "sources").glob("书架*.gdl"))) == 1
 
 
 def test_workbench_session_broken_workspace_path_falls_back_to_independent(tmp_path):

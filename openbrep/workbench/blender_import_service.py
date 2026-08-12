@@ -24,11 +24,8 @@ from openbrep.importers.blender_script.converter import (
     convert_blender_script,
     probe_object_name,
 )
-from openbrep.workbench.project_session_service import (
-    safe_project_name,
-    unique_project_name,
-    write_project_origin,
-)
+from openbrep.naming import safe_project_name, unique_project_name
+from openbrep.workbench.project_session_service import write_project_origin
 
 if TYPE_CHECKING:
     from openbrep.workbench_api import WorkbenchSession

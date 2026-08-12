@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, normalize_project_after_import
+from openbrep.naming import safe_project_name, unique_project_name
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_parameter_service import parameter_to_dict
@@ -668,12 +669,6 @@ def project_to_snapshot(
     }
 
 
-def safe_project_name(name: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_\- ]+", "_", str(name or "").strip())
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ._")
-    return cleaned or "Imported_GDL"
-
-
 def project_name_from_prompt(prompt: str) -> str:
     words = re.findall(r"[A-Za-z0-9_\-]+", prompt)
     if words:
@@ -773,15 +768,6 @@ def _image_refs_from_payload(validated_images: list[dict[str, Any]]) -> list:
         ImageRef(token=str(img.get("token") or ""), path=img.get("path"), b64=str(img.get("b64") or ""), mime=str(img.get("mime") or "image/png"))
         for img in validated_images
     ]
-
-
-def unique_project_name(base_name: str, work_dir: Path) -> str:
-    candidate = base_name
-    suffix = 2
-    while (work_dir / candidate).exists():
-        candidate = f"{base_name}_{suffix}"
-        suffix += 1
-    return candidate
 
 
 def recent_project_to_api(path: str) -> dict[str, Any]:
