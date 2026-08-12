@@ -176,6 +176,11 @@ export const en: Record<LocaleKey, string> = {
   'dialog.confirm': 'Confirm',
   'dialog.cancel': 'Cancel',
 
+  // P0-C: create-intent confirmation when a project is open
+  'chat.confirmCreateTitle': 'Generate a new GDL object?',
+  'chat.confirmCreateMessage': 'A separate new project will be created. The currently open "{name}" will not be modified. To modify the current project instead, cancel and rephrase with "change ... to ...".',
+  'chat.confirmCreateOk': 'Create new project',
+
   // P4-C empty states
   'preview.empty.title': 'No model to preview yet',
   'preview.empty.hint': 'Open or create a project, or describe a component in the AI panel',

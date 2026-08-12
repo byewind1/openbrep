@@ -173,6 +173,11 @@ export const zh = {
   'dialog.confirm': '确定',
   'dialog.cancel': '取消',
 
+  // P0-C：有项目打开时的生成意图确认门
+  'chat.confirmCreateTitle': '生成新 GDL 构件？',
+  'chat.confirmCreateMessage': '将创建独立的新项目，当前打开的《{name}》不会被修改。想修改当前项目，请取消并改用「把…改成…」的说法。',
+  'chat.confirmCreateOk': '新建项目',
+
   // P4-C 空态
   'preview.empty.title': '还没有可预览的模型',
   'preview.empty.hint': '打开/新建项目，或在 AI 面板描述一个构件',

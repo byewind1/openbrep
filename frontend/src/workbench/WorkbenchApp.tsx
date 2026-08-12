@@ -2,7 +2,9 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { BottomDrawer } from '../components/BottomDrawer'
 import { TopMenu } from '../components/TopMenu'
 import { useThemedDialog } from '../components/ThemedDialog'
-import type { CompileIssue } from '../api/types'
+import { detectChatIntent } from '../state/chatIntent'
+import { useT } from '../i18n'
+import type { AssistantImageAttachment, CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useUiPrefsStore } from '../state/uiPrefsStore'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
@@ -142,6 +144,22 @@ export function WorkbenchApp() {
   const commitProjectGit = useWorkbenchStore((state) => state.commitProjectGit)
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
   const sendChat = useWorkbenchStore((state) => state.sendChat)
+  const t = useT()
+
+  // P0-C：有项目打开时的"生成"意图先确认（建筑基础_v1 事故：
+  // "参考图1生成坐斗"被当成改当前项目，全文重写覆盖了打开的项目）。
+  // 新建项目不会改动当前项目文件；想改当前项目可取消后改用修改类表述。
+  async function handleChat(message: string, images?: AssistantImageAttachment[]) {
+    if (project && detectChatIntent(message, true) === 'create') {
+      const ok = await confirm({
+        title: t('chat.confirmCreateTitle'),
+        message: t('chat.confirmCreateMessage', { name: project.name || '' }),
+        confirmLabel: t('chat.confirmCreateOk'),
+      })
+      if (!ok) return
+    }
+    await sendChat(message, images)
+  }
   const confirmPendingPlan = useWorkbenchStore((state) => state.confirmPendingPlan)
   const confirmPendingSkillProposal = useWorkbenchStore((state) => state.confirmPendingSkillProposal)
   const stopChat = useWorkbenchStore((state) => state.stopChat)
@@ -395,7 +413,7 @@ export function WorkbenchApp() {
             onApplyTapirParameters={() => void applyTapirParameters()}
             hasProject={!!project}
             interruptedContext={interruptedContext}
-            onChat={(message, images) => void sendChat(message, images)}
+            onChat={(message, images) => void handleChat(message, images)}
             onStop={stopChat}
             onClearAssistantHistory={() => void clearAssistantHistory()}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
