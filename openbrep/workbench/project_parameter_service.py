@@ -114,16 +114,22 @@ def parameter_to_dict(param: GDLParameter) -> dict[str, Any]:
     }
 
 
-def parameter_values(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, float]:
-    values: dict[str, float] = {}
+def parameter_values(project: HSFProject, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    values: dict[str, Any] = {}
     for param in project.parameters:
         numeric = to_preview_number(param.value)
         if numeric is not None:
             values[param.name.upper()] = numeric
+        elif isinstance(param.value, str) and param.value.strip():
+            # P9：非数值字符串参数（如 String 型 pattern_type）原样保留，
+            # 供预览器字符串比较（IF pattern_type = "直棂"）使用。
+            values[param.name.upper()] = param.value
     for key, value in (overrides or {}).items():
         numeric = to_preview_number(value)
         if numeric is not None:
             values[str(key).upper()] = numeric
+        elif isinstance(value, str) and value.strip():
+            values[str(key).upper()] = value
     return values
 
 

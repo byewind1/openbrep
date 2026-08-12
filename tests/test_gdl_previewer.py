@@ -266,6 +266,117 @@ DEL 3
         self.assertLess(max(max(abs(y) for y in mesh.y) for mesh in res.meshes), 1.0)
 
 
+class TestP9ConditionEvaluation(unittest.TestCase):
+    """P9：预览器条件求值三缺口（字符串比较 / NOT / 单行 IF 深度计数）。
+
+    事故背景：漏窗真机项目（output/window_decorative_lattice_v2/）的合法 GDL
+    在 Archicad 可运行，但预览器窗芯全缺（纹样 mesh 恒 8 = 只外框+内框）：
+    1. `IF pattern_type = "直棂" THEN GOSUB ...` 字符串比较不支持 → 分发全跳过；
+    2. `IF NOT show_in_3d THEN END` 前级 NOT 不支持 → 解析失败；
+    3. 单行 IF 被 _find_matching_if_bounds/_find_matching_endif 计入深度，
+       块 IF 误报 "IF 缺少匹配 ENDIF"，且匹配失败后块体无条件穿透执行。
+    """
+
+    def test_string_pattern_dispatch_gosub(self):
+        """事故形状：字符串分发（单行 IF + GOSUB）。pattern_type 命中时
+        窗芯 mesh 出现，不命中时不出现。"""
+        script = """GOSUB "DrawFrame"
+IF pattern_type = "直棂" THEN GOSUB "CoreZhileng"
+IF pattern_type = "井字" THEN GOSUB "CoreJingzi"
+END
+"DrawFrame":
+    BLOCK 1, 1, 1
+RETURN
+"CoreZhileng":
+    BLOCK 0.5, 0.5, 0.5
+RETURN
+"CoreJingzi":
+    BLOCK 0.25, 0.25, 0.25
+RETURN
+"""
+        res_zhileng = preview_3d_script(script, {"pattern_type": "直棂"})
+        self.assertEqual(len(res_zhileng.meshes), 2)
+        res_jingzi = preview_3d_script(script, {"pattern_type": "井字"})
+        self.assertEqual(len(res_jingzi.meshes), 2)
+        res_other = preview_3d_script(script, {"pattern_type": "菱花"})
+        self.assertEqual(len(res_other.meshes), 1)  # 只外框
+        for res in (res_zhileng, res_jingzi, res_other):
+            self.assertFalse(any("条件解析失败" in w for w in res.warnings))
+
+    def test_string_inequality_operators(self):
+        """字符串不等号：`<>` 与 `#` 都按字符串不相等处理。"""
+        script = """IF pattern_type <> "井字" THEN
+    BLOCK 1, 1, 1
+ENDIF
+IF pattern_type # "直棂" THEN
+    BLOCK 0.5, 0.5, 0.5
+ENDIF
+"""
+        res = preview_3d_script(script, {"pattern_type": "直棂"})
+        self.assertEqual(len(res.meshes), 1)  # <> 为真；# 为假
+        res2 = preview_3d_script(script, {"pattern_type": "井字"})
+        self.assertEqual(len(res2.meshes), 1)  # <> 为假；# 为真
+        res3 = preview_3d_script(script, {"pattern_type": "菱花"})
+        self.assertEqual(len(res3.meshes), 2)  # 两者都为真
+
+    def test_not_prefix_condition(self):
+        """前级 NOT：flag=1 时 IF NOT flag 不执行；flag=0 时执行。"""
+        script = """IF NOT show_flag THEN
+    BLOCK 9, 9, 9
+ENDIF
+IF show_flag THEN
+    BLOCK 1, 1, 1
+ENDIF
+"""
+        res_on = preview_3d_script(script, {"show_flag": 1})
+        self.assertEqual(len(res_on.meshes), 1)  # 只走 show_flag 分支
+        self.assertEqual(res_on.meshes[0].source_ref.line, 5)
+        res_off = preview_3d_script(script, {"show_flag": 0})
+        self.assertEqual(len(res_off.meshes), 1)  # 只走 NOT 分支
+        self.assertEqual(res_off.meshes[0].source_ref.line, 2)
+
+    def test_not_incident_guard_parses(self):
+        """事故形状 `IF NOT show_in_3d THEN END`：show=1 时守卫不触发，
+        不再报条件解析失败。"""
+        script = "IF NOT show_in_3d THEN END\nBLOCK 1, 1, 1\n"
+        res = preview_3d_script(script, {"show_in_3d": 1})
+        self.assertEqual(len(res.meshes), 1)
+        self.assertFalse(any("条件解析失败" in w for w in res.warnings))
+
+    def test_inline_if_inside_block_if(self):
+        """漏窗 master 形状：块 IF 内含两条单行 IF + ENDIF。零"缺少匹配
+        ENDIF"警告；条件为假时块体不执行（盯死无条件穿透不再误触）。"""
+        script = """IF _inner_opening_w > bar_width THEN
+    _n = INT((_inner_opening_w + gap) / (bar_width + gap))
+    IF _n < 1 THEN _n = 1
+    IF _n = 1 THEN _gap = 0
+    BLOCK _n, 1, 1
+ENDIF
+"""
+        res = preview_3d_script(script, {"_inner_opening_w": 0.66, "bar_width": 0.03, "gap": 0.1})
+        self.assertEqual(len(res.meshes), 1)
+        self.assertFalse(any("缺少匹配 ENDIF" in w for w in res.warnings))
+        self.assertFalse(any("游离 ENDIF" in w for w in res.warnings))
+
+        res_false = preview_3d_script(script, {"_inner_opening_w": 0.01, "bar_width": 0.03, "gap": 0.1})
+        self.assertEqual(len(res_false.meshes), 0)  # 条件为假：块体不执行
+        self.assertFalse(any("缺少匹配 ENDIF" in w for w in res_false.warnings))
+
+    def test_numeric_condition_shapes_regression(self):
+        """数值条件全形态回归：比较 / AND / OR 行为不变。"""
+        script = """IF A >= 0.9 AND B <= 1.0 THEN
+    BLOCK A, B, ZZYZX
+ENDIF
+IF A < 0.1 OR has_back = 1 THEN
+    BLOCK 0.1, 0.1, 0.1
+ENDIF
+"""
+        res = preview_3d_script(script, {"A": 0.9, "B": 0.9, "ZZYZX": 0.1, "has_back": 1})
+        self.assertEqual(len(res.meshes), 2)
+        res2 = preview_3d_script(script, {"A": 0.9, "B": 0.9, "ZZYZX": 0.1, "has_back": 0})
+        self.assertEqual(len(res2.meshes), 1)
+
+
 class TestRuledPreview(unittest.TestCase):
 
     def test_ruled_basic_square_loft(self):

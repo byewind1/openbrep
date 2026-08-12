@@ -197,6 +197,10 @@ def sweep_parameters(
 
     for name in sorted(baseline_params.keys())[:max_params]:
         baseline_value = baseline_params[name]
+        # P9：字符串参数（如 String 型 pattern_type）不参与数值扫掠——扰动
+        # 字符串没有数值意义，直接跳过，避免制造无意义的 sweep_preview_error。
+        if not isinstance(baseline_value, (int, float)):
+            continue
         is_boolean = name in boolean_param_names
         perturbed_params = dict(baseline_params)
         perturbed_params[name] = _perturb_value(

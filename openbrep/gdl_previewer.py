@@ -298,7 +298,7 @@ class _PreviewRuntime:
                 condition, statement = inline_if
                 should_run = self._eval_condition(condition, line_no)
                 if should_run:
-                    self._exec_block([(line_no, statement)], 0, 1, mode=mode)
+                    self._exec_inline_statement(statement, line_no, lines, idx, mode)
                 idx += 1
                 continue
 
@@ -393,8 +393,13 @@ class _PreviewRuntime:
                     self._warn(line_no, "RETURN 没有对应 GOSUB，已忽略")
                     idx += 1
                 else:
-                    idx = self._gosub_stack.pop()
+                    ret = self._gosub_stack.pop()
                     self._subroutine_stack.pop()
+                    if ret is None:
+                        # P9：单行 IF 语句里的 GOSUB 返回后即结束该语句作用域
+                        # （_exec_inline_statement 用 None 哨兵表示）。
+                        break
+                    idx = ret
                 continue
 
             # Transform commands
@@ -445,6 +450,33 @@ class _PreviewRuntime:
                     self._warn(line_no, "无法解析语句，已跳过", command="", code="PARSE_FAIL")
 
             idx += 1
+
+    def _exec_inline_statement(
+        self,
+        statement: str,
+        line_no: int,
+        lines: list[tuple[int, str]],
+        idx: int,
+        mode: str,
+    ) -> None:
+        """执行单行 IF（IF cond THEN stmt）的语句部分。
+
+        GOSUB 语句特殊处理：子程序在脚本后方（标签位置），单元素子块无法
+        跳到那里。这里直接在完整脚本上下文中从标签执行到 RETURN（RETURN 用
+        None 哨兵返回，结束语句作用域，不会继续执行脚本剩余部分）。其余
+        语句保持原有单行子块执行方式。
+        """
+        m = re.match(r"^GOSUB\b\s*(.+)$", statement, re.IGNORECASE)
+        if m:
+            target = self._resolve_gosub_target(m.group(1), line_no)
+            if target is None:
+                self._warn(line_no, "GOSUB 目标标签未找到，已跳过")
+                return
+            self._gosub_stack.append(None)
+            self._subroutine_stack.append(self._subroutine_extents.get(lines[target][0]))
+            self._exec_block(lines, target, len(lines), mode=mode)
+            return
+        self._exec_block([(line_no, statement)], 0, 1, mode=mode)
 
     def _execute_for(
         self,
@@ -529,7 +561,11 @@ class _PreviewRuntime:
             _, line = lines[i]
             cmd = _extract_command(line)
             if cmd == "IF":
-                depth += 1
+                # P9：单行 IF（IF cond THEN stmt，自包含）不计深度——它有自己的
+                # THEN 语句、不消耗 ENDIF。只有块级 IF（IF cond THEN + ENDIF）
+                # 才增加嵌套深度。
+                if _extract_inline_if(line) is None:
+                    depth += 1
             elif cmd == "ENDIF":
                 depth -= 1
                 if depth == 0:
@@ -549,7 +585,9 @@ class _PreviewRuntime:
             _, line = lines[i]
             cmd = _extract_command(line)
             if cmd == "IF":
-                depth += 1
+                # P9：单行 IF 不计深度（同 _find_matching_endif）。
+                if _extract_inline_if(line) is None:
+                    depth += 1
             elif cmd == "ENDIF":
                 depth -= 1
                 if depth == 0:
@@ -1491,10 +1529,15 @@ class _PreviewRuntime:
         self._warn(line_no, msg, command=cmd, code="UNKNOWN_COMMAND")
 
 
-def _normalize_parameters(parameters: dict[str, Any]) -> dict[str, float]:
-    out: dict[str, float] = {}
+def _normalize_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
     for k, v in parameters.items():
         name = str(k).upper()
+        if isinstance(v, str):
+            # P9：保留字符串参数值（如 pattern_type = "直棂"），供字符串比较
+            # （_safe_eval_condition 字符串分支）使用；数值路径不受影响。
+            out[name] = v
+            continue
         try:
             out[name] = float(v)
         except (TypeError, ValueError):
@@ -2406,6 +2449,8 @@ def _make_tube_mesh(
 _ALLOWED_FUNCS = {
     "ABS": lambda x: abs(x),
     "SQRT": lambda x: math.sqrt(x),
+    # P9：GDL 平方根函数名是 SQR（Archicad 合法脚本用 SQR，如菱花对角线计算）。
+    "SQR": lambda x: math.sqrt(x),
     "SIN": lambda x: math.sin(math.radians(x)),
     "COS": lambda x: math.cos(math.radians(x)),
     "TAN": lambda x: math.tan(math.radians(x)),
@@ -2429,9 +2474,22 @@ def _safe_eval_expr(
     return float(_eval_ast(node.body, env, funcs=funcs, missing_names_zero=missing_names_zero))
 
 
+def _string_value(src: str, env: dict[str, Any]) -> str | None:
+    """Interpret a condition operand as a string: quoted literal or a
+    string-valued env name. Returns None when it cannot be a string."""
+    s = (src or "").strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in {'"', "'"}:
+        return s[1:-1]
+    if re.match(r"^[A-Za-z_]\w*$", s):
+        value = env.get(s.upper())
+        if isinstance(value, str):
+            return value
+    return None
+
+
 def _safe_eval_condition(
     condition: str,
-    env: dict[str, float],
+    env: dict[str, Any],
     *,
     funcs: dict[str, Any] | None = None,
 ) -> bool:
@@ -2447,26 +2505,52 @@ def _safe_eval_condition(
             values = [_safe_eval_condition(part, env, funcs=funcs) for part in parts]
             return any(values) if op.strip() == "OR" else all(values)
 
+    # P9：前级 NOT（逻辑优先级最高）。AND/OR 已在上面拆分，因此这里 NOT
+    # 只作用于自己的操作数：`NOT a AND b` → `(NOT a) AND (b)`。
+    m_not = re.match(r"^NOT\b\s*(.+)$", text, re.IGNORECASE)
+    if m_not:
+        return not _safe_eval_condition(m_not.group(1).strip(), env, funcs=funcs)
+
     m = re.match(r"^(.+?)\s*(<=|>=|<>|#|=|<|>)\s*(.+)$", text)
     if not m:
         return abs(_safe_eval_expr(text, env, funcs=funcs, missing_names_zero=True)) > 1e-12
 
-    left = _safe_eval_expr(m.group(1), env, funcs=funcs, missing_names_zero=True)
-    right = _safe_eval_expr(m.group(3), env, funcs=funcs, missing_names_zero=True)
-    op = m.group(2)
-    if op == "=":
-        return abs(left - right) <= 1e-9
-    if op in {"<>", "#"}:
-        return abs(left - right) > 1e-9
-    if op == "<":
-        return left < right
-    if op == ">":
-        return left > right
-    if op == "<=":
-        return left <= right + 1e-9
-    if op == ">=":
-        return left >= right - 1e-9
-    raise ValueError(f"条件运算符不支持: {op}")
+    left_src, op, right_src = m.group(1).strip(), m.group(2), m.group(3).strip()
+
+    # 数值路径：两侧都能数值求值时走原逻辑（行为不变）。任一侧数值求值失败
+    # 才尝试字符串解释——字符串比较只支持 = / <> / #，其余运算符抛不支持。
+    try:
+        left = _safe_eval_expr(left_src, env, funcs=funcs, missing_names_zero=True)
+    except Exception:
+        left = None
+    try:
+        right = _safe_eval_expr(right_src, env, funcs=funcs, missing_names_zero=True)
+    except Exception:
+        right = None
+    if left is not None and right is not None:
+        if op == "=":
+            return abs(left - right) <= 1e-9
+        if op in {"<>", "#"}:
+            return abs(left - right) > 1e-9
+        if op == "<":
+            return left < right
+        if op == ">":
+            return left > right
+        if op == "<=":
+            return left <= right + 1e-9
+        if op == ">=":
+            return left >= right - 1e-9
+        raise ValueError(f"条件运算符不支持: {op}")
+
+    left_s = _string_value(left_src, env)
+    right_s = _string_value(right_src, env)
+    if left_s is not None and right_s is not None:
+        if op == "=":
+            return left_s == right_s
+        if op in {"<>", "#"}:
+            return left_s != right_s
+        raise ValueError(f"条件运算符不支持: {op}")
+    raise ValueError(f"条件无法求值: {text}")
 
 
 def _eval_ast(

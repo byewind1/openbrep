@@ -63,6 +63,21 @@ def test_apply_parameter_values_updates_project_values():
     assert project.get_parameter("has_back_panel").value == "1"
 
 
+def test_parameter_values_preserves_string_params_for_preview():
+    """P9：非数值字符串参数（String 型，如 pattern_type）保留在预览参数里，
+    供预览器字符串比较（IF pattern_type = "直棂"）使用；数值参数不受影响。"""
+    from openbrep.workbench.project_parameter_service import parameter_values
+
+    project = build_demo_project()
+    project.add_parameter(GDLParameter(name="pattern_type", type_tag="String", value="直棂"))
+
+    values = parameter_values(project)
+
+    assert values["PATTERN_TYPE"] == "直棂"
+    assert values["A"] == 1.2  # 数值参数照旧
+    assert values["HAS_BACK_PANEL"] == 1.0  # Boolean 照旧数值化
+
+
 def test_route_rpc_preview_returns_preview_for_overrides():
     route_rpc("POST", "/api/project/new", {})
     response = route_rpc(
