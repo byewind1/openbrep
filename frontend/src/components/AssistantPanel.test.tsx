@@ -215,6 +215,66 @@ describe('AssistantPanel', () => {
     expect(onImportAssistantHistory).not.toHaveBeenCalled()
   })
 
+  test('history drawer distill button is disabled without a project (P6b)', () => {
+    render(<AssistantPanel {...baseProps} messages={[{ role: 'user', content: '旧记录' }]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    const distillBtn = screen.getByRole('button', { name: '整理成指令' })
+    expect((distillBtn as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  test('history drawer is unreachable without messages, so distill stays disabled (P6b)', () => {
+    render(<AssistantPanel {...baseProps} hasProject messages={[]} />)
+    const historyBtn = screen.getByRole('button', { name: 'History' })
+    expect((historyBtn as HTMLButtonElement).disabled).toBe(true)
+    // 无记录时抽屉不可打开，无历史可整理（后端空记录也会报错）
+    expect(screen.queryByRole('dialog', { name: 'Assistant history' })).toBeNull()
+  })
+
+  test('history drawer distill button is enabled with a project and messages (P6b)', () => {
+    render(<AssistantPanel {...baseProps} hasProject messages={[{ role: 'user', content: '旧记录' }]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    const distillBtn = screen.getByRole('button', { name: '整理成指令' })
+    expect((distillBtn as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  test('distill click calls the handler, fills the draft seed and never auto-sends (P6b)', async () => {
+    const onChat = vi.fn()
+    const onDistill = vi.fn(async () => {})
+    const onConsume = vi.fn()
+    const { rerender } = render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        onChat={onChat}
+        onDistillAssistantHistory={onDistill}
+        onConsumeDraftSeed={onConsume}
+        messages={[{ role: 'user', content: '把书架层板数改成 5' }]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    fireEvent.click(screen.getByRole('button', { name: '整理成指令' }))
+    expect(onDistill).toHaveBeenCalledTimes(1)
+    // 整理完成：seed 到达 → 填入输入框草稿、关抽屉、消费 seed
+    rerender(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        onChat={onChat}
+        onDistillAssistantHistory={onDistill}
+        onConsumeDraftSeed={onConsume}
+        draftSeed="把书架层板数改成 5，保留 3D 代码"
+        messages={[{ role: 'user', content: '把书架层板数改成 5' }]}
+      />,
+    )
+    const ta = screen.getByLabelText('Ask or generate') as HTMLTextAreaElement
+    expect(ta.value).toBe('把书架层板数改成 5，保留 3D 代码')
+    expect(onConsume).toHaveBeenCalledTimes(1)
+    // 绝不自动发送
+    expect(onChat).not.toHaveBeenCalled()
+    // 抽屉已关闭
+    expect(screen.queryByRole('dialog', { name: 'Assistant history' })).toBeNull()
+  })
+
   test('shows error category badge and interrupted badge', () => {
     render(
       <AssistantPanel

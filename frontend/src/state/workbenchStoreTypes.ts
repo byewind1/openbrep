@@ -24,6 +24,7 @@ import type {
   GenerateResult,
   HsfExportResult,
   ImportAssistantHistoryResult,
+  DistillAssistantHistoryResult,
   IgnoreMemoryLessonResult,
   KnowledgeStatus,
   LlmSettings,
@@ -136,6 +137,7 @@ export interface WorkbenchApi {
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
   clearAssistantHistory: () => Promise<SaveAssistantHistoryResult>
   importAssistantHistory: (sourcePath: string) => Promise<ImportAssistantHistoryResult>
+  distillAssistantHistory: () => Promise<DistillAssistantHistoryResult>
   extractAssistantCodeBlocks: (content: string) => Promise<AssistantCodeBlocksResult>
   fetchMemoryStatus: () => Promise<ProjectMemoryStatusResult>
   fetchMemoryLessons: () => Promise<ProjectLessonsResult>
@@ -221,6 +223,8 @@ export interface WorkbenchState {
   activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
+  /** P6b 整理指令草稿通道：distill 成功后写入，AssistantPanel 监听填入输入框并消费（绝不自动发送） */
+  assistantDraftSeed: string | null
   /** 计划确认门（V3）：非 null = 有待用户确认的修改计划 */
   pendingPlan: import('../api/types').PendingPlan | null
   /** 模式级 skill 提案（P2-d）：非 null = 有待用户确认的 skill 提案 */
@@ -290,6 +294,10 @@ export interface WorkbenchState {
   loadAssistantHistory: () => Promise<void>
   clearAssistantHistory: () => Promise<void>
   importAssistantHistory: (sourcePath: string) => Promise<void>
+  /** P6b：LLM 把当前项目聊天记录整理成指令 → 填入 AI 输入框草稿（不自动发送） */
+  distillAssistantHistory: () => Promise<void>
+  /** 面板填入草稿后消费 seed，防止旧结果再被填入 */
+  consumeAssistantDraftSeed: () => void
   adoptAssistantMessageCode: (index: number) => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
   createProjectFromPrompt: (message: string, images?: AssistantImageAttachment[]) => Promise<void>

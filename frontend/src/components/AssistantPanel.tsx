@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react'
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, SkillProposal, VerificationReport, WorkspaceInfo } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
@@ -33,6 +33,10 @@ interface AssistantPanelProps {
   workspace?: WorkspaceInfo | null
   currentProjectPath?: string | null
   onImportAssistantHistory?: (sourcePath: string) => void
+  // P6b：整理聊天记录为指令 → 填入输入框草稿（不自动发送）
+  draftSeed?: string | null
+  onConsumeDraftSeed?: () => void
+  onDistillAssistantHistory?: () => void | Promise<void>
 }
 
 /** 面板内带 token 的已贴图片（token 与草稿里的 [图N] 对应，按 attach 顺序递增）。 */
@@ -66,12 +70,25 @@ export function AssistantPanel({
   workspace = null,
   currentProjectPath = null,
   onImportAssistantHistory,
+  draftSeed = null,
+  onConsumeDraftSeed,
+  onDistillAssistantHistory,
 }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<AttachedImage[]>([])
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const t = useT()
+
+  // P6b：store 的整理指令草稿到达 → 填入输入框、关抽屉、聚焦，绝不自动发送
+  useEffect(() => {
+    if (!draftSeed || busy) return
+    setDraft(draftSeed)
+    setAttachments([])
+    setHistoryOpen(false)
+    onConsumeDraftSeed?.()
+    textareaRef.current?.focus()
+  }, [draftSeed, busy, onConsumeDraftSeed])
 
   // slash command state
   const [pickerMode, setPickerMode] = useState<null | 'commands' | 'models'>(null)
@@ -595,6 +612,7 @@ export function AssistantPanel({
         onClose={() => setHistoryOpen(false)}
         onAdoptCode={onAdoptCode}
         onImportAssistantHistory={onImportAssistantHistory}
+        onDistillAssistantHistory={onDistillAssistantHistory}
       />
     </aside>
   )
@@ -822,6 +840,7 @@ function AssistantHistoryDrawer({
   onClose,
   onAdoptCode,
   onImportAssistantHistory,
+  onDistillAssistantHistory,
 }: {
   open: boolean
   messages: AssistantMessage[]
@@ -832,10 +851,12 @@ function AssistantHistoryDrawer({
   onClose: () => void
   onAdoptCode: (index: number) => void
   onImportAssistantHistory?: (sourcePath: string) => void
+  onDistillAssistantHistory?: () => void | Promise<void>
 }) {
   const t = useT()
   const { confirm, dialogNode } = useThemedDialog()
   const [importOpen, setImportOpen] = useState(false)
+  const [distilling, setDistilling] = useState(false)
   if (!open) return null
 
   // P6a：源项目候选 = 工作区项目里排除当前项目
@@ -855,6 +876,17 @@ function AssistantHistoryDrawer({
     onImportAssistantHistory?.(sourcePath)
   }
 
+  // P6b：LLM 整理中禁用按钮，防止重复点击；结果经 store 草稿通道填入输入框
+  async function handleDistill() {
+    if (distilling) return
+    setDistilling(true)
+    try {
+      await onDistillAssistantHistory?.()
+    } finally {
+      setDistilling(false)
+    }
+  }
+
   return (
     <>
       <button className="history-scrim" type="button" aria-label="Close assistant history" onClick={onClose} />
@@ -866,6 +898,20 @@ function AssistantHistoryDrawer({
               <span>{messages.length} messages</span>
             </div>
             <div className="history-header-actions">
+              <button
+                type="button"
+                disabled={!hasProject || messages.length === 0 || distilling}
+                title={
+                  !hasProject
+                    ? t('assistant.history.distillNoProject')
+                    : messages.length === 0
+                      ? t('assistant.history.distillNoHistory')
+                      : t('assistant.history.distillTitle')
+                }
+                onClick={() => void handleDistill()}
+              >
+                {distilling ? t('assistant.history.distillBusy') : t('assistant.history.distill')}
+              </button>
               <button
                 type="button"
                 disabled={!hasProject}

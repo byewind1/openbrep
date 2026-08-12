@@ -117,6 +117,13 @@ export const zh = {
   'assistant.history.importConfirmMessage': '从项目「{source}」导入聊天记录到当前项目「{current}」？将追加合并，不覆盖现有记录。',
   'assistant.history.importConfirmLabel': '确认导入',
 
+  // P6b 聊天记录整理成指令（历史抽屉）
+  'assistant.history.distill': '整理成指令',
+  'assistant.history.distillTitle': '把聊天记录整理成一段可直接发给 AI 的指令（填入输入框草稿，审阅后自己发送）',
+  'assistant.history.distillNoProject': '先打开一个项目才能整理聊天记录',
+  'assistant.history.distillNoHistory': '当前项目没有聊天记录可整理',
+  'assistant.history.distillBusy': '整理中…',
+
   // Assistant plan confirmation gate (V3)
   'assistant.plan.title': '修改计划',
   'assistant.plan.userChanges': '将要发生的改动',

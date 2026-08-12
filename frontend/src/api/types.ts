@@ -524,6 +524,13 @@ export interface ImportAssistantHistoryResult {
   error?: string
 }
 
+export interface DistillAssistantHistoryResult {
+  ok: boolean
+  instruction?: string
+  message_count?: number
+  error?: string
+}
+
 export interface AssistantCodeBlock {
   path: string
   script_name: string

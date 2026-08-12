@@ -294,6 +294,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     saveAssistantHistory: async (messages) => ({ ok: true, count: messages.length }),
     clearAssistantHistory: async () => ({ ok: true, count: 0 }),
     importAssistantHistory: async (sourcePath) => ({ ok: true, imported: 0, source_name: sourcePath.split('/').pop() ?? 'source' }),
+    distillAssistantHistory: async () => ({ ok: false, error: 'not loaded' }),
     extractAssistantCodeBlocks: async () => ({ ok: true, blocks: [] }),
     fetchMemoryStatus: async () => ({
       ok: true,
@@ -1653,6 +1654,93 @@ test('importAssistantHistory records api failure in lastError (P6a)', async () =
   await store.getState().importAssistantHistory('/nope')
 
   expect(store.getState().lastError).toContain('/nope')
+})
+
+test('distillAssistantHistory seeds the draft channel on success (P6b)', async () => {
+  let called = false
+  const store = createWorkbenchStore(
+    makeApi({
+      distillAssistantHistory: async () => {
+        called = true
+        return { ok: true, instruction: '把书架层板数改成 5，保留现有 3D 代码', message_count: 3 }
+      },
+    }),
+  )
+
+  await store.getState().distillAssistantHistory()
+
+  expect(called).toBe(true)
+  expect(store.getState().assistantDraftSeed).toBe('把书架层板数改成 5，保留现有 3D 代码')
+  expect(store.getState().lastError).toBeNull()
+})
+
+test('distillAssistantHistory records api failure in lastError (P6b)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      distillAssistantHistory: async () => ({ ok: false, error: '当前项目没有聊天记录可整理。' }),
+    }),
+  )
+
+  await store.getState().distillAssistantHistory()
+
+  expect(store.getState().lastError).toContain('聊天记录')
+  expect(store.getState().assistantDraftSeed).toBeNull()
+})
+
+test('distillAssistantHistory discards the seed when the project switches mid-flight (P6b)', async () => {
+  let resolveDistill: (v: { ok: boolean; instruction?: string; error?: string }) => void = () => {}
+  const store = createWorkbenchStore(
+    makeApi({
+      distillAssistantHistory: async () =>
+        new Promise((resolve) => {
+          resolveDistill = resolve
+        }),
+    }),
+  )
+
+  const pending = store.getState().distillAssistantHistory()
+  // 请求未返回时切换项目（epoch 变化）
+  store.setState({ projectEpoch: store.getState().projectEpoch + 1 })
+  resolveDistill({ ok: true, instruction: '旧项目的整理结果' })
+  await pending
+
+  expect(store.getState().assistantDraftSeed).toBeNull()
+  expect(store.getState().lastError).toBeNull()
+})
+
+test('consumeAssistantDraftSeed clears the seed (P6b)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      distillAssistantHistory: async () => ({ ok: true, instruction: '整理结果', message_count: 1 }),
+    }),
+  )
+  await store.getState().distillAssistantHistory()
+  expect(store.getState().assistantDraftSeed).toBe('整理结果')
+
+  store.getState().consumeAssistantDraftSeed()
+
+  expect(store.getState().assistantDraftSeed).toBeNull()
+})
+
+test('hydrateSnapshot clears an un-consumed draft seed on project switch (P6b)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      distillAssistantHistory: async () => ({ ok: true, instruction: '旧项目整理结果', message_count: 2 }),
+      loadProjectPath: async (path: string) => ({
+        project: { name: 'NewProj', source: 'hsf', path },
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+      }),
+    }),
+  )
+  await store.getState().distillAssistantHistory()
+  expect(store.getState().assistantDraftSeed).toBe('旧项目整理结果')
+
+  await store.getState().loadProjectPath('/workspace/NewProj')
+
+  expect(store.getState().assistantDraftSeed).toBeNull()
 })
 
 test('load hydrates project memory status', async () => {

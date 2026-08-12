@@ -55,7 +55,10 @@ export function WorkbenchApp() {
   const activeRailPanel = useWorkbenchStore((state) => state.activeRailPanel)
   const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
+  const assistantDraftSeed = useWorkbenchStore((state) => state.assistantDraftSeed)
   const importAssistantHistory = useWorkbenchStore((state) => state.importAssistantHistory)
+  const distillAssistantHistory = useWorkbenchStore((state) => state.distillAssistantHistory)
+  const consumeAssistantDraftSeed = useWorkbenchStore((state) => state.consumeAssistantDraftSeed)
   const pendingPlan = useWorkbenchStore((state) => state.pendingPlan)
   const pendingSkillProposal = useWorkbenchStore((state) => state.pendingSkillProposal)
   const scripts = useWorkbenchStore((state) => state.scripts)
@@ -427,6 +430,9 @@ export function WorkbenchApp() {
             workspace={workspace}
             currentProjectPath={project?.path ?? null}
             onImportAssistantHistory={(sourcePath) => void importAssistantHistory(sourcePath)}
+            draftSeed={assistantDraftSeed}
+            onConsumeDraftSeed={consumeAssistantDraftSeed}
+            onDistillAssistantHistory={() => void distillAssistantHistory()}
           />
         )}
       />

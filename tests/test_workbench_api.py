@@ -6,6 +6,7 @@ from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.learning import ErrorLearningStore
+from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import TaskResult
 import openbrep.workbench_api as workbench_api
 from openbrep.workbench.project_session_service import write_project_origin
@@ -1844,6 +1845,155 @@ def test_workbench_session_import_assistant_history_cleans_roles(tmp_path):
         {"role": "user", "content": "合法用户"},
         {"role": "assistant", "content": "非法 role 变成 assistant"},
     ]
+
+
+def test_workbench_session_distill_history_intent_happy_path(tmp_path):
+    """P6b：mock LLM happy path —— prompt 含对话文本与 system 指令，返回 instruction + message_count。"""
+    captured: dict = {}
+
+    class FakeLLM:
+        def generate(self, messages, **kwargs):
+            captured["messages"] = messages
+            return LLMResponse(content="请把书架层板数改成 5，并保留现有 3D 代码。", model="mock", usage={}, finish_reason="stop")
+
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def _make_llm(self, request):
+            captured["request"] = request
+            return FakeLLM()
+
+    project = HSFProject.create_new("DistillShelf", str(tmp_path))
+    hsf = project.save_to_disk()
+    ErrorLearningStore(hsf).append_chat_messages(
+        [
+            {"role": "user", "content": "把书架层板数改成 5"},
+            {"role": "assistant", "content": "```gdl\nSHELF_COUNT = 5\n```"},
+        ],
+        project_name="DistillShelf",
+        source="react_workbench",
+    )
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf)})
+
+    response = session.route("POST", "/api/assistant/history/distill", {})
+
+    assert response["ok"] is True
+    assert response["instruction"] == "请把书架层板数改成 5，并保留现有 3D 代码。"
+    assert response["message_count"] == 2
+    # 关键断言：system prompt 一处定义的完整指令 + user prompt 含对话文本
+    system = next(m for m in captured["messages"] if m["role"] == "system")
+    assert "把以下 GDL 工作台对话整理成一段" in system["content"]
+    assert "```gdl" in system["content"]
+    user = next(m for m in captured["messages"] if m["role"] == "user")
+    assert "user: 把书架层板数改成 5" in user["content"]
+    assert "assistant: ```gdl" in user["content"]
+    # 适配器拿到 session 的 assistant_settings
+    assert captured["request"].assistant_settings == session.assistant_settings
+
+
+def test_workbench_session_distill_history_requires_open_project():
+    session = WorkbenchSession()
+    response = session.route("POST", "/api/assistant/history/distill", {})
+
+    assert response["ok"] is False
+    assert response["error"] == "Load an HSF project before distilling assistant history."
+
+
+def test_workbench_session_distill_history_empty_record_errors(tmp_path):
+    project = HSFProject.create_new("EmptyDistill", str(tmp_path))
+    hsf = project.save_to_disk()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf)})
+
+    response = session.route("POST", "/api/assistant/history/distill", {})
+
+    assert response["ok"] is False
+    assert response["error"] == "当前项目没有聊天记录可整理。"
+
+
+def test_workbench_session_distill_history_llm_failure_passthrough(tmp_path):
+    """LLM 调用失败 → error 透传（不静默）。"""
+
+    class FailingLLM:
+        def generate(self, messages, **kwargs):
+            raise RuntimeError("upstream quota exhausted")
+
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def _make_llm(self, request):
+            return FailingLLM()
+
+    project = HSFProject.create_new("FailDistill", str(tmp_path))
+    hsf = project.save_to_disk()
+    ErrorLearningStore(hsf).append_chat_messages(
+        [{"role": "user", "content": "把层板数改成 5"}],
+        project_name="FailDistill",
+        source="react_workbench",
+    )
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf)})
+
+    response = session.route("POST", "/api/assistant/history/distill", {})
+
+    assert response["ok"] is False
+    assert "upstream quota exhausted" in response["error"]
+
+
+def test_workbench_session_distill_history_trims_to_recent_messages(tmp_path):
+    """超过 30 条时只取最近 30 条（防超长），message_count 反映实际条数。"""
+    captured: dict = {}
+
+    class FakeLLM:
+        def generate(self, messages, **kwargs):
+            captured["messages"] = messages
+            return LLMResponse(content="整理结果", model="mock", usage={}, finish_reason="stop")
+
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def _make_llm(self, request):
+            return FakeLLM()
+
+    project = HSFProject.create_new("LongDistill", str(tmp_path))
+    hsf = project.save_to_disk()
+    ErrorLearningStore(hsf).append_chat_messages(
+        [{"role": "user", "content": f"第 {i} 条"} for i in range(40)],
+        project_name="LongDistill",
+        source="react_workbench",
+    )
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf)})
+
+    response = session.route("POST", "/api/assistant/history/distill", {})
+
+    assert response["ok"] is True
+    assert response["message_count"] == 30
+    user = next(m for m in captured["messages"] if m["role"] == "user")
+    assert "第 9 条" not in user["content"]  # 最旧 10 条被裁剪
+    assert "第 39 条" in user["content"]
+
+
+def test_workbench_session_distill_history_ignores_empty_content_entries(tmp_path):
+    """空 content 条目跳过（与 list 同规则），全部为空 → 按空记录报错。"""
+    project = HSFProject.create_new("BlankDistill", str(tmp_path))
+    hsf = project.save_to_disk()
+    ErrorLearningStore(hsf).append_chat_messages(
+        [{"role": "user", "content": "   "}, {"role": "assistant", "content": ""}],
+        project_name="BlankDistill",
+        source="react_workbench",
+    )
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf)})
+
+    response = session.route("POST", "/api/assistant/history/distill", {})
+
+    assert response["ok"] is False
+    assert response["error"] == "当前项目没有聊天记录可整理。"
 
 
 def test_workbench_session_extracts_code_blocks_from_assistant_history_text():

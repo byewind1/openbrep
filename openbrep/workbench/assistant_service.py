@@ -154,6 +154,74 @@ class WorkbenchAssistantService:
             return {"ok": False, "error": f"Failed to import assistant history: {exc}"}
         return {"ok": True, "imported": count, "source_name": source.name}
 
+    # ── P6b：聊天记录整理成指令（distill，LLM 只读，不写任何文件）────────────
+    # system prompt 一处定义：保留原始意图 / 明确约束 / GDL 代码线索，
+    # 不编造记录外要求，只输出指令文本本身。
+    DISTILL_HISTORY_SYSTEM_PROMPT = (
+        "你是一个 GDL 工作台意图整理器。把以下 GDL 工作台对话整理成一段"
+        "可直接发给 AI 的指令：保留用户的原始意图、明确提到的尺寸/数量/样式约束、"
+        "以及记录中出现过的 GDL 代码线索（代码用 ```gdl 围栏原样保留）；"
+        "不要编造记录里没有的要求；输出只要指令文本本身。"
+    )
+    DISTILL_HISTORY_LIMIT = 30
+
+    def distill_history_intent(self, body: dict[str, Any]) -> dict[str, Any]:
+        """P6b：LLM 把当前项目最近 N 条聊天记录整理成一段可直接发送的指令。
+
+        只读 transcript + 一次 LLM 调用，不写任何脚本/项目文件；前端拿到
+        instruction 后填入 AI 面板输入框草稿，由用户审阅后手动发送（绝不自动发）。
+        """
+        if self.session.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before distilling assistant history."}
+        try:
+            entries = ErrorLearningStore(self.session.source_path).list_chat_transcript()
+            messages = [
+                {"role": entry.role if entry.role in {"user", "assistant"} else "assistant", "content": entry.content}
+                for entry in entries
+                if entry.content
+            ]
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to load assistant history: {exc}"}
+        if not messages:
+            return {"ok": False, "error": "当前项目没有聊天记录可整理。"}
+        recent = messages[-self.DISTILL_HISTORY_LIMIT:]
+        dialogue = "\n".join(f"{item['role']}: {item['content']}" for item in recent)
+        user_content = f"以下是当前 GDL 项目的聊天记录（最近 {len(recent)} 条）：\n\n{dialogue}"
+        try:
+            llm = self._build_distill_llm()
+            resp = llm.generate(
+                [
+                    {"role": "system", "content": self.DISTILL_HISTORY_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ]
+            )
+            instruction = (resp.content or "").strip()
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to distill assistant history: {exc}"}
+        if not instruction:
+            return {"ok": False, "error": "Failed to distill assistant history: LLM returned an empty instruction."}
+        return {"ok": True, "instruction": instruction, "message_count": len(recent)}
+
+    def _build_distill_llm(self):
+        """按 _build_generate_pipeline 同款配置构造 distill 用的 LLMAdapter。
+
+        先建 pipeline 并灌 session 的 llm_model/api_key/api_base/assistant_settings，
+        再经 pipeline._make_llm 拿适配器（与 generate 路径共用同一套配置解析）。
+        """
+        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        if hasattr(pipeline, "config"):
+            pipeline.config.llm.model = self.session.llm_model
+            if self.session.llm_api_key:
+                pipeline.config.llm.api_key = self.session.llm_api_key
+            if self.session.llm_api_base:
+                pipeline.config.llm.api_base = self.session.llm_api_base
+            pipeline.config.llm.assistant_settings = self.session.assistant_settings
+        request = TaskRequest(
+            user_input="",
+            assistant_settings=self.session.assistant_settings,
+        )
+        return pipeline._make_llm(request)
+
     def extract_assistant_code_blocks(self, body: dict[str, Any]) -> dict[str, Any]:
         content = str(body.get("content") or "")
         try:

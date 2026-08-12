@@ -120,6 +120,13 @@ export const en: Record<LocaleKey, string> = {
   'assistant.history.importConfirmMessage': 'Import chat history from "{source}" into the current project "{current}"? It will be appended and merged, existing records are kept.',
   'assistant.history.importConfirmLabel': 'Import',
 
+  // P6b distill chat history into an AI-ready instruction (history drawer)
+  'assistant.history.distill': 'Distill to instruction',
+  'assistant.history.distillTitle': 'Distill chat history into an AI-ready instruction (fills the input draft; review before sending)',
+  'assistant.history.distillNoProject': 'Open a project first to distill chat history',
+  'assistant.history.distillNoHistory': 'No chat history in the current project to distill',
+  'assistant.history.distillBusy': 'Distilling…',
+
   // Assistant plan confirmation gate (V3)
   'assistant.plan.title': 'Modification plan',
   'assistant.plan.userChanges': 'Changes you will see',

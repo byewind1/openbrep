@@ -27,6 +27,8 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     // P2a：ghost 锚定"任务前"版本，换项目即失效（load/打开/新建/导入/关闭都走这里）
     previewGhost: null,
     previewGhostLabel: null,
+    // P6b：换项目即丢弃未消费的整理指令草稿，防止旧项目结果填进新项目输入框
+    assistantDraftSeed: null,
     warnings: snapshot.warnings ?? snapshot.preview?.warnings ?? [],
     compilerSettings: snapshot.compiler ?? fallbackCompiler,
     llmSettings: snapshot.llm ?? fallbackLlm,

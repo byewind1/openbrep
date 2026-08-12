@@ -476,6 +476,9 @@ class WorkbenchSession:
     def import_assistant_history(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.assistant_service.import_assistant_history(body)
 
+    def distill_assistant_history(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.assistant_service.distill_history_intent(body)
+
     def extract_assistant_code_blocks(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.assistant_service.extract_assistant_code_blocks(body)
 
@@ -764,6 +767,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/assistant/history/import":
             return self.import_assistant_history(body)
+
+        if normalized_method == "POST" and route == "/api/assistant/history/distill":
+            return self.distill_assistant_history(body)
 
         if normalized_method == "POST" and route == "/api/assistant/code-blocks":
             return self.extract_assistant_code_blocks(body)

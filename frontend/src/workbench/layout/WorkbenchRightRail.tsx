@@ -56,6 +56,10 @@ interface WorkbenchRightRailProps {
   workspace?: import('../../api/types').WorkspaceInfo | null
   currentProjectPath?: string | null
   onImportAssistantHistory?: (sourcePath: string) => void
+  // P6b：整理聊天记录为指令 → 草稿通道
+  draftSeed?: string | null
+  onConsumeDraftSeed?: () => void
+  onDistillAssistantHistory?: () => void | Promise<void>
 }
 
 export function WorkbenchRightRail({
@@ -98,6 +102,9 @@ export function WorkbenchRightRail({
   workspace = null,
   currentProjectPath = null,
   onImportAssistantHistory,
+  draftSeed,
+  onConsumeDraftSeed,
+  onDistillAssistantHistory,
 }: WorkbenchRightRailProps) {
   // P1b：预览质量档是 store 会话态，视口只消费，不走 props 倒灌
   const previewQuality = useWorkbenchStore((state) => state.previewQuality)
@@ -189,6 +196,9 @@ export function WorkbenchRightRail({
             workspace={workspace}
             currentProjectPath={currentProjectPath}
             onImportAssistantHistory={onImportAssistantHistory}
+            draftSeed={draftSeed}
+            onConsumeDraftSeed={onConsumeDraftSeed}
+            onDistillAssistantHistory={onDistillAssistantHistory}
           />
         )}
       </div>

@@ -241,6 +241,33 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }))
     },
 
+    /** P6b：LLM 把当前项目聊天记录整理成指令 → 填入 AI 输入框草稿（不自动发送）。
+     *  长操作期间切换项目 → 丢弃结果（projectEpoch 守卫），防止旧项目整理结果
+     *  填进新项目的输入框。 */
+    async distillAssistantHistory() {
+      const epoch = get().projectEpoch
+      const result = await api.distillAssistantHistory()
+      if (projectSwitchedSince(epoch)) {
+        discardStaleResult('Distill result discarded: project switched during the request.')
+        return
+      }
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to distill assistant history.' })
+        return
+      }
+      const instruction = (result.instruction ?? '').trim()
+      if (!instruction) {
+        set({ lastError: 'Failed to distill assistant history: empty instruction.' })
+        return
+      }
+      // 只填草稿通道，绝不自动发送；面板监听 seed 后填入输入框并消费
+      set({ assistantDraftSeed: instruction })
+    },
+
+    consumeAssistantDraftSeed() {
+      set({ assistantDraftSeed: null })
+    },
+
     async adoptAssistantMessageCode(index: number) {
       const message = get().assistantMessages[index]
       if (!message || message.role !== 'assistant') {
