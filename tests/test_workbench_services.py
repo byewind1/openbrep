@@ -44,6 +44,33 @@ def test_settings_service_updates_compiler_settings_and_persists_config(tmp_path
     assert reloaded.output_dir == str(tmp_path / "out")
 
 
+def test_settings_service_compiler_save_without_paths_preserves_stored_values(tmp_path):
+    """缺键 ≠ 清空：只保存 mode 时不得抹掉已存的 converter_path/output_dir。
+
+    2026-08-13 事故：设置面板保存动作带空字段 → 编译器路径被反复清掉。
+    """
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    session = SimpleNamespace(
+        compiler_mode="lp",
+        converter_path="/Applications/LP_XMLConverter",
+        output_dir="/tmp/out",
+        config=config,
+        config_path=config_path,
+    )
+    session.config.compiler.mode = "lp"
+    session.config.compiler.path = "/Applications/LP_XMLConverter"
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: None)
+
+    response = service.update_compiler_settings({"mode": "lp"})
+
+    assert response["ok"] is True
+    assert session.converter_path == "/Applications/LP_XMLConverter"
+    assert session.output_dir == "/tmp/out"
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.compiler.path == "/Applications/LP_XMLConverter"
+
+
 def test_settings_service_model_switch_resolves_api_key_for_new_model(tmp_path):
     config_path = tmp_path / "config.toml"
     config = GDLAgentConfig()

@@ -28,7 +28,12 @@ else:
         tomllib = None
 
 _CONVERTER_SEARCH_PATHS = {
-    "Darwin": ["/Applications/GRAPHISOFT/ArchiCAD {v}/LP_XMLConverter"],
+    "Darwin": [
+        "/Applications/GRAPHISOFT/ArchiCAD {v}/LP_XMLConverter",
+        # Archicad 28+ 把转换器打进 .app bundle（2026-08-13 实测 Archicad 29）
+        "/Applications/GRAPHISOFT/Archicad {v}/Archicad {v}.app/Contents/MacOS/"
+        "LP_XMLConverter.app/Contents/MacOS/LP_XMLConverter",
+    ],
     "Windows": [r"C:\Program Files\GRAPHISOFT\ArchiCAD {v}\LP_XMLConverter.exe"],
     "Linux": ["/opt/GRAPHISOFT/ArchiCAD{v}/LP_XMLConverter"],
 }

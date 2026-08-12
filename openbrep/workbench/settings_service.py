@@ -184,8 +184,12 @@ class WorkbenchSettingsService:
         if mode not in {"mock", "lp"}:
             return {"ok": False, "error": f"Unsupported compiler mode: {mode}"}
         self.session.compiler_mode = mode
-        self.session.converter_path = str(body.get("converter_path") or "").strip()
-        self.session.output_dir = str(body.get("output_dir") or "").strip()
+        # 缺键 ≠ 清空：只在表单显式传了字段时才覆盖，防止设置面板保存其他选项时
+        # 把已存路径意外抹掉（2026-08-13 编译器路径反复丢失事故）
+        if "converter_path" in body:
+            self.session.converter_path = str(body.get("converter_path") or "").strip()
+        if "output_dir" in body:
+            self.session.output_dir = str(body.get("output_dir") or "").strip()
         self.session.config.compiler.mode = self.session.compiler_mode
         self.session.config.compiler.path = self.session.converter_path
         self.session.config.output_dir = self.session.output_dir or "./output"
