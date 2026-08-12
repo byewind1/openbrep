@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { BottomDrawer } from '../components/BottomDrawer'
 import { TopMenu } from '../components/TopMenu'
 import { useThemedDialog } from '../components/ThemedDialog'
@@ -111,6 +111,9 @@ export function WorkbenchApp() {
   const importBlenderScript = useWorkbenchStore((state) => state.importBlenderScript)
   const exportHsfProject = useWorkbenchStore((state) => state.exportHsfProject)
   const saveProject = useWorkbenchStore((state) => state.saveProject)
+  const saveProjectAs = useWorkbenchStore((state) => state.saveProjectAs)
+  const clearNeedsSaveAs = useWorkbenchStore((state) => state.clearNeedsSaveAs)
+  const needsSaveAs = useWorkbenchStore((state) => state.needsSaveAs)
   const closeProject = useWorkbenchStore((state) => state.closeProject)
   const browseProjectDirectory = useWorkbenchStore((state) => state.browseProjectDirectory)
   const setCompilerSettings = useWorkbenchStore((state) => state.setCompilerSettings)
@@ -265,12 +268,42 @@ export function WorkbenchApp() {
     if (hasDirtyScript) {
       await saveActiveScript()
     }
-    if (!project.path) {
-      await saveProjectAsWithPrompt()
-      return
-    }
+    // P7c：新建空白项目（无路径）→ 后端回 needs_save_as → 下方 effect 弹命名引导
+    // ThemedDialog（默认「未命名构件」）；已落盘项目直接落盘，行为不变。
     await saveProject()
   }
+
+  // P7c：needs_save_as 响应 → 弹命名对话框；确认 → saveProjectAs 只传 name
+  // （落点/唯一化由后端自动处理：工作区 hsf/ ＞ output_dir ＞ ./output）；
+  // 取消或空名 → 不动，只清标记。ref 防重入：prompt/t 每次渲染都是新引用，
+  // 对话框打开期间任何重渲染都不能再叠一个对话框。
+  const namingPromptRef = useRef(false)
+  useEffect(() => {
+    if (!needsSaveAs || namingPromptRef.current) return
+    namingPromptRef.current = true
+    void (async () => {
+      try {
+        const name = await prompt({
+          title: t('saveAs.dialogTitle'),
+          message: t('saveAs.dialogMessage'),
+          defaultValue: t('saveAs.defaultName'),
+        })
+        if (name === null) {
+          clearNeedsSaveAs()
+          return
+        }
+        const cleanedName = name.trim()
+        if (!cleanedName) {
+          clearNeedsSaveAs()
+          window.alert(t('saveAs.nameRequired'))
+          return
+        }
+        await saveProjectAs('', cleanedName)
+      } finally {
+        namingPromptRef.current = false
+      }
+    })()
+  }, [needsSaveAs, prompt, clearNeedsSaveAs, saveProjectAs, t])
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {

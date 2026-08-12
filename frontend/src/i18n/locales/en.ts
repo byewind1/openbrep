@@ -194,6 +194,12 @@ export const en: Record<LocaleKey, string> = {
   'dialog.confirm': 'Confirm',
   'dialog.cancel': 'Cancel',
 
+  // P7c: naming guidance when saving a new blank project (ThemedDialog on needs_save_as)
+  'saveAs.dialogTitle': 'Save project',
+  'saveAs.dialogMessage': 'Name the new project. It will be saved automatically to the workspace or your configured output directory.',
+  'saveAs.defaultName': 'Untitled Object',
+  'saveAs.nameRequired': 'Project name is required.',
+
   // P0-C: create-intent confirmation when a project is open
   'chat.confirmCreateTitle': 'Generate a new GDL object?',
   'chat.confirmCreateMessage': 'A separate new project will be created. The currently open "{name}" will not be modified. To modify the current project instead, cancel and rephrase with "change ... to ...".',

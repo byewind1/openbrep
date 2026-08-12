@@ -253,6 +253,7 @@ function initialWorkbenchState() {
     scriptContents: {},
     dirtyScripts: {},
     lastSavedAt: null,
+    needsSaveAs: false,
     scriptLoading: false,
     scriptSaving: false,
     mockCompileResult: null,

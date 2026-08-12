@@ -638,13 +638,63 @@ test('newProject loads an untitled project and refreshes project resources', asy
   expect(store.getState().scripts.length).toBeGreaterThan(0)
 })
 
-test('saveProject reports save-as requirement for unsaved projects', async () => {
+test('saveProject sets needsSaveAs for unsaved projects (P7c naming guide)', async () => {
   const store = createWorkbenchStore(makeApi())
 
   await store.getState().saveProject()
 
-  expect(store.getState().lastError).toContain('Save As HSF')
+  // 后端 needs_save_as → 不再当错误展示，置 needsSaveAs 由组件弹命名引导
+  expect(store.getState().needsSaveAs).toBe(true)
+  expect(store.getState().lastError).toBeNull()
   expect(store.getState().loading).toBe(false)
+})
+
+test('saveProjectAs with only name exports to auto location and clears needsSaveAs (P7c)', async () => {
+  const exportHsfProject = vi.fn(async (_parentDir = '', name = '') => ({
+    ok: true,
+    saved_to: `/exports/${name}`,
+    project: { name, source: 'hsf', path: `/exports/${name}` },
+    parameters: [],
+    preview: { meshes: [], wires: [], warnings: [] },
+    warnings: [],
+    compiler: { mode: 'mock' as const, converter_path: '', output_dir: '' },
+  }))
+  const store = createWorkbenchStore(makeApi({ exportHsfProject }))
+
+  // 先走 needs_save_as 置位（命名引导等待态）
+  await store.getState().saveProject()
+  expect(store.getState().needsSaveAs).toBe(true)
+
+  // 确认命名 → saveProjectAs 只传 name（parentDir 空 = 后端自动落点）
+  await store.getState().saveProjectAs('', '未命名构件')
+
+  expect(exportHsfProject).toHaveBeenCalledWith('', '未命名构件')
+  expect(store.getState().needsSaveAs).toBe(false)
+  expect(store.getState().project?.path).toBe('/exports/未命名构件')
+  expect(store.getState().lastError).toBeNull()
+})
+
+test('clearNeedsSaveAs cancels the naming flow without any api call (P7c)', async () => {
+  const exportHsfProject = vi.fn(async () => ({
+    ok: true,
+    saved_to: '/exports/Chair',
+    project: { name: 'Chair', source: 'hsf', path: '/exports/Chair' },
+    parameters: [],
+    preview: { meshes: [], wires: [], warnings: [] },
+    warnings: [],
+    compiler: { mode: 'mock' as const, converter_path: '', output_dir: '' },
+  }))
+  const store = createWorkbenchStore(makeApi({ exportHsfProject }))
+
+  await store.getState().saveProject()
+  expect(store.getState().needsSaveAs).toBe(true)
+
+  // 取消命名 → 只清标记，不触发任何保存调用
+  await store.getState().clearNeedsSaveAs()
+
+  expect(store.getState().needsSaveAs).toBe(false)
+  expect(exportHsfProject).not.toHaveBeenCalled()
+  expect(store.getState().lastError).toBeNull()
 })
 
 test('load fetches recent project list', async () => {

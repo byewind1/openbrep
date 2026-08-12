@@ -191,6 +191,12 @@ export const zh = {
   'dialog.confirm': '确定',
   'dialog.cancel': '取消',
 
+  // P7c 新建空白项目保存时的命名引导（needs_save_as 响应处弹 ThemedDialog）
+  'saveAs.dialogTitle': '保存项目',
+  'saveAs.dialogMessage': '为新建项目命名，保存后自动放到工作区或设置的输出目录。',
+  'saveAs.defaultName': '未命名构件',
+  'saveAs.nameRequired': '项目名不能为空。',
+
   // P0-C：有项目打开时的生成意图确认门
   'chat.confirmCreateTitle': '生成新 GDL 构件？',
   'chat.confirmCreateMessage': '将创建独立的新项目，当前打开的《{name}》不会被修改。想修改当前项目，请取消并改用「把…改成…」的说法。',

@@ -248,6 +248,8 @@ export interface WorkbenchState {
   scriptContents: Record<string, string>
   dirtyScripts: Record<string, boolean>
   lastSavedAt: string | null
+  /** P7c：新建空白项目首次保存（后端 needs_save_as）等待命名引导；组件弹 ThemedDialog */
+  needsSaveAs: boolean
   scriptLoading: boolean
   scriptSaving: boolean
   mockCompileResult: MockCompileResponse | null
@@ -268,6 +270,7 @@ export interface WorkbenchState {
   exportHsfProject: (parentDir?: string, name?: string) => Promise<void>
   saveProject: () => Promise<void>
   saveProjectAs: (parentDir?: string, name?: string) => Promise<void>
+  clearNeedsSaveAs: () => void
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
   browseCompilerFile: () => Promise<CompilerSettings | null>

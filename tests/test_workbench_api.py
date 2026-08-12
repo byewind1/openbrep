@@ -10,6 +10,7 @@ from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import TaskResult
 import openbrep.workbench_api as workbench_api
 from openbrep.workbench.project_session_service import write_project_origin
+from openbrep.workbench.workspace_service import init_workspace
 from openbrep.workbench_api import (
     WorkbenchSession,
     apply_parameter_values,
@@ -333,6 +334,104 @@ def test_workbench_session_export_hsf_rejects_non_empty_target(tmp_path):
     assert response["ok"] is False
     assert "already exists" in response["error"]
     assert (target / "notes.txt").read_text(encoding="utf-8") == "do not overwrite"
+
+
+# ── P7c：只给 name 不给 parent_dir 的保存（自动落点 + 唯一化 + session 挂载）──
+
+
+def test_workbench_session_export_hsf_name_only_uses_output_dir_fallback(tmp_path):
+    """只给 name：落点取设置 output_dir，保存后 session 挂载（source=hsf / path / 最近项目）。"""
+    output_dir = tmp_path / "out"
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.config.output_dir = str(output_dir)
+    session.output_dir = str(output_dir)
+    session.route("POST", "/api/project/new", {})
+
+    response = session.route("POST", "/api/project/export-hsf", {"name": "参数化书架"})
+
+    assert response["ok"] is True
+    saved_to = output_dir / "参数化书架"
+    assert response["saved_to"] == str(saved_to)
+    assert response["project"]["name"] == "参数化书架"
+    assert response["project"]["source"] == "hsf"
+    assert response["project"]["path"] == str(saved_to)
+    assert (saved_to / "libpartdata.xml").exists()
+    assert session.route("GET", "/api/project/recent")["projects"][0]["path"] == str(saved_to)
+    # 落盘目录可重新加载，3D 脚本保持原内容
+    reloaded = HSFProject.load_from_disk(str(saved_to))
+    assert reloaded.get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\n"
+
+
+def test_workbench_session_export_hsf_name_only_prefers_workspace_hsf(tmp_path):
+    """工作区附着时：只给 name 的保存落点优先工作区 hsf/（高于设置 output_dir）。"""
+    workspace_root = tmp_path / "ws"
+    init_workspace(str(workspace_root))
+    output_dir = tmp_path / "out"
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.config.output_dir = str(output_dir)
+    session.output_dir = str(output_dir)
+    opened = session.route("POST", "/api/workspace/open", {"path": str(workspace_root)})
+    assert opened["ok"] is True
+    session.route("POST", "/api/project/new", {})
+
+    response = session.route("POST", "/api/project/export-hsf", {"name": "坐斗"})
+
+    assert response["ok"] is True
+    saved_to = workspace_root / "hsf" / "坐斗"
+    assert response["saved_to"] == str(saved_to)
+    assert response["project"]["path"] == str(saved_to)
+    assert (saved_to / "libpartdata.xml").exists()
+    assert not (output_dir / "坐斗").exists()
+
+
+def test_workbench_session_export_hsf_name_only_uniquifies_conflicts(tmp_path):
+    """自动落点下同名目录已存在 → unique_project_name 加 _vN，不报"已存在"错误。"""
+    output_dir = tmp_path / "out"
+    existing = output_dir / "书架"
+    existing.mkdir(parents=True)
+    (existing / "notes.txt").write_text("keep", encoding="utf-8")
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.config.output_dir = str(output_dir)
+    session.output_dir = str(output_dir)
+    session.route("POST", "/api/project/new", {})
+
+    response = session.route("POST", "/api/project/export-hsf", {"name": "书架"})
+
+    assert response["ok"] is True
+    saved_to = output_dir / "书架_v2"
+    assert response["saved_to"] == str(saved_to)
+    assert response["project"]["name"] == "书架_v2"
+    assert (existing / "notes.txt").read_text(encoding="utf-8") == "keep"
+    # 再存一次 → _v3
+    response2 = session.route("POST", "/api/project/export-hsf", {"name": "书架"})
+    assert response2["ok"] is True
+    assert response2["saved_to"] == str(output_dir / "书架_v3")
+
+
+def test_workbench_session_export_hsf_name_only_falls_back_to_dot_output(tmp_path, monkeypatch):
+    """无工作区、无 output_dir 配置 → ./output 兜底（chdir 到 tmp 隔离落盘位置）。"""
+    monkeypatch.chdir(tmp_path)
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/new", {})
+
+    response = session.route("POST", "/api/project/export-hsf", {"name": "新构件"})
+
+    assert response["ok"] is True
+    saved_to = tmp_path / "output" / "新构件"
+    assert response["saved_to"] == str(saved_to)
+    assert response["project"]["path"] == str(saved_to)
+    assert (saved_to / "libpartdata.xml").exists()
+
+
+def test_workbench_session_save_project_still_returns_needs_save_as_for_untitled(tmp_path):
+    """红线回归：新建空白项目直接 save_project 仍回 needs_save_as（前端据此弹命名框）。"""
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/new", {})
+
+    response = session.route("POST", "/api/project/save", {})
+
+    assert response["ok"] is False
+    assert response["needs_save_as"] is True
 
 
 def test_workbench_session_imports_single_gdl_file_as_hsf_project(tmp_path):

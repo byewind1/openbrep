@@ -135,6 +135,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set((state) => ({
         loading: false,
         lastSavedAt: nowTimeText(),
+        needsSaveAs: false,
         compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
       }))
     },
@@ -143,6 +144,12 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: true, lastError: null })
       const result = await api.saveProject()
       if (result.ok === false) {
+        if (result.needs_save_as) {
+          // P7c：新建空白项目首次保存 → 置 needsSaveAs，由组件弹命名引导
+          // ThemedDialog（默认「未命名构件」），不再把"Use Save As HSF"当错误展示。
+          set({ loading: false, needsSaveAs: true })
+          return
+        }
         set({
           loading: false,
           lastError: result.error ?? 'Failed to save HSF project.',
@@ -158,12 +165,17 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set((state) => ({
         loading: false,
         lastSavedAt: nowTimeText(),
+        needsSaveAs: false,
         compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
       }))
     },
 
     async saveProjectAs(parentDir = '', name = '') {
       await get().exportHsfProject(parentDir, name)
+    },
+
+    async clearNeedsSaveAs() {
+      set({ needsSaveAs: false })
     },
 
     async closeProject() {

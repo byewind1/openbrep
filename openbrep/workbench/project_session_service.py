@@ -545,10 +545,34 @@ class WorkbenchProjectSessionService:
         self.session.project.save_to_disk()
         return {"ok": True, "saved_to": str(self.session.source_path), **self.session.snapshot()}
 
+    def _save_as_auto_dir(self) -> Path:
+        """P7c 自动落点：只给 name 不给 parent_dir 时，落点自动取
+        工作区 hsf/ ＞ 设置 output_dir ＞ ./output（与 create/导入收敛同口径）。
+
+        工作区附着判定与 workspace_open/_workspace_import_root 一致
+        （检查 .openbrep/workspace.toml 存在）。
+        """
+        workspace = getattr(self.session, "workspace_path", None)
+        if workspace:
+            root = Path(workspace).expanduser().resolve()
+            if (root / ".openbrep" / "workspace.toml").is_file():
+                return root / "hsf"
+        configured = str(getattr(self.session, "output_dir", "") or "").strip()
+        if configured:
+            return Path(configured).expanduser().resolve()
+        return Path("./output").expanduser().resolve()
+
     def export_hsf_project(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": False, "error": "No project to export."}
+        requested_name = str(body.get("name") or "").strip()
         raw_parent = str(body.get("parent_dir") or "").strip()
+        # P7c：只给 name 不给 parent_dir → 自动落点（工作区 hsf/ ＞ output_dir ＞
+        # ./output），不再弹目录选择器；name 过 safe_project_name + unique_project_name。
+        # 两者都空才走旧目录选择器路径（显式 Save As 无名字 / 设置面板导出）。
+        auto_dir = bool(requested_name) and not raw_parent
+        if auto_dir:
+            raw_parent = str(self._save_as_auto_dir())
         if not raw_parent:
             try:
                 raw_parent = self.session.directory_chooser()
@@ -565,7 +589,10 @@ class WorkbenchProjectSessionService:
         if not parent.is_dir():
             return {"ok": False, "error": f"Export target is not a directory: {parent}"}
 
-        project_name = safe_project_name(str(body.get("name") or self.session.project.name or "OpenBrep_Project"))
+        base_name = safe_project_name(requested_name or self.session.project.name or "OpenBrep_Project")
+        # P7c 自动落点唯一化（_vN 后缀，与 create/导入同一命名管线）；显式
+        # parent_dir 路径保持原有"非空已存在目录直接拒绝"语义，不做唯一化。
+        project_name = unique_project_name(base_name, parent) if auto_dir else base_name
         target = (parent / project_name).resolve()
         previous_source = self.session.source_path.expanduser().resolve() if self.session.source_path else None
         current_root = self.session.project.root.expanduser().resolve() if self.session.project.root else None
