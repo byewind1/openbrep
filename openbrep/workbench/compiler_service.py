@@ -95,7 +95,7 @@ class WorkbenchCompilerService:
                 "gsm_size_bytes": file_size_or_none(output_gsm),
                 "parameter_count": len(self.session.project.parameters or []),
             },
-            **({} if result.success else {"error": result.stderr or "Compile failed"}),
+            **({} if result.success else {"error": result.stderr or result.stdout or "Compile failed"}),
         }
 
 

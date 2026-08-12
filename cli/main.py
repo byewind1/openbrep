@@ -896,7 +896,7 @@ def compile(
         console.print(f"[green]📄 文件名：{gsm_path.name}[/green]")
         console.print(f"[green]📁 完整路径：{gsm_path}[/green]")
     else:
-        err_console.print(f"[red]❌ 编译失败：\n{result.stderr}[/red]")
+        err_console.print(f"[red]❌ 编译失败：\n{result.stderr or result.stdout}[/red]")
         raise typer.Exit(1)
 
 
@@ -1504,7 +1504,7 @@ def _try_compile(project, mock: bool = False):
         else:
             console.print(f"[green]✅ 编译成功[/green]")
     else:
-        err_console.print(f"[red]❌ 编译失败：{result.stderr}[/red]")
+        err_console.print(f"[red]❌ 编译失败：{result.stderr or result.stdout}[/red]")
 
 
 app.add_typer(revision_app, name="revision")

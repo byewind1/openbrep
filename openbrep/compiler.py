@@ -36,12 +36,17 @@ class CompileResult:
             self.errors = []
         if self.warnings is None:
             self.warnings = []
-        if self.stderr:
+        if self.stderr or self.stdout:
             self._parse_log()
 
     def _parse_log(self):
-        """Extract structured error/warning info from stderr."""
-        for line in self.stderr.splitlines():
+        """Extract structured error/warning info from compiler output.
+
+        LP_XMLConverter（至少 Archicad 28+ macOS 版）把诊断写到 stdout
+        而非 stderr——漏窗真机编译的 "Missing CDATA section" 错误就在
+        stdout 里。两路都解析，stderr 优先。
+        """
+        for line in (self.stderr + "\n" + self.stdout).splitlines():
             line_stripped = line.strip()
             if not line_stripped:
                 continue

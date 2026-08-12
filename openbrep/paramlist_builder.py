@@ -77,7 +77,15 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
 
         # Value formatting
         value = _format_value(tag, param.value)
-        lines.append(f'\t\t\t<Value>{value}</Value>')
+        if tag == "String":
+            # LP_XMLConverter 要求 String 值必须 CDATA 包裹且带引号
+            # （同 Description 规则）：<Value><![CDATA["文本"]]></Value>。
+            # 裸文本报 "Missing CDATA section"，无引号 CDATA 报
+            # "String value error"（漏窗真机编译实测）。
+            value = value.replace("]]>", "]] >")
+            lines.append(f'\t\t\t<Value><![CDATA["{value}"]]></Value>')
+        else:
+            lines.append(f'\t\t\t<Value>{value}</Value>')
 
         lines.append(f'\t\t</{tag}>')
 
@@ -139,6 +147,10 @@ def parse_paramlist_xml(content: str) -> list[GDLParameter]:
         value = ""
         if val_el is not None and val_el.text:
             value = val_el.text.strip()
+            # String 值写出为 <![CDATA["文本"]]>（见 build_paramlist_xml），
+            # 读回时剥掉包裹引号；旧格式裸文本（无引号）不受影响。
+            if tag == "String" and value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
 
         # Check for Fix tag
         is_fixed = elem.find("Fix") is not None
