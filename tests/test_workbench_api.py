@@ -2899,3 +2899,188 @@ def test_import_session_fake_without_workspace_path_stays_independent(tmp_path):
     # 项目落在源文件旁边（独立路径），不经过工作区
     assert (gdl_path.parent / "FakeSession").is_dir()
     assert "archived_source" not in result
+
+
+# ── P7b：AI create 生成后按 object_type rename 目录 ──────────────────
+
+def _rename_pipeline_cls(object_type="", gsm_artifact=False):
+    """生成一个可配置 object_type / .gsm 产物的 FakePipeline 类。
+
+    object_type=None → TaskResult 不带 object_plan（模拟 plan 缺失）。
+    """
+    class _Pipe:
+        last_request = None
+
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            _Pipe.last_request = request
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            if gsm_artifact:
+                (Path(request.output_dir) / f"{request.gsm_name}.gsm").write_text("fake gsm", encoding="utf-8")
+            kwargs = {}
+            if object_type is not None:
+                kwargs["object_plan"] = {"object_type": object_type}
+            return TaskResult(
+                success=True,
+                intent="CREATE",
+                scripts={"scripts/3d.gdl": project.get_script(ScriptType.SCRIPT_3D)},
+                plain_text="已创建",
+                project=project,
+                **kwargs,
+            )
+
+    return _Pipe
+
+
+def test_p7b_create_renames_project_dir_by_object_type(tmp_path):
+    """object_type 可用 → 目录/项目名/session/最近列表全部切到新名，旧路径移除。"""
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type="坐斗"))
+    # 预置旧临时路径，验证 rename 后从最近项目列表移除
+    session.recent_project_paths = [str(tmp_path / "临时构件")]
+
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+    )
+
+    assert response["ok"] is True, response
+    old_dir = tmp_path / "临时构件"
+    new_dir = tmp_path / "坐斗"
+    assert not old_dir.exists()
+    assert new_dir.is_dir()
+    assert response["project"]["name"] == "坐斗"
+    assert response["project"]["path"] == str(new_dir.resolve())
+    assert session.source_path == new_dir.resolve()
+    assert str(old_dir.resolve()) not in session.recent_project_paths
+    assert str(new_dir.resolve()) in session.recent_project_paths
+    assert HSFProject.load_from_disk(str(new_dir)).get_script(ScriptType.SCRIPT_3D) == "BLOCK A, B, ZZYZX\n"
+    assert not [w for w in response["warnings"] if "改名" in w]
+
+
+def test_p7b_create_object_type_missing_keeps_rule_name(tmp_path):
+    """object_plan 缺失（默认 {}）→ 不 rename，行为同现状。"""
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type=None))
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+    )
+    assert response["ok"] is True, response
+    assert response["project"]["name"] == "临时构件"
+    assert (tmp_path / "临时构件").is_dir()
+    assert not [w for w in response["warnings"] if "改名" in w]
+
+
+def test_p7b_create_object_type_empty_keeps_rule_name(tmp_path):
+    """object_type 为空串 → 不 rename。"""
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type=""))
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+    )
+    assert response["ok"] is True, response
+    assert response["project"]["name"] == "临时构件"
+    assert (tmp_path / "临时构件").is_dir()
+
+
+def test_p7b_create_object_type_same_as_temp_name_no_rename(tmp_path):
+    """object_type 与临时名相同 → 不 rename（本来就是这个名字）。"""
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type="临时构件"))
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+    )
+    assert response["ok"] is True, response
+    assert response["project"]["name"] == "临时构件"
+    assert (tmp_path / "临时构件").is_dir()
+    assert not [w for w in response["warnings"] if "改名" in w]
+
+
+def test_p7b_create_object_type_sanitizes_to_fallback_no_rename(tmp_path):
+    """object_type sanitize 后是兜底名（未命名构件）→ 不 rename。"""
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type="///"))
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+    )
+    assert response["ok"] is True, response
+    assert response["project"]["name"] == "临时构件"
+    assert (tmp_path / "临时构件").is_dir()
+
+
+def test_p7b_create_object_type_conflict_gets_vN(tmp_path):
+    """目标名被占用 → unique _vN 后缀。"""
+    (tmp_path / "坐斗").mkdir()
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type="坐斗"))
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+    )
+    assert response["ok"] is True, response
+    assert response["project"]["name"] == "坐斗_v2"
+    assert (tmp_path / "坐斗_v2").is_dir()
+    assert not (tmp_path / "临时构件").exists()
+
+
+def test_p7b_create_rename_failure_keeps_temp_name_with_warning(tmp_path):
+    """os.rename 抛 OSError → 保留临时名照常交付 + warning，不阻断。"""
+    from unittest.mock import patch
+
+    with patch(
+        "openbrep.workbench.project_session_service.os.rename",
+        side_effect=OSError("permission denied"),
+    ):
+        session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type="坐斗"))
+        response = session.route(
+            "POST",
+            "/api/project/create",
+            {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+        )
+
+    assert response["ok"] is True, response
+    assert response["project"]["name"] == "临时构件"
+    assert (tmp_path / "临时构件").is_dir()
+    assert session.source_path == (tmp_path / "临时构件").resolve()
+    assert "warnings" in response
+    assert any("改名失败" in w for w in response["warnings"])
+
+
+def test_p7b_create_renames_gsm_artifact_with_dir(tmp_path):
+    """编译产物 <临时名>.gsm 存在 → 随目录一起改名。"""
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type="坐斗", gsm_artifact=True))
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "生成一个临时构件", "output_dir": str(tmp_path)},
+    )
+    assert response["ok"] is True, response
+    assert (tmp_path / "坐斗.gsm").is_file()
+    assert not (tmp_path / "临时构件.gsm").exists()
+    assert not [w for w in response["warnings"] if "改名" in w]
+
+
+def test_p7b_create_explicit_project_name_wins_over_object_type(tmp_path):
+    """显式 project_name 优先于 object_type（监控方补）：不 rename。"""
+    session = WorkbenchSession(pipeline_class=_rename_pipeline_cls(object_type="坐斗"))
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {
+            "prompt": "生成一个临时构件",
+            "project_name": "我的书架",
+            "output_dir": str(tmp_path),
+        },
+    )
+    assert response["ok"] is True, response
+    assert response["project"]["name"] == "我的书架"
+    assert (tmp_path / "我的书架").is_dir()
+    assert not (tmp_path / "坐斗").exists()
+    assert session.source_path == (tmp_path / "我的书架").resolve()

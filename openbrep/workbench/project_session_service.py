@@ -4,6 +4,7 @@ import base64
 import binascii
 import datetime as _dt
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -13,7 +14,12 @@ from typing import Any, Callable
 
 from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, normalize_project_after_import
-from openbrep.naming import safe_project_name, unique_project_name
+from openbrep.naming import (
+    DEFAULT_PROJECT_NAME,
+    project_name_from_prompt,
+    safe_project_name,
+    unique_project_name,
+)
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_parameter_service import parameter_to_dict
@@ -438,6 +444,44 @@ class WorkbenchProjectSessionService:
         result.project.work_dir = target_dir.parent
         result.project.root = target_dir
         hsf_dir = result.project.save_to_disk()
+
+        # ── P7b：生成成功后按 object_type（规划阶段 LLM 产出，一级命名来源）rename 目录 ──
+        # 规则提取名只是临时名；object_type 可用（非空、sanitize 后非兜底名、与临时名不同）
+        # 时执行 rename；失败一律保留临时名照常交付，绝不阻断主流程。
+        rename_warnings: list[str] = []
+        object_type = str((result.object_plan or {}).get("object_type") or "").strip()
+        # 显式 project_name（API 调用方指定）优先于 object_type，不 rename
+        if object_type and not requested_name:
+            candidate_name = safe_project_name(object_type)
+            if candidate_name != DEFAULT_PROJECT_NAME and candidate_name != project_name:
+                new_name = unique_project_name(candidate_name, output_root)
+                if new_name != project_name:
+                    new_dir = output_root / new_name
+                    try:
+                        os.rename(target_dir, new_dir)
+                    except OSError as exc:
+                        rename_warnings.append(
+                            f"目录改名失败（{project_name} → {new_name}），已保留临时名：{exc}"
+                        )
+                    else:
+                        result.project.name = new_name
+                        result.project.root = new_dir
+                        result.project.work_dir = new_dir.parent
+                        hsf_dir = new_dir
+                        # 最近项目列表里的旧临时路径移除（rename 后旧路径已失效）
+                        self._drop_recent_project_path(target_dir)
+                        # 编译产物 <临时名>.gsm 随目录一起改名（best-effort，失败仅记 warning）
+                        old_gsm = output_root / f"{project_name}.gsm"
+                        new_gsm = output_root / f"{new_name}.gsm"
+                        if old_gsm.exists():
+                            try:
+                                os.rename(old_gsm, new_gsm)
+                            except OSError as exc:
+                                rename_warnings.append(
+                                    f"目录已改名为 {new_name}，但编译产物 {old_gsm.name} 未能同步改名：{exc}"
+                                )
+                        project_name = new_name
+
         self.session.project = result.project
         self.session.source = "hsf"
         self.session.source_path = hsf_dir
@@ -470,6 +514,8 @@ class WorkbenchProjectSessionService:
             "events": events,
             **self.session.snapshot(),
         }
+        if rename_warnings:
+            response["warnings"] = list(response.get("warnings") or []) + rename_warnings
         if proposal:
             response["skill_proposal"] = proposal
         return response
@@ -565,6 +611,13 @@ class WorkbenchProjectSessionService:
         ][:8]
         self.session.config.recent_projects = self.session.recent_project_paths
         save_workbench_config(self.session.config, self.session.config_path)
+
+    def _drop_recent_project_path(self, path: Path) -> None:
+        """从最近项目列表移除指定路径（rename 后旧路径失效；落盘随下一次 remember 一起）。"""
+        normalized = str(path.expanduser().resolve())
+        self.session.recent_project_paths = [
+            item for item in self.session.recent_project_paths if item != normalized
+        ]
 
     def choose_and_load_hsf_directory(self) -> dict[str, Any]:
         try:
@@ -667,13 +720,6 @@ def project_to_snapshot(
         "preview": preview,
         "warnings": preview.get("warnings", []),
     }
-
-
-def project_name_from_prompt(prompt: str) -> str:
-    words = re.findall(r"[A-Za-z0-9_\-]+", prompt)
-    if words:
-        return "_".join(words[:4])
-    return "Generated_Object"
 
 
 def validate_image_payload(body: dict[str, Any]) -> dict[str, Any]:

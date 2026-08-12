@@ -1,8 +1,9 @@
 """项目命名统一管线：语义名来源 → sanitize（保中文）→ unique（_vN 后缀）。
 
-全仓唯一实现（P7a）：workbench 服务、mcp_tools、blender_import_service
-全部从这里取 `safe_project_name` 与 `unique_project_name`，禁止另起 sanitize
-逻辑。设计依据：`项目命名方式设计-2026-08-12.md` §3.1 / §3.3。
+全仓唯一实现（P7a/P7b）：workbench 服务、mcp_tools、blender_import_service
+全部从这里取 `safe_project_name`、`unique_project_name` 与
+`project_name_from_prompt`，禁止另起 sanitize/提取逻辑。设计依据：
+`项目命名方式设计-2026-08-12.md` §3.1 / §3.2 / §3.3。
 """
 
 from __future__ import annotations
@@ -35,6 +36,52 @@ def safe_project_name(name: str) -> str:
     cleaned = _WS_RUN.sub(" ", cleaned)
     cleaned = cleaned.strip(" .")
     return cleaned or DEFAULT_PROJECT_NAME
+
+
+#: AI create 规则提取（二级命名来源）取名前 N 个字符（中英文均按字符计）
+PROMPT_NAME_MAX_CHARS = 12
+#: 剥 [图N] / 图N token（参考图引用与对象语义无关）
+_IMAGE_TOKEN_RE = re.compile(r"\[?图\d+\]?")
+#: 句首动词/礼貌前缀（长的排前面，避免 制作 被 做 抢先截断）
+_LEADING_VERB_RE = re.compile(r"^(?:帮我|帮忙|请|生成|创建|新建|重做|制作|做)")
+#: 句首量词（长的排前面）
+_LEADING_QUANTIFIER_RE = re.compile(r"^(?:一个|一只|这款|这个|个|只|把)")
+
+
+def project_name_from_prompt(prompt: str) -> str:
+    """规则提取：从创建 prompt 提炼项目名候选（P7b §3.2，二级来源；一级是 object_type）。
+
+    规则：
+    1. 剥 `[图N]` / `图N` token（`[图1][图2]生成…` → `生成…`）；
+    2. 反复剥句首动词/礼貌前缀：帮我|帮忙|请|生成|创建|新建|重做|制作|做；
+    3. 反复剥句首量词：一个|一只|这款|这个|个|只|把；
+    4. 取前 PROMPT_NAME_MAX_CHARS 个字符（中英文均按字符计）；
+    5. 全部剥空 → 返回 ""（由上层 safe_project_name 兜底到 未命名构件）。
+
+    例：'参考图1生成中国古建筑斗拱中坐斗gdl构件' → 剥图 token →
+    '参考生成中国古建筑斗拱中坐斗gdl构件'（句首非动词不剥）→ 取前 12 字。
+    规则提取只是回退，不必追求完美语义；object_type 才是一级来源。
+    """
+    text = str(prompt or "")
+    text = _IMAGE_TOKEN_RE.sub("", text)
+    changed = True
+    while changed and text:
+        changed = False
+        stripped = text.lstrip()
+        if stripped != text:
+            text = stripped
+            changed = True
+            continue
+        match = _LEADING_VERB_RE.match(text)
+        if match:
+            text = text[match.end():]
+            changed = True
+            continue
+        match = _LEADING_QUANTIFIER_RE.match(text)
+        if match:
+            text = text[match.end():]
+            changed = True
+    return text[:PROMPT_NAME_MAX_CHARS]
 
 
 def unique_project_name(base_name: str, work_dir: Path) -> str:
