@@ -233,6 +233,7 @@ function initialWorkbenchState() {
     assistantMessages: [],
     assistantDraftSeed: null,
     pendingPlan: null,
+    pendingExtraction: null,
     pendingSkillProposal: null,
     scripts: [],
     recentProjects: [],

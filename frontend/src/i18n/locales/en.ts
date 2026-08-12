@@ -158,6 +158,13 @@ export const en: Record<LocaleKey, string> = {
   'vision.extraction.lowConfidence': 'low confidence',
   'vision.extraction.evidenceHint': 'critic correction evidence',
 
+  // P5d-2 extraction confirmation gate (editable confirm card)
+  'assistant.extraction.title': 'Confirm image extraction',
+  'assistant.extraction.subtitle': 'What the model read from the reference image; required / critic_checks fields are editable. Confirm to continue generation.',
+  'assistant.extraction.confirm': 'Confirm & generate',
+  'assistant.extraction.cancel': 'Cancel',
+  'assistant.extraction.keepRest': 'other fields keep original values',
+
   // 3D preview picking (P1a): click mesh to highlight + jump to source
   'preview.pick.noSource': 'No source trace',
   'preview.pick.jumpToSource': 'Jump to source',

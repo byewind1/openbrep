@@ -179,6 +179,8 @@ class TaskRequest:
     agent_loop_plan: bool = False          # agent loop 是否先输出可审查计划（流式/SSE 默认开）
     confirm_plan: bool = False             # 计划确认门：GUI MODIFY 置 True（先出计划，确认后才执行）
     confirmed_plan: Optional[dict] = None  # 已确认的计划（/api/modify/confirm approve 后注入 agent loop）
+    confirm_extraction: bool = False       # 提取确认门（P5d-2）：GUI CREATE 带图置 True（提取后早退等确认）
+    confirmed_extractions: Optional[list[dict]] = None  # 用户确认/编辑后的提取 dict 列表（跳过 harness 重建 plans）
 
 
 @dataclass
@@ -527,22 +529,32 @@ class TaskPipeline:
             # generic schema 平移现有 analyze_reference_image（原函数原 prompt），
             # 各图 hint 以 【图N】 前缀标注后拼入 enriched_instruction（与 P5a 逐字节一致）。
             from openbrep.vision.harness import run as vision_harness_run
+            from openbrep.vision.extraction_store import plan_to_dict
 
+            # P5d-2 提取确认门：confirmed_extractions 非空 = 用户确认后的重发。
+            # 跳过 harness（零 vision 重调），从确认的 dict 重建 ModelingPlan
+            # （用户编辑值经 from_dict → to_hint 自然生效）；空则走正常 harness。
+            confirmed = request.confirmed_extractions or []
             try:
-                on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
-                plans = vision_harness_run(
-                    multi_images,
-                    request.intent,
-                    request.user_input,
-                    llm,
-                    on_event=on_event,
-                    critic_pass=self.config.vision.critic_pass,
-                )
+                if confirmed:
+                    from openbrep.vision.modeling_plan import ModelingPlan
+
+                    on_event("status", {"message": "正在按已确认的读图结果生成…"})
+                    plans = [ModelingPlan.from_dict(entry) for entry in confirmed]
+                else:
+                    on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
+                    plans = vision_harness_run(
+                        multi_images,
+                        request.intent,
+                        request.user_input,
+                        llm,
+                        on_event=on_event,
+                        critic_pass=self.config.vision.critic_pass,
+                    )
                 # P5d-1：plans 序列化进 metadata（设计 D7 存储 + 前端只读卡片数据源）。
                 # 每图一条：schema/fields/confidence/corrections/降级标记 + sha256；
                 # 无字节或分析失败的图记 {token, skipped: true}。字段形状与
                 # vision.extraction_store.plan_to_dict 同构（事件 payload 同源）。
-                from openbrep.vision.extraction_store import plan_to_dict
                 for idx, (plan, img) in enumerate(zip(plans, multi_images), start=1):
                     token = img.token or f"图{idx}"
                     if plan is None:
@@ -559,6 +571,23 @@ class TaskPipeline:
                     hint_parts.append(f"【图{idx}】\n{plan.to_hint()}")
                 if hint_parts:
                     enriched_instruction = f"{request.user_input}\n\n" + "\n\n".join(hint_parts)
+
+                # P5d-2 提取确认门：confirm_extraction=True 且无已确认提取时，
+                # harness 提取完成后**早退**——不进 plan_gdl_object / 生成 / 编译，
+                # 把提取结果交还前端等用户确认/编辑（产品心脏：模型读错，生成前拦住）。
+                # 全部 skipped（无字节图）→ 无提取可确认，照旧流程降级继续。
+                if request.confirm_extraction and not confirmed:
+                    non_skipped = [e for e in vision_extractions if not e.get("skipped")]
+                    if non_skipped:
+                        return TaskResult(
+                            success=True,
+                            intent=request.intent or "CREATE",
+                            project=project,
+                            metadata={
+                                "awaiting_extraction_confirmation": True,
+                                "vision_extractions": vision_extractions,
+                            },
+                        )
             except Exception as exc:
                 logger.warning("Vision harness failed, falling back to direct vision: %s", exc)
         # ─────────────────────────────────────────────────────────────────────

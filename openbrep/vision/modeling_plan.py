@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass, field
 
 from openbrep.vision.image_to_plan import visual_structure_to_gdl_hint
-from openbrep.vision.schema import VisualStructure
+from openbrep.vision.schema import VisualLayer, VisualStructure
 
 
 @dataclass
@@ -42,6 +42,10 @@ class ModelingPlan:
     raw_description: str = ""
     degraded: bool = False
     critic_degraded: bool = False
+    # P5d-2：schema 元数据随提取透出（前端可编辑卡片据此决定哪些字段可改）。
+    # required + critic_checks 是 D4 规定的可编辑范围；generic 两者皆空 → 只读确认。
+    required: list = field(default_factory=list)
+    critic_checks: list = field(default_factory=list)
 
     # ── hint 标记格式（P5c，测试钉死）──────────────────────────
     # low 置信顶层字段        → key: value（低置信）
@@ -106,3 +110,59 @@ class ModelingPlan:
             ):
                 markers.append(f"（低置信：{path}）")
         return markers
+
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ModelingPlan":
+        """从 plan_to_dict 输出（确认重发 payload）重建 ModelingPlan。
+
+        P5d-2 确认门：用户在前端编辑 fields 后，整份 extraction dict 随原
+        body 重发，pipeline 用本方法重建 plans（跳过 harness，零 vision 重调）。
+        generic 的 fields 内嵌 VisualStructure dict → 还原为实例，保证
+        to_hint() 走原 visual_structure_to_gdl_hint 渲染（未编辑时逐字节一致）。
+        """
+        schema_name = str(data.get("schema_name") or "")
+        fields: dict = data.get("fields") or {}
+        if schema_name == "generic" and isinstance(fields, dict):
+            vs_data = fields.get("visual_structure")
+            if isinstance(vs_data, dict):
+                fields = {"visual_structure": _visual_structure_from_dict(vs_data)}
+        return cls(
+            schema_name=schema_name,
+            fields=fields,
+            confidence=dict(data.get("confidence") or {}),
+            corrections=list(data.get("corrections") or []),
+            source_images=[str(data.get("sha256") or "")] if data.get("sha256") else [],
+            raw_description=str(data.get("raw_description") or ""),
+            degraded=bool(data.get("degraded")),
+            critic_degraded=bool(data.get("critic_degraded")),
+            required=list(data.get("required") or []),
+            critic_checks=list(data.get("critic_checks") or []),
+        )
+
+
+def _visual_structure_from_dict(data: dict) -> VisualStructure:
+    """plan_to_dict 序列化后的 VisualStructure dict → VisualStructure 实例。"""
+    layers = []
+    for raw in data.get("layers") or []:
+        if not isinstance(raw, dict):
+            continue
+        layers.append(
+            VisualLayer(
+                name=str(raw.get("name") or ""),
+                command=str(raw.get("command") or ""),
+                description=str(raw.get("description") or ""),
+                parametric=bool(raw.get("parametric", True)),
+            )
+        )
+    return VisualStructure(
+        component_type=str(data.get("component_type") or ""),
+        main_form=str(data.get("main_form") or ""),
+        layers=layers,
+        symmetry=list(data.get("symmetry") or []),
+        key_features=list(data.get("key_features") or []),
+        dimension_hints=dict(data.get("dimension_hints") or {}),
+        parametrize=list(data.get("parametrize") or []),
+        fix_as_ratio=list(data.get("fix_as_ratio") or []),
+        raw_description=str(data.get("raw_description") or ""),
+    )

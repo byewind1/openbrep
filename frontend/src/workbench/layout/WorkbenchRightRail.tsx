@@ -27,6 +27,8 @@ interface WorkbenchRightRailProps {
   assistantBusy: boolean
   pendingPlan: import('../../api/types').PendingPlan | null
   onConfirmPlan: (approve: boolean) => void
+  pendingExtraction: import('../../api/types').PendingExtraction | null
+  onConfirmExtraction: (extractions: import('../../api/types').VisionExtraction[], approve: boolean) => void
   pendingSkillProposal: import('../../api/types').SkillProposal | null
   onConfirmSkillProposal: (approve: boolean) => void
   onSetActiveRailPanel: (panel: ActiveRailPanel) => void
@@ -74,6 +76,8 @@ export function WorkbenchRightRail({
   assistantBusy,
   pendingPlan,
   onConfirmPlan,
+  pendingExtraction,
+  onConfirmExtraction,
   pendingSkillProposal,
   onConfirmSkillProposal,
   onSetActiveRailPanel,
@@ -191,6 +195,8 @@ export function WorkbenchRightRail({
             onModelChange={onModelChange}
             pendingPlan={pendingPlan}
             onConfirmPlan={onConfirmPlan}
+            pendingExtraction={pendingExtraction}
+            onConfirmExtraction={onConfirmExtraction}
             pendingSkillProposal={pendingSkillProposal}
             onConfirmSkillProposal={onConfirmSkillProposal}
             workspace={workspace}

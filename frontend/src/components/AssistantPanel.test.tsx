@@ -721,3 +721,95 @@ describe('AssistantPanel vision extraction card (P5d-1)', () => {
     expect(screen.queryByText('读图提取')).toBeNull()
   })
 })
+
+describe('AssistantPanel editable extraction gate (P5d-2)', () => {
+  const extraction = {
+    token: '图1',
+    schema_name: 'lattice_window',
+    fields: {
+      opening_shape: 'rect',
+      pattern_family: '冰裂',
+      grid_topology: { kind: 'grid', rows: 4, cols: 4, cell_desc: '方冰裂单元' },
+      bar_width_ratio: 0.08,
+      symmetry_group: 'd4',
+    },
+    confidence: {
+      opening_shape: 'high',
+      'grid_topology.rows': 'low',
+      bar_width_ratio: 'low',
+    },
+    corrections: [
+      // 嵌套 critic 修正：旧值→新值 展示
+      { field: 'grid_topology.rows', old: 4, new: 3, evidence: '图中 3 行' },
+    ],
+    required: ['opening_shape', 'pattern_family', 'grid_topology'],
+    critic_checks: ['grid_topology.rows', 'grid_topology.cols', 'symmetry_group'],
+    degraded: false,
+    critic_degraded: false,
+    raw_description: '',
+    sha256: 'aa'.repeat(32),
+  }
+
+  function renderGate(onConfirmExtraction = vi.fn(), onCancel = vi.fn()) {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingExtraction={{ extractions: [extraction], message: '这是漏窗', images: [] }}
+        onConfirmExtraction={(extractions, approve) =>
+          approve ? onConfirmExtraction(extractions) : onCancel()
+        }
+      />,
+    )
+    return { onConfirmExtraction, onCancel }
+  }
+
+  test('renders editable inputs for required + critic_checks fields, read-only for the rest', () => {
+    renderGate()
+    expect(screen.getByText('读图结果确认')).toBeTruthy()
+    // required 顶层字段 → 输入框
+    expect(screen.getByLabelText('opening_shape')).toBeTruthy()
+    expect(screen.getByLabelText('pattern_family')).toBeTruthy()
+    // critic_checks 嵌套路径 → 输入框
+    expect(screen.getByLabelText('grid_topology.rows')).toBeTruthy()
+    expect(screen.getByLabelText('grid_topology.cols')).toBeTruthy()
+    // critic_checks 顶层字段 → 输入框
+    expect(screen.getByLabelText('symmetry_group')).toBeTruthy()
+    // 非可编辑字段（bar_width_ratio）只读展示，无输入框
+    expect(screen.queryByLabelText('bar_width_ratio')).toBeNull()
+    expect(screen.getByText('0.08')).toBeTruthy()
+    // 低置信嵌套路径输入框带低置信标注（低置信出现多处：嵌套输入框标注 + 只读行 badge）
+    expect(screen.getAllByText(/低置信/).length).toBeGreaterThan(0)
+    // critic 修正展示（嵌套行内）
+    expect(screen.getByText('grid_topology.rows 4→3')).toBeTruthy()
+  })
+
+  test('confirm sends edited extractions with number parsing and preserved untouched fields', () => {
+    const { onConfirmExtraction } = renderGate()
+    fireEvent.change(screen.getByLabelText('opening_shape'), { target: { value: 'circle' } })
+    // 原值是数字 4 → 数字解析为 5
+    fireEvent.change(screen.getByLabelText('grid_topology.rows'), { target: { value: '5' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认并生成' }))
+
+    expect(onConfirmExtraction).toHaveBeenCalledTimes(1)
+    const payload = onConfirmExtraction.mock.calls[0][0] as typeof extraction[]
+    expect(payload).toHaveLength(1)
+    expect(payload[0].fields.opening_shape).toBe('circle')
+    expect(payload[0].fields.pattern_family).toBe('冰裂') // 未编辑保持原值
+    expect(payload[0].fields.grid_topology).toEqual({
+      kind: 'grid',
+      rows: 5, // 数字解析
+      cols: 4,
+      cell_desc: '方冰裂单元',
+    })
+    // schema 元数据原样透传（后端 from_dict 依赖）
+    expect(payload[0].required).toEqual(['opening_shape', 'pattern_family', 'grid_topology'])
+    expect(payload[0].critic_checks).toEqual(['grid_topology.rows', 'grid_topology.cols', 'symmetry_group'])
+  })
+
+  test('cancel clears without generating', () => {
+    const { onCancel } = renderGate()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+})

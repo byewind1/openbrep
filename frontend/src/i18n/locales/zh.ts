@@ -155,6 +155,13 @@ export const zh = {
   'vision.extraction.lowConfidence': '低置信',
   'vision.extraction.evidenceHint': 'critic 修正依据',
 
+  // P5d-2 提取确认门（可编辑确认卡）
+  'assistant.extraction.title': '读图结果确认',
+  'assistant.extraction.subtitle': '模型从参考图读到的信息；required / critic_checks 字段可编辑，确认后继续生成。',
+  'assistant.extraction.confirm': '确认并生成',
+  'assistant.extraction.cancel': '取消',
+  'assistant.extraction.keepRest': '其余字段保持原值',
+
   // 3D 预览拾取（P1a）：点击 mesh 高亮 + 溯源跳转
   'preview.pick.noSource': '无源码溯源',
   'preview.pick.jumpToSource': '跳转到源码',

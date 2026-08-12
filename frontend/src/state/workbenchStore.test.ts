@@ -3082,3 +3082,109 @@ test('loading the app (fetchSnapshot) starts with no ghost (P2a)', async () => {
   expect(store.getState().previewGhost).toBeNull()
   expect(store.getState().previewGhostLabel).toBeNull()
 })
+
+
+// ── P5d-2 提取确认门：读图完成 → 可编辑卡片 → 确认重发 / 取消清态 ──────────
+
+const EXTRACTION = {
+  token: '图1',
+  schema_name: 'lattice_window',
+  fields: { opening_shape: 'rect', pattern_family: '冰裂', grid_topology: { kind: 'grid', rows: 4, cols: 4 } },
+  confidence: {},
+  corrections: [],
+  degraded: false,
+  critic_degraded: false,
+  raw_description: '',
+  sha256: 'aa'.repeat(32),
+  required: ['opening_shape', 'pattern_family', 'grid_topology'],
+  critic_checks: ['grid_topology.rows', 'grid_topology.cols', 'symmetry_group'],
+}
+
+function gateApi(overrides: Record<string, unknown> = {}) {
+  return makeApi({
+    createProjectFromPrompt: async (_message, _settings, images, _signal, confirmedExtractions) => {
+      if (confirmedExtractions) {
+        return {
+          ok: true,
+          assistant: {
+            kind: 'create',
+            reply: `created with ${(confirmedExtractions[0]?.fields as Record<string, unknown>)?.opening_shape ?? '?'}`,
+            changed_files: ['scripts/3d.gdl'],
+            intent: 'IMAGE',
+          },
+          project: { name: 'Bookshelf', source: 'hsf', path: '/workspace/Bookshelf' },
+          parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
+          preview: { meshes: [], wires: [], warnings: [] },
+          warnings: ['created'],
+          events: [],
+          ...overrides,
+        }
+      }
+      return {
+        ok: true,
+        awaiting_extraction_confirmation: true,
+        extractions: [EXTRACTION],
+        events: [],
+        // snapshot 字段占位（类型契约需要；前端 await 分支不消费）
+        project: null,
+        parameters: [],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        ...overrides,
+      }
+    },
+  })
+}
+
+test('create with image sets pendingExtraction when awaiting_extraction_confirmation (P5d-2)', async () => {
+  const store = createWorkbenchStore(gateApi())
+  await store.getState().sendChat('帮我按图生成漏窗[图1]', [{ name: 'w.png', mime: 'image/png', b64: 'aGk=' }])
+
+  const state = store.getState()
+  expect(state.pendingExtraction).not.toBeNull()
+  expect(state.pendingExtraction?.extractions).toHaveLength(1)
+  expect(state.pendingExtraction?.message).toBe('帮我按图生成漏窗[图1]')
+  expect(state.assistantBusy).toBe(false)
+  // pending 占位消息保留 Thinking... 前缀（确认重发时被替换）
+  expect(state.assistantMessages.at(-1)?.content).toContain('读图结果已生成')
+  // 未生成任何项目
+  expect(state.project).toBeNull()
+})
+
+test('confirmPendingExtraction(true) re-sends create with edited extractions (P5d-2)', async () => {
+  const store = createWorkbenchStore(gateApi())
+  await store.getState().sendChat('帮我按图生成漏窗[图1]', [{ name: 'w.png', mime: 'image/png', b64: 'aGk=' }])
+  expect(store.getState().pendingExtraction).not.toBeNull()
+
+  const edited = [{ ...EXTRACTION, fields: { opening_shape: 'circle', pattern_family: '冰裂', grid_topology: { kind: 'grid', rows: 5, cols: 4 } } }]
+  await store.getState().confirmPendingExtraction(edited, true)
+
+  const state = store.getState()
+  expect(state.pendingExtraction).toBeNull()
+  expect(state.assistantBusy).toBe(false)
+  expect(state.project).toEqual({ name: 'Bookshelf', source: 'hsf', path: '/workspace/Bookshelf' })
+  // 确认后的回复体现编辑值（payload 透传到后端）
+  expect(state.assistantMessages.at(-1)?.content).toContain('created with circle')
+  // 不重复追加用户消息（首次发起已追加一条）
+  expect(state.assistantMessages.filter((m) => m.role === 'user')).toHaveLength(1)
+})
+
+test('confirmPendingExtraction(false) cancels and clears state without generating (P5d-2)', async () => {
+  const store = createWorkbenchStore(gateApi())
+  await store.getState().sendChat('帮我按图生成漏窗[图1]', [{ name: 'w.png', mime: 'image/png', b64: 'aGk=' }])
+  expect(store.getState().pendingExtraction).not.toBeNull()
+
+  await store.getState().confirmPendingExtraction([], false)
+
+  const state = store.getState()
+  expect(state.pendingExtraction).toBeNull()
+  expect(state.project).toBeNull()
+  expect(state.assistantBusy).toBe(false)
+  expect(state.assistantMessages.at(-1)?.content).toContain('已取消本次创建')
+})
+
+test('confirmPendingExtraction without a pending extraction sets lastError (P5d-2)', async () => {
+  const store = createWorkbenchStore(gateApi())
+  await store.getState().confirmPendingExtraction([EXTRACTION], true)
+  expect(store.getState().lastError).toContain('没有待确认的读图结果')
+})

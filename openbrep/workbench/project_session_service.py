@@ -390,6 +390,24 @@ class WorkbenchProjectSessionService:
         if not image_payload["ok"]:
             return {"ok": False, "error": image_payload["error"]}
 
+        # P5d-2 提取确认门：GUI 带图创建置 confirm_extraction=True；用户确认后
+        # 同路由带 confirmed_extractions 重发原 body（校验 project_epoch 防跨项目
+        # 确认，照 pending_plan 模式）。
+        confirm_extraction = bool(body.get("confirm_extraction"))
+        confirmed_raw = body.get("confirmed_extractions")
+        if confirmed_raw is not None and not isinstance(confirmed_raw, list):
+            return {"ok": False, "error": "confirmed_extractions must be a list."}
+        confirmed_extractions: list[dict] | None = confirmed_raw or None
+        if confirmed_extractions:
+            pending = getattr(self.session, "pending_extraction", None)
+            if pending is None:
+                return {"ok": False, "code": "NO_PENDING_EXTRACTION", "error": "没有待确认的读图结果，请先发起一次带图的创建。"}
+            if pending.get("project_epoch") != getattr(self.session, "project_epoch", None):
+                self.session.pending_extraction = None
+                return {"ok": False, "code": "NO_PENDING_EXTRACTION", "error": "待确认的读图结果已失效（项目已切换），请重新发起。"}
+            # 校验通过：消费 pending（本次确认成功后落盘用确认后 fields）
+            self.session.pending_extraction = None
+
         # AI 新建项目落点：请求显式指定 > 设置里的 output_dir > ./output 兜底，
         # 保证用户在设置面板看到的目录就是项目实际生成的位置。
         output_root = (
@@ -430,8 +448,25 @@ class WorkbenchProjectSessionService:
                 assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
                 history=list(body.get("history") or []),
                 on_event=on_event,
+                # P5d-2 提取确认门：确认/重发状态透传给 pipeline
+                confirm_extraction=confirm_extraction,
+                confirmed_extractions=confirmed_extractions,
             )
         )
+        # P5d-2 提取确认门早退：harness 提取完成、等用户确认/编辑。不挂载项目、
+        # 不落盘；存 session.pending_extraction（防跨项目确认），返回提取结果。
+        if result.metadata.get("awaiting_extraction_confirmation"):
+            self.session.pending_extraction = {
+                "extractions": result.metadata.get("vision_extractions") or [],
+                "body": body,
+                "project_epoch": self.session.project_epoch,
+            }
+            return {
+                "ok": True,
+                "awaiting_extraction_confirmation": True,
+                "extractions": result.metadata.get("vision_extractions") or [],
+                "events": events,
+            }
         # 验证未过（success=False）但有 project 产出时照常交付并挂载，
         # verification 报告会如实显示 FAIL；只有无产出才算硬失败
         if result.project is None:

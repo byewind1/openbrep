@@ -186,6 +186,9 @@ def _schema_plan(schema: VisionSchema, img, user_input: str, llm) -> ModelingPla
             source_images=[img.sha256] if img.sha256 else [],
             raw_description=raw[:500] or f"图像分析失败：{exc}",
             degraded=True,
+            # P5d-2：schema 元数据透出（可编辑卡片数据源；降级图仍带，前端只读展示）
+            required=list(schema.required),
+            critic_checks=list(schema.critic_checks),
         )
 
     # 信封解析：{fields, confidence, raw_description}；兼容旧平铺结构
@@ -213,6 +216,9 @@ def _schema_plan(schema: VisionSchema, img, user_input: str, llm) -> ModelingPla
         corrections=[],
         source_images=[img.sha256] if img.sha256 else [],
         raw_description=raw_description_out,
+        # P5d-2：schema 元数据透出（required + critic_checks = 前端可编辑范围）
+        required=list(schema.required),
+        critic_checks=list(schema.critic_checks),
     )
 
 

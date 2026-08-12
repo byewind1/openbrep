@@ -45,6 +45,7 @@ import type {
   ProjectScriptsResponse,
   RecentProject,
   RecentProjectsResponse,
+  VisionExtraction,
   RevealArtifactResult,
   RestoreRevisionResponse,
   RuntimeSettingsResult,
@@ -105,6 +106,7 @@ export interface WorkbenchApi {
     assistantSettings?: string,
     images?: AssistantImageAttachment[],
     signal?: AbortSignal,
+    confirmedExtractions?: VisionExtraction[],
   ) => Promise<CreateProjectResult>
   listProjectScripts: () => Promise<ProjectScriptsResponse>
   listRecentProjects: () => Promise<RecentProjectsResponse>
@@ -227,6 +229,8 @@ export interface WorkbenchState {
   assistantDraftSeed: string | null
   /** 计划确认门（V3）：非 null = 有待用户确认的修改计划 */
   pendingPlan: import('../api/types').PendingPlan | null
+  /** 提取确认门（P5d-2）：非 null = 有待用户确认/编辑的读图提取结果 */
+  pendingExtraction: import('../api/types').PendingExtraction | null
   /** 模式级 skill 提案（P2-d）：非 null = 有待用户确认的 skill 提案 */
   pendingSkillProposal: import('../api/types').SkillProposal | null
   scripts: ProjectScript[]
@@ -283,6 +287,8 @@ export interface WorkbenchState {
   sendChat: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   stopChat: () => void
   confirmPendingPlan: (approve: boolean) => Promise<void>
+  /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建；false 取消清态 */
+  confirmPendingExtraction: (extractions: VisionExtraction[], approve: boolean) => Promise<void>
   confirmPendingSkillProposal: (approve: boolean) => Promise<void>
   reloadRuntimeSettings: () => Promise<void>
   pollConfigRevision: () => Promise<void>

@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, SkillProposal, VerificationReport, WorkspaceInfo } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
-import { ExtractionCardList } from './ExtractionCard'
+import { ExtractionCardList, ExtractionConfirmCard } from './ExtractionCard'
 import { PanelEmpty } from './PanelEmpty'
 import { useThemedDialog } from './ThemedDialog'
 import { useT } from '../i18n'
@@ -27,6 +27,9 @@ interface AssistantPanelProps {
   // 计划确认门（V3）：待确认计划 + 确认/取消回调
   pendingPlan?: PendingPlan | null
   onConfirmPlan?: (approve: boolean) => void
+  // 提取确认门（P5d-2）：待确认/编辑的读图提取 + 确认（带编辑后 extractions）/取消回调
+  pendingExtraction?: PendingExtraction | null
+  onConfirmExtraction?: (extractions: VisionExtraction[], approve: boolean) => void
   // 模式级 skill 提案（P2-d）：待确认提案 + 沉淀/忽略回调
   pendingSkillProposal?: SkillProposal | null
   onConfirmSkillProposal?: (approve: boolean) => void
@@ -66,6 +69,8 @@ export function AssistantPanel({
   onModelChange,
   pendingPlan = null,
   onConfirmPlan,
+  pendingExtraction = null,
+  onConfirmExtraction,
   pendingSkillProposal = null,
   onConfirmSkillProposal,
   workspace = null,
@@ -448,6 +453,14 @@ export function AssistantPanel({
           </PanelEmpty>
         )}
         {pendingPlan ? <PlanConfirmCard plan={pendingPlan} busy={busy} onConfirm={onConfirmPlan} /> : null}
+        {pendingExtraction ? (
+          <ExtractionConfirmCard
+            extractions={pendingExtraction.extractions}
+            busy={busy}
+            onConfirm={(extractions) => onConfirmExtraction?.(extractions, true)}
+            onCancel={() => onConfirmExtraction?.([], false)}
+          />
+        ) : null}
         {pendingSkillProposal ? (
           <SkillProposalCard proposal={pendingSkillProposal} busy={busy} onConfirm={onConfirmSkillProposal} />
         ) : null}

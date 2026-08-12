@@ -431,6 +431,9 @@ export interface VisionExtraction {
   critic_degraded?: boolean
   raw_description?: string
   sha256?: string
+  // P5d-2：schema 元数据（required + critic_checks = 可编辑确认卡的可编辑范围）
+  required?: string[]
+  critic_checks?: string[]
 }
 
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────
@@ -721,6 +724,16 @@ export interface CreateProjectResult extends WorkbenchSnapshot {
   events?: Array<{ type: string; data: unknown }>
   error?: string
   skill_proposal?: SkillProposal | null
+  // P5d-2 提取确认门：读图完成、等用户确认/编辑（extractions = 可编辑卡片数据源）
+  awaiting_extraction_confirmation?: boolean
+  extractions?: VisionExtraction[]
+}
+
+/** P5d-2 提取确认门：待用户确认/编辑的读图结果（含原消息与图片，确认时原样重发） */
+export interface PendingExtraction {
+  extractions: VisionExtraction[]
+  message: string
+  images: AssistantImageAttachment[]
 }
 
 export interface ProjectScriptsResponse {

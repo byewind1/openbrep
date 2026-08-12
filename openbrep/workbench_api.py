@@ -102,6 +102,8 @@ class WorkbenchSession:
         self._op_lock = threading.RLock()
         # 计划确认门（V3）：MODIFY 先出计划，用户确认后才执行；None = 无待确认计划
         self.pending_plan: dict[str, Any] | None = None
+        # 提取确认门（P5d-2）：CREATE 带图提取完成后早退，等用户确认/编辑；None = 无待确认提取
+        self.pending_extraction: dict[str, Any] | None = None
         # 模式级 skill 提案（P2-d）：成功 CREATE/MODIFY 后提炼，用户确认后才落盘晋升
         self.pending_skill_proposal: dict[str, Any] | None = None
         self.skill_harvest_enabled: bool = True

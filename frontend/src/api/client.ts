@@ -37,6 +37,7 @@ import type {
   ProjectScriptContentResponse,
   ProjectScriptsResponse,
   ProjectMemoryStatusResult,
+  VisionExtraction,
   ProjectRevisionsResponse,
   RecentProjectsResponse,
   RevealArtifactResult,
@@ -313,6 +314,7 @@ export async function createProjectFromPrompt(
   assistantSettings = '',
   images: AssistantImageAttachment[] = [],
   signal?: AbortSignal,
+  confirmedExtractions?: VisionExtraction[],
 ): Promise<CreateProjectResult> {
   return requestJson<CreateProjectResult>(
     '/api/project/create',
@@ -322,6 +324,10 @@ export async function createProjectFromPrompt(
       body: JSON.stringify({
         prompt: message,
         assistant_settings: assistantSettings,
+        // P5d-2 提取确认门：GUI 带图创建总是开启（非交互路径不进此客户端）
+        confirm_extraction: images.length > 0 ? true : undefined,
+        // 确认重发：用户编辑后的提取 dict 随原 body 一起回传（后端跳过 harness）
+        ...(confirmedExtractions ? { confirmed_extractions: confirmedExtractions } : {}),
         ...assistantImagesPayload(images),
       }),
     },

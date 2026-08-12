@@ -60,6 +60,7 @@ export function WorkbenchApp() {
   const distillAssistantHistory = useWorkbenchStore((state) => state.distillAssistantHistory)
   const consumeAssistantDraftSeed = useWorkbenchStore((state) => state.consumeAssistantDraftSeed)
   const pendingPlan = useWorkbenchStore((state) => state.pendingPlan)
+  const pendingExtraction = useWorkbenchStore((state) => state.pendingExtraction)
   const pendingSkillProposal = useWorkbenchStore((state) => state.pendingSkillProposal)
   const scripts = useWorkbenchStore((state) => state.scripts)
   const recentProjects = useWorkbenchStore((state) => state.recentProjects)
@@ -168,6 +169,7 @@ export function WorkbenchApp() {
     await sendChat(message, images)
   }
   const confirmPendingPlan = useWorkbenchStore((state) => state.confirmPendingPlan)
+  const confirmPendingExtraction = useWorkbenchStore((state) => state.confirmPendingExtraction)
   const confirmPendingSkillProposal = useWorkbenchStore((state) => state.confirmPendingSkillProposal)
   const stopChat = useWorkbenchStore((state) => state.stopChat)
   const interruptedContext = useWorkbenchStore((state) => state.interruptedContext)
@@ -435,6 +437,8 @@ export function WorkbenchApp() {
             assistantBusy={assistantBusy}
             pendingPlan={pendingPlan}
             onConfirmPlan={(approve) => void confirmPendingPlan(approve)}
+            pendingExtraction={pendingExtraction}
+            onConfirmExtraction={(extractions, approve) => void confirmPendingExtraction(extractions, approve)}
             pendingSkillProposal={pendingSkillProposal}
             onConfirmSkillProposal={(approve) => void confirmPendingSkillProposal(approve)}
             onSetActiveRailPanel={setActiveRailPanel}

@@ -1,4 +1,4 @@
-import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingPlan, VisionExtraction } from '../../api/types'
+import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -13,6 +13,10 @@ const ASSISTANT_PENDING_PREFIX = 'Thinking...'
 // 让 replacePendingAssistantMessage 能正确替换上一条 pending 消息
 const PLAN_PENDING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n📝 修改计划已生成，请确认后执行。`
 const PLAN_EXECUTING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n⏳ 正在按已确认的计划执行修改…`
+// 提取确认门（P5d-2）的待确认内容：保留 Thinking... 前缀，让 replacePendingAssistantMessage 能替换
+const EXTRACTION_PENDING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n🖼️ 读图结果已生成，请确认或编辑后继续。`
+const EXTRACTION_EXECUTING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n⏳ 正在按已确认的读图结果生成…`
+const EXTRACTION_CANCELLED_CONTENT = '⏹ 已取消本次创建。'
 const INTERRUPTED_CONTENT = '⏹ 已中断'
 
 function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep | null {
@@ -144,25 +148,52 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     message: string,
     images: AssistantImageAttachment[] = [],
     signal?: AbortSignal,
+    confirmedExtractions?: VisionExtraction[],
   ) {
     const trimmed = message.trim()
     if (!trimmed) return
-    set((state) => ({
-      assistantBusy: true,
-      assistantMessages: [
-        ...state.assistantMessages,
-        { role: 'user', content: userMessageContent(trimmed, images), images: images.length ? images : undefined },
-        { role: 'assistant', content: pendingAssistantMessage('create', images) },
-      ],
-    }))
+    const isConfirm = !!confirmedExtractions
+    if (!isConfirm) {
+      // 首次发起：追加用户消息 + pending 占位
+      set((state) => ({
+        assistantBusy: true,
+        assistantMessages: [
+          ...state.assistantMessages,
+          { role: 'user', content: userMessageContent(trimmed, images), images: images.length ? images : undefined },
+          { role: 'assistant', content: pendingAssistantMessage('create', images) },
+        ],
+      }))
+    } else {
+      // 确认重发：复用已有 pending 消息占位（不重复追加用户消息）
+      set({ assistantBusy: true })
+    }
     const epoch = get().projectEpoch
-    const result = await api.createProjectFromPrompt(trimmed, get().llmSettings.assistant_settings, images, signal)
+    const result = await api.createProjectFromPrompt(
+      trimmed,
+      get().llmSettings.assistant_settings,
+      images,
+      signal,
+      confirmedExtractions,
+    )
     if (projectSwitchedSince(epoch)) {
       discardStaleResult(
         result.ok && result.project
           ? `Project "${result.project.name}" was created, but the workspace switched meanwhile. Open it from recent projects.`
           : 'Create result discarded: project switched during the request.',
       )
+      return
+    }
+    // P5d-2 提取确认门：读图完成 → 弹可编辑卡片，等用户确认/编辑后再生成
+    // （extractions 为空说明无提取可确认，落到常规交付/错误分支，不卡门）
+    if (result.awaiting_extraction_confirmation && result.extractions && result.extractions.length > 0) {
+      set((state) => ({
+        assistantBusy: false,
+        pendingExtraction: { extractions: result.extractions ?? [], message: trimmed, images },
+        assistantMessages: replacePendingAssistantMessage(
+          state.assistantMessages,
+          EXTRACTION_PENDING_CONTENT,
+        ),
+      }))
       return
     }
     if (!result.ok || !result.project || !result.parameters || !result.preview) {
@@ -186,6 +217,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       : ''
     set((state) => ({
       assistantBusy: false,
+      pendingExtraction: null,
       assistantMessages: replacePendingAssistantMessage(
         state.assistantMessages,
         `${result.assistant?.reply ?? 'Project created.'}${locationNote}${formatAssistantEventSummary(result.events)}`,
@@ -632,6 +664,35 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         }))
       })
       await finishModifyStream(result, epoch, '⏳ 正在按已确认的计划执行修改…', thinkingSteps)
+    },
+
+    /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建（跳过 harness）；false 取消清态。 */
+    async confirmPendingExtraction(extractions: VisionExtraction[], approve: boolean) {
+      const pending = get().pendingExtraction
+      if (!pending) {
+        set({ lastError: '没有待确认的读图结果，请先发起一次带图的创建。' })
+        return
+      }
+      if (!approve) {
+        set((state) => ({
+          pendingExtraction: null,
+          assistantMessages: replacePendingAssistantMessage(
+            state.assistantMessages,
+            EXTRACTION_CANCELLED_CONTENT,
+          ),
+        }))
+        await persistAssistantHistory()
+        return
+      }
+      set((state) => ({
+        pendingExtraction: null,
+        assistantBusy: true,
+        assistantMessages: replacePendingAssistantMessage(
+          state.assistantMessages,
+          EXTRACTION_EXECUTING_CONTENT,
+        ),
+      }))
+      await _createProject(pending.message, pending.images, undefined, extractions)
     },
 
     async confirmPendingSkillProposal(approve: boolean) {
