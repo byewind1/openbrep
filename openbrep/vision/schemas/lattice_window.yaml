@@ -1,4 +1,4 @@
-# lattice_window — 园林漏窗定向提取（P5b 首发，设计 §4 示例）
+# lattice_window — 园林漏窗定向提取（P5b 首发，设计 §4 示例；P5c 加字段级置信度）
 name: lattice_window
 trigger:
   keywords: [漏窗, 窗花, 花窗, 棂, lattice]
@@ -12,8 +12,15 @@ extract_prompt: |
   6. symmetry_group：对称群（d4 / d2 / c2 / c4 / none）
   7. motif_features：母题特征数组（如 "四角海棠瓣"）
   8. gdl_strategy：推荐 GDL 命令组合（如 "PRISM_ 棱条 + FOR 网格平铺"）
-  raw_description：一句话描述这张图。
-  按 JSON 输出（不加 markdown 包裹），无法判断的字段用 null。
+
+  【P5c 输出契约】按以下 JSON 结构输出（严格，不加 markdown 包裹）：
+  {
+    "fields": { 上面每个字段名: 值, 无法判断的字段用 null },
+    "confidence": { 每个字段名: "high" | "low" },
+    "raw_description": "一句话描述这张图"
+  }
+  confidence 表示对该字段提取值的把握：high = 图中清晰可见、可靠；low = 不确定/遮挡/模糊。
+  raw_description 位于顶层，不再放进 fields。
 fields:
   opening_shape: { type: enum, hint: 开洞形状 }
   pattern_family: { type: enum, hint: 纹样母题 }

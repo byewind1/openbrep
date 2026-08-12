@@ -668,14 +668,19 @@ class CompilerConfig:
 
 @dataclass
 class VisionConfig:
-    """Vision Harness 配置（P5b，设计 §10-D5/D9）。
+    """Vision Harness 配置（P5b 设计 §10-D5/D9，P5c 加 critic_pass）。
 
     pass_raw_image: 提取后原图是否随生成调用双通道发送（默认 on，现状行为）。
         on  → 多图生成只带 role ∈ {outline, pattern, auto} 的图（material 只参与提取）；
         off → 生成不带原图，只靠 ModelingPlan hint。单图旧路径不受此开关影响。
+    critic_pass: S3 critic 校验开关（默认 on，设计 D3）。
+        on  → CREATE/IMAGE + schema 声明 critic_checks 时，每图一次 critic 复读
+              核对必核字段（"不匹配+依据"改值并留痕，"无法判断"标 low）；
+        off → 不跑 critic（MODIFY 简化档本就永远不跑，见 harness）。
     """
 
     pass_raw_image: bool = True
+    critic_pass: bool = True
 
 
 @dataclass
@@ -866,6 +871,7 @@ class GDLAgentConfig:
             },
             "vision": {
                 "pass_raw_image": self.vision.pass_raw_image,
+                "critic_pass": self.vision.critic_pass,
             },
             "knowledge_dir": self.knowledge_dir,
             "user_knowledge_dir": self.user_knowledge_dir,

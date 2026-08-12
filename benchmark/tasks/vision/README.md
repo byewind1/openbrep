@@ -55,6 +55,11 @@ PY
 - `benchmark/baseline.json` 不含 vision 套件；`check_baseline` 只跑 create +
   modify，本套件不影响基线门禁。
 - 当前为骨架：任务/语料/断言随 P5c/P5d 演进（critic 校验、字段置信度入断言）。
+- **P5c（2026-08-12）prompt 变更 → vision.jsonl 已过期**：extract_prompt 追加了
+  字段级置信度要求（输出信封 `{fields, confidence, raw_description}`），且
+  CREATE/IMAGE + critic_checks 非空时每图多一次 critic 调用——语料必然 miss
+  （回放报"未命中"是特性：证明悄悄改 prompt 会被拦住）。合并后由监控方用
+  `--mode auto --jobs 1 --llm-record` 重录（见上），录制命令不变。
 
 ## 首轮录制结果（2026-08-12，kimi-k2.6，13 条语料）
 

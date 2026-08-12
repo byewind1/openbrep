@@ -313,6 +313,35 @@ class TestRevisionsConfig(unittest.TestCase):
             self.assertEqual(reloaded.revisions.keep_last_n, 5)
 
 
+class TestVisionConfig(unittest.TestCase):
+    """[vision] 配置解析：critic_pass 默认 on，可显式关闭，save/load 往返。"""
+
+    def _load(self, toml_text: str) -> GDLAgentConfig:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(toml_text, encoding="utf-8")
+            return GDLAgentConfig.load(str(config_path))
+
+    def test_critic_pass_defaults_to_on(self):
+        config = self._load("")
+        self.assertTrue(config.vision.critic_pass)
+        self.assertTrue(config.vision.pass_raw_image)  # P5b 默认不变
+
+    def test_critic_pass_can_be_disabled_via_toml(self):
+        config = self._load("[vision]\ncritic_pass = false\n")
+        self.assertFalse(config.vision.critic_pass)
+        self.assertTrue(config.vision.pass_raw_image)
+
+    def test_critic_pass_save_load_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config = GDLAgentConfig()
+            config.vision.critic_pass = False
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertFalse(reloaded.vision.critic_pass)
+
+
 class TestProviderRegistry(_CleanEnvMixin, unittest.TestCase):
     """PROVIDER_PROFILES 注册表：LLM 链路"模型属于哪个 provider"的单一事实来源。"""
 

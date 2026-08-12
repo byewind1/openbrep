@@ -296,31 +296,59 @@ class TestGenericZeroRegression(unittest.TestCase):
 # ── 4. lattice_window 定向提取 ───────────────────────────
 
 class TestLatticeExtraction(unittest.TestCase):
+    _EXTRACT_ENVELOPE = {
+        "fields": {
+            "opening_shape": "rect",
+            "pattern_family": "冰裂",
+            "grid_topology": {"kind": "grid", "rows": 4, "cols": 4, "cell_desc": "方冰裂单元"},
+            "bar_width_ratio": 0.08,
+            "frame_bar_ratio": 0.35,
+            "symmetry_group": "d4",
+            "motif_features": ["四角海棠瓣"],
+            "gdl_strategy": "PRISM_ 棱条 + FOR 网格平铺",
+        },
+        "confidence": {
+            "opening_shape": "high",
+            "pattern_family": "high",
+            "grid_topology": "high",
+            "bar_width_ratio": "high",
+            "frame_bar_ratio": "high",
+            "symmetry_group": "high",
+            "motif_features": "high",
+            "gdl_strategy": "high",
+        },
+        "raw_description": "方洞冰裂纹漏窗",
+    }
+    _CRITIC_ALL_MATCH = {
+        "verdicts": {
+            "grid_topology.rows": {"verdict": "match", "evidence": "图中行数与提取一致"},
+            "grid_topology.cols": {"verdict": "match", "evidence": "图中列数与提取一致"},
+            "symmetry_group": {"verdict": "match", "evidence": "四重旋转对称"},
+        }
+    }
+
     def test_fixed_json_parses_into_fields(self):
-        events = []
+        """P5c 信封解析 + critic 全 match：字段/置信度正确，hint 无降级无低置信。"""
+        responses = [
+            json.dumps(self._EXTRACT_ENVELOPE, ensure_ascii=False),
+            json.dumps(self._CRITIC_ALL_MATCH, ensure_ascii=False),
+        ]
 
         class FakeLLM:
-            def generate_with_image(self, text_prompt, image_b64, image_mime="image/jpeg", system_prompt=None, **kwargs):
-                return LLMResponse(
-                    content=json.dumps({
-                        "opening_shape": "rect",
-                        "pattern_family": "冰裂",
-                        "grid_topology": {"kind": "grid", "rows": 4, "cols": 4, "cell_desc": "方冰裂单元"},
-                        "bar_width_ratio": 0.08,
-                        "frame_bar_ratio": 0.35,
-                        "symmetry_group": "d4",
-                        "motif_features": ["四角海棠瓣"],
-                        "gdl_strategy": "PRISM_ 棱条 + FOR 网格平铺",
-                        "raw_description": "方洞冰裂纹漏窗",
-                    }, ensure_ascii=False),
-                    model="mock", usage={}, finish_reason="stop",
-                )
+            def __init__(self):
+                self.call_count = 0
 
+            def generate_with_image(self, text_prompt, image_b64, image_mime="image/jpeg", system_prompt=None, **kwargs):
+                content = responses[self.call_count]
+                self.call_count += 1
+                return LLMResponse(content=content, model="mock", usage={}, finish_reason="stop")
+
+        llm = FakeLLM()
         plans = harness_run(
             [ImageRef(token="图1", b64="YQ==", mime="image/png")],
             "CREATE",
             "这是漏窗，按图生成",
-            FakeLLM(),
+            llm,
             on_event=lambda *_: None,
         )
         plan = plans[0]
@@ -329,12 +357,20 @@ class TestLatticeExtraction(unittest.TestCase):
         self.assertEqual(plan.fields["opening_shape"], "rect")
         self.assertEqual(plan.fields["pattern_family"], "冰裂")
         self.assertEqual(plan.fields["grid_topology"]["rows"], 4)
-        self.assertEqual(plan.confidence, {k: "unknown" for k in plan.fields})
+        # P5c：字段级置信度来自提取信封 + critic 核对（不再是全 unknown）
+        self.assertEqual(plan.confidence["opening_shape"], "high")
+        self.assertEqual(plan.confidence["grid_topology.rows"], "high")  # critic match
+        self.assertEqual(plan.confidence["grid_topology.cols"], "high")
+        self.assertEqual(plan.confidence["symmetry_group"], "high")
         self.assertEqual(plan.corrections, [])
+        self.assertFalse(plan.critic_degraded)
+        # 每图两次调用：提取 1 → critic 1
+        self.assertEqual(llm.call_count, 2)
         hint = plan.to_hint()
         self.assertIn("lattice_window", hint)
         self.assertIn("pattern_family: 冰裂", hint)
         self.assertNotIn("降级", hint)
+        self.assertNotIn("低置信", hint)
 
     def test_bad_json_degrades_to_raw_description_with_marker(self):
         events = []
@@ -380,6 +416,292 @@ class TestLatticeExtraction(unittest.TestCase):
             FakeLLM(),
         )
         self.assertEqual(plans[0].schema_name, "lattice_window")
+
+
+# ── 4b. S3 critic 校验（P5c，设计 D3）────────────────────
+
+class TestCriticPass(unittest.TestCase):
+    """S3 critic：修正语义、越权防护、降级（D8）、开关、degraded 跳过、hint 渲染。"""
+
+    _EXTRACT = TestLatticeExtraction._EXTRACT_ENVELOPE
+
+    def _seq_llm(self, responses, raise_on=None):
+        """按序返回响应的假 LLM（提取 1 → critic 1 → 提取 2 → critic 2 …）。"""
+        class _Seq:
+            def __init__(self):
+                self.call_count = 0
+                self.prompts = []
+
+            def generate_with_image(self, text_prompt, image_b64, image_mime="image/jpeg", system_prompt=None, **kwargs):
+                self.prompts.append(text_prompt)
+                idx = self.call_count
+                self.call_count += 1
+                if raise_on and idx == raise_on:
+                    raise RuntimeError(f"simulated failure at call {idx}")
+                content = responses[idx] if isinstance(responses, list) else responses
+                return LLMResponse(content=content, model="mock", usage={}, finish_reason="stop")
+        return _Seq()
+
+    def _run(self, llm, intent="CREATE", critic_pass=True, user_input="这是漏窗", on_event=None):
+        return harness_run(
+            [ImageRef(token="图1", b64="YQ==", mime="image/png")],
+            intent, user_input, llm,
+            on_event=on_event or (lambda *_: None),
+            critic_pass=critic_pass,
+        )[0]
+
+    # ── 修正语义（D3）────────────────────────────────────
+
+    def test_mismatch_with_evidence_corrects_value_and_records(self):
+        critic = json.dumps({"verdicts": {
+            "grid_topology.rows": {"verdict": "mismatch", "evidence": "图中棂条为 3 行", "value": 3},
+            "grid_topology.cols": {"verdict": "match", "evidence": "图中列数与提取一致"},
+            "symmetry_group": {"verdict": "unknown", "evidence": "图被遮挡，无法判断"},
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False), critic])
+        plan = self._run(llm)
+        # mismatch + 依据 → 改值，corrections 记 old/new/evidence，confidence=high
+        self.assertEqual(plan.fields["grid_topology"]["rows"], 3)
+        self.assertEqual(plan.corrections, [{
+            "field": "grid_topology.rows",
+            "old": 4,
+            "new": 3,
+            "evidence": "图中棂条为 3 行",
+        }])
+        self.assertEqual(plan.confidence["grid_topology.rows"], "high")
+        # match → high；unknown → low 不改值
+        self.assertEqual(plan.fields["grid_topology"]["cols"], 4)
+        self.assertEqual(plan.confidence["grid_topology.cols"], "high")
+        self.assertEqual(plan.fields["symmetry_group"], "d4")
+        self.assertEqual(plan.confidence["symmetry_group"], "low")
+        self.assertFalse(plan.critic_degraded)
+
+    def test_mismatch_without_evidence_or_value_flags_low_without_change(self):
+        critic = json.dumps({"verdicts": {
+            "grid_topology.rows": {"verdict": "mismatch", "value": 2},          # 无依据
+            "grid_topology.cols": {"verdict": "mismatch", "evidence": "不对"},  # 无修正值
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False), critic])
+        plan = self._run(llm)
+        self.assertEqual(plan.fields["grid_topology"]["rows"], 4)
+        self.assertEqual(plan.fields["grid_topology"]["cols"], 4)
+        self.assertEqual(plan.corrections, [])
+        self.assertEqual(plan.confidence["grid_topology.rows"], "low")
+        self.assertEqual(plan.confidence["grid_topology.cols"], "low")
+
+    def test_critic_value_type_coerced_to_int(self):
+        """old 是 int 而 critic 给字符串数字 → 转回 int，corrections 记录 int。"""
+        critic = json.dumps({"verdicts": {
+            "grid_topology.rows": {"verdict": "mismatch", "evidence": "3 行", "value": "3"},
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False), critic])
+        plan = self._run(llm)
+        self.assertEqual(plan.fields["grid_topology"]["rows"], 3)
+        self.assertIs(type(plan.fields["grid_topology"]["rows"]), int)
+        self.assertEqual(plan.corrections[0]["new"], 3)
+
+    def test_furniture_shelf_count_corrected(self):
+        """顶层字段（shelf_count）修正：critic_checks 覆盖 furniture_stack。"""
+        extract = {
+            "fields": {"component_type": "书架", "shelf_count": 4, "shelf_layout": "等距",
+                       "frame_profile": "方管", "symmetry": ["x"], "key_features": ["多层"],
+                       "parametrize": ["width", "shelf_count"], "fix_as_ratio": []},
+            "confidence": {k: "high" for k in
+                           ["component_type", "shelf_count", "shelf_layout", "frame_profile",
+                            "symmetry", "key_features", "parametrize", "fix_as_ratio"]},
+            "raw_description": "四层书架",
+        }
+        critic = json.dumps({"verdicts": {
+            "shelf_count": {"verdict": "mismatch", "evidence": "图中可见 5 层板", "value": 5},
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(extract, ensure_ascii=False), critic])
+        plan = self._run(llm, user_input="做一个书架")
+        self.assertEqual(plan.schema_name, "furniture_stack")
+        self.assertEqual(plan.fields["shelf_count"], 5)
+        self.assertEqual(plan.corrections, [{"field": "shelf_count", "old": 4, "new": 5,
+                                             "evidence": "图中可见 5 层板"}])
+        self.assertEqual(plan.confidence["shelf_count"], "high")
+
+    # ── 越权防护（D3）────────────────────────────────────
+
+    def test_out_of_scope_fields_ignored(self):
+        critic = json.dumps({"verdicts": {
+            "grid_topology.rows": {"verdict": "match", "evidence": "一致"},
+            "opening_shape": {"verdict": "mismatch", "evidence": "其实是圆形", "value": "circle"},
+            "gdl_strategy": {"verdict": "mismatch", "evidence": "换成别的", "value": "HACK"},
+            "bar_width_ratio": {"verdict": "mismatch", "evidence": "更粗", "value": 0.2},
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False), critic])
+        plan = self._run(llm)
+        # critic_checks 之外的字段：值不动、不记 corrections、置信度不被 critic 改动
+        self.assertEqual(plan.fields["opening_shape"], "rect")
+        self.assertEqual(plan.fields["gdl_strategy"], "PRISM_ 棱条 + FOR 网格平铺")
+        self.assertEqual(plan.fields["bar_width_ratio"], 0.08)
+        self.assertEqual(plan.corrections, [])
+        # 范围内的字段正常处理
+        self.assertEqual(plan.confidence["grid_topology.rows"], "high")
+
+    # ── 降级（D8）────────────────────────────────────────
+
+    def test_critic_failure_marks_all_unknown_and_continues(self):
+        events = []
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False)], raise_on=1)
+        plan = self._run(llm, on_event=lambda et, d: events.append((et, d)))
+        # 不阻塞流程：plan 仍返回，字段值保留
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.fields["opening_shape"], "rect")
+        # 全字段 confidence=unknown + critic_degraded 标记
+        self.assertTrue(plan.critic_degraded)
+        self.assertEqual(set(plan.confidence.values()), {"unknown"})
+        self.assertEqual(plan.corrections, [])
+        # 降级必须在事件流可见
+        self.assertTrue(any(et == "vision_degraded" for et, _ in events))
+        self.assertIn("【critic 校验已降级】", plan.to_hint())
+
+    def test_critic_unparseable_output_degrades_like_failure(self):
+        """critic 输出不是 JSON / 没有 verdicts → 视为校验不可用（D8），不装核过。"""
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False), "```json\n不是JSON\n```"])
+        plan = self._run(llm)
+        self.assertTrue(plan.critic_degraded)
+        self.assertEqual(set(plan.confidence.values()), {"unknown"})
+        self.assertIn("【critic 校验已降级】", plan.to_hint())
+
+    def test_degraded_extraction_skips_critic(self):
+        """degraded 的图没有可信 JSON 可核 → 跳过 critic（只 1 次调用）。"""
+        llm = self._seq_llm(["not json at all"])
+        plan = self._run(llm)
+        self.assertTrue(plan.degraded)
+        self.assertFalse(plan.critic_degraded)
+        self.assertEqual(llm.call_count, 1)
+
+    # ── 开关与触发条件 ───────────────────────────────────
+
+    def test_critic_pass_off_skips_critic_call(self):
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False)])
+        plan = self._run(llm, critic_pass=False)
+        self.assertEqual(llm.call_count, 1)  # 只有提取
+        self.assertEqual(plan.corrections, [])
+        self.assertFalse(plan.critic_degraded)
+        self.assertEqual(plan.confidence["opening_shape"], "high")  # 提取置信度保留
+
+    def test_critic_not_run_for_modify_intent(self):
+        """D3：MODIFY 简化档不跑 critic。"""
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False)])
+        plan = self._run(llm, intent="MODIFY")
+        self.assertEqual(llm.call_count, 1)
+        self.assertEqual(plan.corrections, [])
+        self.assertFalse(plan.critic_degraded)
+
+    # ── hint 渲染（P5c）──────────────────────────────────
+
+    def test_hint_renders_low_and_correction_markers(self):
+        critic = json.dumps({"verdicts": {
+            "grid_topology.rows": {"verdict": "mismatch", "evidence": "3 行", "value": 3},
+            "grid_topology.cols": {"verdict": "unknown", "evidence": "看不清"},
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(self._EXTRACT, ensure_ascii=False), critic])
+        plan = self._run(llm)
+        hint = plan.to_hint()
+        # 嵌套修正：critic 修正：路径 旧→新
+        self.assertIn("（critic 修正：grid_topology.rows 4→3）", hint)
+        # 嵌套低置信：点路径标注
+        self.assertIn("（低置信：grid_topology.cols）", hint)
+        self.assertNotIn("降级", hint)
+
+    def test_hint_renders_top_level_correction_marker(self):
+        extract = {
+            "fields": {"component_type": "书架", "shelf_count": 4, "shelf_layout": "等距",
+                       "frame_profile": "方管", "symmetry": ["x"], "key_features": ["多层"],
+                       "parametrize": ["width", "shelf_count"], "fix_as_ratio": []},
+            "confidence": {"shelf_count": "high"},
+            "raw_description": "四层书架",
+        }
+        critic = json.dumps({"verdicts": {
+            "shelf_count": {"verdict": "mismatch", "evidence": "5 层", "value": 5},
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(extract, ensure_ascii=False), critic])
+        plan = self._run(llm, user_input="做一个书架")
+        hint = plan.to_hint()
+        # 顶层修正：shelf_count: 5（critic 修正：4→5）
+        self.assertIn("shelf_count: 5（critic 修正：4→5）", hint)
+
+    def test_hint_renders_top_level_low_marker(self):
+        extract = {
+            "fields": {"component_type": "书架", "shelf_count": None, "shelf_layout": "等距",
+                       "frame_profile": "方管", "symmetry": ["x"], "key_features": ["多层"],
+                       "parametrize": ["width", "shelf_count"], "fix_as_ratio": []},
+            "confidence": {"component_type": "high", "shelf_count": "high"},  # null 值强制 low
+            "raw_description": "书架",
+        }
+        critic = json.dumps({"verdicts": {
+            "shelf_count": {"verdict": "unknown", "evidence": "层板被遮挡"},
+        }}, ensure_ascii=False)
+        llm = self._seq_llm([json.dumps(extract, ensure_ascii=False), critic])
+        plan = self._run(llm, user_input="做一个书架")
+        hint = plan.to_hint()
+        self.assertIn("shelf_count: null（低置信）", hint)
+
+
+# ── 4c. 端到端：critic_pass 从 [vision] config 接线 ───────
+
+class TestCriticPipelineWiring(unittest.TestCase):
+    """IMAGE 任务走生产 pipeline：critic_pass 由 config 控制，修正值进入生成指令。"""
+
+    _EXTRACT = TestLatticeExtraction._EXTRACT_ENVELOPE
+
+    def _run(self, critic_pass: bool) -> tuple:
+        pipeline = _make_pipeline()
+        pipeline.config.vision.critic_pass = critic_pass
+        captured = {"instruction": None, "vision_calls": 0}
+
+        class FakeLLM:
+            def generate(self, messages, **kwargs):
+                return LLMResponse(
+                    content=json.dumps({"component_type": "漏窗"}, ensure_ascii=False),
+                    model="m", usage={}, finish_reason="stop",
+                )
+
+            def generate_with_image(self, text_prompt, image_b64, image_mime="image/jpeg", system_prompt=None, **kwargs):
+                captured["vision_calls"] += 1
+                if captured["vision_calls"] == 1:
+                    content = json.dumps(TestCriticPipelineWiring._EXTRACT, ensure_ascii=False)
+                else:
+                    content = json.dumps({"verdicts": {
+                        "grid_topology.rows": {"verdict": "mismatch", "evidence": "图中 3 行", "value": 3},
+                        "grid_topology.cols": {"verdict": "match", "evidence": "一致"},
+                        "symmetry_group": {"verdict": "match", "evidence": "四重对称"},
+                    }}, ensure_ascii=False)
+                return LLMResponse(content=content, model="m", usage={}, finish_reason="stop")
+
+            def generate_with_images(self, text_prompt, images, system_prompt=None, **kwargs):
+                captured["instruction"] = text_prompt
+                return LLMResponse(
+                    content="[FILE: scripts/3d.gdl]\nBLOCK 1,1,1\nEND",
+                    model="m", usage={}, finish_reason="stop",
+                )
+
+        llm = FakeLLM()
+        pipeline._make_llm = lambda req: llm
+        with patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()):
+            request = TaskRequest(
+                user_input="这是漏窗，按图生成",
+                intent="IMAGE",
+                images=[ImageRef(token="图1", b64=base64.b64encode(b"a").decode(), mime="image/png")],
+            )
+            result = pipeline.execute(request)
+        return captured, result
+
+    def test_critic_pass_on_corrects_value_into_generation_instruction(self):
+        captured, result = self._run(critic_pass=True)
+        # 每图两次调用：提取 + critic
+        self.assertEqual(captured["vision_calls"], 2)
+        # 修正值进入生成指令（hint 渲染 旧→新）
+        self.assertIn("（critic 修正：grid_topology.rows 4→3）", captured["instruction"])
+
+    def test_critic_pass_off_skips_critic_end_to_end(self):
+        captured, result = self._run(critic_pass=False)
+        self.assertEqual(captured["vision_calls"], 1)  # 只有提取
+        self.assertNotIn("critic 修正", captured["instruction"])
 
 
 # ── 5. 角色过滤（D5/D9）─────────────────────────────────

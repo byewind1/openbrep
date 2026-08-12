@@ -1,4 +1,4 @@
-# furniture_stack — 层叠家具语义（服务书架 / 博古架类，现有层叠语义平移）
+# furniture_stack — 层叠家具语义（服务书架 / 博古架类，现有层叠语义平移；P5c 加字段级置信度）
 name: furniture_stack
 trigger:
   keywords: [书架, 博古架, 层叠家具, 层架, bookshelf]
@@ -12,8 +12,15 @@ extract_prompt: |
   6. key_features：关键形态特征数组
   7. parametrize：应参数化的维度数组（如 [width, depth, height, shelf_count]）
   8. fix_as_ratio：固定比例派生量数组（如 "shelf_thickness = height * 0.04"）
-  raw_description：一句话描述这张图。
-  按 JSON 输出（不加 markdown 包裹），无法判断的字段用 null。
+
+  【P5c 输出契约】按以下 JSON 结构输出（严格，不加 markdown 包裹）：
+  {
+    "fields": { 上面每个字段名: 值, 无法判断的字段用 null },
+    "confidence": { 每个字段名: "high" | "low" },
+    "raw_description": "一句话描述这张图"
+  }
+  confidence 表示对该字段提取值的把握：high = 图中清晰可见、可靠；low = 不确定/遮挡/模糊。
+  raw_description 位于顶层，不再放进 fields。
 fields:
   component_type: { type: string, hint: 构件中文名 }
   shelf_count: { type: number, hint: 层板数量 }

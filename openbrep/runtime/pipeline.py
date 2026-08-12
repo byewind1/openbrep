@@ -529,7 +529,12 @@ class TaskPipeline:
             try:
                 on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
                 plans = vision_harness_run(
-                    multi_images, request.intent, request.user_input, llm, on_event=on_event
+                    multi_images,
+                    request.intent,
+                    request.user_input,
+                    llm,
+                    on_event=on_event,
+                    critic_pass=self.config.vision.critic_pass,
                 )
                 hint_parts: list[str] = []
                 for idx, plan in enumerate(plans, start=1):

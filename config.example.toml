@@ -91,6 +91,12 @@ keep_last_n = 20
 # off → 生成不带原图，只靠 ModelingPlan hint。单图旧路径不受此开关影响。
 pass_raw_image = true
 
+# Vision Harness（P5c）：S3 critic 校验开关（默认 on，设计 D3）。
+# on  → CREATE/IMAGE + schema 声明 critic_checks 时，每图一次 critic 复读核对
+#       必核字段（"不匹配+依据"改值并留痕，"无法判断"标 low）；
+# off → 不跑 critic（MODIFY 简化档本就永远不跑，见 harness）。
+critic_pass = true
+
 [paths]
 knowledge_dir = "./knowledge"
 templates_dir = "./templates"
