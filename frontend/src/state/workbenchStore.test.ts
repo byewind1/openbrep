@@ -1026,6 +1026,80 @@ test('saveActiveScript records save failures without clearing dirty state', asyn
   expect(store.getState().scriptSaving).toBe(false)
 })
 
+test('updateScriptContent marks the named script dirty without switching active script (P11)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  const activeBefore = store.getState().activeScriptName
+
+  store.getState().updateScriptContent('vl.gdl', 'VALUES "pattern_type" "直棂", "井字"')
+
+  expect(store.getState().activeScriptName).toBe(activeBefore)
+  expect(store.getState().scriptContents['vl.gdl']).toBe('VALUES "pattern_type" "直棂", "井字"')
+  expect(store.getState().dirtyScripts['vl.gdl']).toBe(true)
+})
+
+test('saveScript persists the named script and refreshes parameter options from snapshot (P11)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [
+          {
+            name: 'pattern_type',
+            type_tag: 'String',
+            description: '纹样',
+            value: '直棂',
+            is_fixed: false,
+            options: ['直棂', '井字', '菱花'],
+          },
+        ],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+      }),
+    }),
+  )
+  await store.getState().load()
+
+  store.getState().updateScriptContent('vl.gdl', 'VALUES "pattern_type" "直棂", "井字", "菱花"')
+  await store.getState().saveScript('vl.gdl')
+
+  expect(store.getState().dirtyScripts['vl.gdl']).toBe(false)
+  expect(store.getState().parameters[0].options).toEqual(['直棂', '井字', '菱花'])
+  expect(store.getState().scriptSaving).toBe(false)
+})
+
+test('saveActiveScript on vl.gdl also refreshes parameter options from snapshot (P11)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [
+          {
+            name: 'pattern_type',
+            type_tag: 'String',
+            description: '纹样',
+            value: '直棂',
+            is_fixed: false,
+            options: ['直棂', '井字', '菱花'],
+          },
+        ],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+      }),
+    }),
+  )
+  await store.getState().load()
+
+  await store.getState().openScript('vl.gdl')
+  store.getState().updateActiveScriptContent('VALUES "pattern_type" "直棂", "井字", "菱花"')
+  await store.getState().saveActiveScript()
+
+  expect(store.getState().dirtyScripts['vl.gdl']).toBe(false)
+  expect(store.getState().parameters[0].options).toEqual(['直棂', '井字', '菱花'])
+})
+
 test('runMockCompile stores diagnostics result', async () => {
   const store = createWorkbenchStore(
     makeApi({

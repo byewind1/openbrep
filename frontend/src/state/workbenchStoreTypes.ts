@@ -341,6 +341,10 @@ export interface WorkbenchState {
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
   flushDirtyScripts: () => Promise<{ ok: boolean; didSave: boolean }>
+  /** P11：按名更新脚本内容（参数面板「参数脚本」tab 编辑 vl.gdl 用，不切换 activeScriptName） */
+  updateScriptContent: (name: string, content: string) => void
+  /** P11：按名保存脚本；vl.gdl 保存后重新拉快照刷新参数枚举（options）与预览 */
+  saveScript: (name: string) => Promise<void>
   runMockCompile: () => Promise<void>
   revealCompileOutput: (path?: string) => Promise<void>
   openWorkspace: (path: string) => Promise<void>

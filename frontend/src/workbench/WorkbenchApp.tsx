@@ -175,6 +175,8 @@ export function WorkbenchApp() {
   const interruptedContext = useWorkbenchStore((state) => state.interruptedContext)
   const openScript = useWorkbenchStore((state) => state.openScript)
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
+  const updateScriptContent = useWorkbenchStore((state) => state.updateScriptContent)
+  const saveScript = useWorkbenchStore((state) => state.saveScript)
   const saveActiveScript = useWorkbenchStore((state) => state.saveActiveScript)
   const saveRevision = useWorkbenchStore((state) => state.saveRevision)
   const restoreRevision = useWorkbenchStore((state) => state.restoreRevision)
@@ -403,6 +405,11 @@ export function WorkbenchApp() {
             onUpdateParameter={updateProjectParameter}
             onDeleteParameter={deleteProjectParameter}
             onValidateParameters={() => void validateProjectParameters()}
+            paramScriptContent={scriptContents['vl.gdl'] ?? ''}
+            paramScriptDirty={Boolean(dirtyScripts['vl.gdl'])}
+            paramScriptSaving={scriptSaving}
+            onParamScriptChange={(content) => void updateScriptContent('vl.gdl', content)}
+            onParamScriptSave={() => void saveScript('vl.gdl')}
           />
         )}
         main={(

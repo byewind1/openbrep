@@ -38,6 +38,12 @@ interface WorkbenchLeftRailProps {
   onDeleteParameter: (name: string) => Promise<boolean>
   onValidateParameters: () => void
   onSelectProjectPath: (path: string) => void
+  /** P11：参数脚本（vl.gdl）视图：内容/脏状态/保存回调 */
+  paramScriptContent: string
+  paramScriptDirty: boolean
+  paramScriptSaving: boolean
+  onParamScriptChange: (content: string) => void
+  onParamScriptSave: () => void
 }
 
 export function WorkbenchLeftRail({
@@ -71,6 +77,11 @@ export function WorkbenchLeftRail({
   onDeleteParameter,
   onValidateParameters,
   onSelectProjectPath,
+  paramScriptContent,
+  paramScriptDirty,
+  paramScriptSaving,
+  onParamScriptChange,
+  onParamScriptSave,
 }: WorkbenchLeftRailProps) {
   return (
     <aside className="left-rail">

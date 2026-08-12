@@ -109,6 +109,15 @@ export const en: Record<LocaleKey, string> = {
   'workspace.deleteConfirm': 'Move project {name} to trash? It can be restored from .openbrep/trash/.',
   'workspace.deleteActiveDisabled': 'This project is open: switch to another project first',
 
+  // P11 parameter panel: UI / parameter script view toggle + enum dropdown
+  'parameter.view.params': 'Parameters',
+  'parameter.view.script': 'Parameter Script',
+  'parameter.enumFallback': 'Current: {value} (not in VALUES list)',
+  'parameter.script.saved': 'Saved',
+  'parameter.script.unsaved': 'Unsaved',
+  'parameter.script.save': 'Save',
+  'parameter.script.saving': 'Saving',
+
   // P6a cross-project assistant history import (history drawer)
   'assistant.history.import': 'Import…',
   'assistant.history.importTitle': 'Import chat history from another project',

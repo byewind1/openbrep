@@ -106,6 +106,15 @@ export const zh = {
   'workspace.deleteConfirm': '把项目 {name} 移入回收站？可从 .openbrep/trash/ 手动恢复。',
   'workspace.deleteActiveDisabled': '当前打开的项目：请先切换到其他项目再删除',
 
+  // P11 参数面板：参数 UI / 参数脚本 视图切换 + 枚举下拉
+  'parameter.view.params': '参数',
+  'parameter.view.script': '参数脚本',
+  'parameter.enumFallback': '当前值：{value}（不在 VALUES 列表）',
+  'parameter.script.saved': '已保存',
+  'parameter.script.unsaved': '未保存',
+  'parameter.script.save': '保存',
+  'parameter.script.saving': '保存中',
+
   // P6a 跨项目聊天记录导入（历史抽屉）
   'assistant.history.import': '导入…',
   'assistant.history.importTitle': '从其他项目导入聊天记录',

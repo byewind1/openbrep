@@ -22,7 +22,7 @@ from openbrep.naming import (
 )
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
-from openbrep.workbench.project_parameter_service import parameter_to_dict
+from openbrep.workbench.project_parameter_service import parameter_to_dict, parse_values_declarations
 from openbrep.workbench.project_script_service import SCRIPT_NAME_TO_TYPE
 from openbrep.workbench.settings_service import save_workbench_config
 from openbrep.workbench.view_models import classify_vision_error
@@ -806,13 +806,18 @@ def project_to_snapshot(
     if project is None:
         return empty_project_snapshot()
     preview = preview_payload(project)
+    # P11：vl.gdl 的 VALUES 声明解析一次，供参数 payload 的 options/range 使用。
+    values_map = parse_values_declarations(project.get_script(ScriptType.PARAM))
     return {
         "project": {
             "name": project.name,
             "source": source,
             **({"path": source_path} if source_path else {}),
         },
-        "parameters": [parameter_to_dict(param) for param in project.parameters],
+        "parameters": [
+            parameter_to_dict(param, values=values_map.get(param.name))
+            for param in project.parameters
+        ],
         "preview": preview,
         "warnings": preview.get("warnings", []),
     }

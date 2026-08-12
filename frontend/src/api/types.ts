@@ -26,6 +26,10 @@ export interface WorkbenchParameter {
   description: string
   value: string
   is_fixed: boolean
+  /** P11：vl.gdl VALUES 枚举（保持脚本声明顺序与原始类型）；无声明时为 null/undefined */
+  options?: Array<string | number> | null
+  /** P11：vl.gdl VALUES RANGE 约束（[min, max]（或含步长），原样透传）；无声明时为 null/undefined */
+  range?: number[] | null
 }
 
 export interface ProjectScript {

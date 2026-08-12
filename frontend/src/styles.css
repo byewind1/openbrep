@@ -1221,12 +1221,28 @@ button:focus-visible {
 }
 
 .numeric-input,
-.text-input {
+.text-input,
+.enum-select {
   width: 92px;
   height: 24px;
   padding: 0 7px;
   font-size: 12px;
   text-align: right;
+}
+
+.enum-select {
+  justify-self: end;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+/* P11：参数面板「参数脚本」视图 —— 头部 + 内嵌脚本编辑器 */
+.parameter-script-view {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 62vh;
+  min-height: 280px;
 }
 
 .text-input {

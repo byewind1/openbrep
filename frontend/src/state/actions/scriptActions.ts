@@ -88,6 +88,48 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
       }))
     },
 
+    // P11：参数面板「参数脚本」tab 按名编辑 vl.gdl，不切换 activeScriptName
+    // （主编辑器当前打开的脚本不受影响）。
+    updateScriptContent(name: string, content: string) {
+      set((state) => ({
+        scriptContents: { ...state.scriptContents, [name]: content },
+        dirtyScripts: { ...state.dirtyScripts, [name]: true },
+      }))
+    },
+
+    // P11：参数面板「参数脚本」tab 的保存：复用脚本保存链路（saveProjectScript +
+    // 脏标记清理）；vl.gdl 保存后 VALUES 可能已变，重新拉快照刷新参数枚举
+    // （options/range）与预览，让「参数」tab 反映最新脚本内容。
+    async saveScript(name: string) {
+      const content = get().scriptContents[name]
+      if (typeof content !== 'string') return
+      set({ scriptSaving: true, lastError: null })
+      const result = await api.saveProjectScript(name, content)
+      if (!result.success) {
+        set({ scriptSaving: false, lastError: result.error ?? `Failed to save script: ${name}` })
+        return
+      }
+      const snapshot = await api.fetchSnapshot()
+      // 快照刷新失败会回落成空 fallback（project=null）：此时保留现有 UI 状态，
+      // 不把参数面板清空（保存本身已成功）。
+      const snapshotFields =
+        snapshot.project !== null
+          ? {
+              project: snapshot.project,
+              parameters: snapshot.parameters,
+              preview: snapshot.preview,
+              warnings: snapshot.warnings ?? [],
+            }
+          : {}
+      set((state) => ({
+        scriptSaving: false,
+        dirtyScripts: { ...state.dirtyScripts, [name]: false },
+        lastSavedAt: nowTimeText(),
+        compileLog: [`Saved ${name} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
+        ...snapshotFields,
+      }))
+    },
+
     // 统一的“读当前脚本前先落盘”入口：编译、AI 生成等操作必须先走这里，
     // 否则后端会基于旧脚本工作，并在刷新时覆盖用户未保存的手改。
     async flushDirtyScripts() {
@@ -137,6 +179,20 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
           refreshPreview: true,
           runDiagnostics: true,
         })
+        // P11：vl.gdl 保存后 VALUES 可能已变 → 重新拉快照，参数枚举（options/range）
+        // 与预览反映最新脚本内容（主编辑器保存路径与参数面板「参数脚本」tab 一致）。
+        if (activeScriptName === 'vl.gdl') {
+          const snapshot = await api.fetchSnapshot()
+          // 快照回落（project=null）时保留现有 UI 状态，避免清空参数面板
+          if (snapshot.project !== null) {
+            set({
+              parameters: snapshot.parameters,
+              project: snapshot.project,
+              preview: snapshot.preview,
+              warnings: snapshot.warnings ?? [],
+            })
+          }
+        }
         return
       }
       set({

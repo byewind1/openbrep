@@ -15,6 +15,16 @@ class WorkbenchProjectParameterService:
     def __init__(self, session: Any) -> None:
         self.session = session
 
+    def _values_for(self, name: str) -> dict[str, Any] | None:
+        """当前项目 vl.gdl 中该参数的 VALUES 声明（无项目/无声明 → None）。"""
+        if self.session.project is None:
+            return None
+        from openbrep.hsf_project import ScriptType
+
+        return parse_values_declarations(
+            self.session.project.get_script(ScriptType.PARAM)
+        ).get(name)
+
     def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": False, "error": "Create or open a project before applying parameters."}
@@ -36,7 +46,7 @@ class WorkbenchProjectParameterService:
             self.session.project.save_to_disk()
         return {
             "ok": True,
-            "added": parameter_to_dict(param),
+            "added": parameter_to_dict(param, values=self._values_for(param.name)),
             **self.session.snapshot(),
         }
 
@@ -72,7 +82,7 @@ class WorkbenchProjectParameterService:
             self.session.project.save_to_disk()
         return {
             "ok": True,
-            "updated": parameter_to_dict(param),
+            "updated": parameter_to_dict(param, values=self._values_for(param.name)),
             **self.session.snapshot(),
         }
 
@@ -103,7 +113,106 @@ class WorkbenchProjectParameterService:
         }
 
 
-def parameter_to_dict(param: GDLParameter) -> dict[str, Any]:
+# ── P11: vl.gdl VALUES 枚举解析 ────────────────────────────────
+# 轻量行解析：只关心 `VALUES "name" ...` 声明，其余行（注释/IF/LOCK 等）
+# 一律跳过。解析失败只影响本参数（不进入结果 → payload 字段为 None），
+# 绝不抛出异常，不影响既有参数链路。
+
+VALUES_DECL_RE = re.compile(r'^\s*VALUES\s+"([^"]+)"\s*(.*)$', re.IGNORECASE)
+VALUES_RANGE_RE = re.compile(r'^RANGE\s*\[(.*)\]$', re.IGNORECASE | re.DOTALL)
+_VALUES_INT_RE = re.compile(r'^[+-]?\d+$')
+_VALUES_NUM_RE = re.compile(r'^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$')
+
+
+def _strip_gdl_comment(text: str) -> str:
+    """去掉行尾 GDL 注释（`!` 起，引号内的 `!` 不算注释起点）。"""
+    in_quote = False
+    for i, ch in enumerate(text):
+        if ch == '"':
+            in_quote = not in_quote
+        elif ch == "!" and not in_quote:
+            return text[:i]
+    return text
+
+
+def _split_values_tokens(text: str) -> list[str]:
+    """按逗号切分 VALUES 列表；引号内的逗号是字符串内容，不算分隔符。"""
+    tokens: list[str] = []
+    current: list[str] = []
+    in_quote = False
+    for ch in text:
+        if ch == '"':
+            in_quote = not in_quote
+            current.append(ch)
+        elif ch == "," and not in_quote:
+            tokens.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _parse_values_token(token: str) -> str | int | float:
+    """解析单个 VALUES 条目：引号字符串 / 整数 / 浮点数 / 原样字符串。"""
+    token = token.strip()
+    if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
+        return token[1:-1]
+    if _VALUES_INT_RE.match(token):
+        return int(token)
+    if _VALUES_NUM_RE.match(token):
+        return float(token)
+    return token
+
+
+def parse_values_declarations(vl_content: str) -> dict[str, dict[str, Any]]:
+    """解析 vl.gdl 的 VALUES 声明。
+
+    返回 ``{参数名: {"options": list | None, "range": list | None}}``：
+    - ``VALUES "name" v1, v2, ...`` → ``options``（保持脚本里的顺序与原始类型）
+    - ``VALUES "name" RANGE [a, b]`` → ``range``（数字列表原样透传）
+    - 同一参数多条声明：后声明覆盖先声明
+    - 无 vl.gdl / 无 VALUES / 解析失败：该参数不出现（上层字段为 None）
+    """
+    result: dict[str, dict[str, Any]] = {}
+    if not vl_content:
+        return result
+    for raw_line in vl_content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("!"):
+            continue
+        match = VALUES_DECL_RE.match(line)
+        if not match:
+            continue
+        name, rest = match.group(1), _strip_gdl_comment(match.group(2)).strip()
+        entry: dict[str, Any] = {"options": None, "range": None}
+        range_match = VALUES_RANGE_RE.match(rest)
+        if range_match:
+            numbers: list[str | int | float] = []
+            for part in range_match.group(1).split(","):
+                token = _parse_values_token(part)
+                if isinstance(token, str):
+                    numbers = []
+                    break
+                numbers.append(token)
+            if numbers:
+                entry["range"] = numbers
+        elif rest.upper().startswith("RANGE"):
+            # 以 RANGE 开头但括号/数字不合法 → 声明残缺，跳过（解析失败兜底）
+            continue
+        else:
+            tokens = [token for token in _split_values_tokens(rest) if token.strip()]
+            if tokens:
+                entry["options"] = [_parse_values_token(token) for token in tokens]
+        if entry["options"] is not None or entry["range"] is not None:
+            result[name] = entry
+    return result
+
+
+def parameter_to_dict(param: GDLParameter, values: dict[str, Any] | None = None) -> dict[str, Any]:
+    options = values.get("options") if values else None
+    range_values = values.get("range") if values else None
     return {
         "name": param.name,
         "type": param.type_tag,
@@ -111,6 +220,10 @@ def parameter_to_dict(param: GDLParameter) -> dict[str, Any]:
         "description": param.description,
         "value": param.value,
         "is_fixed": bool(param.is_fixed),
+        # P11：vl.gdl VALUES 枚举（options）与 RANGE 约束（range）透传；
+        # 无声明/解析失败时为 None，不改变既有 payload 形状。
+        "options": options,
+        "range": range_values,
     }
 
 
