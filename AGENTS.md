@@ -204,12 +204,12 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 
 ## Current Baseline
 
-As of 2026-08-01:
+As of 2026-08-12:
 
 ```text
-python tests: 1078 passed, 64 subtests passed
-frontend: 166 passed (vitest) + tsc clean
-CI (Tests workflow): pytest / react-workbench / scorecard-mock all green
+python tests: 1692 passed, 66 subtests passed
+frontend: 429 passed (vitest) + tsc clean
+benchmark replay: create/modify zero regression; vision suite 1/3 (recorded baseline)
 ```
 
 Architecture notes:
@@ -277,6 +277,34 @@ Architecture notes:
   value, snapshots a before-revision (metadata records the change), persists
   paramlist, and still runs compile; semantic verification is advisory only —
   explicit user intent, same semantics as editing the parameter panel.
+- Vision Harness (2026-08-10→12, P5a–P5e): image input goes through
+  `openbrep/vision/harness.py` (S1 local schema classification → S2
+  schema-driven extraction → S3 critic → S4 hint composition) instead of raw
+  image passthrough. Schemas live in `openbrep/vision/schemas/*.yaml`
+  (registry: `schema_registry.py`). CREATE with images stops after extraction
+  for user confirmation/editing (`TaskRequest.confirm_extraction` /
+  `confirmed_extractions`, session `pending_extraction` with project_epoch
+  guard); confirmed dicts rebuild plans via `ModelingPlan.from_dict` with
+  byte-identical hints when unedited. Extractions persist as content-addressed
+  artifacts `.openbrep/vision/extraction-<sha12>.json`
+  (`vision/extraction_store.py`); MODIFY (agent loop) runs the lite harness
+  (no critic) and reuses cached extractions by sha256, injecting hints into
+  the system message (never user messages, never tools). Non-interactive
+  paths (benchmark/CLI) are byte-identical — replay zero-miss is the gate.
+  MODIFY with images skips micro_modify (guard at pipeline `_try_micro_modify`).
+- Naming pipeline (2026-08-12, P7a–P7c): `openbrep/naming.py` is the single
+  place for project naming (sanitize keeps CJK, conflicts get `_vN`). AI
+  create names by three levels: planner `object_type` > rule-based prompt
+  extraction > 未命名构件 fallback; post-generation the project directory is
+  renamed (gsm artifacts follow, explicit `project_name` wins). Untitled
+  project save prompts for a name (`needs_save_as` → auto-located Save As).
+- Assistant history as asset (2026-08-12, P6a/P6b): chat history can be
+  imported across projects and distilled into a draft instruction (never
+  auto-sent).
+- Chat-intent guards (2026-08-12, P0): `[图N]` tokens are stripped before
+  intent detection; agent loop snapshots a before-revision lazily before the
+  first actual mutation; generate intent with an open project asks first;
+  chat without a project never creates files on disk.
 
 ## benchmark 黄金语料规范（corpus maintenance）
 
