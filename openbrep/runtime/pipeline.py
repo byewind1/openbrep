@@ -717,6 +717,69 @@ class TaskPipeline:
         cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}
         cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
 
+        # ── P8 CREATE 零产出守卫：首轮解析零 [FILE:] → 重试一次；重试仍零 → 硬失败 ──
+        # 事故回归：CREATE 零产出（模型只输出规划+提问）时旧代码静默交付 create_new
+        # 占位项目（BLOCK A,B,ZZYZX），验证报告对占位脚本空转全绿。
+        # 重试仍零产出 → project=None，service 走既有"只有无产出才算硬失败"路径：
+        # 占位项目不落盘、不挂载、不跑空转验证。
+        # 回放安全：重试只在首轮零产出时触发；黄金语料 CREATE 全部首轮有产出 →
+        # 调用序列不变 → 回放零 miss。
+        if not cleaned and request.intent in ("CREATE", "IMAGE"):
+            on_event("status", {"message": "⚠️ 模型首轮未输出 [FILE:] 代码块，正在重试…"})
+            logger.warning(
+                "[create-zero-output] intent=%s first round produced no [FILE:] blocks; retrying once",
+                request.intent,
+            )
+            retry_instruction = (
+                f"{enriched_instruction}\n\n"
+                "你上一次回复没有包含任何 [FILE:] 代码块。"
+                "不要提问、不要只输出计划，直接输出完整代码文件。"
+            )
+            retry_changes, retry_plain = agent.generate_only(
+                instruction=retry_instruction,
+                project=project,
+                knowledge=knowledge,
+                skills=skills_text,
+                include_all_scripts=debug_mode,
+                last_code_context=request.last_code_context,
+                syntax_report=request.syntax_report,
+                history=request.history,
+                image_b64=image_b64,
+                image_mime=image_mime,
+                images=_generation_images(multi_images, self.config),
+            )
+            retry_cleaned = (
+                {k: sanitize_llm_script_output(v, k) for k, v in retry_changes.items()}
+                if retry_changes else {}
+            )
+            retry_cleaned, retry_lint = _run_gdl_linter(retry_cleaned, on_event=on_event)
+            if retry_cleaned:
+                cleaned = retry_cleaned
+                plain_text = retry_plain
+                if retry_lint:
+                    lint_summary = "\n\n".join(
+                        p for p in [lint_summary, retry_lint] if p
+                    )
+                on_event("status", {"message": "✅ 重试后模型已输出 [FILE:] 代码块"})
+                logger.info("[create-zero-output] retry round produced code; continuing")
+            else:
+                model_text = retry_plain or plain_text
+                on_event("status", {"message": "❌ 重试后仍无代码产出，任务以硬失败结束"})
+                logger.warning(
+                    "[create-zero-output] retry round also produced no [FILE:] blocks; hard fail"
+                )
+                return TaskResult(
+                    success=False,
+                    intent=request.intent or "CREATE",
+                    plain_text=(
+                        f"{model_text}\n\n"
+                        "⚠️ 模型未产出代码（可能在提问或规划）。"
+                        "请检查助手设置中是否有「先规划后生成」类指令，或补充说明后重发。"
+                    ),
+                    project=None,
+                    error="模型未产出代码（两轮均无 [FILE:] 代码块）",
+                )
+
         # Apply changes to the project in-place
         if cleaned:
             agent._apply_changes(project, cleaned)
@@ -1014,6 +1077,8 @@ class TaskPipeline:
             auto_repair_info=auto_repair_info,
             graph_powered=_graph_constraint_injected or _graph_powered_repair,
             reserved_conflicts=detect_reserved_param_misuse(project),
+            # P8 交付完整性（CREATE/IMAGE 专属；MODIFY 路径不传 → 不启用）
+            enable_delivery_integrity=(request.intent in ("CREATE", "IMAGE")),
         )
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────

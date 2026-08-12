@@ -146,12 +146,20 @@ class VerificationReport:
     def to_summary_text(self) -> str:
         lines = ["### 验证报告"]
 
-        static_chk = _find(self.checks, "static")
-        if static_chk:
-            lines.append(
-                f"- 静态检查：{_status_icon(static_chk.status)} "
-                f"{static_chk.detail or static_chk.status.value}"
-            )
+        static_chks = [c for c in self.checks if c.check_type == "static"]
+        if static_chks:
+            failed_static = [c for c in static_chks if c.status == CheckStatus.FAIL]
+            if failed_static:
+                # P8：交付完整性检查也是 static 类型；聚合展示所有 static FAIL，
+                # 避免占位交付时摘要仍显示"静态检查 ✅ 无问题"（空转全绿事故回归）。
+                parts = [f"{c.name}：{c.detail or '失败'}" for c in failed_static]
+                lines.append(f"- 静态检查：❌ " + "；".join(parts))
+            else:
+                first = static_chks[0]
+                lines.append(
+                    f"- 静态检查：{_status_icon(first.status)} "
+                    f"{first.detail or first.status.value}"
+                )
 
         lint_chk = _find(self.checks, "lint")
         if lint_chk:
@@ -339,11 +347,17 @@ def build_verification_report(
     auto_repair_info: str = "",
     graph_powered: bool = False,
     reserved_conflicts: list | None = None,
+    enable_delivery_integrity: Optional[bool] = None,
 ) -> VerificationReport:
     """Aggregate scattered checks into one :class:`VerificationReport`.
 
     This is a pure observer: it reads already-computed results and does not
     run the compiler, LLM, or static checker itself.
+
+    ``enable_delivery_integrity`` (P8): when True AND intent is CREATE/IMAGE,
+    run CREATE 专属交付完整性检查——3D 脚本为空或仍为 create_new 占位脚本
+    （placeholder_delivery）、paramlist 缺 A/B/ZZYZX（reserved_params_missing），
+    均以 static FAIL 阻断。默认 None = 不启用（MODIFY 老项目打开即改是合法场景）。
     """
     report = VerificationReport(
         intent=intent,
@@ -374,6 +388,47 @@ def build_verification_report(
                     for e in static_result.errors
                 ),
             ))
+
+    # 2b. P8 交付完整性（CREATE/IMAGE 专属）：占位脚本 / 参数表缺保留参数 → static FAIL。
+    # 事故回归：CREATE 零产出时 pipeline 交付 create_new 占位项目（BLOCK A,B,ZZYZX），
+    # 旧报告对占位脚本空转全绿——这里用确定性字节对比把它打成阻断 FAIL。
+    # MODIFY 不启用（老项目打开就改是合法场景）。
+    if enable_delivery_integrity and intent in ("CREATE", "IMAGE") and project is not None:
+        from openbrep.hsf_project import HSFProject, ScriptType
+
+        actual_3d = project.get_script(ScriptType.SCRIPT_3D) or ""
+        if not actual_3d.strip():
+            checks.append(VerificationCheck(
+                name="占位脚本交付", check_type="static",
+                status=CheckStatus.FAIL, detail="3D 脚本为空：交付内容缺失，生成未生效",
+            ))
+            report.errors_caught.append("[placeholder_delivery] 3D 脚本为空，生成未生效")
+        else:
+            placeholder_3d = HSFProject.create_new(
+                "__delivery_integrity_probe__"
+            ).get_script(ScriptType.SCRIPT_3D)
+            if actual_3d == placeholder_3d:
+                checks.append(VerificationCheck(
+                    name="占位脚本交付", check_type="static",
+                    status=CheckStatus.FAIL,
+                    detail="交付内容仍是 create_new 占位脚本（BLOCK A, B, ZZYZX），生成未生效",
+                ))
+                report.errors_caught.append(
+                    "[placeholder_delivery] 3D 脚本仍为 create_new 占位脚本"
+                )
+        missing = [
+            n for n in ("A", "B", "ZZYZX")
+            if not any(getattr(p, "name", None) == n for p in (project.parameters or []))
+        ]
+        if missing:
+            checks.append(VerificationCheck(
+                name="保留参数缺失", check_type="static",
+                status=CheckStatus.FAIL,
+                detail=f"参数表缺少 ArchiCAD 保留参数：{'、'.join(missing)}",
+            ))
+            report.errors_caught.append(
+                f"[reserved_params_missing] 参数表缺少 {'、'.join(missing)}"
+            )
 
     # 3. lint
     if lint_summary:

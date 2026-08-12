@@ -17,12 +17,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from openbrep.compiler import CompileResult
-from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse
 from openbrep.object_planner import GDLObjectPlan
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
-from openbrep.static_checker import StaticCheckResult, StaticError
+from openbrep.static_checker import StaticCheckResult, StaticError, StaticChecker
 from openbrep.verification import (
     CheckStatus,
     VerificationCheck,
@@ -532,3 +532,176 @@ class TestPipelineVerificationIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# ── P8 交付完整性 checks（CREATE/IMAGE 专属）──────────────────
+
+
+class TestDeliveryIntegrityChecks(unittest.TestCase):
+    """build_verification_report 的占位脚本 / 保留参数缺失检查。"""
+
+    def _report(self, intent, project, enable=True):
+        return build_verification_report(
+            intent=intent,
+            project=project,
+            static_result=_static(),
+            enable_delivery_integrity=enable,
+        )
+
+    def _static_checks(self, report):
+        return [c for c in report.checks if c.check_type == "static"]
+
+    def test_create_placeholder_3d_fails_blocking(self):
+        """CREATE + 3D 仍是 create_new 占位（BLOCK A, B, ZZYZX）→ static FAIL 阻断。"""
+        proj = HSFProject.create_new("probe", work_dir="./workdir")  # 占位 3D
+        report = self._report("CREATE", proj)
+        self.assertFalse(report.passed)
+        fails = [c for c in self._static_checks(report) if c.status == CheckStatus.FAIL]
+        names = [c.name for c in fails]
+        self.assertIn("占位脚本交付", names)
+        self.assertTrue(any("[placeholder_delivery]" in e for e in report.errors_caught))
+
+    def test_create_empty_3d_fails(self):
+        """CREATE + 3D 脚本为空 → static FAIL。"""
+        proj = HSFProject.create_new("probe", work_dir="./workdir")
+        proj.scripts[ScriptType.SCRIPT_3D] = "   \n"
+        report = self._report("CREATE", proj)
+        self.assertFalse(report.passed)
+        self.assertTrue(any(
+            c.name == "占位脚本交付" and c.status == CheckStatus.FAIL
+            for c in self._static_checks(report)
+        ))
+
+    def test_create_missing_zzzyx_fails(self):
+        """CREATE + paramlist 缺 ZZYZX → static FAIL reserved_params_missing。"""
+        proj = HSFProject.create_new("probe", work_dir="./workdir")
+        proj.parameters = [
+            GDLParameter("A", "Length", "Width", "1.00", is_fixed=True),
+            GDLParameter("B", "Length", "Depth", "1.00", is_fixed=True),
+        ]
+        report = self._report("CREATE", proj)
+        self.assertFalse(report.passed)
+        self.assertTrue(any(
+            c.name == "保留参数缺失" and c.status == CheckStatus.FAIL
+            for c in self._static_checks(report)
+        ))
+        self.assertTrue(any("[reserved_params_missing]" in e for e in report.errors_caught))
+
+    def test_modify_same_content_not_triggered(self):
+        """MODIFY + 同样内容（占位 3D、缺 ZZYZX）→ 两个 check 都不触发。"""
+        proj = HSFProject.create_new("probe", work_dir="./workdir")
+        proj.parameters = [
+            GDLParameter("A", "Length", "Width", "1.00", is_fixed=True),
+            GDLParameter("B", "Length", "Depth", "1.00", is_fixed=True),
+        ]
+        report = self._report("MODIFY", proj, enable=True)
+        self.assertTrue(report.passed)
+        names = [c.name for c in self._static_checks(report)]
+        self.assertNotIn("占位脚本交付", names)
+        self.assertNotIn("保留参数缺失", names)
+
+    def test_disabled_by_default(self):
+        """enable_delivery_integrity 默认 None → CREATE 也不触发。"""
+        proj = HSFProject.create_new("probe", work_dir="./workdir")
+        report = build_verification_report(
+            intent="CREATE",
+            project=proj,
+            static_result=_static(),
+        )
+        self.assertTrue(report.passed)
+        names = [c.name for c in self._static_checks(report)]
+        self.assertNotIn("占位脚本交付", names)
+        self.assertNotIn("保留参数缺失", names)
+
+    def test_healthy_create_passes(self):
+        """CREATE + 正常 3D（非占位）+ 完整保留参数 → 两个 check 都 PASS。"""
+        proj = _project_with_3d("BLOCK A, B, ZZYZX\nEND\n")
+        report = self._report("CREATE", proj)
+        self.assertTrue(report.passed)
+        self.assertEqual(
+            [c for c in self._static_checks(report) if c.status == CheckStatus.FAIL],
+            [],
+        )
+
+    def test_summary_text_shows_placeholder_failure(self):
+        """to_summary_text 聚合 static FAIL：占位交付时摘要不再是 ✅ 无问题。"""
+        proj = HSFProject.create_new("probe", work_dir="./workdir")
+        report = self._report("CREATE", proj)
+        text = report.to_summary_text()
+        self.assertIn("占位脚本交付", text)
+        self.assertNotIn("静态检查：✅", text)
+
+
+# ── P8 事故回归：漏窗事故现场形状（残桩 3d.gdl + 2 材质参数）──
+
+
+class TestAccidentRegression(unittest.TestCase):
+    """用事故现场形状喂 build_verification_report（CREATE 意图）→ 必须 FAIL 且不 passed。"""
+
+    @staticmethod
+    def _accident_project() -> HSFProject:
+        """事故现场形状：3d.gdl 第 2 行是字面省略号，paramlist 只剩 2 个材质参数。"""
+        from openbrep.hsf_project import GDLParameter
+
+        proj = HSFProject.create_new("window_decorative_lattice", work_dir="./workdir")
+        proj.scripts[ScriptType.SCRIPT_3D] = (
+            "IF show_lattice AND inner_opening_width > bar_width "
+            "AND inner_opening_height > bar_width THEN\n"
+            "       ...\n"
+            "   ENDIF\n"
+            "\n"
+            "   END\n"
+        )
+        proj.scripts[ScriptType.MASTER] = (
+            "! 漏窗 Master Script — 参数验证与派生计算\n"
+            "IF A < 0.30 THEN A = 0.30\n"
+            "IF B < 0.30 THEN B = 0.30\n"
+            "IF ZZYZX < 0.01 THEN ZZYZX = 0.01\n"
+            "inner_opening_width = A - 2\n"
+            "inner_opening_height = B - 2\n"
+            "bar_width = 0.05\n"
+            "show_lattice = 1\n"
+        )
+        proj.scripts[ScriptType.SCRIPT_2D] = (
+            "! 漏窗 2D Script\n"
+            "HOTSPOT2 0, 0\n"
+            "HOTSPOT2 A, 0\n"
+            "HOTSPOT2 0, B\n"
+            "HOTSPOT2 A, B\n"
+            "PROJECT2 3, 270, 2\n"
+        )
+        proj.parameters = [
+            GDLParameter("mat_frame", "Material", "框架材质", "0"),
+            GDLParameter("mat_lattice", "Material", "棂条材质", "0"),
+        ]
+        return proj
+
+    def test_accident_shape_fails_report(self):
+        """残桩 3d + 2 参数 paramlist（CREATE 意图）→ 报告 FAIL 且不 passed。"""
+        proj = self._accident_project()
+        static_result = StaticChecker().check(proj)
+        # 静态检查必须抓到省略号残桩（跨脚本未定义变量暂不检查，见派单范围）
+        self.assertTrue(
+            any(e.check_type == "ellipsis_stub" for e in static_result.errors),
+            msg=f"Unexpected static errors: {static_result.errors}",
+        )
+        report = build_verification_report(
+            intent="CREATE",
+            user_input="生成一个漏窗",
+            project=proj,
+            static_result=static_result,
+            enable_delivery_integrity=True,
+        )
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any(c.status == CheckStatus.FAIL for c in report.checks),
+            msg="事故现场必须出现 FAIL check",
+        )
+        self.assertTrue(
+            any("[ellipsis_stub]" in e for e in report.errors_caught)
+            or any("[reserved_params_missing]" in e for e in report.errors_caught),
+            msg=f"errors_caught 应含残桩/参数缺失证据: {report.errors_caught}",
+        )
+        # 报告摘要不再是全绿
+        text = report.to_summary_text()
+        self.assertIn("❌", text)
+

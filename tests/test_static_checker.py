@@ -491,3 +491,71 @@ class TestStackImbalanceBranchAware(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# ── check 5: ellipsis_stub（P8：退化残桩检测）──────────────────
+
+
+class TestEllipsisStub(unittest.TestCase):
+
+    def test_standalone_dots_line_error(self):
+        """独立成行的 ... 行 → ellipsis_stub error。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "IF show_lattice THEN\n       ...\n   ENDIF\n\n   END\n"},
+            param_names=["show_lattice"],
+        )
+        result = StaticChecker().check(proj)
+        stub = [e for e in result.errors if e.check_type == "ellipsis_stub"]
+        self.assertEqual(len(stub), 1, msg=f"Unexpected: {result.errors}")
+        self.assertIn("scripts/3d.gdl", stub[0].file)
+        self.assertIn("2", stub[0].detail)  # 第 2 行
+
+    def test_unicode_ellipsis_standalone_line_error(self):
+        """独立成行的 …（Unicode）同样报错。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "…\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        stub = [e for e in result.errors if e.check_type == "ellipsis_stub"]
+        self.assertEqual(len(stub), 1)
+
+    def test_inline_comment_ellipsis_not_flagged(self):
+        """行内注释里的 ...（BLOCK ... ! note）不误报。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "BLOCK A, B, ZZYZX ! 尺寸 ... 注释\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        stub = [e for e in result.errors if e.check_type == "ellipsis_stub"]
+        self.assertEqual(stub, [], msg=f"Unexpected: {stub}")
+
+    def test_comment_only_line_ellipsis_not_flagged(self):
+        """整行注释里的 ...（! ...）不误报。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "! ... 这是注释\nBLOCK A, B, ZZYZX\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        stub = [e for e in result.errors if e.check_type == "ellipsis_stub"]
+        self.assertEqual(stub, [])
+
+    def test_code_line_with_dots_not_flagged(self):
+        """代码行里的 ...（如 PRISM_ 参数列表换行写法）不误报。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "PRISM_ 4, ZZYZX, 0, 0, 1, A, 0, 1, A, B, 1, 0, B, 1\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        stub = [e for e in result.errors if e.check_type == "ellipsis_stub"]
+        self.assertEqual(stub, [])
+
+    def test_clean_script_no_ellipsis(self):
+        """无省略号的正常脚本零 ellipsis_stub。"""
+        proj = FakeProject(
+            scripts={"3d.gdl": "BLOCK A, B, ZZYZX\nEND\n"},
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        stub = [e for e in result.errors if e.check_type == "ellipsis_stub"]
+        self.assertEqual(stub, [])
+

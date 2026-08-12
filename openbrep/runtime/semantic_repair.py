@@ -9,6 +9,10 @@ A round is accepted only when compile still passes (if a compiler is configured)
 AND the blocking-issue count strictly decreases; otherwise the round is rolled
 back, so delivery is never worse than no repair. Used by both the CREATE path
 and the MODIFY/DEBUG/REPAIR path in `openbrep/runtime/pipeline.py`.
+
+P8 防退化守卫（确定性，与模型强弱无关）：接受判定前先拦截退化修复——
+修复脚本含独立成行的省略号残桩（.../…）、修复后脚本内容锐减、或修复后
+参数表丢失 A/B/ZZYZX / 参数总数下降，一律拒绝并回退。
 """
 
 from __future__ import annotations
@@ -24,6 +28,73 @@ from openbrep.gdl_sanitizer import sanitize_llm_script_output
 logger = logging.getLogger(__name__)
 
 MAX_SEMANTIC_REPAIR_ROUNDS = 2
+
+# ── P8 防退化守卫阈值（测试钉死，勿随手改）────────────────────────────────
+# 独立成行的省略号残桩（模型退化输出标记，如 "3d.gdl 第 2 行是字面省略号 ..."）
+ELLIPSIS_STUB_LINES: frozenset[str] = frozenset({"...", "…"})
+# 内容锐减守卫：修复前 ≥ MIN_PRE_SHRINK_LINES 行的脚本掉到 ≤ SHRUNK_SCRIPT_MAX_LINES 行，
+# 或全脚本总行数掉过 TOTAL_LINE_DROP_RATIO（50%），视为退化。
+MIN_PRE_SHRINK_LINES = 10
+SHRUNK_SCRIPT_MAX_LINES = 3
+TOTAL_LINE_DROP_RATIO = 0.5
+# 参数丢失守卫：修复后缺失任一 ArchiCAD 保留参数即拒绝
+RESERVED_PARAM_NAMES: tuple[str, ...] = ("A", "B", "ZZYZX")
+
+
+def _find_ellipsis_stub(cleaned: dict[str, str]) -> Optional[tuple[str, int]]:
+    """返回 (文件路径, 行号) 若任一脚本含独立成行的 .../…；行内注释里的 ... 不误报。
+
+    只匹配"去掉行内注释后整行就是省略号"的情况——`! ...` 注释行、代码行里的
+    `...`（如 `BLOCK ...`）都不是残桩。
+    """
+    for fpath, code in (cleaned or {}).items():
+        for idx, line in enumerate((code or "").splitlines(), start=1):
+            code_part = line.split("!", 1)[0].strip()
+            if code_part in ELLIPSIS_STUB_LINES:
+                return fpath, idx
+    return None
+
+
+def _count_code_lines(code: str) -> int:
+    """非空非注释行数：空行与 `!` 开头（或 [FILE: 元数据）的行不算代码。"""
+    n = 0
+    for line in (code or "").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("!"):
+            n += 1
+    return n
+
+
+def _is_degenerate(prev_scripts: dict, new_scripts: dict) -> Optional[str]:
+    """内容锐减守卫：返回拒绝原因（None = 未退化）。
+
+    规则：任一修复前 ≥ MIN_PRE_SHRINK_LINES 行的脚本掉到 ≤ SHRUNK_SCRIPT_MAX_LINES 行，
+    或全脚本总行数掉过 TOTAL_LINE_DROP_RATIO。
+    """
+    for key in set(prev_scripts) | set(new_scripts):
+        prev_n = _count_code_lines(prev_scripts.get(key) or "")
+        new_n = _count_code_lines(new_scripts.get(key) or "")
+        if prev_n >= MIN_PRE_SHRINK_LINES and new_n <= SHRUNK_SCRIPT_MAX_LINES:
+            label = getattr(key, "value", str(key))
+            return f"因修复后脚本内容锐减（{label}：{prev_n} 行 → {new_n} 行）被拒绝"
+    prev_total = sum(_count_code_lines(c) for c in (prev_scripts or {}).values())
+    new_total = sum(_count_code_lines(c) for c in (new_scripts or {}).values())
+    if prev_total > 0 and new_total < prev_total * TOTAL_LINE_DROP_RATIO:
+        return f"因修复后脚本总行数下降过半（{prev_total} → {new_total} 行）被拒绝"
+    return None
+
+
+def _param_loss_reason(prev_params: list, new_params: list) -> Optional[str]:
+    """参数丢失守卫：返回拒绝原因（None = 参数表未退化）。"""
+    prev_params = prev_params or []
+    new_params = new_params or []
+    new_names = {getattr(p, "name", "") for p in new_params}
+    missing = [n for n in RESERVED_PARAM_NAMES if n not in new_names]
+    if missing:
+        return f"因修复后参数表丢失 ArchiCAD 保留参数（{', '.join(missing)}）被拒绝"
+    if len(new_params) < len(prev_params):
+        return f"因修复后参数总数下降（{len(prev_params)} → {len(new_params)}）被拒绝"
+    return None
 
 
 @dataclass
@@ -143,7 +214,42 @@ def run_semantic_repair_loop(
                     f"🧩 第 {round_no} 轮几何语义修复未产出可应用的修改，停止重试",
                 )
                 break
+
+            # ── P8 退化守卫 1：省略号残桩（独立成行的 .../…）——不进接受判定，
+            # 直接回退。行内注释里的 ... 不误报。─────────────────────────────
+            ellipsis_hit = _find_ellipsis_stub(round_cleaned)
+            if ellipsis_hit is not None:
+                _rollback()
+                new_cleaned = prev_cleaned
+                compile_result = prev_compile_result
+                auto_repair_info = _join_info(
+                    auto_repair_info,
+                    f"🧩 第 {round_no} 轮几何语义修复因脚本含省略号残桩"
+                    f"（{ellipsis_hit[0]} 第 {ellipsis_hit[1]} 行）被拒绝，已回退",
+                )
+                break
+
             agent._apply_changes(project, round_cleaned)
+
+            # ── P8 退化守卫 2/3：内容锐减 / 参数丢失（对比修复前后，命中即回退）──
+            degrade_reason = _is_degenerate(prev_scripts, project.scripts)
+            if degrade_reason is None:
+                degrade_reason = _param_loss_reason(prev_params, project.parameters)
+            if degrade_reason is not None:
+                _rollback()
+                new_cleaned = prev_cleaned
+                if compiler_configured and gsm_path:
+                    compile_result = compiler.hsf2libpart(
+                        str(project.save_to_disk()), gsm_path
+                    )
+                else:
+                    project.save_to_disk()
+                    compile_result = prev_compile_result
+                auto_repair_info = _join_info(
+                    auto_repair_info,
+                    f"🧩 第 {round_no} 轮几何语义修复{degrade_reason}，已回退",
+                )
+                break
 
             # 编译门：配置编译器时，修复后必须仍通过编译
             round_compile_ok = True

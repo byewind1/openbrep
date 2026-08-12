@@ -1,11 +1,12 @@
 """
 GDL static checker — runs before compilation.
 
-Four checks (all regex/count-based, no LLM):
+Five checks (all regex/count-based, no LLM):
   1. undefined_var   — script variables not declared in paramlist.xml
   2. forward_decl    — _underscore vars in 3d/2d not assigned in 1d.gdl
   3. stack_imbalance — ADD*/ROT*/MUL push count != DEL pop count in 3d.gdl
   4. block_mismatch  — unmatched IF/ENDIF or FOR/NEXT across any .gdl file
+  5. ellipsis_stub   — standalone .../… line (model-degeneration stub marker)
 
 StaticChecker.check(project) returns StaticCheckResult immediately.
 Returns passed=True when project is None (safe no-op).
@@ -57,7 +58,7 @@ GDL_SIGNATURE_WORDS: frozenset[str] = frozenset({
 
 @dataclass
 class StaticError:
-    check_type: str   # "undefined_var" | "forward_decl" | "stack_imbalance" | "block_mismatch"
+    check_type: str   # "undefined_var" | "forward_decl" | "stack_imbalance" | "block_mismatch" | "ellipsis_stub"
     file: str         # e.g. "scripts/3d.gdl"
     detail: str       # human-readable, injected into prompt hint
 
@@ -86,6 +87,7 @@ class StaticChecker:
         errors.extend(self._check_stack_imbalance(project))
         errors.extend(self._check_stack_imbalance_branches(project))
         errors.extend(self._check_block_mismatch(project))
+        errors.extend(self._check_ellipsis_stub(project))
 
         return StaticCheckResult(passed=len(errors) == 0, errors=errors)
 
@@ -403,3 +405,32 @@ class StaticChecker:
             next_count += len(self._NEXT_RE.findall(clean))
 
         return if_count, endif_count, for_count, next_count
+
+
+    # ── check 5: ellipsis_stub ──────────────────────────────────────────────
+
+    # 独立成行的省略号残桩（模型退化输出标记，P8 事故："3d.gdl 第 2 行是字面
+    # 省略号 ..."）。只匹配"去掉行内注释后整行就是 .../…"的情况——`! ...`
+    # 注释行、代码行里的 ...（如 `BLOCK ...`）都不算残桩，避免误报。
+    _STANDALONE_ELLIPSIS: frozenset[str] = frozenset({"...", "…"})
+
+    def _check_ellipsis_stub(self, project: "HSFProject") -> list[StaticError]:
+        errors: list[StaticError] = []
+        for gdl_file in ("3d.gdl", "2d.gdl", "1d.gdl", "ui.gdl", "vl.gdl"):
+            code = self._get_script(project, gdl_file) or ""
+            hit_lines = []
+            for idx, line in enumerate(code.splitlines(), start=1):
+                code_part = line.split("!", 1)[0].strip()
+                if code_part in self._STANDALONE_ELLIPSIS:
+                    hit_lines.append(idx)
+            if hit_lines:
+                errors.append(StaticError(
+                    check_type="ellipsis_stub",
+                    file=f"scripts/{gdl_file}",
+                    detail=(
+                        f"脚本含独立成行的省略号残桩"
+                        f"（第 {'、'.join(str(n) for n in hit_lines)} 行），"
+                        "疑似模型退化输出，请补全脚本内容"
+                    ),
+                ))
+        return errors

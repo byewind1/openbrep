@@ -3,7 +3,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from openbrep.hsf_project import HSFProject
+from openbrep.hsf_project import HSFProject, ScriptType
+
+
+def _apply_real_changes(project, changes):
+    """按 core.GDLAgent._apply_changes 同款语义应用改动（mock GDLAgent 的替身）。"""
+    for file_path, content in changes.items():
+        for script_type in ScriptType:
+            if script_type.value in file_path:
+                project.scripts[script_type] = content + "\n"
+
+
 from openbrep.project_context import (
     append_project_decision,
     build_project_context_prompt,
@@ -227,7 +237,9 @@ class TestProjectContext(unittest.TestCase):
             fake_llm.generate.return_value = MagicMock(content="{}")
             with patch("openbrep.runtime.pipeline.GDLAgent") as mock_agent_cls:
                 mock_agent = MagicMock()
-                mock_agent.generate_only.return_value = ({}, "ok")
+                # P8：mock 必须真正交付非占位脚本并应用（空交付现在会触发零产出硬失败）
+                mock_agent.generate_only.return_value = ({"scripts/3d.gdl": "BLOCK A, B, ZZYZX\nEND\n"}, "ok")
+                mock_agent._apply_changes.side_effect = _apply_real_changes
                 mock_agent_cls.return_value = mock_agent
                 with patch.object(pipeline, "_make_llm", return_value=fake_llm):
                     result = pipeline.execute(
