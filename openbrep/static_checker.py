@@ -31,6 +31,8 @@ __all__ = [
     "StaticChecker",
     "StaticCheckResult",
     "StaticError",
+    "ProseLeakHit",
+    "find_prose_leaks",
 ]
 
 if TYPE_CHECKING:
@@ -434,3 +436,49 @@ class StaticChecker:
                     ),
                 ))
         return errors
+
+
+# ── prose_leak 检测函数（P12：GDL 散文守卫，供工具层写盘前拦截）──────
+
+# markdown ATX 标题行：#/## 开头（GDL 行首没有 # 语法；注释是 !）
+_MD_HEADING_RE = re.compile(r"^#{1,6}(?:\s|$)")
+# markdown 加粗标记：**...**（GDL 无 ** 运算符）
+_MD_BOLD_RE = re.compile(r"\*\*[^*]+\*\*")
+# markdown 行内代码标记：`...`（GDL 无反引号语法）
+_MD_INLINE_CODE_RE = re.compile(r"`[^`]+`")
+
+
+@dataclass
+class ProseLeakHit:
+    """一行代码里发现的散文（markdown 形状）泄漏。"""
+
+    line: int      # 1-based 行号
+    kind: str      # md_heading | md_table | md_bold | md_inline_code
+    excerpt: str   # 去注释后的代码片段（截断展示）
+
+
+def find_prose_leaks(content: str) -> list[ProseLeakHit]:
+    """扫描 GDL 脚本内容中的 markdown 散文泄漏（P12 事故形状）。
+
+    只对非注释行判定：先去掉行内 `!` 注释再匹配，合法注释里的任何文字
+    都不误伤。识别形状：
+      - md_heading: `#`/`##` 开头的标题行（GDL 注释是 `!`，行首 # 非 GDL）
+      - md_table:   `|` 开头且含多个 `|` 的表格行（含 `| --- | --- |` 分隔行）
+      - md_bold:    非注释行中的 `**粗体**`
+      - md_inline_code: 非注释行中的 `反引号包裹`
+    """
+    hits: list[ProseLeakHit] = []
+    for idx, raw in enumerate(content.splitlines(), start=1):
+        code = raw.split("!", 1)[0].strip()
+        if not code:
+            continue
+        if _MD_HEADING_RE.match(code):
+            hits.append(ProseLeakHit(idx, "md_heading", code[:60]))
+        elif code.startswith("|") and code.count("|") >= 2:
+            hits.append(ProseLeakHit(idx, "md_table", code[:60]))
+        else:
+            for kind, rx in (("md_bold", _MD_BOLD_RE), ("md_inline_code", _MD_INLINE_CODE_RE)):
+                if rx.search(code):
+                    hits.append(ProseLeakHit(idx, kind, code[:60]))
+                    break
+    return hits

@@ -21,7 +21,7 @@ from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import ToolCall, ToolDefinition
-from openbrep.static_checker import StaticChecker
+from openbrep.static_checker import StaticChecker, find_prose_leaks
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,85 @@ def _param_text_ok(text: str) -> bool:
     """补丁后的参数行文本是否仍是结构合法的简化格式（防静默丢参数）。"""
     lines = [l for l in text.splitlines() if l.strip() and not l.strip().startswith("!")]
     return bool(lines) and all(_PARAM_LINE_RE.match(l.strip()) for l in lines)
+
+
+# P12 字符串参数引用一致性守卫：从简化参数行文本里提取 {name: (type_tag, value)}。
+# 只关心 String 参数的取值变化，无需 Length mm→m 归一化。
+_PARAM_VALUE_RE = re.compile(
+    r'^(Length|Angle|RealNum|Integer|Boolean|String|Material|'
+    r'FillPattern|LineType|PenColor)\s+(\w+)\s*=\s*("[^"]*"|\S+)',
+    re.IGNORECASE,
+)
+
+
+def _parse_param_values(text: str) -> dict[str, tuple[str, str]]:
+    """解析简化参数行文本为 {name: (type_tag, value)}（value 去引号）。"""
+    out: dict[str, tuple[str, str]] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("!"):
+            continue
+        m = _PARAM_VALUE_RE.match(stripped)
+        if m:
+            out[m.group(2)] = (m.group(1), m.group(3).strip('"'))
+    return out
+
+
+def _string_ref_hits(project: HSFProject, param_name: str, value: str) -> list[tuple[str, int]]:
+    """扫描项目所有 .gdl 脚本中对 `param_name = "value"` / `VALUES "param" ... "value"`
+    形状的引用，返回 [(file_path, 行号), ...]。误报宁多勿漏（阻断是 advisory 信号）。"""
+    hits: list[tuple[str, int]] = []
+    if not value:
+        return hits
+    compare_re = re.compile(
+        r"\b" + re.escape(param_name) + r"\s*(?:=|<>|#)\s*\"" + re.escape(value) + r"\""
+    )
+    values_re = re.compile(
+        r"\bVALUES\s*\"" + re.escape(param_name) + r"\"\s*((?:\"[^\"]*\"\s*)+)"
+    )
+    for stype in ScriptType:
+        content = project.get_script(stype) or ""
+        for idx, raw in enumerate(content.splitlines(), start=1):
+            code = raw.split("!", 1)[0]
+            if compare_re.search(code):
+                hits.append((f"scripts/{stype.value}", idx))
+                continue
+            m = values_re.search(code)
+            if m and re.search(r'\"' + re.escape(value) + r'\"', m.group(1)):
+                hits.append((f"scripts/{stype.value}", idx))
+    return hits
+
+
+def _paramlist_string_change_violations(project: HSFProject, new_param_text: str) -> list[str]:
+    """paramlist.xml 字符串参数值改动 → 脚本引用一致性检查（P12）。
+
+    对每个值被改动的 String 参数：若旧值仍被脚本引用而新值未出现在任何
+    VALUES/比较中 → 阻断（返回违规说明列表，由调用方拒绝写入）。
+    """
+    old_params = {p.name: (p.type_tag, p.value) for p in project.parameters}
+    new_params = _parse_param_values(new_param_text)
+    violations: list[str] = []
+    for name, (old_type, old_value) in old_params.items():
+        if old_type.lower() != "string" or not old_value:
+            continue
+        if name not in new_params:
+            continue
+        new_type, new_value = new_params[name]
+        if new_type.lower() != "string" or new_value == old_value:
+            continue
+        old_refs = _string_ref_hits(project, name, old_value)
+        if not old_refs:
+            continue  # 旧值已无脚本引用：改值不破坏一致性
+        new_refs = _string_ref_hits(project, name, new_value)
+        if new_refs:
+            continue  # 新值已在 VALUES/比较中出现：模型同步改好了脚本
+        refs_text = "、".join(f"{fp}:{ln}" for fp, ln in sorted(set(old_refs)))
+        violations.append(
+            f"字符串参数 {name} 的值从 {old_value!r} 改为 {new_value!r}，但 {new_value!r} "
+            f"未出现在任何 VALUES 或 IF 比较中，{old_value!r} 仍被 {refs_text} 引用。"
+            "请同步修改脚本中的引用，或放弃改值。"
+        )
+    return violations
 
 
 class ModifyToolRegistry:
@@ -254,6 +333,28 @@ class ModifyToolRegistry:
         if not content.strip():
             return ToolExecutionResult(name="update_script", ok=False, summary="content 为空，未做任何改动")
         cleaned = sanitize_llm_script_output(content, file_path)
+        if file_path == _PARAMLIST_NAME:
+            # P12 字符串参数引用一致性守卫（paramlist.xml 不走散文守卫——XML 内容）
+            violations = _paramlist_string_change_violations(self.project, cleaned)
+            if violations:
+                return ToolExecutionResult(
+                    name="update_script",
+                    ok=False,
+                    summary="拒绝写入 paramlist.xml：\n" + "\n".join(violations),
+                )
+        else:
+            # P12 GDL 散文守卫：写盘前拦截 markdown 散文泄漏（P8 ellipsis_stub 同族）
+            leaks = find_prose_leaks(cleaned)
+            if leaks:
+                lines = "、".join(f"第 {h.line} 行（{h.kind}）" for h in leaks[:5])
+                return ToolExecutionResult(
+                    name="update_script",
+                    ok=False,
+                    summary=(
+                        f"拒绝写入：{file_path} 含 {len(leaks)} 处 markdown 散文泄漏（{lines}）。"
+                        "脚本文件只允许 GDL 语句；解释文字请放在对话里或以 `!` 注释书写。"
+                    ),
+                )
         self._apply_changes(self.project, {file_path: cleaned})
         self.changed_files[file_path] = cleaned
         self.write_methods[file_path] = "update_script"
@@ -361,11 +462,33 @@ class ModifyToolRegistry:
         cleaned = sanitize_llm_script_output(working, file_path)
         if not cleaned.strip():
             return ToolExecutionResult(name="patch_script", ok=False, summary="补丁后文件为空，未做任何改动")
-        if file_path == _PARAMLIST_NAME and not _param_text_ok(cleaned):
-            return ToolExecutionResult(
-                name="patch_script", ok=False,
-                summary="补丁后的参数行文本格式不合法（应为 `类型 名称 = 值 ! 描述` 每行一条），未做任何改动（全或无）",
-            )
+        if file_path == _PARAMLIST_NAME:
+            if not _param_text_ok(cleaned):
+                return ToolExecutionResult(
+                    name="patch_script", ok=False,
+                    summary="补丁后的参数行文本格式不合法（应为 `类型 名称 = 值 ! 描述` 每行一条），未做任何改动（全或无）",
+                )
+            # P12 字符串参数引用一致性守卫
+            violations = _paramlist_string_change_violations(self.project, cleaned)
+            if violations:
+                return ToolExecutionResult(
+                    name="patch_script",
+                    ok=False,
+                    summary="拒绝写入 paramlist.xml：\n" + "\n".join(violations) + "\n未做任何改动（全或无）",
+                )
+        else:
+            # P12 GDL 散文守卫：写盘前对补丁后的完整内容做散文检查
+            leaks = find_prose_leaks(cleaned)
+            if leaks:
+                lines = "、".join(f"第 {h.line} 行（{h.kind}）" for h in leaks[:5])
+                return ToolExecutionResult(
+                    name="patch_script",
+                    ok=False,
+                    summary=(
+                        f"拒绝写入：补丁后 {file_path} 含 {len(leaks)} 处 markdown 散文泄漏（{lines}）。"
+                        "脚本文件只允许 GDL 语句；解释文字请放在对话里或以 `!` 注释书写。\n未做任何改动（全或无）"
+                    ),
+                )
 
         self._apply_changes(self.project, {file_path: cleaned})
         self.changed_files[file_path] = cleaned
@@ -428,6 +551,9 @@ class ModifyToolRegistry:
         error_text = "\n".join(
             part for part in [self.last_compile_result.stderr or "", self.last_compile_result.stdout or ""] if part.strip()
         )
+        if not error_text.strip():
+            # P12 顺带小修：编译失败但编译器无任何输出时，回填明确标注而非空消息
+            error_text = f"（编译器无错误输出，exit_code={self.last_compile_result.exit_code}）"
         self.on_event("status", {"stage": "compile", "message": "❌ 编译失败"})
         return ToolExecutionResult(
             name="compile_script",
