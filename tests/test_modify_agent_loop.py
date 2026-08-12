@@ -571,3 +571,74 @@ class TestTextDeliveryEscapeHatch(unittest.TestCase):
         self.assertEqual(mock_llm.call_count, 3)
         self.assertEqual(counter["n"], 3)
         self.assertTrue(result.success)
+
+
+# ── P0：agent loop 修改前 revision 快照 ────────────────────
+
+class TestAgentLoopBeforeRevision(unittest.TestCase):
+    """建筑基础_v1 事故修复：agent loop 此前零快照，AI 全文重写直接覆盖打开的
+    项目且无法回滚。现在首次实际改动前必须落 before-revision；零改动任务
+    不产生空 revision。"""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _saved_project(self) -> HSFProject:
+        proj = _make_project(self.tmp)
+        proj.save_to_disk()
+        return proj
+
+    def test_first_mutation_creates_before_revision(self):
+        """update_script 首次执行前：快照改动前内容；项目内容照常更新。"""
+        from pathlib import Path
+        new_3d = "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.018\nDEL 1\nEND\n"
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "update_script", "arguments": {"file_path": "scripts/3d.gdl", "content": new_3d}}]},
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "已加一层层板，编译通过。",
+        ])
+        pipeline = _make_pipeline(mock_llm, self.tmp)
+        proj = self._saved_project()
+        result = pipeline.execute(_make_request(proj, self.tmp))
+
+        self.assertTrue(result.success)
+        rev_dir = Path(proj.root) / ".openbrep" / "revisions" / "r0001"
+        self.assertTrue(rev_dir.is_dir(), "首次写工具执行前应创建 before-revision")
+        snap_3d = (rev_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8")
+        self.assertIn("BLOCK A, B, ZZYZX", snap_3d)
+        self.assertNotIn("ADDZ ZZYZX", snap_3d)  # 快照必须是改动前的内容
+        self.assertIn("ADDZ ZZYZX", proj.get_script(ScriptType.SCRIPT_3D))
+
+    def test_text_fallback_changes_also_snapshot(self):
+        """文本夹带 [FILE:] 的兜底应用路径同样先快照再应用。"""
+        from pathlib import Path
+        mock_llm = MockLLM(responses=[
+            "改好了。\n[FILE: scripts/3d.gdl]\nBLOCK A, B, 0.5\nEND\n",
+        ])
+        pipeline = _make_pipeline(mock_llm, self.tmp)
+        proj = self._saved_project()
+        pipeline.execute(_make_request(proj, self.tmp))
+
+        rev_dir = Path(proj.root) / ".openbrep" / "revisions" / "r0001"
+        self.assertTrue(rev_dir.is_dir(), "文本兜底改动也应先创建 before-revision")
+        snap_3d = (rev_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8")
+        self.assertNotIn("BLOCK A, B, 0.5", snap_3d)
+
+    def test_no_mutation_no_revision(self):
+        """全程只读工具（compile）：不产生空 revision。"""
+        from pathlib import Path
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "编译通过，无需改动。",
+        ])
+        pipeline = _make_pipeline(mock_llm, self.tmp)
+        proj = self._saved_project()
+        pipeline.execute(_make_request(proj, self.tmp))
+
+        self.assertFalse((Path(proj.root) / ".openbrep" / "revisions").exists())

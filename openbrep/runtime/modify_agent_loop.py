@@ -352,6 +352,34 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     before_params = [(p.name, p.value) for p in project.parameters]
     before_preview = preview_geometry_summary(project)
 
+    # 修改前 revision 快照（建筑基础_v1 事故教训：agent loop 此前零快照，
+    # AI 全文重写会直接覆盖打开的项目且无法回滚）。惰性创建：首次实际改动
+    # 前快照一次，零改动任务不产生空 revision。
+    from openbrep.revisions import get_latest_revision_id
+    from openbrep.runtime.pipeline import _can_revision_project, _create_auto_revision
+    before_revision_id: str | None = None
+
+    def _ensure_before_revision() -> None:
+        nonlocal before_revision_id
+        if before_revision_id is not None:
+            return
+        if not _can_revision_project(project):
+            logger.warning("agent loop: project not revisionable, mutating without snapshot")
+            on_event("status", {"message": "⚠️ 项目未保存为 HSF 目录，本次修改无版本快照"})
+            before_revision_id = ""  # 标记已尝试过，避免每次写操作重复告警
+            return
+        before_revision_id, _warning = _create_auto_revision(
+            project,
+            message=f"auto: before {intent.lower()} (agent loop)",
+            trigger=intent.lower(),
+            intent=intent,
+            user_instruction=clean_instruction,
+            changed_files=[],
+            parent_revision_id=get_latest_revision_id(project.root),
+        )
+        if _warning:
+            logger.warning("agent loop before-revision: %s", _warning)
+
     llm_calls = 0
     tool_calls_used = 0
     budget_exhausted = False
@@ -439,6 +467,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             applied_changes: dict[str, str] = {}
             if fallback_changes:
                 cleaned = {k: sanitize_llm_script_output(v, k) for k, v in fallback_changes.items()}
+                _ensure_before_revision()
                 agent._apply_changes(project, cleaned)
                 registry.changed_files.update(cleaned)
                 applied_changes = cleaned
@@ -479,6 +508,9 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                 break
             display_name, tool_stage = _tool_display(call.name)
             on_event("status", _architect_status(tool_stage, tool=display_name))
+            if call.name in ("update_script", "patch_script"):
+                # 写工具首次执行前快照一次（零快照主洞修复）
+                _ensure_before_revision()
             result = registry.execute(call)
             tool_calls_used += 1
             messages.append(tool_result_message(call.id, result.summary, name=call.name))
