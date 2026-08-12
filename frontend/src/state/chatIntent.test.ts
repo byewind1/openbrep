@@ -14,8 +14,16 @@ describe('detectChatIntent', () => {
     expect(detectChatIntent('帮我做一个斗拱', true)).toBe('create')
   })
 
-  it('无项目时一律 create', () => {
-    expect(detectChatIntent('把层板改成5', false)).toBe('create')
+  it('无项目 + 明确生成词 → create（自动无感建项目）', () => {
+    expect(detectChatIntent('生成一个书架', false)).toBe('create')
+    expect(detectChatIntent('[图1]参考图1生成坐斗', false)).toBe('create')
+    expect(detectChatIntent('帮我做一个斗拱', false)).toBe('create')
+  })
+
+  it('无项目 + 非生成意图 → explain（闲聊/陈述不落盘）', () => {
+    expect(detectChatIntent('把层板改成5', false)).toBe('explain')
+    expect(detectChatIntent('今天天气不错', false)).toBe('explain')
+    expect(detectChatIntent('这段代码是什么意思？', false)).toBe('explain')
   })
 
   it('修改类表述 + 有项目 → modify', () => {

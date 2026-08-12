@@ -74,6 +74,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
   }
 
   async function persistAssistantHistory() {
+    // 无项目时不写盘：聊天历史存在 <项目>/.openbrep/ 下，
+    // 纯聊天不应触发任何落盘，也避免后端报错污染 lastError
+    if (!get().project) return
     const result = await api.saveAssistantHistory(get().assistantMessages)
     if (!result.ok && result.error) {
       set({ lastError: result.error })
@@ -177,11 +180,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     await get().loadRecentProjects()
     await get().loadScripts()
     await get().loadRevisions()
+    const projectPath = result.project.path ?? ''
+    const locationNote = projectPath
+      ? `\n\n📁 项目已创建：${projectPath}\n可继续发修改指令（如「把层板数改成 5」），或在编辑器里直接改脚本、参数面板里调参数。`
+      : ''
     set((state) => ({
       assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(
         state.assistantMessages,
-        `${result.assistant?.reply ?? 'Project created.'}${formatAssistantEventSummary(result.events)}`,
+        `${result.assistant?.reply ?? 'Project created.'}${locationNote}${formatAssistantEventSummary(result.events)}`,
         { verification: result.assistant?.verification ?? undefined },
       ),
       // 模式级 skill 提案（P2-d）：CREATE 成功交付后弹"沉淀提案"确认卡

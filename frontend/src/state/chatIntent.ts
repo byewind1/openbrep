@@ -28,15 +28,20 @@ export function detectChatIntent(message: string, hasProject: boolean): ChatInte
     return 'explain'
   }
 
-  // Explicit create-new signals (or no project loaded yet).
+  // Explicit create-new signals.
   // 生成类动词出现在句中也算 create（"参考图1生成坐斗"），但明确修改词优先
   if (
-    !hasProject ||
-    (!hasModifyIntent &&
-      (/^(帮(我|忙)|请)?(生成|创建|新建|做)(一个|全新|新的)?/.test(m) ||
-        /(生成|创建|新建|重做)/.test(m)))
+    !hasModifyIntent &&
+    (/^(帮(我|忙)|请)?(生成|创建|新建|做)(一个|全新|新的)?/.test(m) ||
+      /(生成|创建|新建|重做)/.test(m))
   ) {
     return 'create'
+  }
+
+  // 无项目时不落盘：没有明确生成意图的闲聊/陈述只答不动，
+  // 等有产出物意图（create）才自动建项目目录
+  if (!hasProject) {
+    return 'explain'
   }
 
   // Default with an open project → modify

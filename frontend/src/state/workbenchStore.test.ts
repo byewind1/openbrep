@@ -1511,6 +1511,8 @@ test('adds user and assistant messages to the assistant thread', async () => {
       }),
     }),
   )
+  // 聊天历史存在 <项目>/.openbrep/ 下，需有项目打开才会持久化
+  store.setState({ project: { name: 'Demo', source: 'hsf', path: '/workspace/Demo' } })
 
   await store.getState().sendAssistantMessage('解释这个构件')
 
@@ -1520,6 +1522,28 @@ test('adds user and assistant messages to the assistant thread', async () => {
   ])
   expect(savedMessages).toEqual(store.getState().assistantMessages)
   expect(store.getState().assistantBusy).toBe(false)
+})
+
+test('纯聊天无项目时不持久化历史（不落盘）', async () => {
+  let saveCalled = false
+  const store = createWorkbenchStore(
+    makeApi({
+      saveAssistantHistory: async () => {
+        saveCalled = true
+        return { ok: true, count: 0 }
+      },
+      askAssistant: async (message: string) => ({
+        ok: true,
+        assistant: { kind: 'explain_project', reply: `reply to ${message}` },
+      }),
+    }),
+  )
+
+  await store.getState().sendAssistantMessage('随便聊聊')
+
+  expect(store.getState().assistantMessages).toHaveLength(2)
+  expect(saveCalled).toBe(false)
+  expect(store.getState().lastError).toBeNull()
 })
 
 test('load hydrates persisted assistant history', async () => {
@@ -1922,7 +1946,11 @@ test('createProjectFromPrompt loads the created project and records assistant re
   expect(store.getState().activeScriptName).toBe('3d.gdl')
   expect(store.getState().assistantMessages).toEqual([
     { role: 'user', content: '做一个书架' },
-    { role: 'assistant', content: 'created bookshelf' },
+    {
+      role: 'assistant',
+      content:
+        'created bookshelf\n\n📁 项目已创建：/workspace/Bookshelf\n可继续发修改指令（如「把层板数改成 5」），或在编辑器里直接改脚本、参数面板里调参数。',
+    },
   ])
   expect(store.getState().assistantBusy).toBe(false)
 })
