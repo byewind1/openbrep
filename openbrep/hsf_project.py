@@ -33,6 +33,14 @@ class ScriptType(Enum):
 
 # ── Parameter Types ───────────────────────────────────────
 
+# Graphisoft 注册常量（GSM 二进制头魔数 "MYSGCASG" 的来源）：
+# Signature="MYSG"(LE)=1196644685，Owner="CASG"(LE)=1196638531。
+# 为 0 时 LP_XMLConverter 产出的 GSM 缺该魔数，Archicad 拒绝打开
+# （"Unsupported document version or incorrect file"，漏窗真机实测）。
+DEFAULT_LIBPART_OWNER = "1196638531"
+DEFAULT_LIBPART_SIGNATURE = "1196644685"
+
+
 # Valid paramlist.xml type tags (Graphisoft XML Schema)
 VALID_PARAM_TYPES = {
     "Length", "Angle", "RealNum", "Integer", "Boolean",
@@ -107,8 +115,9 @@ class HSFProject:
         # Metadata
         self.guid: str = self._generate_guid()
         self.version: int = 46           # AC27 default
-        self.owner: str = "0"
-        self.signature: str = "0"
+        # Graphisoft 注册常量（见模块顶部 DEFAULT_LIBPART_* 注释）。
+        self.owner: str = DEFAULT_LIBPART_OWNER
+        self.signature: str = DEFAULT_LIBPART_SIGNATURE
         self.subtype_guid: str = "F938E33A-329D-4A36-BE3E-85E126820996"  # General GDL Object
         self.description: str = ""
 

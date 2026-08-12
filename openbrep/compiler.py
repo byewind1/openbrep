@@ -19,6 +19,42 @@ from typing import Optional
 from openbrep.config import _auto_detect_converter
 
 
+def _normalize_registration(hsf_path: Path) -> bool:
+    """编译前归一化 libpartdata.xml 的 Owner/Signature 注册字段。
+
+    Owner/Signature 为 "0"（或缺失）时改写为 Graphisoft 常量——否则
+    LP_XMLConverter 产出的 GSM 缺 "MYSGCASG" 头魔数，Archicad 拒绝打开。
+    返回是否有改写。仅在编译期调用（见 hsf2libpart 注释）。
+    """
+    from openbrep.hsf_project import DEFAULT_LIBPART_OWNER, DEFAULT_LIBPART_SIGNATURE
+
+    lp = hsf_path / "libpartdata.xml"
+    try:
+        raw = lp.read_bytes()
+    except OSError:
+        return False
+    has_bom = raw.startswith(b"\xef\xbb\xbf")
+    content = raw.decode("utf-8-sig")
+    new = content
+
+    m = re.search(r'<LibpartData\b[^>]*>', new)
+    if not m:
+        return False
+    tag = m.group(0)
+    new_tag = tag
+    for attr, const in (("Owner", DEFAULT_LIBPART_OWNER), ("Signature", DEFAULT_LIBPART_SIGNATURE)):
+        am = re.search(attr + r'="([^"]*)"', new_tag)
+        if am is None:
+            new_tag = new_tag[:-1] + f' {attr}="{const}">'
+        elif am.group(1) in ("", "0"):
+            new_tag = new_tag.replace(am.group(0), f'{attr}="{const}"', 1)
+    if new_tag == tag:
+        return False
+    new = new.replace(tag, new_tag, 1)
+    lp.write_bytes((b"\xef\xbb\xbf" if has_bom else b"") + new.encode("utf-8"))
+    return True
+
+
 @dataclass
 class CompileResult:
     """Result of a compilation attempt."""
@@ -106,6 +142,13 @@ class HSFCompiler:
                 success=False, exit_code=1,
                 stderr=f"Not a valid HSF directory (missing libpartdata.xml): {hsf_dir}"
             )
+
+        # 编译时归一化注册字段：Owner/Signature 为 "0"/缺失时改写为
+        # Graphisoft 常量，否则产出的 GSM 缺 "MYSGCASG" 魔数，Archicad
+        # 拒绝打开（漏窗真机实测）。放在编译期而非加载/保存期：
+        # modify 确定性路径的变更守护只允许 paramlist.xml + scripts/*，
+        # 加载/保存期改写 libpartdata 会触发守护回滚（M19 回放事故）。
+        _normalize_registration(hsf_path)
 
         # Ensure output directory exists
         Path(output_gsm).parent.mkdir(parents=True, exist_ok=True)
