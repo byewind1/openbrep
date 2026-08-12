@@ -61,6 +61,8 @@ VALUES "bHasBack" 0, 1
 LOCK "A", "B"
 ```
 
+**注意：GDL 没有 `UNLOCK` 命令**——不加 `LOCK` 即为解锁状态。写 `UNLOCK "x"` 会让 Archicad 报 `Missing CALL keyword (not recommended)`（被当作无 CALL 的宏调用）。
+
 ## Parameter Types in HSF
 
 | Type | HSF Name | Example | Usage |

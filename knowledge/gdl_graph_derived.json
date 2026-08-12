@@ -5740,6 +5740,24 @@
    "diagnosis": "Markdown 反引号混入 GDL 脚本：从 AI 回复复制代码时把 Markdown fence 一起复制。",
    "fix_hint": "删除所有 ``` 行，仅保留纯 GDL 代码。",
    "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "missing parameter(s) after function",
+   "diagnosis": "NOT 当作裸运算符使用：GDL 的 `NOT` 是布尔**函数**，必须写成 `NOT (x)`；它没有 C 语言式的裸 `!x` / `NOT x` 运算符形态。",
+   "fix_hint": "给 `NOT` 加括号，或改用等值比较（对 0/1 布尔参数最稳妥）。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "missing call keyword (not recommended)",
+   "diagnosis": "使用不存在的 UNLOCK 命令：GDL **没有** `UNLOCK` 命令。`LOCK` 只锁定参数脚本里的参数，不加 `LOCK` 就是解锁状态，无需反向操作。",
+   "fix_hint": "直接删除 `UNLOCK` 行；若本意是锁定参数，改用 `LOCK \"param_name\"`。",
+   "source": "GDL_common_errors.md"
+  },
+  {
+   "pattern": "if cond then s1 : s2",
+   "diagnosis": "单行 IF 同行写多条语句：单行 `IF ... THEN` 同行只允许**一条**条件语句（GDL Reference Guide：\"A command after THEN in the same row means a definite ENDIF.\"）。`:` 是行内语句分隔符，其后的语句**无条件执行**——等价于 `IF cond THEN s1` 结束后再写 `s2`。",
+   "fix_hint": "多条语句一律改成多行 `IF ... ENDIF` 块。",
+   "source": "GDL_common_errors.md"
   }
  ]
 }

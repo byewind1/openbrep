@@ -367,6 +367,10 @@ pass 数下降都会红灯。
 
 必须重录（prompt 会变化）：
 - `knowledge/`、`user_knowledge/`、`skills/` 目录内容变更
+  （例外：`GDL_common_errors.md` 当前被 selector 的 `\n---\n` 分片规则
+  整体切碎丢失——改动它暂不改变 prompt，见总报告第 10 节 P14 候选；
+  `GDL_control_flow.md` / `GDL_parameters.md` / `GDL_quick_reference.md`
+  无内部分隔符，改动会进 prompt）
 - `benchmark/tasks/` 任务文件的 `description` 变更（description 是发给 LLM 的
   指令本体）
 - prompt 构建逻辑变更（pipeline 的指令拼装、object_planner、图谱注入、

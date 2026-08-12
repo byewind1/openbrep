@@ -76,3 +76,5 @@ RETURN
 - Subroutine names must be in quotes: `GOSUB "Name"`
 - Subroutine must end with `RETURN`
 - Main script ends with `END`
+- **`NOT` 是函数不是运算符**：必须写 `NOT (x)`，裸 `NOT x` 会报 `Missing parameter(s) after function`。对 0/1 布尔参数更稳的写法是 `IF show_in_3d = 0 THEN ...`
+- **单行 IF 同行只允许一条条件语句**：`IF c THEN s1 : s2` 中 `:` 后的 `s2` **无条件执行**（Archicad 语义：THEN 同行一条命令即隐含 ENDIF）。多条语句必须写成多行 `IF ... ENDIF` 块

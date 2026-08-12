@@ -1,4 +1,4 @@
-# GDL 常见错误（20 种，Archicad 29）
+# GDL 常见错误（23 种，Archicad 29）
 
 > 目标：把高频编译/运行问题做成“可直接修复”的字典。
 > 约定：说明中文，代码英文。
@@ -447,4 +447,67 @@ END
 ! right
 BLOCK A, B, ZZYZX
 END
+```
+
+---
+
+## 21. NOT 当作裸运算符使用
+
+**现象**：Archicad 报错 `Missing parameter(s) after function`，定位到含 `NOT` 的行。
+
+**原因**：GDL 的 `NOT` 是布尔**函数**，必须写成 `NOT (x)`；它没有 C 语言式的裸 `!x` / `NOT x` 运算符形态。
+
+**修复**：给 `NOT` 加括号，或改用等值比较（对 0/1 布尔参数最稳妥）。
+
+**示例**：错误代码 → 正确代码
+```gdl
+! wrong
+IF NOT show_in_3d THEN END
+
+! right
+IF NOT (show_in_3d) THEN END
+! 或更稳：IF show_in_3d = 0 THEN END
+```
+
+---
+
+## 22. 使用不存在的 UNLOCK 命令
+
+**现象**：Archicad 报 `Missing CALL keyword (not recommended)` 或未知命令类警告，定位到 `UNLOCK` 行。
+
+**原因**：GDL **没有** `UNLOCK` 命令。`LOCK` 只锁定参数脚本里的参数，不加 `LOCK` 就是解锁状态，无需反向操作。
+
+**修复**：直接删除 `UNLOCK` 行；若本意是锁定参数，改用 `LOCK "param_name"`。
+
+**示例**：错误代码 → 正确代码
+```gdl
+! wrong
+LOCK "width"
+UNLOCK "width"
+
+! right
+LOCK "width"
+! 不加 LOCK 即为解锁，删掉 UNLOCK
+```
+
+---
+
+## 23. 单行 IF 同行写多条语句
+
+**现象**：`IF cond THEN s1 : s2` 中 `s2` 在条件为假时**仍然执行**，与预期不符。
+
+**原因**：单行 `IF ... THEN` 同行只允许**一条**条件语句（GDL Reference Guide："A command after THEN in the same row means a definite ENDIF."）。`:` 是行内语句分隔符，其后的语句**无条件执行**——等价于 `IF cond THEN s1` 结束后再写 `s2`。
+
+**修复**：多条语句一律改成多行 `IF ... ENDIF` 块。
+
+**示例**：错误代码 → 正确代码
+```gdl
+! wrong（cond 为假时 _b = 2 仍会执行）
+IF flag = 1 THEN _a = 1 : _b = 2
+
+! right
+IF flag = 1 THEN
+    _a = 1
+    _b = 2
+ENDIF
 ```
