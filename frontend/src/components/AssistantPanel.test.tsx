@@ -113,6 +113,108 @@ describe('AssistantPanel', () => {
     expect(revisionMessage.length).toBeLessThanOrEqual(65)
   })
 
+  test('history drawer shows an import button, disabled without a project (P6a)', () => {
+    render(<AssistantPanel {...baseProps} messages={[{ role: 'user', content: '旧记录' }]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    const importBtn = screen.getByRole('button', { name: '导入…' })
+    expect((importBtn as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  test('history drawer import button is enabled with a project (P6a)', () => {
+    render(<AssistantPanel {...baseProps} hasProject messages={[{ role: 'user', content: '旧记录' }]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    const importBtn = screen.getByRole('button', { name: '导入…' })
+    expect((importBtn as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  test('history import picker hints to mount a workspace when workspace is null (P6a)', () => {
+    render(<AssistantPanel {...baseProps} hasProject workspace={null} messages={[{ role: 'user', content: '旧记录' }]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    fireEvent.click(screen.getByRole('button', { name: '导入…' }))
+    expect(screen.getByText('先在工作区面板挂载工作区')).toBeTruthy()
+  })
+
+  test('history import picker lists workspace projects excluding the current one (P6a)', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        currentProjectPath="/workspace/hsf/Current"
+        messages={[{ role: 'user', content: '旧记录' }]}
+        workspace={{
+          path: '/workspace',
+          project_count: 2,
+          projects: [
+            { name: 'Current', path: '/workspace/hsf/Current', parameter_count: 3, scripts_present: [], latest_revision_id: null, origin: null, artifact_count: 0, active: true },
+            { name: 'SourceShelf', path: '/workspace/hsf/SourceShelf', parameter_count: 3, scripts_present: [], latest_revision_id: null, origin: null, artifact_count: 0, active: false },
+          ],
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    fireEvent.click(screen.getByRole('button', { name: '导入…' }))
+    expect(screen.getByText('SourceShelf')).toBeTruthy()
+    expect(screen.queryByText('Current')).toBeNull()
+  })
+
+  test('confirming an import source calls onImportAssistantHistory (P6a)', async () => {
+    const onImportAssistantHistory = vi.fn()
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        currentProjectPath="/workspace/hsf/Current"
+        messages={[{ role: 'user', content: '旧记录' }]}
+        onImportAssistantHistory={onImportAssistantHistory}
+        workspace={{
+          path: '/workspace',
+          project_count: 1,
+          projects: [
+            { name: 'SourceShelf', path: '/workspace/hsf/SourceShelf', parameter_count: 3, scripts_present: [], latest_revision_id: null, origin: null, artifact_count: 0, active: false },
+          ],
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    fireEvent.click(screen.getByRole('button', { name: '导入…' }))
+    fireEvent.click(screen.getByRole('button', { name: '从项目 SourceShelf 导入' }))
+
+    // 主题化确认弹窗
+    const dialog = await screen.findByRole('dialog', { name: '导入聊天记录' })
+    expect(dialog.textContent).toContain('SourceShelf')
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认导入' }))
+
+    await waitFor(() => expect(onImportAssistantHistory).toHaveBeenCalledWith('/workspace/hsf/SourceShelf'))
+  })
+
+  test('cancelling the import confirm does not call onImportAssistantHistory (P6a)', async () => {
+    const onImportAssistantHistory = vi.fn()
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        currentProjectPath="/workspace/hsf/Current"
+        messages={[{ role: 'user', content: '旧记录' }]}
+        onImportAssistantHistory={onImportAssistantHistory}
+        workspace={{
+          path: '/workspace',
+          project_count: 1,
+          projects: [
+            { name: 'SourceShelf', path: '/workspace/hsf/SourceShelf', parameter_count: 3, scripts_present: [], latest_revision_id: null, origin: null, artifact_count: 0, active: false },
+          ],
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    fireEvent.click(screen.getByRole('button', { name: '导入…' }))
+    fireEvent.click(screen.getByRole('button', { name: '从项目 SourceShelf 导入' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '导入聊天记录' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+
+    expect(onImportAssistantHistory).not.toHaveBeenCalled()
+  })
+
   test('shows error category badge and interrupted badge', () => {
     render(
       <AssistantPanel

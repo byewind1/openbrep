@@ -2075,9 +2075,14 @@ button:focus-visible {
   max-width: calc(100vw - 24px);
   height: 100vh;
   display: grid;
-  grid-template-rows: 46px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+.history-header-wrap {
+  display: grid;
+  grid-template-rows: 46px auto;
 }
 
 .history-header {
@@ -2087,6 +2092,62 @@ button:focus-visible {
   gap: 12px;
   border-bottom: 1px solid var(--border);
   padding: 0 12px;
+}
+
+.history-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-import {
+  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-hover);
+  padding: 10px 12px;
+}
+
+.history-import-title {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.history-import-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.history-import-list {
+  display: grid;
+  gap: 4px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.history-import-item {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  padding: 6px 8px;
+}
+
+.history-import-name {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.history-import-path {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-header div {

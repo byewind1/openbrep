@@ -293,6 +293,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     listAssistantHistory: async () => ({ ok: true, messages: [] }),
     saveAssistantHistory: async (messages) => ({ ok: true, count: messages.length }),
     clearAssistantHistory: async () => ({ ok: true, count: 0 }),
+    importAssistantHistory: async (sourcePath) => ({ ok: true, imported: 0, source_name: sourcePath.split('/').pop() ?? 'source' }),
     extractAssistantCodeBlocks: async () => ({ ok: true, blocks: [] }),
     fetchMemoryStatus: async () => ({
       ok: true,
@@ -1587,6 +1588,71 @@ test('clearAssistantHistory clears local and persisted assistant history', async
 
   expect(cleared).toBe(true)
   expect(store.getState().assistantMessages).toEqual([])
+})
+
+test('importAssistantHistory appends source messages and reloads history (P6a)', async () => {
+  let importedPath = ''
+  let listCalls = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      importAssistantHistory: async (sourcePath) => {
+        importedPath = sourcePath
+        return { ok: true, imported: 2, source_name: 'SourceShelf' }
+      },
+      listAssistantHistory: async () => {
+        listCalls += 1
+        return {
+          ok: true,
+          messages: [
+            { role: 'user', content: '目标原有' },
+            { role: 'user', content: '源项目问题' },
+            { role: 'assistant', content: '源项目答复' },
+          ],
+        }
+      },
+    }),
+  )
+
+  await store.getState().importAssistantHistory('/workspace/hsf/SourceShelf')
+
+  expect(importedPath).toBe('/workspace/hsf/SourceShelf')
+  // 导入成功后 reload 历史，且消息流包含合并后的完整记录
+  expect(listCalls).toBeGreaterThanOrEqual(1)
+  expect(store.getState().assistantMessages).toEqual([
+    { role: 'user', content: '目标原有' },
+    { role: 'user', content: '源项目问题' },
+    { role: 'assistant', content: '源项目答复' },
+  ])
+  // 导入结果作为一条系统提示写进 compileLog
+  expect(store.getState().compileLog.some((line) => line.includes('已从「SourceShelf」导入 2 条'))).toBe(true)
+})
+
+test('importAssistantHistory writes an empty-source note without failing (P6a)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importAssistantHistory: async () => ({ ok: true, imported: 0, source_name: 'EmptySource' }),
+    }),
+  )
+
+  await store.getState().importAssistantHistory('/workspace/hsf/EmptySource')
+
+  expect(store.getState().lastError).toBeNull()
+  expect(store.getState().compileLog.some((line) => line.includes('没有可导入的聊天记录'))).toBe(true)
+})
+
+test('importAssistantHistory records api failure in lastError (P6a)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importAssistantHistory: async () => ({
+        ok: false,
+        error: 'Source project path does not exist: /nope',
+      }),
+    }),
+  )
+
+  await store.getState().importAssistantHistory('/nope')
+
+  expect(store.getState().lastError).toContain('/nope')
 })
 
 test('load hydrates project memory status', async () => {

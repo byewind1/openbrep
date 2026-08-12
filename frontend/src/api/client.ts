@@ -21,6 +21,7 @@ import type {
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  ImportAssistantHistoryResult,
   WorkspaceScanResult,
   WorkspaceSearchResult,
   WorkspaceTrashResult,
@@ -694,6 +695,18 @@ export async function clearAssistantHistory(): Promise<SaveAssistantHistoryResul
     '/api/assistant/history',
     { method: 'DELETE' },
     { ok: false, count: 0, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function importAssistantHistory(sourcePath: string): Promise<ImportAssistantHistoryResult> {
+  return requestJson<ImportAssistantHistoryResult>(
+    '/api/assistant/history/import',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_path: sourcePath }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

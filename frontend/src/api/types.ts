@@ -517,6 +517,13 @@ export interface SaveAssistantHistoryResult {
   error?: string
 }
 
+export interface ImportAssistantHistoryResult {
+  ok: boolean
+  imported?: number
+  source_name?: string
+  error?: string
+}
+
 export interface AssistantCodeBlock {
   path: string
   script_name: string

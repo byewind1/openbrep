@@ -1,4 +1,5 @@
 import base64
+import json
 from pathlib import Path
 
 from openbrep.compiler import CompileResult
@@ -1710,6 +1711,139 @@ def test_workbench_session_clears_project_assistant_history(tmp_path):
     assert cleared["ok"] is True
     assert cleared["count"] == 0
     assert loaded["messages"] == []
+
+
+
+def test_workbench_session_imports_assistant_history_append_merge(tmp_path):
+    """P6a happy path：双项目，目标 transcript 原有条目保留 + 源条目追加在后。"""
+    current = HSFProject.create_new("CurrentShelf", str(tmp_path))
+    current_hsf = current.save_to_disk()
+    source = HSFProject.create_new("SourceShelf", str(tmp_path))
+    source_hsf = source.save_to_disk()
+    ErrorLearningStore(source_hsf).append_chat_messages(
+        [
+            {"role": "user", "content": "源项目问题"},
+            {"role": "assistant", "content": "源项目答复"},
+        ],
+        project_name="SourceShelf",
+        source="ui_chat",
+    )
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(current_hsf)})
+    session.route(
+        "POST",
+        "/api/assistant/history",
+        {"messages": [{"role": "user", "content": "目标原有记录"}]},
+    )
+
+    response = session.route("POST", "/api/assistant/history/import", {"source_path": str(source_hsf)})
+
+    assert response["ok"] is True
+    assert response["imported"] == 2
+    assert response["source_name"] == "SourceShelf"
+    loaded = session.route("GET", "/api/assistant/history")
+    assert loaded["messages"] == [
+        {"role": "user", "content": "目标原有记录"},
+        {"role": "user", "content": "源项目问题"},
+        {"role": "assistant", "content": "源项目答复"},
+    ]
+    # 追加条目带 source 标记 imported:<源目录名>
+    transcript = current_hsf / ".openbrep" / "memory" / "chats" / "chat_transcript.jsonl"
+    lines = [json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [line["source"] for line in lines] == ["react_workbench", "imported:SourceShelf", "imported:SourceShelf"]
+    assert [line["project_name"] for line in lines] == ["CurrentShelf", "CurrentShelf", "CurrentShelf"]
+
+
+def test_workbench_session_import_assistant_history_requires_open_project():
+    session = WorkbenchSession()
+    response = session.route("POST", "/api/assistant/history/import", {"source_path": "/some/source"})
+
+    assert response["ok"] is False
+    assert response["error"] == "Load an HSF project before importing assistant history."
+
+
+def test_workbench_session_import_assistant_history_rejects_missing_source_path(tmp_path):
+    current = HSFProject.create_new("CurrentShelf", str(tmp_path))
+    current_hsf = current.save_to_disk()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(current_hsf)})
+
+    response = session.route("POST", "/api/assistant/history/import", {})
+
+    assert response["ok"] is False
+    assert response["error"] == "source_path is required."
+
+
+def test_workbench_session_import_assistant_history_names_missing_source_path(tmp_path):
+    current = HSFProject.create_new("CurrentShelf", str(tmp_path))
+    current_hsf = current.save_to_disk()
+    missing = tmp_path / "does-not-exist"
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(current_hsf)})
+
+    response = session.route("POST", "/api/assistant/history/import", {"source_path": str(missing)})
+
+    assert response["ok"] is False
+    assert str(missing) in response["error"]
+
+
+def test_workbench_session_import_assistant_history_rejects_same_project(tmp_path):
+    current = HSFProject.create_new("CurrentShelf", str(tmp_path))
+    current_hsf = current.save_to_disk()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(current_hsf)})
+
+    response = session.route("POST", "/api/assistant/history/import", {"source_path": str(current_hsf)})
+
+    assert response["ok"] is False
+    assert "same as the current project" in response["error"]
+
+
+def test_workbench_session_import_assistant_history_empty_source_imports_zero(tmp_path):
+    current = HSFProject.create_new("CurrentShelf", str(tmp_path))
+    current_hsf = current.save_to_disk()
+    source = HSFProject.create_new("EmptySource", str(tmp_path))
+    source_hsf = source.save_to_disk()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(current_hsf)})
+
+    response = session.route("POST", "/api/assistant/history/import", {"source_path": str(source_hsf)})
+
+    assert response["ok"] is True
+    assert response["imported"] == 0
+    assert response["source_name"] == "EmptySource"
+    loaded = session.route("GET", "/api/assistant/history")
+    assert loaded["messages"] == []
+
+
+def test_workbench_session_import_assistant_history_cleans_roles(tmp_path):
+    """非法 role → assistant；空 content 跳过（与 list_assistant_history 同规则）。"""
+    current = HSFProject.create_new("CurrentShelf", str(tmp_path))
+    current_hsf = current.save_to_disk()
+    source = HSFProject.create_new("RoleSource", str(tmp_path))
+    source_hsf = source.save_to_disk()
+    ErrorLearningStore(source_hsf).append_chat_messages(
+        [
+            {"role": "user", "content": "合法用户"},
+            {"role": "system", "content": "非法 role 变成 assistant"},
+            {"role": "tool", "content": "   "},
+        ],
+        project_name="RoleSource",
+        source="ui_chat",
+    )
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(current_hsf)})
+
+    response = session.route("POST", "/api/assistant/history/import", {"source_path": str(source_hsf)})
+
+    assert response["ok"] is True
+    assert response["imported"] == 2
+    loaded = session.route("GET", "/api/assistant/history")
+    assert loaded["messages"] == [
+        {"role": "user", "content": "合法用户"},
+        {"role": "assistant", "content": "非法 role 变成 assistant"},
+    ]
 
 
 def test_workbench_session_extracts_code_blocks_from_assistant_history_text():

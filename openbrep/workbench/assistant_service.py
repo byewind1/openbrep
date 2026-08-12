@@ -114,6 +114,46 @@ class WorkbenchAssistantService:
             return {"ok": False, "error": f"Failed to clear assistant history: {exc}"}
         return {"ok": True, "count": count}
 
+    def import_assistant_history(self, body: dict[str, Any]) -> dict[str, Any]:
+        """P6a：把另一个项目的聊天记录追加合并进当前项目（纯文件操作，无 LLM）。
+
+        追加语义：源 transcript 清洗为 {role, content}（role 非 user/assistant →
+        assistant，空 content 跳过，与 list_assistant_history 同规则），
+        通过 append_chat_messages 追加到当前项目 transcript 尾部，source 标记
+        "imported:<源目录名>"。空源不算错误（imported=0）。
+        """
+        if self.session.source_path is None:
+            return {"ok": False, "error": "Load an HSF project before importing assistant history."}
+
+        source_path = str(body.get("source_path") or "").strip()
+        if not source_path:
+            return {"ok": False, "error": "source_path is required."}
+        source = Path(source_path).expanduser().resolve()
+        if not source.exists():
+            return {"ok": False, "error": f"Source project path does not exist: {source_path}"}
+        if not source.is_dir():
+            return {"ok": False, "error": f"Source project path is not a directory: {source_path}"}
+        if source == self.session.source_path.resolve():
+            return {"ok": False, "error": "Source project is the same as the current project."}
+
+        try:
+            entries = ErrorLearningStore(source).list_chat_transcript()
+            messages = [
+                {"role": entry.role if entry.role in {"user", "assistant"} else "assistant", "content": entry.content}
+                for entry in entries
+                if entry.content
+            ]
+            if not messages:
+                return {"ok": True, "imported": 0, "source_name": source.name}
+            count = ErrorLearningStore(self.session.source_path).append_chat_messages(
+                messages,
+                project_name=self.session.project.name,
+                source=f"imported:{source.name}",
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"Failed to import assistant history: {exc}"}
+        return {"ok": True, "imported": count, "source_name": source.name}
+
     def extract_assistant_code_blocks(self, body: dict[str, Any]) -> dict[str, Any]:
         content = str(body.get("content") or "")
         try:

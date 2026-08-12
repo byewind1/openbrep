@@ -55,6 +55,7 @@ export function WorkbenchApp() {
   const activeRailPanel = useWorkbenchStore((state) => state.activeRailPanel)
   const assistantBusy = useWorkbenchStore((state) => state.assistantBusy)
   const assistantMessages = useWorkbenchStore((state) => state.assistantMessages)
+  const importAssistantHistory = useWorkbenchStore((state) => state.importAssistantHistory)
   const pendingPlan = useWorkbenchStore((state) => state.pendingPlan)
   const pendingSkillProposal = useWorkbenchStore((state) => state.pendingSkillProposal)
   const scripts = useWorkbenchStore((state) => state.scripts)
@@ -423,6 +424,9 @@ export function WorkbenchApp() {
             modelOptions={llmSettings.model_options ?? []}
             currentModel={llmSettings.model}
             onModelChange={switchLlmModel}
+            workspace={workspace}
+            currentProjectPath={project?.path ?? null}
+            onImportAssistantHistory={(sourcePath) => void importAssistantHistory(sourcePath)}
           />
         )}
       />

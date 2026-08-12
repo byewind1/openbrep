@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, SkillProposal, VerificationReport } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingPlan, SkillProposal, VerificationReport, WorkspaceInfo } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
 import { PanelEmpty } from './PanelEmpty'
+import { useThemedDialog } from './ThemedDialog'
 import { useT } from '../i18n'
 
 interface AssistantPanelProps {
@@ -28,6 +29,10 @@ interface AssistantPanelProps {
   // 模式级 skill 提案（P2-d）：待确认提案 + 沉淀/忽略回调
   pendingSkillProposal?: SkillProposal | null
   onConfirmSkillProposal?: (approve: boolean) => void
+  // P6a：跨项目聊天记录导入（历史抽屉入口）
+  workspace?: WorkspaceInfo | null
+  currentProjectPath?: string | null
+  onImportAssistantHistory?: (sourcePath: string) => void
 }
 
 /** 面板内带 token 的已贴图片（token 与草稿里的 [图N] 对应，按 attach 顺序递增）。 */
@@ -58,6 +63,9 @@ export function AssistantPanel({
   onConfirmPlan,
   pendingSkillProposal = null,
   onConfirmSkillProposal,
+  workspace = null,
+  currentProjectPath = null,
+  onImportAssistantHistory,
 }: AssistantPanelProps) {
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<AttachedImage[]>([])
@@ -581,8 +589,12 @@ export function AssistantPanel({
         open={historyOpen}
         messages={messages}
         busy={busy}
+        hasProject={hasProject}
+        workspace={workspace}
+        currentProjectPath={currentProjectPath}
         onClose={() => setHistoryOpen(false)}
         onAdoptCode={onAdoptCode}
+        onImportAssistantHistory={onImportAssistantHistory}
       />
     </aside>
   )
@@ -804,29 +816,94 @@ function AssistantHistoryDrawer({
   open,
   messages,
   busy,
+  hasProject,
+  workspace,
+  currentProjectPath,
   onClose,
   onAdoptCode,
+  onImportAssistantHistory,
 }: {
   open: boolean
   messages: AssistantMessage[]
   busy: boolean
+  hasProject: boolean
+  workspace?: WorkspaceInfo | null
+  currentProjectPath?: string | null
   onClose: () => void
   onAdoptCode: (index: number) => void
+  onImportAssistantHistory?: (sourcePath: string) => void
 }) {
+  const t = useT()
+  const { confirm, dialogNode } = useThemedDialog()
+  const [importOpen, setImportOpen] = useState(false)
   if (!open) return null
+
+  // P6a：源项目候选 = 工作区项目里排除当前项目
+  const candidates = (workspace?.projects ?? []).filter((project) => project.path !== currentProjectPath)
+
+  async function pickSource(sourcePath: string, sourceName: string) {
+    setImportOpen(false)
+    const confirmed = await confirm({
+      title: t('assistant.history.importConfirmTitle'),
+      message: t('assistant.history.importConfirmMessage', {
+        source: sourceName,
+        current: currentProjectPath?.split('/').filter(Boolean).pop() ?? '',
+      }),
+      confirmLabel: t('assistant.history.importConfirmLabel'),
+    })
+    if (!confirmed) return
+    onImportAssistantHistory?.(sourcePath)
+  }
 
   return (
     <>
       <button className="history-scrim" type="button" aria-label="Close assistant history" onClick={onClose} />
       <aside className="assistant-history-drawer" role="dialog" aria-label="Assistant history">
-        <div className="history-header">
-          <div>
-            <strong>History</strong>
-            <span>{messages.length} messages</span>
+        <div className="history-header-wrap">
+          <div className="history-header">
+            <div>
+              <strong>History</strong>
+              <span>{messages.length} messages</span>
+            </div>
+            <div className="history-header-actions">
+              <button
+                type="button"
+                disabled={!hasProject}
+                title={hasProject ? t('assistant.history.importTitle') : t('assistant.history.importDisabledTitle')}
+                onClick={() => setImportOpen((openImport) => !openImport)}
+              >
+                {t('assistant.history.import')}
+              </button>
+              <button type="button" onClick={onClose}>
+                Close
+              </button>
+            </div>
           </div>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
+          {importOpen ? (
+            <div className="history-import" role="group" aria-label={t('assistant.history.importTitle')}>
+              <div className="history-import-title">{t('assistant.history.importTitle')}</div>
+              {!workspace ? (
+                <div className="history-import-hint">{t('assistant.history.importHintNoWorkspace')}</div>
+              ) : candidates.length === 0 ? (
+                <div className="history-import-hint">{t('assistant.history.importNoSources')}</div>
+              ) : (
+                <div className="history-import-list">
+                  {candidates.map((project) => (
+                    <button
+                      type="button"
+                      key={project.path}
+                      className="history-import-item"
+                      aria-label={t('assistant.history.importSourceAria', { name: project.name })}
+                      onClick={() => void pickSource(project.path, project.name)}
+                    >
+                      <span className="history-import-name">{project.name}</span>
+                      <span className="history-import-path">{project.path}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
         <div className="history-list">
           {messages.map((message, index) => (
@@ -850,6 +927,7 @@ function AssistantHistoryDrawer({
           ))}
         </div>
       </aside>
+      {dialogNode}
     </>
   )
 }

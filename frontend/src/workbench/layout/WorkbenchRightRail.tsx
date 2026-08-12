@@ -52,6 +52,10 @@ interface WorkbenchRightRailProps {
   modelOptions?: import('../../api/types').LlmModelOption[]
   currentModel?: string
   onModelChange?: (model: string) => Promise<void>
+  // P6a：跨项目聊天记录导入
+  workspace?: import('../../api/types').WorkspaceInfo | null
+  currentProjectPath?: string | null
+  onImportAssistantHistory?: (sourcePath: string) => void
 }
 
 export function WorkbenchRightRail({
@@ -91,6 +95,9 @@ export function WorkbenchRightRail({
   modelOptions,
   currentModel,
   onModelChange,
+  workspace = null,
+  currentProjectPath = null,
+  onImportAssistantHistory,
 }: WorkbenchRightRailProps) {
   // P1b：预览质量档是 store 会话态，视口只消费，不走 props 倒灌
   const previewQuality = useWorkbenchStore((state) => state.previewQuality)
@@ -179,6 +186,9 @@ export function WorkbenchRightRail({
             onConfirmPlan={onConfirmPlan}
             pendingSkillProposal={pendingSkillProposal}
             onConfirmSkillProposal={onConfirmSkillProposal}
+            workspace={workspace}
+            currentProjectPath={currentProjectPath}
+            onImportAssistantHistory={onImportAssistantHistory}
           />
         )}
       </div>

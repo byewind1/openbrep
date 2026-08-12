@@ -109,6 +109,17 @@ export const en: Record<LocaleKey, string> = {
   'workspace.deleteConfirm': 'Move project {name} to trash? It can be restored from .openbrep/trash/.',
   'workspace.deleteActiveDisabled': 'This project is open: switch to another project first',
 
+  // P6a cross-project assistant history import (history drawer)
+  'assistant.history.import': 'Import…',
+  'assistant.history.importTitle': 'Import chat history from another project',
+  'assistant.history.importDisabledTitle': 'Open a project first to import chat history',
+  'assistant.history.importHintNoWorkspace': 'Mount a workspace in the workspace panel first',
+  'assistant.history.importNoSources': 'No other projects to import from',
+  'assistant.history.importSourceAria': 'Import from project {name}',
+  'assistant.history.importConfirmTitle': 'Import chat history',
+  'assistant.history.importConfirmMessage': 'Import chat history from "{source}" into the current project "{current}"? It will be appended and merged, existing records are kept.',
+  'assistant.history.importConfirmLabel': 'Import',
+
   // Assistant plan confirmation gate (V3)
   'assistant.plan.title': 'Modification plan',
   'assistant.plan.userChanges': 'Changes you will see',

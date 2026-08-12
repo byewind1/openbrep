@@ -23,6 +23,7 @@ import type {
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  ImportAssistantHistoryResult,
   IgnoreMemoryLessonResult,
   KnowledgeStatus,
   LlmSettings,
@@ -134,6 +135,7 @@ export interface WorkbenchApi {
   listAssistantHistory: () => Promise<AssistantHistoryResult>
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
   clearAssistantHistory: () => Promise<SaveAssistantHistoryResult>
+  importAssistantHistory: (sourcePath: string) => Promise<ImportAssistantHistoryResult>
   extractAssistantCodeBlocks: (content: string) => Promise<AssistantCodeBlocksResult>
   fetchMemoryStatus: () => Promise<ProjectMemoryStatusResult>
   fetchMemoryLessons: () => Promise<ProjectLessonsResult>
@@ -287,6 +289,7 @@ export interface WorkbenchState {
   setActiveRailPanel: (panel: '3d' | '2d' | 'inspect' | 'ai') => void
   loadAssistantHistory: () => Promise<void>
   clearAssistantHistory: () => Promise<void>
+  importAssistantHistory: (sourcePath: string) => Promise<void>
   adoptAssistantMessageCode: (index: number) => Promise<void>
   sendAssistantMessage: (message: string) => Promise<void>
   createProjectFromPrompt: (message: string, images?: AssistantImageAttachment[]) => Promise<void>

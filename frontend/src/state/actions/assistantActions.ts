@@ -222,6 +222,25 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       set({ assistantMessages: [] })
     },
 
+    /** P6a：从另一个项目追加合并聊天记录到当前项目（纯文件操作，无 LLM）。 */
+    async importAssistantHistory(sourcePath: string) {
+      const result = await api.importAssistantHistory(sourcePath)
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to import assistant history.' })
+        return
+      }
+      await get().loadAssistantHistory()
+      const imported = result.imported ?? 0
+      const sourceName = result.source_name ?? sourcePath
+      const note =
+        imported > 0
+          ? `已从「${sourceName}」导入 ${imported} 条聊天记录（追加合并，不覆盖现有记录）`
+          : `项目「${sourceName}」没有可导入的聊天记录`
+      set((state) => ({
+        compileLog: [note, ...state.compileLog].slice(0, 20),
+      }))
+    },
+
     async adoptAssistantMessageCode(index: number) {
       const message = get().assistantMessages[index]
       if (!message || message.role !== 'assistant') {

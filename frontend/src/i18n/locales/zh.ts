@@ -106,6 +106,17 @@ export const zh = {
   'workspace.deleteConfirm': '把项目 {name} 移入回收站？可从 .openbrep/trash/ 手动恢复。',
   'workspace.deleteActiveDisabled': '当前打开的项目：请先切换到其他项目再删除',
 
+  // P6a 跨项目聊天记录导入（历史抽屉）
+  'assistant.history.import': '导入…',
+  'assistant.history.importTitle': '从其他项目导入聊天记录',
+  'assistant.history.importDisabledTitle': '先打开一个项目才能导入聊天记录',
+  'assistant.history.importHintNoWorkspace': '先在工作区面板挂载工作区',
+  'assistant.history.importNoSources': '没有可导入的其他项目',
+  'assistant.history.importSourceAria': '从项目 {name} 导入',
+  'assistant.history.importConfirmTitle': '导入聊天记录',
+  'assistant.history.importConfirmMessage': '从项目「{source}」导入聊天记录到当前项目「{current}」？将追加合并，不覆盖现有记录。',
+  'assistant.history.importConfirmLabel': '确认导入',
+
   // Assistant plan confirmation gate (V3)
   'assistant.plan.title': '修改计划',
   'assistant.plan.userChanges': '将要发生的改动',
