@@ -177,6 +177,11 @@ button:focus-visible {
   padding: 3px 6px;
   background: var(--status-warning-bg);
 }
+/* P5e：MODIFY 复用标注（D7 内容哈希命中，来源模型可见） */
+.assistant-vision-reused {
+  color: var(--text-muted);
+  font-size: 10px;
+}
 .assistant-vision-fields {
   width: 100%;
   border-collapse: collapse;

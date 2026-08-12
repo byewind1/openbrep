@@ -860,6 +860,9 @@ async function readAssistantStream(
   const decoder = new TextDecoder()
   let buffer = ''
   let finalResult: GenerateResult | null = null
+  // P5e：流式过程事件原样累积进最终结果（vision_analysis_done 等供
+  // 只读提取卡片 / 事件摘要消费；与同步路径 response.events 同构）
+  const accumulatedEvents: Array<{ type: string; data: unknown }> = []
 
   try {
     while (true) {
@@ -882,7 +885,10 @@ async function readAssistantStream(
           }
         } else if (line === '' && currentEvent) {
           if (currentEvent.type === 'done') {
-            finalResult = (currentEvent.data as unknown as GenerateResult) ?? null
+            finalResult = {
+              ...((currentEvent.data as unknown as GenerateResult) ?? {}),
+              events: [...accumulatedEvents],
+            }
           } else if (currentEvent.type === 'error') {
             finalResult = {
               ok: false,
@@ -893,6 +899,7 @@ async function readAssistantStream(
               events: [],
             } as GenerateResult
           } else {
+            accumulatedEvents.push(currentEvent)
             onEvent?.(currentEvent)
           }
           currentEvent = null

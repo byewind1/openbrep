@@ -31,6 +31,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _llm_model_name(llm) -> str:
+    """提取所用模型名（D7 落盘标注）：LLMAdapter 走 config.model，mock 走 model 兜底。"""
+    cfg = getattr(llm, "config", None)
+    if cfg is not None and getattr(cfg, "model", None):
+        return str(cfg.model)
+    return str(getattr(llm, "model", "") or "")
+
+
 def _architect_status(stage: str, **ctx) -> dict[str, object]:
     """把内部执行阶段翻译成建筑师可读的中文状态文案。
 
@@ -332,6 +340,88 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     budget = request.agent_loop_budget or DEFAULT_AGENT_LOOP_BUDGET
     budget = max(1, min(budget, MAX_AGENT_LOOP_BUDGET))
     messages[0]["content"] = (messages[0].get("content") or "") + _AGENT_LOOP_PROTOCOL.format(budget=budget)
+
+    # ── P5e：带图 MODIFY —— 简化档 Vision Harness + 提取复用（D10 system 层注入）──
+    # 无图 → 全流程零变化（硬门禁）。有图 → S0 预处理（与 CREATE 同口径）→ 逐图
+    # 分流：sha256 命中 load_extraction → ModelingPlan.from_dict 重建（零 vision
+    # LLM 调用，D7）；未命中 → vision_harness_run(intent="MODIFY", critic_pass=False)
+    # （MODIFY 永不跑 critic，设计 D3）。各 plan 的 to_hint() 以 【图N】 前缀拼入
+    # system 消息（不作工具、不进 user 消息，D10）；新提取 best-effort 落盘
+    # （D7 复用铺路，失败 warning 不阻断）。
+    vision_extractions: list[dict] = []
+    if request.images:
+        try:
+            from openbrep.vision.multi_image import resolve_and_preprocess
+            from openbrep.vision.extraction_store import (
+                load_extraction,
+                plan_to_dict,
+                save_extraction,
+            )
+            from openbrep.vision.harness import run as vision_harness_run
+            from openbrep.vision.modeling_plan import ModelingPlan
+
+            multi_images = resolve_and_preprocess(request.images)
+            hint_parts: list[str] = []
+            for idx, img in enumerate(multi_images, start=1):
+                token = img.token or f"图{idx}"
+                plan: Optional[ModelingPlan] = None
+                reused = False
+                reused_from_model = ""
+                if img.b64:
+                    try:
+                        stored = load_extraction(project.root, img.sha256)
+                    except Exception as exc:
+                        logger.warning("P5e: extraction load failed for %s: %s", token, exc)
+                        stored = None
+                    if stored is not None:
+                        # 哈希命中：复用缓存提取，零 vision LLM 调用（D7）
+                        plan = ModelingPlan.from_dict(stored)
+                        reused = True
+                        reused_from_model = str(stored.get("model") or "")
+                    else:
+                        # 未命中：只对这一张图跑简化档 harness（S0→S1→S2→S4，无 critic）
+                        plans = vision_harness_run(
+                            [img], "MODIFY", request.user_input, llm,
+                            on_event=on_event, critic_pass=False,
+                        )
+                        plan = plans[0] if plans else None
+                        if plan is not None:
+                            try:
+                                save_extraction(project.root, plan, model=_llm_model_name(llm))
+                            except Exception as exc:
+                                logger.warning("P5e: extraction persist failed for %s: %s", token, exc)
+                if plan is None:
+                    vision_extractions.append({"token": token, "skipped": True})
+                    continue
+                entry = plan_to_dict(plan)
+                entry["token"] = token
+                vision_extractions.append(entry)
+                if reused:
+                    if reused_from_model:
+                        entry["reused_from_model"] = reused_from_model
+                    # 复用图不经过 harness（零 LLM 调用），事件在这里补发
+                    # （前端只读卡片数据源；payload 与 P5d-1 同构）
+                    on_event("vision_analysis_done", {
+                        "schema_name": plan.schema_name,
+                        "image_index": idx,
+                        "token": token,
+                        "extraction": entry,
+                    })
+                hint = plan.to_hint()
+                if reused:
+                    reuse_marker = (
+                        f"（复用缓存：由 {reused_from_model} 模型提取，未重新读图）"
+                        if reused_from_model else "（复用缓存提取结果，未重新读图）"
+                    )
+                    hint = f"{hint}\n{reuse_marker}"
+                hint_parts.append(f"【图{idx}】\n{hint}")
+            if hint_parts:
+                messages[0]["content"] = (messages[0].get("content") or "") + (
+                    "\n\n---\n## 参考图结构提取（本次修改的依据）\n" + "\n\n".join(hint_parts)
+                )
+        except Exception as exc:
+            # D8：vision 只作上下文，任何意外降级都不阻塞 MODIFY 主流程
+            logger.warning("P5e: vision harness integration degraded for modify: %s", exc)
 
     from pathlib import Path
     out_dir = Path(request.output_dir)
@@ -643,17 +733,39 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         project=project,
         compile_result=compile_result,
         verification=verification_report.to_dict(),
-        metadata={
-            "agent_loop": {
-                "diff_guardrail": {
-                    "warnings": diff_warnings,
-                    "ratios": diff_ratios,
-                    "write_methods": dict(registry.write_methods),
-                }
-            },
-            "acceptance": acceptance,
-        },
+        metadata=_agent_loop_metadata(
+            diff_warnings=diff_warnings,
+            diff_ratios=diff_ratios,
+            write_methods=dict(registry.write_methods),
+            acceptance=acceptance,
+            # P5e：vision 提取透出（同 P5d-1 形状，前端只读卡片数据源；无图时空列表不写）
+            vision_extractions=vision_extractions,
+        ),
     )
+
+
+def _agent_loop_metadata(
+    *,
+    diff_warnings: list,
+    diff_ratios: dict,
+    write_methods: dict,
+    acceptance: dict,
+    vision_extractions: list[dict],
+) -> dict:
+    """agent loop 的 TaskResult.metadata 组装（vision_extractions 有值才写入）。"""
+    metadata: dict = {
+        "agent_loop": {
+            "diff_guardrail": {
+                "warnings": diff_warnings,
+                "ratios": diff_ratios,
+                "write_methods": write_methods,
+            }
+        },
+        "acceptance": acceptance,
+    }
+    if vision_extractions:
+        metadata["vision_extractions"] = vision_extractions
+    return metadata
 
 
 def _tool_digest(tool_log: list[dict]) -> str:

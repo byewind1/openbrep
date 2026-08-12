@@ -154,6 +154,7 @@ export const zh = {
   'vision.extraction.criticDegraded': '【critic 校验已降级】',
   'vision.extraction.lowConfidence': '低置信',
   'vision.extraction.evidenceHint': 'critic 修正依据',
+  'vision.extraction.reusedFrom': '复用自',
 
   // P5d-2 提取确认门（可编辑确认卡）
   'assistant.extraction.title': '读图结果确认',

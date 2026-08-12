@@ -121,6 +121,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           verification: result.assistant?.verification ?? undefined,
           acceptance: result.assistant?.acceptance ?? undefined,
           thinkingSteps: [...thinkingSteps],
+          // P5e：MODIFY 流式完成聚合处复用事件提取（只读卡片数据源；
+          // 无 vision_analysis_done 事件时 undefined，不污染消息）
+          visionExtractions: extractVisionExtractions(result.events),
         }
       : { errorCategory: classifyAssistantError(finalReply), thinkingSteps: [...thinkingSteps] }
     set((state) => ({
@@ -418,7 +421,13 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           ? `${result.assistant.reply}${suffix}${eventSummary}`
           : formatAssistantRequestError(result.error, 'Generation request failed.')
       const replyExtras = result.ok
-        ? { changedFiles, verification: result.assistant?.verification ?? undefined, acceptance: result.assistant?.acceptance ?? undefined }
+        ? {
+            changedFiles,
+            verification: result.assistant?.verification ?? undefined,
+            acceptance: result.assistant?.acceptance ?? undefined,
+            // P5e：非流式 MODIFY 同源提取（与 CREATE 路径一致，只读卡片）
+            visionExtractions: extractVisionExtractions(result.events),
+          }
         : { errorCategory: classifyAssistantError(reply) }
       set((state) => ({
         assistantBusy: false,

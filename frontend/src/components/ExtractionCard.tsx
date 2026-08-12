@@ -65,6 +65,11 @@ function ExtractionCard({ extraction }: { extraction: VisionExtraction }) {
       {critic_degraded ? (
         <p className="assistant-vision-degraded">⚠️ {t('vision.extraction.criticDegraded')}</p>
       ) : null}
+      {extraction.reused_from_model ? (
+        <p className="assistant-vision-reused">
+          ♻️ {t('vision.extraction.reusedFrom')}：{extraction.reused_from_model}
+        </p>
+      ) : null}
       {fieldEntries.length ? (
         <table className="assistant-vision-fields">
           <tbody>

@@ -157,6 +157,7 @@ export const en: Record<LocaleKey, string> = {
   'vision.extraction.criticDegraded': '【Critic verification degraded】',
   'vision.extraction.lowConfidence': 'low confidence',
   'vision.extraction.evidenceHint': 'critic correction evidence',
+  'vision.extraction.reusedFrom': 'reused from',
 
   // P5d-2 extraction confirmation gate (editable confirm card)
   'assistant.extraction.title': 'Confirm image extraction',

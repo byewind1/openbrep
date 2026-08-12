@@ -434,6 +434,8 @@ export interface VisionExtraction {
   // P5d-2：schema 元数据（required + critic_checks = 可编辑确认卡的可编辑范围）
   required?: string[]
   critic_checks?: string[]
+  // P5e：MODIFY 复用标记（D7）——提取结果来自内容哈希命中的缓存，标注来源模型
+  reused_from_model?: string
 }
 
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────

@@ -3188,3 +3188,68 @@ test('confirmPendingExtraction without a pending extraction sets lastError (P5d-
   await store.getState().confirmPendingExtraction([EXTRACTION], true)
   expect(store.getState().lastError).toContain('没有待确认的读图结果')
 })
+
+test('sendChat debug stream renders read-only vision extraction card from vision_analysis_done (P5e)', async () => {
+  const visionEvent = {
+    type: 'vision_analysis_done',
+    data: {
+      schema_name: 'lattice_window',
+      image_index: 1,
+      token: '图1',
+      extraction: {
+        token: '图1',
+        schema_name: 'lattice_window',
+        fields: { opening_shape: 'rect', pattern_family: '冰裂', grid_topology: { rows: 3, cols: 4 } },
+        confidence: { 'grid_topology.rows': 'low' },
+        corrections: [],
+        degraded: false,
+        critic_degraded: false,
+        raw_description: '',
+        sha256: 'abc123def456',
+        reused_from_model: 'mock-vision-model',
+      },
+    },
+  }
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistantStream: async (_message, _settings, _images, onEvent) => {
+        onEvent?.(visionEvent as AssistantStreamEvent)
+        return {
+          ok: true,
+          assistant: { kind: 'generate', reply: '✅ 已按图调整完成。', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+          preview: null,
+          warnings: [],
+          events: [visionEvent],
+        }
+      },
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('报错了，按图修复')
+
+  const last = store.getState().assistantMessages.at(-1)
+  // 只读提取卡片数据源就位：visionExtractions 从流式事件聚合（含复用标记）
+  expect(last?.visionExtractions).toHaveLength(1)
+  expect(last?.visionExtractions?.[0]?.fields?.pattern_family).toBe('冰裂')
+  expect(last?.visionExtractions?.[0]?.reused_from_model).toBe('mock-vision-model')
+  expect(last?.visionExtractions?.[0]?.confidence?.['grid_topology.rows']).toBe('low')
+})
+
+test('modify stream without vision events leaves visionExtractions undefined (P5e)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistantStream: async () => ({
+        ok: true,
+        assistant: { kind: 'generate', reply: '✅ 已调整。', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+        preview: null,
+        warnings: [],
+        events: [{ type: 'status', data: { message: '编译中' } }],
+      }),
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('报错了，修复一下')
+
+  const last = store.getState().assistantMessages.at(-1)
+  expect(last?.visionExtractions).toBeUndefined()
+})
