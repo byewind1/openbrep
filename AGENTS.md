@@ -298,6 +298,10 @@ Architecture notes:
   extraction > 未命名构件 fallback; post-generation the project directory is
   renamed (gsm artifacts follow, explicit `project_name` wins). Untitled
   project save prompts for a name (`needs_save_as` → auto-located Save As).
+  Project landing spot is workspace-first everywhere (2026-08-13): AI create,
+  Save As, and import all resolve explicit request dir > attached workspace
+  `hsf/` > settings `output_dir` > `./output`
+  (`project_session_service._save_as_auto_dir`).
 - Assistant history as asset (2026-08-12, P6a/P6b): chat history can be
   imported across projects and distilled into a draft instruction (never
   auto-sent).

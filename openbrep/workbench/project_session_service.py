@@ -408,10 +408,15 @@ class WorkbenchProjectSessionService:
             # 校验通过：消费 pending（本次确认成功后落盘用确认后 fields）
             self.session.pending_extraction = None
 
-        # AI 新建项目落点：请求显式指定 > 设置里的 output_dir > ./output 兜底，
-        # 保证用户在设置面板看到的目录就是项目实际生成的位置。
+        # AI 新建项目落点：请求显式指定 output_dir ＞ 自动落点（工作区 hsf/ ＞
+        # 设置 output_dir ＞ ./output，与 Save As/导入收敛同口径，见
+        # _save_as_auto_dir）。工作区附着时项目直接生成在工作区 hsf/ 下，
+        # 不再落到启动目录的 ./output。
+        explicit_output = str(body.get("output_dir") or "").strip()
         output_root = (
-            Path(str(body.get("output_dir") or self.session.output_dir or "./output")).expanduser().resolve()
+            Path(explicit_output).expanduser().resolve()
+            if explicit_output
+            else self._save_as_auto_dir()
         )
         output_root.mkdir(parents=True, exist_ok=True)
         requested_name = str(body.get("project_name") or "").strip()

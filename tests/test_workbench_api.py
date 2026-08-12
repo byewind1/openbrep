@@ -924,6 +924,42 @@ def test_workbench_session_create_uses_configured_output_dir(tmp_path):
     assert response["project"]["path"].startswith(str((tmp_path / "workspace").resolve()))
 
 
+def test_workbench_session_create_prefers_workspace_hsf(tmp_path):
+    """工作区附着时：AI 新建项目落点优先工作区 hsf/（高于设置 output_dir），
+    与 Save As 自动落点同口径；请求显式 output_dir 仍最高优先。"""
+
+    class FakePipeline:
+        def __init__(self, trace_dir="./traces"):
+            self.trace_dir = trace_dir
+
+        def execute(self, request):
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+            return TaskResult(success=True, intent="CREATE", plain_text="ok", project=project)
+
+    workspace_root = tmp_path / "ws"
+    init_workspace(str(workspace_root))
+    output_dir = tmp_path / "out"
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    session.output_dir = str(output_dir)
+    opened = session.route("POST", "/api/workspace/open", {"path": str(workspace_root)})
+    assert opened["ok"] is True
+
+    response = session.route("POST", "/api/project/create", {"prompt": "create a bookshelf"})
+
+    assert response["ok"] is True
+    assert response["project"]["path"].startswith(str((workspace_root / "hsf").resolve()))
+    assert not output_dir.exists()
+
+    explicit = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "create a shelf", "output_dir": str(output_dir)},
+    )
+    assert explicit["ok"] is True
+    assert explicit["project"]["path"].startswith(str(output_dir.resolve()))
+
+
 def test_workbench_session_creates_project_from_image_prompt(tmp_path):
     class FakePipeline:
         last_request = None
