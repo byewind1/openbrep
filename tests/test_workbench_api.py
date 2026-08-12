@@ -1245,6 +1245,9 @@ def test_workbench_session_mock_compile_returns_diagnostics(tmp_path):
 
 def test_workbench_session_exposes_and_updates_compiler_settings():
     session = WorkbenchSession()
+    # output_dir 是独立设置：本 POST 不带它时应原样保留（fcb4104 缺键≠清空），
+    # 取值随开发者本机 config 而变，断言从快照读期望而非硬编码 ""。
+    expected_output_dir = session.route("GET", "/api/snapshot")["compiler"]["output_dir"]
 
     update = session.route(
         "POST",
@@ -1257,7 +1260,7 @@ def test_workbench_session_exposes_and_updates_compiler_settings():
     assert update["compiler"] == {
         "mode": "lp",
         "converter_path": "/Applications/LP_XMLConverter",
-        "output_dir": "",
+        "output_dir": expected_output_dir,
     }
     assert snapshot["compiler"] == update["compiler"]
 

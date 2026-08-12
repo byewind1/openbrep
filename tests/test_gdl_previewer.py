@@ -377,6 +377,137 @@ ENDIF
         self.assertEqual(len(res2.meshes), 1)
 
 
+class TestP10ForGosubCrossScopeAndColonStatements(unittest.TestCase):
+    """P10：FOR 体内 GOSUB 跨作用域 + 单行 IF 内 `:` 多语句。
+
+    事故背景：漏窗菱花（window_decorative_lattice_v2，pattern_type="菱花"）
+    P9 修复后仍 8 mesh + 798 警告（399×"DEL 1 超过栈深" + 399×"游离 NEXT"）。
+    根因：
+    1. FOR 体内 GOSUB 跳到 body 作用域外的标签 → 子程序静默不执行 + GOSUB
+       返回点每轮迭代泄漏 → 级联穿透产生 798 条次生警告；
+    2. 单行 IF 语句内 `:` 多语句（GDL 语句分隔符）被当成单个语句 → 求值失败。
+    """
+
+    def test_for_body_gosub_to_tail_label_executes_subroutine(self):
+        """事故形状最小复现：FOR 体内 GOSUB 到脚本尾部标签（body 作用域之外）。
+        子程序体实际执行（几何 + 赋值生效）、零"游离 NEXT"、零"DEL 超过栈深"、
+        变换栈平衡。"""
+        script = """\
+FOR i = 1 TO 2
+    GOSUB "bar"
+    IF _ok THEN
+        BLOCK 1, 1, 1
+    ENDIF
+NEXT i
+END
+"bar":
+    _ok = 1
+    ADDX 1
+    BLOCK 0.5, 0.5, 0.5
+    DEL 1
+    RETURN
+"""
+        res = preview_3d_script(script)
+        # 每轮迭代：子程序 1 个 BLOCK（x∈[1,1.5]，ADDX 生效）+ 主流程 1 个
+        # BLOCK（x∈[0,1]，_ok 由子程序赋值 → IF 块真实执行）
+        self.assertEqual(len(res.meshes), 4)
+        sub_meshes = [m for m in res.meshes if min(m.x) >= 1.0 - 1e-9]
+        main_meshes = [m for m in res.meshes if max(m.x) <= 1.0 + 1e-9]
+        self.assertEqual(len(sub_meshes), 2)
+        self.assertEqual(len(main_meshes), 2)
+        self.assertEqual(res.warnings, [])
+
+    def test_for_body_gosub_in_scope_keeps_inplace_jump(self):
+        """FOR 体内 GOSUB 在块区间内的既有行为回归：目标在 [start, end) 之内时
+        压 idx+1 返回点原地跳转，行为与修复前逐字节一致（不回落到 None 哨兵
+        分支）。子程序体执行 + 返回后继续 body + 既有回落（P1e 已定性）。"""
+        script = """\
+FOR i = 1 TO 2
+    GOSUB "inner"
+    BLOCK 1, 1, 1
+    "inner":
+        ADDX 2
+        BLOCK 0.5, 0.5, 0.5
+        DEL 1
+        RETURN
+NEXT i
+"""
+        res = preview_3d_script(script)
+        # 每轮迭代：GOSUB 原地跳转执行子程序 1 次（x∈[2,2.5]）→ 回主流程
+        # BLOCK（x∈[0,1]）→ 回落到标签处再执行一次子程序体（既有回落行为）。
+        # 共 6 mesh；若被错误改成跨作用域 None 哨兵路径，行为会变。
+        self.assertEqual(len(res.meshes), 6)
+        sub_meshes = [m for m in res.meshes if min(m.x) >= 2.0 - 1e-9]
+        main_meshes = [m for m in res.meshes if max(m.x) <= 1.0 + 1e-9]
+        self.assertEqual(len(sub_meshes), 4)
+        self.assertEqual(len(main_meshes), 2)
+        # 既有回落行为：子程序体再执行一次时 RETURN 无对应 GOSUB（P1e 已定性，
+        # 非本单引入）；变换栈平衡（无 DEL 下溢 / 栈未平衡）。
+        self.assertEqual(len([w for w in res.warnings if "RETURN 没有对应 GOSUB" in w]), 2)
+        self.assertFalse(any("游离 NEXT" in w for w in res.warnings))
+        self.assertFalse(any("DEL 1 超过栈深" in w for w in res.warnings))
+        self.assertFalse(any("栈未平衡" in w for w in res.warnings))
+
+    def test_inline_if_colon_multi_statement(self):
+        """单行 IF 内 `:` 多语句：IF f = 1 THEN _a = 1 : _b = 2 两个赋值都
+        生效（GDL 的 `:` 是语句分隔符）。"""
+        script = """f = 1
+IF f = 1 THEN _a = 1 : _b = 2
+BLOCK _a, _b, 1
+"""
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        mesh = res.meshes[0]
+        self.assertAlmostEqual(min(mesh.x), 0.0, places=6)
+        self.assertAlmostEqual(max(mesh.x), 1.0, places=6)
+        self.assertAlmostEqual(min(mesh.y), 0.0, places=6)
+        self.assertAlmostEqual(max(mesh.y), 2.0, places=6)
+        self.assertEqual(res.warnings, [])
+
+    def test_inline_if_colon_string_literal_not_split(self):
+        """字符串字面量含 `:` 不误拆：条件里的 `"a:b"` 正常字符串比较；
+        语句里的 `GOSUB "sub:x"` 标签名含 `:` 不被当作语句分隔符。"""
+        script = '''IF s = "a:b" THEN GOSUB "sub:x"
+END
+"sub:x":
+    BLOCK 1, 1, 1
+    RETURN
+'''
+        res = preview_3d_script(script, {"s": "a:b"})
+        self.assertEqual(len(res.meshes), 1)
+        self.assertEqual(res.warnings, [])
+        res_no = preview_3d_script(script, {"s": "other"})
+        self.assertEqual(len(res_no.meshes), 0)
+
+    def test_multi_iteration_gosub_no_stack_leak_no_cascade(self):
+        """多轮迭代 GOSUB 后栈不泄漏：FOR 3 轮 + 子程序 RETURN 后，外层
+        继续执行的语句只执行一次（盯死级联穿透）。修复前 GOSUB 返回点每轮
+        泄漏，外层 RETURN 弹到垃圾区间 → 游离 NEXT + BLOCK 被重复执行多次。"""
+        script = """\
+GOSUB "outer"
+END
+"outer":
+    _count = 0
+    FOR i = 1 TO 3
+        GOSUB "inner"
+    NEXT i
+    _count = _count + 1
+    BLOCK _count, 1, 1
+    RETURN
+"inner":
+    _count = _count + 10
+    RETURN
+"""
+        res = preview_3d_script(script)
+        # 3 轮 × 10 + 外层 1 = 31；BLOCK 只执行一次（修复前被级联穿透
+        # 重复执行 4 次：_count = 1..4，外加 3×"游离 NEXT"）。
+        self.assertEqual(len(res.meshes), 1)
+        mesh = res.meshes[0]
+        self.assertAlmostEqual(min(mesh.x), 0.0, places=6)
+        self.assertAlmostEqual(max(mesh.x), 31.0, places=6)
+        self.assertEqual(res.warnings, [])
+
+
 class TestRuledPreview(unittest.TestCase):
 
     def test_ruled_basic_square_loft(self):

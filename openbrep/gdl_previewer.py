@@ -381,7 +381,18 @@ class _PreviewRuntime:
                 if target is None:
                     self._warn(line_no, "GOSUB 目标标签未找到，已跳过")
                     idx += 1
+                elif target < start or target >= end:
+                    # P10：目标落在当前块区间 [start, end) 之外（典型：FOR 体内
+                    # GOSUB 跳到脚本尾部的子程序）。复用 P9 单行 IF 的成熟做法
+                    # —— 压 None 哨兵 + 子程序 extent，在完整脚本上下文中从标签
+                    # 执行到 RETURN（RETURN 消费 None 哨兵 break），返回后继续
+                    # 本块下一条语句。子程序真实执行、GOSUB 栈不泄漏。
+                    self._gosub_stack.append(None)
+                    self._subroutine_stack.append(self._subroutine_extents.get(lines[target][0]))
+                    self._exec_block(lines, target, len(lines), mode=mode)
+                    idx += 1
                 else:
+                    # 目标在块区间之内：压返回点原地跳转（既有行为保持不变）。
                     self._gosub_stack.append(idx + 1)
                     # P1e：GOSUB 子程序区间（标签到 RETURN），未知时 None
                     self._subroutine_stack.append(self._subroutine_extents.get(lines[target][0]))
@@ -461,11 +472,21 @@ class _PreviewRuntime:
     ) -> None:
         """执行单行 IF（IF cond THEN stmt）的语句部分。
 
+        GDL 的 `:` 是语句分隔符：语句部分先按 `:` 拆成多条独立语句（引号
+        "..." 内的 `:` 不拆）逐条执行；单语句无 `:` 时行为逐字节不变。
+
         GOSUB 语句特殊处理：子程序在脚本后方（标签位置），单元素子块无法
         跳到那里。这里直接在完整脚本上下文中从标签执行到 RETURN（RETURN 用
         None 哨兵返回，结束语句作用域，不会继续执行脚本剩余部分）。其余
         语句保持原有单行子块执行方式。
         """
+        parts = _split_colon_statements(statement)
+        if len(parts) > 1:
+            # P10：`:` 多语句——拆成多元素子块复用 _exec_block 既有语句分发
+            # （赋值/变换/GOSUB 等；跨作用域 GOSUB 由 _exec_block 的 P10
+            # None 哨兵分支处理）。
+            self._exec_block([(line_no, part) for part in parts], 0, len(parts), mode=mode)
+            return
         m = re.match(r"^GOSUB\b\s*(.+)$", statement, re.IGNORECASE)
         if m:
             target = self._resolve_gosub_target(m.group(1), line_no)
@@ -1642,6 +1663,30 @@ def _extract_inline_if(line: str) -> tuple[str, str] | None:
     if not condition or not statement:
         return None
     return condition, statement
+
+
+def _split_colon_statements(text: str) -> list[str]:
+    """按 GDL 语句分隔符 `:` 拆分语句列表；`"..."` 字符串字面量内的 `:` 不拆。
+
+    返回去空白后的语句片段列表；无 `:` 时返回 [text]（原样单条，逐字节不变）。
+    """
+    if not text:
+        return []
+    parts: list[str] = []
+    cur: list[str] = []
+    in_string = False
+    for ch in text:
+        if ch == '"':
+            in_string = not in_string
+            cur.append(ch)
+            continue
+        if ch == ":" and not in_string:
+            parts.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur).strip())
+    return [p for p in parts if p]
 
 
 def _split_args(text: str) -> list[str]:
