@@ -1,0 +1,23 @@
+---
+id: V03
+category: create
+complexity: medium
+description: "参考图生成一个圆形（月洞）开洞的冰裂纹漏窗：圆形外框内嵌冰裂纹窗芯。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）。圆洞用 CIRCLE 或 PRISM_ 表达，冰裂纹窗芯用可参数化随机剖分表达。"
+images:
+  - benchmark/fixtures/vision/round_window_ice_crack.jpg
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "圆形开洞 + 冰裂窗芯几何，尺寸与参数对应"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: CIRCLE
+    - type: param_used
+      script: 3d.gdl
+      param: A
+    - type: transform_balanced
+      script: 3d.gdl
+expected_difficulty: medium
+expected_pass: true

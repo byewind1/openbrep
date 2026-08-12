@@ -27,6 +27,7 @@ dependencies = [
     "toml>=0.10.2",
     "mcp>=2.0.0",
     "Pillow>=10.0.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

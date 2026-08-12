@@ -52,6 +52,28 @@ def _corpus_key(messages, kwargs, tools=None) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _vision_messages(text_prompt, images, system_prompt=None) -> list[dict]:
+    """按 llm.py generate_with_images 同款拼装 messages（语料 key 必须一致）。
+
+    content 数组按序拼 image_url + text；与 LLMAdapter.generate_with_images
+    的字节结构保持一致，保证 record/replay 的 key 与真实调用完全一致。
+    """
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    content = []
+    for img in images:
+        image_b64 = str(img.get("b64") or "")
+        image_mime = str(img.get("mime") or "image/jpeg").strip().lower()
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
+        })
+    content.append({"type": "text", "text": text_prompt})
+    messages.append({"role": "user", "content": content})
+    return messages
+
+
 def _replay_tool_call(tc: dict) -> ToolCall:
     """从语料里逐字重建 ToolCall：arguments 按 llm.py 同款容错 JSON 解析。"""
     raw = str(tc.get("raw_arguments") or "")
@@ -108,8 +130,27 @@ class RecordingLLM:
         self._record(messages, kwargs, resp, tools=tools)
         return resp
 
-    def generate_with_image(self, *args, **kwargs) -> LLMResponse:
-        return self.inner.generate_with_image(*args, **kwargs)
+    def generate_with_image(self, text_prompt, image_b64, image_mime="image/jpeg", system_prompt=None, **kwargs) -> LLMResponse:
+        """vision 调用也录制（P5b vision 套件）：key = (拼装的 messages, kwargs)。"""
+        resp = self.inner.generate_with_image(text_prompt, image_b64, image_mime, system_prompt, **kwargs)
+        messages = _vision_messages(
+            text_prompt,
+            [{"b64": image_b64, "mime": image_mime}],
+            system_prompt=system_prompt,
+        )
+        self._record(messages, kwargs, resp)
+        return resp
+
+    def generate_with_images(self, text_prompt, images, system_prompt=None, **kwargs) -> LLMResponse:
+        """多图生成调用也录制（P5b 复核补漏）：与 generate_with_image 同一 key 结构。
+
+        vision 套件的 IMAGE 任务走多图通道，生成调用在 core.py:399 是
+        generate_with_images——缺了它录制会在生成步骤 AttributeError。
+        """
+        resp = self.inner.generate_with_images(text_prompt, images, system_prompt, **kwargs)
+        messages = _vision_messages(text_prompt, images, system_prompt=system_prompt)
+        self._record(messages, kwargs, resp)
+        return resp
 
 
 class ReplayLLM:
@@ -161,5 +202,28 @@ class ReplayLLM:
             tool_calls=tool_calls,
         )
 
-    def generate_with_image(self, *args, **kwargs) -> LLMResponse:
-        raise NotImplementedError("replay 模式暂不支持图像输入")
+    def generate_with_image(self, text_prompt, image_b64, image_mime="image/jpeg", system_prompt=None, **kwargs) -> LLMResponse:
+        """回放 vision 调用（P5b vision 套件）：按同款 messages 找 key，未命中即提示重录。"""
+        messages = _vision_messages(
+            text_prompt,
+            [{"b64": image_b64, "mime": image_mime}],
+            system_prompt=system_prompt,
+        )
+        key = _corpus_key(messages, kwargs)
+        if key not in self.corpus:
+            raise self._miss(key)
+        item = self.corpus[key]
+        return LLMResponse(
+            content=item["content"], model="replay", usage={}, finish_reason="stop"
+        )
+
+    def generate_with_images(self, text_prompt, images, system_prompt=None, **kwargs) -> LLMResponse:
+        """回放多图生成调用（P5b 复核补漏）：与 generate_with_image 同一 key 结构。"""
+        messages = _vision_messages(text_prompt, images, system_prompt=system_prompt)
+        key = _corpus_key(messages, kwargs)
+        if key not in self.corpus:
+            raise self._miss(key)
+        item = self.corpus[key]
+        return LLMResponse(
+            content=item["content"], model="replay", usage={}, finish_reason="stop"
+        )

@@ -1,0 +1,23 @@
+---
+id: V01
+category: create
+complexity: medium
+description: "参考图生成一个海棠纹园林漏窗：方形开洞，井字格底，四瓣海棠花单元铺满窗芯。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）。纹样用可参数化的网格逻辑表达（如 FOR 循环平铺海棠瓣单元），不要逐格手写。"
+images:
+  - benchmark/fixtures/vision/begonia_lattice.jpg
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "窗框 + 网格状窗芯几何，尺寸与参数对应"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: FOR
+    - type: param_used
+      script: 3d.gdl
+      param: A
+    - type: transform_balanced
+      script: 3d.gdl
+expected_difficulty: medium
+expected_pass: true

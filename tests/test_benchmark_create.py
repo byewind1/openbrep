@@ -92,5 +92,48 @@ class TestCreateRunnerBranch(unittest.TestCase):
             self.assertEqual(record["task_id"], "C01")
 
 
+    def test_vision_task_passes_image_through_pipeline(self):
+        """P5b vision 套件：IMAGE 任务经 runner → TaskRequest.images → harness 提取。"""
+        import json
+
+        vision_suite = PROJECT_ROOT / "benchmark" / "tasks" / "vision"
+        fixture = PROJECT_ROOT / "benchmark" / "fixtures" / "vision" / "begonia_lattice.jpg"
+        self.assertTrue(fixture.exists(), "vision fixture 必须入库")
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            runner = self._make_runner(tmp_path)
+            # 响应序列：analyze(1) → object_plan(2) → generate_only(3)
+            runner.llm = MockLLM(responses=[
+                json.dumps({
+                    "component_type": "海棠纹漏窗", "main_form": "lattice_grid",
+                    "layers": [], "symmetry": ["x", "y"], "key_features": ["海棠瓣"],
+                    "dimension_hints": {}, "parametrize": ["A", "ZZYZX"],
+                    "fix_as_ratio": [], "raw_description": "井字格底四瓣海棠",
+                }, ensure_ascii=False),
+                '{"object_type": "lattice_window", "params": [], "scripts": {}, "knowledge_sources": []}',
+                _GDL_REPLY,
+            ])
+
+            record = runner.run_task(str(vision_suite / "V01_begonia_lattice.yaml"))
+
+            self.assertEqual(record["task_id"], "V01")
+            # 请求携带图片（intent=IMAGE 走多图通道，fixture 被读取进 request.images）
+            self.assertTrue(
+                any("海棠" in str(messages) for messages in runner.llm.call_history),
+                "vision 提取调用未携带图/描述",
+            )
+            self.assertFalse(record["skipped"])
+
+    def test_vision_task_yaml_images_parsed(self):
+        """任务 YAML 的 images 字段被解析进 BenchmarkTask。"""
+        from benchmark.schema import load_benchmark_task
+
+        task = load_benchmark_task(
+            PROJECT_ROOT / "benchmark" / "tasks" / "vision" / "V02_ice_crack_lattice.yaml"
+        )
+        self.assertEqual(task.images, ["benchmark/fixtures/vision/ice_crack_lattice.jpg"])
+
+
 if __name__ == "__main__":
     unittest.main()

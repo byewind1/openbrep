@@ -1,0 +1,27 @@
+# lattice_window — 园林漏窗定向提取（P5b 首发，设计 §4 示例）
+name: lattice_window
+trigger:
+  keywords: [漏窗, 窗花, 花窗, 棂, lattice]
+extract_prompt: |
+  这是园林漏窗参考图。只提取以下 GDL 建模必需信息，不要生成 GDL 代码：
+  1. opening_shape：开洞形状（rect 方形 / circle 圆形 / hexagon 六角 / octagon 八角 / begonia 海棠 / freeform 自由形）
+  2. pattern_family：纹样母题（直棂 / 井字 / 套方 / 菱花 / 古钱 / 回纹 / 万字 / 鱼鳞 / 海棠 / 冰裂 / other）
+  3. grid_topology：网格拓扑对象 {kind: grid|radial|irregular, rows: 行数, cols: 列数, cell_desc: 单元描述}
+  4. bar_width_ratio：棂条宽 / 单元宽 的比例（数字）
+  5. frame_bar_ratio：边框宽 / 棂条宽 的比例（数字）
+  6. symmetry_group：对称群（d4 / d2 / c2 / c4 / none）
+  7. motif_features：母题特征数组（如 "四角海棠瓣"）
+  8. gdl_strategy：推荐 GDL 命令组合（如 "PRISM_ 棱条 + FOR 网格平铺"）
+  raw_description：一句话描述这张图。
+  按 JSON 输出（不加 markdown 包裹），无法判断的字段用 null。
+fields:
+  opening_shape: { type: enum, hint: 开洞形状 }
+  pattern_family: { type: enum, hint: 纹样母题 }
+  grid_topology: { type: object, hint: "网格拓扑 {kind, rows, cols, cell_desc}" }
+  bar_width_ratio: { type: number, hint: 棂条宽/单元宽 }
+  frame_bar_ratio: { type: number, hint: 边框宽/棂条宽 }
+  symmetry_group: { type: enum, hint: 对称群 }
+  motif_features: { type: array, hint: 母题描述 }
+  gdl_strategy: { type: string, hint: 推荐命令组合 }
+required: [opening_shape, pattern_family, grid_topology]
+critic_checks: [grid_topology.rows, grid_topology.cols, symmetry_group]

@@ -98,13 +98,72 @@ class TestRecordReplayRoundtrip(unittest.TestCase):
                 replay.generate([{"role": "user", "content": "未知 prompt"}])
             self.assertIn("未命中", str(ctx.exception))
 
-    def test_replay_image_still_rejected(self):
+    def test_vision_record_then_replay_returns_same_content(self):
+        """P5b vision 套件：generate_with_image 录制/回放 round-trip（同 key 同内容）。"""
         with tempfile.TemporaryDirectory() as td:
             corpus = str(Path(td) / "corpus.jsonl")
-            Path(corpus).write_text("", encoding="utf-8")
+            inner = MockLLM(responses=["{\"opening_shape\": \"rect\"}"])
+            recording = RecordingLLM(inner, corpus)
+            live = recording.generate_with_image(
+                "提取漏窗字段", "aGVsbG8=", "image/png", system_prompt="sys",
+                max_tokens=1200, temperature=0.1,
+            )
+
             replay = ReplayLLM(corpus)
-            with self.assertRaises(NotImplementedError):
-                replay.generate_with_image([])
+            played = replay.generate_with_image(
+                "提取漏窗字段", "aGVsbG8=", "image/png", system_prompt="sys",
+                max_tokens=1200, temperature=0.1,
+            )
+
+            self.assertEqual(played.content, live.content)
+            self.assertEqual(played.model, "replay")
+
+    def test_vision_replay_miss_raises(self):
+        with tempfile.TemporaryDirectory() as td:
+            corpus = str(Path(td) / "corpus.jsonl")
+            RecordingLLM(MockLLM(responses=["x"]), corpus).generate_with_image(
+                "已知", "YQ==", "image/png", max_tokens=1200, temperature=0.1,
+            )
+            replay = ReplayLLM(corpus)
+            with self.assertRaises(KeyError) as ctx:
+                replay.generate_with_image(
+                    "未知 prompt", "YQ==", "image/png", max_tokens=1200, temperature=0.1,
+                )
+            self.assertIn("未命中", str(ctx.exception))
+
+    def test_vision_multi_image_record_then_replay_returns_same_content(self):
+        """P5b 复核补漏：generate_with_images 录制/回放 round-trip。
+
+        vision 套件的 IMAGE 任务生成调用走 core.py 的 generate_with_images——
+        Recording/ReplayLLM 缺这个方法时，录制会在生成步骤 AttributeError。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            corpus = str(Path(td) / "corpus.jsonl")
+            images = [
+                {"b64": "aGVsbG8=", "mime": "image/png"},
+                {"b64": "d29ybGQ=", "mime": "image/jpeg"},
+            ]
+            inner = MockLLM(responses=["RESOLVE 0\nBLOCK A, B, ZZYZX\nEND"])
+            recording = RecordingLLM(inner, corpus)
+            live = recording.generate_with_images(
+                "按图生成", images, system_prompt="sys", max_tokens=4096,
+            )
+
+            replay = ReplayLLM(corpus)
+            played = replay.generate_with_images(
+                "按图生成", images, system_prompt="sys", max_tokens=4096,
+            )
+
+            self.assertEqual(played.content, live.content)
+            self.assertEqual(played.model, "replay")
+            # 换一张图 → key 变化 → 未命中报错
+            with self.assertRaises(KeyError):
+                replay.generate_with_images(
+                    "按图生成",
+                    [{"b64": "b3RoZXI=", "mime": "image/png"}],
+                    system_prompt="sys",
+                    max_tokens=4096,
+                )
 
 
 class TestToolCallsRoundtrip(unittest.TestCase):

@@ -667,6 +667,18 @@ class CompilerConfig:
 
 
 @dataclass
+class VisionConfig:
+    """Vision Harness 配置（P5b，设计 §10-D5/D9）。
+
+    pass_raw_image: 提取后原图是否随生成调用双通道发送（默认 on，现状行为）。
+        on  → 多图生成只带 role ∈ {outline, pattern, auto} 的图（material 只参与提取）；
+        off → 生成不带原图，只靠 ModelingPlan hint。单图旧路径不受此开关影响。
+    """
+
+    pass_raw_image: bool = True
+
+
+@dataclass
 class RevisionsConfig:
     """revisions 快照系统配置。
 
@@ -699,6 +711,7 @@ class GDLAgentConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
     compiler: CompilerConfig = field(default_factory=CompilerConfig)
     revisions: RevisionsConfig = field(default_factory=RevisionsConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     knowledge_dir: str = "./knowledge"
     user_knowledge_dir: str = "./user_knowledge"
     templates_dir: str = "./templates"
@@ -785,11 +798,17 @@ class GDLAgentConfig:
         revisions_cfg = pick(RevisionsConfig, revisions_data)
         revisions_cfg.keep_last_n = _normalize_keep_last_n(revisions_cfg.keep_last_n)
 
+        vision_data = data.get("vision", {})
+        if not isinstance(vision_data, dict):
+            vision_data = {}
+        vision_cfg = pick(VisionConfig, vision_data)
+
         return cls(
             llm=llm_cfg,
             agent=pick(AgentConfig, data.get("agent", {})),
             compiler=compiler_cfg,
             revisions=revisions_cfg,
+            vision=vision_cfg,
             knowledge_dir=data.get("knowledge_dir", "./knowledge"),
             user_knowledge_dir=data.get("user_knowledge_dir", "./user_knowledge"),
             templates_dir=data.get("templates_dir", "./templates"),
@@ -844,6 +863,9 @@ class GDLAgentConfig:
             },
             "revisions": {
                 "keep_last_n": self.revisions.keep_last_n,
+            },
+            "vision": {
+                "pass_raw_image": self.vision.pass_raw_image,
             },
             "knowledge_dir": self.knowledge_dir,
             "user_knowledge_dir": self.user_knowledge_dir,

@@ -85,6 +85,12 @@ timeout = 60
 # 非法值（负数/非整数）自动回退默认 20。
 keep_last_n = 20
 
+[vision]
+# Vision Harness（P5b）：提取后原图是否随生成调用双通道发送。
+# on  → 多图生成只带 role ∈ {outline, pattern, auto} 的图（material 只参与提取）；
+# off → 生成不带原图，只靠 ModelingPlan hint。单图旧路径不受此开关影响。
+pass_raw_image = true
+
 [paths]
 knowledge_dir = "./knowledge"
 templates_dir = "./templates"

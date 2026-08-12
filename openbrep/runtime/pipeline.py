@@ -68,7 +68,9 @@ from openbrep.vision.image_to_plan import analyze_reference_image, visual_struct
 
 # ── 多图摄取通道（Vision Harness S0，P5a）──────────────────
 # ImageRef 契约见设计文档 §6：token 与用户文本中的 [图N] 引用对应；
-# path 由后端读取后置 None（防泄露进 prompt）；b64/mime 为预处理后的字节。
+# path 由后端读取后置 None（防泄露进 prompt）；b64/mime 为预处理后的字节；
+# role 由 S1 分型推导（outline/pattern/material/auto，P5b）；sha256 为预处理
+# 字节哈希（P5b 只算不存，为 P5d 存储/复用铺路）。
 
 
 @dataclass
@@ -77,6 +79,27 @@ class ImageRef:
     path: Optional[str] = None       # 本地路径来源（后端读取后置 None，防泄露进 prompt）
     b64: str = ""                    # base64 图像字节（预处理后）
     mime: str = "image/png"          # MIME（image/png / image/jpeg / image/webp）
+    role: str = "auto"               # outline | pattern | material | auto（S1 推导）
+    sha256: str = ""                 # 预处理字节哈希（P5b 只算不存）
+
+
+_GENERATION_ROLES = ("outline", "pattern", "auto")
+
+
+def _generation_images(multi_images: list[ImageRef], config) -> list[dict]:
+    """多图生成调用图片过滤（P5b，设计 D5/D9）。
+
+    pass_raw_image=on → 只带 role ∈ {outline, pattern, auto} 的图（material 只参与提取）；
+    off → 生成不带原图（只靠 hint）。旧单图字段（image_b64）不受此开关影响。
+    """
+    pass_raw = bool(getattr(getattr(config, "vision", None), "pass_raw_image", True))
+    if not pass_raw:
+        return []
+    return [
+        {"b64": img.b64, "mime": img.mime, "token": img.token}
+        for img in multi_images
+        if img.b64 and img.role in _GENERATION_ROLES
+    ]
 
 
 # ── Modify-specific skill instructions ───────────────────
@@ -498,28 +521,26 @@ class TaskPipeline:
                 logger.warning("Vision pre-analysis failed, falling back to direct vision: %s", exc)
                 # fallback: 原始 instruction + image，行为与 Phase 1 之前一致
         elif multi_images and request.intent in ("CREATE", "IMAGE"):
-            # 多图：对每张图顺序调用现有 analyze_reference_image（prompt 一字不改），
-            # 各图 hint 以 【图N】 前缀标注后拼入 enriched_instruction。
+            # 多图：Vision Harness（P5b）——S1 分型 + S2 定向提取（schema 驱动）+ S4 合成。
+            # generic schema 平移现有 analyze_reference_image（原函数原 prompt），
+            # 各图 hint 以 【图N】 前缀标注后拼入 enriched_instruction（与 P5a 逐字节一致）。
+            from openbrep.vision.harness import run as vision_harness_run
+
             try:
                 on_event("status", {"message": f"正在分析 {len(multi_images)} 张参考图…"})
+                plans = vision_harness_run(
+                    multi_images, request.intent, request.user_input, llm, on_event=on_event
+                )
                 hint_parts: list[str] = []
-                for idx, img in enumerate(multi_images, start=1):
-                    if not img.b64:
-                        logger.warning("multi_image: skip image %s (no bytes after read)", img.token or idx)
+                for idx, plan in enumerate(plans, start=1):
+                    if plan is None:
+                        logger.warning("multi_image: skip image %s (no plan after analysis)", multi_images[idx - 1].token or idx)
                         continue
-                    try:
-                        vs = analyze_reference_image(img.b64, img.mime, request.user_input, llm)
-                        gdl_hint = visual_structure_to_gdl_hint(vs)
-                        hint_parts.append(f"【图{idx}】\n{gdl_hint}")
-                        on_event("vision_analysis_done", {"component_type": vs.component_type, "image_index": idx})
-                        logger.info("Vision pre-analysis done for image %d: %s", idx, vs.component_type)
-                    except Exception as exc:
-                        logger.warning("Vision pre-analysis failed for image %d: %s", idx, exc)
-                        # 该图降级为直传，其余图照常
+                    hint_parts.append(f"【图{idx}】\n{plan.to_hint()}")
                 if hint_parts:
                     enriched_instruction = f"{request.user_input}\n\n" + "\n\n".join(hint_parts)
             except Exception as exc:
-                logger.warning("Multi-image pre-analysis failed, falling back to direct vision: %s", exc)
+                logger.warning("Vision harness failed, falling back to direct vision: %s", exc)
         # ─────────────────────────────────────────────────────────────────────
 
         object_plan = None
@@ -636,8 +657,11 @@ class TaskPipeline:
             history=request.history,
             image_b64=image_b64,
             image_mime=image_mime,
-            # 多图通道：仅 images 非空时生效（生成调用改用多图 content 数组）
-            images=[{"b64": img.b64, "mime": img.mime, "token": img.token} for img in multi_images if img.b64],
+            # 多图通道：仅 images 非空时生效（生成调用改用多图 content 数组）。
+            # P5b 角色过滤（设计 D5/D9）：pass_raw_image=on 时只带
+            # role ∈ {outline, pattern, auto} 的图（material 只参与提取）；
+            # off 时生成不带原图（只靠 ModelingPlan hint）。单图旧路径不受影响。
+            images=_generation_images(multi_images, self.config),
         )
 
         # Strip markdown fences the LLM sometimes leaks into scripts

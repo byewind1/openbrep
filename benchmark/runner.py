@@ -200,12 +200,20 @@ class BenchmarkRunner:
 
         request = TaskRequest(
             user_input=task.description,
-            intent="CREATE",
+            # IMAGE 任务（task.images 非空）与生产语义一致：意图 IMAGE 走多图通道
+            intent="IMAGE" if task.images else "CREATE",
             project=project,
             work_dir=str(self.work_dir),
             output_dir=str(self.results_dir),
             gsm_name=task_id,
         )
+        if task.images:
+            from openbrep.runtime.pipeline import ImageRef
+
+            request.images = [
+                ImageRef(token=f"图{index}", path=str(PROJECT_ROOT / rel))
+                for index, rel in enumerate(task.images, start=1)
+            ]
         result = pipeline.execute(request)
 
         elapsed = time.time() - start

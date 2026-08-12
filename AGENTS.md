@@ -345,6 +345,8 @@ openbrep/runtime/semantic_repair.py
 openbrep/naming_alignment.py
 benchmark/llm_replay.py
 openbrep/importers/blender_script/*
+openbrep/vision/harness.py
+openbrep/vision/schema_registry.py (+ schemas/*.yaml)
 frontend/src/workbench/*
 frontend/src/state/*
 ```

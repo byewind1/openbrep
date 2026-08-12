@@ -917,3 +917,42 @@ class MockLLM:
 
     def generate_with_tools(self, messages: list, tools: list, **kwargs) -> LLMResponse:
         return self._next_response(messages)
+
+    def generate_with_image(
+        self,
+        text_prompt: str,
+        image_b64: str,
+        image_mime: str = "image/jpeg",
+        system_prompt: str | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """Mock vision 调用：同 generate 语义（按序返回脚本化响应）。"""
+        return self.generate_with_images(
+            text_prompt=text_prompt,
+            images=[{"b64": image_b64, "mime": image_mime}],
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+    def generate_with_images(
+        self,
+        text_prompt: str,
+        images: list,
+        system_prompt: str | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """Mock 多图 vision 调用：content 数组与 llm.py 同构，响应按序脚本化。"""
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        content = []
+        for img in images:
+            image_b64 = str(img.get("b64") or "")
+            image_mime = str(img.get("mime") or "image/jpeg").strip().lower()
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
+            })
+        content.append({"type": "text", "text": text_prompt})
+        messages.append({"role": "user", "content": content})
+        return self._next_response(messages)

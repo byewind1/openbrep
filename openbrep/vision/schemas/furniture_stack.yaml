@@ -1,0 +1,27 @@
+# furniture_stack — 层叠家具语义（服务书架 / 博古架类，现有层叠语义平移）
+name: furniture_stack
+trigger:
+  keywords: [书架, 博古架, 层叠家具, 层架, bookshelf]
+extract_prompt: |
+  这是层叠家具（书架/博古架类）参考图。只提取以下 GDL 建模必需信息，不要生成 GDL 代码：
+  1. component_type：构件中文名
+  2. shelf_count：层板数量（数字）
+  3. shelf_layout：层板布局描述（如 "上三层等距，底层加厚"）
+  4. frame_profile：框架断面描述
+  5. symmetry：对称轴数组（x / y）
+  6. key_features：关键形态特征数组
+  7. parametrize：应参数化的维度数组（如 [width, depth, height, shelf_count]）
+  8. fix_as_ratio：固定比例派生量数组（如 "shelf_thickness = height * 0.04"）
+  raw_description：一句话描述这张图。
+  按 JSON 输出（不加 markdown 包裹），无法判断的字段用 null。
+fields:
+  component_type: { type: string, hint: 构件中文名 }
+  shelf_count: { type: number, hint: 层板数量 }
+  shelf_layout: { type: string, hint: 层板布局描述 }
+  frame_profile: { type: string, hint: 框架断面描述 }
+  symmetry: { type: array, hint: 对称轴 }
+  key_features: { type: array, hint: 关键形态特征 }
+  parametrize: { type: array, hint: 应参数化维度 }
+  fix_as_ratio: { type: array, hint: 固定比例派生量 }
+required: [component_type, shelf_count]
+critic_checks: [shelf_count]

@@ -1,0 +1,23 @@
+---
+id: V02
+category: create
+complexity: medium
+description: "参考图生成一个冰裂纹园林漏窗：方形开洞，窗芯为不规则冰裂纹网格（可近似为三角/多边形随机剖分）。参数必须使用这些名称：A（宽度）、B（深度）、ZZYZX（高度）。冰裂纹用可参数化的随机剖分逻辑表达（如按固定种子生成多边形棱条），不要逐格手写坐标。"
+images:
+  - benchmark/fixtures/vision/ice_crack_lattice.jpg
+success_criteria:
+  compile_pass: true
+  required_params: [A, B, ZZYZX]
+  required_scripts: [3d.gdl, 2d.gdl, paramlist.xml]
+  geometry_check: "窗框 + 冰裂网格窗芯几何，尺寸与参数对应"
+  semantic_assertions:
+    - type: command_present
+      script: 3d.gdl
+      command: PRISM_
+    - type: param_used
+      script: 3d.gdl
+      param: ZZYZX
+    - type: transform_balanced
+      script: 3d.gdl
+expected_difficulty: medium
+expected_pass: true

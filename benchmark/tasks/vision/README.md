@@ -1,0 +1,57 @@
+# Vision Benchmark 套件（P5b 骨架）
+
+vision 链路（多图通道 + Vision Harness）的回归套件。独立小套件 + 独立语料
+`benchmark/fixtures/llm_corpus/vision.jsonl`，不混入 create/modify 套件。
+
+## 任务清单
+
+| id | 任务 | 参考图 | 说明 |
+|----|------|--------|------|
+| V01 | 海棠纹漏窗（CREATE/IMAGE） | `benchmark/fixtures/vision/begonia_lattice.jpg` | 井字格底 + 四瓣海棠单元，源 `materials/patterns/lanyuan-62.jpg` |
+| V02 | 冰裂纹漏窗（CREATE/IMAGE） | `benchmark/fixtures/vision/ice_crack_lattice.jpg` | 方洞冰裂正面，源 `materials/patterns/lanyuan-44.jpg` |
+| V03 | 圆洞冰裂纹漏窗（CREATE/IMAGE） | `benchmark/fixtures/vision/round_window_ice_crack.jpg` | 拙政园月洞 + 冰裂窗芯，源 `materials/patterns/round-window-humble.jpg` |
+
+## 录制（未执行——消耗真实 token，由监控方复核后执行）
+
+```bash
+# 真实 LLM 录制一次（vision 调用走 generate / generate_with_image，均可录制）
+python -m benchmark.runner --suite benchmark/tasks/vision/ --mode auto --jobs 1 \
+  --llm-record benchmark/fixtures/llm_corpus/vision.jsonl
+
+# 之后离线确定性回放
+python -m benchmark.runner --suite benchmark/tasks/vision/ --mode mock --jobs 1 \
+  --llm-replay benchmark/fixtures/llm_corpus/vision.jsonl
+```
+
+注意：
+- 录制命令用 `--jobs 1`（vision 套件图多、语料小，串行最稳；与 create/modify 的
+  4 worker 并行规范不同，因为本套件目前只有 3 题）。
+- vision 语料 key 与 create/modify 同构（messages + kwargs 的 sha256）；未命中
+  报错并提示重录，与主套件同一纪律。
+- 任务 description 变更 = 送给 LLM 的指令变更 → 必须重录（黄金语料规范）。
+
+## fixture 规范
+
+- 图片放 `benchmark/fixtures/vision/`，来源 `materials/patterns/`（Wikimedia
+  Commons 自由授权，商用需注意各自授权条款，见源目录 README）。
+- **超 500KB 的先降采样到 1568px 长边再入库**（本套件当前 3 张均为 ~960px
+  缩略图、<500KB，直接拷贝）。降采样命令：
+
+```bash
+python - <<'PY'
+from PIL import Image
+im = Image.open("materials/patterns/xxx.jpg")
+if max(im.size) > 1568:
+    im.thumbnail((1568, 1568))
+    im.save("benchmark/fixtures/vision/xxx.jpg", "JPEG", quality=85)
+PY
+```
+
+- harness 侧（P5a 预处理）对入库图还会统一压到 1568px 长边，fixture 内卷尺寸
+  只是为了仓库体积与入库纪律。
+
+## 注意
+
+- `benchmark/baseline.json` 不含 vision 套件；`check_baseline` 只跑 create +
+  modify，本套件不影响基线门禁。
+- 当前为骨架：任务/语料/断言随 P5c/P5d 演进（critic 校验、字段置信度入断言）。

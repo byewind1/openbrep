@@ -1,0 +1,20 @@
+# generic — 现有通用提取的平移（P5b）
+# 等价策略：generic 路径 = 直接调用 analyze_reference_image（原函数原 prompt 原封不动），
+# VisualStructure 包装进 ModelingPlan，to_hint() 转调 visual_structure_to_gdl_hint。
+# 本 YAML 只作 registry 必需键占位与文档；字段不参与提取逻辑。
+name: generic
+trigger:
+  keywords: []
+extract_prompt: |
+  参考图通用结构分析：识别构件类型、几何层次、对称性、关键特征、
+  参数化维度与固定比例。输出严格 JSON。
+fields:
+  component_type: { type: string, hint: 构件中文名 }
+  main_form: { type: string, hint: 整体形态英文简短描述 }
+  layers: { type: array, hint: 几何层次（从下往上） }
+  symmetry: { type: array, hint: 对称轴 }
+  key_features: { type: array, hint: 关键形态特征 }
+  parametrize: { type: array, hint: 应参数化的维度 }
+  fix_as_ratio: { type: array, hint: 固定比例派生量 }
+required: []
+critic_checks: []

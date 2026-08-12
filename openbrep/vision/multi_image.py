@@ -14,6 +14,7 @@ multi_image — 多图摄取通道（Vision Harness S0，P5a）
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import logging
 from pathlib import Path
@@ -48,6 +49,14 @@ def resolve_image_path(path: str) -> Optional[str]:
 
 def mime_from_path(path: str) -> str:
     return _IMAGE_SUFFIX_MIME.get(Path(path).suffix.lower(), "image/png")
+
+
+def sha256_of_b64(image_b64: str) -> str:
+    """预处理字节的 sha256（设计 D7：内容哈希寻址键；P5b 只算不存）。"""
+    try:
+        return hashlib.sha256(base64.b64decode(image_b64)).hexdigest()
+    except Exception:
+        return ""
 
 
 def preprocess_image_bytes(image_b64: str, image_mime: str) -> tuple[str, str]:
@@ -117,5 +126,8 @@ def resolve_and_preprocess(images: list["ImageRef"]) -> list["ImageRef"]:
             path=None,  # 后端读取后置 None，防泄露进 prompt
             b64=b64,
             mime=mime,
+            # P5b：role 透传（S1 推导前为 auto），sha256 取预处理后字节的哈希
+            role=getattr(img, "role", "auto") or "auto",
+            sha256=sha256_of_b64(b64) if b64 else "",
         ))
     return resolved

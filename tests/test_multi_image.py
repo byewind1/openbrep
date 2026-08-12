@@ -319,8 +319,8 @@ class TestMultiImagePipeline(unittest.TestCase):
             captured.setdefault("analyze_calls", []).append((b64, mime, user_hint))
             return _FAKE_VS
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", side_effect=fake_analyze) as mock_analyze, \
-             patch("openbrep.runtime.pipeline.visual_structure_to_gdl_hint", return_value="## 建模计划\n收分台座"), \
+        with patch("openbrep.vision.harness.analyze_reference_image", side_effect=fake_analyze) as mock_analyze, \
+             patch("openbrep.vision.modeling_plan.visual_structure_to_gdl_hint", return_value="## 建模计划\n收分台座"), \
              patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()) as mock_plan:
             request = TaskRequest(
                 user_input="做一个斗",
@@ -344,13 +344,18 @@ class TestMultiImagePipeline(unittest.TestCase):
         self.assertIn("【图2】", instruction)
         self.assertIn("## 建模计划", instruction)
         self.assertLess(instruction.index("【图1】"), instruction.index("【图2】"))
+        # P5b generic 零回归：与 P5a 现状逐字节一致（user_input + \n\n + 【图N】\nhint 拼接）
+        self.assertEqual(
+            instruction,
+            "做一个斗\n\n【图1】\n## 建模计划\n收分台座\n\n【图2】\n## 建模计划\n收分台座",
+        )
 
     def test_generation_uses_multi_image_content_array(self):
         pipeline = _make_pipeline()
         captured = {}
 
-        with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS), \
-             patch("openbrep.runtime.pipeline.visual_structure_to_gdl_hint", return_value="hint"), \
+        with patch("openbrep.vision.harness.analyze_reference_image", return_value=_FAKE_VS), \
+             patch("openbrep.vision.modeling_plan.visual_structure_to_gdl_hint", return_value="hint"), \
              patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()):
             def fake_generate_with_images(text_prompt, images, system_prompt=None, **kwargs):
                 captured["images"] = images
@@ -370,6 +375,7 @@ class TestMultiImagePipeline(unittest.TestCase):
             )
             pipeline.execute(request)
 
+        # P5b 角色过滤：图1 outline / 图2 auto 都在允许集，两张都进生成调用（与 P5a 一致）
         self.assertEqual(
             captured["images"],
             [{"b64": "Zmlyc3Q=", "mime": "image/png"},
@@ -415,8 +421,8 @@ class TestMultiImagePipeline(unittest.TestCase):
             p = Path(td) / "big.png"
             big.save(p)
             pipeline = _make_pipeline()
-            with patch("openbrep.runtime.pipeline.analyze_reference_image", return_value=_FAKE_VS), \
-                 patch("openbrep.runtime.pipeline.visual_structure_to_gdl_hint", return_value="hint"), \
+            with patch("openbrep.vision.harness.analyze_reference_image", return_value=_FAKE_VS), \
+                 patch("openbrep.vision.modeling_plan.visual_structure_to_gdl_hint", return_value="hint"), \
                  patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()):
                 captured = {}
 
