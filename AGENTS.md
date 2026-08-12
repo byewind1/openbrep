@@ -204,10 +204,10 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 
 ## Current Baseline
 
-As of 2026-08-12:
+As of 2026-08-13:
 
 ```text
-python tests: 1692 passed, 66 subtests passed
+python tests: 1727 passed, 66 subtests passed
 frontend: 429 passed (vitest) + tsc clean
 benchmark replay: create/modify zero regression; vision suite 1/3 (recorded baseline)
 ```
@@ -305,6 +305,19 @@ Architecture notes:
   intent detection; agent loop snapshots a before-revision lazily before the
   first actual mutation; generate intent with an open project asks first;
   chat without a project never creates files on disk.
+- Verification defense pack (2026-08-13, P8): `openbrep/runtime/semantic_repair.py`
+  rejects degenerate repair rounds (ellipsis stubs, content shrink, param loss)
+  before the accept check; `static_checker.py` has an `ellipsis_stub` check;
+  CREATE/IMAGE runs delivery-integrity checks (placeholder_delivery /
+  reserved_params_missing) and retries once on zero `[FILE:]` output before
+  hard-failing with `project=None`.
+- Previewer condition eval (2026-08-13, P9): `gdl_previewer.py` supports string
+  comparison (`=`, `<>/#`), leading `NOT`, single-line IF no longer counted in
+  block-IF depth, inline-IF GOSUB runs in full script context, `SQR` allowed.
+  String parameters survive the production path
+  (`project_parameter_service.parameter_values`); numeric sweeps skip them.
+  Note: FOR-body GOSUB to labels outside the body scope and `:` multi-statements
+  in inline IFs are still unsupported (菱花 lattice blocked on this).
 
 ## benchmark 黄金语料规范（corpus maintenance）
 
