@@ -117,8 +117,10 @@ def _schema_plan(schema: VisionSchema, img, user_input: str, llm) -> ModelingPla
             img.b64,
             img.mime,
             system_prompt=_SCHEMA_SYSTEM_PROMPT,
+            # 不传 temperature：部分 provider（如 kimi-k2.6）对 temperature 有
+            # 硬约束（仅 0.6/1），硬编码 0.1 会被端点 400 拒绝——交给
+            # LLMAdapter._effective_temperature 按 provider 条目级配置决定。
             max_tokens=1200,
-            temperature=0.1,
         )
         raw = (resp.content or "").strip()
         data = _parse_schema_json(raw)

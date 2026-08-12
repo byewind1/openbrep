@@ -55,3 +55,15 @@ PY
 - `benchmark/baseline.json` 不含 vision 套件；`check_baseline` 只跑 create +
   modify，本套件不影响基线门禁。
 - 当前为骨架：任务/语料/断言随 P5c/P5d 演进（critic 校验、字段置信度入断言）。
+
+## 首轮录制结果（2026-08-12，kimi-k2.6，13 条语料）
+
+0/3 PASS——回放已逐字复现失败原因（闭环验证通过），失败全部是生成质量问题
+而非链路问题：V01/V03 transform stack 不平衡（push≠pop）、V03 缺 CIRCLE
+命令、V02/V03 大量 derived_var_not_in_master 告警。这是 k2.6 在漏窗几何上的
+真实水平基线，P5c critic 与漏窗项目的改进以此为对照。
+
+录制前置修复（同 commit）：vision 调用硬编码 temperature=0.1 与 kimi 端点
+约束（仅 0.6/1）冲突导致提取全部 400 降级——harness._schema_plan 与
+analyze_reference_image 两处改为不传 temperature，由 LLMAdapter
+_effective_temperature 按 provider 条目级配置决定。

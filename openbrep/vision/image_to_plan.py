@@ -104,7 +104,10 @@ def analyze_reference_image(
     ]
 
     try:
-        resp = llm.generate(messages, max_tokens=1200, temperature=0.1)
+        # 不传 temperature：部分 provider（如 kimi-k2.6）对 temperature 有
+        # 硬约束（仅 0.6/1），硬编码会被端点 400 拒绝——交给
+        # LLMAdapter._effective_temperature 按 provider 条目级配置决定。
+        resp = llm.generate(messages, max_tokens=1200)
         raw = resp.content.strip()
         return _parse_response(raw)
     except Exception as exc:
