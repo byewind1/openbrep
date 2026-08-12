@@ -32,6 +32,7 @@ import json
 import logging
 from typing import Any, Callable, Optional
 
+from openbrep.vision.extraction_store import plan_to_dict
 from openbrep.vision.image_to_plan import analyze_reference_image
 from openbrep.vision.modeling_plan import ModelingPlan
 from openbrep.vision.schema_registry import VisionSchema, load_all_schemas
@@ -100,6 +101,9 @@ def run(
             on_event("vision_analysis_done", {
                 "component_type": vs.component_type if vs is not None else "unknown",
                 "image_index": idx,
+                "token": img.token or "",
+                # P5d-1：事件 payload 携带提取摘要（只读卡片数据源，不改变 hint）
+                "extraction": plan_to_dict(plan),
             })
         else:
             plan = _schema_plan(schema, img, user_input, llm)
@@ -114,7 +118,13 @@ def run(
                 and critic_pass
             ):
                 plan = _critic_pass(schema, plan, img, user_input, llm, on_event=on_event)
-            on_event("vision_analysis_done", {"schema_name": schema.name, "image_index": idx})
+            on_event("vision_analysis_done", {
+                "schema_name": schema.name,
+                "image_index": idx,
+                "token": img.token or "",
+                # P5d-1：事件 payload 携带提取摘要（只读卡片数据源，不改变 hint）
+                "extraction": plan_to_dict(plan),
+            })
             if plan.degraded:
                 on_event("vision_degraded", {
                     "schema_name": schema.name,

@@ -151,6 +151,13 @@ export const en: Record<LocaleKey, string> = {
   'assistant.acceptance.bbox': 'Bounding box',
   'assistant.acceptance.counts2d': '2D elements (lines/polygons/circles/arcs)',
 
+  // Vision extraction card (P5d-1, read-only): schema extraction result
+  'vision.extraction.title': 'Image extraction',
+  'vision.extraction.degraded': '【Analysis failed — degraded】',
+  'vision.extraction.criticDegraded': '【Critic verification degraded】',
+  'vision.extraction.lowConfidence': 'low confidence',
+  'vision.extraction.evidenceHint': 'critic correction evidence',
+
   // 3D preview picking (P1a): click mesh to highlight + jump to source
   'preview.pick.noSource': 'No source trace',
   'preview.pick.jumpToSource': 'Jump to source',

@@ -140,6 +140,103 @@ button:focus-visible {
   font-size: 11px;
 }
 
+/* ── Vision extraction card (P5d-1, read-only) ────────────────────────── */
+.assistant-vision-extractions {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+.assistant-vision-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 11px;
+  display: grid;
+  gap: 6px;
+}
+.assistant-vision-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.assistant-vision-card-header strong {
+  color: var(--text-primary);
+}
+.assistant-vision-card-header em {
+  font-style: normal;
+  color: var(--accent-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+.assistant-vision-degraded {
+  color: var(--warning);
+  border: 1px dashed rgba(245, 158, 11, 0.5);
+  border-radius: 4px;
+  padding: 3px 6px;
+  background: var(--status-warning-bg);
+}
+.assistant-vision-fields {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.assistant-vision-fields th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 3px 8px 3px 0;
+  vertical-align: top;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+.assistant-vision-fields td {
+  color: var(--text-primary);
+  padding: 3px 0;
+  word-break: break-word;
+}
+.assistant-vision-fields tr {
+  border-bottom: 1px solid var(--border);
+}
+.assistant-vision-fields tr:last-child {
+  border-bottom: none;
+}
+/* 低置信字段：琥珀色高亮（零静默原则，设计 D8） */
+.assistant-vision-fields tr.is-low-confidence th,
+.assistant-vision-fields tr.is-low-confidence td {
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+.assistant-vision-low-badge {
+  font-style: normal;
+  font-size: 9px;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+/* critic 修正：旧值→新值 */
+.assistant-vision-correction {
+  color: var(--accent-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  cursor: help;
+}
+.assistant-vision-marker {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+}
+.assistant-vision-raw {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
 /* ── Verification evidence card ─────────────────────────────────────────── */
 .assistant-verification {
   margin-top: 6px;

@@ -406,6 +406,31 @@ export interface AssistantMessage {
   acceptance?: ModifyAcceptance
   // 已发送图片（仅当前会话内存活，与 changedFiles 同语义；用于消息气泡缩略 chip）
   images?: AssistantImageAttachment[]
+  // 读图提取卡片（P5d-1，只读）：vision 提取结果渲染（仅当前会话内存活）
+  visionExtractions?: VisionExtraction[]
+}
+
+// ── 读图提取卡片（P5d-1，只读）─────────────────────────────────────────────
+// 与后端 vision_analysis_done 事件 payload.extraction（及
+// TaskResult.metadata["vision_extractions"] 条目）同构，snake_case 原样透传。
+export interface VisionExtractionCorrection {
+  field: string
+  old: unknown
+  new: unknown
+  evidence?: string
+}
+
+export interface VisionExtraction {
+  token?: string
+  skipped?: boolean
+  schema_name?: string
+  fields?: Record<string, unknown>
+  confidence?: Record<string, string>
+  corrections?: VisionExtractionCorrection[]
+  degraded?: boolean
+  critic_degraded?: boolean
+  raw_description?: string
+  sha256?: string
 }
 
 // ── Streaming events from /api/assistant/generate?stream=1 (SSE) ───────────

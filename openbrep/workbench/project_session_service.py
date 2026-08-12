@@ -486,6 +486,33 @@ class WorkbenchProjectSessionService:
         self.session.source = "hsf"
         self.session.source_path = hsf_dir
         self.remember_project_path(hsf_dir)
+        # ── P5d-1：vision 提取工件落盘（设计 D7 内容哈希寻址）──────────────
+        # 数据源：pipeline 透出的 TaskResult.metadata["vision_extractions"]。
+        # 位置必须在 save_to_disk + P7b 目录 rename 之后（root 已是最终路径）；
+        # 落盘失败只记 warning 不阻断交付（设计 D8 零静默的存储侧兜底）。
+        vision_warnings: list[str] = []
+        extraction_entries = (result.metadata or {}).get("vision_extractions") or []
+        if extraction_entries:
+            from openbrep.vision.extraction_store import save_extraction
+            from openbrep.vision.modeling_plan import ModelingPlan
+
+            for entry in extraction_entries:
+                if entry.get("skipped"):
+                    continue
+                try:
+                    plan = ModelingPlan(
+                        schema_name=str(entry.get("schema_name") or ""),
+                        fields=entry.get("fields") or {},
+                        confidence=entry.get("confidence") or {},
+                        corrections=entry.get("corrections") or [],
+                        source_images=[str(entry.get("sha256") or "")],
+                        raw_description=str(entry.get("raw_description") or ""),
+                        degraded=bool(entry.get("degraded")),
+                        critic_degraded=bool(entry.get("critic_degraded")),
+                    )
+                    save_extraction(result.project.root, plan, model=self.session.llm_model)
+                except Exception as exc:
+                    vision_warnings.append(f"vision 提取工件落盘失败（{entry.get('token') or '?'}）：{exc}")
         # skill 效果回写（GUI 侧通道，best-effort）：失败任务按注入 skill 计 fail_count
         try:
             from openbrep.runtime.skill_harvest import record_skill_outcome
@@ -516,6 +543,8 @@ class WorkbenchProjectSessionService:
         }
         if rename_warnings:
             response["warnings"] = list(response.get("warnings") or []) + rename_warnings
+        if vision_warnings:
+            response["warnings"] = list(response.get("warnings") or []) + vision_warnings
         if proposal:
             response["skill_proposal"] = proposal
         return response

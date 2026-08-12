@@ -504,6 +504,8 @@ class TaskPipeline:
 
         on_event = request.on_event or (lambda *_: None)
         debug_mode = request.intent == "DEBUG"
+        # P5d-1：vision 提取透出（多图分支填充；无图/单图旧路径保持空列表）
+        vision_extractions: list[dict] = []
 
         # ── Phase 1 Vision Pre-analysis ──────────────────────────────────────
         # 有图 + 生成类意图（CREATE / IMAGE）→ 先结构化再生成
@@ -536,6 +538,19 @@ class TaskPipeline:
                     on_event=on_event,
                     critic_pass=self.config.vision.critic_pass,
                 )
+                # P5d-1：plans 序列化进 metadata（设计 D7 存储 + 前端只读卡片数据源）。
+                # 每图一条：schema/fields/confidence/corrections/降级标记 + sha256；
+                # 无字节或分析失败的图记 {token, skipped: true}。字段形状与
+                # vision.extraction_store.plan_to_dict 同构（事件 payload 同源）。
+                from openbrep.vision.extraction_store import plan_to_dict
+                for idx, (plan, img) in enumerate(zip(plans, multi_images), start=1):
+                    token = img.token or f"图{idx}"
+                    if plan is None:
+                        vision_extractions.append({"token": token, "skipped": True})
+                        continue
+                    entry = plan_to_dict(plan)
+                    entry["token"] = token
+                    vision_extractions.append(entry)
                 hint_parts: list[str] = []
                 for idx, plan in enumerate(plans, start=1):
                     if plan is None:
@@ -988,6 +1003,8 @@ class TaskPipeline:
                 "attempted": _sem_outcome.rounds_attempted,
                 "accepted": _sem_outcome.accepted_rounds,
             },
+            # P5d-1：vision 提取透出（无提取时为空 dict，避免污染 metadata）
+            metadata={"vision_extractions": vision_extractions} if vision_extractions else {},
         )
 
     def _handle_modify(self, request: TaskRequest) -> TaskResult:

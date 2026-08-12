@@ -4,6 +4,7 @@ import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, Modify
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
+import { ExtractionCardList } from './ExtractionCard'
 import { PanelEmpty } from './PanelEmpty'
 import { useThemedDialog } from './ThemedDialog'
 import { useT } from '../i18n'
@@ -386,6 +387,12 @@ export function AssistantPanel({
                   busy={busy && index === messages.length - 1}
                   interrupted={message.interrupted}
                 />
+              ) : null}
+
+              {/* P5d-1：读图提取卡片（只读）——schema 名 + 字段表 + 低置信高亮 +
+                   critic 修正 旧→新 + 降级标记 */}
+              {message.role === 'assistant' && message.visionExtractions?.length ? (
+                <ExtractionCardList extractions={message.visionExtractions} />
               ) : null}
 
               {message.changedFiles?.length ? (

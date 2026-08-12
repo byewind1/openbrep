@@ -148,6 +148,13 @@ export const zh = {
   'assistant.acceptance.bbox': '包围盒尺寸',
   'assistant.acceptance.counts2d': '平面元素（线/多边形/圆/弧）',
 
+  // 读图提取卡片（P5d-1，只读）：vision 提取结果
+  'vision.extraction.title': '读图提取',
+  'vision.extraction.degraded': '【分析失败已降级】',
+  'vision.extraction.criticDegraded': '【critic 校验已降级】',
+  'vision.extraction.lowConfidence': '低置信',
+  'vision.extraction.evidenceHint': 'critic 修正依据',
+
   // 3D 预览拾取（P1a）：点击 mesh 高亮 + 溯源跳转
   'preview.pick.noSource': '无源码溯源',
   'preview.pick.jumpToSource': '跳转到源码',

@@ -628,3 +628,96 @@ describe('AssistantPanel acceptance report card (V5)', () => {
     expect(screen.queryByText('修改前')).toBeNull()
   })
 })
+
+describe('AssistantPanel vision extraction card (P5d-1)', () => {
+  const extraction = {
+    token: '图1',
+    schema_name: 'lattice_window',
+    fields: {
+      opening_shape: 'rect',
+      pattern_family: '冰裂',
+      grid_topology: { kind: 'grid', rows: 4, cols: 4 },
+      bar_width_ratio: 0.08,
+    },
+    confidence: {
+      opening_shape: 'high',
+      pattern_family: 'high',
+      'grid_topology.rows': 'low',
+      bar_width_ratio: 'low',
+    },
+    corrections: [
+      // 顶层字段精确修正 → 旧值→新值
+      { field: 'pattern_family', old: '冰裂', new: '海棠', evidence: '图中为海棠纹' },
+      // 嵌套字段修正 → 行内标记
+      { field: 'grid_topology.rows', old: 4, new: 3, evidence: '图中 3 行' },
+    ],
+    degraded: false,
+    critic_degraded: false,
+    raw_description: '',
+    sha256: 'aa'.repeat(32),
+  }
+
+  test('renders schema name, field table, low-confidence highlight and correction old→new', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        messages={[{ role: 'assistant', content: '已根据参考图创建。', visionExtractions: [extraction] }]}
+      />,
+    )
+    // 卡片标题 + schema 名
+    expect(screen.getByText('读图提取')).toBeTruthy()
+    expect(screen.getByText('图1 · lattice_window')).toBeTruthy()
+    // 字段表
+    expect(screen.getByText('opening_shape')).toBeTruthy()
+    expect(screen.getByText('rect')).toBeTruthy()
+    // 顶层字段精确修正：旧值→新值
+    expect(screen.getByText('冰裂 → 海棠')).toBeTruthy()
+    // 嵌套字段修正 → 行内标记
+    expect(screen.getByText('grid_topology.rows 4→3')).toBeTruthy()
+    // 顶层低置信字段：琥珀色行 + 低置信 badge
+    const lowRow = screen.getByText('bar_width_ratio').closest('tr')
+    expect(lowRow?.className).toContain('is-low-confidence')
+    expect(screen.getByText('低置信')).toBeTruthy()
+    // 嵌套低置信 → 行内标记（低置信：grid_topology.rows）
+    expect(screen.getByText('低置信：grid_topology.rows')).toBeTruthy()
+    // 非低置信字段不标
+    expect(screen.queryByText('低置信：opening_shape')).toBeNull()
+  })
+
+  test('renders degraded markers for extraction failure and critic failure', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        messages={[
+          {
+            role: 'assistant',
+            content: '已创建。',
+            visionExtractions: [
+              { ...extraction, token: '图1', degraded: true, fields: {}, raw_description: '原始分析文本' },
+              { ...extraction, token: '图2', degraded: false, critic_degraded: true, fields: {} },
+            ],
+          },
+        ]}
+      />,
+    )
+    expect(screen.getByText(/【分析失败已降级】/)).toBeTruthy()
+    expect(screen.getByText(/【critic 校验已降级】/)).toBeTruthy()
+    // 降级图无字段时退回 raw_description 展示
+    expect(screen.getByText('原始分析文本')).toBeTruthy()
+  })
+
+  test('skips skipped entries and renders nothing', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        messages={[
+          { role: 'assistant', content: '已创建。', visionExtractions: [{ token: '图3', skipped: true }] },
+        ]}
+      />,
+    )
+    expect(screen.queryByText('读图提取')).toBeNull()
+  })
+})

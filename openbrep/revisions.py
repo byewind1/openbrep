@@ -101,6 +101,10 @@ def create_revision(
         "explanation": extra_metadata.get("explanation", ""),
         "compile_comparison": extra_metadata.get("compile_comparison"),
         "metadata": extra_metadata,
+        # P5d-1（设计 D7）：manifest 记录本项目当前全部 extraction 哈希
+        # （简化口径：当前全部，不按 revision 快照回放；提取文件本身在
+        # .openbrep/vision/ 下，属项目元数据，不进 revision 源码快照）。
+        "vision_extractions": _vision_extraction_hashes(root),
     }
     # 成品归档：编译成功且产物存在时，把 .gsm 拷入 artifacts/<revision_id>/ 并让
     # manifest 的 gsm_path 指向归档路径（修复旧版指向临时目录、运行后悬空的问题）。
@@ -626,6 +630,16 @@ def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> int:
     if deleted:
         _logger.info("prune_revisions: deleted %d revision(s), kept %d", deleted, keep_last_n)
     return deleted
+
+
+def _vision_extraction_hashes(project_root: Path) -> list:
+    """项目当前全部 extraction 哈希（manifest 用，best-effort 失败记空）。"""
+    try:
+        from openbrep.vision.extraction_store import list_extraction_hashes
+
+        return list_extraction_hashes(project_root)
+    except Exception:
+        return []
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:

@@ -764,6 +764,124 @@ class TestGenerationRoleFilter(unittest.TestCase):
         )
 
 
+# ── 7. P5d-1 提取透出（metadata + 事件 payload）──────────
+
+class TestExtractionPayload(unittest.TestCase):
+    """P5d-1：提取结果成为可见工件——harness 事件 payload 携带提取摘要，
+    pipeline 把 plans 序列化进 TaskResult.metadata["vision_extractions"]。"""
+
+    _EXTRACT = TestLatticeExtraction._EXTRACT_ENVELOPE
+
+    def _schema_llm(self, critic_pass: bool = True):
+        extract = self._EXTRACT  # 闭包捕获（_Seq 实例没有类属性）
+
+        class _Seq:
+            def __init__(self):
+                self.call_count = 0
+
+            def generate_with_image(self, text_prompt, image_b64, image_mime="image/jpeg", system_prompt=None, **kwargs):
+                idx = self.call_count
+                self.call_count += 1
+                if critic_pass and idx % 2 == 1:
+                    return LLMResponse(
+                        content=json.dumps({"verdicts": {
+                            "grid_topology.rows": {"verdict": "mismatch", "evidence": "图中 3 行", "value": 3},
+                            "grid_topology.cols": {"verdict": "match", "evidence": "一致"},
+                            "symmetry_group": {"verdict": "match", "evidence": "四重对称"},
+                        }}, ensure_ascii=False),
+                        model="mock", usage={}, finish_reason="stop",
+                    )
+                return LLMResponse(
+                    content=json.dumps(extract, ensure_ascii=False),
+                    model="mock", usage={}, finish_reason="stop",
+                )
+
+            def generate_with_images(self, text_prompt, images, system_prompt=None, **kwargs):
+                return LLMResponse(
+                    content="[FILE: scripts/3d.gdl]\nBLOCK 1,1,1\nEND",
+                    model="mock", usage={}, finish_reason="stop",
+                )
+
+        return _Seq()
+
+    def test_harness_event_payload_carries_extraction_summary(self):
+        """vision_analysis_done 事件 payload.extraction = 提取摘要（含 critic 修正后状态）。"""
+        events = []
+        llm = self._schema_llm(critic_pass=True)
+        sha256 = "11" * 32
+        plans = harness_run(
+            [ImageRef(token="图1", b64="YQ==", mime="image/png", sha256=sha256)],
+            "CREATE",
+            "这是漏窗，按图生成",
+            llm,
+            on_event=lambda t, d: events.append((t, d)),
+        )
+        self.assertIsNotNone(plans[0])
+        done = [d for t, d in events if t == "vision_analysis_done"]
+        self.assertEqual(len(done), 1)
+        payload = done[0]
+        self.assertEqual(payload["schema_name"], "lattice_window")
+        self.assertEqual(payload["token"], "图1")
+        ext = payload["extraction"]
+        # 提取摘要：字段/置信度/修正/降级标记/sha256 齐全
+        self.assertEqual(ext["schema_name"], "lattice_window")
+        self.assertEqual(ext["fields"]["opening_shape"], "rect")
+        self.assertEqual(ext["confidence"]["grid_topology.rows"], "high")
+        self.assertEqual(ext["corrections"][0]["field"], "grid_topology.rows")
+        self.assertEqual(ext["corrections"][0]["old"], 4)
+        self.assertEqual(ext["corrections"][0]["new"], 3)
+        self.assertFalse(ext["degraded"])
+        self.assertFalse(ext["critic_degraded"])
+        self.assertEqual(ext["sha256"], sha256)
+        # payload 必须 JSON 可序列化（纯 JSON 形状，dataclass 已 asdict）
+        json.dumps(payload, ensure_ascii=False)
+
+    def test_pipeline_metadata_lists_plans_and_skipped_images(self):
+        """metadata["vision_extractions"]：每图一条（含 schema/fields/confidence/
+        corrections/degraded/critic_degraded/sha256）；无字节图记 {token, skipped: true}。"""
+        pipeline = _make_pipeline()
+        llm = self._schema_llm(critic_pass=True)
+        pipeline._make_llm = lambda req: llm
+        with patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()):
+            request = TaskRequest(
+                user_input="这是漏窗，按图生成",
+                intent="IMAGE",
+                images=[
+                    ImageRef(token="图1", b64=base64.b64encode(b"a").decode(), mime="image/png"),
+                    ImageRef(token="图2", b64=base64.b64encode(b"b").decode(), mime="image/jpeg"),
+                    ImageRef(token="图3", b64="", path=None),  # 无字节 → skipped
+                ],
+            )
+            result = pipeline.execute(request)
+
+        extractions = (result.metadata or {}).get("vision_extractions")
+        self.assertIsNotNone(extractions)
+        self.assertEqual(len(extractions), 3)
+        for idx in (0, 1):
+            entry = extractions[idx]
+            self.assertEqual(entry["token"], ["图1", "图2"][idx])
+            self.assertEqual(entry["schema_name"], "lattice_window")
+            self.assertEqual(entry["fields"]["pattern_family"], "冰裂")
+            self.assertIn("confidence", entry)
+            self.assertIn("corrections", entry)
+            self.assertIn("degraded", entry)
+            self.assertIn("critic_degraded", entry)
+            self.assertEqual(len(entry["sha256"]), 64)
+            # 条目必须 JSON 可序列化（service 落盘直接消费）
+            json.dumps(entry, ensure_ascii=False)
+        # 无字节图：{token, skipped: true}
+        self.assertEqual(extractions[2], {"token": "图3", "skipped": True})
+        # injected_skills 合并后 vision_extractions 仍保留
+        self.assertIn("injected_skills", result.metadata)
+
+    def test_pipeline_metadata_empty_for_plain_create(self):
+        """无图 CREATE：metadata 不含 vision_extractions（不污染）。"""
+        pipeline = _make_pipeline()
+        with patch("openbrep.runtime.pipeline.plan_gdl_object", return_value=_FakeObjectPlan()):
+            result = pipeline.execute(TaskRequest(user_input="做一个书架", intent="CREATE"))
+        self.assertNotIn("vision_extractions", result.metadata or {})
+
+
 # ── 6. sha256 ────────────────────────────────────────────
 
 class TestImageSha256(unittest.TestCase):

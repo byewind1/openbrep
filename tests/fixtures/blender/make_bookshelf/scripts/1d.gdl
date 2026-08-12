@@ -1,0 +1,3 @@
+﻿! Derived variables from make_bookshelf
+spacing = height / (shelf_count + 1)
+

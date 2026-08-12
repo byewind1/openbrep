@@ -1,4 +1,4 @@
-import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingPlan } from '../../api/types'
+import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingPlan, VisionExtraction } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -189,7 +189,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       assistantMessages: replacePendingAssistantMessage(
         state.assistantMessages,
         `${result.assistant?.reply ?? 'Project created.'}${locationNote}${formatAssistantEventSummary(result.events)}`,
-        { verification: result.assistant?.verification ?? undefined },
+        {
+          verification: result.assistant?.verification ?? undefined,
+          // P5d-1：从事件流提取读图结果 → 渲染只读提取卡片
+          visionExtractions: extractVisionExtractions(result.events),
+        },
       ),
       // 模式级 skill 提案（P2-d）：CREATE 成功交付后弹"沉淀提案"确认卡
       pendingSkillProposal: result.skill_proposal ?? null,
@@ -693,6 +697,36 @@ function replacePendingAssistantMessage(messages: AssistantMessage[], reply: str
     return [...messages.slice(0, -1), replyMessage]
   }
   return [...messages, replyMessage]
+}
+
+/**
+ * P5d-1：从事件流提取读图结果（只读卡片数据源）。
+ *
+ * pipeline 的 vision_analysis_done 事件 payload 携带 `extraction` 提取摘要
+ * （与 TaskResult.metadata["vision_extractions"] 条目同构，snake_case 原样透传）；
+ * 这里聚合成按图顺序的数组，无提取事件时返回 undefined（不污染消息）。
+ * token 缺省时用事件里的 image_index 拼「图N」；skipped 条目保留给卡片过滤。
+ */
+function extractVisionExtractions(
+  events?: Array<{ type: string; data: unknown }>,
+): VisionExtraction[] | undefined {
+  const out: VisionExtraction[] = []
+  for (const event of events ?? []) {
+    if (event.type !== 'vision_analysis_done') continue
+    const data = event.data
+    if (!data || typeof data !== 'object') continue
+    const rawExtraction = (data as { extraction?: unknown }).extraction
+    if (!rawExtraction || typeof rawExtraction !== 'object') continue
+    const ext = rawExtraction as VisionExtraction
+    const index = (data as { image_index?: unknown }).image_index
+    out.push({
+      ...ext,
+      token:
+        ext.token ??
+        (typeof index === 'number' ? `图${index}` : undefined),
+    })
+  }
+  return out.length ? out : undefined
 }
 
 function formatAssistantEventSummary(events?: Array<{ type: string; data: unknown }>) {

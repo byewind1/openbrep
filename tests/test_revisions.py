@@ -235,6 +235,50 @@ class TestProjectRevisions(unittest.TestCase):
             self.assertTrue(copied)
             self.assertEqual(get_latest_revision_id(target), "r0001")
             self.assertEqual([r.message for r in list_revisions(target)], ["initial"])
+    def test_create_revision_manifest_records_vision_extraction_hashes(self):
+        """P5d-1（设计 D7）：manifest 记录项目当前全部 extraction 哈希；
+        无提取文件时记空列表，不引入额外键污染。"""
+        from openbrep.vision.extraction_store import save_extraction
+        from openbrep.vision.modeling_plan import ModelingPlan
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+
+            # 无提取文件 → 空列表
+            revision = create_revision(project, "before extraction")
+            manifest = json.loads(
+                (revision.path / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest.get("vision_extractions"), [])
+
+            # 写入两个提取工件（不同 sha256）后建 revision → 哈希列表入 manifest
+            plan = ModelingPlan(
+                schema_name="lattice_window",
+                fields={"opening_shape": "rect"},
+                confidence={},
+                corrections=[],
+                source_images=["aa" * 32],
+            )
+            save_extraction(project, plan, model="mock")
+            plan2 = ModelingPlan(
+                schema_name="lattice_window",
+                fields={"opening_shape": "circle"},
+                confidence={},
+                corrections=[],
+                source_images=["bb" * 32],
+            )
+            save_extraction(project, plan2, model="mock")
+
+            revision2 = create_revision(project, "with extraction")
+            manifest2 = json.loads(
+                (revision2.path / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest2.get("vision_extractions"), ["a" * 12, "b" * 12])
+            # 提取文件本身不进 revision 源码快照（.openbrep 是项目元数据）
+            self.assertFalse(
+                (revision2.path / ".openbrep" / "vision").exists()
+            )
+
     def test_create_revision_records_v07_manifest_fields(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = self._make_project(tmpdir)
