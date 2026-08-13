@@ -17,6 +17,8 @@ from openbrep.workbench.copilot_service import (
     _extract_gdl_code_blocks,
     _is_error_clipboard_text,
 )
+from openbrep.workbench.request_gate import LOCK_FREE_POST_ROUTES, is_lock_free_route
+from openbrep.workbench_api import WorkbenchSession
 
 
 @pytest.fixture
@@ -319,3 +321,78 @@ def test_extract_gdl_code_blocks_handles_case_and_whitespace():
     text = "A\n```GDL\n   GOSUB 100   \n```\nB"
     assert _extract_gdl_code_blocks(text) == ["GOSUB 100"]
     assert _extract_gdl_code_blocks("no fences") == []
+
+
+# ── T2：/api/copilot/* 路由注册（经 session.route 分发）──────────────
+
+
+def _route_session(tmp_path):
+    return WorkbenchSession(config_path=tmp_path / "config.toml")
+
+
+def test_copilot_routes_reachable_via_session_route(tmp_path, monkeypatch):
+    monkeypatch.setattr(copilot_service.platform, "system", lambda: "Linux")
+    session = _route_session(tmp_path)
+
+    status = session.route("GET", "/api/copilot/status")
+    assert status == {"ok": True, "version": "0.2.0", "min_addon_version": "0.4.0"}
+
+    buffer = session.route("GET", "/api/copilot/clipboard-buffer")
+    assert buffer == {"ok": True, "items": []}
+
+    cleared = session.route("POST", "/api/copilot/clipboard-buffer/clear", {"items": []})
+    assert cleared == {"ok": True, "items": []}
+
+    summary = session.route("POST", "/api/copilot/summarize-errors")
+    assert summary == {"ok": True, "summary": ""}
+
+
+def test_copilot_chat_route_with_mock_llm(tmp_path, monkeypatch):
+    monkeypatch.setattr(copilot_service.platform, "system", lambda: "Linux")
+    session = _route_session(tmp_path)
+
+    class FakeLLM:
+        def __init__(self, config):
+            self.config = config
+
+        def generate(self, messages, **kwargs):
+            return LLMResponse(content="```gdl\nGOSUB 100\n```", model="test-model")
+
+    monkeypatch.setattr(copilot_service, "LLMAdapter", FakeLLM)
+
+    result = session.route("POST", "/api/copilot/chat", {"message": "fix it"})
+    assert result["ok"] is True
+    assert "GOSUB 100" in result["reply"]
+    assert result["code_blocks"] == ["GOSUB 100"]
+
+
+def test_copilot_chat_route_empty_message_returns_validation_error(tmp_path):
+    session = _route_session(tmp_path)
+
+    result = session.route("POST", "/api/copilot/chat", {"message": "  "})
+    assert result["ok"] is False
+    assert result["status"] == 400
+    assert "message is required" in result["error"]
+
+
+def test_copilot_post_routes_registered_lock_free():
+    for route in (
+        "/api/copilot/chat",
+        "/api/copilot/clipboard-buffer/clear",
+        "/api/copilot/summarize-errors",
+    ):
+        assert route in LOCK_FREE_POST_ROUTES
+        assert is_lock_free_route("POST", route) is True
+
+
+def test_copilot_get_routes_lock_free_by_default():
+    for route in ("/api/copilot/status", "/api/copilot/clipboard-buffer"):
+        assert is_lock_free_route("GET", route) is True
+
+
+def test_unknown_copilot_route_keeps_global_error_shape(tmp_path):
+    session = _route_session(tmp_path)
+    assert session.route("GET", "/api/copilot/unknown") == {
+        "ok": False,
+        "error": "Unknown route: GET /api/copilot/unknown",
+    }

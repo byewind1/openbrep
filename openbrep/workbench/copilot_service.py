@@ -198,6 +198,20 @@ class WorkbenchCopilotService:
         self._ensure_clipboard_watch()
         return {"ok": True, "version": SERVICE_VERSION, "min_addon_version": MIN_ADDON_VERSION}
 
+    def route(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch the service-owned ``/api/copilot/*`` route family."""
+        if method == "GET" and path == "/api/copilot/status":
+            return self.status()
+        if method == "POST" and path == "/api/copilot/chat":
+            return self.chat(body)
+        if method == "GET" and path == "/api/copilot/clipboard-buffer":
+            return self.clipboard_buffer()
+        if method == "POST" and path == "/api/copilot/clipboard-buffer/clear":
+            return self.clipboard_buffer_clear(body)
+        if method == "POST" and path == "/api/copilot/summarize-errors":
+            return self.summarize_errors()
+        return {"ok": False, "error": f"Unknown route: {method} {path}"}
+
     def chat(self, body: dict[str, Any]) -> dict[str, Any]:
         """请求 ``{message, history[], images[]?}``，响应 ``{ok, reply, code_blocks[]}``。
 

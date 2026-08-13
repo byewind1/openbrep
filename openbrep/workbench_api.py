@@ -17,6 +17,7 @@ from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.blender_import_service import WorkbenchBlenderImportService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
+from openbrep.workbench.copilot_service import WorkbenchCopilotService
 from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
 from openbrep.workbench.preview_service import preview_2d_payload, preview_payload
@@ -123,6 +124,7 @@ class WorkbenchSession:
         self.git_service = WorkbenchGitService(self)
         self.blender_import_service = WorkbenchBlenderImportService(self)
         self.assistant_service = WorkbenchAssistantService(self)
+        self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
         self.tapir = WorkbenchTapirAdapter(
@@ -775,7 +777,8 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/assistant/code-blocks":
             return self.extract_assistant_code_blocks(body)
-
+        if route.startswith("/api/copilot/"):
+            return self.copilot_service.route(normalized_method, route, body)
         if normalized_method == "GET" and route == "/api/memory/status":
             return self.memory_status()
 

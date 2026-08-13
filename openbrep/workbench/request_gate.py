@@ -21,6 +21,13 @@ LOCK_FREE_POST_ROUTES = frozenset({
     "/api/settings/llm/test",
     "/api/assistant/code-blocks",
     "/api/artifact/reveal",
+    # Copilot 端点：不触碰 session/project 状态（chat 只读 LLM 配置并回写
+    # copilot 自身 buffer；clipboard-buffer/clear、summarize-errors 也只操作
+    # copilot 的剪贴板 buffer，该 buffer 有 service 内部锁保护），无需持有
+    # session 级 RLock。GET 两条（status / clipboard-buffer）天然 lock-free。
+    "/api/copilot/chat",
+    "/api/copilot/clipboard-buffer/clear",
+    "/api/copilot/summarize-errors",
 })
 
 
