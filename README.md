@@ -148,6 +148,19 @@ PATH="$HOME/.cargo/bin:$PATH" npx @tauri-apps/cli@2 build
 
 Tauri 模式下，Rust 壳负责 spawn Python 进程、捕获 `OBR7_READY_URL` 信号、打开 Webview 窗口，关窗时发送 `/api/shutdown` 并等待 Python 进程退出。
 
+### 后台服务模式（`obr serve`）
+
+```bash
+obr serve             # 后台常驻：单端口 8765，服务 frontend/dist 构建产物
+obr serve --status    # 查看后台运行状态
+obr serve --stop      # 停止后台服务
+```
+
+`obr serve` 是 `scripts/obr7.py --tauri --daemon` 的薄封装：单端口、静态前端、
+后台常驻（日志 `~/.openbrep/logs/obr7.log`，状态文件 `~/.openbrep/run/obr7.json`）。
+Archicad 的 Copilot 面板依赖此后台服务（`http://localhost:8765/?mode=copilot`），
+启动面板前请先执行 `obr serve`。首次使用前需先构建前端：`cd frontend && npm run build`。
+
 ---
 
 ## CLI 模式

@@ -47,6 +47,8 @@ err_console = Console(stderr=True)
 
 logging.basicConfig(level=logging.WARNING)
 
+COPILOT_SERVICE_PORT = 8765
+
 
 # ── Helpers ───────────────────────────────────────────────
 
@@ -614,6 +616,12 @@ def _has_react_workbench() -> bool:
         and (root / "openbrep" / "workbench_api.py").is_file()
         and (root / "scripts" / "obr7.py").is_file()
     )
+
+
+def _has_frontend_dist() -> bool:
+    """True if built frontend (frontend/dist) is available."""
+    root = Path(__file__).resolve().parents[1]
+    return (root / "frontend" / "dist").is_dir()
 
 
 def _launch_ui() -> int:
@@ -1318,6 +1326,45 @@ def mcp_server():
 
     try:
         raise typer.Exit(mcp_server_main())
+    except KeyboardInterrupt:
+        raise typer.Exit(0)
+
+
+@app.command("serve")
+def cmd_serve(
+    stop: bool = typer.Option(False, "--stop", help="停止后台服务"),
+    status: bool = typer.Option(False, "--status", help="查看后台服务状态"),
+):
+    """启动/管理后台服务（Archicad Copilot 面板依赖此后台服务）。
+
+    转发到 scripts/obr7.py --tauri --daemon：单端口 8765、服务 frontend/dist
+    构建产物、后台常驻、不打开浏览器；端口选择/状态文件/日志逻辑全部复用 obr7，
+    此处不复制实现。
+    """
+    root = Path(__file__).resolve().parents[1]
+    obr7_script = root / "scripts" / "obr7.py"
+    if not obr7_script.is_file():
+        err_console.print(f"[red]❌ scripts/obr7.py 不存在：{obr7_script}[/red]")
+        raise typer.Exit(1)
+
+    # --stop/--status 是管理操作，无需前端构建产物
+    if not (stop or status):
+        if not _has_frontend_dist():
+            err_console.print("[red]❌ 前端构建产物缺失：请先 cd frontend && npm run build[/red]")
+            raise typer.Exit(1)
+
+    cmd = [sys.executable, str(obr7_script), "--tauri", "--daemon"]
+    if stop:
+        cmd.append("--stop")
+    if status:
+        cmd.append("--status")
+    if not (stop or status):
+        # Archicad Add-On 固定探测 8765。显式端口可防止 obr7 在占用时静默
+        # 漂移到 8766，造成“后台已启动但面板仍无法连接”的假成功。
+        cmd += ["--api-port", str(COPILOT_SERVICE_PORT)]
+
+    try:
+        raise typer.Exit(subprocess.call(cmd))
     except KeyboardInterrupt:
         raise typer.Exit(0)
 

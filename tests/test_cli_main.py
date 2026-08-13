@@ -141,6 +141,57 @@ class TestCliMainCommands(unittest.TestCase):
         self.assertTrue(any("obr7.py" in str(part) for part in cmd))
         self.assertNotIn("--no-open", cmd)
 
+    def test_serve_forwards_to_obr7_tauri_daemon(self):
+        """obr serve 转发到 scripts/obr7.py --tauri --daemon。"""
+        with patch("cli.main._has_frontend_dist", return_value=True):
+            with patch("cli.main.subprocess.call", return_value=0) as call:
+                result = self.runner.invoke(app, ["serve"])
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        cmd = call.call_args.args[0]
+        self.assertTrue(any(str(part).endswith("obr7.py") for part in cmd))
+        self.assertIn("--tauri", cmd)
+        self.assertIn("--daemon", cmd)
+        self.assertNotIn("--stop", cmd)
+        self.assertNotIn("--status", cmd)
+        self.assertEqual(cmd[cmd.index("--api-port") + 1], "8765")
+
+    def test_serve_passes_through_stop(self):
+        """obr serve --stop 透传给 obr7，且不检查 frontend/dist。"""
+        with patch("cli.main._has_frontend_dist", return_value=False):
+            with patch("cli.main.subprocess.call", return_value=0) as call:
+                result = self.runner.invoke(app, ["serve", "--stop"])
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertIn("--stop", call.call_args.args[0])
+
+    def test_serve_passes_through_status(self):
+        """obr serve --status 透传给 obr7。"""
+        with patch("cli.main.subprocess.call", return_value=0) as call:
+            result = self.runner.invoke(app, ["serve", "--status"])
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        cmd = call.call_args.args[0]
+        self.assertIn("--status", cmd)
+
+    def test_serve_uses_fixed_copilot_port(self):
+        """obr serve 固定使用 Add-On 探测的 8765，不允许静默漂移。"""
+        with patch("cli.main._has_frontend_dist", return_value=True):
+            with patch("cli.main.subprocess.call", return_value=0) as call:
+                result = self.runner.invoke(app, ["serve"])
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        cmd = call.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("--api-port") + 1], "8765")
+
+    def test_serve_errors_when_frontend_dist_missing(self):
+        """frontend/dist 缺失时明确报错并退出非 0。"""
+        with patch("cli.main._has_frontend_dist", return_value=False):
+            result = self.runner.invoke(app, ["serve"])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("请先 cd frontend && npm run build", result.output)
+
     def test_cli_subcommand_enters_repl(self):
         with patch("cli.main._run_chat_repl") as repl:
             result = self.runner.invoke(app, ["cli"])

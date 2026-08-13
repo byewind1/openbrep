@@ -313,6 +313,19 @@ lsof -nP -iTCP:8765 -sTCP:LISTEN
 kill <PID>
 ```
 
+#### 后台服务模式：`obr serve`（Archicad Copilot 面板依赖）
+
+```bash
+obr serve             # 后台常驻：单端口 8765，服务 frontend/dist 构建产物
+obr serve --status    # 查看后台运行状态
+obr serve --stop      # 停止后台服务
+```
+
+`obr serve` 是 `scripts/obr7.py --tauri --daemon` 的薄封装（单端口、静态前端、
+后台常驻，日志 `~/.openbrep/logs/obr7.log`）。Archicad 的 Copilot 面板通过
+`http://localhost:8765/?mode=copilot` 加载此服务，打开面板前请先执行 `obr serve`；
+若提示前端构建产物缺失，先执行 `cd frontend && npm run build`。
+
 ---
 
 ## 首次使用：3 分钟上手
