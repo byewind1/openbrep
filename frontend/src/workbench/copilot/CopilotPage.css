@@ -1,7 +1,10 @@
 /* CopilotPage：Archicad 窄面板精简对话页（?mode=copilot）。
    视觉对齐 styles/tokens.css 的 OBR tokens；最小宽度 320px 可用（流式布局）。 */
 
-/* 覆盖全局 styles.css 的 min-width:1180px（仅 copilot 模式，main.tsx 会加 html.copilot-mode） */
+/* 覆盖全局 styles.css 的 min-width:1180px（仅 copilot 模式，main.tsx 会加 html.copilot-mode）
+   html 本身也必须复位：body/#root 的包含块是 html，若 html 仍为 1180px 宽，
+   整个页面按 1180px 排版、被 overflow:hidden 裁切，按钮不随面板宽度移动、文字不重排。 */
+html.copilot-mode,
 html.copilot-mode body,
 html.copilot-mode #root {
   min-width: 0;
@@ -9,6 +12,7 @@ html.copilot-mode #root {
 
 .copilot-page {
   height: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -20,12 +24,19 @@ html.copilot-mode #root {
 .copilot-header {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
+}
+
+.copilot-title {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .copilot-title h1 {
@@ -34,6 +45,8 @@ html.copilot-mode #root {
   color: var(--accent);
   font-weight: 700;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .copilot-title p {
@@ -82,6 +95,7 @@ html.copilot-mode #root {
 .copilot-chat {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding: 12px;
   display: flex;
@@ -92,6 +106,7 @@ html.copilot-mode #root {
 .copilot-msg-wrap {
   display: flex;
   width: 100%;
+  min-width: 0;
 }
 
 .copilot-msg-wrap.copilot-msg-user {
@@ -103,6 +118,7 @@ html.copilot-mode #root {
 }
 
 .copilot-msg {
+  min-width: 0;
   max-width: 100%;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -143,28 +159,33 @@ html.copilot-mode #root {
 }
 
 .copilot-code {
-  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 6px;
   margin-top: 8px;
   border-left: 3px solid var(--accent);
   background: var(--bg-panel);
   border-radius: 8px;
-  padding: 10px 10px 10px 12px;
+  padding: 8px 10px;
   overflow: auto;
 }
 
 .copilot-code pre {
   margin: 0;
+  min-width: 0;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .copilot-copy-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+  position: static;
+  align-self: flex-end;
+  flex-shrink: 0;
   border: 1px solid var(--accent);
   background: transparent;
   color: var(--accent);
@@ -218,6 +239,7 @@ html.copilot-mode #root {
 
 .copilot-composer {
   flex-shrink: 0;
+  min-width: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
   padding: 8px 12px;
@@ -264,15 +286,17 @@ html.copilot-mode #root {
 .copilot-collector-list {
   display: grid;
   gap: 6px;
+  min-width: 0;
   max-height: 160px;
   overflow: auto;
 }
 
 .copilot-collector-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   align-items: start;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px 4px 4px 8px;
@@ -287,9 +311,11 @@ html.copilot-mode #root {
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   line-height: 1.4;
   padding: 2px 0;
   height: auto;
+  min-width: 0;
   cursor: pointer;
 }
 
@@ -318,6 +344,7 @@ html.copilot-mode #root {
 
 .copilot-collector-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -387,9 +414,10 @@ html.copilot-mode #root {
 
 .copilot-input-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: end;
+  min-width: 0;
 }
 
 .copilot-input-actions {
@@ -400,6 +428,7 @@ html.copilot-mode #root {
 
 .copilot-composer textarea {
   width: 100%;
+  min-width: 0;
   height: 68px;
   resize: none;
   border: 1px solid var(--border);
@@ -469,4 +498,24 @@ html.copilot-mode #root {
   justify-content: center;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* 极窄面板：隐藏副标题、收紧间距；核心按钮（清空/附件/发送）保持可见可点 */
+@media (max-width: 420px) {
+  .copilot-title p {
+    display: none;
+  }
+
+  .copilot-header {
+    padding: 6px 8px;
+    gap: 6px;
+  }
+
+  .copilot-composer {
+    padding: 6px 8px;
+  }
+
+  .copilot-chat {
+    padding: 10px 8px;
+  }
 }

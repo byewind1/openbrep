@@ -1,5 +1,6 @@
 // T3：CopilotPage 行为测试（mock fetch，不走真实后端）。
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+// T7：新增响应式布局结构/回归测试（jsdom 不验证真实排版尺寸，只验证渲染结构与保留的 class）。
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CopilotPage, parseMessageWithCodeBlocks } from './CopilotPage'
 
@@ -279,5 +280,121 @@ describe('CopilotPage status banner', () => {
 
     await new Promise((resolve) => window.setTimeout(resolve, 50))
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+// T7：响应式布局结构/回归测试。jsdom 无法测量真实排版尺寸，这里只验证：
+// 长中文/无空格长串能渲染进消息气泡、复制按钮保留在代码块内、响应式布局所需 class 结构不变。
+describe('CopilotPage responsive structure (T7)', () => {
+  const LONG_CJK = '这是长中文段落：' + '构件类型定义与几何参数化建模必须严格遵循单位与命名约定，避免编译错误或尺寸漂移。'.repeat(4)
+  const LONG_NO_SPACE = 'https://example.com/' + 'abcdefghij0123456789'.repeat(8) // 192 字符无空格
+  const LONG_GDL_LINE = 'CALL _COMPONENT_GENERATOR(' + 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(6) + ')'
+
+  test('长中文与无空格长串都渲染在消息气泡内', async () => {
+    mockFetch((url) => {
+      if (url === '/api/copilot/status') return jsonResponse(STATUS_OK)
+      if (url === '/api/copilot/clipboard-buffer') return jsonResponse(EMPTY_BUFFER)
+      if (url === '/api/copilot/chat') {
+        return jsonResponse({
+          ok: true,
+          reply: `${LONG_CJK}\n\n路径：${LONG_NO_SPACE}`,
+          code_blocks: [],
+        })
+      }
+      return jsonResponse({ ok: false })
+    })
+    const { container } = render(<CopilotPage />)
+    await act(async () => {})
+
+    fireEvent.change(screen.getByPlaceholderText(/粘贴报错信息/), { target: { value: LONG_NO_SPACE } })
+    fireEvent.click(screen.getByRole('button', { name: /发送/ }))
+
+    // 用户气泡：无空格长串原样渲染
+    const userBubbles = container.querySelectorAll('.copilot-msg-wrap.copilot-msg-user .copilot-msg')
+    expect(userBubbles.length).toBeGreaterThan(0)
+    const lastUser = userBubbles[userBubbles.length - 1]
+    expect(within(lastUser as HTMLElement).getByText(new RegExp(LONG_NO_SPACE.slice(0, 30)))).toBeTruthy()
+
+    // assistant 气泡：长中文与无空格长串同处一个气泡
+    await waitFor(() => {
+      const assistantBubbles = container.querySelectorAll('.copilot-msg-wrap.copilot-msg-assistant .copilot-msg')
+      expect(assistantBubbles.length).toBeGreaterThan(1)
+    })
+    const assistantBubbles = container.querySelectorAll('.copilot-msg-wrap.copilot-msg-assistant .copilot-msg')
+    const replyBubble = assistantBubbles[assistantBubbles.length - 1] as HTMLElement
+    expect(within(replyBubble).getByText(new RegExp('这是长中文段落：'))).toBeTruthy()
+    expect(within(replyBubble).getByText(new RegExp('https://example\\.com/abcdefgh'))).toBeTruthy()
+  })
+
+  test('代码块内保留复制按钮且可点击，长 GDL 行保留在 pre 内', async () => {
+    const writeText = stubClipboard()
+    mockFetch((url) => {
+      if (url === '/api/copilot/status') return jsonResponse(STATUS_OK)
+      if (url === '/api/copilot/clipboard-buffer') return jsonResponse(EMPTY_BUFFER)
+      if (url === '/api/copilot/chat') {
+        return jsonResponse({ ok: true, reply: '```gdl\n' + LONG_GDL_LINE + '\nEND\n```', code_blocks: [LONG_GDL_LINE] })
+      }
+      return jsonResponse({ ok: false })
+    })
+    const { container } = render(<CopilotPage />)
+    await act(async () => {})
+
+    fireEvent.change(screen.getByPlaceholderText(/粘贴报错信息/), { target: { value: 'hi' } })
+    fireEvent.click(screen.getByRole('button', { name: /发送/ }))
+
+    const code = await screen.findByText((content, el) => el?.tagName === 'PRE' && content.includes(LONG_GDL_LINE.slice(0, 40)))
+    expect(code.tagName).toBe('PRE')
+    const codeBlock = code.closest('.copilot-code')
+    expect(codeBlock).toBeTruthy()
+    // 复制按钮是代码块的一部分（结构与 .copilot-code pre 同容器）
+    const copyBtn = codeBlock!.querySelector('.copilot-copy-btn')
+    expect(copyBtn).toBeTruthy()
+    // 复制仍可用
+    fireEvent.click(copyBtn as HTMLButtonElement)
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(LONG_GDL_LINE + '\nEND'))
+    // 长行文本没有丢失换行/缩进结构（pre-wrap 语义依赖 white-space:pre-wrap，行为测试保证渲染）
+    expect(code.textContent).toContain('END')
+  })
+
+  test('响应式布局所需 class 结构保留（header / input-actions / 消息 / 代码容器）', async () => {
+    mockFetch((url) => {
+      if (url === '/api/copilot/status') return jsonResponse(STATUS_OK)
+      if (url === '/api/copilot/clipboard-buffer') return jsonResponse(EMPTY_BUFFER)
+      if (url === '/api/copilot/chat') {
+        return jsonResponse({ ok: true, reply: '修复建议\n\n```gdl\nGOSUB 100\n```', code_blocks: ['GOSUB 100'] })
+      }
+      return jsonResponse({ ok: false })
+    })
+    const { container } = render(<CopilotPage />)
+    await act(async () => {})
+
+    // header：标题区与清空按钮是 header 的兄弟子项（可随 header 换行/收缩）
+    const header = container.querySelector('.copilot-header')
+    expect(header).toBeTruthy()
+    const title = header!.querySelector('.copilot-title')
+    const clearBtn = header!.querySelector('.copilot-clear-chat')
+    expect(title).toBeTruthy()
+    expect(clearBtn).toBeTruthy()
+    expect(title!.querySelector('h1')).toBeTruthy()
+
+    // 输入区：input row + actions 结构，附件/发送按钮都在 actions 容器内
+    const inputRow = container.querySelector('.copilot-input-row')
+    expect(inputRow).toBeTruthy()
+    const actions = inputRow!.querySelector('.copilot-input-actions')
+    expect(actions).toBeTruthy()
+    expect(actions!.querySelector('.copilot-attach-btn')).toBeTruthy()
+    expect(actions!.querySelector('.copilot-send-btn')).toBeTruthy()
+    expect(inputRow!.querySelector('textarea')).toBeTruthy()
+
+    fireEvent.change(screen.getByPlaceholderText(/粘贴报错信息/), { target: { value: '修复' } })
+    fireEvent.click(screen.getByRole('button', { name: /发送/ }))
+
+    // 消息/代码容器：assistant 气泡内存在 .copilot-code，复制按钮与 pre 是 .copilot-code 的子元素
+    await waitFor(() => expect(container.querySelectorAll('.copilot-msg').length).toBeGreaterThan(1))
+    const codeBlock = container.querySelector('.copilot-code')
+    expect(codeBlock).toBeTruthy()
+    expect(codeBlock!.querySelector('pre')).toBeTruthy()
+    expect(codeBlock!.querySelector('.copilot-copy-btn')).toBeTruthy()
+    expect(codeBlock!.querySelector('.copilot-copy-btn')!.getAttribute('type')).toBe('button')
   })
 })
