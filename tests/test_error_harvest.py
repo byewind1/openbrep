@@ -3,14 +3,40 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
+
+import pytest
 
 from openbrep.error_harvest import (
     _is_noise,
     build_candidates,
     harvest_error_lessons,
+    harvest_global_error_lessons,
     harvest_traces,
 )
+
+
+@pytest.fixture(autouse=True)
+def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """每个用例默认隔离 HOME：~/.openbrep/error_lessons.jsonl 指向 tmp 空目录。
+
+    E2 起 build_candidates 会读取全局错题本；开发者本机若存在真实
+    ~/.openbrep/error_lessons.jsonl（E1 真机沉淀），未隔离的用例会把真实条目
+    混进候选、结果依赖机器状态。需要全局源的用例显式往 fake_home 写文件。
+    """
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
+
+
+def _write_global_lessons(fake_home: Path, lines: list[str]) -> Path:
+    """向 fake_home 写入全局错题本，返回文件路径。"""
+    global_dir = fake_home / ".openbrep"
+    global_dir.mkdir(parents=True, exist_ok=True)
+    fp = global_dir / "error_lessons.jsonl"
+    fp.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return fp
 
 
 def _write_trace(trace_dir: Path, name: str, **fields) -> None:
@@ -95,3 +121,136 @@ def test_tracer_compile_error_excerpt() -> None:
     assert r == "ENDIF expected at line 5"
     r = _compile_error_excerpt(_FakeCompile(False, stderr="boom " * 200))
     assert r is not None and len(r) <= 500
+
+
+# ── E2：copilot 全局错题本源接入 ──────────────────────────────────
+
+
+def test_harvest_global_error_lessons_reads_home_file(fake_home: Path) -> None:
+    _write_global_lessons(fake_home, [
+        json.dumps({"raw_excerpt": "Error in 3D script, line 42", "count": 7}),
+    ])
+    counter = harvest_global_error_lessons()
+    assert counter == Counter({"Error in 3D script, line 42": 7})
+
+
+def test_harvest_global_error_lessons_missing_file_returns_empty(fake_home: Path) -> None:
+    assert harvest_global_error_lessons() == Counter()
+
+
+def test_global_error_lessons_enter_candidates(fake_home: Path, tmp_path: Path) -> None:
+    _write_global_lessons(fake_home, [
+        json.dumps({"raw_excerpt": "Error in 3D script, line 12: Missing END", "count": 5}),
+    ])
+    trace_dir = tmp_path / "traces"
+    trace_dir.mkdir()
+
+    candidates = build_candidates(
+        trace_dir=trace_dir, workdir=tmp_path / "nonexistent", min_count=2
+    )
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["sources"] == ["global_lessons"]
+    assert candidate["count"] == 5
+    assert candidate["review"] == "pending"
+    assert candidate["suggested_fix_hint"]
+
+
+def test_build_candidates_merges_traces_and_global_lessons_by_fingerprint(
+    fake_home: Path, tmp_path: Path
+) -> None:
+    trace_dir = tmp_path / "traces"
+    trace_dir.mkdir()
+    _write_trace(trace_dir, "t1", error="Error in 3D script, line 12: Missing END")
+    _write_trace(trace_dir, "t2", error="Error in 3D script, line 99: Missing END")
+    _write_global_lessons(fake_home, [
+        json.dumps({"raw_excerpt": "Error in 3D script, line 42: Missing END", "count": 3}),
+    ])
+
+    candidates = build_candidates(
+        trace_dir=trace_dir, workdir=tmp_path / "nonexistent", min_count=2
+    )
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    # 跨源同指纹合并：count 累加（traces 2 + global 3）、sources 并集（排序）
+    assert candidate["count"] == 5
+    assert candidate["sources"] == ["global_lessons", "traces"]
+    # example_excerpt 保留先见者（traces 先聚合）
+    assert candidate["example_excerpt"] == "Error in 3D script, line 12: Missing END"
+
+
+def test_build_candidates_merges_workdir_and_global_lessons_sources(
+    fake_home: Path, tmp_path: Path
+) -> None:
+    # workdir 收窄到 proj/：fake_home 位于 tmp_path 之下，workdir 若用 tmp_path
+    # 会把全局错题本也 rglob 进来造成重复计权
+    lessons_dir = tmp_path / "proj" / ".openbrep" / "memory" / "learnings"
+    lessons_dir.mkdir(parents=True)
+    (lessons_dir / "error_lessons.jsonl").write_text(
+        json.dumps({"raw_excerpt": "Error in 3D script, line 12: Missing END", "count": 2})
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_global_lessons(fake_home, [
+        json.dumps({"raw_excerpt": "Error in 3D script, line 42: Missing END", "count": 4}),
+    ])
+    trace_dir = tmp_path / "traces"
+    trace_dir.mkdir()
+
+    candidates = build_candidates(
+        trace_dir=trace_dir, workdir=tmp_path / "proj", min_count=2
+    )
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["count"] == 6
+    assert candidate["sources"] == ["global_lessons", "workdir_lessons"]
+
+
+def test_global_lessons_file_missing_does_not_affect_other_sources(
+    fake_home: Path, tmp_path: Path
+) -> None:
+    trace_dir = tmp_path / "traces"
+    trace_dir.mkdir()
+    _write_trace(trace_dir, "t1", error="Error in 3D script, line 12: Missing END")
+    _write_trace(trace_dir, "t2", error="Error in 3D script, line 99: Missing END")
+    # fake_home 下无 .openbrep/error_lessons.jsonl → 全局源静默为空
+    candidates = build_candidates(
+        trace_dir=trace_dir, workdir=tmp_path / "nonexistent", min_count=2
+    )
+    assert len(candidates) == 1
+    assert candidates[0]["count"] == 2
+    assert candidates[0]["sources"] == ["traces"]
+
+
+def test_global_error_lessons_skips_corrupt_lines(fake_home: Path, tmp_path: Path) -> None:
+    _write_global_lessons(fake_home, [
+        json.dumps({"raw_excerpt": "Error in 3D script, line 12: Missing END", "count": 2}),
+        "this-is-not-json{",
+        json.dumps({"raw_excerpt": "Error in 3D script, line 42: Missing END", "count": 3}),
+    ])
+    trace_dir = tmp_path / "traces"
+    trace_dir.mkdir()
+
+    candidates = build_candidates(
+        trace_dir=trace_dir, workdir=tmp_path / "nonexistent", min_count=2
+    )
+    assert len(candidates) == 1
+    assert candidates[0]["count"] == 5
+    assert candidates[0]["sources"] == ["global_lessons"]
+
+
+def test_workdir_lessons_sources_tagged(fake_home: Path, tmp_path: Path) -> None:
+    lessons_dir = tmp_path / "proj" / ".openbrep" / "memory" / "learnings"
+    lessons_dir.mkdir(parents=True)
+    (lessons_dir / "error_lessons.jsonl").write_text(
+        json.dumps({"raw_excerpt": "Error in 3D script, line 12: Missing END", "count": 4})
+        + "\n",
+        encoding="utf-8",
+    )
+    trace_dir = tmp_path / "traces"
+    trace_dir.mkdir()
+
+    candidates = build_candidates(trace_dir=trace_dir, workdir=tmp_path, min_count=2)
+    assert len(candidates) == 1
+    assert candidates[0]["sources"] == ["workdir_lessons"]
+    assert candidates[0]["count"] == 4
