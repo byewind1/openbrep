@@ -349,3 +349,128 @@ def test_ingest_error_route_reachable_via_copilot_service_route(service, global_
 def test_ingest_error_route_registered_lock_free():
     assert "/api/copilot/ingest-error" in LOCK_FREE_POST_ROUTES
     assert is_lock_free_route("POST", "/api/copilot/ingest-error") is True
+
+
+# ── E4：剪贴板噪声收紧（沉淀侧结构化匹配；buffer 行为不变）──────
+
+
+def test_is_structured_error_text_predicate() -> None:
+    structured = copilot_service._is_structured_error_text
+    # 真实 Archicad 报错形状 → 放行
+    assert structured("Error in 3D script, line 12: Undefined variable width")
+    assert structured(
+        "Missing parameter(s) after function\nat line 5 in the 3D script of file x.gsm"
+    )
+    assert structured("第2行 错误：参数未定义")
+    assert structured("警告：x.gdl 第3行存在参数问题")
+    # 结构合法的伪报错 → 放行（设计意图：重复出现即为有效模式）
+    assert structured("line 3: error near GOSUB")
+    # markdown/文档形状 → 拒（# 开头行 / ``` 围栏）
+    assert not structured(
+        "# 派单：E1 错误自动沉淀\nError in 3D script, line 12: Undefined variable width"
+    )
+    assert not structured("```gdl\nline 12: error\n```")
+    # 含「错误」但无结构信号的散文 → 拒
+    assert not structured(
+        "完成报告：E1 错误自动沉淀 - 改动文件：copilot_service.py、request_gate.py"
+    )
+    # 无错误关键词的普通文本 → 拒
+    assert not structured("建筑师随便复制的一段普通文本")
+
+
+def test_structured_error_real_archicad_shapes_pass(service, global_lessons_path, monkeypatch):
+    shapes = (
+        "Error in 3D script, line 12: Undefined variable width",
+        "Missing parameter(s) after function\nat line 5 in the 3D script of file x.gsm",
+    )
+    for text in shapes:
+        monkeypatch.setattr(
+            copilot_service,
+            "_read_clipboard_snapshot",
+            lambda t=text: (t, "pbpaste"),
+        )
+        service._clipboard_watch_iteration()
+
+    lessons = _load_lessons(global_lessons_path)
+    assert len(lessons) == 2
+    assert {lesson["source"] for lesson in lessons} == {"copilot_clipboard"}
+    assert {lesson["raw_excerpt"] for lesson in lessons} == set(shapes)
+
+
+def test_markdown_document_not_precipitated(service, global_lessons_path, monkeypatch):
+    # 派单 markdown：含「错误」关键词、甚至含 line 12 结构信号，
+    # 但以 # 开头（文档形状）→ 沉淀侧拒，全局错题本零新增
+    markdown = (
+        "# 派单：E1 错误自动沉淀（Copilot 错误沉淀循环 第一卡）\n"
+        "- 日期：2026-08-13\n"
+        "Error in 3D script, line 12: Undefined variable width（示例）\n"
+        "错误沉淀循环与纪律在此。"
+    )
+    monkeypatch.setattr(
+        copilot_service,
+        "_read_clipboard_snapshot",
+        lambda: (markdown, "pbpaste"),
+    )
+    service._clipboard_watch_iteration()
+
+    assert _load_lessons(global_lessons_path) == []
+
+
+def test_prose_without_structure_not_precipitated(service, global_lessons_path, monkeypatch):
+    prose = (
+        "完成报告：E1 错误自动沉淀 - 改动文件：copilot_service.py、request_gate.py；"
+        "验证命令与结果：全部通过；问题与风险：无阻塞。"
+    )
+    monkeypatch.setattr(
+        copilot_service,
+        "_read_clipboard_snapshot",
+        lambda: (prose, "pbpaste"),
+    )
+    service._clipboard_watch_iteration()
+
+    assert service.clipboard_buffer()["items"] == [prose]  # buffer 照常收录
+    assert _load_lessons(global_lessons_path) == []  # 沉淀被结构化门拦下
+
+
+def test_structured_fake_error_passes_by_design(service, global_lessons_path, monkeypatch):
+    # 结构合法的伪报错（line + error）→ 放行沉淀（设计意图，钉死防回退）
+    fake = "line 3: error near GOSUB"
+    monkeypatch.setattr(
+        copilot_service,
+        "_read_clipboard_snapshot",
+        lambda: (fake, "pbpaste"),
+    )
+    service._clipboard_watch_iteration()
+
+    lessons = _load_lessons(global_lessons_path)
+    assert len(lessons) == 1
+    assert lessons[0]["raw_excerpt"] == fake
+    assert lessons[0]["source"] == "copilot_clipboard"
+
+
+def test_markdown_still_enters_buffer_chips(service, global_lessons_path, monkeypatch):
+    # 两层过滤互不影响：同一 markdown 文本（含错误关键词 + line 结构信号），
+    # buffer 第一层单词命中即入 chips；沉淀第二层结构化门拦下 → 零落盘
+    markdown = (
+        "# 派单：E1 错误自动沉淀\n"
+        "Error in 3D script, line 12: Undefined variable width\n"
+        "- 日期：2026-08-13"
+    )
+    monkeypatch.setattr(
+        copilot_service,
+        "_read_clipboard_snapshot",
+        lambda: (markdown, "pbpaste"),
+    )
+    service._clipboard_watch_iteration()
+
+    assert service.clipboard_buffer()["items"] == [markdown]
+    assert _load_lessons(global_lessons_path) == []
+
+
+def test_manual_ingest_error_not_gated_by_structure(service, global_lessons_path):
+    # 手动沉淀是显式用户动作，不受剪贴板噪声门限制（门只加在自动沉淀入口）
+    result = service.ingest_error({
+        "error_text": "完成报告：E1 错误自动沉淀 - 改动文件：copilot_service.py",
+    })
+    assert result["ok"] is True
+    assert len(_load_lessons(global_lessons_path)) == 1

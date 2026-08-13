@@ -77,6 +77,39 @@ def _is_error_clipboard_text(value: str) -> bool:
     return bool(ERROR_CLIPBOARD_PATTERN.search(value))
 
 
+# E4：沉淀侧结构化匹配的结构信号（与 ERROR_CLIPBOARD_PATTERN 的宽关键词互补）。
+# at line N 是 line N 的子集，这里按任务卡列出的形状逐一保留，便于阅读。
+_STRUCTURED_ERROR_SIGNALS = (
+    re.compile(r"\bline\s*\d+", re.IGNORECASE),
+    re.compile(r"\bat\s+line\s*\d+", re.IGNORECASE),
+    re.compile(r"第\s*\d+\s*行"),
+    re.compile(r"\.gdl\b", re.IGNORECASE),
+    re.compile(r"\.gsm\b", re.IGNORECASE),
+)
+
+
+def _is_structured_error_text(value: str) -> bool:
+    """沉淀侧更严格的结构化匹配（E4）：错误关键词 + 结构信号，且非文档形状。
+
+    - 错误关键词沿用 ERROR_CLIPBOARD_PATTERN 语义（error/warning/错误/警告等）；
+    - 结构信号至少一条：``line N`` / ``at line N`` / ``第N行`` / ``.gdl`` 或 ``.gsm``；
+    - 文档形状直接拒：任一行以 ``#`` 开头，或含 ``` 代码围栏。
+
+    与 ``_is_error_clipboard_text``（buffer 用，单词命中即真）互不干扰：
+    本判定只服务于自动沉淀路径，不满足 → 不沉淀（与"非错误文本不沉淀"同一语义）。
+    """
+    text = str(value or "")
+    if not ERROR_CLIPBOARD_PATTERN.search(text):
+        return False
+    if not any(signal.search(text) for signal in _STRUCTURED_ERROR_SIGNALS):
+        return False
+    if any(line.lstrip().startswith("#") for line in text.splitlines()):
+        return False
+    if "```" in text:
+        return False
+    return True
+
+
 def _read_clipboard_text_pbpaste() -> str:
     try:
         return subprocess.check_output(["pbpaste"], text=True, timeout=1).strip()
@@ -454,7 +487,14 @@ class WorkbenchCopilotService:
                 self._auto_ingest_clipboard_error(value)
 
     def _auto_ingest_clipboard_error(self, value: str) -> None:
-        """剪贴板新错误 → 自动沉淀（E1）。沉淀是旁路：任何异常只记日志。"""
+        """剪贴板新错误 → 自动沉淀（E1）。沉淀是旁路：任何异常只记日志。
+
+        E4：入口加结构化匹配门——不满足 ``_is_structured_error_text`` 直接返回
+        （不沉淀、不报错，与"非错误文本不沉淀"同一语义）。该门只影响自动沉淀，
+        不影响 buffer chips（第一层 ``_is_error_clipboard_text`` 行为不变）。
+        """
+        if not _is_structured_error_text(value):
+            return
         try:
             self._persist_error_lesson(value, source="copilot_clipboard")
         except Exception:
