@@ -207,8 +207,8 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 As of 2026-08-13:
 
 ```text
-python tests: 1785 passed, 66 subtests passed
-frontend: 442 passed (vitest) + tsc clean
+python tests: 1817 passed, 66 subtests passed
+frontend: 458 passed (vitest) + tsc clean
 benchmark replay: create/modify zero regression; vision suite 1/3 (recorded baseline)
 ```
 
@@ -353,6 +353,17 @@ Architecture notes:
   is a function requiring `NOT (x)`; operator-position heuristic avoids flagging
   English prose "not"). Warnings flow into `VerificationReport.warnings_caught`
   and the `run_static_check` tool summary without blocking delivery.
+- Copilot integration (2026-08-13, T1–T4): the Archicad add-on's copilot backend
+  lives in the workbench now — `openbrep/workbench/copilot_service.py`
+  (`WorkbenchCopilotService`: status/chat/clipboard buffer/error summary,
+  clipboard watcher lazy-starts on first call, macOS AppKit→pbpaste fallback),
+  routed as `/api/copilot/*` in `workbench_api.py` with the three POST routes
+  lock-free (they never touch session/project state). Frontend
+  `?mode=copilot` renders a standalone `CopilotPage` (no workbench store,
+  direct fetch). `obr serve` (cli/main.py) wraps `scripts/obr7.py
+  --tauri --daemon` as the C++ add-on's only launch entry; it hard-fails when
+  `frontend/dist` is missing. Copilot chat deliberately bypasses
+  `/api/assistant` intent routing — no project required, no file mutation.
 
 ## benchmark 黄金语料规范（corpus maintenance）
 
