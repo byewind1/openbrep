@@ -1,0 +1,472 @@
+/* CopilotPage：Archicad 窄面板精简对话页（?mode=copilot）。
+   视觉对齐 styles/tokens.css 的 OBR tokens；最小宽度 320px 可用（流式布局）。 */
+
+/* 覆盖全局 styles.css 的 min-width:1180px（仅 copilot 模式，main.tsx 会加 html.copilot-mode） */
+html.copilot-mode body,
+html.copilot-mode #root {
+  min-width: 0;
+}
+
+.copilot-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.copilot-header {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.copilot-title h1 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--accent);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.copilot-title p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.copilot-clear-chat {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.copilot-clear-chat:hover:not(:disabled) {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.copilot-banner {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+  border-bottom: 1px solid var(--border);
+}
+
+.copilot-banner-error {
+  background: var(--status-error-bg);
+  border-color: var(--status-error-border);
+  color: var(--status-error-text);
+}
+
+.copilot-banner-warning {
+  background: var(--status-warning-bg);
+  border-color: var(--border-strong);
+  color: var(--warning);
+}
+
+.copilot-chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.copilot-msg-wrap {
+  display: flex;
+  width: 100%;
+}
+
+.copilot-msg-wrap.copilot-msg-user {
+  justify-content: flex-end;
+}
+
+.copilot-msg-wrap.copilot-msg-assistant {
+  justify-content: flex-start;
+}
+
+.copilot-msg {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+
+.copilot-msg-user .copilot-msg {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+}
+
+.copilot-msg-assistant .copilot-msg {
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.copilot-msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.copilot-msg-image {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-canvas);
+  flex-shrink: 0;
+}
+
+.copilot-code {
+  position: relative;
+  margin-top: 8px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 10px 10px 10px 12px;
+  overflow: auto;
+}
+
+.copilot-code pre {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.copilot-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.copilot-copy-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.copilot-loading-dots {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  align-self: flex-start;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.copilot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: copilot-blink 1s infinite ease-in-out;
+}
+
+.copilot-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.copilot-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes copilot-blink {
+  0%, 80%, 100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.copilot-composer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 8px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.copilot-collector {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.copilot-collector-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  height: auto;
+}
+
+.copilot-collector-toggle.has-items {
+  color: var(--accent);
+}
+
+.copilot-collector-body {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.copilot-collector-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.copilot-collector-list {
+  display: grid;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.copilot-collector-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 4px 4px 8px;
+  background: var(--bg-base);
+}
+
+.copilot-chip {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+  padding: 2px 0;
+  height: auto;
+  cursor: pointer;
+}
+
+.copilot-chip:hover {
+  color: var(--accent);
+  background: transparent;
+}
+
+.copilot-chip-remove {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+}
+
+.copilot-chip-remove:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.copilot-collector-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.copilot-collector-actions button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.copilot-collector-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.copilot-image-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  padding: 8px;
+}
+
+.copilot-image-thumb {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.copilot-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-canvas);
+  display: block;
+}
+
+.copilot-image-thumb button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-muted);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+}
+
+.copilot-image-thumb button:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.copilot-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.copilot-input-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.copilot-composer textarea {
+  width: 100%;
+  height: 68px;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+}
+
+.copilot-composer textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.copilot-attach-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+
+.copilot-attach-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.copilot-send-btn {
+  height: 36px;
+  min-width: 72px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 14px;
+}
+
+.copilot-send-btn:disabled,
+.copilot-attach-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.copilot-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.copilot-page-loading {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
