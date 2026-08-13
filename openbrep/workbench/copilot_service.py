@@ -12,11 +12,15 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import platform
 import re
 import subprocess
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -26,15 +30,32 @@ except Exception:  # pragma: no cover - macOS only
     NSStringPboardType = None  # type: ignore[assignment]
 
 from openbrep.config import GDLAgentConfig
+from openbrep.learning import (
+    ERROR_LESSONS_FILE,
+    ErrorLearningStore,
+    ErrorLesson,
+    _lesson_from_dict,
+    _merge_lesson,
+    classify_error,
+    error_fingerprint,
+    guidance_for_category,
+    summarize_error,
+)
 from openbrep.llm import LLMAdapter
 
 if TYPE_CHECKING:
     from openbrep.workbench_api import WorkbenchSession
 
+logger = logging.getLogger(__name__)
+
 # 与 ADDON copilot/server.py 的 FastAPI app version 保持一致
 SERVICE_VERSION = "0.2.0"
 # Copilot 面板要求的最低 ADDON 版本（addon 侧以该字段做能力门禁）
 MIN_ADDON_VERSION = "0.4.0"
+
+# 全局错题本（E1：错误自动沉淀的去重落盘目标；与工作区级
+# <work_dir>/.openbrep/memory/learnings/error_lessons.jsonl 相互独立）
+GLOBAL_ERROR_LESSONS_PATH = Path.home() / ".openbrep" / ERROR_LESSONS_FILE
 
 SYSTEM_PROMPT = """你是 Archicad GDL 脚本 AI 修复助手。
 用户会粘贴编译报错或出问题的代码片段。
@@ -179,6 +200,34 @@ def _build_messages(
     return messages
 
 
+def _global_error_lessons_store() -> ErrorLearningStore:
+    """构建指向全局错题本 (~/.openbrep/error_lessons.jsonl) 的 store。
+
+    仅重定向 ``root`` / ``error_lessons_path`` 到全局位置；序列化与写盘
+    完全复用父类 ``_write_lessons``（内部 ``_lesson_to_dict``），不新造序列化。
+    """
+    store = ErrorLearningStore(Path.home())
+    store.root = GLOBAL_ERROR_LESSONS_PATH.parent
+    store.error_lessons_path = GLOBAL_ERROR_LESSONS_PATH
+    return store
+
+
+def _read_error_lessons(path: Path) -> list[ErrorLesson]:
+    """读取 jsonl 错题本（逐行 dict → ErrorLesson，schema 同 learning.py）。
+
+    文件不存在返回空列表；解析/读取异常向上抛出，由调用方（自动沉淀 /
+    ingest_error）统一按旁路失败处理——不静默吞错，避免下次写盘时覆盖损坏数据。
+    """
+    lessons: list[ErrorLesson] = []
+    if not path.exists():
+        return lessons
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        lessons.append(_lesson_from_dict(json.loads(line)))
+    return lessons
+
+
 class WorkbenchCopilotService:
     """Archicad GDL Copilot 工作台服务（原 addon copilot/server.py 的后端逻辑）。
 
@@ -191,6 +240,9 @@ class WorkbenchCopilotService:
         self._clipboard_buffer: list[str] = []
         self._clipboard_last_signature = ""
         self._clipboard_thread: threading.Thread | None = None
+        # E1：全局错题本写入锁（service 自有，与 request_gate 无关；
+        # 沉淀是旁路，锁只保护错题本文件读写，不触碰 session/project 状态）
+        self._error_lessons_lock = threading.Lock()
 
     # ── 公开 API（dict 进 / dict 出）──────────────────────────────
 
@@ -210,6 +262,8 @@ class WorkbenchCopilotService:
             return self.clipboard_buffer_clear(body)
         if method == "POST" and path == "/api/copilot/summarize-errors":
             return self.summarize_errors()
+        if method == "POST" and path == "/api/copilot/ingest-error":
+            return self.ingest_error(body)
         return {"ok": False, "error": f"Unknown route: {method} {path}"}
 
     def chat(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -323,6 +377,33 @@ class WorkbenchCopilotService:
 
         return {"ok": True, "summary": summary}
 
+    def ingest_error(self, body: dict[str, Any]) -> dict[str, Any]:
+        """手动沉淀入口（E1）。
+
+        请求 ``{error_text, code_context?}``：``error_text`` 为错误文本，
+        ``code_context`` 为关联代码/上下文（存 ``example`` 字段，蒸馏时
+        错误↔代码配对用）。归一化去重并入全局错题本
+        ``~/.openbrep/error_lessons.jsonl``，**无需项目打开**（不触碰
+        session/project，文件写入由 service 自有锁保护）。沉淀是旁路：
+        落盘失败返回 500 错误，不影响 chat / 剪贴板 buffer 主路径。
+        """
+        body = body or {}
+
+        error_text = str(body.get("error_text") or "").strip()
+        if not error_text:
+            return {"ok": False, "error": "error_text is required.", "status": 400}
+        code_context = str(body.get("code_context") or "").strip()
+
+        try:
+            return self._persist_error_lesson(
+                error_text,
+                source="copilot_manual",
+                code_context=code_context,
+            )
+        except Exception as exc:
+            logger.exception("copilot: ingest_error 落盘失败（沉淀是旁路，不影响主功能）")
+            return {"ok": False, "error": f"错题本写入失败: {exc}", "status": 500}
+
     # ── 内部实现 ─────────────────────────────────────────────────
 
     def _create_llm_adapter(self) -> LLMAdapter:
@@ -354,7 +435,7 @@ class WorkbenchCopilotService:
             self._clipboard_thread.start()
 
     def _clipboard_watch_iteration(self) -> None:
-        """单次监听 tick：读剪贴板 → 按签名去重 → 错误类文本入 buffer。"""
+        """单次监听 tick：读剪贴板 → 按签名去重 → 新错误文本入 buffer + 自动沉淀。"""
         value, source = _read_clipboard_snapshot()
         if not value:
             return
@@ -364,8 +445,76 @@ class WorkbenchCopilotService:
         self._clipboard_last_signature = signature
         if _is_error_clipboard_text(value):
             with self._clipboard_lock:
-                if value not in self._clipboard_buffer:
+                is_new_entry = value not in self._clipboard_buffer
+                if is_new_entry:
                     self._clipboard_buffer.append(value)
+            # E1：新捕获的错误条目自动沉淀进全局错题本（旁路；失败只记日志，
+            # 绝不影响 buffer 主路径——buffer 追加已完成，且内部已 try/except）
+            if is_new_entry:
+                self._auto_ingest_clipboard_error(value)
+
+    def _auto_ingest_clipboard_error(self, value: str) -> None:
+        """剪贴板新错误 → 自动沉淀（E1）。沉淀是旁路：任何异常只记日志。"""
+        try:
+            self._persist_error_lesson(value, source="copilot_clipboard")
+        except Exception:
+            logger.exception(
+                "copilot: 剪贴板错误自动沉淀失败（沉淀是旁路，不影响对话主功能）"
+            )
+
+    def _persist_error_lesson(
+        self,
+        error_text: str,
+        *,
+        source: str,
+        code_context: str = "",
+    ) -> dict[str, Any]:
+        """归一化去重并入全局错题本（E1 核心）。
+
+        复用 ``learning.py`` 的 ``classify_error`` / ``error_fingerprint`` /
+        ``summarize_error`` / ``guidance_for_category`` 产出字段，merge 用
+        ``_merge_lesson``、写盘用 ``ErrorLearningStore._write_lessons``（内部
+        复用 ``_lesson_to_dict``），**不新造序列化**。fingerprint 已存在则
+        count+1 并更新 last_seen；文件写入由 service 自有 ``_error_lessons_lock``
+        保护，与 request_gate 无关。
+        """
+        raw = str(error_text or "").strip()
+        now = datetime.now().isoformat(timespec="seconds")
+        category = classify_error(raw)
+        fingerprint = error_fingerprint(raw, category)
+        lesson = ErrorLesson(
+            fingerprint=fingerprint,
+            category=category,
+            summary=summarize_error(raw, category),
+            guidance=guidance_for_category(category),
+            example=str(code_context or "").strip()[:500],
+            count=1,
+            first_seen=now,
+            last_seen=now,
+            source=source,
+            raw_excerpt=raw[:500],
+        )
+
+        with self._error_lessons_lock:
+            store = _global_error_lessons_store()
+            lessons = _read_error_lessons(store.error_lessons_path)
+            existing = next(
+                (item for item in lessons if item.fingerprint == fingerprint),
+                None,
+            )
+            _merge_lesson(lessons, lesson)
+            store._write_lessons(lessons)
+            merged = existing if existing is not None else lesson
+
+        return {
+            "ok": True,
+            "fingerprint": merged.fingerprint,
+            "category": merged.category,
+            "count": merged.count,
+            "first_seen": merged.first_seen,
+            "last_seen": merged.last_seen,
+            "created": existing is None,
+        }
 
     def _clipboard_watch_loop(self) -> None:
         while True:

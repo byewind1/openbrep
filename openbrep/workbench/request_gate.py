@@ -28,6 +28,9 @@ LOCK_FREE_POST_ROUTES = frozenset({
     "/api/copilot/chat",
     "/api/copilot/clipboard-buffer/clear",
     "/api/copilot/summarize-errors",
+    # E1：手动错误沉淀。只读写全局错题本 ~/.openbrep/error_lessons.jsonl，
+    # 不触碰 session/project 状态；文件写入有 copilot service 自有锁保护。
+    "/api/copilot/ingest-error",
 })
 
 
