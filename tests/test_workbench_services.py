@@ -1569,3 +1569,162 @@ def test_codex_switch_account_requires_explicit_logout(tmp_path, monkeypatch):
     # 重新登录：打开全新的浏览器 flow（新账号），绝不复用旧登录态
     service.codex_login_start()
     assert provider.login_calls == 1
+
+
+# ── P0-1 三层绕过：service / route 层同样拒绝「已登录再登录 / pending 再登录」──
+
+
+class _RealProviderFakeClient:
+    """真实 CodexProvider + fake client：验证 service/route 层门禁不依赖 UI。"""
+
+    def __init__(self, account=None):
+        self.started = False
+        self.account = account
+        self.login_calls = 0
+        self.logout_calls = 0
+        self.login_cancel_calls = 0
+        self.model_list_calls = 0
+        self.rate_limits_calls = 0
+        self.closed = False
+        self.server_version = (0, 147, 0)
+
+    @property
+    def transport(self):
+        return None
+
+    def start(self):
+        self.started = True
+
+    def initialize(self):
+        return {"userAgent": "openbrep/0.147.0 (Mac OS)"}
+
+    def account_read(self):
+        return {"account": self.account, "requiresOpenaiAuth": self.account is None}
+
+    def account_login_start(self, login_type):
+        self.login_calls += 1
+        if login_type == "chatgptDeviceCode":
+            return {
+                "type": "chatgptDeviceCode",
+                "loginId": "L1",
+                "verificationUrl": "https://example.test/device",
+                "userCode": "ABCD-EFGH",
+            }
+        return {"type": "chatgpt", "loginId": "L1", "authUrl": "https://auth.example.test/oauth"}
+
+    def account_login_cancel(self, login_id):
+        self.login_cancel_calls += 1
+        return {"status": "canceled"}
+
+    def account_logout(self):
+        self.logout_calls += 1
+        self.account = None
+        return {}
+
+    def account_rate_limits_read(self):
+        self.rate_limits_calls += 1
+        raise RuntimeError("not signed in")
+
+    def model_list(self):
+        self.model_list_calls += 1
+        return {"data": [{"id": "gpt-5.6-luna", "model": "gpt-5.6-luna", "displayName": "GPT-5.6 Luna"}], "nextCursor": None}
+
+    def close(self):
+        self.closed = True
+
+
+def _real_provider_service(tmp_path, client):
+    from openbrep.codex.provider import CodexProvider
+
+    config = GDLAgentConfig()
+    provider = CodexProvider(
+        codex_home=tmp_path / "codex-home",
+        client_factory=lambda: client,
+        cli_available=True,
+        browser_opener=lambda url: None,
+    )
+    session = SimpleNamespace(
+        llm_model=config.llm.model,
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+    )
+    service = WorkbenchSettingsService(
+        session, llm_adapter_factory=lambda _c: None, codex_provider=provider,
+    )
+    return service, provider
+
+
+def test_service_login_while_signed_in_rejected(tmp_path):
+    """P0-1：service 层——已登录时 login/start 返回稳定 already_signed_in，不发 RPC。"""
+    client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
+    service, provider = _real_provider_service(tmp_path, client)
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    assert response["code"] == "codex_app_server"
+    assert "已连接" in response["error"]
+    assert "断开连接" in response["error"]
+    assert client.login_calls == 0
+    provider.close()
+
+
+def test_service_double_start_rejected(tmp_path):
+    """P0-1：service 层——pending 中再登录返回稳定 login_already_pending。"""
+    client = _RealProviderFakeClient(account=None)
+    service, provider = _real_provider_service(tmp_path, client)
+    first = service.codex_login_start()
+    assert first["ok"] is True
+    second = service.codex_login_start()
+    assert second["ok"] is False
+    assert "正在进行" in second["error"]
+    assert client.login_calls == 1
+    service.codex_login_cancel()
+    provider.close()
+
+
+def test_route_login_while_signed_in_rejected(tmp_path):
+    """P0-1：route 层——已登录时 POST /login/start 拒绝，绝不发 login RPC。"""
+    from openbrep.codex.provider import CodexProvider
+
+    client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
+    config = GDLAgentConfig()
+    provider = CodexProvider(
+        codex_home=tmp_path / "codex-home",
+        client_factory=lambda: client,
+        cli_available=True,
+        browser_opener=lambda url: None,
+    )
+    from openbrep.workbench_api import WorkbenchSession
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.settings_service.codex_provider = provider
+    response = session.route("POST", "/api/settings/llm/codex/login/start", {})
+    assert response["ok"] is False
+    assert "已连接" in response["error"]
+    assert client.login_calls == 0
+    provider.close()
+
+
+def test_route_device_code_while_signed_in_rejected(tmp_path):
+    """P0-1：route 层——已登录时 device-code 同样拒绝。"""
+    from openbrep.codex.provider import CodexProvider
+
+    client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
+    provider = CodexProvider(
+        codex_home=tmp_path / "codex-home",
+        client_factory=lambda: client,
+        cli_available=True,
+        browser_opener=lambda url: None,
+    )
+    from openbrep.workbench_api import WorkbenchSession
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.settings_service.codex_provider = provider
+    response = session.route("POST", "/api/settings/llm/codex/login/device-code", {})
+    assert response["ok"] is False
+    assert "已连接" in response["error"]
+    assert client.login_calls == 0
+    provider.close()

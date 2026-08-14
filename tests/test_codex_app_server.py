@@ -664,3 +664,171 @@ class TestCodexVersionParsing(unittest.TestCase):
         self.assertIsNone(parse_codex_version(""))
         self.assertIsNone(parse_codex_version("no-version-token"))
         self.assertIsNone(parse_codex_version("openbrep-garbage no-version-token"))
+
+
+# ── P0-5：畸形 JSON-RPC 帧不能杀死 reader ────────────────────────────────────
+
+
+class TestCodexD2MalformedFrames(unittest.TestCase):
+    """P0-5：list/dict id、无 method 通知、非对象帧、非 JSON 行均不能杀 reader。"""
+
+    def _transport_with_malformed(self, rpc_timeout=5.0):
+        transport = _spawn_transport(
+            rpc_timeout=rpc_timeout,
+            extra_env={"FAKE_CODEX_MALFORMED_FRAMES": "1"},
+        )
+        return transport
+
+    def test_malformed_frames_do_not_kill_reader(self):
+        transport = self._transport_with_malformed()
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        # initialize 响应前 fake 会先发一批畸形帧；reader 必须存活并正确回包
+        result = client.initialize()
+        self.assertIn("userAgent", result)
+        # 后续正常调用不受影响
+        self.assertEqual(client.account_read(), {"account": None, "requiresOpenaiAuth": True})
+        self.assertFalse(transport.crashed)
+        self.assertTrue(transport.is_alive)
+        transport.close()
+
+    def test_malformed_frames_then_eof_marks_crashed(self):
+        transport = self._transport_with_malformed()
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        # 正常 close 后不误标 crashed
+        transport.close()
+        self.assertFalse(transport.crashed)
+
+
+class TestCodexD2ReaderCrashDetection(unittest.TestCase):
+    """P0-5：reader 顶层 finally——异常/EOF 都标记 finished/crashed 并唤醒 waiters。"""
+
+    def test_subscriber_exception_does_not_kill_reader(self):
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "loginCompleted"})
+
+        def bad_handler(msg):
+            raise RuntimeError("subscriber bug")
+
+        transport.start()
+        transport.subscribe(bad_handler)
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(0.5)
+        self.assertFalse(transport.crashed)
+        self.assertTrue(transport.is_alive)
+        # 后续调用仍正常
+        self.assertEqual(client.account_read(), {"account": None, "requiresOpenaiAuth": True})
+        transport.close()
+
+
+class TestCodexD2ClosingProtocol(unittest.TestCase):
+    """P0-2：close() 置 closing 并唤醒 in-flight waiter，不干等到 rpc_timeout。"""
+
+    def test_in_flight_call_fails_fast_on_close(self):
+        transport = _spawn_transport(
+            rpc_timeout=10.0,
+            extra_env={
+                "FAKE_CODEX_DELAY_METHOD": "account/login/start",
+                "FAKE_CODEX_DELAY_RESPONSE_SECONDS": "3.0",
+            },
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        errors: list = []
+
+        def worker():
+            try:
+                client.account_login_start("chatgpt")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        thread = threading.Thread(target=worker)
+        start = time.monotonic()
+        thread.start()
+        time.sleep(0.3)  # 让 login RPC 进入等待
+        transport.close()  # 触发 closing → waiter 立即失败
+        thread.join(timeout=2.0)
+        elapsed = time.monotonic() - start
+        self.assertEqual(len(errors), 1)
+        self.assertLess(elapsed, 5.0, "close 后 in-flight call 应快速失败而非等满 rpc_timeout")
+        # 关闭后调用直接失败
+        with self.assertRaises(CodexAppServerError):
+            client.account_read()
+
+
+class TestCodexD2BoundedQueues(unittest.TestCase):
+    """P1-1/P1-2：通知与超时 tombstone 有界，防长期运行无界增长。"""
+
+    def test_notifications_queue_is_bounded(self):
+        from openbrep.codex.app_server import _NOTIFICATIONS_CAP
+
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "loginCompleted"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        # 大量请求触发大量通知
+        for _ in range(300):
+            client.initialize()
+        time.sleep(0.3)
+        drained = transport.drain_notifications()
+        self.assertLessEqual(len(drained), _NOTIFICATIONS_CAP)
+        transport.close()
+
+    def test_timed_out_tombstones_are_bounded(self):
+        from openbrep.codex.app_server import _TIMED_OUT_CAP
+
+        transport = _spawn_transport(rpc_timeout=0.2)
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        for _ in range(50):
+            try:
+                client.initialize()
+            except CodexAppServerError:
+                pass
+        with transport._cv:
+            self.assertLessEqual(len(transport._timed_out), _TIMED_OUT_CAP)
+            self.assertLessEqual(len(transport._timed_out_order), _TIMED_OUT_CAP)
+        transport.close()
+
+
+class TestCodexD2StubbornDescendant(unittest.TestCase):
+    """P0-3：SIGTERM 后直接子进程退出但后代忽略 SIGTERM → close 后仍被回收。"""
+
+    def test_stubborn_child_killed_after_close(self):
+        import os
+        import tempfile
+
+        pid_file = Path(tempfile.mkdtemp(prefix="obr-codex-stubborn-")) / "child.pid"
+        transport = _spawn_transport(
+            extra_env={
+                "FAKE_CODEX_IGNORE_EOF": "1",
+                "FAKE_CODEX_SPAWN_CHILD_PID_FILE": str(pid_file),
+                "FAKE_CODEX_CHILD_IGNORE_TERM": "1",
+            },
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        deadline = time.monotonic() + 5
+        child_pid = None
+        while time.monotonic() < deadline:
+            if pid_file.exists():
+                child_pid = int(pid_file.read_text().strip())
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(child_pid)
+        # close：EOF 后 fake 继续运行（ignore EOF）→ 5s grace → SIGTERM 组 →
+        # 父进程响应 TERM 退出，子进程忽略 TERM → 最终 SIGKILL 组
+        start = time.monotonic()
+        transport.close()
+        elapsed = time.monotonic() - start
+        self.assertGreaterEqual(elapsed, 4.5)
+        time.sleep(0.5)
+        try:
+            os.kill(child_pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        self.assertFalse(alive, "忽略 SIGTERM 的后代在 close 后仍存活（P0-3）")

@@ -38,6 +38,14 @@ _CLOSE_GRACE_SECONDS = 5.0
 # 有界 stderr 诊断捕获上限（D2 崩溃恢复）：只保留最近 N 字节，避免 PIPE
 # 被 64KB 缓冲填满阻塞子进程；内容先经 redact_secrets 脱敏再落队列。
 _STDERR_CAPTURE_LIMIT = 64 * 1024
+# 进程组回收宽限：SIGTERM 后无论直接子进程是否已退出，最终 SIGKILL 原进程组，
+# 保证忽略 SIGTERM 的后代也被回收（P0-3）。
+_KILL_GROUP_GRACE_SECONDS = 2.0
+# 兼容队列（drain_notifications）上限：有订阅者时通知也已投递，保留队列
+# 只作兼容；设上限防长期运行无界增长（P1-1）。
+_NOTIFICATIONS_CAP = 256
+# 超时请求 tombstone 上限：防永不返回的请求导致无界增长（P1-2）。
+_TIMED_OUT_CAP = 256
 
 
 class CodexCliUnavailableError(RuntimeError):
@@ -127,7 +135,7 @@ class StdioJsonRpcTransport:
         self._reader: threading.Thread | None = None
         self._stderr_reader: threading.Thread | None = None
         self._responses: dict[int, dict] = {}
-        self._notifications: list[dict] = []
+        self._notifications: deque[dict] = deque(maxlen=_NOTIFICATIONS_CAP)
         self._cv = threading.Condition()
         self._next_id = itertools.count(1)
         # 串行化 JSON-RPC 帧：app-server 是单 stdin 管道，并发写会交错帧。
@@ -136,9 +144,14 @@ class StdioJsonRpcTransport:
         # D2：通知订阅者（reader 线程投递）；迟到响应丢弃集合；崩溃标记
         self._subscribers: list[Callable[[dict], None]] = []
         self._timed_out: set[int] = set()
+        # tombstone 顺序队列：超限时淘汰最旧 id（P1-2）
+        self._timed_out_order: deque[int] = deque()
         self._crashed = False
         self._crash_exit_code: int | None = None
         self._reader_finished = False
+        # close() 开始后置 True：in-flight call 立即失败而不是干等到超时
+        # （P0-2 取消/等待协议：close 唤醒所有 waiter）。
+        self._closing = False
         # 有界脱敏 stderr 尾巴（崩溃诊断用，日志路径先脱敏）
         self._stderr_tail: deque[str] = deque(maxlen=64)
         self._stderr_bytes = 0
@@ -179,6 +192,11 @@ class StdioJsonRpcTransport:
         self._crashed = False
         self._crash_exit_code = None
         self._reader_finished = False
+        self._closing = False
+        self._responses.clear()
+        self._notifications.clear()
+        self._timed_out.clear()
+        self._timed_out_order.clear()
         self._stderr_tail.clear()
         self._stderr_bytes = 0
         if os.name == "posix":
@@ -238,65 +256,90 @@ class StdioJsonRpcTransport:
         proc = self._proc
         if proc is None or proc.stdout is None:
             return
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except ValueError:
-                # P0-R1B：协议行不得原样进日志（可能含 access_token/loginId/Bearer 等）；
-                # 只记固定文案 + 长度，不记内容。
-                self.logger.warning(
-                    "codex app-server: 忽略非 JSON 协议输出（length=%d）",
-                    len(line),
-                )
-                continue
-            if not isinstance(msg, dict):
-                continue
-            if msg.get("id") is not None:
-                rid = msg["id"]
-                with self._cv:
-                    if rid in self._timed_out:
-                        # D2：迟到响应——请求已超时，丢弃，不污染后续调用
-                        self._timed_out.discard(rid)
-                    else:
-                        self._responses[rid] = msg
-                        self._cv.notify_all()
-            else:
-                with self._cv:
-                    self._notifications.append(msg)
-                    subscribers = list(self._subscribers)
-                    self._cv.notify_all()
-                for handler in subscribers:
-                    try:
-                        handler(msg)
-                    except Exception:  # noqa: BLE001 —— 订阅者不得打断 reader
-                        self.logger.debug("codex app-server 通知订阅者异常", exc_info=True)
-        # stdout EOF：区分主动 close 与崩溃
-        with self._cv:
-            self._reader_finished = True
-            if self._proc is proc:
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
                 try:
-                    exit_code = proc.poll()
-                    if exit_code is None:
-                        try:
-                            proc.wait(timeout=2.0)
-                        except subprocess.TimeoutExpired:
-                            exit_code = None
-                        else:
-                            exit_code = proc.returncode
-                    self._crashed = True
-                    self._crash_exit_code = exit_code
+                    msg = json.loads(line)
+                except ValueError:
+                    # P0-R1B：协议行不得原样进日志（可能含 access_token/loginId/Bearer 等）；
+                    # 只记固定文案 + 长度，不记内容。
                     self.logger.warning(
-                        "codex app-server 进程已退出（exit=%s）——标记 crashed，"
-                        "可用 restart() 恢复",
-                        exit_code,
+                        "codex app-server: 忽略非 JSON 协议输出（length=%d）",
+                        len(line),
                     )
-                except Exception:  # noqa: BLE001
-                    self._crashed = True
-                    self._crash_exit_code = None
-            self._cv.notify_all()
+                    continue
+                if not isinstance(msg, dict):
+                    self.logger.warning(
+                        "codex app-server: 忽略非对象协议帧（length=%d）",
+                        len(line),
+                    )
+                    continue
+                rid = msg.get("id")
+                if rid is None:
+                    # 通知：method 必须是非空字符串
+                    method = msg.get("method")
+                    if not isinstance(method, str) or not method.strip():
+                        # P0-5：畸形通知帧固定脱敏记录并继续，不杀 reader
+                        self.logger.warning(
+                            "codex app-server: 忽略畸形通知帧（length=%d）",
+                            len(line),
+                        )
+                        continue
+                    with self._cv:
+                        self._notifications.append(msg)
+                        subscribers = list(self._subscribers)
+                        self._cv.notify_all()
+                    for handler in subscribers:
+                        try:
+                            handler(msg)
+                        except Exception:  # noqa: BLE001 —— 订阅者不得打断 reader
+                            self.logger.debug("codex app-server 通知订阅者异常", exc_info=True)
+                else:
+                    # P0-5：响应 id 只接受 int（拒绝 list/dict/str/bool 等）；
+                    # 畸形 id 固定脱敏记录并继续，绝不把未校验 id 用于 dict 索引。
+                    if not isinstance(rid, int) or isinstance(rid, bool):
+                        self.logger.warning(
+                            "codex app-server: 忽略畸形响应帧 id（length=%d）",
+                            len(line),
+                        )
+                        continue
+                    with self._cv:
+                        if rid in self._timed_out:
+                            # D2：迟到响应——请求已超时，丢弃，不污染后续调用
+                            self._timed_out.discard(rid)
+                            self._timed_out_order.remove(rid)
+                        else:
+                            self._responses[rid] = msg
+                            self._cv.notify_all()
+        finally:
+            # stdout EOF / 任何未预期异常：都标记 reader 结束；非主动 close 视为
+            # 崩溃并唤醒所有 waiter（P0-5：异常不得静默杀死 reader）。
+            with self._cv:
+                self._reader_finished = True
+                if self._proc is proc:
+                    try:
+                        exit_code = proc.poll()
+                        if exit_code is None:
+                            try:
+                                proc.wait(timeout=2.0)
+                            except subprocess.TimeoutExpired:
+                                exit_code = None
+                            else:
+                                exit_code = proc.returncode
+                        self._crashed = True
+                        self._crash_exit_code = exit_code
+                        self.logger.warning(
+                            "codex app-server 进程已退出（exit=%s）——标记 crashed，"
+                            "可用 restart() 恢复",
+                            exit_code,
+                        )
+                    except Exception:  # noqa: BLE001
+                        self._crashed = True
+                        self._crash_exit_code = None
+                self._cv.notify_all()
 
     @staticmethod
     def _signal_group(pgid: int | None, sig: int) -> None:
@@ -314,6 +357,11 @@ class StdioJsonRpcTransport:
         if proc is None:
             return
         pgid, self._pgid = self._pgid, None
+        # P0-2 取消/等待协议：置 closing 并唤醒所有 waiter（in-flight call
+        # 立即以 process_exited/closed 失败，而不是干等到 rpc_timeout）。
+        with self._cv:
+            self._closing = True
+            self._cv.notify_all()
         try:
             if proc.stdin is not None:
                 proc.stdin.close()  # EOF → app-server 优雅退出
@@ -324,13 +372,16 @@ class StdioJsonRpcTransport:
         except subprocess.TimeoutExpired:
             self._signal_group(pgid, signal.SIGTERM)
             try:
+                proc.wait(timeout=_KILL_GROUP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            # P0-3：无论直接子进程在 SIGTERM 后是否已退出，都要对原进程组
+            # 最终 SIGKILL（忽略 SIGTERM 的后代也必须被回收）。
+            self._signal_group(pgid, signal.SIGKILL)
+            try:
                 proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
-                self._signal_group(pgid, signal.SIGKILL)
-                try:
-                    proc.wait(timeout=2.0)
-                except subprocess.TimeoutExpired:
-                    pass
+                pass
         else:
             # 直接子进程已退出（可能优雅 exit 0），但进程组内可能还有后代
             # （app-server 派生的 helper）；按进程组兜底回收，避免遗留子进程。
@@ -364,10 +415,22 @@ class StdioJsonRpcTransport:
         with self._call_lock:
             return self._call_locked(method, params)
 
+    def _mark_timed_out(self, req_id: int) -> None:
+        """登记超时 tombstone（有界）：reader 收到迟到响应时丢弃。"""
+        self._timed_out.add(req_id)
+        self._timed_out_order.append(req_id)
+        if len(self._timed_out_order) > _TIMED_OUT_CAP:
+            self._timed_out.discard(self._timed_out_order.popleft())
+
     def _call_locked(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         proc = self._proc
         if proc is None:
             raise CodexAppServerError("codex app-server 尚未启动（先调用 start()）。", category="not_started")
+        if self._closing:
+            raise CodexAppServerError(
+                "codex app-server 正在关闭，请求已取消。",
+                category="closed",
+            )
         if self._crashed or proc.poll() is not None:
             raise CodexAppServerError(
                 f"codex app-server 进程已退出（exit={self._crash_exit_code or proc.returncode}）。"
@@ -396,11 +459,16 @@ class StdioJsonRpcTransport:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    # D2：标记该 id 已超时，reader 收到迟到响应时丢弃
-                    self._timed_out.add(req_id)
+                    # D2：标记该 id 已超时（有界 tombstone），reader 收到迟到响应时丢弃
+                    self._mark_timed_out(req_id)
                     raise CodexAppServerError(
                         f"codex app-server 请求超时（>{self.rpc_timeout:.0f}s）：{method}",
                         category="timeout",
+                    )
+                if self._closing:
+                    raise CodexAppServerError(
+                        "codex app-server 正在关闭，请求已取消。",
+                        category="closed",
                     )
                 if self._crashed or proc.poll() is not None:
                     raise CodexAppServerError(
@@ -426,7 +494,8 @@ class StdioJsonRpcTransport:
 
     def drain_notifications(self) -> list[dict]:
         with self._cv:
-            out, self._notifications = self._notifications, []
+            out = list(self._notifications)
+            self._notifications.clear()
         return out
 
 

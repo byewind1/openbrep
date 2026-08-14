@@ -8,6 +8,7 @@ authUrl 不外传、模型目录 provider-qualified、退出后 fail closed、
 from __future__ import annotations
 
 import contextlib
+import threading
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from openbrep.codex.provider import (
     CodexProvider,
     CodexVersionIncompatibleError,
     mask_email,
+    mask_rate_limits,
 )
 
 # 响应里绝不允许出现的秘密字段（值也不允许出现）
@@ -570,8 +572,24 @@ class TestCodexD2Provider(unittest.TestCase):
         client = _D2FakeClient()
         provider = self._provider(client)
         result = provider.login_cancel()
-        self.assertEqual(result, {"state": "signed_out"})
+        self.assertEqual(result["state"], "signed_out")
+        self.assertEqual(result["code"], "no_pending_login")
         self.assertEqual(client.login_cancel_calls, 0)
+
+    def test_login_cancel_while_signed_in_does_not_logout(self):
+        """P0-1：cancel 只对真实 pending 生效；已登录时切换账号必须先显式退出。"""
+        client = _D2FakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"}
+        )
+        provider = self._provider(client)
+        result = provider.login_cancel()
+        self.assertEqual(result["state"], "signed_in")
+        self.assertEqual(result["code"], "no_pending_login")
+        self.assertEqual(client.logout_calls, 0)
+        self.assertEqual(client.login_cancel_calls, 0)
+        # 账户仍是登录态（没有静默登出）
+        status = provider.status(refresh=True)
+        self.assertEqual(status["state"], "signed_in")
 
     def test_login_cancel_after_device_code(self):
         client = _D2FakeClient()
@@ -834,3 +852,693 @@ class TestCodexD2ProviderWireIntegration(unittest.TestCase):
             # 未登录：rate_limits fail closed（额度不会错误地暴露给未登录用户）
             with self.assertRaises(CodexNotSignedInError):
                 provider.rate_limits()
+
+
+# ── P0-1：账户状态机表驱动（signed_out/pending/signed_in × 动作）─────────────
+
+
+class TestCodexStateMachineTable(unittest.TestCase):
+    """P0-1：登录前状态门禁表驱动——已登录必须显式退出；pending 拒绝第二次。"""
+
+    def _provider_for(self, *, signed_in=False, pending=False, crashed=False):
+        """构造指定初始状态的 provider（factory 每次返回新客户端）。"""
+        healthy = _D2FakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"}
+            if signed_in else None
+        )
+        if crashed:
+            first = _D2FakeClient(transport=_TransportStub(crashed=True, exit_code=42))
+        else:
+            first = healthy
+        queue = iter([first, healthy])
+
+        def factory():
+            return next(queue)
+
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-table"),
+            client_factory=factory,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        if pending:
+            # 先发起一次登录（fake 返回 chatgpt flow）→ pending 置位
+            provider.login_start()
+        return provider
+
+    # (初始状态, 动作, 期望: ("state", value) 或 ("raise_category", cat))
+    CASES = [
+        ("signed_out", "start", ("state", "login_started")),
+        ("signed_out", "device", ("state", "login_started")),
+        ("signed_out", "cancel", ("state", "signed_out")),
+        ("signed_out", "logout", ("state", "signed_out")),
+        ("signed_out", "restart", ("state", "signed_out")),
+        ("signed_out", "completion_success", ("state", "signed_out")),
+        ("signed_out", "completion_failure", ("state", "signed_out")),
+        ("pending", "start", ("raise_category", "login_already_pending")),
+        ("pending", "device", ("raise_category", "login_already_pending")),
+        ("pending", "cancel", ("state", "signed_out")),
+        ("pending", "logout", ("state", "signed_out")),
+        ("pending", "restart", ("state", "signed_out")),
+        ("pending", "completion_success", ("state", "signed_out")),
+        ("pending", "completion_failure", ("state", "signed_out")),
+        ("signed_in", "start", ("raise_category", "already_signed_in")),
+        ("signed_in", "device", ("raise_category", "already_signed_in")),
+        ("signed_in", "cancel", ("state", "signed_in")),
+        ("signed_in", "logout", ("state", "signed_out")),
+        ("signed_in", "restart", ("state", "signed_in")),
+        ("signed_in", "completion_success", ("state", "signed_in")),
+        ("signed_in", "completion_failure", ("state", "signed_in")),
+    ]
+
+    def _run_action(self, provider, action):
+        if action == "start":
+            return provider.login_start()
+        if action == "device":
+            return provider.login_start_device_code()
+        if action == "cancel":
+            return provider.login_cancel()
+        if action == "logout":
+            return provider.logout()
+        if action == "restart":
+            return provider.restart()
+        if action == "completion_success":
+            provider._on_notification(
+                {"method": "account/login/completed", "params": {"loginId": "L1", "success": True, "error": None}}
+            )
+            return provider.status(refresh=True)
+        if action == "completion_failure":
+            provider._on_notification(
+                {"method": "account/login/completed", "params": {"loginId": "L1", "success": False, "error": "cancelled"}}
+            )
+            return provider.status(refresh=True)
+        raise AssertionError(f"unknown action {action}")
+
+    def test_state_machine_table(self):
+        for initial, action, expected in self.CASES:
+            with self.subTest(initial=initial, action=action):
+                provider = self._provider_for(
+                    signed_in=(initial == "signed_in"),
+                    pending=(initial == "pending"),
+                    crashed=(initial == "crashed"),
+                )
+                kind, value = expected
+                if kind == "state":
+                    result = self._run_action(provider, action)
+                    self.assertEqual(result["state"], value, f"{initial}×{action}")
+                else:
+                    with self.assertRaises(CodexAppServerError) as ctx:
+                        self._run_action(provider, action)
+                    self.assertEqual(ctx.exception.category, value, f"{initial}×{action}")
+                provider.close()
+
+    def test_login_while_signed_in_never_issues_rpc(self):
+        """P0-1：已登录时 login_start 绝不发 login RPC（UI 隐藏按钮不是边界）。"""
+        client = _D2FakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"}
+        )
+        provider = self._provider_for(signed_in=True)
+        # 使用可观测 client：_provider_for 的 factory 不可见，这里直接验证
+        # 异常类别 + 未发 RPC（通过带计数 client 的 provider）
+        counted = _D2FakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"}
+        )
+        p2 = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-norpc"),
+            client_factory=lambda: counted,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        with self.assertRaises(CodexAppServerError) as ctx:
+            p2.login_start()
+        self.assertEqual(ctx.exception.category, "already_signed_in")
+        self.assertEqual(counted.login_calls, 0)
+        with self.assertRaises(CodexAppServerError) as ctx:
+            p2.login_start_device_code()
+        self.assertEqual(ctx.exception.category, "already_signed_in")
+        self.assertEqual(counted.login_calls, 0)
+        p2.close()
+
+    def test_double_start_never_overwrites_pending_id(self):
+        """P0-1：两条登录流程不能共存；第二条被拒，loginId 不被覆盖。"""
+        client = _D2FakeClient()
+        provider = self._provider_for(pending=False)
+        provider.login_start()          # 第一条 → pending L1
+        self.assertEqual(provider._pending_login_id, "fake-login-id")
+        with self.assertRaises(CodexAppServerError) as ctx:
+            provider.login_start_device_code()  # 第二条 → 拒绝
+        self.assertEqual(ctx.exception.category, "login_already_pending")
+        self.assertEqual(provider._pending_login_id, "fake-login-id")
+        self.assertEqual(provider._login_pending, True)
+        provider.login_cancel()
+        provider.close()
+
+    def test_completion_failure_clears_pending_and_is_actionable(self):
+        """P0-1：completion failure 清 pending/id，status 不再永久 login_started。"""
+        client = _D2FakeClient()
+        provider = self._provider_for(pending=False)
+        provider.login_start()
+        self.assertEqual(provider.status(refresh=True)["state"], "login_started")
+        provider._on_notification(
+            {"method": "account/login/completed", "params": {"loginId": "L1", "success": False, "error": "cancelled"}}
+        )
+        status = provider.status(refresh=True)
+        self.assertEqual(status["state"], "signed_out")
+        self.assertIn("login_error", status)
+        self.assertIn("设备码", status["login_error"])
+        # 反复 refresh 也绝不回到 login_started
+        for _ in range(3):
+            self.assertEqual(provider.status(refresh=True)["state"], "signed_out")
+        self.assertFalse(provider._login_pending)
+        self.assertIsNone(provider._pending_login_id)
+        provider.close()
+
+    def test_completion_success_clears_pending(self):
+        """P0-1：completion success 清 pending/id，状态回到账户实际状态。"""
+        client = _D2FakeClient()
+        provider = self._provider_for(pending=False)
+        provider.login_start()
+        provider._on_notification(
+            {"method": "account/login/completed", "params": {"loginId": "L1", "success": True, "error": None}}
+        )
+        self.assertFalse(provider._login_pending)
+        self.assertIsNone(provider._pending_login_id)
+        status = provider.status(refresh=True)
+        self.assertEqual(status["state"], "signed_out")
+        self.assertNotIn("login_error", status)
+        provider.close()
+
+    def test_completion_failure_never_shown_while_signed_in(self):
+        provider = self._provider_for(signed_in=True)
+        provider._on_notification(
+            {"method": "account/login/completed", "params": {"loginId": "L1", "success": False, "error": "x"}}
+        )
+        status = provider.status(refresh=True)
+        self.assertEqual(status["state"], "signed_in")
+        self.assertNotIn("login_error", status)
+        provider.close()
+
+    def test_rollback_on_missing_auth_url(self):
+        """P0-1：响应校验失败必须 best-effort cancel 回滚（server 登录可能已开始）。"""
+        client = _D2FakeClient(login_result={"type": "chatgpt", "loginId": "ROLLBACK-L"})
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-rollback"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        with self.assertRaises(CodexAppServerError):
+            provider.login_start()
+        self.assertEqual(client.login_cancel_calls, 1)
+        self.assertFalse(provider._login_pending)
+        self.assertIsNone(provider._pending_login_id)
+        provider.close()
+
+    def test_rollback_on_invalid_device_code_fields(self):
+        client = _D2FakeClient(
+            login_result={"type": "chatgptDeviceCode", "loginId": "ROLLBACK-D", "verificationUrl": "javascript:alert(1)", "userCode": "ABCD-EFGH"}
+        )
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-rollback2"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        with self.assertRaises(CodexAppServerError):
+            provider.login_start_device_code()
+        self.assertEqual(client.login_cancel_calls, 1)
+        self.assertFalse(provider._login_pending)
+        provider.close()
+
+    def test_rollback_on_opener_exception(self):
+        """P0-1：browser opener 异常 → 回滚取消，UI 状态与 server 会话一起回滚。"""
+        client = _D2FakeClient()
+
+        def bad_opener(url):
+            raise RuntimeError("browser launch failed")
+
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-rollback3"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=bad_opener,
+        )
+        with self.assertRaises(CodexAppServerError):
+            provider.login_start()
+        self.assertEqual(client.login_cancel_calls, 1)
+        self.assertFalse(provider._login_pending)
+        self.assertIsNone(provider._pending_login_id)
+        status = provider.status(refresh=True)
+        self.assertEqual(status["state"], "signed_out")
+        provider.close()
+
+
+class TestCodexStateMachineCrashed(unittest.TestCase):
+    """P0-1 表补：crashed 初始状态的动作语义（自愈/显式重启）。"""
+
+    def test_crashed_start_self_heals_then_logs_in(self):
+        """crashed（运行中崩溃）→ start：操作路径自愈重建后发起登录。"""
+        first = _D2FakeClient()  # 先健康创建
+        second = _D2FakeClient()
+        queue = iter([first, second])
+
+        def factory():
+            return next(queue)
+
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-crashed"),
+            client_factory=factory,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        provider.status()  # 创建 first（健康）
+        first._transport = _TransportStub(crashed=True, exit_code=9)  # 运行中崩溃
+        result = provider.login_start()  # 自愈 → second
+        self.assertEqual(result["state"], "login_started")
+        self.assertTrue(first.closed)
+        self.assertIs(provider._client, second)
+        provider.close()
+
+    def test_crashed_status_reports_crashed_not_stale(self):
+        """P1-3：崩溃后 status 不得返回旧的 signed-in 缓存。"""
+        import tempfile
+
+        crashed = _D2FakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"},
+            transport=_TransportStub(crashed=False),
+        )
+        healthy = _D2FakeClient(account=None)
+        queue = iter([crashed, healthy])
+
+        def factory():
+            return next(queue)
+
+        provider = CodexProvider(
+            codex_home=Path(tempfile.mkdtemp(prefix="obr-codex-p13-")) / "home",
+            client_factory=factory,
+            cli_available=True,
+            browser_opener=lambda url: None,
+            status_ttl=60.0,
+        )
+        # 第一次 status 填充 signed_in 缓存
+        status = provider.status()
+        self.assertEqual(status["state"], "signed_in")
+        # 运行中崩溃
+        crashed._transport = _TransportStub(crashed=True, exit_code=11)
+        # 缓存 TTL 内也必须返回 crashed，而不是旧的 signed_in
+        status = provider.status()
+        self.assertEqual(status["state"], "crashed")
+        provider.close()
+
+
+# ── P0-2：真实线程竞态（login↔restart / status·model↔restart / login↔cancel / double start）──
+
+
+class _RaceFakeClient(_D2FakeClient):
+    """可控阻塞 fake client：account_login_start / model_list / account_read 可挂起。"""
+
+    def __init__(self, *args, login_gate=None, model_gate=None, read_gate=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.login_gate = login_gate
+        self.model_gate = model_gate
+        self.read_gate = read_gate
+        self.login_entered = threading.Event()
+        self.model_entered = threading.Event()
+        self.read_entered = threading.Event()
+
+    def account_login_start(self, login_type):
+        self.login_calls += 1
+        if self.login_gate is not None:
+            self.login_entered.set()
+            self.login_gate.wait(5)
+        if self.login_result is not None:
+            return self.login_result
+        return {
+            "type": "chatgpt",
+            "loginId": "fake-login-id",
+            "authUrl": "https://auth.openai.com/oauth/authorize?state=fake",
+        }
+
+    def model_list(self):
+        self.model_list_calls += 1
+        if self.model_gate is not None:
+            self.model_entered.set()
+            self.model_gate.wait(5)
+        return {"data": self.models, "nextCursor": None}
+
+    def account_read(self):
+        self.account_read_calls += 1
+        if self.read_gate is not None:
+            self.read_entered.set()
+            self.read_gate.wait(5)
+        return {"account": self.account, "requiresOpenaiAuth": self.account is None}
+
+
+def _race_provider(first, second=None, **kwargs):
+    """每次 factory 返回下一个 client；first 用完后取 second（或 first 的副本）。"""
+    second = second if second is not None else _D2FakeClient()
+    queue = iter([first, second])
+
+    def factory():
+        return next(queue)
+
+    provider = CodexProvider(
+        codex_home=Path("/tmp/obr-codex-race"),
+        client_factory=factory,
+        cli_available=True,
+        browser_opener=lambda url: None,
+        **kwargs,
+    )
+    return provider, first, second
+
+
+class TestCodexThreadRaces(unittest.TestCase):
+    """P0-2：生命周期操作经 _op_lock 串行化——竞态下无陈旧状态提交。"""
+
+    def test_login_restart_race_no_stale_pending(self):
+        """login RPC 进行中 restart：op_lock 串行化，无 OLD-L 残留/错发。"""
+        gate = threading.Event()
+        old_client = _RaceFakeClient(login_gate=gate)
+        new_client = _D2FakeClient()
+        provider, old_client, new_client = _race_provider(old_client, new_client)
+
+        results: list = []
+
+        def t1():
+            try:
+                results.append(("ok", provider.login_start()))
+            except Exception as exc:  # noqa: BLE001
+                results.append(("err", exc))
+
+        thread = threading.Thread(target=t1)
+        thread.start()
+        self.assertTrue(old_client.login_entered.wait(5), "login RPC 未进入")
+        # T2 restart：被 _op_lock 阻塞直到 login_start 完成
+        status = provider.restart()
+        gate.set()
+        thread.join(timeout=5)
+        self.assertEqual(status["state"], "signed_out")
+        # login_start 完成且提交 pending（old client）→ restart 随后清空
+        self.assertFalse(provider._login_pending)
+        self.assertIsNone(provider._pending_login_id)
+        # provider 现在指向 new client；旧 client 已关闭
+        self.assertIs(provider._client, new_client)
+        self.assertTrue(old_client.closed)
+        # cancel 不会把 OLD-L 发给 new client（没有 pending → 无取消 RPC）
+        provider.login_cancel()
+        self.assertEqual(new_client.login_cancel_calls, 0)
+        provider.close()
+
+    def test_double_start_serialized_second_rejected(self):
+        """double start：并发两次 login_start，只发一次 RPC，第二次 login_already_pending。"""
+        client = _D2FakeClient()
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-double"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        results: list = []
+
+        def run():
+            try:
+                results.append(provider.login_start())
+            except Exception as exc:  # noqa: BLE001
+                results.append(exc)
+
+        threads = [threading.Thread(target=run) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        self.assertEqual(len(results), 2)
+        states = [
+            r.get("state") if isinstance(r, dict) else getattr(r, "category", None)
+            for r in results
+        ]
+        self.assertIn("login_started", states)
+        self.assertIn("login_already_pending", states)
+        self.assertEqual(client.login_calls, 1, "double start 只能发一次 login RPC")
+        provider.login_cancel()
+        provider.close()
+
+    def test_login_cancel_race(self):
+        """login↔cancel：并发下要么 cancel 在 login 后取消成功，要么先返回 no_pending。"""
+        gate = threading.Event()
+        client = _RaceFakeClient(login_gate=gate)
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-cancel-race"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        login_result: list = []
+        cancel_result: list = []
+
+        def t1():
+            try:
+                login_result.append(provider.login_start())
+            except Exception as exc:  # noqa: BLE001
+                login_result.append(exc)
+
+        thread = threading.Thread(target=t1)
+        thread.start()
+        self.assertTrue(client.login_entered.wait(5))
+        # cancel 并发：op_lock 串行化——若 login 先完成，cancel 取消 pending；
+        # 若 cancel 先执行，login 随后被 pending 门禁拒绝。
+        cancel_result.append(provider.login_cancel())
+        gate.set()
+        thread.join(timeout=5)
+        # 最终一致性：无残留 pending（除非 login 被门禁拒绝后 cancel 是 no_pending）
+        provider2_status = provider.status(refresh=True)
+        self.assertIn(provider2_status["state"], ("signed_out", "login_started"))
+        # 两种合法结果都不允许"取消后仍 pending"
+        if isinstance(cancel_result[0], dict) and cancel_result[0].get("state") == "signed_out":
+            self.assertFalse(provider._login_pending)
+        provider.close()
+
+    def test_models_restart_race_no_stale_cache(self):
+        """model RPC 进行中 restart：要么干净返回，要么干净报错；无陈旧缓存提交。"""
+        gate = threading.Event()
+        old_client = _RaceFakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"},
+            model_gate=gate,
+        )
+        new_client = _D2FakeClient(account=None)
+        provider, old_client, new_client = _race_provider(old_client, new_client)
+        provider.status()  # 创建 old client（signed_in）
+        old_client.model_gate = gate
+        models_result: list = []
+
+        def t1():
+            try:
+                models_result.append(provider.models(refresh=True))
+            except Exception as exc:  # noqa: BLE001
+                models_result.append(exc)
+
+        thread = threading.Thread(target=t1)
+        thread.start()
+        self.assertTrue(old_client.model_entered.wait(5))
+        # restart 并发（models 不走 op_lock，但 restart 关旧 client → models 干净失败或已提交）
+        provider.restart()
+        gate.set()
+        thread.join(timeout=5)
+        # restart 后 pending/缓存一致性：models 若成功提交，其缓存来自旧 client 的
+        # model_list 结果（同一账户目录，安全）；restart 已清缓存并换新 client。
+        self.assertIs(provider._client, new_client)
+        self.assertTrue(old_client.closed)
+        provider.close()
+
+    def test_status_restart_race_clean(self):
+        """status RPC 进行中 restart：status 干净返回（不抛异常），无陈旧缓存残留。"""
+        gate = threading.Event()
+        old_client = _RaceFakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"},
+            read_gate=gate,
+        )
+        new_client = _D2FakeClient(account=None)
+        provider, old_client, new_client = _race_provider(old_client, new_client)
+        status_result: list = []
+
+        def t1():
+            try:
+                status_result.append(provider.status(refresh=True))
+            except Exception as exc:  # noqa: BLE001
+                status_result.append(exc)
+
+        thread = threading.Thread(target=t1)
+        thread.start()
+        self.assertTrue(old_client.read_entered.wait(5))
+        provider.restart()
+        gate.set()
+        thread.join(timeout=5)
+        self.assertEqual(len(status_result), 1)
+        # status 要么是 dict（干净状态），要么干净异常——不允许脏状态
+        if isinstance(status_result[0], dict):
+            self.assertIn(status_result[0]["state"], ("signed_in", "signed_out", "error", "crashed"))
+        # restart 后缓存已失效：新 status 不残留旧 signed_in（新 client 未登录）
+        final = provider.status(refresh=True)
+        self.assertEqual(final["state"], "signed_out")
+        provider.close()
+
+
+# ── P0-4：恶意/漂移 rate-limit payload 脱敏硬化 ──────────────────────────────
+
+
+class TestCodexRateLimitMaskingHardening(unittest.TestCase):
+    """P0-4：每个保留字段携带恶意字符串/嵌套对象时，一律置空或拒绝，绝不透传。"""
+
+    SECRETS = (
+        "access_token=SUPERSECRET",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig",
+        "loginId=a0327bbe-a894-4455-9e96-8c6d19ed2a53",
+        "Bearer plain-secret-value",
+        "https://auth.openai.com/oauth?state=SECRET",
+    )
+
+    def _masked(self, **overrides):
+        rl = {
+            "limitId": "codex",
+            "limitName": "Codex",
+            "primary": {"usedPercent": 12, "windowDurationMins": 360, "resetsAt": 1786800000},
+            "credits": {"hasCredits": True, "unlimited": False, "balance": "123.45"},
+            "spendControlReached": False,
+            "planType": "pro",
+            "rateLimitReachedType": None,
+        }
+        rl.update(overrides)
+        return mask_rate_limits({"rateLimits": rl, "rateLimitsByLimitId": None, "rateLimitResetCredits": None})
+
+    def _assert_clean(self, masked, secret):
+        text = str(masked)
+        self.assertNotIn(secret, text, f"脱敏摘要泄漏 {secret!r}")
+        self.assertNotIn("SUPERSECRET", text)
+        self.assertNotIn("auth.openai.com", text)
+
+    def test_malicious_plan_type_is_rejected(self):
+        for secret in self.SECRETS:
+            masked = self._masked(planType=secret)
+            self.assertIsNone(masked["plan_type"], secret)
+            self._assert_clean(masked, secret)
+
+    def test_malicious_reached_type_is_rejected(self):
+        for secret in self.SECRETS:
+            masked = self._masked(rateLimitReachedType=secret)
+            self.assertIsNone(masked["reached_type"], secret)
+            self.assertFalse(masked["reached"], secret)
+            self._assert_clean(masked, secret)
+
+    def test_malicious_used_percent_is_rejected(self):
+        for secret in self.SECRETS:
+            masked = self._masked(primary={"usedPercent": secret})
+            self.assertIsNone(masked["used_percent"], secret)
+            self._assert_clean(masked, secret)
+
+    def test_nested_objects_rejected(self):
+        # 整个 dict 塞进标量字段
+        masked = self._masked(planType={"token": "SUPERSECRET"})
+        self.assertIsNone(masked["plan_type"])
+        masked = self._masked(rateLimitReachedType=["rate_limit_reached"])
+        self.assertIsNone(masked["reached_type"])
+        masked = self._masked(primary={"usedPercent": {"value": 99}})
+        self.assertIsNone(masked["used_percent"])
+        masked = self._masked(credits={"hasCredits": "yes", "unlimited": {"x": 1}})
+        self.assertEqual(masked["credits"], {"has_credits": None, "unlimited": None})
+        text = str(masked)
+        self.assertNotIn("SUPERSECRET", text)
+
+    def test_non_bool_flags_rejected(self):
+        masked = self._masked(spendControlReached="true")
+        self.assertIsNone(masked["spend_control_reached"])
+        self.assertFalse(masked["reached"])
+        masked = self._masked(spendControlReached=1)
+        self.assertIsNone(masked["spend_control_reached"])
+        masked = self._masked(spendControlReached=True)
+        self.assertIs(masked["spend_control_reached"], True)
+
+    def test_out_of_range_numbers_rejected(self):
+        masked = self._masked(primary={"usedPercent": 150})
+        self.assertIsNone(masked["used_percent"])
+        masked = self._masked(primary={"usedPercent": -1})
+        self.assertIsNone(masked["used_percent"])
+        masked = self._masked(primary={"usedPercent": float("inf")})
+        self.assertIsNone(masked["used_percent"])
+        masked = self._masked(primary={"resetsAt": -5})
+        self.assertIsNone(masked["resets_at"])
+
+    def test_rate_limits_not_dict_returns_empty_summary(self):
+        masked = mask_rate_limits({"rateLimits": ["not", "a", "dict"]})
+        self.assertIsNone(masked["plan_type"])
+        self.assertIsNone(masked["used_percent"])
+        self.assertFalse(masked["reached"])
+        masked2 = mask_rate_limits({"rateLimits": None})
+        self.assertIsNone(masked2["plan_type"])
+
+    def test_valid_enum_and_product_string_accepted(self):
+        masked = self._masked(planType="pro")
+        self.assertEqual(masked["plan_type"], "pro")
+        masked = self._masked(planType="custom-plan-x")
+        self.assertEqual(masked["plan_type"], "custom-plan-x")
+        masked = self._masked(rateLimitReachedType="rate_limit_reached")
+        self.assertEqual(masked["reached_type"], "rate_limit_reached")
+        self.assertTrue(masked["reached"])
+
+    def test_status_and_service_never_leak_malicious_rate_limits(self):
+        """P0-4：provider status + service API 递归断言恶意 payload 无秘密。"""
+        from types import SimpleNamespace
+
+        from openbrep.config import GDLAgentConfig
+        from openbrep.workbench.settings_service import WorkbenchSettingsService
+
+        rl = {
+            "rateLimits": {
+                "planType": "access_token=SUPERSECRET",
+                "rateLimitReachedType": "loginId=a0327bbe-a894-4455-9e96-8c6d19ed2a53",
+                "primary": {"usedPercent": "Bearer plain-secret-value", "resetsAt": {"x": 1}},
+                "credits": {"hasCredits": "yes", "unlimited": {"nested": "sk-abc123456789"}},
+                "spendControlReached": "true",
+            },
+            "rateLimitsByLimitId": {"codex": {}},
+            "rateLimitResetCredits": None,
+        }
+        client = _D2FakeClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"},
+            rate_limits=rl,
+        )
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-p04"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        # provider status（含 rate_limits 摘要）
+        status = provider.status()
+        text = str(status)
+        for bad in ("SUPERSECRET", "a0327bbe", "plain-secret-value", "sk-abc123456789", "access_token", "loginId", "Bearer"):
+            self.assertNotIn(bad, text, f"status 泄漏 {bad}")
+        self.assertIsNone(status["rate_limits"]["plan_type"])
+        self.assertIsNone(status["rate_limits"]["used_percent"])
+        self.assertEqual(status["rate_limits"]["credits"], {"has_credits": None, "unlimited": None})
+        # service API 边界
+        config = GDLAgentConfig()
+        session = SimpleNamespace(
+            llm_model="openai-codex/gpt-5.6-luna",
+            llm_api_key="",
+            llm_api_base="",
+            assistant_settings="",
+            max_retries=5,
+            config=config,
+            config_path=Path("/tmp/obr-codex-p04-config.toml"),
+        )
+        service = WorkbenchSettingsService(
+            session, llm_adapter_factory=lambda _c: None, codex_provider=provider,
+        )
+        response = service.codex_status()
+        resp_text = str(response)
+        for bad in ("SUPERSECRET", "a0327bbe", "plain-secret-value", "sk-abc123456789"):
+            self.assertNotIn(bad, resp_text, f"API 泄漏 {bad}")
+        rl_response = service.codex_rate_limits()
+        rl_text = str(rl_response)
+        for bad in ("SUPERSECRET", "a0327bbe", "plain-secret-value", "sk-abc123456789"):
+            self.assertNotIn(bad, rl_text, f"rate-limits API 泄漏 {bad}")
+        provider.close()

@@ -189,6 +189,28 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     await waitFor(() => expect(screen.queryByText('GPT-5.6 Luna')).toBeNull())
     expect(await screen.findByTestId('codex-login-button')).toBeTruthy()
   })
+  test('login failure from status shows actionable hint', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_out',
+      codex_available: true,
+      connected: false,
+      account: null,
+      login_error: 'ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。',
+    })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    const el = await screen.findByTestId('codex-login-error')
+    expect(el.textContent ?? '').toMatch(/设备码/)
+  })
+
   // ── D2：取消 / 设备码 / 崩溃重启 / 额度 ─────────────────────────────────
 
   test('cancel pending login returns to signed out', async () => {

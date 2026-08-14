@@ -680,6 +680,11 @@ function CodexSection({
           ) : null}
         </div>
       ) : null}
+      {status?.login_error && !loginStarted ? (
+        <p className="settings-test-result error" data-testid="codex-login-error">
+          {status.login_error}
+        </p>
+      ) : null}
       {loginStarted ? (
         <div data-testid="codex-login-pending">
           <p className="settings-test-result">{t('settings.ai.codex.loginPendingHint')}</p>

@@ -94,8 +94,15 @@ def main() -> None:
     if child_pid_file:
         # 不设 start_new_session：子进程加入 fake app-server 的进程组
         # （transport 用 start_new_session=True 启动 fake），进程组回收时一并清理。
+        if os.environ.get("FAKE_CODEX_CHILD_IGNORE_TERM"):
+            child_code = (
+                "import signal, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)"
+            )
+        else:
+            child_code = "import time; time.sleep(300)"
         child = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(300)"],
+            [sys.executable, "-c", child_code],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -111,6 +118,7 @@ def main() -> None:
 
     handled = 0
     delay_first = float(os.environ.get("FAKE_CODEX_DELAY_FIRST_RESPONSE_SECONDS", "0"))
+    malformed_sent = False
     for raw in sys.stdin:
         line = raw.strip()
         if not line:
@@ -121,7 +129,8 @@ def main() -> None:
             continue
         rid = msg.get("id")
         method = msg.get("method") or ""
-        if delay:
+        delay_method = os.environ.get("FAKE_CODEX_DELAY_METHOD", "")
+        if delay and (not delay_method or method == delay_method):
             time.sleep(delay)
         elif delay_first and handled == 0:
             time.sleep(delay_first)
@@ -142,6 +151,14 @@ def main() -> None:
                 "platformFamily": "unix",
                 "platformOs": "macos",
             }
+            if os.environ.get("FAKE_CODEX_MALFORMED_FRAMES") and not malformed_sent:
+                malformed_sent = True
+                # P0-5：畸形帧批次——list/dict id、无 method 通知、非对象帧、非 JSON
+                _send({"jsonrpc": "2.0", "id": [1, 2], "result": {}})
+                _send({"jsonrpc": "2.0", "id": {"a": 1}, "result": {}})
+                _send({"jsonrpc": "2.0", "params": {}})  # 无 method 的通知
+                _send(["not", "a", "dict"])
+                _send("not json at all {{{{")  # 非 JSON 行
         elif method == "account/read":
             if os.environ.get("FAKE_CODEX_SIGNED_IN"):
                 result = {
@@ -251,6 +268,18 @@ def main() -> None:
             sys.stderr.write("fake app-server crash: simulated failure\n")
             sys.stderr.flush()
             sys.exit(43)
+
+    if os.environ.get("FAKE_CODEX_IGNORE_EOF"):
+        # P0-3：stdin EOF 后不退出（父进程对 SIGTERM 响应退出），用于验证
+        # close() 进程组兜底回收。
+        import signal as _signal
+
+        def _on_term(signum, frame):
+            sys.exit(0)
+
+        _signal.signal(_signal.SIGTERM, _on_term)
+        while True:
+            time.sleep(1)
 
 
 if __name__ == "__main__":

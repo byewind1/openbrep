@@ -54,6 +54,10 @@ ALLOWED_LOGIN_TYPES = frozenset({"chatgpt", "chatgptDeviceCode"})
 # 最小 Codex CLI 版本：app-server 协议面（account/login/cancel、
 # account/rateLimits/read、通知）以 0.147.0 实测验证；低于此版本
 # version_incompatible，fail closed。version 解析自 initialize.userAgent。
+# 边界（P1-4，如实记录）：当前只有版本门槛，没有逐方法的 schema/capability
+# 探测——若版本满足但上游缺少 cancel/rate-limit 等方法，会在运行时以稳定
+# rpc_error 失败（错误文案不泄漏上游原文），不会静默降级。逐方法能力协商
+# 留待后续版本。
 MIN_CODEX_VERSION = (0, 147, 0)
 
 
@@ -81,30 +85,109 @@ def mask_email(email: str) -> str:
     return f"{visible}***@{domain}"
 
 
-def mask_rate_limits(raw: dict[str, Any]) -> dict[str, Any]:
-    """account/rateLimits/read 的脱敏摘要——只暴露产品需要的字段。
+# 上游 rateLimits 的合法枚举（来自 codex 0.147.0 生成绑定）；不在枚举内的
+# 产品字符串也必须通过严格字符集/长度校验，绝不透传任意上游字符串。
+_RATE_LIMIT_REACHED_TYPES = frozenset({
+    "rate_limit_reached",
+    "workspace_owner_credits_depleted",
+    "workspace_member_credits_depleted",
+    "workspace_owner_usage_limit_reached",
+    "workspace_member_usage_limit_reached",
+})
+_PLAN_TYPES = frozenset({
+    "free", "go", "plus", "pro", "prolite", "team",
+    "self_serve_business_prolite", "self_serve_business_usage_based",
+    "business", "ent26", "enterprise_cbp_automation",
+    "enterprise_cbp_usage_based", "enterprise", "edu", "unknown",
+})
 
-    保留：是否触顶、触顶类型、plan、usedPercent、窗口/重置时间、has_credits/
-    unlimited。绝不暴露：余额字符串、limit/used 字符串、reset credit id、
-    individualLimit、账号原始字段。
-    """
-    rl = raw.get("rateLimits") or {}
-    primary = rl.get("primary") or {}
-    credits = rl.get("credits") or {}
-    reached_type = rl.get("rateLimitReachedType")
-    spend_reached = rl.get("spendControlReached")
+
+def _strict_bool(value: Any, default: bool | None = None) -> bool | None:
+    """只接受严格 bool；其它类型（含 0/1 数字、字符串、dict）一律拒绝。"""
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _finite_number(
+    value: Any,
+    *,
+    default: float | int | None = None,
+    min_value: float | None = None,
+    max_value: float | None = None,
+) -> float | int | None:
+    """只接受有限数值（拒绝 bool/str/dict/list），并做范围校验。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    num = float(value)
+    if num != num or num in (float("inf"), float("-inf")):  # NaN/inf 拒绝
+        return default
+    if min_value is not None and num < min_value:
+        return default
+    if max_value is not None and num > max_value:
+        return default
+    return value
+
+
+def _strict_enum(value: Any, allowed: frozenset[str], default: str | None = None) -> str | None:
+    if isinstance(value, str) and value in allowed:
+        return value
+    return default
+
+
+def _product_string(value: Any, *, max_len: int = 64) -> str | None:
+    """严格长度 + 字符集的产品字符串（拒绝任意上游字符串/嵌套对象）。"""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not (1 <= len(text) <= max_len):
+        return None
+    if not all(ch.isalnum() or ch in "-_" for ch in text):
+        return None
+    return text
+
+
+def _credits_summary(value: Any) -> dict[str, bool] | None:
+    """credits 只接受 dict，且只取两个严格 bool 字段；其它一律置空。"""
+    if not isinstance(value, dict):
+        return None
     return {
-        "reached": bool(reached_type) or bool(spend_reached),
-        "reached_type": reached_type or None,
+        "has_credits": _strict_bool(value.get("hasCredits")),
+        "unlimited": _strict_bool(value.get("unlimited")),
+    }
+
+
+def mask_rate_limits(raw: dict[str, Any]) -> dict[str, Any]:
+    """account/rateLimits/read 的脱敏摘要——只暴露产品需要的字段（P0-4 硬化）。
+
+    每个保留字段都做类型/枚举/字符集校验：恶意或漂移 payload 中的 token、
+    account id、嵌套对象、任意字符串一律置空或拒绝，绝不原样透传。
+    绝不暴露：余额字符串、limit/used 字符串、reset credit id、individualLimit、
+    账号原始字段。
+    """
+    rl = raw.get("rateLimits")
+    if not isinstance(rl, dict):
+        rl = {}
+    primary = rl.get("primary")
+    if not isinstance(primary, dict):
+        primary = {}
+    reached_type = _strict_enum(rl.get("rateLimitReachedType"), _RATE_LIMIT_REACHED_TYPES)
+    spend_reached = _strict_bool(rl.get("spendControlReached"))
+    plan = _strict_enum(rl.get("planType"), _PLAN_TYPES)
+    if plan is None:
+        plan = _product_string(rl.get("planType"), max_len=32)
+    used_percent = _finite_number(primary.get("usedPercent"), min_value=0, max_value=100)
+    window_mins = _finite_number(primary.get("windowDurationMins"), min_value=0, max_value=1_000_000)
+    resets_at = _finite_number(primary.get("resetsAt"), min_value=0, max_value=4_000_000_000)
+    return {
+        "reached": bool(reached_type is not None) or bool(spend_reached),
+        "reached_type": reached_type,
         "spend_control_reached": spend_reached,
-        "plan_type": rl.get("planType"),
-        "used_percent": primary.get("usedPercent"),
-        "window_duration_mins": primary.get("windowDurationMins"),
-        "resets_at": primary.get("resetsAt"),
-        "credits": {
-            "has_credits": credits.get("hasCredits"),
-            "unlimited": credits.get("unlimited"),
-        },
+        "plan_type": plan,
+        "used_percent": used_percent,
+        "window_duration_mins": window_mins,
+        "resets_at": resets_at,
+        "credits": _credits_summary(rl.get("credits")),
     }
 
 
@@ -147,6 +230,12 @@ class CodexProvider:
         self._pending_login_id: str | None = None
         # 登录进行中：login_start/device-code 后置 True，登录完成/取消/退出/重启清 False
         self._login_pending = False
+        # 登录失败/过期提示（completion 通知 failure 时置位，TTL 内随 status 返回）
+        self._login_failure: str | None = None
+        self._login_failure_ts = 0.0
+        # P0-2：生命周期操作专用锁——串行化 start/cancel/logout/restart/client
+        # replacement，保证 in-flight RPC 结果不会跨 restart 写回 provider 状态。
+        self._op_lock = threading.Lock()
         self._closed = False
         atexit.register(self.close)
 
@@ -206,6 +295,13 @@ class CodexProvider:
                     self._client = None
                     self._pending_login_id = None
                     self._login_pending = False
+                    # P1-3：崩溃立即失效所有缓存，避免旧账户/旧登录态残留
+                    self._status_cache = None
+                    self._status_ts = 0.0
+                    self._models_cache = None
+                    self._models_ts = 0.0
+                    self._rate_limits_cache = None
+                    self._rate_limits_ts = 0.0
                     client = None
             if client is None:
                 if not self.cli_available:
@@ -259,13 +355,37 @@ class CodexProvider:
             return client
 
     def _on_notification(self, msg: dict) -> None:
-        """reader 线程投递的通知 → 缓存失效（额度/账户/登录完成）。"""
+        """reader 线程投递的通知 → 缓存失效 / 登录完成状态原子更新。"""
         method = str(msg.get("method") or "")
         if method == "account/rateLimits/updated":
             with self._lock:
                 self._rate_limits_cache = None
                 self._rate_limits_ts = 0.0
-        elif method in ("account/updated", "account/login/completed"):
+        elif method == "account/login/completed":
+            # P0-1：completion 通知按 success/failure 原子更新——两种结果都清
+            # pending/id；失败/过期给稳定可操作状态，绝不永久 pending。
+            params = msg.get("params")
+            if isinstance(params, dict):
+                success = params.get("success")
+            else:
+                success = None
+            now = time.monotonic()
+            with self._lock:
+                self._login_pending = False
+                self._pending_login_id = None
+                if success is True:
+                    self._login_failure = None
+                    self._login_failure_ts = 0.0
+                elif success is False:
+                    self._login_failure = (
+                        "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
+                    )
+                    self._login_failure_ts = now
+                self._status_cache = None
+                self._status_ts = 0.0
+                self._models_cache = None
+                self._models_ts = 0.0
+        elif method == "account/updated":
             with self._lock:
                 self._status_cache = None
                 self._status_ts = 0.0
@@ -298,7 +418,14 @@ class CodexProvider:
                 and not refresh
                 and now - self._status_ts < self.status_ttl
             ):
-                return dict(self._status_cache)
+                # P1-3：缓存命中前先检查 transport alive——崩溃后不得短暂
+                # 返回旧的 signed-in 缓存。
+                cached_client = self._client
+                cached_transport = (
+                    getattr(cached_client, "transport", None) if cached_client is not None else None
+                )
+                if cached_transport is None or not getattr(cached_transport, "crashed", False):
+                    return dict(self._status_cache)
 
         if not self.cli_available:
             result: dict[str, Any] = {
@@ -322,6 +449,15 @@ class CodexProvider:
                         "codex_available": True,
                         "account": None,
                     }
+                # P0-1：登录失败/过期提示（completion failure 后 60s 内可操作）；
+                # 已登录时不展示（避免旧失败提示误导当前会话）。
+                if (
+                    self._login_failure
+                    and now - self._login_failure_ts < 60.0
+                    and not result.get("connected")
+                ):
+                    result = dict(result)
+                    result["login_error"] = self._login_failure
                 if result.get("connected"):
                     limits = self._read_rate_limits_cached(client, refresh=refresh)
                     if limits is not None:
@@ -437,8 +573,81 @@ class CodexProvider:
         return limits
 
     # ── 登录 / 退出 / 取消 / 重启 ────────────────────────────
+    # P0-1/P0-2：生命周期操作全部经 _op_lock 串行化，并执行账户状态门禁：
+    # - 已登录 → 必须先显式 logout（already_signed_in_requires_logout），绝不发 login RPC；
+    # - 已有 pending flow → 拒绝第二次 start（login_already_pending），绝不覆盖 loginId；
+    # - completion 通知按 success/failure 原子清 pending/id；
+    # - opener/响应校验失败 → best-effort cancel（失败则关闭 app-server）回滚。
 
-    def _login_start_type(self, login_type: str) -> dict[str, Any]:
+    @staticmethod
+    def _validate_auth_url(url: str) -> bool:
+        """auth/verification URL 校验：http(s) + 非空 host + 长度上限。"""
+        if not isinstance(url, str):
+            return False
+        url = url.strip()
+        if not (1 <= len(url) <= 2048):
+            return False
+        low = url.lower()
+        if not (low.startswith("https://") or low.startswith("http://")):
+            return False
+        rest = url.split("://", 1)[1]
+        if not rest or not rest.split("/", 1)[0].strip():
+            return False
+        return True
+
+    @staticmethod
+    def _validate_user_code(code: str) -> bool:
+        """device user code：严格字符集 + 长度。"""
+        if not isinstance(code, str):
+            return False
+        code = code.strip()
+        if not (4 <= len(code) <= 64):
+            return False
+        return all(ch.isalnum() or ch in "-_" for ch in code)
+
+    def _rollback_login(self, client: Any, login_id: str) -> None:
+        """登录启动失败（校验/opener 异常）回滚：best-effort cancel；
+        失败则关闭该 app-server 强制终止登录会话。"""
+        if login_id and client is not None:
+            try:
+                client.account_login_cancel(login_id)
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning(
+                    "codex 登录回滚取消 RPC 失败（%s），关闭 app-server 终止登录会话",
+                    exc.__class__.__name__,
+                )
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                with self._lock:
+                    if self._client is client:
+                        self._client = None
+        with self._lock:
+            self._pending_login_id = None
+            self._login_pending = False
+            self._login_failure = None
+        self._invalidate_status()
+
+    def _ensure_can_login(self) -> None:
+        """登录前状态门禁（P0-1）：已登录必须显式退出；已有 pending 拒绝第二次。"""
+        if self._login_pending:
+            raise CodexAppServerError(
+                "已有登录流程正在进行。请先取消当前登录，再重新发起。",
+                category="login_already_pending",
+            )
+        # 刷新账户状态：已登录（chatgpt 账号）必须先 logout——UI 隐藏按钮不是边界。
+        client = self._get_client()
+        raw = client.account_read()
+        account = raw.get("account") or None
+        if isinstance(account, dict) and account.get("type") == "chatgpt":
+            raise CodexAppServerError(
+                "已连接 ChatGPT 账号。切换账号请先点击「断开连接」退出当前账号，再登录新账号。",
+                category="already_signed_in",
+            )
+
+    def _login_start_type(self, login_type: str) -> tuple[Any, dict[str, Any], str]:
+        """发起登录 RPC，返回 (client, result, login_id)。不设置 pending 状态。"""
         if not self.cli_available:
             raise CodexCliUnavailableError(
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
@@ -461,25 +670,49 @@ class CodexProvider:
             raise CodexAppServerError(
                 "登录服务未返回所请求的 ChatGPT 浏览器/设备码流程，无法继续登录。"
             )
-        self._pending_login_id = str(result.get("loginId") or "")
-        return result
+        return client, result, str(result.get("loginId") or "")
+
+    def _commit_pending(self, client: Any, login_id: str) -> None:
+        """提交 pending 状态（带 stale-commit 守卫：restart 换 client 后丢弃）。"""
+        with self._lock:
+            if self._client is not client:
+                raise CodexAppServerError(
+                    "Codex app-server 已重启，登录流程已失效，请重新发起。",
+                    category="closed",
+                )
+            self._pending_login_id = login_id
+            self._login_pending = True
+            self._login_failure = None
 
     def login_start(self) -> dict[str, Any]:
         """启动浏览器 OAuth（chatgpt）：浏览器由本进程打开，authUrl 不外传。
 
         返回 {state: "login_started", method: "chatgpt"}；调用方通过
         status(refresh=True) 轮询登录结果（account/login/completed 通知
-        由 app-server 内部处理并触发本 provider 缓存失效）。
+        由 app-server 内部处理并触发本 provider 状态更新）。
         """
-        result = self._login_start_type("chatgpt")
-        auth_url = str(result.get("authUrl") or "").strip()
-        if not auth_url:
-            raise CodexAppServerError("登录服务未返回浏览器地址，无法继续登录。")
-        self._browser_opener(auth_url)
-        with self._lock:
-            self._login_pending = True
-        self._invalidate_status()
-        return {"state": "login_started", "method": "chatgpt"}
+        with self._op_lock:
+            self._ensure_can_login()
+            client, result, login_id = self._login_start_type("chatgpt")
+            auth_url = str(result.get("authUrl") or "").strip()
+            if not self._validate_auth_url(auth_url):
+                # P0-1：响应校验失败必须回滚（server 侧登录可能已开始）
+                self._rollback_login(client, login_id)
+                raise CodexAppServerError(
+                    "登录服务未返回有效的浏览器地址，无法继续登录。",
+                    category="login_failed",
+                )
+            try:
+                self._browser_opener(auth_url)
+            except Exception as exc:  # noqa: BLE001 —— opener 异常同样回滚
+                self._rollback_login(client, login_id)
+                raise CodexAppServerError(
+                    "无法打开浏览器完成登录，请改用设备码登录。",
+                    category="login_failed",
+                ) from exc
+            self._commit_pending(client, login_id)
+            self._invalidate_status()
+            return {"state": "login_started", "method": "chatgpt"}
 
     def login_start_device_code(self) -> dict[str, Any]:
         """设备码登录（用户显式选择）：返回 verification_url + user_code 供 UI 展示。
@@ -487,71 +720,103 @@ class CodexProvider:
         这是完成授权所必需的产品信息（用户需在浏览器输入该码），
         不是 token/JWT/请求头；loginId 只保存在 provider 内部用于取消。
         """
-        result = self._login_start_type("chatgptDeviceCode")
-        verification_url = str(result.get("verificationUrl") or "").strip()
-        user_code = str(result.get("userCode") or "").strip()
-        if not verification_url or not user_code:
-            raise CodexAppServerError("登录服务未返回设备码信息，无法继续登录。")
-        with self._lock:
-            self._login_pending = True
-        self._invalidate_status()
-        return {
-            "state": "login_started",
-            "method": "chatgptDeviceCode",
-            "verification_url": verification_url,
-            "user_code": user_code,
-        }
+        with self._op_lock:
+            self._ensure_can_login()
+            client, result, login_id = self._login_start_type("chatgptDeviceCode")
+            verification_url = str(result.get("verificationUrl") or "").strip()
+            user_code = str(result.get("userCode") or "").strip()
+            if not self._validate_auth_url(verification_url) or not self._validate_user_code(user_code):
+                # P0-1/P1-5：URL/设备码校验失败回滚，绝不把任意上游值交给 UI
+                self._rollback_login(client, login_id)
+                raise CodexAppServerError(
+                    "登录服务返回的设备码信息无效，无法继续登录。",
+                    category="login_failed",
+                )
+            self._commit_pending(client, login_id)
+            self._invalidate_status()
+            return {
+                "state": "login_started",
+                "method": "chatgptDeviceCode",
+                "verification_url": verification_url,
+                "user_code": user_code,
+            }
 
     def login_cancel(self) -> dict[str, Any]:
-        """取消进行中的登录。取消 RPC 失败时关闭 app-server 强制终止登录会话。"""
-        with self._lock:
-            login_id, self._pending_login_id = self._pending_login_id, None
-            self._login_pending = False
-            client = self._client
-        if client is not None and login_id:
+        """取消进行中的登录；只对真实 pending flow 生效（P0-1）。
+
+        - 有 pending：发起 account/login/cancel；RPC 失败则关闭 app-server 强制终止。
+        - 无 pending 且已登录：返回 signed_in，**不执行 logout**（切换账号必须先显式断开）。
+        - 无 pending 且未登录：幂等返回 signed_out。
+        """
+        with self._op_lock:
+            with self._lock:
+                login_id, self._pending_login_id = self._pending_login_id, None
+                was_pending = self._login_pending
+                self._login_pending = False
+                client = self._client
+            if was_pending:
+                if client is not None and login_id:
+                    try:
+                        client.account_login_cancel(login_id)
+                    except Exception as exc:  # noqa: BLE001 —— 取消失败仍要退出登录态
+                        self._logger.warning(
+                            "codex 登录取消 RPC 失败（%s），关闭 app-server 终止登录会话",
+                            exc.__class__.__name__,
+                        )
+                        try:
+                            client.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        with self._lock:
+                            if self._client is client:
+                                self._client = None
+                self._invalidate_status()
+                return {"state": "signed_out"}
+            # 没有 pending flow：不执行任何取消/登出
             try:
-                client.account_login_cancel(login_id)
-            except Exception as exc:  # noqa: BLE001 —— 取消失败仍要退出登录态
-                self._logger.warning(
-                    "codex 登录取消 RPC 失败（%s），关闭 app-server 终止登录会话",
-                    exc.__class__.__name__,
-                )
-                try:
-                    client.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                with self._lock:
-                    self._client = None
-        self._invalidate_status()
-        return {"state": "signed_out"}
+                status = self.status(refresh=True)
+            except Exception:  # noqa: BLE001
+                status = {"state": "signed_out"}
+            if status.get("connected"):
+                return {
+                    "state": "signed_in",
+                    "code": "no_pending_login",
+                    "error": "没有进行中的登录。切换账号请先点击「断开连接」退出当前账号。",
+                }
+            return {"state": "signed_out", "code": "no_pending_login"}
 
     def logout(self) -> dict[str, Any]:
         """退出登录；未连接时也是幂等的 signed_out。"""
-        if self.cli_available:
-            client = self._get_client()
-            client.account_logout()
-        with self._lock:
-            self._pending_login_id = None
-            self._login_pending = False
-        self._invalidate_status()
-        return {"state": "signed_out"}
+        with self._op_lock:
+            if self.cli_available:
+                client = self._get_client()
+                client.account_logout()
+            with self._lock:
+                self._pending_login_id = None
+                self._login_pending = False
+                self._login_failure = None
+            self._invalidate_status()
+            return {"state": "signed_out"}
 
     def restart(self) -> dict[str, Any]:
         """显式重启 app-server（崩溃恢复）：关闭旧进程 → 重建 → 返回最新状态。"""
-        with self._lock:
-            client, self._client = self._client, None
-            self._pending_login_id = None
-            self._login_pending = False
-            self._invalidate_status()
-        if client is not None:
-            try:
-                client.close()
-            except Exception as exc:  # noqa: BLE001
-                self._logger.warning(
-                    "codex app-server 重启时关闭旧进程失败（%s）",
-                    exc.__class__.__name__,
-                )
-        return self.status(refresh=True)
+        with self._op_lock:
+            with self._lock:
+                client, self._client = self._client, None
+                self._pending_login_id = None
+                self._login_pending = False
+                self._login_failure = None
+                self._invalidate_status()
+            if client is not None:
+                try:
+                    client.close()
+                except Exception as exc:  # noqa: BLE001
+                    self._logger.warning(
+                        "codex app-server 重启时关闭旧进程失败（%s）",
+                        exc.__class__.__name__,
+                    )
+            return self.status(refresh=True)
+
 
     # ── 动态模型目录 ─────────────────────────────────────────
 

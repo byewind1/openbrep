@@ -176,6 +176,8 @@ export interface CodexStatus {
   rate_limits?: CodexRateLimits | null
   /** crashed 状态下为 true：UI 提供「重启」动作 */
   restartable?: boolean
+  /** P0-1：登录失败/过期提示（completion failure 后短暂可见的可操作文案） */
+  login_error?: string
   /** 当前配置模型（llmSettings.model），便于 UI 判断可用性 */
   model?: string
   model_available?: boolean
