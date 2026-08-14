@@ -21,6 +21,11 @@ def _send(msg: dict) -> None:
 
 
 def main() -> None:
+    # 测试 P0-R1B：可在启动时注入一行非 JSON 垃圾输出（模拟协议污染/秘密泄漏）
+    garbage = os.environ.get("FAKE_CODEX_GARBAGE_LINE")
+    if garbage:
+        sys.stdout.write(garbage + "\n")
+        sys.stdout.flush()
     for raw in sys.stdin:
         line = raw.strip()
         if not line:

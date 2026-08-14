@@ -130,7 +130,12 @@ class StdioJsonRpcTransport:
             try:
                 msg = json.loads(line)
             except ValueError:
-                self.logger.warning("codex app-server: 非 JSON 输出行被忽略: %r", line[:200])
+                # P0-R1B：协议行不得原样进日志（可能含 access_token/loginId/Bearer 等）；
+                # 只记固定文案 + 长度，不记内容。
+                self.logger.warning(
+                    "codex app-server: 忽略非 JSON 协议输出（length=%d）",
+                    len(line),
+                )
                 continue
             if not isinstance(msg, dict):
                 continue

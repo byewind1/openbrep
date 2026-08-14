@@ -294,3 +294,90 @@ class TestMaskEmail(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCodexStatusErrorStateSecretSafety(unittest.TestCase):
+    """P0-R1A：真实 provider 吞掉异常后的 error 状态，不得泄漏上游原文。
+
+    组合链路：CodexProvider(fake client 抛 CodexAppServerError 含秘密)
+    → provider.status() 返回值/缓存 → WorkbenchSettingsService.codex_status()。
+    """
+
+    def _boom_client(self):
+        from openbrep.codex.app_server import CodexAppServerError
+
+        class _BoomClient:
+            def start(self):
+                pass
+
+            def initialize(self):
+                return {}
+
+            def account_read(self):
+                raise CodexAppServerError(
+                    "rpc failed: access_token=SUPERSECRET loginId=opaque-secret "
+                    "Authorization: Bearer plain-secret-value",
+                    category="rpc_error",
+                )
+
+            def close(self):
+                pass
+
+        return _BoomClient()
+
+    def test_provider_status_error_state_and_cache_are_clean(self):
+        import tempfile
+
+        provider = CodexProvider(
+            codex_home=Path(tempfile.mkdtemp(prefix="obr-codex-r1a-")) / "home",
+            client_factory=self._boom_client,
+            cli_available=True,
+            status_ttl=60.0,
+        )
+        status = provider.status()
+        self.assertEqual(status["state"], "error")
+        self.assertEqual(status["code"], "codex_app_server")
+        self.assertEqual(status["error"], "Codex app-server 请求失败，请稍后重试。")
+        # 返回值与缓存均无秘密
+        cached = provider.status()
+        self.assertEqual(cached, status)
+        for payload in (status, cached):
+            text = str(payload)
+            for bad in ("SUPERSECRET", "opaque-secret", "plain-secret-value", "access_token", "loginId", "Bearer"):
+                self.assertNotIn(bad, text, f"provider 返回泄漏 {bad}")
+
+    def test_service_codex_status_never_leaks_upstream_error(self):
+        import tempfile
+        from types import SimpleNamespace
+
+        from openbrep.config import GDLAgentConfig
+        from openbrep.workbench.settings_service import WorkbenchSettingsService
+
+        provider = CodexProvider(
+            codex_home=Path(tempfile.mkdtemp(prefix="obr-codex-r1a-")) / "home",
+            client_factory=self._boom_client,
+            cli_available=True,
+        )
+        config = GDLAgentConfig()
+        session = SimpleNamespace(
+            llm_model=config.llm.model,
+            llm_api_key="",
+            llm_api_base="",
+            assistant_settings="",
+            max_retries=5,
+            config=config,
+            config_path=Path(tempfile.mkdtemp(prefix="obr-codex-r1a-")) / "config.toml",
+        )
+        service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None, codex_provider=provider)
+        response = service.codex_status()
+        self.assertEqual(response["ok"], True)
+        self.assertEqual(response["state"], "error")
+        self.assertEqual(response["code"], "codex_app_server")
+        text = str(response)
+        for bad in ("SUPERSECRET", "opaque-secret", "plain-secret-value", "access_token", "loginId", "Bearer"):
+            self.assertNotIn(bad, text, f"API 响应泄漏 {bad}")
+        # llm_settings 的 codex 块同样干净
+        llm = service.llm_settings()
+        llm_text = str(llm)
+        for bad in ("SUPERSECRET", "opaque-secret", "plain-secret-value", "access_token", "loginId", "Bearer"):
+            self.assertNotIn(bad, llm_text, f"llm_settings 泄漏 {bad}")

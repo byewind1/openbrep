@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from openbrep.codex.app_server import CodexAppServerError
+from openbrep.codex.errors import DEFAULT_FALLBACK, error_response, stabilize_message
 from openbrep.codex.redact import redact_secrets
 from openbrep.config import (
     ALL_MODELS,
@@ -250,45 +250,14 @@ class WorkbenchSettingsService:
         except Exception:
             return {"state": "error", "connected": False, "account": None}
 
-    # P0-R1：API 只返回稳定产品文案 + 稳定非空错误码，不传上游原文；
-    # redact_secrets 仅作最后一道纵深防御。
-    _CODEX_STABLE_ERRORS: dict[str, str] = {
-        "codex_cli_unavailable": "未检测到 Codex CLI，请先安装 Codex CLI 后重试。",
-        "not_signed_in": "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。",
-    }
-    _CODEX_APP_SERVER_MESSAGES: dict[str, str] = {
-        "codex_app_server": "Codex app-server 请求失败，请稍后重试。",
-        "not_started": "Codex app-server 尚未就绪，请稍后重试。",
-        "process_exited": "Codex app-server 进程已退出，请重启工作台后重试。",
-        "write_failed": "Codex app-server 通信失败，请稍后重试。",
-        "timeout": "Codex app-server 响应超时，请稍后重试。",
-        "rpc_error": "Codex app-server 请求失败，请稍后重试。",
-        "login_failed": "登录服务返回异常，请稍后重试或重新连接。",
-        "closed": "Codex app-server 已关闭，请重启工作台后重试。",
-    }
-
     @classmethod
-    def _codex_error(cls, exc: BaseException, fallback: str = "Codex 操作失败，请稍后重试。") -> dict[str, Any]:
+    def _codex_error(cls, exc: BaseException, fallback: str = DEFAULT_FALLBACK) -> dict[str, Any]:
         """异常 → API 错误响应：稳定非空错误码 + 稳定产品文案（不传上游原文）。
 
-        仅按异常 code/category 映射；未知异常一律 codex_error + 兜底文案。
+        映射表在 openbrep/codex/errors.py（provider 与 service 共用一份），
+        未知异常一律 codex_error + 兜底文案；redact 仅作纵深防御。
         """
-        code = getattr(exc, "code", None)
-        if code in cls._CODEX_STABLE_ERRORS:
-            stable_code, message = code, cls._CODEX_STABLE_ERRORS[code]
-        elif isinstance(exc, CodexAppServerError):
-            stable_code = "codex_app_server"
-            message = cls._CODEX_APP_SERVER_MESSAGES.get(
-                getattr(exc, "category", None), fallback
-            )
-        else:
-            stable_code = code or "codex_error"
-            message = fallback
-        return {
-            "ok": False,
-            "code": stable_code,
-            "error": redact_secrets(message),
-        }
+        return {"ok": False, **error_response(exc, fallback)}
 
     def _codex_model_usable(self, model: str) -> bool:
         """codex 模型可用 = 已登录 且 模型在当前账户 model/list 目录中（P0-4）。
@@ -358,7 +327,7 @@ class WorkbenchSettingsService:
         if codex is not None:
             codex_block = {key: codex.get(key) for key in ("state", "connected", "codex_available", "account")}
             if codex.get("error"):
-                codex_block["error"] = redact_secrets(str(codex["error"]))
+                codex_block["error"] = stabilize_message(codex.get("code"), str(codex["error"]))
             # 只有当前模型本身是 codex 订阅模型时才查目录（避免无谓 RPC）
             if is_codex_qualified_model(self.session.llm_model):
                 codex_usable = self._codex_model_usable(self.session.llm_model)
@@ -535,8 +504,14 @@ class WorkbenchSettingsService:
                 "state": "error",
                 "connected": False,
                 "account": None,
+                "code": self._codex_error(exc)["code"],
                 "error": self._codex_error(exc)["error"],
             }
+        if status.get("state") == "error" and status.get("error"):
+            # P0-R1A：API 边界对 provider 正常返回的 error 状态再做稳定化
+            # （纵深防御；provider 自身已只返回稳定文案）。
+            status = dict(status)
+            status["error"] = stabilize_message(status.get("code"), str(status["error"]))
         payload: dict[str, Any] = {"ok": True, **status}
         payload["model"] = self.session.llm_model
         payload["model_available"] = llm_model_available(

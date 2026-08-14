@@ -298,3 +298,104 @@ class TestRedactSecrets(unittest.TestCase):
         self.assertNotIn("evil.example", text)
         self.assertNotIn("sec-1", text)
         self.assertNotIn("authUrl", text)
+
+
+class TestCodexLogSecretSafety(unittest.TestCase):
+    """P0-R1B：日志路径不得原样记录秘密（协议行 / close 异常）。"""
+
+    @staticmethod
+    def _capture_logger(logger_name):
+        import logging
+
+        records: list[str] = []
+        handler = logging.Handler()
+
+        def emit(record):
+            records.append(record.getMessage())
+
+        handler.emit = emit
+        logger = logging.getLogger(logger_name)
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        return logger, handler, records
+
+    def test_non_json_line_logs_length_only(self):
+        import os
+        import tempfile
+
+        codex_home = Path(tempfile.mkdtemp(prefix="obr-codex-log-")) / "home"
+        previous = os.environ.get("FAKE_CODEX_GARBAGE_LINE")
+        os.environ["FAKE_CODEX_GARBAGE_LINE"] = "access_token=SUPERSECRET loginId=opaque-secret"
+        transport = StdioJsonRpcTransport(
+            codex_binary=sys.executable,
+            codex_home=codex_home,
+            extra_args=(str(FAKE_SERVER),),
+            rpc_timeout=5.0,
+        )
+        logger, handler, records = self._capture_logger("openbrep.codex.app_server")
+        try:
+            transport.start()
+            client = CodexAppServerClient(transport=transport)
+            client.initialize()  # reader 线程会先消费垃圾行再回包
+            time.sleep(0.3)
+        finally:
+            transport.close()
+            logger.removeHandler(handler)
+            if previous is None:
+                os.environ.pop("FAKE_CODEX_GARBAGE_LINE", None)
+            else:
+                os.environ["FAKE_CODEX_GARBAGE_LINE"] = previous
+        joined = "\n".join(records)
+        self.assertIn("非 JSON 协议输出", joined)
+        for bad in ("access_token=SUPERSECRET", "SUPERSECRET", "opaque-secret", "loginId"):
+            self.assertNotIn(bad, joined, f"日志泄漏 {bad}")
+
+
+class TestCodexProviderCloseLogSafety(unittest.TestCase):
+    """P0-R1B：close() 异常只记稳定 category/类名，不打印含秘密的 traceback。"""
+
+    def test_close_exception_logs_stable_category_only(self):
+        import logging
+        import tempfile
+
+        from openbrep.codex.provider import CodexProvider
+
+        records: list[str] = []
+        handler = logging.Handler()
+
+        def emit(record):
+            records.append(record.getMessage())
+
+        handler.emit = emit
+        logger = logging.getLogger("openbrep.codex.provider")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+
+        class _BoomClient:
+            def start(self):
+                pass
+
+            def initialize(self):
+                return {}
+
+            def account_read(self):
+                return {"account": None, "requiresOpenaiAuth": True}
+
+            def close(self):
+                raise RuntimeError("Authorization: Bearer plain-secret-value")
+
+        try:
+            provider = CodexProvider(
+                codex_home=Path(tempfile.mkdtemp(prefix="obr-codex-close-")) / "home",
+                client_factory=lambda: _BoomClient(),
+                cli_available=True,
+            )
+            provider.status()  # 创建 client
+            provider.close()   # close 抛异常 → 吞掉并记稳定日志
+        finally:
+            logger.removeHandler(handler)
+
+        joined = "\n".join(records)
+        self.assertIn("关闭失败", joined)
+        for bad in ("plain-secret-value", "Bearer", "Authorization"):
+            self.assertNotIn(bad, joined, f"日志泄漏 {bad}")

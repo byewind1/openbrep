@@ -27,6 +27,7 @@ from openbrep.codex.app_server import (
     CodexCliUnavailableError,
     default_codex_home,
 )
+from openbrep.codex.errors import error_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,12 +157,16 @@ class CodexProvider:
                 result = self._read_account(client)
                 result["codex_available"] = True
             except (CodexCliUnavailableError, CodexAppServerError, OSError) as exc:
+                # P0-R1A：error 状态只携带稳定 code + 稳定产品文案，
+                # 绝不在返回值/缓存里保存原始 str(exc)（可能含秘密）。
+                stable = error_response(exc)
                 result = {
                     "state": "error",
                     "connected": False,
                     "codex_available": self.cli_available,
                     "account": None,
-                    "error": str(exc),
+                    "code": stable["code"],
+                    "error": stable["error"],
                 }
         with self._lock:
             self._status_cache = result
@@ -280,5 +285,11 @@ class CodexProvider:
         if client is not None:
             try:
                 client.close()
-            except Exception:  # noqa: BLE001 —— 关闭路径不掩盖其他错误
-                self._logger.warning("codex app-server 关闭失败", exc_info=True)
+            except Exception as exc:  # noqa: BLE001 —— 关闭路径不掩盖其他错误
+                # P0-R1B：不打印 traceback（异常原文可能含秘密）；
+                # 只记稳定 category/异常类名。
+                category = getattr(exc, "category", None)
+                self._logger.warning(
+                    "codex app-server 关闭失败（category=%s）",
+                    category or exc.__class__.__name__,
+                )
