@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { codexLoginStart, codexLogout, fetchCodexModels, fetchCodexStatus } from '../../api/client'
+import {
+  codexLoginCancel,
+  codexLoginDeviceCode,
+  codexLoginStart,
+  codexLogout,
+  codexRestart,
+  fetchCodexModels,
+  fetchCodexStatus,
+} from '../../api/client'
 import type {
+  CodexDeviceCodeResult,
   CodexModelInfo,
   CodexStatus,
   LlmConnectionTestResult,
@@ -29,13 +38,17 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
   const [keyFeedback, setKeyFeedback] = useState<{ ok: boolean; text: string } | null>(null)
-  // ── Codex BYOA（D1）：ChatGPT 订阅连接状态 ──
+  // ── Codex BYOA（D1+D2）：ChatGPT 订阅连接状态 ──
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null)
   const [codexModels, setCodexModels] = useState<CodexModelInfo[]>([])
   const [codexBusy, setCodexBusy] = useState(false)
   const [loginStarted, setLoginStarted] = useState(false)
+  const [deviceCode, setDeviceCode] = useState<{ verificationUrl: string; userCode: string } | null>(null)
+  const [deviceCodeCopied, setDeviceCodeCopied] = useState(false)
   const [codexError, setCodexError] = useState<string | null>(null)
   const [pendingCodexModel, setPendingCodexModel] = useState<string | null>(null)
+  const [codexCancelling, setCodexCancelling] = useState(false)
+  const [codexRestarting, setCodexRestarting] = useState(false)
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const groups = llmSettings.model_groups
@@ -119,10 +132,33 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   async function handleCodexLogin() {
     setCodexBusy(true)
     setCodexError(null)
+    setDeviceCode(null)
     try {
       const result = await codexLoginStart()
       if (result.ok) {
         setLoginStarted(true)
+        setCodexStatus((prev) => ({ ...(prev ?? emptyCodexStatus()), state: 'login_started', connected: false }))
+      } else {
+        // D2：browser flow 失败 → 明确提示改用设备码（不静默切换）
+        setCodexError(result.error ?? t('settings.ai.codex.loginFailed'))
+      }
+    } catch (error) {
+      setCodexError(error instanceof Error ? error.message : t('settings.ai.codex.loginFailed'))
+    } finally {
+      setCodexBusy(false)
+    }
+  }
+
+  // D2：设备码登录——用户显式选择，绝不静默 fallback
+  async function handleCodexDeviceCode() {
+    setCodexBusy(true)
+    setCodexError(null)
+    setDeviceCodeCopied(false)
+    try {
+      const result: CodexDeviceCodeResult = await codexLoginDeviceCode()
+      if (result.ok && result.verification_url && result.user_code) {
+        setLoginStarted(true)
+        setDeviceCode({ verificationUrl: result.verification_url, userCode: result.user_code })
         setCodexStatus((prev) => ({ ...(prev ?? emptyCodexStatus()), state: 'login_started', connected: false }))
       } else {
         setCodexError(result.error ?? t('settings.ai.codex.loginFailed'))
@@ -134,6 +170,75 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     }
   }
 
+  // D2：取消进行中的登录（浏览器或设备码）
+  async function handleCodexCancelLogin() {
+    setCodexCancelling(true)
+    setCodexError(null)
+    try {
+      const result = await codexLoginCancel()
+      if (result.ok) {
+        setLoginStarted(false)
+        setDeviceCode(null)
+        setDeviceCodeCopied(false)
+        setCodexStatus({ ...emptyCodexStatus(), state: 'signed_out' })
+      } else {
+        setCodexError(result.error ?? t('settings.ai.codex.logoutFailed'))
+      }
+    } catch (error) {
+      setCodexError(error instanceof Error ? error.message : t('settings.ai.codex.logoutFailed'))
+    } finally {
+      setCodexCancelling(false)
+    }
+  }
+
+  // D2：app-server 崩溃后显式重启
+  async function handleCodexRestart() {
+    setCodexRestarting(true)
+    setCodexError(null)
+    try {
+      const result = await codexRestart()
+      if (result.ok) {
+        const status: CodexStatus = {
+          ...emptyCodexStatus(),
+          state: result.state ?? 'signed_out',
+          restartable: false,
+          error: result.error,
+        }
+        setCodexStatus(status)
+        if (status.connected) {
+          const models = await fetchCodexModels()
+          setCodexModels(models.ok ? (models.models ?? []) : [])
+          if (!models.ok) setCodexError(models.error ?? null)
+        }
+      } else {
+        setCodexError(result.error ?? t('settings.ai.codex.restartFailed'))
+      }
+    } catch (error) {
+      setCodexError(error instanceof Error ? error.message : t('settings.ai.codex.restartFailed'))
+    } finally {
+      setCodexRestarting(false)
+    }
+  }
+
+  async function copyDeviceCode() {
+    const code = deviceCode?.userCode
+    if (!code) return
+    try {
+      await navigator.clipboard.writeText(code)
+      setDeviceCodeCopied(true)
+    } catch {
+      const textarea = document.createElement('textarea')
+      textarea.value = code
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      setDeviceCodeCopied(ok)
+    }
+  }
+
   async function handleCodexLogout() {
     setCodexBusy(true)
     setCodexError(null)
@@ -141,6 +246,8 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       const result = await codexLogout()
       if (result.ok) {
         setLoginStarted(false)
+        setDeviceCode(null)
+        setDeviceCodeCopied(false)
         setCodexModels([])
         setPendingCodexModel(null)
         setCodexStatus({ ...emptyCodexStatus(), state: 'signed_out' })
@@ -369,11 +476,19 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         models={codexModels}
         busy={codexBusy}
         loginStarted={loginStarted}
+        deviceCode={deviceCode}
+        deviceCodeCopied={deviceCodeCopied}
+        cancelling={codexCancelling}
+        restarting={codexRestarting}
         error={codexError}
         current={currentId}
         pending={pendingCodexModel}
         switching={switching}
         onLogin={() => void handleCodexLogin()}
+        onDeviceCode={() => void handleCodexDeviceCode()}
+        onCancelLogin={() => void handleCodexCancelLogin()}
+        onRestart={() => void handleCodexRestart()}
+        onCopyDeviceCode={() => void copyDeviceCode()}
         onLogout={() => void handleCodexLogout()}
         onSelect={requestCodexModelSwitch}
         onConfirm={() => void confirmCodexModelSwitch()}
@@ -431,11 +546,19 @@ function CodexSection({
   models,
   busy,
   loginStarted,
+  deviceCode,
+  deviceCodeCopied,
+  cancelling,
+  restarting,
   error,
   current,
   pending,
   switching,
   onLogin,
+  onDeviceCode,
+  onCancelLogin,
+  onRestart,
+  onCopyDeviceCode,
   onLogout,
   onSelect,
   onConfirm,
@@ -445,11 +568,19 @@ function CodexSection({
   models: CodexModelInfo[]
   busy: boolean
   loginStarted: boolean
+  deviceCode: { verificationUrl: string; userCode: string } | null
+  deviceCodeCopied: boolean
+  cancelling: boolean
+  restarting: boolean
   error: string | null
   current: string
   pending: string | null
   switching: boolean
   onLogin: () => void
+  onDeviceCode: () => void
+  onCancelLogin: () => void
+  onRestart: () => void
+  onCopyDeviceCode: () => void
   onLogout: () => void
   onSelect: (model: string) => void
   onConfirm: () => void
@@ -458,6 +589,7 @@ function CodexSection({
   const t = useT()
   const state = status?.state ?? 'signed_out'
   const connected = status?.connected === true
+  const rateLimits = status?.rate_limits
 
   return (
     <div className="settings-codex-section" data-testid="codex-section">
@@ -467,9 +599,34 @@ function CodexSection({
           {t('settings.ai.codex.noCli')}
         </p>
       ) : null}
+      {state === 'version_incompatible' ? (
+        <p className="settings-test-result error" data-testid="codex-version-incompatible">
+          {t('settings.ai.codex.versionIncompatible')}
+        </p>
+      ) : null}
+      {state === 'crashed' ? (
+        <div data-testid="codex-crashed">
+          <p className="settings-test-result error">{t('settings.ai.codex.crashed')}</p>
+          <div className="settings-row">
+            <button
+              type="button"
+              disabled={restarting}
+              onClick={onRestart}
+              data-testid="codex-restart-button"
+            >
+              {restarting ? t('settings.ai.codex.restarting') : t('settings.ai.codex.restart')}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {state === 'error' ? (
         <p className="settings-test-result error" data-testid="codex-error">
           {error || t('settings.ai.codex.errorUnknown')}
+        </p>
+      ) : null}
+      {state === 'quota_exhausted' && connected ? (
+        <p className="settings-test-result error" data-testid="codex-quota-exhausted">
+          {t('settings.ai.codex.quotaExhausted')}
         </p>
       ) : null}
       {connected && status?.account ? (
@@ -484,7 +641,23 @@ function CodexSection({
           </button>
         </div>
       ) : null}
-      {!connected && state !== 'no_cli' && state !== 'error' ? (
+      {rateLimits && connected ? (
+        <div className="settings-row" data-testid="codex-rate-limits">
+          <span>{t('settings.ai.codex.rateLimits')}</span>
+          <code className="settings-model-display valid">
+            {rateLimits.plan_type ? `${t('settings.ai.codex.rateLimitsPlan')}: ${rateLimits.plan_type} · ` : ''}
+            {rateLimits.used_percent !== undefined && rateLimits.used_percent !== null
+              ? `${t('settings.ai.codex.rateLimitsUsed')}: ${rateLimits.used_percent}%`
+              : rateLimits.credits?.unlimited
+                ? t('settings.ai.codex.rateLimitsUnlimited')
+                : rateLimits.credits?.has_credits
+                  ? t('settings.ai.codex.rateLimitsHasCredits')
+                  : ''}
+            {rateLimits.reached ? ` · ${t('settings.ai.codex.rateLimitsReached')}` : ''}
+          </code>
+        </div>
+      ) : null}
+      {!connected && state !== 'no_cli' && state !== 'error' && state !== 'version_incompatible' && state !== 'crashed' ? (
         <div className="settings-row" data-testid="codex-login-row">
           <span>{t('settings.ai.codex.notConnectedLabel')}</span>
           <button
@@ -495,12 +668,50 @@ function CodexSection({
           >
             {loginStarted ? t('settings.ai.codex.loginPending') : t('settings.ai.codex.login')}
           </button>
+          {!loginStarted ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onDeviceCode}
+              data-testid="codex-device-code-button"
+            >
+              {t('settings.ai.codex.deviceCode')}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {loginStarted ? (
-        <p className="settings-test-result" data-testid="codex-login-pending">
-          {t('settings.ai.codex.loginPendingHint')}
-        </p>
+        <div data-testid="codex-login-pending">
+          <p className="settings-test-result">{t('settings.ai.codex.loginPendingHint')}</p>
+          {deviceCode ? (
+            <div className="settings-codex-device-code" data-testid="codex-device-code">
+              <p className="settings-test-result">{t('settings.ai.codex.deviceCodeHint')}</p>
+              <div className="settings-row">
+                <span>{t('settings.ai.codex.deviceCodeUrl')}</span>
+                <code className="settings-model-display">{deviceCode.verificationUrl}</code>
+              </div>
+              <div className="settings-row">
+                <span>{t('settings.ai.codex.deviceCodeValue')}</span>
+                <code className="settings-model-display valid" data-testid="codex-device-code-value">
+                  {deviceCode.userCode}
+                </code>
+                <button type="button" onClick={onCopyDeviceCode}>
+                  {deviceCodeCopied ? t('settings.ai.codex.deviceCodeCopied') : t('settings.ai.codex.copyDeviceCode')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="settings-row">
+            <button
+              type="button"
+              disabled={cancelling}
+              onClick={onCancelLogin}
+              data-testid="codex-login-cancel"
+            >
+              {cancelling ? '…' : t('settings.ai.codex.cancelLogin')}
+            </button>
+          </div>
+        </div>
       ) : null}
       {error ? <p className="settings-test-result error">{error}</p> : null}
       {connected ? (
@@ -542,6 +753,7 @@ function CodexSection({
     </div>
   )
 }
+
 
 function ModelGroup({
   label,

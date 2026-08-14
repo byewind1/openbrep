@@ -93,6 +93,29 @@ export const zh = {
   'settings.ai.codex.modelsLabel': '可用模型（来自你的 ChatGPT 账户）',
   'settings.ai.codex.noModels': '账户暂无可用模型。',
   'settings.ai.codex.modelUnavailable': '当前 Codex 模型不可用：请先连接 ChatGPT 或重新登录。',
+  'settings.ai.codex.cancelLogin': '取消登录',
+  'settings.ai.codex.loginCancelled': '已取消登录。',
+  'settings.ai.codex.deviceCode': '使用设备码登录',
+  'settings.ai.codex.deviceCodeHint':
+    '如果浏览器登录未打开或失败，可使用设备码：在任意浏览器打开验证网址并输入下方设备码。',
+  'settings.ai.codex.deviceCodeUrl': '验证网址',
+  'settings.ai.codex.deviceCodeValue': '设备码',
+  'settings.ai.codex.deviceCodeCopied': '已复制',
+  'settings.ai.codex.copyDeviceCode': '复制',
+  'settings.ai.codex.crashed': 'Codex app-server 进程异常退出。点击「重启」恢复连接。',
+  'settings.ai.codex.restart': '重启 app-server',
+  'settings.ai.codex.restarting': '重启中…',
+  'settings.ai.codex.restartFailed': '重启 app-server 失败',
+  'settings.ai.codex.versionIncompatible':
+    'Codex CLI 版本与 OpenBrep 不兼容。请升级 Codex CLI（npm install -g @openai/codex）后重试。',
+  'settings.ai.codex.quotaExhausted':
+    'ChatGPT 订阅额度已耗尽或已达到用量上限。请稍后重试、等待重置，或切换到其他模型/提供商。',
+  'settings.ai.codex.rateLimits': '用量',
+  'settings.ai.codex.rateLimitsPlan': '套餐',
+  'settings.ai.codex.rateLimitsUsed': '已用',
+  'settings.ai.codex.rateLimitsUnlimited': '不限量',
+  'settings.ai.codex.rateLimitsHasCredits': '有额度',
+  'settings.ai.codex.rateLimitsReached': '已触顶',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': '语言',

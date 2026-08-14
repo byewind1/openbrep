@@ -132,12 +132,38 @@ export interface LlmSettings {
 // 后端只返回枚举化状态 + 脱敏账户信息；token/JWT/account id/authUrl/
 // auth 路径绝不进入 API payload（后端安全不变量，前端类型同样不定义这些字段）。
 
-export type CodexState = 'no_cli' | 'signed_out' | 'signed_in' | 'login_started' | 'error'
+export type CodexState =
+  | 'no_cli'
+  | 'version_incompatible'
+  | 'signed_out'
+  | 'signed_in'
+  | 'login_started'
+  | 'quota_exhausted'
+  | 'crashed'
+  | 'error'
+
+export type CodexLoginMethod = 'chatgpt' | 'chatgptDeviceCode'
 
 export interface CodexAccount {
   /** 脱敏邮箱（如 jo***@example.com），仅用于用户确认连的是自己的账号 */
   email_masked: string | null
   plan_type: string
+}
+
+/** D2：account/rateLimits/read 的脱敏摘要（后端只暴露产品需要的字段） */
+export interface CodexRateLimits {
+  reached: boolean
+  reached_type?: string | null
+  spend_control_reached?: boolean | null
+  plan_type?: string | null
+  /** 用量百分比（0-100）；上游未返回时为 null */
+  used_percent?: number | null
+  window_duration_mins?: number | null
+  resets_at?: number | null
+  credits?: {
+    has_credits?: boolean | null
+    unlimited?: boolean | null
+  }
 }
 
 export interface CodexStatus {
@@ -146,6 +172,10 @@ export interface CodexStatus {
   codex_available: boolean
   connected: boolean
   account: CodexAccount | null
+  /** D2：脱敏额度摘要（已登录且上游返回时存在） */
+  rate_limits?: CodexRateLimits | null
+  /** crashed 状态下为 true：UI 提供「重启」动作 */
+  restartable?: boolean
   /** 当前配置模型（llmSettings.model），便于 UI 判断可用性 */
   model?: string
   model_available?: boolean
@@ -165,12 +195,40 @@ export interface CodexModelInfo {
 export interface CodexLoginStartResult {
   ok: boolean
   state?: string
+  method?: CodexLoginMethod
+  error?: string
+}
+
+/** D2：设备码登录（用户显式选择）——verification_url + user_code 是用户完成
+ *  授权所必需的产品信息（在浏览器输入该码），不是 token/请求头 */
+export interface CodexDeviceCodeResult extends CodexLoginStartResult {
+  method?: 'chatgptDeviceCode'
+  verification_url?: string
+  user_code?: string
+}
+
+export interface CodexLoginCancelResult {
+  ok: boolean
+  state?: string
   error?: string
 }
 
 export interface CodexLogoutResult {
   ok: boolean
   state?: string
+  error?: string
+}
+
+export interface CodexRestartResult {
+  ok: boolean
+  state?: CodexState
+  error?: string
+}
+
+export interface CodexRateLimitsResult {
+  ok: boolean
+  rate_limits?: CodexRateLimits
+  code?: string
   error?: string
 }
 

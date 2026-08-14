@@ -96,6 +96,30 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.codex.modelsLabel': 'Available models (from your ChatGPT account)',
   'settings.ai.codex.noModels': 'No models available for this account.',
   'settings.ai.codex.modelUnavailable': 'Current Codex model is unavailable: connect ChatGPT or sign in again.',
+  'settings.ai.codex.cancelLogin': 'Cancel sign-in',
+  'settings.ai.codex.loginCancelled': 'Sign-in cancelled.',
+  'settings.ai.codex.deviceCode': 'Sign in with device code',
+  'settings.ai.codex.deviceCodeHint':
+    'If the browser flow did not open or failed, use the device code flow: open the verification URL in any browser and enter the code below.',
+  'settings.ai.codex.deviceCodeUrl': 'Verification URL',
+  'settings.ai.codex.deviceCodeValue': 'Device code',
+  'settings.ai.codex.deviceCodeCopied': 'Copied',
+  'settings.ai.codex.copyDeviceCode': 'Copy',
+  'settings.ai.codex.crashed':
+    'Codex app-server crashed. Click Restart to restore the connection.',
+  'settings.ai.codex.restart': 'Restart app-server',
+  'settings.ai.codex.restarting': 'Restarting…',
+  'settings.ai.codex.restartFailed': 'Failed to restart app-server',
+  'settings.ai.codex.versionIncompatible':
+    'Codex CLI version is incompatible. Upgrade Codex CLI (npm install -g @openai/codex) and try again.',
+  'settings.ai.codex.quotaExhausted':
+    'ChatGPT subscription quota is exhausted or usage limit reached. Try again later, wait for reset, or switch to another model/provider.',
+  'settings.ai.codex.rateLimits': 'Usage',
+  'settings.ai.codex.rateLimitsPlan': 'Plan',
+  'settings.ai.codex.rateLimitsUsed': 'Used',
+  'settings.ai.codex.rateLimitsUnlimited': 'unlimited',
+  'settings.ai.codex.rateLimitsHasCredits': 'has credits',
+  'settings.ai.codex.rateLimitsReached': 'quota reached',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': 'Language',

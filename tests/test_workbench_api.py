@@ -3244,12 +3244,17 @@ def test_p7b_create_explicit_project_name_wins_over_object_type(tmp_path):
 class _RouteFakeCodexClient:
     """app-server 假客户端：会话级集成测试用，无网络。"""
 
-    def __init__(self):
+    def __init__(self, login_type="chatgpt", rate_limits=None):
         self.started = False
         self.account = None
         self.login_calls = 0
         self.logout_calls = 0
         self.model_list_calls = 0
+        self.cancel_calls = 0
+        self.rate_limits_calls = 0
+        self.login_type = login_type
+        self.rate_limits = rate_limits
+        self.closed = False
 
     def start(self):
         self.started = True
@@ -3264,10 +3269,31 @@ class _RouteFakeCodexClient:
         self.login_calls += 1
         return {"type": "chatgpt", "loginId": "route-login-id", "authUrl": "https://auth.openai.com/route"}
 
+    def account_login_start(self, login_type):
+        self.login_calls += 1
+        if login_type == "chatgptDeviceCode":
+            return {
+                "type": "chatgptDeviceCode",
+                "loginId": "route-login-id",
+                "verificationUrl": "https://example.test/device",
+                "userCode": "ABCD-EFGH",
+            }
+        return {"type": "chatgpt", "loginId": "route-login-id", "authUrl": "https://auth.openai.com/route"}
+
+    def account_login_cancel(self, login_id):
+        self.cancel_calls += 1
+        return {"status": "canceled"}
+
     def account_logout(self):
         self.logout_calls += 1
         self.account = None
         return {}
+
+    def account_rate_limits_read(self):
+        self.rate_limits_calls += 1
+        if self.rate_limits is None:
+            raise RuntimeError("rate limits unavailable")
+        return self.rate_limits
 
     def model_list(self):
         self.model_list_calls += 1
@@ -3281,6 +3307,7 @@ class _RouteFakeCodexClient:
 
     def close(self):
         self.started = False
+        self.closed = True
 
 
 def _route_codex_session(tmp_path, client, opened=None):
@@ -3339,7 +3366,7 @@ def test_codex_login_start_route_opens_browser_and_returns_state_only(tmp_path):
     client = _RouteFakeCodexClient()
     session, opened = _route_codex_session(tmp_path, client)
     response = session.route("POST", "/api/settings/llm/codex/login/start", {})
-    assert response == {"ok": True, "state": "login_started"}
+    assert response == {"ok": True, "state": "login_started", "method": "chatgpt"}
     assert client.login_calls == 1
     assert len(opened) == 1
     assert opened[0].startswith("https://auth.openai.com/")
@@ -3460,7 +3487,7 @@ def test_codex_login_start_failure_route_redacts_secrets(tmp_path):
             '"loginId":"a0327bbe-a894-4455-9e96-8c6d19ed2a53"}'
         )
 
-    client.account_login_start_chatgpt = _boom
+    client.account_login_start = _boom
     session, _opened = _route_codex_session(tmp_path, client)
 
     response = session.route("POST", "/api/settings/llm/codex/login/start", {})
@@ -3502,3 +3529,128 @@ models = ["gpt-5.6-luna"]
     saved = config_path.read_text(encoding="utf-8")
     assert "DEV-SECRET" not in saved
     assert 'api_mode = "codex_app_server"' in saved
+
+
+# ── D2：device-code / 取消 / 额度 / 重启 路由 + 锁分类 ───────────────────────
+
+
+def test_codex_device_code_route_explicit(tmp_path):
+    client = _RouteFakeCodexClient(login_type="chatgptDeviceCode")
+    session, _opened = _route_codex_session(tmp_path, client)
+    response = session.route("POST", "/api/settings/llm/codex/login/device-code", {})
+    assert response["ok"] is True
+    assert response["state"] == "login_started"
+    assert response["method"] == "chatgptDeviceCode"
+    assert response["verification_url"] == "https://example.test/device"
+    assert response["user_code"] == "ABCD-EFGH"
+    # loginId 绝不出现在响应
+    assert "loginId" not in response
+
+
+def test_codex_login_cancel_route(tmp_path):
+    client = _RouteFakeCodexClient()
+    session, _opened = _route_codex_session(tmp_path, client)
+    # 先开始登录，再取消
+    session.route("POST", "/api/settings/llm/codex/login/start", {})
+    response = session.route("POST", "/api/settings/llm/codex/login/cancel", {})
+    assert response == {"ok": True, "state": "signed_out"}
+    assert client.cancel_calls == 1
+
+
+def test_codex_rate_limits_route_masked(tmp_path):
+    rl = {
+        "rateLimits": {
+            "limitId": "codex",
+            "limitName": "Codex",
+            "primary": {"usedPercent": 12, "windowDurationMins": 360, "resetsAt": 1786800000},
+            "credits": {"hasCredits": True, "unlimited": False, "balance": "123.45"},
+            "spendControlReached": False,
+            "planType": "pro",
+            "rateLimitReachedType": None,
+        },
+        "rateLimitsByLimitId": {"codex": {}},
+        "rateLimitResetCredits": None,
+    }
+    client = _RouteFakeCodexClient(rate_limits=rl)
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "pro"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    response = session.route("GET", "/api/settings/llm/codex/rate-limits")
+    assert response["ok"] is True
+    assert response["rate_limits"]["used_percent"] == 12
+    assert response["rate_limits"]["reached"] is False
+    text = str(response)
+    for bad in ("123.45", "balance", "limitName", "limitId"):
+        assert bad not in text, f"额度泄漏 {bad}"
+
+
+def test_codex_restart_route(tmp_path):
+    client = _RouteFakeCodexClient()
+    session, _opened = _route_codex_session(tmp_path, client)
+    response = session.route("POST", "/api/settings/llm/codex/restart", {})
+    assert response["ok"] is True
+    assert response["state"] == "signed_out"
+
+
+def test_codex_crashed_status_route(tmp_path):
+    """app-server 崩溃 → API 返回 crashed 状态 + restartable。"""
+    client = _RouteFakeCodexClient()
+
+    class _CrashTransport:
+        crashed = True
+        crash_exit_code = 42
+
+    class _CrashClient(_RouteFakeCodexClient):
+        @property
+        def transport(self):
+            return _CrashTransport()
+
+    session, _opened = _route_codex_session(tmp_path, _CrashClient())
+    response = session.route("GET", "/api/settings/llm/codex/status")
+    assert response["ok"] is True
+    assert response["state"] == "crashed"
+    assert response["restartable"] is True
+    # 可操作信息、无内部细节
+    assert "重启" in response["error"]
+
+
+def test_codex_quota_exhausted_status_route(tmp_path):
+    """额度耗尽 → API 状态 quota_exhausted + 脱敏额度摘要。"""
+    rl = {
+        "rateLimits": {
+            "primary": {"usedPercent": 100, "windowDurationMins": 360, "resetsAt": 1786800000},
+            "credits": {"hasCredits": False, "unlimited": False},
+            "spendControlReached": False,
+            "planType": "pro",
+            "rateLimitReachedType": "rate_limit_reached",
+        },
+        "rateLimitsByLimitId": None,
+        "rateLimitResetCredits": None,
+    }
+    client = _RouteFakeCodexClient(rate_limits=rl)
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "pro"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    response = session.route("GET", "/api/settings/llm/codex/status")
+    assert response["ok"] is True
+    assert response["state"] == "quota_exhausted"
+    assert response["connected"] is True
+    assert response["rate_limits"]["reached"] is True
+    text = str(response)
+    for bad in ("balance", "resetCredit", "grantedAt"):
+        assert bad not in text, f"泄漏 {bad}"
+
+
+def test_codex_d2_routes_registered_lock_free(tmp_path):
+    from openbrep.workbench.request_gate import LOCK_FREE_POST_ROUTES
+
+    for route in (
+        "/api/settings/llm/codex/login/start",
+        "/api/settings/llm/codex/login/device-code",
+        "/api/settings/llm/codex/login/cancel",
+        "/api/settings/llm/codex/logout",
+        "/api/settings/llm/codex/restart",
+    ):
+        assert route in LOCK_FREE_POST_ROUTES, route
+    # 未知 codex 路由返回明确错误（不静默）
+    session, _opened = _route_codex_session(tmp_path, _RouteFakeCodexClient())
+    response = session.route("POST", "/api/settings/llm/codex/nope", {})
+    assert response["ok"] is False

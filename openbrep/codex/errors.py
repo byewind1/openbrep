@@ -17,6 +17,9 @@ STABLE_MESSAGES: dict[str, str] = {
     # 异常 code
     "codex_cli_unavailable": "未检测到 Codex CLI，请先安装 Codex CLI 后重试。",
     "not_signed_in": "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。",
+    "version_incompatible": "Codex CLI 版本与 OpenBrep 不兼容，请升级 Codex CLI 后重试。",
+    "codex_crashed": "Codex app-server 进程异常退出。请点击「重启」恢复连接。",
+    "quota_exhausted": "ChatGPT 订阅额度已耗尽或已达到用量上限。请稍后重试、等待重置，或切换到其他模型/提供商。",
     # CodexAppServerError.category
     "codex_app_server": "Codex app-server 请求失败，请稍后重试。",
     "not_started": "Codex app-server 尚未就绪，请稍后重试。",
