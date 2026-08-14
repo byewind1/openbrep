@@ -69,6 +69,11 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      - name: Secret gate on Tauri bundle
+        run: |
+          python scripts/secret_scan.py --tree frontend/dist --report text
+          python scripts/secret_scan.py --tree src-tauri/target/release/bundle --report text
+
       - name: Upload macOS artifacts
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4

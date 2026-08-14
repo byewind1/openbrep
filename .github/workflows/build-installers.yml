@@ -33,6 +33,20 @@ jobs:
         shell: pwsh
         run: ./scripts/build_windows.ps1
 
+      - name: Secret gate on macOS release zip
+        if: runner.os == 'macOS'
+        run: |
+          ZIP="$(ls release/OpenBrep-*-macOS.zip | head -n 1)"
+          python scripts/secret_scan.py --archive "$ZIP" --report text
+
+      - name: Secret gate on Windows release zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem release/OpenBrep-*-Windows.zip | Select-Object -First 1
+          if (-not $zip) { throw "No Windows package zip found in release/" }
+          python scripts/secret_scan.py --archive $zip.FullName --report text
+
       - name: Smoke-test macOS package
         if: runner.os == 'macOS'
         run: |

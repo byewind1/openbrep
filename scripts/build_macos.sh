@@ -31,6 +31,11 @@ mkdir -p release
 OUT="release/OpenBrep-${EDITION_LOWER}-macOS.zip"
 rm -f "$OUT"
 
+# D7 发布秘密门禁：打包产物（源码镜像 + zip）不得含 auth.json/.env/…/
+# Bearer/JWT/sk-* 密钥/CODEX_ACCESS_TOKEN 赋值/注入的 canary。
+# 报告只报类型和位置，不回显秘密值。
+python3 scripts/secret_scan.py --tree dist --canary "${OPENBREP_RELEASE_CANARY:-}" --report text
+
 cat > dist/OpenBrep/OpenBrep.command <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -72,5 +77,8 @@ echo "Building unsigned macOS zip. Users may need the documented Gatekeeper work
   cd dist
   zip -r -X "../$OUT" OpenBrep >/dev/null
 )
+
+# D7 发布秘密门禁（归档级）：zip 内容与 dist 树一致，二次确认无秘密。
+python3 scripts/secret_scan.py --archive "$OUT" --canary "${OPENBREP_RELEASE_CANARY:-}" --report text
 
 echo "Built: $OUT"

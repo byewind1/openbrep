@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Smoke-test a packaged OpenBrep zip without using the local dev install."""
+"""Smoke-test a packaged OpenBrep zip without using the local dev install.
+
+D7: by default the smoke runs under a clean HOME with OpenAI/Codex env vars
+stripped, so a developer machine's accounts / keys / caches cannot leak into
+the packaged app's first-run state. Pass ``--no-clean-env`` to opt out.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +20,43 @@ import time
 import urllib.request
 import zipfile
 from pathlib import Path
+
+# 首跑环境里必须剥离的 OpenAI / Codex / 本机工作台相关变量（D7）：
+# 打包产物首次启动不得继承开发机账号、密钥或登录态。
+CLEAN_ENV_STRIP = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "OPENAI_ORG_ID",
+        "OPENAI_API_BASE",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY_PATH",
+        "OPENAI_CHATGPT_AUTH",
+        "OPENAI_SKIP_PROXY",
+        "OPENAI_LOG_LEVEL",
+        "CODEX_ACCESS_TOKEN",
+        "CODEX_HOME",
+        "GDL_AGENT_CONFIG",
+        "GDL_AGENT_API_KEY",
+        "GDL_AGENT_API_BASE",
+        "OBR7_API_PORT",
+        "OBR7_WEB_PORT",
+        "OBR7_TAURI_MODE",
+        "OPENBREP_RELEASE_CANARY",
+    }
+)
+
+
+def clean_package_env() -> tuple[dict[str, str], Path]:
+    """返回 (env, tmp_home)：全新 HOME + 剥离 OpenAI/Codex/本机配置变量。
+
+    调用方负责在 finally 里删除 tmp_home。
+    """
+    tmp_home = Path(tempfile.mkdtemp(prefix="openbrep_clean_home_"))
+    env = {k: v for k, v in os.environ.items() if k not in CLEAN_ENV_STRIP}
+    env["HOME"] = str(tmp_home)
+    if os.name == "nt":
+        env["USERPROFILE"] = str(tmp_home)
+    return env, tmp_home
 
 
 def _find_free_port() -> int:
@@ -90,10 +132,13 @@ def _restore_package_permissions(package_dir: Path) -> None:
     _ensure_executable(package_dir / "OpenBrep.exe")
 
 
-def smoke_package(zip_path: Path, timeout_seconds: float) -> dict[str, object]:
+def smoke_package(
+    zip_path: Path, timeout_seconds: float, *, clean_env: bool = True
+) -> dict[str, object]:
     port = _find_free_port()
     tmp_root = Path(tempfile.mkdtemp(prefix="openbrep_package_smoke_"))
     process: subprocess.Popen[str] | None = None
+    clean_home: Path | None = None
     try:
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(tmp_root)
@@ -101,7 +146,7 @@ def smoke_package(zip_path: Path, timeout_seconds: float) -> dict[str, object]:
         package_dir = tmp_root / "OpenBrep"
         launcher = _resolve_launcher(package_dir)
         _restore_package_permissions(package_dir)
-        env = os.environ.copy()
+        env, clean_home = clean_package_env() if clean_env else (os.environ.copy(), None)
         env["OPENBREP_PORT"] = str(port)
         env["OPENBREP_NO_BROWSER"] = "1"
 
@@ -130,6 +175,8 @@ def smoke_package(zip_path: Path, timeout_seconds: float) -> dict[str, object]:
             "url": f"http://127.0.0.1:{port}",
             "returncode": process.poll(),
             "output": output,
+            "clean_env": clean_env,
+            "clean_home": str(clean_home) if clean_home else None,
         }
     finally:
         if process is not None:
@@ -143,15 +190,25 @@ def smoke_package(zip_path: Path, timeout_seconds: float) -> dict[str, object]:
             else:
                 _terminate(process)
         shutil.rmtree(tmp_root, ignore_errors=True)
+        if clean_home is not None:
+            shutil.rmtree(clean_home, ignore_errors=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test an OpenBrep release zip")
     parser.add_argument("zip", type=Path, help="Path to OpenBrep-free-*.zip")
     parser.add_argument("--timeout", type=float, default=60.0, help="Health-check timeout seconds")
+    parser.add_argument(
+        "--no-clean-env",
+        action="store_true",
+        help=(
+            "Run with the caller's HOME and OpenAI/Codex env vars "
+            "(default: clean HOME + stripped env)"
+        ),
+    )
     args = parser.parse_args()
 
-    result = smoke_package(args.zip.resolve(), args.timeout)
+    result = smoke_package(args.zip.resolve(), args.timeout, clean_env=not args.no_clean_env)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 1
 
