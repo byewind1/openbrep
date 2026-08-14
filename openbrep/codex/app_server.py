@@ -79,6 +79,9 @@ class StdioJsonRpcTransport:
         self._notifications: list[dict] = []
         self._cv = threading.Condition()
         self._next_id = itertools.count(1)
+        # 串行化 JSON-RPC 帧：app-server 是单 stdin 管道，并发写会交错帧。
+        # call() 全程持锁（含等待响应），保证一帧一帧写、id 关联不混乱。
+        self._call_lock = threading.Lock()
 
     # ── 生命周期 ─────────────────────────────────────────────
 
@@ -92,11 +95,13 @@ class StdioJsonRpcTransport:
         # 日志不输出 codex_home（auth 文件所在路径属敏感信息，见 D1 秘密门禁）
         self.logger.info("starting codex app-server: argv=%s", argv)
         try:
+            # stderr 用 DEVNULL：无人 drain 的 PIPE 会被 64KB 缓冲填满后阻塞子进程
+            # （D1 P0-并发风险）。有界诊断捕获/日志留待 D2 崩溃恢复一起做。
             self._proc = subprocess.Popen(
                 argv,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 env=env,
                 text=True,
                 bufsize=1,
@@ -155,6 +160,10 @@ class StdioJsonRpcTransport:
     # ── JSON-RPC ─────────────────────────────────────────────
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        with self._call_lock:
+            return self._call_locked(method, params)
+
+    def _call_locked(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         proc = self._proc
         if proc is None:
             raise CodexAppServerError("codex app-server 尚未启动（先调用 start()）。")

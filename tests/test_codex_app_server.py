@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -184,3 +185,81 @@ class TestCodexAppServerStdioWire(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCodexAppServerConcurrency(unittest.TestCase):
+    """并发风险（D1 P0）：call() 内部锁串行化 JSON-RPC 帧，并发调用不交错。"""
+
+    def test_parallel_calls_are_serialized_and_pair_correctly(self):
+        import tempfile
+
+        codex_home = Path(tempfile.mkdtemp(prefix="obr-codex-conc-")) / "home"
+        transport = StdioJsonRpcTransport(
+            codex_binary=sys.executable,
+            codex_home=codex_home,
+            extra_args=(str(FAKE_SERVER),),
+            rpc_timeout=10.0,
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+
+        results: list = []
+        errors: list = []
+
+        def worker(index):
+            try:
+                if index % 2 == 0:
+                    results.append(client.account_read())
+                else:
+                    models = client.model_list()
+                    results.append(models["data"][0]["id"])
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        transport.close()
+        self.assertEqual(errors, [])
+        # 5 个 account/read（signed_out → account None）+ 5 个 model/list（首模型 id）
+        self.assertEqual(results.count({"account": None, "requiresOpenaiAuth": True}), 5)
+        self.assertEqual(results.count("gpt-5.6-luna"), 5)
+
+
+class TestRedactSecrets(unittest.TestCase):
+    """P0-2：错误文本脱敏——任何响应不泄露 authUrl/loginId/token/auth 路径。"""
+
+    def _redact(self, text):
+        from openbrep.codex.redact import redact_secrets
+
+        return redact_secrets(text)
+
+    def test_redacts_url_with_query(self):
+        text = self._redact('login failed: {"authUrl":"https://auth.openai.com/oauth?state=SECRET"}')
+        self.assertNotIn("auth.openai.com", text)
+        self.assertNotIn("SECRET", text)
+        self.assertNotIn("authUrl", text)
+
+    def test_redacts_jwt_and_api_key(self):
+        text = self._redact(
+            "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+            " key sk-abc123456789xyz"
+        )
+        self.assertNotIn("eyJ", text)
+        self.assertNotIn("sk-", text)
+
+    def test_redacts_login_id_and_auth_path(self):
+        text = self._redact(
+            "loginId=a0327bbe-a894-4455-9e96-8c6d19ed2a53 path=/Users/me/.codex/auth.json"
+        )
+        self.assertNotIn("a0327bbe", text)
+        self.assertNotIn(".codex", text)
+        self.assertNotIn("loginId", text)
+
+    def test_plain_error_passes_through(self):
+        text = self._redact("codex app-server 请求超时：model/list")
+        self.assertEqual(text, "codex app-server 请求超时：model/list")

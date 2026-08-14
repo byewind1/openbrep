@@ -220,19 +220,58 @@ def is_codex_qualified_model(model: str) -> bool:
     return target == CODEX_PROVIDER_NAME or target.startswith(CODEX_PROVIDER_NAME + "/")
 
 
+def _force_codex_provider_entry(entry: dict) -> dict:
+    """把 `openai-codex` 保留 provider 条目就地强制为规范形态（防篡改/安全迁移）。
+
+    openai-codex 是保留身份：同名条目不得携带 api/api_key 或改用其他 api_mode，
+    否则 API-key 会通过通用配置通道混入订阅 provider（D1 P0-3）。强制后：
+    api_mode=codex_app_server、api=""/api_key=""（_explicit_base=True，绝不回退
+    顶层）、models=[]（目录由账户 model/list 动态提供，不固话进配置）。
+    """
+    entry.update({
+        "name": CODEX_PROVIDER_NAME,
+        "api_mode": API_MODE_CODEX_APP_SERVER,
+        "protocol": "openai",
+        "api": "",
+        "base_url": "",
+        "api_key": "",
+        "models": [],
+        "_explicit_base": True,
+    })
+    return entry
+
+
+def normalize_provider_list(raw_list) -> list[dict]:
+    """逐条归一化 provider 配置；`openai-codex` 保留身份强制规范形态。
+
+    用于加载（_from_dict）与保存前整理，保证下游永远见不到带
+    api_key/api 的非 codex_app_server 同名条目。
+    """
+    out: list[dict] = []
+    for entry in raw_list or []:
+        if not isinstance(entry, dict):
+            continue
+        normalized = normalize_provider_entry(entry)
+        if str(normalized.get("name", "") or "").strip() == CODEX_PROVIDER_NAME:
+            normalized = _force_codex_provider_entry(normalized)
+        out.append(normalized)
+    return out
+
+
 def ensure_codex_provider_entry(config: "GDLAgentConfig") -> dict:
     """确保 config 里存在 openai-codex provider 条目（api_mode=codex_app_server）。
 
     模型保存（update_llm_model_only / update_llm_settings）在写入
-    `openai-codex/<model>` 时调用：没有条目时补一条，已存在则原样返回。
-    条目显式 api=""（_explicit_base=True）保证 api_base 绝不回退顶层配置。
+    `openai-codex/<model>` 时调用：没有条目时补一条；已有同名条目则**强制
+    规范形态**（不信任同名自定义配置，P0-3）。
     """
     for provider in config.llm.providers:
         if str(provider.get("name", "") or "").strip() == CODEX_PROVIDER_NAME:
-            return provider
+            return _force_codex_provider_entry(provider)
     entry = {
         "name": CODEX_PROVIDER_NAME,
         "api_mode": API_MODE_CODEX_APP_SERVER,
+        "protocol": "openai",
         "api": "",
         "api_key": "",
         "models": [],
@@ -851,7 +890,7 @@ class GDLAgentConfig:
                     custom_providers.extend(raw)
 
         llm_cfg = pick(LLMConfig, llm_data)
-        llm_cfg.custom_providers = [normalize_provider_entry(p) for p in custom_providers]
+        llm_cfg.custom_providers = normalize_provider_list(custom_providers)
 
         raw_recent_projects = data.get("recent_projects", [])
         if not isinstance(raw_recent_projects, list):

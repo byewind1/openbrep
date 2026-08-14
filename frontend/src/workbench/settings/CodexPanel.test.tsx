@@ -71,6 +71,8 @@ describe('AiSettingsPanel Codex BYOA section', () => {
       codex_available: true,
       connected: true,
       account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'deepseek-chat',
+      model_available: true,
     })
     mockedModels.mockResolvedValue({
       ok: true,
@@ -150,6 +152,8 @@ describe('AiSettingsPanel Codex BYOA section', () => {
       codex_available: true,
       connected: true,
       account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'deepseek-chat',
+      model_available: true,
     })
     mockedModels.mockResolvedValue({
       ok: true,
@@ -172,3 +176,30 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     expect(await screen.findByTestId('codex-login-button')).toBeTruthy()
   })
 })
+
+  test('current codex model missing from account catalog shows unavailable (P0-4)', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'openai-codex/gpt-5.6-terra',
+      model_available: false,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [{ id: 'openai-codex/gpt-5.6-luna', label: 'GPT-5.6 Luna', model: 'gpt-5.6-luna' }],
+    })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({ model: 'openai-codex/gpt-5.6-terra' })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    // 已登录但当前模型不在账户目录 → 模型不可用提示出现
+    expect(await screen.findByText(/当前 Codex 模型不可用/)).toBeTruthy()
+  })

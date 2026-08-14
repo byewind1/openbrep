@@ -43,9 +43,10 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const officialModels = groups?.official ?? []
   const modelAvailable = llmSettings.model_available ?? true
   const isCodexModel = llmSettings.model.startsWith('openai-codex/')
-  // 当前模型是 Codex 订阅模型时，可用性以登录态为准（后端同样 fail closed）
+  // 当前模型是 Codex 订阅模型时，可用性以后端为准：已登录 且 模型在当前
+  // 账户 model/list 目录中（后端 status 的 model_available 已含目录校验，P0-4）
   const effectiveModelAvailable = isCodexModel
-    ? codexStatus?.connected === true
+    ? codexStatus?.model_available === true
     : modelAvailable
 
   // 统一 provider 注册表后，官方模型与自定义 provider 的 Key 都可以在界面保存

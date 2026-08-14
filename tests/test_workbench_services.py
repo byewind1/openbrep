@@ -835,6 +835,18 @@ def test_settings_service_update_api_key_saves_unified_providers_format(tmp_path
 
 
 # ── Codex BYOA（D1）：登录/状态/动态模型/显式保存 ──────────────────────────
+# 环境清理清单（P0-5：不得跨测试模块导入私有常量，本地定义最小清单）
+
+_CODEX_TEST_ENV_VARS = (
+    "ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY",
+)
+
+
+def _clear_codex_test_env(monkeypatch):
+    for name in _CODEX_TEST_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
 
 class _FakeCodexProvider:
     """脚本化 CodexProvider 替身：服务层只依赖 status/login_start/logout/models。"""
@@ -861,7 +873,7 @@ class _FakeCodexProvider:
         self.logout_calls += 1
         return {"state": "signed_out"}
 
-    def models(self):
+    def models(self, *, refresh=False):
         self.model_calls += 1
         if self.models_result is None:
             raise CodexNotSignedInError("尚未连接 ChatGPT。请先登录。")
@@ -907,6 +919,13 @@ def _codex_models_payload():
     ]
 
 
+def _signed_in_status():
+    return {
+        "state": "signed_in", "connected": True, "codex_available": True,
+        "account": {"email_masked": "jo***@example.com", "plan_type": "pro"},
+    }
+
+
 def test_codex_status_signed_out(tmp_path):
     config = GDLAgentConfig()
     provider = _FakeCodexProvider(status={
@@ -938,9 +957,9 @@ def test_codex_status_signed_in_masks_account(tmp_path):
 def test_codex_login_start_triggers_browser_flow_only(tmp_path):
     config = GDLAgentConfig()
     provider = _FakeCodexProvider()
-    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+    session = _make_codex_service(config, tmp_path / "config.toml", provider)
 
-    response = service.codex_login_start()
+    response = session.codex_login_start()
     assert response == {"ok": True, "state": "login_started"}
     assert provider.login_calls == 1
     # 登录动作绝不携带/返回任何凭据或 authUrl
@@ -980,16 +999,10 @@ def test_codex_models_fail_closed_when_signed_out(tmp_path):
 
 
 def test_llm_settings_codex_block_and_availability(tmp_path, monkeypatch):
-    from tests.test_config import _LLM_ENV_VARS  # 复用环境清理清单
-
-    for name in _LLM_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
+    _clear_codex_test_env(monkeypatch)
     config = GDLAgentConfig()
     config.llm.model = "openai-codex/gpt-5.6-luna"
-    provider = _FakeCodexProvider(status={
-        "state": "signed_in", "connected": True, "codex_available": True,
-        "account": {"email_masked": "jo***@example.com", "plan_type": "free"},
-    })
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
     service = _make_codex_service(config, tmp_path / "config.toml", provider)
 
     llm = service.llm_settings()
@@ -998,14 +1011,12 @@ def test_llm_settings_codex_block_and_availability(tmp_path, monkeypatch):
     assert llm["codex"]["connected"] is True
     assert llm["codex"]["account"]["email_masked"] == "jo***@example.com"
     # llm_settings 只反映已存在的 provider，不隐式拉起 app-server
-    assert provider.status_calls == 1
+    # （known_status 一次 + 目录可用性检查一次，共 2 次；无 factory → 不新建）
+    assert provider.status_calls == 2
 
 
 def test_llm_settings_codex_unavailable_after_logout(tmp_path, monkeypatch):
-    from tests.test_config import _LLM_ENV_VARS
-
-    for name in _LLM_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
+    _clear_codex_test_env(monkeypatch)
     config = GDLAgentConfig()
     config.llm.model = "openai-codex/gpt-5.6-luna"
     provider = _FakeCodexProvider(status={
@@ -1019,10 +1030,7 @@ def test_llm_settings_codex_unavailable_after_logout(tmp_path, monkeypatch):
 
 
 def test_llm_settings_codex_fail_closed_without_provider(tmp_path, monkeypatch):
-    from tests.test_config import _LLM_ENV_VARS
-
-    for name in _LLM_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
+    _clear_codex_test_env(monkeypatch)
     config = GDLAgentConfig()
     config.llm.model = "openai-codex/gpt-5.6-luna"
     session = SimpleNamespace(
@@ -1045,8 +1053,8 @@ def test_llm_settings_codex_fail_closed_without_provider(tmp_path, monkeypatch):
 def test_update_llm_model_only_codex_ensures_provider_entry(tmp_path):
     config = GDLAgentConfig()
     config.llm.model = "glm-4-flash"
-    session = _make_settings_session(config, tmp_path / "config.toml")
-    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None)
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
 
     response = service.update_llm_model_only({"model": "openai-codex/gpt-5.6-luna"})
     assert response["ok"] is True
@@ -1058,12 +1066,126 @@ def test_update_llm_model_only_codex_ensures_provider_entry(tmp_path):
     assert reloaded.llm.model == "openai-codex/gpt-5.6-luna"
 
 
+def test_update_llm_model_only_codex_rejects_model_not_in_catalog(tmp_path):
+    """P0-4：只允许保存当前账户 model/list 目录中的模型。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.update_llm_model_only({"model": "openai-codex/not-a-real-account-model"})
+    assert response["ok"] is False
+    assert response["code"] == "model_not_in_catalog"
+    # 未保存：config 仍是旧模型
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.model == "glm-4-flash"
+
+
+def test_llm_settings_codex_available_false_when_model_dropped_from_catalog(tmp_path, monkeypatch):
+    """P0-4：目录漂移/下架后 model_available 必须为 false。"""
+    _clear_codex_test_env(monkeypatch)
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-terra"
+    # 目录只剩 luna：terra 已被下架
+    provider = _FakeCodexProvider(
+        status=_signed_in_status(),
+        models=[m for m in _codex_models_payload() if m["id"].endswith("gpt-5.6-luna")],
+    )
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    llm = service.llm_settings()
+    assert llm["codex"]["state"] == "signed_in"
+    assert llm["model_available"] is False
+
+
+def test_update_llm_api_key_rejects_codex_model(tmp_path):
+    """P0-1：openai-codex 订阅身份拒绝通用 API-key 写入，config 不落盘。"""
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+    service._codex_provider()  # 确保 provider 存在
+
+    response = service.update_llm_api_key({"model": "openai-codex/gpt-5.6-luna", "api_key": "DEV-SECRET"})
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    # 拒绝后 config 没有任何 key（未落盘，也未被写入 provider 条目）
+    assert "DEV-SECRET" not in config.to_toml_string()
+    assert not any(
+        str(p.get("api_key", "") or "") == "DEV-SECRET"
+        for p in config.llm.providers
+    )
+
+
+def test_update_llm_settings_rejects_codex_api_key(tmp_path):
+    """P0-1：update_llm_settings 带 codex 模型 + api_key 同样拒绝。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    session = SimpleNamespace(
+        llm_model="openai-codex/gpt-5.6-luna",
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+    )
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None, codex_provider=provider)
+
+    response = service.update_llm_settings({
+        "model": "openai-codex/gpt-5.6-luna", "api_key": "DEV-SECRET",
+    })
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    assert "DEV-SECRET" not in config.to_toml_string()
+
+
+def test_codex_login_failure_response_redacts_secrets(tmp_path):
+    """P0-2：失败路径（异常原文夹带 authUrl/loginId）也必须脱敏。"""
+    config = GDLAgentConfig()
+
+    class _LeakyProvider(_FakeCodexProvider):
+        def login_start(self):
+            raise RuntimeError(
+                'login failed: {"type":"unexpected",'
+                '"authUrl":"https://auth.openai.com/oauth?state=SECRET",'
+                '"loginId":"a0327bbe-a894-4455-9e96-8c6d19ed2a53"}'
+            )
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _LeakyProvider())
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    text = str(response["error"])
+    assert "auth.openai.com" not in text
+    assert "a0327bbe-a894-4455-9e96-8c6d19ed2a53" not in text
+    assert "SECRET" not in text
+    assert "authUrl" not in text
+    assert "loginId" not in text
+
+
+def test_codex_status_error_response_redacts_secrets(tmp_path):
+    """P0-2：status 异常路径同样脱敏。"""
+    config = GDLAgentConfig()
+
+    class _LeakyProvider(_FakeCodexProvider):
+        def status(self, *, refresh=False):
+            raise RuntimeError(
+                "upstream error: https://auth.openai.com/oauth?state=SECRET "
+                "loginId=a0327bbe-a894-4455-9e96-8c6d19ed2a53"
+            )
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _LeakyProvider())
+    response = service.codex_status()
+    assert response["ok"] is True  # status 降级为 error 状态，不抛给调用方
+    assert response["state"] == "error"
+    assert "auth.openai.com" not in str(response.get("error"))
+    assert "a0327bbe" not in str(response.get("error"))
+
+
 def test_codex_service_responses_never_leak_secrets(tmp_path):
     config = GDLAgentConfig()
-    provider = _FakeCodexProvider(status={
-        "state": "signed_in", "connected": True, "codex_available": True,
-        "account": {"email_masked": "jo***@example.com", "plan_type": "pro"},
-    }, models=_codex_models_payload())
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
     service = _make_codex_service(config, tmp_path / "config.toml", provider)
 
     payloads = [

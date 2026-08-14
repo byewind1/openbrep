@@ -194,6 +194,24 @@ class TestCodexProvider(unittest.TestCase):
         with self.assertRaises(CodexAppServerError):
             provider.login_start()
 
+    def test_login_start_error_never_leaks_raw_payload(self):
+        """P0-2：恶意/异常登录响应（含 authUrl/loginId）不进入错误文本。"""
+        client = _FakeCodexClient(account=None)
+        client.account_login_start_chatgpt = lambda: {
+            "type": "unexpected",
+            "authUrl": "https://auth.openai.com/oauth?state=SECRET",
+            "loginId": "a0327bbe-a894-4455-9e96-8c6d19ed2a53",
+        }
+        provider, _opened = self._provider(client)
+        with self.assertRaises(CodexAppServerError) as ctx:
+            provider.login_start()
+        text = str(ctx.exception)
+        self.assertNotIn("auth.openai.com", text)
+        self.assertNotIn("a0327bbe", text)
+        self.assertNotIn("SECRET", text)
+        self.assertNotIn("authUrl", text)
+        self.assertNotIn("loginId", text)
+
     # ── 模型目录 ────────────────────────────────────────────
 
     def test_models_require_signed_in(self):
@@ -216,6 +234,26 @@ class TestCodexProvider(unittest.TestCase):
         self.assertEqual(models[1]["specialty"], "balanced")
         self.assertTrue(client.model_list_calls >= 1)
         _assert_no_secrets(self, models, "models")
+
+    # ── 模型目录缓存 ────────────────────────────────────────
+
+    def test_models_are_cached_within_ttl(self):
+        client = _FakeCodexClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+        )
+        provider, _opened = self._provider(client, models_ttl=60.0)
+        provider.models()
+        provider.models()
+        self.assertEqual(client.model_list_calls, 1)
+
+    def test_models_refresh_forces_relist(self):
+        client = _FakeCodexClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+        )
+        provider, _opened = self._provider(client, models_ttl=60.0)
+        provider.models()
+        provider.models(refresh=True)
+        self.assertEqual(client.model_list_calls, 2)
 
     # ── 退出 ────────────────────────────────────────────────
 

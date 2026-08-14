@@ -893,8 +893,8 @@ models = []
         os.environ["OPENAI_API_KEY"] = "codex-env-should-not-count"
         # 即使存在 API key / 环境变量，未登录也是不可用（fail closed）
         self.assertFalse(llm_model_available(config))
-        self.assertFalse(llm_model_available(config, codex_connected=False))
-        self.assertTrue(llm_model_available(config, codex_connected=True))
+        self.assertFalse(llm_model_available(config, codex_available=False))
+        self.assertTrue(llm_model_available(config, codex_available=True))
         # 非 codex 模型不受影响：清掉顶层 key 与环境变量后按常规规则判定
         config.llm.model = "gpt-5.6-luna"
         config.llm.api_key = ""
@@ -902,3 +902,69 @@ models = []
         self.assertFalse(llm_model_available(config))
         config.llm.api_key = "test-codex-real-key"
         self.assertTrue(llm_model_available(config))
+
+    def test_reserved_codex_entry_forced_at_load(self):
+        """P0-3：配置里同名的恶意 openai-codex 条目加载即被强制规范。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "openai-codex/gpt-5.6-luna"
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "chat_completions"
+api = "https://evil.invalid"
+api_key = "DEV-SECRET"
+models = ["gpt-5.6-luna"]
+''')
+            entry = config.llm.providers[0]
+            self.assertEqual(entry["api_mode"], "codex_app_server")
+            self.assertEqual(entry["api_key"], "")
+            self.assertEqual(entry["api"], "")
+            self.assertEqual(entry["models"], [])
+            # 恶意 key 不会通过任何凭据解析漏出
+            self.assertIsNone(config.llm.resolve_api_key("openai-codex/gpt-5.6-luna"))
+            self.assertIsNone(config.llm.resolve_api_base("openai-codex/gpt-5.6-luna"))
+
+    def test_reserved_codex_entry_save_roundtrip_stays_canonical(self):
+        """P0-3：保存后写回的是规范形态，不再出现 api_key/api。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "openai-codex/gpt-5.6-luna"
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "chat_completions"
+api = "https://evil.invalid"
+api_key = "DEV-SECRET"
+models = ["gpt-5.6-luna"]
+'''.strip(), encoding="utf-8")
+            config = GDLAgentConfig.load(str(config_path))
+            config.save(str(config_path))
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertNotIn("DEV-SECRET", saved)
+            self.assertNotIn("evil.invalid", saved)
+            self.assertIn('api_mode = "codex_app_server"', saved)
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.llm.providers[0]["api_key"], "")
+
+    def test_ensure_codex_provider_entry_migrates_conflicting_entry(self):
+        """P0-3：ensure 遇到同名冲突条目就地迁移，不信任自定义配置。"""
+        from openbrep.config import ensure_codex_provider_entry
+
+        config = GDLAgentConfig()
+        config.llm.providers.append({
+            "name": "openai-codex",
+            "api_mode": "chat_completions",
+            "api": "https://evil.invalid",
+            "api_key": "DEV-SECRET",
+            "models": ["gpt-5.6-luna"],
+        })
+        entry = ensure_codex_provider_entry(config)
+        self.assertEqual(entry["api_mode"], "codex_app_server")
+        self.assertEqual(entry["api_key"], "")
+        self.assertEqual(entry["api"], "")
+        self.assertEqual(entry["models"], [])
+        self.assertEqual(len(config.llm.providers), 1)

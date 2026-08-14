@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from openbrep.codex.redact import redact_secrets
 from openbrep.config import (
     ALL_MODELS,
     GDLAgentConfig,
@@ -61,6 +62,9 @@ def apply_llm_credentials_to_config(
     api_key: str,
     api_base: str,
 ) -> None:
+    if is_codex_qualified_model(model):
+        # openai-codex 订阅模型凭据来自登录态，绝不接收/写入 API key（P0-1）
+        return
     custom_match = config.llm._find_custom_provider_match(model)
     if custom_match is not None:
         provider = custom_match.get("provider")
@@ -121,12 +125,13 @@ def llm_model_available(
     config: GDLAgentConfig,
     model: str | None = None,
     *,
-    codex_connected: bool | None = None,
+    codex_available: bool | None = None,
 ) -> bool:
     """判断当前模型是否可立即调用。
 
-    - openai-codex/*（ChatGPT 订阅）：只有已登录（codex_connected=True）才可用，
-      绝不 fallback 到 API key / 环境变量；未提供登录态一律不可用（fail closed）。
+    - openai-codex/*（ChatGPT 订阅）：只有已登录且模型在账户 model/list
+      目录中（codex_available=True）才可用；绝不 fallback 到 API key /
+      环境变量；未提供登录态一律不可用（fail closed）。
     - 本地 ollama：无需 key。
     - 其余：需要可解析的 API key。
     """
@@ -134,7 +139,7 @@ def llm_model_available(
     if not target:
         return False
     if is_codex_qualified_model(target):
-        return bool(codex_connected)
+        return bool(codex_available)
     if model_to_provider(target) == "ollama":
         return True
     return bool(config.llm.resolve_credentials(target).api_key)
@@ -244,6 +249,59 @@ class WorkbenchSettingsService:
         except Exception:
             return {"state": "error", "connected": False, "account": None}
 
+    @staticmethod
+    def _codex_error(exc: BaseException, fallback: str = "Codex 操作失败。") -> dict[str, Any]:
+        """异常 → API 错误响应：稳定错误码 + 脱敏文本（P0-2）。
+
+        上游错误原文可能携带 authUrl / loginId / token / auth 路径，
+        返回前端前必须经过 redact_secrets 清洗。
+        """
+        return {
+            "ok": False,
+            "code": getattr(exc, "code", None),
+            "error": redact_secrets(str(exc).strip() or fallback),
+        }
+
+    def _codex_model_usable(self, model: str) -> bool:
+        """codex 模型可用 = 已登录 且 模型在当前账户 model/list 目录中（P0-4）。
+
+        目录漂移/下架后 model_available 必须为 false；异常一律视为不可用。
+        """
+        if not is_codex_qualified_model(model):
+            return False
+        provider = self.codex_provider
+        if provider is None:
+            return False
+        try:
+            status = provider.status()
+            if not status.get("connected"):
+                return False
+            catalog = provider.models()
+        except Exception:
+            return False
+        return model in {m["id"] for m in catalog}
+
+    def _codex_save_guard(self, model: str) -> tuple[bool, dict[str, Any] | None]:
+        """保存 codex 模型前的门禁：已登录 + 模型属于当前账户 model/list 目录。
+
+        只信后端目录，不信任前端按钮来源（P0-4）。
+        """
+        try:
+            provider = self._codex_provider()
+            catalog = provider.models(refresh=True)
+        except Exception as exc:
+            return False, self._codex_error(exc)
+        if model not in {m["id"] for m in catalog}:
+            return False, {
+                "ok": False,
+                "code": "model_not_in_catalog",
+                "error": (
+                    f"模型 {model} 不在当前 ChatGPT 账户可用模型目录中，无法保存。"
+                    "请先连接 ChatGPT 并选择账户返回的模型。"
+                ),
+            }
+        return True, None
+
     def codex_route(
         self,
         method: str,
@@ -268,16 +326,20 @@ class WorkbenchSettingsService:
         models = [option["id"] for option in model_options]
         codex = self._known_codex_status()
         codex_block = None
+        codex_usable = False
         if codex is not None:
             codex_block = {key: codex.get(key) for key in ("state", "connected", "codex_available", "account")}
             if codex.get("error"):
-                codex_block["error"] = str(codex["error"])
+                codex_block["error"] = redact_secrets(str(codex["error"]))
+            # 只有当前模型本身是 codex 订阅模型时才查目录（避免无谓 RPC）
+            if is_codex_qualified_model(self.session.llm_model):
+                codex_usable = self._codex_model_usable(self.session.llm_model)
         return {
             "model": self.session.llm_model,
             "model_available": llm_model_available(
                 self.session.config,
                 self.session.llm_model,
-                codex_connected=codex.get("connected") if codex is not None else None,
+                codex_available=codex_usable if codex is not None else None,
             ),
             "models": models,
             "model_options": model_options,
@@ -335,8 +397,11 @@ class WorkbenchSettingsService:
         if not model:
             return {"ok": False, "error": "Model is required."}
         if is_codex_qualified_model(model):
-            # openai-codex 订阅模型：保证 provider 条目存在（api_mode=codex_app_server），
-            # 否则解析链路会误落到 API-key/顶层凭据（fail closed 要求）。
+            # 只允许保存当前账户 model/list 目录里的模型（P0-4），
+            # 且保证 provider 条目为保留规范形态（api_mode=codex_app_server）。
+            ok, failure = self._codex_save_guard(model)
+            if not ok:
+                return failure
             ensure_codex_provider_entry(self.session.config)
         self.session.llm_model = model
         self.session.config.llm.model = model
@@ -353,6 +418,14 @@ class WorkbenchSettingsService:
             return {"ok": False, "error": "Model is required."}
         if not api_key:
             return {"ok": False, "error": "API key is required."}
+        if is_codex_qualified_model(model):
+            # P0-1：openai-codex 是订阅登录身份，通用 API-key 通道必须拒绝，
+            # 前端隐藏编辑器不是安全边界——后端独立拒绝并落测试。
+            return {
+                "ok": False,
+                "code": "codex_no_api_key",
+                "error": "ChatGPT Codex（openai-codex）模型使用订阅登录，不接受 API Key。",
+            }
         custom_match = self.session.config.llm._find_custom_provider_match(model)
         if custom_match is not None:
             provider = custom_match.get("provider")
@@ -384,6 +457,16 @@ class WorkbenchSettingsService:
 
         self.session.config.llm.model = self.session.llm_model
         if is_codex_qualified_model(self.session.llm_model):
+            if str(body.get("api_key") or "").strip():
+                # P0-1：订阅身份不接受 API Key 写入
+                return {
+                    "ok": False,
+                    "code": "codex_no_api_key",
+                    "error": "ChatGPT Codex（openai-codex）模型使用订阅登录，不接受 API Key。",
+                }
+            ok, failure = self._codex_save_guard(self.session.llm_model)
+            if not ok:
+                return failure
             ensure_codex_provider_entry(self.session.config)
         self.session.config.llm.assistant_settings = self.session.assistant_settings
         self.session.config.agent.max_iterations = self.session.max_retries
@@ -407,17 +490,21 @@ class WorkbenchSettingsService:
         try:
             provider = self._codex_provider()
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return self._codex_error(exc)
         try:
             status = provider.status()
         except Exception as exc:
-            status = {"state": "error", "connected": False, "account": None, "error": str(exc)}
+            status = {"state": "error", "connected": False, "account": None, "error": redact_secrets(str(exc))}
         payload: dict[str, Any] = {"ok": True, **status}
         payload["model"] = self.session.llm_model
         payload["model_available"] = llm_model_available(
             self.session.config,
             self.session.llm_model,
-            codex_connected=status.get("connected"),
+            codex_available=(
+                self._codex_model_usable(self.session.llm_model)
+                if is_codex_qualified_model(self.session.llm_model)
+                else status.get("connected")
+            ),
         )
         return payload
 
@@ -431,7 +518,8 @@ class WorkbenchSettingsService:
             provider = self._codex_provider()
             result = provider.login_start()
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            # P0-2：异常文本先脱敏（可能夹带上游 authUrl/loginId 原文）
+            return self._codex_error(exc)
         return {"ok": True, **result}
 
     def codex_logout(self) -> dict[str, Any]:
@@ -440,7 +528,7 @@ class WorkbenchSettingsService:
             provider = self._codex_provider()
             result = provider.logout()
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return self._codex_error(exc)
         return {"ok": True, **result}
 
     def codex_models(self) -> dict[str, Any]:
@@ -449,8 +537,7 @@ class WorkbenchSettingsService:
             provider = self._codex_provider()
             models = provider.models()
         except Exception as exc:
-            code = getattr(exc, "code", None)
-            return {"ok": False, "code": code, "error": str(exc)}
+            return self._codex_error(exc)
         return {"ok": True, "models": models}
 
     def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:

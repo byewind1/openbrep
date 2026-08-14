@@ -3415,3 +3415,90 @@ def test_codex_model_save_via_route_persists_provider_entry(tmp_path):
     saved = (tmp_path / "config.toml").read_text(encoding="utf-8")
     for bad in ("auth.json", "access_token", "authUrl", "loginId", "sk-", "eyJ", "chatgpt_account_id"):
         assert bad not in saved, f"config.toml 写入秘密字段 {bad}"
+
+
+def test_codex_api_key_route_rejects_codex_model(tmp_path):
+    """P0-1：通用 API-key 通道对 openai-codex 订阅身份必须拒绝（后端独立）。"""
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm/api-key",
+        {"model": "openai-codex/gpt-5.6-luna", "api_key": "DEV-SECRET"},
+    )
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    # 拒绝后 config 不落盘（文件不存在），更不会有 DEV-SECRET
+    assert not (tmp_path / "config.toml").exists()
+
+
+def test_codex_model_save_route_rejects_model_not_in_catalog(tmp_path):
+    """P0-4：保存 openai-codex 模型必须属于当前账户 model/list 目录。"""
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+
+    response = session.route(
+        "PATCH", "/api/settings/llm/model", {"model": "openai-codex/not-a-real-account-model"}
+    )
+    assert response["ok"] is False
+    assert response["code"] == "model_not_in_catalog"
+    # 未落盘
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.model != "openai-codex/not-a-real-account-model"
+
+
+def test_codex_login_start_failure_route_redacts_secrets(tmp_path):
+    """P0-2：登录失败路径经路由返回的错误必须脱敏（不含 authUrl/loginId 值）。"""
+    client = _RouteFakeCodexClient()
+
+    def _boom():
+        raise RuntimeError(
+            'login failed: {"authUrl":"https://auth.openai.com/oauth?state=SECRET",'
+            '"loginId":"a0327bbe-a894-4455-9e96-8c6d19ed2a53"}'
+        )
+
+    client.account_login_start_chatgpt = _boom
+    session, _opened = _route_codex_session(tmp_path, client)
+
+    response = session.route("POST", "/api/settings/llm/codex/login/start", {})
+    assert response["ok"] is False
+    text = str(response["error"])
+    assert "auth.openai.com" not in text
+    assert "a0327bbe" not in text
+    assert "SECRET" not in text
+    assert "authUrl" not in text
+    assert "loginId" not in text
+
+
+def test_codex_config_migrates_reserved_provider_entry(tmp_path):
+    """P0-3：配置里同名的恶意 openai-codex 条目在加载时被强制规范。"""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "openai-codex/gpt-5.6-luna"
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "chat_completions"
+api = "https://evil.invalid"
+api_key = "DEV-SECRET"
+models = ["gpt-5.6-luna"]
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+    entry = session.config.llm.providers[0]
+    assert entry["api_mode"] == "codex_app_server"
+    assert entry["api_key"] == ""
+    assert entry["api"] == ""
+    assert entry["models"] == []
+    # 保存后写回的是规范形态
+    session.route("GET", "/api/settings/runtime")
+    session.config.save(str(config_path))
+    saved = config_path.read_text(encoding="utf-8")
+    assert "DEV-SECRET" not in saved
+    assert 'api_mode = "codex_app_server"' in saved
