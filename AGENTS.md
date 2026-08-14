@@ -15,6 +15,29 @@ This file is the repository entry point for AI coding agents.
 
 3. **再看代码**。commit message 只是摘要，Obsidian 文档才有决策背景。
 
+## 规划与决策文档的落盘规则
+
+开发计划、调研记录、方案探索、派单文档和 handoff 默认属于本地决策背景，
+应落盘到以下 Obsidian 目录，而不是仓库 `docs/`：
+
+```text
+/Users/ren/Library/Mobile Documents/iCloud~md~obsidian/Documents/库/01-Projects/dev开发/OpenBrep 开发/
+```
+
+规则：
+
+- 用户要求“写开发计划”“做调研”“整理方案”“写 handoff”，但没有明确要求
+  纳入仓库时，只写入上述本地目录，不得 `git add`、commit 或 push。
+- 此类文档即使已经写完，也仍是待维护者审阅的工作材料；不能套用本文的
+  Default Finish Sequence。
+- Git commit 表示仓库层面的认可。只有维护者明确表示“纳入仓库”“形成 ADR”
+  “更新仓库文档”或认可了具体草案后，才把相应内容迁入 `docs/` 并提交。
+- 不要先把草案 push 再用 revert 当作移动文档的方式；应先选对落盘位置。
+- 仓库本身的长期规范与用户文档，例如 `AGENTS.md`、架构指南、ADR、README、
+  安装/发布文档，仍属于仓库交付物，按正常测试、commit、push 流程完成。
+- 如果用户明确要求只负责框架、决策或 review，不负责实施，则不得把计划阶段
+  扩张成业务代码实现；只交付本地计划和 review 结论。
+
 ---
 
 中文维护者优先阅读：
@@ -67,8 +90,9 @@ Default success criteria:
 - Existing architecture boundaries remain intact.
 - Relevant tests pass, and full tests pass before merge or push unless the user
   explicitly narrows scope.
-- Completed work is committed, pushed, and verified against `origin/main`
-  unless the user says otherwise.
+- Completed repository work is committed, pushed, and verified against
+  `origin/main` unless the user says otherwise. Local planning and decision
+  documents follow the Obsidian-only rule above and are not repository work.
 - The final answer states what changed, how it was verified, and any remaining
   risk.
 
@@ -444,8 +468,10 @@ frontend/src/state/*
 
 ## Default Finish Sequence
 
-Unless the user explicitly asks not to commit or push, finish completed code or
-documentation work with this sequence:
+Unless the user explicitly asks not to commit or push, finish completed
+repository code or repository documentation with this sequence. Local planning,
+research, design exploration, dispatch, and handoff documents are excluded and
+must follow “规划与决策文档的落盘规则” above:
 
 ```bash
 python -m pytest tests/ -q
