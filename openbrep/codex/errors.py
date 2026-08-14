@@ -50,5 +50,3 @@ def stabilize_message(code, raw_text, fallback: str = DEFAULT_FALLBACK) -> str:
     if code in STABLE_MESSAGES:
         return STABLE_MESSAGES[code]
     return fallback
-
-
