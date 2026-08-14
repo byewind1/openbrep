@@ -13,6 +13,7 @@ from openbrep.workbench.preview_service import WorkbenchPreviewService
 from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService
 from openbrep.workbench.project_script_service import WorkbenchProjectScriptService
 from openbrep.workbench.project_service import WorkbenchProjectService
+from openbrep.codex.provider import CodexNotSignedInError
 from openbrep.workbench import settings_service
 from openbrep.workbench.settings_service import WorkbenchSettingsService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
@@ -831,3 +832,477 @@ def test_settings_service_update_api_key_saves_unified_providers_format(tmp_path
     reloaded = GDLAgentConfig.load(str(config_path))
     assert reloaded.llm.custom_providers[0]["api_key"] == "new-key"
     assert reloaded.llm.resolve_api_key() == "new-key"
+
+
+# ── Codex BYOA（D1）：登录/状态/动态模型/显式保存 ──────────────────────────
+# 环境清理清单（P0-5：不得跨测试模块导入私有常量，本地定义最小清单）
+
+_CODEX_TEST_ENV_VARS = (
+    "ZHIPU_API_KEY", "ZAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY",
+)
+
+
+def _clear_codex_test_env(monkeypatch):
+    for name in _CODEX_TEST_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+class _FakeCodexProvider:
+    """脚本化 CodexProvider 替身：服务层只依赖 status/login_start/logout/models。"""
+
+    def __init__(self, status=None, models=None):
+        self.status_result = status or {
+            "state": "signed_out", "connected": False, "codex_available": True, "account": None,
+        }
+        self.models_result = models
+        self.login_calls = 0
+        self.logout_calls = 0
+        self.status_calls = 0
+        self.model_calls = 0
+
+    def status(self, *, refresh=False):
+        self.status_calls += 1
+        return dict(self.status_result)
+
+    def login_start(self):
+        self.login_calls += 1
+        return {"state": "login_started"}
+
+    def logout(self):
+        self.logout_calls += 1
+        return {"state": "signed_out"}
+
+    def models(self, *, refresh=False):
+        self.model_calls += 1
+        if self.models_result is None:
+            raise CodexNotSignedInError("尚未连接 ChatGPT。请先登录。")
+        return self.models_result
+
+
+def _make_codex_service(config, config_path, provider=None, factory=None):
+    session = SimpleNamespace(
+        llm_model=config.llm.model,
+        llm_api_key=config.llm.resolve_api_key() or "",
+        llm_api_base=config.llm.resolve_api_base() or "",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=config_path,
+    )
+    return WorkbenchSettingsService(
+        session,
+        llm_adapter_factory=lambda _c: None,
+        codex_provider=provider,
+        codex_provider_factory=factory,
+    )
+
+
+def _codex_models_payload():
+    return [
+        {
+            "id": "openai-codex/gpt-5.6-luna",
+            "label": "GPT-5.6 Luna",
+            "model": "gpt-5.6-luna",
+            "display_name": "GPT-5.6 Luna",
+            "hidden": False,
+            "specialty": None,
+        },
+        {
+            "id": "openai-codex/gpt-5.6-terra",
+            "label": "GPT-5.6 Terra",
+            "model": "gpt-5.6-terra",
+            "display_name": "GPT-5.6 Terra",
+            "hidden": False,
+            "specialty": "balanced",
+        },
+    ]
+
+
+def _signed_in_status():
+    return {
+        "state": "signed_in", "connected": True, "codex_available": True,
+        "account": {"email_masked": "jo***@example.com", "plan_type": "pro"},
+    }
+
+
+def test_codex_status_signed_out(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(status={
+        "state": "signed_out", "connected": False, "codex_available": True, "account": None,
+    })
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_status()
+    assert response["ok"] is True
+    assert response["state"] == "signed_out"
+    assert response["connected"] is False
+    assert response["account"] is None
+
+
+def test_codex_status_signed_in_masks_account(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(status={
+        "state": "signed_in", "connected": True, "codex_available": True,
+        "account": {"email_masked": "jo***@example.com", "plan_type": "pro"},
+    })
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_status()
+    assert response["state"] == "signed_in"
+    assert response["account"]["email_masked"] == "jo***@example.com"
+    assert "email" not in response["account"]
+
+
+def test_codex_login_start_triggers_browser_flow_only(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider()
+    session = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = session.codex_login_start()
+    assert response == {"ok": True, "state": "login_started"}
+    assert provider.login_calls == 1
+    # 登录动作绝不携带/返回任何凭据或 authUrl
+    assert not any(k in response for k in ("authUrl", "loginId", "token", "jwt"))
+
+
+def test_codex_logout(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider()
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_logout()
+    assert response == {"ok": True, "state": "signed_out"}
+    assert provider.logout_calls == 1
+
+
+def test_codex_models_returned_only_when_signed_in(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_models()
+    assert response["ok"] is True
+    assert [m["id"] for m in response["models"]] == [
+        "openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-terra",
+    ]
+
+
+def test_codex_models_fail_closed_when_signed_out(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(models=None)  # 未登录
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_models()
+    assert response["ok"] is False
+    assert response["code"] == "not_signed_in"
+
+
+def test_llm_settings_codex_block_and_availability(tmp_path, monkeypatch):
+    _clear_codex_test_env(monkeypatch)
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    llm = service.llm_settings()
+    assert llm["model_available"] is True
+    assert llm["codex"]["state"] == "signed_in"
+    assert llm["codex"]["connected"] is True
+    assert llm["codex"]["account"]["email_masked"] == "jo***@example.com"
+    # llm_settings 只反映已存在的 provider，不隐式拉起 app-server
+    # （known_status 一次 + 目录可用性检查一次，共 2 次；无 factory → 不新建）
+    assert provider.status_calls == 2
+
+
+def test_llm_settings_codex_unavailable_after_logout(tmp_path, monkeypatch):
+    _clear_codex_test_env(monkeypatch)
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    provider = _FakeCodexProvider(status={
+        "state": "signed_out", "connected": False, "codex_available": True, "account": None,
+    })
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    llm = service.llm_settings()
+    assert llm["model_available"] is False
+    assert llm["codex"]["state"] == "signed_out"
+
+
+def test_llm_settings_codex_fail_closed_without_provider(tmp_path, monkeypatch):
+    _clear_codex_test_env(monkeypatch)
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    session = SimpleNamespace(
+        llm_model=config.llm.model,
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+        # 没有 codex_provider / codex_provider_factory：不隐式拉起，fail closed
+    )
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None)
+
+    llm = service.llm_settings()
+    assert llm["model_available"] is False
+    assert llm["codex"] is None
+
+
+def test_update_llm_model_only_codex_ensures_provider_entry(tmp_path):
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.update_llm_model_only({"model": "openai-codex/gpt-5.6-luna"})
+    assert response["ok"] is True
+    assert response["llm"]["model"] == "openai-codex/gpt-5.6-luna"
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    entry = reloaded.llm.providers[0]
+    assert entry["name"] == "openai-codex"
+    assert entry["api_mode"] == "codex_app_server"
+    assert reloaded.llm.model == "openai-codex/gpt-5.6-luna"
+
+
+def test_update_llm_model_only_codex_rejects_model_not_in_catalog(tmp_path):
+    """P0-4：只允许保存当前账户 model/list 目录中的模型。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.update_llm_model_only({"model": "openai-codex/not-a-real-account-model"})
+    assert response["ok"] is False
+    assert response["code"] == "model_not_in_catalog"
+    # 未保存：config 仍是旧模型
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.model == "glm-4-flash"
+
+
+def test_llm_settings_codex_available_false_when_model_dropped_from_catalog(tmp_path, monkeypatch):
+    """P0-4：目录漂移/下架后 model_available 必须为 false。"""
+    _clear_codex_test_env(monkeypatch)
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-terra"
+    # 目录只剩 luna：terra 已被下架
+    provider = _FakeCodexProvider(
+        status=_signed_in_status(),
+        models=[m for m in _codex_models_payload() if m["id"].endswith("gpt-5.6-luna")],
+    )
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    llm = service.llm_settings()
+    assert llm["codex"]["state"] == "signed_in"
+    assert llm["model_available"] is False
+
+
+def test_update_llm_api_key_rejects_codex_model(tmp_path):
+    """P0-1：openai-codex 订阅身份拒绝通用 API-key 写入，config 不落盘。"""
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+    service._codex_provider()  # 确保 provider 存在
+
+    response = service.update_llm_api_key({"model": "openai-codex/gpt-5.6-luna", "api_key": "DEV-SECRET"})
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    # 拒绝后 config 没有任何 key（未落盘，也未被写入 provider 条目）
+    assert "DEV-SECRET" not in config.to_toml_string()
+    assert not any(
+        str(p.get("api_key", "") or "") == "DEV-SECRET"
+        for p in config.llm.providers
+    )
+
+
+def test_update_llm_settings_rejects_codex_api_key(tmp_path):
+    """P0-1：update_llm_settings 带 codex 模型 + api_key 同样拒绝。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    session = SimpleNamespace(
+        llm_model="openai-codex/gpt-5.6-luna",
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+    )
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None, codex_provider=provider)
+
+    response = service.update_llm_settings({
+        "model": "openai-codex/gpt-5.6-luna", "api_key": "DEV-SECRET",
+    })
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    assert "DEV-SECRET" not in config.to_toml_string()
+
+
+def test_codex_login_failure_response_redacts_secrets(tmp_path):
+    """P0-2：失败路径（异常原文夹带 authUrl/loginId）也必须脱敏。"""
+    config = GDLAgentConfig()
+
+    class _LeakyProvider(_FakeCodexProvider):
+        def login_start(self):
+            raise RuntimeError(
+                'login failed: {"type":"unexpected",'
+                '"authUrl":"https://auth.openai.com/oauth?state=SECRET",'
+                '"loginId":"a0327bbe-a894-4455-9e96-8c6d19ed2a53"}'
+            )
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _LeakyProvider())
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    text = str(response["error"])
+    assert "auth.openai.com" not in text
+    assert "a0327bbe-a894-4455-9e96-8c6d19ed2a53" not in text
+    assert "SECRET" not in text
+    assert "authUrl" not in text
+    assert "loginId" not in text
+
+
+def test_codex_status_error_response_redacts_secrets(tmp_path):
+    """P0-2：status 异常路径同样脱敏。"""
+    config = GDLAgentConfig()
+
+    class _LeakyProvider(_FakeCodexProvider):
+        def status(self, *, refresh=False):
+            raise RuntimeError(
+                "upstream error: https://auth.openai.com/oauth?state=SECRET "
+                "loginId=a0327bbe-a894-4455-9e96-8c6d19ed2a53"
+            )
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _LeakyProvider())
+    response = service.codex_status()
+    assert response["ok"] is True  # status 降级为 error 状态，不抛给调用方
+    assert response["state"] == "error"
+    assert "auth.openai.com" not in str(response.get("error"))
+    assert "a0327bbe" not in str(response.get("error"))
+
+
+def test_codex_service_responses_never_leak_secrets(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    payloads = [
+        service.codex_status(),
+        service.codex_login_start(),
+        service.codex_logout(),
+        service.codex_models(),
+        service.llm_settings(),
+    ]
+    forbidden_keys = {"token", "jwt", "authurl", "loginid", "auth_path", "codex_home", "access_token"}
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, val in value.items():
+                assert str(key).lower() not in forbidden_keys, f"泄露字段 {key}"
+                walk(val)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    for payload in payloads:
+        walk(payload)
+
+
+def _snapshot_llm_state(session, config_path):
+    """P0-R2：session/config/磁盘三层的完整快照，用于失败前后逐字段比对。"""
+    config = session.config
+    file_bytes = config_path.read_bytes() if config_path.exists() else None
+    return {
+        "session": {
+            "llm_model": session.llm_model,
+            "llm_api_key": session.llm_api_key,
+            "llm_api_base": session.llm_api_base,
+            "assistant_settings": session.assistant_settings,
+            "max_retries": session.max_retries,
+        },
+        "config": {
+            "model": config.llm.model,
+            "assistant_settings": config.llm.assistant_settings,
+            "max_iterations": config.agent.max_iterations,
+            "providers": list(config.llm.providers),
+            "api_key": config.llm.api_key,
+        },
+        "file": file_bytes,
+    }
+
+
+def test_update_llm_settings_rejection_leaves_state_untouched(tmp_path):
+    """P0-R2：codex 拒绝（API-key / 目录外模型）前后 session/config/磁盘逐字段不变。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    config.llm.api_key = ""
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    session = SimpleNamespace(
+        llm_model="glm-4-flash",
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="OLD",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+    )
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None, codex_provider=provider)
+
+    # 1) API-key 拒绝
+    before = _snapshot_llm_state(session, tmp_path / "config.toml")
+    response = service.update_llm_settings({
+        "model": "openai-codex/gpt-5.6-luna",
+        "api_key": "DEV-SECRET",
+        "assistant_settings": "NEW",
+        "max_retries": 9,
+    })
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    assert _snapshot_llm_state(session, tmp_path / "config.toml") == before
+
+    # 2) 目录外模型拒绝
+    before = _snapshot_llm_state(session, tmp_path / "config.toml")
+    response = service.update_llm_settings({
+        "model": "openai-codex/not-a-real-account-model",
+        "api_key": "",
+        "assistant_settings": "NEW",
+        "max_retries": 9,
+    })
+    assert response["ok"] is False
+    assert response["code"] == "model_not_in_catalog"
+    assert _snapshot_llm_state(session, tmp_path / "config.toml") == before
+
+
+def test_codex_generic_exception_uses_stable_code_and_message(tmp_path):
+    """P0-R1：未知异常 → 稳定非空错误码 + 稳定产品文案（不传上游原文）。"""
+    config = GDLAgentConfig()
+
+    class _GenericBoomProvider(_FakeCodexProvider):
+        def login_start(self):
+            raise RuntimeError("some internal detail that should not reach the API")
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _GenericBoomProvider())
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    assert response["code"] == "codex_error"
+    assert response["error"] == "Codex 操作失败，请稍后重试。"
+    assert "internal detail" not in response["error"]
+
+
+def test_codex_app_server_error_maps_to_stable_message(tmp_path):
+    """P0-R1：app-server 超时等异常 → 按 category 映射稳定文案。"""
+    from openbrep.codex.app_server import CodexAppServerError
+
+    config = GDLAgentConfig()
+
+    class _TimeoutProvider(_FakeCodexProvider):
+        def login_start(self):
+            raise CodexAppServerError("codex app-server 请求超时（>10s）：model/list", category="timeout")
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _TimeoutProvider())
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    assert response["code"] == "codex_app_server"
+    assert response["error"] == "Codex app-server 响应超时，请稍后重试。"

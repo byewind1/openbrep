@@ -3237,3 +3237,268 @@ def test_p7b_create_explicit_project_name_wins_over_object_type(tmp_path):
     assert (tmp_path / "我的书架").is_dir()
     assert not (tmp_path / "坐斗").exists()
     assert session.source_path == (tmp_path / "我的书架").resolve()
+
+
+# ── Codex BYOA（D1）：登录/状态/动态模型路由 + 秘密不泄漏 ───────────────────
+
+class _RouteFakeCodexClient:
+    """app-server 假客户端：会话级集成测试用，无网络。"""
+
+    def __init__(self):
+        self.started = False
+        self.account = None
+        self.login_calls = 0
+        self.logout_calls = 0
+        self.model_list_calls = 0
+
+    def start(self):
+        self.started = True
+
+    def initialize(self):
+        return {}
+
+    def account_read(self):
+        return {"account": self.account, "requiresOpenaiAuth": self.account is None}
+
+    def account_login_start_chatgpt(self):
+        self.login_calls += 1
+        return {"type": "chatgpt", "loginId": "route-login-id", "authUrl": "https://auth.openai.com/route"}
+
+    def account_logout(self):
+        self.logout_calls += 1
+        self.account = None
+        return {}
+
+    def model_list(self):
+        self.model_list_calls += 1
+        return {
+            "data": [
+                {"id": "gpt-5.6-luna", "model": "gpt-5.6-luna", "displayName": "GPT-5.6 Luna", "hidden": False, "modelSpecialty": None},
+                {"id": "gpt-5.2", "model": "gpt-5.2", "displayName": "GPT-5.2", "hidden": False, "modelSpecialty": None},
+            ],
+            "nextCursor": None,
+        }
+
+    def close(self):
+        self.started = False
+
+
+def _route_codex_session(tmp_path, client, opened=None):
+    from openbrep.codex.provider import CodexProvider
+
+    opened = opened if opened is not None else []
+
+    def factory():
+        return CodexProvider(
+            codex_home=tmp_path / "codex-home",
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=opened.append,
+        )
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.settings_service.codex_provider_factory = factory
+    return session, opened
+
+
+def test_codex_status_route_three_states_distinguishable(tmp_path):
+    """无 CLI / 未登录 / 已登录三种状态经 API 可区分。"""
+    # 已登录（chatgpt 账号）
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "johndoe@example.com", "planType": "pro"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    signed_in = session.route("GET", "/api/settings/llm/codex/status")
+    assert signed_in["ok"] is True
+    assert signed_in["state"] == "signed_in"
+    assert signed_in["connected"] is True
+    assert signed_in["account"]["email_masked"] == "jo***@example.com"
+    assert signed_in["account"]["plan_type"] == "pro"
+    assert "email" not in signed_in["account"]
+
+    # 未登录
+    client2 = _RouteFakeCodexClient()
+    session2, _opened2 = _route_codex_session(tmp_path, client2)
+    signed_out = session2.route("GET", "/api/settings/llm/codex/status")
+    assert signed_out["state"] == "signed_out"
+    assert signed_out["connected"] is False
+
+    # 无 CLI
+    from openbrep.codex.provider import CodexProvider
+
+    session3 = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session3.settings_service.codex_provider_factory = lambda: CodexProvider(
+        codex_home=tmp_path / "codex-home3", cli_available=False,
+    )
+    no_cli = session3.route("GET", "/api/settings/llm/codex/status")
+    assert no_cli["state"] == "no_cli"
+    assert no_cli["connected"] is False
+    assert no_cli["codex_available"] is False
+
+
+def test_codex_login_start_route_opens_browser_and_returns_state_only(tmp_path):
+    client = _RouteFakeCodexClient()
+    session, opened = _route_codex_session(tmp_path, client)
+    response = session.route("POST", "/api/settings/llm/codex/login/start", {})
+    assert response == {"ok": True, "state": "login_started"}
+    assert client.login_calls == 1
+    assert len(opened) == 1
+    assert opened[0].startswith("https://auth.openai.com/")
+    # authUrl/loginId 不出现在响应
+    assert "authUrl" not in response
+    assert "loginId" not in response
+
+
+def test_codex_logout_route(tmp_path):
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    response = session.route("POST", "/api/settings/llm/codex/logout", {})
+    assert response == {"ok": True, "state": "signed_out"}
+    assert client.logout_calls == 1
+    # 退出后模型列表不可读（fail closed）
+    models = session.route("GET", "/api/settings/llm/codex/models")
+    assert models["ok"] is False
+    assert models["code"] == "not_signed_in"
+
+
+def test_codex_models_route_returns_qualified_ids(tmp_path):
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    response = session.route("GET", "/api/settings/llm/codex/models")
+    assert response["ok"] is True
+    ids = [m["id"] for m in response["models"]]
+    assert ids == ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.2"]
+    # 模型目录来自 model/list，不是硬编码清单
+    assert client.model_list_calls == 1
+
+
+def test_codex_routes_registered_lock_free():
+    from openbrep.workbench.request_gate import LOCK_FREE_POST_ROUTES
+
+    assert "/api/settings/llm/codex/login/start" in LOCK_FREE_POST_ROUTES
+    assert "/api/settings/llm/codex/logout" in LOCK_FREE_POST_ROUTES
+
+
+def test_snapshot_llm_codex_block_and_no_secrets(tmp_path):
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "johndoe@example.com", "planType": "pro"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    # 先走一次 status 路由（现实流程：AI 设置页打开时创建 provider），
+    # 之后 snapshot/llm_settings 复用同一 provider 状态，不重复拉起。
+    status = session.route("GET", "/api/settings/llm/codex/status")
+    assert status["state"] == "signed_in"
+    snapshot = session.snapshot()
+    assert snapshot["llm"]["codex"]["state"] == "signed_in"
+    assert snapshot["llm"]["codex"]["connected"] is True
+    # snapshot 不得包含秘密字段
+    text = json.dumps(snapshot)
+    for bad in ("authUrl", "loginId", "auth.json", ".codex", "johndoe@example.com", "fake-login-id"):
+        assert bad not in text, f"snapshot 泄露 {bad}"
+    assert "jo***@example.com" in text  # 脱敏邮箱允许出现
+
+
+def test_codex_model_save_via_route_persists_provider_entry(tmp_path):
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    session.route("GET", "/api/settings/llm/codex/status")  # 创建 provider（已登录）
+    response = session.route("PATCH", "/api/settings/llm/model", {"model": "openai-codex/gpt-5.6-luna"})
+    assert response["ok"] is True
+    assert response["llm"]["model"] == "openai-codex/gpt-5.6-luna"
+    # 已登录 → 保存后立即可用
+    assert response["llm"]["model_available"] is True
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.model == "openai-codex/gpt-5.6-luna"
+    assert reloaded.llm.providers[0]["api_mode"] == "codex_app_server"
+    # 保存不写任何 codex 凭据（access_token/authUrl/loginId/auth.json/sk- 等）
+    saved = (tmp_path / "config.toml").read_text(encoding="utf-8")
+    for bad in ("auth.json", "access_token", "authUrl", "loginId", "sk-", "eyJ", "chatgpt_account_id"):
+        assert bad not in saved, f"config.toml 写入秘密字段 {bad}"
+
+
+def test_codex_api_key_route_rejects_codex_model(tmp_path):
+    """P0-1：通用 API-key 通道对 openai-codex 订阅身份必须拒绝（后端独立）。"""
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm/api-key",
+        {"model": "openai-codex/gpt-5.6-luna", "api_key": "DEV-SECRET"},
+    )
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    # 拒绝后 config 不落盘（文件不存在），更不会有 DEV-SECRET
+    assert not (tmp_path / "config.toml").exists()
+
+
+def test_codex_model_save_route_rejects_model_not_in_catalog(tmp_path):
+    """P0-4：保存 openai-codex 模型必须属于当前账户 model/list 目录。"""
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+
+    response = session.route(
+        "PATCH", "/api/settings/llm/model", {"model": "openai-codex/not-a-real-account-model"}
+    )
+    assert response["ok"] is False
+    assert response["code"] == "model_not_in_catalog"
+    # 未落盘
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.model != "openai-codex/not-a-real-account-model"
+
+
+def test_codex_login_start_failure_route_redacts_secrets(tmp_path):
+    """P0-2：登录失败路径经路由返回的错误必须脱敏（不含 authUrl/loginId 值）。"""
+    client = _RouteFakeCodexClient()
+
+    def _boom():
+        raise RuntimeError(
+            'login failed: {"authUrl":"https://auth.openai.com/oauth?state=SECRET",'
+            '"loginId":"a0327bbe-a894-4455-9e96-8c6d19ed2a53"}'
+        )
+
+    client.account_login_start_chatgpt = _boom
+    session, _opened = _route_codex_session(tmp_path, client)
+
+    response = session.route("POST", "/api/settings/llm/codex/login/start", {})
+    assert response["ok"] is False
+    text = str(response["error"])
+    assert "auth.openai.com" not in text
+    assert "a0327bbe" not in text
+    assert "SECRET" not in text
+    assert "authUrl" not in text
+    assert "loginId" not in text
+
+
+def test_codex_config_migrates_reserved_provider_entry(tmp_path):
+    """P0-3：配置里同名的恶意 openai-codex 条目在加载时被强制规范。"""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "openai-codex/gpt-5.6-luna"
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "chat_completions"
+api = "https://evil.invalid"
+api_key = "DEV-SECRET"
+models = ["gpt-5.6-luna"]
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+    entry = session.config.llm.providers[0]
+    assert entry["api_mode"] == "codex_app_server"
+    assert entry["api_key"] == ""
+    assert entry["api"] == ""
+    assert entry["models"] == []
+    # 保存后写回的是规范形态
+    session.route("GET", "/api/settings/runtime")
+    session.config.save(str(config_path))
+    saved = config_path.read_text(encoding="utf-8")
+    assert "DEV-SECRET" not in saved
+    assert 'api_mode = "codex_app_server"' in saved

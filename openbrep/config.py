@@ -201,6 +201,86 @@ PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
 _PROFILES_BY_PREFIX_LEN = sorted(PROVIDER_PROFILES, key=lambda p: -max(len(x) for x in p.prefixes))
 
 
+# ── Codex BYOA（ChatGPT 订阅）provider 身份 ─────────────────────────────────
+# `openai-codex/<model>` 表示「ChatGPT 登录的 Codex 订阅」路线，与 API-key
+# OpenAI（裸 gpt-* / openai/ 前缀）严格分离。登录由本地官方 Codex app-server
+# 在独立 CODEX_HOME 内完成，OpenBrep 不保存/不返回任何 token。
+CODEX_PROVIDER_NAME = "openai-codex"
+API_MODE_CODEX_APP_SERVER = "codex_app_server"
+# 认识的 api_mode 全集；未知值必须报错（不静默降级成 chat_completions）
+SUPPORTED_API_MODES = ("chat_completions", "anthropic_messages", API_MODE_CODEX_APP_SERVER)
+
+
+def is_codex_qualified_model(model: str) -> bool:
+    """`openai-codex` 或 `openai-codex/<model>` 才算 ChatGPT Codex 订阅身份。
+
+    裸 `gpt-*` / `openai/*` 仍是 API-key OpenAI 路线，绝不混用。
+    """
+    target = str(model or "").strip()
+    return target == CODEX_PROVIDER_NAME or target.startswith(CODEX_PROVIDER_NAME + "/")
+
+
+def _force_codex_provider_entry(entry: dict) -> dict:
+    """把 `openai-codex` 保留 provider 条目就地强制为规范形态（防篡改/安全迁移）。
+
+    openai-codex 是保留身份：同名条目不得携带 api/api_key 或改用其他 api_mode，
+    否则 API-key 会通过通用配置通道混入订阅 provider（D1 P0-3）。强制后：
+    api_mode=codex_app_server、api=""/api_key=""（_explicit_base=True，绝不回退
+    顶层）、models=[]（目录由账户 model/list 动态提供，不固话进配置）。
+    """
+    entry.update({
+        "name": CODEX_PROVIDER_NAME,
+        "api_mode": API_MODE_CODEX_APP_SERVER,
+        "protocol": "openai",
+        "api": "",
+        "base_url": "",
+        "api_key": "",
+        "models": [],
+        "_explicit_base": True,
+    })
+    return entry
+
+
+def normalize_provider_list(raw_list) -> list[dict]:
+    """逐条归一化 provider 配置；`openai-codex` 保留身份强制规范形态。
+
+    用于加载（_from_dict）与保存前整理，保证下游永远见不到带
+    api_key/api 的非 codex_app_server 同名条目。
+    """
+    out: list[dict] = []
+    for entry in raw_list or []:
+        if not isinstance(entry, dict):
+            continue
+        normalized = normalize_provider_entry(entry)
+        if str(normalized.get("name", "") or "").strip() == CODEX_PROVIDER_NAME:
+            normalized = _force_codex_provider_entry(normalized)
+        out.append(normalized)
+    return out
+
+
+def ensure_codex_provider_entry(config: "GDLAgentConfig") -> dict:
+    """确保 config 里存在 openai-codex provider 条目（api_mode=codex_app_server）。
+
+    模型保存（update_llm_model_only / update_llm_settings）在写入
+    `openai-codex/<model>` 时调用：没有条目时补一条；已有同名条目则**强制
+    规范形态**（不信任同名自定义配置，P0-3）。
+    """
+    for provider in config.llm.providers:
+        if str(provider.get("name", "") or "").strip() == CODEX_PROVIDER_NAME:
+            return _force_codex_provider_entry(provider)
+    entry = {
+        "name": CODEX_PROVIDER_NAME,
+        "api_mode": API_MODE_CODEX_APP_SERVER,
+        "protocol": "openai",
+        "api": "",
+        "api_key": "",
+        "models": [],
+        "_explicit_base": True,
+    }
+    config.llm.providers.append(entry)
+    return entry
+
+
 # 官方 provider 的默认端点模板（"从模板添加"数据源；litellm native 路由不依赖它，
 # 用户想用统一 [[llm.providers]] 格式配官方 provider 时从这里抄端点即可）
 PROVIDER_API_TEMPLATES = {
@@ -288,11 +368,24 @@ def expand_env_ref(value) -> str:
 
 
 def _normalize_api_mode(value) -> str:
-    """api_mode 归一化：chat_completions（默认）| anthropic_messages。兼容旧 protocol 写法。"""
+    """api_mode 归一化：chat_completions（默认）| anthropic_messages | codex_app_server。
+
+    兼容旧 protocol 写法（openai→chat_completions、anthropic/claude/messages→
+    anthropic_messages）。**未知 api_mode 直接报错，不静默降级**——新增模式
+    （如 codex_app_server）未接入前，配置了该模式的 provider 必须显式失败，
+    而不是被悄悄当成 chat_completions 请求到错误端点（BYOA 安全不变量）。
+    """
     text = str(value or "").strip().lower()
+    if not text or text in {"openai", "completions", "chat_completions"}:
+        return "chat_completions"
     if text in {"anthropic", "claude", "anthropic_messages", "messages"}:
         return "anthropic_messages"
-    return "chat_completions"
+    if text == API_MODE_CODEX_APP_SERVER:
+        return API_MODE_CODEX_APP_SERVER
+    raise ValueError(
+        f"未知 api_mode {text!r}（支持的 api_mode：{', '.join(SUPPORTED_API_MODES)}）。"
+        "请检查 [[llm.providers]] 配置，或升级 OpenBrep 以支持该模式。"
+    )
 
 
 def normalize_provider_entry(entry: dict | None) -> dict:
@@ -490,6 +583,15 @@ class LLMConfig:
 
     def _is_custom_provider_model(self, model: str | None = None) -> bool:
         return self._find_custom_provider_match(model) is not None
+
+    def _is_codex_app_server_model(self, model: str | None = None) -> bool:
+        """模型是否走 ChatGPT Codex（openai-codex）订阅路线。
+
+        以 provider-qualified 前缀为准（fail closed）：只要模型 id 是
+        `openai-codex/...`，无论 provider 条目是否已配置、api_mode 是否匹配，
+        都按 Codex BYOA 处理——绝不回退到 API-key / 顶层凭据。
+        """
+        return is_codex_qualified_model(str(model or self.model or ""))
 
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
@@ -788,7 +890,7 @@ class GDLAgentConfig:
                     custom_providers.extend(raw)
 
         llm_cfg = pick(LLMConfig, llm_data)
-        llm_cfg.custom_providers = [normalize_provider_entry(p) for p in custom_providers]
+        llm_cfg.custom_providers = normalize_provider_list(custom_providers)
 
         raw_recent_projects = data.get("recent_projects", [])
         if not isinstance(raw_recent_projects, list):
@@ -848,6 +950,11 @@ class GDLAgentConfig:
     def save(self, config_path: str = "config.toml") -> None:
         """将当前配置写回 config.toml"""
         import toml
+        # P0-R3：单一保存边界强制保留身份规范化——openai-codex 同名条目一律
+        # 规范为 codex_app_server + api=''/api_key='' 并回写内存，不依赖
+        # 调用者事先经过 load/ensure（程序内直接构造的 config 也必须安全）。
+        providers = normalize_provider_list(self.llm.providers)
+        self.llm.providers = providers
         data = {
             "llm": {
                 "model": self.llm.model,
@@ -857,7 +964,7 @@ class GDLAgentConfig:
                 "max_tokens": self.llm.max_tokens,
                 "provider_keys": self.llm.provider_keys,
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
-                "providers": [provider_entry_to_toml(p) for p in self.llm.providers],
+                "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
             },
             "agent": {

@@ -411,6 +411,15 @@ class LLMAdapter:
             )
 
         requested_model = kwargs.pop("model", None)
+        # ChatGPT Codex（openai-codex）订阅模型：D1 只交付登录与模型选择，
+        # 生成能力尚未开放。必须 fail closed——绝不静默回退到 litellm /
+        # API-key / 环境变量（BYOA 安全不变量）。
+        if self.config._is_codex_app_server_model(requested_model):
+            raise RuntimeError(
+                "ChatGPT Codex（openai-codex）模型的生成能力尚未开放："
+                "当前版本支持登录与模型选择，生成将在后续版本提供。"
+                "请改用其他已配置的模型。"
+            )
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 
@@ -643,6 +652,15 @@ class LLMAdapter:
             )
 
         requested_model = kwargs.pop("model", None)
+        # ChatGPT Codex（openai-codex）订阅模型：D1 只交付登录与模型选择，
+        # 生成能力尚未开放。必须 fail closed——绝不静默回退到 litellm /
+        # API-key / 环境变量（BYOA 安全不变量）。
+        if self.config._is_codex_app_server_model(requested_model):
+            raise RuntimeError(
+                "ChatGPT Codex（openai-codex）模型的生成能力尚未开放："
+                "当前版本支持登录与模型选择，生成将在后续版本提供。"
+                "请改用其他已配置的模型。"
+            )
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 

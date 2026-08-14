@@ -78,6 +78,21 @@ export const zh = {
   'settings.ai.switchFailed': '模型切换失败',
   'settings.ai.copyError': '复制错误信息',
   'settings.ai.copied': '已复制',
+  // Codex BYOA（D1）：ChatGPT 订阅登录与动态模型
+  'settings.ai.codex.sectionTitle': 'ChatGPT Codex（订阅）',
+  'settings.ai.codex.login': '连接我的 ChatGPT',
+  'settings.ai.codex.loginPending': '登录中…',
+  'settings.ai.codex.loginPendingHint': '请在打开的浏览器中完成登录。登录成功后本面板会自动刷新账户与可用模型。',
+  'settings.ai.codex.loginFailed': '启动浏览器登录失败',
+  'settings.ai.codex.logout': '断开连接',
+  'settings.ai.codex.logoutFailed': '退出登录失败',
+  'settings.ai.codex.connectedLabel': '已连接',
+  'settings.ai.codex.notConnectedLabel': '未连接',
+  'settings.ai.codex.noCli': '未检测到 Codex CLI。请先安装 Codex CLI（npm install -g @openai/codex）后重试。',
+  'settings.ai.codex.errorUnknown': 'Codex 连接状态未知，请稍后重试。',
+  'settings.ai.codex.modelsLabel': '可用模型（来自你的 ChatGPT 账户）',
+  'settings.ai.codex.noModels': '账户暂无可用模型。',
+  'settings.ai.codex.modelUnavailable': '当前 Codex 模型不可用：请先连接 ChatGPT 或重新登录。',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': '语言',
