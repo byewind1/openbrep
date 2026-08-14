@@ -1,24 +1,32 @@
 """D7: BYOA 与发布秘密泄漏门禁 —— 黑盒安全测试（全部离线、无真实账号/网络）。
 
-覆盖两个层面：
+覆盖：
 
-1. ``scripts/secret_scan.py`` 发布秘密门禁扫描器：
-   - 注入 canary 的坏 artifact 必须使 gate 失败，正常 artifact 通过；
-   - 报告绝不回显完整秘密，只报类型和文件位置；
-   - 凭据文件（auth.json/.env/…）只按名报，内容绝不读取；
-   - zip 归档、dmg 占位、staged source 均按目标规则处理。
+1. ``scripts/secret_scan.py`` 发布秘密门禁扫描器（fail-closed）：
+   - canary 注入的坏 artifact 在 tree/zip/二进制/大文件尾部/豁免源码/忽略目录/
+     symlink/opaque installer 中全部必须失败；正常 artifact 通过且零秘密回显；
+   - 凭据文件（auth.json/.env/…）在 open 之前完成分类，内容绝不读取
+     （instrumented-open 证明）；unreadable 文件必须失败；
+   - 报告对正文、文件名、目录名、target、archive entry 名均零秘密回显；
+   - 全文件/全 zip entry 流式扫描（chunk 重叠），2 MiB 之后不藏秘密；
+   - 二进制原始字节扫描（NUL 不跳过）；symlink 不跟随、可疑者 fail closed；
+   - opaque installer 无 paired staging 不得 exit 0。
 
 2. 黑盒回归：外部环境即使存在 canary token / OPENAI_API_KEY /
    开发机 ~/.codex/auth.json，初装 openai-codex（隔离 CODEX_HOME）仍 signed out；
-   两个隔离 CODEX_HOME 的状态互不可见。
-   子进程 fake app-server 模拟真实 codex CLI 的 auth.json 行为（auth 状态存在
-   CODEX_HOME 下），transport/子进程环境注入是真实路径。
+   两个隔离 CODEX_HOME 的状态互不可见。子进程 fake app-server 模拟真实 codex
+   CLI 的 auth.json 行为，transport/子进程环境注入是真实路径。
+
+3. workflow 静态契约：release-tauri / build-installers 的 secret gate 步骤
+   排在所有 upload-artifact 与 release publish 之前；tauri-action 纯构建
+   （不内联创建 Release）。
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import stat
 import subprocess
 import sys
 import zipfile
@@ -45,10 +53,11 @@ def _load_scanner():
 SECRET_MARKERS = (
     "sk-proj-REALKEY1234567890abcdef",
     "sk-REAL-SECRET-TOKEN-123456",
-    "plain-secret-value",
     "obr-canary-abc123",
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123456",
 )
+
+CANARY = "obr-canary-abc123"
 
 
 @pytest.fixture()
@@ -91,17 +100,7 @@ def clean_tree(tmp_path: Path) -> Path:
     return root
 
 
-# ── 扫描器：名称级（凭据文件只按名报，不读内容） ──────────────────────────
-
-
-def test_scan_tree_flags_auth_json_by_name_without_echoing_value(bad_tree):
-    scanner = _load_scanner()
-    result = scanner.scan_tree(bad_tree)
-    auth = [f for f in result.findings if f.type == "auth_file"]
-    assert auth and auth[0].file.endswith(".codex/auth.json")
-    assert not result.ok
-    report = scanner.report_text(result)
-    assert "sk-REAL-SECRET-TOKEN-123456" not in report  # 内容未回显 = 未读取内容
+# ── 扫描器：名称级（凭据文件只按名报，绝不 open） ─────────────────────────
 
 
 def test_classify_name_and_content_gate():
@@ -120,31 +119,51 @@ def test_classify_name_and_content_gate():
     assert scanner.content_scan_applies("a/.env") is False
     assert scanner.content_scan_applies("a/.codex/anything") is False
     assert scanner.content_scan_applies("a/main.py") is True
-    # 秘密脱敏模块源码（随包镜像）豁免内容级，但不豁免其他文件
-    assert scanner.content_scan_applies("openbrep/codex/redact.py") is False
-    assert scanner.content_scan_applies("some/other/redact.py") is True
 
 
-def test_secret_redaction_module_source_does_not_false_positive(tmp_path):
-    """随包镜像的 openbrep/codex/redact.py 源码含 Bearer 示例词，不得误报；
-    同目录/同树的真实秘密仍必须命中。"""
+def test_credential_file_never_opened(tmp_path, monkeypatch):
+    """P0-1：auth.json 在 open 之前按名分类；instrumented-open 证明从未打开。"""
     scanner = _load_scanner()
-    root = tmp_path / "pkg"
-    (root / "openbrep" / "codex").mkdir(parents=True)
-    (root / "openbrep" / "codex" / "redact.py").write_text(
-        '# 裸 Bearer token（无 Authorization 前缀时）\n'
-        '# "Authorization: Bearer plain-secret-value" 等冒号写法\n'
-        '_BEARER_RE = re.compile(r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{6,}")\n',
-        encoding="utf-8",
-    )
-    assert scanner.scan_tree(root).ok
-    # 真实秘密（同树其他文件）不受豁免影响
-    (root / ".env").write_text(
-        "OPENAI_API_KEY=" + "sk-proj-REALKEY1234567890abcdef\n", encoding="utf-8"
-    )
+    root = tmp_path / "a"
+    (root / ".codex").mkdir(parents=True)
+    auth = root / ".codex" / "auth.json"
+    auth.write_text("TOP-SECRET-AUTH-BYTES", encoding="utf-8")
+
+    real_open = open
+    opened: list[str] = []
+
+    def spy_open(path, *args, **kwargs):
+        opened.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+    result = scanner.scan_tree(root)
+    assert any(f.type == "auth_file" for f in result.findings)
+    assert not result.ok
+    assert str(auth) not in opened  # 凭据文件从未被打开
+    report = scanner.report_text(result)
+    assert "TOP-SECRET-AUTH-BYTES" not in report
+
+
+def test_unreadable_file_fails_closed(tmp_path, monkeypatch):
+    """P0-1：无法读取的普通 artifact 文件必须使 gate 失败，不能静默 continue。"""
+    scanner = _load_scanner()
+    root = tmp_path / "a"
+    root.mkdir()
+    target = root / "payload.dat"
+    target.write_bytes(b"hello")
+
+    real_open = open
+
+    def denying_open(path, *args, **kwargs):
+        if str(path) == str(target):
+            raise PermissionError("denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", denying_open)
     result = scanner.scan_tree(root)
     assert not result.ok
-    assert any(f.type == "env_file" for f in result.findings)
+    assert any(f.type == "unreadable" and f.severity == "error" for f in result.findings)
 
 
 # ── 扫描器：内容级 ─────────────────────────────────────────────────────────
@@ -157,11 +176,10 @@ def test_scan_text_detects_bearer_jwt_and_sk_keys():
         "jwt = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123456\n"
         'key = "sk-proj-REALKEY1234567890abcdef"\n'
     )
-    findings = scanner.scan_text("x.py", text, ())
-    types = {f.type for f in findings}
-    assert "bearer" in types
+    types = {f.type for f in scanner.scan_text("x.py", text, ())}
     assert "jwt" in types
     assert "openai_api_key" in types
+    assert "bearer" not in types  # plain-secret-value 是已知安全样例
 
 
 def test_scan_text_detects_env_assignments_but_not_plain_references():
@@ -190,43 +208,179 @@ def test_scan_text_detects_env_assignments_but_not_plain_references():
         )
         == []
     )
+    # SSH 算法名（sk-ecdsa-*/sk-ssh-*）不是 OpenAI key
+    assert scanner.scan_text("x", "sk-ecdsa-sha2-nistp256@openssh.com\n", ()) == []
+    # 散文（全小写单词）不是 Bearer token
+    assert (
+        scanner.scan_text(
+            "x", "The token to use as HTTP bearer authorization for remote files.\n", ()
+        )
+        == []
+    )
 
 
-# ── 扫描器：canary 注入 → gate 失败 ────────────────────────────────────────
-
-
-def test_canary_injected_artifact_fails_gate(clean_tree, tmp_path):
+def test_secret_redaction_module_safe_example_does_not_false_positive(tmp_path):
+    """redact.py 的安全样例（Bearer plain-secret-value）不误报，但 canary/sk-* 必命中。"""
     scanner = _load_scanner()
-    (clean_tree / "leak.js").write_text("const canary = 'obr-canary-abc123';\n", encoding="utf-8")
-    result = scanner.scan_tree(clean_tree, canaries=("obr-canary-abc123",))
+    root = tmp_path / "pkg"
+    (root / "openbrep" / "codex").mkdir(parents=True)
+    (root / "openbrep" / "codex" / "redact.py").write_text(
+        "# 裸 Bearer token（无 Authorization 前缀时）\n"
+        '# "Authorization: Bearer plain-secret-value" 等冒号写法\n'
+        '_BEARER_RE = re.compile(r"(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{6,}")\n',
+        encoding="utf-8",
+    )
+    assert scanner.scan_tree(root).ok
+    # canary 与 sk-* 永不豁免
+    (root / "openbrep" / "codex" / "redact.py").write_text(
+        "# doc\nCANARY=obr-canary-abc123\nsk-proj-REALKEY1234567890abcdef\n",
+        encoding="utf-8",
+    )
+    result = scanner.scan_tree(root, canaries=(CANARY,))
     assert not result.ok
-    canary = [f for f in result.findings if f.type == "canary"]
-    assert canary and canary[0].file == "leak.js"
-    assert "obr-canary-abc123" not in scanner.report_text(result)  # canary 也不回显
+    types = {f.type for f in result.findings}
+    assert "canary" in types
+    assert "openai_api_key" in types
 
 
-def test_clean_artifact_passes_and_prints_no_secrets(clean_tree):
+# ── 扫描器：canary 注入 → gate 失败（覆盖评审的每条绕过形态） ─────────────
+
+
+def test_canary_injected_artifact_fails_gate(clean_tree):
     scanner = _load_scanner()
-    result = scanner.scan_tree(clean_tree, canaries=("obr-canary-abc123",))
-    assert result.ok
-    assert result.findings == []
+    (clean_tree / "leak.js").write_text(f"const canary = '{CANARY}';\n", encoding="utf-8")
+    result = scanner.scan_tree(clean_tree, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+    assert CANARY not in scanner.report_text(result)  # canary 也不回显
+
+
+def test_canary_in_developer_ignore_dirs_fails(tmp_path):
+    """P0-2：release 树不得忽略 .git/node_modules/.venv/target/.worktrees。"""
+    scanner = _load_scanner()
+    root = tmp_path / "artifact"
+    for d in (".git", "node_modules", ".venv", "target", ".worktrees"):
+        (root / d).mkdir(parents=True)
+        (root / d / "leak").write_text(f"x={CANARY}\n", encoding="utf-8")
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    assert not result.ok
+    canary_files = {f.file for f in result.findings if f.type == "canary"}
+    assert len(canary_files) == 5
+
+
+def test_canary_after_2mib_in_large_file_fails(tmp_path):
+    """P0-2：全文件流式扫描，2 MiB 之后不藏秘密。"""
+    scanner = _load_scanner()
+    root = tmp_path / "a"
+    root.mkdir()
+    big = root / "bundle.js"
+    with open(big, "wb") as fh:
+        fh.write(b"// x" + b"a" * (2 * 1024 * 1024 + 1000))
+        fh.write(f'var c="{CANARY}";'.encode())
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_canary_and_key_in_binary_with_nul_fails(tmp_path):
+    """P0-2：含 NUL 的二进制也要原始字节扫描，不得整体跳过。"""
+    scanner = _load_scanner()
+    root = tmp_path / "a"
+    root.mkdir()
+    (root / "app.bin").write_bytes(
+        b"\x00\x01\x02" + CANARY.encode() + b"\x00sk-proj-REALKEY1234567890abcdef\x00\xff"
+    )
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    assert not result.ok
+    types = {f.type for f in result.findings}
+    assert "canary" in types
+    assert "openai_api_key" in types
+
+
+def test_canary_straddling_chunk_boundary_fails(tmp_path):
+    """chunk 重叠：canary 恰在 chunk 边界处也必须命中。"""
+    scanner = _load_scanner()
+    root = tmp_path / "a"
+    root.mkdir()
+    target = root / "straddle.txt"
+    filler = b"x" * (1024 * 1024 - 5)  # 让 canary 跨 1 MiB chunk 边界
+    with open(target, "wb") as fh:
+        fh.write(filler + CANARY.encode() + b"\n")
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_empty_codex_dir_and_auth_json_symlink_fail(tmp_path):
+    """P0-2：空 .codex 目录要枚举；auth.json symlink 按名 fail closed。"""
+    scanner = _load_scanner()
+    root = tmp_path / "a"
+    (root / ".codex").mkdir(parents=True)
+    real_auth = tmp_path / "outside" / "auth.json"
+    real_auth.parent.mkdir()
+    real_auth.write_text('{"type":"chatgpt","accessToken":"sk-leaked"}', encoding="utf-8")
+    (root / ".codex" / "auth.json").symlink_to(real_auth)
+    result = scanner.scan_tree(root)
+    assert not result.ok
+    types = {f.type for f in result.findings}
+    assert "codex_dir" in types  # 空目录也被枚举
+    assert "auth_file" in types  # symlink 名按凭据名报
+    assert "symlink_escape" in types  # 绝对目标逃逸
+    # 内容零回显
     report = scanner.report_text(result)
-    assert "SECRET GATE PASS" in report
-    for marker in SECRET_MARKERS:
-        assert marker not in report
+    assert "sk-leaked" not in report
+
+
+def test_benign_relative_in_tree_symlink_is_info_only(tmp_path):
+    """良性相对 in-tree symlink（如 dylib 版本链接）可见但不失败。"""
+    scanner = _load_scanner()
+    root = tmp_path / "app"
+    root.mkdir()
+    (root / "libfoo.1.2.3.dylib").write_bytes(b"\x00data")
+    (root / "libfoo.1.dylib").symlink_to("libfoo.1.2.3.dylib")
+    result = scanner.scan_tree(root)
+    assert result.ok
+    assert any(f.type == "symlink" and f.severity == "info" for f in result.findings)
+
+
+def test_secret_filename_and_target_are_redacted_in_reports(tmp_path):
+    """P0-4：报告对文件名/目录名/target 中的秘密同样零回显。"""
+    scanner = _load_scanner()
+    root = tmp_path / "sk-proj-REVIEWSECRET1234567890abcdef"
+    root.mkdir()
+    (root / "payload.txt").write_text(f"x\n{CANARY}\n", encoding="utf-8")
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    assert not result.ok
+    text_report = scanner.report_text(result)
+    json_report = scanner.report_json(result)
+    assert "REVIEWSECRET" not in text_report
+    assert "REVIEWSECRET" not in json_report
+    assert CANARY not in text_report
+    assert CANARY not in json_report
+    # 保留可定位性：目录被脱敏但仍可见
+    assert "<redacted>" in json_report
 
 
 def test_report_never_echoes_any_secret_value(bad_tree):
     scanner = _load_scanner()
-    result = scanner.scan_tree(bad_tree, canaries=("obr-canary-abc123",))
+    result = scanner.scan_tree(bad_tree, canaries=(CANARY,))
     text_report = scanner.report_text(result)
     json_report = scanner.report_json(result)
     for marker in SECRET_MARKERS:
         assert marker not in text_report
         assert marker not in json_report
-    # 报告只含类型与位置
     assert "auth_file" in json_report
     assert ".codex/auth.json" in json_report
+
+
+def test_clean_artifact_passes_and_prints_no_secrets(clean_tree):
+    scanner = _load_scanner()
+    result = scanner.scan_tree(clean_tree, canaries=(CANARY,))
+    assert result.ok
+    report = scanner.report_text(result)
+    assert "SECRET GATE PASS" in report
+    for marker in SECRET_MARKERS:
+        assert marker not in report
 
 
 # ── 扫描器：zip 归档 ───────────────────────────────────────────────────────
@@ -243,7 +397,7 @@ def test_scan_zip_flags_bad_entries(bad_tree, tmp_path):
     scanner = _load_scanner()
     zpath = tmp_path / "bad.zip"
     _zip_tree(bad_tree, zpath)
-    result = scanner.scan_archive(zpath, canaries=("obr-canary-abc123",))
+    result = scanner.scan_archive(zpath, canaries=(CANARY,))
     assert not result.ok
     types = {f.type for f in result.findings}
     assert "auth_file" in types
@@ -258,17 +412,43 @@ def test_scan_zip_clean_passes(clean_tree, tmp_path):
     scanner = _load_scanner()
     zpath = tmp_path / "clean.zip"
     _zip_tree(clean_tree, zpath)
-    result = scanner.scan_archive(zpath, canaries=("obr-canary-abc123",))
+    result = scanner.scan_archive(zpath, canaries=(CANARY,))
     assert result.ok
 
 
-def test_opaque_archive_dmg_is_info_not_failure(tmp_path):
+def test_scan_zip_streams_full_entry_after_2mib(tmp_path):
+    """P0-2：zip entry 全量流式扫描，尾部 canary 必须命中。"""
     scanner = _load_scanner()
-    dmg = tmp_path / "OpenBrep.dmg"
-    dmg.write_bytes(b"\x00" * 64)
-    result = scanner.scan_archive(dmg)
-    assert result.ok  # dmg 不可解析 ≠ gate 失败
-    assert any(f.type == "opaque_archive" and f.severity == "info" for f in result.findings)
+    zpath = tmp_path / "big.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("big.dat", b"x" * (2 * 1024 * 1024 + 1000) + CANARY.encode())
+    result = scanner.scan_archive(zpath, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_opaque_archive_fails_closed(tmp_path):
+    """P0-2/P0-3：dmg/msi/exe 不可解析 → gate 失败（须配 staging 树扫描）。"""
+    scanner = _load_scanner()
+    for suffix in (".dmg", ".msi", ".exe", ".pkg"):
+        fake = tmp_path / f"OpenBrep{suffix}"
+        fake.write_bytes(CANARY.encode() + b"\x00\x01")
+        result = scanner.scan_archive(fake, canaries=(CANARY,))
+        assert not result.ok, f"{suffix} 不应 exit 0"
+        assert any(f.type == "opaque_archive" and f.severity == "error" for f in result.findings)
+
+
+def test_nested_zip_in_tree_is_scanned(tmp_path):
+    """tree 里的嵌套 zip（如 base_library.zip）也按归档级扫描。"""
+    scanner = _load_scanner()
+    root = tmp_path / "pkg"
+    root.mkdir()
+    inner = root / "data.zip"
+    with zipfile.ZipFile(inner, "w") as zf:
+        zf.writestr("leak", CANARY.encode())
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
 
 
 # ── 扫描器：staged source ──────────────────────────────────────────────────
@@ -324,6 +504,17 @@ def test_scan_staged_flags_staged_auth_json_by_name(git_repo):
     assert any(f.type == "auth_file" for f in result.findings)
 
 
+def test_scan_staged_flags_secret_filename(git_repo):
+    scanner = _load_scanner()
+    (git_repo / "sk-proj-REVIEWSECRET1234567890abcdef.txt").write_text("ok\n", encoding="utf-8")
+    _git("add", ".", cwd=git_repo)
+    result = scanner.scan_staged(git_repo, canaries=())
+    assert not result.ok
+    assert any(f.type == "openai_api_key" for f in result.findings)
+    report = scanner.report_text(result)
+    assert "REVIEWSECRET" not in report
+
+
 # ── 扫描器：CLI 入口 ───────────────────────────────────────────────────────
 
 
@@ -331,29 +522,72 @@ def test_cli_exit_codes(clean_tree, bad_tree, tmp_path, monkeypatch, capsys):
     scanner = _load_scanner()
     monkeypatch.chdir(tmp_path)
     assert scanner.main(["--tree", str(clean_tree)]) == 0
-    assert scanner.main(["--tree", str(bad_tree), "--canary", "obr-canary-abc123"]) == 1
+    assert scanner.main(["--tree", str(bad_tree), "--canary", CANARY]) == 1
     assert scanner.main(["--tree", str(tmp_path / "missing")]) == 2
+    opaque = tmp_path / "x.msi"
+    opaque.write_bytes(CANARY.encode() + b"\x00\x01")
+    assert scanner.main(["--archive", str(opaque)]) == 1  # opaque → fail
     out = capsys.readouterr().out
     for marker in SECRET_MARKERS:
         assert marker not in out
 
 
+# ── workflow 静态契约（P0-3）：gate 必须先于一切上传/发布 ──────────────────
+
+
+def test_release_workflow_secret_gate_before_uploads():
+    yaml = pytest.importorskip("yaml")
+    root = Path(__file__).resolve().parents[1]
+
+    with open(root / ".github" / "workflows" / "release-tauri.yml") as fh:
+        wf = yaml.safe_load(fh)
+    build = wf["jobs"]["build-tauri"]
+    steps = build["steps"]
+    names = [str(s.get("name", "")) for s in steps]
+    gate_idx = next(i for i, n in enumerate(names) if "Secret gate" in n)
+    # 上传/发布不得出现在 gate 之前
+    for step in steps[:gate_idx]:
+        uses = str(step.get("uses", "") or "")
+        run = str(step.get("run", "") or "")
+        assert "upload-artifact" not in uses, f"gate 前存在上传: {uses}"
+        assert "gh release" not in run, f"gate 前存在 release 操作: {run}"
+    # gate 之后确实存在上传（顺序成立）
+    assert any("upload-artifact" in str(s.get("uses", "")) for s in steps[gate_idx:])
+    # tauri-action 纯构建：不得内联创建/上传 Release
+    tauri_step = next(s for s in steps if "tauri-action" in str(s.get("uses", "")))
+    with_ = tauri_step.get("with", {}) or {}
+    assert "tagName" not in with_
+    assert "releaseName" not in with_
+    assert "GITHUB_TOKEN" not in (tauri_step.get("env", {}) or {})
+    # 发布在独立 job，且必须等待 gate 所在 build job
+    assert "publish-release" in wf["jobs"]
+    assert wf["jobs"]["publish-release"].get("needs") == "build-tauri"
+
+    with open(root / ".github" / "workflows" / "build-installers.yml") as fh:
+        wf2 = yaml.safe_load(fh)
+    build2 = wf2["jobs"]["build"]
+    names2 = [str(s.get("name", "")) for s in build2["steps"]]
+    first_gate = next(i for i, n in enumerate(names2) if "Secret gate" in n)
+    for step in build2["steps"][:first_gate]:
+        uses = str(step.get("uses", "") or "")
+        assert "upload-artifact" not in uses, f"gate 前存在上传: {uses}"
+    assert any("upload-artifact" in str(s.get("uses", "")) for s in build2["steps"][first_gate:])
+    # publish-release job 独立且在 build 之后
+    assert "publish-release" in wf2["jobs"]
+    assert wf2["jobs"]["publish-release"].get("needs") == "build"
+
+
 # ── 构建脚本不复制用户 home/config/cache（静态守卫） ────────────────────
 
 
-def test_build_scripts_do_not_copy_user_home_or_config(tmp_path):
-    """构建脚本/打包 spec 不得递归复制用户 home/config/cache（D7 验收）。
-
-    静态守卫：未来若有人往打包脚本里加 home 复制，这里立刻红灯。
-    """
+def test_build_scripts_do_not_copy_user_home_or_config():
+    """构建脚本/打包 spec 不得递归复制用户 home/config/cache（D7 验收）。"""
     root = Path(__file__).resolve().parents[1]
     for rel in ("scripts/build_macos.sh", "scripts/build_windows.ps1", "openbrep.spec"):
         text = (root / rel).read_text(encoding="utf-8")
         lowered = text.lower()
-        # 复制类操作
-        for op in ("cp -r", "cp -r ", "copy-item", "robocopy", "xcopy", "copytree"):
+        for op in ("cp -r", "copy-item", "robocopy", "xcopy", "copytree"):
             assert op not in lowered, f"{rel} 含 home 复制操作: {op}"
-        # home 展开引用
         for home_ref in (
             "$home",
             "${home}",
@@ -364,7 +598,6 @@ def test_build_scripts_do_not_copy_user_home_or_config(tmp_path):
             "/home/",
         ):
             assert home_ref not in lowered, f"{rel} 引用用户 home: {home_ref}"
-        # openbrep.spec 的 datas 必须只引用仓库相对路径
         if rel == "openbrep.spec":
             assert 'root / "ui"' in text or '"ui"' in text
 
@@ -451,7 +684,7 @@ for raw in sys.stdin:
 def fake_codex_server(tmp_path: Path) -> Path:
     server = tmp_path / "app-server"
     server.write_text(FAKE_APP_SERVER, encoding="utf-8")
-    server.chmod(server.stat().st_mode | 0o755)
+    server.chmod(server.stat().st_mode | stat.S_IXUSR)
     return server
 
 
@@ -495,7 +728,7 @@ def test_fresh_install_signed_out_despite_canary_env_and_dev_codex_home(
     assert status.get("codex_available") is True
     # 隔离 HOME 无残留登录态
     assert not (isolated / "auth.json").exists()
-    # 开发机 auth 文件未被读取/修改（内容、字节级一致）
+    # 开发机 auth 文件未被读取/修改（字节级一致）
     assert dev_auth.read_bytes() == dev_auth_before
 
 

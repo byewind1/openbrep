@@ -52,12 +52,14 @@ def test_package_smoke_homepage_rejects_not_found(monkeypatch):
 
 
 def test_clean_package_env_strips_openai_codex_and_sets_fresh_home(monkeypatch):
-    """D7：package smoke 默认干净 HOME + 清空 OpenAI/Codex env。"""
+    """D7：package smoke 默认干净 HOME + 清空 OpenAI/Codex env（含未知前缀变量）。"""
     smoke = _load_package_smoke()
     monkeypatch.setenv("OPENAI_API_KEY", "sk-dev-secret-1234567890")
     monkeypatch.setenv("CODEX_ACCESS_TOKEN", "dev-canary-token-123456")
     monkeypatch.setenv("CODEX_HOME", "/home/dev/.codex")
     monkeypatch.setenv("GDL_AGENT_CONFIG", "/home/dev/config.toml")
+    monkeypatch.setenv("OPENAI_FUTURE_TOKEN", "/developer/cache/SECRET")
+    monkeypatch.setenv("CODEX_FUTURE_TOKEN", "/developer/cache/SECRET")
     monkeypatch.setenv("KEEP_ME", "still-here")
 
     env, tmp_home = smoke.clean_package_env()
@@ -66,11 +68,41 @@ def test_clean_package_env_strips_openai_codex_and_sets_fresh_home(monkeypatch):
         assert "CODEX_ACCESS_TOKEN" not in env
         assert "CODEX_HOME" not in env
         assert "GDL_AGENT_CONFIG" not in env
+        # 前缀剥离：未来新增的 OpenAI_*/CODEX_* 变量也不会继承
+        assert "OPENAI_FUTURE_TOKEN" not in env
+        assert "CODEX_FUTURE_TOKEN" not in env
         assert env["KEEP_ME"] == "still-here"
         assert env["HOME"] == str(tmp_home)
         if smoke.os.name == "nt":
             assert env["USERPROFILE"] == str(tmp_home)
         assert tmp_home.is_dir()
+    finally:
+        import shutil as _shutil
+
+        _shutil.rmtree(tmp_home, ignore_errors=True)
+
+
+def test_clean_package_env_redirects_xdg_and_windows_appdata(monkeypatch):
+    """P1：XDG/APPDATA 指向开发机 cache 时，必须重定向到临时 HOME 下。"""
+    smoke = _load_package_smoke()
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/developer/cache/SECRET")
+    monkeypatch.setenv("XDG_DATA_HOME", "/developer/cache/SECRET")
+    monkeypatch.setenv("XDG_CACHE_HOME", "/developer/cache/SECRET")
+    monkeypatch.setenv("APPDATA", "/developer/cache/SECRET")
+    monkeypatch.setenv("LOCALAPPDATA", "/developer/cache/SECRET")
+
+    env, tmp_home = smoke.clean_package_env()
+    try:
+        assert env["XDG_CONFIG_HOME"] == str(tmp_home / ".config")
+        assert env["XDG_DATA_HOME"] == str(tmp_home / ".local" / "share")
+        assert env["XDG_CACHE_HOME"] == str(tmp_home / ".cache")
+        assert "/developer/cache/SECRET" not in "\n".join(env.values())
+        if smoke.os.name == "nt":
+            assert env["APPDATA"] == str(tmp_home / "AppData" / "Roaming")
+            assert env["LOCALAPPDATA"] == str(tmp_home / "AppData" / "Local")
+        else:
+            assert "APPDATA" not in env
+            assert "LOCALAPPDATA" not in env
     finally:
         import shutil as _shutil
 

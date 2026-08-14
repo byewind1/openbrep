@@ -23,6 +23,8 @@ from pathlib import Path
 
 # 首跑环境里必须剥离的 OpenAI / Codex / 本机工作台相关变量（D7）：
 # 打包产物首次启动不得继承开发机账号、密钥或登录态。
+# 除显式名单外，按 OPENAI_*/CODEX_*/GDL_AGENT_* 前缀剥离未知变量
+# （如 OPENAI_FUTURE_TOKEN、CODEX_FUTURE_TOKEN）。
 CLEAN_ENV_STRIP = frozenset(
     {
         "OPENAI_API_KEY",
@@ -45,17 +47,39 @@ CLEAN_ENV_STRIP = frozenset(
     }
 )
 
+# 前缀命中即剥离（大写比较）——覆盖未来新增的 OpenAI/Codex 变量
+_STRIP_PREFIXES = ("OPENAI_", "CODEX_", "GDL_AGENT_")
+
+
+def _should_strip(name: str) -> bool:
+    upper = name.upper()
+    if upper in CLEAN_ENV_STRIP:
+        return True
+    return any(upper.startswith(p) for p in _STRIP_PREFIXES)
+
 
 def clean_package_env() -> tuple[dict[str, str], Path]:
     """返回 (env, tmp_home)：全新 HOME + 剥离 OpenAI/Codex/本机配置变量。
 
+    同时把 XDG_CONFIG/DATA/CACHE_HOME 与 Windows APPDATA/LOCALAPPDATA 重定向到
+    tmp_home 下，避免干净 HOME 下仍指向开发机 cache。
     调用方负责在 finally 里删除 tmp_home。
     """
     tmp_home = Path(tempfile.mkdtemp(prefix="openbrep_clean_home_"))
-    env = {k: v for k, v in os.environ.items() if k not in CLEAN_ENV_STRIP}
+    env = {k: v for k, v in os.environ.items() if not _should_strip(k)}
     env["HOME"] = str(tmp_home)
+    env["XDG_CONFIG_HOME"] = str(tmp_home / ".config")
+    env["XDG_DATA_HOME"] = str(tmp_home / ".local" / "share")
+    env["XDG_CACHE_HOME"] = str(tmp_home / ".cache")
     if os.name == "nt":
         env["USERPROFILE"] = str(tmp_home)
+        env["APPDATA"] = str(tmp_home / "AppData" / "Roaming")
+        env["LOCALAPPDATA"] = str(tmp_home / "AppData" / "Local")
+    else:
+        # 非 Windows：APPDATA/LOCALAPPDATA 是 Windows 专属，若存在则剥离
+        # （避免干净 HOME 下仍指向开发机 cache）
+        env.pop("APPDATA", None)
+        env.pop("LOCALAPPDATA", None)
     return env, tmp_home
 
 
