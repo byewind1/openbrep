@@ -81,6 +81,21 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.switchFailed': 'Model switch failed.',
   'settings.ai.copyError': 'Copy error details',
   'settings.ai.copied': 'Copied',
+  // Codex BYOA (D1): ChatGPT subscription login & dynamic models
+  'settings.ai.codex.sectionTitle': 'ChatGPT Codex (subscription)',
+  'settings.ai.codex.login': 'Connect my ChatGPT',
+  'settings.ai.codex.loginPending': 'Signing in…',
+  'settings.ai.codex.loginPendingHint': 'Complete the sign-in in the opened browser. The panel refreshes your account and available models automatically.',
+  'settings.ai.codex.loginFailed': 'Failed to start browser sign-in',
+  'settings.ai.codex.logout': 'Disconnect',
+  'settings.ai.codex.logoutFailed': 'Failed to sign out',
+  'settings.ai.codex.connectedLabel': 'Connected',
+  'settings.ai.codex.notConnectedLabel': 'Not connected',
+  'settings.ai.codex.noCli': 'Codex CLI not found. Install it first (npm install -g @openai/codex) and try again.',
+  'settings.ai.codex.errorUnknown': 'Codex connection state unknown. Try again later.',
+  'settings.ai.codex.modelsLabel': 'Available models (from your ChatGPT account)',
+  'settings.ai.codex.noModels': 'No models available for this account.',
+  'settings.ai.codex.modelUnavailable': 'Current Codex model is unavailable: connect ChatGPT or sign in again.',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': 'Language',

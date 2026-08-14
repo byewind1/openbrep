@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { LlmConnectionTestResult, LlmModelOption, LlmSettings } from '../../api/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { codexLoginStart, codexLogout, fetchCodexModels, fetchCodexStatus } from '../../api/client'
+import type {
+  CodexModelInfo,
+  CodexStatus,
+  LlmConnectionTestResult,
+  LlmModelOption,
+  LlmSettings,
+} from '../../api/types'
 import { useT } from '../../i18n'
 
 interface AiSettingsPanelProps {
@@ -22,11 +29,24 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
   const [keyFeedback, setKeyFeedback] = useState<{ ok: boolean; text: string } | null>(null)
+  // ── Codex BYOA（D1）：ChatGPT 订阅连接状态 ──
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null)
+  const [codexModels, setCodexModels] = useState<CodexModelInfo[]>([])
+  const [codexBusy, setCodexBusy] = useState(false)
+  const [loginStarted, setLoginStarted] = useState(false)
+  const [codexError, setCodexError] = useState<string | null>(null)
+  const [pendingCodexModel, setPendingCodexModel] = useState<string | null>(null)
+  const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const groups = llmSettings.model_groups
   const customModels = groups?.custom ?? []
   const officialModels = groups?.official ?? []
   const modelAvailable = llmSettings.model_available ?? true
+  const isCodexModel = llmSettings.model.startsWith('openai-codex/')
+  // 当前模型是 Codex 订阅模型时，可用性以登录态为准（后端同样 fail closed）
+  const effectiveModelAvailable = isCodexModel
+    ? codexStatus?.connected === true
+    : modelAvailable
 
   // 统一 provider 注册表后，官方模型与自定义 provider 的 Key 都可以在界面保存
   // （写入 config.toml 的 provider_keys / [[llm.providers]]）；ollama 本地模型无需 Key。
@@ -37,12 +57,121 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   // 列表高亮必须与 currentOption 用同一套解析，否则 target_model 命中时列表不亮。
   const currentId = currentOption?.id ?? llmSettings.model
   const isOllamaModel = currentOption?.provider === 'ollama' || llmSettings.model.startsWith('ollama/')
-  const showKeyEditor = Boolean(onSaveApiKey) && !isOllamaModel && Boolean(llmSettings.model)
+  // Codex 订阅模型没有 API Key 可填（凭据在 app-server 的独立 CODEX_HOME 里）
+  const showKeyEditor = Boolean(onSaveApiKey) && !isOllamaModel && !isCodexModel && Boolean(llmSettings.model)
 
   useEffect(() => {
     setApiKeyInput('')
     setKeyFeedback(null)
   }, [llmSettings.model])
+
+  // ── Codex：挂载时加载状态；登录后加载动态模型目录 ──
+  useEffect(() => {
+    let cancelled = false
+    async function loadCodex() {
+      setCodexBusy(true)
+      const status = await fetchCodexStatus()
+      if (cancelled) return
+      setCodexStatus(status)
+      setCodexError(status.ok ? null : status.error ?? null)
+      if (status.connected) {
+        const models = await fetchCodexModels()
+        if (!cancelled) {
+          setCodexModels(models.ok ? (models.models ?? []) : [])
+          if (!models.ok) setCodexError(models.error ?? null)
+        }
+      }
+      setCodexBusy(false)
+    }
+    void loadCodex()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 登录中轮询状态（最多 3 分钟），完成后自动拉模型目录
+  useEffect(() => {
+    if (!loginStarted) return
+    const startedAt = Date.now()
+    loginPollRef.current = setInterval(() => {
+      void (async () => {
+        const status = await fetchCodexStatus()
+        setCodexStatus(status)
+        if (status.connected || status.state === 'error' || Date.now() - startedAt > 180_000) {
+          if (loginPollRef.current) clearInterval(loginPollRef.current)
+          loginPollRef.current = null
+          setLoginStarted(false)
+          if (status.connected) {
+            const models = await fetchCodexModels()
+            setCodexModels(models.ok ? (models.models ?? []) : [])
+            if (!models.ok) setCodexError(models.error ?? null)
+          }
+        }
+      })()
+    }, 2000)
+    return () => {
+      if (loginPollRef.current) clearInterval(loginPollRef.current)
+      loginPollRef.current = null
+    }
+  }, [loginStarted])
+
+  async function handleCodexLogin() {
+    setCodexBusy(true)
+    setCodexError(null)
+    try {
+      const result = await codexLoginStart()
+      if (result.ok) {
+        setLoginStarted(true)
+        setCodexStatus((prev) => ({ ...(prev ?? emptyCodexStatus()), state: 'login_started', connected: false }))
+      } else {
+        setCodexError(result.error ?? t('settings.ai.codex.loginFailed'))
+      }
+    } catch (error) {
+      setCodexError(error instanceof Error ? error.message : t('settings.ai.codex.loginFailed'))
+    } finally {
+      setCodexBusy(false)
+    }
+  }
+
+  async function handleCodexLogout() {
+    setCodexBusy(true)
+    setCodexError(null)
+    try {
+      const result = await codexLogout()
+      if (result.ok) {
+        setLoginStarted(false)
+        setCodexModels([])
+        setPendingCodexModel(null)
+        setCodexStatus({ ...emptyCodexStatus(), state: 'signed_out' })
+      } else {
+        setCodexError(result.error ?? t('settings.ai.codex.logoutFailed'))
+      }
+    } catch (error) {
+      setCodexError(error instanceof Error ? error.message : t('settings.ai.codex.logoutFailed'))
+    } finally {
+      setCodexBusy(false)
+    }
+  }
+
+  function requestCodexModelSwitch(model: string) {
+    if (!onModelChange || model === currentId || switching) return
+    setPendingCodexModel(model)
+  }
+
+  async function confirmCodexModelSwitch() {
+    const model = pendingCodexModel
+    if (!onModelChange || !model || switching) return
+    setSwitching(true)
+    setSwitchError(null)
+    try {
+      await onModelChange(model)
+      setPendingCodexModel(null)
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : t('settings.ai.switchFailed'))
+    } finally {
+      setSwitching(false)
+    }
+  }
 
   const filteredCustom = useFilteredModels(customModels, modelQuery)
   const filteredOfficial = useFilteredModels(officialModels, modelQuery)
@@ -154,12 +283,14 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     <div className="settings-panel-form">
       <div className="settings-row">
         <span>{t('settings.ai.modelLabel')}</span>
-        <code className={`settings-model-display ${modelAvailable ? 'valid' : 'invalid'}`}>
+        <code className={`settings-model-display ${effectiveModelAvailable ? 'valid' : 'invalid'}`}>
           {llmSettings.model || '—'}
         </code>
       </div>
-      {!modelAvailable ? (
-        <p className="settings-test-result error">{t('settings.ai.modelUnavailable')}</p>
+      {!effectiveModelAvailable ? (
+        <p className="settings-test-result error">
+          {isCodexModel ? t('settings.ai.codex.modelUnavailable') : t('settings.ai.modelUnavailable')}
+        </p>
       ) : null}
       {showKeyEditor ? (
         <div className="settings-apikey-row">
@@ -232,6 +363,21 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
           ) : null}
         </>
       ) : null}
+      <CodexSection
+        status={codexStatus}
+        models={codexModels}
+        busy={codexBusy}
+        loginStarted={loginStarted}
+        error={codexError}
+        current={currentId}
+        pending={pendingCodexModel}
+        switching={switching}
+        onLogin={() => void handleCodexLogin()}
+        onLogout={() => void handleCodexLogout()}
+        onSelect={requestCodexModelSwitch}
+        onConfirm={() => void confirmCodexModelSwitch()}
+        onCancel={() => setPendingCodexModel(null)}
+      />
       <div className="settings-submit-row">
         <button type="button" className="settings-open-config-btn" onClick={onOpenConfig}>
           Edit config.toml ↗
@@ -273,6 +419,127 @@ function useFilteredModels(models: LlmModelOption[], query: string) {
       (m) => m.label.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q),
     )
   }, [models, query])
+}
+
+function emptyCodexStatus(): CodexStatus {
+  return { state: 'signed_out', codex_available: true, connected: false, account: null }
+}
+
+function CodexSection({
+  status,
+  models,
+  busy,
+  loginStarted,
+  error,
+  current,
+  pending,
+  switching,
+  onLogin,
+  onLogout,
+  onSelect,
+  onConfirm,
+  onCancel,
+}: {
+  status: CodexStatus | null
+  models: CodexModelInfo[]
+  busy: boolean
+  loginStarted: boolean
+  error: string | null
+  current: string
+  pending: string | null
+  switching: boolean
+  onLogin: () => void
+  onLogout: () => void
+  onSelect: (model: string) => void
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const t = useT()
+  const state = status?.state ?? 'signed_out'
+  const connected = status?.connected === true
+
+  return (
+    <div className="settings-codex-section" data-testid="codex-section">
+      <div className="settings-row-header">{t('settings.ai.codex.sectionTitle')}</div>
+      {state === 'no_cli' ? (
+        <p className="settings-test-result error" data-testid="codex-no-cli">
+          {t('settings.ai.codex.noCli')}
+        </p>
+      ) : null}
+      {state === 'error' ? (
+        <p className="settings-test-result error" data-testid="codex-error">
+          {error || t('settings.ai.codex.errorUnknown')}
+        </p>
+      ) : null}
+      {connected && status?.account ? (
+        <div className="settings-row" data-testid="codex-account">
+          <span>{t('settings.ai.codex.connectedLabel')}</span>
+          <code className="settings-model-display valid">
+            {status.account.email_masked ?? '—'}
+            {status.account.plan_type ? ` · ${status.account.plan_type}` : ''}
+          </code>
+          <button type="button" disabled={busy} onClick={onLogout}>
+            {t('settings.ai.codex.logout')}
+          </button>
+        </div>
+      ) : null}
+      {!connected && state !== 'no_cli' && state !== 'error' ? (
+        <div className="settings-row" data-testid="codex-login-row">
+          <span>{t('settings.ai.codex.notConnectedLabel')}</span>
+          <button
+            type="button"
+            disabled={busy || loginStarted}
+            onClick={onLogin}
+            data-testid="codex-login-button"
+          >
+            {loginStarted ? t('settings.ai.codex.loginPending') : t('settings.ai.codex.login')}
+          </button>
+        </div>
+      ) : null}
+      {loginStarted ? (
+        <p className="settings-test-result" data-testid="codex-login-pending">
+          {t('settings.ai.codex.loginPendingHint')}
+        </p>
+      ) : null}
+      {error ? <p className="settings-test-result error">{error}</p> : null}
+      {connected ? (
+        <>
+          <div className="settings-row-header">{t('settings.ai.codex.modelsLabel')}</div>
+          {models.length === 0 ? (
+            <p className="settings-test-result">{t('settings.ai.codex.noModels')}</p>
+          ) : (
+            <div className="settings-model-list">
+              {models.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={m.id === current ? 'active' : m.id === pending ? 'pending' : ''}
+                  disabled={switching}
+                  title={`${m.label} (${m.model})`}
+                  onClick={() => onSelect(m.id)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {pending ? (
+            <div className="settings-model-confirm" data-testid="codex-model-confirm">
+              <span>{t('settings.ai.confirmSwitch', { model: pending })}</span>
+              <div className="settings-model-confirm-actions">
+                <button type="button" disabled={switching} onClick={onConfirm}>
+                  {switching ? '…' : t('settings.ai.confirmYes')}
+                </button>
+                <button type="button" disabled={switching} onClick={onCancel}>
+                  {t('settings.ai.confirmNo')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  )
 }
 
 function ModelGroup({

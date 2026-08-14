@@ -221,12 +221,6 @@ class WorkbenchSession:
     def llm_settings(self) -> dict[str, Any]:
         return self.settings_service.llm_settings()
 
-    def update_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
-        return self.settings_service.update_llm_settings(body)
-
-    def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
-        return self.settings_service.test_llm_settings(body)
-
     def open_config(self) -> dict[str, Any]:
         config_path = Path(self.config_path)
         if not config_path.exists():
@@ -691,7 +685,7 @@ class WorkbenchSession:
             return self.open_config()
 
         if normalized_method == "POST" and route == "/api/settings/llm/test":
-            return self.test_llm_settings(body)
+            return self.settings_service.test_llm_settings(body)
 
         if normalized_method in ("PATCH", "PUT") and route == "/api/settings/llm/model":
             return self.settings_service.update_llm_model_only(body)
@@ -700,7 +694,7 @@ class WorkbenchSession:
             return self.settings_service.update_llm_api_key(body)
 
         if normalized_method == "POST" and route == "/api/settings/llm":
-            return self.update_llm_settings(body)
+            return self.settings_service.update_llm_settings(body)
 
         if normalized_method == "GET" and route == "/api/tapir/status":
             return self.tapir_service.status_response()
@@ -779,6 +773,10 @@ class WorkbenchSession:
             return self.extract_assistant_code_blocks(body)
         if route.startswith("/api/copilot/"):
             return self.copilot_service.route(normalized_method, route, body)
+        # Codex BYOA（ChatGPT 订阅）：登录/状态/动态模型目录。响应只含枚举化
+        # 状态与脱敏账户信息；token/JWT/account id/authUrl/auth 路径永不返回。
+        if route.startswith("/api/settings/llm/codex/"):
+            return self.settings_service.codex_route(normalized_method, route, body)
         if normalized_method == "GET" and route == "/api/memory/status":
             return self.memory_status()
 

@@ -797,3 +797,53 @@ class TestUnifiedProviderResolution(unittest.TestCase):
         adapter = LLMAdapter(config)
         resolved = adapter._resolve_model_target("kimi-k2.6")
         self.assertEqual(adapter._effective_temperature(resolved), 0.6)
+
+
+class TestCodexAppServerModelFailClosed(unittest.TestCase):
+    """D1：openai-codex 订阅模型生成必须 fail closed，绝不落到 litellm/API-key。"""
+
+    def _adapter(self, model="openai-codex/gpt-5.6-luna"):
+        config = LLMConfig(
+            model=model,
+            api_key="fake-codex-key-never-used",
+            custom_providers=[
+                {
+                    "name": "openai-codex",
+                    "api_mode": "codex_app_server",
+                    "api_key": "",
+                    "models": [],
+                }
+            ],
+        )
+        adapter = LLMAdapter(config)
+        # 即使 litellm 可用且配置了 key，也不允许走到生成
+        adapter._litellm = MagicMock()
+        return adapter
+
+    def test_generate_raises_and_does_not_call_litellm(self):
+        adapter = self._adapter()
+        with self.assertRaisesRegex(RuntimeError, "openai-codex"):
+            adapter.generate([{"role": "user", "content": "hi"}])
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_with_explicit_codex_model_raises(self):
+        adapter = self._adapter(model="glm-4-flash")
+        with self.assertRaisesRegex(RuntimeError, "openai-codex"):
+            adapter.generate(
+                [{"role": "user", "content": "hi"}],
+                model="openai-codex/gpt-5.6-luna",
+            )
+        adapter._litellm.completion.assert_not_called()
+
+    def test_non_codex_models_unaffected(self):
+        adapter = self._adapter(model="glm-4-flash")
+        built_response = MagicMock()
+        built_response.choices = [MagicMock()]
+        built_response.choices[0].message.content = "ok"
+        built_response.choices[0].finish_reason = "stop"
+        built_response.model = "glm-4-flash"
+        built_response.usage = {"prompt_tokens": 1}
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
+        result = adapter.generate([{"role": "user", "content": "hi"}])
+        self.assertEqual(result.content, "ok")

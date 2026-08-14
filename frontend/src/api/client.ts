@@ -14,6 +14,10 @@ import type {
   DeleteMemoryLessonResult,
   IgnoreMemoryLessonResult,
   MockCompileResponse,
+  CodexLoginStartResult,
+  CodexLogoutResult,
+  CodexModelsResult,
+  CodexStatus,
   CompilerSettings,
   CompilerSettingsResult,
   ConfigRevisionResult,
@@ -569,6 +573,47 @@ export async function testLlmConnection(): Promise<LlmConnectionTestResult> {
     '/api/settings/llm/test',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
     { ok: false, error: 'OpenBrep local API is not available.', category: 'llm_configuration' },
+  )
+}
+
+// ── Codex BYOA（D1）：ChatGPT 订阅登录 / 状态 / 动态模型目录 ────────────────
+
+export async function fetchCodexStatus(): Promise<CodexStatus> {
+  return requestJson<CodexStatus>(
+    '/api/settings/llm/codex/status',
+    { method: 'GET' },
+    {
+      ok: false,
+      state: 'error',
+      codex_available: false,
+      connected: false,
+      account: null,
+      error: 'OpenBrep local API is not available.',
+    },
+  )
+}
+
+export async function codexLoginStart(): Promise<CodexLoginStartResult> {
+  return requestJson<CodexLoginStartResult>(
+    '/api/settings/llm/codex/login/start',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function codexLogout(): Promise<CodexLogoutResult> {
+  return requestJson<CodexLogoutResult>(
+    '/api/settings/llm/codex/logout',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchCodexModels(): Promise<CodexModelsResult> {
+  return requestJson<CodexModelsResult>(
+    '/api/settings/llm/codex/models',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

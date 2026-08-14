@@ -7,7 +7,15 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from openbrep.config import ALL_MODELS, GDLAgentConfig, iter_custom_provider_model_entries, model_to_provider, provider_templates
+from openbrep.config import (
+    ALL_MODELS,
+    GDLAgentConfig,
+    ensure_codex_provider_entry,
+    is_codex_qualified_model,
+    iter_custom_provider_model_entries,
+    model_to_provider,
+    provider_templates,
+)
 
 
 def load_workbench_config(config_path: Path) -> GDLAgentConfig:
@@ -109,11 +117,24 @@ def format_llm_exception_detail(exc: BaseException) -> str:
     return "\n\n".join(parts)
 
 
-def llm_model_available(config: GDLAgentConfig, model: str | None = None) -> bool:
-    """判断当前模型是否可立即调用：本地 ollama 无需 key，其余需要可解析的 API key。"""
+def llm_model_available(
+    config: GDLAgentConfig,
+    model: str | None = None,
+    *,
+    codex_connected: bool | None = None,
+) -> bool:
+    """判断当前模型是否可立即调用。
+
+    - openai-codex/*（ChatGPT 订阅）：只有已登录（codex_connected=True）才可用，
+      绝不 fallback 到 API key / 环境变量；未提供登录态一律不可用（fail closed）。
+    - 本地 ollama：无需 key。
+    - 其余：需要可解析的 API key。
+    """
     target = str(model if model is not None else config.llm.model or "").strip()
     if not target:
         return False
+    if is_codex_qualified_model(target):
+        return bool(codex_connected)
     if model_to_provider(target) == "ollama":
         return True
     return bool(config.llm.resolve_credentials(target).api_key)
@@ -168,9 +189,15 @@ class WorkbenchSettingsService:
         session: Any,
         *,
         llm_adapter_factory: Callable[[Any], Any],
+        codex_provider: Any | None = None,
+        codex_provider_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.session = session
         self.llm_adapter_factory = llm_adapter_factory
+        # Codex BYOA（ChatGPT 订阅）：懒创建（首次 codex 路由调用时），
+        # 测试注入 codex_provider / codex_provider_factory 使用 fake app-server。
+        self.codex_provider = codex_provider
+        self.codex_provider_factory = codex_provider_factory
 
     def compiler_settings(self) -> dict[str, str]:
         return {
@@ -196,13 +223,62 @@ class WorkbenchSettingsService:
         save_workbench_config(self.session.config, self.session.config_path)
         return {"ok": True, "compiler": self.compiler_settings()}
 
+    def _codex_provider(self) -> Any:
+        """懒创建 service 级 CodexProvider（仅 codex 路由调用；llm_settings 不隐式拉起）。"""
+        if self.codex_provider is None:
+            if self.codex_provider_factory is not None:
+                self.codex_provider = self.codex_provider_factory()
+            else:
+                from openbrep.codex.provider import CodexProvider
+
+                self.codex_provider = CodexProvider()
+        return self.codex_provider
+
+    def _known_codex_status(self) -> dict[str, Any] | None:
+        """llm_settings 用的轻量 codex 状态：只在 provider 已存在时查询，
+        绝不隐式拉起 app-server；异常降级为 error 状态，不影响整体设置。"""
+        if self.codex_provider is None:
+            return None
+        try:
+            return self.codex_provider.status()
+        except Exception:
+            return {"state": "error", "connected": False, "account": None}
+
+    def codex_route(
+        self,
+        method: str,
+        route: str,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """workbench_api 的 codex 路由分发（保持 workbench_api 行数阈值内）。"""
+        method = method.upper()
+        if method == "GET" and route == "/api/settings/llm/codex/status":
+            return self.codex_status()
+        if method == "POST" and route == "/api/settings/llm/codex/login/start":
+            return self.codex_login_start()
+        if method == "POST" and route == "/api/settings/llm/codex/logout":
+            return self.codex_logout()
+        if method == "GET" and route == "/api/settings/llm/codex/models":
+            return self.codex_models()
+        return {"ok": False, "error": f"Unknown route: {method} {route}"}
+
     def llm_settings(self) -> dict[str, Any]:
         groups = llm_model_groups(self.session.config)
         model_options = groups["custom"] + groups["official"]
         models = [option["id"] for option in model_options]
+        codex = self._known_codex_status()
+        codex_block = None
+        if codex is not None:
+            codex_block = {key: codex.get(key) for key in ("state", "connected", "codex_available", "account")}
+            if codex.get("error"):
+                codex_block["error"] = str(codex["error"])
         return {
             "model": self.session.llm_model,
-            "model_available": llm_model_available(self.session.config, self.session.llm_model),
+            "model_available": llm_model_available(
+                self.session.config,
+                self.session.llm_model,
+                codex_connected=codex.get("connected") if codex is not None else None,
+            ),
             "models": models,
             "model_options": model_options,
             "model_groups": groups,
@@ -211,6 +287,7 @@ class WorkbenchSettingsService:
             "api_base": self.session.llm_api_base,
             "max_retries": self.session.max_retries,
             "assistant_settings": self.session.assistant_settings,
+            "codex": codex_block,
         }
 
     def config_revision(self) -> dict[str, Any]:
@@ -257,6 +334,10 @@ class WorkbenchSettingsService:
         model = str(body.get("model") or "").strip()
         if not model:
             return {"ok": False, "error": "Model is required."}
+        if is_codex_qualified_model(model):
+            # openai-codex 订阅模型：保证 provider 条目存在（api_mode=codex_app_server），
+            # 否则解析链路会误落到 API-key/顶层凭据（fail closed 要求）。
+            ensure_codex_provider_entry(self.session.config)
         self.session.llm_model = model
         self.session.config.llm.model = model
         self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
@@ -302,6 +383,8 @@ class WorkbenchSettingsService:
             self.session.max_retries = 5
 
         self.session.config.llm.model = self.session.llm_model
+        if is_codex_qualified_model(self.session.llm_model):
+            ensure_codex_provider_entry(self.session.config)
         self.session.config.llm.assistant_settings = self.session.assistant_settings
         self.session.config.agent.max_iterations = self.session.max_retries
         apply_llm_credentials_to_config(
@@ -314,6 +397,61 @@ class WorkbenchSettingsService:
         self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
         save_workbench_config(self.session.config, self.session.config_path)
         return {"ok": True, "llm": self.llm_settings()}
+
+    # ── Codex BYOA（ChatGPT 订阅）───────────────────────────
+    # 所有响应只含枚举化状态/脱敏信息；token、JWT、account id、authUrl、
+    # auth 路径一律不离开 openbrep/codex（见 codex/app_server.py、provider.py）。
+
+    def codex_status(self) -> dict[str, Any]:
+        """GET /api/settings/llm/codex/status"""
+        try:
+            provider = self._codex_provider()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        try:
+            status = provider.status()
+        except Exception as exc:
+            status = {"state": "error", "connected": False, "account": None, "error": str(exc)}
+        payload: dict[str, Any] = {"ok": True, **status}
+        payload["model"] = self.session.llm_model
+        payload["model_available"] = llm_model_available(
+            self.session.config,
+            self.session.llm_model,
+            codex_connected=status.get("connected"),
+        )
+        return payload
+
+    def codex_login_start(self) -> dict[str, Any]:
+        """POST /api/settings/llm/codex/login/start：只触发终端用户浏览器 flow。
+
+        登录按钮绝不继承开发者账号：app-server 跑在独立 CODEX_HOME，
+        login/start 返回的 authUrl 由后端直接打开浏览器，不返回给前端。
+        """
+        try:
+            provider = self._codex_provider()
+            result = provider.login_start()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **result}
+
+    def codex_logout(self) -> dict[str, Any]:
+        """POST /api/settings/llm/codex/logout：退出登录，模型立即不可用。"""
+        try:
+            provider = self._codex_provider()
+            result = provider.logout()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **result}
+
+    def codex_models(self) -> dict[str, Any]:
+        """GET /api/settings/llm/codex/models：model/list 动态目录（不硬编码）。"""
+        try:
+            provider = self._codex_provider()
+            models = provider.models()
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            return {"ok": False, "code": code, "error": str(exc)}
+        return {"ok": True, "models": models}
 
     def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         model = str(body.get("model") or self.session.llm_model).strip()

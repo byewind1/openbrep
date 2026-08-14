@@ -124,6 +124,61 @@ export interface LlmSettings {
   api_base: string
   max_retries: number
   assistant_settings: string
+  /** D1：ChatGPT Codex（openai-codex）连接状态。provider 未拉起时为 null */
+  codex?: CodexStatus | null
+}
+
+// ── Codex BYOA（D1）：ChatGPT 订阅登录与动态模型目录 ───────────────────────
+// 后端只返回枚举化状态 + 脱敏账户信息；token/JWT/account id/authUrl/
+// auth 路径绝不进入 API payload（后端安全不变量，前端类型同样不定义这些字段）。
+
+export type CodexState = 'no_cli' | 'signed_out' | 'signed_in' | 'login_started' | 'error'
+
+export interface CodexAccount {
+  /** 脱敏邮箱（如 jo***@example.com），仅用于用户确认连的是自己的账号 */
+  email_masked: string | null
+  plan_type: string
+}
+
+export interface CodexStatus {
+  ok?: boolean
+  state: CodexState
+  codex_available: boolean
+  connected: boolean
+  account: CodexAccount | null
+  /** 当前配置模型（llmSettings.model），便于 UI 判断可用性 */
+  model?: string
+  model_available?: boolean
+  error?: string
+}
+
+export interface CodexModelInfo {
+  /** provider-qualified id：openai-codex/<model>（与 API-key OpenAI 分离） */
+  id: string
+  label: string
+  model: string
+  display_name?: string
+  hidden?: boolean
+  specialty?: string | null
+}
+
+export interface CodexLoginStartResult {
+  ok: boolean
+  state?: string
+  error?: string
+}
+
+export interface CodexLogoutResult {
+  ok: boolean
+  state?: string
+  error?: string
+}
+
+export interface CodexModelsResult {
+  ok: boolean
+  models?: CodexModelInfo[]
+  code?: string
+  error?: string
 }
 
 export interface LlmProviderTemplate {

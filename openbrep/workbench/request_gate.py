@@ -31,6 +31,12 @@ LOCK_FREE_POST_ROUTES = frozenset({
     # E1：手动错误沉淀。只读写全局错题本 ~/.openbrep/error_lessons.jsonl，
     # 不触碰 session/project 状态；文件写入有 copilot service 自有锁保护。
     "/api/copilot/ingest-error",
+    # Codex BYOA（D1）：login/start 拉起 app-server 子进程并打开终端用户浏览器
+    # （可能耗时数秒）；logout 只改 codex 登录态。两者都不触碰 session/project
+    # 状态，且 CodexProvider 内部有 RLock 串行化 RPC，无需持有 session 级锁。
+    # GET 两条（status / models）天然 lock-free。
+    "/api/settings/llm/codex/login/start",
+    "/api/settings/llm/codex/logout",
 })
 
 

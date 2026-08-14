@@ -201,6 +201,47 @@ PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
 _PROFILES_BY_PREFIX_LEN = sorted(PROVIDER_PROFILES, key=lambda p: -max(len(x) for x in p.prefixes))
 
 
+# ── Codex BYOA（ChatGPT 订阅）provider 身份 ─────────────────────────────────
+# `openai-codex/<model>` 表示「ChatGPT 登录的 Codex 订阅」路线，与 API-key
+# OpenAI（裸 gpt-* / openai/ 前缀）严格分离。登录由本地官方 Codex app-server
+# 在独立 CODEX_HOME 内完成，OpenBrep 不保存/不返回任何 token。
+CODEX_PROVIDER_NAME = "openai-codex"
+API_MODE_CODEX_APP_SERVER = "codex_app_server"
+# 认识的 api_mode 全集；未知值必须报错（不静默降级成 chat_completions）
+SUPPORTED_API_MODES = ("chat_completions", "anthropic_messages", API_MODE_CODEX_APP_SERVER)
+
+
+def is_codex_qualified_model(model: str) -> bool:
+    """`openai-codex` 或 `openai-codex/<model>` 才算 ChatGPT Codex 订阅身份。
+
+    裸 `gpt-*` / `openai/*` 仍是 API-key OpenAI 路线，绝不混用。
+    """
+    target = str(model or "").strip()
+    return target == CODEX_PROVIDER_NAME or target.startswith(CODEX_PROVIDER_NAME + "/")
+
+
+def ensure_codex_provider_entry(config: "GDLAgentConfig") -> dict:
+    """确保 config 里存在 openai-codex provider 条目（api_mode=codex_app_server）。
+
+    模型保存（update_llm_model_only / update_llm_settings）在写入
+    `openai-codex/<model>` 时调用：没有条目时补一条，已存在则原样返回。
+    条目显式 api=""（_explicit_base=True）保证 api_base 绝不回退顶层配置。
+    """
+    for provider in config.llm.providers:
+        if str(provider.get("name", "") or "").strip() == CODEX_PROVIDER_NAME:
+            return provider
+    entry = {
+        "name": CODEX_PROVIDER_NAME,
+        "api_mode": API_MODE_CODEX_APP_SERVER,
+        "api": "",
+        "api_key": "",
+        "models": [],
+        "_explicit_base": True,
+    }
+    config.llm.providers.append(entry)
+    return entry
+
+
 # 官方 provider 的默认端点模板（"从模板添加"数据源；litellm native 路由不依赖它，
 # 用户想用统一 [[llm.providers]] 格式配官方 provider 时从这里抄端点即可）
 PROVIDER_API_TEMPLATES = {
@@ -288,11 +329,24 @@ def expand_env_ref(value) -> str:
 
 
 def _normalize_api_mode(value) -> str:
-    """api_mode 归一化：chat_completions（默认）| anthropic_messages。兼容旧 protocol 写法。"""
+    """api_mode 归一化：chat_completions（默认）| anthropic_messages | codex_app_server。
+
+    兼容旧 protocol 写法（openai→chat_completions、anthropic/claude/messages→
+    anthropic_messages）。**未知 api_mode 直接报错，不静默降级**——新增模式
+    （如 codex_app_server）未接入前，配置了该模式的 provider 必须显式失败，
+    而不是被悄悄当成 chat_completions 请求到错误端点（BYOA 安全不变量）。
+    """
     text = str(value or "").strip().lower()
+    if not text or text in {"openai", "completions", "chat_completions"}:
+        return "chat_completions"
     if text in {"anthropic", "claude", "anthropic_messages", "messages"}:
         return "anthropic_messages"
-    return "chat_completions"
+    if text == API_MODE_CODEX_APP_SERVER:
+        return API_MODE_CODEX_APP_SERVER
+    raise ValueError(
+        f"未知 api_mode {text!r}（支持的 api_mode：{', '.join(SUPPORTED_API_MODES)}）。"
+        "请检查 [[llm.providers]] 配置，或升级 OpenBrep 以支持该模式。"
+    )
 
 
 def normalize_provider_entry(entry: dict | None) -> dict:
@@ -490,6 +544,15 @@ class LLMConfig:
 
     def _is_custom_provider_model(self, model: str | None = None) -> bool:
         return self._find_custom_provider_match(model) is not None
+
+    def _is_codex_app_server_model(self, model: str | None = None) -> bool:
+        """模型是否走 ChatGPT Codex（openai-codex）订阅路线。
+
+        以 provider-qualified 前缀为准（fail closed）：只要模型 id 是
+        `openai-codex/...`，无论 provider 条目是否已配置、api_mode 是否匹配，
+        都按 Codex BYOA 处理——绝不回退到 API-key / 顶层凭据。
+        """
+        return is_codex_qualified_model(str(model or self.model or ""))
 
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model

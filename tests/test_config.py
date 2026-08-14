@@ -767,3 +767,138 @@ models = ["kimi-k2.7-code"]
             config.save(str(config_path))
             reloaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(reloaded.llm.resolve_temperature("kimi-k2.6"), 0.6)
+
+
+class TestCodexProviderConfig(_CleanEnvMixin, unittest.TestCase):
+    """D1：api_mode=codex_app_server、openai-codex/<model> 身份分离与 fail closed。"""
+
+    def _load(self, tmpdir, text):
+        config_path = Path(tmpdir) / "config.toml"
+        config_path.write_text(text.strip(), encoding="utf-8")
+        return GDLAgentConfig.load(str(config_path))
+
+    def test_is_codex_qualified_model(self):
+        from openbrep.config import is_codex_qualified_model
+
+        self.assertTrue(is_codex_qualified_model("openai-codex/gpt-5.6-luna"))
+        self.assertTrue(is_codex_qualified_model("openai-codex"))
+        self.assertFalse(is_codex_qualified_model("gpt-5.6-luna"))
+        self.assertFalse(is_codex_qualified_model("openai/gpt-5.6-luna"))
+        self.assertFalse(is_codex_qualified_model(""))
+
+    def test_codex_api_mode_normalizes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._load(tmpdir, '''
+[llm]
+model = "openai-codex/gpt-5.6-luna"
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "codex_app_server"
+api_key = ""
+models = []
+''')
+            entry = config.llm.providers[0]
+            self.assertEqual(entry["api_mode"], "codex_app_server")
+            self.assertEqual(entry["name"], "openai-codex")
+            self.assertTrue(config.llm._is_codex_app_server_model("openai-codex/gpt-5.6-luna"))
+            self.assertFalse(config.llm._is_codex_app_server_model("gpt-5.6-luna"))
+            # 订阅模型不走 API-key 解析：没有 key、没有 env fallback
+            self.assertIsNone(config.llm.resolve_api_key("openai-codex/gpt-5.6-luna"))
+            self.assertIsNone(config.llm.resolve_api_base("openai-codex/gpt-5.6-luna"))
+
+    def test_unknown_api_mode_raises_at_load(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ValueError) as ctx:
+                self._load(tmpdir, '''
+[llm]
+model = "some-model"
+
+[[llm.providers]]
+name = "mystery"
+api_mode = "some_future_mode"
+''')
+            self.assertIn("some_future_mode", str(ctx.exception))
+            self.assertIn("codex_app_server", str(ctx.exception))
+
+    def test_unknown_api_mode_in_legacy_protocol_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ValueError):
+                self._load(tmpdir, '''
+[llm]
+model = "m"
+
+[[llm.custom_providers]]
+name = "old"
+protocol = "weird-protocol"
+''')
+
+    def test_codex_provider_save_roundtrips(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "openai-codex/gpt-5.6-luna"
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "codex_app_server"
+api_key = ""
+models = []
+'''.strip(), encoding="utf-8")
+            config = GDLAgentConfig.load(str(config_path))
+            config.save(str(config_path))
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertIn('api_mode = "codex_app_server"', saved)
+            reloaded = GDLAgentConfig.load(str(config_path))
+            entry = reloaded.llm.providers[0]
+            self.assertEqual(entry["name"], "openai-codex")
+            self.assertEqual(entry["api_mode"], "codex_app_server")
+
+    def test_ensure_codex_provider_entry_adds_and_is_idempotent(self):
+        from openbrep.config import ensure_codex_provider_entry
+
+        config = GDLAgentConfig()
+        entry = ensure_codex_provider_entry(config)
+        self.assertEqual(entry["name"], "openai-codex")
+        self.assertEqual(entry["api_mode"], "codex_app_server")
+        self.assertEqual(len(config.llm.providers), 1)
+        again = ensure_codex_provider_entry(config)
+        self.assertIs(again, entry)
+        self.assertEqual(len(config.llm.providers), 1)
+        # 显式 api=""（_explicit_base=True）→ api_base 绝不回退顶层
+        self.assertIsNone(config.llm.resolve_api_base("openai-codex/gpt-5.6-luna"))
+        # 保存后再加载仍是 codex_app_server
+        import tempfile as _tmp
+
+        with _tmp.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.llm.providers[0]["api_mode"], "codex_app_server")
+
+    def test_codex_model_never_matches_openai_profile(self):
+        # provider-qualified 身份分离：openai-codex/* 不能命中 OpenAI API-key 路线
+        self.assertIsNone(provider_profile_for_model("openai-codex/gpt-5.6-luna"))
+        self.assertEqual(model_to_provider("openai-codex/gpt-5.6-luna"), "custom")
+        self.assertEqual(provider_profile_for_model("gpt-5.6-luna").name, "openai")
+
+    def test_llm_model_available_codex_requires_login(self):
+        from openbrep.workbench.settings_service import llm_model_available
+
+        config = GDLAgentConfig()
+        config.llm.model = "openai-codex/gpt-5.6-luna"
+        config.llm.api_key = "test-codex-key-should-not-count"
+        self._clear_llm_env()
+        os.environ["OPENAI_API_KEY"] = "codex-env-should-not-count"
+        # 即使存在 API key / 环境变量，未登录也是不可用（fail closed）
+        self.assertFalse(llm_model_available(config))
+        self.assertFalse(llm_model_available(config, codex_connected=False))
+        self.assertTrue(llm_model_available(config, codex_connected=True))
+        # 非 codex 模型不受影响：清掉顶层 key 与环境变量后按常规规则判定
+        config.llm.model = "gpt-5.6-luna"
+        config.llm.api_key = ""
+        os.environ.pop("OPENAI_API_KEY", None)
+        self.assertFalse(llm_model_available(config))
+        config.llm.api_key = "test-codex-real-key"
+        self.assertTrue(llm_model_available(config))
