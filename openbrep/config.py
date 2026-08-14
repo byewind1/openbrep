@@ -950,6 +950,11 @@ class GDLAgentConfig:
     def save(self, config_path: str = "config.toml") -> None:
         """将当前配置写回 config.toml"""
         import toml
+        # P0-R3：单一保存边界强制保留身份规范化——openai-codex 同名条目一律
+        # 规范为 codex_app_server + api=''/api_key='' 并回写内存，不依赖
+        # 调用者事先经过 load/ensure（程序内直接构造的 config 也必须安全）。
+        providers = normalize_provider_list(self.llm.providers)
+        self.llm.providers = providers
         data = {
             "llm": {
                 "model": self.llm.model,
@@ -959,7 +964,7 @@ class GDLAgentConfig:
                 "max_tokens": self.llm.max_tokens,
                 "provider_keys": self.llm.provider_keys,
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
-                "providers": [provider_entry_to_toml(p) for p in self.llm.providers],
+                "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
             },
             "agent": {

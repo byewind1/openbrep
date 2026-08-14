@@ -1208,3 +1208,101 @@ def test_codex_service_responses_never_leak_secrets(tmp_path):
 
     for payload in payloads:
         walk(payload)
+
+
+def _snapshot_llm_state(session, config_path):
+    """P0-R2：session/config/磁盘三层的完整快照，用于失败前后逐字段比对。"""
+    config = session.config
+    file_bytes = config_path.read_bytes() if config_path.exists() else None
+    return {
+        "session": {
+            "llm_model": session.llm_model,
+            "llm_api_key": session.llm_api_key,
+            "llm_api_base": session.llm_api_base,
+            "assistant_settings": session.assistant_settings,
+            "max_retries": session.max_retries,
+        },
+        "config": {
+            "model": config.llm.model,
+            "assistant_settings": config.llm.assistant_settings,
+            "max_iterations": config.agent.max_iterations,
+            "providers": list(config.llm.providers),
+            "api_key": config.llm.api_key,
+        },
+        "file": file_bytes,
+    }
+
+
+def test_update_llm_settings_rejection_leaves_state_untouched(tmp_path):
+    """P0-R2：codex 拒绝（API-key / 目录外模型）前后 session/config/磁盘逐字段不变。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    config.llm.api_key = ""
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    session = SimpleNamespace(
+        llm_model="glm-4-flash",
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="OLD",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+    )
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None, codex_provider=provider)
+
+    # 1) API-key 拒绝
+    before = _snapshot_llm_state(session, tmp_path / "config.toml")
+    response = service.update_llm_settings({
+        "model": "openai-codex/gpt-5.6-luna",
+        "api_key": "DEV-SECRET",
+        "assistant_settings": "NEW",
+        "max_retries": 9,
+    })
+    assert response["ok"] is False
+    assert response["code"] == "codex_no_api_key"
+    assert _snapshot_llm_state(session, tmp_path / "config.toml") == before
+
+    # 2) 目录外模型拒绝
+    before = _snapshot_llm_state(session, tmp_path / "config.toml")
+    response = service.update_llm_settings({
+        "model": "openai-codex/not-a-real-account-model",
+        "api_key": "",
+        "assistant_settings": "NEW",
+        "max_retries": 9,
+    })
+    assert response["ok"] is False
+    assert response["code"] == "model_not_in_catalog"
+    assert _snapshot_llm_state(session, tmp_path / "config.toml") == before
+
+
+def test_codex_generic_exception_uses_stable_code_and_message(tmp_path):
+    """P0-R1：未知异常 → 稳定非空错误码 + 稳定产品文案（不传上游原文）。"""
+    config = GDLAgentConfig()
+
+    class _GenericBoomProvider(_FakeCodexProvider):
+        def login_start(self):
+            raise RuntimeError("some internal detail that should not reach the API")
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _GenericBoomProvider())
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    assert response["code"] == "codex_error"
+    assert response["error"] == "Codex 操作失败，请稍后重试。"
+    assert "internal detail" not in response["error"]
+
+
+def test_codex_app_server_error_maps_to_stable_message(tmp_path):
+    """P0-R1：app-server 超时等异常 → 按 category 映射稳定文案。"""
+    from openbrep.codex.app_server import CodexAppServerError
+
+    config = GDLAgentConfig()
+
+    class _TimeoutProvider(_FakeCodexProvider):
+        def login_start(self):
+            raise CodexAppServerError("codex app-server 请求超时（>10s）：model/list", category="timeout")
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _TimeoutProvider())
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    assert response["code"] == "codex_app_server"
+    assert response["error"] == "Codex app-server 响应超时，请稍后重试。"

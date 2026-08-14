@@ -38,9 +38,16 @@ class CodexCliUnavailableError(RuntimeError):
 
 
 class CodexAppServerError(RuntimeError):
-    """app-server 进程级错误：RPC 错误、超时、进程退出等。"""
+    """app-server 进程级错误：RPC 错误、超时、进程退出等。
+
+    ``category`` 供 API 边界映射稳定产品文案（P0-R1：不传上游原文）。
+    """
 
     code = "codex_app_server"
+
+    def __init__(self, message: str, *, category: str = "codex_app_server"):
+        super().__init__(message)
+        self.category = category
 
 
 def default_codex_home() -> Path:
@@ -166,10 +173,11 @@ class StdioJsonRpcTransport:
     def _call_locked(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         proc = self._proc
         if proc is None:
-            raise CodexAppServerError("codex app-server 尚未启动（先调用 start()）。")
+            raise CodexAppServerError("codex app-server 尚未启动（先调用 start()）。", category="not_started")
         if proc.poll() is not None:
             raise CodexAppServerError(
-                f"codex app-server 进程已退出（exit={proc.returncode}）。"
+                f"codex app-server 进程已退出（exit={proc.returncode}）。",
+                category="process_exited",
             )
         req_id = next(self._next_id)
         payload = {
@@ -184,7 +192,8 @@ class StdioJsonRpcTransport:
             proc.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             raise CodexAppServerError(
-                f"codex app-server 写入失败（进程可能已退出）：{exc}"
+                f"codex app-server 写入失败（进程可能已退出）：{exc}",
+                category="write_failed",
             ) from exc
 
         deadline = time.monotonic() + self.rpc_timeout
@@ -193,7 +202,8 @@ class StdioJsonRpcTransport:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise CodexAppServerError(
-                        f"codex app-server 请求超时（>{self.rpc_timeout:.0f}s）：{method}"
+                        f"codex app-server 请求超时（>{self.rpc_timeout:.0f}s）：{method}",
+                        category="timeout",
                     )
                 if req_id in self._responses:
                     resp = self._responses.pop(req_id)
@@ -205,7 +215,8 @@ class StdioJsonRpcTransport:
             if isinstance(err, dict):
                 message = str(err.get("message") or "")
             raise CodexAppServerError(
-                f"codex app-server {method} 返回错误：{message or err}"
+                f"codex app-server {method} 返回错误：{message or err}",
+                category="rpc_error",
             )
         result = resp.get("result") or {}
         return result if isinstance(result, dict) else {"data": result}

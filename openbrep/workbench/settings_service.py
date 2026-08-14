@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from openbrep.codex.app_server import CodexAppServerError
 from openbrep.codex.redact import redact_secrets
 from openbrep.config import (
     ALL_MODELS,
@@ -249,17 +250,44 @@ class WorkbenchSettingsService:
         except Exception:
             return {"state": "error", "connected": False, "account": None}
 
-    @staticmethod
-    def _codex_error(exc: BaseException, fallback: str = "Codex 操作失败。") -> dict[str, Any]:
-        """异常 → API 错误响应：稳定错误码 + 脱敏文本（P0-2）。
+    # P0-R1：API 只返回稳定产品文案 + 稳定非空错误码，不传上游原文；
+    # redact_secrets 仅作最后一道纵深防御。
+    _CODEX_STABLE_ERRORS: dict[str, str] = {
+        "codex_cli_unavailable": "未检测到 Codex CLI，请先安装 Codex CLI 后重试。",
+        "not_signed_in": "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。",
+    }
+    _CODEX_APP_SERVER_MESSAGES: dict[str, str] = {
+        "codex_app_server": "Codex app-server 请求失败，请稍后重试。",
+        "not_started": "Codex app-server 尚未就绪，请稍后重试。",
+        "process_exited": "Codex app-server 进程已退出，请重启工作台后重试。",
+        "write_failed": "Codex app-server 通信失败，请稍后重试。",
+        "timeout": "Codex app-server 响应超时，请稍后重试。",
+        "rpc_error": "Codex app-server 请求失败，请稍后重试。",
+        "login_failed": "登录服务返回异常，请稍后重试或重新连接。",
+        "closed": "Codex app-server 已关闭，请重启工作台后重试。",
+    }
 
-        上游错误原文可能携带 authUrl / loginId / token / auth 路径，
-        返回前端前必须经过 redact_secrets 清洗。
+    @classmethod
+    def _codex_error(cls, exc: BaseException, fallback: str = "Codex 操作失败，请稍后重试。") -> dict[str, Any]:
+        """异常 → API 错误响应：稳定非空错误码 + 稳定产品文案（不传上游原文）。
+
+        仅按异常 code/category 映射；未知异常一律 codex_error + 兜底文案。
         """
+        code = getattr(exc, "code", None)
+        if code in cls._CODEX_STABLE_ERRORS:
+            stable_code, message = code, cls._CODEX_STABLE_ERRORS[code]
+        elif isinstance(exc, CodexAppServerError):
+            stable_code = "codex_app_server"
+            message = cls._CODEX_APP_SERVER_MESSAGES.get(
+                getattr(exc, "category", None), fallback
+            )
+        else:
+            stable_code = code or "codex_error"
+            message = fallback
         return {
             "ok": False,
-            "code": getattr(exc, "code", None),
-            "error": redact_secrets(str(exc).strip() or fallback),
+            "code": stable_code,
+            "error": redact_secrets(message),
         }
 
     def _codex_model_usable(self, model: str) -> bool:
@@ -446,38 +474,47 @@ class WorkbenchSettingsService:
         model = str(body.get("model") or self.session.llm_model).strip()
         if not model:
             return {"ok": False, "error": "Model is required."}
-        self.session.llm_model = model
-        self.session.llm_api_key = str(body.get("api_key") or "").strip()
-        self.session.llm_api_base = str(body.get("api_base") or "").strip()
-        self.session.assistant_settings = str(body.get("assistant_settings") or "")
+        # P0-R2：先在局部变量完成全部解析与验证（含 codex 门禁），
+        # 任何失败都不触碰 session/config/磁盘；全部通过后才一次性 commit。
+        api_key = str(body.get("api_key") or "").strip()
+        api_base = str(body.get("api_base") or "").strip()
+        assistant_settings = str(body.get("assistant_settings") or "")
         try:
-            self.session.max_retries = max(1, min(10, int(body.get("max_retries") or self.session.max_retries)))
+            max_retries = max(1, min(10, int(body.get("max_retries") or self.session.max_retries)))
         except (TypeError, ValueError):
-            self.session.max_retries = 5
+            max_retries = 5
 
-        self.session.config.llm.model = self.session.llm_model
-        if is_codex_qualified_model(self.session.llm_model):
-            if str(body.get("api_key") or "").strip():
+        if is_codex_qualified_model(model):
+            if api_key:
                 # P0-1：订阅身份不接受 API Key 写入
                 return {
                     "ok": False,
                     "code": "codex_no_api_key",
                     "error": "ChatGPT Codex（openai-codex）模型使用订阅登录，不接受 API Key。",
                 }
-            ok, failure = self._codex_save_guard(self.session.llm_model)
+            ok, failure = self._codex_save_guard(model)
             if not ok:
                 return failure
+
+        # 验证全部通过 → 一次性 commit 到 session + config
+        self.session.llm_model = model
+        self.session.llm_api_key = api_key
+        self.session.llm_api_base = api_base
+        self.session.assistant_settings = assistant_settings
+        self.session.max_retries = max_retries
+        self.session.config.llm.model = model
+        if is_codex_qualified_model(model):
             ensure_codex_provider_entry(self.session.config)
-        self.session.config.llm.assistant_settings = self.session.assistant_settings
-        self.session.config.agent.max_iterations = self.session.max_retries
+        self.session.config.llm.assistant_settings = assistant_settings
+        self.session.config.agent.max_iterations = max_retries
         apply_llm_credentials_to_config(
             self.session.config,
-            model=self.session.llm_model,
-            api_key=self.session.llm_api_key,
-            api_base=self.session.llm_api_base,
+            model=model,
+            api_key=api_key,
+            api_base=api_base,
         )
-        self.session.llm_api_key = self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
-        self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
+        self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
+        self.session.llm_api_base = self.session.config.llm.resolve_api_base(model) or ""
         save_workbench_config(self.session.config, self.session.config_path)
         return {"ok": True, "llm": self.llm_settings()}
 
@@ -494,7 +531,12 @@ class WorkbenchSettingsService:
         try:
             status = provider.status()
         except Exception as exc:
-            status = {"state": "error", "connected": False, "account": None, "error": redact_secrets(str(exc))}
+            status = {
+                "state": "error",
+                "connected": False,
+                "account": None,
+                "error": self._codex_error(exc)["error"],
+            }
         payload: dict[str, Any] = {"ok": True, **status}
         payload["model"] = self.session.llm_model
         payload["model_available"] = llm_model_available(

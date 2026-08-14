@@ -102,7 +102,7 @@ class CodexProvider:
     def _get_client(self) -> Any:
         with self._lock:
             if self._closed:
-                raise CodexAppServerError("Codex app-server 已关闭。")
+                raise CodexAppServerError("Codex app-server 已关闭。", category="closed")
             if self._client is None:
                 if not self.cli_available:
                     raise CodexCliUnavailableError(

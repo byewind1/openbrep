@@ -263,3 +263,38 @@ class TestRedactSecrets(unittest.TestCase):
     def test_plain_error_passes_through(self):
         text = self._redact("codex app-server 请求超时：model/list")
         self.assertEqual(text, "codex app-server 请求超时：model/list")
+
+    def test_redacts_sensitive_key_value_assign_forms(self):
+        """P0-R1：key=value 形态整体替换（值不保证是 URL/JWT/sk-/UUID）。"""
+        cases = [
+            "access_token=SUPERSECRET",
+            "loginId=opaque-secret-not-uuid",
+            "chatgpt_account_id=org-secret-123",
+            "api_key=some-arbitrary-value",
+        ]
+        for case in cases:
+            text = self._redact(case)
+            self.assertEqual(text, "<redacted>", case)
+            for bad in ("SUPERSECRET", "opaque-secret", "org-secret-123", "some-arbitrary"):
+                self.assertNotIn(bad, text)
+
+    def test_redacts_authorization_bearer_colon_form(self):
+        text = self._redact("Authorization: Bearer plain-secret-value")
+        self.assertNotIn("plain-secret-value", text)
+        self.assertNotIn("Bearer", text)
+        # 无 Authorization 前缀的裸 Bearer 也擦
+        text2 = self._redact("header Authorization Bearer second-secret-here")
+        self.assertNotIn("second-secret-here", text2)
+
+    def test_redacts_nested_quotes_and_commas(self):
+        text = self._redact('{"access_token": "abc,def", "loginId":"xyz", "account_id": 123}')
+        self.assertNotIn("abc", text)
+        self.assertNotIn("def", text)
+        self.assertNotIn("xyz", text)
+        self.assertNotIn("access_token", text)
+
+    def test_redacts_single_quoted_json_style(self):
+        text = self._redact("{'authUrl': 'https://evil.example/oauth?state=Q', 'loginId': 'sec-1'}")
+        self.assertNotIn("evil.example", text)
+        self.assertNotIn("sec-1", text)
+        self.assertNotIn("authUrl", text)

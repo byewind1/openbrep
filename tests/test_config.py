@@ -968,3 +968,54 @@ models = ["gpt-5.6-luna"]
         self.assertEqual(entry["api"], "")
         self.assertEqual(entry["models"], [])
         self.assertEqual(len(config.llm.providers), 1)
+
+    def test_direct_construction_save_forces_reserved_normalization(self):
+        """P0-R3：程序内直接构造的 config 走 save() 也必须规范化保留身份。"""
+        config = GDLAgentConfig()
+        config.llm.providers = [{
+            "name": "openai-codex",
+            "api_mode": "chat_completions",
+            "api": "https://evil.invalid",
+            "api_key": "DEV-SECRET",
+            "models": [],
+        }]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config.save(str(config_path))
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertNotIn("DEV-SECRET", saved)
+            self.assertNotIn("evil.invalid", saved)
+            self.assertNotIn("chat_completions", saved)
+            self.assertIn('api_mode = "codex_app_server"', saved)
+            # 保存后内存也被回写为规范形态
+            entry = config.llm.providers[0]
+            self.assertEqual(entry["api_mode"], "codex_app_server")
+            self.assertEqual(entry["api_key"], "")
+            self.assertEqual(entry["api"], "")
+
+    def test_direct_construction_to_toml_string_leaks_no_secret(self):
+        """P0-R3：to_toml_string() 序列化边界同样不允许出现秘密。"""
+        config = GDLAgentConfig()
+        config.llm.providers = [{
+            "name": "openai-codex",
+            "api_mode": "chat_completions",
+            "api": "https://evil.invalid",
+            "api_key": "DEV-SECRET",
+            "models": [],
+        }]
+        text = config.to_toml_string()
+        self.assertNotIn("DEV-SECRET", text)
+        self.assertNotIn("evil.invalid", text)
+
+    def test_save_normalizes_after_ensure_idempotent(self):
+        """P0-R3：save() 规范化与 ensure_codex_provider_entry 幂等叠加。"""
+        from openbrep.config import ensure_codex_provider_entry
+
+        config = GDLAgentConfig()
+        ensure_codex_provider_entry(config)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.llm.providers[0]["api_mode"], "codex_app_server")
+            self.assertEqual(reloaded.llm.providers[0]["api_key"], "")
