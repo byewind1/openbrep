@@ -31,13 +31,20 @@ LOCK_FREE_POST_ROUTES = frozenset({
     # E1：手动错误沉淀。只读写全局错题本 ~/.openbrep/error_lessons.jsonl，
     # 不触碰 session/project 状态；文件写入有 copilot service 自有锁保护。
     "/api/copilot/ingest-error",
-    # Codex BYOA（D1）：login/start 拉起 app-server 子进程并打开终端用户浏览器
-    # （可能耗时数秒）；logout 只改 codex 登录态。两者都不触碰 session/project
-    # 状态；JSON-RPC 帧由 StdioJsonRpcTransport.call() 的内部锁全程串行化
-    # （写帧+等响应），并发 status 轮询与 login/logout 不会交错帧，
-    # 因此无需持有 session 级锁。GET 两条（status / models）天然 lock-free。
+    # Codex BYOA（D1+D2）：login/start 拉起 app-server 子进程并打开终端用户浏览器
+    # （可能耗时数秒）；logout/cancel/restart 只改 codex 登录态/进程。都不触碰
+    # session/project 状态。并发安全由两层保证：StdioJsonRpcTransport.call() 的
+    # 内部锁串行化 JSON-RPC 帧（写帧+等响应）；provider._op_lock 串行化完整
+    # lifecycle transition（start/cancel/logout/restart/client replacement），
+    # close() 置 closing 唤醒 in-flight waiter。因此无需持有 session 级锁。
+    # GET 两条（status / models）天然 lock-free。
     "/api/settings/llm/codex/login/start",
+    "/api/settings/llm/codex/login/device-code",
+    "/api/settings/llm/codex/login/cancel",
     "/api/settings/llm/codex/logout",
+    # D2：restart 只重建 codex app-server 子进程（不触碰 session/project），
+    # JSON-RPC 帧由 transport 内部锁串行化，无需 session 级锁。
+    "/api/settings/llm/codex/restart",
 })
 
 

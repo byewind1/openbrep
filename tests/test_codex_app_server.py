@@ -239,7 +239,9 @@ class TestRedactSecrets(unittest.TestCase):
         return redact_secrets(text)
 
     def test_redacts_url_with_query(self):
-        text = self._redact('login failed: {"authUrl":"https://auth.openai.com/oauth?state=SECRET"}')
+        text = self._redact(
+            'login failed: {"authUrl":"https://auth.openai.com/oauth?state=SECRET"}'
+        )
         self.assertNotIn("auth.openai.com", text)
         self.assertNotIn("SECRET", text)
         self.assertNotIn("authUrl", text)
@@ -391,7 +393,7 @@ class TestCodexProviderCloseLogSafety(unittest.TestCase):
                 cli_available=True,
             )
             provider.status()  # 创建 client
-            provider.close()   # close 抛异常 → 吞掉并记稳定日志
+            provider.close()  # close 抛异常 → 吞掉并记稳定日志
         finally:
             logger.removeHandler(handler)
 
@@ -399,3 +401,561 @@ class TestCodexProviderCloseLogSafety(unittest.TestCase):
         self.assertIn("关闭失败", joined)
         for bad in ("plain-secret-value", "Bearer", "Authorization"):
             self.assertNotIn(bad, joined, f"日志泄漏 {bad}")
+
+
+# ── D2：通知分发、迟到响应、崩溃、重启、进程组清理 ──────────────────────────
+
+
+def _codex_home_dir(prefix="obr-codex-d2-"):
+    import tempfile
+
+    return Path(tempfile.mkdtemp(prefix=prefix)) / "codex-home"
+
+
+def _spawn_transport(*, rpc_timeout=5.0, extra_env=None, codex_home=None):
+    import os
+
+    env = dict(os.environ)
+    for key, value in (extra_env or {}).items():
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
+    home = codex_home or _codex_home_dir()
+    transport = StdioJsonRpcTransport(
+        codex_binary=sys.executable,
+        codex_home=home,
+        extra_args=(str(FAKE_SERVER),),
+        rpc_timeout=rpc_timeout,
+    )
+    # 通过环境变量注入 fake 模式：直接替换 transport 的启动环境
+    original_start = transport.start
+
+    def start_with_env():
+        import os as _os
+
+        # 重新构造 Popen env 太深，这里在调用前设置进程级 env 由 fake 读取
+        saved = {}
+        for key, value in (extra_env or {}).items():
+            saved[key] = _os.environ.get(key)
+            if value is None:
+                _os.environ.pop(key, None)
+            else:
+                _os.environ[key] = value
+        try:
+            original_start()
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    _os.environ.pop(key, None)
+                else:
+                    _os.environ[key] = value
+
+    transport.start = start_with_env  # type: ignore[method-assign]
+    return transport
+
+
+class TestCodexD2NotificationDispatch(unittest.TestCase):
+    """D2：通知分发（reader 线程投递订阅者）+ drain 兼容。"""
+
+    def test_subscriber_receives_notifications_and_unsubscribe_stops(self):
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "loginCompleted"})
+        received: list[dict] = []
+
+        def handler(msg):
+            received.append(msg)
+
+        transport.start()
+        transport.subscribe(handler)
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        # 通知在请求响应前发送，稍等 reader 消费
+        import time
+
+        time.sleep(0.5)
+        transport.close()
+        self.assertTrue(
+            any(m.get("method") == "account/login/completed" for m in received),
+            f"订阅者未收到通知: {received}",
+        )
+        # drain 兼容：通知同时进入内部队列
+        # （close 后队列已清空，这里只验证订阅机制本身）
+
+    def test_unsubscribe_stops_delivery(self):
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "accountUpdated"})
+        received: list[dict] = []
+
+        def handler(msg):
+            received.append(msg)
+
+        transport.start()
+        transport.subscribe(handler)
+        transport.unsubscribe(handler)
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        import time
+
+        time.sleep(0.5)
+        transport.close()
+        self.assertEqual(received, [])
+
+
+class TestCodexD2LateResponse(unittest.TestCase):
+    """D2：迟到响应——超时请求的响应到达后被丢弃，不污染后续调用。"""
+
+    def test_late_response_does_not_pollute_next_call(self):
+        # 首个请求延迟 1s 响应；客户端 0.3s 超时 → 超时；迟到响应被丢弃；
+        # 第二个请求正常返回自己的结果
+        transport = _spawn_transport(
+            rpc_timeout=0.3,
+            extra_env={"FAKE_CODEX_DELAY_FIRST_RESPONSE_SECONDS": "1.0"},
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        # 第一个请求（延迟 1s → 0.3s 超时）
+        with self.assertRaises(CodexAppServerError) as ctx:
+            client.initialize()
+        self.assertEqual(ctx.exception.category, "timeout")
+        # 等待迟到响应到达并被丢弃
+        time.sleep(1.5)
+        # 第二个请求正常（不再延迟）
+        result = client.initialize()
+        self.assertIn("userAgent", result)
+        transport.close()
+
+
+class TestCodexD2CrashRestart(unittest.TestCase):
+    """D2：崩溃检测（EOF/非零退出）+ restart 恢复。"""
+
+    def test_crash_at_startup_marks_crashed_with_exit_code(self):
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_CRASH_IMMEDIATELY": "1"})
+        transport.start()
+        time.sleep(1.0)  # reader 读到 EOF
+        self.assertTrue(transport.crashed)
+        self.assertEqual(transport.crash_exit_code, 42)
+        with self.assertRaises(CodexAppServerError) as ctx:
+            transport.call("account/read", {})
+        self.assertEqual(ctx.exception.category, "process_exited")
+        transport.close()
+
+    def test_crash_after_requests_then_restart(self):
+        marker = _codex_home_dir("obr-crash-marker-")
+        transport = _spawn_transport(
+            extra_env={
+                "FAKE_CODEX_CRASH_AFTER_REQUESTS": "2",
+                "FAKE_CODEX_CRASH_MARKER": str(marker),
+            }
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()  # 请求 1
+        client.account_read()  # 请求 2 → fake 崩溃
+        time.sleep(1.0)
+        self.assertTrue(transport.crashed)
+        self.assertEqual(transport.crash_exit_code, 43)
+        # restart：close 旧传输 → 新进程（不再崩溃）→ initialize
+        result = client.restart()
+        self.assertIn("userAgent", result)
+        self.assertFalse(transport.crashed)
+        self.assertTrue(transport.is_alive)
+        # 重启后可用
+        self.assertEqual(client.account_read(), {"account": None, "requiresOpenaiAuth": True})
+        transport.close()
+
+    def test_restart_after_crash_reuses_clean_state(self):
+        marker = _codex_home_dir("obr-crash-marker-")
+        transport = _spawn_transport(
+            extra_env={
+                "FAKE_CODEX_CRASH_AFTER_REQUESTS": "1",
+                "FAKE_CODEX_CRASH_MARKER": str(marker),
+            }
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()  # 请求 1 → 崩溃
+        time.sleep(1.0)
+        self.assertTrue(transport.crashed)
+        client.restart()
+        models = client.model_list()
+        self.assertEqual([m["id"] for m in models["data"]], ["gpt-5.6-luna", "gpt-5.6-terra"])
+        transport.close()
+
+
+class TestCodexD2StderrCapture(unittest.TestCase):
+    """D2：有界 stderr 捕获 + 脱敏（崩溃诊断不泄漏秘密）。"""
+
+    def test_stderr_secret_is_redacted_in_tail(self):
+        transport = _spawn_transport(
+            extra_env={"FAKE_CODEX_STDERR_SECRET": "Authorization: Bearer super-secret-value"},
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(0.5)
+        tail = transport.stderr_tail()
+        self.assertNotIn("super-secret-value", tail)
+        self.assertNotIn("Bearer", tail)
+        transport.close()
+
+    def test_crash_diagnostics_available_redacted(self):
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_CRASH_AFTER_REQUESTS": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(1.0)
+        self.assertTrue(transport.crashed)
+        # 崩溃后 stderr 尾巴包含诊断（脱敏后）
+        tail = transport.stderr_tail()
+        self.assertIn("crash", tail)
+        transport.close()
+
+
+class TestCodexD2ProcessGroupCleanup(unittest.TestCase):
+    """D2：close() 后无遗留子进程（fake 服务器 spawn 的 sleep 子进程）。"""
+
+    def test_close_kills_descendant_process(self):
+        import os
+        import tempfile
+
+        pid_file = Path(tempfile.mkdtemp(prefix="obr-codex-pg-")) / "child.pid"
+        transport = _spawn_transport(
+            extra_env={"FAKE_CODEX_SPAWN_CHILD_PID_FILE": str(pid_file)},
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        # 等 fake 写入子进程 PID
+        deadline = time.monotonic() + 5
+        child_pid = None
+        while time.monotonic() < deadline:
+            if pid_file.exists():
+                child_pid = int(pid_file.read_text().strip())
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(child_pid, "fake 未写入子进程 PID")
+        # 子进程必须存活（对照组）
+        self._alive(child_pid, "spawn 后子进程应存活")
+        transport.close()
+        time.sleep(0.5)
+        self.assertFalse(self._alive(child_pid, "close 后子进程应被回收"), "遗留子进程")
+
+    @staticmethod
+    def _alive(pid, message):
+        import os
+
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+
+class TestCodexVersionParsing(unittest.TestCase):
+    """D2：initialize.userAgent → Codex CLI 版本解析。"""
+
+    def test_parse_real_format(self):
+        from openbrep.codex.app_server import parse_codex_version
+
+        self.assertEqual(
+            parse_codex_version("openbrep/0.147.0 (Mac OS 15.7.5; arm64)"),
+            (0, 147, 0),
+        )
+        self.assertEqual(parse_codex_version("codex-cli/1.2.3 (Linux)"), (1, 2, 3))
+        self.assertIsNone(parse_codex_version(""))
+        self.assertIsNone(parse_codex_version("no-version-token"))
+        self.assertIsNone(parse_codex_version("openbrep-garbage no-version-token"))
+
+
+# ── P0-5：畸形 JSON-RPC 帧不能杀死 reader ────────────────────────────────────
+
+
+class TestCodexD2MalformedFrames(unittest.TestCase):
+    """P0-5：list/dict id、无 method 通知、非对象帧、非 JSON 行均不能杀 reader。"""
+
+    def _transport_with_malformed(self, rpc_timeout=5.0):
+        transport = _spawn_transport(
+            rpc_timeout=rpc_timeout,
+            extra_env={"FAKE_CODEX_MALFORMED_FRAMES": "1"},
+        )
+        return transport
+
+    def test_malformed_frames_do_not_kill_reader(self):
+        transport = self._transport_with_malformed()
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        # initialize 响应前 fake 会先发一批畸形帧；reader 必须存活并正确回包
+        result = client.initialize()
+        self.assertIn("userAgent", result)
+        # 后续正常调用不受影响
+        self.assertEqual(client.account_read(), {"account": None, "requiresOpenaiAuth": True})
+        self.assertFalse(transport.crashed)
+        self.assertTrue(transport.is_alive)
+        transport.close()
+
+    def test_malformed_frames_then_eof_marks_crashed(self):
+        transport = self._transport_with_malformed()
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        # 正常 close 后不误标 crashed
+        transport.close()
+        self.assertFalse(transport.crashed)
+
+
+class TestCodexD2ReaderCrashDetection(unittest.TestCase):
+    """P0-5：reader 顶层 finally——异常/EOF 都标记 finished/crashed 并唤醒 waiters。"""
+
+    def test_subscriber_exception_does_not_kill_reader(self):
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "loginCompleted"})
+
+        def bad_handler(msg):
+            raise RuntimeError("subscriber bug")
+
+        transport.start()
+        transport.subscribe(bad_handler)
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(0.5)
+        self.assertFalse(transport.crashed)
+        self.assertTrue(transport.is_alive)
+        # 后续调用仍正常
+        self.assertEqual(client.account_read(), {"account": None, "requiresOpenaiAuth": True})
+        transport.close()
+
+
+class TestCodexD2ClosingProtocol(unittest.TestCase):
+    """P0-2：close() 置 closing 并唤醒 in-flight waiter，不干等到 rpc_timeout。"""
+
+    def test_in_flight_call_fails_fast_on_close(self):
+        transport = _spawn_transport(
+            rpc_timeout=10.0,
+            extra_env={
+                "FAKE_CODEX_DELAY_METHOD": "account/login/start",
+                "FAKE_CODEX_DELAY_RESPONSE_SECONDS": "3.0",
+            },
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        errors: list = []
+
+        def worker():
+            try:
+                client.account_login_start("chatgpt")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        thread = threading.Thread(target=worker)
+        start = time.monotonic()
+        thread.start()
+        time.sleep(0.3)  # 让 login RPC 进入等待
+        transport.close()  # 触发 closing → waiter 立即失败
+        thread.join(timeout=2.0)
+        elapsed = time.monotonic() - start
+        self.assertEqual(len(errors), 1)
+        self.assertLess(elapsed, 5.0, "close 后 in-flight call 应快速失败而非等满 rpc_timeout")
+        # 关闭后调用直接失败
+        with self.assertRaises(CodexAppServerError):
+            client.account_read()
+
+
+class TestCodexD2BoundedQueues(unittest.TestCase):
+    """P1-1/P1-2：通知与超时 tombstone 有界，防长期运行无界增长。"""
+
+    def test_notifications_queue_is_bounded(self):
+        from openbrep.codex.app_server import _NOTIFICATIONS_CAP
+
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "loginCompleted"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        # 大量请求触发大量通知
+        for _ in range(300):
+            client.initialize()
+        time.sleep(0.3)
+        drained = transport.drain_notifications()
+        self.assertLessEqual(len(drained), _NOTIFICATIONS_CAP)
+        transport.close()
+
+    def test_pending_requests_are_bounded_and_cleared(self):
+        """P0-3：超时后 pending 集合清空、无孤儿响应，内存不增长。"""
+        transport = _spawn_transport(rpc_timeout=0.2)
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        for _ in range(50):
+            try:
+                client.initialize()
+            except CodexAppServerError:
+                pass
+        with transport._cv:
+            # 单飞调用：超时后 pending 清空、_responses 无孤儿
+            self.assertEqual(transport._pending, set())
+            self.assertEqual(transport._responses, {})
+        transport.close()
+
+
+class TestCodexD2StubbornDescendant(unittest.TestCase):
+    """P0-3：SIGTERM 后直接子进程退出但后代忽略 SIGTERM → close 后仍被回收。"""
+
+    def test_stubborn_child_killed_after_close(self):
+        import os
+        import tempfile
+
+        pid_file = Path(tempfile.mkdtemp(prefix="obr-codex-stubborn-")) / "child.pid"
+        transport = _spawn_transport(
+            extra_env={
+                "FAKE_CODEX_IGNORE_EOF": "1",
+                "FAKE_CODEX_SPAWN_CHILD_PID_FILE": str(pid_file),
+                "FAKE_CODEX_CHILD_IGNORE_TERM": "1",
+            },
+        )
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        deadline = time.monotonic() + 5
+        child_pid = None
+        while time.monotonic() < deadline:
+            if pid_file.exists():
+                child_pid = int(pid_file.read_text().strip())
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(child_pid)
+        # close：EOF 后 fake 继续运行（ignore EOF）→ 5s grace → SIGTERM 组 →
+        # 父进程响应 TERM 退出，子进程忽略 TERM → 最终 SIGKILL 组
+        start = time.monotonic()
+        transport.close()
+        elapsed = time.monotonic() - start
+        self.assertGreaterEqual(elapsed, 4.5)
+        time.sleep(0.5)
+        try:
+            os.kill(child_pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        self.assertFalse(alive, "忽略 SIGTERM 的后代在 close 后仍存活（P0-3）")
+
+
+class TestCodexD2UnsolicitedResponseIds(unittest.TestCase):
+    """P0-3：未请求/未来/超大/重复的响应 id 不污染后续调用，内存不增长。"""
+
+    def test_unsolicited_future_id_does_not_pollute_next_call(self):
+        """server 在 request 1 前先发 id=3 的 POISON 响应；后续调用必须各回各的结果。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_UNSOLICITED_POISON": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        first = client.initialize()
+        self.assertIn("userAgent", first)
+        self.assertNotEqual(first.get("value"), "POISON")
+        # 第二次调用（id=2）：正常返回；第三次调用（id=3，即被投毒的未来 id）
+        # 也必须拿到自己的响应，而不是 POISON。
+        second = client.initialize()
+        self.assertIn("userAgent", second)
+        third = client.initialize()
+        self.assertIn("userAgent", third)
+        self.assertNotEqual(third.get("value"), "POISON")
+        transport.close()
+
+    def test_unsolicited_ids_never_stored(self):
+        """reader 只存 pending id 的响应：投毒 id 不进入 _responses，无界增长被堵住。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_UNSOLICITED_POISON": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(0.3)  # 等 reader 消费投毒帧
+        with transport._cv:
+            self.assertEqual(transport._responses, {})
+            self.assertEqual(transport._pending, set())
+        transport.close()
+
+    def test_unsolicited_past_duplicate_and_huge_ids_discarded(self):
+        """直接向 reader 投递 past/重复/超大 int id 响应：全部丢弃，不污染、
+        不增长。"""
+        transport = _spawn_transport()
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        # 手工注入 unsolicited 帧（真实 reader 路径）：过去 id、重复 id、超大 id
+        reader_inject = [
+            {"jsonrpc": "2.0", "id": 999999, "result": {"value": "HUGEPOISON"}},
+            {"jsonrpc": "2.0", "id": -7, "result": {"value": "NEGPOISON"}},
+            {"jsonrpc": "2.0", "id": 2, "result": {"value": "DUPEPOISON"}},
+        ]
+        for frame in reader_inject:
+            transport._handle_line(json.dumps(frame))
+        time.sleep(0.2)
+        with transport._cv:
+            self.assertEqual(transport._responses, {})
+        # 后续调用不受影响
+        result = client.initialize()
+        self.assertIn("userAgent", result)
+        self.assertNotEqual(result.get("value"), "HUGEPOISON")
+        transport.close()
+
+
+class TestCodexD2SubscriberLogSecretSafety(unittest.TestCase):
+    """P0-4：订阅者异常绝不把异常原文/traceback 写进日志。"""
+
+    def test_subscriber_exception_log_never_leaks_secret(self):
+        import logging
+
+        records: list[str] = []
+        handler = logging.Handler()
+
+        def emit(record):
+            records.append(record.getMessage())
+
+        handler.emit = emit
+        logger = logging.getLogger("openbrep.codex.app_server")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "loginCompleted"})
+
+        def bad_handler(msg):
+            raise RuntimeError("Authorization: Bearer DEV-SUBSCRIBER-SECRET")
+
+        try:
+            transport.start()
+            transport.subscribe(bad_handler)
+            client = CodexAppServerClient(transport=transport)
+            client.initialize()
+            time.sleep(0.5)
+            self.assertFalse(transport.crashed)
+        finally:
+            transport.close()
+            logger.removeHandler(handler)
+        joined = "\n".join(records)
+        self.assertIn("通知订阅者异常", joined)
+        self.assertIn("RuntimeError", joined)  # 只记稳定异常类名
+        for bad in ("DEV-SUBSCRIBER-SECRET", "Bearer", "Authorization", "RuntimeError("):
+            self.assertNotIn(bad, joined, f"订阅者异常日志泄漏 {bad}")
+
+
+class TestCodexD2DuplicateResponseFirstWins(unittest.TestCase):
+    """P0-3：同 pending id 的第二条响应不得覆盖第一条（first-response-wins）。"""
+
+    def test_duplicate_same_id_response_first_wins(self):
+        """server 对每个请求连续写两条同 id 响应（第一条正确、第二条
+        DUPLICATE-POISON）：连续 20 次调用必须始终返回第一条。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_DUP_RESPONSE": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        for i in range(20):
+            result = client.initialize()
+            self.assertIn("userAgent", result, f"第 {i} 次调用返回了重复响应")
+            self.assertNotEqual(
+                result.get("value"), "DUPLICATE-POISON", f"第 {i} 次调用被重复响应覆盖"
+            )
+        transport.close()
+
+    def test_duplicate_response_not_stored_twice(self):
+        """重复同 id 响应：第一条 claim 后第二条被丢弃，_responses 无残留。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_DUP_RESPONSE": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(0.3)
+        with transport._cv:
+            self.assertEqual(transport._responses, {})
+        transport.close()

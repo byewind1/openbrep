@@ -311,8 +311,16 @@ class WorkbenchSettingsService:
             return self.codex_status()
         if method == "POST" and route == "/api/settings/llm/codex/login/start":
             return self.codex_login_start()
+        if method == "POST" and route == "/api/settings/llm/codex/login/device-code":
+            return self.codex_login_device_code()
+        if method == "POST" and route == "/api/settings/llm/codex/login/cancel":
+            return self.codex_login_cancel()
         if method == "POST" and route == "/api/settings/llm/codex/logout":
             return self.codex_logout()
+        if method == "POST" and route == "/api/settings/llm/codex/restart":
+            return self.codex_restart()
+        if method == "GET" and route == "/api/settings/llm/codex/rate-limits":
+            return self.codex_rate_limits()
         if method == "GET" and route == "/api/settings/llm/codex/models":
             return self.codex_models()
         return {"ok": False, "error": f"Unknown route: {method} {route}"}
@@ -547,6 +555,58 @@ class WorkbenchSettingsService:
         except Exception as exc:
             return self._codex_error(exc)
         return {"ok": True, **result}
+
+    def codex_login_device_code(self) -> dict[str, Any]:
+        """POST /api/settings/llm/codex/login/device-code：用户显式选择的设备码登录。
+
+        D2：device-code 绝不静默切换——只有用户主动点击「使用设备码登录」才走
+        此路由；返回 verification_url + user_code 供 UI 展示（完成授权所必需）。
+        """
+        try:
+            provider = self._codex_provider()
+            result = provider.login_start_device_code()
+        except Exception as exc:
+            return self._codex_error(exc)
+        return {"ok": True, **result}
+
+    def codex_login_cancel(self) -> dict[str, Any]:
+        """POST /api/settings/llm/codex/login/cancel：取消进行中的登录。
+
+        取消后回到 signed_out；登录会话随取消或 app-server 关闭终止。
+        """
+        try:
+            provider = self._codex_provider()
+            result = provider.login_cancel()
+        except Exception as exc:
+            return self._codex_error(exc)
+        return {"ok": True, **result}
+
+    def codex_restart(self) -> dict[str, Any]:
+        """POST /api/settings/llm/codex/restart：app-server 崩溃后显式重启。
+
+        返回重启后的最新枚举化状态（可能仍是 crashed/error——重启本身不保证
+        上游可用，但进程一定重建）。
+        """
+        try:
+            provider = self._codex_provider()
+            status = provider.restart()
+        except Exception as exc:
+            return self._codex_error(exc)
+        return {"ok": True, **status}
+
+    def codex_rate_limits(self) -> dict[str, Any]:
+        """GET /api/settings/llm/codex/rate-limits：account/rateLimits/read 脱敏摘要。
+
+        只暴露 reached / reached_type / used_percent / plan_type / credits
+        （has_credits、unlimited）；绝不返回余额字符串、limit/used 数值、
+        reset credit id 等内部字段。
+        """
+        try:
+            provider = self._codex_provider()
+            limits = provider.rate_limits()
+        except Exception as exc:
+            return self._codex_error(exc)
+        return {"ok": True, "rate_limits": limits}
 
     def codex_models(self) -> dict[str, Any]:
         """GET /api/settings/llm/codex/models：model/list 动态目录（不硬编码）。"""

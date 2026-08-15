@@ -849,17 +849,22 @@ def _clear_codex_test_env(monkeypatch):
 
 
 class _FakeCodexProvider:
-    """脚本化 CodexProvider 替身：服务层只依赖 status/login_start/logout/models。"""
+    """脚本化 CodexProvider 替身：服务层只依赖 status/login*/logout/models/rate_limits/restart。"""
 
-    def __init__(self, status=None, models=None):
+    def __init__(self, status=None, models=None, rate_limits=None):
         self.status_result = status or {
             "state": "signed_out", "connected": False, "codex_available": True, "account": None,
         }
         self.models_result = models
+        self.rate_limits_result = rate_limits
         self.login_calls = 0
         self.logout_calls = 0
         self.status_calls = 0
         self.model_calls = 0
+        self.device_code_calls = 0
+        self.cancel_calls = 0
+        self.rate_limits_calls = 0
+        self.restart_calls = 0
 
     def status(self, *, refresh=False):
         self.status_calls += 1
@@ -867,11 +872,34 @@ class _FakeCodexProvider:
 
     def login_start(self):
         self.login_calls += 1
-        return {"state": "login_started"}
+        return {"state": "login_started", "method": "chatgpt"}
+
+    def login_start_device_code(self):
+        self.device_code_calls += 1
+        return {
+            "state": "login_started",
+            "method": "chatgptDeviceCode",
+            "verification_url": "https://example.test/device",
+            "user_code": "ABCD-EFGH",
+        }
+
+    def login_cancel(self):
+        self.cancel_calls += 1
+        return {"state": "signed_out"}
 
     def logout(self):
         self.logout_calls += 1
         return {"state": "signed_out"}
+
+    def restart(self):
+        self.restart_calls += 1
+        return dict(self.status_result)
+
+    def rate_limits(self, *, refresh=False):
+        self.rate_limits_calls += 1
+        if self.rate_limits_result is None:
+            raise CodexNotSignedInError("尚未连接 ChatGPT，无法读取订阅额度。请先登录。")
+        return dict(self.rate_limits_result)
 
     def models(self, *, refresh=False):
         self.model_calls += 1
@@ -960,7 +988,7 @@ def test_codex_login_start_triggers_browser_flow_only(tmp_path):
     session = _make_codex_service(config, tmp_path / "config.toml", provider)
 
     response = session.codex_login_start()
-    assert response == {"ok": True, "state": "login_started"}
+    assert response == {"ok": True, "state": "login_started", "method": "chatgpt"}
     assert provider.login_calls == 1
     # 登录动作绝不携带/返回任何凭据或 authUrl
     assert not any(k in response for k in ("authUrl", "loginId", "token", "jwt"))
@@ -1306,3 +1334,397 @@ def test_codex_app_server_error_maps_to_stable_message(tmp_path):
     assert response["ok"] is False
     assert response["code"] == "codex_app_server"
     assert response["error"] == "Codex app-server 响应超时，请稍后重试。"
+
+
+# ── D2：device-code、取消、额度、重启、登录失败/过期不清空其他 provider ──────
+
+
+def test_codex_login_device_code_route_returns_verification_info(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider()
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_login_device_code()
+    assert response == {
+        "ok": True,
+        "state": "login_started",
+        "method": "chatgptDeviceCode",
+        "verification_url": "https://example.test/device",
+        "user_code": "ABCD-EFGH",
+    }
+    assert provider.device_code_calls == 1
+    # loginId 绝不返回
+    assert "loginId" not in response
+
+
+def test_codex_login_cancel_route(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider()
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_login_cancel()
+    assert response == {"ok": True, "state": "signed_out"}
+    assert provider.cancel_calls == 1
+
+
+def test_codex_rate_limits_route_masked(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(
+        rate_limits={
+            "reached": False,
+            "reached_type": None,
+            "plan_type": "pro",
+            "used_percent": 12,
+            "credits": {"has_credits": True, "unlimited": False},
+        }
+    )
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_rate_limits()
+    assert response["ok"] is True
+    assert response["rate_limits"]["used_percent"] == 12
+    assert response["rate_limits"]["plan_type"] == "pro"
+    # 脱敏：无余额/limit/used 字符串
+    text = str(response)
+    for bad in ("balance", "123.45", "limitName", "limitId", "grantedAt"):
+        assert bad not in text, f"额度泄漏 {bad}"
+
+
+def test_codex_rate_limits_fail_closed_signed_out(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider()  # rate_limits=None → 抛 not_signed_in
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_rate_limits()
+    assert response["ok"] is False
+    assert response["code"] == "not_signed_in"
+
+
+def test_codex_restart_route(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(status=_signed_in_status())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_restart()
+    assert response["ok"] is True
+    assert response["state"] == "signed_in"
+    assert provider.restart_calls == 1
+
+
+def test_codex_crashed_status_surfaces_restartable(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(status={
+        "state": "crashed", "connected": False, "codex_available": True,
+        "account": None, "restartable": True, "code": "codex_crashed",
+        "error": "Codex app-server 进程异常退出。请点击「重启」恢复连接。",
+    })
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_status()
+    assert response["ok"] is True
+    assert response["state"] == "crashed"
+    assert response["restartable"] is True
+    # 错误信息可操作、不含内部细节
+    assert "进程异常退出" in response["error"]
+    for bad in ("token", "Bearer", "authUrl", "loginId"):
+        assert bad not in str(response), f"泄漏 {bad}"
+
+
+def test_codex_status_quota_exhausted_with_rate_limits(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(status={
+        "state": "quota_exhausted", "connected": True, "codex_available": True,
+        "account": {"email_masked": "jo***@example.com", "plan_type": "pro"},
+        "rate_limits": {"reached": True, "reached_type": "rate_limit_reached", "used_percent": 100},
+        "error": "ChatGPT 订阅额度已耗尽或已达到用量上限。",
+    })
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_status()
+    assert response["state"] == "quota_exhausted"
+    assert response["connected"] is True
+    assert response["rate_limits"]["reached"] is True
+
+
+def _config_with_other_providers(tmp_path):
+    """带 deepseek key + custom provider 的配置，用于验证 codex 失败不清空。"""
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    config.llm.provider_keys["deepseek"] = "dk-12345"
+    config.llm.custom_providers = [
+        {
+            "name": "myproxy",
+            "api": "https://proxy.example/v1",
+            "api_key": "proxy-key-999",
+            "models": [{"alias": "my-model", "model": "gpt-5"}],
+        }
+    ]
+    return config
+
+
+def test_codex_login_failure_does_not_clear_other_providers(tmp_path, monkeypatch):
+    """D2：登录失败/过期绝不会清空其他 provider 配置（config 文件与内存都不动）。"""
+    _clear_codex_test_env(monkeypatch)
+    config = _config_with_other_providers(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config.save(str(config_path))
+    before = config_path.read_bytes()
+
+    class _LeakyProvider(_FakeCodexProvider):
+        def login_start(self):
+            raise RuntimeError("upstream login failed: access_token=SUPERSECRET")
+
+    service = _make_codex_service(config, config_path, _LeakyProvider())
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    assert "SUPERSECRET" not in str(response)
+    # config 文件字节不变
+    assert config_path.read_bytes() == before
+    # 内存中其他 provider 配置保留
+    assert config.llm.provider_keys.get("deepseek") == "dk-12345"
+    assert config.llm.custom_providers[0]["api_key"] == "proxy-key-999"
+    assert config.llm.model == "deepseek-chat"
+
+
+def test_codex_login_expiry_does_not_clear_other_providers(tmp_path, monkeypatch):
+    """D2：登录过期（status 变 signed_out/error）不影响其他 provider 的保存与配置。"""
+    _clear_codex_test_env(monkeypatch)
+    config = _config_with_other_providers(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config.save(str(config_path))
+
+    # 登录过期：codex status 变成 signed_out（过期 → 需重新登录）
+    provider = _FakeCodexProvider(status={
+        "state": "signed_out", "connected": False, "codex_available": True, "account": None,
+    })
+    session = SimpleNamespace(
+        llm_model="deepseek-chat",
+        llm_api_key=config.llm.resolve_api_key() or "",
+        llm_api_base=config.llm.resolve_api_base() or "",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=config_path,
+    )
+    service = WorkbenchSettingsService(
+        session, llm_adapter_factory=lambda _c: None, codex_provider=provider,
+    )
+    # 过期后保存其他 provider 的 key 依然成功，且 codex 配置不被触碰
+    response = service.update_llm_api_key({"model": "deepseek-chat", "api_key": "dk-NEW"})
+    assert response["ok"] is True
+    reloaded = GDLAgentConfig.load(str(config_path))
+    assert reloaded.llm.provider_keys.get("deepseek") == "dk-NEW"
+    assert reloaded.llm.model == "deepseek-chat"
+    # codex 登录态失败不影响其他 provider 的可用性判断
+    llm = service.llm_settings()
+    assert llm["model"] == "deepseek-chat"
+
+
+def test_codex_login_expiry_does_not_clear_custom_providers(tmp_path, monkeypatch):
+    """D2：codex 过期状态保存其他自定义 provider 的 key 时 custom 条目保留。"""
+    _clear_codex_test_env(monkeypatch)
+    config = _config_with_other_providers(tmp_path)
+    config_path = tmp_path / "config.toml"
+    config.save(str(config_path))
+    provider = _FakeCodexProvider(status={
+        "state": "signed_out", "connected": False, "codex_available": True, "account": None,
+    })
+    session = SimpleNamespace(
+        llm_model="my-model",
+        llm_api_key="proxy-key-999",
+        llm_api_base="https://proxy.example/v1",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=config_path,
+    )
+    service = WorkbenchSettingsService(
+        session, llm_adapter_factory=lambda _c: None, codex_provider=provider,
+    )
+    response = service.update_llm_api_key({"model": "my-model", "api_key": "proxy-key-NEW"})
+    assert response["ok"] is True
+    reloaded = GDLAgentConfig.load(str(config_path))
+    entry = reloaded.llm.custom_providers[0]
+    assert entry["api_key"] == "proxy-key-NEW"
+    assert entry["api"] == "https://proxy.example/v1"
+
+
+def test_codex_switch_account_requires_explicit_logout(tmp_path, monkeypatch):
+    """D2：切换账号必须显式退出/确认——退出后 fail closed，绝不复用未知凭据。"""
+    _clear_codex_test_env(monkeypatch)
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    provider = _FakeCodexProvider(status=_signed_in_status())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    # 账号切换语义：先显式 logout → 模型 fail closed → 再重新 login
+    service.codex_logout()
+    assert provider.logout_calls == 1
+    # 退出后 codex 模型立即不可用（不复用未知/旧凭据，不 fallback 到任何 key）
+    provider.status_result = {
+        "state": "signed_out", "connected": False, "codex_available": True, "account": None,
+    }
+    llm = service.llm_settings()
+    assert llm["model_available"] is False
+    # 重新登录：打开全新的浏览器 flow（新账号），绝不复用旧登录态
+    service.codex_login_start()
+    assert provider.login_calls == 1
+
+
+# ── P0-1 三层绕过：service / route 层同样拒绝「已登录再登录 / pending 再登录」──
+
+
+class _RealProviderFakeClient:
+    """真实 CodexProvider + fake client：验证 service/route 层门禁不依赖 UI。"""
+
+    def __init__(self, account=None):
+        self.started = False
+        self.account = account
+        self.login_calls = 0
+        self.logout_calls = 0
+        self.login_cancel_calls = 0
+        self.model_list_calls = 0
+        self.rate_limits_calls = 0
+        self.closed = False
+        self.server_version = (0, 147, 0)
+
+    @property
+    def transport(self):
+        return None
+
+    def start(self):
+        self.started = True
+
+    def initialize(self):
+        return {"userAgent": "openbrep/0.147.0 (Mac OS)"}
+
+    def account_read(self):
+        return {"account": self.account, "requiresOpenaiAuth": self.account is None}
+
+    def account_login_start(self, login_type):
+        self.login_calls += 1
+        if login_type == "chatgptDeviceCode":
+            return {
+                "type": "chatgptDeviceCode",
+                "loginId": "L1",
+                "verificationUrl": "https://example.test/device",
+                "userCode": "ABCD-EFGH",
+            }
+        return {"type": "chatgpt", "loginId": "L1", "authUrl": "https://auth.example.test/oauth"}
+
+    def account_login_cancel(self, login_id):
+        self.login_cancel_calls += 1
+        return {"status": "canceled"}
+
+    def account_logout(self):
+        self.logout_calls += 1
+        self.account = None
+        return {}
+
+    def account_rate_limits_read(self):
+        self.rate_limits_calls += 1
+        raise RuntimeError("not signed in")
+
+    def model_list(self):
+        self.model_list_calls += 1
+        return {"data": [{"id": "gpt-5.6-luna", "model": "gpt-5.6-luna", "displayName": "GPT-5.6 Luna"}], "nextCursor": None}
+
+    def close(self):
+        self.closed = True
+
+
+def _real_provider_service(tmp_path, client):
+    from openbrep.codex.provider import CodexProvider
+
+    config = GDLAgentConfig()
+    provider = CodexProvider(
+        codex_home=tmp_path / "codex-home",
+        client_factory=lambda: client,
+        cli_available=True,
+        browser_opener=lambda url: None,
+    )
+    session = SimpleNamespace(
+        llm_model=config.llm.model,
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+    )
+    service = WorkbenchSettingsService(
+        session, llm_adapter_factory=lambda _c: None, codex_provider=provider,
+    )
+    return service, provider
+
+
+def test_service_login_while_signed_in_rejected(tmp_path):
+    """P0-1：service 层——已登录时 login/start 返回稳定 already_signed_in，不发 RPC。"""
+    client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
+    service, provider = _real_provider_service(tmp_path, client)
+    response = service.codex_login_start()
+    assert response["ok"] is False
+    assert response["code"] == "codex_app_server"
+    assert "已连接" in response["error"]
+    assert "断开连接" in response["error"]
+    assert client.login_calls == 0
+    provider.close()
+
+
+def test_service_double_start_rejected(tmp_path):
+    """P0-1：service 层——pending 中再登录返回稳定 login_already_pending。"""
+    client = _RealProviderFakeClient(account=None)
+    service, provider = _real_provider_service(tmp_path, client)
+    first = service.codex_login_start()
+    assert first["ok"] is True
+    second = service.codex_login_start()
+    assert second["ok"] is False
+    assert "正在进行" in second["error"]
+    assert client.login_calls == 1
+    service.codex_login_cancel()
+    provider.close()
+
+
+def test_route_login_while_signed_in_rejected(tmp_path):
+    """P0-1：route 层——已登录时 POST /login/start 拒绝，绝不发 login RPC。"""
+    from openbrep.codex.provider import CodexProvider
+
+    client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
+    config = GDLAgentConfig()
+    provider = CodexProvider(
+        codex_home=tmp_path / "codex-home",
+        client_factory=lambda: client,
+        cli_available=True,
+        browser_opener=lambda url: None,
+    )
+    from openbrep.workbench_api import WorkbenchSession
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.settings_service.codex_provider = provider
+    response = session.route("POST", "/api/settings/llm/codex/login/start", {})
+    assert response["ok"] is False
+    assert "已连接" in response["error"]
+    assert client.login_calls == 0
+    provider.close()
+
+
+def test_route_device_code_while_signed_in_rejected(tmp_path):
+    """P0-1：route 层——已登录时 device-code 同样拒绝。"""
+    from openbrep.codex.provider import CodexProvider
+
+    client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
+    provider = CodexProvider(
+        codex_home=tmp_path / "codex-home",
+        client_factory=lambda: client,
+        cli_available=True,
+        browser_opener=lambda url: None,
+    )
+    from openbrep.workbench_api import WorkbenchSession
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.settings_service.codex_provider = provider
+    response = session.route("POST", "/api/settings/llm/codex/login/device-code", {})
+    assert response["ok"] is False
+    assert "已连接" in response["error"]
+    assert client.login_calls == 0
+    provider.close()

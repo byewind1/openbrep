@@ -16,7 +16,9 @@ from openbrep.codex.app_server import (
 from openbrep.codex.provider import (
     CodexNotSignedInError,
     CodexProvider,
+    CodexVersionIncompatibleError,
     mask_email,
+    mask_rate_limits,
 )
 
 __all__ = [
@@ -25,7 +27,9 @@ __all__ = [
     "CodexCliUnavailableError",
     "CodexNotSignedInError",
     "CodexProvider",
+    "CodexVersionIncompatibleError",
     "StdioJsonRpcTransport",
     "default_codex_home",
     "mask_email",
+    "mask_rate_limits",
 ]

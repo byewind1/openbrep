@@ -14,9 +14,13 @@ import type {
   DeleteMemoryLessonResult,
   IgnoreMemoryLessonResult,
   MockCompileResponse,
+  CodexDeviceCodeResult,
+  CodexLoginCancelResult,
   CodexLoginStartResult,
   CodexLogoutResult,
   CodexModelsResult,
+  CodexRateLimitsResult,
+  CodexRestartResult,
   CodexStatus,
   CompilerSettings,
   CompilerSettingsResult,
@@ -613,6 +617,40 @@ export async function fetchCodexModels(): Promise<CodexModelsResult> {
   return requestJson<CodexModelsResult>(
     '/api/settings/llm/codex/models',
     { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+// ── Codex BYOA（D2）：取消 / 设备码 / 额度 / 重启 ───────────────────────────
+
+export async function codexLoginCancel(): Promise<CodexLoginCancelResult> {
+  return requestJson<CodexLoginCancelResult>(
+    '/api/settings/llm/codex/login/cancel',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function codexLoginDeviceCode(): Promise<CodexDeviceCodeResult> {
+  return requestJson<CodexDeviceCodeResult>(
+    '/api/settings/llm/codex/login/device-code',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchCodexRateLimits(): Promise<CodexRateLimitsResult> {
+  return requestJson<CodexRateLimitsResult>(
+    '/api/settings/llm/codex/rate-limits',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function codexRestart(): Promise<CodexRestartResult> {
+  return requestJson<CodexRestartResult>(
+    '/api/settings/llm/codex/restart',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
