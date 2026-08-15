@@ -77,6 +77,7 @@ def main() -> None:
     rate_mode = os.environ.get("FAKE_CODEX_RATE_LIMITS", "unauth")
     notify = os.environ.get("FAKE_CODEX_NOTIFY", "")
     delay = float(os.environ.get("FAKE_CODEX_DELAY_RESPONSE_SECONDS", "0"))
+    delay_once_marker = os.environ.get("FAKE_CODEX_DELAY_ONCE_MARKER", "")
     crash_after = int(os.environ.get("FAKE_CODEX_CRASH_AFTER_REQUESTS", "0"))
     crash_marker = os.environ.get("FAKE_CODEX_CRASH_MARKER", "")
     if crash_after and crash_marker and os.path.exists(crash_marker):
@@ -132,7 +133,18 @@ def main() -> None:
         method = msg.get("method") or ""
         delay_method = os.environ.get("FAKE_CODEX_DELAY_METHOD", "")
         if delay and (not delay_method or method == delay_method):
-            time.sleep(delay)
+            # 一次性延迟：marker 已存在则本次不延迟（用于「超时→关闭→重试」
+            # 测试：新进程看到 marker 后正常响应）
+            if delay_once_marker and os.path.exists(delay_once_marker):
+                pass
+            else:
+                if delay_once_marker:
+                    try:
+                        with open(delay_once_marker, "w", encoding="utf-8") as f:
+                            f.write("1")
+                    except OSError:
+                        pass
+                time.sleep(delay)
         elif delay_first and handled == 0:
             time.sleep(delay_first)
         if notify:

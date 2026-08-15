@@ -924,6 +924,35 @@ class TestCodexD2ProviderWireIntegration(unittest.TestCase):
             with self.assertRaises(CodexNotSignedInError):
                 provider.rate_limits()
 
+    def test_start_timeout_closes_app_server_and_retry_clean(self):
+        """第五轮 P0（真实管道）：login/start 延迟超 rpc_timeout → 失败后
+        app-server 被关闭（无遗留进程）；重试创建干净的新 client 并成功。"""
+        import tempfile
+
+        marker = Path(tempfile.mkdtemp(prefix="obr-d2-delay-once-")) / "delayed"
+        with self._provider(
+            extra_env={
+                "FAKE_CODEX_DELAY_METHOD": "account/login/start",
+                "FAKE_CODEX_DELAY_RESPONSE_SECONDS": "3.0",
+                "FAKE_CODEX_DELAY_ONCE_MARKER": str(marker),
+            },
+            rpc_timeout=0.5,
+        ) as provider:
+            with self.assertRaises(CodexAppServerError) as ctx:
+                provider.login_start()
+            self.assertEqual(ctx.exception.category, "timeout")
+            # app-server 已关闭、start 会话完整退役
+            self.assertIsNone(provider._client)
+            self.assertIsNone(provider._login_start_inflight)
+            self.assertFalse(provider._login_pending)
+            self.assertEqual(provider._completed_login_ids, deque())
+            # 重试（一次性延迟已消费）→ 干净的新 client + 成功登录
+            result = provider.login_start()
+            self.assertEqual(result["state"], "login_started")
+            self.assertTrue(provider._login_pending)
+            cancel_result = provider.login_cancel()
+            self.assertEqual(cancel_result["state"], "signed_out")
+
 
 # ── P0-1：账户状态机表驱动（signed_out/pending/signed_in × 动作）─────────────
 
@@ -2388,7 +2417,7 @@ class TestCodexSameSessionRetry(unittest.TestCase):
         self.assertEqual(result["state"], "login_started")
         self.assertTrue(provider._login_pending, "成功重试被 tombstone 吞掉")
         self.assertEqual(provider._pending_login_id, "fake-login-id")
-        cancel = provider.login_cancel()
+        provider.login_cancel()
         self.assertEqual(client.login_cancel_calls, 1)
         provider.close()
 
@@ -2409,7 +2438,9 @@ class TestCodexSameSessionRetry(unittest.TestCase):
                 "params": {"loginId": "fake-login-id", "success": True, "error": None},
             }
         )
-        self.assertEqual(provider._completed_login_ids, deque(), "stale completion 不得埋 tombstone")
+        self.assertEqual(
+            provider._completed_login_ids, deque(), "stale completion 不得埋 tombstone"
+        )
         # 后续同 id 登录正常进入 pending
         result = provider.login_start()
         self.assertEqual(result["state"], "login_started")
@@ -2439,4 +2470,125 @@ class TestCodexSameSessionRetry(unittest.TestCase):
         cancel = provider.login_cancel()
         self.assertEqual(cancel["state"], "signed_out")
         self.assertEqual(client.login_cancel_calls, 2)
+        provider.close()
+
+
+# ── 第五轮 P0：start RPC 失败（服务端可能已开始）→ 完整退役 + 关闭 client ──
+
+
+class _FailingStartClient(_D2FakeClient):
+    """login/start 先标记 server flow 已开始，再抛指定异常。"""
+
+    def __init__(self, error, *, account=None):
+        super().__init__(account=account)
+        self._error = error
+        self.server_flow_started = False
+
+    def account_login_start(self, login_type):
+        self.login_calls += 1
+        self.server_flow_started = True
+        raise self._error
+
+
+class TestCodexStartRpcFailureCleanup(unittest.TestCase):
+    """第五轮 P0：start RPC 在取得 loginId 前失败 → 退役 token/tombstone/pending、
+    关闭 app-server，UI 与服务端流程不会失去对应关系。"""
+
+    def test_rpc_failure_aborts_session_and_closes_client(self):
+        """RPC 抛 timeout/EOF/rpc error：client closed、provider 无 client、
+        token=None、pending=false、tombstone 空，原 category 保留。"""
+        for exc in (
+            CodexAppServerError("request timeout", category="timeout"),
+            CodexAppServerError("process exited", category="process_exited"),
+            CodexAppServerError("rpc failed", category="rpc_error"),
+        ):
+            client = _FailingStartClient(exc)
+            provider = CodexProvider(
+                codex_home=Path("/tmp/obr-codex-start-fail"),
+                client_factory=lambda: client,
+                cli_available=True,
+                browser_opener=lambda url: None,
+            )
+            with self.assertRaises(CodexAppServerError) as ctx:
+                provider.login_start()
+            self.assertEqual(
+                ctx.exception.category, exc.category, f"{exc.category} 的 category 未保留"
+            )
+            self.assertTrue(client.server_flow_started)
+            self.assertTrue(client.closed, f"{exc.category}: app-server 未关闭")
+            self.assertIsNone(provider._client, f"{exc.category}: provider 仍持有 client")
+            self.assertIsNone(provider._login_start_inflight, f"{exc.category}: token 未退役")
+            self.assertFalse(provider._login_pending)
+            self.assertIsNone(provider._pending_login_id)
+            self.assertEqual(provider._completed_login_ids, deque())
+            provider.close()
+
+    def test_rpc_failure_message_with_secret_never_logged(self):
+        """异常原文（含 Bearer 秘密）不得进日志；只记稳定类别/类名。"""
+        import logging
+
+        records: list[str] = []
+        handler = logging.Handler()
+        handler.emit = lambda record: records.append(record.getMessage())
+        logger = logging.getLogger("openbrep.codex.provider")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+
+        client = _FailingStartClient(
+            CodexAppServerError("Authorization: Bearer START-RPC-SECRET", category="timeout")
+        )
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-start-secret"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        try:
+            with self.assertRaises(CodexAppServerError) as ctx:
+                provider.login_start()
+            self.assertEqual(ctx.exception.category, "timeout")
+        finally:
+            provider.close()
+            logger.removeHandler(handler)
+        joined = "\n".join(records)
+        self.assertNotIn("START-RPC-SECRET", joined, "start RPC 失败原文进日志")
+        self.assertNotIn("Bearer", joined)
+
+    def test_wrong_type_response_cleans_token_and_closes_client(self):
+        """响应类型非法（如 apiKey）：_abort_start_session 完整清理。"""
+        client = _D2FakeClient(login_result={"type": "apiKey", "loginId": "L"})
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-start-type"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        with self.assertRaises(CodexAppServerError):
+            provider.login_start()
+        self.assertTrue(client.closed)
+        self.assertIsNone(provider._client)
+        self.assertIsNone(provider._login_start_inflight)
+        self.assertFalse(provider._login_pending)
+        self.assertEqual(provider._completed_login_ids, deque())
+        provider.close()
+
+    def test_missing_login_id_cleans_token_and_closes_client(self):
+        """loginId 缺失：_abort_start_session 完整清理（比只断言 closed 更严）。"""
+        client = _D2FakeClient(
+            login_result={"type": "chatgpt", "authUrl": "https://auth.openai.com/x"}
+        )
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-start-nolid"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        with self.assertRaises(CodexAppServerError) as ctx:
+            provider.login_start()
+        self.assertEqual(ctx.exception.category, "login_failed")
+        self.assertTrue(client.closed)
+        self.assertIsNone(provider._client)
+        self.assertIsNone(provider._login_start_inflight)
+        self.assertFalse(provider._login_pending)
+        self.assertEqual(provider._completed_login_ids, deque())
         provider.close()

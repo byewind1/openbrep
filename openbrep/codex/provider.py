@@ -755,6 +755,30 @@ class CodexProvider:
                 self._client = None
         self._bump_generation()
 
+    def _abort_start_session(self, client: Any) -> None:
+        """start RPC 在取得有效 loginId 前失败/非法（第五轮 P0）的统一清理边界。
+
+        服务端流程可能已开始，但客户端没有可靠 loginId 可精确 cancel——必须
+        关闭 app-server 强制终止，并完整退役本次 start 会话：
+        - 清 _login_start_inflight 与绑定该 token 的 early tombstone；
+        - 清 pending/id/login_failure；
+        - 关闭当前 client/app-server（_close_client 内部递增 generation 并清缓存）；
+        - 清理异常不得覆盖主异常（调用方负责 re-raise 原异常）。
+        """
+        self._close_client(client)
+        with self._lock:
+            token = self._login_start_inflight
+            self._login_start_inflight = None
+            self._pending_login_id = None
+            self._login_pending = False
+            self._login_failure = None
+            if token:
+                kept = deque(maxlen=_COMPLETED_LOGIN_CAP)
+                for entry in self._completed_login_ids:
+                    if entry[0] != token:
+                        kept.append(entry)
+                self._completed_login_ids = kept
+
     def _rollback_login(self, client: Any, login_id: str) -> None:
         """登录启动失败（校验/opener 异常）回滚（P0-2）：
         有可取消的 loginId → best-effort cancel；否则关闭 app-server 强制
@@ -822,16 +846,23 @@ class CodexProvider:
             # 响应前到达（情况 A），只绑定本次 start 会话；重试（同 id）不受影响。
             self._start_seq += 1
             self._login_start_inflight = f"start-{self._start_seq}"
-        if login_type == "chatgpt" and not hasattr(client, "account_login_start"):
-            # D1 兼容：旧 fake/客户端只暴露 account_login_start_chatgpt()
-            result = client.account_login_start_chatgpt()
-        else:
-            result = client.account_login_start(login_type)
+        try:
+            if login_type == "chatgpt" and not hasattr(client, "account_login_start"):
+                # D1 兼容：旧 fake/客户端只暴露 account_login_start_chatgpt()
+                result = client.account_login_start_chatgpt()
+            else:
+                result = client.account_login_start(login_type)
+        except Exception:  # noqa: BLE001 —— 原异常直接 re-raise 保留稳定 category
+            # 第五轮 P0：RPC 失败（timeout/EOF/rpc error）——服务端流程可能已
+            # 开始但客户端无 loginId → 关闭 app-server 强制终止 + 完整退役 start
+            # 会话；re-raise 保留原异常的稳定 category（不记录/返回上游秘密原文）。
+            self._abort_start_session(client)
+            raise
         if result.get("type") not in ALLOWED_LOGIN_TYPES or result.get("type") != login_type:
             # P0-2：白名单拒绝——server 侧流程可能已开始（如 apiKey），
             # 无法按 id 取消 → 关闭 app-server 强制终止；绝不把原始登录响应
             # （可能含 authUrl/loginId）拼进错误文本。
-            self._close_client(client)
+            self._abort_start_session(client)
             raise CodexAppServerError(
                 "登录服务未返回所请求的 ChatGPT 浏览器/设备码流程，无法继续登录。",
                 category="login_failed",
@@ -839,7 +870,7 @@ class CodexProvider:
         login_id = result.get("loginId")
         if not self._validate_login_id(login_id):
             # P0-2：loginId 缺失/非法 → 无法按 id 取消 → 关闭 app-server
-            self._close_client(client)
+            self._abort_start_session(client)
             raise CodexAppServerError(
                 "登录服务未返回有效的登录会话标识，无法继续登录。",
                 category="login_failed",
