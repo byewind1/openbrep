@@ -263,12 +263,17 @@ class CodexProvider:
         # 登录失败/过期提示（completion 通知 failure 时置位，TTL 内随 status 返回）
         self._login_failure: str | None = None
         self._login_failure_ts = 0.0
-        # P0-2/P0-3：已完成的登录 tombstone（有界，(generation, loginId, success)）
-        # ——completion 先于 start 响应到达或迟到时，_commit_pending 据此不提交
-        # 已完成的会话；tombstone 绑定 generation，重启/登出/换 client 即失效。
-        self._completed_login_ids: deque[tuple[int, str, bool]] = deque(
+        # P0-2/P0-3：early-completion tombstone（有界，(start_token, loginId,
+        # success)）——只记录「start RPC 已发出、pending 尚未提交」时提前到达的
+        # completion，供 _commit_pending 判重；tombstone 绑定具体 start 会话
+        # token，同一会话内的正常重试（app-server 重用 loginId）绝不受影响。
+        self._completed_login_ids: deque[tuple[str, str, bool]] = deque(
             maxlen=_COMPLETED_LOGIN_CAP
         )
+        # 当前 start RPC 在途会话 token（login/start 发出前置位，_commit_pending/
+        # 回滚清位）；early completion 只绑定该 token 的 start 会话。
+        self._login_start_inflight: str | None = None
+        self._start_seq = 0
         # P0-2：生命周期操作专用锁——串行化 start/cancel/logout/restart/client
         # replacement，保证 in-flight RPC 结果不会跨 restart 写回 provider 状态。
         self._op_lock = threading.Lock()
@@ -395,9 +400,13 @@ class CodexProvider:
                 self._rate_limits_ts = 0.0
                 self._rate_limits_gen = None
         elif method == "account/login/completed":
-            # P0-2：completion 必须与当前 pending loginId 精确关联——
-            # 旧 id / 未知 id / 无 id 一律忽略（绝不清掉其他进行中的登录流程），
-            # 只记有界 tombstone 供乱序/迟到场景判重。
+            # P0-2：completion 必须与当前登录流程精确关联——按三种情形处理：
+            #  A. start RPC 在途、pending 尚未提交（completion 先于 start 响应）：
+            #     记绑定该 start 会话 token 的 tombstone，供 _commit_pending 判重；
+            #  B. 命中已提交的当前 pending：直接完成状态机，**不留 tombstone**
+            #     （否则同一会话内 app-server 重用 loginId 的正常重试会被吞掉）；
+            #  C. 无 pending 且无 start 在途的 stale/未知 completion：忽略，
+            #     绝不埋 tombstone 影响未来登录。
             params = msg.get("params")
             login_id: str | None = None
             success: Any = None
@@ -408,33 +417,42 @@ class CodexProvider:
             now = time.monotonic()
             with self._lock:
                 if login_id is None or not isinstance(success, bool):
-                    # P0-2/P0-3：无法关联（缺 loginId）或 success 非严格 boolean
-                    # 的畸形 completion → 忽略，绝不清当前 pending（静默清空会让
-                    # UI 与 app-server 登录会话失去对应关系）。
+                    # 无法关联（缺 loginId）或 success 非严格 boolean 的畸形
+                    # completion → 忽略，绝不清当前 pending。
                     return
                 current = self._pending_login_id
-                if current is not None and login_id != current:
-                    # 旧/未知 id 的迟到 completion：只记（绑定当前 generation 的）
-                    # tombstone，不动当前 pending。
-                    self._completed_login_ids.append((self._generation, login_id, success))
+                if current is not None:
+                    if login_id != current:
+                        # 旧/未知 id 的迟到 completion：不动当前 pending，不留 tombstone
+                        return
+                    # 情况 B：命中已提交的 pending → 完成状态机
+                    self._login_pending = False
+                    self._pending_login_id = None
+                    self._apply_login_outcome(success, now)
+                    # P0-1：登录完成是账户会话变迁——旧 in-flight RPC 不得回写缓存
+                    self._bump_generation()
                     return
-                self._login_pending = False
-                self._pending_login_id = None
-                if success:
-                    self._login_failure = None
-                    self._login_failure_ts = 0.0
-                else:
-                    self._login_failure = "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
-                    self._login_failure_ts = now
-                # P0-1：登录完成是账户会话变迁——旧 in-flight RPC 不得回写缓存；
-                # bump 同时清空旧会话 tombstone（P0-3）。
-                self._bump_generation()
-                # tombstone 绑定新 generation：供 completion 先于 start 响应的
-                # 乱序场景判重；重启（再次 bump）后自动失效。
-                self._completed_login_ids.append((self._generation, login_id, success))
+                if self._login_start_inflight is not None:
+                    # 情况 A：completion 先于 start 响应（start RPC 在途、pending
+                    # 未提交）→ 记绑定该 start 会话 token 的 tombstone
+                    self._completed_login_ids.append(
+                        (self._login_start_inflight, login_id, success)
+                    )
+                    return
+                # 情况 C：stale/未知 completion → 忽略
+                return
         elif method == "account/updated":
             with self._lock:
                 self._bump_generation()
+
+    def _apply_login_outcome(self, success: bool, now: float) -> None:
+        """按 completion 结果设置登录失败提示（供完成状态机与 tombstone 消费共用）。"""
+        if success:
+            self._login_failure = None
+            self._login_failure_ts = 0.0
+        else:
+            self._login_failure = "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
+            self._login_failure_ts = now
 
     def _snapshot(self, *, heal: bool = True) -> tuple[Any, int]:
         """P0-1：原子 (client, generation) 快照。
@@ -755,9 +773,17 @@ class CodexProvider:
                 # 没有可用 loginId（缺失/非法）→ 无法取消 → 关闭 app-server
                 self._close_client(client)
         with self._lock:
+            token = self._login_start_inflight
+            self._login_start_inflight = None
             self._pending_login_id = None
             self._login_pending = False
             self._login_failure = None
+            # 丢弃本次 start 会话的 early-completion tombstone（token 已退役）
+            kept = deque(maxlen=_COMPLETED_LOGIN_CAP)
+            for entry in self._completed_login_ids:
+                if entry[0] != token:
+                    kept.append(entry)
+            self._completed_login_ids = kept
         self._bump_generation()
 
     def _ensure_can_login(self) -> None:
@@ -791,6 +817,11 @@ class CodexProvider:
                 category="login_failed",
             )
         client = self._get_client()
+        with self._lock:
+            # 第四轮 P0：start RPC 发出前置位 in-flight token——completion 若在
+            # 响应前到达（情况 A），只绑定本次 start 会话；重试（同 id）不受影响。
+            self._start_seq += 1
+            self._login_start_inflight = f"start-{self._start_seq}"
         if login_type == "chatgpt" and not hasattr(client, "account_login_start"):
             # D1 兼容：旧 fake/客户端只暴露 account_login_start_chatgpt()
             result = client.account_login_start_chatgpt()
@@ -817,38 +848,34 @@ class CodexProvider:
 
     def _commit_pending(self, client: Any, login_id: str) -> None:
         """提交 pending 状态（带 stale-commit 守卫：restart 换 client 后丢弃；
-        P0-2：completion 先于 start 响应到达时不再提交已完成的会话；
-        P0-3：tombstone 绑定 generation 且命中即消费——新会话重用同 id 不受
-        旧会话 tombstone 影响）。"""
+        P0-2：early completion（先于 start 响应）的 tombstone 命中即消费——
+        不提交已完成的会话；第四轮 P0：tombstone 只绑定本次 start 会话 token，
+        同一会话内的正常重试（app-server 重用 loginId）绝不受影响）。"""
         with self._lock:
             if self._client is not client:
                 raise CodexAppServerError(
                     "Codex app-server 已重启，登录流程已失效，请重新发起。",
                     category="closed",
                 )
-            gen = self._generation
-            # 乱序守卫：仅匹配「当前会话 + 同 id」的 tombstone，命中即消费（移除），
-            # 登录结果由 completion 决定（成功→清 pending；失败→login_error）。
-            matched: tuple[int, str, bool] | None = None
+            token = self._login_start_inflight
+            self._login_start_inflight = None  # 本次 start 会话结束
+            # 乱序守卫：仅消费「本次 start token + 同 id」的 early-completion
+            # tombstone；同 token 的其他条目（畸形）一并丢弃，其他会话条目保留
+            # （token 不同，永远不会匹配本次 commit）。
+            matched: tuple[str, str, bool] | None = None
             kept = deque(maxlen=_COMPLETED_LOGIN_CAP)
             for entry in self._completed_login_ids:
-                e_gen, e_id, e_success = entry
-                if e_gen == gen and e_id == login_id and matched is None:
-                    matched = entry
+                e_token, e_id, e_success = entry
+                if e_token == token:
+                    if e_id == login_id and matched is None:
+                        matched = entry
                 else:
                     kept.append(entry)
             self._completed_login_ids = kept
             if matched is not None:
                 self._pending_login_id = None
                 self._login_pending = False
-                if matched[2]:
-                    self._login_failure = None
-                    self._login_failure_ts = 0.0
-                else:
-                    self._login_failure = (
-                        "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
-                    )
-                    self._login_failure_ts = time.monotonic()
+                self._apply_login_outcome(matched[2], time.monotonic())
                 self._bump_generation()
                 return
             self._pending_login_id = login_id
@@ -966,6 +993,7 @@ class CodexProvider:
                 self._pending_login_id = None
                 self._login_pending = False
                 self._login_failure = None
+                self._login_start_inflight = None
             # P0-1：登出是账户会话变迁——旧 in-flight RPC 结果不得回写缓存
             self._bump_generation()
             return {"state": "signed_out"}
@@ -978,6 +1006,7 @@ class CodexProvider:
                 self._pending_login_id = None
                 self._login_pending = False
                 self._login_failure = None
+                self._login_start_inflight = None
                 # P0-1：重启 = 新会话——先递增 generation，旧 in-flight 请求
                 # 提交缓存时发现 generation 不匹配而被拒绝。
                 self._bump_generation()
@@ -1056,6 +1085,7 @@ class CodexProvider:
             client, self._client = self._client, None
             self._pending_login_id = None
             self._login_pending = False
+            self._login_start_inflight = None
             self._bump_generation()
         if client is not None:
             try:

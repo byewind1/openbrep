@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import threading
 import unittest
+from collections import deque
 from pathlib import Path
 
 from openbrep.codex.app_server import CodexAppServerError, CodexCliUnavailableError
@@ -608,7 +609,10 @@ class TestCodexD2Provider(unittest.TestCase):
         provider._on_notification({"method": "account/rateLimits/updated", "params": {}})
         provider.rate_limits()
         self.assertGreater(client.rate_limits_calls, before)
-        # account/login/completed → status + models 缓存失效（需可关联的 loginId）
+        # account/login/completed → status + models 缓存失效（命中已提交的 pending）
+        with provider._lock:
+            provider._pending_login_id = "fake-login-id"
+            provider._login_pending = True
         provider._on_notification(
             {
                 "method": "account/login/completed",
@@ -1908,7 +1912,9 @@ class TestCodexLoginIdValidation(unittest.TestCase):
             cli_available=True,
             browser_opener=lambda url: None,
         )
-        # 模拟 reader 先投递 completion（pending 尚未提交）
+        # 模拟 start RPC 在途（pending 尚未提交）时 reader 先投递 completion
+        with provider._lock:
+            provider._login_start_inflight = "start-1"
         provider._on_notification(
             {
                 "method": "account/login/completed",
@@ -2288,7 +2294,9 @@ class TestCodexCompletionTombstoneSessionBinding(unittest.TestCase):
             cli_available=True,
             browser_opener=lambda url: None,
         )
-        # completion 先于 start 响应到达（乱序）→ tombstone
+        # start RPC 在途时 completion 先于响应到达（乱序）→ 绑定 token 的 tombstone
+        with provider._lock:
+            provider._login_start_inflight = "start-1"
         provider._on_notification(
             {"method": "account/login/completed", "params": {"loginId": "X", "success": True}}
         )
@@ -2301,4 +2309,134 @@ class TestCodexCompletionTombstoneSessionBinding(unittest.TestCase):
         self.assertTrue(provider._login_pending)
         self.assertEqual(provider._pending_login_id, "X")
         provider.login_cancel()
+        provider.close()
+
+
+# ── 第四轮 P0：同会话同 id 正常重试不受 tombstone 影响 ─────────────────────
+
+
+class _SequentialLoginClient(_D2FakeClient):
+    """每次 login/start 返回序列中的下一个 loginId（模拟 app-server 重用 id）。"""
+
+    def __init__(self, ids, *, account=None):
+        super().__init__(account=account)
+        self._ids = iter(ids)
+
+    def account_login_start(self, login_type):
+        self.login_calls += 1
+        return {
+            "type": login_type if login_type in ("chatgpt", "chatgptDeviceCode") else "chatgpt",
+            "loginId": next(self._ids),
+            "authUrl": "https://auth.openai.com/oauth/authorize?state=fake",
+        }
+
+
+class TestCodexSameSessionRetry(unittest.TestCase):
+    """第四轮 P0：同一 app-server 会话内（不 restart）app-server 重用 loginId 的
+    正常重试，绝不被上一次 completion 留下的 tombstone 吞掉。"""
+
+    def test_retry_after_failure_same_id_commits_and_cancels(self):
+        """pending L1 completion failure → 不 restart → 再 start 返回 L1 →
+        新流程必须 pending 且 cancel 发 RPC。"""
+        client = _D2FakeClient()
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-retry-fail"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        provider.login_start()  # pending = fake-login-id
+        # completion failure（命中已提交的 pending）→ 完成状态机，不留 tombstone
+        provider._on_notification(
+            {
+                "method": "account/login/completed",
+                "params": {"loginId": "fake-login-id", "success": False, "error": "cancelled"},
+            }
+        )
+        self.assertFalse(provider._login_pending)
+        self.assertEqual(provider._completed_login_ids, deque())  # 无 tombstone
+        # 原地重试（不 restart）：app-server 重用同 id
+        result = provider.login_start()
+        self.assertEqual(result["state"], "login_started")
+        self.assertTrue(provider._login_pending, "重试被上一次 completion 的 tombstone 吞掉")
+        self.assertEqual(provider._pending_login_id, "fake-login-id")
+        cancel = provider.login_cancel()
+        self.assertEqual(cancel["state"], "signed_out")
+        self.assertEqual(client.login_cancel_calls, 1, "重试后的取消必须发 RPC")
+        provider.close()
+
+    def test_retry_after_success_same_id_commits(self):
+        """pending L1 completion success（账户状态尚未同步）→ 原地重试同 id，
+        不得被旧 tombstone 吞掉（新流程可轮询/取消）。"""
+        client = _D2FakeClient(account=None)  # 账户未同步（仍 signed_out）
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-retry-succ"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        provider.login_start()
+        provider._on_notification(
+            {
+                "method": "account/login/completed",
+                "params": {"loginId": "fake-login-id", "success": True, "error": None},
+            }
+        )
+        self.assertFalse(provider._login_pending)
+        self.assertEqual(provider._completed_login_ids, deque(), "正常完成不得留 tombstone")
+        result = provider.login_start()  # 原地重试同 id
+        self.assertEqual(result["state"], "login_started")
+        self.assertTrue(provider._login_pending, "成功重试被 tombstone 吞掉")
+        self.assertEqual(provider._pending_login_id, "fake-login-id")
+        cancel = provider.login_cancel()
+        self.assertEqual(client.login_cancel_calls, 1)
+        provider.close()
+
+    def test_stale_completion_without_start_inflight_ignored(self):
+        """无 pending、无 start 在途的 stale completion → 忽略，不留 tombstone，
+        后续同 id 登录不受影响。"""
+        client = _D2FakeClient()
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-stale"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        # stale completion（例如旧流程的迟到帧）
+        provider._on_notification(
+            {
+                "method": "account/login/completed",
+                "params": {"loginId": "fake-login-id", "success": True, "error": None},
+            }
+        )
+        self.assertEqual(provider._completed_login_ids, deque(), "stale completion 不得埋 tombstone")
+        # 后续同 id 登录正常进入 pending
+        result = provider.login_start()
+        self.assertEqual(result["state"], "login_started")
+        self.assertTrue(provider._login_pending)
+        provider.login_cancel()
+        provider.close()
+
+    def test_sequential_ids_cancel_old_start_new_late_old_completion(self):
+        """取消 L1 → 启动 L2（不同 id）→ L1 迟到 completion：不得清掉 L2。"""
+        client = _SequentialLoginClient(ids=["L1", "L2"])
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-seq"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        provider.login_start()   # pending = L1
+        provider.login_cancel()  # 取消 L1
+        provider.login_start()   # pending = L2
+        self.assertEqual(provider._pending_login_id, "L2")
+        # L1 的迟到 completion（不同 id）→ 忽略，不动 L2
+        provider._on_notification(
+            {"method": "account/login/completed", "params": {"loginId": "L1", "success": True}}
+        )
+        self.assertTrue(provider._login_pending)
+        self.assertEqual(provider._pending_login_id, "L2")
+        cancel = provider.login_cancel()
+        self.assertEqual(cancel["state"], "signed_out")
+        self.assertEqual(client.login_cancel_calls, 2)
         provider.close()
