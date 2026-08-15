@@ -119,6 +119,7 @@ def main() -> None:
     handled = 0
     delay_first = float(os.environ.get("FAKE_CODEX_DELAY_FIRST_RESPONSE_SECONDS", "0"))
     malformed_sent = False
+    poison_sent = False
     for raw in sys.stdin:
         line = raw.strip()
         if not line:
@@ -136,6 +137,10 @@ def main() -> None:
             time.sleep(delay_first)
         if notify:
             _send(_notify_payload(notify))
+        # P0-3：unsolicited 响应污染测试——首个请求前先发一个未来 id 的伪响应
+        if os.environ.get("FAKE_CODEX_UNSOLICITED_POISON") and not poison_sent:
+            poison_sent = True
+            _send({"jsonrpc": "2.0", "id": rid + 2, "result": {"value": "POISON"}})
         handled += 1
 
         if method == "initialize":
@@ -204,7 +209,11 @@ def main() -> None:
                 rl = {
                     "limitId": "codex",
                     "limitName": "Codex",
-                    "primary": {"usedPercent": 100, "windowDurationMins": 360, "resetsAt": 1786800000},
+                    "primary": {
+                        "usedPercent": 100,
+                        "windowDurationMins": 360,
+                        "resetsAt": 1786800000,
+                    },
                     "credits": {"hasCredits": False, "unlimited": False, "balance": "0"},
                     "spendControlReached": False,
                     "planType": "pro",
@@ -214,7 +223,11 @@ def main() -> None:
                 rl = {
                     "limitId": "codex",
                     "limitName": "Codex",
-                    "primary": {"usedPercent": 12, "windowDurationMins": 360, "resetsAt": 1786800000},
+                    "primary": {
+                        "usedPercent": 12,
+                        "windowDurationMins": 360,
+                        "resetsAt": 1786800000,
+                    },
                     "credits": {"hasCredits": True, "unlimited": False, "balance": "123.45"},
                     "spendControlReached": False,
                     "planType": "pro",

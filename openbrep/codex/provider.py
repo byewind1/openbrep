@@ -19,14 +19,16 @@ from __future__ import annotations
 
 import atexit
 import logging
+import re
 import shutil
 import threading
 import time
 import webbrowser
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
-from openbrep.config import CODEX_PROVIDER_NAME
 from openbrep.codex.app_server import (
     CodexAppServerClient,
     CodexAppServerError,
@@ -34,6 +36,7 @@ from openbrep.codex.app_server import (
     default_codex_home,
 )
 from openbrep.codex.errors import error_response
+from openbrep.config import CODEX_PROVIDER_NAME
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,19 +90,34 @@ def mask_email(email: str) -> str:
 
 # 上游 rateLimits 的合法枚举（来自 codex 0.147.0 生成绑定）；不在枚举内的
 # 产品字符串也必须通过严格字符集/长度校验，绝不透传任意上游字符串。
-_RATE_LIMIT_REACHED_TYPES = frozenset({
-    "rate_limit_reached",
-    "workspace_owner_credits_depleted",
-    "workspace_member_credits_depleted",
-    "workspace_owner_usage_limit_reached",
-    "workspace_member_usage_limit_reached",
-})
-_PLAN_TYPES = frozenset({
-    "free", "go", "plus", "pro", "prolite", "team",
-    "self_serve_business_prolite", "self_serve_business_usage_based",
-    "business", "ent26", "enterprise_cbp_automation",
-    "enterprise_cbp_usage_based", "enterprise", "edu", "unknown",
-})
+_RATE_LIMIT_REACHED_TYPES = frozenset(
+    {
+        "rate_limit_reached",
+        "workspace_owner_credits_depleted",
+        "workspace_member_credits_depleted",
+        "workspace_owner_usage_limit_reached",
+        "workspace_member_usage_limit_reached",
+    }
+)
+_PLAN_TYPES = frozenset(
+    {
+        "free",
+        "go",
+        "plus",
+        "pro",
+        "prolite",
+        "team",
+        "self_serve_business_prolite",
+        "self_serve_business_usage_based",
+        "business",
+        "ent26",
+        "enterprise_cbp_automation",
+        "enterprise_cbp_usage_based",
+        "enterprise",
+        "edu",
+        "unknown",
+    }
+)
 
 
 def _strict_bool(value: Any, default: bool | None = None) -> bool | None:
@@ -135,16 +153,18 @@ def _strict_enum(value: Any, allowed: frozenset[str], default: str | None = None
     return default
 
 
-def _product_string(value: Any, *, max_len: int = 64) -> str | None:
-    """严格长度 + 字符集的产品字符串（拒绝任意上游字符串/嵌套对象）。"""
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not (1 <= len(text) <= max_len):
-        return None
-    if not all(ch.isalnum() or ch in "-_" for ch in text):
-        return None
-    return text
+def _sanitize_plan_type(value: Any) -> str | None:
+    """plan type 只允许明确枚举（P0-5）：未知/非字符串一律 None，绝不回显
+    任意上游字符串（含纯字母数字 canary）。account 与 rate-limit 共用本函数。"""
+    return _strict_enum(value, _PLAN_TYPES)
+
+
+# loginId 校验：非空、有界、ASCII 可见字符的 opaque 内部标识（P0-2）
+_LOGIN_ID_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{1,128}$")
+# device user code：显式 ASCII 字符集 + 长度上限（P1）
+_USER_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+# 已完成的登录 id tombstone 上限（P0-2：completion 乱序/迟到有界记录）
+_COMPLETED_LOGIN_CAP = 32
 
 
 def _credits_summary(value: Any) -> dict[str, bool] | None:
@@ -173,11 +193,12 @@ def mask_rate_limits(raw: dict[str, Any]) -> dict[str, Any]:
         primary = {}
     reached_type = _strict_enum(rl.get("rateLimitReachedType"), _RATE_LIMIT_REACHED_TYPES)
     spend_reached = _strict_bool(rl.get("spendControlReached"))
-    plan = _strict_enum(rl.get("planType"), _PLAN_TYPES)
-    if plan is None:
-        plan = _product_string(rl.get("planType"), max_len=32)
+    # P0-5：plan type 只允许明确枚举——绝不回显任意上游字符串（含裸字母数字）
+    plan = _sanitize_plan_type(rl.get("planType"))
     used_percent = _finite_number(primary.get("usedPercent"), min_value=0, max_value=100)
-    window_mins = _finite_number(primary.get("windowDurationMins"), min_value=0, max_value=1_000_000)
+    window_mins = _finite_number(
+        primary.get("windowDurationMins"), min_value=0, max_value=1_000_000
+    )
     resets_at = _finite_number(primary.get("resetsAt"), min_value=0, max_value=4_000_000_000)
     return {
         "reached": bool(reached_type is not None) or bool(spend_reached),
@@ -219,20 +240,34 @@ class CodexProvider:
         self._logger = logger or _LOGGER
         self._client: Any | None = None
         self._lock = threading.RLock()
+        # P0-1：账户会话 generation——任何 client 替换 / 登出 / 重启 / 关闭 /
+        # 登录完成等会话变迁都递增；缓存命中/写入必须绑定当前 generation，
+        # 旧 client 上迟到的 RPC 结果绝不回写新会话的缓存。
+        self._generation = 0
         self._status_cache: dict[str, Any] | None = None
         self._status_ts = 0.0
+        self._status_gen: int | None = None
         self._models_cache: list[dict[str, Any]] | None = None
         self._models_ts = 0.0
+        self._models_gen: int | None = None
         self.models_ttl = models_ttl if models_ttl is not None else _MODELS_TTL_SECONDS
-        self.rate_limits_ttl = rate_limits_ttl if rate_limits_ttl is not None else _RATE_LIMITS_TTL_SECONDS
+        self.rate_limits_ttl = (
+            rate_limits_ttl if rate_limits_ttl is not None else _RATE_LIMITS_TTL_SECONDS
+        )
         self._rate_limits_cache: dict[str, Any] | None = None
         self._rate_limits_ts = 0.0
+        self._rate_limits_gen: int | None = None
         self._pending_login_id: str | None = None
         # 登录进行中：login_start/device-code 后置 True，登录完成/取消/退出/重启清 False
         self._login_pending = False
         # 登录失败/过期提示（completion 通知 failure 时置位，TTL 内随 status 返回）
         self._login_failure: str | None = None
         self._login_failure_ts = 0.0
+        # P0-2：已完成的登录 id tombstone（有界）——completion 先于 start 响应
+        # 到达或迟到时，_commit_pending 据此不提交已完成的会话。
+        self._completed_login_ids: deque[tuple[str, bool | None]] = deque(
+            maxlen=_COMPLETED_LOGIN_CAP
+        )
         # P0-2：生命周期操作专用锁——串行化 start/cancel/logout/restart/client
         # replacement，保证 in-flight RPC 结果不会跨 restart 写回 provider 状态。
         self._op_lock = threading.Lock()
@@ -296,18 +331,12 @@ class CodexProvider:
                     self._pending_login_id = None
                     self._login_pending = False
                     # P1-3：崩溃立即失效所有缓存，避免旧账户/旧登录态残留
-                    self._status_cache = None
-                    self._status_ts = 0.0
-                    self._models_cache = None
-                    self._models_ts = 0.0
-                    self._rate_limits_cache = None
-                    self._rate_limits_ts = 0.0
+                    self._bump_generation()
                     client = None
             if client is None:
                 if not self.cli_available:
                     raise CodexCliUnavailableError(
-                        f"未检测到 Codex CLI（{self.codex_binary}）。"
-                        "请先安装 Codex CLI 后重试。"
+                        f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
                     )
                 if self._client_factory is not None:
                     self._client = self._client_factory()
@@ -316,6 +345,8 @@ class CodexProvider:
                         codex_binary=self.codex_binary,
                         codex_home=self.codex_home,
                     )
+                # P0-1：新 client 是新的账户会话——in-flight 旧请求不得回写缓存
+                self._bump_generation()
                 self._client.start()
                 try:
                     self._check_version(self._client)
@@ -361,45 +392,76 @@ class CodexProvider:
             with self._lock:
                 self._rate_limits_cache = None
                 self._rate_limits_ts = 0.0
+                self._rate_limits_gen = None
         elif method == "account/login/completed":
-            # P0-1：completion 通知按 success/failure 原子更新——两种结果都清
-            # pending/id；失败/过期给稳定可操作状态，绝不永久 pending。
+            # P0-2：completion 必须与当前 pending loginId 精确关联——
+            # 旧 id / 未知 id / 无 id 一律忽略（绝不清掉其他进行中的登录流程），
+            # 只记有界 tombstone 供乱序/迟到场景判重。
             params = msg.get("params")
+            login_id: str | None = None
+            success: Any = None
             if isinstance(params, dict):
+                raw = params.get("loginId")
+                login_id = raw if isinstance(raw, str) else None
                 success = params.get("success")
-            else:
-                success = None
             now = time.monotonic()
             with self._lock:
+                if login_id is None:
+                    # 无法关联的 completion（缺 loginId）→ 忽略，不动当前 pending
+                    return
+                current = self._pending_login_id
+                if current is not None and login_id != current:
+                    # 旧/未知 id 的迟到 completion：只记 tombstone，不动当前 pending
+                    self._completed_login_ids.append((login_id, success is True))
+                    return
+                # 命中当前 pending（或 completion 先于 start 响应到达——pending
+                # 尚未提交，记 tombstone 由 _commit_pending 判重）。
+                self._completed_login_ids.append((login_id, success is True))
                 self._login_pending = False
                 self._pending_login_id = None
                 if success is True:
                     self._login_failure = None
                     self._login_failure_ts = 0.0
                 elif success is False:
-                    self._login_failure = (
-                        "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
-                    )
+                    self._login_failure = "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
                     self._login_failure_ts = now
-                self._status_cache = None
-                self._status_ts = 0.0
-                self._models_cache = None
-                self._models_ts = 0.0
+                # P0-1：登录完成是账户会话变迁——旧 in-flight RPC 不得回写缓存
+                self._bump_generation()
         elif method == "account/updated":
             with self._lock:
-                self._status_cache = None
-                self._status_ts = 0.0
-                self._models_cache = None
-                self._models_ts = 0.0
+                self._bump_generation()
 
     def _invalidate_status(self) -> None:
+        """清空状态/模型/额度缓存（不递增 generation）。"""
         with self._lock:
             self._status_cache = None
             self._status_ts = 0.0
+            self._status_gen = None
             self._models_cache = None
             self._models_ts = 0.0
+            self._models_gen = None
             self._rate_limits_cache = None
             self._rate_limits_ts = 0.0
+            self._rate_limits_gen = None
+
+    def _bump_generation(self) -> None:
+        """账户会话变迁：递增 generation 并使所有缓存失效（P0-1）。
+
+        在 client 替换 / 登出 / 重启 / 关闭 / 登录完成 / 账户更新时调用——
+        旧 client 上 in-flight 的 status/model/rate RPC 结果（捕获旧 generation）
+        提交缓存前必须匹配当前 generation，否则被拒绝。
+        """
+        with self._lock:
+            self._generation += 1
+            self._status_cache = None
+            self._status_ts = 0.0
+            self._status_gen = None
+            self._models_cache = None
+            self._models_ts = 0.0
+            self._models_gen = None
+            self._rate_limits_cache = None
+            self._rate_limits_ts = 0.0
+            self._rate_limits_gen = None
 
     # ── 账户状态 ─────────────────────────────────────────────
 
@@ -413,9 +475,13 @@ class CodexProvider:
         """
         now = time.monotonic()
         with self._lock:
+            # P0-1：默认捕获当前 generation（错误路径也安全——写缓存时若
+            # generation 已变则拒绝，只是不缓存而已）。
+            gen = self._generation
             if (
                 self._status_cache is not None
                 and not refresh
+                and self._status_gen == self._generation
                 and now - self._status_ts < self.status_ttl
             ):
                 # P1-3：缓存命中前先检查 transport alive——崩溃后不得短暂
@@ -434,11 +500,16 @@ class CodexProvider:
                 "codex_available": False,
                 "account": None,
             }
+            with self._lock:
+                gen = self._generation
         else:
             try:
                 # status() 不重建崩溃的 app-server：显式报告 crashed，让 UI
                 # 提供「重启」动作；登录/模型/额度等操作路径自愈。
                 client = self._get_client(heal=False)
+                # P0-1：捕获当前会话 generation——提交缓存前必须仍匹配
+                with self._lock:
+                    gen = self._generation
                 result = self._read_account(client)
                 result["codex_available"] = True
                 if not result.get("connected") and self._login_pending:
@@ -511,8 +582,11 @@ class CodexProvider:
                     "error": stable["error"],
                 }
         with self._lock:
-            self._status_cache = result
-            self._status_ts = time.monotonic()
+            # P0-1：只有 RPC 期间会话未变迁（generation 未变）才允许写缓存
+            if gen == self._generation:
+                self._status_cache = result
+                self._status_ts = time.monotonic()
+                self._status_gen = gen
         return dict(result)
 
     def _read_account(self, client: Any) -> dict[str, Any]:
@@ -527,29 +601,37 @@ class CodexProvider:
             "connected": True,
             "account": {
                 "email_masked": mask_email(email) if email else None,
-                "plan_type": str(account.get("planType") or "unknown"),
+                # P0-5：plan type 只允许明确枚举——裸字母数字 canary 绝不回显
+                "plan_type": _sanitize_plan_type(account.get("planType")),
             },
         }
 
     # ── 额度 ─────────────────────────────────────────────────
 
-    def _read_rate_limits_cached(self, client: Any, *, refresh: bool = False) -> dict[str, Any] | None:
+    def _read_rate_limits_cached(
+        self, client: Any, *, refresh: bool = False
+    ) -> dict[str, Any] | None:
         now = time.monotonic()
         with self._lock:
             if (
                 self._rate_limits_cache is not None
                 and not refresh
+                and self._rate_limits_gen == self._generation
                 and now - self._rate_limits_ts < self.rate_limits_ttl
             ):
                 return dict(self._rate_limits_cache)
+            # P0-1：捕获当前会话 generation——提交缓存前必须仍匹配
+            gen = self._generation
         try:
             raw = client.account_rate_limits_read()
         except Exception:  # noqa: BLE001 —— 额度是辅助信息，读不到不拖垮状态
             return None
         masked = mask_rate_limits(raw)
         with self._lock:
-            self._rate_limits_cache = masked
-            self._rate_limits_ts = time.monotonic()
+            if gen == self._generation:
+                self._rate_limits_cache = masked
+                self._rate_limits_ts = time.monotonic()
+                self._rate_limits_gen = gen
         return dict(masked)
 
     def rate_limits(self, *, refresh: bool = False) -> dict[str, Any]:
@@ -561,9 +643,7 @@ class CodexProvider:
         client = self._get_client()
         status = self.status(refresh=refresh)
         if not status.get("connected"):
-            raise CodexNotSignedInError(
-                "尚未连接 ChatGPT，无法读取订阅额度。请先登录。"
-            )
+            raise CodexNotSignedInError("尚未连接 ChatGPT，无法读取订阅额度。请先登录。")
         limits = self._read_rate_limits_cached(client, refresh=True)
         if limits is None:
             raise CodexAppServerError(
@@ -581,53 +661,80 @@ class CodexProvider:
 
     @staticmethod
     def _validate_auth_url(url: str) -> bool:
-        """auth/verification URL 校验：http(s) + 非空 host + 长度上限。"""
+        """auth/verification URL 校验（P1）：urlsplit 校验 scheme 与真实 hostname。
+
+        只允许 https 真实域名；http 仅限 localhost（本机开发流程），
+        不泛化到任意远端明文 HTTP。query 被当 host 等畸形输入一律拒绝。
+        """
         if not isinstance(url, str):
             return False
         url = url.strip()
         if not (1 <= len(url) <= 2048):
             return False
-        low = url.lower()
-        if not (low.startswith("https://") or low.startswith("http://")):
+        try:
+            parts = urlsplit(url)
+        except ValueError:
             return False
-        rest = url.split("://", 1)[1]
-        if not rest or not rest.split("/", 1)[0].strip():
-            return False
-        return True
+        scheme = parts.scheme.lower()
+        host = parts.hostname or ""
+        if scheme == "https":
+            # 真实域名：必须含点（拒绝单标签内网名/裸 host）
+            return "." in host
+        if scheme == "http":
+            # 明文 HTTP 只允许本机回环地址
+            return host == "localhost" or host == "127.0.0.1"
+        return False
 
     @staticmethod
     def _validate_user_code(code: str) -> bool:
-        """device user code：严格字符集 + 长度。"""
+        """device user code（P1）：显式 ASCII 字符集 + 长度上限（拒绝 Unicode）。"""
         if not isinstance(code, str):
             return False
-        code = code.strip()
-        if not (4 <= len(code) <= 64):
+        return bool(_USER_CODE_RE.match(code.strip()))
+
+    @staticmethod
+    def _validate_login_id(login_id: Any) -> bool:
+        """loginId（P0-2）：非空、有界、ASCII 可见字符的 opaque 内部标识。"""
+        if not isinstance(login_id, str):
             return False
-        return all(ch.isalnum() or ch in "-_" for ch in code)
+        return bool(_LOGIN_ID_RE.match(login_id))
+
+    def _close_client(self, client: Any) -> None:
+        """关闭指定 client；若仍是当前 client 则清引用并递增 generation。"""
+        try:
+            client.close()
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning(
+                "codex app-server 关闭失败（%s）",
+                exc.__class__.__name__,
+            )
+        with self._lock:
+            if self._client is client:
+                self._client = None
+        self._bump_generation()
 
     def _rollback_login(self, client: Any, login_id: str) -> None:
-        """登录启动失败（校验/opener 异常）回滚：best-effort cancel；
-        失败则关闭该 app-server 强制终止登录会话。"""
-        if login_id and client is not None:
-            try:
-                client.account_login_cancel(login_id)
-            except Exception as exc:  # noqa: BLE001
-                self._logger.warning(
-                    "codex 登录回滚取消 RPC 失败（%s），关闭 app-server 终止登录会话",
-                    exc.__class__.__name__,
-                )
+        """登录启动失败（校验/opener 异常）回滚（P0-2）：
+        有可取消的 loginId → best-effort cancel；否则关闭 app-server 强制
+        终止登录会话（server 侧流程可能已开始，但无法按 id 取消）。"""
+        if client is not None:
+            if login_id:
                 try:
-                    client.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                with self._lock:
-                    if self._client is client:
-                        self._client = None
+                    client.account_login_cancel(login_id)
+                except Exception as exc:  # noqa: BLE001
+                    self._logger.warning(
+                        "codex 登录回滚取消 RPC 失败（%s），关闭 app-server 终止登录会话",
+                        exc.__class__.__name__,
+                    )
+                    self._close_client(client)
+            else:
+                # 没有可用 loginId（缺失/非法）→ 无法取消 → 关闭 app-server
+                self._close_client(client)
         with self._lock:
             self._pending_login_id = None
             self._login_pending = False
             self._login_failure = None
-        self._invalidate_status()
+        self._bump_generation()
 
     def _ensure_can_login(self) -> None:
         """登录前状态门禁（P0-1）：已登录必须显式退出；已有 pending 拒绝第二次。"""
@@ -666,20 +773,49 @@ class CodexProvider:
         else:
             result = client.account_login_start(login_type)
         if result.get("type") not in ALLOWED_LOGIN_TYPES or result.get("type") != login_type:
-            # P0-2：绝不把原始登录响应（可能含 authUrl/loginId）拼进错误文本
+            # P0-2：白名单拒绝——server 侧流程可能已开始（如 apiKey），
+            # 无法按 id 取消 → 关闭 app-server 强制终止；绝不把原始登录响应
+            # （可能含 authUrl/loginId）拼进错误文本。
+            self._close_client(client)
             raise CodexAppServerError(
-                "登录服务未返回所请求的 ChatGPT 浏览器/设备码流程，无法继续登录。"
+                "登录服务未返回所请求的 ChatGPT 浏览器/设备码流程，无法继续登录。",
+                category="login_failed",
             )
-        return client, result, str(result.get("loginId") or "")
+        login_id = result.get("loginId")
+        if not self._validate_login_id(login_id):
+            # P0-2：loginId 缺失/非法 → 无法按 id 取消 → 关闭 app-server
+            self._close_client(client)
+            raise CodexAppServerError(
+                "登录服务未返回有效的登录会话标识，无法继续登录。",
+                category="login_failed",
+            )
+        return client, result, login_id
 
     def _commit_pending(self, client: Any, login_id: str) -> None:
-        """提交 pending 状态（带 stale-commit 守卫：restart 换 client 后丢弃）。"""
+        """提交 pending 状态（带 stale-commit 守卫：restart 换 client 后丢弃；
+        P0-2：completion 先于 start 响应到达时不再提交已完成的会话）。"""
         with self._lock:
             if self._client is not client:
                 raise CodexAppServerError(
                     "Codex app-server 已重启，登录流程已失效，请重新发起。",
                     category="closed",
                 )
+            # 乱序守卫：completion 已到达（tombstone 命中）→ 不提交 pending，
+            # 登录结果由 completion 决定（成功→清 pending；失败→login_error）。
+            for done_id, success in self._completed_login_ids:
+                if done_id == login_id:
+                    self._pending_login_id = None
+                    self._login_pending = False
+                    if success is True:
+                        self._login_failure = None
+                        self._login_failure_ts = 0.0
+                    else:
+                        self._login_failure = (
+                            "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
+                        )
+                        self._login_failure_ts = time.monotonic()
+                    self._bump_generation()
+                    return
             self._pending_login_id = login_id
             self._login_pending = True
             self._login_failure = None
@@ -725,7 +861,9 @@ class CodexProvider:
             client, result, login_id = self._login_start_type("chatgptDeviceCode")
             verification_url = str(result.get("verificationUrl") or "").strip()
             user_code = str(result.get("userCode") or "").strip()
-            if not self._validate_auth_url(verification_url) or not self._validate_user_code(user_code):
+            if not self._validate_auth_url(verification_url) or not self._validate_user_code(
+                user_code
+            ):
                 # P0-1/P1-5：URL/设备码校验失败回滚，绝不把任意上游值交给 UI
                 self._rollback_login(client, login_id)
                 raise CodexAppServerError(
@@ -755,22 +893,20 @@ class CodexProvider:
                 self._login_pending = False
                 client = self._client
             if was_pending:
-                if client is not None and login_id:
-                    try:
-                        client.account_login_cancel(login_id)
-                    except Exception as exc:  # noqa: BLE001 —— 取消失败仍要退出登录态
-                        self._logger.warning(
-                            "codex 登录取消 RPC 失败（%s），关闭 app-server 终止登录会话",
-                            exc.__class__.__name__,
-                        )
+                if client is not None:
+                    if login_id:
                         try:
-                            client.close()
-                        except Exception:  # noqa: BLE001
-                            pass
-                        with self._lock:
-                            if self._client is client:
-                                self._client = None
-                self._invalidate_status()
+                            client.account_login_cancel(login_id)
+                        except Exception as exc:  # noqa: BLE001 —— 取消失败仍要退出登录态
+                            self._logger.warning(
+                                "codex 登录取消 RPC 失败（%s），关闭 app-server 终止登录会话",
+                                exc.__class__.__name__,
+                            )
+                            self._close_client(client)
+                    else:
+                        # P0-2：无可用 loginId（不应发生）→ 关闭 app-server 强制终止
+                        self._close_client(client)
+                self._bump_generation()
                 return {"state": "signed_out"}
             # 没有 pending flow：不执行任何取消/登出
             try:
@@ -795,7 +931,8 @@ class CodexProvider:
                 self._pending_login_id = None
                 self._login_pending = False
                 self._login_failure = None
-            self._invalidate_status()
+            # P0-1：登出是账户会话变迁——旧 in-flight RPC 结果不得回写缓存
+            self._bump_generation()
             return {"state": "signed_out"}
 
     def restart(self) -> dict[str, Any]:
@@ -806,7 +943,9 @@ class CodexProvider:
                 self._pending_login_id = None
                 self._login_pending = False
                 self._login_failure = None
-                self._invalidate_status()
+                # P0-1：重启 = 新会话——先递增 generation，旧 in-flight 请求
+                # 提交缓存时发现 generation 不匹配而被拒绝。
+                self._bump_generation()
             if client is not None:
                 try:
                     client.close()
@@ -816,7 +955,6 @@ class CodexProvider:
                         exc.__class__.__name__,
                     )
             return self.status(refresh=True)
-
 
     # ── 动态模型目录 ─────────────────────────────────────────
 
@@ -832,6 +970,7 @@ class CodexProvider:
             if (
                 self._models_cache is not None
                 and not refresh
+                and self._models_gen == self._generation
                 and now - self._models_ts < self.models_ttl
             ):
                 return [dict(m) for m in self._models_cache]
@@ -841,6 +980,9 @@ class CodexProvider:
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
             )
         client = self._get_client()
+        # P0-1：捕获当前会话 generation——提交缓存前必须仍匹配
+        with self._lock:
+            gen = self._generation
         status = self.status(refresh=refresh)
         if not status.get("connected"):
             raise CodexNotSignedInError(
@@ -865,8 +1007,10 @@ class CodexProvider:
                 }
             )
         with self._lock:
-            self._models_cache = [dict(m) for m in models]
-            self._models_ts = time.monotonic()
+            if gen == self._generation:
+                self._models_cache = [dict(m) for m in models]
+                self._models_ts = time.monotonic()
+                self._models_gen = gen
         return models
 
     # ── 关闭 ─────────────────────────────────────────────────
@@ -877,6 +1021,9 @@ class CodexProvider:
                 return
             self._closed = True
             client, self._client = self._client, None
+            self._pending_login_id = None
+            self._login_pending = False
+            self._bump_generation()
         if client is not None:
             try:
                 client.close()

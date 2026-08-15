@@ -239,7 +239,9 @@ class TestRedactSecrets(unittest.TestCase):
         return redact_secrets(text)
 
     def test_redacts_url_with_query(self):
-        text = self._redact('login failed: {"authUrl":"https://auth.openai.com/oauth?state=SECRET"}')
+        text = self._redact(
+            'login failed: {"authUrl":"https://auth.openai.com/oauth?state=SECRET"}'
+        )
         self.assertNotIn("auth.openai.com", text)
         self.assertNotIn("SECRET", text)
         self.assertNotIn("authUrl", text)
@@ -391,7 +393,7 @@ class TestCodexProviderCloseLogSafety(unittest.TestCase):
                 cli_available=True,
             )
             provider.status()  # 创建 client
-            provider.close()   # close 抛异常 → 吞掉并记稳定日志
+            provider.close()  # close 抛异常 → 吞掉并记稳定日志
         finally:
             logger.removeHandler(handler)
 
@@ -546,8 +548,8 @@ class TestCodexD2CrashRestart(unittest.TestCase):
         )
         transport.start()
         client = CodexAppServerClient(transport=transport)
-        client.initialize()          # 请求 1
-        client.account_read()        # 请求 2 → fake 崩溃
+        client.initialize()  # 请求 1
+        client.account_read()  # 请求 2 → fake 崩溃
         time.sleep(1.0)
         self.assertTrue(transport.crashed)
         self.assertEqual(transport.crash_exit_code, 43)
@@ -570,7 +572,7 @@ class TestCodexD2CrashRestart(unittest.TestCase):
         )
         transport.start()
         client = CodexAppServerClient(transport=transport)
-        client.initialize()          # 请求 1 → 崩溃
+        client.initialize()  # 请求 1 → 崩溃
         time.sleep(1.0)
         self.assertTrue(transport.crashed)
         client.restart()
@@ -776,9 +778,8 @@ class TestCodexD2BoundedQueues(unittest.TestCase):
         self.assertLessEqual(len(drained), _NOTIFICATIONS_CAP)
         transport.close()
 
-    def test_timed_out_tombstones_are_bounded(self):
-        from openbrep.codex.app_server import _TIMED_OUT_CAP
-
+    def test_pending_requests_are_bounded_and_cleared(self):
+        """P0-3：超时后 pending 集合清空、无孤儿响应，内存不增长。"""
         transport = _spawn_transport(rpc_timeout=0.2)
         transport.start()
         client = CodexAppServerClient(transport=transport)
@@ -788,8 +789,9 @@ class TestCodexD2BoundedQueues(unittest.TestCase):
             except CodexAppServerError:
                 pass
         with transport._cv:
-            self.assertLessEqual(len(transport._timed_out), _TIMED_OUT_CAP)
-            self.assertLessEqual(len(transport._timed_out_order), _TIMED_OUT_CAP)
+            # 单飞调用：超时后 pending 清空、_responses 无孤儿
+            self.assertEqual(transport._pending, set())
+            self.assertEqual(transport._responses, {})
         transport.close()
 
 
@@ -832,3 +834,99 @@ class TestCodexD2StubbornDescendant(unittest.TestCase):
         except ProcessLookupError:
             alive = False
         self.assertFalse(alive, "忽略 SIGTERM 的后代在 close 后仍存活（P0-3）")
+
+
+class TestCodexD2UnsolicitedResponseIds(unittest.TestCase):
+    """P0-3：未请求/未来/超大/重复的响应 id 不污染后续调用，内存不增长。"""
+
+    def test_unsolicited_future_id_does_not_pollute_next_call(self):
+        """server 在 request 1 前先发 id=3 的 POISON 响应；后续调用必须各回各的结果。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_UNSOLICITED_POISON": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        first = client.initialize()
+        self.assertIn("userAgent", first)
+        self.assertNotEqual(first.get("value"), "POISON")
+        # 第二次调用（id=2）：正常返回；第三次调用（id=3，即被投毒的未来 id）
+        # 也必须拿到自己的响应，而不是 POISON。
+        second = client.initialize()
+        self.assertIn("userAgent", second)
+        third = client.initialize()
+        self.assertIn("userAgent", third)
+        self.assertNotEqual(third.get("value"), "POISON")
+        transport.close()
+
+    def test_unsolicited_ids_never_stored(self):
+        """reader 只存 pending id 的响应：投毒 id 不进入 _responses，无界增长被堵住。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_UNSOLICITED_POISON": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(0.3)  # 等 reader 消费投毒帧
+        with transport._cv:
+            self.assertEqual(transport._responses, {})
+            self.assertEqual(transport._pending, set())
+        transport.close()
+
+    def test_unsolicited_past_duplicate_and_huge_ids_discarded(self):
+        """直接向 reader 投递 past/重复/超大 int id 响应：全部丢弃，不污染、
+        不增长。"""
+        transport = _spawn_transport()
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        # 手工注入 unsolicited 帧（真实 reader 路径）：过去 id、重复 id、超大 id
+        reader_inject = [
+            {"jsonrpc": "2.0", "id": 999999, "result": {"value": "HUGEPOISON"}},
+            {"jsonrpc": "2.0", "id": -7, "result": {"value": "NEGPOISON"}},
+            {"jsonrpc": "2.0", "id": 2, "result": {"value": "DUPEPOISON"}},
+        ]
+        for frame in reader_inject:
+            transport._handle_line(json.dumps(frame))
+        time.sleep(0.2)
+        with transport._cv:
+            self.assertEqual(transport._responses, {})
+        # 后续调用不受影响
+        result = client.initialize()
+        self.assertIn("userAgent", result)
+        self.assertNotEqual(result.get("value"), "HUGEPOISON")
+        transport.close()
+
+
+class TestCodexD2SubscriberLogSecretSafety(unittest.TestCase):
+    """P0-4：订阅者异常绝不把异常原文/traceback 写进日志。"""
+
+    def test_subscriber_exception_log_never_leaks_secret(self):
+        import logging
+
+        records: list[str] = []
+        handler = logging.Handler()
+
+        def emit(record):
+            records.append(record.getMessage())
+
+        handler.emit = emit
+        logger = logging.getLogger("openbrep.codex.app_server")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_NOTIFY": "loginCompleted"})
+
+        def bad_handler(msg):
+            raise RuntimeError("Authorization: Bearer DEV-SUBSCRIBER-SECRET")
+
+        try:
+            transport.start()
+            transport.subscribe(bad_handler)
+            client = CodexAppServerClient(transport=transport)
+            client.initialize()
+            time.sleep(0.5)
+            self.assertFalse(transport.crashed)
+        finally:
+            transport.close()
+            logger.removeHandler(handler)
+        joined = "\n".join(records)
+        self.assertIn("通知订阅者异常", joined)
+        self.assertIn("RuntimeError", joined)  # 只记稳定异常类名
+        for bad in ("DEV-SUBSCRIBER-SECRET", "Bearer", "Authorization", "RuntimeError("):
+            self.assertNotIn(bad, joined, f"订阅者异常日志泄漏 {bad}")
