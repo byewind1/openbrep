@@ -350,6 +350,10 @@ class StdioJsonRpcTransport:
                     rid,
                 )
             else:
+                # P0-2：first-response-wins——收到第一条合法响应即原子 claim 该
+                # pending id（从 pending 移除），第二条同 id 响应视为非 pending
+                # 丢弃，绝不覆盖第一条。
+                self._pending.discard(rid)
                 self._responses[rid] = msg
                 self._cv.notify_all()
 
@@ -473,6 +477,12 @@ class StdioJsonRpcTransport:
         deadline = time.monotonic() + self.rpc_timeout
         with self._cv:
             while True:
+                # P0-2：先检查已接收响应再判断 deadline——响应已按时到达但
+                # waiter 调度稍晚时，不得误报 timeout。
+                if req_id in self._responses:
+                    resp = self._responses.pop(req_id)
+                    self._pending.discard(req_id)
+                    break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     # D2：超时——移除 pending，并丢弃任何已存入的孤儿响应
@@ -496,10 +506,6 @@ class StdioJsonRpcTransport:
                         "请调用 restart() 恢复。",
                         category="process_exited",
                     )
-                if req_id in self._responses:
-                    resp = self._responses.pop(req_id)
-                    self._pending.discard(req_id)
-                    break
                 self._cv.wait(remaining)
         if "error" in resp and resp.get("error"):
             err = resp["error"]

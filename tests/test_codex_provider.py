@@ -2057,3 +2057,248 @@ class TestCodexStrictUrlAndUserCodeValidation(unittest.TestCase):
             provider.login_start()
         self.assertEqual(client.login_cancel_calls, 1)
         provider.close()
+
+
+# ── P0-1：原子 (client, generation) 快照（第三轮复验） ─────────────────────
+
+
+class TestCodexAtomicSnapshot(unittest.TestCase):
+    """P0-1：_snapshot 在锁内解析 client 并捕获 generation——restart/logout 无法
+    插入「已拿旧 client、未读 generation」窗口；旧账户结果绝不写成新会话缓存。"""
+
+    def test_restart_during_status_rpc_new_account_wins(self):
+        """评审复现：旧账户（ol***）status RPC 阻塞 → restart 到新账户（ne***）
+        → 释放；非 refresh 读取必须属于新账户，旧结果不得写缓存。"""
+        gate = threading.Event()
+        old_client = _RaceFakeClient(
+            account={"type": "chatgpt", "email": "oliver@example.com", "planType": "pro"},
+            read_gate=gate,
+        )
+        new_client = _D2FakeClient(
+            account={"type": "chatgpt", "email": "newton@example.com", "planType": "pro"}
+        )
+        provider, old_client, new_client = _race_provider(old_client, new_client)
+        results: list = []
+
+        def t1():
+            try:
+                results.append(provider.status(refresh=True))
+            except Exception as exc:  # noqa: BLE001
+                results.append(exc)
+
+        thread = threading.Thread(target=t1)
+        thread.start()
+        self.assertTrue(old_client.read_entered.wait(5))
+        provider.restart()
+        gate.set()
+        thread.join(timeout=5)
+        self.assertEqual(len(results), 1)
+        # 关键：缓存必须属于新账户
+        final = provider.status(refresh=False)
+        self.assertEqual(final["state"], "signed_in")
+        self.assertEqual(final["account"]["email_masked"], "ne***@example.com")
+        cached_email = (provider._status_cache or {}).get("account", {}).get("email_masked")
+        self.assertNotEqual(cached_email, "ol***@example.com", "旧账户结果回写了 status 缓存")
+        provider.close()
+
+    def test_logout_during_status_rpc_old_account_never_cached(self):
+        """logout 与 status RPC 并发：旧 signed-in 结果不得写缓存；
+        随后非 refresh 读取 signed_out。"""
+        gate = threading.Event()
+        client = _RaceFakeClient(
+            account={"type": "chatgpt", "email": "oliver@example.com", "planType": "pro"},
+            read_gate=gate,
+        )
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-snap-logout"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        results: list = []
+
+        def t1():
+            try:
+                results.append(provider.status(refresh=True))
+            except Exception as exc:  # noqa: BLE001
+                results.append(exc)
+
+        thread = threading.Thread(target=t1)
+        thread.start()
+        self.assertTrue(client.read_entered.wait(5))
+        provider.logout()
+        gate.set()
+        thread.join(timeout=5)
+        self.assertEqual(provider.status(refresh=False)["state"], "signed_out")
+        provider.close()
+
+    def test_models_restart_new_account_never_cached(self):
+        """评审复现：旧账户 model RPC 阻塞 → restart 到新账户 → 释放；
+        非 refresh models 必须属于新账户目录，旧模型不得写缓存。"""
+        gate = threading.Event()
+        old_client = _RaceFakeClient(
+            account={"type": "chatgpt", "email": "oliver@example.com", "planType": "pro"},
+            model_gate=gate,
+            models=[
+                {"id": "old-account-model", "model": "old-account-model", "displayName": "Old"}
+            ],
+        )
+        new_client = _D2FakeClient(
+            account={"type": "chatgpt", "email": "newton@example.com", "planType": "pro"}
+        )
+        provider, old_client, new_client = _race_provider(old_client, new_client)
+        results: list = []
+
+        def t1():
+            try:
+                results.append(provider.models(refresh=True))
+            except Exception as exc:  # noqa: BLE001
+                results.append(exc)
+
+        thread = threading.Thread(target=t1)
+        thread.start()
+        self.assertTrue(old_client.model_entered.wait(5))
+        provider.restart()
+        gate.set()
+        thread.join(timeout=5)
+        # 新账户的 model_list（fake 默认 luna/terra），绝无 old-account-model
+        models = provider.models(refresh=False)
+        ids = [m["id"] for m in models]
+        self.assertNotIn("openai-codex/old-account-model", ids)
+        provider.close()
+
+    def test_snapshot_holds_lock_across_client_creation(self):
+        """原子性证明：_snapshot 持锁解析 client（factory 阻塞）期间，
+        restart 无法完成——(client, gen) 只能成对出现，绝无中间态。"""
+        factory_gate = threading.Event()
+
+        def slow_factory():
+            factory_gate.wait(5)
+            return _D2FakeClient(account=None)
+
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-snap-lock"),
+            client_factory=slow_factory,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        results: list = []
+        restart_results: list = []
+
+        def t1():
+            try:
+                results.append(provider.status(refresh=True))
+            except Exception as exc:  # noqa: BLE001
+                results.append(exc)
+
+        def t2():
+            try:
+                restart_results.append(provider.restart())
+            except Exception as exc:  # noqa: BLE001
+                restart_results.append(exc)
+
+        th1 = threading.Thread(target=t1)
+        th1.start()
+        import time
+
+        time.sleep(0.3)  # _snapshot 已进入 _get_client（factory 阻塞，锁被持有）
+        th2 = threading.Thread(target=t2)
+        th2.start()
+        time.sleep(0.3)
+        # factory 仍阻塞 → restart 必须被锁挡住（尚未完成）
+        self.assertEqual(restart_results, [], "restart 不应在 snapshot 持锁期间完成")
+        factory_gate.set()
+        th1.join(timeout=5)
+        th2.join(timeout=5)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(restart_results), 1)
+        provider.close()
+
+
+# ── P0-3：completion tombstone 绑定 generation + 严格 bool success ────────
+
+
+class TestCodexCompletionTombstoneSessionBinding(unittest.TestCase):
+    """P0-3：tombstone 绑定会话 generation；重启后同 id 登录不受旧 tombstone
+    影响；畸形 success（非 bool）不得静默清当前 pending。"""
+
+    def test_completion_then_restart_then_same_id_login_commits(self):
+        """完成 → restart → 新 client 重用同 loginId：新登录必须真实 pending（可轮询/取消）。"""
+        client = _D2FakeClient()
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-tomb-restart"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        # 旧会话：登录 + 完成
+        provider.login_start()
+        provider._on_notification(
+            {
+                "method": "account/login/completed",
+                "params": {"loginId": "fake-login-id", "success": True, "error": None},
+            }
+        )
+        self.assertFalse(provider._login_pending)
+        # restart 到新 client（新会话）
+        provider.restart()
+        self.assertFalse(provider._login_pending)
+        # 新 client 再次返回同 loginId
+        result = provider.login_start()
+        self.assertEqual(result["state"], "login_started")
+        # 关键：新登录必须真实 pending（可取消），而不是被旧 tombstone 吞掉
+        self.assertTrue(provider._login_pending, "同 id 新登录被旧会话 tombstone 吞掉")
+        self.assertEqual(provider._pending_login_id, "fake-login-id")
+        cancel = provider.login_cancel()
+        self.assertEqual(cancel["state"], "signed_out")
+        self.assertEqual(client.login_cancel_calls, 1)
+        provider.close()
+
+    def test_malformed_success_keeps_pending(self):
+        """当前 id + 非 bool success 的 completion：忽略，保持 pending（可取消）。"""
+        client = _D2FakeClient()
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-tomb-badbool"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        provider.login_start()
+        for bad in ("yes", 1, 0, None, {"ok": True}, [True]):
+            provider._on_notification(
+                {
+                    "method": "account/login/completed",
+                    "params": {"loginId": "fake-login-id", "success": bad},
+                }
+            )
+            self.assertTrue(provider._login_pending, f"success={bad!r} 不应清 pending")
+            self.assertEqual(provider._pending_login_id, "fake-login-id")
+        # 仍可取消
+        provider.login_cancel()
+        self.assertEqual(client.login_cancel_calls, 1)
+        self.assertFalse(provider._login_pending)
+        provider.close()
+
+    def test_tombstone_consumed_on_match(self):
+        """tombstone 命中即消费：同会话同 id 再次 _commit_pending 不再受旧 tombstone 影响。"""
+        client = _D2FakeClient()
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-codex-tomb-consume"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        # completion 先于 start 响应到达（乱序）→ tombstone
+        provider._on_notification(
+            {"method": "account/login/completed", "params": {"loginId": "X", "success": True}}
+        )
+        # 第一次 commit：tombstone 命中 → 不提交
+        provider._client = _D2FakeClient()
+        provider._commit_pending(provider._client, "X")
+        self.assertFalse(provider._login_pending)
+        # tombstone 已消费：第二次 commit（同 id）正常提交
+        provider._commit_pending(provider._client, "X")
+        self.assertTrue(provider._login_pending)
+        self.assertEqual(provider._pending_login_id, "X")
+        provider.login_cancel()
+        provider.close()

@@ -930,3 +930,32 @@ class TestCodexD2SubscriberLogSecretSafety(unittest.TestCase):
         self.assertIn("RuntimeError", joined)  # 只记稳定异常类名
         for bad in ("DEV-SUBSCRIBER-SECRET", "Bearer", "Authorization", "RuntimeError("):
             self.assertNotIn(bad, joined, f"订阅者异常日志泄漏 {bad}")
+
+
+class TestCodexD2DuplicateResponseFirstWins(unittest.TestCase):
+    """P0-3：同 pending id 的第二条响应不得覆盖第一条（first-response-wins）。"""
+
+    def test_duplicate_same_id_response_first_wins(self):
+        """server 对每个请求连续写两条同 id 响应（第一条正确、第二条
+        DUPLICATE-POISON）：连续 20 次调用必须始终返回第一条。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_DUP_RESPONSE": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        for i in range(20):
+            result = client.initialize()
+            self.assertIn("userAgent", result, f"第 {i} 次调用返回了重复响应")
+            self.assertNotEqual(
+                result.get("value"), "DUPLICATE-POISON", f"第 {i} 次调用被重复响应覆盖"
+            )
+        transport.close()
+
+    def test_duplicate_response_not_stored_twice(self):
+        """重复同 id 响应：第一条 claim 后第二条被丢弃，_responses 无残留。"""
+        transport = _spawn_transport(extra_env={"FAKE_CODEX_DUP_RESPONSE": "1"})
+        transport.start()
+        client = CodexAppServerClient(transport=transport)
+        client.initialize()
+        time.sleep(0.3)
+        with transport._cv:
+            self.assertEqual(transport._responses, {})
+        transport.close()

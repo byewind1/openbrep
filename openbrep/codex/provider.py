@@ -263,9 +263,10 @@ class CodexProvider:
         # 登录失败/过期提示（completion 通知 failure 时置位，TTL 内随 status 返回）
         self._login_failure: str | None = None
         self._login_failure_ts = 0.0
-        # P0-2：已完成的登录 id tombstone（有界）——completion 先于 start 响应
-        # 到达或迟到时，_commit_pending 据此不提交已完成的会话。
-        self._completed_login_ids: deque[tuple[str, bool | None]] = deque(
+        # P0-2/P0-3：已完成的登录 tombstone（有界，(generation, loginId, success)）
+        # ——completion 先于 start 响应到达或迟到时，_commit_pending 据此不提交
+        # 已完成的会话；tombstone 绑定 generation，重启/登出/换 client 即失效。
+        self._completed_login_ids: deque[tuple[int, str, bool]] = deque(
             maxlen=_COMPLETED_LOGIN_CAP
         )
         # P0-2：生命周期操作专用锁——串行化 start/cancel/logout/restart/client
@@ -406,30 +407,47 @@ class CodexProvider:
                 success = params.get("success")
             now = time.monotonic()
             with self._lock:
-                if login_id is None:
-                    # 无法关联的 completion（缺 loginId）→ 忽略，不动当前 pending
+                if login_id is None or not isinstance(success, bool):
+                    # P0-2/P0-3：无法关联（缺 loginId）或 success 非严格 boolean
+                    # 的畸形 completion → 忽略，绝不清当前 pending（静默清空会让
+                    # UI 与 app-server 登录会话失去对应关系）。
                     return
                 current = self._pending_login_id
                 if current is not None and login_id != current:
-                    # 旧/未知 id 的迟到 completion：只记 tombstone，不动当前 pending
-                    self._completed_login_ids.append((login_id, success is True))
+                    # 旧/未知 id 的迟到 completion：只记（绑定当前 generation 的）
+                    # tombstone，不动当前 pending。
+                    self._completed_login_ids.append((self._generation, login_id, success))
                     return
-                # 命中当前 pending（或 completion 先于 start 响应到达——pending
-                # 尚未提交，记 tombstone 由 _commit_pending 判重）。
-                self._completed_login_ids.append((login_id, success is True))
                 self._login_pending = False
                 self._pending_login_id = None
-                if success is True:
+                if success:
                     self._login_failure = None
                     self._login_failure_ts = 0.0
-                elif success is False:
+                else:
                     self._login_failure = "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
                     self._login_failure_ts = now
-                # P0-1：登录完成是账户会话变迁——旧 in-flight RPC 不得回写缓存
+                # P0-1：登录完成是账户会话变迁——旧 in-flight RPC 不得回写缓存；
+                # bump 同时清空旧会话 tombstone（P0-3）。
                 self._bump_generation()
+                # tombstone 绑定新 generation：供 completion 先于 start 响应的
+                # 乱序场景判重；重启（再次 bump）后自动失效。
+                self._completed_login_ids.append((self._generation, login_id, success))
         elif method == "account/updated":
             with self._lock:
                 self._bump_generation()
+
+    def _snapshot(self, *, heal: bool = True) -> tuple[Any, int]:
+        """P0-1：原子 (client, generation) 快照。
+
+        在同一把锁内解析/确认 client 并捕获 generation——不存在
+        「拿到旧 client 后、读取 generation 前被 restart 打断」的窗口。
+        提交缓存时必须同时验证 ``self._client is client`` 与
+        ``self._generation == generation`` 仍成立。
+        """
+        with self._lock:
+            client = self._get_client(heal=heal)
+            gen = self._generation
+            return client, gen
 
     def _invalidate_status(self) -> None:
         """清空状态/模型/额度缓存（不递增 generation）。"""
@@ -462,6 +480,9 @@ class CodexProvider:
             self._rate_limits_cache = None
             self._rate_limits_ts = 0.0
             self._rate_limits_gen = None
+            # P0-3：登录 completion tombstone 绑定会话 generation——重启/登出/
+            # 换 client 时清空，旧会话 tombstone 不得污染新会话的同 id 登录
+            self._completed_login_ids.clear()
 
     # ── 账户状态 ─────────────────────────────────────────────
 
@@ -474,6 +495,7 @@ class CodexProvider:
         signed_in 只含脱敏邮箱、plan_type 与脱敏额度摘要。
         """
         now = time.monotonic()
+        client: Any | None = None
         with self._lock:
             # P0-1：默认捕获当前 generation（错误路径也安全——写缓存时若
             # generation 已变则拒绝，只是不缓存而已）。
@@ -506,10 +528,9 @@ class CodexProvider:
             try:
                 # status() 不重建崩溃的 app-server：显式报告 crashed，让 UI
                 # 提供「重启」动作；登录/模型/额度等操作路径自愈。
-                client = self._get_client(heal=False)
-                # P0-1：捕获当前会话 generation——提交缓存前必须仍匹配
-                with self._lock:
-                    gen = self._generation
+                # P0-1：原子 (client, generation) 快照——提交缓存时必须
+                # 同时验证 client 与 generation 仍匹配。
+                client, gen = self._snapshot(heal=False)
                 result = self._read_account(client)
                 result["codex_available"] = True
                 if not result.get("connected") and self._login_pending:
@@ -530,7 +551,7 @@ class CodexProvider:
                     result = dict(result)
                     result["login_error"] = self._login_failure
                 if result.get("connected"):
-                    limits = self._read_rate_limits_cached(client, refresh=refresh)
+                    limits = self._read_rate_limits_cached(client, gen, refresh=refresh)
                     if limits is not None:
                         result["rate_limits"] = limits
                         if limits.get("reached"):
@@ -582,8 +603,9 @@ class CodexProvider:
                     "error": stable["error"],
                 }
         with self._lock:
-            # P0-1：只有 RPC 期间会话未变迁（generation 未变）才允许写缓存
-            if gen == self._generation:
+            # P0-1：只有 RPC 期间会话未变迁（client 与 generation 均未变）
+            # 才允许写缓存
+            if self._client is client and gen == self._generation:
                 self._status_cache = result
                 self._status_ts = time.monotonic()
                 self._status_gen = gen
@@ -609,26 +631,28 @@ class CodexProvider:
     # ── 额度 ─────────────────────────────────────────────────
 
     def _read_rate_limits_cached(
-        self, client: Any, *, refresh: bool = False
+        self, client: Any, gen: int, *, refresh: bool = False
     ) -> dict[str, Any] | None:
+        """额度读取：client/gen 来自调用方的原子快照（P0-1）。提交缓存时
+
+        同时验证 client 与 generation 仍匹配，杜绝旧会话结果写回。"""
         now = time.monotonic()
         with self._lock:
             if (
                 self._rate_limits_cache is not None
                 and not refresh
                 and self._rate_limits_gen == self._generation
+                and self._client is client
                 and now - self._rate_limits_ts < self.rate_limits_ttl
             ):
                 return dict(self._rate_limits_cache)
-            # P0-1：捕获当前会话 generation——提交缓存前必须仍匹配
-            gen = self._generation
         try:
             raw = client.account_rate_limits_read()
         except Exception:  # noqa: BLE001 —— 额度是辅助信息，读不到不拖垮状态
             return None
         masked = mask_rate_limits(raw)
         with self._lock:
-            if gen == self._generation:
+            if self._client is client and gen == self._generation:
                 self._rate_limits_cache = masked
                 self._rate_limits_ts = time.monotonic()
                 self._rate_limits_gen = gen
@@ -640,11 +664,11 @@ class CodexProvider:
             raise CodexCliUnavailableError(
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
             )
-        client = self._get_client()
+        client, gen = self._snapshot()
         status = self.status(refresh=refresh)
         if not status.get("connected"):
             raise CodexNotSignedInError("尚未连接 ChatGPT，无法读取订阅额度。请先登录。")
-        limits = self._read_rate_limits_cached(client, refresh=True)
+        limits = self._read_rate_limits_cached(client, gen, refresh=True)
         if limits is None:
             raise CodexAppServerError(
                 "无法读取订阅额度（app-server 未返回额度数据）。",
@@ -793,29 +817,40 @@ class CodexProvider:
 
     def _commit_pending(self, client: Any, login_id: str) -> None:
         """提交 pending 状态（带 stale-commit 守卫：restart 换 client 后丢弃；
-        P0-2：completion 先于 start 响应到达时不再提交已完成的会话）。"""
+        P0-2：completion 先于 start 响应到达时不再提交已完成的会话；
+        P0-3：tombstone 绑定 generation 且命中即消费——新会话重用同 id 不受
+        旧会话 tombstone 影响）。"""
         with self._lock:
             if self._client is not client:
                 raise CodexAppServerError(
                     "Codex app-server 已重启，登录流程已失效，请重新发起。",
                     category="closed",
                 )
-            # 乱序守卫：completion 已到达（tombstone 命中）→ 不提交 pending，
+            gen = self._generation
+            # 乱序守卫：仅匹配「当前会话 + 同 id」的 tombstone，命中即消费（移除），
             # 登录结果由 completion 决定（成功→清 pending；失败→login_error）。
-            for done_id, success in self._completed_login_ids:
-                if done_id == login_id:
-                    self._pending_login_id = None
-                    self._login_pending = False
-                    if success is True:
-                        self._login_failure = None
-                        self._login_failure_ts = 0.0
-                    else:
-                        self._login_failure = (
-                            "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
-                        )
-                        self._login_failure_ts = time.monotonic()
-                    self._bump_generation()
-                    return
+            matched: tuple[int, str, bool] | None = None
+            kept = deque(maxlen=_COMPLETED_LOGIN_CAP)
+            for entry in self._completed_login_ids:
+                e_gen, e_id, e_success = entry
+                if e_gen == gen and e_id == login_id and matched is None:
+                    matched = entry
+                else:
+                    kept.append(entry)
+            self._completed_login_ids = kept
+            if matched is not None:
+                self._pending_login_id = None
+                self._login_pending = False
+                if matched[2]:
+                    self._login_failure = None
+                    self._login_failure_ts = 0.0
+                else:
+                    self._login_failure = (
+                        "ChatGPT 登录未完成或已取消，请重试，或改用设备码登录。"
+                    )
+                    self._login_failure_ts = time.monotonic()
+                self._bump_generation()
+                return
             self._pending_login_id = login_id
             self._login_pending = True
             self._login_failure = None
@@ -979,10 +1014,8 @@ class CodexProvider:
             raise CodexCliUnavailableError(
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
             )
-        client = self._get_client()
-        # P0-1：捕获当前会话 generation——提交缓存前必须仍匹配
-        with self._lock:
-            gen = self._generation
+        # P0-1：原子 (client, generation) 快照
+        client, gen = self._snapshot()
         status = self.status(refresh=refresh)
         if not status.get("connected"):
             raise CodexNotSignedInError(
@@ -1007,7 +1040,7 @@ class CodexProvider:
                 }
             )
         with self._lock:
-            if gen == self._generation:
+            if self._client is client and gen == self._generation:
                 self._models_cache = [dict(m) for m in models]
                 self._models_ts = time.monotonic()
                 self._models_gen = gen

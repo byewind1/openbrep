@@ -141,6 +141,8 @@ def main() -> None:
         if os.environ.get("FAKE_CODEX_UNSOLICITED_POISON") and not poison_sent:
             poison_sent = True
             _send({"jsonrpc": "2.0", "id": rid + 2, "result": {"value": "POISON"}})
+        # P0-3：同 id 重复响应测试——每条响应后再发一条同 id 的 DUPLICATE-POISON
+        # （与正确响应在同一次 flush 中连续写出，验证 first-response-wins）
         handled += 1
 
         if method == "initialize":
@@ -270,6 +272,8 @@ def main() -> None:
             )
             continue
         _send({"jsonrpc": "2.0", "id": rid, "result": result})
+        if os.environ.get("FAKE_CODEX_DUP_RESPONSE"):
+            _send({"jsonrpc": "2.0", "id": rid, "result": {"value": "DUPLICATE-POISON"}})
 
         if crash_after and handled >= crash_after:
             if crash_marker:
