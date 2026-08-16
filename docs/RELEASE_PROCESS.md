@@ -88,6 +88,19 @@ python scripts/package_browser_smoke.py release/OpenBrep-free-macOS.zip --timeou
   Windows runs package smoke. If any smoke step fails, the release publish job
   is blocked.
 
+## Release Secret Gate
+
+Every release artifact must pass the machine-executable secret gate
+(`scripts/secret_scan.py`) before upload. The gate scans staged source, build
+output trees, `frontend/dist`, Tauri bundle staging dirs, and produced zips
+for `auth.json` / `.env*` / `config.toml` / private keys / `.codex` paths /
+Bearer / JWT / `sk-...` OpenAI keys / `CODEX_ACCESS_TOKEN` assignments and
+injected canaries. Reports never echo secret values. The package smoke also
+runs with a clean HOME and stripped OpenAI/Codex env vars by default
+(`--no-clean-env` to opt out).
+
+Full contract and usage: `docs/RELEASE_SECRET_GATE.zh-CN.md`.
+
 Packaging regressions fixed in v0.6.11:
 
 - Bundle `streamlit/static` at the exact runtime path expected by Streamlit.

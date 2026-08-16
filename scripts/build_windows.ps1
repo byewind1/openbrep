@@ -34,4 +34,12 @@ New-Item -ItemType Directory -Path release -Force | Out-Null
 $out = "release/OpenBrep-$edition-Windows.zip"
 if (Test-Path $out) { Remove-Item $out -Force }
 Compress-Archive -Path dist/OpenBrep -DestinationPath $out
+
+# D7 发布秘密门禁：打包产物（dist 树 + zip）不得含 auth.json/.env/…/
+# Bearer/JWT/sk-* 密钥/CODEX_ACCESS_TOKEN 赋值/注入的 canary。
+# 报告只报类型和位置，不回显秘密值。
+python scripts/secret_scan.py --tree dist/OpenBrep --archive $out `
+  --canary $env:OPENBREP_RELEASE_CANARY --report text
+if ($LASTEXITCODE -ne 0) { throw "Secret gate failed on $out" }
+
 Write-Host "Built: $out"
