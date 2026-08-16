@@ -451,6 +451,428 @@ def test_nested_zip_in_tree_is_scanned(tmp_path):
     assert any(f.type == "canary" for f in result.findings)
 
 
+# ── 复审 P0-1：symlink 相对逃逸必须 fail closed（tree 与 zip 均不跟随） ────
+
+
+def _symlink_entry(zf: zipfile.ZipFile, name: str, target: str) -> None:
+    zi = zipfile.ZipInfo(name)
+    zi.create_system = 3
+    zi.external_attr = (stat.S_IFLNK | 0o777) << 16
+    zf.writestr(zi, target)
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["../secret.txt", "../../developer/auth.json", "../../../x/y", "a/../../out"],
+)
+def test_tree_symlink_relative_escape_fails_closed(tmp_path, target):
+    """P0-1：相对 ../ 与多层 ../../ 逃逸（含从子目录出发）必须 fail closed。"""
+    scanner = _load_scanner()
+    root = tmp_path / "artifact"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "escape").symlink_to(target)
+    result = scanner.scan_tree(root)
+    assert not result.ok
+    assert any(f.type == "symlink_escape" and f.severity == "error" for f in result.findings)
+
+
+def test_tree_symlink_absolute_and_drive_escape_fail_closed(tmp_path):
+    """P0-1：绝对路径与 Windows 盘符目标必须 fail closed。"""
+    scanner = _load_scanner()
+    root = tmp_path / "artifact"
+    root.mkdir()
+    (root / "abs").symlink_to("/etc/passwd")
+    (root / "drive").symlink_to("C:\\Users\\me\\secret.txt")
+    result = scanner.scan_tree(root)
+    assert not result.ok
+    escapes = {f.type for f in result.findings if f.type == "symlink_escape"}
+    assert "symlink_escape" in escapes
+    assert len([f for f in result.findings if f.type == "symlink_escape"]) == 2
+
+
+def test_tree_symlink_dangling_fails_closed(tmp_path):
+    """P0-1：解析后仍在树内但目标不存在（悬空）→ fail closed。"""
+    scanner = _load_scanner()
+    root = tmp_path / "artifact"
+    root.mkdir()
+    (root / "libfoo.1.dylib").symlink_to("libfoo.1.2.3.dylib")  # 目标缺失
+    result = scanner.scan_tree(root)
+    assert not result.ok
+    assert any(f.type == "symlink_dangling" and f.severity == "error" for f in result.findings)
+
+
+def test_tree_symlink_never_followed(tmp_path, monkeypatch):
+    """P0-1：绝不跟随 symlink 读取目标——link 路径本身永不被 open。"""
+    scanner = _load_scanner()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "auth.json").write_text("TOP-SECRET-OUTSIDE", encoding="utf-8")
+
+    root = tmp_path / "artifact"
+    root.mkdir()
+    target = root / "target.txt"
+    target.write_text(f"x={CANARY}\n", encoding="utf-8")
+    link = root / "link.txt"
+    link.symlink_to("target.txt")  # 树内相对链接
+
+    real_open = open
+    opened: list[str] = []
+
+    def spy_open(path, *args, **kwargs):
+        opened.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    # canary 经由真实文件 target.txt 命中，无需跟随 link
+    assert any(f.type == "canary" for f in result.findings)
+    assert str(link) not in opened  # link 路径从未被打开
+    assert str(outside / "auth.json") not in opened  # 树外目标从未被触碰
+    # 树外文件内容不在报告中
+    report = scanner.report_text(result)
+    assert "TOP-SECRET-OUTSIDE" not in report
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["../secret.txt", "../../developer/auth.json", "../../../x/y", "a/../../out"],
+)
+def test_zip_symlink_relative_escape_fails_closed(tmp_path, target):
+    """P0-1：zip symlink 相对 ../ 与多层 ../../ 逃逸必须 fail closed。"""
+    scanner = _load_scanner()
+    zpath = tmp_path / "escape.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        _symlink_entry(zf, "escape", target)
+    result = scanner.scan_archive(zpath)
+    assert not result.ok
+    assert any(f.type == "symlink_escape" and f.severity == "error" for f in result.findings)
+
+
+def test_zip_symlink_subdir_relative_escape_fails_closed(tmp_path):
+    """P0-1：从子目录 entry 出发的 ../../ 逃逸同样 fail closed。"""
+    scanner = _load_scanner()
+    zpath = tmp_path / "escape.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        _symlink_entry(zf, "sub/escape", "../../developer/auth.json")
+    result = scanner.scan_archive(zpath)
+    assert not result.ok
+    assert any(f.type == "symlink_escape" and f.severity == "error" for f in result.findings)
+
+
+def test_tree_symlink_subdir_relative_escape_fails_closed(tmp_path):
+    """P0-1：tree 从子目录出发的 ../../ 逃逸同样 fail closed。"""
+    scanner = _load_scanner()
+    root = tmp_path / "artifact"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "escape").symlink_to("../../developer/auth.json")
+    result = scanner.scan_tree(root)
+    assert not result.ok
+    assert any(f.type == "symlink_escape" and f.severity == "error" for f in result.findings)
+
+
+def test_zip_symlink_absolute_and_drive_escape_fail_closed(tmp_path):
+    """P0-1：zip symlink 绝对路径与 Windows 盘符目标必须 fail closed。"""
+    scanner = _load_scanner()
+    zpath = tmp_path / "escape.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        _symlink_entry(zf, "abs", "/etc/passwd")
+        _symlink_entry(zf, "drive", "C:/Users/me/secret.txt")
+        _symlink_entry(zf, "drive2", "C:\\Users\\me\\secret.txt")
+    result = scanner.scan_archive(zpath)
+    assert not result.ok
+    assert len([f for f in result.findings if f.type == "symlink_escape"]) == 3
+
+
+def test_zip_symlink_dangling_fails_closed(tmp_path):
+    """P0-1：zip symlink 目标 entry 不存在（悬空/不可验证）→ fail closed。"""
+    scanner = _load_scanner()
+    zpath = tmp_path / "dangling.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        _symlink_entry(zf, "libfoo.1.dylib", "libfoo.1.2.3.dylib")
+    result = scanner.scan_archive(zpath)
+    assert not result.ok
+    assert any(f.type == "symlink_dangling" and f.severity == "error" for f in result.findings)
+
+
+def test_zip_symlink_benign_in_archive_is_info(tmp_path):
+    """P0-1：确认为 archive 内相对链接（目标 entry 存在）→ INFO，不失败。"""
+    scanner = _load_scanner()
+    zpath = tmp_path / "benign.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("lib/libfoo.1.2.3.dylib", b"\x00data")
+        _symlink_entry(zf, "lib/libfoo.1.dylib", "libfoo.1.2.3.dylib")
+    result = scanner.scan_archive(zpath)
+    assert result.ok
+    assert any(f.type == "symlink" and f.severity == "info" for f in result.findings)
+
+
+def test_zip_symlink_every_entry_has_stable_finding(tmp_path):
+    """P0-1：zip 内每个 symlink 至少产生一个稳定 finding（error 或 INFO）。"""
+    scanner = _load_scanner()
+    zpath = tmp_path / "links.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("lib/libfoo.1.2.3.dylib", b"\x00data")
+        _symlink_entry(zf, "lib/libfoo.1.dylib", "libfoo.1.2.3.dylib")
+        _symlink_entry(zf, "bad", "../../outside")
+    result = scanner.scan_archive(zpath)
+    symlink_findings = [f for f in result.findings if f.type in ("symlink", "symlink_escape")]
+    assert len(symlink_findings) == 2  # 两个 symlink entry 各有 finding
+
+
+# ── 复审 P0-2：嵌套 zip 不得隐藏 canary；资源上限 fail closed ─────────────
+
+
+def _nested_zip_chain(tmp_path, levels: int, canary: str = CANARY) -> Path:
+    """构造 levels 层嵌套 zip（最内层含 canary），返回最外层 zip。
+
+    levels=1 → outer.zip 内含 inner.zip（inner 里是 canary）；
+    levels=2 → outer.zip 内含 mid.zip，mid 内含 inner.zip。
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    inner = tmp_path / "inner.zip"
+    with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("payload", (f"x={canary} " * 200).encode())
+    cur = inner
+    for level in range(levels):
+        outer = tmp_path / f"level{level}.zip"
+        with zipfile.ZipFile(outer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(cur, f"nested/{cur.name}")
+        cur = outer
+    return cur
+
+
+def test_nested_zip_canary_detected(tmp_path):
+    """P0-2：外层 zip 的 entry 是压缩后的 inner.zip，canary 仍必须命中（评审复现）。"""
+    scanner = _load_scanner()
+    outer = _nested_zip_chain(tmp_path, levels=1)
+    assert b"obr-canary" not in outer.read_bytes()  # 压缩后原始字节不含 canary
+    result = scanner.scan_archive(outer, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_two_level_nested_zip_canary_detected(tmp_path):
+    """P0-2：两层嵌套（outer→mid→inner）canary 仍必须命中。"""
+    scanner = _load_scanner()
+    outer = _nested_zip_chain(tmp_path, levels=2)
+    result = scanner.scan_archive(outer, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_nested_zip_depth_limit_fails_closed(tmp_path, monkeypatch):
+    """P0-2：嵌套深度达到上限必须 error finding，不能 PASS。"""
+    scanner = _load_scanner()
+    outer = _nested_zip_chain(tmp_path, levels=2)
+    monkeypatch.setattr(scanner, "_MAX_ARCHIVE_DEPTH", 0)  # 不允许任何嵌套
+    result = scanner.scan_archive(outer, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "archive_limit" and f.severity == "error" for f in result.findings)
+
+
+def test_nested_zip_entries_limit_fails_closed(tmp_path, monkeypatch):
+    """P0-2：累计 entry 数达到上限必须 error finding，不能 PASS。"""
+    scanner = _load_scanner()
+    outer = _nested_zip_chain(tmp_path, levels=1)
+    monkeypatch.setattr(scanner, "_MAX_ARCHIVE_ENTRIES", 1)
+    result = scanner.scan_archive(outer, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "archive_limit" and f.severity == "error" for f in result.findings)
+
+
+def test_nested_zip_bytes_limit_fails_closed(tmp_path, monkeypatch):
+    """P0-2：累计解压字节达到上限必须 error finding，不能 PASS。"""
+    scanner = _load_scanner()
+    outer = _nested_zip_chain(tmp_path, levels=1)
+    monkeypatch.setattr(scanner, "_MAX_ARCHIVE_BYTES", 10)
+    result = scanner.scan_archive(outer, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "archive_limit" and f.severity == "error" for f in result.findings)
+
+
+def test_corrupt_nested_zip_fails_closed(tmp_path):
+    """P0-2：.zip entry 无法解析为 zip → error finding，不能静默当普通文件。"""
+    scanner = _load_scanner()
+    zpath = tmp_path / "outer.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("fake/inner.zip", b"this is not a zip archive")
+    result = scanner.scan_archive(zpath)
+    assert not result.ok
+    assert any(
+        f.type == "nested_archive_unreadable" and f.severity == "error" for f in result.findings
+    )
+
+
+def test_nested_zip_in_tree_shared_budget(tmp_path, monkeypatch):
+    """P0-2：tree 里多个 zip 共享同一预算，超限 fail closed。"""
+    scanner = _load_scanner()
+    root = tmp_path / "pkg"
+    root.mkdir()
+    for i in range(2):
+        z = _nested_zip_chain(tmp_path / f"z{i}", levels=1)
+        (root / z.name).write_bytes(z.read_bytes())
+    monkeypatch.setattr(scanner, "_MAX_ARCHIVE_ENTRIES", 1)
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+    assert not result.ok
+    assert any(f.type == "archive_limit" for f in result.findings)
+
+
+# ── 复审 P0-3：CLI 全部错误输出走统一脱敏边界 ──────────────────────────────
+
+SECRET_DIR_NAME = "sk-proj-REVIEWSECRET1234567890abcdef"
+
+
+def _cli(scanner, monkeypatch, capsys, *argv, chdir=None):
+    if chdir is not None:
+        monkeypatch.chdir(chdir)
+    rc = scanner.main(list(argv))
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+def test_cli_missing_tree_redacts_secret_path(tmp_path, monkeypatch, capsys):
+    """P0-3：缺失 tree 的 stderr 不得回显路径中的秘密（评审复现）。"""
+    scanner = _load_scanner()
+    rc, out, err = _cli(
+        scanner, monkeypatch, capsys,
+        "--tree", str(tmp_path / SECRET_DIR_NAME / "missing"),
+    )
+    assert rc == 2
+    assert SECRET_DIR_NAME not in err
+    assert "<redacted>" in err
+
+
+def test_cli_missing_tree_json_redacts_secret_path(tmp_path, monkeypatch, capsys):
+    """P0-3：json 模式下缺失 tree 同样脱敏。"""
+    scanner = _load_scanner()
+    rc, out, err = _cli(scanner, monkeypatch, capsys,
+                        "--tree", str(tmp_path / SECRET_DIR_NAME / "missing"), "--report", "json")
+    assert rc == 2
+    assert SECRET_DIR_NAME not in err
+
+
+def test_cli_missing_archive_redacts_secret_path(tmp_path, monkeypatch, capsys):
+    """P0-3：缺失 archive 的 stderr 不得回显路径中的秘密。"""
+    scanner = _load_scanner()
+    rc, out, err = _cli(scanner, monkeypatch, capsys,
+                        "--archive", str(tmp_path / SECRET_DIR_NAME / "gone.zip"))
+    assert rc == 2
+    assert SECRET_DIR_NAME not in err
+
+
+def test_cli_bad_zip_redacts_secret_path(tmp_path, monkeypatch, capsys):
+    """P0-3：损坏 zip 的错误消息不得回显路径中的秘密（评审复现）。"""
+    scanner = _load_scanner()
+    bad = tmp_path / SECRET_DIR_NAME
+    bad.mkdir()
+    (bad / "bad.zip").write_bytes(b"not a zip")
+    rc, out, err = _cli(scanner, monkeypatch, capsys, "--archive", str(bad / "bad.zip"))
+    assert rc == 2
+    assert SECRET_DIR_NAME not in err
+    assert "<redacted>" in err
+
+
+def test_cli_tree_is_file_redacts_secret_path(tmp_path, monkeypatch, capsys):
+    """P0-3：--tree 指向文件属于 usage 错误，路径脱敏。"""
+    scanner = _load_scanner()
+    secret = tmp_path / SECRET_DIR_NAME
+    secret.mkdir()
+    f = secret / "file.txt"
+    f.write_text("x")
+    rc, out, err = _cli(scanner, monkeypatch, capsys, "--tree", str(f))
+    assert rc == 2
+    assert SECRET_DIR_NAME not in err
+
+
+def test_cli_permission_error_redacts_secret_path(tmp_path, monkeypatch, capsys):
+    """P0-3：树内权限错误走 finding 报告（exit 1），target/路径同样脱敏。"""
+    scanner = _load_scanner()
+    secret = tmp_path / SECRET_DIR_NAME
+    secret.mkdir()
+    payload = secret / "payload.dat"
+    payload.write_bytes(b"hello")
+
+    real_open = open
+
+    def denying_open(path, *args, **kwargs):
+        if str(path) == str(payload):
+            raise PermissionError("denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", denying_open)
+    rc, out, err = _cli(scanner, monkeypatch, capsys, "--tree", str(secret))
+    assert rc == 1
+    assert SECRET_DIR_NAME not in out
+    assert SECRET_DIR_NAME not in err
+    assert "unreadable" in out
+
+
+def test_cli_argparse_error_redacts_secret_value(tmp_path):
+    """P0-3：usage 错误回显 argv 时秘密值同样脱敏（黑盒 subprocess）。"""
+    (tmp_path / "ok").mkdir()
+    proc = subprocess.run(
+        [sys.executable, str(SCANNER_PATH), "--tree", str(tmp_path / "ok"),
+         "--bogus", "sk-proj-ARGLEAK1234567890abcdef"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "ARGLEAK1234567890abcdef" not in proc.stderr
+
+
+def test_cli_error_redacts_canary_in_path(tmp_path, monkeypatch, capsys):
+    """P0-3：缺失路径内含 canary 时错误输出必须脱敏 canary。"""
+    scanner = _load_scanner()
+    rc, out, err = _cli(scanner, monkeypatch, capsys,
+                        "--tree", str(tmp_path / CANARY / "missing"), "--canary", CANARY)
+    assert rc == 2
+    assert CANARY not in err
+    assert "<redacted>" in err
+
+
+# ── 复审 P1：超过 8192 字节 canary 跨 chunk 边界也必须命中 ────────────────
+
+
+def test_long_canary_crossing_chunk_boundary_detected(tmp_path):
+    """P1：9000 字节 canary 在首 chunk 留 8900 字节、次 chunk 留 100 字节必须命中。"""
+    scanner = _load_scanner()
+    root = tmp_path / "big"
+    root.mkdir()
+    big = root / "big.txt"
+    canary = "C" * 9000
+    with open(big, "wb") as fh:
+        fh.write(b"x" * (1024 * 1024 - 8900) + canary.encode())
+    result = scanner.scan_tree(root, canaries=(canary,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_long_canary_fully_inside_chunk_detected(tmp_path):
+    """P1：>8192 字节 canary 完整落在单 chunk 内同样命中。"""
+    scanner = _load_scanner()
+    root = tmp_path / "big"
+    root.mkdir()
+    big = root / "big.txt"
+    canary = "Q" * 9000
+    big.write_bytes(canary.encode() + b"\n")
+    result = scanner.scan_tree(root, canaries=(canary,))
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_oversized_canary_fails_closed_as_usage_error(tmp_path, monkeypatch, capsys):
+    """P1：超过 _MAX_CANARY_BYTES 的 canary 必须 usage error（exit 2），不能返回 clean。"""
+    scanner = _load_scanner()
+    rc, out, err = _cli(
+        scanner, monkeypatch, capsys,
+        "--tree", str(tmp_path / "ok"),
+        "--canary", "K" * (scanner._MAX_CANARY_BYTES + 1),
+    )
+    assert rc == 2
+    assert "canary string exceeds" in err
+    # 不把 canary 值回显
+    assert "K" * 64 not in err
+
 # ── 扫描器：staged source ──────────────────────────────────────────────────
 
 

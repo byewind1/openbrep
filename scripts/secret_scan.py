@@ -46,8 +46,10 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
+import posixpath
 import re
 import stat
 import subprocess
@@ -125,9 +127,19 @@ _PLACEHOLDER_RE = re.compile(
 # 示例值。canary 永不豁免；sk-*/JWT/其他 Bearer 值在 redact.py 内同样命中。
 _SAFE_MATCH_EXAMPLES = frozenset({"bearer plain-secret-value"})
 
-# 流式扫描：chunk 间保留重叠（须大于任何模式/最长 canary 的长度）
+# 流式扫描：chunk 间保留重叠（须大于任何模式/最长 canary 的长度）。
+# overlap 按本轮最长 canary 字节动态放大（见 scan_stream），保证任意合法
+# canary 跨 chunk 边界都能命中；canary 长度由 _MAX_CANARY_BYTES 封顶
+# （超限在 CLI 层 fail closed，见 _load_canaries）。
 _CHUNK_BYTES = 1024 * 1024
 _OVERLAP_BYTES = 8192
+_MAX_CANARY_BYTES = 256 * 1024
+
+# 嵌套归档（zip entry 里的 zip）递归资源保护：达到上限必须 fail closed。
+_MAX_ARCHIVE_DEPTH = 4          # 允许的嵌套层数（顶层=0）
+_MAX_ARCHIVE_ENTRIES = 50_000   # 单次扫描累计 entry 数
+_MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024   # 累计解压字节上限
+_MAX_NESTED_ZIP_BYTES = 256 * 1024 * 1024     # 单个嵌套 zip 读入内存上限
 
 # finding type → 稳定类型名（报告用，不带值）
 FINDING_LABELS = {
@@ -146,8 +158,12 @@ FINDING_LABELS = {
     "unreadable": "file could not be read (fail closed)",
     "symlink": "symbolic link (not followed)",
     "symlink_escape": "symlink target escapes the artifact tree",
+    "symlink_dangling": "symlink target missing / unverifiable (fail closed)",
+    "symlink_unverifiable": "symlink target could not be read (fail closed)",
     "symlink_target_secret": "symlink target contains secret segments",
     "opaque_archive": "opaque installer archive (scan its staging tree)",
+    "archive_limit": "nested archive resource limit reached (fail closed)",
+    "nested_archive_unreadable": "nested archive could not be parsed (fail closed)",
 }
 
 
@@ -187,6 +203,14 @@ class ScanResult:
         self.targets.extend(other.targets)
         if not self.canaries and other.canaries:
             self.canaries = other.canaries
+
+
+@dataclass
+class _ArchiveBudget:
+    """嵌套归档递归扫描的累计资源预算（单次扫描运行内共享）。"""
+
+    entries: int = 0  # 累计处理 entry 数
+    bytes: int = 0  # 累计解压字节数
 
 
 # ── 名称级规则 ─────────────────────────────────────────────────────────────
@@ -353,6 +377,13 @@ def scan_stream(fh, rel_path: str, target: str, canaries: tuple[str, ...]) -> li
     prev_tail = b""
     line_cursor = 1
     chunk_index = 0
+    # overlap 至少 8192；若 canary 更长，按最长 canary 字节动态放大，
+    # 保证任何跨 chunk 边界的 canary 都完整落入 data（长度上限见
+    # _MAX_CANARY_BYTES，CLI 层超限 fail closed）。
+    max_canary_bytes = max(
+        (len(c.encode("utf-8")) for c in canaries if c), default=0
+    )
+    overlap = max(_OVERLAP_BYTES, max_canary_bytes)
     while True:
         chunk = fh.read(_CHUNK_BYTES)
         if not chunk:
@@ -396,7 +427,7 @@ def scan_stream(fh, rel_path: str, target: str, canaries: tuple[str, ...]) -> li
                 findings.append(Finding(assign.type, target, rel_path, line))
 
         line_cursor += text[boundary:].count("\n")
-        prev_tail = chunk[-_OVERLAP_BYTES:] if len(chunk) >= _OVERLAP_BYTES else chunk
+        prev_tail = chunk[-overlap:] if len(chunk) >= overlap else chunk
         chunk_index += 1
     return _merge_line_findings(findings)
 
@@ -404,10 +435,78 @@ def scan_stream(fh, rel_path: str, target: str, canaries: tuple[str, ...]) -> li
 # ── 目标扫描 ───────────────────────────────────────────────────────────────
 
 
+def _tree_symlink_verdict(link_path: Path, link_target: str) -> str:
+    """tree symlink 的目标安全分类（纯路径规范化，不跟随、不读取目标）。
+
+    - 绝对路径（/ 开头、Windows 盘符前缀）→ escape
+    - 相对目标用 父目录 + target 纯字符串规范化；解析后越出父目录 → escape
+    - 解析后仍在树内但目标不存在（悬空/不可验证）→ dangling
+    - 其余（解析后位于树内且存在）→ ok
+    """
+    if link_target.startswith("/") or re.match(r"^[A-Za-z]:", link_target):
+        return "escape"
+    parent = os.path.abspath(os.path.dirname(str(link_path)))
+    joined = os.path.normpath(os.path.join(parent, link_target))
+    try:
+        inside = os.path.commonpath([joined, parent]) == parent
+    except ValueError:  # Windows 跨盘符
+        inside = False
+    if not inside:
+        return "escape"
+    if not os.path.lexists(joined):
+        return "dangling"
+    return "ok"
+
+
+def _norm_entry(name: str) -> str:
+    """zip entry 名规范化（去掉尾部斜杠、反斜杠转 /、posix normpath）。"""
+    return posixpath.normpath(name.replace("\\", "/").rstrip("/"))
+
+
+def _zip_entry_exists(normalized: str, entry_names: set[str], dir_prefixes: set[str]) -> bool:
+    """规范化后的目标是否存在于归档（entry 精确名或祖先目录形态）。"""
+    return normalized in entry_names or normalized in dir_prefixes
+
+
+def _zip_symlink_verdict(
+    entry_name: str,
+    link_target: str,
+    entry_names: set[str],
+    dir_prefixes: set[str],
+) -> str:
+    """zip symlink entry 的目标安全分类（entry parent / link target 规范化）。
+
+    - 绝对路径 → escape；反斜杠按分隔符处理（Windows 创建的 zip）
+    - 归一化后越过 archive root → escape
+    - 归一化后仍在 archive 内但目标 entry 不存在（悬空/不可验证）→ dangling
+    - 其余（确认为 archive 内相对链接）→ ok
+    """
+    target = link_target.rstrip("\r\n").replace("\\", "/")
+    if target.startswith("/") or re.match(r"^[A-Za-z]:", target):
+        return "escape"
+    parent = entry_name.rsplit("/", 1)[0] if "/" in entry_name else ""
+    joined = f"{parent}/{target}" if parent else target
+    normalized = posixpath.normpath(joined)
+    if (
+        normalized == ".."
+        or normalized.startswith("../")
+        or normalized.startswith("/")
+        or re.match(r"^[A-Za-z]:", normalized)
+    ):
+        return "escape"
+    if not _zip_entry_exists(normalized, entry_names, dir_prefixes):
+        return "dangling"
+    return "ok"
+
+
 def _symlink_findings(
     rel: str, link_path: Path, target: str, canaries: tuple[str, ...]
 ) -> list[Finding]:
-    """symlink：绝不跟随；按 link 名与 link target 的安全分类报告。"""
+    """symlink：绝不跟随；按 link 名与 link target 的安全分类报告。
+
+    相对目标逃逸、绝对目标、悬空/不可验证一律 error（fail closed）；
+    确认为树内/归档内相对链接才 INFO。
+    """
     findings: list[Finding] = []
     name_kind = classify_name(rel)
     if name_kind is not None:
@@ -416,11 +515,16 @@ def _symlink_findings(
     try:
         link_target = os.readlink(link_path)  # 不跟随
     except OSError:
-        link_target = ""
+        findings.append(Finding("symlink_unverifiable", target, rel))
+        return findings
+    link_target = link_target.rstrip("\r\n")
     if _dir_secret_type(link_target):
         findings.append(Finding("symlink_target_secret", target, rel))
-    if link_target.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", link_target):
+    verdict = _tree_symlink_verdict(link_path, link_target)
+    if verdict == "escape":
         findings.append(Finding("symlink_escape", target, rel))
+    elif verdict == "dangling":
+        findings.append(Finding("symlink_dangling", target, rel))
     if not findings:
         # 良性相对 in-tree symlink（如 dylib 版本链接）：可见但不失败
         findings.append(Finding("symlink", target, rel, severity="info"))
@@ -428,11 +532,15 @@ def _symlink_findings(
 
 
 def scan_tree(
-    root: Path, canaries: tuple[str, ...] = (), target_label: str | None = None
+    root: Path,
+    canaries: tuple[str, ...] = (),
+    target_label: str | None = None,
+    _budget: _ArchiveBudget | None = None,
 ) -> ScanResult:
     """递归扫描目录树：不跟随符号链接，不忽略任何目录（release 树全扫）。"""
     target = target_label or f"tree:{root}"
     result = ScanResult(targets=[target], canaries=canaries)
+    budget = _budget if _budget is not None else _ArchiveBudget()
     root_kind = _dir_secret_type(str(root))
     if root_kind:
         result.findings.append(Finding(root_kind, target, str(root)))
@@ -464,10 +572,10 @@ def scan_tree(
                 continue
             # 2) 路径内嵌秘密模式（目录名/文件名）
             result.findings.extend(path_secret_findings(rel, canaries, target))
-            # 3) 嵌套 zip → 归档级扫描（streaming entries）
+            # 3) 嵌套 zip → 归档级扫描（streaming entries，递归共享预算）
             if rel.lower().endswith(".zip"):
                 try:
-                    result.merge(scan_archive(p, canaries))
+                    result.merge(scan_archive(p, canaries, _depth=0, _budget=budget))
                 except ValueError:
                     result.findings.append(Finding("unreadable", target, rel))
                 continue
@@ -480,48 +588,126 @@ def scan_tree(
     return result
 
 
-def scan_archive(path: Path, canaries: tuple[str, ...] = ()) -> ScanResult:
-    """扫描 zip 归档（streaming entries）；dmg/msi/pkg/exe 不可解析 → 失败（fail closed）。"""
+def _scan_zip_entries(
+    zf: zipfile.ZipFile,
+    result: ScanResult,
+    canaries: tuple[str, ...],
+    target: str,
+    depth: int,
+    budget: _ArchiveBudget,
+) -> None:
+    """遍历一个 zip 的 entries：名称级 + 内容级 + 嵌套 zip 递归（共享预算）。
+
+    资源上限（entry 数 / 累计解压字节 / 嵌套深度）达到即产生 error finding
+    并停止该归档的进一步扫描 —— 绝不静默 PASS。
+    """
+    entry_names: set[str] = set()
+    dir_prefixes: set[str] = set()
+    for info in zf.infolist():
+        normalized = _norm_entry(info.filename)
+        entry_names.add(normalized)
+        parts = normalized.split("/")
+        for k in range(1, len(parts)):
+            dir_prefixes.add("/".join(parts[:k]))
+
+    for info in zf.infolist():
+        name = info.filename
+        if budget.entries >= _MAX_ARCHIVE_ENTRIES:
+            result.findings.append(Finding("archive_limit", target, name))
+            return
+        budget.entries += 1
+        size = info.file_size or 0
+        if budget.bytes + size > _MAX_ARCHIVE_BYTES:
+            result.findings.append(Finding("archive_limit", target, name))
+            return
+        budget.bytes += size
+
+        if info.is_dir():
+            kind = _dir_secret_type(name)
+            if kind is not None:
+                result.findings.append(Finding(kind, target, name))
+            result.findings.extend(path_secret_findings(name, canaries, target))
+            continue
+        # zip 内 symlink entry（内容即 link target）：每个 symlink 至少一个稳定 finding
+        if stat.S_ISLNK(info.external_attr >> 16):
+            had_error = False
+            kind = classify_name(name)
+            if kind is not None:
+                result.findings.append(Finding(kind, target, name))
+                had_error = True
+            path_findings = path_secret_findings(name, canaries, target)
+            if path_findings:
+                had_error = True
+            result.findings.extend(path_findings)
+            try:
+                link_target = zf.read(info)[:4096].decode("latin-1", errors="replace")
+            except (OSError, zipfile.BadZipFile, RuntimeError):
+                result.findings.append(Finding("unreadable", target, name))
+                continue
+            link_target = link_target.rstrip("\r\n")
+            if _dir_secret_type(link_target):
+                result.findings.append(Finding("symlink_target_secret", target, name))
+                had_error = True
+            verdict = _zip_symlink_verdict(name, link_target, entry_names, dir_prefixes)
+            if verdict == "escape":
+                result.findings.append(Finding("symlink_escape", target, name))
+                had_error = True
+            elif verdict == "dangling":
+                result.findings.append(Finding("symlink_dangling", target, name))
+                had_error = True
+            elif not had_error:
+                # 确认为 archive 内相对链接：INFO（可定位但不失败）
+                result.findings.append(Finding("symlink", target, name, severity="info"))
+            continue
+        kind = classify_name(name)
+        if kind is not None:
+            result.findings.append(Finding(kind, target, name))
+            continue
+        result.findings.extend(path_secret_findings(name, canaries, target))
+        # 嵌套 zip（entry 是 zip）→ 递归扫描 entries；失败必须 fail closed
+        if name.lower().endswith(".zip"):
+            if depth + 1 > _MAX_ARCHIVE_DEPTH:
+                result.findings.append(Finding("archive_limit", target, name))
+                continue
+            if size > _MAX_NESTED_ZIP_BYTES:
+                result.findings.append(Finding("archive_limit", target, name))
+                continue
+            try:
+                data = zf.read(info)
+            except (OSError, zipfile.BadZipFile, RuntimeError):
+                result.findings.append(Finding("unreadable", target, name))
+                continue
+            try:
+                inner = zipfile.ZipFile(io.BytesIO(data))
+            except (zipfile.BadZipFile, OSError):
+                result.findings.append(Finding("nested_archive_unreadable", target, name))
+                continue
+            with inner:
+                _scan_zip_entries(inner, result, canaries, target, depth + 1, budget)
+            continue
+        try:
+            with zf.open(info) as entry:
+                result.findings.extend(scan_stream(entry, name, target, canaries))
+        except (OSError, zipfile.BadZipFile, RuntimeError):
+            result.findings.append(Finding("unreadable", target, name))
+
+
+def scan_archive(
+    path: Path,
+    canaries: tuple[str, ...] = (),
+    _depth: int = 0,
+    _budget: _ArchiveBudget | None = None,
+) -> ScanResult:
+    """扫描 zip 归档（streaming entries + 嵌套 zip 递归）；dmg/msi/pkg/exe → 失败。"""
     target = f"archive:{path}"
     result = ScanResult(targets=[target], canaries=canaries)
     if path.suffix.lower() != ".zip":
         result.findings.append(Finding("opaque_archive", target, str(path)))
         return result
+    budget = _budget if _budget is not None else _ArchiveBudget()
     try:
         with zipfile.ZipFile(path) as zf:
-            for info in zf.infolist():
-                name = info.filename
-                if info.is_dir():
-                    kind = _dir_secret_type(name)
-                    if kind is not None:
-                        result.findings.append(Finding(kind, target, name))
-                    result.findings.extend(path_secret_findings(name, canaries, target))
-                    continue
-                # zip 内 symlink entry（内容即 link target）
-                if stat.S_ISLNK(info.external_attr >> 16):
-                    kind = classify_name(name)
-                    if kind is not None:
-                        result.findings.append(Finding(kind, target, name))
-                    result.findings.extend(path_secret_findings(name, canaries, target))
-                    try:
-                        link_target = zf.read(info)[:4096].decode("latin-1", errors="replace")
-                    except (OSError, zipfile.BadZipFile, RuntimeError):
-                        link_target = ""
-                    if _dir_secret_type(link_target):
-                        result.findings.append(Finding("symlink_target_secret", target, name))
-                    if link_target.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", link_target):
-                        result.findings.append(Finding("symlink_escape", target, name))
-                    continue
-                kind = classify_name(name)
-                if kind is not None:
-                    result.findings.append(Finding(kind, target, name))
-                    continue
-                result.findings.extend(path_secret_findings(name, canaries, target))
-                try:
-                    with zf.open(info) as entry:
-                        result.findings.extend(scan_stream(entry, name, target, canaries))
-                except (OSError, zipfile.BadZipFile, RuntimeError):
-                    result.findings.append(Finding("unreadable", target, name))
+            _scan_zip_entries(zf, result, canaries, target, _depth, budget)
     except (zipfile.BadZipFile, OSError) as exc:
         raise ValueError(f"cannot open archive {path}: {exc}") from exc
     return result
@@ -581,7 +767,14 @@ def _load_canaries(cli_values: list[str]) -> tuple[str, ...]:
     env = os.environ.get("OPENBREP_RELEASE_CANARY", "").strip()
     if env:
         values.extend(v.strip() for v in env.replace(",", " ").split() if v.strip())
-    return tuple(dict.fromkeys(values))  # 去重保序
+    seen = tuple(dict.fromkeys(values))  # 去重保序
+    for c in seen:
+        if len(c.encode("utf-8")) > _MAX_CANARY_BYTES:
+            # 不把 canary 值拼进错误消息（错误边界统一脱敏，但这里直接不写值）
+            raise ValueError(
+                f"canary string exceeds {_MAX_CANARY_BYTES} bytes maximum length"
+            )
+    return seen
 
 
 def redact_secret_text(value, canaries: tuple[str, ...]) -> str:
@@ -636,21 +829,24 @@ def report_json(result: ScanResult) -> str:
 
 
 def run_scan(args: argparse.Namespace) -> ScanResult:
-    """按 CLI 目标执行扫描，返回合并结果。"""
+    """按 CLI 目标执行扫描，返回合并结果（单次运行共享嵌套归档预算）。"""
     canaries = _load_canaries(args.canary or [])
     result = ScanResult(canaries=canaries)
     missing: list[str] = []
+    budget = _ArchiveBudget()
 
     for tree in args.tree or []:
         if not Path(tree).exists():
             missing.append(tree)
             continue
-        result.merge(scan_tree(Path(tree), canaries))
+        if not Path(tree).is_dir():
+            raise ValueError(f"target path is not a directory: {tree}")
+        result.merge(scan_tree(Path(tree), canaries, _budget=budget))
     for archive in args.archive or []:
         if not Path(archive).exists():
             missing.append(archive)
             continue
-        result.merge(scan_archive(Path(archive), canaries))
+        result.merge(scan_archive(Path(archive), canaries, _budget=budget))
     if args.staged:
         result.merge(scan_staged(Path.cwd(), canaries))
 
@@ -659,9 +855,45 @@ def run_scan(args: argparse.Namespace) -> ScanResult:
     return result
 
 
+class _RedactingParser(argparse.ArgumentParser):
+    """usage/参数错误也走统一脱敏边界：argv 里的秘密值不回显到 stderr。"""
+
+    def __init__(self, *args, canaries: tuple[str, ...] = (), **kwargs):
+        super().__init__(*args, **kwargs)
+        self._canaries = canaries
+
+    def error(self, message: str):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {redact_secret_text(message, self._canaries)}\n")
+
+
+def _argv_canaries(argv: list[str]) -> list[str]:
+    """解析前预扫描 argv 里的 --canary 值（供 argparse 错误脱敏）。"""
+    values: list[str] = []
+    it = iter(argv)
+    for arg in it:
+        if arg == "--canary":
+            try:
+                values.append(next(it))
+            except StopIteration:
+                pass
+        elif arg.startswith("--canary="):
+            values.append(arg.split("=", 1)[1])
+    return values
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # env canary 先加载（超限 fail closed）；CLI canary 预扫描供 argparse 脱敏
+    try:
+        env_canaries = _load_canaries([])
+    except ValueError as exc:
+        print(f"SECRET GATE ERROR: {redact_secret_text(exc, ())}", file=sys.stderr)
+        return 2
+    redaction_canaries = tuple(dict.fromkeys(env_canaries + tuple(_argv_canaries(argv))))
+    parser = _RedactingParser(
         description="Release secret gate: scan staged source, build trees and archives.",
+        canaries=redaction_canaries,
     )
     parser.add_argument(
         "--tree",
@@ -695,7 +927,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_scan(args)
     except ValueError as exc:
-        print(f"SECRET GATE ERROR: {exc}", file=sys.stderr)
+        # 统一脱敏错误边界：target/path/异常中的秘密一律不回显
+        canaries = tuple(dict.fromkeys(env_canaries + tuple(args.canary or [])))
+        print(f"SECRET GATE ERROR: {redact_secret_text(exc, canaries)}", file=sys.stderr)
         return 2
 
     if args.report == "json":
