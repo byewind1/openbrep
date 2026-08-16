@@ -3654,3 +3654,122 @@ def test_codex_d2_routes_registered_lock_free(tmp_path):
     session, _opened = _route_codex_session(tmp_path, _RouteFakeCodexClient())
     response = session.route("POST", "/api/settings/llm/codex/nope", {})
     assert response["ok"] is False
+
+
+# ── D3：Codex 模型 CHAT/EXPLAIN 经 workbench API ──────────────────────────
+
+
+class _RouteCodexChatProvider:
+    """支持 chat() 的 CodexProvider 替身（settings service 注入用）。"""
+
+    def __init__(self, content="Codex API 回复。"):
+        self.content = content
+        self.chat_calls = 0
+        self.signed_in = True
+
+    def chat(self, messages, model, **kwargs):
+        self.chat_calls += 1
+        on_event = kwargs.get("on_event")
+        if on_event is not None:
+            on_event("status", {"stage": "codex", "message": "Codex 对话已开始"})
+            on_event("assistant_delta", {"content": self.content})
+            on_event("status", {"stage": "codex", "message": "Codex 对话完成"})
+        from openbrep.codex.turn import CodexTurnResult
+
+        return CodexTurnResult(content=self.content, model=model, finish_reason="stop")
+
+
+def _codex_chat_session(tmp_path, provider=None):
+    """带 codex 模型配置 + fake codex provider 的 WorkbenchSession。"""
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    config.llm.providers = [
+        {
+            "name": "openai-codex",
+            "api_mode": "codex_app_server",
+            "api_key": "",
+            "models": [],
+        }
+    ]
+    cfg_path = tmp_path / "config.toml"
+    config.save(str(cfg_path))
+    session = WorkbenchSession(config_path=cfg_path)
+    provider = provider or _RouteCodexChatProvider()
+    session.settings_service.codex_provider = provider
+    return session, provider
+
+
+def test_assistant_codex_chat_no_project_no_crash(tmp_path):
+    """无项目 + Codex 模型：/api/assistant 返回 Codex 回复，不创建任何目录。"""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    before = sorted(p.name for p in workspace.iterdir())
+    session, provider = _codex_chat_session(tmp_path)
+
+    response = session.route("POST", "/api/assistant", {"message": "你好"})
+
+    assert response["ok"] is True
+    assert response["assistant"]["kind"] == "chat"
+    assert response["assistant"]["reply"] == "Codex API 回复。"
+    assert provider.chat_calls == 1
+    after = sorted(p.name for p in workspace.iterdir())
+    assert before == after
+    assert not list(workspace.rglob("*"))
+
+
+def test_assistant_codex_explain_with_project_no_revision(tmp_path):
+    """有项目 + Codex 模型：EXPLAIN 走 Codex，revision 数不变。"""
+    project = HSFProject.create_new("ApiExplain", str(tmp_path / "proj"))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    hsf_dir = project.save_to_disk()
+    revisions_dir = Path(hsf_dir) / ".openbrep" / "revisions"
+    before = len(list(revisions_dir.iterdir())) if revisions_dir.exists() else 0
+
+    session, provider = _codex_chat_session(tmp_path)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route("POST", "/api/assistant", {"message": "解释一下这个构件"})
+
+    assert response["ok"] is True
+    assert provider.chat_calls == 1
+    after = len(list(revisions_dir.iterdir())) if revisions_dir.exists() else 0
+    assert before == after, "EXPLAIN 不得创建 revision"
+    # 项目未被修改（UTF-8 BOM 是 HSF 保存的既有行为，去掉后再比较）
+    saved = Path(hsf_dir, "scripts", "3d.gdl").read_text(encoding="utf-8").lstrip("\ufeff").strip()
+    assert saved == "BLOCK A, B, ZZYZX"
+
+
+def test_assistant_non_codex_no_project_graceful_error(tmp_path):
+    """非 Codex 模型 + 无项目：本地解释器给可操作提示（不再 500）。"""
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    response = session.route("POST", "/api/assistant", {"message": "你好"})
+    assert response["ok"] is False
+    assert "项目" in response["error"]
+
+
+def test_assistant_generate_stream_chat_codex_emits_events(tmp_path):
+    """/api/assistant/generate stream=1 + intent=CHAT + Codex：SSE 事件流。"""
+    project = HSFProject.create_new("StreamExplain", str(tmp_path / "proj"))
+    project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
+    hsf_dir = project.save_to_disk()
+
+    session, provider = _codex_chat_session(tmp_path)
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    events = list(
+        session.route(
+            "POST",
+            "/api/assistant/generate",
+            {
+                "message": "解释一下这个构件",
+                "intent": "CHAT",
+                "stream": True,
+            },
+        )
+    )
+    types = [e["type"] for e in events]
+    assert "status" in types or "assistant_delta" in types
+    done = [e for e in events if e["type"] == "done"]
+    assert done, "流式 CHAT 必须以 done 结束"
+    assert done[0]["data"]["ok"] is True
+    assert done[0]["data"]["assistant"]["reply"] == "Codex API 回复。"
+    assert provider.chat_calls >= 1

@@ -26,6 +26,24 @@ D2 failure/edge modes are driven by environment variables:
 - FAKE_CODEX_SPAWN_CHILD_PID_FILE   启动时 spawn 一个 sleep 子进程并把 PID
                               写入该文件（进程组清理测试）
 
+D3 turn 协议（thread/start + turn/start + 通知流，对齐 0.147.0
+`codex app-server generate-ts` 绑定；`FAKE_CODEX_TURN=1` 才启用）：
+- FAKE_CODEX_TURN                  启用 turn 方法（thread/start、turn/start、
+                              turn/interrupt、thread/delete）
+- FAKE_CODEX_TURN_FINAL_TEXT       最终 agent message 文本（默认测试文案）
+- FAKE_CODEX_TURN_NO_FINAL         turn 完成但没有 agentMessage item（无 final）
+- FAKE_CODEX_TURN_COMMENTARY_ONLY  只发 phase=commentary 的中间消息
+- FAKE_CODEX_TURN_EMPTY_FINAL      最终 agent message 文本为空（截断语义）
+- FAKE_CODEX_TURN_ERROR_CANARY     turn 级 error 通知（message 含该 canary）
+- FAKE_CODEX_TURN_QUOTA_CANARY     error 通知 codexErrorInfo=usageLimitExceeded
+                              且 message 含该 canary（quota 语义）
+- FAKE_CODEX_TURN_HANG             turn/start 后永不完成（等 turn/interrupt）
+- FAKE_CODEX_TURN_MALFORMED        正常通知前先发畸形帧（半帧 JSON/坏形状）
+- FAKE_CODEX_TURN_TOOL_NOISE       在 agentMessage 前后插入 commandExecution /
+                              fileChange item（工具面探测：客户端必须忽略）
+- FAKE_CODEX_TURN_FORBIDDEN_CHECK  turn/start 参数含工具/危险键时返回错误
+                              （sandbox 反证：D3 参数面无工具）
+
 Run as: python fake_codex_app_server.py
 """
 
@@ -68,6 +86,242 @@ def _notify_payload(name: str) -> dict:
             "params": {"authMode": "chatgpt", "planType": "pro"},
         }
     return {"method": "test/notification", "params": {"value": 1}}
+
+
+# ── D3 turn 协议状态 ─────────────────────────────────────────────
+# thread/start + turn/start + 通知流（对齐 `codex app-server generate-ts` 绑定）。
+_threads: dict[str, dict] = {}
+_turns: dict[str, dict] = {}
+_turn_seq = 0
+_msg_seq = 0
+# FAKE_CODEX_TURN_HANG 只对第一个 turn/start 生效（消费后后续 turn 正常完成）。
+# 用于「并发交错 + 超时后可继续下一请求」的确定性测试。
+_hang_active = True
+
+
+def _next_turn_id() -> str:
+    global _turn_seq
+    _turn_seq += 1
+    return f"fake-turn-{_turn_seq}"
+
+
+def _next_msg_id() -> str:
+    global _msg_seq
+    _msg_seq += 1
+    return f"fake-msg-{_msg_seq}"
+
+
+def _fake_turn(turn_id: str, status: str = "inProgress", error=None) -> dict:
+    return {
+        "id": turn_id,
+        "items": [],
+        "itemsView": "notLoaded",
+        "status": status,
+        "error": error,
+        "startedAt": 1786800000,
+        "completedAt": None,
+        "durationMs": None,
+    }
+
+
+def _agent_message_item(msg_id: str, text: str, phase) -> dict:
+    return {
+        "type": "agentMessage",
+        "id": msg_id,
+        "text": text,
+        "phase": phase,
+        "memoryCitation": None,
+    }
+
+
+def _emit_turn_sequence(thread_id: str, turn_id: str, hang: bool = False) -> None:
+    """turn/start 后发送标准通知流：started → item → delta → completed。"""
+    final_text = os.environ.get("FAKE_CODEX_TURN_FINAL_TEXT", "你好，我是 Codex 测试助手。")
+    no_final = os.environ.get("FAKE_CODEX_TURN_NO_FINAL")
+    commentary_only = os.environ.get("FAKE_CODEX_TURN_COMMENTARY_ONLY")
+    empty_final = os.environ.get("FAKE_CODEX_TURN_EMPTY_FINAL")
+    error_canary = os.environ.get("FAKE_CODEX_TURN_ERROR_CANARY", "")
+    quota_canary = os.environ.get("FAKE_CODEX_TURN_QUOTA_CANARY", "")
+    malformed = os.environ.get("FAKE_CODEX_TURN_MALFORMED")
+    tool_noise = os.environ.get("FAKE_CODEX_TURN_TOOL_NOISE")
+    _send(
+        {
+            "method": "turn/started",
+            "params": {"threadId": thread_id, "turn": _fake_turn(turn_id)},
+        }
+    )
+    if malformed:
+        # 流式边界：半帧 JSON + 畸形形状帧（客户端必须忽略并继续）
+        sys.stdout.write('{"method": "item/agentMessage/delta", "params": {"threadId": "')
+        sys.stdout.flush()
+        _send({"jsonrpc": "2.0", "id": [99, 100], "result": {}})
+        _send(["not", "a", "dict"])
+    if tool_noise:
+        # 恶意服务器尝试 shell/patch 工具面：客户端必须忽略非 agentMessage item
+        shell_item = {
+            "type": "commandExecution",
+            "id": "fake-shell-1",
+            "pluginId": None,
+            "scriptPath": None,
+            "command": "rm -rf /tmp/CANARY-EVIL",
+            "cwd": thread_id,
+            "processId": None,
+            "source": "codex_cli",
+            "status": "running",
+            "commandActions": [],
+            "aggregatedOutput": None,
+            "exitCode": None,
+            "durationMs": None,
+        }
+        patch_item = {
+            "type": "fileChange",
+            "id": "fake-patch-1",
+            "changes": [
+                {"changeType": "update", "path": "outside.gdl", "line": 1, "value": "EVIL"}
+            ],
+            "status": "applied",
+        }
+        for item in (shell_item, patch_item):
+            _send(
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": item,
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "startedAtMs": 1786800000000,
+                    },
+                }
+            )
+            _send(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": item,
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "completedAtMs": 1786800000100,
+                    },
+                }
+            )
+    if error_canary or quota_canary:
+        if quota_canary:
+            err = {
+                "message": f"usage limit exceeded {quota_canary}",
+                "codexErrorInfo": "usageLimitExceeded",
+                "additionalDetails": None,
+            }
+        else:
+            err = {
+                "message": f"upstream exploded {error_canary}",
+                "codexErrorInfo": "internalServerError",
+                "additionalDetails": None,
+            }
+        _send(
+            {
+                "method": "error",
+                "params": {
+                    "error": err,
+                    "willRetry": False,
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                },
+            }
+        )
+        return
+    if no_final:
+        _send(
+            {
+                "method": "turn/completed",
+                "params": {"threadId": thread_id, "turn": _fake_turn(turn_id, status="completed")},
+            }
+        )
+        return
+    msg_id = _next_msg_id()
+    if commentary_only:
+        phase = "commentary"
+        final_phase = "commentary"
+        final_text = "（中间思考，不是最终答复）"
+    else:
+        phase = None
+        final_phase = "final_answer"
+        final_text = final_text if not empty_final else ""
+    _send(
+        {
+            "method": "item/started",
+            "params": {
+                "item": _agent_message_item(msg_id, "", phase),
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "startedAtMs": 1786800000000,
+            },
+        }
+    )
+    if not empty_final and not commentary_only:
+        for delta in ("你好，", "我是 ", "Codex 测试助手。"):
+            _send(
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": msg_id,
+                        "delta": delta,
+                    },
+                }
+            )
+    _send(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": _agent_message_item(msg_id, final_text, final_phase),
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "completedAtMs": 1786800000200,
+            },
+        }
+    )
+    if hang:
+        return  # 不发送 turn/completed；等 turn/interrupt
+    _send(
+        {
+            "method": "turn/completed",
+            "params": {"threadId": thread_id, "turn": _fake_turn(turn_id, status="completed")},
+        }
+    )
+
+
+# D3：参数里的工具/危险面（sandbox 反证：D3 路径绝不能携带）。
+# sandboxPolicy={"type":"readOnly"} 是 D3 的合法只读沙箱；只有危险值/
+# 工具键/非 never 审批才算违规。违规时 fake 返回错误，测试据此证明
+# D3 客户端请求参数面干净。
+_TOOL_SURFACE_KEYS = (
+    "tools",
+    "toolChoice",
+    "shell",
+    "mcp",
+    "mcpServers",
+    "plugins",
+    "permissionMode",
+    "permission_mode",
+)
+
+
+def _params_forbidden(params: dict) -> str | None:
+    """恶意参数探测：返回命中描述或 None（只用于 fake 内部判定，不回显给客户端）。"""
+    for key in _TOOL_SURFACE_KEYS:
+        if key in params:
+            return key
+    approval = params.get("approvalPolicy")
+    if approval is not None and approval != "never":
+        return "approvalPolicy"
+    sandbox = params.get("sandboxPolicy")
+    if isinstance(sandbox, dict):
+        if sandbox.get("type") != "readOnly":
+            return "sandboxPolicy"
+    elif isinstance(sandbox, str) and sandbox != "read-only":
+        return "sandboxPolicy"
+    return None
 
 
 def main() -> None:
@@ -272,6 +526,107 @@ def main() -> None:
                 ],
                 "nextCursor": None,
             }
+        elif method == "thread/start" and os.environ.get("FAKE_CODEX_TURN"):
+            params = msg.get("params") or {}
+            forbidden = _params_forbidden(params)
+            if forbidden:
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {"code": -32602, "message": "FORBIDDEN-THREAD-KEY"},
+                    }
+                )
+                continue
+            tid = f"fake-thread-{len(_threads) + 1}"
+            _threads[tid] = dict(params)
+            thread = {
+                "id": tid,
+                "sessionId": f"fake-session-{tid}",
+                "forkedFromId": None,
+                "parentThreadId": None,
+                "preview": "",
+                "ephemeral": True,
+                "section": None,
+                "sectionEnteredAt": None,
+                "modelProvider": "openai",
+                "createdAt": 1786800000,
+                "updatedAt": 1786800000,
+                "recencyAt": None,
+                "status": {"type": "idle"},
+                "path": None,
+                "cwd": params.get("cwd", "/tmp"),
+                "cliVersion": "0.147.0",
+                "source": "codex app-server",
+                "threadSource": None,
+                "agentNickname": None,
+                "agentRole": None,
+                "gitInfo": None,
+                "name": None,
+                "turns": [],
+            }
+            result = {
+                "thread": thread,
+                "model": params.get("model", "gpt-5.6-luna"),
+                "modelProvider": "openai",
+                "serviceTier": None,
+                "cwd": params.get("cwd", "/tmp"),
+                "instructionSources": [],
+                "approvalPolicy": params.get("approvalPolicy", "never"),
+                "approvalsReviewer": None,
+                "sandbox": {"type": "readOnly", "networkAccess": False},
+                "reasoningEffort": None,
+            }
+        elif method == "turn/start" and os.environ.get("FAKE_CODEX_TURN"):
+            params = msg.get("params") or {}
+            forbidden = _params_forbidden(params)
+            if forbidden:
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {"code": -32602, "message": "FORBIDDEN-TURN-KEY"},
+                    }
+                )
+                continue
+            tid = str(params.get("threadId") or "")
+            turn_id = _next_turn_id()
+            _turns[turn_id] = {
+                "threadId": tid,
+                "status": "inProgress",
+                "interrupted": False,
+            }
+            result = {"turn": _fake_turn(turn_id)}
+            # 先响应 turn/start，再流式发通知（客户端按 id 关联响应、
+            # 按 threadId/turnId 过滤通知）
+            _send({"jsonrpc": "2.0", "id": rid, "result": result})
+            global _hang_active
+            hang_pending = os.environ.get("FAKE_CODEX_TURN_HANG") and _hang_active
+            if hang_pending:
+                _hang_active = False  # 只让第一个 turn 挂起
+            _emit_turn_sequence(tid, turn_id, hang=bool(hang_pending))
+            continue
+        elif method == "turn/interrupt" and os.environ.get("FAKE_CODEX_TURN"):
+            params = msg.get("params") or {}
+            turn_id = str(params.get("turnId") or "")
+            tid = str(params.get("threadId") or "")
+            if turn_id in _turns:
+                _turns[turn_id]["status"] = "interrupted"
+                _send(
+                    {
+                        "method": "turn/completed",
+                        "params": {
+                            "threadId": tid,
+                            "turn": _fake_turn(turn_id, status="interrupted"),
+                        },
+                    }
+                )
+            result = {}
+        elif method == "thread/delete" and os.environ.get("FAKE_CODEX_TURN"):
+            params = msg.get("params") or {}
+            tid = str(params.get("threadId") or "")
+            _threads.pop(tid, None)
+            result = {}
         elif method == "never/respond":
             continue  # 专门用于超时测试：不发响应
         else:

@@ -230,14 +230,19 @@ class WorkbenchSettingsService:
         return {"ok": True, "compiler": self.compiler_settings()}
 
     def _codex_provider(self) -> Any:
-        """懒创建 service 级 CodexProvider（仅 codex 路由调用；llm_settings 不隐式拉起）。"""
+        """懒创建 service 级 CodexProvider（仅 codex 路由调用；llm_settings 不隐式拉起）。
+
+        D3：未注入 factory 时复用进程共享默认实例（default_codex_provider），
+        保证 settings 路由与 pipeline 的 CHAT/EXPLAIN 走同一个 app-server
+        子进程与登录态；测试仍通过 codex_provider / codex_provider_factory 注入替身。
+        """
         if self.codex_provider is None:
             if self.codex_provider_factory is not None:
                 self.codex_provider = self.codex_provider_factory()
             else:
-                from openbrep.codex.provider import CodexProvider
+                from openbrep.codex.provider import default_codex_provider
 
-                self.codex_provider = CodexProvider()
+                self.codex_provider = default_codex_provider()
         return self.codex_provider
 
     def _known_codex_status(self) -> dict[str, Any] | None:

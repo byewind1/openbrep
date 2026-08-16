@@ -628,6 +628,28 @@ class CodexAppServerClient:
         """model/list：{data: [Model...], nextCursor}。"""
         return self._transport.call("model/list", {})
 
+    # ── D3：turn 层（CHAT/EXPLAIN 安全调用）───────────────────────────────
+    # 协议面见 openbrep/codex/turn.py（0.147.0 `codex app-server generate-ts`
+    # 绑定）：thread/start（ephemeral 只读线程）→ turn/start（文本输入）→
+    # 通知流（item/agentMessage/delta、item/completed、turn/completed、error）
+    # → turn/interrupt（取消）→ thread/delete（清理）。
+
+    def thread_start(self, params: dict) -> dict[str, Any]:
+        """thread/start：创建（ephemeral）线程，返回 {thread, model, ...}。"""
+        return self._transport.call("thread/start", params)
+
+    def turn_start(self, params: dict) -> dict[str, Any]:
+        """turn/start：在线程上启动一次 turn；事件以通知流式返回。"""
+        return self._transport.call("turn/start", params)
+
+    def turn_interrupt(self, params: dict) -> dict[str, Any]:
+        """turn/interrupt：中断进行中的 turn（返回空 dict）。"""
+        return self._transport.call("turn/interrupt", params)
+
+    def thread_delete(self, params: dict) -> dict[str, Any]:
+        """thread/delete：删除线程（清理 ephemeral thread，返回空 dict）。"""
+        return self._transport.call("thread/delete", params)
+
     def close(self) -> None:
         """关闭 app-server：stdin EOF → 等待退出 → 进程组兜底 terminate/kill。"""
         self._transport.close()

@@ -800,7 +800,8 @@ class TestUnifiedProviderResolution(unittest.TestCase):
 
 
 class TestCodexAppServerModelFailClosed(unittest.TestCase):
-    """D1：openai-codex 订阅模型生成必须 fail closed，绝不落到 litellm/API-key。"""
+    """D1+D3：openai-codex 订阅模型——只有 CHAT/EXPLAIN 走 app-server turn；
+    其余意图必须 fail closed，绝不落到 litellm/API-key。"""
 
     def _adapter(self, model="openai-codex/gpt-5.6-luna"):
         config = LLMConfig(
@@ -820,19 +821,100 @@ class TestCodexAppServerModelFailClosed(unittest.TestCase):
         adapter._litellm = MagicMock()
         return adapter
 
-    def test_generate_raises_and_does_not_call_litellm(self):
+    def test_generate_without_chat_intent_raises_and_does_not_call_litellm(self):
         adapter = self._adapter()
         with self.assertRaisesRegex(RuntimeError, "openai-codex"):
             adapter.generate([{"role": "user", "content": "hi"}])
         adapter._litellm.completion.assert_not_called()
 
-    def test_generate_with_explicit_codex_model_raises(self):
+    def test_generate_with_explicit_codex_model_without_chat_intent_raises(self):
         adapter = self._adapter(model="glm-4-flash")
         with self.assertRaisesRegex(RuntimeError, "openai-codex"):
             adapter.generate(
                 [{"role": "user", "content": "hi"}],
                 model="openai-codex/gpt-5.6-luna",
             )
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_chat_intent_without_provider_fails_closed(self):
+        from openbrep.codex.provider import get_default_codex_provider, set_default_codex_provider
+
+        saved = get_default_codex_provider()
+        set_default_codex_provider(None)
+        adapter = self._adapter()
+        adapter.codex_provider = None  # 显式不注入
+        try:
+            with self.assertRaisesRegex(RuntimeError, "openai-codex|Codex"):
+                adapter.generate(
+                    [{"role": "user", "content": "hi"}],
+                    codex_intent="CHAT",
+                )
+        finally:
+            set_default_codex_provider(saved)
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_chat_intent_routes_to_codex_provider(self):
+        from openbrep.codex.turn import CodexTurnResult
+
+        calls = {}
+
+        class _FakeProvider:
+            def chat(self, messages, model, **kwargs):
+                calls["messages"] = messages
+                calls["model"] = model
+                return CodexTurnResult(
+                    content="你好，我是 Codex。",
+                    model=model,
+                    finish_reason="stop",
+                )
+
+        adapter = self._adapter()
+        adapter.codex_provider = _FakeProvider()
+        result = adapter.generate(
+            [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+            codex_intent="CHAT",
+        )
+        self.assertEqual(result.content, "你好，我是 Codex。")
+        self.assertEqual(result.model, "openai-codex/gpt-5.6-luna")
+        self.assertEqual(calls["model"], "openai-codex/gpt-5.6-luna")
+        self.assertEqual(calls["messages"][1]["content"], "hi")
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_chat_intent_signed_out_maps_to_stable_message(self):
+        from openbrep.codex.provider import CodexNotSignedInError
+
+        class _SignedOutProvider:
+            def chat(self, messages, model, **kwargs):
+                raise CodexNotSignedInError("尚未连接 ChatGPT。")
+
+        adapter = self._adapter()
+        adapter.codex_provider = _SignedOutProvider()
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.generate([{"role": "user", "content": "hi"}], codex_intent="CHAT")
+        self.assertIn("ChatGPT", str(ctx.exception))
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_chat_intent_no_final_maps_to_stable_message(self):
+        from openbrep.codex.turn import NO_FINAL_MESSAGE_TEXT, CodexTurnResult
+
+        class _NoFinalProvider:
+            def chat(self, messages, model, **kwargs):
+                return CodexTurnResult(
+                    model=model,
+                    finish_reason="no_final_message",
+                    error=NO_FINAL_MESSAGE_TEXT,
+                )
+
+        adapter = self._adapter()
+        adapter.codex_provider = _NoFinalProvider()
+        with self.assertRaisesRegex(RuntimeError, "未返回最终回复"):
+            adapter.generate([{"role": "user", "content": "hi"}], codex_intent="CHAT")
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_with_image_codex_fails_closed(self):
+        adapter = self._adapter()
+        with self.assertRaisesRegex(RuntimeError, "openai-codex"):
+            adapter.generate_with_image("描述这张图", "aGVsbG8=", system_prompt="sys")
         adapter._litellm.completion.assert_not_called()
 
     def test_non_codex_models_unaffected(self):
@@ -847,3 +929,26 @@ class TestCodexAppServerModelFailClosed(unittest.TestCase):
         adapter._litellm.stream_chunk_builder.return_value = built_response
         result = adapter.generate([{"role": "user", "content": "hi"}])
         self.assertEqual(result.content, "ok")
+        adapter._litellm.completion.assert_called_once()
+
+    def test_codex_intent_kwargs_never_reach_litellm_for_non_codex(self):
+        adapter = self._adapter(model="glm-4-flash")
+        built_response = MagicMock()
+        built_response.choices = [MagicMock()]
+        built_response.choices[0].message.content = "ok"
+        built_response.choices[0].finish_reason = "stop"
+        built_response.model = "glm-4-flash"
+        built_response.usage = {"prompt_tokens": 1}
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
+        result = adapter.generate(
+            [{"role": "user", "content": "hi"}],
+            codex_intent="CHAT",
+            codex_should_cancel=lambda: False,
+            codex_on_event=lambda *a: None,
+        )
+        self.assertEqual(result.content, "ok")
+        kwargs = adapter._litellm.completion.call_args.kwargs
+        self.assertNotIn("codex_intent", kwargs)
+        self.assertNotIn("codex_should_cancel", kwargs)
+        self.assertNotIn("codex_on_event", kwargs)
