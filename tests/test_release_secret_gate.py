@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import stat
 import subprocess
@@ -717,7 +718,92 @@ def test_nested_zip_in_tree_shared_budget(tmp_path, monkeypatch):
     assert any(f.type == "archive_limit" for f in result.findings)
 
 
-# ── 复审 P0-3：CLI 全部错误输出走统一脱敏边界 ──────────────────────────────
+# ── 第三轮复审：ZIP metadata 与改名 ZIP 不得 fail open ───────────
+
+def test_top_level_zip_comment_canary_fails_closed(tmp_path):
+    """ZIP 容器 comment 中的 canary 必须 fail closed。"""
+    scanner = _load_scanner()
+    archive = tmp_path / "comment.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("clean.txt", b"clean")
+        zf.comment = CANARY.encode()
+
+    result = scanner.scan_archive(archive, canaries=(CANARY,))
+
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_zip_entry_metadata_canary_fails_closed(tmp_path):
+    """ZIP entry comment/extra 中的 canary 都必须 fail closed。"""
+    scanner = _load_scanner()
+    archive = tmp_path / "metadata.zip"
+    comment_canary = f"{CANARY}-comment"
+    extra_canary = f"{CANARY}-extra"
+    info = zipfile.ZipInfo("clean.txt")
+    info.comment = comment_canary.encode()
+    payload = extra_canary.encode()
+    info.extra = b"\xfe\xca" + len(payload).to_bytes(2, "little") + payload
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(info, b"clean")
+
+    result = scanner.scan_archive(archive, canaries=(comment_canary, extra_canary))
+
+    assert not result.ok
+    metadata_files = {f.file for f in result.findings if f.type == "canary"}
+    assert "clean.txt:comment" in metadata_files
+    assert "clean.txt:extra" in metadata_files
+
+
+def test_outer_renamed_inner_zip_canary_fails_closed(tmp_path):
+    """outer.zip/payload.bin 实为 ZIP 时必须递归扫描。"""
+    scanner = _load_scanner()
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("secret.txt", CANARY.encode())
+    outer = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("payload.bin", inner.getvalue())
+
+    result = scanner.scan_archive(outer, canaries=(CANARY,))
+
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_tree_renamed_zip_canary_fails_closed(tmp_path):
+    """tree/payload.bin 实为 ZIP 时必须按归档扫描。"""
+    scanner = _load_scanner()
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("secret.txt", CANARY.encode())
+    root = tmp_path / "release-tree"
+    root.mkdir()
+    (root / "payload.bin").write_bytes(inner.getvalue())
+
+    result = scanner.scan_tree(root, canaries=(CANARY,))
+
+    assert not result.ok
+    assert any(f.type == "canary" for f in result.findings)
+
+
+def test_zip_magic_corrupt_fails_closed(tmp_path):
+    """ZIP magic 命中但无法解析时必须产生稳定 error finding。"""
+    scanner = _load_scanner()
+    root = tmp_path / "release-tree"
+    root.mkdir()
+    (root / "payload.dat").write_bytes(b"PK\x03\x04corrupt")
+
+    result = scanner.scan_tree(root)
+
+    assert not result.ok
+    assert any(
+        f.type == "nested_archive_unreadable" and f.severity == "error"
+        for f in result.findings
+    )
+
+
+# ── 复审 P0-3：CLI 全部错误输出走统一脱敏边界 ─────────────────────
 
 SECRET_DIR_NAME = "sk-proj-REVIEWSECRET1234567890abcdef"
 

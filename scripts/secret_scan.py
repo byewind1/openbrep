@@ -140,6 +140,7 @@ _MAX_ARCHIVE_DEPTH = 4          # 允许的嵌套层数（顶层=0）
 _MAX_ARCHIVE_ENTRIES = 50_000   # 单次扫描累计 entry 数
 _MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024   # 累计解压字节上限
 _MAX_NESTED_ZIP_BYTES = 256 * 1024 * 1024     # 单个嵌套 zip 读入内存上限
+_ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 
 # finding type → 稳定类型名（报告用，不带值）
 FINDING_LABELS = {
@@ -463,6 +464,11 @@ def _norm_entry(name: str) -> str:
     return posixpath.normpath(name.replace("\\", "/").rstrip("/"))
 
 
+def _has_zip_magic(prefix: bytes) -> bool:
+    """ZIP 本地文件头、空归档或流式 data descriptor 签名。"""
+    return prefix.startswith(_ZIP_MAGICS)
+
+
 def _zip_entry_exists(normalized: str, entry_names: set[str], dir_prefixes: set[str]) -> bool:
     """规范化后的目标是否存在于归档（entry 精确名或祖先目录形态）。"""
     return normalized in entry_names or normalized in dir_prefixes
@@ -572,12 +578,19 @@ def scan_tree(
                 continue
             # 2) 路径内嵌秘密模式（目录名/文件名）
             result.findings.extend(path_secret_findings(rel, canaries, target))
-            # 3) 嵌套 zip → 归档级扫描（streaming entries，递归共享预算）
-            if rel.lower().endswith(".zip"):
+            # 3) ZIP 后缀或 magic → 归档级扫描（递归共享预算）
+            try:
+                with open(p, "rb") as fh:
+                    has_zip_magic = _has_zip_magic(fh.read(4))
+            except OSError:
+                result.findings.append(Finding("unreadable", target, rel))
+                continue
+            if rel.lower().endswith(".zip") or has_zip_magic:
                 try:
                     result.merge(scan_archive(p, canaries, _depth=0, _budget=budget))
                 except ValueError:
-                    result.findings.append(Finding("unreadable", target, rel))
+                    kind = "nested_archive_unreadable" if has_zip_magic else "unreadable"
+                    result.findings.append(Finding(kind, target, rel))
                 continue
             # 4) 内容级流式扫描（完整文件，二进制同样扫原始字节）
             try:
@@ -603,6 +616,9 @@ def _scan_zip_entries(
     """
     entry_names: set[str] = set()
     dir_prefixes: set[str] = set()
+    result.findings.extend(
+        scan_stream(io.BytesIO(zf.comment), "<zip-comment>", target, canaries)
+    )
     for info in zf.infolist():
         normalized = _norm_entry(info.filename)
         entry_names.add(normalized)
@@ -621,6 +637,13 @@ def _scan_zip_entries(
             result.findings.append(Finding("archive_limit", target, name))
             return
         budget.bytes += size
+
+        result.findings.extend(
+            scan_stream(io.BytesIO(info.comment), f"{name}:comment", target, canaries)
+        )
+        result.findings.extend(
+            scan_stream(io.BytesIO(info.extra), f"{name}:extra", target, canaries)
+        )
 
         if info.is_dir():
             kind = _dir_secret_type(name)
@@ -664,8 +687,14 @@ def _scan_zip_entries(
             result.findings.append(Finding(kind, target, name))
             continue
         result.findings.extend(path_secret_findings(name, canaries, target))
-        # 嵌套 zip（entry 是 zip）→ 递归扫描 entries；失败必须 fail closed
-        if name.lower().endswith(".zip"):
+        # 嵌套 ZIP（后缀或 magic）→ 递归扫描；失败必须 fail closed
+        try:
+            with zf.open(info) as entry:
+                has_zip_magic = _has_zip_magic(entry.read(4))
+        except (OSError, zipfile.BadZipFile, RuntimeError):
+            result.findings.append(Finding("unreadable", target, name))
+            continue
+        if name.lower().endswith(".zip") or has_zip_magic:
             if depth + 1 > _MAX_ARCHIVE_DEPTH:
                 result.findings.append(Finding("archive_limit", target, name))
                 continue
@@ -701,14 +730,26 @@ def scan_archive(
     """扫描 zip 归档（streaming entries + 嵌套 zip 递归）；dmg/msi/pkg/exe → 失败。"""
     target = f"archive:{path}"
     result = ScanResult(targets=[target], canaries=canaries)
-    if path.suffix.lower() != ".zip":
+    try:
+        with open(path, "rb") as fh:
+            has_zip_magic = _has_zip_magic(fh.read(4))
+    except OSError as exc:
+        raise ValueError(f"cannot open archive {path}: {exc}") from exc
+    if path.suffix.lower() != ".zip" and not has_zip_magic:
         result.findings.append(Finding("opaque_archive", target, str(path)))
         return result
     budget = _budget if _budget is not None else _ArchiveBudget()
     try:
+        with open(path, "rb") as fh:
+            result.findings.extend(scan_stream(fh, path.name, target, canaries))
         with zipfile.ZipFile(path) as zf:
             _scan_zip_entries(zf, result, canaries, target, _depth, budget)
     except (zipfile.BadZipFile, OSError) as exc:
+        if has_zip_magic:
+            result.findings.append(
+                Finding("nested_archive_unreadable", target, path.name)
+            )
+            return result
         raise ValueError(f"cannot open archive {path}: {exc}") from exc
     return result
 
