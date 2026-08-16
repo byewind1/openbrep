@@ -1152,6 +1152,7 @@ for raw in sys.stdin:
     method = msg.get("method") or ""
     if method == "initialize":
         result = {
+            "userAgent": "openbrep/0.147.0 (Mac OS 15.7.5; arm64)",
             "codexHome": _home,
             "envSeen": {
                 "CODEX_ACCESS_TOKEN": os.environ.get("CODEX_ACCESS_TOKEN"),
