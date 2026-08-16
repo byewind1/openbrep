@@ -104,12 +104,17 @@ def plan_gdl_object(
     skills: str = "",
     planner_knowledge_max_chars: int | None = None,
     planner_skills_max_chars: int | None = 3000,
+    llm_kwargs: dict | None = None,
 ) -> GDLObjectPlan:
     """
     Ask the LLM for a compact GDL object plan, with deterministic fallback.
 
     The fallback keeps offline tests and no-key local runs working while still
     giving the generation step a professional minimum contract.
+
+    ``llm_kwargs``（D4）：附加在 llm.generate() 上的专用 kwargs（如 Codex 的
+    codex_intent/codex_should_cancel/codex_on_event）；None = 现有调用形态
+    逐字节不变（非 codex 路径不受影响）。
     """
     fallback = infer_minimum_plan(instruction)
     try:
@@ -126,7 +131,7 @@ def plan_gdl_object(
                 ),
             },
         ]
-        raw = llm.generate(messages)
+        raw = llm.generate(messages, **(llm_kwargs or {}))
         content = raw.content if hasattr(raw, "content") else str(raw)
         return parse_gdl_object_plan(content, fallback=fallback)
     except Exception:

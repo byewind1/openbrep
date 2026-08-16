@@ -70,8 +70,13 @@ class GDLAgent:
         on_event: Optional[Callable] = None,
         assistant_settings: str = "",
         should_cancel: Optional[Callable[[], bool]] = None,
+        llm_kwargs: Optional[dict] = None,
     ):
         self.llm = llm
+        # D4：附加在每次 llm.generate() 上的专用 kwargs（如 Codex 的
+        # codex_intent/codex_should_cancel/codex_on_event）。None = 现有行为
+        # 逐字节不变（不传任何 kwargs）。仅 CREATE 意图由 pipeline 注入。
+        self._llm_kwargs = dict(llm_kwargs or {})
         self.compiler = compiler or MockHSFCompiler()
         self.max_iterations = max_iterations
         self.on_event = on_event or (lambda *a: None)
@@ -406,7 +411,9 @@ class GDLAgent:
                 max_tokens=4096,
             )
         else:
-            raw = self.llm.generate(messages)
+            # D4：llm_kwargs（Codex turn 专用参数）只影响 codex 模型；非 codex
+            # 路径 llm_kwargs 为空 → generate(messages) 与基线逐字节一致。
+            raw = self.llm.generate(messages, **self._llm_kwargs)
         self._raise_if_cancelled()
         response = raw.content if hasattr(raw, "content") else str(raw)
 
@@ -440,7 +447,7 @@ class GDLAgent:
                     chat_mode=chat_mode,
                     syntax_report=syntax_report,
                 )
-                rewrite_raw = self.llm.generate(rewrite_messages)
+                rewrite_raw = self.llm.generate(rewrite_messages, **self._llm_kwargs)
                 self._raise_if_cancelled()
                 rewrite_response = rewrite_raw.content if hasattr(rewrite_raw, "content") else str(rewrite_raw)
                 self.on_event("llm_response", {"length": len(rewrite_response), "rewrite": True})
@@ -479,7 +486,7 @@ class GDLAgent:
                             chat_mode=chat_mode,
                             syntax_report=syntax_report,
                         )
-                        third_raw = self.llm.generate(third_messages)
+                        third_raw = self.llm.generate(third_messages, **self._llm_kwargs)
                         self._raise_if_cancelled()
                         third_response = third_raw.content if hasattr(third_raw, "content") else str(third_raw)
                         self.on_event("llm_response", {"length": len(third_response), "rewrite": True})
