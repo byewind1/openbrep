@@ -389,11 +389,12 @@ class LLMAdapter:
         except ImportError:
             self._litellm = None
 
-    # ── Codex BYOA（openai-codex）薄分派（D3）─────────────────────────────
+    # ── Codex BYOA（openai-codex）薄分派（D3 + D4）────────────────────────
     # D1：openai-codex 订阅模型绝不落到 litellm / API-key / 环境变量（fail closed）。
-    # D3：只有 CHAT/EXPLAIN（codex_intent="CHAT"，由 pipeline 显式传入）走
-    # app-server turn；其余意图（CREATE/MODIFY/DEBUG/IMAGE/工具调用等）保持
-    # fail closed，绝不把生成类请求当作闲聊发给订阅模型。
+    # D3：CHAT/EXPLAIN（codex_intent="CHAT"，由 pipeline 显式传入）走 app-server turn。
+    # D4：文本 CREATE（codex_intent="CREATE"）走同一 turn 契约——Codex 只负责生成
+    # final text（[FILE:] 协议），OpenBrep 负责解析/落盘/编译/验证/修复/delivery gate。
+    # 其余意图（MODIFY/DEBUG/IMAGE/工具调用等）保持 fail closed。
 
     def _codex_provider(self):
         """返回可用的 CodexProvider：实例注入 > 进程共享默认。
@@ -411,10 +412,12 @@ class LLMAdapter:
             logger.warning("codex provider 读取失败（%s）", exc.__class__.__name__)
             return None
 
-    def _codex_chat_generate(self, msg_dicts: list, model: str, **kwargs) -> LLMResponse:
-        """CHAT/EXPLAIN 走 Codex app-server turn（ephemeral thread + 临时只读
-        cwd + approval never，见 openbrep/codex/turn.py）。
+    def _codex_turn_generate(self, msg_dicts: list, model: str, **kwargs) -> LLMResponse:
+        """CHAT/EXPLAIN 与文本 CREATE 走 Codex app-server turn（ephemeral thread
+        + 临时只读 cwd + approval never，见 openbrep/codex/turn.py）。
 
+        CHAT/EXPLAIN 的 content 是回复文本；CREATE 的 content 是按 [FILE:]
+        协议的完整生成文本（由 pipeline/GDLAgent 负责解析、落盘与验证）。
         错误一律稳定文案（error_response / turn 层稳定文案），绝不透传上游原文。
         """
         from openbrep.codex.errors import STABLE_MESSAGES
@@ -481,16 +484,16 @@ class LLMAdapter:
             )
 
         requested_model = kwargs.pop("model", None)
-        # D3：openai-codex 订阅模型——只有显式 CHAT/EXPLAIN 意图走 turn；
-        # 其余意图 fail closed（绝不落到 litellm / API-key / 环境变量）。
+        # D3 + D4：openai-codex 订阅模型——只有显式 CHAT/EXPLAIN/CREATE 意图走
+        # turn（文本生成契约）；其余意图 fail closed（绝不落到 litellm / API-key）。
         if self.config._is_codex_app_server_model(requested_model):
             codex_intent = kwargs.pop("codex_intent", None)
-            if codex_intent == "CHAT":
+            if codex_intent in ("CHAT", "CREATE"):
                 codex_model = requested_model or self.config.model
-                return self._codex_chat_generate(msg_dicts, model=codex_model, **kwargs)
+                return self._codex_turn_generate(msg_dicts, model=codex_model, **kwargs)
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的 CREATE/MODIFY/DEBUG 生成能力"
-                "尚未开放：当前版本支持登录、模型选择与 CHAT/EXPLAIN。"
+                "ChatGPT Codex（openai-codex）模型的 MODIFY/DEBUG/IMAGE 生成能力"
+                "尚未开放：当前支持登录、模型选择、CHAT/EXPLAIN 与文本 CREATE。"
                 "请改用其他已配置的模型。"
             )
         # 非 codex 模型：忽略 codex 专用参数（绝不让它们进入 litellm）
@@ -613,8 +616,8 @@ class LLMAdapter:
         # 的生成类请求当作闲聊发给订阅模型。
         if self.config._is_codex_app_server_model(requested_model):
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的 CREATE/MODIFY/DEBUG 生成能力"
-                "尚未开放：当前版本支持登录、模型选择与 CHAT/EXPLAIN。"
+                "ChatGPT Codex（openai-codex）模型的 MODIFY/DEBUG 工具面"
+                "尚未开放：当前支持登录、模型选择、CHAT/EXPLAIN 与文本 CREATE。"
                 "请改用其他已配置的模型。"
             )
         kwargs.pop("codex_intent", None)
@@ -746,8 +749,8 @@ class LLMAdapter:
         # API-key / 环境变量（BYOA 安全不变量）。
         if self.config._is_codex_app_server_model(requested_model):
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的 CREATE/IMAGE 生成能力"
-                "尚未开放：当前版本支持登录、模型选择与 CHAT/EXPLAIN。"
+                "ChatGPT Codex（openai-codex）模型的图片 CREATE/IMAGE 生成能力"
+                "尚未开放：当前支持登录、模型选择、CHAT/EXPLAIN 与文本 CREATE。"
                 "请改用其他已配置的模型。"
             )
         kwargs.pop("codex_intent", None)

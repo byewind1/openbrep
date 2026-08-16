@@ -44,6 +44,15 @@ D3 turn 协议（thread/start + turn/start + 通知流，对齐 0.147.0
 - FAKE_CODEX_TURN_FORBIDDEN_CHECK  turn/start 参数含工具/危险键时返回错误
                               （sandbox 反证：D3 参数面无工具）
 
+D4 CREATE 隔离反证探针：
+- FAKE_CODEX_CWD_LOG=<path>      每次 thread/start 与 turn/start 收到的 cwd
+                              追加写入该文件（一行一个 JSON：method + cwd +
+                              写 canary 结果）——测试断言 app-server 只见过
+                              自己的临时 cwd，从未收到真实 HSF/工作区路径。
+- FAKE_CODEX_WRITE_PROBE=<path>  对每个收到的 cwd 与该路径尝试写 canary；
+                              测试把真实 HSF 目录设为只读，probe 写失败即证明
+                              app-server 对该路径无写权限（OS 级隔离反证）。
+
 Run as: python fake_codex_app_server.py
 """
 
@@ -324,6 +333,62 @@ def _params_forbidden(params: dict) -> str | None:
     return None
 
 
+# ── D4：隔离反证探针 ───────────────────────────────────────────
+# app-server 只被允许看到自己的临时 cwd；绝不能看到/写入真实 HSF cwd。
+# FAKE_CODEX_CWD_LOG=<path>      把每次 thread/turn 收到的 cwd 追加写入该文件
+#                               （一行一个 JSON：method + cwd），测试据此断言
+#                               app-server 从未收到项目/工作区路径。
+# FAKE_CODEX_WRITE_PROBE=<path>  对每个收到的 cwd 与 probe 路径尝试写入 canary，
+#                               把结果追加进 cwd log：
+#                                 {"probe": <dir>, "cwd_write_ok": bool, ...}
+#                               测试把真实 HSF 目录设为只读，证明即使 app-server
+#                               拿到该路径也没有写权限（OS 级隔离反证）。
+_CWD_LOG_PATH = os.environ.get("FAKE_CODEX_CWD_LOG", "")
+
+
+def _log_line(entry: dict) -> None:
+    if not _CWD_LOG_PATH:
+        return
+    try:
+        with open(_CWD_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _try_write_canary(directory: str) -> dict:
+    """尝试向 directory 写入 canary 文件；返回 {ok, error_class}（不抛异常）。"""
+    try:
+        probe_dir = os.path.join(str(directory), ".fake-codex-canary")
+        os.makedirs(probe_dir, exist_ok=True)
+        marker = os.path.join(probe_dir, "canary.txt")
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("fake-codex-write-probe")
+        return {"ok": True, "error": None}
+    except OSError as exc:
+        return {"ok": False, "error": exc.__class__.__name__}
+
+
+def _record_cwd(method: str, cwd) -> None:
+    """thread/start 与 turn/start 收到 cwd 时调用：记录 + 写权限探测。
+
+    探测语义（隔离反证）：
+    - 收到的 cwd 必须是 app-server 自己的临时目录（写 canary 成功是正常的——
+      证明它操作的是自己的 scratch）；
+    - FAKE_CODEX_WRITE_PROBE 指向真实 HSF/工作区路径（测试会设为只读）——
+      写 canary 失败证明 app-server 对该路径无写权限。
+    """
+    cwd_str = str(cwd) if cwd is not None else ""
+    entry: dict = {"event": "cwd", "method": method, "cwd": cwd_str}
+    if cwd_str:
+        entry["cwd_write"] = _try_write_canary(cwd_str)
+    probe = os.environ.get("FAKE_CODEX_WRITE_PROBE", "")
+    if probe:
+        entry["probe"] = str(probe)
+        entry["probe_write"] = _try_write_canary(probe)
+    _log_line(entry)
+
+
 def main() -> None:
     version = os.environ.get("FAKE_CODEX_VERSION", "0.147.0")
     login_type = os.environ.get("FAKE_CODEX_LOGIN_TYPE", "chatgpt")
@@ -528,6 +593,7 @@ def main() -> None:
             }
         elif method == "thread/start" and os.environ.get("FAKE_CODEX_TURN"):
             params = msg.get("params") or {}
+            _record_cwd("thread/start", params.get("cwd"))
             forbidden = _params_forbidden(params)
             if forbidden:
                 _send(
@@ -579,6 +645,7 @@ def main() -> None:
             }
         elif method == "turn/start" and os.environ.get("FAKE_CODEX_TURN"):
             params = msg.get("params") or {}
+            _record_cwd("turn/start", params.get("cwd"))
             forbidden = _params_forbidden(params)
             if forbidden:
                 _send(

@@ -911,6 +911,85 @@ class TestCodexAppServerModelFailClosed(unittest.TestCase):
             adapter.generate([{"role": "user", "content": "hi"}], codex_intent="CHAT")
         adapter._litellm.completion.assert_not_called()
 
+    # ── D4：文本 CREATE 意图归一化（同一 turn 契约，只收集 final text）──────
+
+    def test_generate_create_intent_routes_to_codex_provider(self):
+        from openbrep.codex.turn import CodexTurnResult
+
+        calls = {}
+
+        class _FakeProvider:
+            def chat(self, messages, model, **kwargs):
+                calls["messages"] = messages
+                calls["model"] = model
+                calls["kwargs"] = kwargs
+                return CodexTurnResult(
+                    content="[FILE: scripts/3d.gdl]\nBLOCK A, B, ZZYZX\nEND\n",
+                    model=model,
+                    finish_reason="stop",
+                )
+
+        adapter = self._adapter()
+        adapter.codex_provider = _FakeProvider()
+        result = adapter.generate(
+            [{"role": "system", "content": "sys"}, {"role": "user", "content": "生成书架"}],
+            codex_intent="CREATE",
+            codex_should_cancel=lambda: False,
+            codex_on_event=lambda *a: None,
+        )
+        self.assertIn("[FILE: scripts/3d.gdl]", result.content)
+        self.assertEqual(result.model, "openai-codex/gpt-5.6-luna")
+        self.assertEqual(calls["model"], "openai-codex/gpt-5.6-luna")
+        self.assertEqual(calls["messages"][1]["content"], "生成书架")
+        # turn 参数透传：取消回调与事件回调原样到达 provider.chat
+        self.assertIsNotNone(calls["kwargs"]["should_cancel"])
+        self.assertIsNotNone(calls["kwargs"]["on_event"])
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_create_intent_no_final_maps_to_stable_message(self):
+        from openbrep.codex.turn import NO_FINAL_MESSAGE_TEXT, CodexTurnResult
+
+        class _NoFinalProvider:
+            def chat(self, messages, model, **kwargs):
+                return CodexTurnResult(
+                    model=model,
+                    finish_reason="no_final_message",
+                    error=NO_FINAL_MESSAGE_TEXT,
+                )
+
+        adapter = self._adapter()
+        adapter.codex_provider = _NoFinalProvider()
+        with self.assertRaisesRegex(RuntimeError, "未返回最终回复"):
+            adapter.generate([{"role": "user", "content": "hi"}], codex_intent="CREATE")
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_create_intent_signed_out_maps_to_stable_message(self):
+        from openbrep.codex.provider import CodexNotSignedInError
+
+        class _SignedOutProvider:
+            def chat(self, messages, model, **kwargs):
+                raise CodexNotSignedInError("尚未连接 ChatGPT。")
+
+        adapter = self._adapter()
+        adapter.codex_provider = _SignedOutProvider()
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.generate([{"role": "user", "content": "hi"}], codex_intent="CREATE")
+        self.assertIn("ChatGPT", str(ctx.exception))
+        adapter._litellm.completion.assert_not_called()
+
+    def test_generate_modify_intent_still_fails_closed(self):
+        """D4 只开文本 CREATE：MODIFY/DEBUG 意图绝不经 turn 发给订阅模型。"""
+        adapter = self._adapter()
+        adapter.codex_provider = MagicMock()
+        for intent in ("MODIFY", "DEBUG", "REPAIR", "IMAGE"):
+            with self.assertRaisesRegex(RuntimeError, "openai-codex"):
+                adapter.generate(
+                    [{"role": "user", "content": "hi"}],
+                    codex_intent=intent,
+                )
+        adapter.codex_provider.chat.assert_not_called()
+        adapter._litellm.completion.assert_not_called()
+
     def test_generate_with_image_codex_fails_closed(self):
         adapter = self._adapter()
         with self.assertRaisesRegex(RuntimeError, "openai-codex"):

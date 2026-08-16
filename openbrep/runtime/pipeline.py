@@ -542,6 +542,19 @@ class TaskPipeline:
         llm = self._make_llm(request)
         compiler = self._make_compiler()
 
+        # D4：Codex 文本 CREATE——Codex 只负责生成 final text（[FILE:] 协议），
+        # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
+        # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
+        # 分派与 turn 层临时只读 cwd 隔离）。codex kwargs 只注入文本生成类意图
+        # （CREATE/IMAGE 无图路径）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
+        codex_kwargs: dict = {}
+        if self._is_codex_model_selected() and request.intent in ("CREATE", "IMAGE"):
+            codex_kwargs = {
+                "codex_intent": "CREATE",
+                "codex_should_cancel": request.should_cancel,
+                "codex_on_event": request.on_event,
+            }
+
         # Ensure project exists
         project = request.project
         if project is None:
@@ -670,6 +683,7 @@ class TaskPipeline:
                 instruction=enriched_instruction,
                 knowledge=assembled_context.planner_context,
                 skills=skills_text,
+                llm_kwargs=codex_kwargs or None,
             )
             object_plan = replace(
                 object_plan,
@@ -763,6 +777,7 @@ class TaskPipeline:
             on_event=on_event,
             assistant_settings=request.assistant_settings,
             should_cancel=request.should_cancel,
+            llm_kwargs=codex_kwargs or None,
         )
 
         changes, plain_text = agent.generate_only(
