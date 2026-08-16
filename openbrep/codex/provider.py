@@ -36,6 +36,7 @@ from openbrep.codex.app_server import (
     default_codex_home,
 )
 from openbrep.codex.errors import error_response
+from openbrep.codex.turn import CodexTurnResult, CodexTurnRunner
 from openbrep.config import CODEX_PROVIDER_NAME
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,6 +63,38 @@ ALLOWED_LOGIN_TYPES = frozenset({"chatgpt", "chatgptDeviceCode"})
 # rpc_error 失败（错误文案不泄漏上游原文），不会静默降级。逐方法能力协商
 # 留待后续版本。
 MIN_CODEX_VERSION = (0, 147, 0)
+
+# ── 进程共享默认 provider（D3）──────────────────────────────────────────────
+# LLMAdapter 的薄分派与 workbench settings service 共用同一个 CodexProvider
+# 实例（同一 app-server 子进程、同一登录态）。测试可注入替身，用完须复位。
+_default_provider: "CodexProvider | None" = None
+_default_provider_lock = threading.Lock()
+
+
+def set_default_codex_provider(provider: "CodexProvider | None") -> None:
+    """注册/清空进程共享默认 CodexProvider（测试注入或服务层共享）。"""
+    global _default_provider
+    with _default_provider_lock:
+        _default_provider = provider
+
+
+def get_default_codex_provider() -> "CodexProvider | None":
+    """当前进程共享默认 CodexProvider（无则 None）。"""
+    with _default_provider_lock:
+        return _default_provider
+
+
+def default_codex_provider() -> "CodexProvider":
+    """懒创建进程共享默认 CodexProvider（单例，首次调用时构造）。
+
+    登录/状态/额度/崩溃恢复语义与 D2 完全一致；只解决「谁拥有 app-server
+    进程」的共享问题。
+    """
+    global _default_provider
+    with _default_provider_lock:
+        if _default_provider is None:
+            _default_provider = CodexProvider()
+        return _default_provider
 
 
 class CodexNotSignedInError(RuntimeError):
@@ -1105,6 +1138,65 @@ class CodexProvider:
                 self._models_ts = time.monotonic()
                 self._models_gen = gen
         return models
+
+    # ── D3：CHAT / EXPLAIN 安全调用 ─────────────────────────
+
+    def chat(
+        self,
+        messages: list[dict],
+        model: str,
+        *,
+        timeout: float | None = None,
+        should_cancel: Any | None = None,
+        on_event: Any | None = None,
+        temp_dir: str | Path | None = None,
+    ) -> CodexTurnResult:
+        """Codex 模型 CHAT/EXPLAIN 安全调用（D3）。
+
+        安全不变量（turn 层保证，见 openbrep/codex/turn.py）：
+        - ephemeral thread + 临时只读 cwd + approval never + 无工具面。
+        - 输入只来自调用方 messages；不加载 home AGENTS/skills/plugins。
+        - 只收集 final agent message；无 final / 截断 / interrupt / 超时 /
+          quota / crash 各有明确 finish_reason 与稳定文案，上游原文零回显。
+
+        本方法负责：fail closed 门禁（CLI / 登录 / 额度 / 崩溃）+ 临时 cwd
+        生命周期（用完即删，绝不落在项目/工作区）。
+        """
+        if not self.cli_available:
+            raise CodexCliUnavailableError(
+                f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
+            )
+        status = self.status(refresh=True)
+        if not status.get("connected"):
+            raise CodexNotSignedInError(
+                "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
+            )
+        if status.get("state") == "quota_exhausted":
+            raise CodexAppServerError(
+                "ChatGPT 订阅额度已耗尽或已达到用量上限。"
+                "请稍后重试、等待重置，或切换到其他模型/提供商。",
+                category="quota_exhausted",
+            )
+        client, _gen = self._snapshot()
+
+        # 临时只读 cwd：turn 的工作目录（可能被 app-server 作为工作区根）。
+        # 必须与项目/工作区完全隔离，用完即删；不指定 root 时落在系统临时目录。
+        import tempfile
+
+        cwd_root = Path(temp_dir) if temp_dir is not None else Path(tempfile.gettempdir())
+        cwd = Path(tempfile.mkdtemp(prefix="openbrep-codex-turn-", dir=str(cwd_root)))
+        try:
+            runner = CodexTurnRunner(client, logger=self._logger)
+            return runner.run(
+                model=model,
+                cwd=str(cwd),
+                messages=messages,
+                timeout=timeout,
+                should_cancel=should_cancel,
+                on_event=on_event,
+            )
+        finally:
+            shutil.rmtree(cwd, ignore_errors=True)
 
     # ── 关闭 ─────────────────────────────────────────────────
 

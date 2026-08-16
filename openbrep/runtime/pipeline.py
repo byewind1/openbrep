@@ -24,7 +24,7 @@ import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from openbrep.explainer.chat_adapter import build_chat_explanation_reply
 from openbrep.explainer.context_builder import (
@@ -258,10 +258,14 @@ class TaskPipeline:
         config_path: Optional[str] = None,
         trace_dir: str = "./traces",
         include_learned_skills: bool = True,
+        codex_provider: Any = None,
     ):
         self.config = config or GDLAgentConfig.load(config_path)
         self.router = IntentRouter()
         self.tracer = Tracer(trace_dir=trace_dir)
+        # D3：Codex CHAT/EXPLAIN 的 provider（workbench 注入 session 共享实例；
+        # 未注入时 LLMAdapter 走进程共享默认注册表）。非 codex 模型从不触碰。
+        self.codex_provider = codex_provider
         # benchmark 传 False：错误学习记忆是累积态，会让 prompt 随运行历史漂移，
         # 破坏黄金语料可复现性；生产默认 True，行为不变
         self.include_learned_skills = include_learned_skills
@@ -396,6 +400,13 @@ class TaskPipeline:
                 reply = creator.list_skills()
                 return TaskResult(success=True, intent="CHAT", plain_text=reply)
 
+        # ── D3：Codex 模型 CHAT/EXPLAIN（ephemeral thread + 临时只读 cwd +
+        # approval never，见 openbrep/codex/turn.py）。项目内容只经 prompt 注入，
+        # 绝不修改 HSF / 创建 revision；无项目时不创建任何目录。非 codex 模型
+        # 走下方原有路径，逐字节不变。
+        if self._is_codex_model_selected():
+            return self._handle_codex_chat(request)
+
         # ── Existing: project context explanation ──
         if request.project is not None and not is_greeting:
             script_target = resolve_script_target(request.user_input)
@@ -457,14 +468,73 @@ class TaskPipeline:
         messages = [{"role": "system", "content": system_content}]
         messages.extend({"role": item.get("role", "user"), "content": item.get("content", "")} for item in history)
         messages.append({"role": "user", "content": request.user_input})
+        codex_kwargs = {}
+        if self._is_codex_model_selected():
+            codex_kwargs = {
+                "codex_intent": "CHAT",
+                "codex_should_cancel": request.should_cancel,
+                "codex_on_event": request.on_event,
+            }
         try:
-            resp = llm.generate(messages)
+            resp = llm.generate(messages, **codex_kwargs)
             return TaskResult(
                 success=True,
                 intent="CHAT",
                 plain_text=resp.content,
             )
         except Exception as exc:
+            return TaskResult(success=False, intent="CHAT", error=str(exc))
+
+    # ── D3：Codex 模型 CHAT/EXPLAIN ─────────────────────────
+
+    def _is_codex_model_selected(self) -> bool:
+        """当前 pipeline 配置选中的模型是否走 ChatGPT Codex（openai-codex）订阅路线。"""
+        try:
+            return bool(self.config.llm._is_codex_app_server_model())
+        except Exception:  # noqa: BLE001 —— 配置异常按非 codex 处理（不阻塞现有路径）
+            return False
+
+    def _handle_codex_chat(self, request: TaskRequest) -> TaskResult:
+        """Codex 模型 CHAT/EXPLAIN（D3）：ephemeral thread + 临时只读 cwd +
+        approval never + 无工具面，见 openbrep/codex/turn.py。
+
+        - CHAT（无项目）：只回复，不创建任何目录/文件。
+        - EXPLAIN（有项目）：项目只读摘要经 prompt 注入，绝不修改 HSF、
+          绝不创建 revision。
+        - 系统提示与现有 chat 路径一致（assistant_settings 前置）；错误全部
+          映射为稳定文案（上游原文零回显）。
+        """
+        llm = self._make_llm(request)
+        system_content = (
+            "你是 openbrep 的内置助手，专注于 ArchiCAD GDL 对象编辑器的使用指引。\n"
+            "【重要约束】绝对禁止在回复中输出任何 GDL 代码、代码块或脚本片段。"
+            "如果用户想创建或修改 GDL 对象，告诉他直接描述需求，AI 会自动生成。\n"
+            "当用户是问候语时，先做一句简短自我介绍，再问“我可以帮你做什么？”。"
+            "回复语言必须与用户输入语言一致（中文就中文，英文就英文）。"
+            "回复简洁，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
+        )
+        if request.project is not None:
+            # EXPLAIN：只读项目摘要（脚本只取前几行，参数/构件名完整）
+            system_content += "\n\n" + _build_chat_project_context(request.project)
+        system_content = _build_assistant_settings_prompt(request.assistant_settings) + system_content
+        history = _trim_history(request.history, limit=6)
+        messages = [{"role": "system", "content": system_content}]
+        messages.extend(
+            {"role": item.get("role", "user"), "content": item.get("content", "")}
+            for item in history
+        )
+        messages.append({"role": "user", "content": request.user_input})
+        try:
+            resp = llm.generate(
+                messages,
+                codex_intent="CHAT",
+                codex_should_cancel=request.should_cancel,
+                codex_on_event=request.on_event,
+            )
+            return TaskResult(success=True, intent="CHAT", plain_text=resp.content)
+        except Exception as exc:
+            # D3：错误已由 LLMAdapter 映射为稳定文案（error_response / turn 层
+            # 稳定文案）；此处只兜底，绝不把上游原文透传给用户。
             return TaskResult(success=False, intent="CHAT", error=str(exc))
 
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
@@ -1922,7 +1992,11 @@ class TaskPipeline:
         if request.assistant_settings and not cfg.assistant_settings:
             cfg = dataclasses.replace(cfg, assistant_settings=request.assistant_settings)
 
-        return LLMAdapter(cfg)
+        adapter = LLMAdapter(cfg)
+        # D3：注入 workbench 共享的 CodexProvider（None = 走默认注册表）。
+        if self.codex_provider is not None:
+            adapter.codex_provider = self.codex_provider
+        return adapter
 
     def _make_compiler(self):
         """Return real compiler if path configured, otherwise MockHSFCompiler."""

@@ -7,16 +7,16 @@ provider compatible with the OpenAI API format.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
-from dataclasses import dataclass, field
-import logging
 import time
-from typing import Optional
 import warnings
+from dataclasses import dataclass, field
+from typing import Optional
 
-from openbrep.config import LLMConfig, PROVIDER_PROFILES, provider_profile_for_model
-
+from openbrep.codex.errors import error_response
+from openbrep.config import PROVIDER_PROFILES, LLMConfig, provider_profile_for_model
 
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = tuple(p.native_prefix for p in PROVIDER_PROFILES if p.native_prefix)
@@ -193,6 +193,9 @@ class LLMAdapter:
     def __init__(self, config: LLMConfig):
         self.config = config
         self._litellm = None
+        # D3：Codex CHAT/EXPLAIN 的 provider 注入点（实例级 > 进程共享默认）。
+        # 测试/管线可显式注入 fake provider；None = 走默认注册表。
+        self.codex_provider = None
         # Re-register warning filter here so it survives pytest's filter reset
         warnings.filterwarnings(
             "ignore",
@@ -386,6 +389,73 @@ class LLMAdapter:
         except ImportError:
             self._litellm = None
 
+    # ── Codex BYOA（openai-codex）薄分派（D3）─────────────────────────────
+    # D1：openai-codex 订阅模型绝不落到 litellm / API-key / 环境变量（fail closed）。
+    # D3：只有 CHAT/EXPLAIN（codex_intent="CHAT"，由 pipeline 显式传入）走
+    # app-server turn；其余意图（CREATE/MODIFY/DEBUG/IMAGE/工具调用等）保持
+    # fail closed，绝不把生成类请求当作闲聊发给订阅模型。
+
+    def _codex_provider(self):
+        """返回可用的 CodexProvider：实例注入 > 进程共享默认。
+
+        没有可用 provider 时返回 None（调用方 fail closed，绝不自动回退）。
+        """
+        provider = getattr(self, "codex_provider", None)
+        if provider is not None:
+            return provider
+        try:
+            from openbrep.codex.provider import get_default_codex_provider
+
+            return get_default_codex_provider()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("codex provider 读取失败（%s）", exc.__class__.__name__)
+            return None
+
+    def _codex_chat_generate(self, msg_dicts: list, model: str, **kwargs) -> LLMResponse:
+        """CHAT/EXPLAIN 走 Codex app-server turn（ephemeral thread + 临时只读
+        cwd + approval never，见 openbrep/codex/turn.py）。
+
+        错误一律稳定文案（error_response / turn 层稳定文案），绝不透传上游原文。
+        """
+        from openbrep.codex.errors import STABLE_MESSAGES
+        from openbrep.codex.turn import NO_FINAL_MESSAGE_TEXT
+
+        should_cancel = kwargs.pop("codex_should_cancel", None)
+        on_event = kwargs.pop("codex_on_event", None)
+        timeout = kwargs.pop("timeout", None) or self.config.timeout
+
+        provider = self._codex_provider()
+        if provider is None:
+            raise RuntimeError(
+                "ChatGPT Codex（openai-codex）模型不可用：未检测到可用的 Codex "
+                "连接。请先在 AI 设置中完成 ChatGPT 登录后重试。"
+            )
+        try:
+            result = provider.chat(
+                msg_dicts,
+                model=model,
+                timeout=float(timeout),
+                should_cancel=should_cancel,
+                on_event=on_event,
+            )
+        except Exception as exc:  # noqa: BLE001 —— 映射稳定文案
+            from openbrep.codex.provider import CodexNotSignedInError
+
+            if isinstance(exc, CodexNotSignedInError):
+                raise RuntimeError(
+                    STABLE_MESSAGES.get("not_signed_in", "尚未连接 ChatGPT，请先完成登录。")
+                ) from exc
+            stable = error_response(exc)
+            raise RuntimeError(stable["error"]) from exc
+        if result.finish_reason != "stop":
+            raise RuntimeError(result.error or NO_FINAL_MESSAGE_TEXT)
+        return LLMResponse(
+            content=result.content,
+            model=model,
+            usage=dict(result.usage or {}),
+            finish_reason="stop",
+        )
+
     def generate(self, messages: list, **kwargs) -> LLMResponse:
         """
         Send messages to the LLM and return the response.
@@ -411,15 +481,22 @@ class LLMAdapter:
             )
 
         requested_model = kwargs.pop("model", None)
-        # ChatGPT Codex（openai-codex）订阅模型：D1 只交付登录与模型选择，
-        # 生成能力尚未开放。必须 fail closed——绝不静默回退到 litellm /
-        # API-key / 环境变量（BYOA 安全不变量）。
+        # D3：openai-codex 订阅模型——只有显式 CHAT/EXPLAIN 意图走 turn；
+        # 其余意图 fail closed（绝不落到 litellm / API-key / 环境变量）。
         if self.config._is_codex_app_server_model(requested_model):
+            codex_intent = kwargs.pop("codex_intent", None)
+            if codex_intent == "CHAT":
+                codex_model = requested_model or self.config.model
+                return self._codex_chat_generate(msg_dicts, model=codex_model, **kwargs)
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的生成能力尚未开放："
-                "当前版本支持登录与模型选择，生成将在后续版本提供。"
+                "ChatGPT Codex（openai-codex）模型的 CREATE/MODIFY/DEBUG 生成能力"
+                "尚未开放：当前版本支持登录、模型选择与 CHAT/EXPLAIN。"
                 "请改用其他已配置的模型。"
             )
+        # 非 codex 模型：忽略 codex 专用参数（绝不让它们进入 litellm）
+        kwargs.pop("codex_intent", None)
+        kwargs.pop("codex_should_cancel", None)
+        kwargs.pop("codex_on_event", None)
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 
@@ -531,6 +608,18 @@ class LLMAdapter:
                 tool_dicts.append(t)
 
         requested_model = kwargs.pop("model", None)
+        # D1 不变量：openai-codex 订阅模型绝不落到 litellm / API-key（fail closed）。
+        # MODIFY/DEBUG 工具面在 D10/D11 门禁开放前一律拒绝，绝不把 agent loop
+        # 的生成类请求当作闲聊发给订阅模型。
+        if self.config._is_codex_app_server_model(requested_model):
+            raise RuntimeError(
+                "ChatGPT Codex（openai-codex）模型的 CREATE/MODIFY/DEBUG 生成能力"
+                "尚未开放：当前版本支持登录、模型选择与 CHAT/EXPLAIN。"
+                "请改用其他已配置的模型。"
+            )
+        kwargs.pop("codex_intent", None)
+        kwargs.pop("codex_should_cancel", None)
+        kwargs.pop("codex_on_event", None)
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 
@@ -657,10 +746,13 @@ class LLMAdapter:
         # API-key / 环境变量（BYOA 安全不变量）。
         if self.config._is_codex_app_server_model(requested_model):
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的生成能力尚未开放："
-                "当前版本支持登录与模型选择，生成将在后续版本提供。"
+                "ChatGPT Codex（openai-codex）模型的 CREATE/IMAGE 生成能力"
+                "尚未开放：当前版本支持登录、模型选择与 CHAT/EXPLAIN。"
                 "请改用其他已配置的模型。"
             )
+        kwargs.pop("codex_intent", None)
+        kwargs.pop("codex_should_cancel", None)
+        kwargs.pop("codex_on_event", None)
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 

@@ -2592,3 +2592,141 @@ class TestCodexStartRpcFailureCleanup(unittest.TestCase):
         self.assertFalse(provider._login_pending)
         self.assertEqual(provider._completed_login_ids, deque())
         provider.close()
+
+
+# ── D3：provider.chat CHAT/EXPLAIN 安全调用 ────────────────────────────────
+
+
+class TestCodexProviderChatWire(unittest.TestCase):
+    """provider.chat 端到端（真实管道 + fake app-server）：fail closed 门禁、
+    临时 cwd 清理、CHAT/EXPLAIN 安全语义。"""
+
+    @contextlib.contextmanager
+    def _provider(self, extra_env=None, rpc_timeout=5.0):
+        import os
+        import sys
+        import tempfile
+
+        from openbrep.codex.app_server import CodexAppServerClient, StdioJsonRpcTransport
+
+        saved = {
+            key: os.environ.pop(key) for key in list(os.environ) if key.startswith("FAKE_CODEX_")
+        }
+        env = {"FAKE_CODEX_TURN": "1"}
+        env.update(extra_env or {})
+        for key, value in env.items():
+            os.environ[key] = value
+        home = Path(tempfile.mkdtemp(prefix="obr-d3-chat-")) / "home"
+
+        def factory():
+            transport = StdioJsonRpcTransport(
+                codex_binary=sys.executable,
+                codex_home=home,
+                extra_args=(str(FAKE_SERVER),),
+                rpc_timeout=rpc_timeout,
+            )
+            return CodexAppServerClient(transport=transport)
+
+        provider = CodexProvider(
+            codex_home=home,
+            client_factory=factory,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        try:
+            yield provider
+        finally:
+            try:
+                provider.close()
+            finally:
+                for key in list(os.environ):
+                    if key.startswith("FAKE_CODEX_"):
+                        os.environ.pop(key, None)
+                os.environ.update(saved)
+
+    @staticmethod
+    def _turn_dirs_leftover() -> list[str]:
+        import tempfile
+
+        root = Path(tempfile.gettempdir())
+        return [p.name for p in root.glob("openbrep-codex-turn-*")]
+
+    def test_chat_signed_out_fails_closed(self):
+        with self._provider() as provider:  # 未登录
+            with self.assertRaises(CodexNotSignedInError):
+                provider.chat(
+                    [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+                    model="gpt-5.6-luna",
+                )
+
+    def test_chat_quota_exhausted_fails_closed(self):
+        with self._provider(
+            {"FAKE_CODEX_SIGNED_IN": "1", "FAKE_CODEX_RATE_LIMITS": "reached"}
+        ) as provider:
+            with self.assertRaises(CodexAppServerError) as ctx:
+                provider.chat(
+                    [{"role": "user", "content": "hi"}],
+                    model="gpt-5.6-luna",
+                )
+            self.assertEqual(ctx.exception.category, "quota_exhausted")
+
+    def test_chat_no_cli_fails_closed(self):
+        provider = CodexProvider(
+            codex_home=Path("/tmp/obr-d3-no-cli"),
+            cli_available=False,
+        )
+        with self.assertRaises(CodexCliUnavailableError):
+            provider.chat([{"role": "user", "content": "hi"}], model="gpt-5.6-luna")
+
+    def test_chat_completes_and_cleans_temp_cwd(self):
+        before = set(self._turn_dirs_leftover())
+        with self._provider({"FAKE_CODEX_SIGNED_IN": "1"}) as provider:
+            result = provider.chat(
+                [{"role": "system", "content": "sys"}, {"role": "user", "content": "你好"}],
+                model="gpt-5.6-luna",
+                timeout=10.0,
+            )
+            self.assertEqual(result.finish_reason, "stop")
+            self.assertEqual(result.content, "你好，我是 Codex 测试助手。")
+        after = set(self._turn_dirs_leftover())
+        self.assertEqual(before, after, "临时 turn cwd 必须用完即删")
+
+    def test_chat_does_not_touch_workspace_dirs(self):
+        """CHAT 的临时 cwd 与项目/工作区隔离：外部目录树逐字节不变。"""
+        import tempfile
+
+        workspace = Path(tempfile.mkdtemp(prefix="obr-d3-ws-"))
+        (workspace / "keep.txt").write_text("payload", encoding="utf-8")
+        (workspace / "sub").mkdir()
+        (workspace / "sub" / "keep.gdl").write_text("BLOCK A, B, ZZYZX\n", encoding="utf-8")
+
+        def snapshot(root: Path) -> dict:
+            out = {}
+            for p in sorted(root.rglob("*")):
+                if p.is_file():
+                    out[str(p.relative_to(root))] = p.read_bytes()
+            return out
+
+        before = snapshot(workspace)
+        with self._provider({"FAKE_CODEX_SIGNED_IN": "1"}) as provider:
+            result = provider.chat(
+                [{"role": "user", "content": "你好"}],
+                model="gpt-5.6-luna",
+                timeout=10.0,
+            )
+            self.assertEqual(result.finish_reason, "stop")
+        after = snapshot(workspace)
+        self.assertEqual(before, after, "CHAT 不得在工作区创建/修改任何文件")
+
+    def test_chat_error_canary_zero_echo(self):
+        canary = "CANARY-CHAT-5c3d"
+        with self._provider(
+            {"FAKE_CODEX_SIGNED_IN": "1", "FAKE_CODEX_TURN_ERROR_CANARY": canary}
+        ) as provider:
+            result = provider.chat(
+                [{"role": "user", "content": "hi"}],
+                model="gpt-5.6-luna",
+                timeout=10.0,
+            )
+            self.assertEqual(result.finish_reason, "error")
+            self.assertNotIn(canary, str(result))

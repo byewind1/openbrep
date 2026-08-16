@@ -36,6 +36,24 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Assistant message is empty."}
 
+        # D3：用户选中的是 ChatGPT Codex（openai-codex）订阅模型 → CHAT/EXPLAIN
+        # 由该模型完成（ephemeral thread + 临时只读 cwd + approval never）。
+        # 无项目（CHAT）不创建任何目录；有项目（EXPLAIN）经 pipeline 只读摘要
+        # 注入 prompt，绝不创建 revision。非 codex 模型走下方原有本地解释器，
+        # 逐字节不变。
+        from openbrep.config import is_codex_qualified_model
+
+        if is_codex_qualified_model(self.session.llm_model):
+            return self._codex_assistant_reply(body, message)
+
+        if self.session.project is None:
+            # 既有本地解释器需要项目上下文；无项目时给出可操作提示而不是 500
+            # （D3 顺手收口：CHAT 无项目的稳定语义）。
+            return {
+                "ok": False,
+                "error": "请先创建或打开一个 GDL 项目，再进行解释。",
+            }
+
         parameter_targets = resolve_parameter_targets(self.session.project, message)
         if parameter_targets:
             context = build_project_parameter_context(self.session.project, parameter_targets[0])
@@ -70,6 +88,42 @@ class WorkbenchAssistantService:
                 "reply": build_chat_explanation_reply(explanation, user_input=message),
             },
         }
+
+    def _codex_assistant_reply(self, body: dict[str, Any], message: str) -> dict[str, Any]:
+        """D3：Codex 模型 CHAT/EXPLAIN——复用 pipeline 的 CHAT intent 契约。
+
+        EXPLAIN 只读项目摘要注入 prompt（pipeline._handle_codex_chat）；
+        CHAT（无项目）不创建任何目录；错误映射为稳定文案（上游原文零回显）。
+        """
+        from openbrep.runtime.pipeline import TaskRequest
+
+        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        if hasattr(pipeline, "config"):
+            pipeline.config.llm.model = self.session.llm_model
+            if self.session.llm_api_key:
+                pipeline.config.llm.api_key = self.session.llm_api_key
+            if self.session.llm_api_base:
+                pipeline.config.llm.api_base = self.session.llm_api_base
+            pipeline.config.llm.assistant_settings = self.session.assistant_settings
+            try:
+                pipeline.codex_provider = self.session.settings_service._codex_provider()
+            except Exception:  # noqa: BLE001 —— provider 不可用留给 LLMAdapter fail closed
+                pipeline.codex_provider = None
+        request = TaskRequest(
+            user_input=message,
+            intent="CHAT",
+            project=self.session.project,
+            assistant_settings=self.session.assistant_settings,
+            history=list(body.get("history") or []),
+        )
+        result = pipeline.execute(request)
+        if result.success:
+            return {
+                "ok": True,
+                "assistant": {"kind": "chat", "reply": result.plain_text},
+            }
+        error = result.error or "对话失败，请稍后重试。"
+        return {"ok": False, "error": error}
 
     def list_assistant_history(self) -> dict[str, Any]:
         if self.session.source_path is None:
@@ -570,4 +624,12 @@ class WorkbenchAssistantService:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
             pipeline.config.agent.max_iterations = self.session.max_retries
+        # D3：codex 模型才注入共享 provider（非 codex 不拉起 app-server）
+        from openbrep.config import is_codex_qualified_model
+
+        if is_codex_qualified_model(self.session.llm_model):
+            try:
+                pipeline.codex_provider = self.session.settings_service._codex_provider()
+            except Exception:  # noqa: BLE001 —— provider 不可用留给 LLMAdapter fail closed
+                pipeline.codex_provider = None
         return pipeline, request
