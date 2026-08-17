@@ -564,6 +564,11 @@ class LLMConfig:
     custom_providers: list[dict] = field(default_factory=list)
     assistant_settings: str = ""
     extra_body: dict = field(default_factory=dict)
+    # D6：ChatGPT Codex（openai-codex）Fixed 模式的 reasoning effort。
+    # 只对 codex 订阅模型有意义；值必须来自当前账户 model/list 的
+    # supportedReasoningEfforts（save 时校验）；空字符串 = 不覆盖（模型默认）。
+    # 非 codex 模型一律忽略该字段，绝不写入 litellm 请求。
+    reasoning_effort: str = ""
 
     @property
     def providers(self) -> list[dict]:
@@ -592,6 +597,16 @@ class LLMConfig:
         都按 Codex BYOA 处理——绝不回退到 API-key / 顶层凭据。
         """
         return is_codex_qualified_model(str(model or self.model or ""))
+
+    def codex_reasoning_effort(self, model: str | None = None) -> str:
+        """Fixed 模式的 reasoning effort（D6）：只对 codex 订阅模型有意义。
+
+        非 codex 模型一律返回空字符串（该字段绝不进入 litellm 请求）；
+        codex 模型返回已保存的 effort（可能为空 = 不覆盖模型默认）。
+        """
+        if not self._is_codex_app_server_model(model):
+            return ""
+        return str(self.reasoning_effort or "").strip()
 
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
@@ -963,6 +978,9 @@ class GDLAgentConfig:
                 "temperature": self.llm.temperature,
                 "max_tokens": self.llm.max_tokens,
                 "provider_keys": self.llm.provider_keys,
+                # D6：Fixed 模式 reasoning effort（只对 codex 订阅模型生效；
+                # 空字符串 = 不覆盖模型默认）
+                "reasoning_effort": self.llm.reasoning_effort or "",
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
@@ -1005,6 +1023,8 @@ class GDLAgentConfig:
             lines.append('assistant_settings = """' + self.llm.assistant_settings + '"""')
         else:
             lines.append('# assistant_settings = """告诉我你的使用场景、经验水平，或你希望我怎么协助你"""')
+        if self.llm.reasoning_effort:
+            lines.append(f'reasoning_effort = "{self.llm.reasoning_effort}"')
         if self.llm.api_base:
             lines.append(f'api_base = "{self.llm.api_base}"')
         lines += [

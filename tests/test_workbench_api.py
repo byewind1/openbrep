@@ -3299,8 +3299,25 @@ class _RouteFakeCodexClient:
         self.model_list_calls += 1
         return {
             "data": [
-                {"id": "gpt-5.6-luna", "model": "gpt-5.6-luna", "displayName": "GPT-5.6 Luna", "hidden": False, "modelSpecialty": None},
-                {"id": "gpt-5.2", "model": "gpt-5.2", "displayName": "GPT-5.2", "hidden": False, "modelSpecialty": None},
+                {
+                    "id": "gpt-5.6-luna", "model": "gpt-5.6-luna",
+                    "displayName": "GPT-5.6 Luna", "hidden": False, "modelSpecialty": None,
+                    # D6：effort 目录
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "low", "description": "Fastest"},
+                        {"reasoningEffort": "medium", "description": "Balanced"},
+                        {"reasoningEffort": "high", "description": "Deep"},
+                    ],
+                    "defaultReasoningEffort": "medium",
+                },
+                {
+                    "id": "gpt-5.2", "model": "gpt-5.2",
+                    "displayName": "GPT-5.2", "hidden": False, "modelSpecialty": None,
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "medium", "description": "Balanced"},
+                    ],
+                    "defaultReasoningEffort": "medium",
+                },
             ],
             "nextCursor": None,
         }
@@ -3398,6 +3415,43 @@ def test_codex_models_route_returns_qualified_ids(tmp_path):
     assert ids == ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.2"]
     # 模型目录来自 model/list，不是硬编码清单
     assert client.model_list_calls == 1
+    # D6：effort 目录透出（UI 选项只来自 model/list.supportedReasoningEfforts）
+    luna = next(m for m in response["models"] if m["id"].endswith("gpt-5.6-luna"))
+    assert [e["effort"] for e in luna["supported_reasoning_efforts"]] == ["low", "medium", "high"]
+    assert luna["default_reasoning_effort"] == "medium"
+
+
+def test_update_llm_model_route_saves_codex_effort(tmp_path):
+    """D6：PATCH /api/settings/llm/model 显式保存 model + effort。"""
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    response = session.route("PATCH", "/api/settings/llm/model", {
+        "model": "openai-codex/gpt-5.6-luna", "reasoning_effort": "high",
+    })
+    assert response["ok"] is True
+    assert response["llm"]["model"] == "openai-codex/gpt-5.6-luna"
+    assert response["llm"]["reasoning_effort"] == "high"
+    # 落盘：重新加载 config 可见
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.reasoning_effort == "high"
+
+
+def test_update_llm_model_route_rejects_unsupported_effort(tmp_path):
+    """D6：effort 注入对抗——model/list 不支持的 effort 保存请求显式报错。"""
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    # gpt-5.2 只支持 medium；注入 low → 拒绝（effort_not_supported）
+    response = session.route("PATCH", "/api/settings/llm/model", {
+        "model": "openai-codex/gpt-5.2", "reasoning_effort": "low",
+    })
+    assert response["ok"] is False
+    assert response["code"] == "effort_not_supported"
+    assert "low" in response["error"]
+    # 配置未落盘
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.reasoning_effort == ""
 
 
 def test_codex_routes_registered_lock_free():

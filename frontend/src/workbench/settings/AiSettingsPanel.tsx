@@ -22,7 +22,7 @@ interface AiSettingsPanelProps {
   llmSettings: LlmSettings
   onOpenConfig: () => void
   onTestConnection: () => Promise<LlmConnectionTestResult>
-  onModelChange?: (model: string) => Promise<void>
+  onModelChange?: (model: string, reasoningEffort?: string) => Promise<void>
   onSaveApiKey?: (model: string, apiKey: string) => Promise<unknown>
 }
 
@@ -38,6 +38,11 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
   const [keyFeedback, setKeyFeedback] = useState<{ ok: boolean; text: string } | null>(null)
+  // ── D6：Fixed 模式 reasoning effort（draft + 显式 Save，绝不随控件变化隐式写配置）──
+  const [effortDraft, setEffortDraft] = useState('')
+  const [effortSaving, setEffortSaving] = useState(false)
+  const [effortFeedback, setEffortFeedback] = useState<{ ok: boolean; text: string } | null>(null)
+  const [pendingEffort, setPendingEffort] = useState('')
   // ── Codex BYOA（D1+D2）：ChatGPT 订阅连接状态 ──
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null)
   const [codexModels, setCodexModels] = useState<CodexModelInfo[]>([])
@@ -78,6 +83,12 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     setApiKeyInput('')
     setKeyFeedback(null)
   }, [llmSettings.model])
+
+  // D6：已保存 effort 是 draft 的事实源；保存/切换模型后回填，
+  // 用户编辑未保存时以本地 draft 为准（不隐式写配置）。
+  useEffect(() => {
+    setEffortDraft(llmSettings.reasoning_effort ?? '')
+  }, [llmSettings.reasoning_effort])
 
   // ── Codex：挂载时加载状态；登录后加载动态模型目录 ──
   useEffect(() => {
@@ -264,6 +275,9 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   function requestCodexModelSwitch(model: string) {
     if (!onModelChange || model === currentId || switching) return
     setPendingCodexModel(model)
+    // D6：新模型的 effort 由用户显式选择（draft）；不静默继承旧模型 effort
+    setPendingEffort('')
+    setSwitchError(null)
   }
 
   async function confirmCodexModelSwitch() {
@@ -272,14 +286,52 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     setSwitching(true)
     setSwitchError(null)
     try {
-      await onModelChange(model)
+      // D6：model + effort 一起显式保存；后端按 model/list 校验组合
+      // （不支持的 effort 拒绝保存，不会静默替换）。无 effort 时保持
+      // 既有调用形状（只传 model），兼容非 codex 模型切换。
+      if (pendingEffort) {
+        await onModelChange(model, pendingEffort)
+      } else {
+        await onModelChange(model)
+      }
       setPendingCodexModel(null)
+      setPendingEffort('')
     } catch (error) {
       setSwitchError(error instanceof Error ? error.message : t('settings.ai.switchFailed'))
     } finally {
       setSwitching(false)
     }
   }
+
+  // D6：当前模型 effort 的显式保存（draft → Save；成功后回填事实源）
+  async function saveCodexEffort() {
+    if (!onModelChange || effortSaving) return
+    setEffortSaving(true)
+    setEffortFeedback(null)
+    try {
+      // 显式 Save：effort 为空 = 清除覆盖（回到模型默认）
+      if (effortDraft) {
+        await onModelChange(llmSettings.model, effortDraft)
+      } else {
+        await onModelChange(llmSettings.model)
+      }
+      setEffortFeedback({ ok: true, text: t('settings.ai.codex.effortSaved') })
+    } catch (error) {
+      setEffortFeedback({
+        ok: false,
+        text: error instanceof Error ? error.message : t('settings.ai.codex.effortSaveFailed'),
+      })
+    } finally {
+      setEffortSaving(false)
+    }
+  }
+
+  // D6：当前/待选模型的支持 effort 目录（只来自 model/list，不硬编码）
+  const codexCatalog = useMemo(() => new Map(codexModels.map((m) => [m.id, m])), [codexModels])
+  const currentEffortOptions = codexCatalog.get(currentId)?.supported_reasoning_efforts ?? []
+  const pendingEffortOptions = pendingCodexModel
+    ? (codexCatalog.get(pendingCodexModel)?.supported_reasoning_efforts ?? [])
+    : []
 
   const filteredCustom = useFilteredModels(customModels, modelQuery)
   const filteredOfficial = useFilteredModels(officialModels, modelQuery)
@@ -492,7 +544,27 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         onLogout={() => void handleCodexLogout()}
         onSelect={requestCodexModelSwitch}
         onConfirm={() => void confirmCodexModelSwitch()}
-        onCancel={() => setPendingCodexModel(null)}
+        onCancel={() => {
+          setPendingCodexModel(null)
+          setPendingEffort('')
+        }}
+        // D6：Fixed 模式 effort（draft + 显式 Save）
+        savedEffort={llmSettings.reasoning_effort ?? ''}
+        effortDraft={effortDraft}
+        effortOptions={currentEffortOptions}
+        effortSaving={effortSaving}
+        effortFeedback={effortFeedback}
+        onEffortDraftChange={(v) => {
+          setEffortDraft(v)
+          setEffortFeedback(null)
+        }}
+        onSaveEffort={() => void saveCodexEffort()}
+        pendingEffort={pendingEffort}
+        pendingEffortOptions={pendingEffortOptions}
+        onPendingEffortChange={(v) => {
+          setPendingEffort(v)
+          setSwitchError(null)
+        }}
       />
       <div className="settings-submit-row">
         <button type="button" className="settings-open-config-btn" onClick={onOpenConfig}>
@@ -554,6 +626,13 @@ function CodexSection({
   current,
   pending,
   switching,
+  savedEffort,
+  effortDraft,
+  effortOptions,
+  effortSaving,
+  effortFeedback,
+  pendingEffort,
+  pendingEffortOptions,
   onLogin,
   onDeviceCode,
   onCancelLogin,
@@ -563,6 +642,9 @@ function CodexSection({
   onSelect,
   onConfirm,
   onCancel,
+  onEffortDraftChange,
+  onSaveEffort,
+  onPendingEffortChange,
 }: {
   status: CodexStatus | null
   models: CodexModelInfo[]
@@ -576,6 +658,14 @@ function CodexSection({
   current: string
   pending: string | null
   switching: boolean
+  // D6：Fixed 模式 effort（draft + 显式 Save）
+  savedEffort: string
+  effortDraft: string
+  effortOptions: { effort: string; description?: string }[]
+  effortSaving: boolean
+  effortFeedback: { ok: boolean; text: string } | null
+  pendingEffort: string
+  pendingEffortOptions: { effort: string; description?: string }[]
   onLogin: () => void
   onDeviceCode: () => void
   onCancelLogin: () => void
@@ -585,6 +675,9 @@ function CodexSection({
   onSelect: (model: string) => void
   onConfirm: () => void
   onCancel: () => void
+  onEffortDraftChange: (value: string) => void
+  onSaveEffort: () => void
+  onPendingEffortChange: (value: string) => void
 }) {
   const t = useT()
   const state = status?.state ?? 'signed_out'
@@ -740,9 +833,61 @@ function CodexSection({
               ))}
             </div>
           )}
+          {current.startsWith('openai-codex/') && !pending ? (
+            <div className="settings-row" data-testid="codex-effort-row">
+              <span>{t('settings.ai.codex.effortLabel')}</span>
+              <select
+                aria-label={t('settings.ai.codex.effortLabel')}
+                value={effortDraft}
+                disabled={effortSaving}
+                onChange={(event) => onEffortDraftChange(event.target.value)}
+              >
+                <option value="">{t('settings.ai.codex.effortDefault')}</option>
+                {effortOptions.map((opt) => (
+                  <option key={opt.effort} value={opt.effort}>
+                    {opt.description ? `${opt.effort} — ${opt.description}` : opt.effort}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={effortSaving || effortDraft === savedEffort}
+                onClick={onSaveEffort}
+                data-testid="codex-effort-save"
+              >
+                {effortSaving ? '…' : t('settings.ai.codex.effortSave')}
+              </button>
+            </div>
+          ) : null}
+          {effortFeedback ? (
+            <p
+              className={`settings-test-result ${effortFeedback.ok ? 'success' : 'error'}`}
+              data-testid="codex-effort-feedback"
+            >
+              {effortFeedback.text}
+            </p>
+          ) : null}
           {pending ? (
             <div className="settings-model-confirm" data-testid="codex-model-confirm">
               <span>{t('settings.ai.confirmSwitch', { model: pending })}</span>
+              {pendingEffortOptions.length > 0 ? (
+                <div className="settings-row">
+                  <span>{t('settings.ai.codex.effortLabel')}</span>
+                  <select
+                    aria-label={t('settings.ai.codex.effortLabel')}
+                    value={pendingEffort}
+                    disabled={switching}
+                    onChange={(event) => onPendingEffortChange(event.target.value)}
+                  >
+                    <option value="">{t('settings.ai.codex.effortDefault')}</option>
+                    {pendingEffortOptions.map((opt) => (
+                      <option key={opt.effort} value={opt.effort}>
+                        {opt.description ? `${opt.effort} — ${opt.description}` : opt.effort}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
               <div className="settings-model-confirm-actions">
                 <button type="button" disabled={switching} onClick={onConfirm}>
                   {switching ? '…' : t('settings.ai.confirmYes')}

@@ -56,7 +56,7 @@ interface SettingsDrawerProps {
   onCompilerSettingsChange: (settings: CompilerSettings) => Promise<CompilerSettings>
   onOpenConfig: () => void
   onTestLlmConnection: () => Promise<LlmConnectionTestResult>
-  onModelChange?: (model: string) => Promise<void>
+  onModelChange?: (model: string, reasoningEffort?: string) => Promise<void>
   onSaveLlmApiKey?: (model: string, apiKey: string) => Promise<unknown>
   onReloadRuntimeSettings: () => Promise<void>
   onBrowseCompilerFile: () => Promise<CompilerSettings | null>

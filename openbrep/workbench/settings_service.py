@@ -283,17 +283,25 @@ class WorkbenchSettingsService:
             return False
         return model in {m["id"] for m in catalog}
 
-    def _codex_save_guard(self, model: str) -> tuple[bool, dict[str, Any] | None]:
-        """保存 codex 模型前的门禁：已登录 + 模型属于当前账户 model/list 目录。
+    def _codex_save_guard(self, model: str, effort: str = "") -> tuple[bool, dict[str, Any] | None]:
+        """保存 codex 模型 + effort 前的门禁：已登录 + 模型属于当前账户
+        model/list 目录 + effort 属于该模型 supportedReasoningEfforts。
 
-        只信后端目录，不信任前端按钮来源（P0-4）。
+        只信后端目录，不信任前端按钮来源（P0-4）；effort 选项只来自
+        model/list.supportedReasoningEfforts（D6，绝不硬编码/静默替换）。
+        effort 为空 = 不覆盖模型默认（允许）。
         """
         try:
             provider = self._codex_provider()
             catalog = provider.models(refresh=True)
         except Exception as exc:
             return False, self._codex_error(exc)
-        if model not in {m["id"] for m in catalog}:
+        target = None
+        for m in catalog:
+            if m["id"] == model:
+                target = m
+                break
+        if target is None:
             return False, {
                 "ok": False,
                 "code": "model_not_in_catalog",
@@ -302,7 +310,60 @@ class WorkbenchSettingsService:
                     "请先连接 ChatGPT 并选择账户返回的模型。"
                 ),
             }
+        effort = str(effort or "").strip()
+        if effort:
+            supported = [
+                str(e.get("effort") or "")
+                for e in target.get("supported_reasoning_efforts") or []
+            ]
+            if effort not in supported:
+                return False, {
+                    "ok": False,
+                    "code": "effort_not_supported",
+                    "error": (
+                        f"模型 {model} 不支持 reasoning effort「{effort}」。"
+                        "该模型的受支持选项：" + ("、".join(supported) if supported else "无")
+                        + "。请重新选择后再保存。"
+                    ),
+                }
         return True, None
+
+    def _codex_validate_effort(self, model: str, effort: str) -> tuple[bool, dict[str, Any] | None]:
+        """校验已保存 effort 是否仍被当前模型支持（模型切换/目录漂移后校验）。
+
+        D6「模型改变时校验 effort，不静默替换」：旧 effort 残留/直改配置导致的
+        不兼容必须在保存与运行时都显式报错，绝不静默清空或替换。
+        """
+        effort = str(effort or "").strip()
+        if not effort:
+            return True, None
+        try:
+            provider = self._codex_provider()
+            catalog = provider.models(refresh=True)
+        except Exception as exc:
+            return False, self._codex_error(exc)
+        for m in catalog:
+            if m["id"] == model:
+                supported = [
+                    str(e.get("effort") or "")
+                    for e in m.get("supported_reasoning_efforts") or []
+                ]
+                if effort in supported:
+                    return True, None
+                return False, {
+                    "ok": False,
+                    "code": "effort_not_supported",
+                    "error": (
+                        f"已保存的 reasoning effort「{effort}」不被模型 {model} 支持。"
+                        "该模型的受支持选项：" + ("、".join(supported) if supported else "无")
+                        + "。请重新选择后再保存（不会自动替换）。"
+                    ),
+                }
+        return False, {
+            "ok": False,
+            "code": "model_not_in_catalog",
+            "error": f"模型 {model} 不在当前 ChatGPT 账户可用模型目录中，无法保存。",
+        }
 
     def codex_route(
         self,
@@ -359,6 +420,9 @@ class WorkbenchSettingsService:
             "api_base": self.session.llm_api_base,
             "max_retries": self.session.max_retries,
             "assistant_settings": self.session.assistant_settings,
+            # D6：Fixed 模式已保存的 reasoning effort（只对 codex 模型有意义；
+            # 空字符串 = 不覆盖模型默认）
+            "reasoning_effort": str(self.session.config.llm.reasoning_effort or ""),
             "codex": codex_block,
         }
 
@@ -406,15 +470,35 @@ class WorkbenchSettingsService:
         model = str(body.get("model") or "").strip()
         if not model:
             return {"ok": False, "error": "Model is required."}
+        # D6：Fixed 模式 effort——显式传入则校验；未传入（仅切模型）时校验
+        # 已保存 effort 是否仍被新模型支持（残留拒绝，不静默替换）。
+        effort = str(body.get("reasoning_effort") or "").strip()
         if is_codex_qualified_model(model):
             # 只允许保存当前账户 model/list 目录里的模型（P0-4），
             # 且保证 provider 条目为保留规范形态（api_mode=codex_app_server）。
-            ok, failure = self._codex_save_guard(model)
+            ok, failure = self._codex_save_guard(model, effort)
             if not ok:
                 return failure
+            if not effort:
+                saved_effort = str(self.session.config.llm.reasoning_effort or "").strip()
+                if saved_effort:
+                    ok2, failure2 = self._codex_validate_effort(model, saved_effort)
+                    if not ok2:
+                        return failure2
             ensure_codex_provider_entry(self.session.config)
+        elif effort:
+            # 非 codex 模型不接受 effort（D6：显式报错，不静默忽略）
+            return {
+                "ok": False,
+                "code": "effort_not_for_codex",
+                "error": "reasoning effort 仅适用于 ChatGPT Codex（openai-codex）订阅模型。",
+            }
         self.session.llm_model = model
         self.session.config.llm.model = model
+        if is_codex_qualified_model(model):
+            # 只对 codex 模型写 effort；非 codex 切换不清空（该字段对其惰性，
+            # 切回 codex 时仍生效，避免静默丢配置）。
+            self.session.config.llm.reasoning_effort = effort
         self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
         self.session.llm_api_base = self.session.config.llm.resolve_api_base(model) or ""
         save_workbench_config(self.session.config, self.session.config_path)
@@ -466,6 +550,9 @@ class WorkbenchSettingsService:
         except (TypeError, ValueError):
             max_retries = 5
 
+        # D6：Fixed 模式 effort（显式传入则校验；未传入则校验已保存 effort
+        # 是否仍被新模型支持——残留拒绝，不静默替换）。
+        effort = str(body.get("reasoning_effort") or "").strip()
         if is_codex_qualified_model(model):
             if api_key:
                 # P0-1：订阅身份不接受 API Key 写入
@@ -474,9 +561,21 @@ class WorkbenchSettingsService:
                     "code": "codex_no_api_key",
                     "error": "ChatGPT Codex（openai-codex）模型使用订阅登录，不接受 API Key。",
                 }
-            ok, failure = self._codex_save_guard(model)
+            ok, failure = self._codex_save_guard(model, effort)
             if not ok:
                 return failure
+            if not effort:
+                saved_effort = str(self.session.config.llm.reasoning_effort or "").strip()
+                if saved_effort:
+                    ok2, failure2 = self._codex_validate_effort(model, saved_effort)
+                    if not ok2:
+                        return failure2
+        elif effort:
+            return {
+                "ok": False,
+                "code": "effort_not_for_codex",
+                "error": "reasoning effort 仅适用于 ChatGPT Codex（openai-codex）订阅模型。",
+            }
 
         # 验证全部通过 → 一次性 commit 到 session + config
         self.session.llm_model = model
@@ -487,6 +586,7 @@ class WorkbenchSettingsService:
         self.session.config.llm.model = model
         if is_codex_qualified_model(model):
             ensure_codex_provider_entry(self.session.config)
+            self.session.config.llm.reasoning_effort = effort
         self.session.config.llm.assistant_settings = assistant_settings
         self.session.config.agent.max_iterations = max_retries
         apply_llm_credentials_to_config(

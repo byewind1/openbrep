@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sys
 import tempfile
@@ -912,3 +913,485 @@ class TestCodexTurnWireIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── D6：Fixed 模式 effort 参数面 + delta phase 过滤（UI 脱敏）─────────────
+
+
+class TestCodexTurnEffortParams(unittest.TestCase):
+    """D6：turn/start 的 effort 覆盖键 + result 携带 effective effort。"""
+
+    def test_build_turn_start_params_includes_effort_when_set(self):
+        params = CodexTurnRunner.build_turn_start_params(
+            thread_id="th-1",
+            model="gpt-5.6-luna",
+            cwd="/tmp/x",
+            user_text="hi",
+            reasoning_effort="high",
+        )
+        self.assertEqual(params["effort"], "high")
+
+    def test_build_turn_start_params_omits_effort_when_empty(self):
+        params = CodexTurnRunner.build_turn_start_params(
+            thread_id="th-1",
+            model="gpt-5.6-luna",
+            cwd="/tmp/x",
+            user_text="hi",
+            reasoning_effort="",
+        )
+        self.assertNotIn("effort", params)
+
+    def test_run_threads_effort_into_turn_start_and_result(self):
+        transport = _RecordingTransport()
+        client = _RecordingClient(transport)
+
+        def turn_start(params):
+            thread_id = params["threadId"]
+            turn_id = "tn-eff-1"
+
+            def deliver(msg):
+                transport.deliver(msg)
+
+            threading.Timer(
+                0.02,
+                lambda: deliver(
+                    {
+                        "method": "turn/started",
+                        "params": {
+                            "threadId": thread_id,
+                            "turn": {"id": turn_id, "status": "inProgress"},
+                        },
+                    }
+                ),
+            ).start()
+            threading.Timer(
+                0.04,
+                lambda: deliver(
+                    {
+                        "method": "item/started",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "item": {
+                                "type": "agentMessage",
+                                "id": "m1",
+                                "phase": "final_answer",
+                            },
+                            "startedAtMs": 1786800000000,
+                        },
+                    }
+                ),
+            ).start()
+            threading.Timer(
+                0.06,
+                lambda: deliver(
+                    {
+                        "method": "item/agentMessage/delta",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "itemId": "m1",
+                            "delta": "final 文本",
+                        },
+                    }
+                ),
+            ).start()
+            threading.Timer(
+                0.08,
+                lambda: deliver(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "item": {
+                                "type": "agentMessage",
+                                "id": "m1",
+                                "text": "final 文本",
+                                "phase": "final_answer",
+                            },
+                            "completedAtMs": 1786800000200,
+                        },
+                    }
+                ),
+            ).start()
+            threading.Timer(
+                0.10,
+                lambda: deliver(
+                    {
+                        "method": "turn/completed",
+                        "params": {
+                            "threadId": thread_id,
+                            "turn": {"id": turn_id, "status": "completed"},
+                        },
+                    }
+                ),
+            ).start()
+            return {"turn": {"id": turn_id, "status": "inProgress"}}
+
+        transport.set_script({"turn/start": turn_start})
+        runner = CodexTurnRunner(client)
+        cwd = tempfile.mkdtemp(prefix="obr-d6-rec-")
+        try:
+            result = runner.run(
+                model="gpt-5.6-luna",
+                cwd=cwd,
+                messages=[{"role": "user", "content": "hi"}],
+                reasoning_effort="high",
+            )
+        finally:
+            import shutil
+            shutil.rmtree(cwd, ignore_errors=True)
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.reasoning_effort, "high")
+        turn_params = [p for m, p in transport.calls if m == "turn/start"][0]
+        self.assertEqual(turn_params.get("effort"), "high")
+        # thread/start 不携带 effort（协议 TurnStartParams 才接受覆盖）
+        thread_params = [p for m, p in transport.calls if m == "thread/start"][0]
+        self.assertNotIn("effort", thread_params)
+
+
+class TestCodexTurnDeltaPhaseFiltering(unittest.TestCase):
+    """D6 UI 脱敏：commentary（中间思考）delta 绝不进入 on_event/结果；
+    final delta 正常透出。"""
+
+    def _script_with_phases(self, transport):
+        def turn_start(params):
+            thread_id = params["threadId"]
+            turn_id = "tn-phase-1"
+
+            def deliver(msg):
+                transport.deliver(msg)
+
+            seq = [
+                # commentary item：长思考 delta（canary——UI 绝不能看到）
+                {
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": {"type": "agentMessage", "id": "c1", "phase": "commentary"},
+                        "startedAtMs": 1786800000000,
+                    },
+                },
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": "c1",
+                        "delta": "CANARY-REASONING-中间思考",
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": {
+                            "type": "agentMessage",
+                            "id": "c1",
+                            "text": "CANARY-REASONING-中间思考",
+                            "phase": "commentary",
+                        },
+                        "completedAtMs": 1786800000100,
+                    },
+                },
+                # final item：final delta 应透出
+                {
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": {"type": "agentMessage", "id": "f1", "phase": "final_answer"},
+                        "startedAtMs": 1786800000200,
+                    },
+                },
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": "f1",
+                        "delta": "最终答复",
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "item": {
+                            "type": "agentMessage",
+                            "id": "f1",
+                            "text": "最终答复",
+                            "phase": "final_answer",
+                        },
+                        "completedAtMs": 1786800000300,
+                    },
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turn": {"id": turn_id, "status": "completed"},
+                    },
+                },
+            ]
+            def deliver_all():
+                for msg in seq:
+                    time.sleep(0.008)
+                    deliver(msg)
+
+            threading.Thread(target=deliver_all, daemon=True).start()
+            return {"turn": {"id": turn_id, "status": "inProgress"}}
+
+        return {"turn/start": turn_start}
+
+    def test_commentary_deltas_never_reach_on_event_or_result(self):
+        transport = _RecordingTransport()
+        client = _RecordingClient(transport)
+        transport.set_script(self._script_with_phases(transport))
+        runner = CodexTurnRunner(client)
+        events: list[tuple] = []
+
+        def on_event(kind, data):
+            events.append((kind, data))
+
+        cwd = tempfile.mkdtemp(prefix="obr-d6-phase-")
+        try:
+            result = runner.run(
+                model="gpt-5.6-luna",
+                cwd=cwd,
+                messages=[{"role": "user", "content": "hi"}],
+                on_event=on_event,
+            )
+        finally:
+            import shutil
+            shutil.rmtree(cwd, ignore_errors=True)
+
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.content, "最终答复")
+        # 最终内容不含 commentary canary
+        self.assertNotIn("CANARY-REASONING", result.content)
+        # on_event 的 assistant_delta 只有 final 文本，绝无 commentary
+        deltas = [d for k, d in events if k == "assistant_delta"]
+        self.assertEqual(deltas, [{"content": "最终答复"}])
+        self.assertFalse(any("CANARY-REASONING" in str(d) for d in deltas))
+        # status 事件只是稳定文案，无任何上游原文
+        for kind, data in events:
+            self.assertNotIn("CANARY-REASONING", str(data))
+
+    def test_commentary_only_with_long_reasoning_is_no_final_message(self):
+        """D6：reasoning 很长但 final 为空/截断 → 统一完整性错误。"""
+        transport = _RecordingTransport()
+        client = _RecordingClient(transport)
+
+        def turn_start(params):
+            thread_id = params["threadId"]
+            turn_id = "tn-nf-1"
+
+            def deliver(msg):
+                transport.deliver(msg)
+
+            seq = []
+            for i in range(60):
+                seq.append(
+                    {
+                        "method": "item/started",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "item": {"type": "agentMessage", "id": f"c{i}", "phase": "commentary"},
+                            "startedAtMs": 1786800000000 + i,
+                        },
+                    }
+                )
+                seq.append(
+                    {
+                        "method": "item/agentMessage/delta",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "itemId": f"c{i}",
+                            "delta": f"思考 {i} " + "x" * 200,
+                        },
+                    }
+                )
+                seq.append(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "item": {
+                                "type": "agentMessage",
+                                "id": f"c{i}",
+                                "text": f"思考 {i} " + "x" * 200,
+                                "phase": "commentary",
+                            },
+                            "completedAtMs": 1786800000100 + i,
+                        },
+                    }
+                )
+            seq.append(
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turn": {"id": turn_id, "status": "completed"},
+                    },
+                }
+            )
+            def deliver_all():
+                for msg in seq:
+                    time.sleep(0.002)
+                    deliver(msg)
+
+            threading.Thread(target=deliver_all, daemon=True).start()
+            return {"turn": {"id": turn_id, "status": "inProgress"}}
+
+        transport.set_script({"turn/start": turn_start})
+        runner = CodexTurnRunner(client)
+        events: list[tuple] = []
+
+        def on_event(kind, data):
+            events.append((kind, data))
+
+        cwd = tempfile.mkdtemp(prefix="obr-d6-nf-")
+        try:
+            result = runner.run(
+                model="gpt-5.6-luna",
+                cwd=cwd,
+                messages=[{"role": "user", "content": "hi"}],
+                on_event=on_event,
+            )
+        finally:
+            import shutil
+            shutil.rmtree(cwd, ignore_errors=True)
+
+        # 统一完整性错误：不交付空结果
+        self.assertEqual(result.finish_reason, "no_final_message")
+        self.assertEqual(result.error, NO_FINAL_MESSAGE_TEXT)
+        self.assertEqual(result.content, "")
+        # UI 流式回调零透出（没有任何 delta 到达 on_event）
+        deltas = [d for k, d in events if k == "assistant_delta"]
+        self.assertEqual(deltas, [])
+
+
+class TestCodexTurnWireD6Effort(unittest.TestCase):
+    """D6 wire：effort 参数面 + 长 reasoning 无 final 完整性（fake app-server）。"""
+
+    @contextlib.contextmanager
+    def _provider(self, extra_env=None, rpc_timeout=5.0):
+        saved = {
+            key: os.environ.pop(key) for key in list(os.environ) if key.startswith("FAKE_CODEX_")
+        }
+        env = {"FAKE_CODEX_TURN": "1", "FAKE_CODEX_SIGNED_IN": "1"}
+        env.update(extra_env or {})
+        for key, value in env.items():
+            os.environ[key] = value
+        home = Path(tempfile.mkdtemp(prefix="obr-d6-wire-")) / "home"
+
+        def factory():
+            transport = StdioJsonRpcTransport(
+                codex_binary=sys.executable,
+                codex_home=home,
+                extra_args=(str(FAKE_SERVER),),
+                rpc_timeout=rpc_timeout,
+            )
+            return CodexAppServerClient(transport=transport)
+
+        from openbrep.codex.provider import CodexProvider
+
+        provider = CodexProvider(
+            codex_home=home,
+            client_factory=factory,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        try:
+            yield provider
+        finally:
+            try:
+                provider.close()
+            finally:
+                for key in list(os.environ):
+                    if key.startswith("FAKE_CODEX_"):
+                        os.environ.pop(key, None)
+                os.environ.update(saved)
+
+    def _run(self, provider, messages=None, **kwargs):
+        client, _ = provider._snapshot()
+        runner = CodexTurnRunner(client)
+        cwd = tempfile.mkdtemp(prefix="obr-d6-wire-cwd-")
+        try:
+            return runner.run(
+                model="gpt-5.6-luna",
+                cwd=cwd,
+                messages=messages
+                or [{"role": "system", "content": "sys"}, {"role": "user", "content": "你好"}],
+                **kwargs,
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(cwd, ignore_errors=True)
+
+    def test_effort_forwarded_to_app_server_and_recorded_in_result(self):
+        params_log = Path(tempfile.mkdtemp(prefix="obr-d6-log-")) / "params.jsonl"
+        with self._provider(
+            {"FAKE_CODEX_TURN_PARAMS_LOG": str(params_log), "FAKE_CODEX_MODEL_EFFORTS_JSON": json.dumps(
+                {"gpt-5.6-luna": {"efforts": [["low"], ["medium"], ["high"]], "default": "medium"}}
+            )}
+        ) as provider:
+            result = self._run(provider, reasoning_effort="high")
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.reasoning_effort, "high")
+        lines = params_log.read_text(encoding="utf-8").strip().splitlines()
+        turn_entries = [json.loads(ln) for ln in lines if '"turn/start"' in ln]
+        self.assertTrue(turn_entries, "fake server 必须记录 turn/start 参数")
+        self.assertEqual(turn_entries[0]["params"].get("effort"), "high")
+
+    def test_effort_empty_means_no_effort_key(self):
+        params_log = Path(tempfile.mkdtemp(prefix="obr-d6-log-")) / "params.jsonl"
+        with self._provider({"FAKE_CODEX_TURN_PARAMS_LOG": str(params_log)}) as provider:
+            result = self._run(provider)
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.reasoning_effort, "")
+        lines = params_log.read_text(encoding="utf-8").strip().splitlines()
+        turn_entries = [json.loads(ln) for ln in lines if '"turn/start"' in ln]
+        self.assertTrue(turn_entries)
+        self.assertNotIn("effort", turn_entries[0]["params"])
+
+    def test_long_reasoning_without_final_is_unified_integrity_error(self):
+        events: list[tuple] = []
+        params_log = Path(tempfile.mkdtemp(prefix="obr-d6-log-")) / "params.jsonl"
+        with self._provider(
+            {
+                "FAKE_CODEX_TURN_REASONING_NO_FINAL": "1",
+                "FAKE_CODEX_TURN_PARAMS_LOG": str(params_log),
+            }
+        ) as provider:
+            client, _ = provider._snapshot()
+            runner = CodexTurnRunner(client)
+            cwd = tempfile.mkdtemp(prefix="obr-d6-wire-cwd-")
+            try:
+                result = runner.run(
+                    model="gpt-5.6-luna",
+                    cwd=cwd,
+                    messages=[{"role": "user", "content": "你好"}],
+                    on_event=lambda kind, data: events.append((kind, data)),
+                )
+            finally:
+                import shutil
+
+                shutil.rmtree(cwd, ignore_errors=True)
+        # 长 reasoning + 空 final → 统一完整性错误，绝不交付空结果
+        self.assertEqual(result.finish_reason, "no_final_message")
+        self.assertEqual(result.error, NO_FINAL_MESSAGE_TEXT)
+        self.assertEqual(result.content, "")
+        # UI 流式回调零透出（commentary 长思考文本绝不进 on_event）
+        deltas = [d for k, d in events if k == "assistant_delta"]
+        self.assertEqual(deltas, [])
+        self.assertFalse(any("思考过程" in str(d) for _, d in events))

@@ -23,7 +23,7 @@ interface AssistantPanelProps {
   onRevealLine?: (scriptName: string, lineNumber: number) => void
   modelOptions?: LlmModelOption[]
   currentModel?: string
-  onModelChange?: (model: string) => Promise<void>
+  onModelChange?: (model: string, reasoningEffort?: string) => Promise<void>
   // 计划确认门（V3）：待确认计划 + 确认/取消回调
   pendingPlan?: PendingPlan | null
   onConfirmPlan?: (approve: boolean) => void

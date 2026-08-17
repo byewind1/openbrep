@@ -53,7 +53,7 @@ interface WorkbenchRightRailProps {
   onRevealLine?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
   modelOptions?: import('../../api/types').LlmModelOption[]
   currentModel?: string
-  onModelChange?: (model: string) => Promise<void>
+  onModelChange?: (model: string, reasoningEffort?: string) => Promise<void>
   // P6a：跨项目聊天记录导入
   workspace?: import('../../api/types').WorkspaceInfo | null
   currentProjectPath?: string | null

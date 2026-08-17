@@ -474,13 +474,19 @@ class TaskPipeline:
                 "codex_intent": "CHAT",
                 "codex_should_cancel": request.should_cancel,
                 "codex_on_event": request.on_event,
+                "codex_reasoning_effort": self.config.llm.codex_reasoning_effort(),
             }
         try:
             resp = llm.generate(messages, **codex_kwargs)
+            result_metadata: dict = {}
+            effective = (resp.metadata or {}).get("codex_effective")
+            if effective:
+                result_metadata["codex_effective"] = dict(effective)
             return TaskResult(
                 success=True,
                 intent="CHAT",
                 plain_text=resp.content,
+                metadata=result_metadata,
             )
         except Exception as exc:
             return TaskResult(success=False, intent="CHAT", error=str(exc))
@@ -530,8 +536,19 @@ class TaskPipeline:
                 codex_intent="CHAT",
                 codex_should_cancel=request.should_cancel,
                 codex_on_event=request.on_event,
+                codex_reasoning_effort=self.config.llm.codex_reasoning_effort(),
             )
-            return TaskResult(success=True, intent="CHAT", plain_text=resp.content)
+            chat_metadata: dict = {}
+            effective = (resp.metadata or {}).get("codex_effective")
+            if effective:
+                # D6：CHAT/EXPLAIN 结果同样记录 effective model/effort
+                chat_metadata["codex_effective"] = dict(effective)
+            return TaskResult(
+                success=True,
+                intent="CHAT",
+                plain_text=resp.content,
+                metadata=chat_metadata,
+            )
         except Exception as exc:
             # D3：错误已由 LLMAdapter 映射为稳定文案（error_response / turn 层
             # 稳定文案）；此处只兜底，绝不把上游原文透传给用户。
@@ -556,6 +573,9 @@ class TaskPipeline:
                 "codex_intent": "CREATE",
                 "codex_should_cancel": request.should_cancel,
                 "codex_on_event": request.on_event,
+                # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
+                # provider.chat 运行时刻再校验支持性，fail closed）
+                "codex_reasoning_effort": self.config.llm.codex_reasoning_effort(),
             }
 
         # Ensure project exists
@@ -859,6 +879,10 @@ class TaskPipeline:
                 logger.warning(
                     "[create-zero-output] retry round also produced no [FILE:] blocks; hard fail"
                 )
+                retry_metadata: dict = {}
+                codex_effective_fail = getattr(llm, "last_codex_effective", None)
+                if codex_effective_fail:
+                    retry_metadata["codex_effective"] = dict(codex_effective_fail)
                 return TaskResult(
                     success=False,
                     intent=request.intent or "CREATE",
@@ -869,6 +893,7 @@ class TaskPipeline:
                     ),
                     project=None,
                     error="模型未产出代码（两轮均无 [FILE:] 代码块）",
+                    metadata=retry_metadata,
                 )
 
         # Apply changes to the project in-place
@@ -1174,6 +1199,15 @@ class TaskPipeline:
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
 
+        result_metadata: dict = {}
+        if vision_extractions:
+            # P5d-1：vision 提取透出（无提取时为空 dict，避免污染 metadata）
+            result_metadata["vision_extractions"] = vision_extractions
+        codex_effective = getattr(llm, "last_codex_effective", None)
+        if codex_effective:
+            # D6：任务结果元数据记录实际 effective model/effort
+            # （来自真实 turn 结果，与 fake server 实收逐字节一致）
+            result_metadata["codex_effective"] = dict(codex_effective)
         return TaskResult(
             success=verification_report.passed,
             intent=request.intent or "CREATE",
@@ -1188,8 +1222,7 @@ class TaskPipeline:
                 "attempted": _sem_outcome.rounds_attempted,
                 "accepted": _sem_outcome.accepted_rounds,
             },
-            # P5d-1：vision 提取透出（无提取时为空 dict，避免污染 metadata）
-            metadata={"vision_extractions": vision_extractions} if vision_extractions else {},
+            metadata=result_metadata,
         )
 
     def _handle_modify(self, request: TaskRequest) -> TaskResult:
