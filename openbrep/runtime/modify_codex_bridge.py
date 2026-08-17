@@ -793,12 +793,18 @@ class CodexModifyBridge:
             entry["rejected_reason"] = "epoch_changed"
             self.audit.append(entry)
             return EPOCH_CHANGED_TEXT, False
-        if _is_dangerous_tool_name(tool):
-            # 纵深防御：伪造写路径名（shell/apply_patch/MCP/fs/...）最优先拒绝
+        if tool in self.allowlist:
+            # 注册表 allowlist（来自 ModifyToolRegistry.definitions()）是可信源：
+            # allowlist 内的名字（含 patch_script）永远可达，危险名规则不得
+            # 误杀合法注册工具（P1 修复，验收 e394981）。
+            pass
+        elif _is_dangerous_tool_name(tool):
+            # 纵深防御：非 allowlist 的伪造写路径名（shell/apply_patch/MCP/
+            # fs/...）优先拒绝并区分审计原因
             entry["rejected_reason"] = "dangerous_tool_name"
             self.audit.append(entry)
             return FORBIDDEN_TOOL_TEXT.format(name=tool), False
-        if tool not in self.allowlist:
+        else:
             entry["rejected_reason"] = "tool_not_allowed"
             self.audit.append(entry)
             return FORBIDDEN_TOOL_TEXT.format(name=tool), False
@@ -893,7 +899,11 @@ class CodexModifyBridge:
             file_block_warning = ""
             file_block_warnings: list[str] = []
             last_error_text = ""
-            # 逐 turn（同一 ephemeral thread 保留上下文；turn 数受门禁打回上限约束）
+            # 逐 turn（turn 数受门禁打回上限约束）。注意：每个 turn 都新建
+            # ephemeral thread（CodexModifyTurnDriver.run 每次 thread/start），
+            # 模型在门禁打回续轮时只看到 system 提示 + 门禁反馈文本，上一轮
+            # 对话/工具结果上下文不保留——这是刻意的最小面 fail-safe 语义
+            # （验收 e394981 P2 更正，与实施报告同步）。
             while True:
                 if self.request.should_cancel is not None:
                     try:

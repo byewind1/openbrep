@@ -885,3 +885,55 @@ def test_malformed_frames_during_turn_do_not_kill_reader(tmp_path):
     finally:
         provider.close()
         harness.cleanup()
+
+
+def test_patch_script_success_via_bridge(tmp_path):
+    """P1 回归（验收 e394981）：patch_script 是首选工具，经桥接必须可执行。
+
+    allowlist（ModifyToolRegistry.definitions()）内的名字永远可达——
+    patch_script 不被危险名规则误杀；审计 executed=True、脚本按 patch 改变。
+    """
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            [
+                {"op": "tool_call", "tool": "patch_script", "arguments": {
+                    "file_path": "scripts/3d.gdl",
+                    "patches": [
+                        {
+                            "old": "BLOCK A, B, ZZYZX",
+                            "new": "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.018\nDEL 1",
+                        },
+                    ],
+                }},
+                _tool("compile_script"),
+                _final("已按 patch 完成最小改动。"),
+            ]
+        ],
+    )
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(tmp_path, project))
+        assert result.success, result.plain_text
+        md = result.metadata["codex_modify"]
+        audit = md["tool_audit"]
+        patch_entries = [e for e in audit if e["tool"] == "patch_script"]
+        assert patch_entries, audit
+        assert patch_entries[0]["executed"] is True
+        assert patch_entries[0]["ok"] is True
+        assert patch_entries[0]["rejected_reason"] is None
+        # 脚本内容按 patch 改变（最小 diff，非全量重写）
+        script = project.get_script(ScriptType.SCRIPT_3D)
+        assert "ADDZ ZZYZX" in script
+        assert "BLOCK A, B, 0.018" in script
+        assert "DEL 1" in script
+        assert set(result.scripts.keys()) == {"scripts/3d.gdl"}
+        assert "ADDZ ZZYZX" in (result.scripts["scripts/3d.gdl"] or "")
+    finally:
+        provider.close()
+        harness.cleanup()
