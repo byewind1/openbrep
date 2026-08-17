@@ -69,10 +69,14 @@ def run(
     llm: Any,
     on_event: Optional[Callable] = None,
     critic_pass: bool = True,
+    llm_kwargs: Optional[dict] = None,
 ) -> list[Optional[ModelingPlan]]:
     """对有序多图跑 Vision Harness（S1 分型 → S2 定向提取 → S3 critic → S4 合成）。
 
     critic_pass: [vision] critic_pass 开关（P5c，默认 on）。off 时 S3 不跑。
+    llm_kwargs: D5 Codex 图片通道——随提取/critic 的 generate_with_image 调用
+        透传给 LLMAdapter 的专用 kwargs（codex_intent 等）。None = 现有行为
+        逐字节不变（不传任何 kwargs）。
 
     Returns:
         list[ModelingPlan | None] —— 与输入 images 一一对齐；无字节的图返回 None
@@ -93,7 +97,7 @@ def run(
         img.role = role
 
         if schema_name == "generic":
-            plan = _generic_plan(img, user_input, llm)
+            plan = _generic_plan(img, user_input, llm, llm_kwargs=llm_kwargs)
             if plan is None:
                 plans.append(None)
                 continue
@@ -106,7 +110,7 @@ def run(
                 "extraction": plan_to_dict(plan),
             })
         else:
-            plan = _schema_plan(schema, img, user_input, llm)
+            plan = _schema_plan(schema, img, user_input, llm, llm_kwargs=llm_kwargs)
             # S3 critic（设计 D3，bounded 1 轮）：
             #   触发 = 意图 CREATE/IMAGE + schema 声明 critic_checks + 开关 on
             #         + 该图提取未降级（degraded 无可信 JSON 可核，跳过）。
@@ -117,7 +121,9 @@ def run(
                 and intent in ("CREATE", "IMAGE")
                 and critic_pass
             ):
-                plan = _critic_pass(schema, plan, img, user_input, llm, on_event=on_event)
+                plan = _critic_pass(
+                    schema, plan, img, user_input, llm, on_event=on_event, llm_kwargs=llm_kwargs
+                )
             on_event("vision_analysis_done", {
                 "schema_name": schema.name,
                 "image_index": idx,
@@ -135,10 +141,22 @@ def run(
     return plans
 
 
-def _generic_plan(img, user_input: str, llm) -> Optional[ModelingPlan]:
-    """generic 平移：原函数原 prompt，包装进 ModelingPlan，to_hint 转调现函数。"""
+def _generic_plan(
+    img, user_input: str, llm, *, llm_kwargs: Optional[dict] = None
+) -> Optional[ModelingPlan]:
+    """generic 平移：原函数原 prompt，包装进 ModelingPlan，to_hint 转调现函数。
+
+    llm_kwargs 非 None（Codex 图片通道）时 analyze_reference_image 走
+    generate_with_image 视觉 turn（同一 system/user 提示，localImage 图输入）；
+    None（非 codex）时调用形态与基线逐字节一致（不传 llm_kwargs）。
+    """
     try:
-        vs = analyze_reference_image(img.b64, img.mime, user_input, llm)
+        if llm_kwargs:
+            vs = analyze_reference_image(
+                img.b64, img.mime, user_input, llm, llm_kwargs=llm_kwargs
+            )
+        else:
+            vs = analyze_reference_image(img.b64, img.mime, user_input, llm)
     except Exception as exc:
         logger.warning("vision harness: generic analysis failed for %s: %s", img.token, exc)
         return None
@@ -152,7 +170,9 @@ def _generic_plan(img, user_input: str, llm) -> Optional[ModelingPlan]:
     )
 
 
-def _schema_plan(schema: VisionSchema, img, user_input: str, llm) -> ModelingPlan:
+def _schema_plan(
+    schema: VisionSchema, img, user_input: str, llm, *, llm_kwargs: Optional[dict] = None
+) -> ModelingPlan:
     """schema 定向提取：extract_prompt + 用户说明 → 严格 JSON → ModelingPlan。
 
     P5c 输出信封 {fields, confidence, raw_description}：fields 按 schema.fields
@@ -171,6 +191,7 @@ def _schema_plan(schema: VisionSchema, img, user_input: str, llm) -> ModelingPla
             # 硬约束（仅 0.6/1），硬编码 0.1 会被端点 400 拒绝——交给
             # LLMAdapter._effective_temperature 按 provider 条目级配置决定。
             max_tokens=1200,
+            **(llm_kwargs or {}),
         )
         raw = (resp.content or "").strip()
         data = _parse_schema_json(raw)
@@ -254,6 +275,7 @@ def _critic_pass(
     llm,
     *,
     on_event: Optional[Callable] = None,
+    llm_kwargs: Optional[dict] = None,
 ) -> ModelingPlan:
     """每图一次 critic 调用：复读图 + 提取 JSON → 逐字段核对 critic_checks。
 
@@ -276,6 +298,7 @@ def _critic_pass(
             img.mime,
             system_prompt=_CRITIC_SYSTEM_PROMPT,
             max_tokens=1200,
+            **(llm_kwargs or {}),
         )
         data = _parse_schema_json((resp.content or "").strip())
         verdicts = data.get("verdicts")

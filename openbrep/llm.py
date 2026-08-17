@@ -413,16 +413,20 @@ class LLMAdapter:
             return None
 
     def _codex_turn_generate(self, msg_dicts: list, model: str, **kwargs) -> LLMResponse:
-        """CHAT/EXPLAIN 与文本 CREATE 走 Codex app-server turn（ephemeral thread
-        + 临时只读 cwd + approval never，见 openbrep/codex/turn.py）。
+        """CHAT/EXPLAIN、文本 CREATE 与图片 CREATE 走 Codex app-server turn
+        （ephemeral thread + 临时只读 cwd + approval never，见 openbrep/codex/turn.py）。
 
         CHAT/EXPLAIN 的 content 是回复文本；CREATE 的 content 是按 [FILE:]
         协议的完整生成文本（由 pipeline/GDLAgent 负责解析、落盘与验证）。
+        D5 图片 CREATE：``images=[{"b64", "mime"}]`` 只含当前请求已授权图片，
+        provider.chat 把字节物化进临时 cwd（不透明文件名），app-server 只通过
+        localImage 收到这些物化文件，绝不收到用户提供的本地路径。
         错误一律稳定文案（error_response / turn 层稳定文案），绝不透传上游原文。
         """
         from openbrep.codex.errors import STABLE_MESSAGES
         from openbrep.codex.turn import NO_FINAL_MESSAGE_TEXT
 
+        images = kwargs.pop("images", None) or []
         should_cancel = kwargs.pop("codex_should_cancel", None)
         on_event = kwargs.pop("codex_on_event", None)
         timeout = kwargs.pop("timeout", None) or self.config.timeout
@@ -440,6 +444,7 @@ class LLMAdapter:
                 timeout=float(timeout),
                 should_cancel=should_cancel,
                 on_event=on_event,
+                images=list(images) or None,
             )
         except Exception as exc:  # noqa: BLE001 —— 映射稳定文案
             from openbrep.codex.provider import CodexNotSignedInError
@@ -744,14 +749,30 @@ class LLMAdapter:
             )
 
         requested_model = kwargs.pop("model", None)
-        # ChatGPT Codex（openai-codex）订阅模型：D1 只交付登录与模型选择，
-        # 生成能力尚未开放。必须 fail closed——绝不静默回退到 litellm /
+        # D5：ChatGPT Codex（openai-codex）订阅模型的图片通道——
+        # 只有显式 codex_intent ∈ {CREATE, IMAGE}（pipeline 注入，经历了
+        # 提取确认门）才走 app-server turn（localImage 只收当前请求已授权图片，
+        # 见 provider.chat 物化）。其余（旧单图 image_b64 字段 / MODIFY /
+        # 无确认门的直接调用）一律 fail closed，绝不静默回退到 litellm /
         # API-key / 环境变量（BYOA 安全不变量）。
         if self.config._is_codex_app_server_model(requested_model):
+            codex_intent = kwargs.pop("codex_intent", None)
+            if codex_intent in ("CREATE", "IMAGE"):
+                codex_model = requested_model or self.config.model
+                turn_messages = []
+                if system_prompt:
+                    turn_messages.append({"role": "system", "content": system_prompt})
+                turn_messages.append({"role": "user", "content": text_prompt})
+                return self._codex_turn_generate(
+                    turn_messages,
+                    model=codex_model,
+                    images=list(images),
+                    **kwargs,
+                )
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的图片 CREATE/IMAGE 生成能力"
-                "尚未开放：当前支持登录、模型选择、CHAT/EXPLAIN 与文本 CREATE。"
-                "请改用其他已配置的模型。"
+                "ChatGPT Codex（openai-codex）模型图片通道拒绝该请求：Codex "
+                "图片 CREATE 必须经过读图提取确认流程（旧单图 image_b64 通道/"
+                "MODIFY 图片路径不属于此范围）。请通过工作台带图创建后确认读图结果。"
             )
         kwargs.pop("codex_intent", None)
         kwargs.pop("codex_should_cancel", None)

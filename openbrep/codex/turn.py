@@ -46,6 +46,7 @@ QUOTA_ERROR_TEXT = (
 INTERRUPTED_TEXT = "对话已取消。"
 TIMEOUT_TEXT = "Codex 对话超时，请稍后重试。"
 EMPTY_INPUT_TEXT = "对话内容为空，无法发送。"
+IMAGE_PATH_ESCAPE_TEXT = "图片路径校验失败，请求已拒绝。请重新发起。"
 THREAD_FAILED_TEXT = "Codex 对话线程创建失败，请稍后重试。"
 TURN_START_FAILED_TEXT = "Codex 对话启动失败，请稍后重试。"
 
@@ -240,14 +241,49 @@ class CodexTurnRunner:
         }
 
     @staticmethod
-    def build_turn_start_params(*, thread_id: str, model: str, cwd: str, user_text: str) -> dict:
-        """turn/start 参数：单个文本输入 + 只读 sandbox + approval never。
+    def build_turn_start_params(
+        *,
+        thread_id: str,
+        model: str,
+        cwd: str,
+        user_text: str,
+        images: list | None = None,
+    ) -> dict:
+        """turn/start 参数：文本输入 + 图片输入（localImage）+ 只读 sandbox + approval never。
 
-        参数面不含 tools / shell / patch / MCP / fs 等任何工具键。
+        D5 图片输入安全不变量：
+        - 图片条目只使用 ``{"type": "localImage", "path": ...}`` 协议形状
+          （实测 0.147.0 ``codex app-server`` 只接受 camelCase v2 变体：
+          ``local_image``（v1 snake_case）会被拒绝——见 D5 实施报告协议探针）。
+        - path 只来自 provider 物化到临时 cwd 的授权图片（不透明文件名），
+          绝不转发用户提供的路径；发送前做 cwd 包含性断言（纵深防御）。
+        - 参数面不含 tools / shell / patch / MCP / fs 等任何工具键。
         """
+        import os
+        from pathlib import Path
+
+        cwd_path = Path(cwd).resolve()
+        input_items: list[dict] = [
+            {"type": "text", "text": user_text, "text_elements": []},
+        ]
+        for img in images or []:
+            path = str(img.get("path") or "").strip()
+            if not path:
+                continue
+            img_path = Path(path).resolve()
+            try:
+                within = os.path.commonpath([str(cwd_path), str(img_path)]) == str(cwd_path)
+            except ValueError:
+                within = False
+            if not within:
+                # 纵深防御：物化路径按构造必在 cwd 内；越界一律拒绝发送
+                raise CodexAppServerError(
+                    IMAGE_PATH_ESCAPE_TEXT, category="image_path_escape"
+                )
+            input_items.append({"type": "localImage", "path": str(img_path)})
         return {
             "threadId": thread_id,
-            "input": [{"type": "text", "text": user_text, "text_elements": []}],
+            "input": input_items,
             "model": model,
             "cwd": str(cwd),
             "approvalPolicy": "never",
@@ -283,6 +319,7 @@ class CodexTurnRunner:
         timeout: float | None,
         should_cancel: Callable[[], bool] | None,
         on_delta: Callable[[str], None] | None,
+        images: list | None = None,
     ) -> CodexTurnResult:
         system_text, user_text = build_turn_prompt(messages)
         if not user_text.strip():
@@ -308,7 +345,11 @@ class CodexTurnRunner:
             # 2. turn/start（事件以通知流式返回）
             turn_resp = self._client.turn_start(
                 self.build_turn_start_params(
-                    thread_id=thread_id, model=model, cwd=cwd, user_text=user_text
+                    thread_id=thread_id,
+                    model=model,
+                    cwd=cwd,
+                    user_text=user_text,
+                    images=images,
                 )
             )
             turn = turn_resp.get("turn") or {}
@@ -449,6 +490,7 @@ class CodexTurnRunner:
         timeout: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
         on_event: Callable[[str, Any], None] | None = None,
+        images: list | None = None,
     ) -> CodexTurnResult:
         """非流式：完整执行一次 turn 并返回最终结果。
 
@@ -474,6 +516,7 @@ class CodexTurnRunner:
             timeout=timeout,
             should_cancel=should_cancel,
             on_delta=on_delta,
+            images=images,
         )
         if on_event is not None:
             try:
@@ -490,6 +533,7 @@ class CodexTurnRunner:
         messages: list[dict],
         timeout: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        images: list | None = None,
     ) -> Iterator[dict]:
         """流式：yield 事件；最后一个事件 type="result"（携带 CodexTurnResult）。
 
@@ -509,6 +553,7 @@ class CodexTurnRunner:
                     timeout=timeout,
                     should_cancel=should_cancel,
                     on_delta=on_delta,
+                    images=images,
                 )
                 bridge.put(("result", result))
             except BaseException as exc:  # noqa: BLE001 —— 驱动线程不裸死

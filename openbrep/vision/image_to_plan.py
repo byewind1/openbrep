@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from openbrep.vision.schema import VisualLayer, VisualStructure
 
@@ -74,6 +74,7 @@ def analyze_reference_image(
     image_mime: str,
     user_hint: str,
     llm: "LLMAdapter",
+    llm_kwargs: Optional[dict] = None,
 ) -> VisualStructure:
     """
     调用 LLM 对参考图做结构化分析，返回 VisualStructure。
@@ -83,10 +84,36 @@ def analyze_reference_image(
         image_mime: 图像 MIME 类型，如 "image/png"
         user_hint:  用户文字提示，如 "做一个斗"
         llm:        LLMAdapter 实例（需支持 vision）
+        llm_kwargs: D5 Codex 图片通道——非 None 时改走 generate_with_image
+            视觉 turn（同一 system/user 提示 + localImage 图输入，Codex 订阅
+            模型无 data-URI 直通通道）；None = 现有行为逐字节不变。
 
     Returns:
         VisualStructure 对象，失败时返回带 raw_description 的最小结构
     """
+    user_prompt_text = _USER_PROMPT_TEMPLATE.format(user_hint=user_hint or "（无额外说明）")
+
+    if llm_kwargs:
+        # Codex 图片通道：图经 turn 层 localImage 输入（provider 物化授权字节），
+        # 提示文本与旧路径同一份 system/user 模板，输出解析同一函数。
+        try:
+            resp = llm.generate_with_image(
+                user_prompt_text,
+                image_b64,
+                image_mime,
+                system_prompt=_SYSTEM_PROMPT,
+                max_tokens=1200,
+                **llm_kwargs,
+            )
+            return _parse_response((resp.content or "").strip())
+        except Exception as exc:
+            logger.warning("analyze_reference_image codex vision call failed: %s", exc)
+            return VisualStructure(
+                component_type="未知构件",
+                main_form="unknown",
+                raw_description=f"图像分析失败：{exc}",
+            )
+
     user_content: list = [
         {
             "type": "image_url",
@@ -94,7 +121,7 @@ def analyze_reference_image(
         },
         {
             "type": "text",
-            "text": _USER_PROMPT_TEMPLATE.format(user_hint=user_hint or "（无额外说明）"),
+            "text": user_prompt_text,
         },
     ]
 

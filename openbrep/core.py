@@ -391,6 +391,9 @@ class GDLAgent:
         elif images:
             # 多图通道（P5a）：图作上下文直传（CREATE 已含 hint，此处双通道送原图），
             # 上下文压平方式与单图路径一致，生成调用改用多图 content 数组。
+            # D5：llm_kwargs（Codex turn 专用参数）随图片调用透传——codex 模型
+            # 走 provider 物化 localImage 通道（只收当前请求已授权图片）；
+            # 非 codex 路径 kwargs 为空 → generate_with_images 调用形态与基线一致。
             flattened_parts = []
             for msg in messages[1:]:
                 role = msg.get("role", "user")
@@ -409,6 +412,7 @@ class GDLAgent:
                 ],
                 system_prompt=messages[0]["content"],
                 max_tokens=4096,
+                **self._llm_kwargs,
             )
         else:
             # D4：llm_kwargs（Codex turn 专用参数）只影响 codex 模型；非 codex

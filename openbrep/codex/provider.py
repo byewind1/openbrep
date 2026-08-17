@@ -245,6 +245,85 @@ def mask_rate_limits(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ── D5：授权图片物化（app-server localImage 安全边界）────────────────────
+# 只把「当前请求已授权图片」的字节物化进临时 cwd（不透明文件名），并做内容
+# 校验（可解码 + 魔数 + 尺寸上限）；绝不把用户提供的任何路径转发给 app-server。
+_IMAGE_MIME_SUFFIX = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+}
+# 深度防御的物化解码上限（字节）：请求门禁已限 5MB，这里兜住直连 pipeline 调用
+_IMAGE_MAX_DECODED_BYTES = 20 * 1024 * 1024
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _sniff_image_format(raw: bytes) -> str | None:
+    """魔数嗅探：png / jpeg / webp；无法识别返回 None（内容校验 fail closed）。"""
+    if raw.startswith(_PNG_MAGIC):
+        return "image/png"
+    if raw.startswith(_JPEG_MAGIC):
+        return "image/jpeg"
+    # WebP = RIFF....WEBP（偏移 0-3 'RIFF'、偏移 8-11 'WEBP'）
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _materialize_authorized_images(cwd: "Path", images: list) -> list[dict]:
+    """把授权图片 b64 字节物化进临时 cwd，返回 localImage 输入条目。
+
+    安全边界（D5 红队项）：
+    - 文件名 = image-<sha256[:16]>.<ext>（内容哈希派生，绝不使用用户输入）；
+    - 仅写入校验通过的图片（base64 可解码 + 魔数可识别 + 尺寸上限）；
+      无效字节一律不写入 → app-server 收不到非图片字节；
+    - 全部图片无效 → 稳定报错（fail closed，不发空图 turn）。
+    返回的 path 全部是 cwd 内的绝对路径。
+    """
+    import base64
+    import binascii
+    import hashlib
+
+    entries: list[dict] = []
+    invalid = 0
+    for idx, img in enumerate(images or [], start=1):
+        b64 = str(img.get("b64") or "").strip()
+        if not b64:
+            continue
+        try:
+            raw = base64.b64decode(b64, validate=True)
+        except (binascii.Error, ValueError):
+            _LOGGER.warning("codex image #%d: invalid base64（丢弃，不写盘）", idx)
+            invalid += 1
+            continue
+        if len(raw) > _IMAGE_MAX_DECODED_BYTES:
+            _LOGGER.warning(
+                "codex image #%d: decoded size %d 超上限（丢弃）", idx, len(raw)
+            )
+            invalid += 1
+            continue
+        fmt = _sniff_image_format(raw)
+        if fmt is None:
+            _LOGGER.warning(
+                "codex image #%d: 无法识别的图片字节（丢弃，不写盘）", idx
+            )
+            invalid += 1
+            continue
+        sha = hashlib.sha256(raw).hexdigest()
+        name = f"image-{sha[:16]}{_IMAGE_MIME_SUFFIX[fmt]}"
+        path = cwd / name
+        path.write_bytes(raw)
+        entries.append({"path": str(path), "mime": fmt, "sha256": sha, "index": idx})
+    if not entries and (images or []):
+        raise CodexAppServerError(
+            "图片数据无法识别或已损坏，请求已拒绝。请重新上传图片。",
+            category="image_content_invalid",
+        )
+    return entries
+
+
 class CodexProvider:
     """app-server 生命周期 + 账户/模型能力的高层封装（单进程内单例使用）。"""
 
@@ -1150,6 +1229,7 @@ class CodexProvider:
         should_cancel: Any | None = None,
         on_event: Any | None = None,
         temp_dir: str | Path | None = None,
+        images: list | None = None,
     ) -> CodexTurnResult:
         """Codex 模型 CHAT/EXPLAIN 安全调用（D3）。
 
@@ -1181,11 +1261,14 @@ class CodexProvider:
 
         # 临时只读 cwd：turn 的工作目录（可能被 app-server 作为工作区根）。
         # 必须与项目/工作区完全隔离，用完即删；不指定 root 时落在系统临时目录。
+        # D5：授权图片在同一 cwd 内物化为不透明文件（localImage 输入），
+        # 随 cwd 一起清理——取消/异常/crash 路径图片文件零残留。
         import tempfile
 
         cwd_root = Path(temp_dir) if temp_dir is not None else Path(tempfile.gettempdir())
         cwd = Path(tempfile.mkdtemp(prefix="openbrep-codex-turn-", dir=str(cwd_root)))
         try:
+            local_images = _materialize_authorized_images(cwd, images) if images else []
             runner = CodexTurnRunner(client, logger=self._logger)
             return runner.run(
                 model=model,
@@ -1194,6 +1277,7 @@ class CodexProvider:
                 timeout=timeout,
                 should_cancel=should_cancel,
                 on_event=on_event,
+                images=local_images,
             )
         finally:
             shutil.rmtree(cwd, ignore_errors=True)

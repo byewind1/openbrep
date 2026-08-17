@@ -53,6 +53,20 @@ D4 CREATE 隔离反证探针：
                               测试把真实 HSF 目录设为只读，probe 写失败即证明
                               app-server 对该路径无写权限（OS 级隔离反证）。
 
+D5 图片输入探针（授权边界反证）：
+- FAKE_CODEX_TURN_INPUT_LOG=<path>  每次 turn/start 收到的 input 全文 + 每个
+                              localImage 条目的独立校验（path 是否在该 thread
+                              cwd 内 / 文件是否存在 / sha256）追加写入该文件。
+                              测试据此断言：app-server 只收到物化进临时 cwd 的
+                              授权图片，任何用户提供的路径/canary 零到达。
+- FAKE_CODEX_REJECT_ESCAPING_IMAGE  越界 localImage（path 不在 thread cwd 内）
+                              直接以 JSON-RPC 错误拒绝启动 turn（app-server 侧
+                              fail closed 反证；正常客户端永不触发）。
+- FAKE_CODEX_TURN_FINAL_TEXTS=<path>  每行一个 JSON 编码字符串（json.dumps）：
+                              每个 turn/start 的 final 文本先进先出消费，耗尽后回退
+                              FAKE_CODEX_TURN_FINAL_TEXT。用于跑完整 CREATE
+                              多 turn 序列（提取→规划→生成，可含多行 [FILE:] 文本）。
+
 Run as: python fake_codex_app_server.py
 """
 
@@ -143,9 +157,47 @@ def _agent_message_item(msg_id: str, text: str, phase) -> dict:
     }
 
 
+# FAKE_CODEX_TURN_FINAL_TEXTS 的按 turn 消费（每行一个 JSON 编码字符串）
+_final_texts_cache: list[str] | None = None
+_final_texts_idx = 0
+
+
+def _next_final_text() -> str:
+    """按 turn 顺序消费 FAKE_CODEX_TURN_FINAL_TEXTS；耗尽/未配置回退默认值。
+
+    文件格式：每行一个 JSON 编码字符串（json.dumps(text)），可承载多行 final
+    文本（FULL_GDL 含换行）；解析失败/未配置回退默认值。
+    """
+    global _final_texts_cache, _final_texts_idx
+    default = os.environ.get("FAKE_CODEX_TURN_FINAL_TEXT", "你好，我是 Codex 测试助手。")
+    texts_file = os.environ.get("FAKE_CODEX_TURN_FINAL_TEXTS", "")
+    if not texts_file:
+        return default
+    if _final_texts_cache is None:
+        _final_texts_cache = []
+        try:
+            with open(texts_file, "r", encoding="utf-8") as fh:
+                for ln in fh:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        _final_texts_cache.append(json.loads(ln))
+                    except ValueError:
+                        # 容错：裸行按原样（旧用法）
+                        _final_texts_cache.append(ln)
+        except OSError:
+            _final_texts_cache = []
+    if _final_texts_idx < len(_final_texts_cache):
+        text = _final_texts_cache[_final_texts_idx]
+        _final_texts_idx += 1
+        return text
+    return default
+
+
 def _emit_turn_sequence(thread_id: str, turn_id: str, hang: bool = False) -> None:
     """turn/start 后发送标准通知流：started → item → delta → completed。"""
-    final_text = os.environ.get("FAKE_CODEX_TURN_FINAL_TEXT", "你好，我是 Codex 测试助手。")
+    final_text = _next_final_text()
     no_final = os.environ.get("FAKE_CODEX_TURN_NO_FINAL")
     commentary_only = os.environ.get("FAKE_CODEX_TURN_COMMENTARY_ONLY")
     empty_final = os.environ.get("FAKE_CODEX_TURN_EMPTY_FINAL")
@@ -356,6 +408,18 @@ def _log_line(entry: dict) -> None:
         pass
 
 
+def _log_input_line(entry: dict) -> None:
+    """FAKE_CODEX_TURN_INPUT_LOG 专用写入（独立于 cwd log 路径）。"""
+    path = os.environ.get("FAKE_CODEX_TURN_INPUT_LOG", "")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def _try_write_canary(directory: str) -> dict:
     """尝试向 directory 写入 canary 文件；返回 {ok, error_class}（不抛异常）。"""
     try:
@@ -367,6 +431,76 @@ def _try_write_canary(directory: str) -> dict:
         return {"ok": True, "error": None}
     except OSError as exc:
         return {"ok": False, "error": exc.__class__.__name__}
+
+
+def _record_turn_input(params: dict, thread_id: str, turn_id: str) -> str | None:
+    """D5 授权边界反证：记录 turn/start 收到的 input 全文 + 逐图校验。
+
+    Returns:
+        越界 localImage 路径的判定：命中 FAKE_CODEX_REJECT_ESCAPING_IMAGE 时
+        返回错误类别名（调用方以 JSON-RPC 错误拒绝）；否则返回 None。
+        同时把校验结果写入 FAKE_CODEX_TURN_INPUT_LOG（一行一 JSON）。
+    """
+    log_path = os.environ.get("FAKE_CODEX_TURN_INPUT_LOG", "")
+    record_images = bool(log_path) or os.environ.get("FAKE_CODEX_REJECT_ESCAPING_IMAGE")
+    if not record_images:
+        return None
+    cwd_str = ""
+    thread = _threads.get(thread_id)
+    if isinstance(thread, dict):
+        cwd_str = str(thread.get("cwd") or "")
+    cwd_resolved = os.path.realpath(cwd_str) if cwd_str else ""
+    input_items = params.get("input") or []
+    entries: list[dict] = []
+    escaping = None
+    for item in input_items:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type == "localImage":
+            path = str(item.get("path") or "")
+            entry = {"type": "localImage", "path": path}
+            if path:
+                real = os.path.realpath(path)
+                entry["inside_cwd"] = (
+                    bool(cwd_resolved)
+                    and os.path.commonpath([cwd_resolved, real]) == cwd_resolved
+                )
+                entry["exists"] = os.path.exists(path)
+                entry["is_file"] = os.path.isfile(path)
+                entry["symlink"] = os.path.islink(path)
+                try:
+                    with open(path, "rb") as fh:
+                        raw = fh.read()
+                    import hashlib
+                    entry["sha256"] = hashlib.sha256(raw).hexdigest()
+                    entry["size"] = len(raw)
+                except OSError as exc:
+                    entry["sha256"] = None
+                    entry["size"] = None
+                    entry["error"] = exc.__class__.__name__
+                if not entry["inside_cwd"]:
+                    escaping = "FORBIDDEN-IMAGE-PATH"
+            entries.append(entry)
+        elif item_type == "image":
+            entries.append({"type": "image", "url": str(item.get("url") or "")[:120]})
+        elif item_type == "text":
+            text = str(item.get("text") or "")
+            entries.append({"type": "text", "len": len(text), "text": text})
+        else:
+            entries.append({"type": item_type, "keys": sorted(item.keys())})
+    if log_path:
+        _log_input_line({
+            "event": "input",
+            "method": "turn/start",
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "cwd": cwd_str,
+            "input": entries,
+        })
+    if escaping and os.environ.get("FAKE_CODEX_REJECT_ESCAPING_IMAGE"):
+        return escaping
+    return None
 
 
 def _record_cwd(method: str, cwd) -> None:
@@ -658,6 +792,21 @@ def main() -> None:
                 continue
             tid = str(params.get("threadId") or "")
             turn_id = _next_turn_id()
+            image_err = _record_turn_input(params, tid, turn_id)
+            if image_err:
+                _turns[turn_id] = {
+                    "threadId": tid,
+                    "status": "interrupted",
+                    "interrupted": True,
+                }
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {"code": -32602, "message": image_err},
+                    }
+                )
+                continue
             _turns[turn_id] = {
                 "threadId": tid,
                 "status": "inProgress",
