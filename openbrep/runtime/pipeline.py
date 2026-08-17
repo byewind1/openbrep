@@ -542,11 +542,14 @@ class TaskPipeline:
         llm = self._make_llm(request)
         compiler = self._make_compiler()
 
-        # D4：Codex 文本 CREATE——Codex 只负责生成 final text（[FILE:] 协议），
+        # D4 + D5：Codex CREATE——Codex 只负责生成 final text（[FILE:] 协议），
         # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
         # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
-        # 分派与 turn 层临时只读 cwd 隔离）。codex kwargs 只注入文本生成类意图
-        # （CREATE/IMAGE 无图路径）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
+        # 分派与 turn 层临时只读 cwd 隔离）。D5 起带图 CREATE 走同一通道：
+        # 图经 Vision Harness 提取 → 用户确认（confirm_extraction 早退）→ 确认后
+        # 生成时把授权图物化进 turn 临时 cwd（localImage，见 provider.chat），
+        # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
+        # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
         codex_kwargs: dict = {}
         if self._is_codex_model_selected() and request.intent in ("CREATE", "IMAGE"):
             codex_kwargs = {
@@ -633,6 +636,9 @@ class TaskPipeline:
                         llm,
                         on_event=on_event,
                         critic_pass=self.config.vision.critic_pass,
+                        # D5：Codex 图片通道——提取/critic 的视觉调用带
+                        # codex kwargs（无图/非 codex 时为空 → 现有行为逐字节不变）。
+                        llm_kwargs=codex_kwargs or None,
                     )
                 # P5d-1：plans 序列化进 metadata（设计 D7 存储 + 前端只读卡片数据源）。
                 # 每图一条：schema/fields/confidence/corrections/降级标记 + sha256；
