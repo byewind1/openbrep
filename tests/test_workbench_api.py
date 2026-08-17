@@ -3647,7 +3647,6 @@ def test_codex_restart_route(tmp_path):
 
 def test_codex_crashed_status_route(tmp_path):
     """app-server 崩溃 → API 返回 crashed 状态 + restartable。"""
-    client = _RouteFakeCodexClient()
 
     class _CrashTransport:
         crashed = True

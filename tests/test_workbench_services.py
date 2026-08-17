@@ -1276,7 +1276,9 @@ def test_update_llm_settings_codex_validates_effort(tmp_path):
         config=config,
         config_path=tmp_path / "config.toml",
     )
-    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None, codex_provider=provider)
+    service = WorkbenchSettingsService(
+        session, llm_adapter_factory=lambda _c: None, codex_provider=provider
+    )
 
     # 不支持 → 拒绝
     response = service.update_llm_settings({
@@ -1873,7 +1875,6 @@ def test_route_login_while_signed_in_rejected(tmp_path):
     from openbrep.codex.provider import CodexProvider
 
     client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
-    config = GDLAgentConfig()
     provider = CodexProvider(
         codex_home=tmp_path / "codex-home",
         client_factory=lambda: client,

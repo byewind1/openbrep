@@ -138,7 +138,7 @@ def _next_msg_id() -> str:
 # 默认：gpt-5.6-luna 支持 low/medium/high（默认 medium）；
 # gpt-5.6-terra 只支持 medium/high（默认 high）——测试用 terra 验证
 # 「旧 effort 残留/luna 独有 effort」的拒绝路径。
-# FAKE_CODEX_MODEL_EFFORTS_JSON 可整体覆盖：{"gpt-5.6-luna": {"efforts": [...], "default": ...}, ...}
+# FAKE_CODEX_MODEL_EFFORTS_JSON 可整体覆盖模型 effort 目录（见 _model_efforts_config）。
 _DEFAULT_MODEL_EFFORTS = {
     "gpt-5.6-luna": {
         "efforts": [("low", "Fastest"), ("medium", "Balanced"), ("high", "Deep")],

@@ -1341,9 +1341,17 @@ class TestCodexTurnWireD6Effort(unittest.TestCase):
     def test_effort_forwarded_to_app_server_and_recorded_in_result(self):
         params_log = Path(tempfile.mkdtemp(prefix="obr-d6-log-")) / "params.jsonl"
         with self._provider(
-            {"FAKE_CODEX_TURN_PARAMS_LOG": str(params_log), "FAKE_CODEX_MODEL_EFFORTS_JSON": json.dumps(
-                {"gpt-5.6-luna": {"efforts": [["low"], ["medium"], ["high"]], "default": "medium"}}
-            )}
+            {
+                "FAKE_CODEX_TURN_PARAMS_LOG": str(params_log),
+                "FAKE_CODEX_MODEL_EFFORTS_JSON": json.dumps(
+                    {
+                        "gpt-5.6-luna": {
+                            "efforts": [["low"], ["medium"], ["high"]],
+                            "default": "medium",
+                        }
+                    }
+                ),
+            }
         ) as provider:
             result = self._run(provider, reasoning_effort="high")
         self.assertEqual(result.finish_reason, "stop")
