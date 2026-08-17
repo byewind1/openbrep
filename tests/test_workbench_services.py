@@ -935,6 +935,13 @@ def _codex_models_payload():
             "display_name": "GPT-5.6 Luna",
             "hidden": False,
             "specialty": None,
+            # D6：effort 目录（只来自 model/list.supportedReasoningEfforts）
+            "supported_reasoning_efforts": [
+                {"effort": "low", "description": "Fastest"},
+                {"effort": "medium", "description": "Balanced"},
+                {"effort": "high", "description": "Deep"},
+            ],
+            "default_reasoning_effort": "medium",
         },
         {
             "id": "openai-codex/gpt-5.6-terra",
@@ -943,6 +950,12 @@ def _codex_models_payload():
             "display_name": "GPT-5.6 Terra",
             "hidden": False,
             "specialty": "balanced",
+            # terra 不支持 low（low 是 luna 独有——用于残留拒绝测试）
+            "supported_reasoning_efforts": [
+                {"effort": "medium", "description": "Balanced"},
+                {"effort": "high", "description": "Deep"},
+            ],
+            "default_reasoning_effort": "high",
         },
     ]
 
@@ -1167,6 +1180,178 @@ def test_update_llm_settings_rejects_codex_api_key(tmp_path):
     assert response["ok"] is False
     assert response["code"] == "codex_no_api_key"
     assert "DEV-SECRET" not in config.to_toml_string()
+
+
+# ── D6：Fixed 模式 effort 保存/校验（draft + 显式 Save；不静默替换）────────
+
+
+def test_update_llm_model_only_codex_saves_supported_effort(tmp_path):
+    """保存 model + 受支持 effort：两者一起落盘（显式 Save）。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.update_llm_model_only({
+        "model": "openai-codex/gpt-5.6-luna", "reasoning_effort": "high",
+    })
+    assert response["ok"] is True
+    assert response["llm"]["reasoning_effort"] == "high"
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.model == "openai-codex/gpt-5.6-luna"
+    assert reloaded.llm.reasoning_effort == "high"
+
+
+def test_update_llm_model_only_codex_rejects_unsupported_effort(tmp_path):
+    """effort 注入对抗：model/list 不支持的 effort 保存请求必须拒绝，零落盘。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.update_llm_model_only({
+        "model": "openai-codex/gpt-5.6-terra", "reasoning_effort": "low",
+    })
+    assert response["ok"] is False
+    assert response["code"] == "effort_not_supported"
+    # 拒绝后 config 未保存任何新值（model 与 effort 都不动）
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.model == "glm-4-flash"
+    assert reloaded.llm.reasoning_effort == ""
+
+
+def test_update_llm_model_only_codex_switch_rejects_stale_effort(tmp_path):
+    """模型切换后旧 effort 残留对抗：luna 的 low 不被 terra 支持——
+    切换保存必须显式报错，绝不静默清空/替换 effort。"""
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    config.llm.reasoning_effort = "low"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    # 不带 effort 切到 terra：旧 effort low 残留 → 拒绝
+    response = service.update_llm_model_only({"model": "openai-codex/gpt-5.6-terra"})
+    assert response["ok"] is False
+    assert response["code"] == "effort_not_supported"
+    assert "low" in response["error"]
+    # 原配置未被动过（内存未提交）
+    assert config.llm.model == "openai-codex/gpt-5.6-luna"
+    assert config.llm.reasoning_effort == "low"
+
+    # 显式给出 terra 支持的 effort → 保存成功
+    response2 = service.update_llm_model_only({
+        "model": "openai-codex/gpt-5.6-terra", "reasoning_effort": "medium",
+    })
+    assert response2["ok"] is True
+    reloaded2 = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded2.llm.model == "openai-codex/gpt-5.6-terra"
+    assert reloaded2.llm.reasoning_effort == "medium"
+
+
+def test_update_llm_model_only_rejects_effort_for_non_codex_model(tmp_path):
+    """非 codex 模型不接受 effort：显式报错，不静默忽略。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.update_llm_model_only({"model": "glm-4-flash", "reasoning_effort": "high"})
+    assert response["ok"] is False
+    assert response["code"] == "effort_not_for_codex"
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.reasoning_effort == ""
+
+
+def test_update_llm_settings_codex_validates_effort(tmp_path):
+    """update_llm_settings 同样校验 effort（全量表单保存路径）。"""
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    session = SimpleNamespace(
+        llm_model="openai-codex/gpt-5.6-luna",
+        llm_api_key="",
+        llm_api_base="",
+        assistant_settings="",
+        max_retries=5,
+        config=config,
+        config_path=tmp_path / "config.toml",
+    )
+    service = WorkbenchSettingsService(
+        session, llm_adapter_factory=lambda _c: None, codex_provider=provider
+    )
+
+    # 不支持 → 拒绝
+    response = service.update_llm_settings({
+        "model": "openai-codex/gpt-5.6-terra", "reasoning_effort": "low",
+    })
+    assert response["ok"] is False
+    assert response["code"] == "effort_not_supported"
+
+    # 支持 → 保存
+    response2 = service.update_llm_settings({
+        "model": "openai-codex/gpt-5.6-luna", "reasoning_effort": "high",
+    })
+    assert response2["ok"] is True
+    assert config.llm.reasoning_effort == "high"
+
+
+def test_llm_settings_exposes_saved_reasoning_effort(tmp_path, monkeypatch):
+    """llm_settings 暴露当前已保存 effort（draft 事实源）。"""
+    _clear_codex_test_env(monkeypatch)
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    config.llm.reasoning_effort = "high"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    llm = service.llm_settings()
+    assert llm["reasoning_effort"] == "high"
+
+
+def test_codex_models_include_supported_efforts(tmp_path):
+    """codex_models 路由把 model/list 的 effort 目录透出（供 UI 选择）。"""
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_models()
+    assert response["ok"] is True
+    luna = next(m for m in response["models"] if m["id"].endswith("gpt-5.6-luna"))
+    assert [e["effort"] for e in luna["supported_reasoning_efforts"]] == ["low", "medium", "high"]
+    assert luna["default_reasoning_effort"] == "medium"
+
+
+def test_config_direct_edit_unsupported_effort_fails_at_save_and_runtime(tmp_path):
+    """直改配置文件绕过 UI：已保存的不支持组合在保存/运行时都 fail closed。
+
+    - 保存侧：目录漂移后（terra 不再支持 high）保存 → effort_not_supported；
+    - 运行时侧：provider.validate_reasoning_effort 拒绝（见 test_codex_provider）。
+    """
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-terra"
+    config.llm.reasoning_effort = "high"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    # 目录漂移：terra 现在只支持 medium（high 被下架）→ 保存拒绝，不静默替换
+    drifted = [m for m in _codex_models_payload() if m["id"].endswith("gpt-5.6-luna")]
+    provider.models_result = drifted + [
+        {
+            "id": "openai-codex/gpt-5.6-terra",
+            "label": "GPT-5.6 Terra",
+            "model": "gpt-5.6-terra",
+            "display_name": "GPT-5.6 Terra",
+            "hidden": False,
+            "specialty": "balanced",
+            "supported_reasoning_efforts": [{"effort": "medium", "description": "Balanced"}],
+            "default_reasoning_effort": "medium",
+        }
+    ]
+    response = service.update_llm_settings({"model": "openai-codex/gpt-5.6-terra"})
+    assert response["ok"] is False
+    assert response["code"] == "effort_not_supported"
+    # 配置未被改动（无静默替换）
+    assert config.llm.reasoning_effort == "high"
 
 
 def test_codex_login_failure_response_redacts_secrets(tmp_path):
@@ -1690,7 +1875,6 @@ def test_route_login_while_signed_in_rejected(tmp_path):
     from openbrep.codex.provider import CodexProvider
 
     client = _RealProviderFakeClient(account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"})
-    config = GDLAgentConfig()
     provider = CodexProvider(
         codex_home=tmp_path / "codex-home",
         client_factory=lambda: client,

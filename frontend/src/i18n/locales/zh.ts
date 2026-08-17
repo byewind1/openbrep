@@ -116,6 +116,11 @@ export const zh = {
   'settings.ai.codex.rateLimitsUnlimited': '不限量',
   'settings.ai.codex.rateLimitsHasCredits': '有额度',
   'settings.ai.codex.rateLimitsReached': '已触顶',
+  'settings.ai.codex.effortLabel': '推理强度（reasoning effort）',
+  'settings.ai.codex.effortDefault': '不覆盖（模型默认）',
+  'settings.ai.codex.effortSave': '保存 effort',
+  'settings.ai.codex.effortSaved': '已保存（Fixed 模式将严格使用该组合）',
+  'settings.ai.codex.effortSaveFailed': '保存失败',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': '语言',

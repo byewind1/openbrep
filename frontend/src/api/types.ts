@@ -124,6 +124,8 @@ export interface LlmSettings {
   api_base: string
   max_retries: number
   assistant_settings: string
+  /** D6：Fixed 模式已保存的 reasoning effort（只对 openai-codex 模型有意义；空 = 不覆盖模型默认） */
+  reasoning_effort?: string
   /** D1：ChatGPT Codex（openai-codex）连接状态。provider 未拉起时为 null */
   codex?: CodexStatus | null
 }
@@ -192,6 +194,10 @@ export interface CodexModelInfo {
   display_name?: string
   hidden?: boolean
   specialty?: string | null
+  /** D6：该模型支持的 reasoning effort（只来自 model/list.supportedReasoningEfforts，不硬编码） */
+  supported_reasoning_efforts?: { effort: string; description?: string }[]
+  /** D6：该模型的默认 reasoning effort（model/list.defaultReasoningEffort） */
+  default_reasoning_effort?: string
 }
 
 export interface CodexLoginStartResult {

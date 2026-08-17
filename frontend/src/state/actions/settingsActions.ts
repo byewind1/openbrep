@@ -47,8 +47,8 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
       return api.testLlmConnection()
     },
 
-    async switchLlmModel(model: string) {
-      const result = await api.updateLlmModel(model)
+    async switchLlmModel(model: string, reasoningEffort?: string) {
+      const result = await api.updateLlmModel(model, reasoningEffort)
       if (result.ok && result.llm) {
         set({ llmSettings: result.llm })
         return

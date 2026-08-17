@@ -120,6 +120,11 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.codex.rateLimitsUnlimited': 'unlimited',
   'settings.ai.codex.rateLimitsHasCredits': 'has credits',
   'settings.ai.codex.rateLimitsReached': 'quota reached',
+  'settings.ai.codex.effortLabel': 'Reasoning effort',
+  'settings.ai.codex.effortDefault': 'No override (model default)',
+  'settings.ai.codex.effortSave': 'Save effort',
+  'settings.ai.codex.effortSaved': 'Saved (Fixed mode will strictly use this combination)',
+  'settings.ai.codex.effortSaveFailed': 'Save failed',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': 'Language',

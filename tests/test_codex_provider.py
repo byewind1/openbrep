@@ -8,6 +8,7 @@ authUrl 不外传、模型目录 provider-qualified、退出后 fail closed、
 from __future__ import annotations
 
 import contextlib
+import json
 import threading
 import unittest
 from collections import deque
@@ -2730,3 +2731,234 @@ class TestCodexProviderChatWire(unittest.TestCase):
             )
             self.assertEqual(result.finish_reason, "error")
             self.assertNotIn(canary, str(result))
+
+
+# ── D6：Fixed 模式 effort（model/list 目录 + 运行时门禁）──────────────────
+
+
+class TestCodexModelEffortCatalog(unittest.TestCase):
+    """D6：effort 选项只来自 model/list.supportedReasoningEfforts（不硬编码），
+    逐项校验/去重/限长；默认值必须落在支持集合内。"""
+
+    def _provider(self, client):
+        return CodexProvider(
+            codex_home=Path("/tmp/obr-d6-catalog"),
+            client_factory=lambda: client,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+
+    def test_models_expose_sanitized_supported_efforts(self):
+        client = _FakeCodexClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"},
+            models=[
+                {
+                    "id": "gpt-5.6-luna",
+                    "model": "gpt-5.6-luna",
+                    "displayName": "GPT-5.6 Luna",
+                    "hidden": False,
+                    "modelSpecialty": None,
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "low", "description": "Fastest"},
+                        {"reasoningEffort": "medium", "description": "Balanced"},
+                        {"reasoningEffort": "high", "description": "Deep thinking"},
+                    ],
+                    "defaultReasoningEffort": "medium",
+                },
+                {
+                    "id": "gpt-5.6-terra",
+                    "model": "gpt-5.6-terra",
+                    "displayName": "GPT-5.6 Terra",
+                    "hidden": False,
+                    "modelSpecialty": None,
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "medium", "description": "Balanced"},
+                        {"reasoningEffort": "high", "description": "Deep"},
+                    ],
+                    "defaultReasoningEffort": "high",
+                },
+            ],
+        )
+        provider = self._provider(client)
+        models = provider.models()
+        luna = next(m for m in models if m["id"] == "openai-codex/gpt-5.6-luna")
+        self.assertEqual(
+            luna["supported_reasoning_efforts"],
+            [
+                {"effort": "low", "description": "Fastest"},
+                {"effort": "medium", "description": "Balanced"},
+                {"effort": "high", "description": "Deep thinking"},
+            ],
+        )
+        self.assertEqual(luna["default_reasoning_effort"], "medium")
+        terra = next(m for m in models if m["id"] == "openai-codex/gpt-5.6-terra")
+        self.assertEqual(
+            [e["effort"] for e in terra["supported_reasoning_efforts"]], ["medium", "high"]
+        )
+        self.assertEqual(terra["default_reasoning_effort"], "high")
+        _assert_no_secrets(self, models, "models")
+
+    def test_effort_catalog_drops_invalid_entries(self):
+        """恶意/漂移上游：非法字符、超长、重复、默认不在集合内——全部清洗。"""
+        client = _FakeCodexClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"},
+            models=[
+                {
+                    "id": "gpt-5.6-luna",
+                    "model": "gpt-5.6-luna",
+                    "displayName": "GPT-5.6 Luna",
+                    "hidden": False,
+                    "modelSpecialty": None,
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "low", "description": "ok"},
+                        {"reasoningEffort": "low", "description": "duplicate"},
+                        {"reasoningEffort": "evil effort; rm -rf /", "description": "inject"},
+                        {"reasoningEffort": "x" * 64, "description": "too long"},
+                        {"reasoningEffort": "high", "description": "z" * 500},
+                        "not-a-dict",
+                        {"description": "no effort key"},
+                    ],
+                    "defaultReasoningEffort": "does-not-exist",
+                }
+            ],
+        )
+        provider = self._provider(client)
+        models = provider.models()
+        luna = next(m for m in models if m["id"] == "openai-codex/gpt-5.6-luna")
+        self.assertEqual(
+            luna["supported_reasoning_efforts"],
+            [
+                {"effort": "low", "description": "ok"},
+                {"effort": "high", "description": "z" * 120},
+            ],
+        )
+        # 默认不在支持集合 → 置空（绝不把非法默认值透传）
+        self.assertEqual(luna["default_reasoning_effort"], "")
+
+    def test_validate_reasoning_effort_rejects_unsupported(self):
+        from openbrep.codex.provider import CodexUnsupportedEffortError
+
+        client = _FakeCodexClient(
+            account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"},
+            models=[
+                {
+                    "id": "gpt-5.6-terra",
+                    "model": "gpt-5.6-terra",
+                    "displayName": "GPT-5.6 Terra",
+                    "hidden": False,
+                    "modelSpecialty": None,
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "medium", "description": "Balanced"},
+                        {"reasoningEffort": "high", "description": "Deep"},
+                    ],
+                    "defaultReasoningEffort": "high",
+                }
+            ],
+        )
+        provider = self._provider(client)
+        # 支持 → 通过
+        provider.validate_reasoning_effort("openai-codex/gpt-5.6-terra", "medium")
+        provider.validate_reasoning_effort("openai-codex/gpt-5.6-terra", "high")
+        provider.validate_reasoning_effort("openai-codex/gpt-5.6-terra", "")  # 空 = 不覆盖
+        # 不支持（含 luna 独有 low）→ fail closed
+        with self.assertRaises(CodexUnsupportedEffortError):
+            provider.validate_reasoning_effort("openai-codex/gpt-5.6-terra", "low")
+        # 非法格式 → fail closed
+        with self.assertRaises(CodexUnsupportedEffortError):
+            provider.validate_reasoning_effort("openai-codex/gpt-5.6-terra", "high; rm -rf")
+
+
+class TestCodexProviderChatEffort(unittest.TestCase):
+    """D6：provider.chat 运行时刻 effort 门禁——不支持即拒绝，不启动 turn。"""
+
+    @contextlib.contextmanager
+    def _provider(self, extra_env=None, rpc_timeout=5.0):
+        import os
+        import sys
+        import tempfile
+
+        from openbrep.codex.app_server import CodexAppServerClient, StdioJsonRpcTransport
+
+        saved = {
+            key: os.environ.pop(key) for key in list(os.environ) if key.startswith("FAKE_CODEX_")
+        }
+        env = {"FAKE_CODEX_TURN": "1", "FAKE_CODEX_SIGNED_IN": "1"}
+        env.update(extra_env or {})
+        for key, value in env.items():
+            os.environ[key] = value
+        home = Path(tempfile.mkdtemp(prefix="obr-d6-pchat-")) / "home"
+
+        def factory():
+            transport = StdioJsonRpcTransport(
+                codex_binary=sys.executable,
+                codex_home=home,
+                extra_args=(str(FAKE_SERVER),),
+                rpc_timeout=rpc_timeout,
+            )
+            return CodexAppServerClient(transport=transport)
+
+        provider = CodexProvider(
+            codex_home=home,
+            client_factory=factory,
+            cli_available=True,
+            browser_opener=lambda url: None,
+        )
+        try:
+            yield provider
+        finally:
+            try:
+                provider.close()
+            finally:
+                for key in list(os.environ):
+                    if key.startswith("FAKE_CODEX_"):
+                        os.environ.pop(key, None)
+                os.environ.update(saved)
+
+    def test_chat_supported_effort_forwarded_and_recorded(self):
+        params_log = Path("/tmp") / f"obr-d6-pchat-{threading.get_ident()}.jsonl"
+        params_log.unlink(missing_ok=True)
+        with self._provider(
+            {"FAKE_CODEX_TURN_PARAMS_LOG": str(params_log)}
+        ) as provider:
+            result = provider.chat(
+                [{"role": "user", "content": "你好"}],
+                model="openai-codex/gpt-5.6-luna",
+                timeout=10.0,
+                reasoning_effort="high",
+            )
+            self.assertEqual(result.finish_reason, "stop")
+            self.assertEqual(result.reasoning_effort, "high")
+        lines = [ln for ln in params_log.read_text(encoding="utf-8").strip().splitlines() if ln]
+        turn_entries = [json.loads(ln) for ln in lines if '"turn/start"' in ln]
+        self.assertTrue(turn_entries)
+        self.assertEqual(turn_entries[0]["params"].get("effort"), "high")
+
+    def test_chat_unsupported_effort_fails_closed_without_turn(self):
+        from openbrep.codex.provider import CodexUnsupportedEffortError
+
+        params_log = Path("/tmp") / f"obr-d6-pchat-reject-{threading.get_ident()}.jsonl"
+        params_log.unlink(missing_ok=True)
+        with self._provider(
+            # terra 只支持 medium/high；low 是 luna 独有（残留场景）
+            {"FAKE_CODEX_TURN_PARAMS_LOG": str(params_log)}
+        ) as provider:
+            with self.assertRaises(CodexUnsupportedEffortError):
+                provider.chat(
+                    [{"role": "user", "content": "你好"}],
+                    model="openai-codex/gpt-5.6-terra",
+                    timeout=10.0,
+                    reasoning_effort="low",
+                )
+        # 失败路径零 turn 请求（models() 目录查询不产生 turn/start）。
+        # fake server 只在收到 thread/start / turn/start 时才写 log——
+        # log 不存在或没有任何 turn 条目都证明零 turn 请求。
+        if params_log.exists():
+            lines = [ln for ln in params_log.read_text(encoding="utf-8").strip().splitlines() if ln]
+            self.assertFalse(
+                [ln for ln in lines if '"turn/start"' in ln],
+                "不支持的 effort 绝不能发出 turn/start",
+            )
+            self.assertFalse(
+                [ln for ln in lines if '"thread/start"' in ln],
+                "不支持的 effort 绝不能发出 thread/start",
+            )

@@ -105,6 +105,10 @@ class WorkbenchAssistantService:
             if self.session.llm_api_base:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
+            # D6：Fixed 模式 effort 从会话配置同步（与磁盘/UI 同一事实源）
+            pipeline.config.llm.reasoning_effort = str(
+                self.session.config.llm.reasoning_effort or ""
+            )
             try:
                 pipeline.codex_provider = self.session.settings_service._codex_provider()
             except Exception:  # noqa: BLE001 —— provider 不可用留给 LLMAdapter fail closed
@@ -270,6 +274,10 @@ class WorkbenchAssistantService:
             if self.session.llm_api_base:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
+            # D6：adapter 工厂同样同步 Fixed 模式 effort
+            pipeline.config.llm.reasoning_effort = str(
+                self.session.config.llm.reasoning_effort or ""
+            )
         request = TaskRequest(
             user_input="",
             assistant_settings=self.session.assistant_settings,
@@ -623,6 +631,10 @@ class WorkbenchAssistantService:
             if self.session.llm_api_base:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
+            # D6：Fixed 模式 effort 从会话配置同步（CREATE/IMAGE 的 codex kwargs 读取它）
+            pipeline.config.llm.reasoning_effort = str(
+                self.session.config.llm.reasoning_effort or ""
+            )
             pipeline.config.agent.max_iterations = self.session.max_retries
         # D3：codex 模型才注入共享 provider（非 codex 不拉起 app-server）
         from openbrep.config import is_codex_qualified_model

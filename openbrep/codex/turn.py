@@ -158,6 +158,9 @@ class CodexTurnResult:
     turn_id: str | None = None
     error: str | None = None
     usage: dict = field(default_factory=dict)
+    # D6：本次 turn 实际请求的 reasoning effort（"" = 未覆盖，用模型默认）。
+    # 与 model 一起构成 Fixed 模式的 effective 组合，供结果元数据追踪。
+    reasoning_effort: str = ""
 
 
 class _TurnCollector:
@@ -166,6 +169,11 @@ class _TurnCollector:
     transport reader 线程调用 handle_notification（必须快、绝不抛异常），
     把匹配本 turn (threadId, turnId) 的事件放进队列；驱动线程消费。
     不匹配（迟到 / 乱序 / 他 turn / 畸形）一律忽略。
+
+    D6（UI 脱敏）：按 itemId 记录 item/started 携带的 phase（commentary /
+    final_answer / 未知）。commentary（模型中间思考）的 delta 绝不进入
+    delta 缓冲与 UI 流式回调——UI 任何状态都不出现 raw chain-of-thought。
+    phase 未知（legacy 上游不发送 item/started）按 final 兼容处理。
     """
 
     def __init__(self) -> None:
@@ -173,9 +181,27 @@ class _TurnCollector:
         self.turn_id: str | None = None
         self.q: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self._enabled = True
+        # itemId → phase（"commentary" / "final_answer" / None=未知）
+        self._item_phases: dict[str, str | None] = {}
 
     def close(self) -> None:
         self._enabled = False
+
+    def record_item_phase(self, item_id: Any, phase: Any) -> None:
+        """记录 item 的 phase（来自 item/started 或 item/completed 的 item 对象）。"""
+        if not isinstance(item_id, str) or not item_id:
+            return
+        if isinstance(phase, str) and phase in ("commentary", "final_answer"):
+            self._item_phases[item_id] = phase
+        elif item_id not in self._item_phases:
+            # 未知 phase（legacy）：按 final 兼容，不记录（None 即视为 final 候选）
+            self._item_phases[item_id] = None
+
+    def is_commentary(self, item_id: Any) -> bool:
+        """该 item 是否已被标记为 commentary（中间思考，UI 必须隐藏）。"""
+        if not isinstance(item_id, str) or not item_id:
+            return False
+        return self._item_phases.get(item_id) == "commentary"
 
     def handle_notification(self, msg: dict) -> None:
         if not self._enabled:
@@ -197,6 +223,14 @@ class _TurnCollector:
                 if isinstance(tid, str) and tid:
                     self.turn_id = tid
             self.q.put(("turn_started", params))
+        elif method == "item/started":
+            # D6：item/started 携带 phase——先记录，再让驱动线程消费（保持
+            # reader 线程只做入队；phase 查表在消费侧仍可用，因为驱动线程
+            # 顺序消费 item/started 先于该 item 的 delta/completed）。
+            item = params.get("item")
+            if isinstance(item, dict):
+                self.record_item_phase(item.get("id"), item.get("phase"))
+            self.q.put(("item_started", item if isinstance(item, dict) else {}))
         elif method == "item/agentMessage/delta":
             delta = params.get("delta")
             if isinstance(delta, str) and delta:
@@ -204,6 +238,8 @@ class _TurnCollector:
         elif method == "item/completed":
             item = params.get("item")
             if isinstance(item, dict):
+                # 兜底：某些上游不发送 item/started，只在 completed 携带 phase
+                self.record_item_phase(item.get("id"), item.get("phase"))
                 self.q.put(("item_completed", item))
         elif method == "turn/completed":
             turn = params.get("turn")
@@ -248,6 +284,7 @@ class CodexTurnRunner:
         cwd: str,
         user_text: str,
         images: list | None = None,
+        reasoning_effort: str = "",
     ) -> dict:
         """turn/start 参数：文本输入 + 图片输入（localImage）+ 只读 sandbox + approval never。
 
@@ -281,7 +318,7 @@ class CodexTurnRunner:
                     IMAGE_PATH_ESCAPE_TEXT, category="image_path_escape"
                 )
             input_items.append({"type": "localImage", "path": str(img_path)})
-        return {
+        params: dict[str, Any] = {
             "threadId": thread_id,
             "input": input_items,
             "model": model,
@@ -289,6 +326,13 @@ class CodexTurnRunner:
             "approvalPolicy": "never",
             "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
         }
+        # D6：Fixed 模式 reasoning effort（turn/start 的 effort 覆盖键，
+        # 协议对齐 codex 0.147.0 generate-ts TurnStartParams.effort）。
+        # 空字符串 = 不覆盖（模型默认）——不发送该键，请求形状与基线一致。
+        effort = str(reasoning_effort or "").strip()
+        if effort:
+            params["effort"] = effort
+        return params
 
     # ── 内部：中断 / 清理（best-effort，绝不抛错打断主流程）──────────────────
 
@@ -320,6 +364,7 @@ class CodexTurnRunner:
         should_cancel: Callable[[], bool] | None,
         on_delta: Callable[[str], None] | None,
         images: list | None = None,
+        reasoning_effort: str = "",
     ) -> CodexTurnResult:
         system_text, user_text = build_turn_prompt(messages)
         if not user_text.strip():
@@ -350,13 +395,19 @@ class CodexTurnRunner:
                     cwd=cwd,
                     user_text=user_text,
                     images=images,
+                    reasoning_effort=reasoning_effort,
                 )
             )
             turn = turn_resp.get("turn") or {}
             turn_id = turn.get("id")
             if isinstance(turn_id, str) and turn_id:
                 collector.turn_id = turn_id
-            result = CodexTurnResult(model=model, thread_id=thread_id, turn_id=turn_id)
+            result = CodexTurnResult(
+                model=model,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                reasoning_effort=str(reasoning_effort or "").strip(),
+            )
 
             # 3. 收集通知直到 turn/completed / error / 超时 / 取消
             deadline = time.monotonic() + (
@@ -399,15 +450,21 @@ class CodexTurnRunner:
                 kind, payload = event
                 if kind == "delta":
                     item_id, delta = payload
-                    if isinstance(item_id, str):
-                        delta_buf.setdefault(item_id, []).append(delta)
-                    if on_delta is not None:
-                        try:
-                            on_delta(delta)
-                        except Exception as exc:  # noqa: BLE001
-                            self._logger.warning(
-                                "codex turn delta 回调异常（%s）", exc.__class__.__name__
-                            )
+                    # D6（UI 脱敏）：commentary（中间思考）的 delta 一律丢弃——
+                    # 既不进 final 候选缓冲，也不进 UI 流式回调；final_answer /
+                    # phase 未知（legacy）的 delta 才允许透出。
+                    if not collector.is_commentary(item_id):
+                        if isinstance(item_id, str):
+                            delta_buf.setdefault(item_id, []).append(delta)
+                        if on_delta is not None:
+                            try:
+                                on_delta(delta)
+                            except Exception as exc:  # noqa: BLE001
+                                self._logger.warning(
+                                    "codex turn delta 回调异常（%s）", exc.__class__.__name__
+                                )
+                elif kind == "item_started":
+                    continue  # phase 已在 reader 线程记录；无需处理
                 elif kind == "item_completed":
                     self._record_item(payload, candidates, delta_buf)
                 elif kind == "turn_completed":
@@ -491,10 +548,12 @@ class CodexTurnRunner:
         should_cancel: Callable[[], bool] | None = None,
         on_event: Callable[[str, Any], None] | None = None,
         images: list | None = None,
+        reasoning_effort: str = "",
     ) -> CodexTurnResult:
         """非流式：完整执行一次 turn 并返回最终结果。
 
         on_event 可选：(event_type, data) 回调，事件：status / assistant_delta。
+        reasoning_effort（D6）：Fixed 模式的 effort 覆盖值（"" = 模型默认）。
         """
         if on_event is not None:
             try:
@@ -517,6 +576,7 @@ class CodexTurnRunner:
             should_cancel=should_cancel,
             on_delta=on_delta,
             images=images,
+            reasoning_effort=reasoning_effort,
         )
         if on_event is not None:
             try:
@@ -534,10 +594,12 @@ class CodexTurnRunner:
         timeout: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
         images: list | None = None,
+        reasoning_effort: str = "",
     ) -> Iterator[dict]:
         """流式：yield 事件；最后一个事件 type="result"（携带 CodexTurnResult）。
 
         事件：{"type": "delta", "content": str} | {"type": "result", "result": CodexTurnResult}
+        reasoning_effort（D6）：Fixed 模式的 effort 覆盖值（"" = 模型默认）。
         """
         bridge: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
@@ -554,6 +616,7 @@ class CodexTurnRunner:
                     should_cancel=should_cancel,
                     on_delta=on_delta,
                     images=images,
+                    reasoning_effort=reasoning_effort,
                 )
                 bridge.put(("result", result))
             except BaseException as exc:  # noqa: BLE001 —— 驱动线程不裸死

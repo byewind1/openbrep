@@ -371,6 +371,183 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     const text = screen.getByTestId('codex-rate-limits').textContent ?? ''
     expect(text).not.toMatch(/balance|123\.45|limitId|grantedAt/i)
   })
+
+  test('D6: current codex model shows effort options from catalog and explicit save', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'openai-codex/gpt-5.6-luna',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [
+        {
+          id: 'openai-codex/gpt-5.6-luna',
+          label: 'GPT-5.6 Luna',
+          model: 'gpt-5.6-luna',
+          supported_reasoning_efforts: [
+            { effort: 'low', description: 'Fastest' },
+            { effort: 'medium', description: 'Balanced' },
+            { effort: 'high', description: 'Deep' },
+          ],
+          default_reasoning_effort: 'medium',
+        },
+        {
+          id: 'openai-codex/gpt-5.6-terra',
+          label: 'GPT-5.6 Terra',
+          model: 'gpt-5.6-terra',
+          supported_reasoning_efforts: [
+            { effort: 'medium', description: 'Balanced' },
+            { effort: 'high', description: 'Deep' },
+          ],
+          default_reasoning_effort: 'high',
+        },
+      ],
+    })
+    const onModelChange = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({
+          model: 'openai-codex/gpt-5.6-luna',
+          reasoning_effort: 'medium',
+        })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+        onModelChange={onModelChange}
+      />,
+    )
+
+    // effort 选项来自 model/list（supported_reasoning_efforts），不硬编码
+    const effortRow = await screen.findByTestId('codex-effort-row')
+    const select = effortRow.querySelector('select') as HTMLSelectElement
+    expect(select).toBeTruthy()
+    expect(select.value).toBe('medium')
+    // 切换 draft 后不自动保存（draft + 显式 Save）
+    fireEvent.change(select, { target: { value: 'high' } })
+    expect(onModelChange).not.toHaveBeenCalled()
+    // 显式保存才调用后端（model + effort 一起）
+    fireEvent.click(screen.getByTestId('codex-effort-save'))
+    await waitFor(() => expect(onModelChange).toHaveBeenCalledWith('openai-codex/gpt-5.6-luna', 'high'))
+    expect(await screen.findByTestId('codex-effort-feedback')).toBeTruthy()
+  })
+
+  test('D6: model switch confirm lets user pick effort; backend rejects unsupported combo (no silent replace)', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'openai-codex/gpt-5.6-luna',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [
+        {
+          id: 'openai-codex/gpt-5.6-luna',
+          label: 'GPT-5.6 Luna',
+          model: 'gpt-5.6-luna',
+          supported_reasoning_efforts: [
+            { effort: 'low', description: 'Fastest' },
+            { effort: 'medium', description: 'Balanced' },
+            { effort: 'high', description: 'Deep' },
+          ],
+        },
+        {
+          id: 'openai-codex/gpt-5.6-terra',
+          label: 'GPT-5.6 Terra',
+          model: 'gpt-5.6-terra',
+          supported_reasoning_efforts: [
+            { effort: 'medium', description: 'Balanced' },
+            { effort: 'high', description: 'Deep' },
+          ],
+        },
+      ],
+    })
+    const onModelChange = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({
+          model: 'openai-codex/gpt-5.6-luna',
+          reasoning_effort: 'high',
+        })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+        onModelChange={onModelChange}
+      />,
+    )
+
+    // 切到 terra（不支持 high）：确认面板出现 terra 的 effort 选项
+    fireEvent.click(await screen.findByText('GPT-5.6 Terra'))
+    const confirm = await screen.findByTestId('codex-model-confirm')
+    const select = confirm.querySelector('select') as HTMLSelectElement
+    expect(select).toBeTruthy()
+    // 默认 draft 为空（不静默继承旧 effort）；用户选 medium
+    fireEvent.change(select, { target: { value: 'medium' } })
+    fireEvent.click(screen.getByText('确认切换'))
+    // model + 用户显式选择的 effort 一起保存
+    await waitFor(() => expect(onModelChange).toHaveBeenCalledWith('openai-codex/gpt-5.6-terra', 'medium'))
+    // UI 不展示任何 raw chain-of-thought（无 reasoning 字段渲染）
+    const panel = screen.getByTestId('codex-section').textContent ?? ''
+    expect(panel).not.toMatch(/chain-of-thought|reasoning_text|commentary/i)
+  })
+
+  test('D6: save effort failure surfaces backend error and keeps draft (no silent replace)', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'openai-codex/gpt-5.6-luna',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [
+        {
+          id: 'openai-codex/gpt-5.6-luna',
+          label: 'GPT-5.6 Luna',
+          model: 'gpt-5.6-luna',
+          supported_reasoning_efforts: [
+            { effort: 'low', description: 'Fastest' },
+            { effort: 'medium', description: 'Balanced' },
+            { effort: 'high', description: 'Deep' },
+          ],
+        },
+      ],
+    })
+    const onModelChange = vi
+      .fn()
+      .mockRejectedValue(new Error('模型不支持 reasoning effort「high」。请重新选择后再保存。'))
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({
+          model: 'openai-codex/gpt-5.6-luna',
+          reasoning_effort: 'low',
+        })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+        onModelChange={onModelChange}
+      />,
+    )
+
+    const effortRow = await screen.findByTestId('codex-effort-row')
+    const select = effortRow.querySelector('select') as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'high' } })
+    fireEvent.click(screen.getByTestId('codex-effort-save'))
+    // 后端拒绝 → 错误反馈展示，draft 不被静默替换
+    await waitFor(() => expect(screen.getByTestId('codex-effort-feedback').textContent ?? '').toMatch(/不支持/))
+    expect(onModelChange).toHaveBeenCalledWith('openai-codex/gpt-5.6-luna', 'high')
+  })
 })
 
   test('current codex model missing from account catalog shows unavailable (P0-4)', async () => {

@@ -16,6 +16,12 @@ max_tokens = 16384
 # 可填写你的 GDL 经验、当前使用场景、沟通偏好、改动边界等；修改后会立即影响后续聊天与生成。
 # assistant_settings = "我是 GDL 初学者，请先解释再给最小修改。"
 
+# 可选（ChatGPT Codex 订阅模型专用）：Fixed 模式的 reasoning effort（推理强度）。
+# 值必须来自当前 ChatGPT 账户 model/list 的 supportedReasoningEfforts（如 low/medium/high），
+# 由 AI 设置面板显式保存；运行时严格使用该组合，不自动升级/降级，也不切换模型。
+# 留空 = 不覆盖（使用模型默认）。非 codex 模型一律忽略该字段。
+# reasoning_effort = "medium"
+
 # ── 统一 Provider 注册表（推荐）──────────────────────────────
 # 每个 [[llm.providers]] = 一个 API 端点 + 它的模型列表，官方/自定义同一套机制。
 #   name:    provider 名（用于 provider/model 显式引用与按名匹配）

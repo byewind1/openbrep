@@ -1025,9 +1025,44 @@ class TestCodexAppServerModelFailClosed(unittest.TestCase):
             codex_intent="CHAT",
             codex_should_cancel=lambda: False,
             codex_on_event=lambda *a: None,
+            codex_reasoning_effort="high",
         )
         self.assertEqual(result.content, "ok")
         kwargs = adapter._litellm.completion.call_args.kwargs
         self.assertNotIn("codex_intent", kwargs)
         self.assertNotIn("codex_should_cancel", kwargs)
         self.assertNotIn("codex_on_event", kwargs)
+        # D6：codex 专用 effort 参数绝不进入 litellm（非 codex 模型）
+        self.assertNotIn("codex_reasoning_effort", kwargs)
+        self.assertNotIn("reasoning_effort", kwargs)
+
+    def test_codex_effort_kwarg_routed_to_provider_and_recorded(self):
+        """D6：codex 模型的 reasoning_effort 原样到 provider.chat，结果带
+        effective 元数据（供任务结果追踪）。"""
+        from openbrep.codex.turn import CodexTurnResult
+
+        calls = {}
+
+        class _FakeProvider:
+            def chat(self, messages, model, **kwargs):
+                calls["kwargs"] = kwargs
+                return CodexTurnResult(
+                    content="你好",
+                    model=model,
+                    finish_reason="stop",
+                    reasoning_effort=kwargs.get("reasoning_effort", ""),
+                )
+
+        adapter = self._adapter()
+        adapter.codex_provider = _FakeProvider()
+        result = adapter.generate(
+            [{"role": "user", "content": "hi"}],
+            codex_intent="CHAT",
+            codex_reasoning_effort="high",
+        )
+        self.assertEqual(calls["kwargs"]["reasoning_effort"], "high")
+        self.assertEqual(result.metadata["codex_effective"], {
+            "model": "openai-codex/gpt-5.6-luna", "reasoning_effort": "high",
+        })
+        self.assertEqual(adapter.last_codex_effective["reasoning_effort"], "high")
+        adapter._litellm.completion.assert_not_called()

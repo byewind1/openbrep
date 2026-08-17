@@ -55,6 +55,15 @@ _RATE_LIMITS_TTL_SECONDS = 30.0
 # 一律拒绝进入 subscription provider。
 ALLOWED_LOGIN_TYPES = frozenset({"chatgpt", "chatgptDeviceCode"})
 
+# D6：reasoning effort 的严格字符集/长度校验。上游 ReasoningEffort 是自由
+# 字符串（低风险枚举 low/medium/high/none），但绝不能把任意上游字符串透传
+# 给 turn/start 或 UI——只允许 ASCII 可见安全字符、有界长度（防注入/防回显）。
+_EFFORT_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+# 单模型 supportedReasoningEfforts 上限（防上游超长数组 DoS）
+_MAX_REASONING_EFFORTS = 16
+# 单条 effort description 长度上限（只用于 UI 展示，绝不回显任意上游长文本）
+_MAX_EFFORT_DESC_LEN = 120
+
 # 最小 Codex CLI 版本：app-server 协议面（account/login/cancel、
 # account/rateLimits/read、通知）以 0.147.0 实测验证；低于此版本
 # version_incompatible，fail closed。version 解析自 initialize.userAgent。
@@ -107,6 +116,16 @@ class CodexVersionIncompatibleError(RuntimeError):
     """Codex CLI 版本低于要求/无法识别——协议面未验证，fail closed。"""
 
     code = "version_incompatible"
+
+
+class CodexUnsupportedEffortError(RuntimeError):
+    """Fixed 模式的 reasoning effort 不被当前模型支持（D6，fail closed）。
+
+    保存时（settings service）与运行时（provider.chat）共用；绝不静默替换/
+    降级 effort，也不自动切换模型/provider。
+    """
+
+    code = "unsupported_reasoning_effort"
 
 
 def mask_email(email: str) -> str:
@@ -1201,6 +1220,30 @@ class CodexProvider:
             model_id = str(entry.get("id") or entry.get("model") or "").strip()
             if not model_id:
                 continue
+            # D6：effort 选项只来自 model/list.supportedReasoningEfforts +
+            # defaultReasoningEffort（不硬编码）。逐项做字符集/长度/去重/
+            # 数量上限校验；默认值必须落在 supported 集合内，否则置空。
+            efforts: list[dict[str, Any]] = []
+            seen_efforts: set[str] = set()
+            for opt in entry.get("supportedReasoningEfforts") or []:
+                if not isinstance(opt, dict):
+                    continue
+                effort = str(opt.get("reasoningEffort") or "").strip()
+                if not _EFFORT_RE.match(effort) or effort in seen_efforts:
+                    continue
+                if len(seen_efforts) >= _MAX_REASONING_EFFORTS:
+                    break
+                seen_efforts.add(effort)
+                desc = str(opt.get("description") or "")
+                efforts.append(
+                    {
+                        "effort": effort,
+                        "description": desc[:_MAX_EFFORT_DESC_LEN],
+                    }
+                )
+            default_effort = str(entry.get("defaultReasoningEffort") or "").strip()
+            if not _EFFORT_RE.match(default_effort) or default_effort not in seen_efforts:
+                default_effort = ""
             models.append(
                 {
                     "id": f"{CODEX_PROVIDER_NAME}/{model_id}",
@@ -1209,6 +1252,8 @@ class CodexProvider:
                     "display_name": str(entry.get("displayName") or ""),
                     "hidden": bool(entry.get("hidden")),
                     "specialty": entry.get("modelSpecialty"),
+                    "supported_reasoning_efforts": efforts,
+                    "default_reasoning_effort": default_effort,
                 }
             )
         with self._lock:
@@ -1220,6 +1265,46 @@ class CodexProvider:
 
     # ── D3：CHAT / EXPLAIN 安全调用 ─────────────────────────
 
+    def _supported_efforts(self, model: str) -> list[str]:
+        """当前账户 model/list 中该模型支持的 effort 列表（缓存复用）。
+
+        目录漂移/解析失败一律返回空列表（调用方 fail closed）。
+        """
+        try:
+            catalog = self.models()
+        except Exception:  # noqa: BLE001 —— 目录不可读 = 无法证明 effort 合法
+            return []
+        for entry in catalog:
+            if str(entry.get("id") or "") == model:
+                return [
+                    str(e.get("effort") or "")
+                    for e in entry.get("supported_reasoning_efforts") or []
+                    if str(e.get("effort") or "").strip()
+                ]
+        return []
+
+    def validate_reasoning_effort(self, model: str, reasoning_effort: str) -> None:
+        """Fixed 模式运行时门禁（D6）：effort 必须属于当前模型支持集合。
+
+        空字符串 = 不覆盖（模型默认），跳过校验。不支持的 effort 直接抛
+        CodexUnsupportedEffortError（fail closed）——绝不静默替换/降级，
+        也绝不自动切换模型/provider。这同时拦截「直接改配置文件绕过 UI」
+        的攻击路径：config 里被手写进不支持的 effort 时，turn 根本不会启动。
+        """
+        effort = str(reasoning_effort or "").strip()
+        if not effort:
+            return
+        if not _EFFORT_RE.match(effort):
+            raise CodexUnsupportedEffortError(
+                "reasoning effort 格式不合法，请求已拒绝。请到 AI 设置重新选择。"
+            )
+        supported = self._supported_efforts(model)
+        if effort not in supported:
+            raise CodexUnsupportedEffortError(
+                "当前模型不支持所选 reasoning effort，请求已拒绝。"
+                "请到 AI 设置中选择该模型支持的 effort。"
+            )
+
     def chat(
         self,
         messages: list[dict],
@@ -1230,14 +1315,21 @@ class CodexProvider:
         on_event: Any | None = None,
         temp_dir: str | Path | None = None,
         images: list | None = None,
+        reasoning_effort: str = "",
     ) -> CodexTurnResult:
-        """Codex 模型 CHAT/EXPLAIN 安全调用（D3）。
+        """Codex 模型 CHAT/EXPLAIN/CREATE 安全调用（D3 + D6）。
 
         安全不变量（turn 层保证，见 openbrep/codex/turn.py）：
         - ephemeral thread + 临时只读 cwd + approval never + 无工具面。
         - 输入只来自调用方 messages；不加载 home AGENTS/skills/plugins。
         - 只收集 final agent message；无 final / 截断 / interrupt / 超时 /
           quota / crash 各有明确 finish_reason 与稳定文案，上游原文零回显。
+
+        D6 Fixed 模式：
+        - reasoning_effort 非空时必须属于当前账户 model/list 中该模型的
+          supportedReasoningEfforts（validate_reasoning_effort，fail closed）；
+          空字符串 = 不覆盖（模型默认），turn/start 不发送 effort 键。
+        - 请求失败直接报告，不切模型/provider、不自动升级/降级 effort。
 
         本方法负责：fail closed 门禁（CLI / 登录 / 额度 / 崩溃）+ 临时 cwd
         生命周期（用完即删，绝不落在项目/工作区）。
@@ -1257,6 +1349,9 @@ class CodexProvider:
                 "请稍后重试、等待重置，或切换到其他模型/提供商。",
                 category="quota_exhausted",
             )
+        # D6：运行时刻的 effort 门禁（拦截 config 直改绕过 UI）。
+        # 注意：turn 启动前就校验，不支持的 effort 不会发出任何 turn 请求。
+        self.validate_reasoning_effort(model, reasoning_effort)
         client, _gen = self._snapshot()
 
         # 临时只读 cwd：turn 的工作目录（可能被 app-server 作为工作区根）。
@@ -1278,6 +1373,7 @@ class CodexProvider:
                 should_cancel=should_cancel,
                 on_event=on_event,
                 images=local_images,
+                reasoning_effort=reasoning_effort,
             )
         finally:
             shutil.rmtree(cwd, ignore_errors=True)

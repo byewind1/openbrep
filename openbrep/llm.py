@@ -73,6 +73,9 @@ class LLMResponse:
     usage: dict = field(default_factory=dict)
     finish_reason: str = ""
     tool_calls: list = field(default_factory=list)  # list[ToolCall]
+    # D6：结构化元数据（如 codex 的 effective model/reasoning_effort），
+    # 供 pipeline 写入任务结果元数据；非 codex 路径保持空 dict。
+    metadata: dict = field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -196,6 +199,9 @@ class LLMAdapter:
         # D3：Codex CHAT/EXPLAIN 的 provider 注入点（实例级 > 进程共享默认）。
         # 测试/管线可显式注入 fake provider；None = 走默认注册表。
         self.codex_provider = None
+        # D6：最近一次 codex turn 的 effective {model, reasoning_effort}
+        # （来自实际 CodexTurnResult；非 codex 路径从不设置）。
+        self.last_codex_effective: dict | None = None
         # Re-register warning filter here so it survives pytest's filter reset
         warnings.filterwarnings(
             "ignore",
@@ -430,6 +436,9 @@ class LLMAdapter:
         should_cancel = kwargs.pop("codex_should_cancel", None)
         on_event = kwargs.pop("codex_on_event", None)
         timeout = kwargs.pop("timeout", None) or self.config.timeout
+        # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认）。
+        # 只对 codex 模型生效；provider.chat 运行时刻再校验支持性（fail closed）。
+        reasoning_effort = str(kwargs.pop("codex_reasoning_effort", None) or "").strip()
 
         provider = self._codex_provider()
         if provider is None:
@@ -445,6 +454,7 @@ class LLMAdapter:
                 should_cancel=should_cancel,
                 on_event=on_event,
                 images=list(images) or None,
+                reasoning_effort=reasoning_effort,
             )
         except Exception as exc:  # noqa: BLE001 —— 映射稳定文案
             from openbrep.codex.provider import CodexNotSignedInError
@@ -457,11 +467,19 @@ class LLMAdapter:
             raise RuntimeError(stable["error"]) from exc
         if result.finish_reason != "stop":
             raise RuntimeError(result.error or NO_FINAL_MESSAGE_TEXT)
+        # D6：effective 组合来自实际 turn 结果（与 fake server 实收逐字节一致）。
+        # getattr 兜底兼容旧测试替身（无 model/reasoning_effort 属性的结果对象）。
+        effective = {
+            "model": getattr(result, "model", None) or model,
+            "reasoning_effort": str(getattr(result, "reasoning_effort", None) or ""),
+        }
+        self.last_codex_effective = effective
         return LLMResponse(
             content=result.content,
             model=model,
             usage=dict(result.usage or {}),
             finish_reason="stop",
+            metadata={"codex_effective": effective},
         )
 
     def generate(self, messages: list, **kwargs) -> LLMResponse:
@@ -505,6 +523,7 @@ class LLMAdapter:
         kwargs.pop("codex_intent", None)
         kwargs.pop("codex_should_cancel", None)
         kwargs.pop("codex_on_event", None)
+        kwargs.pop("codex_reasoning_effort", None)
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 
@@ -628,6 +647,7 @@ class LLMAdapter:
         kwargs.pop("codex_intent", None)
         kwargs.pop("codex_should_cancel", None)
         kwargs.pop("codex_on_event", None)
+        kwargs.pop("codex_reasoning_effort", None)
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 
@@ -777,6 +797,7 @@ class LLMAdapter:
         kwargs.pop("codex_intent", None)
         kwargs.pop("codex_should_cancel", None)
         kwargs.pop("codex_on_event", None)
+        kwargs.pop("codex_reasoning_effort", None)
         resolved = self._resolve_model_target(requested_model)
         model = resolved.litellm_model
 

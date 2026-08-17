@@ -855,6 +855,31 @@ models = []
             self.assertEqual(entry["name"], "openai-codex")
             self.assertEqual(entry["api_mode"], "codex_app_server")
 
+    def test_reasoning_effort_save_load_roundtrip(self):
+        """D6：Fixed 模式 effort 随 [llm] 持久化，保存/加载往返一致。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config = GDLAgentConfig()
+            config.llm.model = "openai-codex/gpt-5.6-luna"
+            config.llm.reasoning_effort = "high"
+            config.save(str(config_path))
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertIn('reasoning_effort = "high"', saved)
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.llm.reasoning_effort, "high")
+
+    def test_reasoning_effort_default_empty_and_codex_only_helper(self):
+        """D6：effort 默认空；codex_reasoning_effort() 只对 codex 模型返回。"""
+        config = GDLAgentConfig()
+        self.assertEqual(config.llm.reasoning_effort, "")
+        config.llm.reasoning_effort = "high"
+        # 非 codex 模型：helper 一律返回空（绝不进入 litellm）
+        self.assertEqual(config.llm.codex_reasoning_effort(), "")
+        self.assertEqual(config.llm.codex_reasoning_effort("glm-4-flash"), "")
+        # codex 模型：返回已保存 effort
+        config.llm.model = "openai-codex/gpt-5.6-luna"
+        self.assertEqual(config.llm.codex_reasoning_effort(), "high")
+
     def test_ensure_codex_provider_entry_adds_and_is_idempotent(self):
         from openbrep.config import ensure_codex_provider_entry
 

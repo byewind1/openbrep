@@ -134,6 +134,110 @@ def _next_msg_id() -> str:
     return f"fake-msg-{_msg_seq}"
 
 
+# ── D6：model/list 的 supportedReasoningEfforts（Fixed 模式 effort 目录）─────
+# 默认：gpt-5.6-luna 支持 low/medium/high（默认 medium）；
+# gpt-5.6-terra 只支持 medium/high（默认 high）——测试用 terra 验证
+# 「旧 effort 残留/luna 独有 effort」的拒绝路径。
+# FAKE_CODEX_MODEL_EFFORTS_JSON 可整体覆盖模型 effort 目录（见 _model_efforts_config）。
+_DEFAULT_MODEL_EFFORTS = {
+    "gpt-5.6-luna": {
+        "efforts": [("low", "Fastest"), ("medium", "Balanced"), ("high", "Deep")],
+        "default": "medium",
+    },
+    "gpt-5.6-terra": {
+        "efforts": [("medium", "Balanced"), ("high", "Deep")],
+        "default": "high",
+    },
+}
+
+
+def _model_efforts_config() -> dict:
+    raw = os.environ.get("FAKE_CODEX_MODEL_EFFORTS_JSON", "")
+    if not raw:
+        return _DEFAULT_MODEL_EFFORTS
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return _DEFAULT_MODEL_EFFORTS
+    if not isinstance(parsed, dict):
+        return _DEFAULT_MODEL_EFFORTS
+    return parsed
+
+
+def _model_list_response() -> dict:
+    efforts_cfg = _model_efforts_config()
+    entries = []
+    for model_id in ("gpt-5.6-luna", "gpt-5.6-terra"):
+        cfg = efforts_cfg.get(model_id) or {}
+        efforts_raw = cfg.get("efforts", [])
+        supported = []
+        for item in efforts_raw:
+            if isinstance(item, (list, tuple)) and len(item) >= 1:
+                effort = str(item[0])
+                desc = str(item[1]) if len(item) > 1 else ""
+            elif isinstance(item, dict):
+                effort = str(item.get("effort") or "")
+                desc = str(item.get("description") or "")
+            else:
+                effort = str(item)
+                desc = ""
+            supported.append({"reasoningEffort": effort, "description": desc})
+        default = str(cfg.get("default") or "")
+        entries.append(
+            {
+                "id": model_id,
+                "model": model_id,
+                "displayName": "GPT-5.6 Luna" if model_id == "gpt-5.6-luna" else "GPT-5.6 Terra",
+                "hidden": False,
+                "modelSpecialty": None,
+                "supportedReasoningEfforts": supported,
+                "defaultReasoningEffort": default or None,
+            }
+        )
+    return {"data": entries, "nextCursor": None}
+
+
+# ── D6：turn 参数全量记录（fallback 反证 / effective 对账）────────────────
+# FAKE_CODEX_TURN_PARAMS_LOG=<path>：每次 thread/start 与 turn/start 的完整
+# 参数追加写入该文件（一行一个 JSON）。测试据此断言：Fixed 失败后没有指向
+# 其他模型/provider 的请求；任务结果元数据里的 effective model/effort 与
+# app-server 实收完全一致。
+_TURN_PARAMS_LOG_PATH = os.environ.get("FAKE_CODEX_TURN_PARAMS_LOG", "")
+
+
+def _record_turn_params(method: str, params: dict) -> None:
+    if not _TURN_PARAMS_LOG_PATH:
+        return
+    try:
+        with open(_TURN_PARAMS_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {"event": "params", "method": method, "params": params},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except OSError:
+        pass
+
+
+def _effort_supported_for_thread(thread_id: str, effort: str) -> bool:
+    """turn/start 的 effort 是否属于该 thread 所用模型的支持集合。"""
+    if not effort:
+        return True
+    thread = _threads.get(thread_id)
+    if not isinstance(thread, dict):
+        return False
+    model_id = str(thread.get("model") or "")
+    if not model_id:
+        return False
+    if "/" in model_id:
+        model_id = model_id.rsplit("/", 1)[-1]
+    cfg = _model_efforts_config().get(model_id) or {}
+    efforts = [str(e[0]) for e in cfg.get("efforts", [])]
+    return effort in efforts
+
+
 def _fake_turn(turn_id: str, status: str = "inProgress", error=None) -> dict:
     return {
         "id": turn_id,
@@ -200,6 +304,7 @@ def _emit_turn_sequence(thread_id: str, turn_id: str, hang: bool = False) -> Non
     final_text = _next_final_text()
     no_final = os.environ.get("FAKE_CODEX_TURN_NO_FINAL")
     commentary_only = os.environ.get("FAKE_CODEX_TURN_COMMENTARY_ONLY")
+    reasoning_no_final = os.environ.get("FAKE_CODEX_TURN_REASONING_NO_FINAL")
     empty_final = os.environ.get("FAKE_CODEX_TURN_EMPTY_FINAL")
     error_canary = os.environ.get("FAKE_CODEX_TURN_ERROR_CANARY", "")
     quota_canary = os.environ.get("FAKE_CODEX_TURN_QUOTA_CANARY", "")
@@ -287,6 +392,57 @@ def _emit_turn_sequence(thread_id: str, turn_id: str, hang: bool = False) -> Non
                     "threadId": thread_id,
                     "turnId": turn_id,
                 },
+            }
+        )
+        return
+    if reasoning_no_final:
+        # D6：reasoning 很长但 final 为空/截断——先发大量 commentary 中间
+        # 消息（长思考文本），随后 turn 正常完成但没有 final agent message。
+        # 客户端必须进入统一完整性错误（no_final_message），绝不交付空结果，
+        # 且 commentary 文本绝不透出 UI 流（on_event 不得收到）。
+        import random as _random
+
+        _rng = _random.Random(20260817)
+        for i in range(240):
+            rid_item = _next_msg_id()
+            _send(
+                {
+                    "method": "item/started",
+                    "params": {
+                        "item": _agent_message_item(rid_item, "", "commentary"),
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "startedAtMs": 1786800000000 + i,
+                    },
+                }
+            )
+            chunk = "思考过程 " + str(i) + " " + "x" * (50 + _rng.randint(0, 100))
+            _send(
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": rid_item,
+                        "delta": chunk,
+                    },
+                }
+            )
+            _send(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": _agent_message_item(rid_item, chunk, "commentary"),
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "completedAtMs": 1786800000100 + i,
+                    },
+                }
+            )
+        _send(
+            {
+                "method": "turn/completed",
+                "params": {"threadId": thread_id, "turn": _fake_turn(turn_id, status="completed")},
             }
         )
         return
@@ -706,28 +862,11 @@ def main() -> None:
                 "rateLimitResetCredits": None,
             }
         elif method == "model/list":
-            result = {
-                "data": [
-                    {
-                        "id": "gpt-5.6-luna",
-                        "model": "gpt-5.6-luna",
-                        "displayName": "GPT-5.6 Luna",
-                        "hidden": False,
-                        "modelSpecialty": None,
-                    },
-                    {
-                        "id": "gpt-5.6-terra",
-                        "model": "gpt-5.6-terra",
-                        "displayName": "GPT-5.6 Terra",
-                        "hidden": False,
-                        "modelSpecialty": None,
-                    },
-                ],
-                "nextCursor": None,
-            }
+            result = _model_list_response()
         elif method == "thread/start" and os.environ.get("FAKE_CODEX_TURN"):
             params = msg.get("params") or {}
             _record_cwd("thread/start", params.get("cwd"))
+            _record_turn_params("thread/start", params)
             forbidden = _params_forbidden(params)
             if forbidden:
                 _send(
@@ -780,6 +919,7 @@ def main() -> None:
         elif method == "turn/start" and os.environ.get("FAKE_CODEX_TURN"):
             params = msg.get("params") or {}
             _record_cwd("turn/start", params.get("cwd"))
+            _record_turn_params("turn/start", params)
             forbidden = _params_forbidden(params)
             if forbidden:
                 _send(
@@ -791,6 +931,26 @@ def main() -> None:
                 )
                 continue
             tid = str(params.get("threadId") or "")
+            # D6：FAKE_CODEX_REJECT_UNSUPPORTED_EFFORT —— app-server 侧模拟
+            # 拒绝该模型不支持的 effort（真实上游行为；正常客户端永不触发，
+            # 因为 provider.chat 在 turn 启动前已本地校验）。
+            effort_param = str(params.get("effort") or "")
+            if (
+                os.environ.get("FAKE_CODEX_REJECT_UNSUPPORTED_EFFORT")
+                and effort_param
+                and not _effort_supported_for_thread(tid, effort_param)
+            ):
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {
+                            "code": -32602,
+                            "message": "UNSUPPORTED-EFFORT-FOR-MODEL",
+                        },
+                    }
+                )
+                continue
             turn_id = _next_turn_id()
             image_err = _record_turn_input(params, tid, turn_id)
             if image_err:
