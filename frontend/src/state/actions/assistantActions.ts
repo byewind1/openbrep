@@ -466,6 +466,29 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         intent = detectChatIntent(interrupted.message, hasProject)
       }
 
+      // D10：Codex MODIFY feature flag 默认关闭——codex 模型不提供
+      // MODIFY/DEBUG 入口（flag=false 全链路无入口：后端 API 拒绝 + 前端不路由）。
+      const llm = get().llmSettings
+      if (
+        llm.model.startsWith('openai-codex/') &&
+        (intent === 'modify' || intent === 'debug') &&
+        llm.codex_modify_enabled !== true
+      ) {
+        set((state) => ({
+          assistantBusy: false,
+          assistantMessages: [
+            ...state.assistantMessages,
+            { role: 'user', content: userMessageContent(finalMessage, images), images: images.length ? images : undefined },
+            {
+              role: 'assistant',
+              content: 'ChatGPT Codex 模型的修改（MODIFY）能力尚未开放。请切换到其他模型后重试，或用「问一问」获取项目指引。',
+              thinkingSteps: [],
+            },
+          ],
+        }))
+        return
+      }
+
       // P2a ghost：任务发起时快照"任务前"预览（修改前后对比用）。
       // CREATE（无项目）时 preview 为 null → ghost 置 null；参数防抖刷新 /
       // 手动 Update / 质量档切换都不覆盖；项目切换经 hydrateSnapshot 清空。

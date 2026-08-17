@@ -141,6 +141,11 @@ class StdioJsonRpcTransport:
         self._call_lock = threading.Lock()
         # D2：通知订阅者（reader 线程投递）；in-flight 请求 id 集合；崩溃标记
         self._subscribers: list[Callable[[dict], None]] = []
+        # D10：服务器请求（server→client 的带 id 请求，如 item/tool/call）
+        # 订阅者（reader 线程投递，handler 必须快：只入队，不阻塞）。
+        # 响应只能由调用方线程经 respond() 发出——reader 线程绝不持有
+        # _call_lock，避免与 in-flight call() 构成写锁死锁。
+        self._server_request_handlers: list[Callable[[int, str, dict], None]] = []
         # 显式 pending 请求 id 集合（P0-3）：reader 只接受匹配 pending 的响应，
         # 未请求/已超时/迟到的 id 一律丢弃——绝不污染后续调用，也绝不无界增长。
         self._pending: set[int] = set()
@@ -333,13 +338,43 @@ class StdioJsonRpcTransport:
                         exc.__class__.__name__,
                     )
             return
-        # P0-5：响应 id 只接受 int（拒绝 list/dict/str/bool 等）；
+        # P0-5：请求/响应 id 只接受 int（拒绝 list/dict/str/bool 等）；
         # 畸形 id 固定脱敏记录并继续，绝不把未校验 id 用于 dict 索引。
         if not isinstance(rid, int) or isinstance(rid, bool):
             self.logger.warning(
                 "codex app-server: 忽略畸形响应帧 id（length=%d）",
                 len(line),
             )
+            return
+        # D10：服务器请求（server→client）——带 id + method 且不含 result/error
+        # 的帧不是对我们请求的响应，而是 app-server 主动发起的 RPC（如
+        # item/tool/call）。转发给订阅者（reader 线程，只入队）；无订阅者时
+        # 固定脱敏记录并丢弃（绝不从 reader 线程写 stdout——_call_lock 可能
+        # 被 in-flight call() 持有，写会死锁）。
+        if (
+            isinstance(msg.get("method"), str)
+            and msg["method"].strip()
+            and "result" not in msg
+            and "error" not in msg
+        ):
+            with self._cv:
+                handlers = list(self._server_request_handlers)
+            if not handlers:
+                self.logger.warning(
+                    "codex app-server: 忽略无订阅者的服务器请求"
+                    "（method=%s, length=%d）",
+                    msg["method"],
+                    len(line),
+                )
+                return
+            for handler in handlers:
+                try:
+                    handler(rid, msg["method"], msg.get("params") or {})
+                except Exception as exc:  # noqa: BLE001 —— 订阅者不得打断 reader
+                    self.logger.warning(
+                        "codex app-server 服务器请求订阅者异常（%s）",
+                        exc.__class__.__name__,
+                    )
             return
         with self._cv:
             if rid not in self._pending:
@@ -519,6 +554,44 @@ class StdioJsonRpcTransport:
         result = resp.get("result") or {}
         return result if isinstance(result, dict) else {"data": result}
 
+    def subscribe_server_request(self, handler: Callable[[int, str, dict], None]) -> None:
+        """注册服务器请求处理器（D10）：reader 线程以 (id, method, params) 投递。
+
+        处理器必须快（只入队）；实际响应由拥有 _call_lock 的驱动线程
+        经 ``respond()`` 发出。重复注册同一 handler 是幂等的。
+        """
+        if handler in self._server_request_handlers:
+            return
+        self._server_request_handlers.append(handler)
+
+    def unsubscribe_server_request(self, handler: Callable[[int, str, dict], None]) -> None:
+        if handler in self._server_request_handlers:
+            self._server_request_handlers.remove(handler)
+
+    def respond(self, req_id: int, result: dict[str, Any]) -> None:
+        """向 app-server 回复一个服务器请求（D10）。
+
+        必须在非 reader 线程、且不在其他 call() 内持有 _call_lock 的线程调用
+        （本类的 call() 串行化所有写帧；reader 线程绝不调用本方法）。
+        """
+        with self._call_lock:
+            proc = self._proc
+            if proc is None or self._closing or proc.poll() is not None:
+                raise CodexAppServerError(
+                    "codex app-server 已关闭，无法回复服务器请求。",
+                    category="closed",
+                )
+            assert proc.stdin is not None
+            payload = {"jsonrpc": "2.0", "id": req_id, "result": result}
+            try:
+                proc.stdin.write(json.dumps(payload) + "\n")
+                proc.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                raise CodexAppServerError(
+                    f"codex app-server 回复写入失败（进程可能已退出）：{exc}",
+                    category="write_failed",
+                ) from exc
+
     def drain_notifications(self) -> list[dict]:
         with self._cv:
             out = list(self._notifications)
@@ -584,7 +657,12 @@ class CodexAppServerClient:
                     "name": _OPENBREP_CLIENT_NAME,
                     "version": _OPENBREP_CLIENT_VERSION,
                 },
-                "capabilities": None,
+                # D10：协商 experimental API（app-server README：dynamicTools 与
+                # item/tool/call 请求/响应流需要 experimentalApi=true）。
+                # 该开关只启用"默认关闭的实验性接口"，CHAT/CREATE 现有调用
+                # 不使用任何实验接口，请求形状不变；MODIFY 桥接用它声明
+                # thread/start.dynamicTools。
+                "capabilities": {"experimentalApi": True},
             },
         )
         self._user_agent = str(result.get("userAgent") or "")

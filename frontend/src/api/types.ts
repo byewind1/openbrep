@@ -128,6 +128,8 @@ export interface LlmSettings {
   reasoning_effort?: string
   /** D1：ChatGPT Codex（openai-codex）连接状态。provider 未拉起时为 null */
   codex?: CodexStatus | null
+  /** D10：Codex MODIFY 动态工具桥接 feature flag（默认 false；false 时 UI 不提供 MODIFY/DEBUG 入口） */
+  codex_modify_enabled?: boolean
 }
 
 // ── Codex BYOA（D1）：ChatGPT 订阅登录与动态模型目录 ───────────────────────

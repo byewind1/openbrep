@@ -300,10 +300,32 @@ class WorkbenchAssistantService:
         ]
         return {"ok": True, "blocks": blocks}
 
+    def _codex_modify_gate(self, body: dict[str, Any]) -> str | None:
+        """D10：Codex MODIFY feature flag 的 API 层门禁。
+
+        flag=false 时全链路无 Codex MODIFY 入口：MODIFY/DEBUG/REPAIR 意图在
+        构造 pipeline / 消耗任何额度前直接拒绝（稳定文案）。返回 None = 放行。
+        """
+        intent = str(body.get("intent") or "MODIFY")
+        if intent not in ("MODIFY", "DEBUG", "REPAIR"):
+            return None
+        from openbrep.config import is_codex_qualified_model
+
+        if not is_codex_qualified_model(self.session.llm_model):
+            return None
+        if getattr(self.session.config.llm, "codex_modify_enabled", False):
+            return None
+        from openbrep.runtime.modify_codex_bridge import MODIFY_FLAG_OFF_TEXT
+        return MODIFY_FLAG_OFF_TEXT
+
     def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()
         if not message:
             return {"ok": False, "error": "Generation message is empty."}
+
+        gate_error = self._codex_modify_gate(body)
+        if gate_error is not None:
+            return {"ok": False, "error": gate_error}
 
         # 计划确认门（V3）：仅 GUI MODIFY（非 DEBUG/REPAIR）请求，先出计划等确认
         if body.get("confirm_plan") and str(body.get("intent") or "MODIFY") == "MODIFY":
@@ -363,6 +385,9 @@ class WorkbenchAssistantService:
         计划调用失败/JSON 不合法 → pipeline 已回落为直接执行（旧行为），
         本方法原样返回执行结果并带 plan_failed 标记，不卡死用户。
         """
+        gate_error = self._codex_modify_gate(body)
+        if gate_error is not None:
+            return {"ok": False, "error": gate_error}
         if self.session.source_path is None:
             return {"ok": False, "error": "Load an HSF project before generating changes."}
         image_payload = validate_image_payload(body)
@@ -516,6 +541,11 @@ class WorkbenchAssistantService:
             yield {"type": "error", "data": {"error": "Generation message is empty."}}
             return
 
+        gate_error = self._codex_modify_gate(body)
+        if gate_error is not None:
+            yield {"type": "error", "data": {"error": gate_error}}
+            return
+
         if self.session.source_path is None:
             yield {"type": "error", "data": {"error": "Load an HSF project before generating changes."}}
             return
@@ -599,6 +629,7 @@ class WorkbenchAssistantService:
         """构造 generate 用的 pipeline 与 TaskRequest，供同步/流式复用。"""
         pipeline = self.session.pipeline_class(trace_dir="./traces")
         intent = str(body.get("intent") or "MODIFY")
+        epoch_at_start = getattr(self.session, "project_epoch", None)
         request = TaskRequest(
             user_input=str(body.get("message") or "").strip(),
             intent=intent,
@@ -623,6 +654,15 @@ class WorkbenchAssistantService:
             # 计划确认门（V3）：仅 GUI MODIFY 请求置 True；确认后经 confirmed_plan 注入
             confirm_plan=bool(body.get("confirm_plan")) and intent == "MODIFY",
             confirmed_plan=body.get("confirmed_plan") if isinstance(body.get("confirmed_plan"), dict) else None,
+        )
+        # D10：会话层 project epoch 守卫（Codex modify 桥接在长任务中拒绝
+        # 项目切换后的后续 mutation；非 codex 路径不使用该字段）
+        from openbrep.config import is_codex_qualified_model
+
+        request.epoch_guard = (
+            (lambda: self.session.project_epoch == epoch_at_start)
+            if is_codex_qualified_model(self.session.llm_model)
+            else None
         )
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model

@@ -576,3 +576,35 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     // 已登录但当前模型不在账户目录 → 模型不可用提示出现
     expect(await screen.findByText(/当前 Codex 模型不可用/)).toBeTruthy()
   })
+
+describe('D10 Codex MODIFY capability note', () => {
+  test('settings page does not claim MODIFY is available (explicit not-open note)', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'openai-codex/gpt-5.6-luna',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [{ id: 'openai-codex/gpt-5.6-luna', label: 'GPT-5.6 Luna', model: 'gpt-5.6-luna' }],
+    })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({ model: 'openai-codex/gpt-5.6-luna' })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    // 设置页明确"不宣称 MODIFY 可用"：出现未开放提示，且不含"已支持修改"类文案
+    expect(await screen.findByTestId('codex-modify-note')).toBeTruthy()
+    expect((await screen.findByTestId('codex-modify-note')).textContent).toMatch(/MODIFY/)
+    expect((await screen.findByTestId('codex-modify-note')).textContent).toMatch(/not yet available|尚未开放/)
+    expect(screen.queryByText(/支持修改|修改已开放|MODIFY 已可用/)).toBeNull()
+  })
+})

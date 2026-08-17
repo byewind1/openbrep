@@ -3826,3 +3826,96 @@ def test_assistant_generate_stream_chat_codex_emits_events(tmp_path):
     assert done[0]["data"]["ok"] is True
     assert done[0]["data"]["assistant"]["reply"] == "Codex API 回复。"
     assert provider.chat_calls >= 1
+
+
+# ── D10：Codex MODIFY feature flag 的 API 层门禁 ─────────────
+
+def _codex_modify_config_session(tmp_path, *, modify_enabled: bool) -> WorkbenchSession:
+    """构造选中 openai-codex 模型的 workbench 会话（flag 可开关）。"""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join([
+            "[llm]",
+            'model = "openai-codex/gpt-5.6-luna"',
+            f"codex_modify_enabled = {str(modify_enabled).lower()}",
+            "",
+            "[[llm.providers]]",
+            'name = "openai-codex"',
+            'api_mode = "codex_app_server"',
+            'api_key = ""',
+            "models = []",
+        ]),
+        encoding="utf-8",
+    )
+    return WorkbenchSession(config_path=config_path)
+
+
+def test_codex_modify_api_gate_flag_off_rejects_modify(tmp_path):
+    """flag=false：API 层直接拒绝 codex MODIFY（不进 pipeline、不发请求）。"""
+    session = _codex_modify_config_session(tmp_path, modify_enabled=False)
+    session.route("POST", "/api/project/new", {})
+    response = session.route("POST", "/api/assistant/generate", {
+        "message": "给书架加一层层板",
+        "intent": "MODIFY",
+    })
+    assert response["ok"] is False
+    assert "尚未开放" in response["error"]
+
+
+def test_codex_modify_api_gate_flag_off_rejects_debug_and_confirm(tmp_path):
+    """flag=false：DEBUG/REPAIR 与 confirm_plan 计划确认门同样被拒。"""
+    session = _codex_modify_config_session(tmp_path, modify_enabled=False)
+    session.route("POST", "/api/project/new", {})
+    debug = session.route("POST", "/api/assistant/generate", {
+        "message": "为什么编译不过",
+        "intent": "DEBUG",
+    })
+    assert debug["ok"] is False
+    assert "尚未开放" in debug["error"]
+    confirm = session.route("POST", "/api/assistant/generate", {
+        "message": "给书架加一层层板",
+        "intent": "MODIFY",
+        "confirm_plan": True,
+    })
+    assert confirm["ok"] is False
+    assert "尚未开放" in confirm["error"]
+
+
+def test_codex_modify_api_gate_flag_on_proceeds_to_pipeline(tmp_path):
+    """flag=true：API 放行（请求进入 pipeline；此处用 stub pipeline 验证无 gate 拦截）。"""
+    calls = []
+
+    class _StubPipeline:
+        def __init__(self, trace_dir=None, **kwargs):
+            self.config = GDLAgentConfig()
+
+        def execute(self, request):
+            calls.append(request.intent)
+            return TaskResult(
+                success=True, intent=request.intent or "MODIFY",
+                plain_text="stub-ok", project=None,
+            )
+
+    session = _codex_modify_config_session(tmp_path, modify_enabled=True)
+    session.pipeline_class = _StubPipeline
+    proj = HSFProject.create_new("Shelf", str(tmp_path / "Shelf")).save_to_disk()
+    session.route("POST", "/api/project/load", {"path": str(proj)})
+    response = session.route("POST", "/api/assistant/generate", {
+        "message": "给书架加一层层板",
+        "intent": "MODIFY",
+    })
+    assert response["ok"] is True
+    assert calls == ["MODIFY"]
+
+
+def test_settings_route_exposes_codex_modify_enabled(tmp_path):
+    """llm settings（snapshot 透出）包含 codex_modify_enabled（默认 false；配置 true 时 true）。"""
+    off = _codex_modify_config_session(tmp_path, modify_enabled=False)
+    snapshot_off = off.route("GET", "/api/snapshot", {})
+    assert snapshot_off["ok"] is True
+    assert snapshot_off["llm"]["codex_modify_enabled"] is False
+
+    on = _codex_modify_config_session(tmp_path, modify_enabled=True)
+    snapshot_on = on.route("GET", "/api/snapshot", {})
+    assert snapshot_on["ok"] is True
+    assert snapshot_on["llm"]["codex_modify_enabled"] is True

@@ -687,6 +687,9 @@ function CodexSection({
   return (
     <div className="settings-codex-section" data-testid="codex-section">
       <div className="settings-row-header">{t('settings.ai.codex.sectionTitle')}</div>
+      <p className="settings-hint" data-testid="codex-modify-note">
+        {t('settings.ai.codex.modifyNotOpen')}
+      </p>
       {state === 'no_cli' ? (
         <p className="settings-test-result error" data-testid="codex-no-cli">
           {t('settings.ai.codex.noCli')}

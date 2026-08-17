@@ -83,6 +83,7 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.copied': 'Copied',
   // Codex BYOA (D1): ChatGPT subscription login & dynamic models
   'settings.ai.codex.sectionTitle': 'ChatGPT Codex (subscription)',
+  'settings.ai.codex.modifyNotOpen': 'Modify (MODIFY) is not yet available for ChatGPT Codex — it will be enabled only after a dedicated release decision.',
   'settings.ai.codex.login': 'Connect my ChatGPT',
   'settings.ai.codex.loginPending': 'Signing in…',
   'settings.ai.codex.loginPendingHint': 'Complete the sign-in in the opened browser. The panel refreshes your account and available models automatically.',

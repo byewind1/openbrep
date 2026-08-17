@@ -179,6 +179,10 @@ class TaskRequest:
     agent_loop_plan: bool = False          # agent loop 是否先输出可审查计划（流式/SSE 默认开）
     confirm_plan: bool = False             # 计划确认门：GUI MODIFY 置 True（先出计划，确认后才执行）
     confirmed_plan: Optional[dict] = None  # 已确认的计划（/api/modify/confirm approve 后注入 agent loop）
+    # D10：会话层 project epoch 守卫（workbench 注入）。长任务执行期间会话项目
+    # 切换时返回 False，Codex modify 桥接据此拒绝后续工具 mutation 并中止任务；
+    # 非 codex 路径不使用。None = 不检查（benchmark/CLI 直连 pipeline 保持原状）。
+    epoch_guard: Optional[Callable[[], bool]] = None
     confirm_extraction: bool = False       # 提取确认门（P5d-2）：GUI CREATE 带图置 True（提取后早退等确认）
     confirmed_extractions: Optional[list[dict]] = None  # 用户确认/编辑后的提取 dict 列表（跳过 harness 重建 plans）
 
@@ -319,6 +323,12 @@ class TaskPipeline:
                 micro_result = self._try_micro_modify(request)
                 if micro_result is not None:
                     result = micro_result
+                elif self._is_codex_model_selected():
+                    # D10：codex 模型只走确定性微修改（零 LLM）或动态工具桥接——
+                    # skill_ops / param_modify 需要 LLM 意图解析（codex 生成面
+                    # fail closed），跳过死路径直接进桥接（flag=false 时桥接
+                    # 入口 fail closed，稳定文案，零 RPC）。
+                    result = self._handle_modify_agent_loop(request)
                 else:
                     skill_ops_result = self._try_skill_ops(request)
                     if skill_ops_result is not None:
@@ -1638,6 +1648,20 @@ class TaskPipeline:
         与 `_handle_script_update` 完全独立；显式 `agent_loop=False` 可回退旧路径。
         实现见 runtime/modify_agent_loop.py。
         """
+        # D10：ChatGPT Codex 模型走动态工具桥接（app-server dynamic tools →
+        # ModifyToolRegistry）。feature flag 默认 false：未开启时全链路 fail
+        # closed（稳定文案，不拉起 app-server、不发任何 turn/thread 请求）。
+        if self._is_codex_model_selected():
+            if not self.config.llm.codex_modify_enabled:
+                from openbrep.runtime.modify_codex_bridge import MODIFY_FLAG_OFF_TEXT
+                return TaskResult(
+                    success=False,
+                    intent=request.intent or "MODIFY",
+                    plain_text=MODIFY_FLAG_OFF_TEXT,
+                    error=MODIFY_FLAG_OFF_TEXT,
+                )
+            from openbrep.runtime.modify_codex_bridge import run_codex_modify_agent_loop
+            return run_codex_modify_agent_loop(self, request)
         from openbrep.runtime.modify_agent_loop import run_modify_agent_loop
         return run_modify_agent_loop(self, request)
 
