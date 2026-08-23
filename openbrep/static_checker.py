@@ -210,6 +210,9 @@ class StaticChecker:
                 # GDL built-in (case-insensitive lookup)
                 if name.upper() in GDL_BUILTINS_CASEFOLD or name in GDL_BUILTINS:
                     continue
+                # Known GDL command from static command list (filters WALLHOLE, SET, ...)
+                if name.upper() in GDL_COMMANDS:
+                    continue
                 # _ prefix: handled by forward_decl check
                 if name.startswith("_"):
                     continue
