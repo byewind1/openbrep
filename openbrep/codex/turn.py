@@ -58,6 +58,15 @@ _POLL_INTERVAL = 0.25
 # turn/interrupt 与 thread/delete 的等待窗口（秒）：best-effort 清理，不阻塞过久。
 _CLEANUP_WAIT = 3.0
 
+
+def wire_model_name(model: str) -> str:
+    """Return the model identifier accepted by the Codex app-server wire API.
+
+    ``openai-codex/`` is an OpenBrep configuration/provider namespace, not
+    part of the model id accepted by the ChatGPT-account app-server.
+    """
+    return model.removeprefix("openai-codex/")
+
 # 额度类错误信号（CodexErrorInfo / 错误文本关键字；命中后映射稳定 quota 文案，
 # 绝不把上游错误原文拼进返回）。
 _QUOTA_SIGNALS = (
@@ -266,7 +275,7 @@ class CodexTurnRunner:
         AGENTS/skills/plugins）；threadSource 仅作分析分类。
         """
         return {
-            "model": model,
+            "model": wire_model_name(model),
             "cwd": str(cwd),
             "approvalPolicy": "never",
             "sandbox": "read-only",
@@ -321,7 +330,7 @@ class CodexTurnRunner:
         params: dict[str, Any] = {
             "threadId": thread_id,
             "input": input_items,
-            "model": model,
+            "model": wire_model_name(model),
             "cwd": str(cwd),
             "approvalPolicy": "never",
             "sandboxPolicy": {"type": "readOnly", "networkAccess": False},

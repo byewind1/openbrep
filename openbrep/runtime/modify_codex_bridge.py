@@ -40,6 +40,7 @@ from openbrep.codex.turn import (
     TIMEOUT_TEXT,
     TURN_ERROR_TEXT,
     build_turn_prompt,
+    wire_model_name,
 )
 from openbrep.llm import ToolCall, ToolDefinition
 
@@ -286,7 +287,7 @@ class CodexModifyTurnDriver:
 
     def _thread_start_params(self) -> dict:
         return {
-            "model": self._model,
+            "model": wire_model_name(self._model),
             "cwd": self._cwd,
             "approvalPolicy": "never",
             "sandbox": "read-only",
@@ -301,7 +302,7 @@ class CodexModifyTurnDriver:
         params: dict[str, Any] = {
             "threadId": thread_id,
             "input": [{"type": "text", "text": user_text, "text_elements": []}],
-            "model": self._model,
+            "model": wire_model_name(self._model),
             "cwd": self._cwd,
             "approvalPolicy": "never",
             "sandboxPolicy": {"type": "readOnly", "networkAccess": False},

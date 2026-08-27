@@ -221,6 +221,31 @@ def _record_turn_params(method: str, params: dict) -> None:
         pass
 
 
+def _qualified_codex_model_error(params: dict) -> dict | None:
+    """Mirror app-server's rejection of the OpenBrep-qualified model id.
+
+    The real ChatGPT-account endpoint accepts the bare model id on the wire;
+    the qualified value is intentionally not echoed in the error response.
+    """
+    model = params.get("model")
+    if (
+        os.environ.get("FAKE_CODEX_REJECT_QUALIFIED_MODEL", "1") != "0"
+        and isinstance(model, str)
+        and model.startswith("openai-codex/")
+    ):
+        return {
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32602,
+                "message": "model is not supported for ChatGPT account",
+                "type": "invalid_request_error",
+                "status": 400,
+            },
+            "willRetry": False,
+        }
+    return None
+
+
 def _effort_supported_for_thread(thread_id: str, effort: str) -> bool:
     """turn/start 的 effort 是否属于该 thread 所用模型的支持集合。"""
     if not effort:
@@ -1176,6 +1201,11 @@ def main() -> None:
             params = msg.get("params") or {}
             _record_cwd("thread/start", params.get("cwd"))
             _record_turn_params("thread/start", params)
+            qualified_error = _qualified_codex_model_error(params)
+            if qualified_error:
+                qualified_error["id"] = rid
+                _send(qualified_error)
+                continue
             if params.get("dynamicTools") is not None:
                 caps = _INITIALIZE_PARAMS.get("capabilities")
                 if not isinstance(caps, dict) or not caps.get("experimentalApi"):
@@ -1239,6 +1269,11 @@ def main() -> None:
             params = msg.get("params") or {}
             _record_cwd("turn/start", params.get("cwd"))
             _record_turn_params("turn/start", params)
+            qualified_error = _qualified_codex_model_error(params)
+            if qualified_error:
+                qualified_error["id"] = rid
+                _send(qualified_error)
+                continue
             forbidden = _params_forbidden(params)
             if forbidden:
                 _send(

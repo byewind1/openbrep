@@ -208,10 +208,10 @@ def test_create_effective_metadata_matches_server_received(tmp_path):
         assert turns, "fake server 必须收到 turn/start"
         for entry in turns:
             params = entry["params"]
-            assert params.get("model") == "openai-codex/gpt-5.6-luna"
+            assert params.get("model") == "gpt-5.6-luna"
             assert params.get("effort") == "high"
         # 元数据与实收逐字段一致
-        assert turns[0]["params"]["model"] == "openai-codex/gpt-5.6-luna"
+        assert turns[0]["params"]["model"] == "gpt-5.6-luna"
         assert turns[0]["params"]["effort"] == eff["reasoning_effort"]
     finally:
         provider.close()
@@ -232,7 +232,7 @@ def test_chat_effective_metadata_matches_server_received(tmp_path):
         turns = harness.read_turn_params()
         assert turns
         assert turns[0]["params"]["effort"] == "medium"
-        assert turns[0]["params"]["model"] == "openai-codex/gpt-5.6-luna"
+        assert turns[0]["params"]["model"] == "gpt-5.6-luna"
     finally:
         provider.close()
         harness.cleanup()
@@ -302,17 +302,17 @@ def test_multi_task_settings_changed_metadata_reconciled(tmp_path):
         assert r3.success is True
         turns3 = _sliced_turns(harness, start3)
         assert turns3
-        assert turns3[0]["params"]["model"] == "openai-codex/gpt-5.6-terra"
+        assert turns3[0]["params"]["model"] == "gpt-5.6-terra"
         assert turns3[0]["params"]["effort"] == "high"
         assert r3.metadata["codex_effective"] == {
             "model": "openai-codex/gpt-5.6-terra", "reasoning_effort": "high",
         }
 
         # 每段实收与对应元数据逐字节一致
-        assert turns1[0]["params"]["model"] == r1.metadata["codex_effective"]["model"]
+        assert turns1[0]["params"]["model"] == "gpt-5.6-luna"
         assert turns1[0]["params"]["effort"] == r1.metadata["codex_effective"]["reasoning_effort"]
         assert turns2[0]["params"]["effort"] == r2.metadata["codex_effective"]["reasoning_effort"]
-        assert turns3[0]["params"]["model"] == r3.metadata["codex_effective"]["model"]
+        assert turns3[0]["params"]["model"] == "gpt-5.6-terra"
         assert turns3[0]["params"]["effort"] == r3.metadata["codex_effective"]["reasoning_effort"]
     finally:
         provider.close()
@@ -344,7 +344,7 @@ def test_fixed_failure_no_fallback_to_other_model(tmp_path):
         all_params = [e["params"] for e in threads + turns]
         assert all_params, "fake server 必须记录至少一次请求"
         for params in all_params:
-            assert params.get("model") == "openai-codex/gpt-5.6-luna", (
+            assert params.get("model") == "gpt-5.6-luna", (
                 f"发现指向其他模型的请求: {params}"
             )
         # 失败后没有后续轮次（单次 CHAT 调用；无重试升级）
@@ -404,7 +404,7 @@ def test_long_reasoning_no_final_create_fails_closed(tmp_path):
         assert turns
         for entry in turns:
             assert entry["params"]["effort"] == "high"
-            assert entry["params"]["model"] == "openai-codex/gpt-5.6-luna"
+            assert entry["params"]["model"] == "gpt-5.6-luna"
     finally:
         provider.close()
         harness.cleanup()
