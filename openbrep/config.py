@@ -569,6 +569,12 @@ class LLMConfig:
     # supportedReasoningEfforts（save 时校验）；空字符串 = 不覆盖（模型默认）。
     # 非 codex 模型一律忽略该字段，绝不写入 litellm 请求。
     reasoning_effort: str = ""
+    # D10：ChatGPT Codex（openai-codex）MODIFY 动态工具桥接的 feature flag。
+    # 默认 False：全链路无 Codex MODIFY 入口（workbench API 拒绝、前端无入口、
+    # 运行时 fail closed）。True 时 Codex 模型改物走 app-server dynamic tools
+    # 桥接（OpenBrep 独占工具执行、审计与完成门禁）。仅供维护者测试与 D11
+    # HITL 决策使用；设置页不暴露该开关、不宣称 MODIFY 可用。
+    codex_modify_enabled: bool = False
 
     @property
     def providers(self) -> list[dict]:
@@ -981,6 +987,9 @@ class GDLAgentConfig:
                 # D6：Fixed 模式 reasoning effort（只对 codex 订阅模型生效；
                 # 空字符串 = 不覆盖模型默认）
                 "reasoning_effort": self.llm.reasoning_effort or "",
+                # D10：Codex MODIFY 动态工具桥接 feature flag（默认 false；仅维护者
+                # 在 config.toml 显式开启，设置页不暴露）
+                "codex_modify_enabled": bool(self.llm.codex_modify_enabled),
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
@@ -1025,6 +1034,8 @@ class GDLAgentConfig:
             lines.append('# assistant_settings = """告诉我你的使用场景、经验水平，或你希望我怎么协助你"""')
         if self.llm.reasoning_effort:
             lines.append(f'reasoning_effort = "{self.llm.reasoning_effort}"')
+        if self.llm.codex_modify_enabled:
+            lines.append("codex_modify_enabled = true")
         if self.llm.api_base:
             lines.append(f'api_base = "{self.llm.api_base}"')
         lines += [

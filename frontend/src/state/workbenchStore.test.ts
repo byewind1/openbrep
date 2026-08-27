@@ -3327,3 +3327,83 @@ test('modify stream without vision events leaves visionExtractions undefined (P5
   const last = store.getState().assistantMessages.at(-1)
   expect(last?.visionExtractions).toBeUndefined()
 })
+
+// ── D10：Codex MODIFY feature flag——flag=false 时 UI 无 MODIFY/DEBUG 入口 ──
+
+test('sendChat blocks modify intent for codex model when flag off (no API call)', async () => {
+  let generateCalled = 0
+  let planCalled = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+        llm: {
+          model: 'openai-codex/gpt-5.6-luna',
+          models: ['openai-codex/gpt-5.6-luna'],
+          api_key: '',
+          api_base: '',
+          max_retries: 5,
+          assistant_settings: '',
+          codex_modify_enabled: false,
+        },
+      }),
+      generateWithAssistant: async () => {
+        generateCalled += 1
+        return { ok: true, assistant: { kind: 'generate', reply: 'x', changed_files: [], intent: 'MODIFY' } }
+      },
+      requestModifyPlan: async () => {
+        planCalled += 1
+        return { ok: true, awaiting_confirmation: false }
+      },
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('给书架加一层层板')
+
+  const state = store.getState()
+  expect(generateCalled).toBe(0)
+  expect(planCalled).toBe(0)
+  expect(state.assistantBusy).toBe(false)
+  const last = state.assistantMessages.at(-1)
+  expect(last?.role).toBe('assistant')
+  expect(last?.content).toContain('尚未开放')
+})
+
+test('sendChat blocks debug intent for codex model when flag off', async () => {
+  let generateCalled = 0
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        compiler: { mode: 'mock', converter_path: '', output_dir: '' },
+        llm: {
+          model: 'openai-codex/gpt-5.6-luna',
+          models: ['openai-codex/gpt-5.6-luna'],
+          api_key: '',
+          api_base: '',
+          max_retries: 5,
+          assistant_settings: '',
+          codex_modify_enabled: false,
+        },
+      }),
+      generateWithAssistant: async () => {
+        generateCalled += 1
+        return { ok: true, assistant: { kind: 'generate', reply: 'x', changed_files: [], intent: 'DEBUG' } }
+      },
+    }),
+  )
+  await store.getState().load()
+  await store.getState().sendChat('为什么编译不过')
+
+  const state = store.getState()
+  expect(generateCalled).toBe(0)
+  const last = state.assistantMessages.at(-1)
+  expect(last?.content).toContain('尚未开放')
+})

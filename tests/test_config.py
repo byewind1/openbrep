@@ -868,6 +868,23 @@ models = []
             reloaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(reloaded.llm.reasoning_effort, "high")
 
+    def test_codex_modify_enabled_roundtrip_default_false(self):
+        """D10：codex_modify_enabled 默认 false；save/load roundtrip 保持。
+
+        to_toml_string 只在值为 true 时输出该键。
+        """
+        config = GDLAgentConfig()
+        assert config.llm.codex_modify_enabled is False
+        text = config.to_toml_string()
+        assert "codex_modify_enabled" not in text
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config.llm.codex_modify_enabled = True
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            assert reloaded.llm.codex_modify_enabled is True
+            assert "codex_modify_enabled = true" in config.to_toml_string()
+
     def test_reasoning_effort_default_empty_and_codex_only_helper(self):
         """D6：effort 默认空；codex_reasoning_effort() 只对 codex 模型返回。"""
         config = GDLAgentConfig()

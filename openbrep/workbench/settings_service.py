@@ -423,6 +423,11 @@ class WorkbenchSettingsService:
             # D6：Fixed 模式已保存的 reasoning effort（只对 codex 模型有意义；
             # 空字符串 = 不覆盖模型默认）
             "reasoning_effort": str(self.session.config.llm.reasoning_effort or ""),
+            # D10：Codex MODIFY feature flag（默认 false；前端据此不提供
+            # MODIFY 入口——设置页也绝不宣称 MODIFY 可用）
+            "codex_modify_enabled": bool(
+                getattr(self.session.config.llm, "codex_modify_enabled", False)
+            ),
             "codex": codex_block,
         }
 

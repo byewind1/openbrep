@@ -679,6 +679,311 @@ def _record_cwd(method: str, cwd) -> None:
     _log_line(entry)
 
 
+# ── D10：动态工具桥接协议（experimental dynamicTools + item/tool/call）──────
+# 协议（0.147.0 app-server README）：
+#   thread/start.dynamicTools（camelCase）声明工具；
+#   turn 内模型调用工具时，server 先发 item/started（dynamicToolCall）再发
+#   JSON-RPC 服务器请求 item/tool/call（{threadId, turnId, callId, namespace,
+#   tool, arguments}），客户端以 {contentItems:[{type:"inputText",text}],
+#   success} 回应，最后发 item/completed。
+# FAKE_CODEX_TURN_SCRIPT=<path>：每行一个 JSON 数组 = 该 turn 的事件脚本
+# （按 turn 顺序消费）。步骤 op：
+#   tool_call / exploit_tool : 发一次动态工具调用并等待客户端回应
+#     （tool/arguments/call_id/namespace/times/same_request_id/thread_id/
+#      turn_id 可覆盖）
+#   commentary / final      : 发一条 agentMessage（phase 分别 commentary/final_answer）
+#   no_final                : turn 正常结束但无 agent message
+#   malformed / tool_noise  : 畸形帧 / shell+patch item 噪音（客户端必须忽略）
+#   error / quota           : error 通知（message 可带 canary；quota 带
+#                             codexErrorInfo=usageLimitExceeded）
+#   hang                    : 不发送 turn/completed（等 turn/interrupt）
+# FAKE_CODEX_DYN_LOG=<path>：追加记录 initialize 参数、thread/start 参数、
+# 每个 item/tool/call 请求与客户端回应（测试断言关联纪律/审计用）。
+_INITIALIZE_PARAMS: dict = {}
+_DYN_LOG_PATH = os.environ.get("FAKE_CODEX_DYN_LOG", "")
+_tool_req_seq = 0
+_script_turn_idx = 0
+
+
+def _dyn_log(**data) -> None:
+    if not _DYN_LOG_PATH:
+        return
+    try:
+        with open(_DYN_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _next_tool_req_id() -> int:
+    global _tool_req_seq
+    _tool_req_seq += 1
+    return _tool_req_seq
+
+
+def _script_steps_for_turn() -> list | None:
+    """按 turn 顺序消费 FAKE_CODEX_TURN_SCRIPT 的每一行（JSON 数组 = 该 turn 步骤）。"""
+    global _script_turn_idx
+    path = os.environ.get("FAKE_CODEX_TURN_SCRIPT", "")
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [ln for ln in f if ln.strip()]
+    except OSError:
+        return []
+    if _script_turn_idx >= len(lines):
+        return []
+    try:
+        steps = json.loads(lines[_script_turn_idx])
+    except ValueError:
+        steps = []
+    _script_turn_idx += 1
+    return steps if isinstance(steps, list) else []
+
+
+def _dynamic_tool_item(call_id: str, namespace, tool, arguments, status: str,
+                       content_items=None, success=None) -> dict:
+    return {
+        "type": "dynamicToolCall",
+        "id": call_id,
+        "namespace": namespace,
+        "tool": tool,
+        "arguments": arguments,
+        "status": status,
+        "contentItems": content_items,
+        "success": success,
+        "error": None,
+        "durationMs": None,
+    }
+
+
+def _wait_for_tool_response(lines, req_id: int) -> dict:
+    """等待客户端对 item/tool/call 的回应；期间处理 turn/interrupt 等请求。"""
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("id") == req_id:
+            if "result" in msg and isinstance(msg["result"], dict):
+                return msg["result"]
+            return {"success": False}
+        method = msg.get("method")
+        if isinstance(method, str) and method == "turn/interrupt":
+            params = msg.get("params") or {}
+            t_id = str(params.get("threadId") or "")
+            tu_id = str(params.get("turnId") or "")
+            if tu_id in _turns:
+                _turns[tu_id]["status"] = "interrupted"
+                _send({
+                    "method": "turn/completed",
+                    "params": {"threadId": t_id, "turn": _fake_turn(tu_id, status="interrupted")},
+                })
+            # 回应 interrupt 请求本身（客户端在 call() 等待）
+            _send({"jsonrpc": "2.0", "id": msg.get("id"), "result": {}})
+            continue
+        # 其他客户端请求（thread/delete 等）：忽略，继续等待
+    return {"success": False}
+
+
+def _emit_dynamic_tool_call(thread_id: str, turn_id: str, step: dict, lines) -> None:
+    """发一次 item/started → item/tool/call → 等待回应 → item/completed。"""
+    tool = str(step.get("tool") or "unknown")
+    arguments = step.get("arguments") or {}
+    namespace = step.get("namespace")
+    call_id = str(step.get("call_id") or f"call-{_next_msg_id()}")
+    times = int(step.get("times") or 1)
+    same_request_id = bool(step.get("same_request_id"))
+    req_id = None
+    for i in range(times):
+        req_id = req_id if (same_request_id and i > 0) else _next_tool_req_id()
+        params = {
+            "threadId": str(step.get("thread_id") or thread_id),
+            "turnId": str(step.get("turn_id") or turn_id),
+            "callId": call_id,
+            "namespace": namespace,
+            "tool": tool,
+            "arguments": arguments,
+        }
+        _send({
+            "method": "item/started",
+            "params": {
+                "item": _dynamic_tool_item(call_id, namespace, tool, arguments, "inProgress"),
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "startedAtMs": 1786800000000,
+            },
+        })
+        _send({"jsonrpc": "2.0", "id": req_id, "method": "item/tool/call", "params": params})
+        _dyn_log(event="tool_request", request_id=req_id, params=params)
+        result = _wait_for_tool_response(lines, req_id)
+        _dyn_log(event="tool_response", request_id=req_id, result=result)
+        ok = bool((result or {}).get("success"))
+        status = "completed" if ok else "failed"
+        _send({
+            "method": "item/completed",
+            "params": {
+                "item": _dynamic_tool_item(
+                    call_id, namespace, tool, arguments, status,
+                    content_items=(result or {}).get("contentItems"),
+                    success=ok,
+                ),
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "completedAtMs": 1786800000200,
+            },
+        })
+
+
+def _emit_agent_message(thread_id: str, turn_id: str, text: str, phase: str | None) -> None:
+    msg_id = _next_msg_id()
+    _send({
+        "method": "item/started",
+        "params": {
+            "item": _agent_message_item(msg_id, "", phase),
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "startedAtMs": 1786800000000,
+        },
+    })
+    _send({
+        "method": "item/agentMessage/delta",
+        "params": {"threadId": thread_id, "turnId": turn_id, "itemId": msg_id, "delta": text},
+    })
+    _send({
+        "method": "item/completed",
+        "params": {
+            "item": _agent_message_item(msg_id, text, phase),
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "completedAtMs": 1786800000200,
+        },
+    })
+
+
+def _emit_tool_noise(thread_id: str, turn_id: str) -> None:
+    """恶意服务器尝试 shell/patch 工具面：客户端必须忽略非 agentMessage item。"""
+    shell_item = {
+        "type": "commandExecution", "id": "fake-shell-1", "pluginId": None,
+        "scriptPath": None, "command": "rm -rf /tmp/CANARY-EVIL", "cwd": thread_id,
+        "processId": None, "source": "codex_cli", "status": "running",
+        "commandActions": [], "aggregatedOutput": None, "exitCode": None, "durationMs": None,
+    }
+    patch_item = {
+        "type": "fileChange", "id": "fake-patch-1",
+        "changes": [{"changeType": "update", "path": "outside.gdl", "line": 1, "value": "EVIL"}],
+        "status": "applied",
+    }
+    for item in (shell_item, patch_item):
+        _send({
+            "method": "item/started",
+            "params": {
+                "item": item, "threadId": thread_id, "turnId": turn_id,
+                "startedAtMs": 1786800000000,
+            },
+        })
+        _send({
+            "method": "item/completed",
+            "params": {
+                "item": item, "threadId": thread_id, "turnId": turn_id,
+                "completedAtMs": 1786800000100,
+            },
+        })
+
+
+def _run_turn_script(thread_id: str, turn_id: str, steps: list, lines) -> None:
+    """按脚本执行一次 turn 的事件序列（D10 动态工具桥接测试）。"""
+    for step in steps or []:
+        if not isinstance(step, dict):
+            continue
+        op = str(step.get("op") or "")
+        if op in ("tool_call", "exploit_tool"):
+            _emit_dynamic_tool_call(thread_id, turn_id, step, lines)
+        elif op == "commentary":
+            text_commentary = str(step.get("text") or "（中间思考）")
+            _emit_agent_message(thread_id, turn_id, text_commentary, "commentary")
+        elif op == "final":
+            text_final = str(step.get("text") or "你好，我是 Codex 测试助手。")
+            _emit_agent_message(thread_id, turn_id, text_final, "final_answer")
+        elif op == "no_final":
+            pass
+        elif op == "malformed":
+            sys.stdout.write('{"method": "item/agentMessage/delta", "params": {"threadId": "')
+            sys.stdout.flush()
+            _send({"jsonrpc": "2.0", "id": [99, 100], "result": {}})
+            _send(["not", "a", "dict"])
+            _send("not json at all {{{{")
+        elif op == "tool_noise":
+            _emit_tool_noise(thread_id, turn_id)
+        elif op == "error":
+            canary = str(step.get("canary") or "")
+            _send({
+                "method": "error",
+                "params": {
+                    "message": f"upstream error {canary}",
+                    "codexErrorInfo": None, "additionalDetails": None,
+                },
+            })
+            return
+        elif op == "quota":
+            canary = str(step.get("canary") or "")
+            _send({
+                "method": "error",
+                "params": {
+                    "message": f"usage limit exceeded {canary}",
+                    "codexErrorInfo": "usageLimitExceeded",
+                    "additionalDetails": None,
+                },
+            })
+            return
+        elif op == "approval_request":
+            # 未预期的服务器请求（如审批请求）：客户端必须拒绝，绝不批准
+            req_id = _next_tool_req_id()
+            _send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": str(step.get("method") or "item/commandExecution/requestApproval"),
+                "params": step.get("params") or {},
+            })
+            _wait_for_tool_response(lines, req_id)
+        elif op == "post_completed_tool":
+            # turn 已完成后迟到的工具调用：先发 turn/completed，再发工具请求；
+            # 客户端必须拒绝且不执行（绝不污染已完成轮次）。
+            _send({
+                "method": "turn/completed",
+                "params": {"threadId": thread_id, "turn": _fake_turn(turn_id, status="completed")},
+            })
+            req_id = _next_tool_req_id()
+            _send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "item/tool/call",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "callId": str(step.get("call_id") or "late-call"),
+                    "namespace": None,
+                    "tool": str(step.get("tool") or "update_script"),
+                    "arguments": step.get("arguments") or {},
+                },
+            })
+            _dyn_log(event="tool_request", request_id=req_id, params={})
+            _wait_for_tool_response(lines, req_id)
+            return
+        elif op == "hang":
+            return
+    _send({
+        "method": "turn/completed",
+        "params": {"threadId": thread_id, "turn": _fake_turn(turn_id, status="completed")},
+    })
+
+
 def main() -> None:
     version = os.environ.get("FAKE_CODEX_VERSION", "0.147.0")
     login_type = os.environ.get("FAKE_CODEX_LOGIN_TYPE", "chatgpt")
@@ -730,7 +1035,8 @@ def main() -> None:
     delay_first = float(os.environ.get("FAKE_CODEX_DELAY_FIRST_RESPONSE_SECONDS", "0"))
     malformed_sent = False
     poison_sent = False
-    for raw in sys.stdin:
+    _stdin_lines = iter(sys.stdin)
+    for raw in _stdin_lines:
         line = raw.strip()
         if not line:
             continue
@@ -767,6 +1073,9 @@ def main() -> None:
         handled += 1
 
         if method == "initialize":
+            _INITIALIZE_PARAMS.clear()
+            _INITIALIZE_PARAMS.update(msg.get("params") or {})
+            _dyn_log(event="initialize", params=msg.get("params") or {})
             if version == "garbage":
                 user_agent = "openbrep-garbage no-version-token"
             elif version == "old":
@@ -867,6 +1176,16 @@ def main() -> None:
             params = msg.get("params") or {}
             _record_cwd("thread/start", params.get("cwd"))
             _record_turn_params("thread/start", params)
+            if params.get("dynamicTools") is not None:
+                caps = _INITIALIZE_PARAMS.get("capabilities")
+                if not isinstance(caps, dict) or not caps.get("experimentalApi"):
+                    _send({
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {"code": -32602, "message": "DYNAMIC-TOOLS-NEED-EXPERIMENTAL"},
+                    })
+                    continue
+                _dyn_log(event="thread/start", params=params)
             forbidden = _params_forbidden(params)
             if forbidden:
                 _send(
@@ -980,7 +1299,12 @@ def main() -> None:
             hang_pending = os.environ.get("FAKE_CODEX_TURN_HANG") and _hang_active
             if hang_pending:
                 _hang_active = False  # 只让第一个 turn 挂起
-            _emit_turn_sequence(tid, turn_id, hang=bool(hang_pending))
+            script_steps = _script_steps_for_turn()
+            if script_steps is not None:
+                _dyn_log(event="turn/start", turn_id=turn_id, params=params)
+                _run_turn_script(tid, turn_id, script_steps, _stdin_lines)
+            else:
+                _emit_turn_sequence(tid, turn_id, hang=bool(hang_pending))
             continue
         elif method == "turn/interrupt" and os.environ.get("FAKE_CODEX_TURN"):
             params = msg.get("params") or {}
@@ -1002,6 +1326,7 @@ def main() -> None:
             params = msg.get("params") or {}
             tid = str(params.get("threadId") or "")
             _threads.pop(tid, None)
+            _dyn_log(event="thread/delete", params=params)
             result = {}
         elif method == "never/respond":
             continue  # 专门用于超时测试：不发响应

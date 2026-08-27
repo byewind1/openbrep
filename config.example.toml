@@ -22,6 +22,13 @@ max_tokens = 16384
 # 留空 = 不覆盖（使用模型默认）。非 codex 模型一律忽略该字段。
 # reasoning_effort = "medium"
 
+# 可选（ChatGPT Codex 订阅模型专用，默认关闭）：MODIFY 动态工具桥接。
+# 仅由维护者测试/发布评估使用：默认 false 时全链路无 Codex MODIFY 入口
+# （API 拒绝、前端无入口、运行时 fail closed）。true 时 Codex 改物走
+# app-server dynamic tools 桥接——OpenBrep 独占工具执行、审计与完成门禁，
+# Codex 仍不获得 shell / apply_patch / 任意文件访问 / MCP。设置页不暴露。
+# codex_modify_enabled = true
+
 # ── 统一 Provider 注册表（推荐）──────────────────────────────
 # 每个 [[llm.providers]] = 一个 API 端点 + 它的模型列表，官方/自定义同一套机制。
 #   name:    provider 名（用于 provider/model 显式引用与按名匹配）
