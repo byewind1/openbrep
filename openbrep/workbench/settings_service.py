@@ -423,6 +423,8 @@ class WorkbenchSettingsService:
             # D6：Fixed 模式已保存的 reasoning effort（只对 codex 模型有意义；
             # 空字符串 = 不覆盖模型默认）
             "reasoning_effort": str(self.session.config.llm.reasoning_effort or ""),
+            # D9：Auto 必须显式保存；默认 fixed，前端只把此事实源装入 draft。
+            "codex_routing_mode": self.session.config.llm.effective_codex_routing_mode(),
             # D10：Codex MODIFY feature flag（默认 false；前端据此不提供
             # MODIFY 入口——设置页也绝不宣称 MODIFY 可用）
             "codex_modify_enabled": bool(
@@ -478,6 +480,20 @@ class WorkbenchSettingsService:
         # D6：Fixed 模式 effort——显式传入则校验；未传入（仅切模型）时校验
         # 已保存 effort 是否仍被新模型支持（残留拒绝，不静默替换）。
         effort = str(body.get("reasoning_effort") or "").strip()
+        mode_supplied = "codex_routing_mode" in body
+        routing_mode = str(body.get("codex_routing_mode") or "").strip()
+        if mode_supplied and routing_mode not in {"fixed", "auto"}:
+            return {
+                "ok": False,
+                "code": "invalid_codex_routing_mode",
+                "error": "Codex 路由模式只允许 fixed 或 auto。",
+            }
+        if mode_supplied and routing_mode == "auto" and not is_codex_qualified_model(model):
+            return {
+                "ok": False,
+                "code": "auto_routing_requires_codex",
+                "error": "Auto 路由仅适用于 ChatGPT Codex（openai-codex）订阅模型。",
+            }
         if is_codex_qualified_model(model):
             # 只允许保存当前账户 model/list 目录里的模型（P0-4），
             # 且保证 provider 条目为保留规范形态（api_mode=codex_app_server）。
@@ -504,6 +520,8 @@ class WorkbenchSettingsService:
             # 只对 codex 模型写 effort；非 codex 切换不清空（该字段对其惰性，
             # 切回 codex 时仍生效，避免静默丢配置）。
             self.session.config.llm.reasoning_effort = effort
+        if mode_supplied:
+            self.session.config.llm.codex_routing_mode = routing_mode
         self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
         self.session.llm_api_base = self.session.config.llm.resolve_api_base(model) or ""
         save_workbench_config(self.session.config, self.session.config_path)
@@ -558,6 +576,20 @@ class WorkbenchSettingsService:
         # D6：Fixed 模式 effort（显式传入则校验；未传入则校验已保存 effort
         # 是否仍被新模型支持——残留拒绝，不静默替换）。
         effort = str(body.get("reasoning_effort") or "").strip()
+        mode_supplied = "codex_routing_mode" in body
+        routing_mode = str(body.get("codex_routing_mode") or "").strip()
+        if mode_supplied and routing_mode not in {"fixed", "auto"}:
+            return {
+                "ok": False,
+                "code": "invalid_codex_routing_mode",
+                "error": "Codex 路由模式只允许 fixed 或 auto。",
+            }
+        if mode_supplied and routing_mode == "auto" and not is_codex_qualified_model(model):
+            return {
+                "ok": False,
+                "code": "auto_routing_requires_codex",
+                "error": "Auto 路由仅适用于 ChatGPT Codex（openai-codex）订阅模型。",
+            }
         if is_codex_qualified_model(model):
             if api_key:
                 # P0-1：订阅身份不接受 API Key 写入
@@ -592,6 +624,8 @@ class WorkbenchSettingsService:
         if is_codex_qualified_model(model):
             ensure_codex_provider_entry(self.session.config)
             self.session.config.llm.reasoning_effort = effort
+        if mode_supplied:
+            self.session.config.llm.codex_routing_mode = routing_mode
         self.session.config.llm.assistant_settings = assistant_settings
         self.session.config.agent.max_iterations = max_retries
         apply_llm_credentials_to_config(

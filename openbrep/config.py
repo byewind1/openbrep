@@ -569,6 +569,9 @@ class LLMConfig:
     # supportedReasoningEfforts（save 时校验）；空字符串 = 不覆盖（模型默认）。
     # 非 codex 模型一律忽略该字段，绝不写入 litellm 请求。
     reasoning_effort: str = ""
+    # D9：Auto 路由必须显式 opt-in；全新/旧配置默认 fixed。
+    # 无效值按 fixed 解释并在下次显式保存时规范化，绝不意外启用 Auto。
+    codex_routing_mode: str = "fixed"
     # D10：ChatGPT Codex（openai-codex）MODIFY 动态工具桥接的 feature flag。
     # 默认 False：全链路无 Codex MODIFY 入口（workbench API 拒绝、前端无入口、
     # 运行时 fail closed）。True 时 Codex 模型改物走 app-server dynamic tools
@@ -613,6 +616,10 @@ class LLMConfig:
         if not self._is_codex_app_server_model(model):
             return ""
         return str(self.reasoning_effort or "").strip()
+
+    def effective_codex_routing_mode(self) -> str:
+        """Return the fail-closed routing mode (``fixed`` or ``auto``)."""
+        return "auto" if str(self.codex_routing_mode or "").strip() == "auto" else "fixed"
 
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
@@ -976,6 +983,7 @@ class GDLAgentConfig:
         # 调用者事先经过 load/ensure（程序内直接构造的 config 也必须安全）。
         providers = normalize_provider_list(self.llm.providers)
         self.llm.providers = providers
+        self.llm.codex_routing_mode = self.llm.effective_codex_routing_mode()
         data = {
             "llm": {
                 "model": self.llm.model,
@@ -987,6 +995,8 @@ class GDLAgentConfig:
                 # D6：Fixed 模式 reasoning effort（只对 codex 订阅模型生效；
                 # 空字符串 = 不覆盖模型默认）
                 "reasoning_effort": self.llm.reasoning_effort or "",
+                # D9：显式 opt-in；写盘只允许规范枚举。
+                "codex_routing_mode": self.llm.effective_codex_routing_mode(),
                 # D10：Codex MODIFY 动态工具桥接 feature flag（默认 false；仅维护者
                 # 在 config.toml 显式开启，设置页不暴露）
                 "codex_modify_enabled": bool(self.llm.codex_modify_enabled),
@@ -1034,6 +1044,8 @@ class GDLAgentConfig:
             lines.append('# assistant_settings = """告诉我你的使用场景、经验水平，或你希望我怎么协助你"""')
         if self.llm.reasoning_effort:
             lines.append(f'reasoning_effort = "{self.llm.reasoning_effort}"')
+        if self.llm.effective_codex_routing_mode() == "auto":
+            lines.append('codex_routing_mode = "auto"')
         if self.llm.codex_modify_enabled:
             lines.append("codex_modify_enabled = true")
         if self.llm.api_base:

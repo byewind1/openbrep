@@ -122,6 +122,14 @@ export const zh = {
   'settings.ai.codex.effortSave': '保存 effort',
   'settings.ai.codex.effortSaved': '已保存（Fixed 模式将严格使用该组合）',
   'settings.ai.codex.effortSaveFailed': '保存失败',
+  'settings.ai.codex.routingModeLabel': '模型路由',
+  'settings.ai.codex.routingModeFixed': 'Fixed（默认）',
+  'settings.ai.codex.routingModeAuto': 'Auto（实验性）',
+  'settings.ai.codex.routingModeSave': '保存路由模式',
+  'settings.ai.codex.routingModeSaved': '路由模式已保存',
+  'settings.ai.codex.routingModeSaveFailed': '路由模式保存失败',
+  'settings.ai.codex.routingModeFixedHint': '严格使用已保存的模型与 effort；这是默认行为。',
+  'settings.ai.codex.routingModeAutoHint': '仅按 D8 实测组合路由；复杂任务可能进行一次 Luna high 未实测升级。',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': '语言',

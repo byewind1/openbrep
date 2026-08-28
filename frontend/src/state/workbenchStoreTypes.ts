@@ -126,7 +126,11 @@ export interface WorkbenchApi {
   fetchConfigRevision: () => Promise<ConfigRevisionResult>
   openConfig: () => Promise<{ ok: boolean; error?: string }>
   testLlmConnection: () => Promise<LlmConnectionTestResult>
-  updateLlmModel: (model: string, reasoningEffort?: string) => Promise<LlmSettingsResult>
+  updateLlmModel: (
+    model: string,
+    reasoningEffort?: string,
+    codexRoutingMode?: 'fixed' | 'auto',
+  ) => Promise<LlmSettingsResult>
   updateLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettingsResult>
   fetchTapirStatus: () => Promise<TapirStatusResult>
   reloadTapirLibraries: () => Promise<TapirActionResult>
@@ -282,7 +286,11 @@ export interface WorkbenchState {
   setCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettings>
   openConfig: () => Promise<void>
   testLlmConnection: () => Promise<LlmConnectionTestResult>
-  switchLlmModel: (model: string, reasoningEffort?: string) => Promise<void>
+  switchLlmModel: (
+    model: string,
+    reasoningEffort?: string,
+    codexRoutingMode?: 'fixed' | 'auto',
+  ) => Promise<void>
   saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
   sendChat: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   stopChat: () => void

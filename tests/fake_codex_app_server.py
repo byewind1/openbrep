@@ -203,6 +203,18 @@ def _model_list_response() -> dict:
 # 其他模型/provider 的请求；任务结果元数据里的 effective model/effort 与
 # app-server 实收完全一致。
 _TURN_PARAMS_LOG_PATH = os.environ.get("FAKE_CODEX_TURN_PARAMS_LOG", "")
+_RPC_LOG_PATH = os.environ.get("FAKE_CODEX_RPC_LOG", "")
+
+
+def _record_rpc(method: str) -> None:
+    """D9: optional method-only audit log; never records params or secrets."""
+    if not _RPC_LOG_PATH:
+        return
+    try:
+        with open(_RPC_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"method": method}) + "\n")
+    except OSError:
+        pass
 
 
 def _record_turn_params(method: str, params: dict) -> None:
@@ -1071,6 +1083,7 @@ def main() -> None:
             continue
         rid = msg.get("id")
         method = msg.get("method") or ""
+        _record_rpc(method)
         delay_method = os.environ.get("FAKE_CODEX_DELAY_METHOD", "")
         if delay and (not delay_method or method == delay_method):
             # 一次性延迟：marker 已存在则本次不延迟（用于「超时→关闭→重试」
