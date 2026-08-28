@@ -26,6 +26,7 @@ from unittest.mock import patch
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.runtime.modify_codex_bridge import CodexModifyTurnDriver
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
 
@@ -179,6 +180,24 @@ def _request(tmp_path, project, **overrides) -> TaskRequest:
     )
     kwargs.update(overrides)
     return TaskRequest(**kwargs)
+
+
+def test_modify_wire_params_strip_codex_namespace_only():
+    driver = CodexModifyTurnDriver(
+        client=object(),
+        model="openai-codex/gpt-5.6-luna",
+        cwd="/tmp/openbrep-hf1",
+        system_text="sys",
+        dynamic_tools=[],
+        executor=lambda *_args: ("", True),
+        timeout=1,
+        should_cancel=None,
+        on_delta=None,
+    )
+    assert driver._thread_start_params()["model"] == "gpt-5.6-luna"
+    assert driver._turn_start_params("th-1", "hi")["model"] == "gpt-5.6-luna"
+    driver._model = "other-provider/model"
+    assert driver._thread_start_params()["model"] == "other-provider/model"
 
 
 def _write_script(tmp_path, turns: list[list[dict]]) -> Path:

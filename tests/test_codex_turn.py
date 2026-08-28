@@ -931,6 +931,22 @@ class TestCodexTurnEffortParams(unittest.TestCase):
         )
         self.assertEqual(params["effort"], "high")
 
+    def test_wire_model_name_strips_only_codex_namespace(self):
+        thread = CodexTurnRunner.build_thread_start_params(
+            model="openai-codex/gpt-5.6-luna", cwd="/tmp/x", system_text="sys"
+        )
+        turn = CodexTurnRunner.build_turn_start_params(
+            thread_id="th-1", model="openai-codex/gpt-5.6-luna", cwd="/tmp/x", user_text="hi"
+        )
+        self.assertEqual(thread["model"], "gpt-5.6-luna")
+        self.assertEqual(turn["model"], "gpt-5.6-luna")
+        self.assertEqual(
+            CodexTurnRunner.build_thread_start_params(
+                model="gpt-5.6-luna", cwd="/tmp/x", system_text="sys"
+            )["model"],
+            "gpt-5.6-luna",
+        )
+
     def test_build_turn_start_params_omits_effort_when_empty(self):
         params = CodexTurnRunner.build_turn_start_params(
             thread_id="th-1",
