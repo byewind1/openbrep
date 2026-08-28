@@ -1308,6 +1308,50 @@ def test_llm_settings_exposes_saved_reasoning_effort(tmp_path, monkeypatch):
     assert llm["reasoning_effort"] == "high"
 
 
+def test_codex_routing_mode_explicit_save_and_invalid_request_is_atomic(tmp_path):
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-luna"
+    config.llm.reasoning_effort = "high"
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    assert service.llm_settings()["codex_routing_mode"] == "fixed"
+    saved = service.update_llm_model_only({
+        "model": config.llm.model,
+        "reasoning_effort": "high",
+        "codex_routing_mode": "auto",
+    })
+    assert saved["ok"] is True
+    assert saved["llm"]["codex_routing_mode"] == "auto"
+    before = (tmp_path / "config.toml").read_bytes()
+
+    rejected = service.update_llm_model_only({
+        "model": config.llm.model,
+        "reasoning_effort": "high",
+        "codex_routing_mode": "AUTO-DEV-SECRET",
+    })
+    assert rejected["ok"] is False
+    assert rejected["code"] == "invalid_codex_routing_mode"
+    assert config.llm.effective_codex_routing_mode() == "auto"
+    assert (tmp_path / "config.toml").read_bytes() == before
+
+
+def test_codex_auto_mode_rejected_for_non_codex_model(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+    response = service.update_llm_model_only({
+        "model": "glm-4-flash",
+        "codex_routing_mode": "auto",
+    })
+    assert response == {
+        "ok": False,
+        "code": "auto_routing_requires_codex",
+        "error": "Auto 路由仅适用于 ChatGPT Codex（openai-codex）订阅模型。",
+    }
+    assert config.llm.effective_codex_routing_mode() == "fixed"
+
+
 def test_codex_models_include_supported_efforts(tmp_path):
     """codex_models 路由把 model/list 的 effort 目录透出（供 UI 选择）。"""
     config = GDLAgentConfig()

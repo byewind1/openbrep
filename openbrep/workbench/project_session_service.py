@@ -12,6 +12,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Callable
 
+from openbrep.config import is_codex_qualified_model
 from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, normalize_project_after_import
 from openbrep.naming import (
@@ -438,7 +439,18 @@ class WorkbenchProjectSessionService:
             if self.session.llm_api_base:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
+            pipeline.config.llm.reasoning_effort = str(
+                self.session.config.llm.reasoning_effort or ""
+            )
+            pipeline.config.llm.codex_routing_mode = (
+                self.session.config.llm.effective_codex_routing_mode()
+            )
             pipeline.config.agent.max_iterations = self.session.max_retries
+            if is_codex_qualified_model(self.session.llm_model):
+                try:
+                    pipeline.codex_provider = self.session.settings_service._codex_provider()
+                except Exception:  # noqa: BLE001 — Auto preflight maps this to a stable stop
+                    pipeline.codex_provider = None
 
         result = pipeline.execute(
             TaskRequest(

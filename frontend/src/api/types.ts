@@ -126,6 +126,8 @@ export interface LlmSettings {
   assistant_settings: string
   /** D6：Fixed 模式已保存的 reasoning effort（只对 openai-codex 模型有意义；空 = 不覆盖模型默认） */
   reasoning_effort?: string
+  /** D9：Codex 路由显式 opt-in；缺失/未知均由后端按 fixed 处理。 */
+  codex_routing_mode?: 'fixed' | 'auto'
   /** D1：ChatGPT Codex（openai-codex）连接状态。provider 未拉起时为 null */
   codex?: CodexStatus | null
   /** D10：Codex MODIFY 动态工具桥接 feature flag（默认 false；false 时 UI 不提供 MODIFY/DEBUG 入口） */

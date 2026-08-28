@@ -126,6 +126,14 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.codex.effortSave': 'Save effort',
   'settings.ai.codex.effortSaved': 'Saved (Fixed mode will strictly use this combination)',
   'settings.ai.codex.effortSaveFailed': 'Save failed',
+  'settings.ai.codex.routingModeLabel': 'Model routing',
+  'settings.ai.codex.routingModeFixed': 'Fixed (default)',
+  'settings.ai.codex.routingModeAuto': 'Auto (experimental)',
+  'settings.ai.codex.routingModeSave': 'Save routing mode',
+  'settings.ai.codex.routingModeSaved': 'Routing mode saved',
+  'settings.ai.codex.routingModeSaveFailed': 'Routing mode save failed',
+  'settings.ai.codex.routingModeFixedHint': 'Strictly uses the saved model and effort. This is the default.',
+  'settings.ai.codex.routingModeAutoHint': 'Uses D8-tested routes only; complex tasks may try one untested Luna high escalation.',
 
   // InterfaceSettingsPanel
   'interfacePanel.languageLabel': 'Language',

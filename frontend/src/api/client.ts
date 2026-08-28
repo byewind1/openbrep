@@ -655,11 +655,16 @@ export async function codexRestart(): Promise<CodexRestartResult> {
   )
 }
 
-export async function updateLlmModel(model: string, reasoningEffort?: string): Promise<LlmSettingsResult> {
+export async function updateLlmModel(
+  model: string,
+  reasoningEffort?: string,
+  codexRoutingMode?: 'fixed' | 'auto',
+): Promise<LlmSettingsResult> {
   // D6：Fixed 模式保存 model + effort（显式 Save；effort 只对 codex 模型有意义，
   // 后端按 model/list.supportedReasoningEfforts 校验，不支持的组合拒绝保存）。
   const body: Record<string, string> = { model }
   if (reasoningEffort !== undefined) body.reasoning_effort = reasoningEffort
+  if (codexRoutingMode !== undefined) body.codex_routing_mode = codexRoutingMode
   return requestJson<LlmSettingsResult>(
     '/api/settings/llm/model',
     {

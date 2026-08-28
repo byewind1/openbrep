@@ -905,6 +905,41 @@ def test_workbench_session_creates_project_from_prompt(tmp_path):
     assert FakePipeline.last_request.output_dir == str(tmp_path.resolve())
 
 
+def test_project_create_pipeline_receives_saved_codex_auto_mode_and_provider(tmp_path):
+    """D9：新项目 CREATE 主入口同步 mode/effort/provider，不只当前项目助手入口。"""
+    provider = object()
+
+    class FakePipeline:
+        instance = None
+
+        def __init__(self, trace_dir="./traces"):
+            self.config = GDLAgentConfig()
+            self.codex_provider = None
+            FakePipeline.instance = self
+
+        def execute(self, request):
+            project = HSFProject.create_new(request.gsm_name, request.work_dir)
+            return TaskResult(success=True, intent="CREATE", plain_text="ok", project=project)
+
+    session = WorkbenchSession(pipeline_class=FakePipeline, config_path=tmp_path / "config.toml")
+    session.llm_model = "openai-codex/gpt-5.6-luna"
+    session.config.llm.model = session.llm_model
+    session.config.llm.reasoning_effort = "low"
+    session.config.llm.codex_routing_mode = "auto"
+    session.settings_service.codex_provider = provider
+
+    response = session.route(
+        "POST",
+        "/api/project/create",
+        {"prompt": "做一个简单方块", "output_dir": str(tmp_path / "out")},
+    )
+    assert response["ok"] is True
+    pipeline = FakePipeline.instance
+    assert pipeline.config.llm.reasoning_effort == "low"
+    assert pipeline.config.llm.effective_codex_routing_mode() == "auto"
+    assert pipeline.codex_provider is provider
+
+
 def test_workbench_session_create_uses_configured_output_dir(tmp_path):
     class FakePipeline:
         def __init__(self, trace_dir="./traces"):
@@ -3435,6 +3470,23 @@ def test_update_llm_model_route_saves_codex_effort(tmp_path):
     # 落盘：重新加载 config 可见
     reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
     assert reloaded.llm.reasoning_effort == "high"
+
+
+def test_update_llm_model_route_saves_codex_auto_only_when_explicit(tmp_path):
+    client = _RouteFakeCodexClient()
+    client.account = {"type": "chatgpt", "email": "jo@example.com", "planType": "free"}
+    session, _opened = _route_codex_session(tmp_path, client)
+    assert session.snapshot()["llm"]["codex_routing_mode"] == "fixed"
+
+    response = session.route("PATCH", "/api/settings/llm/model", {
+        "model": "openai-codex/gpt-5.6-luna",
+        "reasoning_effort": "low",
+        "codex_routing_mode": "auto",
+    })
+    assert response["ok"] is True
+    assert response["llm"]["codex_routing_mode"] == "auto"
+    reloaded = GDLAgentConfig.load(str(tmp_path / "config.toml"))
+    assert reloaded.llm.effective_codex_routing_mode() == "auto"
 
 
 def test_update_llm_model_route_rejects_unsupported_effort(tmp_path):

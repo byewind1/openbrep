@@ -344,7 +344,12 @@ class TaskPipeline:
             elif request.intent in ("MODIFY", "DEBUG"):
                 result = self._handle_modify(request)
             else:
-                result = self._handle_gdl(request)
+                # D9：Auto 只包住 Codex CREATE/IMAGE；Fixed 与所有非 Codex
+                # 请求仍逐字节走原分支，不执行目录探测或策略代码。
+                if self._uses_codex_auto_routing(request):
+                    result = self._handle_codex_auto_gdl(request)
+                else:
+                    result = self._handle_gdl(request)
         except Exception as exc:
             logger.exception("Pipeline execution failed: %s", exc)
             result = TaskResult(
@@ -509,6 +514,95 @@ class TaskPipeline:
             return bool(self.config.llm._is_codex_app_server_model())
         except Exception:  # noqa: BLE001 —— 配置异常按非 codex 处理（不阻塞现有路径）
             return False
+
+    def _uses_codex_auto_routing(self, request: TaskRequest) -> bool:
+        return (
+            request.intent in ("CREATE", "IMAGE")
+            and self._is_codex_model_selected()
+            and self.config.llm.effective_codex_routing_mode() == "auto"
+        )
+
+    def _handle_codex_auto_gdl(self, request: TaskRequest) -> TaskResult:
+        """Thin D9 adapter; the complete policy lives in codex.routing."""
+        from openbrep.codex.routing import (
+            CodexRouteDecision,
+            classify_create_complexity,
+            run_auto_route,
+        )
+
+        on_event = request.on_event or (lambda *_: None)
+        complexity = classify_create_complexity(request.user_input)
+        try:
+            provider = self.codex_provider
+            if provider is None:
+                from openbrep.codex.provider import get_default_codex_provider
+
+                provider = get_default_codex_provider()
+            if provider is None:
+                raise RuntimeError("provider unavailable")
+            status = provider.status(refresh=True)
+            catalog = (
+                provider.models(refresh=True)
+                if status.get("connected") and status.get("state") != "quota_exhausted"
+                else []
+            )
+        except Exception:  # noqa: BLE001 — upstream text must never cross this boundary
+            unavailable = CodexRouteDecision(
+                ok=False,
+                reason="Codex account state or model catalog is unavailable",
+                code="auto_catalog_unavailable",
+                error="无法读取当前 ChatGPT 账户的模型目录，Auto 路由已停止。",
+                complexity=complexity,
+            )
+            result = TaskResult(
+                success=False,
+                intent=request.intent or "CREATE",
+                error=unavailable.error,
+            )
+            result.metadata["codex_auto_route"] = {
+                "mode": "auto",
+                "decisions": [unavailable.to_metadata()],
+                "stopped": {"code": unavailable.code, "reason": unavailable.reason},
+            }
+            on_event("status", {"stage": "budget", "message": unavailable.error})
+            return result
+
+        original_model = self.config.llm.model
+        original_effort = self.config.llm.reasoning_effort
+
+        def run(decision: CodexRouteDecision) -> TaskResult:
+            self.config.llm.model = decision.model
+            self.config.llm.reasoning_effort = decision.reasoning_effort
+            try:
+                return self._handle_gdl(request)
+            except Exception:  # noqa: BLE001 — never reflect upstream text in Auto metadata/UI
+                return TaskResult(
+                    success=False,
+                    intent=request.intent or "CREATE",
+                    error="Codex Auto 路由执行失败，任务已停止。",
+                )
+
+        def make_stop(decision: CodexRouteDecision) -> TaskResult:
+            return TaskResult(
+                success=False,
+                intent=request.intent or "CREATE",
+                error=decision.error,
+            )
+
+        try:
+            return run_auto_route(
+                complexity=complexity,
+                catalog=catalog,
+                status=status,
+                run=run,
+                make_stop_result=make_stop,
+                on_event=on_event,
+                should_cancel=request.should_cancel,
+            )
+        finally:
+            # Auto is per-call routing. Saved Fixed model/effort remain the config fact source.
+            self.config.llm.model = original_model
+            self.config.llm.reasoning_effort = original_effort
 
     def _handle_codex_chat(self, request: TaskRequest) -> TaskResult:
         """Codex 模型 CHAT/EXPLAIN（D3）：ephemeral thread + 临时只读 cwd +

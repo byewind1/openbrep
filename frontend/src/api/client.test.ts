@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { fetchPreview, fetchPreview2D } from './client'
+import { fetchPreview, fetchPreview2D, updateLlmModel } from './client'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -49,6 +49,20 @@ describe('fetchPreview2D quality param (P1b)', () => {
     expect(url).toBe('/api/preview/2d')
     const body = JSON.parse(String(init.body))
     expect(body.quality).toBe('accurate')
+  })
+})
+
+describe('D9 routing mode save payload', () => {
+  test('sends explicit routing mode with the preserved Fixed pair', async () => {
+    const fetchMock = stubFetch({})
+    await updateLlmModel('openai-codex/gpt-5.6-luna', 'low', 'auto')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/settings/llm/model')
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: 'openai-codex/gpt-5.6-luna',
+      reasoning_effort: 'low',
+      codex_routing_mode: 'auto',
+    })
   })
 })
 

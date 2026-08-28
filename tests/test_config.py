@@ -868,6 +868,22 @@ models = []
             reloaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(reloaded.llm.reasoning_effort, "high")
 
+    def test_codex_routing_mode_defaults_fixed_and_auto_roundtrips(self):
+        """D9：旧/新配置都默认 Fixed；只有显式 auto 才启用并持久化。"""
+        config = GDLAgentConfig()
+        self.assertEqual(config.llm.effective_codex_routing_mode(), "fixed")
+        self.assertNotIn("codex_routing_mode", config.to_toml_string())
+        config.llm.codex_routing_mode = "unexpected"
+        self.assertEqual(config.llm.effective_codex_routing_mode(), "fixed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config.llm.codex_routing_mode = "auto"
+            config.save(str(config_path))
+            self.assertIn('codex_routing_mode = "auto"', config_path.read_text(encoding="utf-8"))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.llm.effective_codex_routing_mode(), "auto")
+
     def test_codex_modify_enabled_roundtrip_default_false(self):
         """D10：codex_modify_enabled 默认 false；save/load roundtrip 保持。
 

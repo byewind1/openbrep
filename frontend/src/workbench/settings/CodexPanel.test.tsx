@@ -608,3 +608,54 @@ describe('D10 Codex MODIFY capability note', () => {
     expect(screen.queryByText(/支持修改|修改已开放|MODIFY 已可用/)).toBeNull()
   })
 })
+
+describe('D9 Codex Auto routing opt-in', () => {
+  test('defaults to Fixed and writes only after explicit Save', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'openai-codex/gpt-5.6-luna',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [{
+        id: 'openai-codex/gpt-5.6-luna',
+        label: 'GPT-5.6 Luna',
+        model: 'gpt-5.6-luna',
+        supported_reasoning_efforts: [{ effort: 'low' }, { effort: 'high' }],
+      }],
+    })
+    const onModelChange = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({
+          model: 'openai-codex/gpt-5.6-luna',
+          reasoning_effort: 'low',
+        })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn().mockResolvedValue({ ok: true } as LlmConnectionTestResult)}
+        onModelChange={onModelChange}
+      />,
+    )
+
+    const row = await screen.findByTestId('codex-routing-mode-row')
+    const select = row.querySelector('select') as HTMLSelectElement
+    expect(select.value).toBe('fixed')
+    expect((screen.getByTestId('codex-routing-mode-save') as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.change(select, { target: { value: 'auto' } })
+    expect(onModelChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('codex-routing-mode-hint').textContent).toMatch(/D8/)
+    fireEvent.click(screen.getByTestId('codex-routing-mode-save'))
+    await waitFor(() => expect(onModelChange).toHaveBeenCalledWith(
+      'openai-codex/gpt-5.6-luna',
+      'low',
+      'auto',
+    ))
+  })
+})

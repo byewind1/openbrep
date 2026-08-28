@@ -22,7 +22,11 @@ interface AiSettingsPanelProps {
   llmSettings: LlmSettings
   onOpenConfig: () => void
   onTestConnection: () => Promise<LlmConnectionTestResult>
-  onModelChange?: (model: string, reasoningEffort?: string) => Promise<void>
+  onModelChange?: (
+    model: string,
+    reasoningEffort?: string,
+    codexRoutingMode?: 'fixed' | 'auto',
+  ) => Promise<void>
   onSaveApiKey?: (model: string, apiKey: string) => Promise<unknown>
 }
 
@@ -43,6 +47,10 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [effortSaving, setEffortSaving] = useState(false)
   const [effortFeedback, setEffortFeedback] = useState<{ ok: boolean; text: string } | null>(null)
   const [pendingEffort, setPendingEffort] = useState('')
+  // D9：路由模式是独立 draft；改变 select 绝不写盘，必须点保存。
+  const [routingModeDraft, setRoutingModeDraft] = useState<'fixed' | 'auto'>('fixed')
+  const [routingModeSaving, setRoutingModeSaving] = useState(false)
+  const [routingModeFeedback, setRoutingModeFeedback] = useState<{ ok: boolean; text: string } | null>(null)
   // ── Codex BYOA（D1+D2）：ChatGPT 订阅连接状态 ──
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null)
   const [codexModels, setCodexModels] = useState<CodexModelInfo[]>([])
@@ -89,6 +97,10 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   useEffect(() => {
     setEffortDraft(llmSettings.reasoning_effort ?? '')
   }, [llmSettings.reasoning_effort])
+
+  useEffect(() => {
+    setRoutingModeDraft(llmSettings.codex_routing_mode === 'auto' ? 'auto' : 'fixed')
+  }, [llmSettings.codex_routing_mode])
 
   // ── Codex：挂载时加载状态；登录后加载动态模型目录 ──
   useEffect(() => {
@@ -323,6 +335,28 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       })
     } finally {
       setEffortSaving(false)
+    }
+  }
+
+  async function saveCodexRoutingMode() {
+    if (!onModelChange || routingModeSaving) return
+    setRoutingModeSaving(true)
+    setRoutingModeFeedback(null)
+    try {
+      // Preserve the saved Fixed effort while changing only the routing mode.
+      await onModelChange(
+        llmSettings.model,
+        llmSettings.reasoning_effort ?? '',
+        routingModeDraft,
+      )
+      setRoutingModeFeedback({ ok: true, text: t('settings.ai.codex.routingModeSaved') })
+    } catch (error) {
+      setRoutingModeFeedback({
+        ok: false,
+        text: error instanceof Error ? error.message : t('settings.ai.codex.routingModeSaveFailed'),
+      })
+    } finally {
+      setRoutingModeSaving(false)
     }
   }
 
@@ -565,6 +599,15 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
           setPendingEffort(v)
           setSwitchError(null)
         }}
+        savedRoutingMode={llmSettings.codex_routing_mode === 'auto' ? 'auto' : 'fixed'}
+        routingModeDraft={routingModeDraft}
+        routingModeSaving={routingModeSaving}
+        routingModeFeedback={routingModeFeedback}
+        onRoutingModeDraftChange={(value) => {
+          setRoutingModeDraft(value)
+          setRoutingModeFeedback(null)
+        }}
+        onSaveRoutingMode={() => void saveCodexRoutingMode()}
       />
       <div className="settings-submit-row">
         <button type="button" className="settings-open-config-btn" onClick={onOpenConfig}>
@@ -633,6 +676,10 @@ function CodexSection({
   effortFeedback,
   pendingEffort,
   pendingEffortOptions,
+  savedRoutingMode,
+  routingModeDraft,
+  routingModeSaving,
+  routingModeFeedback,
   onLogin,
   onDeviceCode,
   onCancelLogin,
@@ -645,6 +692,8 @@ function CodexSection({
   onEffortDraftChange,
   onSaveEffort,
   onPendingEffortChange,
+  onRoutingModeDraftChange,
+  onSaveRoutingMode,
 }: {
   status: CodexStatus | null
   models: CodexModelInfo[]
@@ -666,6 +715,10 @@ function CodexSection({
   effortFeedback: { ok: boolean; text: string } | null
   pendingEffort: string
   pendingEffortOptions: { effort: string; description?: string }[]
+  savedRoutingMode: 'fixed' | 'auto'
+  routingModeDraft: 'fixed' | 'auto'
+  routingModeSaving: boolean
+  routingModeFeedback: { ok: boolean; text: string } | null
   onLogin: () => void
   onDeviceCode: () => void
   onCancelLogin: () => void
@@ -678,6 +731,8 @@ function CodexSection({
   onEffortDraftChange: (value: string) => void
   onSaveEffort: () => void
   onPendingEffortChange: (value: string) => void
+  onRoutingModeDraftChange: (value: 'fixed' | 'auto') => void
+  onSaveRoutingMode: () => void
 }) {
   const t = useT()
   const state = status?.state ?? 'signed_out'
@@ -837,6 +892,33 @@ function CodexSection({
             </div>
           )}
           {current.startsWith('openai-codex/') && !pending ? (
+            <>
+            <div className="settings-row" data-testid="codex-routing-mode-row">
+              <span>{t('settings.ai.codex.routingModeLabel')}</span>
+              <select
+                aria-label={t('settings.ai.codex.routingModeLabel')}
+                value={routingModeDraft}
+                disabled={routingModeSaving}
+                onChange={(event) => onRoutingModeDraftChange(event.target.value as 'fixed' | 'auto')}
+              >
+                <option value="fixed">{t('settings.ai.codex.routingModeFixed')}</option>
+                <option value="auto">{t('settings.ai.codex.routingModeAuto')}</option>
+              </select>
+              <button
+                type="button"
+                disabled={routingModeSaving || routingModeDraft === savedRoutingMode}
+                onClick={onSaveRoutingMode}
+                data-testid="codex-routing-mode-save"
+              >
+                {routingModeSaving ? '…' : t('settings.ai.codex.routingModeSave')}
+              </button>
+            </div>
+            <p className="settings-hint" data-testid="codex-routing-mode-hint">
+              {routingModeDraft === 'auto'
+                ? t('settings.ai.codex.routingModeAutoHint')
+                : t('settings.ai.codex.routingModeFixedHint')}
+            </p>
+            {routingModeDraft === 'fixed' ? (
             <div className="settings-row" data-testid="codex-effort-row">
               <span>{t('settings.ai.codex.effortLabel')}</span>
               <select
@@ -861,6 +943,16 @@ function CodexSection({
                 {effortSaving ? '…' : t('settings.ai.codex.effortSave')}
               </button>
             </div>
+            ) : null}
+            </>
+          ) : null}
+          {routingModeFeedback ? (
+            <p
+              className={`settings-test-result ${routingModeFeedback.ok ? 'success' : 'error'}`}
+              data-testid="codex-routing-mode-feedback"
+            >
+              {routingModeFeedback.text}
+            </p>
           ) : null}
           {effortFeedback ? (
             <p
