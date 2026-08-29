@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
 import json
 import os
 import sys
@@ -27,7 +30,7 @@ from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.runtime.modify_codex_bridge import CodexModifyTurnDriver
-from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest
 from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
 
 FAKE_SERVER = str(Path(__file__).resolve().parent / "fake_codex_app_server.py")
@@ -956,3 +959,463 @@ def test_patch_script_success_via_bridge(tmp_path):
     finally:
         provider.close()
         harness.cleanup()
+
+
+# ── HF2：带图 MODIFY hint 注入（P5e 同口径移植到 codex 桥接）────────────
+
+GENERIC_JSON = json.dumps({
+    "component_type": "书架",
+    "main_form": "rect_prism",
+    "layers": [],
+    "symmetry": [],
+    "key_features": ["层板"],
+    "dimension_hints": {},
+    "parametrize": ["shelf_count"],
+    "fix_as_ratio": [],
+    "raw_description": "按图调整",
+}, ensure_ascii=False)
+
+
+def _png_b64() -> str:
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), (200, 30, 30)).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _sha256_b64(image_b64: str) -> str:
+    return hashlib.sha256(base64.b64decode(image_b64)).hexdigest()
+
+
+def _read_wire_params(params_log: Path) -> list[dict]:
+    """读取 fake app-server 的 thread/start + turn/start 参数全量（按到达顺序）。"""
+    recs: list[dict] = []
+    if not params_log.exists():
+        return recs
+    for ln in params_log.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        rec = json.loads(ln)
+        recs.append({"method": rec.get("method"), "params": rec.get("params")})
+    return recs
+
+
+def _normalize_wire(recs: list[dict]) -> list[dict]:
+    """擦除非确定性字段（临时 cwd / fake thread·turn id），其余内容逐字节保留。
+
+    用于「无图 MODIFY wire 与 HF2 基线逐字节一致」断言：被擦字段在两次
+    运行间本来就不同（随机临时目录名 / fake server 自增 id），不影响
+    「代码改动是否改变 wire」的判定。
+    """
+    def scrub(value):
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                v = scrub(v)
+                if k == "cwd" and isinstance(v, str):
+                    v = "<CWD>"
+                if k in ("threadId",) and isinstance(v, str):
+                    v = "<THREAD>"
+                if k == "turnId" and isinstance(v, str):
+                    v = "<TURN>"
+                out[k] = v
+            return out
+        if isinstance(value, list):
+            return [scrub(v) for v in value]
+        if isinstance(value, str):
+            value = value.replace("fake-thread-", "<THREAD>")
+            value = value.replace("fake-turn-", "<TURN>")
+            return value
+        return value
+
+    return scrub(recs)
+
+
+def _wire_digest(recs: list[dict]) -> str:
+    norm = _normalize_wire(recs)
+    return hashlib.sha256(
+        json.dumps(norm, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+# 无图 MODIFY 的 wire 基线（HF2 实测于 ecaed74 原桥接；归一化后逐字节摘要）。
+# 任何「无图路径」改动都会改变该摘要 → 回归即红。
+HF2_NO_IMAGE_WIRE_SHA256 = "998eb2cf0a9e0434b0f6de194a1fa5f49fc5dcf58302e39786db03f47f6848f5"
+
+# 桥接 thread 的 system 消息标识（baseInstructions 中必含的协议锚点）
+_BRIDGE_SYSTEM_MARK = "Agent Loop 工作模式（本次任务生效，Codex 动态工具桥接）"
+# 提取 turn 的 system 消息标识（vision harness 提取 prompt 锚点）
+_EXTRACT_SYSTEM_MARK = "你是建筑构件视觉结构分析器"
+
+
+def test_no_image_wire_byte_identical_to_hf2_baseline(tmp_path):
+    """无图 MODIFY：wire 与 HF2 基线逐字节一致（硬门禁）。
+
+    thread/start + turn/start 全量参数（baseInstructions 全量、dynamicTools、
+    turn 输入）归一化后与 ecaed74 实测基线 SHA-256 逐字节相等；零 vision 痕迹
+    （无提取 turn、无【图N】、无参考图结构提取文本）。
+    """
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(tmp_path, [[_final()]])
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(tmp_path, project))
+        assert result.success, result.plain_text
+
+        recs = _read_wire_params(harness.params_log)
+        assert recs, "fake app-server 必须记录 wire 参数"
+        digest = _wire_digest(recs)
+        assert digest == HF2_NO_IMAGE_WIRE_SHA256, (
+            "无图 MODIFY wire 与 HF2 基线不一致（归一化摘要 %s）", digest
+        )
+
+        # 结构断言：恰好一个 bridge thread + 一个 turn；键集固定；零 vision 痕迹
+        threads = [r["params"] for r in recs if r["method"] == "thread/start"]
+        turns = [r["params"] for r in recs if r["method"] == "turn/start"]
+        assert len(threads) == 1, threads
+        assert len(turns) == 1, turns
+        assert set(threads[0].keys()) == {
+            "approvalPolicy", "baseInstructions", "cwd", "dynamicTools",
+            "ephemeral", "model", "sandbox", "serviceName", "threadSource",
+        }
+        sys_text = threads[0]["baseInstructions"]
+        assert "【图" not in sys_text and "参考图结构提取" not in sys_text
+        assert "工具调用预算共 10 次" in sys_text  # 协议仍在（基线内容）
+        assert set(turns[0].keys()) == {
+            "approvalPolicy", "cwd", "input", "model", "sandboxPolicy", "threadId",
+        }
+        texts = [i.get("text", "") for i in turns[0]["input"] if isinstance(i, dict)]
+        assert len(texts) == 1, texts
+        assert "Instruction: 给书架加一层层板" in texts[0]  # 无图不附加任何 hint/图片
+        assert "参考图结构提取" not in texts[0] and "【图" not in texts[0]
+        assert "vision_extractions" not in result.metadata
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_with_image_injects_hint_only_into_system(tmp_path):
+    """带图 MODIFY：提取 hint 只进 system（bridge thread baseInstructions）。
+
+    - 【图1】hint 出现在 bridge thread 的 baseInstructions（不进 user 输入）；
+    - 提取 turn 真实发生（vision 走 turn 契约，localImage 只出现在提取 turn）；
+    - bridge MODIFY turn 的输入只有文字（hint-only：原图不以上传形式进 MODIFY）；
+    - 提取结果透出 metadata.vision_extractions（前端只读卡片数据源）。
+
+    turn 脚本：第 1 个 turn（提取）返回 GENERIC_JSON，第 2 个 turn（桥接 driver）
+    final 正常（每 turn 各占一行，按到达顺序消费）。
+    """
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            [{"op": "final", "text": GENERIC_JSON}],
+            [_final("已按图完成修改。")],
+        ],
+    )
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    img_b64 = _png_b64()
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(
+                tmp_path, project,
+                user_input="按这张图调整这个构件",  # 意图文本不带 furniture 关键词 → generic schema
+                images=[ImageRef(token="图1", b64=img_b64, mime="image/png")],
+            ))
+        assert result.success, result.plain_text
+
+        recs = _read_wire_params(harness.params_log)
+        threads = [r["params"] for r in recs if r["method"] == "thread/start"]
+        turns = [r["params"] for r in recs if r["method"] == "turn/start"]
+        # 提取 turn（预处理阶段，先于 bridge thread）+ bridge thread
+        extraction_threads = [
+            t for t in threads if _EXTRACT_SYSTEM_MARK in str(t.get("baseInstructions") or "")
+        ]
+        bridge_threads = [
+            t for t in threads if _BRIDGE_SYSTEM_MARK in str(t.get("baseInstructions") or "")
+        ]
+        assert len(extraction_threads) == 1, threads
+        assert len(bridge_threads) == 1, threads
+        # 预处理在 thread/start 之前：提取 turn 先出现
+        thread_records = [
+            (i, r) for i, r in enumerate(recs) if r["method"] == "thread/start"
+        ]
+        extract_idx = next(
+            i for i, r in thread_records if r["params"] is extraction_threads[0]
+        )
+        bridge_idx = next(
+            i for i, r in thread_records if r["params"] is bridge_threads[0]
+        )
+        assert extract_idx < bridge_idx
+
+        sys_text = bridge_threads[0]["baseInstructions"]
+        assert "【图1】" in sys_text, "hint 必须带【图N】前缀"
+        assert "参考图结构提取（本次修改的依据）" in sys_text
+        assert "书架" in sys_text and "rect_prism" in sys_text, "hint 携带提取内容"
+
+        # hint 不进 user 输入：bridge turn 只有原始用户文本，无【图1】
+        # （thread 与 turn 共享同一 cwd，见下）
+        bridge_cwd_early = bridge_threads[0].get("cwd")
+        bridge_turns = [t for t in turns if t.get("cwd") == bridge_cwd_early]
+        assert len(bridge_turns) == 1, turns
+        bridge_input = bridge_turns[0]["input"]
+        assert all(isinstance(i, dict) and i.get("type") == "text" for i in bridge_input)
+        assert "【图1】" not in json.dumps(bridge_input, ensure_ascii=False)
+        assert "参考图结构提取" not in json.dumps(bridge_input, ensure_ascii=False)
+        assert any(
+            isinstance(i, dict) and "按这张图调整这个构件" in str(i.get("text") or "")
+            for i in bridge_input
+        )
+
+        # 提取 turn 带 localImage（vision 走 turn 契约）；bridge turn 无图片
+        # thread 与 turn 共享同一 cwd（extraction / bridge 各自独立临时目录），
+        # 用 cwd 关联两次请求。
+        extraction_cwd = extraction_threads[0].get("cwd")
+        bridge_cwd = bridge_threads[0].get("cwd")
+        assert extraction_cwd and bridge_cwd and extraction_cwd != bridge_cwd
+        extraction_turns = [t for t in turns if t.get("cwd") == extraction_cwd]
+        bridge_turns = [t for t in turns if t.get("cwd") == bridge_cwd]
+        assert len(extraction_turns) == 1, turns
+        assert len(bridge_turns) == 1, turns
+        local_images = [
+            i for i in extraction_turns[0]["input"]
+            if isinstance(i, dict) and i.get("type") == "localImage"
+        ]
+        assert len(local_images) == 1, "提取 turn 必须带授权图（localImage）"
+        assert local_images[0]["path"].endswith(".png")
+
+        # 图片以 localImage 形式只出现在提取 turn；bridge turn 零图片
+        assert not any(
+            isinstance(i, dict) and i.get("type") == "localImage"
+            for i in bridge_turns[0]["input"]
+        ), "MODIFY turn 不上传原图（hint-only）"
+
+        # 提取透出 metadata（token 对齐）
+        exts = result.metadata["vision_extractions"]
+        assert len(exts) == 1 and exts[0]["token"] == "图1"
+        assert exts[0]["sha256"] == _sha256_b64(img_b64)
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_extraction_reuse_zero_vision_turns(tmp_path):
+    """sha256 命中缓存：零 vision turn——provider.chat 零调用、无提取 thread。
+
+    hint 来自复用 plan（含来源模型标注），MODIFY 主体照常执行。
+    """
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(tmp_path, [[_final("已按缓存图完成修改。")]])
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    img_b64 = _png_b64()
+    sha = _sha256_b64(img_b64)
+    # 预置提取工件（D7 内容哈希寻址；模拟此前 CREATE/带图 MODIFY 落盘）
+    vision_dir = project.root / ".openbrep" / "vision"
+    vision_dir.mkdir(parents=True, exist_ok=True)
+    (vision_dir / f"extraction-{sha[:12]}.json").write_text(json.dumps({
+        "schema_name": "lattice_window",
+        "fields": {"opening_shape": "rect", "pattern_family": "冰裂"},
+        "confidence": {"opening_shape": "high"},
+        "corrections": [],
+        "degraded": False,
+        "critic_degraded": False,
+        "raw_description": "",
+        "sha256": sha,
+        "model": "mock-vision-model",
+        "created_at": "2026-08-12T00:00:00+00:00",
+    }, ensure_ascii=False), encoding="utf-8")
+
+    chat_calls: list = []
+    orig_chat = provider.chat
+
+    def spy_chat(*args, **kwargs):
+        chat_calls.append((args, kwargs))
+        return orig_chat(*args, **kwargs)
+
+    provider.chat = spy_chat
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(
+                tmp_path, project,
+                images=[ImageRef(token="图1", b64=img_b64, mime="image/png")],
+            ))
+        assert result.success, result.plain_text
+        # 零 vision turn：provider.chat 零调用（桥接 driver 不走 chat 通道）
+        assert chat_calls == [], chat_calls
+        # wire 上只有一个 bridge thread（无提取 thread）
+        threads = [
+            r["params"] for r in _read_wire_params(harness.params_log)
+            if r["method"] == "thread/start"
+        ]
+        assert len(threads) == 1, threads
+        assert _EXTRACT_SYSTEM_MARK not in str(threads[0].get("baseInstructions") or "")
+        sys_text = threads[0]["baseInstructions"]
+        assert "【图1】" in sys_text and "冰裂" in sys_text
+        assert "复用缓存：由 mock-vision-model 模型提取" in sys_text
+        # 复用标注透出 metadata
+        assert result.metadata["vision_extractions"][0]["reused_from_model"] == "mock-vision-model"
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_extraction_failure_skips_image_others_injected(tmp_path):
+    """单图失败（无字节）→ 标 skipped 不阻断；其余图正常注入；MODIFY 继续。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            [{"op": "final", "text": GENERIC_JSON}],  # 图2 的提取 turn
+            [_final("已按有效图完成修改。")],           # 桥接 driver turn
+        ],
+    )
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    img_b64 = _png_b64()
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(
+                tmp_path, project,
+                user_input="按这张图调整这个构件",
+                images=[
+                    ImageRef(token="图1", b64="", path=str(tmp_path / "missing.png")),
+                    ImageRef(token="图2", b64=img_b64, mime="image/png"),
+                ],
+            ))
+        assert result.success, result.plain_text
+        exts = result.metadata["vision_extractions"]
+        assert exts[0] == {"token": "图1", "skipped": True}, exts
+        assert exts[1]["token"] == "图2"
+        # 只有图2 触发提取 turn；bridge system 只注入【图2】
+        threads = [
+            r["params"] for r in _read_wire_params(harness.params_log)
+            if r["method"] == "thread/start"
+        ]
+        extraction = [
+            t for t in threads if _EXTRACT_SYSTEM_MARK in str(t.get("baseInstructions") or "")
+        ]
+        bridge = [
+            t for t in threads if _BRIDGE_SYSTEM_MARK in str(t.get("baseInstructions") or "")
+        ]
+        assert len(extraction) == 1, threads  # 只有图2 走提取
+        assert len(bridge) == 1, threads
+        sys_text = bridge[0]["baseInstructions"]
+        assert "【图2】" in sys_text
+        assert "【图1】" not in sys_text
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_extraction_error_never_leaks_and_modify_continues(tmp_path):
+    """红队：提取 turn 出错 → 稳定文案降级，上游 canary 零到达 wire；MODIFY 主体继续。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            # 提取 turn：上游 error 通知（message 带 canary；客户端必须映射稳定文案）
+            [{"op": "error", "canary": "LEAK-SECRET-XYZ"}],
+            [_final("已尽力完成修改。")],  # 桥接 driver turn（MODIFY 主体继续）
+        ],
+    )
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(
+                tmp_path, project,
+                user_input="按这张图调整这个构件",
+                images=[ImageRef(token="图1", b64=_png_b64(), mime="image/png")],
+            ))
+        assert result.success, result.plain_text
+        # 降级 hint 进入 system（稳定文案），但 canary 零到达任何 wire 位置
+        log_text = (
+            harness.params_log.read_text(encoding="utf-8")
+            if harness.params_log.exists() else ""
+        )
+        assert "LEAK-SECRET-XYZ" not in log_text, log_text
+        assert "LEAK-SECRET-XYZ" not in json.dumps(result.metadata, ensure_ascii=False)
+        threads = [
+            r["params"] for r in _read_wire_params(harness.params_log)
+            if r["method"] == "thread/start"
+        ]
+        bridge = [
+            t for t in threads if _BRIDGE_SYSTEM_MARK in str(t.get("baseInstructions") or "")
+        ]
+        assert len(bridge) == 1, "图片处理异常不得吞掉 MODIFY 主体（bridge thread 必须开出）"
+        sys_text = bridge[0]["baseInstructions"]
+        assert "LEAK-SECRET-XYZ" not in sys_text
+        # 提取仍透出（降级标记在稳定文案里）
+        exts = result.metadata["vision_extractions"]
+        assert exts and exts[0]["token"] == "图1", exts
+        vs = exts[0]["fields"]["visual_structure"]
+        assert "图像分析失败" in vs["raw_description"], vs
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_codex_lite_harness_extraction_dispatches_turn():
+    """codex 配置下 lite harness 的提取调用走 turn 契约（对齐 D5 测试形态）。
+
+    generate_with_image + codex_intent="MODIFY" → 分派到 provider.chat（turn），
+    带授权图；不再 fail closed。无 intent 的 MODIFY 图片调用仍 fail closed
+    （由 D5 既有测试覆盖）。
+    """
+    class _TurnResultStub:
+        def __init__(self, content):
+            self.content = content
+            self.finish_reason = "stop"
+            self.error = None
+            self.model = "gpt-5.6-luna"
+            self.reasoning_effort = ""
+            self.usage = {}
+
+    class _StubCodexProvider:
+        def __init__(self):
+            self.calls = []
+
+        def chat(self, messages, model, **kwargs):
+            self.calls.append({"messages": messages, "model": model, "kwargs": kwargs})
+            return _TurnResultStub(GENERIC_JSON)
+
+    from openbrep.llm import LLMAdapter
+
+    provider = _StubCodexProvider()
+    config = _codex_config()
+    adapter = LLMAdapter(config.llm)
+    adapter.codex_provider = provider
+
+    resp = adapter.generate_with_image(
+        "分析这张参考图",
+        _png_b64(),
+        "image/png",
+        system_prompt="你是建筑构件视觉结构分析器",
+        max_tokens=1200,
+        model="openai-codex/gpt-5.6-luna",
+        codex_intent="MODIFY",
+    )
+    assert resp.content == GENERIC_JSON
+    assert len(provider.calls) == 1, provider.calls
+    images_kwarg = provider.calls[0]["kwargs"].get("images")
+    assert images_kwarg is not None
+    assert [i["b64"] for i in images_kwarg] == [_png_b64()]
+    # 提取 turn 的 messages：system（提取 prompt）+ user（分析文本）
+    roles = [m.get("role") for m in provider.calls[0]["messages"]]
+    assert roles == ["system", "user"]
+    assert "视觉结构分析器" in str(provider.calls[0]["messages"][0].get("content") or "")
