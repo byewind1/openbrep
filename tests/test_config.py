@@ -339,15 +339,19 @@ class TestAgentLoopBudgetConfig(unittest.TestCase):
 
     def test_agent_loop_budget_over_cap_is_preserved_not_clamped(self):
         # 超上限（>20）原样保留：运行时由各路径既有上限 clamp，config 不放大也不缩小
-        self.assertEqual(self._load("[agent]\nagent_loop_budget = 999\n").agent.agent_loop_budget, 999)
+        value = self._load("[agent]\nagent_loop_budget = 999\n").agent.agent_loop_budget
+        self.assertEqual(value, 999)
 
     def test_agent_loop_budget_negative_falls_back_to_zero(self):
         self.assertEqual(self._load("[agent]\nagent_loop_budget = -3\n").agent.agent_loop_budget, 0)
 
     def test_agent_loop_budget_non_numeric_falls_back_to_zero(self):
-        self.assertEqual(self._load('[agent]\nagent_loop_budget = "abc"\n').agent.agent_loop_budget, 0)
-        self.assertEqual(self._load("[agent]\nagent_loop_budget = true\n").agent.agent_loop_budget, 0)
-        self.assertEqual(self._load("[agent]\nagent_loop_budget = 1.5\n").agent.agent_loop_budget, 0)
+        abc_value = self._load('[agent]\nagent_loop_budget = "abc"\n').agent.agent_loop_budget
+        self.assertEqual(abc_value, 0)
+        bool_value = self._load("[agent]\nagent_loop_budget = true\n").agent.agent_loop_budget
+        self.assertEqual(bool_value, 0)
+        float_value = self._load("[agent]\nagent_loop_budget = 1.5\n").agent.agent_loop_budget
+        self.assertEqual(float_value, 0)
 
     def test_agent_loop_budget_roundtrips_through_save(self):
         with tempfile.TemporaryDirectory() as tmpdir:

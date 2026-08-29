@@ -20,7 +20,7 @@ from openbrep.core import GDLAgent
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import MockLLM
 from openbrep.runtime.modify_agent_tools import ModifyToolRegistry, normalize_script_path
-from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
 
 
 # ── 公共构造 ──────────────────────────────────────────────
