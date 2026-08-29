@@ -685,6 +685,11 @@ class WorkbenchAssistantService:
                 self.session.config.llm.effective_codex_routing_mode()
             )
             pipeline.config.agent.max_iterations = self.session.max_retries
+            # D12：MODIFY 工具预算可配置化 — 与 max_iterations 同款同步模式
+            # （只读 config.toml，设置页不暴露；0 = 各路径既有默认值）
+            pipeline.config.agent.agent_loop_budget = (
+                self.session.config.agent.agent_loop_budget or 0
+            )
         # D3：codex 模型才注入共享 provider（非 codex 不拉起 app-server）
         from openbrep.config import is_codex_qualified_model
 

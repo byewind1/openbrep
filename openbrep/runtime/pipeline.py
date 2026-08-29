@@ -307,6 +307,19 @@ class TaskPipeline:
         if request.agent_loop is None and request.intent in ("MODIFY", "DEBUG", "REPAIR"):
             request.agent_loop = True
 
+        # D12：MODIFY 工具预算可配置化 — config [agent] agent_loop_budget > 0 时
+        # 作为 request.agent_loop_budget 的配置来源（codex 桥与非 codex agent loop
+        # 同旋钮）。请求方已显式设置（>0）时不覆盖；0/负数/未设置 = 各路径既有
+        # 默认值（含非 codex 路径，默认零变化）。运行时 clamp 沿用各路径既有上限。
+        if request.intent in ("MODIFY", "DEBUG", "REPAIR") and request.agent_loop_budget <= 0:
+            configured_budget = self.config.agent.agent_loop_budget
+            if (
+                isinstance(configured_budget, int)
+                and not isinstance(configured_budget, bool)
+                and configured_budget > 0
+            ):
+                request.agent_loop_budget = configured_budget
+
         # 注入侧通道清零（不调用 get_for_task 的任务不会残留上一任务的注入名单；
         # get_for_task 每次调用也会在开头重置，这里是双保险）
         if self._skills_loader is not None:

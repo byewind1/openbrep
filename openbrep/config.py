@@ -792,6 +792,11 @@ class AgentConfig:
     validate_xml: bool = True
     diff_check: bool = True
     auto_version: bool = True
+    # D12：MODIFY 工具预算可配置化。0 = 各路径既有默认值（codex 桥与非 codex
+    # agent loop 均为 10）；>0 时作为 TaskRequest.agent_loop_budget 的配置来源，
+    # 运行时按各路径既有上限 clamp（不放大上限）。非法值（负数/非整数）回退
+    # 0 并记 warning；设置页不暴露该键，仅 config.toml 手改。
+    agent_loop_budget: int = 0
 
 
 @dataclass
@@ -842,6 +847,25 @@ def _normalize_keep_last_n(value: Any) -> int:
             "config [revisions] keep_last_n 为负数（%d），回退默认 20", value
         )
         return 20
+    return value
+
+
+def _normalize_agent_loop_budget(value: Any) -> int:
+    """[agent] agent_loop_budget 校验（D12）：负数/非整数回退默认 0 记 warning。
+
+    0 表示"走各路径既有默认值"；正值原样保留（超上限不在这里 clamp，运行时
+    由各路径既有上限（20）收紧，绝不静默放大）。
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        _LOGGER.warning(
+            "config [agent] agent_loop_budget 非法（%r），回退默认 0", value
+        )
+        return 0
+    if value < 0:
+        _LOGGER.warning(
+            "config [agent] agent_loop_budget 为负数（%d），回退默认 0", value
+        )
+        return 0
     return value
 
 
@@ -943,9 +967,17 @@ class GDLAgentConfig:
             vision_data = {}
         vision_cfg = pick(VisionConfig, vision_data)
 
+        agent_data = data.get("agent", {})
+        if not isinstance(agent_data, dict):
+            agent_data = {}
+        agent_cfg = pick(AgentConfig, agent_data)
+        agent_cfg.agent_loop_budget = _normalize_agent_loop_budget(
+            agent_cfg.agent_loop_budget
+        )
+
         return cls(
             llm=llm_cfg,
-            agent=pick(AgentConfig, data.get("agent", {})),
+            agent=agent_cfg,
             compiler=compiler_cfg,
             revisions=revisions_cfg,
             vision=vision_cfg,
@@ -984,6 +1016,10 @@ class GDLAgentConfig:
         providers = normalize_provider_list(self.llm.providers)
         self.llm.providers = providers
         self.llm.codex_routing_mode = self.llm.effective_codex_routing_mode()
+        # D12：单保存边界规范化（负数/非整数 → 0 = 用默认；绝不崩、绝不静默放大）。
+        self.agent.agent_loop_budget = _normalize_agent_loop_budget(
+            self.agent.agent_loop_budget
+        )
         data = {
             "llm": {
                 "model": self.llm.model,
@@ -1009,6 +1045,8 @@ class GDLAgentConfig:
                 "validate_xml": self.agent.validate_xml,
                 "diff_check": self.agent.diff_check,
                 "auto_version": self.agent.auto_version,
+                # D12：MODIFY 工具预算（0 = 各路径既有默认值；设置页不暴露）
+                "agent_loop_budget": self.agent.agent_loop_budget,
             },
             "compiler": {
                 "mode": self.compiler.mode,
@@ -1056,6 +1094,12 @@ class GDLAgentConfig:
             f"validate_xml = {str(self.agent.validate_xml).lower()}",
             f"diff_check = {str(self.agent.diff_check).lower()}",
             f"auto_version = {str(self.agent.auto_version).lower()}",
+            # D12：只在非默认（>0）时输出该键，默认配置模板零变化。
+            *(
+                [f"agent_loop_budget = {self.agent.agent_loop_budget}"]
+                if self.agent.agent_loop_budget
+                else []
+            ),
             "", "[compiler]",
             f'mode = "{self.compiler.mode}"',
         ]

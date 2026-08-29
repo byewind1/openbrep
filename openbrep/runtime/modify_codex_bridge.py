@@ -983,10 +983,17 @@ class CodexModifyBridge:
                 "reasoning_effort": self.reasoning_effort,
                 "logger": self.logger,
             }
+            # D12：codex 桥 turn 超时接 config.llm.timeout（与 llm.py 三处口径一致）。
+            # 未设置/0/负数/非数值一律回落模块级 _DEFAULT_TURN_TIMEOUT（90），绝不崩。
             timeout = None
             cfg = getattr(self.pipeline.config, "llm", None)
-            if cfg is not None and getattr(cfg, "timeout", None):
-                timeout = float(cfg.timeout)
+            if cfg is not None:
+                raw_timeout = getattr(cfg, "timeout", None)
+                if raw_timeout:
+                    try:
+                        timeout = float(raw_timeout)
+                    except (TypeError, ValueError):
+                        timeout = None
             kwargs["timeout"] = timeout
 
             driver = CodexModifyTurnDriver(**kwargs)

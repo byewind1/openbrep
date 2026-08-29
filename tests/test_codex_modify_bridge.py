@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -432,6 +433,136 @@ def test_budget_exhaustion_fails_closed(tmp_path):
     finally:
         provider.close()
         harness.cleanup()
+
+
+def test_config_agent_loop_budget_drives_codex_bridge_budget(tmp_path):
+    """D12：config [agent] agent_loop_budget = 3 → codex 桥恰好 3 次预算后耗尽。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            [
+                _upd("BLOCK A, B, ZZYZX\nEND\n"),
+                _tool("compile_script"),
+                _tool("preview_geometry"),
+                _tool("compile_script"),
+                _final("进度总结。"),
+            ]
+        ],
+    )
+    config = _codex_config()
+    config.agent.agent_loop_budget = 3
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            request = _request(tmp_path, project, agent_loop_budget=0)
+            result = pipeline.execute(request)
+        assert request.agent_loop_budget == 3  # pipeline 从 config 注入成功
+        md = result.metadata["codex_modify"]
+        assert md["budget"] == 3
+        assert md["tool_calls"] == 3
+        assert md["budget_exhausted"] is True
+        assert "预算耗尽" in result.plain_text
+        audit = md["tool_audit"]
+        assert any(
+            e["tool"] == "compile_script" and e["rejected_reason"] == "budget_exhausted"
+            for e in audit
+        )
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_config_budget_over_cap_clamped_to_max_in_codex_bridge(tmp_path):
+    """D12：999 → codex 桥沿用既有上限 clamp 到 20（不放大）。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            [
+                _upd("BLOCK A, B, ZZYZX\nEND\n"),
+                _tool("compile_script"),
+                _final("已按计划完成修改，编译通过。"),
+            ]
+        ],
+    )
+    config = _codex_config()
+    config.agent.agent_loop_budget = 999
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            request = _request(tmp_path, project, agent_loop_budget=0)
+            result = pipeline.execute(request)
+        assert request.agent_loop_budget == 999
+        md = result.metadata["codex_modify"]
+        assert md["budget"] == 20
+        assert md["tool_calls"] == 2
+        assert result.success is True
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+# ── D12：桥接 turn 超时接 config.llm.timeout ─────────────────
+
+
+def _run_hang_turn(tmp_path, config):
+    """fake server 第一个 turn 挂起（不完成）：驱动直到 deadline 收尾，返回耗时。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(tmp_path, [[{"op": "hang"}]])
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    start = time.monotonic()
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(tmp_path, project, agent_loop_budget=0))
+    finally:
+        elapsed = time.monotonic() - start
+        provider.close()
+        harness.cleanup()
+    return result, elapsed
+
+
+def test_turn_timeout_five_seconds_from_config(tmp_path):
+    """D12：llm.timeout = 5 + fake hang → 桥接 turn 在 ~5s 超时收尾（稳定文案、无假成功）。"""
+    config = _codex_config()
+    config.llm.timeout = 5
+    result, elapsed = _run_hang_turn(tmp_path, config)
+    assert result.success is False, result.plain_text
+    assert "超时" in result.plain_text
+    assert "Codex 对话超时，请稍后重试。" in result.plain_text
+    assert 4.0 <= elapsed <= 8.0, f"elapsed={elapsed:.2f}s 应落在 ~5s 窗口"
+    # 无残留临时 cwd（thread 清理 + 用完即删）
+    leftovers = [p for p in Path(tempfile.gettempdir()).glob("openbrep-codex-modify-*")]
+    assert leftovers == [], leftovers
+
+
+def test_zero_timeout_falls_back_to_default_window(tmp_path):
+    """D12：llm.timeout = 0（未设置等价）→ 回落 _DEFAULT_TURN_TIMEOUT（
+    monkeypatch 缩短窗口断言）。"""
+    config = _codex_config()
+    config.llm.timeout = 0
+    with patch("openbrep.runtime.modify_codex_bridge._DEFAULT_TURN_TIMEOUT", 1.0):
+        result, elapsed = _run_hang_turn(tmp_path, config)
+    assert result.success is False
+    assert "Codex 对话超时，请稍后重试。" in result.plain_text
+    assert 0.5 <= elapsed <= 4.0, f"elapsed={elapsed:.2f}s"
+
+
+def test_invalid_timeout_falls_back_to_default_window(tmp_path):
+    """D12：llm.timeout 非法（非数值）→ 回落 _DEFAULT_TURN_TIMEOUT，绝不崩。"""
+    config = _codex_config()
+    config.llm.timeout = "abc"  # type: ignore[assignment]
+    with patch("openbrep.runtime.modify_codex_bridge._DEFAULT_TURN_TIMEOUT", 1.0):
+        result, elapsed = _run_hang_turn(tmp_path, config)
+    assert result.success is False
+    assert "Codex 对话超时，请稍后重试。" in result.plain_text
+    assert 0.5 <= elapsed <= 4.0, f"elapsed={elapsed:.2f}s"
 
 
 # ── 工具面对抗：shell / apply_patch / MCP / 未注册 / namespace ──

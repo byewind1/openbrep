@@ -313,6 +313,82 @@ class TestRevisionsConfig(unittest.TestCase):
             self.assertEqual(reloaded.revisions.keep_last_n, 5)
 
 
+class TestAgentLoopBudgetConfig(unittest.TestCase):
+    """D12：[agent] agent_loop_budget 配置解析、非法值回退与 save/load 往返。
+
+    语义：0 = 走各路径既有默认值；>0 = TaskRequest.agent_loop_budget 的配置
+    来源（运行时按各路径既有上限 clamp）；负数/非整数回退 0 并记 warning，
+    保存时规范化，绝不崩、绝不静默放大。
+    """
+
+    def _load(self, toml_text: str) -> GDLAgentConfig:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(toml_text, encoding="utf-8")
+            return GDLAgentConfig.load(str(config_path))
+
+    def test_agent_loop_budget_defaults_to_zero_when_section_missing(self):
+        self.assertEqual(self._load("").agent.agent_loop_budget, 0)
+
+    def test_agent_loop_budget_parses_from_toml(self):
+        self.assertEqual(self._load("[agent]\nagent_loop_budget = 5\n").agent.agent_loop_budget, 5)
+
+    def test_agent_loop_budget_zero_is_valid(self):
+        # 0 = 用各路径既有默认值，是合法状态，不能被误判为非法回退
+        self.assertEqual(self._load("[agent]\nagent_loop_budget = 0\n").agent.agent_loop_budget, 0)
+
+    def test_agent_loop_budget_over_cap_is_preserved_not_clamped(self):
+        # 超上限（>20）原样保留：运行时由各路径既有上限 clamp，config 不放大也不缩小
+        self.assertEqual(self._load("[agent]\nagent_loop_budget = 999\n").agent.agent_loop_budget, 999)
+
+    def test_agent_loop_budget_negative_falls_back_to_zero(self):
+        self.assertEqual(self._load("[agent]\nagent_loop_budget = -3\n").agent.agent_loop_budget, 0)
+
+    def test_agent_loop_budget_non_numeric_falls_back_to_zero(self):
+        self.assertEqual(self._load('[agent]\nagent_loop_budget = "abc"\n').agent.agent_loop_budget, 0)
+        self.assertEqual(self._load("[agent]\nagent_loop_budget = true\n").agent.agent_loop_budget, 0)
+        self.assertEqual(self._load("[agent]\nagent_loop_budget = 1.5\n").agent.agent_loop_budget, 0)
+
+    def test_agent_loop_budget_roundtrips_through_save(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text("[agent]\nagent_loop_budget = 3\n", encoding="utf-8")
+            config = GDLAgentConfig.load(str(config_path))
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.agent.agent_loop_budget, 3)
+            # save 输出可解析且带该键
+            self.assertIn("agent_loop_budget = 3", config_path.read_text(encoding="utf-8"))
+
+    def test_agent_loop_budget_negative_normalized_on_save(self):
+        """内存中被直接塞入负值时，save 边界把它规范化回 0（默认），roundtrip 保持。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config = GDLAgentConfig()
+            config.agent.agent_loop_budget = -5
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.agent.agent_loop_budget, 0)
+            self.assertIn("agent_loop_budget = 0", config_path.read_text(encoding="utf-8"))
+
+    def test_agent_loop_budget_non_numeric_normalized_on_save(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config = GDLAgentConfig()
+            config.agent.agent_loop_budget = "abc"  # type: ignore[assignment]
+            config.save(str(config_path))  # 绝不崩
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(reloaded.agent.agent_loop_budget, 0)
+            self.assertIn("agent_loop_budget = 0", config_path.read_text(encoding="utf-8"))
+
+    def test_agent_loop_budget_to_toml_string_omitted_at_default(self):
+        """默认配置模板零变化：值为 0 时不输出该键；>0 时输出。"""
+        config = GDLAgentConfig()
+        self.assertNotIn("agent_loop_budget", config.to_toml_string())
+        config.agent.agent_loop_budget = 3
+        self.assertIn("agent_loop_budget = 3", config.to_toml_string())
+
+
 class TestVisionConfig(unittest.TestCase):
     """[vision] 配置解析：critic_pass 默认 on，可显式关闭，save/load 往返。"""
 

@@ -193,6 +193,104 @@ class TestAgentLoopFlow(unittest.TestCase):
         self.assertTrue(any(plan_json in (m.get("content") or "") for m in last_call_messages))
 
 
+class TestAgentLoopBudgetConfig(unittest.TestCase):
+    """D12：[agent] agent_loop_budget 驱动非 codex agent loop 的预算（同旋钮）。
+
+    断言矩阵：3 → 恰好 3 次；0/负数/字符串 → 各路径默认值（10）；999 →
+    既有上限 clamp（20）；显式 request 预算优先于 config。
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _run(self, config) -> tuple[TaskResult, MockLLM, TaskRequest]:
+        """1 个 compile 工具响应（耗尽后 MockLLM 重复末条）：跑完整个预算。"""
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+        ])
+        pipeline = TaskPipeline(config=config, trace_dir=str(self.tmp / "traces"))
+        pipeline._make_llm = lambda _req: mock_llm
+        pipeline._make_compiler = lambda: MockHSFCompiler()
+        request = _make_request(_make_project(self.tmp), self.tmp, agent_loop_budget=0)
+        result = pipeline.execute(request)
+        return result, mock_llm, request
+
+    def test_budget_three_from_config_exactly_three_tools(self):
+        """agent_loop_budget = 3 → 非 codex loop 恰好 3 次工具预算后预算耗尽。"""
+        config = GDLAgentConfig()
+        config.agent.agent_loop_budget = 3
+        result, mock_llm, request = self._run(config)
+        self.assertEqual(request.agent_loop_budget, 3)  # 注入成功
+        self.assertIn("工具调用 3/3 次", result.plain_text)
+        self.assertIn("预算耗尽", result.plain_text)
+        self.assertEqual(mock_llm.call_count, 4)  # 第 4 轮发现预算用尽不再执行工具
+
+    def test_budget_zero_from_config_keeps_default_ten(self):
+        """默认 0 → 不注入，走各路径既有默认 10。"""
+        config = GDLAgentConfig()
+        result, _mock_llm, request = self._run(config)
+        self.assertEqual(request.agent_loop_budget, 0)
+        self.assertIn("工具调用 10/10 次", result.plain_text)
+        self.assertIn("预算耗尽", result.plain_text)
+
+    def test_budget_negative_from_config_keeps_default_ten(self):
+        """负数（直接塞入 dataclass）→ 不注入，默认 10。"""
+        config = GDLAgentConfig()
+        config.agent.agent_loop_budget = -5
+        result, _mock_llm, request = self._run(config)
+        self.assertEqual(request.agent_loop_budget, 0)
+        self.assertIn("工具调用 10/10 次", result.plain_text)
+
+    def test_budget_bool_from_config_keeps_default_ten(self):
+        """bool（int 子类）→ 不注入，默认 10（防 True 被当作 1 误放大）。"""
+        config = GDLAgentConfig()
+        config.agent.agent_loop_budget = True  # type: ignore[assignment]
+        result, _mock_llm, request = self._run(config)
+        self.assertEqual(request.agent_loop_budget, 0)
+        self.assertIn("工具调用 10/10 次", result.plain_text)
+
+    def test_budget_string_from_toml_config_keeps_default_ten(self):
+        """字符串从 toml 加载 → load 规范化 0 → 默认 10（全链路：load → pipeline）。"""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            config_path = Path(td) / "config.toml"
+            config_path.write_text('[agent]\nagent_loop_budget = "abc"\n', encoding="utf-8")
+            config = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(config.agent.agent_loop_budget, 0)
+            result, _mock_llm, request = self._run(config)
+            self.assertEqual(request.agent_loop_budget, 0)
+            self.assertIn("工具调用 10/10 次", result.plain_text)
+
+    def test_budget_over_cap_from_config_clamped_to_twenty(self):
+        """999 → 非 codex 路径既有上限 clamp 到 20。"""
+        config = GDLAgentConfig()
+        config.agent.agent_loop_budget = 999
+        result, _mock_llm, request = self._run(config)
+        self.assertEqual(request.agent_loop_budget, 999)
+        self.assertIn("工具调用 20/20 次", result.plain_text)
+        self.assertIn("预算耗尽", result.plain_text)
+
+    def test_explicit_request_budget_wins_over_config(self):
+        """调用方显式设置 request.agent_loop_budget > 0 时，config 不覆盖。"""
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+        ])
+        pipeline = _make_pipeline(mock_llm, self.tmp)
+        pipeline.config.agent.agent_loop_budget = 3
+        request = _make_request(_make_project(self.tmp), self.tmp, agent_loop_budget=7)
+        result = pipeline.execute(request)
+        self.assertEqual(request.agent_loop_budget, 7)
+        self.assertIn("工具调用 7/7 次", result.plain_text)
+        self.assertIn("预算耗尽", result.plain_text)
+
+
 class TestAgentLoopToggle(unittest.TestCase):
     def setUp(self):
         import tempfile
