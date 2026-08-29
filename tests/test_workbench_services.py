@@ -600,6 +600,63 @@ def test_assistant_service_extracts_classified_code_blocks():
     assert "BLOCK A" in response["blocks"][0]["content"]
 
 
+def test_assistant_modify_pipeline_syncs_agent_loop_budget_from_session_config(tmp_path):
+    """D12：workbench 服务层构造 MODIFY pipeline 时，agent_loop_budget 从会话 config 同步
+    （与 max_iterations 同款模式；设置页不暴露，只读 config.toml）。"""
+    from openbrep.runtime.pipeline import TaskPipeline
+
+    config = GDLAgentConfig()
+    config.agent.agent_loop_budget = 3
+    project = HSFProject.create_new("Shelf", work_dir=str(tmp_path / "src"))
+    session = SimpleNamespace(
+        pipeline_class=TaskPipeline,
+        llm_model="glm-4-flash",
+        llm_api_key=None,
+        llm_api_base=None,
+        assistant_settings="",
+        config=config,
+        project=project,
+        source_path=tmp_path / "src" / "Shelf",
+        project_epoch=1,
+        max_retries=5,
+    )
+    service = WorkbenchAssistantService(session)
+    pipeline, request = service._build_generate_pipeline(
+        {"message": "加一层层板", "intent": "MODIFY"},
+        image_payload={"image_b64": "", "image_mime": "image/png", "images": []},
+        on_event=lambda *_args: None,
+    )
+    assert pipeline.config.agent.agent_loop_budget == 3
+    assert request.intent == "MODIFY"
+
+
+def test_assistant_modify_pipeline_syncs_default_zero_agent_loop_budget(tmp_path):
+    """D12：session config 默认 0 → pipeline 同步 0（各路径既有默认值，零变化）。"""
+    from openbrep.runtime.pipeline import TaskPipeline
+
+    config = GDLAgentConfig()
+    project = HSFProject.create_new("Shelf", work_dir=str(tmp_path / "src"))
+    session = SimpleNamespace(
+        pipeline_class=TaskPipeline,
+        llm_model="glm-4-flash",
+        llm_api_key=None,
+        llm_api_base=None,
+        assistant_settings="",
+        config=config,
+        project=project,
+        source_path=tmp_path / "src" / "Shelf",
+        project_epoch=1,
+        max_retries=5,
+    )
+    service = WorkbenchAssistantService(session)
+    pipeline, _request = service._build_generate_pipeline(
+        {"message": "加一层层板", "intent": "MODIFY"},
+        image_payload={"image_b64": "", "image_mime": "image/png", "images": []},
+        on_event=lambda *_args: None,
+    )
+    assert pipeline.config.agent.agent_loop_budget == 0
+
+
 def test_memory_service_reports_empty_status_without_loaded_project():
     service = WorkbenchMemoryService(SimpleNamespace(source_path=None))
 

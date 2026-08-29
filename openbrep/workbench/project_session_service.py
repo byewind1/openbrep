@@ -446,6 +446,11 @@ class WorkbenchProjectSessionService:
                 self.session.config.llm.effective_codex_routing_mode()
             )
             pipeline.config.agent.max_iterations = self.session.max_retries
+            # D12：MODIFY 工具预算可配置化 — 与 max_iterations 同款同步模式
+            # （只读 config.toml，设置页不暴露；0 = 各路径既有默认值）
+            pipeline.config.agent.agent_loop_budget = (
+                self.session.config.agent.agent_loop_budget or 0
+            )
             if is_codex_qualified_model(self.session.llm_model):
                 try:
                     pipeline.codex_provider = self.session.settings_service._codex_provider()
