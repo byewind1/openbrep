@@ -125,8 +125,16 @@ def _fmt_counts(counts: Optional[dict]) -> str:
     )
 
 
-def _geometry_delta(before: Optional[dict], after: Optional[dict]) -> tuple[list[str], dict[str, Any]]:
-    """前后几何摘要对比：返回 (摘要行, geometry_delta 结构化对比)。"""
+def _geometry_delta(
+    before: Optional[dict], after: Optional[dict], changed_files: Optional[list[str]] = None
+) -> tuple[list[str], dict[str, Any]]:
+    """前后几何摘要对比：返回 (摘要行, geometry_delta 结构化对比)。
+
+    HF3：几何未变时文案不得呈现失败读法——新增可选样式类 MODIFY
+    （vl.gdl VALUES 新枚举 / 新分支）当前参数未命中新分支时几何不变是正确
+    行为。改为中性"当前参数下几何未变化"；若参数定义面（vl.gdl / paramlist.xml）
+    确实有落盘变更，追加参数面板提示行，提醒用户切换新选项查看效果。
+    """
     lines: list[str] = []
     delta: dict[str, Any] = {"status": "ok", "reason": ""}
 
@@ -168,7 +176,21 @@ def _geometry_delta(before: Optional[dict], after: Optional[dict]) -> tuple[list
 
     if not changed:
         delta["status"] = "unchanged"
-        lines.append("几何未发生变化")
+        lines.append("当前参数下几何未变化")
+        # HF3：参数定义面确实落盘（枚举/参数定义更新）→ 给出中性操作提示，
+        # 避免"几何未变化"被读成修改失败。文件名单取自真实 changed_files。
+        param_files = sorted(
+            {
+                f.split('/')[-1] if '/' in f else f
+                for f in (changed_files or [])
+                if (f.split('/')[-1] if '/' in f else f) in ("vl.gdl", "paramlist.xml")
+            }
+        )
+        if param_files:
+            lines.append(
+                f"参数/枚举定义已更新（{'、'.join(param_files)}）："
+                f"在参数面板切换新选项可查看效果，无需重开项目"
+            )
     return lines, delta
 
 
@@ -202,7 +224,7 @@ def build_modify_acceptance(
     if files:
         summary_lines.append("已修改文件：" + "、".join(files))
 
-    geometry_lines, geometry_delta = _geometry_delta(before, after)
+    geometry_lines, geometry_delta = _geometry_delta(before, after, changed_files)
     summary_lines.extend(geometry_lines)
 
     checks: list[dict[str, str]] = []

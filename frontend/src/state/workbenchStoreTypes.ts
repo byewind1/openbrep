@@ -375,6 +375,7 @@ export interface ProjectWorkspaceRefreshOptions {
   preferredScriptName?: string
   refreshAllScripts?: boolean
   refreshPreview?: boolean
+  refreshParameters?: boolean
   runDiagnostics?: boolean
 }
 

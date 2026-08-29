@@ -142,6 +142,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         preferredScriptName: changedFiles[0] ?? '',
         refreshAllScripts: true,
         refreshPreview: false,
+        refreshParameters: true,
         runDiagnostics: true,
       })
     }
@@ -443,6 +444,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           preferredScriptName: changedFiles[0] ?? '',
           refreshAllScripts: true,
           refreshPreview: false,
+          refreshParameters: true,
           runDiagnostics: true,
         })
       }
