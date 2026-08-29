@@ -617,14 +617,15 @@ describe('AssistantPanel acceptance report card (V5)', () => {
           role: 'assistant',
           content: '改好了。',
           acceptance: {
-            summary_lines: ['几何未发生变化'],
+            summary_lines: ['当前参数下几何未变化'],
             geometry_delta: { status: 'unchanged' },
             checks: [{ name: 'compile', status: 'pass', detail: '编译通过' }],
           },
         }]}
       />,
     )
-    expect(screen.getByText('几何未发生变化')).toBeTruthy()
+    // HF3：几何未变文案中性化（不得读成“修改失败”）；无对比表仍不渲染
+    expect(screen.getByText('当前参数下几何未变化')).toBeTruthy()
     expect(screen.queryByText('修改前')).toBeNull()
   })
 })

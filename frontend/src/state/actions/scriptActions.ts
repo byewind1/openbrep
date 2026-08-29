@@ -7,6 +7,7 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
       const preferredScriptName = normalizeScriptName(options.preferredScriptName ?? '')
       const refreshAllScripts = options.refreshAllScripts ?? true
       const refreshPreview = options.refreshPreview ?? true
+      const refreshParameters = options.refreshParameters ?? false
       const runDiagnostics = options.runDiagnostics ?? false
 
       await get().loadScripts()
@@ -36,6 +37,22 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
 
       if (runDiagnostics) {
         await get().runMockCompile()
+      }
+
+      // HF3：MODIFY 交付后参数快照重拉（vl.gdl VALUES / paramlist 可能已变——
+      // 新枚举项、新参数立即出现在参数面板，不需要重开项目）。snapshot 回落
+      // （project=null）时保留现有 UI 状态。绝不写 draftParameters：用户未保存
+      // 的草稿值不受影响（元数据刷新与草稿值正交；任务完成路径的草稿清空语义
+      // 由调用方决定）。preview 不在此覆盖（调用方显式传 refreshPreview 或
+      // 保留流式结果）。
+      if (refreshParameters) {
+        const snapshot = await api.fetchSnapshot()
+        if (snapshot.project !== null) {
+          set({
+            project: snapshot.project,
+            parameters: snapshot.parameters,
+          })
+        }
       }
     },
 

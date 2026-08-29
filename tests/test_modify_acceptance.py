@@ -79,13 +79,49 @@ class TestBuildModifyAcceptance(unittest.TestCase):
         self.assertEqual(delta["counts_2d"]["from"]["lines"], 2)
 
     def test_unchanged_geometry_writes_nothing_fabricated(self):
+        # HF3：几何未变文案改为中性表述，不得读成"未变化 = 失败"
         acc = build_modify_acceptance(
             before=_base_summary(), after=_base_summary(),
             compile_result=_CompileOk(), semantic_issues=[],
         )
-        self.assertIn("几何未发生变化", acc["summary_lines"])
+        joined = "\n".join(acc["summary_lines"])
+        self.assertIn("当前参数下几何未变化", joined)
+        self.assertNotIn("几何未发生变化", joined)
         self.assertEqual(acc["geometry_delta"]["status"], "unchanged")
         self.assertNotIn("mesh_count", acc["geometry_delta"])
+
+    def test_unchanged_geometry_with_param_definition_update_shows_hint(self):
+        """HF3：新增枚举类 MODIFY（vl.gdl/paramlist.xml 落盘 + 几何未变）→
+        中性文案 + 参数面板提示（不呈现失败意味）。"""
+        acc = build_modify_acceptance(
+            before=_base_summary(), after=_base_summary(),
+            changed_files=["scripts/3d.gdl", "scripts/vl.gdl"],
+            compile_result=_CompileOk(), semantic_issues=[],
+        )
+        joined = "\n".join(acc["summary_lines"])
+        self.assertIn("当前参数下几何未变化", joined)
+        self.assertIn("参数/枚举定义已更新（vl.gdl）", joined)
+        self.assertIn("在参数面板切换新选项可查看效果", joined)
+        self.assertEqual(acc["geometry_delta"]["status"], "unchanged")
+
+    def test_unchanged_geometry_without_param_files_keeps_neutral_only(self):
+        """HF3：仅脚本变更且几何未变 → 只保留中性句，不猜参数面提示。"""
+        acc = build_modify_acceptance(
+            before=_base_summary(), after=_base_summary(),
+            changed_files=["scripts/3d.gdl"],
+            compile_result=_CompileOk(), semantic_issues=[],
+        )
+        joined = "\n".join(acc["summary_lines"])
+        self.assertIn("当前参数下几何未变化", joined)
+        self.assertNotIn("参数/枚举定义已更新", joined)
+
+    def test_paramlist_xml_also_triggers_param_hint(self):
+        acc = build_modify_acceptance(
+            before=_base_summary(), after=_base_summary(),
+            changed_files=["paramlist.xml"],
+            compile_result=_CompileOk(), semantic_issues=[],
+        )
+        self.assertIn("参数/枚举定义已更新（paramlist.xml）", "\n".join(acc["summary_lines"]))
 
     def test_before_preview_unavailable_degrades(self):
         before = _base_summary(available=False, reason="3D 预览不可用：boom")

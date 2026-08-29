@@ -2464,6 +2464,62 @@ test('generateAssistantChanges saves dirty editor buffers before calling the LLM
   expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
 })
 
+test('generateAssistantChanges refreshes parameters after successful MODIFY (HF3)', async () => {
+  // HF3：MODIFY 落盘新增枚举（vl.gdl VALUES 新选项）后，参数快照重拉——
+  // 新枚举项立即出现在参数面板，不需要重开项目。
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchSnapshot: async () => ({
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [
+          { name: 'pattern_type', type_tag: 'String', description: '样式', value: 'plain', is_fixed: false, options: ['plain', 'new_style'] },
+        ],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+      }),
+      generateWithAssistant: async () => ({
+        ok: true,
+        assistant: {
+          kind: 'generate',
+          reply: '已新增漏窗样式。',
+          changed_files: ['scripts/vl.gdl', 'scripts/3d.gdl'],
+          intent: 'MODIFY',
+        },
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().generateAssistantChanges('增加漏窗样式')
+
+  const params = store.getState().parameters
+  expect(params[0]?.name).toBe('pattern_type')
+  // 新枚举项立即出现在参数面板（后端快照已是实时内存数据）
+  expect(params[0]?.options).toEqual(['plain', 'new_style'])
+  // 任务完成路径的草稿清空语义保持既有行为
+  expect(store.getState().draftParameters).toEqual({})
+})
+
+test('refreshProjectWorkspace refreshParameters preserves unsaved drafts (HF3)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  await store.getState().load()
+  // 用户改过但未 Apply 的草稿值
+  store.getState().setDraftParameter('A', 2)
+  expect(store.getState().draftParameters).toEqual({ A: 2 })
+
+  // 参数快照重拉（模拟 MODIFY 完成后的刷新）：只更新元数据/值，不冲草稿
+  await store.getState().refreshProjectWorkspace({
+    refreshParameters: true,
+    refreshAllScripts: true,
+    refreshPreview: false,
+  })
+
+  expect(store.getState().parameters.length).toBeGreaterThan(0)
+  expect(store.getState().draftParameters).toEqual({ A: 2 })
+})
+
 test('setDraftParameter debounces rapid preview requests while updating draft immediately', async () => {
   vi.useFakeTimers()
   try {
