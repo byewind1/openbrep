@@ -708,6 +708,106 @@ class CodexModifyBridge:
             + _MODIFY_BRIDGE_PROTOCOL.format(budget=self.budget)
         )
 
+        # ── HF2：带图 MODIFY —— 与 modify_agent_loop P5e 同口径的 hint 注入 ──
+        # 无图 → 全流程零变化（硬门禁，wire 与基线逐字节一致）。有图 → 同一套
+        # S0 预处理（resolve_and_preprocess）→ 逐图分流：sha256 命中
+        # load_extraction → ModelingPlan.from_dict 重建（零 vision LLM 调用，
+        # D7）；未命中 → 简化档 harness
+        # （vision_harness_run(intent="MODIFY", critic_pass=False)，MODIFY 永不
+        # 跑 critic）→ 各 plan 的 to_hint() 以【图N】前缀拼入 system 消息
+        # （只进 system、不进 user、不作工具，D10）。codex 配置下提取类调用带
+        # codex kwargs（codex_intent="MODIFY"，见 llm.py 白名单扩展）——只放行
+        # 提取，MODIFY 生成旧通道保持 fail closed。原图不以 localImage 形式
+        # 进入本桥接的 MODIFY turn（hint-only 口径，与非 codex MODIFY 一致）。
+        self.vision_extractions: list[dict] = []
+        if request.images:
+            try:
+                from openbrep.vision.extraction_store import (
+                    load_extraction,
+                    plan_to_dict,
+                    save_extraction,
+                )
+                from openbrep.vision.harness import run as vision_harness_run
+                from openbrep.vision.modeling_plan import ModelingPlan
+                from openbrep.vision.multi_image import resolve_and_preprocess
+
+                multi_images = resolve_and_preprocess(request.images)
+                codex_kwargs = {
+                    "codex_intent": "MODIFY",
+                    "codex_should_cancel": request.should_cancel,
+                    "codex_on_event": request.on_event,
+                    "codex_reasoning_effort": self.reasoning_effort,
+                }
+                hint_parts: list[str] = []
+                for idx, img in enumerate(multi_images, start=1):
+                    token = img.token or f"图{idx}"
+                    plan: Any = None
+                    reused = False
+                    reused_from_model = ""
+                    if img.b64:
+                        try:
+                            stored = load_extraction(project.root, img.sha256)
+                        except Exception as exc:
+                            self.logger.warning(
+                                "codex modify: extraction load failed for %s: %s", token, exc
+                            )
+                            stored = None
+                        if stored is not None:
+                            # 哈希命中：复用缓存提取，零 vision LLM 调用（D7）
+                            plan = ModelingPlan.from_dict(stored)
+                            reused = True
+                            reused_from_model = str(stored.get("model") or "")
+                        else:
+                            # 未命中：只对这一张图跑简化档 harness（无 critic）
+                            plans = vision_harness_run(
+                                [img], "MODIFY", request.user_input, llm,
+                                on_event=self.on_event, critic_pass=False,
+                                llm_kwargs=codex_kwargs,
+                            )
+                            plan = plans[0] if plans else None
+                            if plan is not None:
+                                try:
+                                    save_extraction(project.root, plan, model=_llm_model_name(llm))
+                                except Exception as exc:
+                                    self.logger.warning(
+                                        "codex modify: extraction persist failed for %s: %s",
+                                        token, exc,
+                                    )
+                    if plan is None:
+                        self.vision_extractions.append({"token": token, "skipped": True})
+                        continue
+                    entry = plan_to_dict(plan)
+                    entry["token"] = token
+                    self.vision_extractions.append(entry)
+                    if reused:
+                        if reused_from_model:
+                            entry["reused_from_model"] = reused_from_model
+                        # 复用图不经过 harness（零 LLM 调用），事件在这里补发
+                        self.on_event("vision_analysis_done", {
+                            "schema_name": plan.schema_name,
+                            "image_index": idx,
+                            "token": token,
+                            "extraction": entry,
+                        })
+                    hint = plan.to_hint()
+                    if reused:
+                        reuse_marker = (
+                            f"（复用缓存：由 {reused_from_model} 模型提取，未重新读图）"
+                            if reused_from_model else "（复用缓存提取结果，未重新读图）"
+                        )
+                        hint = f"{hint}\n{reuse_marker}"
+                    hint_parts.append(f"【图{idx}】\n{hint}")
+                if hint_parts:
+                    self.messages[0]["content"] = (self.messages[0].get("content") or "") + (
+                        "\n\n---\n## 参考图结构提取（本次修改的依据）\n"
+                        + "\n\n".join(hint_parts)
+                    )
+            except Exception as exc:
+                # D8：vision 只作上下文，任何意外降级都不阻塞 MODIFY 主流程
+                self.logger.warning(
+                    "codex modify: vision harness integration degraded for modify: %s", exc
+                )
+
         # 修改前验收快照（必须在任何修改前取）
         from openbrep.runtime.modify_acceptance import preview_geometry_summary
         self.before_params = [(p.name, p.value) for p in project.parameters]
@@ -1153,6 +1253,37 @@ class CodexModifyBridge:
                 for o in self.turn_outcomes
             )
         )
+        metadata: dict = {
+            "agent_loop": {
+                "diff_guardrail": {
+                    "warnings": diff_warnings,
+                    "ratios": diff_ratios,
+                    "write_methods": dict(self.registry.write_methods),
+                }
+            },
+            "acceptance": acceptance,
+            "codex_modify": {
+                "enabled": bool(self.pipeline.config.llm.codex_modify_enabled),
+                "model": self.model,
+                "reasoning_effort": self.reasoning_effort,
+                "turns": self.turns,
+                "tool_calls": self.tool_calls_used,
+                "budget": self.budget,
+                "budget_exhausted": self.budget_exhausted,
+                "gate_rejections": self.gate_rejections,
+                "cancelled": self.cancelled,
+                "epoch_violated": self.epoch_violated,
+                # 审计：每次工具调用/拒绝（含原因）+ 每次线级服务器请求
+                "tool_audit": _merge_audit_wire(self.audit, self.turn_outcomes),
+                "wire_requests": [
+                    r for out in self.turn_outcomes for r in out.requests
+                ],
+            },
+        }
+        # HF2：带图 MODIFY 的提取透出（与 modify_agent_loop P5e 同构：
+        # schema/fields/confidence/skipped，前端只读卡片数据源；无图不写）
+        if self.vision_extractions:
+            metadata["vision_extractions"] = self.vision_extractions
         return TaskResult(
             success=verification_report.passed and not aborted_delivery,
             intent=self.intent,
@@ -1161,33 +1292,7 @@ class CodexModifyBridge:
             project=self.project,
             compile_result=compile_result,
             verification=verification_report.to_dict(),
-            metadata={
-                "agent_loop": {
-                    "diff_guardrail": {
-                        "warnings": diff_warnings,
-                        "ratios": diff_ratios,
-                        "write_methods": dict(self.registry.write_methods),
-                    }
-                },
-                "acceptance": acceptance,
-                "codex_modify": {
-                    "enabled": bool(self.pipeline.config.llm.codex_modify_enabled),
-                    "model": self.model,
-                    "reasoning_effort": self.reasoning_effort,
-                    "turns": self.turns,
-                    "tool_calls": self.tool_calls_used,
-                    "budget": self.budget,
-                    "budget_exhausted": self.budget_exhausted,
-                    "gate_rejections": self.gate_rejections,
-                    "cancelled": self.cancelled,
-                    "epoch_violated": self.epoch_violated,
-                    # 审计：每次工具调用/拒绝（含原因）+ 每次线级服务器请求
-                    "tool_audit": _merge_audit_wire(self.audit, self.turn_outcomes),
-                    "wire_requests": [
-                        r for out in self.turn_outcomes for r in out.requests
-                    ],
-                },
-            },
+            metadata=metadata,
         )
 
 
@@ -1217,6 +1322,17 @@ def _tool_digest(tool_log: list[dict]) -> str:
 
 def _has_file_blocks(text: str) -> bool:
     return "[FILE:" in (text or "")
+
+
+def _llm_model_name(llm) -> str:
+    """提取所用模型名（D7 落盘标注）：LLMAdapter 走 config.model，mock 走 model 兜底。
+
+    与 modify_agent_loop._llm_model_name 同口径（P5e / HF2 落盘一致）。
+    """
+    cfg = getattr(llm, "config", None)
+    if cfg is not None and getattr(cfg, "model", None):
+        return str(cfg.model)
+    return str(getattr(llm, "model", "") or "")
 
 
 def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str | None:

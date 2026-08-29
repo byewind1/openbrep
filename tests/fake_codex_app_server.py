@@ -960,22 +960,39 @@ def _run_turn_script(thread_id: str, turn_id: str, steps: list, lines) -> None:
             _emit_tool_noise(thread_id, turn_id)
         elif op == "error":
             canary = str(step.get("canary") or "")
+            err = {
+                "message": f"upstream error {canary}",
+                "codexErrorInfo": "internalServerError",
+                "additionalDetails": None,
+            }
+            # 与 plain 模式（_emit_turn_sequence）同一形状：error 通知必须带
+            # threadId/turnId，客户端 collector 按 thread/turn 过滤才会收到；
+            # 否则通知被丢弃，turn 会挂到超时（HF2 修正，op=error/quota 原无
+            # 这两个键）。
             _send({
                 "method": "error",
                 "params": {
-                    "message": f"upstream error {canary}",
-                    "codexErrorInfo": None, "additionalDetails": None,
+                    "error": err,
+                    "willRetry": False,
+                    "threadId": thread_id,
+                    "turnId": turn_id,
                 },
             })
             return
         elif op == "quota":
             canary = str(step.get("canary") or "")
+            err = {
+                "message": f"usage limit exceeded {canary}",
+                "codexErrorInfo": "usageLimitExceeded",
+                "additionalDetails": None,
+            }
             _send({
                 "method": "error",
                 "params": {
-                    "message": f"usage limit exceeded {canary}",
-                    "codexErrorInfo": "usageLimitExceeded",
-                    "additionalDetails": None,
+                    "error": err,
+                    "willRetry": False,
+                    "threadId": thread_id,
+                    "turnId": turn_id,
                 },
             })
             return

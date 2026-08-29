@@ -769,15 +769,17 @@ class LLMAdapter:
             )
 
         requested_model = kwargs.pop("model", None)
-        # D5：ChatGPT Codex（openai-codex）订阅模型的图片通道——
-        # 只有显式 codex_intent ∈ {CREATE, IMAGE}（pipeline 注入，经历了
-        # 提取确认门）才走 app-server turn（localImage 只收当前请求已授权图片，
-        # 见 provider.chat 物化）。其余（旧单图 image_b64 字段 / MODIFY /
-        # 无确认门的直接调用）一律 fail closed，绝不静默回退到 litellm /
-        # API-key / 环境变量（BYOA 安全不变量）。
+        # D5 + HF2：ChatGPT Codex（openai-codex）订阅模型的图片通道——
+        # 只有显式 codex_intent ∈ {CREATE, IMAGE, MODIFY} 才走 app-server turn
+        # （CREATE/IMAGE 由 pipeline 注入并经历提取确认门；MODIFY 由 codex 桥
+        # 接的简化档 harness 注入，只做提取 hint，原图不进入 MODIFY turn）。
+        # localImage 只收当前请求已授权图片（见 provider.chat 物化）。其余
+        # （旧单图 image_b64 字段 / MODIFY 生成旧通道 / 无确认门的直接调用）
+        # 一律 fail closed，绝不静默回退到 litellm / API-key / 环境变量
+        # （BYOA 安全不变量）。
         if self.config._is_codex_app_server_model(requested_model):
             codex_intent = kwargs.pop("codex_intent", None)
-            if codex_intent in ("CREATE", "IMAGE"):
+            if codex_intent in ("CREATE", "IMAGE", "MODIFY"):
                 codex_model = requested_model or self.config.model
                 turn_messages = []
                 if system_prompt:
@@ -791,8 +793,9 @@ class LLMAdapter:
                 )
             raise RuntimeError(
                 "ChatGPT Codex（openai-codex）模型图片通道拒绝该请求：Codex "
-                "图片 CREATE 必须经过读图提取确认流程（旧单图 image_b64 通道/"
-                "MODIFY 图片路径不属于此范围）。请通过工作台带图创建后确认读图结果。"
+                "图片通道必须经显式 codex_intent（CREATE/IMAGE 提取确认流程，"
+                "或 codex MODIFY 桥接提取）授权（旧单图 image_b64 通道/无意图"
+                "调用不属于此范围）。请通过工作台带图创建后确认读图结果。"
             )
         kwargs.pop("codex_intent", None)
         kwargs.pop("codex_should_cancel", None)
