@@ -3,6 +3,7 @@ import type {
   AddParameterResult,
   ApplyResult,
   AssistantCodeBlocksResult,
+  AssistantHistoryItem,
   AssistantHistoryResult,
   AssistantImageAttachment,
   AssistantMessage,
@@ -138,7 +139,7 @@ export interface WorkbenchApi {
   highlightTapirSelection: () => Promise<TapirActionResult>
   loadTapirParameters: () => Promise<TapirActionResult>
   applyTapirParameterEdits: (paramEdits?: Record<string, unknown>) => Promise<TapirActionResult>
-  askAssistant: (message: string, signal?: AbortSignal) => Promise<AssistantResult>
+  askAssistant: (message: string, history?: AssistantHistoryItem[], signal?: AbortSignal) => Promise<AssistantResult>
   listAssistantHistory: () => Promise<AssistantHistoryResult>
   saveAssistantHistory: (messages: AssistantMessage[]) => Promise<SaveAssistantHistoryResult>
   clearAssistantHistory: () => Promise<SaveAssistantHistoryResult>
@@ -158,6 +159,7 @@ export interface WorkbenchApi {
     message: string,
     assistantSettings?: string,
     images?: AssistantImageAttachment[],
+    history?: AssistantHistoryItem[],
     signal?: AbortSignal,
   ) => Promise<GenerateResult>
   generateWithAssistantStream: (
@@ -166,18 +168,21 @@ export interface WorkbenchApi {
     images?: AssistantImageAttachment[],
     onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
     signal?: AbortSignal,
+    history?: AssistantHistoryItem[],
   ) => Promise<GenerateResult>
   requestModifyPlan: (
     message: string,
     assistantSettings?: string,
     images?: AssistantImageAttachment[],
     signal?: AbortSignal,
+    history?: AssistantHistoryItem[],
   ) => Promise<GenerateResult>
   confirmModifyPlan: (
     approve: boolean,
     stream?: boolean,
     onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
     signal?: AbortSignal,
+    history?: AssistantHistoryItem[],
   ) => Promise<GenerateResult>
   confirmSkillProposal: (approve: boolean, signal?: AbortSignal) => Promise<import('../api/types').SkillProposalConfirmResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>

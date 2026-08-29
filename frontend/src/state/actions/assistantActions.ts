@@ -1,4 +1,4 @@
-import type { AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
+import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -18,6 +18,34 @@ const EXTRACTION_PENDING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n🖼️ 读图�
 const EXTRACTION_EXECUTING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n⏳ 正在按已确认的读图结果生成…`
 const EXTRACTION_CANCELLED_CONTENT = '⏹ 已取消本次创建。'
 const INTERRUPTED_CONTENT = '⏹ 已中断'
+
+/**
+ * HF4：把 store 的 assistantMessages 组装成发给后端的对话历史载荷。
+ *
+ * 规则（与后端 _build_messages / history[-6:] 护栏对齐）：
+ * - 只带 role/content（卡片字段 changedFiles/verification/acceptance/
+ *   visionExtractions/images 等一律剔除，与后端保存的历史同构）；
+ * - 跳过 pending 占位（Thinking... 前缀，发送中的临时消息）；
+ * - 跳过纯错误消息（errorCategory 存在 → 内容为错误文案）；
+ * - interrupted 的 assistant 消息保留（它是真实对话的一部分）；
+ * - 截断到最近 limit 条（默认 12 = 6 轮，别整本历史浪费 token）；
+ * - 图片 b64 不重发；[图N] token 原样留在 content 里（模型能看到当时有图即可）。
+ */
+export function buildAssistantHistory(
+  messages: AssistantMessage[],
+  limit = 12,
+): AssistantHistoryItem[] {
+  return messages
+    .filter((m) => {
+      if (m.role !== 'user' && m.role !== 'assistant') return false
+      if (!m.content.trim()) return false
+      if (m.role === 'assistant' && m.content.startsWith(ASSISTANT_PENDING_PREFIX)) return false
+      if (m.errorCategory) return false
+      return true
+    })
+    .slice(-limit)
+    .map(({ role, content }) => ({ role, content }))
+}
 
 function eventToThinkingStep(event: AssistantStreamEvent): AssistantThinkingStep | null {
   const { type, data } = event
@@ -353,6 +381,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     async sendAssistantMessage(message: string) {
       const trimmed = message.trim()
       if (!trimmed) return
+      const history = buildAssistantHistory(get().assistantMessages)
       set((state) => ({
         assistantBusy: true,
         assistantMessages: [
@@ -362,7 +391,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         ],
       }))
       const epoch = get().projectEpoch
-      const result = await api.askAssistant(trimmed)
+      const result = await api.askAssistant(trimmed, history)
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Assistant reply discarded: project switched during the request.')
         return
@@ -390,6 +419,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     async generateAssistantChanges(message: string, images: AssistantImageAttachment[] = []) {
       const trimmed = message.trim()
       if (!trimmed) return
+      const history = buildAssistantHistory(get().assistantMessages)
       set((state) => ({
         assistantBusy: true,
         assistantMessages: [
@@ -409,7 +439,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       const epoch = get().projectEpoch
-      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, images)
+      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, images, history)
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Generation result discarded: project switched during the request.')
         return
@@ -512,6 +542,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           // 计划确认门（V3）：MODIFY 先出非代码语言计划，用户确认后才执行
           const settings = get().llmSettings.assistant_settings ?? ''
           const initialContent = pendingAssistantMessage('generate', images)
+          const history = buildAssistantHistory(get().assistantMessages)
           set((state) => ({
             assistantBusy: true,
             assistantMessages: [
@@ -530,7 +561,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           const epoch = get().projectEpoch
-          const planResult = await api.requestModifyPlan(finalMessage, settings, images, controller.signal)
+          const planResult = await api.requestModifyPlan(finalMessage, settings, images, controller.signal, history)
           if (projectSwitchedSince(epoch)) {
             discardStaleResult('Generation result discarded: project switched during the request.')
             return
@@ -564,6 +595,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           // DEBUG 不走确认门：默认走 agent loop 流式路径，实时显示每一步事件
           const settings = get().llmSettings.assistant_settings ?? ''
           const initialContent = pendingAssistantMessage('generate', images)
+          const history = buildAssistantHistory(get().assistantMessages)
           set((state) => ({
             assistantBusy: true,
             assistantMessages: [
@@ -602,10 +634,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
               }))
             },
             controller.signal,
+            history,
           )
           await finishModifyStream(result, epoch, initialContent, thinkingSteps)
         } else {
           // explain
+          const history = buildAssistantHistory(get().assistantMessages)
           set((state) => ({
             assistantBusy: true,
             assistantMessages: [
@@ -615,7 +649,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             ],
           }))
           const epoch = get().projectEpoch
-          const result = await api.askAssistant(finalMessage, controller.signal)
+          const result = await api.askAssistant(finalMessage, history, controller.signal)
           if (projectSwitchedSince(epoch)) {
             discardStaleResult('Assistant reply discarded: project switched during the request.')
             return
@@ -682,6 +716,10 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }
       const lastMessage = get().assistantMessages[get().assistantMessages.length - 1]
       const thinkingSteps: AssistantThinkingStep[] = [...(lastMessage?.thinkingSteps ?? [])]
+      // HF4：确认执行也携带此前对话。当前轮 user 消息已随 requestModifyPlan 的
+      // message / pending body 流转，不重复放进 history。
+      const pendingHistory = buildAssistantHistory(get().assistantMessages)
+      const history = pendingHistory.at(-1)?.role === 'user' ? pendingHistory.slice(0, -1) : pendingHistory
       set((state) => ({ pendingPlan: null, assistantBusy: true }))
       const epoch = get().projectEpoch
       const result = await api.confirmModifyPlan(true, true, (event: AssistantStreamEvent) => {
@@ -696,7 +734,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             { thinkingSteps: [...thinkingSteps] },
           ),
         }))
-      })
+      }, undefined, history)
       await finishModifyStream(result, epoch, '⏳ 正在按已确认的计划执行修改…', thinkingSteps)
     },
 

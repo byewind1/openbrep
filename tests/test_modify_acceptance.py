@@ -79,9 +79,11 @@ class TestBuildModifyAcceptance(unittest.TestCase):
         self.assertEqual(delta["counts_2d"]["from"]["lines"], 2)
 
     def test_unchanged_geometry_writes_nothing_fabricated(self):
-        # HF3：几何未变文案改为中性表述，不得读成"未变化 = 失败"
+        # HF3：几何未变文案改为中性表述，不得读成"未变化 = 失败"。
+        # 传 changed_files 是非零产出场景（AC-2 去重只作用于零产出）。
         acc = build_modify_acceptance(
             before=_base_summary(), after=_base_summary(),
+            changed_files=["scripts/3d.gdl"],
             compile_result=_CompileOk(), semantic_issues=[],
         )
         joined = "\n".join(acc["summary_lines"])
@@ -123,6 +125,58 @@ class TestBuildModifyAcceptance(unittest.TestCase):
         )
         self.assertIn("参数/枚举定义已更新（paramlist.xml）", "\n".join(acc["summary_lines"]))
 
+    def test_zero_changed_files_shows_prominent_warning_first(self):
+        """AC-2（HF4）：零 changed_files 交付 → 验收摘要首行显性中性警示，
+        绝不呈现为"已成功修改"（真实事件：模型误解指代指令 → 零文件零 [FILE:]）。"""
+        acc = build_modify_acceptance(
+            before=_base_summary(), after=_base_summary(),
+            compile_result=_CompileOk(), semantic_issues=[],
+        )
+        lines = acc["summary_lines"]
+        self.assertTrue(lines)
+        self.assertEqual(
+            lines[0],
+            "本次未修改任何文件（如预期有修改，请检查指令或重试）",
+        )
+        # 门禁判定不变：零变更 + compile 绿仍是 success，只动呈现层
+        self.assertEqual(acc["geometry_delta"]["status"], "unchanged")
+
+    def test_zero_changed_files_dedups_hf3_geometry_unchanged(self):
+        """AC-2 与 HF3 并存：零产出 + 几何未变 → 只保留 AC-2 首行，
+        去掉"当前参数下几何未变化"，两条"什么都没发生"语义不并列。"""
+        acc = build_modify_acceptance(
+            before=_base_summary(), after=_base_summary(),
+            compile_result=_CompileOk(), semantic_issues=[],
+        )
+        joined = "\n".join(acc["summary_lines"])
+        self.assertIn("本次未修改任何文件", joined)
+        self.assertNotIn("当前参数下几何未变化", joined)
+
+    def test_nonzero_changed_files_keeps_hf3_geometry_line(self):
+        """非零产出（HF3 既有行为）：几何未变文案原样保留，不回归。"""
+        acc = build_modify_acceptance(
+            before=_base_summary(), after=_base_summary(),
+            changed_files=["scripts/3d.gdl"],
+            compile_result=_CompileOk(), semantic_issues=[],
+        )
+        joined = "\n".join(acc["summary_lines"])
+        self.assertNotIn("本次未修改任何文件", joined)
+        self.assertIn("当前参数下几何未变化", joined)
+
+    def test_zero_changed_files_still_shows_geometry_change(self):
+        """零文件但几何真实变化（罕见预览差异）：变化行仍如实呈现，不退化成模糊。"""
+        after = _base_summary(mesh_count=3)
+        acc = build_modify_acceptance(
+            before=_base_summary(), after=after,
+            compile_result=_CompileOk(), semantic_issues=[],
+        )
+        joined = "\n".join(acc["summary_lines"])
+        self.assertEqual(
+            acc["summary_lines"][0],
+            "本次未修改任何文件（如预期有修改，请检查指令或重试）",
+        )
+        self.assertIn("几何体数量从 1 变为 3", joined)
+
     def test_before_preview_unavailable_degrades(self):
         before = _base_summary(available=False, reason="3D 预览不可用：boom")
         acc = build_modify_acceptance(
@@ -130,6 +184,11 @@ class TestBuildModifyAcceptance(unittest.TestCase):
             compile_result=_CompileOk(), semantic_issues=[],
         )
         self.assertIn("修改前预览不可用", acc["summary_lines"])
+        # AC-2：零产出首行警示 + 预览诊断行并存（诊断不是易混文案，不去重）
+        self.assertEqual(
+            acc["summary_lines"][0],
+            "本次未修改任何文件（如预期有修改，请检查指令或重试）",
+        )
         self.assertEqual(acc["geometry_delta"]["status"], "before_unavailable")
 
     def test_after_preview_unavailable_degrades(self):

@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { fetchPreview, fetchPreview2D, updateLlmModel } from './client'
+import {
+  askAssistant,
+  confirmModifyPlan,
+  fetchPreview,
+  fetchPreview2D,
+  generateWithAssistant,
+  generateWithAssistantStream,
+  requestModifyPlan,
+  updateLlmModel,
+} from './client'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -63,6 +72,92 @@ describe('D9 routing mode save payload', () => {
       reasoning_effort: 'low',
       codex_routing_mode: 'auto',
     })
+  })
+})
+
+describe('HF4 assistant history payload', () => {
+  const HISTORY = [
+    { role: 'user' as const, content: '轮1' },
+    { role: 'assistant' as const, content: '答1' },
+  ]
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // ok=false + text：让 readAssistantStream / requestJson 提前返回，
+  // 只关心本轮发送的 body 是否携带 history。
+  function stubFetch(body: unknown = {}, ok = true) {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok,
+      text: async () => '',
+      json: async () => body,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  test('askAssistant sends history in the POST body', async () => {
+    const fetchMock = stubFetch({ ok: true, assistant: { kind: 'chat', reply: '答' } })
+    await askAssistant('按你提供的顺序加上', HISTORY)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/assistant')
+    const body = JSON.parse(String(init.body))
+    expect(body.message).toBe('按你提供的顺序加上')
+    expect(body.history).toEqual(HISTORY)
+  })
+
+  test('generateWithAssistant sends history without touching existing fields', async () => {
+    const fetchMock = stubFetch({ ok: true, assistant: null, preview: null, warnings: [] })
+    await generateWithAssistant('按你提供的顺序加上', 'settings', [], HISTORY)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/assistant/generate')
+    const body = JSON.parse(String(init.body))
+    expect(body.message).toBe('按你提供的顺序加上')
+    expect(body.assistant_settings).toBe('settings')
+    expect(body.history).toEqual(HISTORY)
+  })
+
+  test('generateWithAssistantStream sends history in the stream body', async () => {
+    const fetchMock = stubFetch({}, false)
+    await generateWithAssistantStream('按你提供的顺序加上', 'settings', [], undefined, undefined, HISTORY)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/assistant/generate')
+    const body = JSON.parse(String(init.body))
+    expect(body.message).toBe('按你提供的顺序加上')
+    expect(body.stream).toBe(true)
+    expect(body.history).toEqual(HISTORY)
+  })
+
+  test('requestModifyPlan sends history alongside intent/confirm_plan', async () => {
+    const fetchMock = stubFetch({ ok: true, awaiting_confirmation: false })
+    await requestModifyPlan('按你提供的顺序加上', 'settings', [], undefined, HISTORY)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/assistant/generate')
+    const body = JSON.parse(String(init.body))
+    expect(body.message).toBe('按你提供的顺序加上')
+    expect(body.intent).toBe('MODIFY')
+    expect(body.confirm_plan).toBe(true)
+    expect(body.stream).toBe(false)
+    expect(body.history).toEqual(HISTORY)
+  })
+
+  test('confirmModifyPlan sends history alongside approve/stream', async () => {
+    const fetchMock = stubFetch({ ok: true, assistant: null, preview: null, warnings: [] })
+    await confirmModifyPlan(true, false, undefined, undefined, HISTORY)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/modify/confirm')
+    const body = JSON.parse(String(init.body))
+    expect(body.approve).toBe(true)
+    expect(body.stream).toBe(false)
+    expect(body.history).toEqual(HISTORY)
+  })
+
+  test('history defaults to [] when omitted (backwards compatible)', async () => {
+    const fetchMock = stubFetch({})
+    await askAssistant('你好')
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    expect(body.history).toEqual([])
   })
 })
 
