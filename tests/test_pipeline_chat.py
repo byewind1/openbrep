@@ -413,8 +413,8 @@ def test_non_codex_chat_prompt_byte_identical_to_baseline(tmp_path):
     """prompt 不变性：现有 provider 的 chat intent prompt 与基线逐字节一致。
 
     对照基线构造（2026-08-16 D3 前行为）：system = assistant_settings 前缀 +
-    chat 系统提示；随后是 history（最多 6 条）与当前 user 输入；messages 不含
-    任何 codex 专用参数痕迹。
+    chat 系统提示；随后是 history（HF5 口径：最近 12 轮 = 24 条消息，本例
+    2 条全部保留）与当前 user 输入；messages 不含任何 codex 专用参数痕迹。
     """
     pipeline = TaskPipeline(config=GDLAgentConfig(), trace_dir=str(tmp_path / "tr"))
     mock_llm = MagicMock()

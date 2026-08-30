@@ -36,6 +36,7 @@ from openbrep.explainer.context_builder import (
 )
 from openbrep.explainer.service import explain_parameter_context, explain_project_context, explain_script_context
 from openbrep.compiler import CompileComparison, CompileResult, CompileSnapshot, HSFCompiler, MockHSFCompiler
+from openbrep.chat_history import trim_history_messages
 from openbrep.config import GDLAgentConfig
 from openbrep.core import GDLAgent
 from openbrep.feedback import append_feedback
@@ -391,7 +392,52 @@ class TaskPipeline:
         except Exception:
             pass
 
+        # 5. AC-2：成功交付后沉淀紧凑项目记忆（规则式、零额外 LLM）。
+        # 硬门禁：include_learned_skills=False（benchmark 录制/回放口径）不写。
+        try:
+            self._record_delivery_memory(request, result)
+        except Exception:
+            logger.debug("Failed to record delivery memory", exc_info=True)
+
         return result
+
+    def _record_delivery_memory(self, request: TaskRequest, result: TaskResult) -> None:
+        """AC-2：任务成功交付后，向项目 .openbrep/memory/decisions.md 追加紧凑记录。
+
+        - 统一点选在这里：GUI（workbench assistant_service）与 CLI（obr/cli.py）
+          都经 pipeline.execute 交付，覆盖 MODIFY/DEBUG/REPAIR/CREATE/IMAGE/CHAT。
+        - 规则式提炼、零额外 LLM：用户指令原文截断 120 字符 + changed_files + 回复
+          首行截断 80 字符（格式见 project_context.append_project_decision）。
+        - 硬门禁：include_learned_skills=False（benchmark 录制/回放口径）禁止写入——
+          decisions.md 是累积态，写入会改变后续 prompt、污染黄金语料。
+        - MODIFY/DEBUG/REPAIR/CREATE/IMAGE：有 changed_files 的才算交付，零产出
+          （"检查通过"式空转）不记。
+        """
+        if not self.include_learned_skills:
+            return
+        if not result.success:
+            return
+        project = result.project or request.project
+        if project is None:
+            return
+        intent = (result.intent or request.intent or "").upper()
+        if intent not in ("MODIFY", "DEBUG", "REPAIR", "CREATE", "IMAGE", "CHAT"):
+            return
+        changed_files = _delivery_changed_files(result)
+        if intent in ("MODIFY", "DEBUG", "REPAIR", "CREATE", "IMAGE") and not changed_files:
+            return
+        instruction = (request.user_input or "").strip()
+        reply = (result.plain_text or "").strip()
+        if not instruction and not reply:
+            return
+        _append_project_decision_from_update(
+            resolve_project_context(project),
+            summary=_summary_first_line(reply),
+            intent=intent,
+            instruction=instruction,
+            changed_files=changed_files,
+            revision_id=None,
+        )
 
     # ── Handlers ─────────────────────────────────────────
 
@@ -492,7 +538,7 @@ class TaskPipeline:
             "回复简洁，专业术语保留英文（GDL、HSF、GSM、paramlist 等）。"
         )
         system_content = _build_assistant_settings_prompt(request.assistant_settings) + system_content
-        history = _trim_history(request.history, limit=6)
+        history = trim_history_messages(request.history)
         messages = [{"role": "system", "content": system_content}]
         messages.extend({"role": item.get("role", "user"), "content": item.get("content", "")} for item in history)
         messages.append({"role": "user", "content": request.user_input})
@@ -640,7 +686,7 @@ class TaskPipeline:
             # EXPLAIN：只读项目摘要（脚本只取前几行，参数/构件名完整）
             system_content += "\n\n" + _build_chat_project_context(request.project)
         system_content = _build_assistant_settings_prompt(request.assistant_settings) + system_content
-        history = _trim_history(request.history, limit=6)
+        history = trim_history_messages(request.history)
         messages = [{"role": "system", "content": system_content}]
         messages.extend(
             {"role": item.get("role", "user"), "content": item.get("content", "")}
@@ -1490,7 +1536,7 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=revision_warnings,
-            metadata={"acceptance": acceptance},
+            metadata={"acceptance": acceptance, "changed_files": ["paramlist.xml"]},
         )
 
     def _try_param_modify(self, request: TaskRequest) -> Optional[TaskResult]:
@@ -2109,14 +2155,6 @@ class TaskPipeline:
             )
             if after_revision_warning:
                 revision_warnings.append(after_revision_warning)
-            _append_project_decision_from_update(
-                assembled_context.project_context,
-                summary=structured_summary,
-                intent=request.intent or "MODIFY",
-                instruction=clean_instruction,
-                changed_files=list(cleaned.keys()),
-                revision_id=_after_revision_id,
-            )
 
         if revision_warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {warning}" for warning in revision_warnings))
@@ -2445,7 +2483,7 @@ class TaskPipeline:
             "回复简洁准确，使用用户输入的语言。必要时可以给出代码示例。\n\n"
             f"Wiki 参考资料：\n{wiki_context}"
         )
-        history = _trim_history(request.history, limit=6)
+        history = trim_history_messages(request.history)
         messages = [{"role": "system", "content": system_content}]
         messages.extend(
             {"role": item.get("role", "user"), "content": item.get("content", "")}
@@ -2575,12 +2613,6 @@ def _build_assistant_settings_prompt(text: str) -> str:
         "请在不违反系统规则、输出格式要求、GDL 硬性规则和当前任务要求的前提下参考执行。\n"
         f"{raw}\n\n"
     )
-
-
-def _trim_history(history: Optional[list[dict]], limit: int = 6) -> list[dict]:
-    if not history:
-        return []
-    return history[-limit:]
 
 
 def _code_block_language(path: str) -> str:
@@ -2727,6 +2759,35 @@ def _append_project_decision_from_update(
         )
     except Exception:
         logger.debug("Failed to append project decision memory", exc_info=True)
+
+
+def _delivery_changed_files(result: TaskResult) -> list[str]:
+    """从 TaskResult 提取本次交付的 changed_files。
+
+    主交付路径（CREATE / MODIFY agent loop / script update）把变更文件放
+    result.scripts 的 key；确定性路径（micro/param modify）不带 scripts，
+    回退查 metadata（含嵌套的 param_modify / micro_modify 子表）。
+    """
+    files = [str(p) for p in (result.scripts or {}).keys()]
+    if files:
+        return sorted(files)
+    meta = result.metadata or {}
+    for key in ("changed_files", "param_modify", "micro_modify"):
+        raw = meta.get(key)
+        if isinstance(raw, dict):
+            raw = raw.get("changed_files")
+        if raw:
+            return sorted(str(p) for p in raw)
+    return []
+
+
+def _summary_first_line(text: str) -> str:
+    """回复要点摘要：取 plain_text 第一条非空行（截断在落盘处统一做）。"""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
 
 
 def _unique_paths(paths: list[str | Path]) -> list[Path]:

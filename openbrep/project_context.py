@@ -195,6 +195,11 @@ def load_project_skills(context: ProjectContext | None, instruction: str) -> str
         return ""
 
 
+def _memory_truncate(text: str, max_chars: int) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= max_chars else text[:max_chars]
+
+
 def append_project_decision(
     context: ProjectContext | None,
     *,
@@ -204,24 +209,34 @@ def append_project_decision(
     changed_files: list[str],
     revision_id: str | None = None,
 ) -> Path | None:
-    """Append a compact successful-change record to project memory."""
+    """向项目记忆追加一条紧凑的成功交付/决策记录（HF5 格式）。
+
+    每轮追加两条行式记录（截断防爆，隐私安全：只写指令原文截断与交付摘要）：
+
+        - [2026-08-30 11:26] 用户意图：<指令原文，≤120 字符>
+          交付：paramlist.xml, scripts/3d.gdl —— <交付摘要首行，≤80 字符>（修订 r0002）
+        - [2026-08-30 11:26] 用户意图：<指令原文，≤120 字符>
+          要点：<回复首行摘要，≤80 字符>        （无 changed_files，如 CHAT/EXPLAIN）
+
+    注入端 load_project_memory 已有 6000 字符护栏，此处只负责追加；规则的
+    写入门禁（benchmark include_learned_skills=False 禁止写入）在调用方。
+    """
     if context is None:
         return None
     body = (summary or "").strip()
     if not body:
         return None
+    instruction_text = _memory_truncate(instruction, 120) or "（未提供指令原文）"
 
-    timestamp = _dt.datetime.now().isoformat(timespec="seconds")
-    title_revision = f" / {revision_id}" if revision_id else ""
-    lines = [
-        f"## {timestamp} · {intent or 'UPDATE'}{title_revision}",
-        "",
-    ]
-    if instruction.strip():
-        lines.append(f"- Instruction: {instruction.strip()}")
+    timestamp = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [f"- [{timestamp}] 用户意图：{instruction_text}"]
     if changed_files:
-        lines.append(f"- Changed files: {', '.join(changed_files)}")
-    lines.extend(["", body, ""])
+        revision = f"（修订 {revision_id}）" if revision_id else ""
+        lines.append(
+            f"  交付：{', '.join(changed_files)} —— {_memory_truncate(body, 80)}{revision}"
+        )
+    else:
+        lines.append(f"  要点：{_memory_truncate(body, 80)}")
 
     context.memory_dir.mkdir(parents=True, exist_ok=True)
     with context.decisions_file.open("a", encoding="utf-8") as fh:

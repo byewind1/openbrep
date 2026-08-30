@@ -110,7 +110,7 @@ class TestProjectContext(unittest.TestCase):
 
             path = append_project_decision(
                 context,
-                summary="**变更摘要：**\n- 新增参数：shelf_count",
+                summary="新增参数：shelf_count（默认 5）",
                 intent="MODIFY",
                 instruction="增加层板数量参数",
                 changed_files=["paramlist.xml", "scripts/3d.gdl"],
@@ -121,7 +121,10 @@ class TestProjectContext(unittest.TestCase):
             self.assertTrue(path.exists())
 
         self.assertIn("Project Memory: decisions", memory)
-        self.assertIn("增加层板数量参数", memory)
+        self.assertIn("用户意图：增加层板数量参数", memory)
+        self.assertIn("交付：paramlist.xml, scripts/3d.gdl", memory)
+        self.assertIn("新增参数：shelf_count（默认 5）", memory)
+        self.assertIn("（修订 r0002）", memory)
         self.assertIn("shelf_count", memory)
 
     def test_project_knowledge_manifest_filters_and_sorts_docs(self):
@@ -207,7 +210,7 @@ class TestProjectContext(unittest.TestCase):
             )
             append_project_decision(
                 resolve_project_context(project),
-                summary="**变更摘要：**\n- 已确定层板默认 5 层",
+                summary="已确定层板默认 5 层",
                 intent="MODIFY",
                 instruction="固定默认层板策略",
                 changed_files=["paramlist.xml"],

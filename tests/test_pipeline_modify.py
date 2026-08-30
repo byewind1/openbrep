@@ -925,9 +925,9 @@ class TestModifyPipelineContext(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertTrue(decisions.exists())
             text = decisions.read_text(encoding="utf-8")
-            self.assertIn("把椅子改宽一点", text)
-            self.assertIn("scripts/3d.gdl", text)
-            self.assertIn("编译结果：✅ 通过", text)
+            # HF5 紧凑格式：用户意图 + 交付行（回复首行摘要，revision 不加）
+            self.assertIn("用户意图：把椅子改宽一点", text)
+            self.assertIn("交付：scripts/3d.gdl —— 已改宽", text)
 
 
 class TestCliRepairIntent(unittest.TestCase):

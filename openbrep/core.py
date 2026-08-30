@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
+from openbrep.chat_history import trim_history_messages
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
 from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
@@ -651,9 +652,12 @@ class GDLAgent:
         system = self._build_system_prompt(knowledge, skills, chat_mode=chat_mode)
         messages = [{"role": "system", "content": system}]
 
-        # Inject recent conversation history (last 6 turns) for multi-turn context
+        # Inject recent conversation history for multi-turn context.
+        # 口径统一走 openbrep.chat_history.trim_history_messages：最近 12 轮
+        # （1 轮 = user + assistant 2 条消息）+ 8000 字符预算兜底，与
+        # pipeline 路径 / 前端 buildAssistantHistory 同源，防止轮/条再次漂移。
         if history:
-            for msg in history[-6:]:
+            for msg in trim_history_messages(history):
                 role = msg.get("role")
                 content = msg.get("content", "")
                 if role in ("user", "assistant") and content.strip():

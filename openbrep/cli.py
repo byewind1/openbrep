@@ -294,12 +294,15 @@ def chat(model, config_path, mock):
             continue
 
         history.append({"role": "user", "content": instruction})
+        # 口径（HF5）：对话窗口统一由 pipeline/chat_history 按"最近 12 轮 + 字符
+        # 预算"截断；这里传全量，禁止自行切片——cli.py 曾用 history[-6:] 预截
+        # 6 条消息=3 轮，把 AC-1 的新窗口又阉割回 3 轮。
         request = TaskRequest(
             user_input=instruction,
             project=project,
             work_dir=str(Path(config.src_dir).parent if config.src_dir else "."),
             output_dir=config.output_dir,
-            history=history[-6:],
+            history=list(history),
             assistant_settings=config.llm.assistant_settings,
         )
         result = pipeline.execute(request)
