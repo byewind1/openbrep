@@ -51,15 +51,26 @@ describe('buildAssistantHistory (HF4)', () => {
     ])
   })
 
-  test('truncates to the most recent 12 messages (= 6 轮, matches backend history[-6:] guard)', () => {
+  test('truncates to the most recent 24 messages (= 12 轮, matches backend trim_history_messages guard)', () => {
     const messages: AssistantMessage[] = []
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 26; i++) {
       messages.push({ role: 'user', content: `u${i}` }, { role: 'assistant', content: `a${i}` })
     }
     const history = buildAssistantHistory(messages)
-    expect(history).toHaveLength(12)
-    expect(history[0]).toEqual({ role: 'user', content: 'u9' })
-    expect(history.at(-1)).toEqual({ role: 'assistant', content: 'a14' })
+    expect(history).toHaveLength(24)
+    expect(history[0]).toEqual({ role: 'user', content: 'u14' })
+    expect(history.at(-1)).toEqual({ role: 'assistant', content: 'a25' })
+  })
+
+  test('keeps a full session of exactly 24 messages intact', () => {
+    const messages: AssistantMessage[] = []
+    for (let i = 0; i < 12; i++) {
+      messages.push({ role: 'user', content: `u${i}` }, { role: 'assistant', content: `a${i}` })
+    }
+    const history = buildAssistantHistory(messages)
+    expect(history).toHaveLength(24)
+    expect(history[0]).toEqual({ role: 'user', content: 'u0' })
+    expect(history.at(-1)).toEqual({ role: 'assistant', content: 'a11' })
   })
 
   test('accepts a custom limit', () => {

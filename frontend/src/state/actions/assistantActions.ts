@@ -22,18 +22,20 @@ const INTERRUPTED_CONTENT = '⏹ 已中断'
 /**
  * HF4：把 store 的 assistantMessages 组装成发给后端的对话历史载荷。
  *
- * 规则（与后端 _build_messages / history[-6:] 护栏对齐）：
+ * 规则（与后端 _build_messages / trim_history_messages 护栏对齐，HF5 口径）：
  * - 只带 role/content（卡片字段 changedFiles/verification/acceptance/
  *   visionExtractions/images 等一律剔除，与后端保存的历史同构）；
  * - 跳过 pending 占位（Thinking... 前缀，发送中的临时消息）；
  * - 跳过纯错误消息（errorCategory 存在 → 内容为错误文案）；
  * - interrupted 的 assistant 消息保留（它是真实对话的一部分）；
- * - 截断到最近 limit 条（默认 12 = 6 轮，别整本历史浪费 token）；
+ * - 截断到最近 limit 条（默认 24 = 12 轮，1 轮 = user + assistant 2 条；
+ *   与后端 core._build_messages / pipeline trim_history_messages 同源）。
+ *   前端只是预截，最终生效以后端为准（后端还会做 8000 字符预算兜底）；
  * - 图片 b64 不重发；[图N] token 原样留在 content 里（模型能看到当时有图即可）。
  */
 export function buildAssistantHistory(
   messages: AssistantMessage[],
-  limit = 12,
+  limit = 24,
 ): AssistantHistoryItem[] {
   return messages
     .filter((m) => {
