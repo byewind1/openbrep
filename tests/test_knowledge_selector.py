@@ -173,6 +173,119 @@ def test_examples_injected_for_matching_object(tmp_path) -> None:
     assert "FOR" in selection.generation_context
 
 
+# ── HF6：命令选择规则文档链路（AC-1/AC-2/AC-3） ──────────────────────
+
+
+def test_command_selection_doc_survives_create_planner_and_generation() -> None:
+    """AC-3：CREATE 的 planner 与 generation 两路 prompt 都含规则文档。
+
+    同时验证文档整份存活（正文不含会被 _split_markdown_sections
+    切碎的 `\n---\n` 分隔线，也不被 core/ 预算截断）。
+    """
+    from openbrep.knowledge_selector import select_gdl_knowledge
+
+    selection = select_gdl_knowledge(
+        instruction="做一个旋转体花瓶",
+        intent="CREATE",
+        knowledge_dir="./knowledge",
+        base_context="## GDL_quick_reference\n\n基础规则",
+    )
+    assert "复杂度阶梯（能低不高）" in selection.planner_context
+    assert "复杂度阶梯（能低不高）" in selection.generation_context
+    assert "审查模式（优化 / 审查请求专用）" in selection.generation_context
+    assert "core.command_selection" in selection.source_ids
+    # 关键小节都在（没有被 4000 字符预算挤掉）
+    for marker in (
+        "减法与加法取舍",
+        "建模前决策清单",
+        "BLOCK / BRICK / CPRISM_",
+        "先用低路径点数出可编译版本",
+    ):
+        assert marker in selection.planner_context, marker
+
+
+def test_command_selection_doc_survives_modify_both_contexts() -> None:
+    """AC-3：MODIFY 的 planner 与 generation（agent loop 只消费 generation）
+    都含规则文档——MODIFY 路径零覆盖问题被修复。
+    """
+    from openbrep.knowledge_selector import select_gdl_knowledge
+
+    selection = select_gdl_knowledge(
+        instruction="把柜门改成推拉门",
+        intent="modify",
+        knowledge_dir="./knowledge",
+        base_context="## GDL_parameters\n\n参数规则",
+    )
+    assert "复杂度阶梯（能低不高）" in selection.generation_context
+    assert "复杂度阶梯（能低不高）" in selection.planner_context
+    assert "core.command_selection" in selection.source_ids
+
+
+def test_review_trigger_words_matching() -> None:
+    """AC-4：优化/审查触发词命中口径（一处常量走的保守子串/正则匹配）。"""
+    from openbrep.knowledge_selector import _hit_review_trigger
+
+    hits = [
+        "帮我优化这个柜子的建模方式",
+        "审查一下当前脚本",
+        "请检查 3d.gdl 有没有更好的选型",
+        "refactor 这段代码",
+        "Review the modeling approach",
+        "精简这个构件的几何",
+    ]
+    misses = [
+        "把宽度改成 2 米",
+        "增加一个层板",
+        "帮我解释一下这个参数",
+        "生成一个桌子",
+    ]
+    for text in hits:
+        assert _hit_review_trigger(text), text
+    for text in misses:
+        assert not _hit_review_trigger(text), text
+
+
+def test_wiki_truncation_keeps_tail_selection_advice() -> None:
+    """AC-2.4：wiki 页截断不再误伤页尾选择建议段
+    （Edge Cases & Traps / Optimization）。
+    """
+    from pathlib import Path
+
+    from openbrep.knowledge_selector import _load_wiki_context
+
+    root = Path(__file__).parent.parent / "knowledge"
+    context, sources = _load_wiki_context(
+        root,
+        instruction="做一个旋转体花瓶",
+        task_type="create",
+        object_keys=["profile_object"],
+        max_pages=5,
+        max_chars_per_page=700,  # 远小于 REVOLVE 页长（~3.9k），必触发截断
+    )
+    assert "wiki.REVOLVE" in sources
+    assert "Edge Cases & Traps" in context
+    assert "[truncated]" in context
+    assert "REVOLVE\n\n" in context or "REVOLVE" in context
+
+
+def test_wiki_short_page_not_truncated() -> None:
+    """预算充足时不截断、不加标记。"""
+    from pathlib import Path
+
+    from openbrep.knowledge_selector import _load_wiki_context
+
+    root = Path(__file__).parent.parent / "knowledge"
+    context, _ = _load_wiki_context(
+        root,
+        instruction="BLOCK 怎么用",
+        task_type="create",
+        object_keys=["bookshelf"],
+        max_pages=1,
+        max_chars_per_page=100000,
+    )
+    assert "[truncated]" not in context
+
+
 def test_examples_matched_by_command_token() -> None:
     from openbrep.knowledge_selector import select_gdl_knowledge
 

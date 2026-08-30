@@ -18,6 +18,52 @@ class KnowledgeSelection:
     source_ids: list[str] = field(default_factory=list)
 
 
+# ── 优化/审查触发词（AC-4，一处常量） ────────────────────────────────
+# 口径：用户输入命中这些词 + 有打开项目 + 非 CREATE/IMAGE 意图时，
+# MODIFY/EXPLAIN 路径**强制**注入规则文档全文，不走关键词命中漏斗——
+# 因为这类请求用户明确要做选型审查（对照复杂度阶梯的评估），
+# 而不是等着按对象类型碰运气命中。只做保守匹配：命中即强制注入，
+# 宁多勿漏（注入的是只读知识，不产生副作用）。
+REVIEW_TRIGGER_WORDS: tuple[str, ...] = (
+    # 中文：优化/审查/检查/改进/精简
+    "优化", "审查", "检查", "改进", "精简", "选型", "建模方式", "重构",
+    # 英文：refactor / optimize / review / improve / simplify / streamline
+    "refactor", "optimize", "review", "improve", "simplify",
+    "streamline", "redo", "assess", "evaluate",
+)
+
+
+# 规则文档在 knowledge/core/ 下的文件名（正文内禁用 `--- 分隔符`，见 AC-1）
+_COMMAND_SELECTION_DOC = "gdl_command_selection"
+
+
+def _hit_review_trigger(instruction: str) -> bool:
+    """保守命中：英文词按正则（re.IGNORECASE 在调用处），中文直接子串。"""
+    text = instruction or ""
+    low = text.lower()
+    for word in REVIEW_TRIGGER_WORDS:
+        if word.isascii():
+            if re.search(word, low):
+                return True
+        elif word in text:
+            return True
+    return False
+
+
+def load_command_selection_rules(knowledge_dir: str | Path) -> str:
+    """读取规则文档正文（去 frontmatter），供 AC-4 强制注入与测试断言。
+
+    文档缺失/损坏时返回空串（调用处可安全降级）。
+    """
+    fp = Path(knowledge_dir) / "core" / f"{_COMMAND_SELECTION_DOC}.md"
+    try:
+        raw = fp.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    _, body = _split_frontmatter(raw)
+    return body.strip()
+
+
 _OBJECT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "bookshelf": ("书架", "书柜", "层板架", "bookshelf", "shelf", "bookcase"),
     "cabinet": ("柜", "柜体", "收纳柜", "鞋柜", "橱柜", "cabinet", "cupboard"),
@@ -43,6 +89,10 @@ _INTENT_WIKI_HINTS: dict[str, tuple[str, ...]] = {
     "debug": ("ADD_DEL", "FOR_NEXT", "IF_ENDIF"),
     "repair": ("ADD_DEL", "FOR_NEXT", "IF_ENDIF"),
 }
+
+# planner 侧 core/ 知识预算：需容纳 plan_contract + generation_discipline +
+# parameter_rules + command_selection（HF6 新增）全部存活。
+_CORE_MAX_CHARS = 8000
 
 
 def select_gdl_knowledge(
@@ -74,14 +124,19 @@ def select_gdl_knowledge(
         generation_parts.append(_section("Project Knowledge", project_knowledge))
         source_ids.append("project.knowledge")
 
+    # HF6：core/ 知识同时进入 generation 上下文（此前只进 planner）。
+    # gdl_command_selection.md 靠这里到达 CREATE 生成与 MODIFY 的 prompt，
+    # 是 MODIFY/EXPLAIN agent-loop 的统一注入点（二者都消费
+    # generation_context；不在各处散写）。
     planner_core_context, planner_core_sources = _load_core_context(
         root,
         task_type=task_type,
         stage="planner",
-        max_chars=4000,
+        max_chars=_CORE_MAX_CHARS,
     )
     if planner_core_context:
         planner_parts.append(planner_core_context)
+        generation_parts.append(planner_core_context)
         source_ids.extend(planner_core_sources)
 
     archetype_context = _load_archetypes(root, object_keys)
@@ -245,7 +300,7 @@ def _load_wiki_context(
     object_keys: list[str],
     *,
     max_pages: int = 5,
-    max_chars_per_page: int = 600,
+    max_chars_per_page: int = 1200,
 ) -> tuple[str, list[str]]:
     wiki = WikiKnowledge(str(root / "wiki"))
     try:
@@ -283,7 +338,55 @@ def _format_wiki_page_compact(page, *, max_chars: int) -> str:
     formatted = page.format_for_context()
     if max_chars <= 0 or len(formatted) <= max_chars:
         return formatted
-    return formatted[:max_chars].rstrip() + "\n\n[truncated]"
+    head, advice = _split_wiki_head_and_advice(formatted)
+    if not advice:
+        return formatted[:max_chars].rstrip() + "\n\n[truncated]"
+    # 预算内保留：头部（标题/元信息/语法）优先，选型建议段（页尾
+    # Traps/Optimization/Recommended）整体追加——截断不误伤选择建议。
+    head_budget = max(200, max_chars - len(advice) - 60)
+    head = head[:head_budget].rstrip() or ""
+    parts = [p for p in [head, advice] if p]
+    return "\n\n".join(parts) + "\n\n[truncated]"
+
+
+# 选型建议段标题关键词：命中即整体保留（大小写不敏感）。
+# HF6：600 字符头截断会把页尾 Edge Cases & Traps / Optimization 段切掉，
+# 而这些正是“选择建议”。
+_WIKI_ADVICE_HEADING_TOKENS: tuple[str, ...] = (
+    "edge cases", "traps", "optimization", "recommended", "选择", "边界",
+    "陷阱", "优化", "建议", "何时", "when to", "use cases",
+)
+
+
+def _split_wiki_head_and_advice(formatted: str) -> tuple[str, str]:
+    """把 wiki 页拆成 (头部, 选型建议段)。
+
+    按 `## ` 二级标题切分；标题命中 _WIKI_ADVICE_HEADING_TOKENS 的段落
+    归入建议段（保留原顺序），其余（含标题前的元信息块）归入头部。
+    """
+    lines = formatted.splitlines()
+    head_lines: list[str] = []
+    advice_lines: list[str] = []
+    cur_is_advice = False
+    cur: list[str] = []
+
+    def flush():
+        nonlocal cur, cur_is_advice
+        if cur:
+            if cur_is_advice:
+                advice_lines.extend(cur)
+            else:
+                head_lines.extend(cur)
+        cur = []
+
+    for line in lines:
+        m = re.match(r"^## (.+)$", line.strip())
+        if m:
+            flush()
+            cur_is_advice = any(tok in m.group(1).lower() for tok in _WIKI_ADVICE_HEADING_TOKENS)
+        cur.append(line)
+    flush()
+    return "\n".join(head_lines).strip(), "\n".join(advice_lines).strip()
 
 
 def _split_frontmatter(raw: str) -> tuple[dict[str, str], str]:

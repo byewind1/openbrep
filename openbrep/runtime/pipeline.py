@@ -42,7 +42,13 @@ from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.knowledge import KnowledgeBase
-from openbrep.knowledge_selector import KnowledgeSelection, select_gdl_knowledge
+from openbrep.knowledge_selector import (
+    KnowledgeSelection,
+    _hit_review_trigger,
+    _section,
+    load_command_selection_rules,
+    select_gdl_knowledge,
+)
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
 from openbrep.object_planner import plan_gdl_object
@@ -215,6 +221,8 @@ class AssembledContext:
     project_context: Optional[ProjectContext]
     knowledge_selection: KnowledgeSelection
     skills_text: str
+    # AC-4：本次是否因优化/审查触发词强制注入了规则全文
+    review_rules_forced: bool = False
 
     @property
     def generation_context(self) -> str:
@@ -639,6 +647,20 @@ class TaskPipeline:
         if request.project is not None:
             # EXPLAIN：只读项目摘要（脚本只取前几行，参数/构件名完整）
             system_content += "\n\n" + _build_chat_project_context(request.project)
+            # AC-4：有项目 + 优化/审查触发词 → 强制注入规则文档全文，
+            # 让 EXPLAIN 答复成为对照复杂度阶梯的选型评估而非泛泛而谈。
+            if _hit_review_trigger(request.user_input):
+                rules_text = load_command_selection_rules(
+                    Path(__file__).parent.parent.parent / "knowledge"
+                )
+                if rules_text:
+                    system_content += (
+                        "\n\n## 审查模式（选型评估）\n"
+                        "用户要求优化/审查此构件：请对照以下规则输出选型评估"
+                        "（每个主要形体：当前命令选择是否合理、有无更低阶替代、"
+                        "理由），不要直接改写脚本。\n"
+                        + rules_text
+                    )
         system_content = _build_assistant_settings_prompt(request.assistant_settings) + system_content
         history = _trim_history(request.history, limit=6)
         messages = [{"role": "system", "content": system_content}]
@@ -2245,10 +2267,36 @@ class TaskPipeline:
                 project=project,
             ) if self.include_learned_skills else "",
         ]
+        # ── AC-4：优化/审查触发词强制注入规则文档全文（不走关键词漏斗）──
+        # 命中条件：非 CREATE/IMAGE 意图（MODIFY/DEBUG/REPAIR/EXPLAIN-CHAT）
+        # + 有打开项目 + 输入命中触发词。规则全文直接追加到 generation
+        # 上下文，保证三种 MODIFY 通道（agent loop / codex bridge /
+        # _handle_script_update）与 EXPLAIN 都能拿到；重复注入由
+        # source_ids 去重兜底，prompt 侧幂等。
+        review_forced = False
+        if (
+            request.intent not in ("CREATE", "IMAGE")
+            and project is not None
+            and _hit_review_trigger(instruction or request.user_input)
+        ):
+            rules_text = load_command_selection_rules(
+                Path(__file__).parent.parent.parent / "knowledge"
+            )
+            if rules_text:
+                knowledge_selection = replace(
+                    knowledge_selection,
+                    generation_context=(
+                        knowledge_selection.generation_context
+                        + "\n\n"
+                        + _section("Core: core.command_selection (审查模式强制注入)", rules_text)
+                    ),
+                )
+                review_forced = True
         return AssembledContext(
             project_context=project_context,
             knowledge_selection=knowledge_selection,
             skills_text="\n\n---\n\n".join(part for part in skill_parts if part),
+            review_rules_forced=review_forced,
         )
 
     def _select_knowledge_for_request(

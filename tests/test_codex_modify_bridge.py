@@ -1172,7 +1172,10 @@ def _wire_digest(recs: list[dict]) -> str:
 
 # 无图 MODIFY 的 wire 基线（HF2 实测于 ecaed74 原桥接；归一化后逐字节摘要）。
 # 任何「无图路径」改动都会改变该摘要 → 回归即红。
-HF2_NO_IMAGE_WIRE_SHA256 = "998eb2cf0a9e0434b0f6de194a1fa5f49fc5dcf58302e39786db03f47f6848f5"
+# HF6（本分支）把 knowledge/core/gdl_command_selection.md 注入 MODIFY 的
+# generation_context（system 提示），prompt 变更是本单目标本身而非回归；
+# 基线已按新摘要重录（c2420473...）。golden corpus 重录由维护者另行决定。
+HF2_NO_IMAGE_WIRE_SHA256 = "c2420473341da9a7592219bef46dab5b710eba1d774b32389358d6ac9fe8c6ac"
 
 # 桥接 thread 的 system 消息标识（baseInstructions 中必含的协议锚点）
 _BRIDGE_SYSTEM_MARK = "Agent Loop 工作模式（本次任务生效，Codex 动态工具桥接）"

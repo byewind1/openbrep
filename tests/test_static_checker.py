@@ -746,3 +746,99 @@ class TestBareNot(unittest.TestCase):
         nots = [e for e in result.errors if e.check_type == "bare_not"]
         self.assertEqual(len(nots), 1, msg=f"Unexpected: {result.errors}")
 
+
+class TestStackedCoaxialCylinders(unittest.TestCase):
+    """AC-4.3：warning 级选型建议——≥4 个同半径同轴 CYLIND 顺序堆叠。
+
+    误报论证：半径表达式文本相同 + 轴心（x,y 平移累积）不变，几何上必然
+    是同轴等半径柱体的顺序堆叠，一个 PRISM_/REVOLVE 单轮廓更优；
+    任何旋转/缩放/加轴偏移/异半径都会切断序列，不报。"""
+
+    def _warns(self, script: str) -> list:
+        proj = FakeProject(scripts={"3d.gdl": script}, param_names=[])
+        result = StaticChecker().check(proj)
+        return [w for w in result.warnings if w.check_type == "stacked_coaxial_cylinders"]
+
+    def test_stack_of_four_same_radius_warns(self):
+        script = (
+            "CYLIND 0.1, 0.05\n"
+            "ADDZ 0.1\nCYLIND 0.1, 0.05\nDEL 1\n"
+            "ADDZ 0.1\nCYLIND 0.1, 0.05\nDEL 1\n"
+            "ADDZ 0.1\nCYLIND 0.1, 0.05\nDEL 1\n"
+            "END\n"
+        )
+        warns = self._warns(script)
+        self.assertEqual(len(warns), 1)
+        self.assertIn("4 个同半径同轴 CYLIND", warns[0].detail)
+        self.assertIn("REVOLVE", warns[0].detail)
+
+    def test_warning_is_non_blocking(self):
+        proj = FakeProject(
+            scripts={
+                "3d.gdl": (
+                    "CYLIND 0.1, 0.05\n"
+                    "ADDZ 0.1\nCYLIND 0.1, 0.05\nDEL 1\n"
+                    "ADDZ 0.1\nCYLIND 0.1, 0.05\nDEL 1\n"
+                    "ADDZ 0.1\nCYLIND 0.1, 0.05\nDEL 1\n"
+                    "END\n"
+                )
+            },
+            param_names=[],
+        )
+        result = StaticChecker().check(proj)
+        self.assertTrue(result.passed)  # warning 不参与 passed
+        self.assertEqual(
+            [w.check_type for w in result.warnings],
+            ["stacked_coaxial_cylinders"],
+        )
+
+    def test_fence_along_x_does_not_warn(self):
+        """ADDX 使轴心平移（栅栏立柱）→ 不同轴，不报。"""
+        script = (
+            "CYLIND 1, 0.05\nADDX 0.3\nCYLIND 1, 0.05\nDEL 1\n"
+            "ADDX 0.3\nCYLIND 1, 0.05\nDEL 1\n"
+            "ADDX 0.3\nCYLIND 1, 0.05\nDEL 1\nEND\n"
+        )
+        self.assertEqual(self._warns(script), [])
+
+    def test_three_cylinders_do_not_warn(self):
+        script = (
+            "CYLIND 1, 0.05\nADDZ 0.1\nCYLIND 1, 0.05\nDEL 1\n"
+            "ADDZ 0.1\nCYLIND 1, 0.05\nDEL 1\nEND\n"
+        )
+        self.assertEqual(self._warns(script), [])
+
+    def test_different_radii_do_not_warn(self):
+        """半径不同（锥形柱）→ 不报（REVOLVE 建议不适配等半径假设）。"""
+        script = (
+            "CYLIND 1, 0.05\nADDZ 0.1\nCYLIND 0.2, 0.06\nDEL 1\n"
+            "ADDZ 0.1\nCYLIND 0.1, 0.05\nDEL 1\n"
+            "ADDZ 0.1\nCYLIND 0.3, 0.05\nDEL 1\nEND\n"
+        )
+        self.assertEqual(self._warns(script), [])
+
+    def test_rotation_between_cylinders_does_not_warn(self):
+        """ROT* 之间打断序列（定向改变不可追踪）→ 不报。"""
+        script = (
+            "CYLIND 1, 0.05\nROTX 90\nADDZ 0.1\nCYLIND 1, 0.05\nDEL 1\n"
+            "ROTX 90\nADDZ 0.1\nCYLIND 1, 0.05\nDEL 1\n"
+            "ROTX 90\nADDZ 0.1\nCYLIND 1, 0.05\nDEL 1\nEND\n"
+        )
+        self.assertEqual(self._warns(script), [])
+
+    def test_for_loop_between_cylinders_does_not_warn(self):
+        """FOR/NEXT 打断序列（循环展开语义不可追踪）→ 不报。"""
+        script = (
+            "FOR i = 1 TO 4\nADDZ 0.1\nCYLIND 1, 0.05\nDEL 1\nNEXT i\nEND\n"
+        )
+        self.assertEqual(self._warns(script), [])
+
+    def test_materials_between_stack_keep_warning(self):
+        """分段材质不同仍建议合并（REVOLVE{2} 按段着色）→ 报。"""
+        script = (
+            "CYLIND 0.1, _r\nMATERIAL 14\nADDZ 0.1\nCYLIND 0.1, _r\nDEL 1\n"
+            "MATERIAL 11\nADDZ 0.1\nCYLIND 0.1, _r\nDEL 1\n"
+            "ADDZ 0.1\nCYLIND 0.1, _r\nDEL 1\nEND\n"
+        )
+        self.assertEqual(len(self._warns(script)), 1)
+

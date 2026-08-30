@@ -370,6 +370,27 @@ def _append_section(lines: list[str], title: str, values: list[str]) -> None:
         lines.append(f"  - {value}")
 
 
+# 命令选择阶梯摘要（注入 planner system prompt；全量规则见
+# knowledge/core/gdl_command_selection.md，经 planner_context 进入 user 消息）。
+# 摘要给 LLM 一个强约束：能低不高，升级必须给出正当理由。
+_COMMAND_LADDER_SUMMARY = """\
+## GDL Command Selection Ladder (pick the LOWEST justifiable level)
+1 BLOCK/BRICK/CPRISM_ — box/panel: default, zero justification needed.
+2 CYLIND/CONE/SPHERE/ELLIPS — analytic cylinders/cones/spheres.
+3 PRISM_/BPRISM_ — arbitrary 2D profile extruded along Z (chamfered/odd panels).
+4 EXTRUDE — profile extrusion with a tilted/translated top face.
+5 REVOLVE — profile rotated around an axis: only for real bodies of revolution.
+6 SWEEP — profile along a bent path: only when the path is truly curved.
+7 TUBE — constant cross-section along a 3D path: hardest, last resort.
+8 RULED/COONS — skin between two profiles / free-form surfaces.
+9 MESH/PGON — explicit mesh patches: last resort, import-only.
+Subtraction: prefer CUTPLANE/CUTPOLY/CUTFORM/GROUP booleans for chamfers and
+cutouts instead of building many small bodies and assembling them.
+Rule: stating the justification for going up a level is mandatory in the plan.
+Never default to BODY/EDGE-level construction or GROUP boolean as the main strategy.
+"""
+
+
 _PLANNER_SYSTEM_PROMPT = """\
 You are an expert Archicad GDL object architect.
 
@@ -397,4 +418,5 @@ Return only compact JSON with this schema:
   "knowledge_sources": ["..."],
   "risks": ["..."]
 }
-"""
+
+""" + _COMMAND_LADDER_SUMMARY + "\n\n"

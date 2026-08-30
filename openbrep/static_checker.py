@@ -131,6 +131,8 @@ class StaticChecker:
         # 警告（无 CALL 的宏调用）→ warning，不阻断交付。
         errors.extend(self._check_bare_not(project))
         warnings.extend(self._check_unknown_command(project))
+        # AC-4.3：同半径同轴 CYLIND 堆叠 → warning（选型改进建议，不阻断）
+        warnings.extend(self._check_stacked_coaxial_cylinders(project))
 
         return StaticCheckResult(
             passed=len(errors) == 0, errors=errors, warnings=warnings
@@ -646,6 +648,162 @@ class StaticChecker:
                 ),
             ))
         return errors
+
+    # ── check 8: stacked_coaxial_cylinders（AC-4.3，warning 级）─────────────
+
+    # ≥4 个同半径、同轴心、顺序堆叠的 CYLIND → 建议合成单一轮廓
+    # （PRISM_ / REVOLVE）。warning 级，不阻断交付。
+    #
+    # 误报论证（实现前分析）：只有同时满足以下全部条件才触发——
+    #   1) ≥4 个连续 CYLIND（间隔只允许赋值/属性行与平移变换）；
+    #   2) 半径参数表达式文本相同（大小写不敏感，去除空白）；
+    #   3) 各 CYLIND 绘制时刻的变换栈轴心（x, y 平移累积）完全相同：
+    #      ROT*/MUL*/其它几何命令会切断序列，保证轴心重合。
+    # 三者齐备时几何上就是同轴等半径柱体的顺序堆叠，一个 PRISM_/REVOLVE
+    # 单轮廓描述同一实体且面数更少，普遍更优；即使分段材质不同，
+    # REVOLVE{2} 也能按段着色。数值相同但写法不同的半径（0.05 vs 0.050）
+    # 或含旋转/缩放的变换一律不判同，宁漏勿误。
+    _CYL_RUN_ALLOW_FIRST: frozenset[str] = frozenset({
+        "MATERIAL", "PEN", "ADD", "ADDX", "ADDY", "ADDZ", "DEL",
+    })
+
+    def _check_stacked_coaxial_cylinders(self, project: "HSFProject") -> list[StaticError]:
+        code = self._get_script(project, "3d.gdl") or ""
+        if not code.strip():
+            return []
+
+        # 变换栈的简化建模：每层记 (dx, dy) 平移；轴心 = 各层 (x, y) 之和。
+        # 只关心轴心是否改变——z 平移不影响轴心。
+        stack: list[tuple[float, float]] = [(0.0, 0.0)]
+        runs: list[list[tuple[int, str]]] = []  # 每个 run: [(行号, radius_文本)]
+        cur: list[tuple[int, str]] = []
+        cur_axis: tuple[float, float] = (0.0, 0.0)
+        cur_radius: str | None = None
+
+        def flush():
+            nonlocal cur, cur_axis, cur_radius
+            if len(cur) >= 4:
+                runs.append(cur)
+            cur = []
+            cur_axis = (0.0, 0.0)  # 占位；下一条 CYLIND 会覆盖
+            cur_radius = None
+
+        def axis() -> tuple[float, float]:
+            return (round(sum(x for x, _ in stack), 9), round(sum(y for _, y in stack), 9))
+
+        for idx, raw in enumerate(code.splitlines(), start=1):
+            masked = self._mask_line(raw).strip()
+            if not masked:
+                continue  # 空行 / 纯注释
+            if re.match(
+                r"^[A-Za-z_][A-Za-z0-9_]*\s*(?:\[[^\]]*\])?\s*=(?!=)",
+                masked,
+            ):
+                continue  # 赋值行（name = ... / name[i] = ...）：不改变换，不打断
+            first = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\b", masked)
+            if not first:
+                flush()
+                continue
+            word = first.group(1).upper()
+            if word == "CYLIND":
+                m = re.match(
+                    r"^CYLIND\s+([^,]+),\s*([^,]+?)\s*$",
+                    masked,
+                    re.IGNORECASE,
+                )
+                if m and not masked.rstrip().endswith(","):
+                    radius = m.group(2).strip().upper()
+                    ax = axis()
+                    if cur_radius is not None and (
+                        radius != cur_radius or ax != cur_axis
+                    ):
+                        flush()
+                    if not cur:
+                        cur_axis = ax
+                    cur.append((idx, radius))
+                    cur_radius = radius
+                    continue
+                # 多行/非常规 CYLIND：保守切断
+                flush()
+                continue
+            if word not in self._CYL_RUN_ALLOW_FIRST:
+                flush()
+                continue
+            if word in ("MATERIAL", "PEN"):
+                continue  # 属性设置：不改变换，不打断
+            if word == "DEL":
+                n = re.match(r"^DEL\s+(TOP|\d+)", masked, re.IGNORECASE)
+                if not n:
+                    flush()
+                    continue
+                arg = n.group(1).upper()
+                pop = len(stack) - 1 if arg == "TOP" else None
+                if pop is None:
+                    try:
+                        pop = int(arg)
+                    except ValueError:
+                        flush()
+                        continue
+                for _ in range(min(pop, len(stack) - 1)):
+                    stack.pop()
+                continue
+            # ADD/ADDX/ADDY/ADDZ：压一层平移；逐分量解析数值
+            comps: dict[str, float] = {}
+            if word == "ADD":
+                parts = re.match(
+                    r"^ADD\s+([^,]+),\s*([^,]+),\s*([^,]+?)\s*$",
+                    masked,
+                    re.IGNORECASE,
+                )
+                if not parts:
+                    flush()
+                    continue
+                for key, val in (
+                    ("X", parts.group(1)),
+                    ("Y", parts.group(2)),
+                    ("Z", parts.group(3)),
+                ):
+                    try:
+                        comps[key] = float(val)
+                    except ValueError:
+                        flush()
+                        break
+                else:
+                    stack.append((comps["X"], comps["Y"]))
+                    continue
+                continue
+            m2 = re.match(r"^ADD[XYZ]\s+([^,]+?)\s*$", masked, re.IGNORECASE)
+            if not m2:
+                flush()
+                continue
+            try:
+                value = float(m2.group(1))
+            except ValueError:
+                flush()
+                continue
+            if word == "ADDX":
+                stack.append((value, 0.0))
+            elif word == "ADDY":
+                stack.append((0.0, value))
+            else:  # ADDZ
+                stack.append((0.0, 0.0))
+
+        flush()
+
+        warnings: list[StaticError] = []
+        for run in runs:
+            line_nos = [str(n) for n, _ in run]
+            warnings.append(StaticError(
+                check_type="stacked_coaxial_cylinders",
+                file="scripts/3d.gdl",
+                detail=(
+                    f"第 {'、'.join(line_nos)} 行出现 {len(run)} 个同半径同轴 "
+                    "CYLIND 顺序堆叠：建议用单一轮廓替代——PRISM_（沿 Z 拉伸）"
+                    "或 REVOLVE（旋转体）可用一个命令描述同一实体，面数更少；"
+                    "若各段材质不同，用 REVOLVE{2} 按段给材质。"
+                ),
+            ))
+        return warnings
 
 
 # ── prose_leak 检测函数（P12：GDL 散文守卫，供工具层写盘前拦截）──────
