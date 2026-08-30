@@ -935,6 +935,41 @@ models = []
             self.assertEqual(entry["name"], "openai-codex")
             self.assertEqual(entry["api_mode"], "codex_app_server")
 
+    def test_responses_api_mode_normalizes_and_roundtrips(self):
+        """api_mode=responses：归一化（线协议 openai）+ 保存/加载往返不丢失。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "gpt-5.4"
+
+[[llm.providers]]
+name = "openai-responses"
+api = "https://api.openai.com/v1"
+api_mode = "responses"
+api_key = "oa-key"
+models = ["gpt-5.4"]
+'''.strip(), encoding="utf-8")
+            config = GDLAgentConfig.load(str(config_path))
+            entry = config.llm.providers[0]
+            self.assertEqual(entry["api_mode"], "responses")
+            # responses 是 OpenAI 线协议（非 anthropic）
+            self.assertEqual(entry["protocol"], "openai")
+            # adapter 解析链路可命中自定义 provider
+            match = config.llm._find_custom_provider_match("gpt-5.4")
+            self.assertEqual(match.get("api_mode"), "responses")
+            self.assertEqual(config.llm.resolve_api_key(), "oa-key")
+            self.assertEqual(config.llm.resolve_api_base(), "https://api.openai.com/v1")
+
+            config.save(str(config_path))
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertIn('api_mode = "responses"', saved)
+            reloaded = GDLAgentConfig.load(str(config_path))
+            reloaded_entry = reloaded.llm.providers[0]
+            self.assertEqual(reloaded_entry["api_mode"], "responses")
+            self.assertEqual(reloaded_entry["protocol"], "openai")
+            self.assertEqual(reloaded_entry["api"], "https://api.openai.com/v1")
+
     def test_reasoning_effort_save_load_roundtrip(self):
         """D6：Fixed 模式 effort 随 [llm] 持久化，保存/加载往返一致。"""
         with tempfile.TemporaryDirectory() as tmpdir:

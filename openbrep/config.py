@@ -207,8 +207,17 @@ _PROFILES_BY_PREFIX_LEN = sorted(PROVIDER_PROFILES, key=lambda p: -max(len(x) fo
 # 在独立 CODEX_HOME 内完成，OpenBrep 不保存/不返回任何 token。
 CODEX_PROVIDER_NAME = "openai-codex"
 API_MODE_CODEX_APP_SERVER = "codex_app_server"
+# OpenAI Responses API（api_mode = "responses"）：走 /v1/responses 传输层——
+# input 数组 + instructions + function_call/function_call_output 项，适用于
+# gpt-5 系 / codex 系等官方 API-key 模型（与 codex_app_server 订阅路线无关）。
+API_MODE_RESPONSES = "responses"
 # 认识的 api_mode 全集；未知值必须报错（不静默降级成 chat_completions）
-SUPPORTED_API_MODES = ("chat_completions", "anthropic_messages", API_MODE_CODEX_APP_SERVER)
+SUPPORTED_API_MODES = (
+    "chat_completions",
+    "anthropic_messages",
+    API_MODE_RESPONSES,
+    API_MODE_CODEX_APP_SERVER,
+)
 
 
 def is_codex_qualified_model(model: str) -> bool:
@@ -368,18 +377,22 @@ def expand_env_ref(value) -> str:
 
 
 def _normalize_api_mode(value) -> str:
-    """api_mode 归一化：chat_completions（默认）| anthropic_messages | codex_app_server。
+    """api_mode 归一化：chat_completions（默认）| anthropic_messages | responses
+    | codex_app_server。
 
     兼容旧 protocol 写法（openai→chat_completions、anthropic/claude/messages→
-    anthropic_messages）。**未知 api_mode 直接报错，不静默降级**——新增模式
-    （如 codex_app_server）未接入前，配置了该模式的 provider 必须显式失败，
-    而不是被悄悄当成 chat_completions 请求到错误端点（BYOA 安全不变量）。
+    anthropic_messages、openai_responses→responses）。**未知 api_mode 直接报错，
+    不静默降级**——新增模式（如 responses / codex_app_server）未接入前，配置了
+    该模式的 provider 必须显式失败，而不是被悄悄当成 chat_completions 请求到
+    错误端点（BYOA 安全不变量）。
     """
     text = str(value or "").strip().lower()
     if not text or text in {"openai", "completions", "chat_completions"}:
         return "chat_completions"
     if text in {"anthropic", "claude", "anthropic_messages", "messages"}:
         return "anthropic_messages"
+    if text in {"responses", "openai_responses", "responses_api"}:
+        return API_MODE_RESPONSES
     if text == API_MODE_CODEX_APP_SERVER:
         return API_MODE_CODEX_APP_SERVER
     raise ValueError(
@@ -409,6 +422,8 @@ def normalize_provider_entry(entry: dict | None) -> dict:
         "api": api,
         "base_url": api,
         "api_mode": api_mode,
+        # 线协议：anthropic_messages → anthropic；responses 与 chat_completions
+        # 都是 OpenAI 线协议 → openai（responses 走同协议、不同端点/参数形状）
         "protocol": "anthropic" if api_mode == "anthropic_messages" else "openai",
         "api_key": str(raw.get("api_key") or "").strip(),
         "models": models,

@@ -1066,3 +1066,238 @@ class TestCodexAppServerModelFailClosed(unittest.TestCase):
         })
         self.assertEqual(adapter.last_codex_effective["reasoning_effort"], "high")
         adapter._litellm.completion.assert_not_called()
+
+
+class TestResponsesAPIMode(unittest.TestCase):
+    """api_mode=responses（OpenAI /v1/responses）的解析、分派、转换与解析。"""
+
+    def _config(self, model="gpt-5.4", **extra):
+        providers = [{
+            "name": "openai-responses",
+            "api": "https://api.openai.com/v1",
+            "api_mode": "responses",
+            "api_key": "oa-key",
+            "models": ["gpt-5.4", "gpt-4o"],
+        }]
+        return LLMConfig(model=model, custom_providers=providers, **extra)
+
+    def _adapter(self, **extra):
+        adapter = LLMAdapter(self._config(**extra))
+        # 防止 _setup 把 key 写进环境变量污染其他测试
+        self.addCleanup(os.environ.pop, "OPENAI_API_KEY", None)
+        return adapter
+
+    @staticmethod
+    def _fake_response(output=None, model="gpt-5.4", status="completed", usage=None):
+        from types import SimpleNamespace
+
+        def _item(**kw):
+            """构造带 type 的 output item；不用 MagicMock（name= 是保留参数）。"""
+            return SimpleNamespace(**kw)
+
+        resp = MagicMock()
+        if output is None:
+            output = [
+                _item(type="message", role="assistant", content=[
+                    _item(type="output_text", text="你好"),
+                ]),
+            ]
+        resp.output = output
+        resp.model = model
+        resp.status = status
+        resp.usage = usage or {"input_tokens": 10, "output_tokens": 20}
+        return resp
+
+    def test_responses_api_mode_resolves_openai_prefix(self):
+        adapter = self._adapter()
+        resolved = adapter._resolve_model_target("gpt-5.4")
+        self.assertEqual(resolved.litellm_model, "openai/gpt-5.4")
+        self.assertEqual(resolved.api_mode, "responses")
+        self.assertTrue(resolved.is_custom_provider_request)
+
+    def test_generate_routes_to_responses_api_and_converts_input(self):
+        adapter = self._adapter()
+        adapter._litellm = MagicMock()
+        adapter._litellm.responses.return_value = self._fake_response()
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+
+        result = adapter.generate([
+            {"role": "system", "content": "你是 GDL 专家"},
+            {"role": "user", "content": "生成一个书架"},
+        ])
+
+        adapter._litellm.completion.assert_not_called()
+        self.assertEqual(result.content, "你好")
+        self.assertEqual(result.model, "gpt-5.4")
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.usage, {"input_tokens": 10, "output_tokens": 20})
+
+        kwargs = adapter._litellm.responses.call_args.kwargs
+        self.assertEqual(kwargs["model"], "openai/gpt-5.4")
+        self.assertEqual(kwargs["instructions"], "你是 GDL 专家")
+        # system 收敛进 instructions，input 只剩 user item
+        self.assertEqual(len(kwargs["input"]), 1)
+        self.assertEqual(kwargs["input"][0]["type"], "message")
+        self.assertEqual(kwargs["input"][0]["role"], "user")
+        # gpt-5 推理模型不传 temperature
+        self.assertNotIn("temperature", kwargs)
+        self.assertEqual(kwargs["max_output_tokens"], adapter.config.max_tokens)
+        self.assertEqual(kwargs["stream"], False)
+        self.assertEqual(kwargs["api_key"], "oa-key")
+        self.assertEqual(kwargs["api_base"], "https://api.openai.com/v1")
+
+    def test_generate_responses_non_gpt_model_passes_temperature(self):
+        adapter = self._adapter(model="gpt-4o")
+        adapter._litellm = MagicMock()
+        adapter._litellm.responses.return_value = self._fake_response(model="gpt-4o")
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+
+        adapter.generate([{"role": "user", "content": "hi"}])
+        kwargs = adapter._litellm.responses.call_args.kwargs
+        self.assertEqual(kwargs["temperature"], 0.2)
+
+    def test_generate_responses_tool_roundtrip(self):
+        adapter = self._adapter()
+        adapter._litellm = MagicMock()
+        from types import SimpleNamespace
+
+        adapter._litellm.responses.return_value = self._fake_response(output=[
+            SimpleNamespace(type="function_call", call_id="call_1", name="update_script",
+                            arguments='{"path": "main.gdl", "content": "x"}'),
+            SimpleNamespace(type="message", role="assistant", content=[
+                SimpleNamespace(type="output_text", text="已更新"),
+            ]),
+        ])
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+
+        result = adapter.generate_with_tools(
+            [
+                {"role": "user", "content": "把层板数改成 5"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "update_script",
+                            "arguments": "{\"path\": \"main.gdl\"}",
+                        },
+
+                    }],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+            ],
+            tools=[{"type": "function", "function": {"name": "update_script", "parameters": {}}}],
+        )
+
+        self.assertEqual(len(result.tool_calls), 1)
+        tool_call = result.tool_calls[0]
+        self.assertEqual(tool_call.id, "call_1")
+        self.assertEqual(tool_call.name, "update_script")
+        self.assertEqual(tool_call.arguments["path"], "main.gdl")
+        self.assertEqual(result.content, "已更新")
+
+        kwargs = adapter._litellm.responses.call_args.kwargs
+        input_items = kwargs["input"]
+        # assistant text 为空 → 只生成 function_call item；tool 结果 → function_call_output
+        self.assertTrue(any(i.get("type") == "function_call" for i in input_items))
+        self.assertTrue(any(i.get("type") == "function_call_output" for i in input_items))
+        fc = next(i for i in input_items if i.get("type") == "function_call")
+        self.assertEqual(fc["call_id"], "call_1")
+        self.assertEqual(fc["name"], "update_script")
+        fco = next(i for i in input_items if i.get("type") == "function_call_output")
+        self.assertEqual(fco["call_id"], "call_1")
+        self.assertEqual(fco["output"], "ok")
+        self.assertEqual(len(kwargs["tools"]), 1)
+
+    def test_generate_with_images_converts_to_input_image(self):
+        adapter = self._adapter()
+        adapter._litellm = MagicMock()
+        adapter._litellm.responses.return_value = self._fake_response()
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+
+        adapter.generate_with_images(
+            text_prompt="看图建模",
+            images=[{"b64": "QUJD", "mime": "image/png"}],
+            system_prompt="你是识图专家",
+        )
+        kwargs = adapter._litellm.responses.call_args.kwargs
+        self.assertEqual(kwargs["instructions"], "你是识图专家")
+        user_item = kwargs["input"][0]
+        parts = user_item["content"]
+        self.assertEqual(parts[0]["type"], "input_image")
+        self.assertEqual(parts[0]["image_url"], "data:image/png;base64,QUJD")
+        self.assertEqual(parts[1]["type"], "input_text")
+        self.assertEqual(parts[1]["text"], "看图建模")
+
+    def test_responses_empty_content_with_reasoning_raises_hint(self):
+        adapter = self._adapter()
+        adapter._litellm = MagicMock()
+        from types import SimpleNamespace
+
+        adapter._litellm.responses.return_value = self._fake_response(output=[
+            SimpleNamespace(type="reasoning", summary=[], content=[]),
+        ])
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=PermissionError, BadRequestError=ValueError
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        self.assertIn("只输出了思考过程", str(cm.exception))
+
+    def test_responses_auth_error_maps_to_stable_message(self):
+        class FakeAuthError(Exception):
+            pass
+
+        adapter = self._adapter()
+        adapter._litellm = MagicMock()
+        adapter._litellm.exceptions = MagicMock(
+            AuthenticationError=FakeAuthError, BadRequestError=ValueError
+        )
+        adapter._litellm.responses.side_effect = FakeAuthError("invalid api key")
+
+        with self.assertRaises(RuntimeError) as cm:
+            adapter.generate([{"role": "user", "content": "hi"}])
+        message = str(cm.exception)
+        self.assertIn("API Key 无效", message)
+        self.assertIn("api_mode=responses", message)
+        self.assertIn("resolved_model=openai/gpt-5.4", message)
+
+    def test_chat_completions_provider_never_routes_to_responses(self):
+        """chat_completions 自定义 provider 仍走 completion，不误入 responses 分支。"""
+        config = LLMConfig(
+            model="gpt-4o",
+            custom_providers=[{
+                "name": "openai-chat",
+                "api": "https://api.openai.com/v1",
+                "api_mode": "chat_completions",
+                "api_key": "ck",
+                "models": ["gpt-4o"],
+            }],
+        )
+        adapter = LLMAdapter(config)
+        self.addCleanup(os.environ.pop, "OPENAI_API_KEY", None)
+        built_response = MagicMock()
+        built_choice = MagicMock()
+        built_choice.message.content = "ok"
+        built_choice.finish_reason = "stop"
+        built_response.choices = [built_choice]
+        built_response.model = "openai/gpt-4o"
+        built_response.usage = {"prompt_tokens": 1}
+        adapter._litellm = MagicMock()
+        adapter._litellm.completion.return_value = [MagicMock(), MagicMock()]
+        adapter._litellm.stream_chunk_builder.return_value = built_response
+
+        result = adapter.generate([{"role": "user", "content": "hi"}])
+        self.assertEqual(result.content, "ok")
+        adapter._litellm.completion.assert_called_once()
+        adapter._litellm.responses.assert_not_called()

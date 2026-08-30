@@ -33,7 +33,9 @@ max_tokens = 16384
 # 每个 [[llm.providers]] = 一个 API 端点 + 它的模型列表，官方/自定义同一套机制。
 #   name:    provider 名（用于 provider/model 显式引用与按名匹配）
 #   api:     OpenAI/Anthropic 兼容端点（不要带 /chat/completions，会自动补）
-#   api_mode: chat_completions（OpenAI 兼容，默认）或 anthropic_messages
+#   api_mode: chat_completions（OpenAI 兼容，默认）/ anthropic_messages /
+#            responses（OpenAI Responses API，/v1/responses；适合 gpt-5 系、
+#            codex 系等走 API-key 的官方模型）
 #   api_key: 明文 Key，或 "${ENV_VAR}" 引用环境变量（避免明文落盘）
 #   default_model: 用 provider 名当模型时的默认模型（可选）
 #   models:  模型 id 列表；也支持 { alias = "别名", model = "真实模型id" }
@@ -61,6 +63,14 @@ max_tokens = 16384
 # api_mode = "anthropic_messages"
 # api_key = "${OPENMODEL_API_KEY}"
 # models = ["deepseek-v4-flash"]
+#
+# OpenAI Responses API 示例（gpt-5 系 / codex API 模型推荐）：
+# [[llm.providers]]
+# name = "openai-responses"
+# api = "https://api.openai.com/v1"
+# api_mode = "responses"
+# api_key = "${OPENAI_API_KEY}"
+# models = ["gpt-5.4"]
 
 # ── 官方 provider 快捷方式（可选，兼容旧配置）─────────────────
 # 内置官方模型（glm-* / deepseek-* / claude-* / gpt-* / qwen-* / moonshot-* /

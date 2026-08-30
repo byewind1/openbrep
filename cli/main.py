@@ -483,19 +483,26 @@ def _configure_custom_provider(config, model: str) -> None:
     ).strip()
     api_key = _prompt_secret("api_key", (matched or {}).get("api_key", ""))
     protocol_value = typer.prompt(
-        "protocol（openai=chat_completions / anthropic=anthropic_messages）",
+        "protocol（openai=chat_completions / anthropic=anthropic_messages / "
+        "responses=OpenAI Responses API）",
         default=(matched or {}).get("protocol", "openai"),
         show_default=True,
     ).strip().lower()
-    if protocol_value not in {"openai", "anthropic"}:
-        raise typer.BadParameter("protocol 仅支持 openai 或 anthropic")
+    if protocol_value not in {"openai", "anthropic", "responses"}:
+        raise typer.BadParameter("protocol 仅支持 openai、anthropic 或 responses")
+
+    api_mode = {
+        "openai": "chat_completions",
+        "anthropic": "anthropic_messages",
+        "responses": "responses",
+    }[protocol_value]
 
     new_provider = {
         "name": provider_name,
         "api": base_url,
         "api_key": api_key,
         "models": [model],
-        "api_mode": "anthropic_messages" if protocol_value == "anthropic" else "chat_completions",
+        "api_mode": api_mode,
     }
 
     remaining = [p for p in config.llm.custom_providers if model not in (p.get("models", []) or [])]

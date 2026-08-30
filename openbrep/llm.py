@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from openbrep.codex.errors import error_response
-from openbrep.config import PROVIDER_PROFILES, LLMConfig, provider_profile_for_model
+from openbrep.config import (
+    API_MODE_RESPONSES,
+    PROVIDER_PROFILES,
+    LLMConfig,
+    provider_profile_for_model,
+)
 
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = tuple(p.native_prefix for p in PROVIDER_PROFILES if p.native_prefix)
@@ -29,6 +34,10 @@ class _ResolvedModelTarget:
     provider_name: str = ""
     protocol: str = ""
     target_model: str = ""
+    # 自定义 provider 条目的 api_mode（chat_completions 默认 / anthropic_messages /
+    # responses / codex_app_server）。官方（非自定义）模型恒为空字符串——
+    # 由 litellm 原生前缀决定传输层，从不走 responses 分支。
+    api_mode: str = ""
 
 
 @dataclass
@@ -288,6 +297,8 @@ class LLMAdapter:
             details.insert(1, f"provider={provider_name or '(未命名自定义 provider)' }")
             if resolved.protocol:
                 details.append(f"protocol={resolved.protocol}")
+            if resolved.api_mode and resolved.api_mode != "chat_completions":
+                details.append(f"api_mode={resolved.api_mode}")
             if resolved.target_model:
                 details.append(f"target_model={resolved.target_model}")
         if resolved_api_base:
@@ -482,6 +493,114 @@ class LLMAdapter:
             metadata={"codex_effective": effective},
         )
 
+    def _responses_generate(
+        self,
+        msg_dicts: list,
+        resolved: _ResolvedModelTarget,
+        *,
+        tools: list | None = None,
+        tool_choice: str = "auto",
+        **kwargs,
+    ) -> LLMResponse:
+        """OpenAI Responses API（/v1/responses）文本与工具调用通道。
+
+        由 generate / generate_with_tools / generate_with_images 在解析到
+        api_mode=responses 的自定义 provider 时分派，绝不用于官方裸模型或
+        codex_app_server（那些走各自既有路径）。要点：
+
+        - system → instructions；图片块 → input_image；assistant tool_calls →
+          function_call items；tool 结果 → function_call_output items。
+        - 非流式（stream=False）：OpenBrep 调用方本就自行聚合整段输出，
+          Responses 聚合语义与 chat 流式一致，响应体一次成型更稳。
+        - gpt-5/codex/o1/o3/o4 推理模型不传 temperature（OpenAI 只接受
+          temperature=1 或 reasoning.effort=none 的组合；不传 = 模型默认）。
+        - 错误分类复用 _raise_config_error_if_needed（litellm 异常类型一致）。
+        """
+        model = resolved.litellm_model
+        input_items, instructions = _responses_input_items(msg_dicts)
+        resp_kwargs: dict = {
+            "model": model,
+            "input": input_items,
+            "max_output_tokens": int(kwargs.pop("max_tokens", None) or self.config.max_tokens),
+            "timeout": float(kwargs.pop("timeout", None) or self.config.timeout),
+            "stream": False,
+        }
+        if instructions:
+            resp_kwargs["instructions"] = instructions
+
+        model_lower = model.lower()
+        if any(token in model_lower for token in ("gpt-5", "codex", "o1", "o3", "o4")):
+            # OpenAI 推理模型的 temperature 约束：不传 = 模型默认（与 chat 路径
+            # drop_params 的净效果一致），避免 gpt-5 400 / o 系静默忽略
+            kwargs.pop("temperature", None)
+        else:
+            temperature = kwargs.pop("temperature", None)
+            if temperature is None:
+                temperature = self._effective_temperature(resolved)
+            resp_kwargs["temperature"] = float(temperature)
+
+        extra_body = self._effective_extra_body(resolved)
+        if extra_body:
+            resp_kwargs["extra_body"] = extra_body
+
+        api_key = self.config.resolve_api_key(resolved.configured_model)
+        if api_key:
+            resp_kwargs["api_key"] = api_key
+        is_native = self._is_native_provider_model(model)
+        api_base = self.config.resolve_api_base(resolved.configured_model)
+        if api_base and (resolved.is_custom_provider_request or not is_native):
+            resp_kwargs["api_base"] = api_base
+
+        if tools:
+            resp_kwargs["tools"] = tools
+            resp_kwargs["tool_choice"] = tool_choice
+
+        # mock_response 测试通道透传（与 completion 路径一致）
+        mock_response = kwargs.pop("mock_response", None)
+        if mock_response is not None:
+            resp_kwargs["mock_response"] = mock_response
+
+        start_time = time.perf_counter()
+        try:
+            response = self._litellm.responses(**resp_kwargs)
+        except Exception as exc:
+            elapsed = time.perf_counter() - start_time
+            logger.warning(
+                "LLM responses call failed model=%s input_items=%d elapsed=%.2fs error=%s",
+                model,
+                len(input_items),
+                elapsed,
+                exc.__class__.__name__,
+            )
+            self._raise_config_error_if_needed(exc, resolved)
+            raise
+        content, tool_calls, finish_reason, saw_reasoning = _responses_parse(response)
+        logger.info(
+            "LLM responses call finished model=%s input_items=%d tool_calls=%d elapsed=%.2fs",
+            model,
+            len(input_items),
+            len(tool_calls),
+            time.perf_counter() - start_time,
+        )
+        if not content.strip() and not tool_calls:
+            if saw_reasoning:
+                raise RuntimeError(
+                    "LLM 只输出了思考过程，没有输出内容。\n"
+                    "原因：该模型把所有输出配额用于内部 reasoning（Responses API 的"
+                    " reasoning item）。\n→ 提高 max_tokens，或在 provider 条目的"
+                    " extra_body 里设置 reasoning = { effort = \"low\" } 等更低档位。"
+                )
+            raise RuntimeError(
+                "LLM 返回了空内容 — 可能是内容过滤、模型配置错误，或该模型不适合当前任务。"
+            )
+        return LLMResponse(
+            content=content,
+            model=_responses_item_value(response, "model", "") or self.config.model,
+            usage=_responses_usage(response),
+            finish_reason=finish_reason,
+            tool_calls=tool_calls,
+        )
+
     def generate(self, messages: list, **kwargs) -> LLMResponse:
         """
         Send messages to the LLM and return the response.
@@ -525,6 +644,9 @@ class LLMAdapter:
         kwargs.pop("codex_on_event", None)
         kwargs.pop("codex_reasoning_effort", None)
         resolved = self._resolve_model_target(requested_model)
+        # Responses API（api_mode=responses）自定义 provider：走 /v1/responses
+        if resolved.api_mode == API_MODE_RESPONSES:
+            return self._responses_generate(msg_dicts, resolved=resolved, **kwargs)
         model = resolved.litellm_model
 
         # Build completion kwargs
@@ -649,6 +771,16 @@ class LLMAdapter:
         kwargs.pop("codex_on_event", None)
         kwargs.pop("codex_reasoning_effort", None)
         resolved = self._resolve_model_target(requested_model)
+        # Responses API（api_mode=responses）：function_call/function_call_output
+        # items 与 tools 一起走 litellm.responses()
+        if resolved.api_mode == API_MODE_RESPONSES:
+            return self._responses_generate(
+                msg_dicts,
+                resolved=resolved,
+                tools=tool_dicts,
+                tool_choice=tool_choice,
+                **kwargs,
+            )
         model = resolved.litellm_model
 
         # 工具调用不走流式：tool_calls 分片重组容易丢参数，一次性拿完整响应
@@ -802,7 +934,6 @@ class LLMAdapter:
         kwargs.pop("codex_on_event", None)
         kwargs.pop("codex_reasoning_effort", None)
         resolved = self._resolve_model_target(requested_model)
-        model = resolved.litellm_model
 
         messages = []
         if system_prompt:
@@ -818,6 +949,11 @@ class LLMAdapter:
             })
         content.append({"type": "text", "text": text_prompt})
         messages.append({"role": "user", "content": content})
+        # Responses API（api_mode=responses）：图片块在 _responses_generate 内
+        # 转成 input_image item（消息形状与 chat 路径保持逐字节一致）
+        if resolved.api_mode == API_MODE_RESPONSES:
+            return self._responses_generate(messages, resolved=resolved, **kwargs)
+        model = resolved.litellm_model
 
         completion_kwargs = {
             "model": model,
@@ -942,6 +1078,9 @@ class LLMAdapter:
                 protocol_prefix = {
                     "openai": "openai",
                     "chat_completions": "openai",
+                    # responses 是 OpenAI 线协议：litellm 前缀 openai/ +
+                    # 调用方走 litellm.responses()（见 _responses_generate）
+                    "responses": "openai",
                     "anthropic": "anthropic",
                     "anthropic_messages": "anthropic",
                     "claude": "claude",
@@ -959,6 +1098,9 @@ class LLMAdapter:
                 provider_name=provider_name,
                 protocol=protocol,
                 target_model=target_model,
+                api_mode=str(
+                    custom_match.get("api_mode", "chat_completions") or "chat_completions"
+                ),
             )
 
         if "/" in configured_model and not configured_model.startswith("http"):
@@ -1022,6 +1164,203 @@ def _parse_tool_calls(raw_tool_calls) -> list[ToolCall]:
             raw_arguments=str(raw_args),
         ))
     return calls
+
+
+# ── OpenAI Responses API（/v1/responses）消息转换与输出解析 ────────────────
+# Responses API 的 input 是"item 数组"而非 chat messages：message / function_call
+# / function_call_output / reasoning 等带 type 的条目。system 消息收敛到
+# instructions 参数（OpenAI 官方 chat→responses 迁移语义）；chat 风格的
+# image_url 内容块转成 input_image 条目。解析侧把 output 数组里的 message 文本
+# 与 function_call 还原成与 chat 路径一致的 LLMResponse 形状，上层零改动。
+
+
+def _responses_text_of_content(content) -> str:
+    """从 chat 消息 content（str 或 list）提取纯文本，供 system 消息/说明用。"""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") in (None, "text"):
+            text = str(block.get("text") or "")
+            if text:
+                texts.append(text)
+    return "\n".join(texts)
+
+
+def _responses_content_parts(content) -> list:
+    """把 chat 内容（str 或 OpenAI content 数组）转成 Responses API 内容块。
+
+    text → {"type": "input_text", ...}；image_url → {"type": "input_image", ...}
+    （data URI 原样透传）。空内容返回 []（调用方决定是否生成 message item）。
+    """
+    if content is None:
+        return []
+    if isinstance(content, str):
+        text = content.strip()
+        if not text:
+            return []
+        return [{"type": "input_text", "text": content}]
+    parts: list = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type in (None, "text"):
+            text = str(block.get("text") or "")
+            if text:
+                parts.append({"type": "input_text", "text": text})
+        elif block_type == "image_url":
+            image_url = block.get("image_url") or {}
+            url = image_url.get("url") if isinstance(image_url, dict) else str(image_url)
+            if url:
+                part: dict = {"type": "input_image", "image_url": url}
+                if isinstance(image_url, dict) and image_url.get("detail"):
+                    part["detail"] = str(image_url["detail"])
+                parts.append(part)
+    return parts
+
+
+def _responses_input_items(messages: list) -> tuple[list, str]:
+    """把聊天消息列表转成 Responses API input items + instructions。
+
+    - system 消息 → 全部收敛进 instructions（空前缀/中缀都行，Responses 不要求
+      role 顺序，但 instructions 是官方迁移语义；多段用空行连接）。
+    - user 消息 → message item（文本 + 图片块）。
+    - assistant 消息 → 文本 message item + function_call items（按 tool_calls）。
+    - tool 消息 → function_call_output items。
+    """
+    items: list = []
+    instructions: list[str] = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or "").strip()
+        content = msg.get("content")
+        if role == "system":
+            text = _responses_text_of_content(content).strip()
+            if text:
+                instructions.append(text)
+            continue
+        if role == "user":
+            parts = _responses_content_parts(content)
+            if parts:
+                items.append({"type": "message", "role": "user", "content": parts})
+            continue
+        if role == "assistant":
+            text = content if isinstance(content, str) else _responses_text_of_content(content)
+            tool_calls = msg.get("tool_calls") or []
+            if text and text.strip():
+                items.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                })
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    function = tc.get("function") or {}
+                else:
+                    function = getattr(tc, "function", None) or {}
+                fn = function if isinstance(function, dict) else {}
+                name = str(fn.get("name") or "")
+                raw_args = str(fn.get("arguments") or "") or "{}"
+                call_id = str(tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "") or "")
+                items.append({
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": raw_args,
+                })
+            continue
+        if role == "tool":
+            items.append({
+                "type": "function_call_output",
+                "call_id": str(msg.get("tool_call_id") or ""),
+                "output": str(content or ""),
+            })
+            continue
+        # 其他 role（如 codex 私有 role）不参与 responses 传输
+    return items, "\n\n".join(instructions)
+
+
+def _responses_item_value(item, name: str, default=""):
+    """从 responses output item（对象或 dict）取字段。"""
+    if isinstance(item, dict):
+        value = item.get(name)
+        return value if value is not None else default
+    return getattr(item, name, default) or default
+
+
+def _responses_parse(response) -> tuple[str, list, str, bool]:
+    """解析 litellm.responses() 返回：content / tool_calls / finish_reason / saw_reasoning。
+
+    finish_reason：status=completed → "stop"；其余原样（用户可据 status 判断）。
+    tool_calls 复用 ToolCall 形状（arguments 容错 JSON，raw_arguments 保留原文）。
+    """
+    import json as _json
+
+    content_parts: list[str] = []
+    calls: list[ToolCall] = []
+    saw_reasoning = False
+    status = str(_responses_item_value(response, "status", ""))
+    finish_reason = "stop" if status == "completed" else status
+    output = _responses_item_value(response, "output", None) or []
+    if isinstance(output, dict):
+        output = []
+    for item in output or []:
+        item_type = str(_responses_item_value(item, "type", ""))
+        if item_type == "message":
+            for part in _responses_item_value(item, "content", None) or []:
+                part_type = str(_responses_item_value(part, "type", ""))
+                if part_type == "output_text":
+                    text = str(_responses_item_value(part, "text", ""))
+                    if text:
+                        content_parts.append(text)
+                elif part_type == "refusal":
+                    text = str(_responses_item_value(part, "refusal", ""))
+                    if text:
+                        content_parts.append(text)
+        elif item_type == "function_call":
+            raw_args = str(_responses_item_value(item, "arguments", "") or "") or "{}"
+            name = str(_responses_item_value(item, "name", ""))
+            call_id = str(_responses_item_value(item, "call_id", "")) or str(
+                _responses_item_value(item, "id", "")
+            )
+            try:
+                arguments = _json.loads(raw_args)
+                if not isinstance(arguments, dict):
+                    arguments = {}
+            except Exception:
+                logger.warning(
+                    "Responses function_call args not valid JSON for %s: %.120s", name, raw_args
+                )
+                arguments = {}
+            calls.append(ToolCall(
+                id=call_id,
+                name=name,
+                arguments=arguments,
+                raw_arguments=raw_args,
+            ))
+        elif item_type == "reasoning":
+            saw_reasoning = True
+    return "".join(content_parts), calls, finish_reason, saw_reasoning
+
+
+def _responses_usage(response) -> dict:
+    """usage 转 dict：pydantic 模型用 model_dump，避免 dict() 触发序列化告警。"""
+    usage = _responses_item_value(response, "usage", None)
+    if not usage:
+        return {}
+    if isinstance(usage, dict):
+        return dict(usage)
+    try:
+        dumped = usage.model_dump(exclude_none=True)
+        return dict(dumped) if isinstance(dumped, dict) else {}
+    except Exception:
+        return {}
 
 
 class MockLLM:
