@@ -3,6 +3,7 @@ import type {
   AddParameterRequest,
   AddParameterResult,
   AssistantCodeBlocksResult,
+  AssistantHistoryItem,
   AssistantHistoryResult,
   AssistantImageAttachment,
   AssistantMessage,
@@ -756,13 +757,17 @@ export async function applyTapirParameterEdits(paramEdits?: Record<string, unkno
   )
 }
 
-export async function askAssistant(message: string, signal?: AbortSignal): Promise<AssistantResult> {
+export async function askAssistant(
+  message: string,
+  history: AssistantHistoryItem[] = [],
+  signal?: AbortSignal,
+): Promise<AssistantResult> {
   return requestJson<AssistantResult>(
     '/api/assistant',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
     signal,
@@ -920,6 +925,7 @@ export async function generateWithAssistant(
   message: string,
   assistantSettings = '',
   images: AssistantImageAttachment[] = [],
+  history: AssistantHistoryItem[] = [],
   signal?: AbortSignal,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
@@ -930,6 +936,7 @@ export async function generateWithAssistant(
       body: JSON.stringify({
         message,
         assistant_settings: assistantSettings,
+        history,
         ...assistantImagesPayload(images),
       }),
     },
@@ -1024,6 +1031,7 @@ export async function generateWithAssistantStream(
   images: AssistantImageAttachment[] = [],
   onEvent?: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
+  history: AssistantHistoryItem[] = [],
 ): Promise<GenerateResult> {
   const response = await fetch(`${API_BASE}/api/assistant/generate`, {
     method: 'POST',
@@ -1031,6 +1039,7 @@ export async function generateWithAssistantStream(
     body: JSON.stringify({
       message,
       assistant_settings: assistantSettings,
+      history,
       stream: true,
       ...assistantImagesPayload(images),
     }),
@@ -1045,6 +1054,7 @@ export async function requestModifyPlan(
   assistantSettings = '',
   images: AssistantImageAttachment[] = [],
   signal?: AbortSignal,
+  history: AssistantHistoryItem[] = [],
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
@@ -1054,6 +1064,7 @@ export async function requestModifyPlan(
       body: JSON.stringify({
         message,
         assistant_settings: assistantSettings,
+        history,
         intent: 'MODIFY',
         confirm_plan: true,
         stream: false,
@@ -1071,11 +1082,12 @@ export async function confirmModifyPlan(
   stream = false,
   onEvent?: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
+  history: AssistantHistoryItem[] = [],
 ): Promise<GenerateResult> {
   const response = await fetch(`${API_BASE}/api/modify/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ approve, stream }),
+    body: JSON.stringify({ approve, stream, history }),
     signal,
   })
   if (!stream) {

@@ -1,4 +1,4 @@
-import type { AssistantStreamEvent } from '../api/types'
+import type { AssistantMessage, AssistantStreamEvent } from '../api/types'
 import type { WorkbenchApi } from './workbenchStore'
 import { createWorkbenchStore } from './workbenchStore'
 
@@ -3462,4 +3462,179 @@ test('sendChat blocks debug intent for codex model when flag off', async () => {
   expect(generateCalled).toBe(0)
   const last = state.assistantMessages.at(-1)
   expect(last?.content).toContain('尚未开放')
+})
+
+// ── HF4：历史接线——发送函数真实携带 store 对话历史（断点修复） ──────────
+
+test('sendAssistantMessage sends filtered prior conversation as history (HF4)', async () => {
+  let sentHistory: unknown = 'not-called'
+  const store = createWorkbenchStore(
+    makeApi({
+      askAssistant: async (message, history) => {
+        sentHistory = history
+        return { ok: true, assistant: { kind: 'explain_project', reply: `reply to ${message}` } }
+      },
+    }),
+  )
+  await store.getState().load()
+  // 上一轮对话（含 pending 占位 / 纯错误 / 卡片字段 / interrupted 消息）：
+  // pending 与 error 跳过，interrupted 保留，卡片字段剔除，只留 role/content。
+  store.setState({
+    assistantMessages: [
+      { role: 'user', content: '轮1', images: [{ name: 'p.png', mime: 'image/png', b64: 'aGk=' }] },
+      { role: 'assistant', content: 'Thinking...\n- Inspecting project.' },
+      { role: 'assistant', content: 'LLM 配置错误：API Key', errorCategory: 'llm' },
+      {
+        role: 'assistant',
+        content: '已按图增加漏窗。',
+        changedFiles: ['scripts/3d.gdl'],
+        verification: { passed: true, checks: [] } as unknown as AssistantMessage['verification'],
+      },
+      { role: 'assistant', content: '⏹ 已中断', interrupted: true },
+    ],
+  })
+
+  await store.getState().sendAssistantMessage('按你提供的顺序加上')
+
+  expect(sentHistory).toEqual([
+    { role: 'user', content: '轮1' },
+    { role: 'assistant', content: '已按图增加漏窗。' },
+    { role: 'assistant', content: '⏹ 已中断' },
+  ])
+  // 本轮 user 消息不入 history：组装发生在消息 append 之前
+  expect(sentHistory).not.toEqual(expect.arrayContaining([expect.objectContaining({ content: '按你提供的顺序加上' })]))
+})
+
+test('generateAssistantChanges sends history to generateWithAssistant (HF4)', async () => {
+  let sentHistory: unknown = 'not-called'
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistant: async (_message, _settings, _images, history) => {
+        sentHistory = history
+        return {
+          ok: true,
+          assistant: { kind: 'generate', reply: '已修改', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+          preview: null,
+          warnings: [],
+          events: [],
+        }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({
+    assistantMessages: [
+      { role: 'user', content: '上一轮提问' },
+      { role: 'assistant', content: '上一轮回答' },
+    ],
+  })
+
+  await store.getState().generateAssistantChanges('加一块层板')
+
+  expect(sentHistory).toEqual([
+    { role: 'user', content: '上一轮提问' },
+    { role: 'assistant', content: '上一轮回答' },
+  ])
+})
+
+test('sendChat modify/confirm send history to requestModifyPlan & confirmModifyPlan (HF4)', async () => {
+  let planHistory: unknown = 'not-called'
+  let confirmHistory: unknown = 'not-called'
+  const store = createWorkbenchStore(
+    makeApi({
+      requestModifyPlan: async (_message, _settings, _images, _signal, history) => {
+        planHistory = history
+        return { ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }
+      },
+      confirmModifyPlan: async (approve, stream, onEvent, _signal, history) => {
+        confirmHistory = history
+        return {
+          ok: true,
+          assistant: { kind: 'generate', reply: '✅ 已按确认的计划执行完成。', changed_files: ['scripts/3d.gdl'], intent: 'MODIFY' },
+          preview: null,
+          warnings: [],
+          events: [],
+        }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({
+    assistantMessages: [
+      { role: 'user', content: '上一轮提问' },
+      { role: 'assistant', content: '上一轮回答' },
+    ],
+  })
+
+  await store.getState().sendChat('给书架加一层层板')
+  expect(planHistory).toEqual([
+    { role: 'user', content: '上一轮提问' },
+    { role: 'assistant', content: '上一轮回答' },
+  ])
+  expect(store.getState().pendingPlan).not.toBeNull()
+
+  await store.getState().confirmPendingPlan(true)
+  // 确认执行不重复携带本轮 user（已随 requestModifyPlan 的 message/pending body 流转）
+  expect(confirmHistory).toEqual([
+    { role: 'user', content: '上一轮提问' },
+    { role: 'assistant', content: '上一轮回答' },
+  ])
+})
+
+test('sendChat debug sends history to generateWithAssistantStream (HF4)', async () => {
+  let sentHistory: unknown = 'not-called'
+  const store = createWorkbenchStore(
+    makeApi({
+      generateWithAssistantStream: async (_message, _settings, _images, _onEvent, _signal, history) => {
+        sentHistory = history
+        return {
+          ok: true,
+          assistant: { kind: 'generate', reply: '✅ 已修复', changed_files: ['scripts/3d.gdl'], intent: 'DEBUG' },
+          preview: null,
+          warnings: [],
+          events: [],
+        }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({
+    assistantMessages: [
+      { role: 'user', content: '上一轮提问' },
+      { role: 'assistant', content: '上一轮回答' },
+    ],
+  })
+
+  await store.getState().sendChat('报错了，修复一下')
+
+  expect(sentHistory).toEqual([
+    { role: 'user', content: '上一轮提问' },
+    { role: 'assistant', content: '上一轮回答' },
+  ])
+})
+
+test('sendChat explain sends history to askAssistant (HF4)', async () => {
+  let sentHistory: unknown = 'not-called'
+  const store = createWorkbenchStore(
+    makeApi({
+      askAssistant: async (message, history) => {
+        sentHistory = history
+        return { ok: true, assistant: { kind: 'explain_project', reply: `reply to ${message}` } }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({
+    assistantMessages: [
+      { role: 'user', content: '上一轮提问' },
+      { role: 'assistant', content: '上一轮回答' },
+    ],
+  })
+
+  await store.getState().sendChat('这个参数是什么意思？')
+
+  expect(sentHistory).toEqual([
+    { role: 'user', content: '上一轮提问' },
+    { role: 'assistant', content: '上一轮回答' },
+  ])
 })

@@ -223,8 +223,19 @@ def build_modify_acceptance(
     files = sorted({f for f in (changed_files or []) if f})
     if files:
         summary_lines.append("已修改文件：" + "、".join(files))
+    else:
+        # AC-2（HF4）：零文件交付绝不呈现为"成功修改"——首行显性中性警示。
+        # 真实事件：模型误解指代指令（history 断裂）→ 零 changed_files 零
+        # [FILE:]，但 compile/semantic 全绿后被包装成"检查通过"式成功。
+        summary_lines.insert(0, "本次未修改任何文件（如预期有修改，请检查指令或重试）")
 
     geometry_lines, geometry_delta = _geometry_delta(before, after, changed_files)
+    if not files and geometry_lines:
+        # 零产出去重：HF3"当前参数下几何未变化"与 AC-2 首行都表达"什么都没
+        # 发生"，不并列两条易混文案；几何**变化**行（数量/包围盒/平面元素）
+        # 及预览不可用诊断仍如实呈现。HF3 的参数面板提示（vl.gdl/paramlist.xml
+        # 落盘）只随 changed_files 出现，零产出时必然为空，无需额外去重。
+        geometry_lines = [ln for ln in geometry_lines if ln != "当前参数下几何未变化"]
     summary_lines.extend(geometry_lines)
 
     checks: list[dict[str, str]] = []

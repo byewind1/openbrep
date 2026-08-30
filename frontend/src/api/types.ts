@@ -520,6 +520,14 @@ export interface ModifyAcceptance {
   checks: Array<{ name: string; status: string; detail: string }>
 }
 
+// ── 对话历史载荷（HF4）：前端发给后端 TaskRequest.history 的消息条目。
+// 只含 role/content（与后端格式同构）；changedFiles/verification/acceptance/
+// visionExtractions 等当前会话卡片字段一律不进历史。
+export interface AssistantHistoryItem {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface AssistantMessage {
   role: 'user' | 'assistant'
   content: string
