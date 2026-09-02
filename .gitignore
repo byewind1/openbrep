@@ -43,6 +43,11 @@ docs/pro_*.md
 skills/pro/
 .obsidian/
 .openbrep/
+# 例外：benchmark fixture 的 .openbrep 是回放输入（M20 的 agent-loop prompt
+# 嵌入 Stair 项目记忆），不是运行时产物——必须版本化，否则 fresh checkout/CI
+# 回放必 miss。只放开 benchmark/fixtures/ 下，用户项目的 .openbrep 仍忽略。
+!benchmark/fixtures/**/.openbrep/
+!benchmark/fixtures/**/.openbrep/**
 generation_quality_report.md
 traces/
 workdir/
