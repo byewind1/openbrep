@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generated_at": "2026-09-02T10:47:24",
-  "commit": "62f5e8258306ef7f2cb47ea23ea982d27b679ff3",
+  "generated_at": "2026-09-02T13:31:19",
+  "commit": "458fbc25d257658edeebd0366ce701eaaef7a13d",
   "mode": "mock",
   "suites": {
     "create": {
@@ -92,7 +92,7 @@
     },
     "modify": {
       "corpus": "benchmark/fixtures/llm_corpus/modify.jsonl",
-      "pass": 19,
+      "pass": 20,
       "tasks": {
         "M01": {
           "success": true,
@@ -171,8 +171,8 @@
           "criteria_failures": 0
         },
         "M20": {
-          "success": false,
-          "criteria_failures": 1
+          "success": true,
+          "criteria_failures": 0
         }
       }
     }

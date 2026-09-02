@@ -403,6 +403,12 @@ pass 数下降都会红灯。
 MODIFY agent loop 到达 `ReplayLLM` 而不进入 Codex app-server。回放始终由
 ReplayLLM 顶替 LLM，不能触网或依赖 CLI/登录态。
 
+modify 语料的 M20 依赖已入库的 Stair fixture 记忆
+（`benchmark/fixtures/modify/Stair/.openbrep/memory/`，`.gitignore` 对
+benchmark fixtures 有最小例外）：agent-loop 后续轮 prompt 嵌入项目记忆，
+缺失即 miss。fixture 记忆属于录制环境的一部分——改动它等于改动 prompt，
+必须重录 modify 语料。
+
 语料文件：`benchmark/fixtures/llm_corpus/{create,modify}.jsonl`
 基线文件：`benchmark/baseline.json`（只能往好的方向更新）
 
