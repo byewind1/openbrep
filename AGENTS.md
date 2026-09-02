@@ -395,6 +395,14 @@ CI 的 `benchmark-replay` job 用入库语料离线回放 create + modify 套件
 并与 `benchmark/baseline.json` 比较：PASS→FAIL、criteria_failures 增加、
 pass 数下降都会红灯。
 
+回放是密封化的：`benchmark/check_baseline.py` 和
+`benchmark/update_baseline.py` 为每个套件显式传入仓内 fixture 配置，绝不读取
+仓根 `config.toml`（因此不受开发者模型、Codex 开关或 CI 本地配置影响）。
+`replay_config_create.toml` 锚定录制时的 `openai-codex/gpt-5.6-luna`，且不含
+凭据；`replay_config_modify.toml` 锚定普通 chat-completions provider，确保
+MODIFY agent loop 到达 `ReplayLLM` 而不进入 Codex app-server。回放始终由
+ReplayLLM 顶替 LLM，不能触网或依赖 CLI/登录态。
+
 语料文件：`benchmark/fixtures/llm_corpus/{create,modify}.jsonl`
 基线文件：`benchmark/baseline.json`（只能往好的方向更新）
 
@@ -412,6 +420,13 @@ pass 数下降都会红灯。
   knowledge_selector.py 的选择逻辑、skills_loader）
 - LLM model 或 provider 变更
 - TaskPipeline 的学习记忆注入策略变更（`include_learned_skills`）
+
+未来重录某套件时，fixture 必须与录制通道一致：CREATE 语料使用 Codex 模型
+时保持 create fixture 的 Codex 模型声明和 `codex_routing_mode = "fixed"`；
+MODIFY 语料使用普通 chat-completions 通道时保持 modify fixture 的普通模型与
+provider 条目。若录制模型/provider 改变，先更新对应
+`benchmark/fixtures/replay_config_*.toml`（只写模型/端点结构，不写真实 key），
+再录制、离线回放并按规则更新 baseline；不要把本机 `config.toml` 复制为 fixture。
 
 不需要重录（prompt 不变，直接回放验证）：
 - 生成后的处理逻辑：linter、static checker、naming_alignment、

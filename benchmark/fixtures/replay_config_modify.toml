@@ -1,0 +1,10 @@
+[llm]
+model = "opencode-go-dsv4flash/deepseek-v4-flash"
+
+[[llm.providers]]
+name = "opencode-go-dsv4flash"
+api = "https://example.invalid/v1"
+api_mode = "chat_completions"
+api_key = ""
+default_model = "deepseek-v4-flash"
+models = ["deepseek-v4-flash"]
