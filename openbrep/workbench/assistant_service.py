@@ -307,22 +307,8 @@ class WorkbenchAssistantService:
         return {"ok": True, "blocks": blocks}
 
     def _codex_modify_gate(self, body: dict[str, Any]) -> str | None:
-        """D10：Codex MODIFY feature flag 的 API 层门禁。
-
-        flag=false 时全链路无 Codex MODIFY 入口：MODIFY/DEBUG/REPAIR 意图在
-        构造 pipeline / 消耗任何额度前直接拒绝（稳定文案）。返回 None = 放行。
-        """
-        intent = str(body.get("intent") or "MODIFY")
-        if intent not in ("MODIFY", "DEBUG", "REPAIR"):
-            return None
-        from openbrep.config import is_codex_qualified_model
-
-        if not is_codex_qualified_model(self.session.llm_model):
-            return None
-        if getattr(self.session.config.llm, "codex_modify_enabled", False):
-            return None
-        from openbrep.runtime.modify_codex_bridge import MODIFY_FLAG_OFF_TEXT
-        return MODIFY_FLAG_OFF_TEXT
+        """保留 API 层扩展点；Codex 能力检查由动态桥接统一负责。"""
+        return None
 
     def generate_with_assistant(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()

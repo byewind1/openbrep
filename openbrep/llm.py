@@ -626,17 +626,16 @@ class LLMAdapter:
             )
 
         requested_model = kwargs.pop("model", None)
-        # D3 + D4：openai-codex 订阅模型——只有显式 CHAT/EXPLAIN/CREATE 意图走
-        # turn（文本生成契约）；其余意图 fail closed（绝不落到 litellm / API-key）。
+        # D3 + D4：openai-codex 订阅模型的普通文本请求走 Codex turn；MODIFY
+        # 工具请求由 runtime.modify_codex_bridge 独立处理，绝不落到 litellm/API-key。
         if self.config._is_codex_app_server_model(requested_model):
             codex_intent = kwargs.pop("codex_intent", None)
             if codex_intent in ("CHAT", "CREATE"):
                 codex_model = requested_model or self.config.model
                 return self._codex_turn_generate(msg_dicts, model=codex_model, **kwargs)
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的 MODIFY/DEBUG/IMAGE 生成能力"
-                "尚未开放：当前支持登录、模型选择、CHAT/EXPLAIN 与文本 CREATE。"
-                "请改用其他已配置的模型。"
+                "ChatGPT Codex（openai-codex）的 MODIFY/DEBUG 请求必须通过 Codex"
+                "动态工具桥接执行；当前文本接口不接受该工具请求。"
             )
         # 非 codex 模型：忽略 codex 专用参数（绝不让它们进入 litellm）
         kwargs.pop("codex_intent", None)
@@ -758,13 +757,12 @@ class LLMAdapter:
 
         requested_model = kwargs.pop("model", None)
         # D1 不变量：openai-codex 订阅模型绝不落到 litellm / API-key（fail closed）。
-        # MODIFY/DEBUG 工具面在 D10/D11 门禁开放前一律拒绝，绝不把 agent loop
-        # 的生成类请求当作闲聊发给订阅模型。
+        # MODIFY/DEBUG 工具面由 runtime.modify_codex_bridge 处理，绝不把 agent
+        # loop 的生成类请求当作闲聊发给订阅模型。
         if self.config._is_codex_app_server_model(requested_model):
             raise RuntimeError(
-                "ChatGPT Codex（openai-codex）模型的 MODIFY/DEBUG 工具面"
-                "尚未开放：当前支持登录、模型选择、CHAT/EXPLAIN 与文本 CREATE。"
-                "请改用其他已配置的模型。"
+                "ChatGPT Codex（openai-codex）的 MODIFY/DEBUG 请求必须通过 Codex"
+                "动态工具桥接执行；当前工具接口不接受该请求。"
             )
         kwargs.pop("codex_intent", None)
         kwargs.pop("codex_should_cancel", None)

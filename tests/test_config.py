@@ -999,22 +999,21 @@ models = ["gpt-5.4"]
             reloaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(reloaded.llm.effective_codex_routing_mode(), "auto")
 
-    def test_codex_modify_enabled_roundtrip_default_false(self):
-        """D10：codex_modify_enabled 默认 false；save/load roundtrip 保持。
-
-        to_toml_string 只在值为 true 时输出该键。
-        """
-        config = GDLAgentConfig()
-        assert config.llm.codex_modify_enabled is False
-        text = config.to_toml_string()
-        assert "codex_modify_enabled" not in text
+    def test_legacy_codex_modify_flag_is_ignored_without_migration(self):
+        """旧配置含 flag 时可加载，且行为/写盘结果与无 flag 完全一致。"""
         with tempfile.TemporaryDirectory() as tmpdir:
-            config_path = Path(tmpdir) / "config.toml"
-            config.llm.codex_modify_enabled = True
-            config.save(str(config_path))
-            reloaded = GDLAgentConfig.load(str(config_path))
-            assert reloaded.llm.codex_modify_enabled is True
-            assert "codex_modify_enabled = true" in config.to_toml_string()
+            plain = Path(tmpdir) / "plain.toml"
+            legacy = Path(tmpdir) / "legacy.toml"
+            plain.write_text('[llm]\nmodel = "glm-4-flash"\n', encoding="utf-8")
+            legacy.write_text(
+                '[llm]\nmodel = "glm-4-flash"\ncodex_modify_enabled = true\n',
+                encoding="utf-8",
+            )
+            clean = GDLAgentConfig.load(str(plain))
+            old = GDLAgentConfig.load(str(legacy))
+            assert old.llm == clean.llm
+            old.save(str(legacy))
+            assert "codex_modify_enabled" not in legacy.read_text(encoding="utf-8")
 
     def test_reasoning_effort_default_empty_and_codex_only_helper(self):
         """D6：effort 默认空；codex_reasoning_effort() 只对 codex 模型返回。"""

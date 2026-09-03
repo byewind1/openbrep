@@ -16,8 +16,8 @@
 - 轮次/工具预算、lazy before revision、project epoch 守卫、取消与失败回滚
   语义与 ``modify_agent_loop.py`` 对齐。
 
-本模块是"隐藏桥接"：feature flag ``llm.codex_modify_enabled`` 默认 false，
-flag=false 时 pipeline 在调用本模块前 fail closed（全链路无入口）。
+本模块是 Codex MODIFY 的正式动态工具桥接：调用本机 Codex CLI 的 app-server，
+并在执行前对 CLI、登录状态、额度和模型能力做 fail-closed 检查。
 """
 
 from __future__ import annotations
@@ -60,7 +60,6 @@ _POLL_INTERVAL = 0.25
 _DEFAULT_TURN_TIMEOUT = 90.0
 
 # 稳定文案：绝不回显上游原文 / canary / 秘密。
-MODIFY_FLAG_OFF_TEXT = "ChatGPT Codex 模型的修改（MODIFY）能力尚未开放，请求已拒绝。"
 EPOCH_CHANGED_TEXT = "项目已切换，本次修改任务已中止，拒绝继续执行工具。"
 BUDGET_EXHAUSTED_TOOL_TEXT = "工具预算已耗尽，无法执行更多工具调用。请如实总结当前进度。"
 DUPLICATE_CALL_TEXT = "该工具调用已处理过（重复回调），结果已在上一次执行中返回，本次不重复执行。"
@@ -1270,7 +1269,6 @@ class CodexModifyBridge:
             },
             "acceptance": acceptance,
             "codex_modify": {
-                "enabled": bool(self.pipeline.config.llm.codex_modify_enabled),
                 "model": self.model,
                 "reasoning_effort": self.reasoning_effort,
                 "turns": self.turns,
@@ -1378,8 +1376,8 @@ def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str
 def run_codex_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "TaskResult":
     """Codex 模型 MODIFY/DEBUG/REPAIR 的动态工具桥接入口（D10）。
 
-    仅当 ``config.llm.codex_modify_enabled`` 为 True 时由 pipeline 调用；
-    flag=false 时 pipeline 在进入本函数前 fail closed。
+    由 pipeline 在选中 Codex 模型的 MODIFY/DEBUG/REPAIR 请求中调用；
+    本函数在建立 app-server 通信前执行 fail-closed 能力检查。
     """
     from openbrep.runtime.pipeline import TaskResult
 
