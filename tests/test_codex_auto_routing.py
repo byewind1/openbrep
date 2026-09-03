@@ -1,4 +1,4 @@
-"""D9: D8-backed Auto routing policy, integration, and red-team guards."""
+"""D9/D15: D8+D13-backed Auto routing policy, integration, and red-team guards."""
 
 from __future__ import annotations
 
@@ -31,6 +31,10 @@ def _model(model: str, *efforts: str) -> dict:
 
 
 CATALOG = [_model(LUNA_MODEL, "low", "medium", "high"), _model(TERRA_MODEL, "medium")]
+CATALOG_TERRA_HIGH = [
+    _model(LUNA_MODEL, "low", "medium", "high"),
+    _model(TERRA_MODEL, "medium", "high"),
+]
 SIGNED_IN = {"state": "signed_in", "connected": True}
 
 
@@ -46,19 +50,26 @@ def test_create_complexity_reuses_preflight_without_erasing_simple_bucket(instru
     assert classify_create_complexity(instruction) == expected
 
 
-@pytest.mark.parametrize(
-    ("complexity", "expected_reason"),
-    [
-        ("simple", "simple/medium CREATE primary"),
-        ("medium", "simple/medium CREATE primary"),
-        ("complex", "complex CREATE has no primary"),
-    ],
-)
-def test_d8_route_table_luna_low_only(complexity, expected_reason):
+@pytest.mark.parametrize("complexity", ["simple", "medium"])
+def test_d8_simple_medium_initial_route_remains_luna_low(complexity):
     decision = choose_initial_route(complexity, CATALOG, SIGNED_IN)
     assert decision.ok
     assert (decision.model, decision.reasoning_effort) == (LUNA_MODEL, "low")
-    assert expected_reason in decision.reason
+    assert "simple/medium CREATE primary" in decision.reason
+
+
+def test_d13_complex_initial_route_is_luna_high():
+    decision = choose_initial_route("complex", CATALOG, SIGNED_IN)
+    assert decision.ok
+    assert (decision.model, decision.reasoning_effort) == (LUNA_MODEL, "high")
+    assert "D13 complex CREATE primary" in decision.reason
+
+
+def test_complex_initial_degrades_to_luna_low_with_explicit_reason_when_luna_high_absent():
+    decision = choose_initial_route("complex", [_model(LUNA_MODEL, "low")], SIGNED_IN)
+    assert decision.ok
+    assert (decision.model, decision.reasoning_effort) == (LUNA_MODEL, "low")
+    assert "Luna high absent" in decision.reason
 
 
 def test_simple_falls_back_to_terra_medium_when_luna_absent():
@@ -109,17 +120,50 @@ def _verification(name="bbox_mismatch", check_type="semantic"):
     }
 
 
-def test_sole_escalation_is_luna_low_to_high_once_and_marked_untested():
-    initial = choose_initial_route("complex", CATALOG, SIGNED_IN)
+@pytest.mark.parametrize("complexity", ["simple", "medium"])
+def test_simple_medium_escalation_luna_low_to_high_once_and_now_d13_tested(complexity):
+    initial = choose_initial_route(complexity, CATALOG, SIGNED_IN)
     escalation = choose_escalation(initial, _verification(), CATALOG, attempts=0)
     assert escalation.ok
     assert (escalation.model, escalation.reasoning_effort) == (LUNA_MODEL, "high")
     assert escalation.escalation is True
-    assert escalation.untested_escalation is True
+    assert escalation.untested_escalation is False
+    assert "D13-measured" in escalation.reason
 
     exhausted = choose_escalation(escalation, _verification(), CATALOG, attempts=1)
     assert not exhausted.ok
     assert exhausted.code == "auto_escalation_exhausted"
+
+
+def test_complex_escalation_is_luna_high_to_terra_high_once_and_d13_tested():
+    initial = choose_initial_route("complex", CATALOG_TERRA_HIGH, SIGNED_IN)
+    assert (initial.model, initial.reasoning_effort) == (LUNA_MODEL, "high")
+    escalation = choose_escalation(initial, _verification(), CATALOG_TERRA_HIGH, attempts=0)
+    assert escalation.ok
+    assert (escalation.model, escalation.reasoning_effort) == (TERRA_MODEL, "high")
+    assert escalation.escalation is True
+    assert escalation.untested_escalation is False
+    assert "zero-sample" in escalation.reason
+
+    exhausted = choose_escalation(escalation, _verification(), CATALOG_TERRA_HIGH, attempts=1)
+    assert not exhausted.ok
+    assert exhausted.code == "auto_escalation_exhausted"
+
+
+def test_complex_escalation_fails_closed_when_terra_lacks_high():
+    initial = choose_initial_route("complex", CATALOG, SIGNED_IN)
+    decision = choose_escalation(initial, _verification(), CATALOG, attempts=0)
+    assert not decision.ok
+    assert decision.code == "auto_escalation_unsupported"
+    assert not decision.model
+
+
+def test_escalation_from_non_luna_route_is_not_allowed():
+    initial = choose_initial_route("simple", [_model(TERRA_MODEL, "medium")], SIGNED_IN)
+    assert initial.ok
+    decision = choose_escalation(initial, _verification(), CATALOG_TERRA_HIGH, attempts=0)
+    assert not decision.ok
+    assert decision.code == "auto_escalation_not_allowed"
 
 
 @pytest.mark.parametrize(
@@ -140,9 +184,9 @@ def test_escalation_requires_localized_semantic_static_or_contract_failure(verif
 
 
 def test_localized_check_name_is_redacted_in_reason_and_metadata():
-    initial = choose_initial_route("complex", CATALOG, SIGNED_IN)
+    initial = choose_initial_route("complex", CATALOG_TERRA_HIGH, SIGNED_IN)
     canary = "Authorization: Bearer DEV-AUTO-SECRET"
-    decision = choose_escalation(initial, _verification(canary), CATALOG, attempts=0)
+    decision = choose_escalation(initial, _verification(canary), CATALOG_TERRA_HIGH, attempts=0)
     text = json.dumps(decision.to_metadata(), ensure_ascii=False)
     assert decision.ok
     assert "DEV-AUTO-SECRET" not in text
@@ -157,7 +201,7 @@ class _Result:
     plain_text: str = ""
 
 
-def test_runner_records_effective_route_reason_and_untested_escalation():
+def test_runner_records_effective_route_reason_and_escalation_flags():
     seen = []
     events = []
 
@@ -169,17 +213,46 @@ def test_runner_records_effective_route_reason_and_untested_escalation():
 
     result = run_auto_route(
         complexity="complex",
-        catalog=CATALOG,
+        catalog=CATALOG_TERRA_HIGH,
         status=SIGNED_IN,
         run=run,
         make_stop_result=lambda _decision: _Result(False),
         on_event=lambda kind, data: events.append((kind, data)),
     )
-    assert seen == [(LUNA_MODEL, "low"), (LUNA_MODEL, "high")]
+    assert seen == [(LUNA_MODEL, "high"), (TERRA_MODEL, "high")]
     decisions = result.metadata["codex_auto_route"]["decisions"]
     assert decisions[0]["reason"]
-    assert decisions[1]["untested_escalation"] is True
+    assert decisions[0]["escalation"] is False
+    assert decisions[1]["untested_escalation"] is False
     assert any(kind == "status" and data.get("stage") == "retry" for kind, data in events)
+
+
+def test_complex_full_chain_decisions_metadata_ends_in_exhausted():
+    seen = []
+
+    def run(decision):
+        seen.append((decision.model, decision.reasoning_effort))
+        return _Result(False, _verification())
+
+    result = run_auto_route(
+        complexity="complex",
+        catalog=CATALOG_TERRA_HIGH,
+        status=SIGNED_IN,
+        run=run,
+        make_stop_result=lambda _decision: _Result(False),
+        on_event=lambda *_: None,
+    )
+    assert seen == [(LUNA_MODEL, "high"), (TERRA_MODEL, "high")]
+    route = result.metadata["codex_auto_route"]
+    decisions = route["decisions"]
+    assert len(decisions) == 3
+    assert (decisions[0]["model"], decisions[0]["reasoning_effort"]) == (LUNA_MODEL, "high")
+    assert decisions[0]["escalation"] is False
+    assert (decisions[1]["model"], decisions[1]["reasoning_effort"]) == (TERRA_MODEL, "high")
+    assert decisions[1]["escalation"] is True
+    assert decisions[1]["untested_escalation"] is False
+    assert decisions[2]["code"] == "auto_escalation_exhausted"
+    assert route["stopped"]["code"] == "auto_escalation_exhausted"
 
 
 def test_runner_cancel_before_escalation_starts_no_second_call():
@@ -437,7 +510,7 @@ def test_escalation_cancel_interrupts_fake_turn_and_leaves_no_third_request(tmp_
 
     try:
         result = run_auto_route(
-            complexity="complex",
+            complexity="simple",
             catalog=CATALOG,
             status=SIGNED_IN,
             run=run,
