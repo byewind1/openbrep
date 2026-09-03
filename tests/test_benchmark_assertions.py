@@ -578,5 +578,148 @@ class TestBenchmarkRunnerCriteria(unittest.TestCase):
         self.assertEqual(failures, [])
 
 
+class TestExpressionPresentContainsAny(unittest.TestCase):
+    """expression_present 的 contains_any：字面子串断言的"任一匹配即通过"口径。
+
+    D14：乘法交换律写法（stair_steps * riser_h vs riser_h * stair_steps）不应
+    被字面子串断言误判为失败。"""
+
+    def _project(self, script_3d: str) -> HSFProject:
+        project = HSFProject.create_new("ContainsAnyBench")
+        project.set_script(ScriptType.SCRIPT_3D, script_3d)
+        return project
+
+    def test_contains_any_first_candidate_matches(self):
+        project = self._project("total_h = stair_steps * riser_h\n")
+        assertion = SemanticAssertion(
+            type="expression_present",
+            script="3d.gdl",
+            contains_any=("stair_steps * riser_h", "riser_h * stair_steps"),
+        )
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(failures, [])
+
+    def test_contains_any_commuted_candidate_matches(self):
+        """乘法交换律写法同样通过。"""
+        project = self._project("total_h = riser_h * stair_steps\n")
+        assertion = SemanticAssertion(
+            type="expression_present",
+            script="3d.gdl",
+            contains_any=("stair_steps * riser_h", "riser_h * stair_steps"),
+        )
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(failures, [])
+
+    def test_contains_any_no_candidate_matches_fails(self):
+        """无关表达式仍失败。"""
+        project = self._project("BLOCK A, B, ZZYZX\n")
+        assertion = SemanticAssertion(
+            type="expression_present",
+            script="3d.gdl",
+            contains_any=("stair_steps * riser_h", "riser_h * stair_steps"),
+        )
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(
+            failures,
+            [
+                "semantic_assertion: scripts/3d.gdl missing expression containing any of "
+                "['stair_steps * riser_h', 'riser_h * stair_steps']"
+            ],
+        )
+
+    def test_contains_single_string_behavior_unchanged(self):
+        """contains 单字符串路径保持原口径（含既有失败消息格式）。"""
+        project = self._project("BLOCK A, B, ZZYZX\n")
+        assertion = SemanticAssertion(
+            type="expression_present",
+            script="3d.gdl",
+            contains="stair_steps * riser_h",
+        )
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        expected = (
+            "semantic_assertion: scripts/3d.gdl missing expression containing "
+            "'stair_steps * riser_h'"
+        )
+        self.assertEqual(failures, [expected])
+
+    def test_missing_contains_and_contains_any_reports_error(self):
+        project = self._project("BLOCK A, B, ZZYZX\n")
+        assertion = SemanticAssertion(type="expression_present", script="3d.gdl")
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(
+            failures,
+            ["semantic_assertion: expression_present missing contains/contains_any"],
+        )
+
+    def test_both_contains_and_contains_any_reports_error(self):
+        project = self._project("total_h = stair_steps * riser_h\n")
+        assertion = SemanticAssertion(
+            type="expression_present",
+            script="3d.gdl",
+            contains="stair_steps * riser_h",
+            contains_any=("stair_steps * riser_h",),
+        )
+
+        failures = evaluate_semantic_assertion(project, assertion)
+
+        self.assertEqual(
+            failures,
+            ["semantic_assertion: expression_present has both contains and contains_any"],
+        )
+
+    def test_yaml_contains_any_parses_into_tuple(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "C96.yaml"
+            task_path.write_text(
+                "---\n"
+                "id: C96\n"
+                "description: contains_any parse test\n"
+                "success_criteria:\n"
+                "  semantic_assertions:\n"
+                "    - type: expression_present\n"
+                "      script: 3d.gdl\n"
+                "      contains_any: ['stair_steps * riser_h', 'riser_h * stair_steps']\n",
+                encoding="utf-8",
+            )
+
+            task = load_benchmark_task(task_path)
+            assertion = task.success_criteria.semantic_assertions[0]
+
+            self.assertEqual(assertion.contains, "")
+            self.assertEqual(
+                assertion.contains_any,
+                ("stair_steps * riser_h", "riser_h * stair_steps"),
+            )
+
+    def test_yaml_contains_and_contains_any_both_present_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task_path = Path(tmpdir) / "C95.yaml"
+            task_path.write_text(
+                "---\n"
+                "id: C95\n"
+                "description: ambiguous assertion test\n"
+                "success_criteria:\n"
+                "  semantic_assertions:\n"
+                "    - type: expression_present\n"
+                "      script: 3d.gdl\n"
+                "      contains: stair_steps * riser_h\n"
+                "      contains_any: ['riser_h * stair_steps']\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                load_benchmark_task(task_path)
+
+
 if __name__ == "__main__":
     unittest.main()

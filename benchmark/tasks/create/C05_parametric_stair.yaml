@@ -17,7 +17,7 @@ success_criteria:
       param: stair_steps
     - type: expression_present
       script: 3d.gdl
-      contains: stair_steps * riser_h
+      contains_any: ["stair_steps * riser_h", "riser_h * stair_steps"]
     - type: transform_balanced
       script: 3d.gdl
 expected_difficulty: medium_high

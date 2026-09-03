@@ -179,12 +179,23 @@ def evaluate_semantic_assertion(
         ):
             failures.append(f"semantic_assertion: scripts/{script_name} does not use param {assertion.param}")
     elif assertion_type == "expression_present":
-        if not assertion.contains:
-            failures.append("semantic_assertion: expression_present missing contains")
-        elif _compact(assertion.contains) not in _compact(script):
+        candidates = list(assertion.contains_any)
+        if not candidates and assertion.contains:
+            candidates = [assertion.contains]
+        if assertion.contains and assertion.contains_any:
             failures.append(
-                f"semantic_assertion: scripts/{script_name} missing expression containing {assertion.contains!r}"
+                "semantic_assertion: expression_present has both contains and contains_any"
             )
+        elif not candidates:
+            failures.append("semantic_assertion: expression_present missing contains/contains_any")
+        elif not any(_compact(candidate) in _compact(script) for candidate in candidates):
+            where = f"scripts/{script_name} missing expression containing"
+            if assertion.contains:
+                failures.append(f"semantic_assertion: {where} {assertion.contains!r}")
+            else:
+                failures.append(
+                    f"semantic_assertion: {where} any of {list(assertion.contains_any)!r}"
+                )
     elif assertion_type == "transform_balanced":
         failures.extend(_assert_transform_balanced(script, script_name))
     elif assertion_type == "semantic_verification":

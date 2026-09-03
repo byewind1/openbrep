@@ -14,6 +14,7 @@ class SemanticAssertion:
     command: str = ""
     param: str = ""
     contains: str = ""
+    contains_any: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,10 +70,17 @@ def benchmark_task_from_dict(data: dict[str, Any]) -> BenchmarkTask:
 
 
 def _semantic_assertion_from_dict(data: dict[str, Any]) -> SemanticAssertion:
+    contains = str(data.get("contains") or "")
+    contains_any = tuple(str(item) for item in (data.get("contains_any") or []) if str(item))
+    if contains and contains_any:
+        raise ValueError(
+            "semantic_assertion: 'contains' and 'contains_any' are mutually exclusive; pick one"
+        )
     return SemanticAssertion(
         type=str(data.get("type") or ""),
         script=str(data.get("script") or ""),
         command=str(data.get("command") or ""),
         param=str(data.get("param") or ""),
-        contains=str(data.get("contains") or ""),
+        contains=contains,
+        contains_any=contains_any,
     )
