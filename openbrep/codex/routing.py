@@ -1,4 +1,14 @@
-"""D9 Codex Auto routing policy derived exclusively from the D8 bake-off.
+"""D9 Codex Auto routing policy, evidence lineage D8 (2026-08) -> D13 (2026-09-03).
+
+D8 established the initial table (Luna/low everywhere, Terra/medium as the
+simple-only fallback) and the bounded single-escalation contract.  D13
+(bake-off v2) added measured evidence for strong tiers: Luna/low scored 0/6
+on complex CREATE while Luna/high scored 2/6 (C10 2/2), so complex tasks now
+start at Luna/high; Terra/high (2/6, lower quota cost than Sol/high) is the
+complex escalation target.  Sol/high stays out of the table: same tier as
+Terra/high but more expensive.  The escalation chain itself (fail, switch
+model, rerun) still has zero measured samples -- reasons must not claim it
+is verified.
 
 The policy is deliberately pure: UI and pipeline code pass it the current
 account catalog/status and receive an explainable decision.  No provider,
@@ -82,10 +92,14 @@ def choose_initial_route(
     catalog: Iterable[Mapping[str, Any]],
     status: Mapping[str, Any],
 ) -> CodexRouteDecision:
-    """Choose the D8-backed initial route, or fail closed.
+    """Choose the D8/D13-backed initial route, or fail closed.
 
-    D8 permits Luna/low for every CREATE complexity. Terra/medium is only a
-    simple-task fallback when Luna is unavailable. No other model may appear.
+    D13 (evidence lineage D8 -> D13): complex CREATE starts at Luna/high
+    (D8's Luna/low scored 0/6 on complex; D13 Luna/high 2/6 with C10 2/2).
+    Simple/medium keep the D8 Luna/low primary.  Terra/medium is only a
+    simple-task fallback when Luna is unavailable.  Sol stays out of the
+    table: D13 measured Sol/high at the same 2/6 tier as Terra/high but at
+    higher quota cost.  No other model may appear.
     """
 
     normalized_complexity = _normalize_complexity(complexity)
@@ -105,11 +119,23 @@ def choose_initial_route(
         )
 
     indexed = _catalog_index(catalog)
+    if normalized_complexity == "complex" and _supports(indexed.get(LUNA_MODEL), "high"):
+        return CodexRouteDecision(
+            ok=True,
+            model=LUNA_MODEL,
+            reasoning_effort="high",
+            reason=(
+                "D13 complex CREATE primary: Luna high "
+                "(D8 Luna low 0/6 on complex; D13 Luna high 2/6)"
+            ),
+            complexity=normalized_complexity,
+        )
+
     if _supports(indexed.get(LUNA_MODEL), "low"):
         reason = (
             "D8 simple/medium CREATE primary: Luna low"
             if normalized_complexity in {"simple", "medium"}
-            else "D8 complex CREATE has no primary; bounded exploration starts at Luna low"
+            else "Luna high absent from catalog; complex CREATE degrades to D8 Luna low (explicit)"
         )
         return CodexRouteDecision(
             ok=True,
@@ -131,8 +157,8 @@ def choose_initial_route(
     return _stop(
         normalized_complexity,
         "auto_route_unavailable",
-        "当前账户目录没有 D8 已验证且支持所需 effort 的 Auto 路由组合，任务已停止。",
-        "no D8-backed model/effort combination is available",
+        "当前账户目录没有 D8/D13 已验证且支持所需 effort 的 Auto 路由组合，任务已停止。",
+        "no D8/D13-backed model/effort combination is available",
     )
 
 
@@ -143,10 +169,23 @@ def choose_escalation(
     *,
     attempts: int,
 ) -> CodexRouteDecision:
-    """Return the sole allowed escalation: Luna low -> Luna high, once.
+    """Return the sole allowed escalation, once.
 
-    Escalation needs at least one failed, named semantic/static/contract check.
-    Luna/high is an explicitly untested exploration slot, never a default.
+    Escalation paths (evidence lineage D8 -> D13):
+    - Luna/low -> Luna/high (any complexity).  D13 measured Luna/high on
+      complex CREATE (2/6, C10 2/2) and MODIFY (6/6), so this is no longer
+      an untested slot.
+    - Luna/high -> Terra/high (complex only).  D13 measured Terra/high at
+      2/6; Sol/high scored the same tier but costs more quota, so Sol is
+      the documented same-tier candidate that lost on price and stays out.
+
+    Both targets are D13-measured models, but the escalation chain itself
+    (fail, switch model, rerun) still has zero measured samples -- the
+    reason text says so and must not claim the chain is verified.
+
+    Escalation needs at least one failed, named semantic/static/contract
+    check and the target model/effort present in the account catalog;
+    anything else fails closed.
     """
 
     complexity = initial.complexity
@@ -157,12 +196,24 @@ def choose_escalation(
             "Auto 路由已达到一次升级上限，任务已停止。",
             "bounded escalation limit reached",
         )
-    if initial.model != LUNA_MODEL or initial.reasoning_effort != "low":
+
+    # Sole allowed escalation sources.  Sol/high was a same-tier complex
+    # candidate in D13 but is excluded for higher quota cost.
+    if initial.model == LUNA_MODEL and initial.reasoning_effort == "low":
+        target_model, target_effort = LUNA_MODEL, "high"
+    elif (
+        initial.model == LUNA_MODEL
+        and initial.reasoning_effort == "high"
+        and complexity == "complex"
+    ):
+        target_model, target_effort = TERRA_MODEL, "high"
+    else:
         return _stop(
             complexity,
             "auto_escalation_not_allowed",
-            "当前路由不在允许的 Luna low → Luna high 升级路径中，任务已停止。",
-            "route is outside the sole D8 exploration path",
+            "当前路由不在允许的升级路径中（Luna low → Luna high，"
+            "或 complex 的 Luna high → Terra high），任务已停止。",
+            "route is outside the allowed D8/D13 escalation paths",
         )
 
     check_name = _localized_failure_name(verification)
@@ -174,21 +225,25 @@ def choose_escalation(
             "verification failure has no named semantic/static/contract check",
         )
     indexed = _catalog_index(catalog)
-    if not _supports(indexed.get(LUNA_MODEL), "high"):
+    if not _supports(indexed.get(target_model), target_effort):
         return _stop(
             complexity,
             "auto_escalation_unsupported",
-            "当前账户的 Luna 不支持 high effort，Auto 升级已停止。",
-            "Luna high is absent from the account catalog",
+            f"当前账户目录不支持升级目标 {target_model} @ {target_effort}，Auto 升级已停止。",
+            f"escalation target {target_model} @ {target_effort} is absent from the catalog",
         )
     return CodexRouteDecision(
         ok=True,
-        model=LUNA_MODEL,
-        reasoning_effort="high",
-        reason=f"localized verification failure [{check_name}]; bounded Luna high exploration",
+        model=target_model,
+        reasoning_effort=target_effort,
+        reason=(
+            f"localized verification failure [{check_name}]; D13-measured "
+            f"{target_model} @ {target_effort} escalation "
+            "(target measured; escalation chain itself still zero-sample)"
+        ),
         complexity=complexity,
         escalation=True,
-        untested_escalation=True,
+        untested_escalation=False,
     )
 
 
@@ -202,7 +257,7 @@ def run_auto_route(
     on_event: Callable[[str, dict[str, Any]], None],
     should_cancel: Callable[[], bool] | None = None,
 ) -> AutoRouteResult:
-    """Execute the D8 policy with one bounded, visible escalation at most."""
+    """Execute the D8/D13 policy with one bounded, visible escalation at most."""
 
     catalog_snapshot = [dict(item) for item in catalog if isinstance(item, Mapping)]
     initial = choose_initial_route(complexity, catalog_snapshot, status)
