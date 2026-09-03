@@ -12,7 +12,7 @@ success_criteria:
   semantic_assertions:
     - type: expression_present
       script: 1d.gdl
-      contains: "step_riser * 6"
+      contains_any: ["step_riser * 6", "6 * step_riser"]
     - type: param_used
       script: 3d.gdl
       param: handrail_height
