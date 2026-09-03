@@ -27,7 +27,6 @@ max_tokens = 16384
 # （API 拒绝、前端无入口、运行时 fail closed）。true 时 Codex 改物走
 # app-server dynamic tools 桥接——OpenBrep 独占工具执行、审计与完成门禁，
 # Codex 仍不获得 shell / apply_patch / 任意文件访问 / MCP。设置页不暴露。
-# codex_modify_enabled = true
 
 # ── 统一 Provider 注册表（推荐）──────────────────────────────
 # 每个 [[llm.providers]] = 一个 API 端点 + 它的模型列表，官方/自定义同一套机制。

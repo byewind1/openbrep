@@ -70,6 +70,7 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     )
 
     // 登录按钮只触发终端用户 browser flow；不显示任何 token/URL
+    fireEvent.click(await screen.findByTestId('codex-toggle'))
     const button = await screen.findByTestId('codex-login-button')
     fireEvent.click(button)
     await waitFor(() => expect(mockedLogin).toHaveBeenCalledTimes(1))
@@ -133,6 +134,7 @@ describe('AiSettingsPanel Codex BYOA section', () => {
       />,
     )
 
+    fireEvent.click(await screen.findByTestId('codex-toggle'))
     expect(await screen.findByTestId('codex-no-cli')).toBeTruthy()
     expect(screen.queryByTestId('codex-login-button')).toBeNull()
   })
@@ -207,6 +209,7 @@ describe('AiSettingsPanel Codex BYOA section', () => {
       />,
     )
 
+    fireEvent.click(await screen.findByTestId('codex-toggle'))
     const el = await screen.findByTestId('codex-login-error')
     expect(el.textContent ?? '').toMatch(/设备码/)
   })
@@ -225,6 +228,7 @@ describe('AiSettingsPanel Codex BYOA section', () => {
       />,
     )
 
+    fireEvent.click(await screen.findByTestId('codex-toggle'))
     fireEvent.click(await screen.findByTestId('codex-login-button'))
     expect(await screen.findByTestId('codex-login-pending')).toBeTruthy()
     fireEvent.click(screen.getByTestId('codex-login-cancel'))
@@ -251,6 +255,7 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     )
 
     // 设备码按钮是显式选择：点「连接我的 ChatGPT」不会静默切到设备码
+    fireEvent.click(await screen.findByTestId('codex-toggle'))
     const deviceButton = await screen.findByTestId('codex-device-code-button')
     fireEvent.click(deviceButton)
     await waitFor(() => expect(mockedDeviceCode).toHaveBeenCalledTimes(1))
@@ -306,6 +311,7 @@ describe('AiSettingsPanel Codex BYOA section', () => {
       />,
     )
 
+    fireEvent.click(await screen.findByTestId('codex-toggle'))
     expect(await screen.findByTestId('codex-version-incompatible')).toBeTruthy()
     expect(screen.queryByTestId('codex-login-button')).toBeNull()
   })
@@ -578,7 +584,7 @@ describe('AiSettingsPanel Codex BYOA section', () => {
   })
 
 describe('D10 Codex MODIFY capability note', () => {
-  test('settings page does not claim MODIFY is available (explicit not-open note)', async () => {
+  test('settings page explains experimental MODIFY boundary', async () => {
     mockedStatus.mockResolvedValue({
       ok: true,
       state: 'signed_in',
@@ -601,11 +607,11 @@ describe('D10 Codex MODIFY capability note', () => {
       />,
     )
 
-    // 设置页明确"不宣称 MODIFY 可用"：出现未开放提示，且不含"已支持修改"类文案
+    // 设置页说明 experimental 边界，并明确依赖本机 CLI 与 ChatGPT 账号
     expect(await screen.findByTestId('codex-modify-note')).toBeTruthy()
     expect((await screen.findByTestId('codex-modify-note')).textContent).toMatch(/MODIFY/)
-    expect((await screen.findByTestId('codex-modify-note')).textContent).toMatch(/not yet available|尚未开放/)
-    expect(screen.queryByText(/支持修改|修改已开放|MODIFY 已可用/)).toBeNull()
+    expect((await screen.findByTestId('codex-modify-note')).textContent).toMatch(/观察期|experimental/i)
+    expect((await screen.findByTestId('codex-modify-note')).textContent).toMatch(/CLI|ChatGPT/)
   })
 })
 

@@ -305,7 +305,9 @@ openbrep/
 
 复制 `config.example.toml` 为 `config.toml`（已 .gitignore），按需填写。
 
-### 1) 官方 provider（`provider_keys`）
+ChatGPT Codex MODIFY is available by default, but remains experimental and requires the local Codex CLI and a ChatGPT account.
+
+### 1) 官方 provider (`provider_keys`)
 
 ```toml
 [llm]

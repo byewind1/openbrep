@@ -536,8 +536,8 @@ def test_codex_create_app_server_isolation_real_subprocess(tmp_path):
 # ── 4.5 D4 范围锁：MODIFY/DEBUG 仍 fail closed（不把生成类请求发给订阅模型）──
 
 
-def test_codex_modify_intent_still_fails_closed(tmp_path):
-    """D4 只开文本 CREATE：codex + MODIFY 走现有 fail closed（D10/D11 门禁前）。"""
+def test_codex_modify_intent_fails_closed_without_cli(tmp_path):
+    """Codex MODIFY 由桥接执行，缺少 CLI 时稳定 fail closed。"""
     project = HSFProject.create_new("Shelf", str(tmp_path / "proj"))
     project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\nEND\n"
     hsf_dir = project.save_to_disk()
@@ -555,7 +555,7 @@ def test_codex_modify_intent_still_fails_closed(tmp_path):
         )
 
     assert result.success is False
-    assert "尚未开放" in (result.error or "") or "openai-codex" in (result.error or "")
+    assert "未检测到 Codex CLI" in (result.error or "")
     # 未登录 provider 之外：MODIFY 绝不能把请求发给订阅模型
     assert provider.generation_calls == []
 

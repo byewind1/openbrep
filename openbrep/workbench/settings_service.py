@@ -425,11 +425,6 @@ class WorkbenchSettingsService:
             "reasoning_effort": str(self.session.config.llm.reasoning_effort or ""),
             # D9：Auto 必须显式保存；默认 fixed，前端只把此事实源装入 draft。
             "codex_routing_mode": self.session.config.llm.effective_codex_routing_mode(),
-            # D10：Codex MODIFY feature flag（默认 false；前端据此不提供
-            # MODIFY 入口——设置页也绝不宣称 MODIFY 可用）
-            "codex_modify_enabled": bool(
-                getattr(self.session.config.llm, "codex_modify_enabled", False)
-            ),
             "codex": codex_block,
         }
 

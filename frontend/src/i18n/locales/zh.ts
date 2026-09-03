@@ -80,7 +80,8 @@ export const zh = {
   'settings.ai.copied': '已复制',
   // Codex BYOA（D1）：ChatGPT 订阅登录与动态模型
   'settings.ai.codex.sectionTitle': 'ChatGPT Codex（订阅）',
-  'settings.ai.codex.modifyNotOpen': 'ChatGPT Codex 的修改（MODIFY）能力尚未开放，将在专门的发布决策通过后才提供。',
+  'settings.ai.codex.modifyNotOpen': 'MODIFY 已可用，但仍处于观察期；需要本机 Codex CLI 和 ChatGPT 账号。',
+  'settings.ai.codex.collapsedSummary': '连接状态：{state}',
   'settings.ai.codex.login': '连接我的 ChatGPT',
   'settings.ai.codex.loginPending': '登录中…',
   'settings.ai.codex.loginPendingHint': '请在打开的浏览器中完成登录。登录成功后本面板会自动刷新账户与可用模型。',

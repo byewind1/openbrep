@@ -11,7 +11,7 @@
   final 不 success。
 - 守卫回归：prose leak 与 String paramlist 引用守卫照样拦截（经工具结果文本）。
 - epoch 守卫：会话项目切换后拒绝后续 mutation。
-- flag 边界：默认 false 时 pipeline 在桥接入口 fail closed（零 RPC）。
+- fail-closed 边界：CLI/登录/额度不可用时桥接零 RPC、零 mutation。
 """
 
 from __future__ import annotations
@@ -142,12 +142,9 @@ class _FakeServerHarness:
         return out
 
 
-def _codex_config(
-    model: str = "openai-codex/gpt-5.6-luna", modify_enabled: bool = True,
-) -> GDLAgentConfig:
+def _codex_config(model: str = "openai-codex/gpt-5.6-luna") -> GDLAgentConfig:
     config = GDLAgentConfig()
     config.llm.model = model
-    config.llm.codex_modify_enabled = modify_enabled
     config.llm.providers = [
         {"name": "openai-codex", "api_mode": "codex_app_server", "api_key": "", "models": []}
     ]
@@ -257,7 +254,6 @@ def test_success_flow_tools_audited_and_scripts_changed(tmp_path):
         md = result.metadata["codex_modify"]
         assert md["turns"] == 1
         assert md["tool_calls"] == 2
-        assert md["enabled"] is True
         # 审计：2 次执行（executed=True），call_id 与 wire request 关联
         audit = md["tool_audit"]
         assert len(audit) == 2
@@ -940,44 +936,22 @@ def test_epoch_guard_blocks_mutation_after_project_switch(tmp_path):
         harness.cleanup()
 
 
-def test_flag_off_pipeline_fails_closed_zero_rpc(tmp_path):
-    """flag=false：codex MODIFY 在 pipeline 桥接入口 fail closed，零 RPC。"""
+def test_codex_modify_without_cli_fails_closed_zero_rpc(tmp_path):
+    """没有 CLI 时桥接稳定拒绝，且不发 RPC、不写项目。"""
     harness = _FakeServerHarness(tmp_path)
-    config = _codex_config(modify_enabled=False)
+    config = _codex_config()
     provider = harness.provider()
+    provider._cli_available = False
     pipeline = _pipeline(config, provider, tmp_path)
     project = _make_project(tmp_path)
+    before = project.get_script(ScriptType.SCRIPT_3D)
     try:
-        # DEBUG 意图直接进 agent loop 路径（micro/skill/dsl 都跳过）
         result = pipeline.execute(_request(tmp_path, project, intent="DEBUG"))
         assert result.success is False
-        assert "尚未开放" in (result.plain_text or "")
-        # 零 RPC：fake server 未收到任何 thread/turn 请求
+        assert "未检测到 Codex CLI" in (result.plain_text or "")
         assert harness.read_params("thread/start") == []
         assert harness.read_params("turn/start") == []
-        # 零写入
-        assert result.scripts == {}
-    finally:
-        provider.close()
-        harness.cleanup()
-
-
-def test_flag_off_modify_non_micro_fails_closed(tmp_path):
-    """flag=false + MODIFY 非微修改：确定性路径全部回落，最终 fail closed。"""
-    harness = _FakeServerHarness(tmp_path)
-    config = _codex_config(modify_enabled=False)
-    provider = harness.provider()
-    pipeline = _pipeline(config, provider, tmp_path)
-    project = _make_project(tmp_path)
-    try:
-        result = pipeline.execute(_request(
-            tmp_path, project,
-            user_input="把柜门改成推拉门并增加弧形面板",
-        ))
-        assert result.success is False
-        assert "尚未开放" in (result.plain_text or "")
-        assert harness.read_params("thread/start") == []
-        assert harness.read_params("turn/start") == []
+        assert project.get_script(ScriptType.SCRIPT_3D) == before
     finally:
         provider.close()
         harness.cleanup()

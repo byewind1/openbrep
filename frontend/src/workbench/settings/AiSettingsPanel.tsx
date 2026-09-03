@@ -735,13 +735,30 @@ function CodexSection({
   onSaveRoutingMode: () => void
 }) {
   const t = useT()
+  const [codexExpanded, setCodexExpanded] = useState(false)
   const state = status?.state ?? 'signed_out'
   const connected = status?.connected === true
   const rateLimits = status?.rate_limits
+  const statusSummary = connected ? t('settings.ai.codex.connectedLabel') : t('settings.ai.codex.notConnectedLabel')
+  useEffect(() => {
+    if (connected || current.startsWith('openai-codex/') || loginStarted || state === 'crashed' || state === 'error' || state === 'quota_exhausted') {
+      setCodexExpanded(true)
+    }
+  }, [connected, current, loginStarted, state])
 
   return (
     <div className="settings-codex-section" data-testid="codex-section">
-      <div className="settings-row-header">{t('settings.ai.codex.sectionTitle')}</div>
+      <button
+        type="button"
+        className="settings-row-header"
+        aria-expanded={codexExpanded}
+        data-testid="codex-toggle"
+        onClick={() => setCodexExpanded((expanded) => !expanded)}
+      >
+        {t('settings.ai.codex.sectionTitle')} {codexExpanded ? '▾' : '▸'}
+        <span className="settings-hint">{t('settings.ai.codex.collapsedSummary', { state: statusSummary })}</span>
+      </button>
+      {codexExpanded ? <>
       <p className="settings-hint" data-testid="codex-modify-note">
         {t('settings.ai.codex.modifyNotOpen')}
       </p>
@@ -995,6 +1012,7 @@ function CodexSection({
           ) : null}
         </>
       ) : null}
+      </> : null}
     </div>
   )
 }

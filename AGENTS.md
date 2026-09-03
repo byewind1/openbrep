@@ -397,7 +397,7 @@ pass 数下降都会红灯。
 
 回放是密封化的：`benchmark/check_baseline.py` 和
 `benchmark/update_baseline.py` 为每个套件显式传入仓内 fixture 配置，绝不读取
-仓根 `config.toml`（因此不受开发者模型、Codex 开关或 CI 本地配置影响）。
+仓根 `config.toml`（因此不受开发者模型、Codex 本地连接状态或 CI 本地配置影响）。
 `replay_config_create.toml` 锚定录制时的 `openai-codex/gpt-5.6-luna`，且不含
 凭据；`replay_config_modify.toml` 锚定普通 chat-completions provider，确保
 MODIFY agent loop 到达 `ReplayLLM` 而不进入 Codex app-server。回放始终由
@@ -428,7 +428,9 @@ benchmark fixtures 有最小例外）：agent-loop 后续轮 prompt 嵌入项目
 - TaskPipeline 的学习记忆注入策略变更（`include_learned_skills`）
 
 未来重录某套件时，fixture 必须与录制通道一致：CREATE 语料使用 Codex 模型
-时保持 create fixture 的 Codex 模型声明和 `codex_routing_mode = "fixed"`；
+时保持 create fixture 的 Codex 模型声明和 `codex_routing_mode = "fixed"`；Codex
+MODIFY 已默认开放，但仍属于 experimental 能力，依赖本机 Codex CLI 与 ChatGPT
+账号；
 MODIFY 语料使用普通 chat-completions 通道时保持 modify fixture 的普通模型与
 provider 条目。若录制模型/provider 改变，先更新对应
 `benchmark/fixtures/replay_config_*.toml`（只写模型/端点结构，不写真实 key），

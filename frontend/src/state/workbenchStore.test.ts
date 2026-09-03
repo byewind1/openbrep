@@ -3384,9 +3384,9 @@ test('modify stream without vision events leaves visionExtractions undefined (P5
   expect(last?.visionExtractions).toBeUndefined()
 })
 
-// ── D10：Codex MODIFY feature flag——flag=false 时 UI 无 MODIFY/DEBUG 入口 ──
+// ── D11：Codex MODIFY/DEBUG 不再被前端 feature flag 拦截 ──
 
-test('sendChat blocks modify intent for codex model when flag off (no API call)', async () => {
+test('sendChat forwards modify intent for codex model without a client-side gate', async () => {
   let generateCalled = 0
   let planCalled = 0
   const store = createWorkbenchStore(
@@ -3404,7 +3404,6 @@ test('sendChat blocks modify intent for codex model when flag off (no API call)'
           api_base: '',
           max_retries: 5,
           assistant_settings: '',
-          codex_modify_enabled: false,
         },
       }),
       generateWithAssistant: async () => {
@@ -3420,16 +3419,11 @@ test('sendChat blocks modify intent for codex model when flag off (no API call)'
   await store.getState().load()
   await store.getState().sendChat('给书架加一层层板')
 
-  const state = store.getState()
   expect(generateCalled).toBe(0)
-  expect(planCalled).toBe(0)
-  expect(state.assistantBusy).toBe(false)
-  const last = state.assistantMessages.at(-1)
-  expect(last?.role).toBe('assistant')
-  expect(last?.content).toContain('尚未开放')
+  expect(planCalled).toBe(1)
 })
 
-test('sendChat blocks debug intent for codex model when flag off', async () => {
+test('sendChat forwards debug intent for codex model without a client-side gate', async () => {
   let generateCalled = 0
   const store = createWorkbenchStore(
     makeApi({
@@ -3446,10 +3440,13 @@ test('sendChat blocks debug intent for codex model when flag off', async () => {
           api_base: '',
           max_retries: 5,
           assistant_settings: '',
-          codex_modify_enabled: false,
         },
       }),
       generateWithAssistant: async () => {
+        generateCalled += 1
+        return { ok: true, assistant: { kind: 'generate', reply: 'x', changed_files: [], intent: 'DEBUG' } }
+      },
+      generateWithAssistantStream: async () => {
         generateCalled += 1
         return { ok: true, assistant: { kind: 'generate', reply: 'x', changed_files: [], intent: 'DEBUG' } }
       },
@@ -3459,9 +3456,7 @@ test('sendChat blocks debug intent for codex model when flag off', async () => {
   await store.getState().sendChat('为什么编译不过')
 
   const state = store.getState()
-  expect(generateCalled).toBe(0)
-  const last = state.assistantMessages.at(-1)
-  expect(last?.content).toContain('尚未开放')
+  expect(generateCalled).toBe(1)
 })
 
 // ── HF4：历史接线——发送函数真实携带 store 对话历史（断点修复） ──────────

@@ -1823,18 +1823,9 @@ class TaskPipeline:
         与 `_handle_script_update` 完全独立；显式 `agent_loop=False` 可回退旧路径。
         实现见 runtime/modify_agent_loop.py。
         """
-        # D10：ChatGPT Codex 模型走动态工具桥接（app-server dynamic tools →
-        # ModifyToolRegistry）。feature flag 默认 false：未开启时全链路 fail
-        # closed（稳定文案，不拉起 app-server、不发任何 turn/thread 请求）。
+        # ChatGPT Codex 模型走动态工具桥接（app-server dynamic tools →
+        # ModifyToolRegistry）。桥接自身负责 CLI、登录、额度和能力检查。
         if self._is_codex_model_selected():
-            if not self.config.llm.codex_modify_enabled:
-                from openbrep.runtime.modify_codex_bridge import MODIFY_FLAG_OFF_TEXT
-                return TaskResult(
-                    success=False,
-                    intent=request.intent or "MODIFY",
-                    plain_text=MODIFY_FLAG_OFF_TEXT,
-                    error=MODIFY_FLAG_OFF_TEXT,
-                )
             from openbrep.runtime.modify_codex_bridge import run_codex_modify_agent_loop
             return run_codex_modify_agent_loop(self, request)
         from openbrep.runtime.modify_agent_loop import run_modify_agent_loop
