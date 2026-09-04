@@ -1268,6 +1268,19 @@ class CodexModifyBridge:
                 }
             },
             "acceptance": acceptance,
+            # G1 统一结构化计数接口（与非 codex agent loop 同形状）：
+            # llm_calls = turn 次数（每次 turn 一次模型调用，真实计数点）；
+            # timeout = 任一 turn finish_reason=="timeout"；均不解析文本反推。
+            "execution": {
+                "llm_calls": self.turns,
+                "tool_calls": self.tool_calls_used,
+                "budget_exhausted": self.budget_exhausted,
+                "cancelled": self.cancelled,
+                "timeout": any(
+                    o.finish_reason == "timeout" for o in self.turn_outcomes
+                ),
+            },
+            "before_revision_id": self.before_revision_id or None,
             "codex_modify": {
                 "model": self.model,
                 "reasoning_effort": self.reasoning_effort,

@@ -915,6 +915,17 @@ def compile(
         raise typer.Exit(1)
 
 
+@app.command("quality-report")
+def cmd_quality_report(
+    workdir: str = typer.Option(".", "--workdir", "-w", help="扫描根目录（递归找各项目质量档案）"),
+):
+    """扫描质量档案，按 outcome/model/intent/commit 分桶出趋势报告（只观测，无评分）"""
+    from openbrep.quality.report import build_report, format_report
+
+    report = build_report(workdir)
+    console.print(format_report(report, scan_root=workdir))
+
+
 @app.command("history")
 def cmd_history(
     project: str = typer.Argument(..., help="HSF 项目目录路径"),

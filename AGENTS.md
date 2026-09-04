@@ -403,6 +403,20 @@ Architecture notes:
   `frontend/src/state/modelVisibility.ts`); default rule: configured providers
   / connected Codex / ollama visible, unconfigured official presets hidden;
   the settings-page toggle panel never triggers a model switch or config write.
+- Quality ledger (2026-09-05, G0+G1): every `TaskPipeline.execute()` gets a
+  stable `run_id` at entry (`r_<date>_<ts>_<rand>`), threaded into trace JSON
+  (optional `run_id` field), feedback events (reuses `trace_id`), and an
+  immutable per-run quality record at `<project>/.openbrep/quality/runs/<run_id>.json`.
+  The `openbrep/quality/` package (schema/evaluator/store/report) is
+  observer-only: no composite score, nothing enters any prompt, evaluator
+  failures degrade fields to `unavailable`, store writes are atomic
+  (tmp+rename) and best-effort. Single write point is the pipeline finalizer;
+  benchmark runner passes `quality_ledger_enabled=False` so replay leaves zero
+  fixture pollution. Execution counters (llm_calls/tool_calls/budget/timeout)
+  come from real counting points in `modify_agent_loop.py` /
+  `modify_codex_bridge.py` metadata (`execution` block) — never parse the
+  human-readable status text. Trend view: `obr quality-report`.
+
 
 ## benchmark 黄金语料规范（corpus maintenance）
 

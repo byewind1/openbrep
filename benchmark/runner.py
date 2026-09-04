@@ -180,7 +180,14 @@ class BenchmarkRunner:
 
         # benchmark 关闭学习记忆注入：prompt 只取决于代码与静态知识，
         # 保证黄金语料可复现（详见 benchmark/llm_replay.py 的设计说明）
-        pipeline = TaskPipeline(config=self.config, trace_dir="./traces", include_learned_skills=False)
+        # quality_ledger_enabled=False（G1 隔离纪律）：质量档案是仓外累积态，
+        # 写进仓内 fixtures 会污染回放（git status 零新增是回放生死线）。
+        pipeline = TaskPipeline(
+            config=self.config,
+            trace_dir="./traces",
+            include_learned_skills=False,
+            quality_ledger_enabled=False,
+        )
         pipeline._make_llm = lambda _req: self.llm
         pipeline._make_compiler = lambda: self.compiler
         return pipeline

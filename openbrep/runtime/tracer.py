@@ -22,13 +22,14 @@ class Tracer:
         self.trace_dir = Path(trace_dir)
         self.trace_dir.mkdir(parents=True, exist_ok=True)
 
-    def record(self, request, result) -> Path:
+    def record(self, request, result, run_id: str | None = None) -> Path:
         """
         Write a trace JSON for a completed task.
 
         Args:
             request: TaskRequest
             result:  TaskResult
+            run_id:  G0 运行身份（pipeline 入口生成；可选字段，向后兼容）
 
         Returns:
             Path to the written trace file.
@@ -36,6 +37,8 @@ class Tracer:
         task_id = f"t_{datetime.now():%Y%m%d_%H%M%S_%f}"
         trace = {
             "task_id": task_id,
+            # G0：pipeline 级 run_id（可选字段；旧 trace 无此键，读取方须容错）
+            "run_id": run_id,
             "intent": result.intent or (request.intent if hasattr(request, "intent") else ""),
             "input_summary": (request.user_input or "")[:200],
             "success": result.success,

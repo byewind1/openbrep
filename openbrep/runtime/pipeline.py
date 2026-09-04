@@ -20,9 +20,12 @@ from __future__ import annotations
 import difflib
 import logging
 import re
+import secrets
 import tempfile
+import time
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -143,6 +146,15 @@ _MODIFY_SKILLS_PROMPT = _load_prompt_body("tasks/modify_skills.md", _DEFAULT_MOD
 
 
 logger = logging.getLogger(__name__)
+
+
+def _new_run_id() -> str:
+    """G0：pipeline 入口生成全局唯一 run_id（r_<日期>_<时间戳>_<短随机>）。
+
+    一次任务全程稳定，贯穿 trace JSON / feedback 事件（trace_id 字段）/
+    质量档案主键。tracer 的 task_id 在任务结束后才生成，不能做关联键。
+    """
+    return f"r_{datetime.now():%Y%m%d_%H%M%S}_{secrets.token_hex(3)}"
 
 
 _GREETING_ONLY_PATTERNS = (
@@ -272,6 +284,7 @@ class TaskPipeline:
         trace_dir: str = "./traces",
         include_learned_skills: bool = True,
         codex_provider: Any = None,
+        quality_ledger_enabled: bool = True,
     ):
         self.config = config or GDLAgentConfig.load(config_path)
         self.router = IntentRouter()
@@ -282,6 +295,12 @@ class TaskPipeline:
         # benchmark 传 False：错误学习记忆是累积态，会让 prompt 随运行历史漂移，
         # 破坏黄金语料可复现性；生产默认 True，行为不变
         self.include_learned_skills = include_learned_skills
+        # G1：质量账本开关（observer-only 落盘 .openbrep/quality/runs/）。
+        # benchmark 显式传 False：档案是累积态文件，写进仓内 fixtures 会污染
+        # 回放（git status 零新增是回放纪律）；生产默认 True。
+        self.quality_ledger_enabled = quality_ledger_enabled
+        # G0：当前任务的 run_id（execute 入口生成，handler 内 feedback 事件复用）
+        self._current_run_id: Optional[str] = None
         # Cached after first load (knowledge can be large)
         self._knowledge_text: Optional[str] = None
         self._skills_loader: Optional[SkillsLoader] = None
@@ -303,6 +322,11 @@ class TaskPipeline:
           3. Record trace
           4. Return TaskResult
         """
+        # 0. G0：run_id 在入口生成，一次任务全程稳定（trace/feedback/质量档案关联键）
+        run_id = _new_run_id()
+        self._current_run_id = run_id
+        started_at = time.monotonic()
+
         # 1. Classify
         if not request.intent:
             request.intent = self.router.classify(
@@ -383,22 +407,40 @@ class TaskPipeline:
         # 3. 注入名单透出（只加 metadata、不改任何 prompt）：把本次实际注入的
         # skill 名写入 TaskResult.metadata["injected_skills"]（无注入记 []）。
         # 只在内存旁路记录；fail_count 回写由 GUI 侧通道完成，绝不经此路径。
+        # 同点合并 G0/G1 结构化元数据：run_id + execution 块（elapsed_sec /
+        # repair_rounds 由 pipeline 统一计量；llm_calls/tool_calls 等由
+        # agent loop / codex bridge 等真实计数点写入，这里只补缺省不覆盖）。
         try:
             injected: list[str] = []
             if self._skills_loader is not None:
                 injected = list(self._skills_loader.last_injected or [])
             merged = dict(result.metadata or {})
             merged["injected_skills"] = injected
+            merged["run_id"] = run_id
+            execution = dict(merged.get("execution") or {})
+            execution.setdefault("llm_calls", None)     # 未埋点路径 = unavailable
+            execution.setdefault("tool_calls", None)
+            execution.setdefault("timeout", False)
+            execution.setdefault("budget_exhausted", False)
+            execution.setdefault("cancelled", False)
+            repair = (result.semantic_repair or {}).get("attempted", 0) or 0
+            execution["repair_rounds"] = int(repair)
+            execution["elapsed_sec"] = round(time.monotonic() - started_at, 3)
+            merged["execution"] = execution
             result.metadata = merged
         except Exception:
             pass
 
         # 4. Trace (never blocks execution)
         try:
-            trace_path = self.tracer.record(request, result)
+            trace_path = self.tracer.record(request, result, run_id=run_id)
             result.trace_path = str(trace_path)
         except Exception:
             pass
+
+        # 4b. G1 质量账本：单点写入（成功失败路径都覆盖），best-effort ——
+        # 写失败只 warning，绝不改变 TaskResult 或抛出。
+        self._write_quality_record(request, result, run_id=run_id)
 
         # 5. AC-2：成功交付后沉淀紧凑项目记忆（规则式、零额外 LLM）。
         # 硬门禁：include_learned_skills=False（benchmark 录制/回放口径）不写。
@@ -408,6 +450,56 @@ class TaskPipeline:
             logger.debug("Failed to record delivery memory", exc_info=True)
 
         return result
+
+    def _append_feedback(self, project_root: Any, event: dict) -> bool:
+        """append_feedback 的 pipeline 包装：自动带上当前 run_id（复用 trace_id 字段）。"""
+        if self._current_run_id and isinstance(event, dict):
+            event = {**event, "trace_id": self._current_run_id}
+        return append_feedback(project_root, event)
+
+    def _write_quality_record(
+        self, request: TaskRequest, result: TaskResult, *, run_id: str
+    ) -> None:
+        """G1 质量账本 finalizer：统一写一次，best-effort，observer-only。
+
+        - 只观测：不进任何 prompt、不改任何判定、不影响 TaskResult；
+        - 无项目（未落盘 HSF 目录）无处落档 → 跳过（与 feedback 同语义）；
+        - 写成功后向 feedback.jsonl 留一条 quality_recorded 指针（关联键 run_id）。
+        """
+        if not self.quality_ledger_enabled:
+            return
+        try:
+            project = result.project or request.project
+            if project is None:
+                return
+            from openbrep.quality.evaluator import build_quality_record, repo_commit
+            from openbrep.quality.store import write_record
+
+            execution = (result.metadata or {}).get("execution") or {}
+            record = build_quality_record(
+                request,
+                result,
+                run_id=run_id,
+                elapsed_sec=float(execution.get("elapsed_sec") or 0.0),
+                project_root=project.root,
+                context={
+                    "commit": repo_commit(),
+                    "model": str(getattr(self.config.llm, "model", "") or ""),
+                    "after_revision": (
+                        get_latest_revision_id(project.root)
+                        if _can_revision_project(project) else None
+                    ),
+                },
+            )
+            path = write_record(project.root, record)
+            if path is not None:
+                self._append_feedback(project.root, {
+                    "kind": "quality_recorded",
+                    "summary": f"质量档案已记录（{run_id}，outcome={record.outcome}）",
+                    "detail": {"run_id": run_id, "outcome": record.outcome},
+                })
+        except Exception as exc:  # best-effort：观测层任何失败只 warning
+            logger.warning("quality ledger write failed (best-effort): %s", exc)
 
     def _record_delivery_memory(self, request: TaskRequest, result: TaskResult) -> None:
         """AC-2：任务成功交付后，向项目 .openbrep/memory/decisions.md 追加紧凑记录。
@@ -1338,7 +1430,7 @@ class TaskPipeline:
         # 反馈信号采集（只采集，best-effort；不改判定）：
         # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
         if _sem_outcome.rounds_attempted > 0:
-            append_feedback(project.root, {
+            self._append_feedback(project.root, {
                 "kind": "semantic_repair_outcome",
                 "summary": (
                     f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"
@@ -1558,7 +1650,13 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=revision_warnings,
-            metadata={"acceptance": acceptance, "changed_files": ["paramlist.xml"]},
+            metadata={
+                "acceptance": acceptance,
+                "changed_files": ["paramlist.xml"],
+                # G1：确定性微修改零 LLM 零工具调用（真实计数，非文本反推）
+                "execution": {"llm_calls": 0, "tool_calls": 0},
+                "before_revision_id": _revision_id or None,
+            },
         )
 
     def _try_param_modify(self, request: TaskRequest) -> Optional[TaskResult]:
@@ -1599,7 +1697,7 @@ class TaskPipeline:
         if plan is None:
             # 采集 DSL 回落信号（best-effort；reason 由 parse_param_modify 透出）
             reason = fallback_reasons[-1] if fallback_reasons else "unknown"
-            append_feedback(project.root, {
+            self._append_feedback(project.root, {
                 "kind": "dsl_fallback",
                 "summary": f"参数级修改 DSL 回落 LLM 路径（{reason}）",
                 "detail": {"reason": reason, "instruction": instruction},
@@ -1616,6 +1714,8 @@ class TaskPipeline:
             on_event=on_event,
             op_lines=op_lines,
             revision_metadata=revision_metadata,
+            # G1：DSL 路径真实计数——恰好一次 LLM 意图解析调用，零工具调用
+            result_metadata_extra={"execution": {"llm_calls": 1, "tool_calls": 0}},
             output_header="✅ 已执行确定性参数修改（LLM 仅做意图解析，未改写 GDL 代码）",
         )
 
@@ -1811,6 +1911,7 @@ class TaskPipeline:
                     "changed_files": outcome.changed_files or [],
                 },
                 "acceptance": acceptance,
+                "before_revision_id": outcome.revision_id or None,
                 **(result_metadata_extra or {}),
             },
         )
@@ -2085,7 +2186,7 @@ class TaskPipeline:
         # 反馈信号采集（只采集，best-effort；不改判定）：
         # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
         if _sem_outcome.rounds_attempted > 0:
-            append_feedback(project.root, {
+            self._append_feedback(project.root, {
                 "kind": "semantic_repair_outcome",
                 "summary": (
                     f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"

@@ -22,6 +22,7 @@ kind 枚举：
 - plan_rejected           用户拒绝了修改计划
 - skill_proposal_outcome  技能提案结果（后续任务使用，仅定义）
 - skill_injection_outcome 技能注入任务结局（pass/fail，驱动 fail_count 治理）
+- quality_recorded        G1 质量档案落盘指针（detail.run_id 关联 .openbrep/quality/runs/）
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ FEEDBACK_KINDS: frozenset[str] = frozenset({
     "plan_rejected",
     "skill_proposal_outcome",
     "skill_injection_outcome",
+    "quality_recorded",
 })
 
 # 字段长度纪律

@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Optional
 
 from openbrep.compiler import CompileResult
 from openbrep.core import GDLAgent
-from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject
 from openbrep.llm import assistant_tool_calls_message, tool_result_message
@@ -509,7 +508,10 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             if request.should_cancel and request.should_cancel():
                 cancelled = True
                 on_event("status", _architect_status("cancel"))
-                return _build_cancelled_result(request, project, registry, gsm_path, compiler, intent)
+                return _build_cancelled_result(
+                    request, project, registry, gsm_path, compiler, intent,
+                    llm_calls=llm_calls, tool_calls=tool_calls_used,
+                )
             on_event("status", _architect_status("plan"))
             planning_messages = _inject_planning_prompt(messages)
             plan_response = llm.generate(planning_messages)
@@ -520,7 +522,10 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             if request.should_cancel and request.should_cancel():
                 cancelled = True
                 on_event("status", _architect_status("cancel"))
-                return _build_cancelled_result(request, project, registry, gsm_path, compiler, intent)
+                return _build_cancelled_result(
+                    request, project, registry, gsm_path, compiler, intent,
+                    llm_calls=llm_calls, tool_calls=tool_calls_used,
+                )
             # 把计划作为 assistant 回复注入历史，约束后续工具调用
             plan_text = plan_response.content or ""
             if plan_text:
@@ -634,7 +639,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     if not cancelled:
         blocking_issues = [issue for issue in semantic_result.issues if issue.blocking]
         if gate_unresolved and compile_result is not None and not compile_result.success:
-            append_feedback(project.root, {
+            pipeline._append_feedback(project.root, {
                 "kind": "compile_failure",
                 "summary": (compile_result.stderr or compile_result.stdout or "compile failed"),
                 "detail": {
@@ -643,7 +648,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
                 },
             })
         if blocking_issues:
-            append_feedback(project.root, {
+            pipeline._append_feedback(project.root, {
                 "kind": "semantic_blocking",
                 "summary": "；".join(issue.detail for issue in blocking_issues),
                 "detail": {
@@ -740,6 +745,11 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             acceptance=acceptance,
             # P5e：vision 提取透出（同 P5d-1 形状，前端只读卡片数据源；无图时空列表不写）
             vision_extractions=vision_extractions,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls_used,
+            budget_exhausted=budget_exhausted,
+            cancelled=cancelled,
+            before_revision_id=before_revision_id,
         ),
     )
 
@@ -751,8 +761,18 @@ def _agent_loop_metadata(
     write_methods: dict,
     acceptance: dict,
     vision_extractions: list[dict],
+    llm_calls: int,
+    tool_calls: int,
+    budget_exhausted: bool,
+    cancelled: bool,
+    before_revision_id: str | None,
 ) -> dict:
-    """agent loop 的 TaskResult.metadata 组装（vision_extractions 有值才写入）。"""
+    """agent loop 的 TaskResult.metadata 组装（vision_extractions 有值才写入）。
+
+    G1：llm_calls/tool_calls/budget_exhausted/cancelled 是 loop 内的真实计数器
+    （此前只存在于人类可读状态行「工具调用 6/18 次」），结构化透出供质量账本
+    统一接口读取——禁止下游解析文本反推。
+    """
     metadata: dict = {
         "agent_loop": {
             "diff_guardrail": {
@@ -762,6 +782,13 @@ def _agent_loop_metadata(
             }
         },
         "acceptance": acceptance,
+        "execution": {
+            "llm_calls": llm_calls,
+            "tool_calls": tool_calls,
+            "budget_exhausted": budget_exhausted,
+            "cancelled": cancelled,
+        },
+        "before_revision_id": before_revision_id or None,
     }
     if vision_extractions:
         metadata["vision_extractions"] = vision_extractions
@@ -825,6 +852,9 @@ def _build_cancelled_result(
     gsm_path: str,
     compiler,
     intent: str,
+    *,
+    llm_calls: int = 0,
+    tool_calls: int = 0,
 ) -> "TaskResult":
     """用户在计划阶段取消时，返回一个干净的 TaskResult（未开始修改）。"""
     from openbrep.runtime.pipeline import TaskResult
@@ -859,4 +889,12 @@ def _build_cancelled_result(
         project=project,
         compile_result=compile_result,
         verification=verification_report.to_dict(),
+        metadata={
+            # G0/G1：取消也要留下结构化终态证据（cancelled 终态的真实信号源）
+            "execution": {
+                "llm_calls": llm_calls,
+                "tool_calls": tool_calls,
+                "cancelled": True,
+            },
+        },
     )
