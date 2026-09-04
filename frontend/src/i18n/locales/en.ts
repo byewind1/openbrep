@@ -83,6 +83,7 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.visibility.hint': 'Toggles only control which models appear in the chat model menu; click a model name to set it as default (explicit save).',
   'settings.ai.visibility.count': '{visible}/{total} visible',
   'settings.ai.visibility.toggle': 'Toggle {model} in the model picker',
+  'settings.ai.visibility.providerToggle': 'Toggle all {provider} models',
   'settings.ai.visibility.current': 'Current',
   'settings.ai.copyError': 'Copy error details',
   'settings.ai.copied': 'Copied',

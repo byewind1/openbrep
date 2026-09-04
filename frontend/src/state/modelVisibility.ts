@@ -26,6 +26,19 @@ export const emptyProviderSentinelKey = (provider: string): string =>
 
 export const isProviderSentinel = (key: string): boolean => key.endsWith('::')
 
+/** 显式全关（哨兵键存在）的 provider slug 集。stored=null（从未自定义）不适用，
+ *  返回空集——默认隐藏的官方预设不算显式关闭（pill 搜索可发现性不变）。 */
+export function sentinelHiddenProviders(stored: Set<string> | null): Set<string> {
+  const hidden = new Set<string>()
+  if (!stored) return hidden
+  for (const key of stored) {
+    if (isProviderSentinel(key)) {
+      hidden.add(key.slice(0, -2))
+    }
+  }
+  return hidden
+}
+
 export interface VisibilityModelEntry {
   id: string
   label: string

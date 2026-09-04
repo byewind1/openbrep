@@ -5,6 +5,7 @@ import {
   buildVisibilityCatalog,
   effectiveVisibleKeys,
   modelVisibilityKey,
+  sentinelHiddenProviders,
   useModelVisibilityStore,
 } from '../state/modelVisibility'
 
@@ -24,7 +25,8 @@ interface ModelPillProps {
 }
 
 /** D16 对话框输入框下方的模型 pill（Hermes 式两层之二）：
- *  菜单只列可见模型（搜索时跨越可见性搜全部目录）；当前模型 pin 永远显示；
+ *  菜单只列可见模型（搜索时跨越可见性搜全部目录，但显式 provider-off（哨兵存在）
+ *  的 provider 浏览/搜索两模式都硬隐藏）；当前模型 pin 永远显示；
  *  切换只作用当前会话；覆盖态显示圆点 + 「恢复默认」。 */
 export function ModelPill({ llmSettings, codex, disabled, onSwitch, onReset, onEditVisibility, onOpen }: ModelPillProps) {
   const t = useT()
@@ -56,10 +58,14 @@ export function ModelPill({ llmSettings, codex, disabled, onSwitch, onReset, onE
     return null
   }, [catalog, effectiveModel])
 
-  // 浏览模式：只列可见模型；搜索模式：跨越可见性搜全部目录
+  // 浏览模式：只列可见模型；搜索模式：跨越可见性搜全部目录——
+  // 但显式 provider-off（哨兵键存在）的 provider 两种模式都整组硬隐藏；
+  // per-model 单关在搜索模式仍可发现（既有行为）。storedSet=null（从未自定义）不适用。
+  const hiddenProviders = useMemo(() => sentinelHiddenProviders(storedSet), [storedSet])
   const groups = useMemo(() => {
     return catalog
       .map((provider) => {
+        if (hiddenProviders.has(provider.slug)) return { provider, models: [] }
         const models = provider.models.filter((m) => {
           if (m.id === effectiveModel) return false // 当前模型走 pin 行
           if (q) {
@@ -70,7 +76,7 @@ export function ModelPill({ llmSettings, codex, disabled, onSwitch, onReset, onE
         return { provider, models }
       })
       .filter((group) => group.models.length > 0)
-  }, [catalog, q, visibleSet, effectiveModel])
+  }, [catalog, q, visibleSet, hiddenProviders, effectiveModel])
 
   function toggleOpen() {
     if (disabled) return

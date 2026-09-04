@@ -5,6 +5,7 @@ import {
   buildVisibilityCatalog,
   effectiveVisibleKeys,
   modelVisibilityKey,
+  setProviderVisibility,
   toggleModelVisibility,
   useModelVisibilityStore,
   type VisibilityProvider,
@@ -22,8 +23,8 @@ interface ModelVisibilityPanelProps {
 }
 
 /** D16 设置页模型可见性开关面板（Hermes 式两层之一）：
- *  按 provider 分组、每模型一个开关；开关只管可见性（localStorage），
- *  绝不触发模型切换或配置写入；点击模型名走既有确认流显式保存默认。 */
+ *  按 provider 分组、组头有 provider 总开关（全关写哨兵/全开恢复全集）、每模型一个开关；
+ *  开关只管可见性（localStorage），绝不触发模型切换或配置写入；点击模型名走既有确认流显式保存默认。 */
 export function ModelVisibilityPanel({
   llmSettings,
   codex,
@@ -86,19 +87,34 @@ export function ModelVisibilityPanel({
             const visibleCount = provider.models.filter(
               (m) => visibleSet.has(modelVisibilityKey(provider.slug, m.id)),
             ).length
+            const providerOn = visibleCount > 0
             return (
               <div className="settings-visibility-group" key={provider.slug}>
-                <button
-                  type="button"
-                  className="settings-visibility-group-header"
-                  aria-expanded={!isCollapsed}
-                  onClick={() => toggleCollapse(provider.slug)}
-                >
-                  {isCollapsed ? '▸' : '▾'} {provider.label}
-                  <span className="settings-hint">
-                    {t('settings.ai.visibility.count', { visible: visibleCount, total: provider.models.length })}
-                  </span>
-                </button>
+                <div className="settings-visibility-group-header">
+                  <button
+                    type="button"
+                    className="settings-visibility-group-collapse"
+                    aria-expanded={!isCollapsed}
+                    onClick={() => toggleCollapse(provider.slug)}
+                  >
+                    {isCollapsed ? '▸' : '▾'} {provider.label}
+                    <span className="settings-hint">
+                      {t('settings.ai.visibility.count', { visible: visibleCount, total: provider.models.length })}
+                    </span>
+                  </button>
+                  {provider.models.length > 0 ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={providerOn}
+                      aria-label={t('settings.ai.visibility.providerToggle', { provider: provider.label })}
+                      className={`visibility-toggle${providerOn ? ' is-on' : ''}`}
+                      onClick={() =>
+                        setKeys(setProviderVisibility(storedSet, catalog, provider.slug, !providerOn))
+                      }
+                    />
+                  ) : null}
+                </div>
                 {!isCollapsed ? (
                   <div className="settings-model-list">
                     {models.map((m) => {
