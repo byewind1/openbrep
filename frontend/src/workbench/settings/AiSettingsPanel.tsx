@@ -13,10 +13,10 @@ import type {
   CodexModelInfo,
   CodexStatus,
   LlmConnectionTestResult,
-  LlmModelOption,
   LlmSettings,
 } from '../../api/types'
 import { useT } from '../../i18n'
+import { ModelVisibilityPanel } from './ModelVisibilityPanel'
 
 interface AiSettingsPanelProps {
   llmSettings: LlmSettings
@@ -367,8 +367,6 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     ? (codexCatalog.get(pendingCodexModel)?.supported_reasoning_efforts ?? [])
     : []
 
-  const filteredCustom = useFilteredModels(customModels, modelQuery)
-  const filteredOfficial = useFilteredModels(officialModels, modelQuery)
   const hasModels = customModels.length > 0 || officialModels.length > 0
 
   async function handleTest() {
@@ -531,31 +529,18 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       ) : null}
       {switchError ? <p className="settings-test-result error">{switchError}</p> : null}
       {hasModels && onModelChange ? (
-        <>
-          {filteredCustom.length > 0 ? (
-            <ModelGroup
-              label={t('settings.ai.groupCustom')}
-              models={filteredCustom}
-              current={currentId}
-              pending={pendingModel}
-              disabled={switching}
-              onSelect={requestModelSwitch}
-            />
-          ) : null}
-          {filteredOfficial.length > 0 ? (
-            <ModelGroup
-              label={t('settings.ai.groupOfficial')}
-              models={filteredOfficial}
-              current={currentId}
-              pending={pendingModel}
-              disabled={switching}
-              onSelect={requestModelSwitch}
-            />
-          ) : null}
-          {filteredCustom.length === 0 && filteredOfficial.length === 0 ? (
-            <p className="settings-test-result">{t('settings.ai.noMatch')}</p>
-          ) : null}
-        </>
+        <ModelVisibilityPanel
+          llmSettings={llmSettings}
+          codex={{ connected: codexStatus?.connected === true, models: codexModels }}
+          query={modelQuery}
+          currentId={currentId}
+          pendingModel={pendingModel ?? pendingCodexModel}
+          disabled={switching}
+          onSelect={(model, kind) => {
+            if (kind === 'codex') requestCodexModelSwitch(model)
+            else requestModelSwitch(model)
+          }}
+        />
       ) : null}
       <CodexSection
         status={codexStatus}
@@ -640,16 +625,6 @@ function testErrorText(result: LlmConnectionTestResult | null) {
   if (!result || result.ok) return ''
   // detail 是服务器返回的全量原文（异常链+响应体），优先展示；无 detail 时退回摘要
   return result.detail || result.error || 'Connection test failed.'
-}
-
-function useFilteredModels(models: LlmModelOption[], query: string) {
-  return useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return models
-    return models.filter(
-      (m) => m.label.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q),
-    )
-  }, [models, query])
 }
 
 function emptyCodexStatus(): CodexStatus {
@@ -1014,42 +989,5 @@ function CodexSection({
       ) : null}
       </> : null}
     </div>
-  )
-}
-
-
-function ModelGroup({
-  label,
-  models,
-  current,
-  pending,
-  disabled,
-  onSelect,
-}: {
-  label: string
-  models: LlmModelOption[]
-  current: string
-  pending: string | null
-  disabled: boolean
-  onSelect: (model: string) => void
-}) {
-  return (
-    <>
-      <div className="settings-row-header">{label}</div>
-      <div className="settings-model-list">
-        {models.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            className={m.id === current ? 'active' : m.id === pending ? 'pending' : ''}
-            disabled={disabled}
-            title={`${m.label} (${m.provider})`}
-            onClick={() => onSelect(m.id)}
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
-    </>
   )
 }

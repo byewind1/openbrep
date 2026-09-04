@@ -79,6 +79,11 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.confirmYes': 'Confirm',
   'settings.ai.confirmNo': 'Cancel',
   'settings.ai.switchFailed': 'Model switch failed.',
+  // D16 model visibility toggle panel (visibility is pure UI curation, localStorage only)
+  'settings.ai.visibility.hint': 'Toggles only control which models appear in the chat model menu; click a model name to set it as default (explicit save).',
+  'settings.ai.visibility.count': '{visible}/{total} visible',
+  'settings.ai.visibility.toggle': 'Toggle {model} in the model picker',
+  'settings.ai.visibility.current': 'Current',
   'settings.ai.copyError': 'Copy error details',
   'settings.ai.copied': 'Copied',
   // Codex BYOA (D1): ChatGPT subscription login & dynamic models
@@ -204,6 +209,14 @@ export const en: Record<LocaleKey, string> = {
   'assistant.skillProposal.project': 'Source project',
   'assistant.skillProposal.approve': 'Approve & save',
   'assistant.skillProposal.ignore': 'Ignore',
+
+  // D16 session-level model pill (switching applies to this session only, never writes config.toml)
+  'assistant.modelPill.override': 'Session override',
+  'assistant.modelPill.resetDefault': 'Reset to default',
+  'assistant.modelPill.editVisibility': 'Edit model visibility…',
+  'assistant.modelPill.searchPlaceholder': 'Search all models…',
+  'assistant.modelPill.unavailable': 'Current model is unavailable (missing API key or incomplete config)',
+  'assistant.modelPill.menuLabel': 'Choose session model',
 
   // MODIFY acceptance report (V5)
   'assistant.acceptance.title': 'Acceptance report',

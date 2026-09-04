@@ -677,8 +677,26 @@ export async function updateLlmModel(
   )
 }
 
-export async function updateLlmApiKey(model: string, apiKey: string): Promise<LlmSettingsResult> {
+/** D16：会话级模型切换（pill/聊天侧）——后端只改 session 生效模型，config.toml 零写入。
+ *  model=null 清除会话覆盖，回到 config 默认。写默认仍走 updateLlmModel（设置页）。 */
+export async function updateSessionLlmModel(
+  model: string | null,
+  reasoningEffort?: string,
+): Promise<LlmSettingsResult> {
+  const body: Record<string, string | null> = { model }
+  if (reasoningEffort !== undefined) body.reasoning_effort = reasoningEffort
   return requestJson<LlmSettingsResult>(
+    '/api/session/llm/model',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function updateLlmApiKey(model: string, apiKey: string): Promise<LlmSettingsResult> {  return requestJson<LlmSettingsResult>(
     '/api/settings/llm/api-key',
     {
       method: 'POST',

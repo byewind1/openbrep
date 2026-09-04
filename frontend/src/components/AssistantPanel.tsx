@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, LlmModelOption, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, CodexModelInfo, LlmModelOption, LlmSettings, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
 import { ExtractionCardList, ExtractionConfirmCard } from './ExtractionCard'
+import { ModelPill } from './ModelPill'
 import { PanelEmpty } from './PanelEmpty'
 import { useThemedDialog } from './ThemedDialog'
 import { useT } from '../i18n'
@@ -23,7 +24,14 @@ interface AssistantPanelProps {
   onRevealLine?: (scriptName: string, lineNumber: number) => void
   modelOptions?: LlmModelOption[]
   currentModel?: string
-  onModelChange?: (model: string, reasoningEffort?: string) => Promise<void>
+  /** D16：聊天侧模型切换 = 会话级（不写 config.toml）；slash /model 与 pill 共用 */
+  onSessionModelChange?: (model: string) => Promise<void>
+  /** D16 模型 pill 数据源与动作 */
+  llmSettings?: LlmSettings
+  codexCatalog?: { connected: boolean; models: CodexModelInfo[]; loaded: boolean }
+  onResetSessionModel?: () => Promise<void>
+  onLoadCodexCatalog?: () => Promise<void>
+  onOpenModelSettings?: () => void
   // 计划确认门（V3）：待确认计划 + 确认/取消回调
   pendingPlan?: PendingPlan | null
   onConfirmPlan?: (approve: boolean) => void
@@ -66,7 +74,12 @@ export function AssistantPanel({
   onRevealLine,
   modelOptions = [],
   currentModel = '',
-  onModelChange,
+  onSessionModelChange,
+  llmSettings,
+  codexCatalog,
+  onResetSessionModel,
+  onLoadCodexCatalog,
+  onOpenModelSettings,
   pendingPlan = null,
   onConfirmPlan,
   pendingExtraction = null,
@@ -112,7 +125,7 @@ export function AssistantPanel({
   // slash command derived values
   const commandQuery = pickerMode === 'commands' ? draft.slice(1).toLowerCase() : ''
   const visibleCommands = SLASH_COMMANDS.filter(
-    (c) => c.id.startsWith(commandQuery) && (c.id !== 'model' || (modelOptions.length > 0 && !!onModelChange)),
+    (c) => c.id.startsWith(commandQuery) && (c.id !== 'model' || (modelOptions.length > 0 && !!onSessionModelChange)),
   )
   const modelQuery = pickerMode === 'models' ? draft.toLowerCase() : ''
   const visibleModelOptions = modelOptions.filter(
@@ -209,9 +222,9 @@ export function AssistantPanel({
   }
 
   async function selectModel(model: string) {
-    if (!onModelChange) return
+    if (!onSessionModelChange) return
     setModelSwitching(true)
-    try { await onModelChange(model) }
+    try { await onSessionModelChange(model) }
     catch { /* 切换失败已写入 store.lastError，由顶栏 error pill 展示 */ }
     finally {
       setModelSwitching(false); setPickerMode(null); setDraft('')
@@ -594,6 +607,19 @@ export function AssistantPanel({
           )}
           {imageError ? <span className="assistant-attach-error">{imageError}</span> : null}
         </div>
+        {llmSettings && onSessionModelChange && onResetSessionModel && onOpenModelSettings ? (
+          <div className="assistant-model-row">
+            <ModelPill
+              llmSettings={llmSettings}
+              codex={codexCatalog ?? { connected: false, models: [], loaded: false }}
+              disabled={busy}
+              onSwitch={onSessionModelChange}
+              onReset={onResetSessionModel}
+              onEditVisibility={onOpenModelSettings}
+              onOpen={() => void onLoadCodexCatalog?.()}
+            />
+          </div>
+        ) : null}
         <div className="assistant-footer-row">
           {detectedIntent && !busy && (
             <span className={`chat-intent-badge intent-${detectedIntent}`}>

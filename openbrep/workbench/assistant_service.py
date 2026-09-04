@@ -22,6 +22,7 @@ from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import ImageRef, TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_service import validate_image_payload
+from openbrep.workbench.settings_service import effective_session_reasoning_effort
 from openbrep.workbench.view_models import classify_code_blocks, classify_vision_error
 
 logger = logging.getLogger(__name__)
@@ -105,10 +106,8 @@ class WorkbenchAssistantService:
             if self.session.llm_api_base:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
-            # D6：Fixed 模式 effort 从会话配置同步（与磁盘/UI 同一事实源）
-            pipeline.config.llm.reasoning_effort = str(
-                self.session.config.llm.reasoning_effort or ""
-            )
+            # D6+D16：Fixed 模式 effort 从会话生效值同步（会话覆盖优先，否则 config 已保存值）
+            pipeline.config.llm.reasoning_effort = effective_session_reasoning_effort(self.session)
             pipeline.config.llm.codex_routing_mode = (
                 self.session.config.llm.effective_codex_routing_mode()
             )
@@ -277,10 +276,8 @@ class WorkbenchAssistantService:
             if self.session.llm_api_base:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
-            # D6：adapter 工厂同样同步 Fixed 模式 effort
-            pipeline.config.llm.reasoning_effort = str(
-                self.session.config.llm.reasoning_effort or ""
-            )
+            # D6+D16：adapter 工厂同样同步 Fixed 模式 effort（会话生效值）
+            pipeline.config.llm.reasoning_effort = effective_session_reasoning_effort(self.session)
             pipeline.config.llm.codex_routing_mode = (
                 self.session.config.llm.effective_codex_routing_mode()
             )
@@ -663,10 +660,8 @@ class WorkbenchAssistantService:
             if self.session.llm_api_base:
                 pipeline.config.llm.api_base = self.session.llm_api_base
             pipeline.config.llm.assistant_settings = self.session.assistant_settings
-            # D6：Fixed 模式 effort 从会话配置同步（CREATE/IMAGE 的 codex kwargs 读取它）
-            pipeline.config.llm.reasoning_effort = str(
-                self.session.config.llm.reasoning_effort or ""
-            )
+            # D6+D16：Fixed 模式 effort 从会话生效值同步（CREATE/IMAGE 的 codex kwargs 读取它）
+            pipeline.config.llm.reasoning_effort = effective_session_reasoning_effort(self.session)
             pipeline.config.llm.codex_routing_mode = (
                 self.session.config.llm.effective_codex_routing_mode()
             )

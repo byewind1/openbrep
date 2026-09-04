@@ -121,6 +121,10 @@ export function WorkbenchApp() {
   const openConfig = useWorkbenchStore((state) => state.openConfig)
   const testLlmConnection = useWorkbenchStore((state) => state.testLlmConnection)
   const switchLlmModel = useWorkbenchStore((state) => state.switchLlmModel)
+  const switchSessionLlmModel = useWorkbenchStore((state) => state.switchSessionLlmModel)
+  const resetSessionLlmModel = useWorkbenchStore((state) => state.resetSessionLlmModel)
+  const codexCatalog = useWorkbenchStore((state) => state.codexCatalog)
+  const loadCodexCatalog = useWorkbenchStore((state) => state.loadCodexCatalog)
   const saveLlmApiKey = useWorkbenchStore((state) => state.saveLlmApiKey)
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
@@ -470,7 +474,12 @@ export function WorkbenchApp() {
             onRevealLine={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine ?? null)}
             modelOptions={llmSettings.model_options ?? []}
             currentModel={llmSettings.model}
-            onModelChange={switchLlmModel}
+            onSessionModelChange={switchSessionLlmModel}
+            llmSettings={llmSettings}
+            codexCatalog={codexCatalog}
+            onResetSessionModel={resetSessionLlmModel}
+            onLoadCodexCatalog={loadCodexCatalog}
+            onOpenModelSettings={() => setSettingsOpen(true)}
             workspace={workspace}
             currentProjectPath={project?.path ?? null}
             onImportAssistantHistory={(sourcePath) => void importAssistantHistory(sourcePath)}

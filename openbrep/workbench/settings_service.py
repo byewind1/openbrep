@@ -92,6 +92,23 @@ def apply_llm_credentials_to_config(
     config.llm.api_base = api_base
 
 
+def effective_session_reasoning_effort(session: Any) -> str:
+    """D16：运行时生效的 codex reasoning effort——会话覆盖优先，否则 config 已保存值。
+
+    旧式替身 session（SimpleNamespace，无 session_reasoning_effort 属性）回退
+    config 值，行为与 D16 前逐字节一致。
+    """
+    override = getattr(session, "session_reasoning_effort", None)
+    if override is not None:
+        return str(override)
+    return str(session.config.llm.reasoning_effort or "")
+
+
+def session_llm_model_override(session: Any) -> str | None:
+    """D16：会话级模型覆盖（无覆盖或旧式替身 session → None）。"""
+    return getattr(session, "session_llm_model", None) or None
+
+
 def format_llm_exception_detail(exc: BaseException) -> str:
     """串起完整异常链与服务器响应体原文，供前端全量明文展示排错。
 
@@ -406,7 +423,10 @@ class WorkbenchSettingsService:
             if is_codex_qualified_model(self.session.llm_model):
                 codex_usable = self._codex_model_usable(self.session.llm_model)
         return {
+            # model = 生效模型（会话覆盖存在时即覆盖值）；session_model = 会话覆盖
+            # 模型（D16，无覆盖时为 None）。前端 pill 据此显示覆盖态。
             "model": self.session.llm_model,
+            "session_model": session_llm_model_override(self.session),
             "model_available": llm_model_available(
                 self.session.config,
                 self.session.llm_model,
@@ -448,9 +468,10 @@ class WorkbenchSettingsService:
         )
         self.session.converter_path = self.session.config.compiler.path or ""
         self.session.output_dir = "" if self.session.config.output_dir in {"", "./output"} else self.session.config.output_dir
-        self.session.llm_model = self.session.config.llm.model
-        self.session.llm_api_key = self.session.config.llm.resolve_api_key() or ""
-        self.session.llm_api_base = self.session.config.llm.resolve_api_base() or ""
+        # D16：外部改配置重载不清会话覆盖——生效模型 = 覆盖优先，否则 config 默认。
+        self.session.llm_model = session_llm_model_override(self.session) or self.session.config.llm.model
+        self.session.llm_api_key = self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
+        self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
         self.session.max_retries = self.session.config.agent.max_iterations
         self.session.assistant_settings = self.session.config.llm.assistant_settings or ""
         self.session.recent_project_paths = list(self.session.config.recent_projects or [])
@@ -511,6 +532,9 @@ class WorkbenchSettingsService:
             }
         self.session.llm_model = model
         self.session.config.llm.model = model
+        # D16：显式保存新默认 = 用户已显式选模型，会话覆盖随之清除（一扇门原则）。
+        self.session.session_llm_model = None
+        self.session.session_reasoning_effort = None
         if is_codex_qualified_model(model):
             # 只对 codex 模型写 effort；非 codex 切换不清空（该字段对其惰性，
             # 切回 codex 时仍生效，避免静默丢配置）。
@@ -520,6 +544,77 @@ class WorkbenchSettingsService:
         self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
         self.session.llm_api_base = self.session.config.llm.resolve_api_base(model) or ""
         save_workbench_config(self.session.config, self.session.config_path)
+        return {"ok": True, "llm": self.llm_settings()}
+
+    _MODEL_MISSING = object()
+
+    def _catalog_known_model(self, model: str) -> bool:
+        """非 codex 模型的目录校验（D16 会话路由 fail closed 用）：
+        官方预设 / 自定义 provider 目录 / ollama 自由形态本地 id 三者之一。"""
+        if model in ALL_MODELS:
+            return True
+        if self.session.config.llm._find_custom_provider_match(model) is not None:
+            return True
+        return model_to_provider(model) == "ollama"
+
+    def update_session_llm_model(self, body: dict[str, Any]) -> dict[str, Any]:
+        """D16 会话级模型切换：只改 session 生效模型（+ 会话级 effort），config.toml 零写入。
+
+        校验与 update_llm_model_only 同源：codex 模型走 _codex_save_guard
+        （已登录 + 账户 model/list 目录 + effort 属于 supportedReasoningEfforts，
+        未登录/目录外一律 fail closed）；非 codex 模型必须在官方/自定义/ollama
+        目录内；effort 只对 codex 模型有意义。{model: null}（或空串）= 清除
+        会话覆盖，回到 config 默认模型与已保存 effort。
+        """
+        raw = body.get("model", self._MODEL_MISSING)
+        if raw is self._MODEL_MISSING:
+            return {"ok": False, "code": "model_required", "error": "Model is required."}
+        effort = str(body.get("reasoning_effort") or "").strip()
+        if raw is None or str(raw).strip() == "":
+            if effort:
+                return {
+                    "ok": False,
+                    "code": "effort_not_for_codex",
+                    "error": "reasoning effort 仅适用于 ChatGPT Codex（openai-codex）订阅模型。",
+                }
+            self.session.session_llm_model = None
+            self.session.session_reasoning_effort = None
+            self.session.llm_model = self.session.config.llm.model
+            self.session.llm_api_key = self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
+            self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
+            return {"ok": True, "llm": self.llm_settings()}
+        model = str(raw).strip()
+        if is_codex_qualified_model(model):
+            ok, failure = self._codex_save_guard(model, effort)
+            if not ok:
+                return failure
+            if not effort:
+                # 未显式传 effort = 跟随 config 已保存 effort；残留不兼容显式拒绝
+                # （与 update_llm_model_only 同口径，不静默替换）。
+                saved_effort = str(self.session.config.llm.reasoning_effort or "").strip()
+                if saved_effort:
+                    ok2, failure2 = self._codex_validate_effort(model, saved_effort)
+                    if not ok2:
+                        return failure2
+        elif effort:
+            return {
+                "ok": False,
+                "code": "effort_not_for_codex",
+                "error": "reasoning effort 仅适用于 ChatGPT Codex（openai-codex）订阅模型。",
+            }
+        elif not self._catalog_known_model(model):
+            return {
+                "ok": False,
+                "code": "unknown_model",
+                "error": f"模型 {model} 不在官方预设或自定义 provider 目录中，无法切换。",
+            }
+        self.session.session_llm_model = model
+        # 会话 effort 覆盖随切换重置：显式传入则覆盖（"" = 模型默认），
+        # 未传入则 None = 跟随 config 已保存 effort；非 codex 模型无意义置 None。
+        self.session.session_reasoning_effort = effort if is_codex_qualified_model(model) else None
+        self.session.llm_model = model
+        self.session.llm_api_key = self.session.config.llm.resolve_api_key(model) or ""
+        self.session.llm_api_base = self.session.config.llm.resolve_api_base(model) or ""
         return {"ok": True, "llm": self.llm_settings()}
 
     def update_llm_api_key(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -611,6 +706,9 @@ class WorkbenchSettingsService:
 
         # 验证全部通过 → 一次性 commit 到 session + config
         self.session.llm_model = model
+        # D16：显式保存新默认 = 会话覆盖随之清除（同 update_llm_model_only）。
+        self.session.session_llm_model = None
+        self.session.session_reasoning_effort = None
         self.session.llm_api_key = api_key
         self.session.llm_api_base = api_base
         self.session.assistant_settings = assistant_settings

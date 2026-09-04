@@ -111,7 +111,10 @@ export interface CompilerSettings {
 }
 
 export interface LlmSettings {
+  /** 生效模型（会话覆盖存在时即覆盖值） */
   model: string
+  /** D16：会话级模型覆盖（pill/聊天侧切换）；无覆盖时为 null。写默认仍只有设置页一扇门 */
+  session_model?: string | null
   model_available?: boolean
   models: string[]
   model_options?: LlmModelOption[]

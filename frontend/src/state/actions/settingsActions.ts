@@ -63,8 +63,47 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
       throw new Error(error)
     },
 
-    async saveLlmApiKey(model: string, apiKey: string) {
-      const result = await api.updateLlmApiKey(model, apiKey)
+    // D16：会话级切换（pill/聊天侧）——后端只改 session 生效模型，config.toml 零写入。
+    // 与 switchLlmModel（设置页显式保存写配置）严格分层。
+    async switchSessionLlmModel(model: string) {
+      const result = await api.updateSessionLlmModel(model)
+      if (result.ok && result.llm) {
+        set({ llmSettings: result.llm, lastError: null })
+        return
+      }
+      const error = result.error ?? 'Model switch failed.'
+      set({ lastError: error })
+      throw new Error(error)
+    },
+
+    async resetSessionLlmModel() {
+      const result = await api.updateSessionLlmModel(null)
+      if (result.ok && result.llm) {
+        set({ llmSettings: result.llm, lastError: null })
+        return
+      }
+      const error = result.error ?? 'Model reset failed.'
+      set({ lastError: error })
+      throw new Error(error)
+    },
+
+    async loadCodexCatalog() {
+      const status = await api.fetchCodexStatus()
+      if (!status.ok || !status.connected) {
+        set({ codexCatalog: { connected: false, models: [], loaded: true } })
+        return
+      }
+      const models = await api.fetchCodexModels()
+      set({
+        codexCatalog: {
+          connected: true,
+          models: models.ok ? (models.models ?? []) : [],
+          loaded: true,
+        },
+      })
+    },
+
+    async saveLlmApiKey(model: string, apiKey: string) {      const result = await api.updateLlmApiKey(model, apiKey)
       if (result.ok && result.llm) {
         set({ llmSettings: result.llm, lastError: null })
         return result.llm
