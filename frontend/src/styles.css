@@ -3235,6 +3235,20 @@ button:focus-visible {
   color: var(--text-muted);
 }
 
+/* HF8：组头内左侧的折叠按钮（右侧是 provider 总开关） */
+.settings-visibility-group-collapse {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+  min-height: 22px;
+  font-size: 11px;
+  padding: 0 4px;
+  color: var(--text-muted);
+}
+
 .settings-visibility-row {
   display: flex;
   align-items: center;

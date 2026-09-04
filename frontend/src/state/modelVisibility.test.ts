@@ -8,6 +8,7 @@ import {
   modelVisibilityKey,
   readStoredVisibilityKeys,
   resolveVisibleKeys,
+  sentinelHiddenProviders,
   setProviderVisibility,
   toggleModelVisibility,
   useModelVisibilityStore,
@@ -103,6 +104,21 @@ describe('modelVisibility state machine', () => {
   })
 })
 
+describe('sentinelHiddenProviders', () => {
+  test('null (never customized) → empty set; default-hidden providers do not count', () => {
+    expect(sentinelHiddenProviders(null)).toEqual(new Set())
+  })
+
+  test('only sentinel keys yield provider slugs; model keys are ignored', () => {
+    const stored = new Set(['deepseek::', 'zhipu::glm-4-flash'])
+    expect(sentinelHiddenProviders(stored)).toEqual(new Set(['deepseek']))
+  })
+
+  test('empty set → empty result', () => {
+    expect(sentinelHiddenProviders(new Set())).toEqual(new Set())
+  })
+})
+
 describe('defaultVisibleKeys', () => {
   test('only defaultVisible providers expand', () => {
     expect(defaultVisibleKeys(CATALOG)).toEqual(
@@ -161,6 +177,15 @@ describe('persistence', () => {
     const raw = localStorage.getItem(MODEL_VISIBILITY_STORAGE_KEY)
     expect(raw).toBeTruthy()
     expect(readStoredVisibilityKeys(localStorage)).toEqual(['deepseek::deepseek-chat'])
+  })
+
+  test('provider hide-all sentinel survives persist + rehydrate (state not lost after reload)', async () => {
+    useModelVisibilityStore.getState().setKeys(new Set(['deepseek::']))
+    await useModelVisibilityStore.persist.rehydrate()
+    expect(useModelVisibilityStore.getState().keys).toEqual(['deepseek::'])
+    expect(sentinelHiddenProviders(new Set(useModelVisibilityStore.getState().keys ?? []))).toEqual(
+      new Set(['deepseek']),
+    )
   })
 
   test('setKeys(null) persists null (never customized)', () => {

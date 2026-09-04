@@ -117,4 +117,48 @@ describe('ModelVisibilityPanel', () => {
     expect(keys).not.toContain('deepseek::')
     expect(keys).toContain('deepseek::deepseek-chat')
   })
+
+  test('provider master switch renders per group; on state = at least one model visible', () => {
+    renderPanel()
+    // 每个 provider 组头都有总开关：deepseek 默认开（1/1），zhipu 默认关（未配 key）
+    expect(screen.getByRole('switch', { name: '切换 deepseek 全部模型的显示' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('switch', { name: '切换 zhipu 全部模型的显示' }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByRole('switch', { name: '切换 ymg 全部模型的显示' }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  test('provider master switch off hides all models and writes the sentinel; on restores the full set', () => {
+    const { onSelect } = renderPanel()
+    const master = screen.getByRole('switch', { name: '切换 deepseek 全部模型的显示' })
+    fireEvent.click(master)
+    expect(onSelect).not.toHaveBeenCalled()
+    let keys = readStoredVisibilityKeys(localStorage) ?? []
+    expect(keys).toContain('deepseek::')
+    expect(keys).not.toContain('deepseek::deepseek-chat')
+    // 组内模型行开关变为关
+    expect(screen.getByRole('switch', { name: /deepseek-chat/ }).getAttribute('aria-checked')).toBe('false')
+    // 再开：恢复该 provider 全部模型（主开关语义是全开，不是子集）
+    fireEvent.click(screen.getByRole('switch', { name: '切换 deepseek 全部模型的显示' }))
+    keys = readStoredVisibilityKeys(localStorage) ?? []
+    expect(keys).not.toContain('deepseek::')
+    expect(keys).toContain('deepseek::deepseek-chat')
+    expect(screen.getByRole('switch', { name: /deepseek-chat/ }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  test('provider master switch click does not collapse or expand the group', () => {
+    renderPanel()
+    fireEvent.click(screen.getByRole('switch', { name: '切换 deepseek 全部模型的显示' }))
+    // 组仍展开（模型行还在）
+    expect(screen.getByRole('button', { name: 'deepseek-chat' })).toBeTruthy()
+  })
+
+  test('provider master switch stays visible and usable while the group is collapsed', () => {
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: /▾ deepseek/ }))
+    expect(screen.queryByRole('button', { name: 'deepseek-chat' })).toBeNull()
+    const master = screen.getByRole('switch', { name: '切换 deepseek 全部模型的显示' })
+    fireEvent.click(master)
+    expect(readStoredVisibilityKeys(localStorage)).toContain('deepseek::')
+    // 折叠状态不受开关点击影响
+    expect(screen.queryByRole('button', { name: 'deepseek-chat' })).toBeNull()
+  })
 })

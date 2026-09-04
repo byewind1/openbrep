@@ -142,4 +142,28 @@ describe('ModelPill', () => {
     fireEvent.change(screen.getByPlaceholderText('搜索全部模型…'), { target: { value: 'reasoner' } })
     expect(await screen.findByRole('option', { name: /deepseek-reasoner/ })).toBeTruthy()
   })
+
+  test('provider explicitly switched off (sentinel) is hard-hidden in browse AND search modes', async () => {
+    useModelVisibilityStore.setState({ keys: ['deepseek::'] })
+    renderPill()
+    fireEvent.click(screen.getByRole('button', { name: /deepseek-chat/ }))
+    // 浏览模式：deepseek 整组消失
+    expect(screen.queryByRole('option', { name: /deepseek-reasoner/ })).toBeNull()
+    // 搜索模式：显式关闭的 provider 同样零泄漏
+    fireEvent.change(screen.getByPlaceholderText('搜索全部模型…'), { target: { value: 'reasoner' } })
+    await waitFor(() => expect(screen.queryByRole('option', { name: /deepseek-reasoner/ })).toBeNull())
+    // 同一哨兵状态下，未自定义的默认隐藏 provider（zhipu）搜索可发现性不变
+    fireEvent.change(screen.getByPlaceholderText('搜索全部模型…'), { target: { value: 'glm' } })
+    expect(await screen.findByRole('option', { name: /glm-4-flash/ })).toBeTruthy()
+  })
+
+  test('current-model pin survives its provider being switched off', async () => {
+    useModelVisibilityStore.setState({ keys: ['deepseek::'] })
+    renderPill()
+    fireEvent.click(screen.getByRole('button', { name: /deepseek-chat/ }))
+    // pin 是状态展示不是可选入口：provider 关掉后当前模型仍 pin 在顶部
+    const current = await screen.findAllByRole('option', { name: /deepseek-chat/ })
+    expect(current.length).toBeGreaterThan(0)
+    expect(current[0].className).toContain('is-current')
+  })
 })

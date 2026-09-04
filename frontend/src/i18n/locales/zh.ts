@@ -80,6 +80,7 @@ export const zh = {
   'settings.ai.visibility.hint': '开关只控制模型在聊天模型菜单中的显示；点击模型名设为默认（显式保存）。',
   'settings.ai.visibility.count': '{visible}/{total} 可见',
   'settings.ai.visibility.toggle': '切换 {model} 在选择器中的显示',
+  'settings.ai.visibility.providerToggle': '切换 {provider} 全部模型的显示',
   'settings.ai.visibility.current': '当前',
   'settings.ai.copyError': '复制错误信息',
   'settings.ai.copied': '已复制',
