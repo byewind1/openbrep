@@ -469,9 +469,15 @@ class WorkbenchSettingsService:
         self.session.converter_path = self.session.config.compiler.path or ""
         self.session.output_dir = "" if self.session.config.output_dir in {"", "./output"} else self.session.config.output_dir
         # D16：外部改配置重载不清会话覆盖——生效模型 = 覆盖优先，否则 config 默认。
-        self.session.llm_model = session_llm_model_override(self.session) or self.session.config.llm.model
-        self.session.llm_api_key = self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
-        self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
+        self.session.llm_model = (
+            session_llm_model_override(self.session) or self.session.config.llm.model
+        )
+        self.session.llm_api_key = (
+            self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
+        )
+        self.session.llm_api_base = (
+            self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
+        )
         self.session.max_retries = self.session.config.agent.max_iterations
         self.session.assistant_settings = self.session.config.llm.assistant_settings or ""
         self.session.recent_project_paths = list(self.session.config.recent_projects or [])
@@ -580,8 +586,12 @@ class WorkbenchSettingsService:
             self.session.session_llm_model = None
             self.session.session_reasoning_effort = None
             self.session.llm_model = self.session.config.llm.model
-            self.session.llm_api_key = self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
-            self.session.llm_api_base = self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
+            self.session.llm_api_key = (
+                self.session.config.llm.resolve_api_key(self.session.llm_model) or ""
+            )
+            self.session.llm_api_base = (
+                self.session.config.llm.resolve_api_base(self.session.llm_model) or ""
+            )
             return {"ok": True, "llm": self.llm_settings()}
         model = str(raw).strip()
         if is_codex_qualified_model(model):

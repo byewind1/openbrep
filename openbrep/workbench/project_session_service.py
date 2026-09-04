@@ -25,7 +25,10 @@ from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_parameter_service import parameter_to_dict, parse_values_declarations
 from openbrep.workbench.project_script_service import SCRIPT_NAME_TO_TYPE
-from openbrep.workbench.settings_service import effective_session_reasoning_effort, save_workbench_config
+from openbrep.workbench.settings_service import (
+    effective_session_reasoning_effort,
+    save_workbench_config,
+)
 from openbrep.workbench.view_models import classify_vision_error
 
 
