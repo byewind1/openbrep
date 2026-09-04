@@ -22,11 +22,12 @@ from openbrep.compiler import MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse, MockLLM
-from openbrep.quality import evaluator as quality_evaluator
-from openbrep.quality.report import build_report, format_report
-from openbrep.quality.schema import OUTCOMES, QualityRecord
-from openbrep.quality.store import load_records, record_path
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
+
+# 注意：openbrep.quality.* 一律函数级导入——该包是本分支新增模块，在基线
+# checkout 上不存在，顶层导入会让 ruff isort 的 first-party 判定随 checkout
+# 状态漂移（I001 在两种状态下要求互相矛盾的布局）；函数级单块导入两种
+# 状态下都稳定。
 
 # ── 公共构造 ──────────────────────────────────────────────
 
@@ -89,6 +90,8 @@ def _read_records(project: HSFProject) -> list[dict]:
 
 
 def _assert_record_shape(record: dict, *, outcome: str) -> None:
+    from openbrep.quality.schema import OUTCOMES
+
     assert record["schema_version"] == 1
     assert record["run_id"].startswith("r_")
     assert record["outcome"] == outcome
@@ -120,34 +123,40 @@ class _StubRequest:
 
 
 class TestOutcomeMapping:
+    @staticmethod
+    def _map(result, request=None):
+        from openbrep.quality.evaluator import map_outcome
+
+        return map_outcome(request or _StubRequest(), result)
+
     def test_completed(self):
-        assert quality_evaluator.map_outcome(_StubRequest(), _StubResult()) == "completed"
+        assert self._map(_StubResult()) == "completed"
 
     def test_gate_fail(self):
         result = _StubResult(success=False)
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "gate_fail"
+        assert self._map(result) == "gate_fail"
 
     def test_cancelled_flag_in_metadata(self):
         result = _StubResult(success=False, metadata={"execution": {"cancelled": True}})
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "cancelled"
+        assert self._map(result) == "cancelled"
 
     def test_cancelled_via_should_cancel(self):
         class Req(_StubRequest):
             should_cancel = staticmethod(lambda: True)
-        assert quality_evaluator.map_outcome(Req(), _StubResult()) == "cancelled"
+        assert self._map(_StubResult(), request=Req()) == "cancelled"
 
     def test_timeout(self):
         result = _StubResult(metadata={"execution": {"timeout": True}})
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "timeout"
+        assert self._map(result) == "timeout"
 
     def test_budget_exhausted(self):
         result = _StubResult(metadata={"execution": {"budget_exhausted": True}})
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "budget_exhausted"
+        assert self._map(result) == "budget_exhausted"
 
     def test_infrastructure_error_via_error_field(self):
         result = _StubResult(success=False, error="codex provider unavailable",
                              verification=None, compile_result=None, scripts={})
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "infrastructure_error"
+        assert self._map(result) == "infrastructure_error"
 
     def test_infrastructure_error_via_skipped_compiler(self):
         result = _StubResult(verification={
@@ -155,19 +164,19 @@ class TestOutcomeMapping:
             "checks": [{"check_type": "compile", "status": "not_run",
                         "detail": "SKIPPED_NO_COMPILER（未配置 LP_XMLConverter）"}],
         })
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "infrastructure_error"
+        assert self._map(result) == "infrastructure_error"
 
     def test_not_evaluable_chat(self):
         result = _StubResult(intent="CHAT")
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "not_evaluable"
+        assert self._map(result) == "not_evaluable"
 
     def test_not_evaluable_awaiting_confirmation(self):
         result = _StubResult(metadata={"awaiting_confirmation": True})
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "not_evaluable"
+        assert self._map(result) == "not_evaluable"
 
     def test_not_evaluable_zero_evidence(self):
         result = _StubResult(success=False, verification=None, compile_result=None, scripts={})
-        assert quality_evaluator.map_outcome(_StubRequest(), result) == "not_evaluable"
+        assert self._map(result) == "not_evaluable"
 
 
 # ── AC-G0-3 全路径契约 ────────────────────────────────────
@@ -190,6 +199,8 @@ class TestCreatePath:
         assert record["execution_cost"]["elapsed_sec"] >= 0
         assert record["provenance"]["score_profile"] == "quality-v1"
         # QualityRecord.from_dict 往返可解析（schema 校验）
+        from openbrep.quality.schema import QualityRecord
+
         QualityRecord.from_dict(record)
 
     def test_create_run_id_in_trace(self, tmp_path):
@@ -477,6 +488,8 @@ class TestRobustness:
 
     def test_evaluator_section_exception_degrades_unavailable(self, tmp_path):
         """红队 6：evaluator 内注入异常 → 字段 unavailable，任务照常交付。"""
+        from openbrep.quality import evaluator as quality_evaluator
+
         project = _make_project(tmp_path)
         pipeline = _make_pipeline(tmp_path)
         with patch.object(
@@ -492,6 +505,8 @@ class TestRobustness:
 
     def test_evaluator_total_failure_still_delivers(self, tmp_path):
         """build_quality_record 整体异常 → 无档案、仅 warning、交付不变。"""
+        from openbrep.quality import evaluator as quality_evaluator
+
         project = _make_project(tmp_path)
         pipeline = _make_pipeline(tmp_path)
         with patch.object(
@@ -545,12 +560,16 @@ class TestRobustness:
 
 class TestReport:
     def test_empty_dir_friendly_message(self, tmp_path):
+        from openbrep.quality.report import build_report, format_report
+
         report = build_report(tmp_path)
         assert report["total"] == 0
         text = format_report(report, scan_root=str(tmp_path))
         assert "暂无质量档案" in text
 
     def test_buckets_counts_and_percent(self, tmp_path):
+        from openbrep.quality.report import build_report, format_report
+
         project = _make_project(tmp_path / "p1")
         pipeline = _make_pipeline(tmp_path / "p1")
         pipeline.execute(_request(project, tmp_path / "p1", "做一个书架", "CREATE"))
@@ -588,6 +607,8 @@ class TestReport:
 
 class TestStore:
     def test_load_records_skips_broken_json(self, tmp_path):
+        from openbrep.quality.store import load_records
+
         project = _make_project(tmp_path)
         pipeline = _make_pipeline(tmp_path)
         pipeline.execute(_request(project, tmp_path, "做一个书架", "CREATE"))
@@ -598,10 +619,14 @@ class TestStore:
         assert len(records) == 1  # 坏文件跳过，好文件在
 
     def test_record_path_uses_run_id(self, tmp_path):
+        from openbrep.quality.store import record_path
+
         path = record_path(tmp_path, "r_20260905_120000_abc123")
         assert path.name == "r_20260905_120000_abc123.json"
 
     def test_schema_validation_rejects_bad_outcome(self):
+        from openbrep.quality.schema import QualityRecord
+
         record = QualityRecord(
             run_id="r_x", intent="CREATE", outcome="bogus",
             project_ref={"path_hash": "a" * 12, "name": "p"},

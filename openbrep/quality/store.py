@@ -12,10 +12,12 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from openbrep.quality.schema import QualityRecord
 from openbrep.revisions import is_hsf_project_dir
+
+if TYPE_CHECKING:
+    from openbrep.quality.schema import QualityRecord
 
 logger = logging.getLogger(__name__)
 
