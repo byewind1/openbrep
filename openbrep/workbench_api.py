@@ -689,6 +689,8 @@ class WorkbenchSession:
 
         if normalized_method in ("PATCH", "PUT") and route == "/api/settings/llm/model":
             return self.settings_service.update_llm_model_only(body)
+        if normalized_method == "POST" and route == "/api/session/llm/model":
+            return self.settings_service.update_session_llm_model(body)
 
         if normalized_method in ("PATCH", "PUT", "POST") and route == "/api/settings/llm/api-key":
             return self.settings_service.update_llm_api_key(body)

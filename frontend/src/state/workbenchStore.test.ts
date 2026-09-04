@@ -456,6 +456,9 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     reloadTapirLibraries: async () => ({ ok: false, message: 'Archicad 未运行或 Tapir 未安装' }),
     updateLlmModel: async () => ({ ok: true }),
     updateLlmApiKey: async () => ({ ok: true }),
+    updateSessionLlmModel: async () => ({ ok: true }),
+    fetchCodexStatus: async () => ({ ok: true, state: 'signed_out' as const, codex_available: true, connected: false, account: null }),
+    fetchCodexModels: async () => ({ ok: true, models: [] }),
     ...overrides,
   }
 }
@@ -3632,4 +3635,105 @@ test('sendChat explain sends history to askAssistant (HF4)', async () => {
     { role: 'user', content: '上一轮提问' },
     { role: 'assistant', content: '上一轮回答' },
   ])
+})
+
+// ── D16：会话级模型切换（不写 config.toml）与 codex 目录 ──────────────────────
+
+test('switchSessionLlmModel updates llmSettings from the session route response', async () => {
+  let calledWith: unknown = null
+  const store = createWorkbenchStore(
+    makeApi({
+      updateSessionLlmModel: async (model) => {
+        calledWith = model
+        return {
+          ok: true,
+          llm: {
+            model: 'glm-4-flash',
+            session_model: 'glm-4-flash',
+            models: [],
+            api_key: '',
+            api_base: '',
+            max_retries: 5,
+            assistant_settings: '',
+          },
+        }
+      },
+    }),
+  )
+
+  await store.getState().switchSessionLlmModel('glm-4-flash')
+
+  expect(calledWith).toBe('glm-4-flash')
+  expect(store.getState().llmSettings.model).toBe('glm-4-flash')
+  expect(store.getState().llmSettings.session_model).toBe('glm-4-flash')
+  expect(store.getState().lastError).toBeNull()
+})
+
+test('switchSessionLlmModel failure throws the server error verbatim and sets lastError', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      updateSessionLlmModel: async () => ({ ok: false, code: 'unknown_model', error: '模型 x 不在官方预设或自定义 provider 目录中，无法切换。' }),
+    }),
+  )
+
+  await expect(store.getState().switchSessionLlmModel('x')).rejects.toThrow('模型 x 不在官方预设或自定义 provider 目录中，无法切换。')
+  expect(store.getState().lastError).toContain('不在官方预设或自定义 provider 目录中')
+})
+
+test('resetSessionLlmModel sends model=null (clear override)', async () => {
+  let calledWith: unknown = 'not-called'
+  const store = createWorkbenchStore(
+    makeApi({
+      updateSessionLlmModel: async (model) => {
+        calledWith = model
+        return {
+          ok: true,
+          llm: {
+            model: 'deepseek-chat',
+            session_model: null,
+            models: [],
+            api_key: '',
+            api_base: '',
+            max_retries: 5,
+            assistant_settings: '',
+          },
+        }
+      },
+    }),
+  )
+
+  await store.getState().resetSessionLlmModel()
+
+  expect(calledWith).toBeNull()
+  expect(store.getState().llmSettings.session_model).toBeNull()
+})
+
+test('loadCodexCatalog fetches dynamic catalog only when connected', async () => {
+  const connected = createWorkbenchStore(
+    makeApi({
+      fetchCodexStatus: async () => ({ ok: true, state: 'signed_in' as const, codex_available: true, connected: true, account: null }),
+      fetchCodexModels: async () => ({
+        ok: true,
+        models: [{ id: 'openai-codex/gpt-5.6-luna', label: 'GPT-5.6 Luna', model: 'gpt-5.6-luna' }],
+      }),
+    }),
+  )
+  await connected.getState().loadCodexCatalog()
+  expect(connected.getState().codexCatalog.connected).toBe(true)
+  expect(connected.getState().codexCatalog.models[0]?.id).toBe('openai-codex/gpt-5.6-luna')
+
+  let modelsCalled = false
+  const disconnected = createWorkbenchStore(
+    makeApi({
+      fetchCodexStatus: async () => ({ ok: true, state: 'signed_out' as const, codex_available: true, connected: false, account: null }),
+      fetchCodexModels: async () => {
+        modelsCalled = true
+        return { ok: true, models: [] }
+      },
+    }),
+  )
+  await disconnected.getState().loadCodexCatalog()
+  expect(disconnected.getState().codexCatalog.connected).toBe(false)
+  expect(disconnected.getState().codexCatalog.models).toEqual([])
+  expect(modelsCalled).toBe(false)
 })

@@ -76,6 +76,11 @@ export const zh = {
   'settings.ai.confirmYes': '确认切换',
   'settings.ai.confirmNo': '取消',
   'settings.ai.switchFailed': '模型切换失败',
+  // D16 模型可见性开关面板（可见性是纯 UI 策展，存 localStorage，不写 config.toml）
+  'settings.ai.visibility.hint': '开关只控制模型在聊天模型菜单中的显示；点击模型名设为默认（显式保存）。',
+  'settings.ai.visibility.count': '{visible}/{total} 可见',
+  'settings.ai.visibility.toggle': '切换 {model} 在选择器中的显示',
+  'settings.ai.visibility.current': '当前',
   'settings.ai.copyError': '复制错误信息',
   'settings.ai.copied': '已复制',
   // Codex BYOA（D1）：ChatGPT 订阅登录与动态模型
@@ -200,6 +205,14 @@ export const zh = {
   'assistant.skillProposal.project': '来源项目',
   'assistant.skillProposal.approve': '批准沉淀',
   'assistant.skillProposal.ignore': '忽略',
+
+  // D16 会话级模型 pill（切换只作用当前会话，不写 config.toml）
+  'assistant.modelPill.override': '会话覆盖',
+  'assistant.modelPill.resetDefault': '恢复默认',
+  'assistant.modelPill.editVisibility': '编辑模型可见性…',
+  'assistant.modelPill.searchPlaceholder': '搜索全部模型…',
+  'assistant.modelPill.unavailable': '当前模型不可用（缺少 API Key 或配置不完整）',
+  'assistant.modelPill.menuLabel': '选择会话模型',
 
   // MODIFY acceptance report (V5)
   'assistant.acceptance.title': '验收报告',

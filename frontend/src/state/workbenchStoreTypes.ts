@@ -133,6 +133,10 @@ export interface WorkbenchApi {
     codexRoutingMode?: 'fixed' | 'auto',
   ) => Promise<LlmSettingsResult>
   updateLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettingsResult>
+  /** D16：会话级模型切换（不写 config.toml）；model=null 清除覆盖 */
+  updateSessionLlmModel: (model: string | null, reasoningEffort?: string) => Promise<LlmSettingsResult>
+  fetchCodexStatus: () => Promise<import('../api/types').CodexStatus>
+  fetchCodexModels: () => Promise<import('../api/types').CodexModelsResult>
   fetchTapirStatus: () => Promise<TapirStatusResult>
   reloadTapirLibraries: () => Promise<TapirActionResult>
   syncTapirSelection: () => Promise<TapirActionResult>
@@ -296,6 +300,14 @@ export interface WorkbenchState {
     reasoningEffort?: string,
     codexRoutingMode?: 'fixed' | 'auto',
   ) => Promise<void>
+  /** D16：会话级模型切换（pill/聊天侧，不写 config.toml）；失败抛错原文由调用方展示 */
+  switchSessionLlmModel: (model: string) => Promise<void>
+  /** D16：清除会话覆盖，回到 config 默认模型 */
+  resetSessionLlmModel: () => Promise<void>
+  /** D16：pill 菜单用的 codex 动态目录（未连接时 connected=false、models=[]） */
+  codexCatalog: { connected: boolean; models: import('../api/types').CodexModelInfo[]; loaded: boolean }
+  /** D16：拉取 codex 状态 + 动态目录（pill 打开时调用；失败降级 connected=false） */
+  loadCodexCatalog: () => Promise<void>
   saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
   sendChat: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   stopChat: () => void

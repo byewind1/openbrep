@@ -388,6 +388,21 @@ Architecture notes:
   --tauri --daemon` as the C++ add-on's only launch entry; it hard-fails when
   `frontend/dist` is missing. Copilot chat deliberately bypasses
   `/api/assistant` intent routing — no project required, no file mutation.
+- Session-level model override + model visibility (2026-09-04, D16): chat-side
+  model switching (model pill + slash `/model`) goes through
+  `POST /api/session/llm/model` — it only sets the session override (lazy attrs
+  `session_llm_model` / `session_reasoning_effort`, getattr-based helpers
+  `session_llm_model_override` / `effective_session_reasoning_effort` in
+  `settings_service.py`), never writes config.toml. `PATCH
+  /api/settings/llm/model` stays the only door that writes the default (it
+  clears the session override); `reload_runtime_settings` preserves the
+  override. Snapshot llm block: `model` = effective model, `session_model` =
+  override or null. Model visibility is pure UI curation in localStorage
+  (`openbrep.visible-models`, `provider::model` keys + three-state + hide-all
+  sentinel, state machine ported from Hermes Agent MIT —
+  `frontend/src/state/modelVisibility.ts`); default rule: configured providers
+  / connected Codex / ollama visible, unconfigured official presets hidden;
+  the settings-page toggle panel never triggers a model switch or config write.
 
 ## benchmark 黄金语料规范（corpus maintenance）
 

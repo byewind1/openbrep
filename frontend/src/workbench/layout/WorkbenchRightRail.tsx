@@ -53,7 +53,13 @@ interface WorkbenchRightRailProps {
   onRevealLine?: (scriptName: string, lineNumber: number, endLine?: number | null) => void
   modelOptions?: import('../../api/types').LlmModelOption[]
   currentModel?: string
-  onModelChange?: (model: string, reasoningEffort?: string) => Promise<void>
+  /** D16：聊天侧模型切换 = 会话级（不写 config.toml） */
+  onSessionModelChange?: (model: string) => Promise<void>
+  llmSettings?: import('../../api/types').LlmSettings
+  codexCatalog?: { connected: boolean; models: import('../../api/types').CodexModelInfo[]; loaded: boolean }
+  onResetSessionModel?: () => Promise<void>
+  onLoadCodexCatalog?: () => Promise<void>
+  onOpenModelSettings?: () => void
   // P6a：跨项目聊天记录导入
   workspace?: import('../../api/types').WorkspaceInfo | null
   currentProjectPath?: string | null
@@ -102,7 +108,12 @@ export function WorkbenchRightRail({
   onRevealLine,
   modelOptions,
   currentModel,
-  onModelChange,
+  onSessionModelChange,
+  llmSettings,
+  codexCatalog,
+  onResetSessionModel,
+  onLoadCodexCatalog,
+  onOpenModelSettings,
   workspace = null,
   currentProjectPath = null,
   onImportAssistantHistory,
@@ -192,7 +203,12 @@ export function WorkbenchRightRail({
             onRevealLine={onRevealLine}
             modelOptions={modelOptions}
             currentModel={currentModel}
-            onModelChange={onModelChange}
+            onSessionModelChange={onSessionModelChange}
+            llmSettings={llmSettings}
+            codexCatalog={codexCatalog}
+            onResetSessionModel={onResetSessionModel}
+            onLoadCodexCatalog={onLoadCodexCatalog}
+            onOpenModelSettings={onOpenModelSettings}
             pendingPlan={pendingPlan}
             onConfirmPlan={onConfirmPlan}
             pendingExtraction={pendingExtraction}

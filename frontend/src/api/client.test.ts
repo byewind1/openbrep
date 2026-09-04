@@ -8,6 +8,7 @@ import {
   generateWithAssistantStream,
   requestModifyPlan,
   updateLlmModel,
+  updateSessionLlmModel,
 } from './client'
 
 afterEach(() => {
@@ -72,6 +73,24 @@ describe('D9 routing mode save payload', () => {
       reasoning_effort: 'low',
       codex_routing_mode: 'auto',
     })
+  })
+})
+
+describe('D16 session model switch payload', () => {
+  test('posts to the session route (never the settings route)', async () => {
+    const fetchMock = stubFetch({})
+    await updateSessionLlmModel('glm-4-flash')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/session/llm/model')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ model: 'glm-4-flash' })
+  })
+
+  test('model=null clears the session override', async () => {
+    const fetchMock = stubFetch({})
+    await updateSessionLlmModel(null)
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ model: null })
   })
 })
 
