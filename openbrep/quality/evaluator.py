@@ -14,6 +14,7 @@ import hashlib
 import logging
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -23,6 +24,7 @@ from openbrep.quality.schema import INSTRUCTION_MAX_CHARS, QualityRecord
 logger = logging.getLogger(__name__)
 
 SCORE_PROFILE = "quality-v1"
+_CROSS_SCRIPT_BUDGET_SEC = 0.5
 
 # 语义验证 sweep 口径标注（AC-G1-3：如实记录现状口径，本单不改扰动逻辑）：
 # semantic_verifier.DEFAULT_SWEEP_MAX_PARAMS=12、数值 +50% 单向扰动、String 跳过。
@@ -219,13 +221,56 @@ def _artifact_quality(result: Any) -> dict:
             "score": None,
             "reason": "semantic_not_run",
         }
+    cross_script = _cross_script_quality(result)
+    if cross_script.get("status") == "measured":
+        eligibility = cross_script.pop("_eligibility", {})
+        role_counts: dict[str, int] = {}
+        with_values = 0
+        for item in eligibility.values():
+            role = item.get("role", "unknown")
+            role_counts[role] = role_counts.get(role, 0) + 1
+            with_values += bool(item.get("test_values"))
+        parametricity["eligibility"] = {
+            "role_counts": role_counts,
+            "geometry_driver_count": role_counts.get("geometry_driver", 0)
+            + role_counts.get("derived", 0),
+            "test_value_coverage": round(with_values / len(eligibility), 3)
+            if eligibility
+            else None,
+        }
     return {
         "requirements": {"status": "not_applicable", "score": None, "coverage": None},
         "parametricity": parametricity,
         "dimension_contract": {"status": "unavailable", "score": None, "reason": "no_contract"},
-        "cross_script": {"status": "not_applicable", "score": None, "coverage": None},
+        "cross_script": cross_script,
         "topology": {"status": "unavailable", "score": None, "reason": "no_geometry_metrics"},
     }
+
+
+def _cross_script_quality(result: Any) -> dict:
+    """Run the static observer with a hard time/exception boundary."""
+    project = getattr(result, "project", None)
+    root = getattr(project, "root", None) if project is not None else None
+    if root is None:
+        return {"status": "unavailable", "reason": "no_project"}
+    started = time.perf_counter()
+    try:
+        from openbrep.quality.cross_script import build_cross_script_graph
+
+        graph = build_cross_script_graph(root)
+        if time.perf_counter() - started > _CROSS_SCRIPT_BUDGET_SEC:
+            return {"status": "unavailable", "reason": "analysis_timeout"}
+        data = graph.to_dict()
+        return {
+            "status": "measured" if graph.status != "unavailable" else "unavailable",
+            "issues": data.get("issues", []),
+            "unknown_edges": len(data.get("unknown_edges", [])),
+            "coverage": data.get("coverage", {}),
+            "_eligibility": data.get("eligibility", {}),
+        }
+    except Exception:
+        logger.warning("quality evaluator: cross-script analysis failed", exc_info=True)
+        return {"status": "unavailable", "reason": "analysis_error"}
 
 
 def _execution_cost(result: Any, elapsed_sec: float) -> dict:

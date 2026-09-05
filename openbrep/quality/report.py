@@ -24,12 +24,17 @@ def build_report(scan_root: Any) -> dict:
         "intent": Counter(),
         "model": Counter(),
         "commit": Counter(),
+        "cross_script_issue": Counter(),
     }
     for record in records:
         buckets["outcome"][str(record.get("outcome") or "unknown")] += 1
         buckets["intent"][str(record.get("intent") or "unknown")] += 1
         buckets["model"][_bucket_key_model(record)] += 1
         buckets["commit"][str((record.get("provenance") or {}).get("commit") or "unknown")] += 1
+        for issue in ((record.get("artifact_quality") or {}).get("cross_script") or {}).get(
+            "issues"
+        ) or []:
+            buckets["cross_script_issue"][str(issue.get("kind") or "unknown")] += 1
     return {
         "total": len(records),
         "buckets": {name: dict(counter) for name, counter in buckets.items()},
@@ -48,6 +53,7 @@ def format_report(report: dict, *, scan_root: Any = None) -> str:
         "intent": "按意图（intent）",
         "model": "按模型路由（model）",
         "commit": "按代码版本（commit）",
+        "cross_script_issue": "跨脚本问题（仅观测）",
     }
     for name, title in titles.items():
         bucket = report["buckets"].get(name) or {}

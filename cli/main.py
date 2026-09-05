@@ -926,6 +926,16 @@ def cmd_quality_report(
     console.print(format_report(report, scan_root=workdir))
 
 
+@app.command("cross-script-scan")
+def cmd_cross_script_scan(
+    project: str = typer.Argument(..., help="HSF 项目目录路径"),
+):
+    """静态打印 HSF 跨脚本依赖图与参数 eligibility（只观测）。"""
+    from openbrep.quality.cross_script import build_cross_script_graph, format_graph
+
+    console.print(format_graph(build_cross_script_graph(project)))
+
+
 @app.command("history")
 def cmd_history(
     project: str = typer.Argument(..., help="HSF 项目目录路径"),
