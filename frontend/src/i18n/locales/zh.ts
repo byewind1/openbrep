@@ -40,6 +40,7 @@ export const zh = {
   'settings.section.workspace': '工作区',
   'settings.section.git': 'Git',
   'settings.section.memory': '记忆',
+  'settings.section.lessons': '蒸馏教训',
   'settings.section.knowledge': '知识库',
 
   // SettingsDrawer section summaries
@@ -51,6 +52,8 @@ export const zh = {
   'settings.summary.gitEnabled': '已启用',
   'settings.summary.gitDisabled': '已禁用',
   'settings.summary.memoryLessonCount': '{count} 条错题',
+  'settings.summary.lessonsPending': '{count} 条待审',
+  'settings.summary.lessonsNone': '暂无待审',
   'settings.summary.knowledgeDash': '—',
   'settings.summary.knowledgeFreePro': '免费 {free} · 专业 {pro}',
   'settings.summary.knowledgeFreeNoPro': '免费 {free} · 无专业版',
@@ -287,6 +290,22 @@ export const zh = {
   'saveAs.dialogMessage': '为新建项目命名，保存后自动放到工作区或设置的输出目录。',
   'saveAs.defaultName': '未命名构件',
   'saveAs.nameRequired': '项目名不能为空。',
+
+  // G4 蒸馏教训确认卡（lesson ≠ skill；Reflector 候选 → LLM 蒸馏 → 确认后才晋升）
+  'lessons.project': '来源项目：{name}',
+  'lessons.refresh': '刷新',
+  'lessons.distill': '立即提炼',
+  'lessons.distilling': '提炼中…',
+  'lessons.empty': '暂无蒸馏教训。AI 任务失败/超时或质量轴检出问题后，点「立即提炼」从质量账本生成候选。',
+  'lessons.statusProposed': '待审',
+  'lessons.statusActive': '已采纳',
+  'lessons.statusRejected': '已忽略',
+  'lessons.count': '{count} 次运行',
+  'lessons.evidence': '证据',
+  'lessons.approve': '采纳',
+  'lessons.ignore': '忽略',
+  'lessons.demote': '撤回待审',
+  'lessons.ariaList': '蒸馏教训清单',
 
   // P0-C：有项目打开时的生成意图确认门
   'chat.confirmCreateTitle': '生成新 GDL 构件？',

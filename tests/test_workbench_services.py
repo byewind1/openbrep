@@ -667,6 +667,23 @@ def test_memory_service_reports_empty_status_without_loaded_project():
     assert response["memory"]["lesson_count"] == 0
 
 
+def test_memory_service_distilled_lesson_methods_guard_missing_project():
+    """G4 确认卡三个方法：无项目时列表空、distill/status 明确报错（薄转发契约）。"""
+    service = WorkbenchMemoryService(SimpleNamespace(source_path=None))
+
+    listed = service.list_distilled_lessons()
+    distilled = service.distill_distilled_lessons({})
+    status = service.set_distilled_lesson_status(
+        {"fingerprint": "quality:x", "decision": "promote"}
+    )
+
+    assert listed == {"ok": True, "lessons": []}
+    assert distilled["ok"] is False
+    assert "project" in distilled["error"]
+    assert status["ok"] is False
+    assert "project" in status["error"]
+
+
 def test_tapir_service_normalizes_missing_parameter_edits():
     calls = []
 

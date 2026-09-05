@@ -2,6 +2,7 @@ import base64
 import json
 from pathlib import Path
 
+from openbrep import feedback_distill
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
@@ -2366,6 +2367,222 @@ def test_workbench_session_updates_project_memory_lesson(tmp_path):
     assert response["lesson"]["example"] == "Use BLOCK A, B, ZZYZX instead."
     assert response["lesson"]["count"] == 1
     assert lessons["lessons"][0]["summary"] == "FOO is not a valid GDL command."
+
+
+# ── G4：蒸馏教训确认卡路由（/api/lessons，lesson ≠ skill）──
+
+def _write_distilled_lesson(hsf_dir, fingerprint, **fields):
+    """向项目教训库追加一条蒸馏教训（与 save_lessons 同一落盘路径/形状）。"""
+    lesson = {
+        "fingerprint": fingerprint,
+        "pattern": "参数脚本与指令不一致导致编译失败",
+        "guidance": "生成前逐条核对参数名与指令描述",
+        "status": "proposed",
+        "count": 1,
+        "first_seen": "2026-09-05T10:00:00",
+        "last_seen": "2026-09-05T10:00:00",
+        "evidence_refs": [
+            {
+                "run_id": "r_gate_1",
+                "check_type": "compile",
+                "before_revision": "rev_1",
+                "after_revision": "rev_2",
+            }
+        ],
+        "raw_excerpt": "编译失败（mode=mock）",
+    }
+    lesson.update(fields)
+    target = (
+        Path(hsf_dir) / ".openbrep" / "memory" / "learnings" / "distilled_lessons.jsonl"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(lesson, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _write_quality_record(hsf_dir, run_id="r_gate_1"):
+    runs = Path(hsf_dir) / ".openbrep" / "quality" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    record = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "ts": "2026-09-05T10:00:00+00:00",
+        "project_ref": {"path_hash": "abc123", "name": "DistillShelf"},
+        "intent": "create",
+        "instruction_summary": "做一个书柜",
+        "outcome": "gate_fail",
+        "delivery": {
+            "status": "fail",
+            "compile": {"status": "fail", "mode": "mock"},
+            "static": {"status": "not_run"},
+            "semantic": {"status": "not_run"},
+        },
+        "artifact_quality": {},
+        "execution_cost": {"llm_calls": 3, "tool_calls": 4},
+        "provenance": {"before_revision": "rev_1", "after_revision": "rev_2"},
+    }
+    (runs / f"{run_id}.json").write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_workbench_session_lists_distilled_lessons_with_status_filter(tmp_path):
+    project = HSFProject.create_new("LessonShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    empty = session.route("GET", "/api/lessons")
+    assert empty["ok"] is True
+    assert empty["lessons"] == []
+
+    _write_distilled_lesson(hsf_dir, "quality:aaa", pattern="教训A", status="proposed")
+    _write_distilled_lesson(hsf_dir, "quality:bbb", pattern="教训B", status="active")
+    _write_distilled_lesson(hsf_dir, "quality:ccc", pattern="教训C", status="rejected")
+
+    all_cards = session.route("GET", "/api/lessons")
+    proposed = session.route("GET", "/api/lessons?status=proposed")
+    active = session.route("GET", "/api/lessons?status=active")
+    unknown_status = session.route("GET", "/api/lessons?status=nope")
+
+    assert all_cards["ok"] is True
+    assert {card["fingerprint"] for card in all_cards["lessons"]} == {
+        "quality:aaa", "quality:bbb", "quality:ccc",
+    }
+    card = proposed["lessons"][0]
+    assert [c["fingerprint"] for c in proposed["lessons"]] == ["quality:aaa"]
+    assert [c["fingerprint"] for c in active["lessons"]] == ["quality:bbb"]
+    assert [c["fingerprint"] for c in unknown_status["lessons"]] == []
+    assert card["pattern"] == "教训A"
+    assert card["status"] == "proposed"
+    assert card["count"] == 1
+    assert card["evidence_refs"] == [
+        {
+            "run_id": "r_gate_1",
+            "check_type": "compile",
+            "before_revision": "rev_1",
+            "after_revision": "rev_2",
+        }
+    ]
+    assert card["raw_excerpt"] == "编译失败（mode=mock）"
+
+    no_project = WorkbenchSession(config_path=tmp_path / "config2.toml")
+    assert no_project.route("GET", "/api/lessons") == {"ok": True, "lessons": []}
+
+
+def test_workbench_session_promotes_and_rejects_distilled_lesson(tmp_path):
+    project = HSFProject.create_new("LessonFlowShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    _write_distilled_lesson(hsf_dir, "quality:flow", pattern="书架教训流")
+
+    promoted = session.route(
+        "POST", "/api/lessons/status",
+        {"fingerprint": "quality:flow", "decision": "promote"},
+    )
+    assert promoted["ok"] is True
+    assert promoted["changed"] is True
+    assert promoted["status"] == "active"
+    assert "书架教训流" in feedback_distill.build_distilled_lessons_prompt(hsf_dir)
+
+    demoted = session.route(
+        "POST", "/api/lessons/status",
+        {"fingerprint": "quality:flow", "decision": "demote"},
+    )
+    assert demoted["ok"] is True
+    assert demoted["status"] == "proposed"
+
+    rejected = session.route(
+        "POST", "/api/lessons/status",
+        {"fingerprint": "quality:flow", "decision": "reject"},
+    )
+    assert rejected["ok"] is True
+    assert rejected["changed"] is True
+    assert rejected["status"] == "rejected"
+    assert "书架教训流" not in feedback_distill.build_distilled_lessons_prompt(hsf_dir)
+
+    # rejected 是终态：promote 一个 rejected 属非法迁移
+    revived = session.route(
+        "POST", "/api/lessons/status",
+        {"fingerprint": "quality:flow", "decision": "promote"},
+    )
+    assert revived["ok"] is False
+    missing = session.route(
+        "POST", "/api/lessons/status",
+        {"fingerprint": "quality:nope", "decision": "promote"},
+    )
+    assert missing["ok"] is False
+    bad_decision = session.route(
+        "POST", "/api/lessons/status",
+        {"fingerprint": "quality:flow", "decision": "frobnicate"},
+    )
+    assert bad_decision["ok"] is False
+
+
+def test_workbench_session_distilled_lesson_routes_require_project(tmp_path):
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+
+    listed = session.route("GET", "/api/lessons")
+    distilled = session.route("POST", "/api/lessons/distill", {})
+    status = session.route(
+        "POST", "/api/lessons/status",
+        {"fingerprint": "quality:x", "decision": "promote"},
+    )
+
+    assert listed["ok"] is True
+    assert listed["lessons"] == []
+    assert distilled["ok"] is False
+    assert "project" in distilled["error"]
+    assert status["ok"] is False
+
+
+def test_workbench_session_distills_quality_lessons_through_route(tmp_path, monkeypatch):
+    """路由全链路：质量账本候选 → （假 LLM）提炼 → proposed 教训 → watermark 防重。"""
+    project = HSFProject.create_new("DistillShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    _write_quality_record(hsf_dir)
+
+    class FakeLLM:
+        calls = 0
+
+        def generate(self, messages, **kwargs):
+            FakeLLM.calls += 1
+            item = {
+                "pattern": "书架指令描述不清导致编译失败",
+                "guidance": "生成前核对参数脚本与指令摘要",
+                "evidence_refs": [{"run_id": "r_gate_1", "check_type": "compile"}],
+            }
+            return type("Resp", (), {"content": json.dumps([item], ensure_ascii=False)})()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    monkeypatch.setattr("openbrep.feedback_distill._build_distill_llm", FakeLLM)
+
+    result = session.route("POST", "/api/lessons/distill", {})
+
+    assert result["ok"] is True
+    assert result["new_lessons"] == 1
+    assert result["rejected"] == 0
+    assert result["total_lessons"] == 1
+    cards = session.route("GET", "/api/lessons?status=proposed")
+    assert len(cards["lessons"]) == 1
+    lesson = cards["lessons"][0]
+    assert lesson["fingerprint"].startswith("quality:")
+    assert lesson["status"] == "proposed"
+    assert lesson["evidence_refs"] == [
+        {
+            "run_id": "r_gate_1",
+            "check_type": "compile",
+            "before_revision": "rev_1",
+            "after_revision": "rev_2",
+        }
+    ]
+
+    again = session.route("POST", "/api/lessons/distill", {})
+    assert again["ok"] is True
+    assert again["new_lessons"] == 0
+    assert FakeLLM.calls == 1  # watermark 已推进：二次运行不建 LLM 不重复提炼
 
 
 def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_path):

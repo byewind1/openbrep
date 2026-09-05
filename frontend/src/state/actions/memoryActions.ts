@@ -1,3 +1,4 @@
+import type { DistillLessonsResult } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 
 export function createMemoryActions({ api, set }: WorkbenchActionContext) {
@@ -139,5 +140,102 @@ export function createMemoryActions({ api, set }: WorkbenchActionContext) {
         lastError: refreshed.ok ? null : refreshed.error ?? state.lastError,
       }))
     },
+
+    // ── G4：蒸馏教训确认卡（lesson ≠ skill；状态机与持久化全在后端）──
+
+    async loadDistilledLessons(status?: string) {
+      const result = await api.fetchDistilledLessons(status)
+      if (!result.ok) {
+        set({ lastError: result.error ?? 'Failed to load distilled lessons.' })
+        return
+      }
+      set({ distilledLessons: result.lessons })
+    },
+
+    async distillLessons() {
+      set({ distilledLessonsBusy: true, distilledLessonsMessage: null, lastError: null })
+      const result = await api.distillDistilledLessons()
+      if (!result.ok) {
+        set({
+          distilledLessonsBusy: false,
+          distilledLessonsMessage: {
+            kind: 'error',
+            text: result.error ?? 'Failed to distill quality lessons.',
+          },
+          lastError: result.error ?? 'Failed to distill quality lessons.',
+        })
+        return
+      }
+      const refreshed = await api.fetchDistilledLessons()
+      set((state) => ({
+        distilledLessonsBusy: false,
+        distilledLessons: refreshed.ok ? refreshed.lessons : state.distilledLessons,
+        distilledLessonsMessage: distillSummaryMessage(result),
+        lastError: refreshed.ok ? null : refreshed.error ?? state.lastError,
+      }))
+    },
+
+    async setDistilledLessonStatus(fingerprint: string, decision: 'promote' | 'reject' | 'demote') {
+      const cleaned = fingerprint.trim()
+      if (!cleaned) {
+        set({ lastError: 'Lesson fingerprint is required.' })
+        return
+      }
+      set({ distilledLessonsBusy: true, distilledLessonsMessage: null })
+      const result = await api.setDistilledLessonStatus({ fingerprint: cleaned, decision })
+      if (!result.ok) {
+        const errorText =
+          typeof result.error === 'string'
+            ? result.error
+            : (result.error?.message ?? 'Failed to update distilled lesson.')
+        set({
+          distilledLessonsBusy: false,
+          distilledLessonsMessage: { kind: 'error', text: errorText },
+          lastError: errorText,
+        })
+        return
+      }
+      const refreshed = await api.fetchDistilledLessons()
+      set((state) => ({
+        distilledLessonsBusy: false,
+        distilledLessons: refreshed.ok ? refreshed.lessons : state.distilledLessons,
+        distilledLessonsMessage: refreshed.ok
+          ? { kind: 'info', text: distillStatusMessage(decision, result.status, result.changed) }
+          : state.distilledLessonsMessage,
+        lastError: refreshed.ok ? null : refreshed.error ?? state.lastError,
+      }))
+    },
   }
+}
+
+function distillSummaryMessage(result: DistillLessonsResult): { kind: 'error' | 'info'; text: string } {
+  if (result.note === 'llm_unavailable') {
+    return { kind: 'info', text: 'Distillation skipped: no LLM configured.' }
+  }
+  if (result.note === 'distill_error') {
+    return { kind: 'error', text: 'Distillation failed unexpectedly; nothing merged.' }
+  }
+  if (!result.new_lessons) {
+    if (result.note === 'llm_failed') {
+      return { kind: 'error', text: 'Distillation LLM call failed; will retry on the next run.' }
+    }
+    if (result.note === 'parse_failed') {
+      return { kind: 'error', text: 'Distillation output could not be parsed; nothing merged.' }
+    }
+    return { kind: 'info', text: 'No new runs to distill.' }
+  }
+  const rejected = result.rejected ? ` (${result.rejected} rejected)` : ''
+  const plural = result.new_lessons === 1 ? '' : 's'
+  return { kind: 'info', text: `Distilled ${result.new_lessons} new lesson${plural}${rejected}.` }
+}
+
+function distillStatusMessage(
+  decision: 'promote' | 'reject' | 'demote',
+  status: string | undefined,
+  changed: boolean | undefined,
+): string {
+  if (!changed) return `Lesson already ${status ?? decision}.`
+  if (decision === 'promote') return 'Lesson promoted — it now guides future distillations.'
+  if (decision === 'reject') return 'Lesson rejected and excluded from future distillations.'
+  return 'Lesson demoted back to proposed.'
 }

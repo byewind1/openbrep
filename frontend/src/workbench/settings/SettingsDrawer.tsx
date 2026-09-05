@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   CompilerSettings,
+  DistilledLesson,
   ErrorLesson,
   KnowledgeStatus,
   LlmConnectionTestResult,
@@ -14,6 +15,7 @@ import { useT } from '../../i18n'
 import { useUiPrefsStore } from '../../state/uiPrefsStore'
 import { AiSettingsPanel } from './AiSettingsPanel'
 import { CompilerSettingsPanel } from './CompilerSettingsPanel'
+import { DistilledLessonsPanel } from './DistilledLessonsPanel'
 import { GitSettingsPanel } from './GitSettingsPanel'
 import { InterfaceSettingsPanel, interfaceSummary } from './InterfaceSettingsPanel'
 import { KnowledgePanel } from './KnowledgePanel'
@@ -27,7 +29,15 @@ const SETTINGS_DRAWER_MAX_WIDTH = 760
 const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
 const SETTINGS_DRAWER_KEY_STEP = 24
 
-type SettingsSectionId = 'interface' | 'ai' | 'compiler' | 'workspace' | 'git' | 'memory' | 'knowledge'
+type SettingsSectionId =
+  | 'interface'
+  | 'ai'
+  | 'compiler'
+  | 'workspace'
+  | 'git'
+  | 'memory'
+  | 'lessons'
+  | 'knowledge'
 
 const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
   interface: false,
@@ -36,6 +46,7 @@ const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
   workspace: false,
   git: false,
   memory: false,
+  lessons: false,
   knowledge: false,
 }
 
@@ -48,6 +59,10 @@ interface SettingsDrawerProps {
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
   memoryBusy: boolean
+  distilledLessons: DistilledLesson[]
+  distilledLessonsBusy: boolean
+  distilledLessonsMessage: { kind: 'error' | 'info'; text: string } | null
+  projectName: string | null
   gitStatus: ProjectGitStatus | null
   gitBusy: boolean
   knowledgeStatus: KnowledgeStatus | null
@@ -80,6 +95,9 @@ interface SettingsDrawerProps {
   onDeleteMemoryLesson: (fingerprint: string) => void
   onIgnoreMemoryLesson: (fingerprint: string) => void
   onClearProjectMemory: () => void
+  onLoadDistilledLessons: () => void
+  onDistillLessons: () => void
+  onSetDistilledLessonStatus: (fingerprint: string, decision: 'promote' | 'reject' | 'demote') => void
 }
 
 export function SettingsDrawer({
@@ -91,6 +109,10 @@ export function SettingsDrawer({
   memoryLessons,
   memorySkillPreview,
   memoryBusy,
+  distilledLessons,
+  distilledLessonsBusy,
+  distilledLessonsMessage,
+  projectName,
   gitStatus,
   gitBusy,
   knowledgeStatus,
@@ -119,6 +141,9 @@ export function SettingsDrawer({
   onDeleteMemoryLesson,
   onIgnoreMemoryLesson,
   onClearProjectMemory,
+  onLoadDistilledLessons,
+  onDistillLessons,
+  onSetDistilledLessonStatus,
 }: SettingsDrawerProps) {
   const t = useT()
   const locale = useUiPrefsStore((state) => state.locale)
@@ -141,11 +166,12 @@ export function SettingsDrawer({
     if (open && !wasOpenRef.current) {
       setSettingsSaveState(null)
       onLoadMemoryLessons()
+      onLoadDistilledLessons()
       onLoadProjectGitStatus()
       onLoadKnowledgeStatus()
     }
     wasOpenRef.current = open
-  }, [open, onLoadMemoryLessons, onLoadProjectGitStatus, onLoadKnowledgeStatus])
+  }, [open, onLoadMemoryLessons, onLoadDistilledLessons, onLoadProjectGitStatus, onLoadKnowledgeStatus])
 
   useEffect(() => {
     if (!open) {
@@ -412,6 +438,24 @@ export function SettingsDrawer({
         </SettingsSection>
 
         <SettingsSection
+          id="lessons"
+          title={t('settings.section.lessons')}
+          summary={lessonsSummary(t, distilledLessons)}
+          expanded={expandedSections.lessons}
+          onToggle={toggleSection}
+        >
+          <DistilledLessonsPanel
+            lessons={distilledLessons}
+            busy={distilledLessonsBusy}
+            projectName={projectName}
+            message={distilledLessonsMessage}
+            onRefresh={onLoadDistilledLessons}
+            onDistill={onDistillLessons}
+            onSetStatus={onSetDistilledLessonStatus}
+          />
+        </SettingsSection>
+
+        <SettingsSection
           id="knowledge"
           title={t('settings.section.knowledge')}
           summary={knowledgeSummary(t, knowledgeStatus)}
@@ -455,6 +499,13 @@ function memorySummary(
 ) {
   const lessonCount = memoryStatus?.lesson_count ?? fallbackLessonCount
   return t('settings.summary.memoryLessonCount', { count: lessonCount })
+}
+
+function lessonsSummary(t: ReturnType<typeof useT>, lessons: DistilledLesson[]) {
+  const pending = lessons.filter((lesson) => (lesson.status ?? 'proposed') === 'proposed').length
+  return pending > 0
+    ? t('settings.summary.lessonsPending', { count: pending })
+    : t('settings.summary.lessonsNone')
 }
 
 function knowledgeSummary(t: ReturnType<typeof useT>, status: KnowledgeStatus | null) {

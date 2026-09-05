@@ -3781,6 +3781,167 @@ button:focus-visible {
   color: var(--error);
 }
 
+/* ── G4 蒸馏教训确认卡（lesson ≠ skill） ──────────────────── */
+.distilled-lessons-list {
+  display: grid;
+  gap: 8px;
+}
+
+.distilled-lessons-message {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.distilled-lessons-message.error {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: var(--error);
+}
+
+.distilled-lessons-message.info {
+  color: var(--text-secondary);
+}
+
+.distilled-lesson-card {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-card) 82%, transparent);
+}
+
+.distilled-lesson-card[data-status='active'] {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.distilled-lesson-card[data-status='rejected'] {
+  opacity: 0.62;
+}
+
+.distilled-lesson-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.distilled-lesson-status {
+  padding: 1px 8px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 999px;
+  color: var(--accent-soft);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.distilled-lesson-card[data-status='active'] .distilled-lesson-status {
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #4ade80;
+}
+
+.distilled-lesson-card[data-status='rejected'] .distilled-lesson-status {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.distilled-lesson-count {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.distilled-lesson-pattern {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.distilled-lesson-guidance {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.distilled-lesson-evidence {
+  display: grid;
+  gap: 3px;
+  padding-top: 2px;
+}
+
+.distilled-lesson-evidence-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.distilled-lesson-evidence-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 10px;
+}
+
+.distilled-lesson-check,
+.distilled-lesson-run {
+  font-family: var(--font-mono, monospace);
+}
+
+.distilled-lesson-check {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.14);
+  color: var(--accent-soft);
+}
+
+.distilled-lesson-run {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.distilled-lesson-revs {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+.distilled-lesson-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.distilled-lesson-actions button {
+  min-height: 24px;
+  padding: 0 12px;
+  font-size: 11px;
+}
+
+.distilled-lesson-approve {
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #4ade80;
+}
+
+.distilled-lesson-ignore,
+.distilled-lesson-demote {
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+
 .danger-action:hover:not(:disabled) {
   border-color: rgba(239, 68, 68, 0.7);
   background: rgba(239, 68, 68, 0.12);

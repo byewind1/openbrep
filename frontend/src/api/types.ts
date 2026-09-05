@@ -793,6 +793,61 @@ export interface IgnoreMemoryLessonResult {
   error?: string
 }
 
+// ── 蒸馏教训确认卡（G4）：lesson ≠ skill；Reflector 候选 → LLM 蒸馏 → 用户确认 ──
+export interface LessonEvidenceRef {
+  run_id: string
+  check_type: string
+  before_revision?: string | null
+  after_revision?: string | null
+}
+
+export interface DistilledLesson {
+  fingerprint: string
+  pattern: string
+  guidance: string
+  status: string
+  count: number
+  first_seen?: string | null
+  last_seen?: string | null
+  evidence_refs?: LessonEvidenceRef[] | null
+  raw_excerpt?: string | null
+}
+
+export interface DistilledLessonsResult {
+  ok: boolean
+  lessons: DistilledLesson[]
+  error?: string
+}
+
+export interface DistillLessonsResult {
+  ok: boolean
+  new_lessons?: number
+  total_lessons?: number
+  rejected?: number
+  note?: string
+  error?: string
+}
+
+export interface SetDistilledLessonStatusRequest {
+  fingerprint: string
+  decision: 'promote' | 'reject' | 'demote'
+}
+
+export interface LessonDecisionError {
+  code: string
+  message: string
+  details?: Record<string, unknown>
+}
+
+export interface SetDistilledLessonStatusResult {
+  ok: boolean
+  fingerprint?: string
+  decision?: string
+  status?: string
+  changed?: boolean
+  error?: string | LessonDecisionError
+}
+
 // ── 计划确认门（V3）：MODIFY 先出非代码语言计划，用户确认后才执行 ─────────
 export interface PendingPlan {
   intent_summary: string

@@ -54,8 +54,6 @@ _DEFAULT_SESSION_LOCK = threading.Lock()
 
 
 SCRIPT_ROUTE_RE = re.compile(r"^/api/project/script/([^/]+)$")
-MEMORY_LESSON_ROUTE_RE = re.compile(r"^/api/memory/lessons/([^/]+)$")
-MEMORY_LESSON_IGNORE_ROUTE_RE = re.compile(r"^/api/memory/lessons/([^/]+)/ignore$")
 
 
 class WorkbenchSession:
@@ -480,27 +478,6 @@ class WorkbenchSession:
     def extract_assistant_code_blocks(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.assistant_service.extract_assistant_code_blocks(body)
 
-    def memory_status(self) -> dict[str, Any]:
-        return self.memory_service.memory_status()
-
-    def list_memory_lessons(self) -> dict[str, Any]:
-        return self.memory_service.list_memory_lessons()
-
-    def summarize_project_memory(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        return self.memory_service.summarize_project_memory(body)
-
-    def delete_memory_lesson(self, fingerprint: str) -> dict[str, Any]:
-        return self.memory_service.delete_memory_lesson(fingerprint)
-
-    def ignore_memory_lesson(self, fingerprint: str) -> dict[str, Any]:
-        return self.memory_service.ignore_memory_lesson(fingerprint)
-
-    def update_memory_lesson(self, fingerprint: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        return self.memory_service.update_memory_lesson(fingerprint, body)
-
-    def clear_project_memory(self) -> dict[str, Any]:
-        return self.memory_service.clear_project_memory()
-
     def generate_with_assistant(self, body: dict[str, Any]):
         if body.get("stream"):
             import threading
@@ -779,27 +756,9 @@ class WorkbenchSession:
         # 状态与脱敏账户信息；token/JWT/account id/authUrl/auth 路径永不返回。
         if route.startswith("/api/settings/llm/codex/"):
             return self.settings_service.codex_route(normalized_method, route, body)
-        if normalized_method == "GET" and route == "/api/memory/status":
-            return self.memory_status()
-
-        if normalized_method == "GET" and route == "/api/memory/lessons":
-            return self.list_memory_lessons()
-
-        if normalized_method == "POST" and route == "/api/memory/summarize":
-            return self.summarize_project_memory(body)
-
-        lesson_ignore_match = MEMORY_LESSON_IGNORE_ROUTE_RE.match(route)
-        if lesson_ignore_match and normalized_method == "POST":
-            return self.ignore_memory_lesson(unquote(lesson_ignore_match.group(1)))
-
-        lesson_match = MEMORY_LESSON_ROUTE_RE.match(route)
-        if lesson_match and normalized_method == "PATCH":
-            return self.update_memory_lesson(unquote(lesson_match.group(1)), body)
-        if lesson_match and normalized_method == "DELETE":
-            return self.delete_memory_lesson(unquote(lesson_match.group(1)))
-
-        if normalized_method == "DELETE" and route == "/api/memory":
-            return self.clear_project_memory()
+        # 记忆/蒸馏教训路由：分发下沉 memory_service（request_gate 锁在 route 层）
+        if route == "/api/memory" or route.startswith(("/api/memory/", "/api/lessons")):
+            return self.memory_service.memory_route(normalized_method, route, body)
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)

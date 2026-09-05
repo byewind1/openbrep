@@ -43,6 +43,7 @@ export const en: Record<LocaleKey, string> = {
   'settings.section.workspace': 'Workspace',
   'settings.section.git': 'Git',
   'settings.section.memory': 'Memory',
+  'settings.section.lessons': 'Distilled lessons',
   'settings.section.knowledge': 'Knowledge',
 
   // SettingsDrawer section summaries
@@ -54,6 +55,8 @@ export const en: Record<LocaleKey, string> = {
   'settings.summary.gitEnabled': 'Enabled',
   'settings.summary.gitDisabled': 'Disabled',
   'settings.summary.memoryLessonCount': '{count} lessons',
+  'settings.summary.lessonsPending': '{count} pending',
+  'settings.summary.lessonsNone': 'None pending',
   'settings.summary.knowledgeDash': '—',
   'settings.summary.knowledgeFreePro': 'Free {free} · Pro {pro}',
   'settings.summary.knowledgeFreeNoPro': 'Free {free} · No Pro',
@@ -291,6 +294,22 @@ export const en: Record<LocaleKey, string> = {
   'saveAs.dialogMessage': 'Name the new project. It will be saved automatically to the workspace or your configured output directory.',
   'saveAs.defaultName': 'Untitled Object',
   'saveAs.nameRequired': 'Project name is required.',
+
+  // G4 distilled-lesson confirm cards (lesson ≠ skill; Reflector candidates → LLM distillation → user confirm)
+  'lessons.project': 'Source project: {name}',
+  'lessons.refresh': 'Refresh',
+  'lessons.distill': 'Distill now',
+  'lessons.distilling': 'Distilling…',
+  'lessons.empty': 'No distilled lessons yet. After an AI task fails, times out, or reports quality-axis problems, run “Distill now” to generate candidates from the quality ledger.',
+  'lessons.statusProposed': 'Proposed',
+  'lessons.statusActive': 'Active',
+  'lessons.statusRejected': 'Rejected',
+  'lessons.count': '{count} runs',
+  'lessons.evidence': 'Evidence',
+  'lessons.approve': 'Approve',
+  'lessons.ignore': 'Ignore',
+  'lessons.demote': 'Demote to review',
+  'lessons.ariaList': 'Distilled lessons',
 
   // P0-C: create-intent confirmation when a project is open
   'chat.confirmCreateTitle': 'Generate a new GDL object?',

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { clampSettingsDrawerWidth, SettingsDrawer } from './SettingsDrawer'
-import type { LlmSettings } from '../../api/types'
+import type { DistilledLesson, LlmSettings } from '../../api/types'
 
 function renderSettingsDrawer(
   llmSettings: LlmSettings,
@@ -19,6 +19,10 @@ function renderSettingsDrawer(
       memoryLessons={[]}
       memorySkillPreview=""
       memoryBusy={false}
+      distilledLessons={[]}
+      distilledLessonsBusy={false}
+      distilledLessonsMessage={null}
+      projectName={null}
       gitStatus={null}
       gitBusy={false}
       knowledgeStatus={null}
@@ -45,6 +49,9 @@ function renderSettingsDrawer(
       onDeleteMemoryLesson={vi.fn()}
       onIgnoreMemoryLesson={vi.fn()}
       onClearProjectMemory={vi.fn()}
+      onLoadDistilledLessons={vi.fn()}
+      onDistillLessons={vi.fn()}
+      onSetDistilledLessonStatus={vi.fn()}
       {...overrides}
     />,
   )
@@ -598,6 +605,10 @@ describe('SettingsDrawer AI model settings', () => {
         memoryLessons={[]}
         memorySkillPreview=""
         memoryBusy={false}
+        distilledLessons={[]}
+        distilledLessonsBusy={false}
+        distilledLessonsMessage={null}
+        projectName={null}
         gitStatus={null}
         gitBusy={false}
         knowledgeStatus={null}
@@ -624,10 +635,96 @@ describe('SettingsDrawer AI model settings', () => {
         onDeleteMemoryLesson={vi.fn()}
         onIgnoreMemoryLesson={vi.fn()}
         onClearProjectMemory={vi.fn()}
+        onLoadDistilledLessons={vi.fn()}
+        onDistillLessons={vi.fn()}
+        onSetDistilledLessonStatus={vi.fn()}
       />,
     )
 
     expect(loadMemory).toHaveBeenCalledTimes(1)
     expect(secondLoadGit).not.toHaveBeenCalled()
+  })
+})
+
+describe('SettingsDrawer distilled lessons section (G4)', () => {
+  const llmSettings: LlmSettings = {
+    model: 'deepseek-chat',
+    models: ['deepseek-chat'],
+    model_groups: {
+      custom: [],
+      official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
+    },
+    api_key: '',
+    api_base: '',
+    max_retries: 5,
+    assistant_settings: '',
+  }
+
+  const lessonFixtures: DistilledLesson[] = [
+    {
+      fingerprint: 'quality:sum1',
+      pattern: 'RANGE 越界防护',
+      guidance: '先检查边界再访问数组。',
+      status: 'proposed',
+      count: 1,
+      first_seen: '2026-09-05T10:00:00Z',
+      last_seen: '2026-09-05T10:00:00Z',
+      evidence_refs: [
+        { run_id: 'r_1', check_type: 'gate_fail', before_revision: 'rev_b', after_revision: 'rev_a' },
+      ],
+      raw_excerpt: '越界',
+    },
+    {
+      fingerprint: 'quality:sum2',
+      pattern: '已采纳模式',
+      guidance: '',
+      status: 'active',
+      count: 3,
+      first_seen: null,
+      last_seen: null,
+      evidence_refs: [],
+      raw_excerpt: null,
+    },
+  ]
+
+  test('loads distilled lessons once when the drawer opens', () => {
+    const load = vi.fn()
+    renderSettingsDrawer(llmSettings, undefined, { onLoadDistilledLessons: load })
+
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  test('section summary counts pending lessons and expansion renders confirm cards', () => {
+    const setStatus = vi.fn()
+    renderSettingsDrawer(llmSettings, undefined, {
+      distilledLessons: lessonFixtures,
+      onSetDistilledLessonStatus: setStatus,
+    })
+
+    const header = screen.getByRole('button', { name: /蒸馏教训/ })
+    expect(header.textContent).toContain('1 条待审')
+    expect(screen.queryByText('RANGE 越界防护')).toBeNull()
+
+    fireEvent.click(header)
+    expect(screen.getByText('RANGE 越界防护')).toBeTruthy()
+    expect(screen.getByText('已采纳模式')).toBeTruthy()
+    expect(screen.getByText('gate_fail')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '采纳' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '采纳' }))
+    expect(setStatus).toHaveBeenCalledWith('quality:sum1', 'promote')
+  })
+
+  test('ignore on a card routes to onSetDistilledLessonStatus with reject', () => {
+    renderSettingsDrawer(llmSettings, undefined, {
+      distilledLessons: lessonFixtures,
+      onSetDistilledLessonStatus: (fingerprint, decision) => {
+        expect(fingerprint).toBe('quality:sum1')
+        expect(decision).toBe('reject')
+      },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /蒸馏教训/ }))
+    fireEvent.click(screen.getByRole('button', { name: '忽略' }))
   })
 })

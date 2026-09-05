@@ -48,6 +48,9 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     workspaceSearchQuery: null,
     workspaceSearchHits: [],
     workspaceSearchResult: null,
+    // G4：蒸馏教训按项目归属，换项目即清空（设置抽屉打开时由 loadDistilledLessons 重拉）
+    distilledLessons: [],
+    distilledLessonsMessage: null,
   }
 }
 

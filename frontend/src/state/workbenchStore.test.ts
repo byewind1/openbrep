@@ -345,6 +345,15 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         raw_excerpt: '',
       },
     }),
+    fetchDistilledLessons: async () => ({ ok: true, lessons: [] }),
+    distillDistilledLessons: async () => ({ ok: true, new_lessons: 0, total_lessons: 0, rejected: 0 }),
+    setDistilledLessonStatus: async (request) => ({
+      ok: true,
+      fingerprint: request.fingerprint,
+      decision: request.decision,
+      status: request.decision === 'promote' ? 'active' : request.decision === 'reject' ? 'rejected' : 'proposed',
+      changed: true,
+    }),
     generateWithAssistant: async () => ({ ok: false, error: 'not loaded' }),
     generateWithAssistantStream: async () => ({ ok: false, error: 'not loaded' }),
     requestModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
@@ -2176,6 +2185,151 @@ test('updateMemoryLesson edits a lesson and refreshes memory status', async () =
   expect(store.getState().memoryLessons[0].guidance).toBe('Replace FOO with a supported primitive.')
   expect(store.getState().memoryStatus?.lesson_count).toBe(1)
   expect(store.getState().compileLog[0]).toContain('Updated memory lesson')
+})
+
+test('loadDistilledLessons stores distilled lesson cards (G4)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchDistilledLessons: async () => ({
+        ok: true,
+        lessons: [
+          {
+            fingerprint: 'quality:abc',
+            pattern: 'RANGE 越界防护',
+            guidance: '先查边界。',
+            status: 'proposed',
+            count: 1,
+            evidence_refs: [{ run_id: 'r_1', check_type: 'gate_fail', before_revision: null, after_revision: null }],
+          },
+        ],
+      }),
+    }),
+  )
+
+  await store.getState().loadDistilledLessons('proposed')
+
+  expect(store.getState().distilledLessons).toHaveLength(1)
+  expect(store.getState().distilledLessons[0].fingerprint).toBe('quality:abc')
+})
+
+test('loadDistilledLessons records api failure in lastError (G4)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({ fetchDistilledLessons: async () => ({ ok: false, lessons: [], error: 'boom' }) }),
+  )
+
+  await store.getState().loadDistilledLessons()
+
+  expect(store.getState().lastError).toBe('boom')
+})
+
+test('distillLessons reports new lessons and refreshes the list (G4)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      distillDistilledLessons: async () => ({ ok: true, new_lessons: 2, total_lessons: 2, rejected: 1 }),
+      fetchDistilledLessons: async () => ({
+        ok: true,
+        lessons: [
+          {
+            fingerprint: 'quality:new',
+            pattern: '新增教训',
+            guidance: '',
+            status: 'proposed',
+            count: 2,
+            evidence_refs: [],
+          },
+        ],
+      }),
+    }),
+  )
+
+  await store.getState().distillLessons()
+
+  expect(store.getState().distilledLessonsBusy).toBe(false)
+  expect(store.getState().distilledLessons).toHaveLength(1)
+  expect(store.getState().distilledLessonsMessage).toEqual({
+    kind: 'info',
+    text: 'Distilled 2 new lessons (1 rejected).',
+  })
+})
+
+test('distillLessons surfaces llm_unavailable as an info message (G4)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({ distillDistilledLessons: async () => ({ ok: true, new_lessons: 0, total_lessons: 0, rejected: 0, note: 'llm_unavailable' }) }),
+  )
+
+  await store.getState().distillLessons()
+
+  expect(store.getState().distilledLessonsMessage).toEqual({
+    kind: 'info',
+    text: 'Distillation skipped: no LLM configured.',
+  })
+})
+
+test('distillLessons records api failure in the inline message and lastError (G4)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({ distillDistilledLessons: async () => ({ ok: false, error: 'no project' }) }),
+  )
+
+  await store.getState().distillLessons()
+
+  expect(store.getState().distilledLessonsMessage).toEqual({ kind: 'error', text: 'no project' })
+  expect(store.getState().lastError).toBe('no project')
+})
+
+test('setDistilledLessonStatus promotes and refreshes the card list (G4)', async () => {
+  const promoted = {
+    fingerprint: 'quality:abc',
+    pattern: 'RANGE 越界防护',
+    guidance: '先查边界。',
+    status: 'active',
+    count: 1,
+    evidence_refs: [],
+  }
+  const store = createWorkbenchStore(
+    makeApi({
+      setDistilledLessonStatus: async (request) => {
+        expect(request.decision).toBe('promote')
+        return { ok: true, fingerprint: request.fingerprint, decision: 'promote', status: 'active', changed: true }
+      },
+      fetchDistilledLessons: async () => ({ ok: true, lessons: [promoted] }),
+    }),
+  )
+
+  await store.getState().setDistilledLessonStatus('quality:abc', 'promote')
+
+  expect(store.getState().distilledLessons).toEqual([promoted])
+  expect(store.getState().distilledLessonsMessage?.text).toContain('promoted')
+})
+
+test('setDistilledLessonStatus maps structured errors from the backend (G4)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      setDistilledLessonStatus: async () => ({
+        ok: false,
+        error: { code: 'invalid_transition', message: '非法迁移: active --promote--> active', details: {} },
+      }),
+    }),
+  )
+
+  await store.getState().setDistilledLessonStatus('quality:abc', 'promote')
+
+  expect(store.getState().distilledLessonsMessage?.kind).toBe('error')
+  expect(store.getState().distilledLessonsMessage?.text).toContain('非法迁移')
+})
+
+test('project switches clear distilled lessons and their message (G4)', async () => {
+  const store = createWorkbenchStore(makeApi())
+  store.setState({
+    distilledLessons: [
+      { fingerprint: 'quality:old', pattern: '旧', guidance: '', status: 'proposed', count: 1, evidence_refs: [] },
+    ],
+    distilledLessonsMessage: { kind: 'info', text: 'Distilled 1 new lesson.' },
+  })
+
+  await store.getState().load()
+
+  expect(store.getState().distilledLessons).toEqual([])
+  expect(store.getState().distilledLessonsMessage).toBeNull()
 })
 
 test('adopts code blocks from an assistant history message into dirty script buffers', async () => {
