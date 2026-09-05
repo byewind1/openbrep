@@ -69,6 +69,12 @@ export function WorkbenchApp() {
   const memoryLessons = useWorkbenchStore((state) => state.memoryLessons)
   const memorySkillPreview = useWorkbenchStore((state) => state.memorySkillPreview)
   const memoryBusy = useWorkbenchStore((state) => state.memoryBusy)
+  const distilledLessons = useWorkbenchStore((state) => state.distilledLessons)
+  const distilledLessonsBusy = useWorkbenchStore((state) => state.distilledLessonsBusy)
+  const distilledLessonsMessage = useWorkbenchStore((state) => state.distilledLessonsMessage)
+  const loadDistilledLessons = useWorkbenchStore((state) => state.loadDistilledLessons)
+  const distillLessons = useWorkbenchStore((state) => state.distillLessons)
+  const setDistilledLessonStatus = useWorkbenchStore((state) => state.setDistilledLessonStatus)
   const gitStatus = useWorkbenchStore((state) => state.gitStatus)
   const gitBusy = useWorkbenchStore((state) => state.gitBusy)
   const knowledgeStatus = useWorkbenchStore((state) => state.knowledgeStatus)
@@ -526,6 +532,10 @@ export function WorkbenchApp() {
         memoryLessons={memoryLessons}
         memorySkillPreview={memorySkillPreview}
         memoryBusy={memoryBusy}
+        distilledLessons={distilledLessons}
+        distilledLessonsBusy={distilledLessonsBusy}
+        distilledLessonsMessage={distilledLessonsMessage}
+        projectName={project?.name ?? null}
         gitStatus={gitStatus}
         gitBusy={gitBusy}
         knowledgeStatus={knowledgeStatus}
@@ -554,6 +564,9 @@ export function WorkbenchApp() {
         onDeleteMemoryLesson={deleteMemoryLesson}
         onIgnoreMemoryLesson={ignoreMemoryLesson}
         onClearProjectMemory={clearProjectMemory}
+        onLoadDistilledLessons={loadDistilledLessons}
+        onDistillLessons={distillLessons}
+        onSetDistilledLessonStatus={setDistilledLessonStatus}
       />
       </Suspense>
       {dialogNode}

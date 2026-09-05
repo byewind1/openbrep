@@ -14,6 +14,13 @@ import type {
   CreateProjectResult,
   DeleteMemoryLessonResult,
   IgnoreMemoryLessonResult,
+  DistilledLesson,
+  DistilledLessonsResult,
+  DistillLessonsResult,
+  LessonDecisionError,
+  LessonEvidenceRef,
+  SetDistilledLessonStatusRequest,
+  SetDistilledLessonStatusResult,
   MockCompileResponse,
   CodexDeviceCodeResult,
   CodexLoginCancelResult,
@@ -935,6 +942,41 @@ export async function clearProjectMemory(): Promise<ClearProjectMemoryResult> {
   return requestJson<ClearProjectMemoryResult>(
     '/api/memory',
     { method: 'DELETE' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchDistilledLessons(status?: string): Promise<DistilledLessonsResult> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : ''
+  return requestJson<DistilledLessonsResult>(
+    `/api/lessons${query}`,
+    { method: 'GET' },
+    { ok: false, lessons: [], error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function distillDistilledLessons(): Promise<DistillLessonsResult> {
+  return requestJson<DistillLessonsResult>(
+    '/api/lessons/distill',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function setDistilledLessonStatus(
+  request: SetDistilledLessonStatusRequest,
+): Promise<SetDistilledLessonStatusResult> {
+  return requestJson<SetDistilledLessonStatusResult>(
+    '/api/lessons/status',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }

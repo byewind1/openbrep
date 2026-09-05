@@ -20,6 +20,8 @@ import type {
   DeleteMemoryLessonResult,
   DirectoryChoiceResult,
   DeleteParameterResult,
+  DistilledLessonsResult,
+  DistillLessonsResult,
   ErrorLesson,
   FileChoiceResult,
   GenerateResult,
@@ -53,6 +55,8 @@ import type {
   SaveAssistantHistoryResult,
   SaveRevisionResponse,
   SaveScriptResponse,
+  SetDistilledLessonStatusRequest,
+  SetDistilledLessonStatusResult,
   SummarizeMemoryResult,
   TapirActionResult,
   TapirStatus,
@@ -157,6 +161,11 @@ export interface WorkbenchApi {
   ignoreMemoryLesson: (fingerprint: string) => Promise<IgnoreMemoryLessonResult>
   updateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => Promise<UpdateMemoryLessonResult>
   clearProjectMemory: () => Promise<ClearProjectMemoryResult>
+  fetchDistilledLessons: (status?: string) => Promise<DistilledLessonsResult>
+  distillDistilledLessons: () => Promise<DistillLessonsResult>
+  setDistilledLessonStatus: (
+    request: SetDistilledLessonStatusRequest,
+  ) => Promise<SetDistilledLessonStatusResult>
   fetchKnowledgeStatus: () => Promise<KnowledgeStatus>
   reloadKnowledge: () => Promise<KnowledgeStatus>
   generateWithAssistant: (
@@ -257,6 +266,11 @@ export interface WorkbenchState {
   memoryLessons: ErrorLesson[]
   memorySkillPreview: string
   memoryBusy: boolean
+  /** G4：蒸馏教训确认卡（lesson ≠ skill；proposed 待审清单） */
+  distilledLessons: import('../api/types').DistilledLesson[]
+  distilledLessonsBusy: boolean
+  /** G4：distill/status 操作后的简短反馈（错误信息或成功摘要），面板内联显示 */
+  distilledLessonsMessage: { kind: 'error' | 'info'; text: string } | null
   tapirStatus: TapirStatus | null
   tapirBusy: boolean
   latestRevisionId: string | null
@@ -356,6 +370,10 @@ export interface WorkbenchState {
   ignoreMemoryLesson: (fingerprint: string) => Promise<void>
   updateMemoryLesson: (fingerprint: string, updates: UpdateMemoryLessonRequest) => Promise<void>
   clearProjectMemory: () => Promise<void>
+  /** G4：蒸馏教训确认卡 —— 刷新 / 触发蒸馏 / approve→promote / ignore→reject / demote */
+  loadDistilledLessons: (status?: string) => Promise<void>
+  distillLessons: () => Promise<void>
+  setDistilledLessonStatus: (fingerprint: string, decision: 'promote' | 'reject' | 'demote') => Promise<void>
   saveRevision: (message?: string) => Promise<void>
   restoreRevision: (revisionId: string) => Promise<void>
   loadProjectGitStatus: () => Promise<void>
