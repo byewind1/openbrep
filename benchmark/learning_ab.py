@@ -28,7 +28,10 @@
 - 写隔离：快照跑前 verify、跑后重算；skills/ 下出现带 reuse_count
   frontmatter 的文件时 preflight 拒绝启动（skills_loader 会写回该类文件）；
   fixture 原件零触碰（只读拷贝）；experiment 只写 --workdir/--results-dir
-  （gitignored）。
+  （gitignored）；
+- 导入纪律（验收 R1）：learning_snapshot 的导入一律函数级——它是本分支新增
+  模块，模块级导入会让 isort first-party 分组随 checkout 状态漂移（基线
+  be6df76 缺该文件 → 被划成 third-party → 幻影 I001）。
 
 输出（--results-dir，gitignored）：
     learning_ab_<suite>.json          全量实验记录
@@ -71,11 +74,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from benchmark.assertions import assert_success_criteria  # noqa: E402
-from benchmark.learning_snapshot import (  # noqa: E402
-    load_manifest,
-    materialize,
-    verify,
-)
 from benchmark.runner import _apply_naming_alignment, _git_commit  # noqa: E402
 from benchmark.schema import load_benchmark_task  # noqa: E402
 from openbrep.compiler import MockHSFCompiler  # noqa: E402
@@ -295,6 +293,8 @@ class LearningABRunner:
         ).hexdigest() if self.snapshot_dir else ""
 
     def preflight(self) -> list[str]:
+        from benchmark.learning_snapshot import verify
+
         problems: list[str] = []
         reuse = scan_skills_for_reuse_count(self.skills_dir)
         if reuse:
@@ -324,6 +324,8 @@ class LearningABRunner:
 
     def postflight(self) -> dict:
         """实验后校验：快照重算 + skills/benchmark 的 git 污染（含豁免说明）。"""
+        from benchmark.learning_snapshot import verify
+
         out: dict[str, Any] = {"snapshot_ok": None, "skills_dirty": [], "benchmark_dirty": []}
         if self.snapshot_dir is not None:
             out["snapshot_ok"] = verify(self.snapshot_dir)
@@ -376,6 +378,8 @@ class LearningABRunner:
         fixture_src = _fixture_src(task)
         shutil.copytree(fixture_src, work_copy)
         if spec.snapshot_dir is not None:
+            from benchmark.learning_snapshot import materialize
+
             mount = materialize(spec.snapshot_dir, work_copy)
             mount_log = {"written": mount["written"], "removed": mount["removed"]}
         else:
@@ -561,6 +565,8 @@ class LearningABRunner:
         return experiment
 
     def _build_experiment(self, rows: list[dict], skipped: list[str]) -> dict:
+        from benchmark.learning_snapshot import load_manifest
+
         by_task: dict[str, dict] = {}
         for row in rows:
             by_task.setdefault(row["task_id"], {})[row["arm"]] = row

@@ -15,6 +15,10 @@ record→replay / preflight / infra_excluded。
 5. reuse_count preflight 拒绝（临时 skills_dir 注入带 frontmatter 的 .md）；
 6. replay miss → infra_excluded 单列（reason=replay_miss + miss_keys）。
 
+导入纪律（验收 R1）：lab（learning_ab）/ lsnap（learning_snapshot）是本分支
+新增模块，模块级导入会让 isort first-party 分组随 checkout 状态漂移（基线
+be6df76 缺这两个文件 → 被划成 third-party → 幻影 I001），故一律函数级导入。
+
 Hermetic 纪律：语料、workdir、results、snapshot、suite 全部在 pytest tmp
 （tmp_path_factory 会话级共享目录，保证同一批绝对路径下回放命中）；仓内
 fixture（benchmark/fixtures/modify/M01）只读，e2e 前后做整树 sha 比对证明零改动。
@@ -29,8 +33,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-import benchmark.learning_ab as lab
-import benchmark.learning_snapshot as lsnap
 from benchmark.llm_replay import RecordingLLM
 from openbrep.llm import MockLLM
 
@@ -111,6 +113,8 @@ def _mini_task_yaml(fixture_rel: str) -> dict:
 @pytest.fixture(scope="module")
 def mini_env(tmp_path_factory):
     """一次建好迷你 suite + 双录语料 + 共享 workdir/results，供全模块复用。"""
+    import benchmark.learning_ab as lab
+
     base = tmp_path_factory.mktemp("learning_ab")
     suite_dir = base / "mini_suite"
     suite_dir.mkdir()
@@ -149,7 +153,9 @@ def mini_env(tmp_path_factory):
     return env
 
 
-def _runner(env, **overrides) -> lab.LearningABRunner:
+def _runner(env, **overrides):
+    import benchmark.learning_ab as lab
+
     params = dict(
         suite_dir=str(env["suite_dir"]),
         llm_mode="mock",
@@ -176,6 +182,8 @@ def _write_learning_state(root: Path):
 
 
 def test_snapshot_roundtrip_present(tmp_path):
+    import benchmark.learning_snapshot as lsnap
+
     src = tmp_path / "src"
     _write_learning_state(src)
     snap = tmp_path / "snap"
@@ -213,6 +221,8 @@ def test_snapshot_roundtrip_present(tmp_path):
 
 
 def test_snapshot_empty_all_absent_and_absent_enforcement(tmp_path):
+    import benchmark.learning_snapshot as lsnap
+
     empty_src = tmp_path / "empty_src"
     empty_src.mkdir()
     snap = tmp_path / "snap"
@@ -238,6 +248,8 @@ def test_snapshot_empty_all_absent_and_absent_enforcement(tmp_path):
 
 
 def test_snapshot_legacy_learnings_layout(tmp_path):
+    import benchmark.learning_snapshot as lsnap
+
     legacy_src = tmp_path / "legacy_src"
     legacy = legacy_src / ".openbrep/learnings"
     legacy.mkdir(parents=True)
@@ -261,6 +273,8 @@ def test_snapshot_legacy_learnings_layout(tmp_path):
 
 
 def test_snapshot_tamper_detection(tmp_path):
+    import benchmark.learning_snapshot as lsnap
+
     src = tmp_path / "src"
     _write_learning_state(src)
     snap = tmp_path / "snap"
@@ -279,6 +293,8 @@ def test_snapshot_tamper_detection(tmp_path):
 
 
 def test_snapshot_conflicting_sources_rejected(tmp_path):
+    import benchmark.learning_snapshot as lsnap
+
     a = tmp_path / "a"
     b = tmp_path / "b"
     _write_learning_state(a)
@@ -293,6 +309,8 @@ def test_snapshot_conflicting_sources_rejected(tmp_path):
 # ── 2. 写隔离 ──────────────────────────────────────────────
 
 def test_write_isolation_snapshot_untouched_by_target_writes(tmp_path):
+    import benchmark.learning_snapshot as lsnap
+
     src = tmp_path / "src"
     _write_learning_state(src)
     snap = tmp_path / "snap"
@@ -318,6 +336,8 @@ def test_write_isolation_snapshot_untouched_by_target_writes(tmp_path):
 def test_snapshot_e2e_isolation_and_learning_injection(mini_env):
     """treatment 臂挂快照跑真实 pipeline：成功后向**副本**追加决策记忆，
     快照跑后重算仍 ok（AC-3）；control 无任何学习层，treatment 有。"""
+    import benchmark.learning_snapshot as lsnap
+
     base = mini_env["base"]
     src = base / "snap_src"
     _write_learning_state(src)
@@ -402,6 +422,8 @@ def test_record_replay_closed_loop_zero_miss(mini_env):
 # ── 5. reuse_count preflight 拒绝 ──────────────────────────
 
 def test_reuse_count_preflight_rejects_and_blocks_start(tmp_path):
+    import benchmark.learning_ab as lab
+
     skills = tmp_path / "skills"
     skills.mkdir()
     (skills / "hot.md").write_text(
@@ -450,6 +472,8 @@ def test_reuse_count_absent_passes_preflight(tmp_path):
 def test_control_request_identity_mirrors_runner_defaults():
     """control 镜像 runner.py 录制语义（budget 0 + plain gsm），否则黄金语料
     agent-loop 首轮 key 全 miss（budget 文本会拼进首轮 system prompt）。"""
+    import benchmark.learning_ab as lab
+
     assert lab._arm_request_names("M01", "control", 6) == ("M01", 0)
     assert lab._arm_request_names("M01", "treatment", 6) == ("M01__treatment", 6)
 
