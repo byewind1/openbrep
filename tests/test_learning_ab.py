@@ -447,6 +447,13 @@ def test_reuse_count_absent_passes_preflight(tmp_path):
 
 # ── 6. replay miss → infra_excluded ────────────────────────
 
+def test_control_request_identity_mirrors_runner_defaults():
+    """control 镜像 runner.py 录制语义（budget 0 + plain gsm），否则黄金语料
+    agent-loop 首轮 key 全 miss（budget 文本会拼进首轮 system prompt）。"""
+    assert lab._arm_request_names("M01", "control", 6) == ("M01", 0)
+    assert lab._arm_request_names("M01", "treatment", 6) == ("M01__treatment", 6)
+
+
 def test_replay_miss_marks_infra_excluded(mini_env):
     # treatment 回放 control 语料：prompt 多学习层 → 必然 miss
     runner = _runner(mini_env, treatment_replay=str(mini_env["ctl_corpus"]))

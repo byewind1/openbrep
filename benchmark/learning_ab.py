@@ -5,6 +5,10 @@
 - control   ：include_learned_skills=False（与 benchmark/runner.py 现口径
   逐项一致），回放**现有 modify 黄金语料**
   （benchmark/fixtures/llm_corpus/modify.jsonl，默认 --control-corpus）；
+  回放保真铁律：agent_loop_budget 必须传 0（路径默认）且 gsm_name 用
+  plain task.id——budget 数字会拼进 agent-loop 首轮 system prompt
+  （“工具调用预算共 N 次”），语料在 runner.py 默认参数下录制，
+  强传自定义预算会把每条 agent-loop 首轮 key 打偏成 replay_miss；
 - treatment ：include_learned_skills=True + 挂载学习快照（--snapshot），
   录制（--record）或回放（--replay）**独立的实验语料**。快照由
   benchmark/learning_snapshot.py 产生（AC-1），默认零快照 = 空快照语义
@@ -212,6 +216,22 @@ def _fixture_src(task) -> Path:
     return PROJECT_ROOT / fixture
 
 
+def _arm_request_names(task_id: str, label: str, budget: int) -> tuple[str, int]:
+    """返回 (gsm_name, agent_loop_budget)。
+
+    control 必须镜像 runner.py 的录制语义：agent_loop_budget=0（路径默认）
+    + gsm_name=plain task.id。budget 数字会拼进 agent-loop 首轮 system
+    prompt（“工具调用预算共 N 次”，modify_agent_loop.py），黄金语料在
+    runner 默认参数下录制，强传自定义预算会把每条 agent-loop 首轮 key
+    打偏成 replay_miss（真实套件实测：10/20 题全 infra）；gsm_name 用
+    plain id 保证后续轮次（产物/编译往返文本）与录制一致。
+    treatment 语料由本 harness 自录自回放：--budget 双阶段一致即确定。
+    """
+    if label == "control":
+        return task_id, 0
+    return f"{task_id}__{label}", budget
+
+
 class LearningABRunner:
     def __init__(
         self,
@@ -372,15 +392,16 @@ class LearningABRunner:
         pipeline._make_llm = lambda _req: probe
         pipeline._make_compiler = lambda: self.compiler
 
+        gsm_name, agent_loop_budget = _arm_request_names(task.id, label, self.budget)
         request = TaskRequest(
             user_input=task.description,
             intent="MODIFY",
             project=project,
             work_dir=str(self.work_dir),
             output_dir=str(self.results_dir),
-            gsm_name=f"{task.id}__{label}",
+            gsm_name=gsm_name,
             agent_loop=True,
-            agent_loop_budget=self.budget,
+            agent_loop_budget=agent_loop_budget,
         )
         start = time.monotonic()
         try:
@@ -1006,7 +1027,11 @@ def _cli() -> None:
         "--snapshot", default=None, metavar="DIR",
         help="学习快照目录（learning_snapshot.py capture 产出）",
     )
-    parser.add_argument("--budget", type=int, default=6, help="agent loop 工具调用预算（默认 6）")
+    parser.add_argument(
+        "--budget", type=int, default=6,
+        help=("treatment 臂 agent loop 工具预算（默认 6）。control 固定镜像 "
+              "runner.py 默认（budget 文本会进首轮 system prompt，必须与录制一致）"),
+    )
     parser.add_argument(
         "--config", default=None,
         help="config 路径（默认 replay_config_modify.toml 密封配置；真实 LLM 请传 config.toml）",
