@@ -23,6 +23,12 @@
   零事件/零增量 → 不建 LLM 直接返回。
 - 宁缺毋滥：LLM 调用失败/超时、坏 JSON、形态非法、空候选 → 静默返回空
   （不抛异常、不影响主流程）；任何文件写入失败 best-effort。
+
+G4 扩展（证据驱动蒸馏，AC-G4-2，不动 distill() 语义）：
+distill_quality_records() 从质量账本（Reflector 选出的失败候选）提炼教训，
+写同一教训库。教训带 evidence_refs [{run_id, check_type, before_revision,
+after_revision}]（只引用 revision，不整存脚本），自动产物一律 proposed；
+raw_excerpt 行级去 GDL 脚本 + 500 字符封顶，parse/merge 双侧强制。
 """
 
 from __future__ import annotations
@@ -64,6 +70,64 @@ _LESSON_DECISIONS: dict[str, dict[str, str | None]] = {
     "reject": {"from": PROPOSED_STATUS, "to": REJECTED_STATUS, "idempotent_with": REJECTED_STATUS},
     "demote": {"from": ACTIVE_STATUS, "to": PROPOSED_STATUS, "idempotent_with": None},
 }
+
+
+# ── G4 常量与落盘文本清洗（证据蒸馏专用） ───────────────────
+
+QUALITY_PREFIX = "quality:"        # 教训指纹前缀（与 distill: 区分）
+RAW_EXCERPT_MAX_CHARS = 500        # raw_excerpt 清洗后封顶（parse/merge 双侧）
+QUALITY_BATCH_SIZE = 6             # 单次 LLM 调用的候选批大小（对齐解析可控）
+QUALITY_LLM_MAX_TOKENS = 2200      # 质量提炼响应预算（逐批小响应）
+QUALITY_CASE_SHOWN = 12            # 单案例证据展示/可引用上限（提示与校验共用）
+QUALITY_MAX_REFS = 20              # 合并后 evidence_refs 上限（确定性截断）
+CASE_DETAIL_MAX_CHARS = 120        # 案例卡片 detail 展示截断
+
+_ASCII_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*=")
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _load_gdl_command_tokens() -> frozenset[str]:
+    """静态命令表（openbrep/data/gdl_commands.txt，与 static_checker 同源）。
+
+    加载失败 → 空集；赋值式语句行过滤仍在，脚本不落盘纪律不失效。
+    """
+    tokens: set[str] = set()
+    try:
+        path = Path(__file__).resolve().parent / "data" / "gdl_commands.txt"
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            tokens.add(line.upper())
+    except OSError:
+        pass
+    return frozenset(tokens)
+
+
+_GDL_COMMAND_TOKENS: frozenset[str] = _load_gdl_command_tokens()
+
+
+def _is_gdl_script_line(line: str) -> bool:
+    """整行判为 GDL 语句：ASCII 行且（命令开头 或 变量赋值开头）。
+
+    含中文字符的行视为 prose（pattern/guidance 正文），一律不判脚本行。
+    """
+    stripped = line.strip()
+    if not stripped or _has_cjk(stripped):
+        return False
+    if _ASCII_ASSIGN_RE.match(stripped):
+        return True
+    first = stripped.split(None, 1)[0].rstrip(":：").upper()
+    return first in _GDL_COMMAND_TOKENS
+
+
+def _clean_quality_text(text: Any, limit: int) -> str:
+    """Curator 落盘文本清洗：删整行 GDL 语句、空白归一、截断上限。"""
+    kept = [ln for ln in str(text or "").splitlines() if not _is_gdl_script_line(ln)]
+    return re.sub(r"\s+", " ", "\n".join(kept)).strip()[:limit]
 
 
 def _now_iso() -> str:
@@ -412,9 +476,11 @@ def save_lessons(work_dir: str | Path, lessons: list[dict]) -> bool:
 
 
 def merge_lessons(existing: list[dict], new_lessons: list[dict]) -> list[dict]:
-    """同 fingerprint 合并：count 累加、last_seen 取新、pattern/guidance 刷新。
-
-    first_seen 保留最早值；文件顺序保持稳定（dict 保序）。
+    """同 fingerprint 合并：count 累加、first_seen 取最早、last_seen 取最晚、
+    pattern/guidance/evidence_kinds 刷新；quality 教训（G4）的 evidence_refs
+    确定性并集（按 (run_id, check_type) 去重排序，上限 QUALITY_MAX_REFS）、
+    raw_excerpt 清洗封顶后取最新值。**status 字段不动**——rejected 是终态，
+    被拒绝的教训不会被再提炼复活。文件顺序保持稳定（dict 保序）。
     """
     by_fp: dict[str, dict] = {lesson["fingerprint"]: lesson for lesson in existing}
     for new_lesson in new_lessons:
@@ -424,11 +490,26 @@ def merge_lessons(existing: list[dict], new_lessons: list[dict]) -> list[dict]:
             by_fp[fp] = dict(new_lesson)
             continue
         prev["count"] = int(prev.get("count") or 0) + int(new_lesson.get("count") or 0)
-        if new_lesson.get("last_seen"):
-            prev["last_seen"] = new_lesson["last_seen"]
+        prev_first = str(prev.get("first_seen") or "")
+        new_first = str(new_lesson.get("first_seen") or "")
+        if new_first and (not prev_first or new_first < prev_first):
+            prev["first_seen"] = new_first
+        new_last = str(new_lesson.get("last_seen") or "")
+        if new_last and new_last > str(prev.get("last_seen") or ""):
+            prev["last_seen"] = new_last
         prev["pattern"] = new_lesson["pattern"]
         prev["guidance"] = new_lesson["guidance"]
-        prev["evidence_kinds"] = new_lesson["evidence_kinds"]
+        if "evidence_kinds" in new_lesson:
+            prev["evidence_kinds"] = new_lesson["evidence_kinds"]
+        new_refs = new_lesson.get("evidence_refs")
+        if isinstance(new_refs, list) and new_refs:
+            prev_refs = prev.get("evidence_refs")
+            prev["evidence_refs"] = _merge_evidence_refs(
+                prev_refs if isinstance(prev_refs, list) else [], new_refs
+            )
+        raw = new_lesson.get("raw_excerpt")
+        if isinstance(raw, str) and raw.strip():
+            prev["raw_excerpt"] = _clean_quality_text(raw, RAW_EXCERPT_MAX_CHARS)
     return list(by_fp.values())
 
 
@@ -585,6 +666,368 @@ def build_distilled_lessons_prompt(work_dir: str | Path, limit: int = 8) -> str:
         if (lesson.get("pattern") or "").strip()
     ]
     return "\n".join(lines)
+
+
+# ── 4.6 G4 Curator：证据驱动蒸馏（quality ledger → lessons） ──
+
+def candidate_ref_targets(candidate: dict) -> dict[str, list[str]]:
+    """候选的可引用证据索引 {check_type: [detail…]}。
+
+    案例卡展示与 parse 校验共用同一口径：来源顺序 = 反射器证据顺序
+    （check_failures 先、issues 后，确定），只取前 QUALITY_CASE_SHOWN 条，
+    detail 截断 CASE_DETAIL_MAX_CHARS。
+    """
+    evidence = candidate.get("evidence")
+    targets: dict[str, list[str]] = {}
+    if not isinstance(evidence, dict):
+        return targets
+    entries: list[tuple[str, str]] = []
+    for key in ("check_failures", "issues"):
+        raw = evidence.get(key)
+        if not isinstance(raw, list):
+            continue
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            ct = str(entry.get("check_type") or "").strip()
+            if ct:
+                detail = str(entry.get("detail") or "")
+                entries.append((ct, detail[:CASE_DETAIL_MAX_CHARS]))
+    for ct, detail in entries[:QUALITY_CASE_SHOWN]:
+        targets.setdefault(ct, []).append(detail)
+    return targets
+
+
+def quality_lesson_fingerprint(candidate: dict) -> str:
+    """候选 → 教训指纹（预 LLM、跨 run 稳定、不依赖输出文本）。
+
+    输入 = 意图 + outcome + 归一化证据（check_type + 清洗后 detail）。
+    同失败模式的不同 run（不同 run_id）产生同一指纹 → 跨 run 合并为一条
+    教训（count 累加、evidence_refs 并集）。
+    """
+    parts = [str(candidate.get("intent") or ""), str(candidate.get("outcome") or "")]
+    targets = candidate_ref_targets(candidate)
+    for ct in sorted(targets):
+        for detail in targets[ct]:
+            parts.append(f"{ct}:{_normalize_signature(detail)}")
+    digest = hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+    return f"{QUALITY_PREFIX}{digest}"
+
+
+def _candidate_revisions(candidate: dict) -> dict[str, Any]:
+    revisions = candidate.get("revisions")
+    if isinstance(revisions, dict):
+        return {
+            "before_revision": revisions.get("before_revision") or None,
+            "after_revision": revisions.get("after_revision") or None,
+        }
+    return {"before_revision": None, "after_revision": None}
+
+
+def _raw_excerpt_for(refs_by_ct: dict[str, dict], targets: dict[str, list[str]]) -> str:
+    """raw_excerpt = 被引用 check 的 detail 摘录（解释器装配，绝不来自 LLM）。
+
+    按案例卡顺序取被引用 check_type 的 detail，去重拼接，清洗 + 500 封顶。
+    """
+    parts: list[str] = []
+    for ct, details in targets.items():
+        if ct not in refs_by_ct:
+            continue
+        for detail in details:
+            cleaned = str(detail or "").strip()
+            if cleaned and cleaned not in parts:
+                parts.append(cleaned)
+    if not parts:
+        return ""
+    return _clean_quality_text("；".join(parts), RAW_EXCERPT_MAX_CHARS)
+
+
+def build_quality_distill_messages(candidates: list[dict]) -> list[dict]:
+    """构造质量提炼消息：反思案例卡 + 证据引用契约。
+
+    案例卡只呈现 run_id / 项目 / 意图 / 指令摘要（≤120 既定隐私上限）/
+    outcome / [check_type] detail 证据行 / 对照 run。行首 [check_type]
+    标记即 parse 校验的允许引用集（与 candidate_ref_targets 同源）。
+    """
+    rules = [
+        "你是 GDL 质量教训提炼器（Curator）。输入若干反思案例，每个案例来自一条",
+        "质量账本记录（失败终态或实测质量轴有问题，可带同类已完成对照）。为每个",
+        "案例提炼一条教训候选；不足以形成教训的案例该位置输出 null（宁缺毋滥）。",
+        "只输出一个 JSON 数组，长度与案例数一致、顺序一致，不要 Markdown 标记。",
+        '每项：{"pattern": "<模式描述，中文，≤100 字>",',
+        ' "guidance": "<可执行修复/预防指引，中文，≤300 字>",',
+        ' "evidence_refs": [{"run_id": "<案例卡 run_id 原样>",',
+        ' "check_type": "<案例卡 [标记] 原样>"}]}',
+        "硬性纪律：",
+        "- 只依据本案例卡内容，禁止编造卡片外的检查/运行；",
+        "- evidence_refs 至少 1 条；run_id/check_type 必须逐字抄自本案例卡；",
+        "- guidance 不得整行写 GDL 代码（BLOCK/ADDZ/FOR/NEXT 等语句行会被删除），",
+        "  用中文叙述修法与预防步骤。",
+    ]
+    lines: list[str] = []
+    for index, cand in enumerate(candidates):
+        lines.append(f"[案例 {index}]")
+        lines.append(f"run_id: {cand.get('run_id') or ''}")
+        lines.append(f"project: {cand.get('project_name') or ''}")
+        lines.append(f"intent: {cand.get('intent') or 'unknown'}")
+        lines.append(f"outcome: {cand.get('outcome') or ''}")
+        summary = str(cand.get("instruction_summary") or "").replace("\n", " ")
+        if summary:
+            lines.append(f"指令摘要: {summary}")
+        for ct, details in candidate_ref_targets(cand).items():
+            for detail in details:
+                lines.append(f"- [{ct}] {detail or ''}")
+        contrast = cand.get("contrast_run_id")
+        if contrast:
+            lines.append(f"对照(同类已完成零问题): {contrast}")
+        else:
+            lines.append("对照: 无")
+        lines.append("")
+    return [
+        {"role": "system", "content": "\n".join(rules)},
+        {"role": "user", "content": "\n".join(lines).strip()},
+    ]
+
+
+def parse_quality_distill_response(
+    text: Any, candidates: list[dict]
+) -> Optional[tuple[list[dict], int]]:
+    """严格解析质量提炼结果（与 candidates 一一对应）。
+
+    - 结构坏响应（非数组 / 长度不符）→ None（整批判废，调用方静默，同
+      distill() 语义；不算 rejected，因为无法逐条归因）；
+    - item = null → LLM 显式「该案例无教训」，静默跳过（不计 rejected）；
+    - 硬校验（判定靠解释器）：非 dict / pattern|guidance 缺失或空 /
+      evidence_refs 缺失或空 / 任一 ref 元素缺 run_id|check_type /
+      ref 语义不匹配（run_id ≠ 本案例 run_id 或 check_type 不在
+      candidate_ref_targets）→ 整条丢弃，rejected + 1；
+    - 通过校验后由解释器注入 before/after revision、装配 raw_excerpt
+      （只引用案例证据 detail，绝不采信 LLM 文本），status 一律 proposed。
+    """
+    data = _extract_json(text)
+    if not isinstance(data, list) or len(data) != len(candidates):
+        return None
+    lessons: list[dict] = []
+    rejected = 0
+    for item, candidate in zip(data, candidates):
+        if item is None:
+            continue
+        if not isinstance(item, dict):
+            rejected += 1
+            continue
+        pattern = item.get("pattern")
+        guidance = item.get("guidance")
+        if not isinstance(pattern, str) or not pattern.strip():
+            rejected += 1
+            continue
+        if not isinstance(guidance, str) or not guidance.strip():
+            rejected += 1
+            continue
+        refs = item.get("evidence_refs")
+        if not isinstance(refs, list) or not refs:
+            rejected += 1
+            continue
+        run_id = str(candidate.get("run_id") or "")
+        targets = candidate_ref_targets(candidate)
+        revisions = _candidate_revisions(candidate)
+        valid: list[dict[str, Any]] = []
+        for ref in refs:
+            if not isinstance(ref, dict):
+                valid = []
+                break
+            rid = ref.get("run_id")
+            check_type = ref.get("check_type")
+            ok_shape = (
+                isinstance(rid, str) and bool(rid)
+                and isinstance(check_type, str) and bool(check_type)
+            )
+            if not ok_shape or rid != run_id or check_type not in targets:
+                valid = []
+                break
+            valid.append({
+                "run_id": rid,
+                "check_type": check_type,
+                "before_revision": revisions["before_revision"],
+                "after_revision": revisions["after_revision"],
+            })
+        if not valid:
+            rejected += 1
+            continue
+        refs_by_ct: dict[str, dict] = {}
+        for ref in valid:
+            refs_by_ct.setdefault(ref["check_type"], ref)
+        refs_sorted = [refs_by_ct[ct] for ct in sorted(refs_by_ct)]
+        excerpt = _raw_excerpt_for(refs_by_ct, targets)
+        lesson = {
+            "fingerprint": quality_lesson_fingerprint(candidate),
+            "pattern": _clean_quality_text(pattern, PATTERN_MAX_CHARS),
+            "guidance": _clean_quality_text(guidance, GUIDANCE_MAX_CHARS),
+            "evidence_refs": refs_sorted,
+            "count": 1,
+            "first_seen": str(candidate.get("ts") or ""),
+            "last_seen": str(candidate.get("ts") or ""),
+            "status": PROPOSED_STATUS,
+        }
+        if excerpt:
+            lesson["raw_excerpt"] = excerpt
+        lessons.append(lesson)
+    return lessons, rejected
+
+
+def _merge_evidence_refs(prev: list[Any], new: list[Any]) -> list[dict[str, Any]]:
+    """evidence_refs 确定性并集：按 (run_id, check_type) 去重排序，上限截断。"""
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for ref in [*prev, *new]:
+        if not isinstance(ref, dict):
+            continue
+        rid = ref.get("run_id")
+        ct = ref.get("check_type")
+        if not isinstance(rid, str) or not rid or not isinstance(ct, str) or not ct:
+            continue
+        merged.setdefault((rid, ct), {
+            "run_id": rid,
+            "check_type": ct,
+            "before_revision": ref.get("before_revision") or None,
+            "after_revision": ref.get("after_revision") or None,
+        })
+    return [merged[key] for key in sorted(merged)][:QUALITY_MAX_REFS]
+
+
+def lesson_cards_view(
+    work_dir: str | Path,
+    status: str | None = None,
+) -> list[dict]:
+    """GUI 确认卡视图：list_lessons_view 的扩展（带 evidence_refs/raw_excerpt）。
+
+    MCP 消费的 list_lessons_view（8 固定字段）保持不变；本视图供 memory
+    service 确认卡渲染。排序同 list_lessons_view：(status, -count, last_seen)。
+    旧格式 lesson（无 evidence_refs）字段缺省返回 None，可读可渲染。
+    """
+    lessons = load_lessons(work_dir)
+    if status is not None:
+        lessons = [
+            lesson for lesson in lessons
+            if (lesson.get("status") or PROPOSED_STATUS) == status
+        ]
+    lessons.sort(
+        key=lambda lesson: (
+            str(lesson.get("status") or PROPOSED_STATUS),
+            -int(lesson.get("count") or 0),
+            str(lesson.get("last_seen") or ""),
+        )
+    )
+    fields = (
+        "fingerprint", "pattern", "guidance", "status", "count",
+        "first_seen", "last_seen", "evidence_refs", "raw_excerpt",
+    )
+    return [{field: lesson.get(field) for field in fields} for lesson in lessons]
+
+
+def distill_quality_records(
+    work_dir: str | Path,
+    scan_root: str | Path | None = None,
+    llm: Any = None,
+) -> dict:
+    """G4 Curator 主入口：Reflector 候选 → LLM 提炼 → merge 进同一教训库。
+
+    与 distill() 的差异：输入是质量账本（scan_root，缺省 = work_dir）而非
+    feedback.jsonl；watermark 是已处理 run_id 集合（reflector_watermark.json，
+    原子写），逐批在 LLM 调用成功后推进；产物带 evidence_refs 引用，自动
+    产物一律 proposed。绝不抛异常。
+
+    返回 {ok, new_lessons, total_lessons, rejected, note?}；note 仅在
+    llm_unavailable / llm_failed / parse_failed 时出现。
+    """
+    try:
+        wd = Path(work_dir)
+        root = Path(scan_root) if scan_root is not None else wd
+        # 函数级 import（G3 教训：避免测试 top-level import 引发 isort 漂移）
+        from openbrep.quality import reflector
+
+        watermark = reflector.load_watermark(wd)
+        candidates, _ = reflector.select_reflection_candidates(root, watermark)
+        if not candidates:
+            return {
+                "ok": True,
+                "new_lessons": 0,
+                "total_lessons": len(load_lessons(wd)),
+                "rejected": 0,
+            }
+        if llm is None:
+            llm = _build_distill_llm()
+            if llm is None:
+                return {
+                    "ok": True,
+                    "new_lessons": 0,
+                    "total_lessons": len(load_lessons(wd)),
+                    "rejected": 0,
+                    "note": "llm_unavailable",
+                }
+        lessons = load_lessons(wd)
+        rejected = 0
+        new_count = 0
+        note: Optional[str] = None
+        done_ids: list[str] = []
+        batches = [
+            candidates[offset:offset + QUALITY_BATCH_SIZE]
+            for offset in range(0, len(candidates), QUALITY_BATCH_SIZE)
+        ]
+        for batch in batches:
+            try:
+                resp = llm.generate(
+                    build_quality_distill_messages(batch),
+                    temperature=LLM_TEMPERATURE,
+                    max_tokens=QUALITY_LLM_MAX_TOKENS,
+                    stream=False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "feedback_distill 质量提炼批失败（本批下次重试）: %s", exc
+                )
+                note = "llm_failed"
+                break
+            done_ids.extend(str(c.get("run_id") or "") for c in batch)
+            parsed = parse_quality_distill_response(
+                getattr(resp, "content", "") or "", batch
+            )
+            if parsed is None:
+                note = note or "parse_failed"
+                continue
+            batch_lessons, batch_rejected = parsed
+            rejected += batch_rejected
+            if batch_lessons:
+                lessons = merge_lessons(lessons, batch_lessons)
+                new_count += len(batch_lessons)
+        if done_ids:
+            processed: set[str] = set()
+            raw_ids = watermark.get(reflector.WATERMARK_RUN_IDS_KEY)
+            if isinstance(raw_ids, list):
+                processed = {str(item) for item in raw_ids if isinstance(item, str)}
+            reflector.save_watermark(wd, {
+                reflector.WATERMARK_RUN_IDS_KEY: sorted(processed | set(done_ids)),
+            })
+        if new_count:
+            save_lessons(wd, lessons)
+        result = {
+            "ok": True,
+            "new_lessons": new_count,
+            "total_lessons": len(lessons),
+            "rejected": rejected,
+        }
+        if note:
+            result["note"] = note
+        return result
+    except Exception as exc:  # 兜底：加工层绝不抛异常
+        logger.warning(
+            "feedback_distill distill_quality_records failed (best-effort): %s", exc
+        )
+        return {
+            "ok": True,
+            "new_lessons": 0,
+            "total_lessons": 0,
+            "rejected": 0,
+            "note": "distill_error",
+        }
 
 
 # ── 5. 主入口 ─────────────────────────────────────────────

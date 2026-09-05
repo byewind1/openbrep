@@ -6,9 +6,10 @@
 字节数），实验期间快照本身不可变——跑前 verify、跑后重算必须一致。
 
 快照内容（相对挂载目标的项目根，与 openbrep.learning / project_context
-的落盘布局一致，任何"根目录"统一探测以下 5 个受管路径）：
+的落盘布局一致，任何"根目录"统一探测以下 6 个受管路径）：
 
     .openbrep/memory/learnings/error_lessons.jsonl   工作区错误教训（新路径）
+    .openbrep/memory/learnings/distilled_lessons.jsonl  蒸馏教训（F2/G4，同目录独立文件）
     .openbrep/memory/skills/learned_skill.md         压缩技能（新路径）
     .openbrep/learnings/error_lessons.jsonl          legacy 错误教训
     .openbrep/learnings/learned_skill.md             legacy 压缩技能
@@ -23,7 +24,7 @@ work_dir）：
 - present → 复制/覆盖目标文件（目录不存在则创建）；
 - absent → 删除目标中同路径文件（如 fixture 自带的 decisions.md 被快照声明
   为 absent 时必须移除，否则回放语料与录制不一致会 miss）。
-materialize 只动 5 个受管路径，绝不触碰其它文件。
+materialize 只动 6 个受管路径，绝不触碰其它文件。
 
 快照目录布局：<快照目录>/<rel_path> 原样存放文件 + manifest.json（条目按
 rel_path 排序，json 序列化确定，便于复算一致性）。
@@ -51,6 +52,7 @@ SCHEMA_VERSION = 1
 # 受管路径（相对挂载根）。顺序即报告/遍历顺序。
 MANAGED_REL_PATHS: tuple[str, ...] = (
     ".openbrep/memory/learnings/error_lessons.jsonl",
+    ".openbrep/memory/learnings/distilled_lessons.jsonl",
     ".openbrep/memory/skills/learned_skill.md",
     ".openbrep/learnings/error_lessons.jsonl",
     ".openbrep/learnings/learned_skill.md",

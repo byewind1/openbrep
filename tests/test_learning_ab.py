@@ -65,6 +65,27 @@ LESSON_LINE = json.dumps(
     },
     ensure_ascii=False,
 )
+DISTILLED_LESSON_LINE = json.dumps(
+    {
+        "fingerprint": "quality:snapshot-ab",
+        "pattern": "快照实验蒸馏教训模式",
+        "guidance": "实验期间 proposed 教训不注入 prompt",
+        "status": "proposed",
+        "count": 1,
+        "first_seen": "2026-09-05T10:00:00",
+        "last_seen": "2026-09-05T10:00:00",
+        "evidence_refs": [
+            {
+                "run_id": "r_snap_1",
+                "check_type": "compile",
+                "before_revision": "rev_1",
+                "after_revision": "rev_2",
+            }
+        ],
+        "raw_excerpt": "编译失败（mode=mock）",
+    },
+    ensure_ascii=False,
+)
 
 # mock 确定性豁免键：run_id（随机后缀）、ts/generated_at（时间戳）、
 # elapsed*（墙钟秒及派生汇总）。剔除后其余字段必须逐字节一致。
@@ -177,6 +198,9 @@ def _write_learning_state(root: Path):
     memory.joinpath("learnings").mkdir(parents=True, exist_ok=True)
     memory.joinpath("skills").mkdir(parents=True, exist_ok=True)
     (memory / "learnings/error_lessons.jsonl").write_text(LESSON_LINE + "\n", encoding="utf-8")
+    (memory / "learnings/distilled_lessons.jsonl").write_text(
+        DISTILLED_LESSON_LINE + "\n", encoding="utf-8"
+    )
     (memory / "skills/learned_skill.md").write_text(LEARNED_SKILL_TEXT, encoding="utf-8")
     (memory / "decisions.md").write_text(DECISIONS_TEXT, encoding="utf-8")
 
@@ -194,6 +218,7 @@ def test_snapshot_roundtrip_present(tmp_path):
     assert set(entries) == set(lsnap.MANAGED_REL_PATHS)
     present = (
         ".openbrep/memory/learnings/error_lessons.jsonl",
+        ".openbrep/memory/learnings/distilled_lessons.jsonl",
         ".openbrep/memory/skills/learned_skill.md",
         ".openbrep/memory/decisions.md",
     )
@@ -232,12 +257,13 @@ def test_snapshot_empty_all_absent_and_absent_enforcement(tmp_path):
     assert lsnap.verify(snap)
 
     target = tmp_path / "target"
-    _write_learning_state(target)  # 目标上已有 memory/ 三个受管文件
+    _write_learning_state(target)  # 目标上已有 memory/ 四个受管文件
     (target / "keep.txt").write_text("unrelated", encoding="utf-8")
     result = lsnap.materialize(snap, target)
     assert result["written"] == []
     memory_rel = (
         ".openbrep/memory/learnings/error_lessons.jsonl",
+        ".openbrep/memory/learnings/distilled_lessons.jsonl",
         ".openbrep/memory/skills/learned_skill.md",
         ".openbrep/memory/decisions.md",
     )

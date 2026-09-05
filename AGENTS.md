@@ -416,6 +416,26 @@ Architecture notes:
   come from real counting points in `modify_agent_loop.py` /
   `modify_codex_bridge.py` metadata (`execution` block) — never parse the
   human-readable status text. Trend view: `obr quality-report`.
+- Reflector/Curator distillation (2026-09-05, G4): `openbrep/quality/reflector.py`
+  is a pure, never-throwing scan of a project's quality ledger —
+  `select_reflection_candidates(scan_root, watermark)` returns outcome/anomaly
+  candidates (gate_fail/budget_exhausted/timeout or measured artifact_quality
+  issues) plus contrast records (completed, zero-issue, same-intent clean
+  runs); candidates only reference runs (check_type + truncated detail, issue
+  refs, revision ids) and never copy scripts; progress persists atomically as a
+  run_id watermark at `<work_dir>/.openbrep/memory/learnings/reflector_watermark.json`.
+  `feedback_distill.distill_quality_records(work_dir, scan_root, llm=None)`
+  turns candidates into lessons through the LLM with strict parsing — every
+  lesson must cite evidence (`evidence_refs: [{run_id, check_type,
+  before_revision, after_revision}]`); missing evidence discards the lesson
+  (counted in `rejected`). Lessons always land as `proposed` — approval is a
+  human decision via the workbench lessons UI (POST /api/lessons/* routes,
+  `set_lesson_status` in feedback_distill.py), never automatic. `distill()`
+  (legacy chat distillation) semantics are unchanged. Distilled lessons persist
+  at `<work_dir>/.openbrep/memory/learnings/distilled_lessons.jsonl` and are
+  part of the learning snapshot (`benchmark/learning_snapshot.py` managed
+  paths); merge stays deterministic via content fingerprint, raw excerpts are
+  capped at 500 chars on both parse and merge.
 
 
 ## benchmark 黄金语料规范（corpus maintenance）
