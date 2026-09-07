@@ -1,0 +1,482 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createWorkbenchStore } from '../workbenchStore'
+import type { WorkbenchApi } from '../workbenchStoreTypes'
+import { collectScriptOverrides, hasAnyDraft, keepValidDraftParameters } from './sourceActionHelpers'
+
+// SF1 草稿保护：AC01–AC14、AC18、AC20、AC27 的 store 级回归。
+// 约定：带 path 的 Chair 项目视为"已落盘"，untitled 视为无路径。
+
+function snapshot(project: Record<string, unknown> | null = {
+  name: 'Chair',
+  source: 'hsf',
+  path: '/workspace/Chair',
+}) {
+  return {
+    project,
+    parameters: [
+      { name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true },
+      { name: 'B', type_tag: 'Length', description: 'Depth', value: '0.5', is_fixed: true },
+    ],
+    preview: { meshes: [], wires: [], warnings: [] },
+    warnings: [],
+    compiler: { mode: 'mock' as const, converter_path: '', output_dir: '' },
+  }
+}
+
+type ApiOverrides = { [K in keyof WorkbenchApi]?: unknown }
+
+function makeApi(overrides: ApiOverrides = {}): WorkbenchApi {
+  // mock 后端内容表：save 后 get 返回已保存内容（贴近真实后端）
+  const scriptStore: Record<string, string> = {}
+  return {
+    fetchSnapshot: vi.fn(async () => snapshot()),
+    listProjectScripts: vi.fn(async () => ({
+      scripts: [
+        { name: '3d.gdl', path: 'scripts/3d.gdl', exists: true, size: 10 },
+        { name: '2d.gdl', path: 'scripts/2d.gdl', exists: true, size: 10 },
+        { name: 'paramlist.xml', path: 'paramlist.xml', exists: true, size: 10 },
+      ],
+    })),
+    getProjectScript: vi.fn(async (name: string) => ({
+      name,
+      path: `scripts/${name}`,
+      content: scriptStore[name] ?? `disk ${name}`,
+    })),
+    saveProjectScript: vi.fn(async (name: string, content: string) => {
+      scriptStore[name] = content
+      return { success: true, saved_at: '2026-09-08T00:00:00Z' }
+    }),
+    saveProject: vi.fn(async () => ({ ok: true, saved_to: '/workspace/Chair', ...snapshot() })),
+    exportHsfProject: vi.fn(async (_parentDir = '', name = '') => ({
+      ok: true,
+      saved_to: `/exports/${name}`,
+      ...snapshot({ name, source: 'hsf', path: `/exports/${name}` }),
+    })),
+    applyParameters: vi.fn(async (parameters: Record<string, unknown>) => ({
+      ok: true,
+      changed: parameters,
+      ...snapshot(),
+    })),
+    addProjectParameter: vi.fn(async (parameter: { name: string; type_tag: string; value: unknown; description?: string }) => ({
+      ok: true,
+      added: { name: parameter.name, type_tag: parameter.type_tag, description: parameter.description ?? '', value: String(parameter.value), is_fixed: false },
+      ...snapshot(),
+    })),
+    updateProjectParameter: vi.fn(async () => ({ ok: true, ...snapshot() })),
+    deleteProjectParameter: vi.fn(async (name: string) => ({
+      ok: true,
+      deleted: name,
+      ...snapshot(),
+      parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
+    })),
+    saveProjectRevision: vi.fn(async () => ({ ok: true, latest_revision_id: 'r1' })),
+    listProjectRevisions: vi.fn(async () => ({ ok: true, revisions: [], latest_revision_id: null })),
+    mockCompile: vi.fn(async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 1 })),
+    fetchPreview: vi.fn(async () => ({ meshes: [], wires: [], warnings: [] })),
+    listRecentProjects: vi.fn(async () => ({ ok: true, projects: [] })),
+    listAssistantHistory: vi.fn(async () => ({ ok: true, messages: [] })),
+    fetchMemoryStatus: vi.fn(async () => ({
+      ok: true,
+      memory: { memory_root: '', chat_count: 0, lesson_count: 0, has_learned_skill: false, total_bytes: 0 },
+    })),
+    ...overrides,
+  } as unknown as WorkbenchApi
+}
+
+async function loadedStore(api: WorkbenchApi) {
+  const store = createWorkbenchStore(api)
+  await store.getState().load()
+  return store
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('SF1 Save（F01）', () => {
+  test('AC01 非当前标签脏：Save 保存所有脏脚本，编辑保留且 clean', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    // 当前标签是 3d.gdl（load 后默认打开），脏的是非当前的 2d.gdl
+    store.getState().updateScriptContent('2d.gdl', 'PROJECT2 3, 270, 2\n! AC01\n')
+
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(true)
+    expect(api.saveProjectScript).toHaveBeenCalledWith('2d.gdl', 'PROJECT2 3, 270, 2\n! AC01\n')
+    expect(api.saveProject).toHaveBeenCalledTimes(1)
+    expect(store.getState().dirtyScripts['2d.gdl']).toBe(false)
+    expect(store.getState().scriptContents['2d.gdl']).toBe('PROJECT2 3, 270, 2\n! AC01\n')
+  })
+
+  test('AC02 多标签都脏：Save 全部入盘（保持原正向场景）', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK A,B,ZZYZX ! AC02_3D\n')
+    store.getState().updateScriptContent('2d.gdl', 'PROJECT2 3,270,2 ! AC02_2D\n')
+
+    await store.getState().saveProject()
+
+    expect(api.saveProjectScript).toHaveBeenCalledWith('3d.gdl', 'BLOCK A,B,ZZYZX ! AC02_3D\n')
+    expect(api.saveProjectScript).toHaveBeenCalledWith('2d.gdl', 'PROJECT2 3,270,2 ! AC02_2D\n')
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().dirtyScripts['2d.gdl']).toBe(false)
+  })
+
+  test('AC03 第 2 个脚本写入失败：第 1 个可已保存，其余仍脏，project save 未调用', async () => {
+    const api = makeApi({
+      saveProjectScript: vi.fn(async (name: string) =>
+        name === '2d.gdl' ? { success: false, error: 'disk full' } : { success: true, saved_at: '' },
+      ),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'ok-3d\n')
+    store.getState().updateScriptContent('2d.gdl', 'fail-2d\n')
+
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(false)
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().dirtyScripts['2d.gdl']).toBe(true)
+    expect(store.getState().scriptContents['2d.gdl']).toBe('fail-2d\n')
+    expect(api.saveProject).not.toHaveBeenCalled()
+    expect(store.getState().lastError).toBe('disk full')
+  })
+
+  test('AC04 dirty 但 content 缺失：明确失败而非跳过', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    // 直接注入 dirty 标记但没有编辑器内容
+    store.setState({ dirtyScripts: { '3d.gdl': true }, scriptContents: {} })
+
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(false)
+    expect(api.saveProjectScript).not.toHaveBeenCalled()
+    expect(api.saveProject).not.toHaveBeenCalled()
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+    expect(store.getState().lastError).toContain('missing')
+  })
+
+  test('AC05 保存等待期间脚本被更新：较新文本与 dirty 不被旧响应清掉；busy 有短时只读', async () => {
+    let release!: (value: { success: boolean; saved_at: string }) => void
+    const gate = new Promise<{ success: boolean; saved_at: string }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({
+      saveProjectScript: vi.fn(() => gate),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'submitted-text\n')
+
+    const pending = store.getState().saveProject()
+    // 等待期间：源操作 busy（编辑器只读），用户/并发路径更新内容
+    await vi.waitFor(() => expect(store.getState().sourceActionBusy).toBe(true))
+    store.getState().updateScriptContent('3d.gdl', 'newer-text\n')
+    release({ success: true, saved_at: '' })
+    const ok = await pending
+
+    expect(ok).toBe(true)
+    expect(store.getState().sourceActionBusy).toBe(false)
+    expect(store.getState().scriptContents['3d.gdl']).toBe('newer-text\n')
+    // 内容已变：不被旧响应清 dirty
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+  })
+
+  test('AC06 参数草稿存在时 Save：不调用 Apply，参数草稿仍在', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    await store.getState().setDraftParameter('A', 2)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+
+    await store.getState().saveProject()
+
+    expect(api.applyParameters).not.toHaveBeenCalled()
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+  })
+
+  test('AC07 untitled Save→取消命名：无导出、无 flush、所有草稿保持', async () => {
+    const api = makeApi({
+      fetchSnapshot: vi.fn(async () => snapshot({ name: 'Untitled GDL Object', source: 'untitled' })),
+      saveProject: vi.fn(async () => ({
+        ok: false,
+        needs_save_as: true,
+        error: 'Project has no HSF path. Use Save As HSF.',
+        ...snapshot({ name: 'Untitled GDL Object', source: 'untitled' }),
+      })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'untitled-draft\n')
+
+    await store.getState().saveProject()
+    expect(store.getState().needsSaveAs).toBe(true)
+    // 未命名阶段不先 flush 到任何目录
+    expect(api.saveProjectScript).not.toHaveBeenCalled()
+    expect(api.exportHsfProject).not.toHaveBeenCalled()
+
+    // 用户取消命名
+    store.getState().clearNeedsSaveAs()
+
+    expect(api.exportHsfProject).not.toHaveBeenCalled()
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+    expect(store.getState().scriptContents['3d.gdl']).toBe('untitled-draft\n')
+  })
+})
+
+describe('SF1 参数 Apply / CRUD（F03）', () => {
+  test('AC08 Apply 前存在脚本草稿：先写脚本再写参数，两者都保留', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK 1,1,1 ! AC08\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().applyDraftParameters()
+
+    expect(ok).toBe(true)
+    // 顺序：先脚本后参数
+    expect(api.saveProjectScript).toHaveBeenCalledWith('3d.gdl', 'BLOCK 1,1,1 ! AC08\n')
+    expect(api.applyParameters).toHaveBeenCalledWith({ A: 2 })
+    const scriptCall = (api.saveProjectScript as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    const applyCall = (api.applyParameters as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    expect(scriptCall).toBeLessThan(applyCall)
+    // 脚本已保存且编辑器内容不丢；参数草稿已提交清理
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().scriptContents['3d.gdl']).toBe('BLOCK 1,1,1 ! AC08\n')
+    expect(store.getState().draftParameters).toEqual({})
+  })
+
+  test('AC09 Apply 前 flush 失败：参数 API 零调用，参数草稿仍在', async () => {
+    const api = makeApi({
+      saveProjectScript: vi.fn(async () => ({ success: false, error: 'disk full' })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().applyDraftParameters()
+
+    expect(ok).toBe(false)
+    expect(api.applyParameters).not.toHaveBeenCalled()
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(store.getState().applying).toBe(false)
+  })
+
+  test('AC10 参数 API 失败：脚本已保存事实真实、参数草稿仍在', async () => {
+    const api = makeApi({
+      applyParameters: vi.fn(async () => ({ ok: false, error: 'backend rejected', ...snapshot() })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().applyDraftParameters()
+
+    expect(ok).toBe(false)
+    expect(api.saveProjectScript).toHaveBeenCalled()
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(store.getState().lastError).toContain('Scripts saved')
+  })
+
+  test('AC11 参数增/改/删：先 flush 脚本、不覆盖脏脚本、不清空无关参数草稿', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK 1,1,1 ! AC11\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const added = await store.getState().addProjectParameter({
+      name: 'seat_height',
+      type_tag: 'Length',
+      value: 0.45,
+    })
+
+    expect(added).toBe(true)
+    expect(api.saveProjectScript).toHaveBeenCalledWith('3d.gdl', 'BLOCK 1,1,1 ! AC11\n')
+    expect(store.getState().scriptContents['3d.gdl']).toBe('BLOCK 1,1,1 ! AC11\n')
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    // 无关参数草稿保留（A 在新参数列表中仍合法）
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+
+    // 删除参数只清被删参数的草稿
+    await store.getState().setDraftParameter('seat_height', 0.5)
+    const deleted = await store.getState().deleteProjectParameter('seat_height')
+    expect(deleted).toBe(true)
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+  })
+})
+
+describe('SF1 Save Revision（F05）', () => {
+  test('AC12 保存版本前先保存全部脚本', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK 1,1,1 ! AC12\n')
+
+    const ok = await store.getState().saveRevision('rev with edits')
+
+    expect(ok).toBe(true)
+    expect(api.saveProjectScript).toHaveBeenCalledWith('3d.gdl', 'BLOCK 1,1,1 ! AC12\n')
+    expect(api.saveProjectRevision).toHaveBeenCalledWith('rev with edits')
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().revisionLoading).toBe(false)
+  })
+
+  test('AC13 flush 失败不创建版本；版本 API 失败复位且不报成功', async () => {
+    const failingFlush = makeApi({
+      saveProjectScript: vi.fn(async () => ({ success: false, error: 'disk full' })),
+    })
+    const store1 = await loadedStore(failingFlush)
+    store1.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    const ok1 = await store1.getState().saveRevision('x')
+    expect(ok1).toBe(false)
+    expect(failingFlush.saveProjectRevision).not.toHaveBeenCalled()
+    expect(store1.getState().revisionLoading).toBe(false)
+    expect(store1.getState().dirtyScripts['3d.gdl']).toBe(true)
+
+    const failingApi = makeApi({
+      saveProjectRevision: vi.fn(async () => ({ ok: false, error: 'revision backend down' })),
+    })
+    const store2 = await loadedStore(failingApi)
+    store2.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    const ok2 = await store2.getState().saveRevision('keep this message')
+    expect(ok2).toBe(false)
+    expect(failingApi.saveProjectScript).toHaveBeenCalled()
+    expect(store2.getState().revisionLoading).toBe(false)
+    expect(store2.getState().lastError).toBe('revision backend down')
+    // 脚本已保存（flush 成功）但版本未建成；草稿文本仍在编辑器
+    expect(store2.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store2.getState().scriptContents['3d.gdl']).toBe('dirty\n')
+    expect(store2.getState().compileLog.join('\n')).not.toContain('Saved revision r1')
+  })
+
+  test('AC14 有未 Apply 参数：提示不纳入版本，参数草稿保留', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().saveRevision('with param draft')
+
+    expect(ok).toBe(true)
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(api.applyParameters).not.toHaveBeenCalled()
+    expect(store.getState().compileLog.join('\n')).toContain('unapplied parameter drafts are not included')
+  })
+})
+
+describe('SF1 Save As（F02）', () => {
+  test('AC15/20 前端把脏脚本作为 overrides 传给导出；参数草稿不自动入盘', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK 1,1,1 ! AC15\n')
+    store.getState().updateScriptContent('2d.gdl', '')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().exportHsfProject('', 'CopyName', collectScriptOverrides(store.getState()))
+
+    expect(ok).toBe(true)
+    const exportCall = (api.exportHsfProject as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(exportCall[2]).toEqual({ '3d.gdl': 'BLOCK 1,1,1 ! AC15\n', '2d.gdl': '' })
+    expect(api.applyParameters).not.toHaveBeenCalled()
+    // 新项目激活；参数草稿保留并提示未应用
+    expect(store.getState().project?.path).toBe('/exports/CopyName')
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(store.getState().compileLog.join('\n')).toContain('Parameter drafts kept (not applied)')
+  })
+
+  test('AC18 导出失败：旧项目、脚本内容、dirty、参数草稿全部保留', async () => {
+    const api = makeApi({
+      exportHsfProject: vi.fn(async () => ({
+        ok: false,
+        error: 'Target HSF directory already exists and is not empty',
+        ...snapshot(),
+      })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK 1,1,1 ! AC18\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().exportHsfProject('', 'CopyName', { '3d.gdl': 'BLOCK 1,1,1 ! AC18\n' })
+
+    expect(ok).toBe(false)
+    expect(store.getState().project?.path).toBe('/workspace/Chair')
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+    expect(store.getState().scriptContents['3d.gdl']).toBe('BLOCK 1,1,1 ! AC18\n')
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(store.getState().loading).toBe(false)
+    expect(store.getState().sourceActionBusy).toBe(false)
+  })
+})
+
+describe('SF1 重入与冲突（AC27）', () => {
+  test('重复/并发调用：第二次被拒绝，busy 最终复位', async () => {
+    let release!: (value: { success: boolean; saved_at: string }) => void
+    const gate = new Promise<{ success: boolean; saved_at: string }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({ saveProjectScript: vi.fn(() => gate) })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+
+    const first = store.getState().saveProject()
+    await vi.waitFor(() => expect(store.getState().sourceActionBusy).toBe(true))
+    const second = await store.getState().saveProject()
+    expect(second).toBe(false)
+    expect(store.getState().lastError).toContain('in progress')
+
+    release({ success: true, saved_at: '' })
+    await first
+    expect(store.getState().sourceActionBusy).toBe(false)
+    expect(store.getState().loading).toBe(false)
+  })
+
+  test('AI 执行中 / 编译中 / 加载中：源操作被拒绝', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+
+    store.setState({ assistantBusy: true })
+    expect(await store.getState().saveProject()).toBe(false)
+    store.setState({ assistantBusy: false, compiling: true })
+    expect(await store.getState().saveProject()).toBe(false)
+    store.setState({ compiling: false, loading: true })
+    expect(await store.getState().saveProject()).toBe(false)
+    store.setState({ loading: false })
+
+    expect(store.getState().sourceActionBusy).toBe(false)
+    expect(api.saveProject).not.toHaveBeenCalled()
+  })
+
+  test('网络异常抛错：busy 仍复位（不卡死后续操作）', async () => {
+    const api = makeApi({
+      saveProjectScript: vi.fn(async () => {
+        throw new Error('network down')
+      }),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+
+    await expect(store.getState().saveProject()).rejects.toThrow('network down')
+    expect(store.getState().sourceActionBusy).toBe(false)
+  })
+})
+
+describe('SF1 辅助函数', () => {
+  test('collectScriptOverrides 只取 dirty 且空串是有效覆盖', () => {
+    const overrides = collectScriptOverrides({
+      dirtyScripts: { '3d.gdl': true, '2d.gdl': true, 'vl.gdl': false },
+      scriptContents: { '3d.gdl': 'x', '2d.gdl': '' },
+    } as never)
+    expect(overrides).toEqual({ '3d.gdl': 'x', '2d.gdl': '' })
+  })
+
+  test('hasAnyDraft：脚本草稿或参数草稿任一存在', () => {
+    expect(hasAnyDraft({ dirtyScripts: {}, draftParameters: {} })).toBe(false)
+    expect(hasAnyDraft({ dirtyScripts: { '3d.gdl': true }, draftParameters: {} })).toBe(true)
+    expect(hasAnyDraft({ dirtyScripts: {}, draftParameters: { A: 1 } })).toBe(true)
+  })
+
+  test('keepValidDraftParameters：保留合法项、报告被丢字段', () => {
+    const { kept, dropped } = keepValidDraftParameters({ A: 1, gone: 2 }, ['A', 'B'])
+    expect(kept).toEqual({ A: 1 })
+    expect(dropped).toEqual(['gone'])
+  })
+})

@@ -1,6 +1,13 @@
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 import { hydrateSnapshot, nowTimeText } from '../workbenchStoreUtils'
-import type { WorkbenchSnapshot } from '../../api/types'
+import type { HsfExportResult, WorkbenchSnapshot } from '../../api/types'
+import {
+  beginSourceAction,
+  captureProjectIdentity,
+  endSourceAction,
+  keepValidDraftParameters,
+  sameProjectIdentity,
+} from './sourceActionHelpers'
 
 export function createProjectActions({ api, get, set }: WorkbenchActionContext) {
   return {
@@ -116,62 +123,127 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: false })
     },
 
-    async exportHsfProject(parentDir = '', name = '') {
-      set({ loading: true, lastError: null })
-      const result = await api.exportHsfProject(parentDir, name)
-      if (result.ok === false) {
-        set({
-          loading: false,
-          lastError: result.cancelled ? null : result.error ?? 'Failed to export HSF project.',
-        })
-        return
+    // SF1 Save As：把当前脚本草稿（scriptOverrides）写入新副本，不顺手改写原项目；
+    // 失败/取消保留旧项目、草稿与 dirty 状态，不 hydrate 空 fallback。
+    // 成功后激活副本；仍合法的参数草稿保留到新项目（不自动 Apply）。
+    async exportHsfProject(parentDir = '', name = '', scriptOverrides?: Record<string, string>) {
+      const guard = beginSourceAction(get, set, 'save-as')
+      if (!guard.ok) {
+        set({ lastError: guard.reason ?? 'Save As is blocked.' })
+        return false
       }
-      set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
-      await get().loadRecentProjects()
-      await get().loadScripts()
-      await get().loadRevisions()
-      await get().loadAssistantHistory()
-      await get().loadMemoryStatus()
-      set((state) => ({
-        loading: false,
-        lastSavedAt: nowTimeText(),
-        needsSaveAs: false,
-        compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
-      }))
-    },
-
-    async saveProject() {
-      set({ loading: true, lastError: null })
-      const result = await api.saveProject()
-      if (result.ok === false) {
-        if (result.needs_save_as) {
-          // P7c：新建空白项目首次保存 → 置 needsSaveAs，由组件弹命名引导
-          // ThemedDialog（默认「未命名构件」），不再把"Use Save As HSF"当错误展示。
-          set({ loading: false, needsSaveAs: true })
-          return
+      const identity = captureProjectIdentity(get())
+      try {
+        set({ loading: true, lastError: null })
+        const result = await api.exportHsfProject(parentDir, name, scriptOverrides)
+        if (result.ok === false) {
+          // 原生文件框取消：不当成错误；其余失败保留全部草稿
+          set({ loading: false, lastError: result.cancelled ? null : result.error ?? 'Failed to export HSF project.' })
+          return false
         }
-        set({
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ loading: false })
+          return false
+        }
+        const hadDrafts = Object.keys(get().draftParameters).length > 0
+        const keptDrafts = keepValidDraftParameters(
+          get().draftParameters,
+          (result.parameters ?? []).map((parameter) => parameter.name),
+        )
+        set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
+        await get().loadRecentProjects()
+        await get().loadScripts()
+        await get().loadRevisions()
+        await get().loadAssistantHistory()
+        await get().loadMemoryStatus()
+        set((state) => ({
           loading: false,
-          lastError: result.error ?? 'Failed to save HSF project.',
-        })
-        return
+          lastSavedAt: nowTimeText(),
+          needsSaveAs: false,
+          draftParameters: keptDrafts.kept,
+          compileLog: [
+            ...(result.saved_to ? [`Saved HSF source: ${result.saved_to}`] : []),
+            // SF1：明确提示参数草稿未应用（参数草稿不带入副本）
+            ...(hadDrafts ? ['Parameter drafts kept (not applied).'] : []),
+            ...state.compileLog,
+          ].slice(0, 20),
+        }))
+        return true
+      } finally {
+        endSourceAction(set)
       }
-      set(hydrateSnapshot(result, get().compilerSettings, get().llmSettings))
-      await get().loadRecentProjects()
-      await get().loadScripts()
-      await get().loadRevisions()
-      await get().loadAssistantHistory()
-      await get().loadMemoryStatus()
-      set((state) => ({
-        loading: false,
-        lastSavedAt: nowTimeText(),
-        needsSaveAs: false,
-        compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
-      }))
     },
 
-    async saveProjectAs(parentDir = '', name = '') {
-      await get().exportHsfProject(parentDir, name)
+    // SF1 Save（已有路径）：先 flush 全部脏脚本，再保存项目；不自动 Apply 参数草稿。
+    // 成功后不清空同项目编辑状态/参数草稿，只合并项目与参数元数据；
+    // 无路径项目走 needsSaveAs 命名引导（不先写临时目录、不丢草稿）。
+    async saveProject() {
+      const guard = beginSourceAction(get, set, 'save')
+      if (!guard.ok) {
+        set({ lastError: guard.reason ?? 'Save is blocked.' })
+        return false
+      }
+      const identity = captureProjectIdentity(get())
+      try {
+        const hasPath = Boolean(get().project?.path)
+        if (hasPath) {
+          const flushed = await get().flushDirtyScripts()
+          if (!flushed.ok) {
+            set({ lastError: get().lastError ?? flushed.error ?? 'Failed to save scripts.' })
+            return false
+          }
+          if (!sameProjectIdentity(get(), identity)) return false
+        }
+        set({ loading: true, lastError: null })
+        const result = await api.saveProject()
+        if (result.ok === false) {
+          if (result.needs_save_as) {
+            // P7c：新建空白项目首次保存 → 置 needsSaveAs，由组件弹命名引导
+            // ThemedDialog（默认「未命名构件」），不再把"Use Save As HSF"当错误展示。
+            set({ loading: false, needsSaveAs: true })
+            return false
+          }
+          set({
+            loading: false,
+            lastError: result.error ?? 'Failed to save HSF project.',
+          })
+          return false
+        }
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ loading: false })
+          return false
+        }
+        // 同项目合并：保留 scriptContents/dirtyScripts/draftParameters，
+        // 只更新项目/参数元数据（脏 XML 落盘后后端参数可能已变化）与保存结果。
+        set((state) => ({
+          loading: false,
+          project: result.project ?? state.project,
+          parameters: result.parameters ?? state.parameters,
+          preview: result.preview ?? state.preview,
+          warnings: result.warnings ?? state.warnings,
+          lastSavedAt: nowTimeText(),
+          needsSaveAs: false,
+          compileLog: result.saved_to ? [`Saved HSF source: ${result.saved_to}`, ...state.compileLog].slice(0, 20) : state.compileLog,
+        }))
+        // 保存了脏 paramlist.xml 后，同项目刷新参数元数据（保留合法参数草稿）。
+        if (Object.values(get().dirtyScripts).every((dirty) => !dirty)) {
+          const snapshot = await api.fetchSnapshot()
+          if (snapshot.project !== null && sameProjectIdentity(get(), identity)) {
+            const kept = keepValidDraftParameters(
+              get().draftParameters,
+              (snapshot.parameters ?? []).map((parameter) => parameter.name),
+            )
+            set({ project: snapshot.project, parameters: snapshot.parameters, draftParameters: kept.kept })
+          }
+        }
+        return true
+      } finally {
+        endSourceAction(set)
+      }
+    },
+
+    async saveProjectAs(parentDir = '', name = '', scriptOverrides?: Record<string, string>) {
+      return get().exportHsfProject(parentDir, name, scriptOverrides)
     },
 
     async clearNeedsSaveAs() {

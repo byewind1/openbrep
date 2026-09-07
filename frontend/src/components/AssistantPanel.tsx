@@ -20,7 +20,7 @@ interface AssistantPanelProps {
   onClearHistory: () => void
   onAdoptCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
-  onSaveRevision?: (message: string) => void
+  onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number) => void
   modelOptions?: LlmModelOption[]
   currentModel?: string

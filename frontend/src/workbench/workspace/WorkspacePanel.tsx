@@ -20,6 +20,8 @@ interface WorkspacePanelProps {
   onDismissInitHint: () => void
   onTrashWorkspaceProject: (path: string) => void
   onLoadProjectPath: (path: string) => void
+  /** SF1：源操作进行中禁用项目打开入口（不阻止工作区附着/刷新） */
+  projectOpenDisabled?: boolean
 }
 
 /** 工作区面板（P3-d2）：项目列表 + 跨项目搜索；空态支持浏览/初始化并附着（P3-d2b）。 */
@@ -39,6 +41,7 @@ export function WorkspacePanel({
   onDismissInitHint,
   onTrashWorkspaceProject,
   onLoadProjectPath,
+  projectOpenDisabled = false,
 }: WorkspacePanelProps) {
   const t = useT()
   const { confirm, dialogNode } = useThemedDialog()
@@ -178,6 +181,7 @@ export function WorkspacePanel({
                   <button
                     type="button"
                     className="workspace-project-item"
+                    disabled={projectOpenDisabled}
                     onClick={() => onLoadProjectPath(project.path)}
                   >
                     <span className="workspace-project-name">{project.name}</span>
@@ -217,6 +221,7 @@ export function WorkspacePanel({
                     type="button"
                     key={`${hit.project}-${hit.location}-${hit.line ?? ''}-${index}`}
                     className="workspace-search-hit"
+                    disabled={projectOpenDisabled}
                     onClick={() => {
                       onLoadProjectPath(
                         workspace.projects.find((project) => project.name === hit.project)?.path ??

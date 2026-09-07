@@ -6,7 +6,8 @@ interface RevisionPanelProps {
   revisions: ProjectRevision[]
   latestRevisionId: string | null
   loading: boolean
-  onSave: (message: string) => void
+  /** SF1：返回是否成功；仅成功后组件清空 message 输入 */
+  onSave: (message: string) => Promise<boolean> | boolean
   onRestore: (revisionId: string) => void
 }
 
@@ -20,15 +21,16 @@ export function RevisionPanel({
   const [message, setMessage] = useState('')
   const { confirm, dialogNode } = useThemedDialog()
 
-  function saveRevision() {
-    onSave(message)
-    setMessage('')
+  async function saveRevision() {
+    const ok = await onSave(message)
+    // SF1：仅成功后清空输入；失败保留用户填写的版本说明
+    if (ok) setMessage('')
   }
 
   async function restoreRevision(revisionId: string) {
     const ok = await confirm({
       title: 'Restore revision',
-      message: `Restore ${revisionId}? Current source files will be replaced.`,
+      message: `Restore ${revisionId}? Current source files will be replaced. Unsaved script edits and parameter drafts will also be discarded.`,
       danger: true,
     })
     if (!ok) return

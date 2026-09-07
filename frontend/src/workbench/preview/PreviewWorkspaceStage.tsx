@@ -19,6 +19,8 @@ interface PreviewWorkspaceStageProps {
   /** P1e：相关代码段末行（整段亮显用），单行定位为 null */
   activeFocusEndLine: number | null
   activeFocusKey: number | null
+  /** SF1：源操作进行中主编辑器临时只读 */
+  sourceBusy?: boolean
   onCollapsePreview: () => void
   onFloatPreview: () => void
   onChangeScript: (content: string) => void
@@ -38,6 +40,7 @@ export function PreviewWorkspaceStage({
   activeFocusLine,
   activeFocusEndLine,
   activeFocusKey,
+  sourceBusy = false,
   onCollapsePreview,
   onFloatPreview,
   onChangeScript,
@@ -92,6 +95,7 @@ export function PreviewWorkspaceStage({
               content={activeScriptContent}
               onChange={onChangeScript}
               isDirty={hasDirtyScript}
+              readOnly={sourceBusy}
               focusLine={activeFocusLine}
               focusEndLine={activeFocusEndLine}
               focusKey={activeFocusKey}

@@ -313,13 +313,22 @@ export async function importBlenderScript(path = ''): Promise<WorkbenchSnapshot>
   )
 }
 
-export async function exportHsfProject(parentDir = '', name = ''): Promise<HsfExportResult> {
+export async function exportHsfProject(
+  parentDir = '',
+  name = '',
+  scriptOverrides?: Record<string, string>,
+): Promise<HsfExportResult> {
   return requestJson<HsfExportResult>(
     '/api/project/export-hsf',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parent_dir: parentDir, name }),
+      // SF1：Save As 携带当前脚本草稿（空串是有效覆盖，原样序列化）
+      body: JSON.stringify({
+        parent_dir: parentDir,
+        name,
+        ...(scriptOverrides ? { script_overrides: scriptOverrides } : {}),
+      }),
     },
     { ok: false, error: 'OpenBrep local API is not available.', ...fallbackSnapshot },
   )

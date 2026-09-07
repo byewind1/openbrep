@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import datetime as _dt
 import logging
 import os
@@ -24,7 +25,11 @@ from openbrep.naming import (
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_parameter_service import parameter_to_dict, parse_values_declarations
-from openbrep.workbench.project_script_service import SCRIPT_NAME_TO_TYPE
+from openbrep.workbench.project_script_service import (
+    SCRIPT_NAME_TO_TYPE,
+    apply_script_overrides,
+    validate_script_overrides,
+)
 from openbrep.workbench.settings_service import (
     effective_session_reasoning_effort,
     save_workbench_config,
@@ -653,6 +658,9 @@ class WorkbenchProjectSessionService:
     def export_hsf_project(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": False, "error": "No project to export."}
+        overrides, overrides_error = validate_script_overrides(body.get("script_overrides"))
+        if overrides_error is not None:
+            return {"ok": False, "error": overrides_error}
         requested_name = str(body.get("name") or "").strip()
         raw_parent = str(body.get("parent_dir") or "").strip()
         # P7c：只给 name 不给 parent_dir → 自动落点（工作区 hsf/ ＞ output_dir ＞
@@ -687,27 +695,60 @@ class WorkbenchProjectSessionService:
         allowed_existing_roots = {root for root in (previous_source, current_root) if root is not None}
         if target.exists() and target not in allowed_existing_roots and any(target.iterdir()):
             return {"ok": False, "error": f"Target HSF directory already exists and is not empty: {target}"}
+        # SF1：带 overrides 的请求不允许原地覆写（target == 当前源）——
+        # 否则 Save As 会偷变成"先改原项目再保存"。这种场景应使用 Save。
+        if overrides and target in allowed_existing_roots:
+            return {
+                "ok": False,
+                "error": "Export target is the current project. Use Save to update it in place.",
+            }
 
-        self.session.project.name = project_name
-        self.session.project.work_dir = parent
-        self.session.project.root = target
+        # SF1：先在工作副本上应用 overrides 并落盘，成功后才切换 session。
+        # 失败时旧 session 的对象身份/路径/名称/脚本/参数全部保持原样。
+        created_target = not target.exists()
         try:
-            saved_root = self.session.project.save_to_disk().expanduser().resolve()
-            if previous_source is not None and previous_source.exists() and previous_source != saved_root:
+            working_copy = copy.deepcopy(self.session.project)
+            if overrides:
+                apply_error = apply_script_overrides(working_copy, overrides)
+                if apply_error is not None:
+                    return {"ok": False, "error": apply_error}
+            working_copy.name = project_name
+            working_copy.work_dir = parent
+            working_copy.root = target
+            saved_root = working_copy.save_to_disk().expanduser().resolve()
+            metadata_warnings: list[str] = []
+            same_as_target = previous_source is not None and previous_source == saved_root
+            if previous_source is not None and previous_source.exists() and not same_as_target:
                 try:
                     from openbrep.revisions import copy_project_metadata
 
                     copy_project_metadata(previous_source, saved_root)
-                except Exception:
-                    pass
-            self.session.source = "hsf"
-            self.session.source_path = saved_root
-            self.remember_project_path(saved_root)
-            self.session.project = HSFProject.load_from_disk(str(saved_root))
+                except Exception as exc:
+                    # SF1：metadata 复制 best-effort 失败要成为可见 warning，
+                    # 不能伪称历史全部复制成功。
+                    metadata_warnings.append(
+                        f"Project metadata/history copy failed (export still succeeded): {exc}"
+                    )
+            reloaded = HSFProject.load_from_disk(str(saved_root))
         except Exception as exc:
+            # 只清理本次明确新建的不完整目标；绝不删已有目标/原项目。
+            if overrides and created_target and target.exists():
+                shutil.rmtree(target, ignore_errors=True)
             return {"ok": False, "error": f"Failed to export HSF project: {exc}"}
 
-        return {"ok": True, "saved_to": str(saved_root), **self.session.snapshot()}
+        self.session.project = reloaded
+        self.session.source = "hsf"
+        self.session.source_path = saved_root
+        self.remember_project_path(saved_root)
+
+        response: dict[str, Any] = {
+            "ok": True,
+            "saved_to": str(saved_root),
+            **self.session.snapshot(),
+        }
+        if metadata_warnings:
+            response["warnings"] = list(response.get("warnings") or []) + metadata_warnings
+        return response
 
     def recent_projects(self) -> dict[str, Any]:
         return {

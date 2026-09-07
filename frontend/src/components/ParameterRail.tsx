@@ -23,6 +23,8 @@ interface ParameterRailProps {
   onDeleteParameter: (name: string) => Promise<boolean>
   onValidateParameters: () => void
   applying: boolean
+  /** SF1：源操作（Save/Save As/Revision）期间参数输入临时只读 */
+  sourceBusy?: boolean
   /** P11：参数脚本（vl.gdl）视图所需状态与回调，复用既有脚本保存/脏状态链路 */
   paramScriptContent?: string
   paramScriptDirty?: boolean
@@ -47,6 +49,7 @@ export function ParameterRail({
   onDeleteParameter,
   onValidateParameters,
   applying,
+  sourceBusy = false,
   paramScriptContent,
   paramScriptDirty,
   paramScriptSaving,
@@ -58,6 +61,7 @@ export function ParameterRail({
   const renderedSections = sections ?? [{ title, parameters }]
   const count = renderedSections.reduce((total, section) => total + section.parameters.length, 0)
   const dirtyCount = Object.keys(draftParameters).length
+  const inputsLocked = applying || sourceBusy
 
   return (
     <aside className="parameter-rail">
@@ -89,10 +93,10 @@ export function ParameterRail({
               <span>{dirtyCount ? `${dirtyCount} changed / ${count}` : `${count}`}</span>
             </div>
             <div className="panel-actions">
-              <button type="button" disabled={!dirtyCount || applying} onClick={onReset}>
+              <button type="button" disabled={!dirtyCount || inputsLocked} onClick={onReset}>
                 Reset
               </button>
-              <button type="button" disabled={!dirtyCount || applying} onClick={onApply}>
+              <button type="button" disabled={!dirtyCount || inputsLocked} onClick={onApply}>
                 {applying ? 'Applying' : 'Apply'}
               </button>
             </div>
@@ -100,13 +104,13 @@ export function ParameterRail({
           <AddParameterInlineForm
             parameters={renderedSections.flatMap((section) => section.parameters)}
             issues={parameterIssues}
-            applying={applying}
+            applying={inputsLocked}
             onAdd={onAddParameter}
             onValidate={onValidateParameters}
           />
           <ParameterMetadataEditor
             parameters={renderedSections.flatMap((section) => section.parameters)}
-            applying={applying}
+            applying={inputsLocked}
             onUpdate={onUpdateParameter}
             onDelete={onDeleteParameter}
           />
@@ -120,6 +124,7 @@ export function ParameterRail({
                     parameter={parameter}
                     value={draftParameters[parameter.name] ?? parseParameterValue(parameter)}
                     onChange={onChange}
+                    disabled={sourceBusy}
                   />
                 ))}
               </div>
@@ -136,7 +141,7 @@ export function ParameterRail({
             <div className="panel-actions">
               <button
                 type="button"
-                disabled={!paramScriptDirty || paramScriptSaving}
+                disabled={!paramScriptDirty || paramScriptSaving || sourceBusy}
                 onClick={onParamScriptSave}
               >
                 {paramScriptSaving ? t('parameter.script.saving') : t('parameter.script.save')}
@@ -149,6 +154,7 @@ export function ParameterRail({
               content={paramScriptContent ?? ''}
               onChange={(content) => onParamScriptChange?.(content)}
               isDirty={Boolean(paramScriptDirty)}
+              readOnly={sourceBusy}
             />
           </Suspense>
         </div>
@@ -161,10 +167,12 @@ function ParameterControl({
   parameter,
   value,
   onChange,
+  disabled = false,
 }: {
   parameter: WorkbenchParameter
   value: unknown
   onChange: (name: string, value: unknown) => void
+  disabled?: boolean
 }) {
   const label = parameter.name
   if (parameter.type_tag === 'Boolean') {
@@ -175,6 +183,7 @@ function ParameterControl({
           className="toggle-input"
           type="checkbox"
           checked={Boolean(value)}
+          disabled={disabled}
           onChange={(event) => onChange(parameter.name, event.currentTarget.checked)}
         />
       </label>
@@ -188,7 +197,7 @@ function ParameterControl({
     return (
       <label className="parameter-control compact-control">
         <span className="parameter-name" title={label}>{label}</span>
-        <EnumSelect parameter={parameter} value={value} onChange={onChange} />
+        <EnumSelect parameter={parameter} value={value} onChange={onChange} disabled={disabled} />
       </label>
     )
   }
@@ -203,6 +212,7 @@ function ParameterControl({
           min={0}
           step={1}
           value={Number(value)}
+          disabled={disabled}
           onChange={(event) => onChange(parameter.name, Number(event.currentTarget.value))}
         />
       </label>
@@ -218,6 +228,7 @@ function ParameterControl({
           type="number"
           step={parameter.type_tag === 'Angle' ? 1 : 0.01}
           value={Number(value)}
+          disabled={disabled}
           onChange={(event) => onChange(parameter.name, Number(event.currentTarget.value))}
         />
       </label>
@@ -231,6 +242,7 @@ function ParameterControl({
         className="text-input"
         type="text"
         value={String(value)}
+        disabled={disabled}
         onChange={(event) => onChange(parameter.name, event.currentTarget.value)}
       />
     </label>
@@ -243,10 +255,12 @@ function EnumSelect({
   parameter,
   value,
   onChange,
+  disabled = false,
 }: {
   parameter: WorkbenchParameter
   value: unknown
   onChange: (name: string, value: unknown) => void
+  disabled?: boolean
 }) {
   const t = useT()
   const options = parameter.options ?? []
@@ -262,7 +276,7 @@ function EnumSelect({
   }
 
   return (
-    <select className="enum-select" value={matched ? current : NOT_IN_VALUES} onChange={handleChange}>
+    <select className="enum-select" value={matched ? current : NOT_IN_VALUES} disabled={disabled} onChange={handleChange}>
       {!matched ? (
         <option value={NOT_IN_VALUES}>{t('parameter.enumFallback', { value: current })}</option>
       ) : null}

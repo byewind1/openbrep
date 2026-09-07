@@ -99,7 +99,8 @@ export interface WorkbenchApi {
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
   importGsmFile: (path?: string) => Promise<WorkbenchSnapshot>
   importBlenderScript: (path?: string) => Promise<WorkbenchSnapshot>
-  exportHsfProject: (parentDir?: string, name?: string) => Promise<HsfExportResult>
+  /** SF1：Save As 可携带当前脚本草稿覆盖（只取本次 dirty 脚本；空串是有效覆盖） */
+  exportHsfProject: (parentDir?: string, name?: string, scriptOverrides?: Record<string, string>) => Promise<HsfExportResult>
   saveProject: () => Promise<HsfExportResult>
   closeProject: () => Promise<WorkbenchSnapshot>
   chooseProjectDirectory: () => Promise<DirectoryChoiceResult>
@@ -233,6 +234,9 @@ export interface WorkbenchState {
   loading: boolean
   applying: boolean
   compiling: boolean
+  /** SF1：短时源操作（Save/Save As/参数写入/Save Revision）重入保护；
+   *  只表示前端操作期冻结，不是后端锁。期间编辑器/参数输入只读。 */
+  sourceActionBusy: boolean
   lastError: string | null
   /** 后端健康看门狗：非 null 表示后端处于故障态（详见 state/backendHealth.ts） */
   backendError: { kind: BackendErrorKind; at: number } | null
@@ -298,9 +302,9 @@ export interface WorkbenchState {
   importGdlFile: (path?: string) => Promise<void>
   importGsmFile: (path?: string) => Promise<void>
   importBlenderScript: (path?: string) => Promise<void>
-  exportHsfProject: (parentDir?: string, name?: string) => Promise<void>
-  saveProject: () => Promise<void>
-  saveProjectAs: (parentDir?: string, name?: string) => Promise<void>
+  exportHsfProject: (parentDir?: string, name?: string, scriptOverrides?: Record<string, string>) => Promise<boolean>
+  saveProject: () => Promise<boolean>
+  saveProjectAs: (parentDir?: string, name?: string, scriptOverrides?: Record<string, string>) => Promise<boolean>
   clearNeedsSaveAs: () => void
   closeProject: () => Promise<void>
   browseProjectDirectory: () => Promise<void>
@@ -355,7 +359,7 @@ export interface WorkbenchState {
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<boolean>
   deleteProjectParameter: (name: string) => Promise<boolean>
   validateProjectParameters: () => Promise<void>
-  applyDraftParameters: () => Promise<void>
+  applyDraftParameters: () => Promise<boolean>
   resetDraftParameters: () => void
   refreshProjectWorkspace: (options?: ProjectWorkspaceRefreshOptions) => Promise<void>
   loadScripts: () => Promise<void>
@@ -374,7 +378,7 @@ export interface WorkbenchState {
   loadDistilledLessons: (status?: string) => Promise<void>
   distillLessons: () => Promise<void>
   setDistilledLessonStatus: (fingerprint: string, decision: 'promote' | 'reject' | 'demote') => Promise<void>
-  saveRevision: (message?: string) => Promise<void>
+  saveRevision: (message?: string) => Promise<boolean>
   restoreRevision: (revisionId: string) => Promise<void>
   loadProjectGitStatus: () => Promise<void>
   initializeProjectGit: () => Promise<void>
@@ -383,7 +387,7 @@ export interface WorkbenchState {
   openScript: (name: string) => Promise<void>
   updateActiveScriptContent: (content: string) => void
   saveActiveScript: () => Promise<void>
-  flushDirtyScripts: () => Promise<{ ok: boolean; didSave: boolean }>
+  flushDirtyScripts: () => Promise<{ ok: boolean; didSave: boolean; error?: string }>
   /** P11：按名更新脚本内容（参数面板「参数脚本」tab 编辑 vl.gdl 用，不切换 activeScriptName） */
   updateScriptContent: (name: string, content: string) => void
   /** P11：按名保存脚本；vl.gdl 保存后重新拉快照刷新参数枚举（options）与预览 */

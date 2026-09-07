@@ -289,6 +289,10 @@ export const en: Record<LocaleKey, string> = {
   'dialog.confirm': 'Confirm',
   'dialog.cancel': 'Cancel',
 
+  // SF1 shared leave-project confirmation (cancel / discard and continue)
+  'leave.discardAndContinue': 'Discard and continue',
+  'leave.discardMessage': '{label}? Unsaved script edits or parameter drafts will be discarded. To keep them, cancel, then save the scripts and apply the parameters first.',
+
   // P7c: naming guidance when saving a new blank project (ThemedDialog on needs_save_as)
   'saveAs.dialogTitle': 'Save project',
   'saveAs.dialogMessage': 'Name the new project. It will be saved automatically to the workspace or your configured output directory.',

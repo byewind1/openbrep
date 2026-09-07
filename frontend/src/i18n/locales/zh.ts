@@ -285,6 +285,10 @@ export const zh = {
   'dialog.confirm': '确定',
   'dialog.cancel': '取消',
 
+  // SF1 离开项目共用确认（取消 / 丢弃并继续）
+  'leave.discardAndContinue': '丢弃并继续',
+  'leave.discardMessage': '{label}？未保存的脚本草稿或参数草稿将被丢弃。如需保留，请取消后保存脚本并应用参数。',
+
   // P7c 新建空白项目保存时的命名引导（needs_save_as 响应处弹 ThemedDialog）
   'saveAs.dialogTitle': '保存项目',
   'saveAs.dialogMessage': '为新建项目命名，保存后自动放到工作区或设置的输出目录。',

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -119,3 +120,56 @@ def read_project_file_content(project: HSFProject, script_name: str) -> str | No
     if file_path is None or not file_path.exists():
         return None
     return file_path.read_text(encoding="utf-8-sig")
+
+
+# ── SF1：Save As 的 script_overrides（只读校验 + 应用到工作副本）────────────
+# 白名单与 save_project_script 完全一致（SCRIPT_FILE_ORDER / resolve_script_name），
+# 不另造更宽的文件写 API。XML 覆盖必须能通过既有解析路径（well-formed 校验 +
+# parse_paramlist_xml / _parse_libpartdata），非法 XML 明确失败。
+
+
+def validate_script_overrides(raw: Any) -> tuple[dict[str, str] | None, str | None]:
+    """校验 export-hsf 的 script_overrides 请求字段；返回 (overrides, error)。"""
+    if raw is None:
+        return {}, None
+    if not isinstance(raw, dict):
+        return None, "script_overrides must be a mapping of script file name to content."
+    overrides: dict[str, str] = {}
+    for key, value in raw.items():
+        name = str(key)
+        # 拒绝绝对路径 / 路径穿越：键必须是白名单内的裸文件名
+        if name != Path(name).name or name in (".", "..") or "\\" in name:
+            return None, f"Invalid script override name: {name!r}."
+        resolved = resolve_script_name(name)
+        if resolved is None:
+            return None, f"Unsupported script file in overrides: {name!r}."
+        if not isinstance(value, str):
+            return None, f"script_overrides content must be a string: {name!r}."
+        overrides[resolved] = value
+    return overrides, None
+
+
+def apply_script_overrides(project: HSFProject, overrides: dict[str, str]) -> str | None:
+    """把 overrides 应用到（工作副本）project；返回错误文本或 None。
+
+    普通脚本复用 HSFProject.set_script；XML 覆盖先校验 well-formed，
+    再走既有解析路径保持副本内存参数与落盘一致。
+    """
+    from openbrep.paramlist_builder import parse_paramlist_xml
+
+    for name, content in overrides.items():
+        script_type = SCRIPT_NAME_TO_TYPE.get(name)
+        if script_type is not None:
+            project.set_script(script_type, content)
+            continue
+        try:
+            ET.fromstring(content)
+        except ET.ParseError as exc:
+            return f"Invalid XML in {name}: {exc}."
+        if name == "paramlist.xml":
+            project.parameters = parse_paramlist_xml(content)
+        elif name == "libpartdata.xml":
+            project._parse_libpartdata(content)
+        else:  # pragma: no cover - resolve_script_name 白名单已拦截
+            return f"Unsupported script file in overrides: {name!r}."
+    return None

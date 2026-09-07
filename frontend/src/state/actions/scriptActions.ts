@@ -1,5 +1,6 @@
 import type { ProjectWorkspaceRefreshOptions, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { normalizeScriptName, nowTimeText, pruneDirtyScripts, selectPreferredScript } from '../workbenchStoreUtils'
+import { sameProjectIdentity } from './sourceActionHelpers'
 
 export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
   return {
@@ -16,13 +17,21 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
         ? existingScripts.map((script) => script.name)
         : [preferredScriptName || get().activeScriptName || ''].filter(Boolean)
 
+      const identity = { sessionId: get().sessionId, projectEpoch: get().projectEpoch }
+
       for (const scriptName of [...new Set(targetNames)]) {
+        if (!sameProjectIdentity(get(), identity)) return
         const updated = await api.getProjectScript(scriptName)
         if (updated) {
-          set((state) => ({
-            scriptContents: { ...state.scriptContents, [scriptName]: updated.content },
-            dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
-          }))
+          // SF1：脏脚本草稿绝不被后端内容覆盖、也不被清 dirty；
+          // 干净脚本正常刷新（参数应用/恢复版本后元数据与源保持一致）。
+          set((state) => {
+            if (state.dirtyScripts[scriptName]) return {}
+            return {
+              scriptContents: { ...state.scriptContents, [scriptName]: updated.content },
+              dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
+            }
+          })
         }
       }
 
@@ -147,29 +156,46 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
       }))
     },
 
-    // 统一的“读当前脚本前先落盘”入口：编译、AI 生成等操作必须先走这里，
+    // 统一的“读当前脚本前先落盘”入口：编译、AI 生成、参数应用等操作必须先走这里，
     // 否则后端会基于旧脚本工作，并在刷新时覆盖用户未保存的手改。
+    // SF1：每份脚本同时捕获 name/content；成功返回后仅当同项目且内容仍等于提交值
+    // 才置 clean（慢响应不允许把期间的新编辑清掉）；dirty 但 content 缺失是明确失败，
+    // 不 silently continue。内部工具，不获取 sourceActionBusy 锁。
     async flushDirtyScripts() {
+      const identity = { sessionId: get().sessionId, projectEpoch: get().projectEpoch }
       const dirtyScriptNames = Object.entries(get().dirtyScripts)
         .filter(([, dirty]) => dirty)
         .map(([name]) => name)
       let didSave = false
 
       for (const scriptName of dirtyScriptNames) {
-        const content = get().scriptContents[scriptName]
-        if (typeof content !== 'string') continue
-
-        const result = await api.saveProjectScript(scriptName, content)
-        if (!result.success) {
-          set({ lastError: result.error ?? `Failed to save ${scriptName}.` })
-          return { ok: false, didSave }
+        if (!sameProjectIdentity(get(), identity)) {
+          return { ok: false, didSave, error: 'Project switched before all scripts were saved.' }
+        }
+        const submitted = get().scriptContents[scriptName]
+        if (typeof submitted !== 'string') {
+          const error = `Cannot save ${scriptName}: editor buffer is missing.`
+          set({ lastError: error })
+          return { ok: false, didSave, error }
         }
 
-        set((state) => ({
-          dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
-          lastSavedAt: nowTimeText(),
-          compileLog: [`Saved ${scriptName}`, ...state.compileLog].slice(0, 20),
-        }))
+        const result = await api.saveProjectScript(scriptName, submitted)
+        if (!result.success) {
+          const error = result.error ?? `Failed to save ${scriptName}.`
+          set({ lastError: error })
+          return { ok: false, didSave, error }
+        }
+
+        // 返回时内容与提交值相等才清 dirty；期间被更新的文本保留 dirty。
+        set((state) => {
+          if (!sameProjectIdentity(state, identity)) return {}
+          if (state.scriptContents[scriptName] !== submitted) return {}
+          return {
+            dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
+            lastSavedAt: nowTimeText(),
+            compileLog: [`Saved ${scriptName}`, ...state.compileLog].slice(0, 20),
+          }
+        })
         didSave = true
       }
 

@@ -104,7 +104,10 @@ def body_has_mock_compile_result(body: str) -> bool:
 
 
 def body_has_script_save_result(body: str) -> bool:
-    return "Saved 3d.gdl at " in body
+    # SF1：顶部 Save 走 flushDirtyScripts（"Saved 3d.gdl"）+ saveProject
+    # （"Saved HSF source:"）；旧的单标签 saveActiveScript 文案（"Saved 3d.gdl at "）
+    # 仍是其子串，一并兼容。
+    return "Saved 3d.gdl" in body or "Saved HSF source:" in body
 
 
 def body_has_preview_controls(body: str) -> bool:
@@ -311,7 +314,7 @@ def run_smoke(
                         edit_interaction_ok = any(marker in body for marker in ("Dirty", "有改动", "未保存"))
                         page.get_by_test_id("save-script-button").click()
                         page.wait_for_function(
-                            "() => document.body.innerText.includes('Saved 3d.gdl at ')",
+                            "() => document.body.innerText.includes('Saved 3d.gdl') || document.body.innerText.includes('Saved HSF source:')",
                             timeout=int(timeout_seconds * 1000),
                         )
                         body = page.locator("body").inner_text(timeout=5000)

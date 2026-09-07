@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 from pathlib import Path
 
@@ -439,7 +440,216 @@ def test_workbench_session_export_hsf_name_only_falls_back_to_dot_output(tmp_pat
     assert (saved_to / "libpartdata.xml").exists()
 
 
-def test_workbench_session_save_project_still_returns_needs_save_as_for_untitled(tmp_path):
+# ── SF1：export-hsf 的 script_overrides（Save As 携带当前脚本草稿，不改原项目）──
+
+
+def test_export_hsf_script_overrides_writes_copy_and_keeps_source_unchanged(tmp_path):
+    """F02：带 overrides 导出 → 新副本含草稿内容，原项目文件 hash 不变。"""
+    source_root = tmp_path / "source"
+    export_root = tmp_path / "exported"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    project.set_script(ScriptType.SCRIPT_2D, "PROJECT2 3, 270, 2\n")
+    hsf_dir = Path(project.save_to_disk())
+    original_3d = (hsf_dir / "scripts" / "3d.gdl").read_bytes()
+    original_2d = (hsf_dir / "scripts" / "2d.gdl").read_bytes()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {
+            "parent_dir": str(export_root),
+            "name": "DraftCopy",
+            "script_overrides": {
+                "3d.gdl": "BLOCK A, B, ZZYZX\n! DRAFT_OVERRIDE\n",
+                "2d.gdl": "",
+            },
+        },
+    )
+
+    assert response["ok"] is True
+    copy_dir = export_root / "DraftCopy"
+    assert "! DRAFT_OVERRIDE" in (copy_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8-sig")
+    assert (copy_dir / "scripts" / "2d.gdl").read_text(encoding="utf-8-sig") == ""
+    # 空字符串是有效覆盖，不能被 if(content) 丢掉
+    assert (copy_dir / "scripts" / "2d.gdl").exists()
+    # 原项目字节不变
+    assert (hsf_dir / "scripts" / "3d.gdl").read_bytes() == original_3d
+    assert (hsf_dir / "scripts" / "2d.gdl").read_bytes() == original_2d
+    # session 已切换到副本
+    assert response["project"]["path"] == str(copy_dir)
+    reloaded = HSFProject.load_from_disk(str(copy_dir))
+    assert "! DRAFT_OVERRIDE" in reloaded.get_script(ScriptType.SCRIPT_3D)
+
+
+def test_export_hsf_script_overrides_validates_names_and_types(tmp_path):
+    """AC17：路径穿越 / 未知文件 / 非字符串值一律拒绝，原项目不变。"""
+    source_root = tmp_path / "source"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    hsf_dir = Path(project.save_to_disk())
+    original = (hsf_dir / "scripts" / "3d.gdl").read_bytes()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    bad_bodies = [
+        {"name": "Escape", "script_overrides": {"../3d.gdl": "x"}},
+        {"name": "Escape2", "script_overrides": {"/abs/3d.gdl": "x"}},
+        {"name": "Unknown", "script_overrides": {"notes.txt": "x"}},
+        {"name": "NotStr", "script_overrides": {"3d.gdl": 123}},
+        {"name": "NotMap", "script_overrides": ["3d.gdl"]},
+    ]
+    for body in bad_bodies:
+        body["parent_dir"] = str(tmp_path / "exported")
+        response = session.route("POST", "/api/project/export-hsf", body)
+        assert response["ok"] is False, body
+        assert "script_overrides" in response["error"] or "Unsupported script file" in response["error"] or "Invalid script override" in response["error"]
+
+    # session 仍指向原项目，原文件未变
+    assert session.source_path == hsf_dir
+    assert (hsf_dir / "scripts" / "3d.gdl").read_bytes() == original
+    # 被拒绝的请求不应留下导出目录
+    assert not (tmp_path / "exported" / "Escape").exists()
+
+
+def test_export_hsf_script_overrides_rejects_invalid_paramlist_xml(tmp_path):
+    """AC16：非法 XML 覆盖明确失败，不产生不完整副本。"""
+    source_root = tmp_path / "source"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    hsf_dir = Path(project.save_to_disk())
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {
+            "parent_dir": str(tmp_path / "exported"),
+            "name": "BadXml",
+            "script_overrides": {"paramlist.xml": "<ParamSection><Parameters><Length Name='A'>"},
+        },
+    )
+
+    assert response["ok"] is False
+    assert "Invalid XML" in response["error"]
+    assert session.source_path == hsf_dir
+    assert not (tmp_path / "exported" / "BadXml").exists()
+
+
+def test_export_hsf_script_overrides_valid_paramlist_roundtrip(tmp_path):
+    """AC16：合法 paramlist 覆盖 → 副本解析/重载一致。"""
+    source_root = tmp_path / "source"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    hsf_dir = Path(project.save_to_disk())
+    paramlist_text = (hsf_dir / "paramlist.xml").read_text(encoding="utf-8-sig")
+    # 在原参数列表中追加一个 Integer 参数
+    addition = '\t\t<Integer Name="shelf_count">\n\t\t\t<Description><![CDATA["层板数"]]></Description>\n\t\t\t<Value>5</Value>\n\t\t</Integer>\n'
+    patched = paramlist_text.replace("\t</Parameters>", addition + "\t</Parameters>")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {
+            "parent_dir": str(tmp_path / "exported"),
+            "name": "ParamCopy",
+            "script_overrides": {"paramlist.xml": patched},
+        },
+    )
+
+    assert response["ok"] is True
+    copy_dir = tmp_path / "exported" / "ParamCopy"
+    reloaded = HSFProject.load_from_disk(str(copy_dir))
+    names = [p.name for p in reloaded.parameters]
+    assert "shelf_count" in names
+    assert "A" in names
+    # 原项目 paramlist 未变
+    assert (hsf_dir / "paramlist.xml").read_text(encoding="utf-8-sig") == paramlist_text
+
+
+def test_export_hsf_script_overrides_rejects_in_place_target(tmp_path):
+    """带 overrides 的目标 == 当前源时明确拒绝（不得把 Save As 变成原地覆写）。"""
+    source_root = tmp_path / "source"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    hsf_dir = Path(project.save_to_disk())
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {
+            "parent_dir": str(hsf_dir.parent),
+            "name": "SourceShelf",
+            "script_overrides": {"3d.gdl": "BLOCK 1,1,1\n"},
+        },
+    )
+
+    assert response["ok"] is False
+    assert "Use Save" in response["error"]
+    assert session.source_path == hsf_dir
+    assert "BLOCK 1,1,1" not in (hsf_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8-sig")
+
+
+def test_export_hsf_failure_keeps_old_session_and_source(tmp_path, monkeypatch):
+    """AC18：副本写盘抛异常 → 旧 session/root/源文件不变，不误激活目标。"""
+    source_root = tmp_path / "source"
+    export_root = tmp_path / "exported"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    hsf_dir = Path(project.save_to_disk())
+    original = (hsf_dir / "scripts" / "3d.gdl").read_bytes()
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    before_project = session.project
+
+    real_deepcopy = copy.deepcopy
+
+    def exploding_deepcopy(obj):
+        if isinstance(obj, HSFProject):
+            raise OSError("disk full")
+        return real_deepcopy(obj)
+
+    monkeypatch.setattr(copy, "deepcopy", exploding_deepcopy)
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {
+            "parent_dir": str(export_root),
+            "name": "WillFail",
+            "script_overrides": {"3d.gdl": "BLOCK 9,9,9\n"},
+        },
+    )
+
+    assert response["ok"] is False
+    assert session.source_path == hsf_dir
+    assert session.project is before_project
+    assert (hsf_dir / "scripts" / "3d.gdl").read_bytes() == original
+    assert not (export_root / "WillFail").exists()
+
+
+def test_export_hsf_without_overrides_keeps_legacy_behavior(tmp_path):
+    """无 overrides 的旧调用继续工作（设置面板导出等路径）。"""
+    source_root = tmp_path / "source"
+    export_root = tmp_path / "exported"
+    project = HSFProject.create_new("SourceShelf", str(source_root))
+    hsf_dir = Path(project.save_to_disk())
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    response = session.route(
+        "POST",
+        "/api/project/export-hsf",
+        {"parent_dir": str(export_root), "name": "LegacyCopy"},
+    )
+
+    assert response["ok"] is True
+    assert response["project"]["path"] == str(export_root / "LegacyCopy")
+    assert HSFProject.load_from_disk(str(export_root / "LegacyCopy")).get_script(
+        ScriptType.SCRIPT_3D
+    ) == "BLOCK A, B, ZZYZX\n"
     """红线回归：新建空白项目直接 save_project 仍回 needs_save_as（前端据此弹命名框）。"""
     session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/new", {})

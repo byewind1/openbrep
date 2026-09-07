@@ -17,6 +17,8 @@ interface TopMenuProps {
   loading: boolean
   compiling: boolean
   saving: boolean
+  /** SF1：源操作进行中（Save/Save As/参数写入/Revision）禁用编译与保存入口 */
+  sourceBusy?: boolean
   hasDirtyScript: boolean
   lastSavedAt: string | null
   lastError: string | null
@@ -38,6 +40,7 @@ export function TopMenu({
   loading,
   compiling,
   saving,
+  sourceBusy = false,
   hasDirtyScript,
   lastSavedAt,
   lastError,
@@ -70,10 +73,10 @@ export function TopMenu({
       </div>
       {projectControls}
       <nav className="menu-row" aria-label="Workbench actions">
-        <button type="button" data-testid="save-script-button" disabled={!project || saving} onClick={onSave}>
+        <button type="button" data-testid="save-script-button" disabled={!project || saving || sourceBusy} onClick={onSave}>
           {saving ? '...' : t('topMenu.save')}
         </button>
-        <button type="button" data-testid="compile-button" disabled={!canCompile || compiling} onClick={onCompile}>
+        <button type="button" data-testid="compile-button" disabled={!canCompile || compiling || sourceBusy} onClick={onCompile}>
           {compiling ? '...' : t('topMenu.compile')}
         </button>
         <div className="toolbar-menu build-menu">
@@ -93,12 +96,12 @@ export function TopMenu({
                 type="button"
                 role="menuitem"
                 data-testid="mock-compile-button"
-                disabled={!canCompile || compiling}
+                disabled={!canCompile || compiling || sourceBusy}
                 onClick={() => runBuildAction(onMockCompile)}
               >
                 {compiling ? '...' : t('topMenu.mockCompile')}
               </button>
-              <button type="button" role="menuitem" disabled={!canCompile || compiling} onClick={() => runBuildAction(onCompile)}>
+              <button type="button" role="menuitem" disabled={!canCompile || compiling || sourceBusy} onClick={() => runBuildAction(onCompile)}>
                 {compiling ? '...' : t('topMenu.compile')}
               </button>
             </div>
@@ -137,7 +140,7 @@ export function TopMenu({
           {hasDraftChanges ? t('topMenu.status.params') : t('topMenu.status.stable')}
         </span>
         {lastSavedAt ? <span className="status-pill">{t('topMenu.status.savedAt', { time: lastSavedAt })}</span> : null}
-        <button className="primary-action" disabled={!hasDraftChanges || applying} onClick={onApply}>
+        <button className="primary-action" disabled={!hasDraftChanges || applying || sourceBusy} onClick={onApply}>
           {applying ? '...' : t('topMenu.apply')}
         </button>
       </div>

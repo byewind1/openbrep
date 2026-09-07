@@ -8,6 +8,7 @@ import type { AssistantImageAttachment, CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useUiPrefsStore } from '../state/uiPrefsStore'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
+import { workbenchStore } from '../state/workbenchStore'
 import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
 import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
 import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
@@ -15,6 +16,8 @@ import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { useConfigAutoRefresh } from './useConfigAutoRefresh'
+import { useProjectLeaveGuard } from './useProjectLeaveGuard'
+import { collectScriptOverrides } from '../state/actions/sourceActionHelpers'
 
 const RevisionPanel = lazy(() => import('./diagnostics/RevisionPanel').then((m) => ({ default: m.RevisionPanel })))
 const SettingsDrawer = lazy(() => import('./settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })))
@@ -26,6 +29,8 @@ export function WorkbenchApp() {
   }, [locale])
 
   const { confirm, prompt, dialogNode } = useThemedDialog()
+  // SF1（F04）：所有离开项目入口共用的"取消 / 丢弃并继续"确认守卫
+  const { runLeaveAction, dialogNode: leaveDialogNode } = useProjectLeaveGuard()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
@@ -47,6 +52,7 @@ export function WorkbenchApp() {
   const loading = useWorkbenchStore((state) => state.loading)
   const applying = useWorkbenchStore((state) => state.applying)
   const compiling = useWorkbenchStore((state) => state.compiling)
+  const sourceActionBusy = useWorkbenchStore((state) => state.sourceActionBusy)
   const lastError = useWorkbenchStore((state) => state.lastError)
   const backendNotice = useWorkbenchStore((state) => state.backendNotice)
   const compileLog = useWorkbenchStore((state) => state.compileLog)
@@ -187,7 +193,6 @@ export function WorkbenchApp() {
   const updateActiveScriptContent = useWorkbenchStore((state) => state.updateActiveScriptContent)
   const updateScriptContent = useWorkbenchStore((state) => state.updateScriptContent)
   const saveScript = useWorkbenchStore((state) => state.saveScript)
-  const saveActiveScript = useWorkbenchStore((state) => state.saveActiveScript)
   const saveRevision = useWorkbenchStore((state) => state.saveRevision)
   const restoreRevision = useWorkbenchStore((state) => state.restoreRevision)
   const clearLastError = useWorkbenchStore((state) => state.clearLastError)
@@ -228,37 +233,39 @@ export function WorkbenchApp() {
   }
 
   function resetCurrentProject() {
-    if (!project || loading) return
-    const hasUnsavedDraft = hasAnyDirtyScript || hasDraftChanges()
-    if (!hasUnsavedDraft) {
-      void closeProject()
-      return
-    }
-    void confirm({
-      title: 'Reset current project',
-      message: 'Reset current project? Unsaved script edits or parameter drafts will be discarded unless saved first.',
-      danger: true,
-    }).then((ok) => {
-      if (ok) void closeProject()
-    })
+    if (!project) return
+    // SF1：离开项目统一守卫（有草稿时"取消 / 丢弃并继续"）
+    void runLeaveAction('Reset current project', () => closeProject())
   }
 
   function hasMeaningfulProjectContent() {
     return Object.values(scriptContents).some((content) => content.trim().length > 0)
   }
 
-  async function confirmDiscardUnsavedChanges(action: string) {
-    const hasUnsavedDraft = hasAnyDirtyScript || hasDraftChanges()
-    if (!hasUnsavedDraft) return true
-    return confirm({
-      title: action,
-      message: `${action}? Unsaved script edits or parameter drafts will be discarded unless saved first.`,
-    })
+  function createNewProject() {
+    // SF1：New 与其他离开入口共用同一个守卫，不提前丢弃草稿
+    void runLeaveAction('Create a new project', () => newProject())
   }
 
-  async function createNewProject() {
-    if (loading || !(await confirmDiscardUnsavedChanges('Create a new project'))) return
-    void newProject()
+  // SF1：Project 菜单的离开类入口统一走守卫；Save As 用自身契约不套丢弃确认。
+  function openProjectPath(path: string) {
+    void runLeaveAction('Open project', () => loadProjectPath(path))
+  }
+
+  function browseProject() {
+    void runLeaveAction('Open project', () => browseProjectDirectory())
+  }
+
+  function importGdl() {
+    void runLeaveAction('Import GDL file', () => importGdlFile())
+  }
+
+  function importGsm() {
+    void runLeaveAction('Import GSM file', () => importGsmFile())
+  }
+
+  function importBlender() {
+    void runLeaveAction('Import Blender script', () => importBlenderScript())
   }
 
   async function saveProjectAsWithPrompt() {
@@ -274,17 +281,18 @@ export function WorkbenchApp() {
       window.alert('Project name is required.')
       return
     }
-    await exportHsfProject('', cleanedName)
+    // SF1：命名完成后再捕获本次脚本草稿并调用；不先 flush 写回原项目
+    const scriptOverrides = collectScriptOverrides(workbenchStore.getState())
+    await exportHsfProject('', cleanedName, scriptOverrides)
   }
 
-  async function saveCurrentProject() {
+  // SF1（F01）：Save 保存所有脏脚本（saveProject action 内先 flush），
+  // 不依赖当前标签，也不先 saveActiveScript 再重复保存。
+  function saveCurrentProject() {
     if (!project || loading) return
-    if (hasDirtyScript) {
-      await saveActiveScript()
-    }
     // P7c：新建空白项目（无路径）→ 后端回 needs_save_as → 下方 effect 弹命名引导
     // ThemedDialog（默认「未命名构件」）；已落盘项目直接落盘，行为不变。
-    await saveProject()
+    void saveProject()
   }
 
   // P7c：needs_save_as 响应 → 弹命名对话框；确认 → saveProjectAs 只传 name
@@ -353,13 +361,14 @@ export function WorkbenchApp() {
           <ProjectOpenControls
             project={project}
             loading={loading}
+            sourceBusy={sourceActionBusy}
             recentProjects={recentProjects}
             onNewProject={createNewProject}
-            onLoadProjectPath={(path) => void loadProjectPath(path)}
-            onBrowseProjectDirectory={() => void browseProjectDirectory()}
-            onImportGdlFile={() => void importGdlFile()}
-            onImportGsmFile={() => void importGsmFile()}
-            onImportBlenderScript={() => void importBlenderScript()}
+            onLoadProjectPath={openProjectPath}
+            onBrowseProjectDirectory={browseProject}
+            onImportGdlFile={importGdl}
+            onImportGsmFile={importGsm}
+            onImportBlenderScript={importBlender}
             onSaveProjectAs={() => void saveProjectAsWithPrompt()}
           />
         }
@@ -374,7 +383,8 @@ export function WorkbenchApp() {
         loading={loading}
         compiling={compiling}
         saving={scriptSaving}
-        hasDirtyScript={hasDirtyScript}
+        sourceBusy={sourceActionBusy}
+        hasDirtyScript={hasAnyDirtyScript}
         lastSavedAt={lastSavedAt}
         lastError={lastError}
         backendNotice={backendNotice}
@@ -399,7 +409,8 @@ export function WorkbenchApp() {
             onBrowseDirectory={() => browseWorkspaceDirectory()}
             onDismissInitHint={clearWorkspaceInitHint}
             onTrashWorkspaceProject={(path) => void trashWorkspaceProject(path)}
-            onSelectProjectPath={(path) => void loadProjectPath(path)}
+            onSelectProjectPath={openProjectPath}
+            sourceBusy={sourceActionBusy}
             scripts={scripts}
             activeScriptName={activeScriptName}
             dirtyScripts={dirtyScripts}
@@ -434,6 +445,7 @@ export function WorkbenchApp() {
             activeFocusLine={activeFocusLine}
             activeFocusEndLine={activeFocusEndLine}
             activeFocusKey={activeFocusKey}
+            sourceBusy={sourceActionBusy}
             onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onChangeScript={updateActiveScriptContent}
@@ -451,7 +463,7 @@ export function WorkbenchApp() {
             tapirStatus={tapirStatus}
             tapirBusy={tapirBusy}
             assistantMessages={assistantMessages}
-            assistantBusy={assistantBusy}
+            assistantBusy={assistantBusy || sourceActionBusy}
             pendingPlan={pendingPlan}
             onConfirmPlan={(approve) => void confirmPendingPlan(approve)}
             pendingExtraction={pendingExtraction}
@@ -476,7 +488,7 @@ export function WorkbenchApp() {
             onClearAssistantHistory={() => void clearAssistantHistory()}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
             onOpenScript={openScriptInEditor}
-            onSaveRevision={(message) => void saveRevision(message)}
+            onSaveRevision={(message) => saveRevision(message)}
             onRevealLine={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine ?? null)}
             modelOptions={llmSettings.model_options ?? []}
             currentModel={llmSettings.model}
@@ -508,7 +520,7 @@ export function WorkbenchApp() {
               revisions={revisions}
               latestRevisionId={latestRevisionId}
               loading={revisionLoading}
-              onSave={(message) => void saveRevision(message)}
+              onSave={(message) => saveRevision(message)}
               onRestore={(revisionId) => void restoreRevision(revisionId)}
             />
           </Suspense>
@@ -549,7 +561,7 @@ export function WorkbenchApp() {
         onReloadRuntimeSettings={reloadRuntimeSettings}
         onBrowseCompilerFile={browseCompilerFile}
         onBrowseOutputDirectory={browseOutputDirectory}
-        onOpenProjectPath={(path) => void loadProjectPath(path)}
+        onOpenProjectPath={openProjectPath}
         onExportHsfProject={() => void exportHsfProject()}
         onResetCurrentProject={resetCurrentProject}
         onLoadProjectGitStatus={() => void loadProjectGitStatus()}
@@ -570,6 +582,7 @@ export function WorkbenchApp() {
       />
       </Suspense>
       {dialogNode}
+      {leaveDialogNode}
     </main>
   )
 }
