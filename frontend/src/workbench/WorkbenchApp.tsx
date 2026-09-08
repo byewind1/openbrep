@@ -17,7 +17,7 @@ import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { useConfigAutoRefresh } from './useConfigAutoRefresh'
 import { useProjectLeaveGuard } from './useProjectLeaveGuard'
-import { collectScriptOverrides } from '../state/actions/sourceActionHelpers'
+import { captureProjectIdentity, sameProjectIdentity } from '../state/actions/sourceActionHelpers'
 
 const RevisionPanel = lazy(() => import('./diagnostics/RevisionPanel').then((m) => ({ default: m.RevisionPanel })))
 const SettingsDrawer = lazy(() => import('./settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })))
@@ -274,16 +274,18 @@ export function WorkbenchApp() {
       window.alert('Nothing to save yet. Add GDL code or generate an object first.')
       return
     }
+    // R1-01：命名前捕获身份，返回后复查；项目已换则拒绝旧命名动作
+    const identity = captureProjectIdentity(workbenchStore.getState())
     const name = await prompt({ title: 'Project name', defaultValue: project.name || 'Untitled GDL Object' })
     if (name === null) return
+    if (!sameProjectIdentity(workbenchStore.getState(), identity)) return
     const cleanedName = name.trim()
     if (!cleanedName) {
       window.alert('Project name is required.')
       return
     }
-    // SF1：命名完成后再捕获本次脚本草稿并调用；不先 flush 写回原项目
-    const scriptOverrides = collectScriptOverrides(workbenchStore.getState())
-    await exportHsfProject('', cleanedName, scriptOverrides)
+    // R1-01：exportHsfProject 无第三参时内部统一收集当前草稿
+    await exportHsfProject('', cleanedName)
   }
 
   // SF1（F01）：Save 保存所有脏脚本（saveProject action 内先 flush），
@@ -305,6 +307,8 @@ export function WorkbenchApp() {
     namingPromptRef.current = true
     void (async () => {
       try {
+        // R1-01：弹框前捕获身份，返回后复查；项目已换则拒绝旧命名动作
+        const identity = captureProjectIdentity(workbenchStore.getState())
         const name = await prompt({
           title: t('saveAs.dialogTitle'),
           message: t('saveAs.dialogMessage'),
@@ -314,6 +318,7 @@ export function WorkbenchApp() {
           clearNeedsSaveAs()
           return
         }
+        if (!sameProjectIdentity(workbenchStore.getState(), identity)) return
         const cleanedName = name.trim()
         if (!cleanedName) {
           clearNeedsSaveAs()

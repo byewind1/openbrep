@@ -5,6 +5,7 @@ import {
   beginSourceAction,
   captureProjectIdentity,
   endSourceAction,
+  formatDraftKeptNotice,
   keepValidDraftParameters,
   sameProjectIdentity,
 } from './sourceActionHelpers'
@@ -44,21 +45,29 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
     })
   }
 
-  // SF1：参数快照应用后不顺手清掉无关参数草稿——保留仍合法的未提交项；
-  // appliedDraft（本次提交的草稿）整体清除；removedName（删除参数）单项清除。
+  // SF1/R1-04：参数快照应用后不顺手清掉无关参数草稿——保留仍合法的未提交项；
+  // appliedDraft（本次提交的草稿）经合法校验，被丢弃的字段返回给调用方提示；
+  // removedName（删除参数）单项清除。
   function applyParameterSnapshot(
     result: WorkbenchSnapshot,
     appliedDraft?: Record<string, unknown>,
     removedName?: string,
-  ) {
-    const kept: Record<string, unknown> = appliedDraft
-      ? {}
-      : keepValidDraftParameters(
-          get().draftParameters,
-          (result.parameters ?? []).map((parameter) => parameter.name),
-        ).kept
-    if (removedName && kept[removedName] !== undefined) {
-      delete kept[removedName]
+  ): { kept: Record<string, unknown>; dropped: string[] } {
+    const validNames = (result.parameters ?? []).map((parameter) => parameter.name)
+    let kept: Record<string, unknown> = {}
+    let dropped: string[] = []
+    if (appliedDraft) {
+      // Apply 提交的草稿：合法项已被后端采纳，应全部清空；只把失效字段返回提示
+      const validated = keepValidDraftParameters(appliedDraft, validNames)
+      kept = {}
+      dropped = validated.dropped
+    } else {
+      const validated = keepValidDraftParameters(get().draftParameters, validNames)
+      kept = validated.kept
+      dropped = validated.dropped
+      if (removedName && kept[removedName] !== undefined) {
+        delete kept[removedName]
+      }
     }
     set({
       project: result.project,
@@ -71,11 +80,14 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       // 参数应用/增删改在后端都会 save_to_disk，算一次保存
       lastSavedAt: nowTimeText(),
     })
+    return { kept, dropped }
   }
 
-  // SF1：参数写入（Apply/增/改/删）的统一前置：先保存全部脏脚本，失败即中止
+  // SF1/R1：参数写入（Apply/增/改/删）的统一前置：先保存全部脏脚本，失败即中止
   // （参数 API 零调用）；flush 后重新确认项目身份再提交。成功后只清被提交的
   // 参数草稿，保留无关合法草稿；flush 已成功而参数写入失败时如实说明。
+  // R1-02：await write 返回后再查身份，过期响应不覆盖新项目。
+  // R1-03：异常分支复位 applying/sourceActionBusy 并显示错误。
   async function runParameterWrite(
     action: string,
     removedName: string | undefined,
@@ -109,9 +121,32 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
         })
         return false
       }
-      applyParameterSnapshot(result, appliedDraft, removedName)
+      if (!sameProjectIdentity(get(), identity)) {
+        set({ applying: false })
+        return false
+      }
+      const { kept, dropped } = applyParameterSnapshot(result, appliedDraft, removedName)
       await refreshParameterSource()
+      if (dropped.length > 0) {
+        set((state) => ({
+          compileLog: [
+            `Parameter drafts dropped after ${action}: ${dropped.join(', ')}.`,
+            ...state.compileLog,
+          ].slice(0, 20),
+        }))
+      }
+      if (Object.keys(kept).length > 0) {
+        set((state) => ({
+          compileLog: ['Parameter drafts kept (not applied).', ...state.compileLog].slice(0, 20),
+        }))
+      }
       return true
+    } catch (exc) {
+      set({
+        applying: false,
+        lastError: exc instanceof Error ? exc.message : String(exc ?? `Failed to ${action}.`),
+      })
+      return false
     } finally {
       endSourceAction(set)
     }

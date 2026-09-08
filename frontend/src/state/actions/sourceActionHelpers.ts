@@ -46,16 +46,27 @@ export function sameProjectIdentity(
 }
 
 /** 收集本次 Save As 请求的脚本覆盖：只取当前 dirty 且内容存在的脚本。
- *  空字符串是有效覆盖，不能被 truthy 判断丢掉。 */
-export function collectScriptOverrides(state: WorkbenchState): Record<string, string> {
+ *  空字符串是有效覆盖，不能被 truthy 判断丢掉。
+ *  返回 {overrides, error?}：dirty=true 但 content 缺失时返回明确错误。 */
+export function collectScriptOverrides(state: WorkbenchState): { overrides: Record<string, string>; error?: string } {
   const overrides: Record<string, string> = {}
+  const missing: string[] = []
   for (const [name, dirty] of Object.entries(state.dirtyScripts)) {
     if (!dirty) continue
     const content = state.scriptContents[name]
-    if (typeof content !== 'string') continue
+    if (typeof content !== 'string') {
+      missing.push(name)
+      continue
+    }
     overrides[name] = content
   }
-  return overrides
+  if (missing.length > 0) {
+    return {
+      overrides,
+      error: `Cannot export drafts: missing editor buffer for ${missing.join(', ')}.`,
+    }
+  }
+  return { overrides }
 }
 
 /** 任一草稿存在（脚本草稿或参数草稿）——离开项目确认共用的判定。 */
@@ -78,4 +89,16 @@ export function keepValidDraftParameters(
     else dropped.push(name)
   }
   return { kept, dropped }
+}
+
+/** 根据保留/丢弃的参数草稿生成提示，未保留任何字段时不谎称已保留。 */
+export function formatDraftKeptNotice(kept: Record<string, unknown>, dropped: string[]): string[] {
+  const notices: string[] = []
+  if (Object.keys(kept).length > 0) {
+    notices.push('Parameter drafts kept (not applied).')
+  }
+  if (dropped.length > 0) {
+    notices.push(`Parameter drafts dropped (no longer valid): ${dropped.join(', ')}.`)
+  }
+  return notices
 }

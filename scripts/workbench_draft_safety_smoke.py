@@ -61,6 +61,41 @@ def create_fixture(root: Path, name: str) -> Path:
     return Path(project.save_to_disk())
 
 
+def prepare_isolated_config(source: Path, root: Path) -> Path:
+    """Copy the credential-free config into the temp root and force output_dir / mock compiler."""
+    dest = root / "sf1-test-config.toml"
+    text = source.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    # Drop any existing output_dir lines to avoid duplicates, and force mock compiler.
+    filtered = [line for line in lines if not line.strip().startswith("output_dir")]
+    in_compiler = False
+    forced: list[str] = []
+    for line in filtered:
+        stripped = line.strip()
+        if stripped == "[compiler]":
+            in_compiler = True
+        elif stripped.startswith("[") and stripped.endswith("]"):
+            in_compiler = False
+        if in_compiler and stripped.startswith("mode"):
+            line = 'mode = "mock"'
+        forced.append(line)
+
+    # Insert top-level output_dir right before the first section header so it stays
+    # in the root table (not accidentally under [compiler] or another section).
+    first_section_index = next(
+        (i for i, line in enumerate(forced) if line.strip().startswith("[") and line.strip().endswith("]")),
+        len(forced),
+    )
+    insertion = [
+        "",
+        "# SF1-R1: force all exports/GSM output into the isolated temp root",
+        f'output_dir = "{root / "exports"}"',
+    ]
+    final = forced[:first_section_index] + insertion + forced[first_section_index:]
+    dest.write_text("\n".join(final), encoding="utf-8")
+    return dest
+
+
 def sha256_tree(path: Path) -> dict[str, str]:
     digests: dict[str, str] = {}
     for file in sorted(path.rglob("*")):
@@ -247,9 +282,13 @@ def case_save_as_dirty(probe: Probe, root: Path) -> dict[str, Any]:
     exported_3d = (exported / "scripts" / "3d.gdl").read_text(encoding="utf-8")
     exported_2d = (exported / "scripts" / "2d.gdl").read_text(encoding="utf-8")
     new_params = probe.snapshot_parameters()
+    exports_root = (root / "exports").resolve()
     actual = {
+        "exported_path": str(exported),
         "exported_name": exported.name,
         "exported_is_new_dir": exported != target and exported.exists(),
+        "exported_in_temp_root": exported.resolve().is_relative_to(exports_root),
+        "exported_name_no_collision": exported.name == "SaveAsCopy",
         "marker_3d_in_export": marker_3d in exported_3d,
         "marker_2d_in_export": marker_2d in exported_2d,
         "original_unchanged": before == after,
@@ -265,6 +304,55 @@ def case_save_as_dirty(probe: Probe, root: Path) -> dict[str, Any]:
     return {
         "case": "save_as_dirty",
         "expect": "copy contains both drafts; original byte-identical; parameter draft kept, not applied",
+        "actual": actual,
+        "passed": passed,
+    }
+
+
+def case_first_save_after_new(probe: Probe, root: Path) -> dict[str, Any]:
+    """R1-01: New project -> edit 3d.gdl -> first top Save -> name -> saved copy contains edit."""
+    marker = "REVIEW_UNTITLED_KEEP"
+    probe.page.goto(probe.web_url, wait_until="domcontentloaded", timeout=int(probe.timeout * 1000))
+    probe.page.wait_for_function(
+        "() => document.querySelector('.brand-lockup strong') !== null",
+        timeout=int(probe.timeout * 1000),
+    )
+    probe.open_project_menu()
+    probe.page.get_by_role("button", name="New", exact=True).click()
+    # No drafts -> New should not show discard dialog
+    probe.page.wait_for_timeout(800)
+    if probe.page.get_by_role("dialog").count() > 0:
+        raise AssertionError("New without drafts should not show discard dialog")
+    probe.edit_script("3d.gdl", f"BLOCK A, B, ZZYZX\n! {marker}\n")
+    # 首次 Save（untitled 项目）→ 后端 needs_save_as → 前端弹命名对话框
+    probe.page.get_by_test_id("save-script-button").click()
+    dialog = probe.page.get_by_role("dialog")
+    dialog.wait_for(timeout=int(probe.timeout * 1000))
+    dialog.get_by_role("textbox").fill("ReviewFirstSave")
+    dialog.get_by_role("button", name="Confirm", exact=True).click()
+    probe.page.wait_for_function(
+        "() => document.body.innerText.includes('Saved HSF source:')",
+        timeout=int(probe.timeout * 1000),
+    )
+    snapshot = probe.snapshot()
+    saved = Path(snapshot["project"]["path"])
+    on_disk = marker in (saved / "scripts" / "3d.gdl").read_text(encoding="utf-8")
+    in_temp_root = saved.resolve().is_relative_to((root / "exports").resolve())
+    # Reload saved project and verify editor still shows the marker
+    probe.load_api(saved)
+    probe.open_script_and_expect("3d.gdl", marker)
+    in_editor_after_reload = marker in probe.editor_text()
+    actual = {
+        "saved_path": str(saved),
+        "saved_path_exists": saved.exists(),
+        "saved_in_temp_root": in_temp_root,
+        "marker_on_disk": on_disk,
+        "marker_in_editor_after_reload": in_editor_after_reload,
+    }
+    passed = all(actual.values())
+    return {
+        "case": "first_save_after_new",
+        "expect": "first Save of untitled project exports current script draft and reloads with it",
         "actual": actual,
         "passed": passed,
     }
@@ -464,6 +552,7 @@ CASES = [
     case_save_inactive_dirty,
     case_compile_multiple_dirty,
     case_save_as_dirty,
+    case_first_save_after_new,
     case_apply_parameter_while_script_dirty,
     case_open_while_dirty,
     case_new_while_dirty,
@@ -499,11 +588,14 @@ def run_smoke(
 
     env = os.environ.copy()
     env.update(env_overrides)
-    env["GDL_AGENT_CONFIG"] = str(config)
 
     try:
         temp_root = tempfile.TemporaryDirectory(prefix="openbrep_sf1_smoke_")
         root = Path(temp_root.name)
+        # R1-05：把传入的凭据无关配置复制到临时 root，并强制 output_dir 指向
+        # root/exports；所有导出/GSM 产物必须落在此隔离目录下。
+        isolated_config = prepare_isolated_config(config, root)
+        env["GDL_AGENT_CONFIG"] = str(isolated_config)
         process = subprocess.Popen(
             command,
             cwd=str(ROOT),

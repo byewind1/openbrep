@@ -107,6 +107,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     return images && images.length ? `${message}\n[图: ${labels}]` : message
   }
 
+  // R1-02：AI 用户入口在源操作进行中也必须拒绝（sourceActionBusy 反向冲突）。
+  function guardSourceBusy(): boolean {
+    if (get().sourceActionBusy) {
+      set({ lastError: 'A source operation is in progress.' })
+      return false
+    }
+    return true
+  }
+
   async function persistAssistantHistory() {
     // 无项目时不写盘：聊天历史存在 <项目>/.openbrep/ 下，
     // 纯聊天不应触发任何落盘，也避免后端报错污染 lastError
@@ -381,6 +390,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     },
 
     async sendAssistantMessage(message: string) {
+      if (!guardSourceBusy()) return
       const trimmed = message.trim()
       if (!trimmed) return
       const history = buildAssistantHistory(get().assistantMessages)
@@ -415,10 +425,12 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     },
 
     async createProjectFromPrompt(message: string, images: AssistantImageAttachment[] = []) {
+      if (!guardSourceBusy()) return
       return _createProject(message, images)
     },
 
     async generateAssistantChanges(message: string, images: AssistantImageAttachment[] = []) {
+      if (!guardSourceBusy()) return
       const trimmed = message.trim()
       if (!trimmed) return
       const history = buildAssistantHistory(get().assistantMessages)
@@ -486,6 +498,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // Detects intent → routes to explain / generate / create.
     // Supports AbortController for ESC / stop-button interruption.
     async sendChat(message: string, images: AssistantImageAttachment[] = []) {
+      if (!guardSourceBusy()) return
       const trimmed = message.trim()
       if (!trimmed) return
 
@@ -675,6 +688,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     },
 
     async confirmPendingPlan(approve: boolean) {
+      if (!guardSourceBusy()) return
       // 计划确认门（V3）：approve=true → 带已确认计划执行（SSE 接回进度流）；false → 取消
       const plan = get().pendingPlan
       if (!plan) {
@@ -719,6 +733,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
 
     /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建（跳过 harness）；false 取消清态。 */
     async confirmPendingExtraction(extractions: VisionExtraction[], approve: boolean) {
+      if (!guardSourceBusy()) return
       const pending = get().pendingExtraction
       if (!pending) {
         set({ lastError: '没有待确认的读图结果，请先发起一次带图的创建。' })

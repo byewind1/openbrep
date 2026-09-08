@@ -71,8 +71,14 @@ function makeApi(overrides: ApiOverrides = {}): WorkbenchApi {
     })),
     saveProjectRevision: vi.fn(async () => ({ ok: true, latest_revision_id: 'r1' })),
     listProjectRevisions: vi.fn(async () => ({ ok: true, revisions: [], latest_revision_id: null })),
+    compileProject: vi.fn(async () => ({ ok: true, compile: { success: true, mode: 'mock', output_path: '/tmp/x.gsm' } })),
     mockCompile: vi.fn(async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 1 })),
     fetchPreview: vi.fn(async () => ({ meshes: [], wires: [], warnings: [] })),
+    askAssistant: vi.fn(async () => ({ ok: true, assistant: { reply: 'hello' } })),
+    generateWithAssistant: vi.fn(async () => ({ ok: true, assistant: { reply: 'done', changed_files: [] } })),
+    generateWithAssistantStream: vi.fn(async () => ({ ok: true, assistant: { reply: 'done', changed_files: [] } })),
+    requestModifyPlan: vi.fn(async () => ({ ok: true, assistant: { reply: 'plan' } })),
+    confirmModifyPlan: vi.fn(async () => ({ ok: true, assistant: { reply: 'done', changed_files: [] } })),
     listRecentProjects: vi.fn(async () => ({ ok: true, projects: [] })),
     listAssistantHistory: vi.fn(async () => ({ ok: true, messages: [] })),
     fetchMemoryStatus: vi.fn(async () => ({
@@ -371,7 +377,7 @@ describe('SF1 Save As（F02）', () => {
     store.getState().updateScriptContent('2d.gdl', '')
     await store.getState().setDraftParameter('A', 2)
 
-    const ok = await store.getState().exportHsfProject('', 'CopyName', collectScriptOverrides(store.getState()))
+    const ok = await store.getState().exportHsfProject('', 'CopyName', collectScriptOverrides(store.getState()).overrides)
 
     expect(ok).toBe(true)
     const exportCall = (api.exportHsfProject as ReturnType<typeof vi.fn>).mock.calls[0]
@@ -445,7 +451,7 @@ describe('SF1 重入与冲突（AC27）', () => {
     expect(api.saveProject).not.toHaveBeenCalled()
   })
 
-  test('网络异常抛错：busy 仍复位（不卡死后续操作）', async () => {
+  test('网络异常抛错：返回 false、busy 仍复位（不卡死后续操作）', async () => {
     const api = makeApi({
       saveProjectScript: vi.fn(async () => {
         throw new Error('network down')
@@ -454,18 +460,31 @@ describe('SF1 重入与冲突（AC27）', () => {
     const store = await loadedStore(api)
     store.getState().updateScriptContent('3d.gdl', 'dirty\n')
 
-    await expect(store.getState().saveProject()).rejects.toThrow('network down')
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(false)
     expect(store.getState().sourceActionBusy).toBe(false)
+    expect(store.getState().lastError).toContain('network down')
   })
 })
 
 describe('SF1 辅助函数', () => {
   test('collectScriptOverrides 只取 dirty 且空串是有效覆盖', () => {
-    const overrides = collectScriptOverrides({
+    const { overrides } = collectScriptOverrides({
       dirtyScripts: { '3d.gdl': true, '2d.gdl': true, 'vl.gdl': false },
       scriptContents: { '3d.gdl': 'x', '2d.gdl': '' },
     } as never)
     expect(overrides).toEqual({ '3d.gdl': 'x', '2d.gdl': '' })
+  })
+
+  test('collectScriptOverrides dirty=true 但 content 缺失时返回错误', () => {
+    const { overrides, error } = collectScriptOverrides({
+      dirtyScripts: { '3d.gdl': true, '2d.gdl': true },
+      scriptContents: { '3d.gdl': 'x' },
+    } as never)
+    expect(overrides).toEqual({ '3d.gdl': 'x' })
+    expect(error).toContain('missing editor buffer')
+    expect(error).toContain('2d.gdl')
   })
 
   test('hasAnyDraft：脚本草稿或参数草稿任一存在', () => {
@@ -478,5 +497,283 @@ describe('SF1 辅助函数', () => {
     const { kept, dropped } = keepValidDraftParameters({ A: 1, gone: 2 }, ['A', 'B'])
     expect(kept).toEqual({ A: 1 })
     expect(dropped).toEqual(['gone'])
+  })
+})
+
+// R1 返工回归：针对 5318f06 验收结论 CHANGES REQUESTED 的五项补充。
+describe('R1-01 统一导出入口', () => {
+  test('exportHsfProject 未传 overrides 时由 action 统一收集当前草稿', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK 1,1,1 ! R1_01_AUTO\n')
+    store.getState().updateScriptContent('2d.gdl', '')
+
+    const ok = await store.getState().exportHsfProject('', 'AutoCollect')
+
+    expect(ok).toBe(true)
+    const exportCall = (api.exportHsfProject as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(exportCall[2]).toEqual({ '3d.gdl': 'BLOCK 1,1,1 ! R1_01_AUTO\n', '2d.gdl': '' })
+  })
+
+  test('dirty=true 但 content 缺失：export API 不调用、草稿保留', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.setState({ dirtyScripts: { '3d.gdl': true }, scriptContents: {} })
+
+    const ok = await store.getState().exportHsfProject('', 'MissingBuffer')
+
+    expect(ok).toBe(false)
+    expect(api.exportHsfProject).not.toHaveBeenCalled()
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+    expect(store.getState().lastError).toContain('missing editor buffer')
+    expect(store.getState().loading).toBe(false)
+    expect(store.getState().sourceActionBusy).toBe(false)
+  })
+
+  test('首次 Save（needs_save_as）→命名→导出副本含当前草稿', async () => {
+    const api = makeApi({
+      fetchSnapshot: vi.fn(async () => snapshot({ name: 'Untitled GDL Object', source: 'untitled' })),
+      saveProject: vi.fn(async () => ({
+        ok: false,
+        needs_save_as: true,
+        error: 'Project has no HSF path. Use Save As HSF.',
+        ...snapshot({ name: 'Untitled GDL Object', source: 'untitled' }),
+      })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'BLOCK 1,1,1 ! R1_01_FIRST\n')
+
+    const saved = await store.getState().saveProject()
+    expect(saved).toBe(false)
+    expect(store.getState().needsSaveAs).toBe(true)
+
+    const exported = await store.getState().exportHsfProject('', 'FirstNamedSave')
+
+    expect(exported).toBe(true)
+    const exportCall = (api.exportHsfProject as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(exportCall[2]).toEqual({ '3d.gdl': 'BLOCK 1,1,1 ! R1_01_FIRST\n' })
+    expect(store.getState().project?.path).toBe('/exports/FirstNamedSave')
+  })
+})
+
+describe('R1-02 异步身份检查与反向冲突保护', () => {
+  test('参数 write 等待期间 projectEpoch 改变：旧结果不覆盖新项目', async () => {
+    let release!: (value: { ok: boolean; parameters: unknown[] }) => void
+    const gate = new Promise<{ ok: boolean; parameters: unknown[] }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({
+      applyParameters: vi.fn(() => gate),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const pending = store.getState().applyDraftParameters()
+    await vi.waitFor(() => expect(store.getState().applying).toBe(true))
+    // 模拟用户在等待期间切换了项目
+    store.setState({ projectEpoch: 99, sessionId: 's-new', project: { name: 'Other', source: 'hsf', path: '/other' } })
+    release({ ok: true, parameters: [] })
+    const ok = await pending
+
+    expect(ok).toBe(false)
+    // 新项目状态不被旧响应覆盖
+    expect(store.getState().project?.path).toBe('/other')
+    expect(store.getState().applying).toBe(false)
+  })
+
+  test('sourceActionBusy=true 时 compileCurrentProject 不调用外部 API', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.setState({ sourceActionBusy: true })
+
+    await store.getState().compileCurrentProject()
+
+    expect(api.compileProject).not.toHaveBeenCalled()
+    expect(api.saveProjectScript).not.toHaveBeenCalled()
+    expect(store.getState().lastError).toContain('source operation is in progress')
+  })
+
+  test('sourceActionBusy=true 时 sendChat 不调用外部 API', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.setState({ sourceActionBusy: true })
+
+    await store.getState().sendChat('hello')
+
+    expect(api.askAssistant).not.toHaveBeenCalled()
+    expect(api.generateWithAssistant).not.toHaveBeenCalled()
+    expect(store.getState().lastError).toContain('source operation is in progress')
+  })
+})
+
+describe('R1-03 异常必须复位完整状态并显示错误', () => {
+  test('api.saveProject reject 后 loading/busy 复位、脚本内容保留、下次可执行', async () => {
+    const api = makeApi({
+      saveProject: vi.fn(async () => {
+        throw new Error('network down')
+      }),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'save-fail-draft\n')
+
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(false)
+    expect(store.getState().loading).toBe(false)
+    expect(store.getState().sourceActionBusy).toBe(false)
+    // flush 已成功（脚本已保存），dirty 已清；编辑器内容保留
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().scriptContents['3d.gdl']).toBe('save-fail-draft\n')
+    expect(store.getState().lastError).toContain('network down')
+
+    // 下一次操作可以执行（busy 不复位到卡住状态）
+    store.setState({ lastError: null })
+    expect(store.getState().sourceActionBusy).toBe(false)
+  })
+
+  test('api.exportHsfProject reject 后状态复位、旧项目草稿保留', async () => {
+    const api = makeApi({
+      exportHsfProject: vi.fn(async () => {
+        throw new Error('export crashed')
+      }),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'export-fail-draft\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().exportHsfProject('', 'FailCopy')
+
+    expect(ok).toBe(false)
+    expect(store.getState().loading).toBe(false)
+    expect(store.getState().sourceActionBusy).toBe(false)
+    expect(store.getState().project?.path).toBe('/workspace/Chair')
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(store.getState().lastError).toContain('export crashed')
+  })
+
+  test('参数 API reject 后 applying 复位、脚本已保存、内容保留、错误可见', async () => {
+    const api = makeApi({
+      addProjectParameter: vi.fn(async () => {
+        throw new Error('param backend down')
+      }),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+
+    const ok = await store.getState().addProjectParameter({ name: 'C', type_tag: 'Length', value: 1 })
+
+    expect(ok).toBe(false)
+    expect(store.getState().applying).toBe(false)
+    expect(store.getState().sourceActionBusy).toBe(false)
+    // flush 已成功，dirty 已清；内容保留
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().scriptContents['3d.gdl']).toBe('dirty\n')
+    expect(store.getState().lastError).toContain('param backend down')
+  })
+
+  test('saveRevision API reject 后 revisionLoading 复位、脚本已保存', async () => {
+    const api = makeApi({
+      saveProjectRevision: vi.fn(async () => {
+        throw new Error('revision backend down')
+      }),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'revision-draft\n')
+
+    const ok = await store.getState().saveRevision('r1 message')
+
+    expect(ok).toBe(false)
+    expect(store.getState().revisionLoading).toBe(false)
+    expect(store.getState().sourceActionBusy).toBe(false)
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().scriptContents['3d.gdl']).toBe('revision-draft\n')
+    expect(store.getState().lastError).toContain('revision backend down')
+  })
+
+  test('脚本已保存但参数 API 返回 ok=false：如实提示“Scripts saved, but ...”', async () => {
+    const api = makeApi({
+      applyParameters: vi.fn(async () => ({ ok: false, error: 'param rejected', ...snapshot() })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().applyDraftParameters()
+
+    expect(ok).toBe(false)
+    expect(store.getState().dirtyScripts['3d.gdl']).toBe(false)
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+    expect(store.getState().lastError).toContain('Scripts saved')
+  })
+})
+
+describe('R1-04 失效参数草稿提示准确', () => {
+  test('全部字段失效时 drafts 清空且不谎称已保留', async () => {
+    const api = makeApi({
+      exportHsfProject: vi.fn(async (_parentDir = '', name = '') => ({
+        ok: true,
+        saved_to: `/exports/${name}`,
+        ...snapshot({ name, source: 'hsf', path: `/exports/${name}` }),
+        parameters: [{ name: 'B', type_tag: 'Length', value: '0.5' }],
+      })),
+    })
+    const store = await loadedStore(api)
+    await store.getState().setDraftParameter('A', 9)
+
+    const ok = await store.getState().exportHsfProject('', 'AllDropped')
+
+    expect(ok).toBe(true)
+    expect(store.getState().draftParameters).toEqual({})
+    const log = store.getState().compileLog.join('\n')
+    expect(log).toContain('Parameter drafts dropped')
+    expect(log).toContain('A')
+    expect(log).not.toContain('Parameter drafts kept')
+  })
+
+  test('部分字段保留/部分失效：分别提示 kept 与 dropped', async () => {
+    const api = makeApi({
+      exportHsfProject: vi.fn(async (_parentDir = '', name = '') => ({
+        ok: true,
+        saved_to: `/exports/${name}`,
+        ...snapshot({ name, source: 'hsf', path: `/exports/${name}` }),
+        parameters: [
+          { name: 'A', type_tag: 'Length', value: '1.0' },
+          { name: 'B', type_tag: 'Length', value: '0.5' },
+        ],
+      })),
+    })
+    const store = await loadedStore(api)
+    await store.getState().setDraftParameter('A', 9)
+    await store.getState().setDraftParameter('gone', 99)
+
+    const ok = await store.getState().exportHsfProject('', 'PartialKept')
+
+    expect(ok).toBe(true)
+    expect(store.getState().draftParameters).toEqual({ A: 9 })
+    const log = store.getState().compileLog.join('\n')
+    expect(log).toContain('Parameter drafts kept')
+    expect(log).toContain('Parameter drafts dropped')
+    expect(log).toContain('gone')
+  })
+
+  test('Apply 后删除参数：只清被删项，保留其它合法草稿', async () => {
+    const api = makeApi({
+      deleteProjectParameter: vi.fn(async () => ({
+        ok: true,
+        deleted: 'B',
+        ...snapshot(),
+        parameters: [{ name: 'A', type_tag: 'Length', value: '1.0' }],
+      })),
+    })
+    const store = await loadedStore(api)
+    await store.getState().setDraftParameter('A', 9)
+    await store.getState().setDraftParameter('B', 99)
+
+    const ok = await store.getState().deleteProjectParameter('B')
+
+    expect(ok).toBe(true)
+    expect(store.getState().draftParameters).toEqual({ A: 9 })
   })
 })

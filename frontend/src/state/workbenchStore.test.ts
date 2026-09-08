@@ -680,7 +680,7 @@ test('saveProjectAs with only name exports to auto location and clears needsSave
   // 确认命名 → saveProjectAs 只传 name（parentDir 空 = 后端自动落点）
   await store.getState().saveProjectAs('', '未命名构件')
 
-  expect(exportHsfProject).toHaveBeenCalledWith('', '未命名构件', undefined)
+  expect(exportHsfProject).toHaveBeenCalledWith('', '未命名构件', {})
   expect(store.getState().needsSaveAs).toBe(false)
   expect(store.getState().project?.path).toBe('/exports/未命名构件')
   expect(store.getState().lastError).toBeNull()

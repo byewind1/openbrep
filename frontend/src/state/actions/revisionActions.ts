@@ -29,8 +29,9 @@ export function createRevisionActions({ api, get, set }: WorkbenchActionContext)
       })
     },
 
-    // SF1：创建版本前先保存全部脚本草稿（失败即中止，版本 API 零调用）；
+    // SF1/R1：创建版本前先保存全部脚本草稿（失败即中止，版本 API 零调用）；
     // 不自动 Apply 参数草稿——有草稿时提示未纳入版本。
+    // R1-02：版本 API 返回后再查身份；R1-03：异常分支复位 revisionLoading/sourceActionBusy。
     async saveRevision(message = '') {
       const guard = beginSourceAction(get, set, 'save-revision')
       if (!guard.ok) {
@@ -60,6 +61,10 @@ export function createRevisionActions({ api, get, set }: WorkbenchActionContext)
           })
           return false
         }
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ revisionLoading: false })
+          return false
+        }
         await get().loadRevisions()
         const hasParameterDrafts = Object.keys(get().draftParameters).length > 0
         set((state) => ({
@@ -72,6 +77,12 @@ export function createRevisionActions({ api, get, set }: WorkbenchActionContext)
           ].slice(0, 20),
         }))
         return true
+      } catch (exc) {
+        set({
+          revisionLoading: false,
+          lastError: exc instanceof Error ? exc.message : String(exc ?? 'Failed to save revision.'),
+        })
+        return false
       } finally {
         endSourceAction(set)
       }

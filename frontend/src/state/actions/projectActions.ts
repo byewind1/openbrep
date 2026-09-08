@@ -4,7 +4,9 @@ import type { HsfExportResult, WorkbenchSnapshot } from '../../api/types'
 import {
   beginSourceAction,
   captureProjectIdentity,
+  collectScriptOverrides,
   endSourceAction,
+  formatDraftKeptNotice,
   keepValidDraftParameters,
   sameProjectIdentity,
 } from './sourceActionHelpers'
@@ -126,6 +128,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
     // SF1 Save As：把当前脚本草稿（scriptOverrides）写入新副本，不顺手改写原项目；
     // 失败/取消保留旧项目、草稿与 dirty 状态，不 hydrate 空 fallback。
     // 成功后激活副本；仍合法的参数草稿保留到新项目（不自动 Apply）。
+    // R1-01：调用者未显式传 overrides 时由 action 统一收集；缺失 buffer 明确失败。
     async exportHsfProject(parentDir = '', name = '', scriptOverrides?: Record<string, string>) {
       const guard = beginSourceAction(get, set, 'save-as')
       if (!guard.ok) {
@@ -135,7 +138,16 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       const identity = captureProjectIdentity(get())
       try {
         set({ loading: true, lastError: null })
-        const result = await api.exportHsfProject(parentDir, name, scriptOverrides)
+        let overrides = scriptOverrides
+        if (overrides === undefined) {
+          const collected = collectScriptOverrides(get())
+          if (collected.error) {
+            set({ loading: false, lastError: collected.error })
+            return false
+          }
+          overrides = collected.overrides
+        }
+        const result = await api.exportHsfProject(parentDir, name, overrides)
         if (result.ok === false) {
           // 原生文件框取消：不当成错误；其余失败保留全部草稿
           set({ loading: false, lastError: result.cancelled ? null : result.error ?? 'Failed to export HSF project.' })
@@ -145,7 +157,6 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
           set({ loading: false })
           return false
         }
-        const hadDrafts = Object.keys(get().draftParameters).length > 0
         const keptDrafts = keepValidDraftParameters(
           get().draftParameters,
           (result.parameters ?? []).map((parameter) => parameter.name),
@@ -163,12 +174,18 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
           draftParameters: keptDrafts.kept,
           compileLog: [
             ...(result.saved_to ? [`Saved HSF source: ${result.saved_to}`] : []),
-            // SF1：明确提示参数草稿未应用（参数草稿不带入副本）
-            ...(hadDrafts ? ['Parameter drafts kept (not applied).'] : []),
+            // R1-04：只有确实保留的草稿才提示；被丢弃的字段明确列出
+            ...formatDraftKeptNotice(keptDrafts.kept, keptDrafts.dropped),
             ...state.compileLog,
           ].slice(0, 20),
         }))
         return true
+      } catch (exc) {
+        set({
+          loading: false,
+          lastError: exc instanceof Error ? exc.message : String(exc ?? 'Failed to export HSF project.'),
+        })
+        return false
       } finally {
         endSourceAction(set)
       }
@@ -177,6 +194,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
     // SF1 Save（已有路径）：先 flush 全部脏脚本，再保存项目；不自动 Apply 参数草稿。
     // 成功后不清空同项目编辑状态/参数草稿，只合并项目与参数元数据；
     // 无路径项目走 needsSaveAs 命名引导（不先写临时目录、不丢草稿）。
+    // R1-03：异常分支复位 loading/sourceActionBusy 并显示错误。
     async saveProject() {
       const guard = beginSourceAction(get, set, 'save')
       if (!guard.ok) {
@@ -227,16 +245,26 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
         }))
         // 保存了脏 paramlist.xml 后，同项目刷新参数元数据（保留合法参数草稿）。
         if (Object.values(get().dirtyScripts).every((dirty) => !dirty)) {
-          const snapshot = await api.fetchSnapshot()
-          if (snapshot.project !== null && sameProjectIdentity(get(), identity)) {
-            const kept = keepValidDraftParameters(
-              get().draftParameters,
-              (snapshot.parameters ?? []).map((parameter) => parameter.name),
-            )
-            set({ project: snapshot.project, parameters: snapshot.parameters, draftParameters: kept.kept })
+          try {
+            const snapshot = await api.fetchSnapshot()
+            if (snapshot.project !== null && sameProjectIdentity(get(), identity)) {
+              const kept = keepValidDraftParameters(
+                get().draftParameters,
+                (snapshot.parameters ?? []).map((parameter) => parameter.name),
+              )
+              set({ project: snapshot.project, parameters: snapshot.parameters, draftParameters: kept.kept })
+            }
+          } catch {
+            // best-effort：刷新失败不改变 save 成功语义
           }
         }
         return true
+      } catch (exc) {
+        set({
+          loading: false,
+          lastError: exc instanceof Error ? exc.message : String(exc ?? 'Failed to save HSF project.'),
+        })
+        return false
       } finally {
         endSourceAction(set)
       }
