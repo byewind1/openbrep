@@ -777,3 +777,257 @@ describe('R1-04 失效参数草稿提示准确', () => {
     expect(store.getState().draftParameters).toEqual({ A: 9 })
   })
 })
+
+// R2 返工：两个原返工遗漏的最小修复。
+describe('R2-A 普通 Save 失效参数草稿告知', () => {
+  test('Save 后某参数草稿失效：清理该草稿并在 compileLog 提示字段名', async () => {
+    const api = makeApi({
+      fetchSnapshot: vi.fn(async () => ({
+        ...snapshot(),
+        parameters: [{ name: 'B', type_tag: 'Length', value: '0.5' }],
+      })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('vl.gdl', '! vl dirty\n')
+    await store.getState().setDraftParameter('A', 9)
+
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(true)
+    expect(store.getState().draftParameters).toEqual({})
+    const log = store.getState().compileLog.join('\n')
+    expect(log).toContain('Saved HSF source')
+    expect(log).toContain('Parameter drafts dropped')
+    expect(log).toContain('A')
+    expect(log).not.toContain('Parameter drafts kept')
+  })
+
+  test('Save 后部分参数草稿失效：保留合法项并提示失效字段', async () => {
+    const api = makeApi({
+      fetchSnapshot: vi.fn(async () => ({
+        ...snapshot(),
+        parameters: [
+          { name: 'A', type_tag: 'Length', value: '1.0' },
+          { name: 'B', type_tag: 'Length', value: '0.5' },
+        ],
+      })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('vl.gdl', '! vl dirty\n')
+    await store.getState().setDraftParameter('A', 9)
+    await store.getState().setDraftParameter('gone', 99)
+
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(true)
+    expect(store.getState().draftParameters).toEqual({ A: 9 })
+    const log = store.getState().compileLog.join('\n')
+    expect(log).toContain('Parameter drafts kept')
+    expect(log).toContain('Parameter drafts dropped')
+    expect(log).toContain('gone')
+    expect(api.applyParameters).not.toHaveBeenCalled()
+  })
+
+  test('Save 后全部参数草稿仍合法：只提示 kept，不提示 dropped', async () => {
+    const api = makeApi()
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('vl.gdl', '! vl dirty\n')
+    await store.getState().setDraftParameter('A', 9)
+
+    const ok = await store.getState().saveProject()
+
+    expect(ok).toBe(true)
+    expect(store.getState().draftParameters).toEqual({ A: 9 })
+    const log = store.getState().compileLog.join('\n')
+    expect(log).toContain('Parameter drafts kept')
+    expect(log).not.toContain('Parameter drafts dropped')
+  })
+})
+
+describe('R2-B 过期响应不覆盖新项目状态', () => {
+  async function staleResponseMatrix(
+    action: () => Promise<boolean>,
+    release: (value: any) => void,
+    store: ReturnType<typeof createWorkbenchStore>,
+  ) {
+    const pending = action()
+    await vi.waitFor(() => expect(store.getState().applying).toBe(true))
+    // 旧请求等待期间切换到新项目/epoch
+    store.setState({
+      projectEpoch: 99,
+      sessionId: 's-new',
+      project: { name: 'NEW', source: 'hsf', path: '/new' },
+      lastError: 'NEW_PROJECT_ERROR',
+    })
+    return { pending, release }
+  }
+
+  test('过期参数成功响应：不覆盖新项目 project/草稿/错误', async () => {
+    let release!: (value: { ok: boolean; parameters: unknown[] }) => void
+    const gate = new Promise<{ ok: boolean; parameters: unknown[] }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({ applyParameters: vi.fn(() => gate) })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const { pending } = await staleResponseMatrix(
+      () => store.getState().applyDraftParameters(),
+      release,
+      store,
+    )
+    release({ ok: true, parameters: [] })
+    const ok = await pending
+
+    expect(ok).toBe(false)
+    expect(store.getState().project?.path).toBe('/new')
+    expect(store.getState().lastError).toBe('NEW_PROJECT_ERROR')
+    expect(store.getState().draftParameters).toEqual({ A: 2 })
+  })
+
+  test('过期参数失败响应：不覆盖新项目错误状态', async () => {
+    let release!: (value: { ok: boolean; error?: string }) => void
+    const gate = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({ applyParameters: vi.fn(() => gate) })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const { pending } = await staleResponseMatrix(
+      () => store.getState().applyDraftParameters(),
+      release,
+      store,
+    )
+    release({ ok: false, error: 'OLD_PROJECT_ERROR' })
+    const ok = await pending
+
+    expect(ok).toBe(false)
+    expect(store.getState().project?.path).toBe('/new')
+    expect(store.getState().lastError).toBe('NEW_PROJECT_ERROR')
+  })
+
+  test('过期参数 reject：不覆盖新项目错误状态', async () => {
+    let rejectGate!: (err: Error) => void
+    const gate = new Promise<{ ok: boolean }>((_, reject) => {
+      rejectGate = reject
+    })
+    // 消费可能的未处理 rejection 跟踪，实际仍由 action catch 处理
+    gate.catch(() => {})
+    const api = makeApi({ applyParameters: vi.fn(() => gate) })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const pending = store.getState().applyDraftParameters()
+    await vi.waitFor(() => expect(store.getState().applying).toBe(true))
+    store.setState({
+      projectEpoch: 99,
+      sessionId: 's-new',
+      project: { name: 'NEW', source: 'hsf', path: '/new' },
+      lastError: 'NEW_PROJECT_ERROR',
+    })
+    rejectGate(new Error('OLD_PROJECT_REJECT'))
+    const ok = await pending
+
+    expect(ok).toBe(false)
+    expect(store.getState().project?.path).toBe('/new')
+    expect(store.getState().lastError).toBe('NEW_PROJECT_ERROR')
+  })
+
+  test('同项目参数失败仍显示错误并可再次执行', async () => {
+    const api = makeApi({
+      applyParameters: vi.fn(async () => ({ ok: false, error: 'SAME_PROJECT_FAIL', ...snapshot() })),
+    })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+    await store.getState().setDraftParameter('A', 2)
+
+    const ok = await store.getState().applyDraftParameters()
+
+    expect(ok).toBe(false)
+    expect(store.getState().lastError).toBe('Scripts saved, but apply parameters failed: SAME_PROJECT_FAIL')
+    expect(store.getState().sourceActionBusy).toBe(false)
+    expect(store.getState().applying).toBe(false)
+    // 下一次操作可执行
+    const ok2 = await store.getState().applyDraftParameters()
+    expect(ok2).toBe(false)
+  })
+
+  test('Save 过期失败响应：不覆盖新项目错误', async () => {
+    let release!: (value: { ok: boolean; error?: string }) => void
+    const gate = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({ saveProject: vi.fn(() => gate) })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+
+    const pending = store.getState().saveProject()
+    await vi.waitFor(() => expect(store.getState().loading).toBe(true))
+    store.setState({
+      projectEpoch: 99,
+      sessionId: 's-new',
+      project: { name: 'NEW', source: 'hsf', path: '/new' },
+      lastError: 'NEW_PROJECT_ERROR',
+    })
+    release({ ok: false, error: 'OLD_SAVE_ERROR' })
+    const ok = await pending
+
+    expect(ok).toBe(false)
+    expect(store.getState().project?.path).toBe('/new')
+    expect(store.getState().lastError).toBe('NEW_PROJECT_ERROR')
+  })
+
+  test('Save As 过期失败响应：不覆盖新项目错误', async () => {
+    let release!: (value: { ok: boolean; error?: string }) => void
+    const gate = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({ exportHsfProject: vi.fn(() => gate) })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+
+    const pending = store.getState().exportHsfProject('', 'Copy')
+    await vi.waitFor(() => expect(store.getState().loading).toBe(true))
+    store.setState({
+      projectEpoch: 99,
+      sessionId: 's-new',
+      project: { name: 'NEW', source: 'hsf', path: '/new' },
+      lastError: 'NEW_PROJECT_ERROR',
+    })
+    release({ ok: false, error: 'OLD_EXPORT_ERROR' })
+    const ok = await pending
+
+    expect(ok).toBe(false)
+    expect(store.getState().project?.path).toBe('/new')
+    expect(store.getState().lastError).toBe('NEW_PROJECT_ERROR')
+  })
+
+  test('Save Revision 过期失败响应：不覆盖新项目错误', async () => {
+    let release!: (value: { ok: boolean; error?: string }) => void
+    const gate = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      release = resolve
+    })
+    const api = makeApi({ saveProjectRevision: vi.fn(() => gate) })
+    const store = await loadedStore(api)
+    store.getState().updateScriptContent('3d.gdl', 'dirty\n')
+
+    const pending = store.getState().saveRevision('msg')
+    await vi.waitFor(() => expect(store.getState().revisionLoading).toBe(true))
+    store.setState({
+      projectEpoch: 99,
+      sessionId: 's-new',
+      project: { name: 'NEW', source: 'hsf', path: '/new' },
+      lastError: 'NEW_PROJECT_ERROR',
+    })
+    release({ ok: false, error: 'OLD_REVISION_ERROR' })
+    const ok = await pending
+
+    expect(ok).toBe(false)
+    expect(store.getState().project?.path).toBe('/new')
+    expect(store.getState().lastError).toBe('NEW_PROJECT_ERROR')
+  })
+})

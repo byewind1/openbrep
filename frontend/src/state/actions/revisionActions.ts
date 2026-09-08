@@ -54,15 +54,15 @@ export function createRevisionActions({ api, get, set }: WorkbenchActionContext)
           return false
         }
         const result = await api.saveProjectRevision(message)
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ revisionLoading: false })
+          return false
+        }
         if (!result.ok) {
           set({
             revisionLoading: false,
             lastError: result.error ?? 'Failed to save revision.',
           })
-          return false
-        }
-        if (!sameProjectIdentity(get(), identity)) {
-          set({ revisionLoading: false })
           return false
         }
         await get().loadRevisions()
@@ -78,6 +78,10 @@ export function createRevisionActions({ api, get, set }: WorkbenchActionContext)
         }))
         return true
       } catch (exc) {
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ revisionLoading: false })
+          return false
+        }
         set({
           revisionLoading: false,
           lastError: exc instanceof Error ? exc.message : String(exc ?? 'Failed to save revision.'),

@@ -112,6 +112,10 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
         return false
       }
       const result = await write()
+      if (!sameProjectIdentity(get(), identity)) {
+        set({ applying: false })
+        return false
+      }
       if (!result.ok) {
         set({
           applying: false,
@@ -119,10 +123,6 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
             ? `Scripts saved, but ${action} failed: ${result.error ?? 'unknown error'}`
             : result.error ?? `Failed to ${action}.`,
         })
-        return false
-      }
-      if (!sameProjectIdentity(get(), identity)) {
-        set({ applying: false })
         return false
       }
       const { kept, dropped } = applyParameterSnapshot(result, appliedDraft, removedName)
@@ -142,6 +142,10 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       }
       return true
     } catch (exc) {
+      if (!sameProjectIdentity(get(), identity)) {
+        set({ applying: false })
+        return false
+      }
       set({
         applying: false,
         lastError: exc instanceof Error ? exc.message : String(exc ?? `Failed to ${action}.`),

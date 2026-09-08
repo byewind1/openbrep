@@ -148,13 +148,13 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
           overrides = collected.overrides
         }
         const result = await api.exportHsfProject(parentDir, name, overrides)
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ loading: false })
+          return false
+        }
         if (result.ok === false) {
           // 原生文件框取消：不当成错误；其余失败保留全部草稿
           set({ loading: false, lastError: result.cancelled ? null : result.error ?? 'Failed to export HSF project.' })
-          return false
-        }
-        if (!sameProjectIdentity(get(), identity)) {
-          set({ loading: false })
           return false
         }
         const keptDrafts = keepValidDraftParameters(
@@ -181,6 +181,10 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
         }))
         return true
       } catch (exc) {
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ loading: false })
+          return false
+        }
         set({
           loading: false,
           lastError: exc instanceof Error ? exc.message : String(exc ?? 'Failed to export HSF project.'),
@@ -207,6 +211,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
         if (hasPath) {
           const flushed = await get().flushDirtyScripts()
           if (!flushed.ok) {
+            if (!sameProjectIdentity(get(), identity)) return false
             set({ lastError: get().lastError ?? flushed.error ?? 'Failed to save scripts.' })
             return false
           }
@@ -214,6 +219,10 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
         }
         set({ loading: true, lastError: null })
         const result = await api.saveProject()
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ loading: false })
+          return false
+        }
         if (result.ok === false) {
           if (result.needs_save_as) {
             // P7c：新建空白项目首次保存 → 置 needsSaveAs，由组件弹命名引导
@@ -225,10 +234,6 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
             loading: false,
             lastError: result.error ?? 'Failed to save HSF project.',
           })
-          return false
-        }
-        if (!sameProjectIdentity(get(), identity)) {
-          set({ loading: false })
           return false
         }
         // 同项目合并：保留 scriptContents/dirtyScripts/draftParameters，
@@ -252,7 +257,15 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
                 get().draftParameters,
                 (snapshot.parameters ?? []).map((parameter) => parameter.name),
               )
-              set({ project: snapshot.project, parameters: snapshot.parameters, draftParameters: kept.kept })
+              set((state) => ({
+                project: snapshot.project,
+                parameters: snapshot.parameters,
+                draftParameters: kept.kept,
+                compileLog: [
+                  ...formatDraftKeptNotice(kept.kept, kept.dropped),
+                  ...state.compileLog,
+                ].slice(0, 20),
+              }))
             }
           } catch {
             // best-effort：刷新失败不改变 save 成功语义
@@ -260,6 +273,10 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
         }
         return true
       } catch (exc) {
+        if (!sameProjectIdentity(get(), identity)) {
+          set({ loading: false })
+          return false
+        }
         set({
           loading: false,
           lastError: exc instanceof Error ? exc.message : String(exc ?? 'Failed to save HSF project.'),
