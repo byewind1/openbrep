@@ -28,7 +28,9 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
       const issues = compileIssuesFromResult(result)
       const message =
         result.ok && result.compile
-          ? `${result.compile.mode === 'mock' ? 'Mock' : 'LP'} compile passed: ${result.compile.output_path}`
+          ? result.compile.mode === 'mock'
+            ? 'Mock validation passed (no GSM generated).'
+            : `LP compile passed: ${result.compile.output_path}`
           : `Compile failed: ${result.error ?? 'Unknown error'}`
       set((state) => ({
         compileLog: [message, ...state.compileLog].slice(0, 20),

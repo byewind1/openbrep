@@ -1586,6 +1586,33 @@ test('mock compile uses configured output directory', async () => {
   expect(receivedOutputDir).toBe('/workspace/output')
 })
 
+test('configured mock compile reports validation without a GSM artifact', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      compileProject: async () => ({
+        ok: true,
+        compile: {
+          success: true,
+          mode: 'mock',
+          output_path: null,
+          artifact_path: null,
+          stdout: 'Mock validation passed; no GSM artifact was generated.',
+          stderr: '',
+          errors: [],
+          warnings: [],
+          gsm_size_bytes: null,
+          parameter_count: 3,
+        },
+      }),
+    }),
+  )
+
+  await store.getState().compileCurrentProject()
+
+  expect(store.getState().compileLog[0]).toBe('Mock validation passed (no GSM generated).')
+  expect(store.getState().mockCompileResult?.output_path).toBeNull()
+})
+
 test('revealCompileOutput records revealed artifact path', async () => {
   const store = createWorkbenchStore(makeApi())
 

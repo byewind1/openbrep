@@ -177,10 +177,11 @@ def _resolve_compiler(mode: str) -> tuple[MockHSFCompiler | HSFCompiler, str]:
 
 
 def compile_hsf(path: str, mode: str = "auto") -> dict:
-    """编译 HSF → .gsm（只读：产物写临时目录，不写进项目目录）。
+    """编译 HSF；真实模式产物写临时目录，不写进项目目录。
 
     mode: "auto" | "mock" | "real"。auto = HSFCompiler.is_available 为真走真实，
-    否则 MockHSFCompiler。ok=True 表示工具执行成功；success 表示编译结果。
+    否则 MockHSFCompiler。Mock 只校验，不生成或归档伪 .gsm。
+    ok=True 表示工具执行成功；success 表示编译/校验结果。
     """
     with _locked():
         trace_id = _next_trace_id()
@@ -205,8 +206,8 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
             # 成品归档：编译成功才归档（unversioned/），失败不归档且不阻断编译结果。
             # 临时目录产物保留，归档是副本。
             artifact_path: str | None = None
-            if result.success:
-                raw_output = result.output_path or output_gsm
+            if result.success and result.output_path:
+                raw_output = result.output_path
                 try:
                     artifact_path = str(archive_artifact(root, raw_output))
                 except Exception:

@@ -1159,13 +1159,14 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     assert response["ok"] is True
     assert response["compile"]["success"] is True
     assert response["compile"]["mode"] == "mock"
-    assert response["compile"]["output_path"].endswith("CompiledShelf.gsm")
-    assert response["compile"]["gsm_size_bytes"] is not None
+    assert response["compile"]["output_path"] is None
+    assert response["compile"]["artifact_path"] is None
+    assert response["compile"]["gsm_size_bytes"] is None
     assert response["compile"]["parameter_count"] == 3
-    assert (output_dir / "CompiledShelf.gsm").exists()
+    assert not (output_dir / "CompiledShelf.gsm").exists()
 
 
-def test_workbench_session_reveals_last_compiled_artifact(tmp_path):
+def test_workbench_session_does_not_reveal_mock_validation_as_artifact(tmp_path):
     project = HSFProject.create_new("RevealShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()
     revealed: list[Path] = []
@@ -1180,9 +1181,9 @@ def test_workbench_session_reveals_last_compiled_artifact(tmp_path):
     response = session.route("POST", "/api/artifact/reveal", {})
 
     assert compile_response["ok"] is True
-    assert response["ok"] is True
-    assert response["path"] == str(output_dir / "RevealShelf.gsm")
-    assert revealed == [output_dir / "RevealShelf.gsm"]
+    assert response["ok"] is False
+    assert "No compiled artifact" in response["error"]
+    assert revealed == []
 
 
 def test_workbench_session_reveal_artifact_rejects_missing_path(tmp_path):
@@ -1273,7 +1274,7 @@ def test_workbench_session_mock_compile_returns_diagnostics(tmp_path):
     assert response["success"] is False
     assert response["mode"] == "mock"
     assert response["duration_ms"] >= 0
-    assert response["output_path"].endswith("MockCompileDiagnostics.gsm")
+    assert response["output_path"] is None
     assert response["parameter_count"] == 3
     assert response["issues"]
     assert response["issues"][0]["severity"] == "error"
@@ -1318,8 +1319,8 @@ def test_workbench_session_updates_compile_output_directory(tmp_path):
     assert update["ok"] is True
     assert update["compiler"]["output_dir"] == str(output_dir)
     assert response["ok"] is True
-    assert response["compile"]["output_path"] == str(output_dir / "ConfiguredOutputShelf.gsm")
-    assert (output_dir / "ConfiguredOutputShelf.gsm").exists()
+    assert response["compile"]["output_path"] is None
+    assert not (output_dir / "ConfiguredOutputShelf.gsm").exists()
 
 
 def test_workbench_session_persists_compiler_settings_after_llm_settings_save(tmp_path):

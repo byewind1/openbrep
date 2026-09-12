@@ -273,7 +273,7 @@ class TestCliMainCommands(unittest.TestCase):
             self.assertEqual(fake_pipeline.last_request.compare_compile, "mock")
 
 
-    def test_compile_prints_final_filename_and_alias(self):
+    def test_mock_compile_reports_alias_but_not_a_gsm_artifact(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir) / "Planter"
             project_dir.mkdir(parents=True)
@@ -288,10 +288,10 @@ class TestCliMainCommands(unittest.TestCase):
             class _FakeCompileResult:
                 success = True
                 stderr = ""
+                mode = "mock"
 
             class _FakeCompiler:
                 def hsf2libpart(self, hsf_dir, gsm_path):
-                    Path(gsm_path).write_text("compiled", encoding="utf-8")
                     return _FakeCompileResult()
 
             with patch("openbrep.hsf_project.HSFProject.load_from_disk", return_value=fake_project):
@@ -303,10 +303,9 @@ class TestCliMainCommands(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0, msg=result.output)
             self.assertIn("检测到同名文件，已改名为 Planter-2.gsm", result.output)
-            self.assertIn("Planter-2.gsm", result.output)
-            self.assertIn("文件名：Planter-2.gsm", result.output)
-            self.assertTrue((output_root / "Planter-2.gsm").resolve().exists())
-            self.assertEqual((output_root / "Planter-2.gsm").read_text(encoding="utf-8"), "compiled")
+            self.assertIn("Mock 校验通过（未生成可安装的 GSM）", result.output)
+            self.assertNotIn("文件名：Planter-2.gsm", result.output)
+            self.assertFalse((output_root / "Planter-2.gsm").resolve().exists())
             self.assertEqual((output_root / "Planter.gsm").read_text(encoding="utf-8"), "existing")
 
     def test_revision_commands_save_list_and_restore_project_snapshots(self):

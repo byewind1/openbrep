@@ -19,6 +19,21 @@ describe('BottomDrawer compile status', () => {
     render(<BottomDrawer warnings={[]} compileLog={[]} mockCompileResult={makeResult()} />)
 
     expect(screen.getByText('✓ Passed')).toBeTruthy()
+    expect(screen.getByText('✓ Mock 校验通过（未生成 GSM）')).toBeTruthy()
+    expect(screen.queryByText(/^Output:/)).toBeNull()
+  })
+
+  test('labels a real compile as producing a compiled artifact', () => {
+    render(
+      <BottomDrawer
+        warnings={[]}
+        compileLog={[]}
+        mockCompileResult={makeResult({ mode: 'lp', output_path: '/workspace/Chair.gsm' })}
+      />,
+    )
+
+    expect(screen.getByText('✓ 编译通过')).toBeTruthy()
+    expect(screen.getByText('Output: /workspace/Chair.gsm')).toBeTruthy()
   })
 
   test('shows failed badge and the compile error message', () => {

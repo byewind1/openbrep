@@ -390,7 +390,8 @@ export interface ValidateParametersResult {
 export interface CompileInfo {
   success: boolean
   mode: string
-  output_path: string
+  output_path?: string | null
+  artifact_path?: string | null
   stdout: string
   stderr: string
   errors: string[]
@@ -418,7 +419,7 @@ export interface MockCompileResponse {
   mode: string
   issues: CompileIssue[]
   duration_ms: number
-  output_path?: string
+  output_path?: string | null
   gsm_size_bytes?: number | null
   parameter_count?: number | null
   error?: string
