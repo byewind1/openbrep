@@ -41,6 +41,9 @@ export function computeBounds2D(preview: Preview2DPayload | null): Bounds2D | nu
   for (const arc of preview?.arcs ?? []) {
     points.push([arc.cx - arc.r, arc.cy - arc.r], [arc.cx + arc.r, arc.cy + arc.r])
   }
+  for (const text of preview?.texts ?? []) {
+    points.push([text.x, text.y])
+  }
 
   if (!points.length) {
     return null

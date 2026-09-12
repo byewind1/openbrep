@@ -1906,3 +1906,259 @@ class TestCallMacroGuards(unittest.TestCase):
         )
         self.assertIn("MACRO_TIMEOUT", _codes(res))
         self.assertEqual(res.meshes, [])
+
+
+# ── P4：2D 命令覆盖扩展（POLY2_ 系状态码 + 文本链）──────────────────────
+# 面向真实图库对象（WL-AC 开关面板宏普查）：poly2_b{5} 主导、define style{2}
+# + paragraph + textblock + richtext2 文本标签链。
+
+import math as _math
+
+
+class TestPoly2Extended(unittest.TestCase):
+    """P4：POLY2_ / POLY2_A / POLY2_B / POLY2_B{5} 附加状态码引擎。"""
+
+    HEADER5 = "0, 3, 1, 1, 0, 0, 1, 0, 0, 1, 0"  # frame_fill 之后的 11 个头值
+
+    def test_rect_frame_fill_draws_fill_and_contour(self):
+        # frame_fill = 1+2+4 = 7（轮廓+填充+闭合），5 记录闭合矩形
+        script = (
+            "poly2_b{5} 5, 7, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  1, 0, 1,\n  1, 1, 1,\n  0, 1, 1,\n  0, 0, 1\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [True])
+        self.assertEqual(res.warnings, [])
+
+    def test_real_fragment_center_angle_arcs_tessellated(self):
+        # 煤气报警器 2d.gdl 真实片段：2 条 900+4001 半圆弧
+        script = (
+            "poly2_b{5} 5, 2, " + self.HEADER5 + ",\n"
+            "  -178.1960276837, 9.752005022221, 1,\n"
+            "  -178.2815750523, 9.752005022221, 900,\n"
+            "  0, 180, 4001,\n"
+            "  -178.2815750523, 9.752005022221, 900,\n"
+            "  0, 180, 4001\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        pts = res.polygons[0]
+        # tessellated：点数(38) > 记录数(5)
+        self.assertGreater(len(pts), 5)
+        # 抽查弧上一点到圆心距离 ≈ r（圆心到前一轮廓点的距离）
+        cx, cy = -178.2815750523, 9.752005022221
+        r = abs(-178.1960276837 - cx)
+        d = _math.hypot(pts[10][0] - cx, pts[10][1] - cy)
+        self.assertAlmostEqual(d, r, places=6)
+        # frame_fill=2：仅填充
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [False])
+
+    def test_center_endpoint_arc_3000(self):
+        # 圆心 (0,0) + 终点 (0,1)：从 (1,0) 逆时针 90°
+        script = (
+            "poly2_b{5} 3, 1, " + self.HEADER5 + ",\n"
+            "  1, 0, 1,\n  0, 0, 900,\n  0, 1, 3000\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        pts = res.polygons[0]
+        self.assertAlmostEqual(pts[-1][0], 0.0, places=9)
+        self.assertAlmostEqual(pts[-1][1], 1.0, places=9)
+        # 中间点应在圆弧上（r=1）
+        mid = pts[len(pts) // 2]
+        self.assertAlmostEqual(_math.hypot(mid[0], mid[1]), 1.0, places=6)
+
+    def test_radius_angle_arc_2000(self):
+        # 从 (1,0) 沿上一段方向（+x）左法向取圆心 (1, 0.5)，r=0.5 转 90°
+        # → 终点 (1.5, 0.5)
+        script = (
+            "poly2_b{5} 3, 1, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  1, 0, 1,\n  0.5, 90, 2000\n"
+        )
+        res = preview_2d_script(script)
+        pts = res.polygons[0]
+        self.assertAlmostEqual(pts[-1][0], 1.5, places=6)
+        self.assertAlmostEqual(pts[-1][1], 0.5, places=6)
+
+    def test_contour_separator_emits_two_polygons(self):
+        # -1 洞分隔：外框 + 内框 → 两个独立 polygon（MVP 不做布尔减除）
+        script = (
+            "poly2_b{5} 9, 3, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  4, 0, 1,\n  4, 4, 1,\n  0, 4, 1,\n"
+            "  0, 0, -1,\n"
+            "  1, 1, 1,\n  2, 1, 1,\n  2, 2, 1,\n  1, 2, 1\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 2)
+        self.assertEqual(res.polygon_fills, [True, True])
+        self.assertEqual(res.polygon_contours, [True, True])
+
+    def test_frame_fill_bits(self):
+        base = "poly2_b{5} 4, %d, " + self.HEADER5 + ",\n  0,0,1,\n  1,0,1,\n  1,1,1,\n  0,1,1\n"
+        res = preview_2d_script(base % 1)
+        self.assertEqual(res.polygon_fills, [False])
+        self.assertEqual(res.polygon_contours, [True])
+        res = preview_2d_script(base % 2)
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [False])
+        # frame_fill=0：不 emit + warning
+        res = preview_2d_script(base % 0)
+        self.assertEqual(res.polygons, [])
+        self.assertTrue(any("frame_fill=0" in w for w in res.warnings))
+
+    def test_unknown_status_code_corner_plus_single_warning(self):
+        script = (
+            "poly2_b{5} 4, 1, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  1, 0, 77,\n  1, 1, 77,\n  0, 1, 1\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(len(res.polygons[0]), 4)  # 77 码记录按角点处理
+        warns = [w for w in res.warnings if "未知状态码 77" in w]
+        self.assertEqual(len(warns), 1)  # 每个码值只警一次
+
+    def test_poly2_legacy_and_rect2_alignment_unchanged(self):
+        # 旧 POLY2 / RECT2：fill=False, contour=True，掩码启发式不回归
+        res = preview_2d_script("RECT2 0, 0, 1, 1\nPOLY2 3, 1, 0,0, 1,0, 0,1\n")
+        self.assertEqual(len(res.polygons), 2)
+        self.assertEqual(res.polygon_fills, [False, False])
+        self.assertEqual(res.polygon_contours, [True, True])
+
+    def test_poly2_b_variants_header_sizes(self):
+        # POLY2_（头 2）/ POLY2_A（头 3）/ POLY2_B（头 4）同一解析路径
+        rec = "  0,0,1,\n  1,0,1,\n  1,1,1\n"
+        res = preview_2d_script("poly2_ 3, 1,\n" + rec)
+        self.assertEqual(len(res.polygons), 1)
+        res = preview_2d_script("poly2_a 3, 1, 5,\n" + rec)
+        self.assertEqual(len(res.polygons), 1)
+        res = preview_2d_script("poly2_b 3, 1, 5, 6,\n" + rec)
+        self.assertEqual(len(res.polygons), 1)
+
+    def test_record_count_cap(self):
+        script = "poly2_b{5} 20000, 1, " + self.HEADER5 + ",\n  0,0,1\n"
+        res = preview_2d_script(script)
+        self.assertEqual(res.polygons, [])
+        self.assertTrue(any("超过上限" in w for w in res.warnings))
+
+
+class TestTextChain(unittest.TestCase):
+    """P4：define style{2} + paragraph + textblock + richtext2 / TEXT2 文本链。"""
+
+    CHAIN = (
+        'define style{2}    "AC_STYLE_1" "微软雅黑", 1.2, 0\n'
+        'paragraph\t\t"AC_PRG_104"      1, 0, 0, 0, 1\n'
+        '    set style "AC_STYLE_1"\n'
+        '        "GAS"\n'
+        'endparagraph\n'
+        'textblock\t\t"AC_TEXTBLOCK_104" 0, 8, 0, 0.5, 1, 1,\n'
+        '        "AC_PRG_104"\n'
+    )
+
+    def test_full_chain_emit_text_with_transform(self):
+        # mul2 A/0.3, B/0.21（A=0.3, B=0.21 → 等比 1）+ add2 平移生效；
+        # size = 1.2mm × 0.001，不随 MUL2 缩放
+        script = (
+            "mul2 A/0.3, B/0.21\n"
+            "add2 178.4960276837, -9.652005022221\n"
+            + self.CHAIN
+            + 'richtext2\t\t-178.2779917466, 9.654526543995, "AC_TEXTBLOCK_104"\n'
+        )
+        res = preview_2d_script(script, parameters={"A": 0.3, "B": 0.21})
+        self.assertEqual(len(res.texts), 1)
+        t = res.texts[0]
+        self.assertEqual(t.text, "GAS")
+        self.assertAlmostEqual(t.size, 0.0012, places=9)
+        # 位置过 _p2（继承 mul2/add2 变换）
+        self.assertAlmostEqual(t.x, -178.2779917466 + 178.4960276837, places=9)
+        self.assertAlmostEqual(t.y, 9.654526543995 - 9.652005022221, places=9)
+        # 真实脚本不平衡 DEL（mul2/add2 无配对）——只许这一条栈收敛警告
+        self.assertEqual(res.warnings, ["ADD/DEL 栈未平衡，自动收敛 DEL 2"])
+
+    def test_text2_uses_current_set_style(self):
+        script = (
+            'define style{2} "S1" "Arial", 2.0, 0\n'
+            'set style "S1"\n'
+            'text2 1, 2, "hi"\n'
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.texts), 1)
+        self.assertEqual(res.texts[0].text, "hi")
+        self.assertAlmostEqual(res.texts[0].size, 0.002, places=9)
+        self.assertEqual(res.texts[0].x, 1.0)
+        self.assertEqual(res.texts[0].y, 2.0)
+        # 顶层 SET STYLE 不再落入静默 no-op，也不报"未支持命令"
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+
+    def test_text2_numeric_and_env_expr(self):
+        res = preview_2d_script('text2 0, 0, A/2\n', parameters={"A": 3})
+        self.assertEqual(res.texts[0].text, "1.5")
+
+    def test_missing_textblock_reference_warns_not_crash(self):
+        res = preview_2d_script('richtext2 0, 0, "NOPE"\n')
+        self.assertEqual(res.texts, [])
+        self.assertTrue(any("未定义的 TEXTBLOCK" in w for w in res.warnings))
+
+    def test_missing_style_reference_warns_not_crash(self):
+        script = (
+            'paragraph "P1" 1, 0, 0, 0, 1\n'
+            '    set style "GHOST"\n'
+            '        "X"\n'
+            'endparagraph\n'
+            'textblock "T1" 0, 8, 0, 0.5, 1, 1, "P1"\n'
+            'richtext2 0, 0, "T1"\n'
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.texts), 1)  # 文本仍 emit，size=0
+        self.assertEqual(res.texts[0].size, 0.0)
+        self.assertTrue(any("未定义的样式" in w for w in res.warnings))
+
+    def test_paragraph_multi_string_concat(self):
+        script = (
+            'paragraph "P1" 1, 0, 0, 0, 1\n'
+            '    "AB"\n'
+            '    "CD"\n'
+            'endparagraph\n'
+            'textblock "T1" 0, 8, 0, 0.5, 1, 1, "P1"\n'
+            'richtext2 0, 0, "T1"\n'
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(res.texts[0].text, "ABCD")
+
+
+class TestP4SilentAndMacroMerge(unittest.TestCase):
+    """P4：属性命令静默 + CALL 宏内 2D 命令结果合并。"""
+
+    def test_fill_line_property_hotline2_silent(self):
+        script = "fill 1\nline_property 0\nhotline2 0,0,1,1\nhotarc2 0,0,1,0,90\n"
+        res = preview_2d_script(script)
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+        # 3D 路径同样静默（FILL/LINE_PROPERTY 是属性设置语句）
+        res3d = preview_3d_script("fill 1\nline_property 0\n")
+        self.assertFalse(any("未支持命令" in w for w in res3d.warnings))
+
+    def test_macro_2d_poly2_and_texts_merge_into_caller(self):
+        macro_2d = (
+            "poly2_b{5} 4, 3, 0, 3, 1, 1, 0, 0, 1, 0, 0, 1, 0,\n"
+            "  0,0,1,\n  1,0,1,\n  1,1,1,\n  0,1,1\n"
+            'define style{2} "S" "Arial", 1.0, 0\n'
+            'paragraph "P" 1, 0, 0, 0, 1\n'
+            '    set style "S"\n'
+            '        "LBL"\n'
+            'endparagraph\n'
+            'textblock "T" 0, 8, 0, 0.5, 1, 1, "P"\n'
+            'richtext2 0.5, 0.5, "T"\n'
+        )
+        table = {"label宏": _macro(name="label宏", scripts={"2d.gdl": macro_2d})}
+        res = preview_2d_script(
+            "CALL 'label宏' PARAMETERS\n",
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [True])
+        self.assertEqual(len(res.texts), 1)
+        self.assertEqual(res.texts[0].text, "LBL")
+        self.assertAlmostEqual(res.texts[0].size, 0.001, places=9)

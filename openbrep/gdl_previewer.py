@@ -121,11 +121,30 @@ class _CallBudget:
 
 
 @dataclass
+class PreviewText:
+    """2D 文本项（TEXT2/RICHTEXT2 链）：位置已过 2D 变换，size 为模型单位。
+
+    size = 样式字号 mm × 0.001（GDL 文本是纸张尺寸，MVP 不随 MUL2 缩放，
+    见 _handle_2d 文本链注释）。
+    """
+
+    x: float
+    y: float
+    text: str
+    size: float
+
+
+@dataclass
 class Preview2DResult:
     lines: list[tuple[Point2D, Point2D]] = field(default_factory=list)
     polygons: list[list[Point2D]] = field(default_factory=list)
+    # 与 polygons 严格等长对齐：该多边形是否填充（frame_fill 的 j2）/
+    # 是否画轮廓（j1）。所有产生 polygon 的 handler 必须同步 append。
+    polygon_fills: list[bool] = field(default_factory=list)
+    polygon_contours: list[bool] = field(default_factory=list)
     circles: list[tuple[float, float, float]] = field(default_factory=list)  # cx, cy, r
     arcs: list[tuple[float, float, float, float, float]] = field(default_factory=list)  # cx, cy, r, a0, a1
+    texts: list[PreviewText] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     warnings_structured: list[PreviewWarning] = field(default_factory=list)
 
@@ -324,6 +343,16 @@ class _PreviewRuntime:
         )
         # CALL 诊断去重（同一 runtime 内同一 宏名+code 只警一次，避免循环刷屏）
         self._call_warned: set[tuple[str, str]] = set()
+
+        # P4（2D 覆盖扩展）：文本链状态（样式表/段落/textblock 映射/当前样式）
+        # 与 POLY2 系状态码告警去重。CALL child runtime 各自持有独立状态
+        # （宏自带 define style），结果在 _handle_call 合并。
+        self._styles: dict[str, dict[str, Any]] = {}
+        self._paragraphs: dict[str, dict[str, Any]] = {}
+        self._textblocks: dict[str, str] = {}
+        self._current_style: str | None = None
+        self._poly2_status_warned: set[int] = set()
+        self._tangent_fallback_warned = False
 
         self._transform_stack: list[tuple[tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]], tuple[float, float, float]]] = []
         self._A = _identity3()
@@ -534,12 +563,42 @@ class _PreviewRuntime:
                 idx += 1
                 continue
 
+            # P4（2D 文本链）：SET STYLE "name" 跟踪当前样式（供 TEXT2 用）。
+            # 必须在下方静默 no-op 正则（含 SET）之前拦截；其余 SET * 保持原
+            # no-op 行为不变。setup/3d 模式不需要——落入原 no-op。
+            if mode == "2d" and re.match(r"^SET\s+STYLE\b", line, re.IGNORECASE):
+                m_set_style = re.match(r'^SET\s+STYLE\s+"([^"]*)"', line, re.IGNORECASE)
+                if m_set_style:
+                    self._current_style = m_set_style.group(1)
+                idx += 1
+                continue
+
+            # P4（2D 文本链）：PARAGRAPH 是块结构——向前消费逻辑行直到
+            # ENDPARAGRAPH。2d 模式解析内容（set style + 纯字符串行）；3d 模式
+            # 整块静默跳过（文本链是纯 2D 构造）；setup 模式不拦截，逐行落入
+            # 下方 setup 跳过即可。
+            if mode in ("2d", "3d") and re.match(r"^PARAGRAPH\b", line, re.IGNORECASE):
+                body: list[tuple[int, str]] = []
+                j = idx + 1
+                while j < end and not re.match(r"^ENDPARAGRAPH\b", lines[j][1], re.IGNORECASE):
+                    body.append(lines[j])
+                    j += 1
+                if j >= end:
+                    self._warn(line_no, "PARAGRAPH 缺少匹配 ENDPARAGRAPH，已跳过")
+                    idx = end
+                    continue
+                if mode == "2d":
+                    self._handle_paragraph(line, body, line_no)
+                idx = j + 1
+                continue
+
             # Recognized but non-renderable commands — suppress "未支持命令" warning.
             # SET（属性设置语句，如 SET MATERIAL x）与 VALUES（参数脚本构造，如
             # VALUES "A" RANGE [..]）对预览无几何副作用：SET 无副作用处理，
             # VALUES 属参数脚本范畴，在 2D/3D 中静默忽略，均不告警。
+            # FILL / LINE_PROPERTY（P4）：属性设置语句，同样无几何副作用。
             if re.match(
-                r"^(RESOL|TOLER|MATERIAL|PEN|XFORM|SET|VALUES)\b",
+                r"^(RESOL|TOLER|MATERIAL|PEN|XFORM|SET|VALUES|FILL|LINE_PROPERTY)\b",
                 line, re.IGNORECASE,
             ):
                 idx += 1
@@ -955,8 +1014,11 @@ class _PreviewRuntime:
         else:
             self.result_2d.lines.extend(child.result_2d.lines)
             self.result_2d.polygons.extend(child.result_2d.polygons)
+            self.result_2d.polygon_fills.extend(child.result_2d.polygon_fills)
+            self.result_2d.polygon_contours.extend(child.result_2d.polygon_contours)
             self.result_2d.circles.extend(child.result_2d.circles)
             self.result_2d.arcs.extend(child.result_2d.arcs)
+            self.result_2d.texts.extend(child.result_2d.texts)
 
         # child 警告透传：文本加 [宏 链] 前缀；structured 保留 line/command/code
         for w in child._warnings:
@@ -1162,10 +1224,13 @@ class _PreviewRuntime:
                 self._p2(x1, y2),
             ]
             self.result_2d.polygons.append(poly)
+            # 对齐契约：RECT2 无填充语义——fill=False, contour=True
+            self.result_2d.polygon_fills.append(False)
+            self.result_2d.polygon_contours.append(True)
             return True
 
-        if cmd == "HOTSPOT2":
-            # 交互拖拽热点（见 knowledge/GDL_2d_commands.md）：非渲染几何，
+        if cmd in {"HOTSPOT2", "HOTLINE2", "HOTARC2"}:
+            # 交互拖拽热点/热区（见 knowledge/GDL_2d_commands.md）：非渲染几何，
             # 预览中识别为无副作用——不产生几何、不告警。
             return True
 
@@ -1187,7 +1252,15 @@ class _PreviewRuntime:
                 self._warn(line_no, "POLY2 顶点数据不足，已跳过")
                 return True
             self.result_2d.polygons.append([self._p2(x, y) for x, y in pts])
+            # 对齐契约：旧 POLY2 无填充语义——fill=False, contour=True
+            self.result_2d.polygon_fills.append(False)
+            self.result_2d.polygon_contours.append(True)
             return True
+
+        # P4：POLY2_ / POLY2_A / POLY2_B / POLY2_B{5}——带附加状态码的多边形
+        # （圆弧/洞/属性记录），头部值数：2 / 3 / 4 / 13。
+        if cmd in {"POLY2_", "POLY2_A", "POLY2_B"}:
+            return self._handle_poly2_ex(cmd, args_text, line_no)
 
         if cmd == "CIRCLE2":
             vals = self._eval_args(args_raw, line_no)
@@ -1225,6 +1298,60 @@ class _PreviewRuntime:
                 )
                 return True
             self._handle_project2(args_raw, line_no)
+            return True
+
+        # ── P4：2D 文本链（DEFINE STYLE / TEXTBLOCK / RICHTEXT2 / TEXT2）────
+        if cmd == "DEFINE":
+            return self._handle_define(args_text, line_no)
+
+        if cmd == "TEXTBLOCK":
+            # TEXTBLOCK "name" ...最后一个字符串参数是段落名
+            names = re.findall(r'"([^"]*)"', args_text)
+            if len(names) < 2:
+                self._warn(line_no, "TEXTBLOCK 缺少段落引用，已忽略", command=cmd)
+                return True
+            self._textblocks[names[0]] = names[-1]
+            return True
+
+        if cmd == "RICHTEXT2":
+            m_rt = re.match(r'^(.*?),\s*"([^"]*)"\s*$', args_text)
+            if not m_rt:
+                self._warn(line_no, "RICHTEXT2 参数无法解析，已跳过", command=cmd)
+                return True
+            vals = self._eval_args(_split_args(m_rt.group(1)), line_no)
+            if vals is None or len(vals) < 2:
+                self._warn(line_no, "RICHTEXT2 坐标解析失败，已跳过", command=cmd)
+                return True
+            self._emit_richtext(vals[0], vals[1], m_rt.group(2), line_no)
+            return True
+
+        if cmd == "TEXT2":
+            # 文本表达式可能含逗号/引号 → 用引号+括号感知的 splitter
+            parts = _split_call_args(args_text)
+            if len(parts) < 3:
+                self._warn(line_no, "TEXT2 参数不足或解析失败", command=cmd)
+                return True
+            vals = self._eval_args(parts[:2], line_no)
+            if vals is None:
+                self._warn(line_no, "TEXT2 坐标解析失败，已跳过", command=cmd)
+                return True
+            text = self._eval_text_expr(", ".join(parts[2:]), line_no)
+            if text is None:
+                return True
+            size = 0.0
+            if self._current_style is not None:
+                style = self._styles.get(self._current_style)
+                if style is None:
+                    self._warn(
+                        line_no,
+                        f"TEXT2 引用了未定义的样式 '{self._current_style}'",
+                        command=cmd,
+                    )
+                else:
+                    # mm → 模型单位；GDL 文本是纸张尺寸，不随 MUL2 缩放（取舍见上）
+                    size = float(style["size_mm"]) * 0.001
+            px, py = self._p2(vals[0], vals[1])
+            self.result_2d.texts.append(PreviewText(x=px, y=py, text=text, size=size))
             return True
 
         return False
@@ -1309,6 +1436,303 @@ class _PreviewRuntime:
                 self.result_2d.lines.append(
                     (self._p2(px1, py1), self._p2(px2, py2))
                 )
+
+    # ── P4：POLY2_ 系（附加状态码多边形）与 2D 文本链 ────────────────────
+
+    def _handle_poly2_ex(self, cmd: str, args_text: str, line_no: int) -> bool:
+        """POLY2_ / POLY2_A / POLY2_B / POLY2_B{5} 统一入口。
+
+        头部值数：POLY2_=2（n, frame_fill）、POLY2_A=3（+fill_pen）、
+        POLY2_B=4（+fill_background_pen）、POLY2_B{5}=13（+fillcategory、
+        distortion_flags、origo、变形矩阵、gradientInnerRadius）。
+        之后 n 条记录，每条 3 值 (x, y, status)；n 计入圆弧参数记录。
+        frame_fill = j1 + 2*j2 + 4*j3：j1 画轮廓、j2 画填充、j3 闭合。
+        """
+        variant = None
+        m_var = re.match(r"^\{(\d+)\}\s*(.*)$", args_text, re.DOTALL)
+        text = args_text
+        if m_var:
+            variant = int(m_var.group(1))
+            text = m_var.group(2)
+        header = {"POLY2_": 2, "POLY2_A": 3, "POLY2_B": 4}[cmd]
+        if cmd == "POLY2_B" and variant == 5:
+            header = 13
+        elif variant is not None and not (cmd == "POLY2_B" and variant == 5):
+            self._warn(
+                line_no,
+                f"{cmd}{{{variant}}} 变体暂不支持（按 {cmd} 基本形态解析头部）",
+                command=cmd,
+            )
+
+        vals = self._eval_args(_split_args(text), line_no)
+        if vals is None or len(vals) < header:
+            self._warn(line_no, f"{cmd} 参数不足或解析失败", command=cmd)
+            return True
+        n = int(round(vals[0]))
+        frame_fill = int(round(vals[1]))
+        if n <= 0:
+            self._warn(line_no, f"{cmd} 记录数必须 > 0", command=cmd)
+            return True
+        if n > 10000:
+            # 防畸形输入：记录数上限
+            self._warn(line_no, f"{cmd} 记录数 {n} 超过上限 10000，已跳过", command=cmd)
+            return True
+        need = header + 3 * n
+        if len(vals) < need:
+            self._warn(line_no, f"{cmd} 记录数据不足（需 {need} 个值），已跳过", command=cmd)
+            return True
+        records = [
+            (float(vals[header + 3 * i]), float(vals[header + 3 * i + 1]), int(round(vals[header + 3 * i + 2])))
+            for i in range(n)
+        ]
+        contours = self._build_poly2_contours(records, line_no, cmd)
+
+        j1 = bool(frame_fill & 1)  # 画轮廓
+        j2 = bool(frame_fill & 2)  # 画填充
+        j3 = bool(frame_fill & 4)  # 闭合开放多边形
+        if not j1 and not j2:
+            self._warn(line_no, f"{cmd} frame_fill=0（不画轮廓也不填充），未产生几何", command=cmd)
+            return True
+        for contour in contours:
+            pts = contour
+            if j3 and len(pts) >= 2 and (abs(pts[0][0] - pts[-1][0]) > 1e-9 or abs(pts[0][1] - pts[-1][1]) > 1e-9):
+                pts = pts + [pts[0]]
+            if len(pts) < 2:
+                continue
+            self.result_2d.polygons.append([self._p2(x, y) for x, y in pts])
+            self.result_2d.polygon_fills.append(j2)
+            self.result_2d.polygon_contours.append(j1)
+        return True
+
+    def _build_poly2_contours(
+        self, records: list[tuple[float, float, int]], line_no: int, cmd: str
+    ) -> list[list[Point2D]]:
+        """把 (x, y, status) 记录流展开为轮廓点列（局部坐标，未过 _p2）。
+
+        状态码分类按十进制数值区间（官方文档写作 s & 900 / s & 3000 等，
+        但它们是数值不是位标志——900 & 4000 ≠ 0，位与无法互斥区分）：
+        [600,700) 填充属性 / [700,800) 段属性（跳过）/ [800,900) 切线向量 /
+        [900,1000) 圆心 / [1000,2000) 切线弧 / [2000,3000) 半径+圆心角弧 /
+        [3000,4000) 弧终点 / ≥4000 起角+圆心角（4000/4001 同等对待）。
+        s & 1 的边可见性 MVP 忽略（画全部轮廓）；s == -1 轮廓结束（洞分隔）
+        ——洞按独立多边形 emit，填充不做布尔减除。
+        """
+        contours: list[list[Point2D]] = []
+        current: list[Point2D] = []
+        pending_center: Point2D | None = None
+        pending_tangent: Point2D | None = None
+
+        def flush() -> None:
+            nonlocal current
+            if current:
+                contours.append(current)
+                current = []
+
+        def append_arc(pts: list[Point2D], exact_end: Point2D | None = None) -> None:
+            if not pts:
+                return
+            if current and _dist2(pts[0], current[-1]) <= 1e-18:
+                pts = pts[1:]
+            if exact_end is not None and pts:
+                pts[-1] = exact_end
+            current.extend(pts)
+
+        def warn_status_once(code: int, msg: str) -> None:
+            if code not in self._poly2_status_warned:
+                self._poly2_status_warned.add(code)
+                self._warn(line_no, msg, command=cmd)
+
+        for x, y, s in records:
+            if s == -1:
+                # 轮廓结束（洞分隔）
+                flush()
+                pending_center = None
+                pending_tangent = None
+                continue
+
+            if pending_center is not None:
+                # 圆心记录之后：本记录决定弧
+                cx, cy = pending_center
+                pending_center = None
+                if not current:
+                    self._warn(line_no, f"{cmd} 圆心记录前没有轮廓点，已跳过该弧", command=cmd)
+                    continue
+                px, py = current[-1]
+                r = math.hypot(px - cx, py - cy)
+                if s >= 4000:
+                    # 起角 + 圆心角（度）
+                    append_arc(_arc_tessellate(cx, cy, r, x, y))
+                elif 3000 <= s < 4000:
+                    # 弧终点：方向由三点叉积定，退化（共线）按逆时针半圆劣弧
+                    a0 = math.degrees(math.atan2(py - cy, px - cx))
+                    a1 = math.degrees(math.atan2(y - cy, x - cx))
+                    cross = (px - cx) * (y - cy) - (py - cy) * (x - cx)
+                    if cross > 1e-12:
+                        sweep = (a1 - a0) % 360.0
+                    elif cross < -1e-12:
+                        sweep = -((a0 - a1) % 360.0)
+                    else:
+                        sweep = 180.0
+                    append_arc(_arc_tessellate(cx, cy, r, a0, sweep), exact_end=(x, y))
+                else:
+                    warn_status_once(s, f"{cmd} 圆心后的弧记录状态码 {s} 无法识别，按角点处理")
+                    current.append((x, y))
+                continue
+
+            if 600 <= s < 800:
+                # 填充/段属性记录：不计入轮廓、不告警
+                continue
+            if 800 <= s < 900:
+                # 切线方向向量（供紧随的切线弧使用）
+                pending_tangent = (x, y)
+                continue
+            if 900 <= s < 1000:
+                # 圆心（不在轮廓上），下一记录决定弧
+                pending_center = (x, y)
+                continue
+            if 1000 <= s < 2000:
+                # 切线弧到端点 (x,y)；切线由前置 800 记录给出
+                if pending_tangent is None or not current:
+                    if not self._tangent_fallback_warned:
+                        self._tangent_fallback_warned = True
+                        self._warn(line_no, f"{cmd} 切线弧无可用切线，退化为直线", command=cmd)
+                    current.append((x, y))
+                    pending_tangent = None
+                    continue
+                arc = _tangent_arc_points(current[-1], pending_tangent, (x, y))
+                pending_tangent = None
+                if arc is None:
+                    if not self._tangent_fallback_warned:
+                        self._tangent_fallback_warned = True
+                        self._warn(line_no, f"{cmd} 切线弧几何退化，退化为直线", command=cmd)
+                    current.append((x, y))
+                    continue
+                append_arc(arc, exact_end=(x, y))
+                continue
+            if 2000 <= s < 3000:
+                # 半径 + 圆心角弧：从当前点出发，x=半径，y=圆心角（正=逆时针）
+                if not current:
+                    self._warn(line_no, f"{cmd} 半径弧记录前没有轮廓点，已跳过", command=cmd)
+                    continue
+                r = abs(x)
+                sweep = y
+                px, py = current[-1]
+                # MVP 近似：圆心取"上一段方向"的左/右法向（sweep>0 → 左侧）；
+                # 无前一段时用 +x 方向
+                if len(current) >= 2:
+                    dx = px - current[-2][0]
+                    dy = py - current[-2][1]
+                else:
+                    dx, dy = 1.0, 0.0
+                length = math.hypot(dx, dy)
+                if length <= 1e-12 or r <= 1e-12:
+                    continue
+                nx, ny = -dy / length, dx / length  # 左法向
+                side = 1.0 if sweep >= 0 else -1.0
+                cx, cy = px + nx * r * side, py + ny * r * side
+                a0 = math.degrees(math.atan2(py - cy, px - cx))
+                append_arc(_arc_tessellate(cx, cy, r, a0, sweep))
+                continue
+            if s >= 3000:
+                # 孤立的弧终点/角度记录（前面没有圆心）——不合法但别崩
+                warn_status_once(s, f"{cmd} 弧记录状态码 {s} 缺少前置圆心记录，已跳过")
+                continue
+            if s >= 64:
+                # 未知状态码：按角点处理，每个码值只警一次
+                warn_status_once(s, f"{cmd} 未知状态码 {s}，按角点处理")
+            # s & 1（边可见性）MVP 忽略：画全部轮廓
+            current.append((x, y))
+            pending_tangent = None
+
+        flush()
+        return contours
+
+    # ── P4：2D 文本链 ────────────────────────────────────────────────────
+
+    def _handle_paragraph(
+        self, header: str, body: list[tuple[int, str]], line_no: int
+    ) -> None:
+        """PARAGRAPH 块：名 + 内容行（set style + 纯字符串字面量拼接为文本）。"""
+        m = re.match(r'^PARAGRAPH\s+"([^"]*)"', header, re.IGNORECASE)
+        if not m:
+            self._warn(line_no, "PARAGRAPH 无法解析名称，已忽略", command="PARAGRAPH")
+            return
+        name = m.group(1)
+        style: str | None = None
+        parts: list[str] = []
+        for _, bline in body:
+            text = bline.strip()
+            m_style = re.match(r'^SET\s+STYLE\s+"([^"]*)"\s*$', text, re.IGNORECASE)
+            if m_style:
+                style = m_style.group(1)
+                continue
+            m_text = re.match(r'^"([^"]*)"\s*$', text)
+            if m_text:
+                parts.append(m_text.group(1))
+            # 其他内容（对齐/缩进属性行）MVP 忽略
+        self._paragraphs[name] = {"text": "".join(parts), "style": style}
+
+    def _handle_define(self, args_text: str, line_no: int) -> bool:
+        """DEFINE STYLE / DEFINE STYLE{2} "name" "font", size_mm, flags → 样式表。
+
+        非 STYLE 的 DEFINE 返回 False（走未知命令路径，行为与现状一致）。
+        """
+        m = re.match(
+            r'^STYLE(?:\{\d+\})?\s+"([^"]*)"\s+"([^"]*)"\s*,\s*(.*)$',
+            args_text,
+            re.IGNORECASE,
+        )
+        if not m:
+            return False
+        name, font, rest = m.group(1), m.group(2), m.group(3)
+        parts = _split_args(rest)
+        size = self._eval_expr(parts[0], line_no) if parts and parts[0] else None
+        if size is None:
+            self._warn(line_no, f"DEFINE STYLE '{name}' 字号解析失败，已忽略", command="DEFINE")
+            return True
+        self._styles[name] = {"font": font, "size_mm": float(size)}
+        return True
+
+    def _emit_richtext(self, x: float, y: float, textblock_name: str, line_no: int) -> None:
+        """RICHTEXT2：textblock → 段落 → 样式 逐层解析，缺引用告警不崩。"""
+        par_name = self._textblocks.get(textblock_name)
+        if par_name is None:
+            self._warn(line_no, f"RICHTEXT2 引用了未定义的 TEXTBLOCK '{textblock_name}'", command="RICHTEXT2")
+            return
+        par = self._paragraphs.get(par_name)
+        if par is None:
+            self._warn(line_no, f"TEXTBLOCK '{textblock_name}' 引用了未定义的段落 '{par_name}'", command="RICHTEXT2")
+            return
+        size = 0.0
+        style_name = par.get("style")
+        if style_name:
+            style = self._styles.get(style_name)
+            if style is None:
+                self._warn(line_no, f"段落 '{par_name}' 引用了未定义的样式 '{style_name}'", command="RICHTEXT2")
+            else:
+                # mm → 模型单位；GDL 文本是纸张尺寸，不随 MUL2 缩放（MVP 取舍）
+                size = float(style["size_mm"]) * 0.001
+        px, py = self._p2(x, y)
+        self.result_2d.texts.append(PreviewText(x=px, y=py, text=str(par["text"]), size=size))
+
+    def _eval_text_expr(self, expr: str, line_no: int) -> str | None:
+        """TEXT2 的文本表达式：字符串字面量 / env 中的字符串或数值变量 /
+        数值表达式（转 str）。失败返回 None（已告警）。"""
+        text = (expr or "").strip()
+        if not text:
+            self._warn(line_no, "TEXT2 缺少文本表达式", command="TEXT2")
+            return None
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+            return text[1:-1]
+        if re.match(r"^[A-Za-z_]\w*$", text) and text.upper() in self.env:
+            value = self.env[text.upper()]
+            if isinstance(value, str):
+                return value
+            return f"{float(value):g}"
+        value = self._eval_expr(text, line_no)
+        if value is None:
+            return None
+        return f"{float(value):g}"
 
     def _handle_3d(self, line: str, line_no: int) -> bool:
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\b\s*(.*)$", line)
@@ -2181,6 +2605,56 @@ def _extract_points_2d(values: list[float], n: int) -> list[Point2D] | None:
         return pairs
 
     return None
+
+
+def _dist2(a: Point2D, b: Point2D) -> float:
+    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
+
+
+def _arc_tessellate(
+    cx: float, cy: float, r: float, a0_deg: float, sweep_deg: float
+) -> list[Point2D]:
+    """圆弧离散为点列（含两端）：约每 10° 一段，每弧最少 4 点、最多 36 点。
+
+    退化（半径≈0 或扫角≈0）返回空列表，由调用方决定回退。
+    """
+    if r <= 1e-12 or abs(sweep_deg) <= 1e-9:
+        return []
+    steps = max(3, min(35, int(math.ceil(abs(sweep_deg) / 10.0))))
+    pts: list[Point2D] = []
+    for i in range(steps + 1):
+        a = math.radians(a0_deg + sweep_deg * i / steps)
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+def _tangent_arc_points(
+    start: Point2D, tangent: Point2D, end: Point2D
+) -> list[Point2D] | None:
+    """过 start、切线方向 tangent、到 end 的圆弧（GDL 切线弧，状态码 1000）。
+
+    圆心在 start 处切线的法线上：C = start + n·rs（n 为切线左法向单位向量），
+    由 |C - end| = |rs| 解出带符号半径 rs；rs > 0 圆心在行进方向左侧 → 逆时针。
+    退化（零切线/端点在切线上）返回 None，调用方退化为直线。
+    """
+    tx, ty = tangent
+    tlen = math.hypot(tx, ty)
+    if tlen <= 1e-12:
+        return None
+    nx, ny = -ty / tlen, tx / tlen  # 左法向
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    denom = 2.0 * (nx * dx + ny * dy)
+    if abs(denom) <= 1e-12:
+        return None
+    rs = (dx * dx + dy * dy) / denom
+    r = abs(rs)
+    if r <= 1e-12:
+        return None
+    cx, cy = start[0] + nx * rs, start[1] + ny * rs
+    a0 = math.degrees(math.atan2(start[1] - cy, start[0] - cx))
+    a1 = math.degrees(math.atan2(end[1] - cy, end[0] - cx))
+    sweep = (a1 - a0) % 360.0 if rs > 0 else -((a0 - a1) % 360.0)
+    return _arc_tessellate(cx, cy, r, a0, sweep)
 
 
 def _quality_profile(quality: str) -> dict[str, Any]:

@@ -1718,6 +1718,12 @@ button:focus-visible {
   vector-effect: non-scaling-stroke;
 }
 
+.preview2d-text {
+  fill: var(--accent-soft);
+  /* GDL 文本是纸张尺寸：字号随 viewBox 缩放（真实比例），不做非缩放处理 */
+  user-select: none;
+}
+
 .preview2d-empty {
   color: var(--text-muted);
   font-size: 12px;

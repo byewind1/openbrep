@@ -93,8 +93,14 @@ export interface PreviewPayload {
 export interface Preview2DPayload {
   lines: Array<{ from: [number, number]; to: [number, number] }>
   polygons: Array<Array<[number, number]>>
+  // 与 polygons 逐一对齐（POLY2_B 系 frame_fill 位：j1 轮廓 / j2 填充）；
+  // 缺省（旧 payload）时按 [填充+描边] 渲染，保持既有外观。
+  polygon_fills?: boolean[]
+  polygon_contours?: boolean[]
   circles: Array<{ cx: number; cy: number; r: number }>
   arcs: Array<{ cx: number; cy: number; r: number; a0: number; a1: number }>
+  // 富文本（RICHTEXT2/TEXT2）：size 为模型单位字高
+  texts?: Array<{ x: number; y: number; text: string; size: number }>
   warnings?: string[]
   verification?: PreviewVerification
 }

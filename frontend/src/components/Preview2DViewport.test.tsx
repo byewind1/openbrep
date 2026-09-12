@@ -93,4 +93,37 @@ describe('Preview2DViewport (P3c)', () => {
     expect(aW).toBeCloseTo(bW, 9)
     expect(aH).toBeCloseTo(bH, 9)
   })
+
+  test('polygon fill/contour flags override default styling', () => {
+    const preview: Preview2DPayload = {
+      ...samplePreview(),
+      // fill=false → fill="none"；contour=false → stroke="none"
+      polygon_fills: [false],
+      polygon_contours: [false],
+    }
+    const { container } = render(<Preview2DViewport preview={preview} warnings={[]} />)
+    const polygon = container.querySelector('.preview2d-polygon')!
+    expect(polygon.getAttribute('fill')).toBe('none')
+    expect(polygon.getAttribute('stroke')).toBe('none')
+  })
+
+  test('renders texts and counts them as entities', () => {
+    const preview: Preview2DPayload = {
+      ...samplePreview(),
+      texts: [{ x: 1, y: 1, text: 'GAS', size: 0.0012 }],
+    }
+    render(<Preview2DViewport preview={preview} warnings={[]} />)
+    expect(screen.getByText('GAS')).toBeTruthy()
+    // 3 几何 + 1 文本
+    expect(screen.getByText('4 entities')).toBeTruthy()
+  })
+
+  test('skips texts with non-positive size', () => {
+    const preview: Preview2DPayload = {
+      ...samplePreview(),
+      texts: [{ x: 1, y: 1, text: 'BAD', size: 0 }],
+    }
+    const { container } = render(<Preview2DViewport preview={preview} warnings={[]} />)
+    expect(container.querySelector('.preview2d-text')).toBeNull()
+  })
 })

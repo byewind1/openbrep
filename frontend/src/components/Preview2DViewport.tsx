@@ -145,9 +145,21 @@ export function Preview2DViewport({ preview, warnings }: Preview2DViewportProps)
             onDoubleClick={resetView}
           >
             <g>
-              {preview.polygons.map((polygon, index) => (
-                <polygon className="preview2d-polygon" points={polygon.map((point) => point.join(',')).join(' ')} key={`poly-${index}`} />
-              ))}
+              {preview.polygons.map((polygon, index) => {
+                // frame_fill 位语义（POLY2_B 系）：fills/contours 数组与 polygons
+                // 对齐；旧 payload 无数组时按 填充+描边 渲染（既有外观不变）。
+                const filled = preview.polygon_fills?.[index] ?? true
+                const contoured = preview.polygon_contours?.[index] ?? true
+                return (
+                  <polygon
+                    className="preview2d-polygon"
+                    points={polygon.map((point) => point.join(',')).join(' ')}
+                    fill={filled ? undefined : 'none'}
+                    stroke={contoured ? undefined : 'none'}
+                    key={`poly-${index}`}
+                  />
+                )
+              })}
               {preview.lines.map((line, index) => (
                 <line
                   className="preview2d-line"
@@ -164,6 +176,23 @@ export function Preview2DViewport({ preview, warnings }: Preview2DViewportProps)
               {preview.arcs.map((arc, index) => (
                 <path className="preview2d-line" d={arcPath(arc)} fill="none" key={`arc-${index}`} />
               ))}
+              {(preview.texts ?? []).map((text, index) =>
+                // size 为模型单位字高（viewBox 单位，随缩放保持真实比例）；
+                // 非法字号（≤0）跳过，避免回退到默认字号在 viewBox 下失控。
+                text.size > 0 && text.text ? (
+                  <text
+                    className="preview2d-text"
+                    x={text.x}
+                    y={text.y}
+                    fontSize={text.size}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    key={`text-${index}`}
+                  >
+                    {text.text}
+                  </text>
+                ) : null,
+              )}
             </g>
           </svg>
         ) : (
@@ -183,7 +212,13 @@ export function Preview2DViewport({ preview, warnings }: Preview2DViewportProps)
 }
 
 function geometryCount(preview: Preview2DPayload) {
-  return preview.lines.length + preview.polygons.length + preview.circles.length + preview.arcs.length
+  return (
+    preview.lines.length +
+    preview.polygons.length +
+    preview.circles.length +
+    preview.arcs.length +
+    (preview.texts?.length ?? 0)
+  )
 }
 
 function arcPath(arc: { cx: number; cy: number; r: number; a0: number; a1: number }) {

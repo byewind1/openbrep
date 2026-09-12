@@ -152,6 +152,13 @@ def preview_2d_payload(
     return {
         "lines": [{"from": list(p1), "to": list(p2)} for p1, p2 in result.lines],
         "polygons": [[list(point) for point in polygon] for polygon in result.polygons],
+        # P4：与 polygons 严格等长对齐的填充/轮廓标志 + 2D 文本项
+        "polygon_fills": list(result.polygon_fills),
+        "polygon_contours": list(result.polygon_contours),
+        "texts": [
+            {"x": t.x, "y": t.y, "text": t.text, "size": t.size}
+            for t in result.texts
+        ],
         "circles": [
             {"cx": cx, "cy": cy, "r": r}
             for cx, cy, r in result.circles
@@ -169,6 +176,9 @@ def empty_preview_2d_payload() -> dict[str, Any]:
     return {
         "lines": [],
         "polygons": [],
+        "polygon_fills": [],
+        "polygon_contours": [],
+        "texts": [],
         "circles": [],
         "arcs": [],
         "warnings": [],
