@@ -207,6 +207,17 @@ class HSFCompiler:
             stdout = self._decode_process_output(proc.stdout)
             stderr = self._decode_process_output(proc.stderr)
 
+            if proc.returncode == 0 and command == "hsf2libpart" and not Path(dest).is_file():
+                return CompileResult(
+                    success=False,
+                    stdout=stdout,
+                    stderr=(stderr + "\n" if stderr else "")
+                    + f"LP_XMLConverter exited successfully but did not produce GSM: {dest}",
+                    exit_code=1,
+                    output_path="",
+                    mode="real",
+                )
+
             return CompileResult(
                 success=(proc.returncode == 0),
                 stdout=stdout,
@@ -346,7 +357,13 @@ class MockHSFCompiler:
     """
 
     def hsf2libpart(self, hsf_dir: str, output_gsm: str) -> CompileResult:
-        """Mock compile: validates structure, writes fake .gsm."""
+        """Validate HSF structure without claiming to produce a GSM artifact.
+
+        Mock mode used to write a UTF-8 ``[MOCK GSM]`` placeholder at a
+        ``.gsm`` path.  Archicad understandably rejects that text file as an
+        unsupported document.  Validation-only mode must never create or
+        expose something that looks like a deliverable.
+        """
         hsf_path = Path(hsf_dir)
 
         errors = []
@@ -388,17 +405,22 @@ class MockHSFCompiler:
                 stderr="\n".join(errors)
             )
 
-        # Success: write mock .gsm
-        Path(output_gsm).parent.mkdir(parents=True, exist_ok=True)
-        Path(output_gsm).write_text(
-            f"[MOCK GSM] Compiled from {hsf_dir}",
-            encoding="utf-8"
-        )
+        # Remove only placeholders written by older OpenBrep versions.  Never
+        # touch an existing real GSM at the requested output path.
+        output_path = Path(output_gsm)
+        try:
+            if output_path.is_file():
+                with output_path.open("rb") as existing:
+                    is_legacy_placeholder = existing.read(len(b"[MOCK GSM]")) == b"[MOCK GSM]"
+                if is_legacy_placeholder:
+                    output_path.unlink()
+        except OSError:
+            pass
 
         return CompileResult(
             success=True, exit_code=0,
-            stdout=f"Successfully compiled: {output_gsm}",
-            output_path=output_gsm,
+            stdout="Mock validation passed; no GSM artifact was generated.",
+            output_path="",
             mode="mock",
         )
 

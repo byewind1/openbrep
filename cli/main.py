@@ -907,9 +907,12 @@ def compile(
         result = compiler.hsf2libpart(str(hsf_dir), str(gsm_path))
 
     if result.success:
-        console.print(f"[green]✅ 编译成功[/green]")
-        console.print(f"[green]📄 文件名：{gsm_path.name}[/green]")
-        console.print(f"[green]📁 完整路径：{gsm_path}[/green]")
+        if mock or getattr(result, "mode", None) == "mock":
+            console.print("[green]✅ Mock 校验通过（未生成可安装的 GSM）[/green]")
+        else:
+            console.print("[green]✅ 编译成功[/green]")
+            console.print(f"[green]📄 文件名：{gsm_path.name}[/green]")
+            console.print(f"[green]📁 完整路径：{gsm_path}[/green]")
     else:
         err_console.print(f"[red]❌ 编译失败：\n{result.stderr or result.stdout}[/red]")
         raise typer.Exit(1)

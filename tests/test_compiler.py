@@ -1,7 +1,61 @@
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from openbrep.compiler import HSFCompiler
+from openbrep.compiler import HSFCompiler, MockHSFCompiler
+
+
+class TestMockCompilerArtifactSafety(unittest.TestCase):
+    def test_successful_validation_does_not_write_fake_gsm(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "libpartdata.xml").write_text("<LibpartData/>", encoding="utf-8")
+            (root / "paramlist.xml").write_text("<ParamSection/>", encoding="utf-8")
+            (root / "scripts" / "3d.gdl").write_text("BLOCK 1, 1, 1\n", encoding="utf-8")
+            output = root / "looks-real.gsm"
+
+            result = MockHSFCompiler().hsf2libpart(str(root), str(output))
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.mode, "mock")
+            self.assertEqual(result.output_path, "")
+            self.assertFalse(output.exists())
+            self.assertIn("no GSM artifact", result.stdout)
+
+    def test_validation_removes_only_legacy_mock_placeholder(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "libpartdata.xml").write_text("<LibpartData/>", encoding="utf-8")
+            (root / "paramlist.xml").write_text("<ParamSection/>", encoding="utf-8")
+            output = root / "legacy.gsm"
+            output.write_text("[MOCK GSM] Compiled from /old/project", encoding="utf-8")
+
+            result = MockHSFCompiler().hsf2libpart(str(root), str(output))
+
+            self.assertTrue(result.success)
+            self.assertFalse(output.exists())
+
+    def test_validation_preserves_existing_real_artifact(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "libpartdata.xml").write_text("<LibpartData/>", encoding="utf-8")
+            (root / "paramlist.xml").write_text("<ParamSection/>", encoding="utf-8")
+            output = root / "existing.gsm"
+            output.write_bytes(b"WW.\x00real-binary")
+
+            result = MockHSFCompiler().hsf2libpart(str(root), str(output))
+
+            self.assertTrue(result.success)
+            self.assertEqual(output.read_bytes(), b"WW.\x00real-binary")
 
 
 class TestCompilerOutputDecoding(unittest.TestCase):
@@ -20,6 +74,20 @@ class TestCompilerOutputDecoding(unittest.TestCase):
             result = compiler._run_converter("libpart2hsf", "in.gsm", "out")
         self.assertFalse(result.success)
         self.assertIn("编译失败", result.stderr)
+
+    def test_hsf_compile_requires_the_declared_gsm_to_exist(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            output = Path(tmp) / "missing.gsm"
+            compiler = HSFCompiler(converter_path="/tmp/LP_XMLConverter")
+            proc = MagicMock(returncode=0, stdout=b"Success", stderr=b"")
+            with patch("openbrep.compiler.subprocess.run", return_value=proc):
+                result = compiler._run_converter("hsf2libpart", "in", str(output))
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.output_path, "")
+            self.assertIn("did not produce", result.stderr)
 
 
 class TestCompilerAutoDetect(unittest.TestCase):

@@ -31,7 +31,7 @@ from openbrep.mcp_tools import (
     workspace_scan,
     workspace_search,
 )
-from openbrep.revisions import get_latest_revision_id
+from openbrep.revisions import archive_artifact, get_latest_revision_id
 from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.skills_loader import SkillsLoader
 
@@ -100,8 +100,8 @@ def test_compile_hsf_mock_mode_succeeds_on_valid_project(tmp_path):
     assert result["success"] is True
     assert result["exit_code"] == 0
     assert result["errors"] == []
-    assert result["output_path"].endswith(".gsm")
-    assert not result["output_path"].startswith(str(hsf_dir))
+    assert result["output_path"] == ""
+    assert result["artifact_path"] is None
     assert TRACE_RE.match(result["trace_id"])
 
 
@@ -132,26 +132,22 @@ def test_workspace_init_scan_search_return_ok(tmp_path):
     assert TRACE_RE.match(bad["trace_id"])
 
 
-def test_compile_hsf_archives_successful_artifact(tmp_path):
+def test_compile_hsf_mock_mode_does_not_archive_placeholder(tmp_path):
     _project, hsf_dir = _make_project(tmp_path)
     result = compile_hsf(str(hsf_dir), mode="mock")
 
     assert result["ok"] is True
     assert result["success"] is True
-    artifact_path = result["artifact_path"]
-    assert artifact_path
-    archive = Path(artifact_path)
-    assert archive.exists()
-    assert archive.is_file()
-    assert archive.read_bytes() == Path(result["output_path"]).read_bytes()
-    # 归档位：项目目录下 artifacts/unversioned/
-    assert "artifacts" in artifact_path
-    assert "unversioned" in artifact_path
+    assert result["output_path"] == ""
+    assert result["artifact_path"] is None
+    assert not (Path(hsf_dir) / "artifacts").exists()
 
 
 def test_load_project_returns_artifacts_summary(tmp_path):
     _project, hsf_dir = _make_project(tmp_path)
-    compile_hsf(str(hsf_dir), mode="mock")
+    real_gsm = tmp_path / "Shelf.gsm"
+    real_gsm.write_bytes(b"WW.\x00real-binary")
+    archive_artifact(hsf_dir, real_gsm)
 
     loaded = load_project(str(hsf_dir))
 

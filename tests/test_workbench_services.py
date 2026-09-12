@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from openbrep.compiler import CompileResult
+from openbrep.compiler import CompileResult, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
@@ -411,6 +411,36 @@ def test_compiler_service_does_not_archive_failed_compile(tmp_path):
 
     assert response["ok"] is False
     assert response["compile"]["artifact_path"] is None
+    assert not (hsf_dir / "artifacts").exists()
+
+
+def test_compiler_service_mock_validation_does_not_expose_or_archive_gsm(tmp_path):
+    project = HSFProject.create_new("ValidationOnly", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = SimpleNamespace(
+        project=project,
+        source_path=hsf_dir,
+        output_dir="",
+        compiler_mode="mock",
+        converter_path="",
+        last_compile_output_path="/previous/real.gsm",
+    )
+    service = WorkbenchCompilerService(
+        session,
+        real_compiler_factory=lambda _path: MockHSFCompiler(),
+        mock_compiler_factory=MockHSFCompiler,
+    )
+
+    response = service.compile_project({})
+
+    assert response["ok"] is True
+    assert response["compile"]["success"] is True
+    assert response["compile"]["mode"] == "mock"
+    assert response["compile"]["output_path"] is None
+    assert response["compile"]["artifact_path"] is None
+    assert response["compile"]["gsm_size_bytes"] is None
+    assert session.last_compile_output_path == "/previous/real.gsm"
+    assert not (hsf_dir.parent / "output" / "ValidationOnly.gsm").exists()
     assert not (hsf_dir / "artifacts").exists()
 
 
