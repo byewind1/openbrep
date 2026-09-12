@@ -26,8 +26,11 @@ macro_resolver 把宏名解析成宏的脚本与默认参数（返回协议见
   fingerprint = sha256(绝对路径 + size + mtime_ns + converter_path)[:16]；
   GSM→HSF 结果在 ``<cache>/hsf/<fp>/``，容器解包在 ``<cache>/containers/<fp>/``、
   包解包在 ``<cache>/packages/<fp>/``；每个缓存目录写 meta.json（source/
-  size/mtime/converter/created_at）；失败结果同样缓存（meta.json 记 error），
-  避免每次预览重复跑失败的转换。密码保护的 GSM 只报告、绝不尝试绕过。
+  size/mtime/converter/created_at）。**磁盘只缓存成功结果**；失败结果只在
+  内存缓存（同一 resolver 实例内不重复跑失败的转换），新实例/下次预览会
+  重试——解包/转换失败多为瞬时（文件锁、磁盘压力），持久化失败会让一次
+  抖动永久毒化缓存（实测 WL-AC图库.lcf 首次 exit=1 后一直被跳过）。
+  密码保护的 GSM 只报告、绝不尝试绕过。
 - 许可红线：图库内容只出现在用户本机缓存目录，绝不复制进项目或仓库。
 - 项目依赖清单：project_root 非空时记录每次 lookup；对返回的 resolver 调用
   ``flush_manifest()`` 原子写入 ``<project_root>/.openbrep/dependencies/
@@ -47,6 +50,7 @@ import json
 import logging
 import os
 import platform
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -240,6 +244,10 @@ class LibraryContext:
         self._index_lower: dict[str, str] = {}   # lower(name) → 精确名（先见优先）
         self._root_errors: list[str] = []        # 容器 root 解包失败诊断
         self._manifest: dict[str, dict[str, Any]] = {}  # name → 最新一条 lookup 记录
+        # 失败结果只在内存缓存（本实例内不重复跑失败的转换）；磁盘只缓存成功
+        # 结果——解包/转换失败多为瞬时（文件锁、磁盘压力），持久化会让一次
+        # 失败永久毒化缓存（实测 WL-AC图库.lcf 首次 exit=1 后一直被跳过）。
+        self._failed_ops: dict[str, str] = {}    # "kind:路径" → 诊断
 
     # ── 公开协议 ────────────────────────────────────────────────────────
 
@@ -323,16 +331,21 @@ class LibraryContext:
         meta = _read_meta(target)
         if meta and meta.get("ok"):
             return target
-        if meta and meta.get("error"):
-            self._root_errors.append(f"图库根解包失败 {lcf_path}: {meta['error']}")
+        fail_key = f"container:{lcf_path}"
+        if fail_key in self._failed_ops:
+            self._root_errors.append(
+                f"图库根解包失败 {lcf_path}: {self._failed_ops[fail_key]}"
+            )
             return None
         ok, diag = _extract_container(str(lcf_path), str(target), self._converter_path or None)
-        self._write_container_meta(target, lcf_path, ok, diag)
         if not ok:
+            # 失败不落盘（瞬时失败可下次重试），清掉可能的部分输出，只内存缓存
+            shutil.rmtree(target, ignore_errors=True)
+            self._failed_ops[fail_key] = diag
             self._root_errors.append(f"图库根解包失败 {lcf_path}: {diag}")
             return None
+        self._write_container_meta(target, lcf_path)
         return target
-
     def _package_dir(self, pack_path: Path) -> Optional[Path]:
         """解包 .libpack（带缓存）→ 内层每个 .lcf 再 extractcontainer。"""
         fingerprint = _content_fingerprint(pack_path, self._converter_path)
@@ -340,12 +353,16 @@ class LibraryContext:
         meta = _read_meta(target)
         if meta and meta.get("ok"):
             return target
-        if meta and meta.get("error"):
-            self._root_errors.append(f"图库包解包失败 {pack_path}: {meta['error']}")
+        fail_key = f"package:{pack_path}"
+        if fail_key in self._failed_ops:
+            self._root_errors.append(
+                f"图库包解包失败 {pack_path}: {self._failed_ops[fail_key]}"
+            )
             return None
         ok, diag = _extract_package(str(pack_path), str(target), self._converter_path or None)
         if not ok:
-            self._write_container_meta(target, pack_path, False, diag)
+            shutil.rmtree(target, ignore_errors=True)
+            self._failed_ops[fail_key] = diag
             self._root_errors.append(f"图库包解包失败 {pack_path}: {diag}")
             return None
         # 内层 .lcf 逐个解包到包目录下；单个失败只记诊断、继续其余。
@@ -359,36 +376,42 @@ class LibraryContext:
             inner_meta = _read_meta(inner_target)
             if inner_meta and inner_meta.get("ok"):
                 continue
+            inner_key = f"container:{inner}"
+            if inner_key in self._failed_ops:
+                inner_errors.append(f"{inner.name}: {self._failed_ops[inner_key]}")
+                continue
             inner_ok, inner_diag = _extract_container(
                 str(inner), str(inner_target), self._converter_path or None
             )
-            self._write_container_meta(inner_target, inner, inner_ok, inner_diag)
             if not inner_ok:
+                shutil.rmtree(inner_target, ignore_errors=True)
+                self._failed_ops[inner_key] = inner_diag
                 inner_errors.append(f"{inner.name}: {inner_diag}")
+                continue
+            self._write_container_meta(inner_target, inner)
         note = "；".join(inner_errors)
-        self._write_container_meta(target, pack_path, True, note)
+        self._write_container_meta(target, pack_path, note)
         if inner_errors:
             self._root_errors.append(f"图库包部分内层容器解包失败 {pack_path}: {note}")
         return target
 
-    def _write_container_meta(
-        self, target: Path, source: Path, ok: bool, diag: str
-    ) -> None:
+    def _write_container_meta(self, target: Path, source: Path, note: str = "") -> None:
+        """成功解包才落盘 meta（磁盘缓存只存成功结果）。"""
         try:
             stat = source.stat()
             size, mtime_ns = stat.st_size, stat.st_mtime_ns
         except OSError:
             size, mtime_ns = 0, 0
         meta: dict[str, Any] = {
-            "ok": bool(ok),
+            "ok": True,
             "source": str(source),
             "size": size,
             "mtime_ns": mtime_ns,
             "converter": self._converter_path,
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
-        if not ok:
-            meta["error"] = diag
+        if note:
+            meta["note"] = note
         _write_meta(target, meta)
 
     # ── 解析规则 ────────────────────────────────────────────────────────
@@ -487,16 +510,16 @@ class LibraryContext:
     # ── GSM → HSF 转换缓存 ─────────────────────────────────────────────
 
     def _load_hsf_for_gsm(self, gsm_path: Path) -> tuple[Optional[HSFProject], str]:
-        """按需转换 GSM → HSF（内容寻址缓存；失败结果同样缓存）。
+        """按需转换 GSM → HSF（内容寻址缓存；失败只内存缓存，不落盘）。
 
         返回 (hsf, "") 或 (None, 错误诊断)。
         """
         fingerprint = _content_fingerprint(gsm_path, self._converter_path)
         cache_dir = self._cache_root / "hsf" / fingerprint
 
-        meta = _read_meta(cache_dir)
-        if meta and meta.get("error"):
-            return None, str(meta["error"])
+        fail_key = f"gsm:{gsm_path}"
+        if fail_key in self._failed_ops:
+            return None, self._failed_ops[fail_key]
 
         hsf_root = _find_hsf_root(cache_dir)
         if hsf_root is None:
@@ -506,40 +529,39 @@ class LibraryContext:
             )
             if not ok:
                 message = f"宏对象转换失败 {gsm_path}: {diag}{_password_hint(diag)}"
-                self._write_gsm_meta(cache_dir, gsm_path, error=message)
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                self._failed_ops[fail_key] = message
                 return None, message
-            self._write_gsm_meta(cache_dir, gsm_path, error=None)
+            self._write_gsm_meta(cache_dir, gsm_path)
             hsf_root = _find_hsf_root(cache_dir)
             if hsf_root is None:
                 message = f"宏对象转换输出缺少 HSF 结构: {cache_dir}"
-                self._write_gsm_meta(cache_dir, gsm_path, error=message)
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                self._failed_ops[fail_key] = message
                 return None, message
 
         try:
             return HSFProject.load_from_disk(str(hsf_root)), ""
         except Exception as exc:
             message = f"缓存 HSF 载入失败 {hsf_root}: {exc}"
-            self._write_gsm_meta(cache_dir, gsm_path, error=message)
+            self._failed_ops[fail_key] = message
             return None, message
 
-    def _write_gsm_meta(
-        self, cache_dir: Path, gsm_path: Path, error: Optional[str]
-    ) -> None:
+    def _write_gsm_meta(self, cache_dir: Path, gsm_path: Path) -> None:
+        """成功转换才落盘 meta（磁盘缓存只存成功结果）。"""
         try:
             stat = gsm_path.stat()
             size, mtime_ns = stat.st_size, stat.st_mtime_ns
         except OSError:
             size, mtime_ns = 0, 0
         meta: dict[str, Any] = {
-            "ok": error is None,
+            "ok": True,
             "source": str(gsm_path),
             "size": size,
             "mtime_ns": mtime_ns,
             "converter": self._converter_path,
             "created_at": datetime.now().isoformat(timespec="seconds"),
         }
-        if error is not None:
-            meta["error"] = error
         _write_meta(cache_dir, meta)
 
     # ── 项目依赖清单 ────────────────────────────────────────────────────

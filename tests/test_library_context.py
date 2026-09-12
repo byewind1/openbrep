@@ -299,10 +299,39 @@ def test_conversion_error_cached_and_password_hint(tmp_path, monkeypatch):
     assert first.status == "error"
     assert "可能受密码保护" in first.message
 
-    # 失败结果也缓存：第二次不再调用转换器
+    # 失败结果也缓存（内存级）：第二次不再调用转换器
     second = resolver("Locked", None)
     assert second.status == "error"
     assert counter["convert"] == 1
+
+
+def test_conversion_failure_does_not_poison_disk_cache(tmp_path, monkeypatch):
+    """回归：失败结果只内存缓存——新 resolver 实例（模拟下次预览/重启）
+    必须重新尝试转换，而不是被磁盘上的失败记录永久跳过（WL-AC图库.lcf
+    首次 extractcontainer exit=1 后一直被跳过的实测事故）。"""
+    root = tmp_path / "lib"
+    _write_fake_gsm(root / "FlakyMacro.gsm")
+    counter: dict = {}
+
+    def failing(gsm_path, out_dir, converter_path):
+        counter["convert"] = counter.get("convert", 0) + 1
+        return False, "transient failure"
+
+    monkeypatch.setattr(lc, "_convert_gsm_to_hsf", failing)
+    resolver = _build(tmp_path, [str(root)])
+    assert resolver("FlakyMacro", None).status == "error"
+    assert counter["convert"] == 1
+
+    # 新实例（同一缓存目录）：失败没落盘 → 重新尝试；这次成功
+    monkeypatch.setattr(
+        lc,
+        "_convert_gsm_to_hsf",
+        _fake_convert_factory({str((root / "FlakyMacro.gsm").resolve()): GUID_A}, counter),
+    )
+    fresh = _build(tmp_path, [str(root)])
+    result = fresh("FlakyMacro", None)
+    assert result.status == "resolved"
+    assert counter["convert"] == 2
 
 
 def test_converter_unavailable_reports_error(tmp_path):
