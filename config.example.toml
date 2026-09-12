@@ -113,6 +113,19 @@ pass_raw_image = true
 # off → 不跑 critic（MODIFY 简化档本就永远不跑，见 harness）。
 critic_pass = true
 
+[library]
+# GSM CALL 宏依赖的图库上下文（2026-09-12 GSM-CALL 研究 P2）：预览器执行
+# CALL 时按 calledmacros.xml 的 名称—GUID 表从这些根解析宏并按需转 HSF。
+# 每项可以是：含 .gsm 文件树的目录 / .lcf 容器 / .libpack 包；按优先级排序。
+# 不配 = 预览器对 CALL 只发"未配置图库上下文"诊断，不解析宏。
+# 本机 Archicad Library Packages 目录作为最低优先级兜底自动探测。
+# roots = [
+#   "/path/to/公司图库.lcf",
+#   "/path/to/宏目录",
+# ]
+# 转换/解包缓存根（内容寻址，源码变化自动失效）；留空 = ~/.openbrep/cache/library。
+# cache_dir = ""
+
 [paths]
 knowledge_dir = "./knowledge"
 templates_dir = "./templates"

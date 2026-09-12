@@ -1632,3 +1632,277 @@ class TestP3cForDoubleGate(unittest.TestCase):
         self.assertTrue(any("FOR 迭代超过上限 10" in w for w in res.warnings))
         self.assertFalse(any("耗时上限" in w for w in res.warnings))
 
+
+
+# ── P3：离线 CALL 执行 MVP + P1 结构化依赖诊断（GSM-CALL 研究 2026-09-12）──
+# 注意（预期内的行为变化）：不传 macro_resolver 时 CALL 不再落入
+# "未支持命令 CALL"，而是发 MACRO_NO_RESOLVER 结构化诊断（P1 要求可诊断）。
+from openbrep.gdl_previewer import MacroLookup
+
+
+def _macro(**kwargs) -> MacroLookup:
+    """构造 resolved MacroLookup 的便捷封装。"""
+    kwargs.setdefault("status", "resolved")
+    return MacroLookup(**kwargs)
+
+
+def _table_resolver(table: dict, calls: list | None = None):
+    """fake MacroResolver：按名查表；calls 非空时记录 (name, guid_hint)。"""
+    def _resolver(name: str, guid: str | None) -> MacroLookup:
+        if calls is not None:
+            calls.append((name, guid))
+        lookup = table.get(name)
+        if lookup is not None:
+            return lookup
+        return MacroLookup(status="missing", name=name, message=f"图库中没有宏 '{name}'")
+    return _resolver
+
+
+def _codes(res) -> list[str]:
+    return [w.code for w in res.warnings_structured]
+
+
+class TestCallMacroExecution(unittest.TestCase):
+    """P3：CALL 宏执行（参数/变换/master script/隔离/结果合并）。"""
+
+    def test_3d_call_inherits_caller_transform_and_marks_source_ref(self):
+        table = {"box宏": _macro(name="box宏", scripts={"3d.gdl": "BLOCK w, 0.1, 0.2"})}
+        res = preview_3d_script(
+            "ROTX 90\nCALL 'box宏' PARAMETERS w=A\nDEL 1\n",
+            parameters={"A": 1.0},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 1)
+        mesh = res.meshes[0]
+        # ROTX 90 继承：(x, y, z) → (x, -z, y)
+        self.assertAlmostEqual(max(mesh.x), 1.0)
+        self.assertAlmostEqual(min(mesh.y), -0.2)
+        self.assertAlmostEqual(max(mesh.z), 0.1)
+        self.assertIsNotNone(mesh.source_ref)
+        self.assertEqual(mesh.source_ref.macro, "box宏")
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+
+    def test_macro_default_parameter_used_when_not_passed(self):
+        table = {"m": _macro(name="m", parameters={"H": "0.5"}, scripts={"3d.gdl": "BLOCK 0.1, 0.1, H"})}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.5)
+
+    def test_explicit_parameter_override_wins(self):
+        table = {"m": _macro(name="m", parameters={"H": "0.5"}, scripts={"3d.gdl": "BLOCK 0.1, 0.1, H"})}
+        res = preview_3d_script("CALL 'm' PARAMETERS H=0.9\n", macro_resolver=_table_resolver(table))
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.9)
+
+    def test_parameters_all_merges_caller_env(self):
+        table = {"m": _macro(name="m", parameters={"H": "0.5"}, scripts={"3d.gdl": "BLOCK 0.1, 0.1, H"})}
+        res = preview_3d_script(
+            "CALL 'm' PARAMETERS ALL\n",
+            parameters={"H": 0.7},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.7)
+
+    def test_string_parameter_with_comma_survives_split(self):
+        # 引号+括号感知的拆分：s="a,b" 不能被拆成两条
+        table = {"m": _macro(name="m", scripts={"3d.gdl": 'IF s = "a,b" THEN BLOCK 1, 1, 1'})}
+        res = preview_3d_script(
+            'CALL \'m\' PARAMETERS s="a,b"\n',
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 1, f"字符串参数应原样传递，warnings={res.warnings}")
+
+    def test_string_parameter_from_caller_env(self):
+        table = {"m": _macro(name="m", scripts={"3d.gdl": 'IF s = "直棂" THEN BLOCK 1, 1, 1'})}
+        res = preview_3d_script(
+            "CALL 'm' PARAMETERS s=PATTERN\n",
+            parameters={"PATTERN": "直棂"},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 1)
+
+    def test_2d_call_merges_macro_2d_geometry(self):
+        table = {"panel宏": _macro(
+            name="panel宏",
+            scripts={"2d.gdl": "LINE2 0, 0, 1, 1\nCIRCLE2 0.5, 0.5, 0.25\n"},
+        )}
+        res = preview_2d_script("CALL 'panel宏' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertEqual(len(res.lines), 1)
+        self.assertEqual(len(res.circles), 1)
+        self.assertAlmostEqual(res.circles[0][2], 0.25)
+
+    def test_master_script_runs_before_mode_script(self):
+        table = {"m": _macro(
+            name="m",
+            parameters={"H": "0.25"},
+            scripts={"1d.gdl": "h2 = H * 2", "3d.gdl": "BLOCK 0.1, 0.1, h2"},
+        )}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.5)
+
+    def test_macro_transform_and_env_do_not_leak_to_caller(self):
+        # 宏内 ADDX 5（无 DEL）+ 给 A 赋值；caller 后续 BLOCK 必须在原点、宽 A=1
+        table = {"shift宏": _macro(
+            name="shift宏",
+            scripts={"3d.gdl": "A = 99\nADDX 5\nBLOCK 1, 1, 1\n"},
+        )}
+        res = preview_3d_script(
+            "CALL 'shift宏' PARAMETERS\nBLOCK A, 1, 1\n",
+            parameters={"A": 1.0},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 2)
+        macro_mesh, caller_mesh = res.meshes
+        self.assertAlmostEqual(min(macro_mesh.x), 5.0)
+        self.assertAlmostEqual(min(caller_mesh.x), 0.0)
+        self.assertAlmostEqual(max(caller_mesh.x), 1.0)
+        self.assertIsNone(caller_mesh.source_ref.macro)
+
+    def test_nested_call_chain_and_guid_hint_passthrough(self):
+        calls: list = []
+        table = {
+            "A宏": _macro(
+                name="A宏",
+                scripts={"3d.gdl": "CALL 'B宏' PARAMETERS"},
+                called_macros={"B宏": "guid-b"},
+            ),
+            "B宏": _macro(name="B宏", scripts={"3d.gdl": "BLOCK 0.1, 0.1, 0.1"}),
+        }
+        res = preview_3d_script(
+            "CALL 'A宏' PARAMETERS\n",
+            macro_resolver=_table_resolver(table, calls),
+            macro_guid_map={"A宏": "guid-a"},
+        )
+        self.assertEqual(len(res.meshes), 1)
+        self.assertEqual(res.meshes[0].source_ref.macro, "A宏/B宏")
+        # caller 的 calledmacros 表给出 A宏 的 GUID；A宏 自己的表给出 B宏 的 GUID
+        self.assertIn(("A宏", "guid-a"), calls)
+        self.assertIn(("B宏", "guid-b"), calls)
+
+    def test_setup_mode_skips_call(self):
+        calls: list = []
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 9, 9, 9"})}
+        res = preview_3d_script(
+            "BLOCK 1, 1, 1\n",
+            setup_script="CALL 'm' PARAMETERS\n",
+            macro_resolver=_table_resolver(table, calls),
+        )
+        self.assertEqual(calls, [])  # master script 里的 CALL 不执行（MVP 近似）
+        self.assertEqual(len(res.meshes), 1)
+
+
+class TestCallMacroDiagnostics(unittest.TestCase):
+    """P1：CALL 结构化依赖诊断（不执行也要可诊断）。"""
+
+    def test_no_resolver_warns_once_per_macro_with_name(self):
+        script = "CALL '煤气报警器立面' PARAMETERS _A=_A\nCALL '煤气报警器立面' PARAMETERS\n"
+        res = preview_3d_script(script)
+        warns = [w for w in res.warnings_structured if w.code == "MACRO_NO_RESOLVER"]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("煤气报警器立面", warns[0].message)
+        self.assertIn("未配置图库上下文", warns[0].message)
+        # 预期内行为变化：不再报"未支持命令 CALL"
+        self.assertFalse(any("未支持命令 CALL" in w for w in res.warnings))
+        self.assertEqual(res.meshes, [])
+
+    def test_missing_ambiguous_error_diagnostics(self):
+        table = {
+            "lost": MacroLookup(status="missing", name="lost", message="已配置图库中没有该名称"),
+            "dup": MacroLookup(status="ambiguous", name="dup", message="候选: a.gsm / b.gsm"),
+            "bad": MacroLookup(status="error", name="bad", message="密码保护，无法转换"),
+        }
+        res = preview_3d_script(
+            "CALL 'lost' PARAMETERS\nCALL 'dup' PARAMETERS\nCALL 'bad' PARAMETERS\n",
+            macro_resolver=_table_resolver(table),
+        )
+        codes = _codes(res)
+        for code, name, snippet in (
+            ("MACRO_MISSING", "lost", "没有该名称"),
+            ("MACRO_AMBIGUOUS", "dup", "候选"),
+            ("MACRO_ERROR", "bad", "密码保护"),
+        ):
+            matched = [w for w in res.warnings_structured if w.code == code]
+            self.assertEqual(len(matched), 1, f"{code} 应恰好一条，实际 {codes}")
+            self.assertIn(name, matched[0].message)
+            self.assertIn(snippet, matched[0].message)
+        self.assertEqual(res.meshes, [])
+
+    def test_parse_fail_without_quoted_name(self):
+        res = preview_3d_script("CALL 煤气报警器 PARAMETERS\n")
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_PARSE_FAIL"]
+        self.assertEqual(len(matched), 1)
+
+    def test_resolved_with_message_warns_guid_mismatch(self):
+        table = {"m": _macro(
+            name="m",
+            message="按名称命中，但 GUID 与 calledmacros 不符",
+            scripts={"3d.gdl": "BLOCK 1, 1, 1"},
+        )}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_GUID_MISMATCH"]
+        self.assertEqual(len(matched), 1)
+        self.assertIn("GUID", matched[0].message)
+        self.assertEqual(len(res.meshes), 1)  # resolved 仍执行
+
+    def test_macro_without_mode_script_warns_no_script(self):
+        table = {"m": _macro(name="m", scripts={"2d.gdl": "LINE2 0, 0, 1, 1"})}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_NO_SCRIPT"]
+        self.assertEqual(len(matched), 1)
+        self.assertIn("没有 3D 脚本", matched[0].message)
+        self.assertEqual(res.meshes, [])
+
+    def test_child_warnings_passthrough_with_macro_prefix(self):
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 1, 1\n"})}  # 参数不足
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertTrue(any(w.startswith("[宏 m] ") for w in res.warnings))
+        child_warns = [w for w in res.warnings_structured if "宏 m" in w.message]
+        self.assertTrue(child_warns)
+        # line/code 原样保留（BLOCK 参数不足是宏内第 1 行）
+        self.assertEqual(child_warns[0].line, 1)
+        self.assertIn("参数不足", child_warns[0].message)
+
+
+class TestCallMacroGuards(unittest.TestCase):
+    """P3 闸门：递归环 / 深度 / 总次数预算。"""
+
+    def test_recursion_cycle_detected(self):
+        table = {"self宏": _macro(name="self宏", scripts={"3d.gdl": "CALL 'self宏' PARAMETERS"})}
+        res = preview_3d_script("CALL 'self宏' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_RECURSION"]
+        self.assertEqual(len(matched), 1)
+        self.assertIn("self宏", matched[0].message)
+        self.assertEqual(res.meshes, [])
+
+    def test_depth_limit(self):
+        # m0 → m1 → … → m19（末级 BLOCK）；深度上限 16 → 链路在 m15 处被截断
+        table = {}
+        for i in range(19):
+            table[f"m{i}"] = _macro(name=f"m{i}", scripts={"3d.gdl": f"CALL 'm{i + 1}' PARAMETERS"})
+        table["m19"] = _macro(name="m19", scripts={"3d.gdl": "BLOCK 1, 1, 1"})
+        res = preview_3d_script("CALL 'm0' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertIn("MACRO_DEPTH_LIMIT", _codes(res))
+        self.assertEqual(res.meshes, [])  # 末级 BLOCK 不可达
+
+    def test_total_call_budget(self):
+        # 300 次 CALL 超过 256 预算：几何截断 + MACRO_BUDGET 只警一次
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 0.01, 0.01, 0.01"})}
+        res = preview_3d_script(
+            "FOR i = 1 TO 300\nCALL 'm' PARAMETERS\nNEXT i\n",
+            macro_resolver=_table_resolver(table),
+        )
+        from openbrep.gdl_previewer import DEFAULT_CALL_BUDGET
+        self.assertEqual(len(res.meshes), DEFAULT_CALL_BUDGET)
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_BUDGET"]
+        self.assertEqual(len(matched), 1)
+
+    def test_timeout_gate(self):
+        # 耗时闸门极小 → 第一次 CALL 前即超时（共享 deadline）
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 1, 1, 1"})}
+        res = preview_3d_script(
+            "CALL 'm' PARAMETERS\n",
+            wall_clock_limit=1e-9,
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertIn("MACRO_TIMEOUT", _codes(res))
+        self.assertEqual(res.meshes, [])

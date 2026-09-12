@@ -12,23 +12,64 @@ class WorkbenchPreviewService:
     def __init__(self, session: Any) -> None:
         self.session = session
 
+    def _macro_resolver(self) -> Any:
+        """按当前配置构建 CALL 宏解析器（GSM-CALL 研究 2026-09-12 P2）。
+
+        图库根来自 config.toml [library] roots（不存在自动写入，纯手改配置）；
+        转换器用会话的 LP_XMLConverter 路径。无可用图库根时返回 None——
+        预览器据此发 MACRO_NO_RESOLVER（"未配置图库上下文"）诊断。
+        """
+        from openbrep.library_context import build_macro_resolver
+
+        config = getattr(self.session, "config", None)
+        library = getattr(config, "library", None)
+        roots = list(getattr(library, "roots", None) or [])
+        cache_dir = str(getattr(library, "cache_dir", "") or "") or None
+        converter_path = str(getattr(self.session, "converter_path", "") or "") or None
+        project_root = None
+        project = getattr(self.session, "project", None)
+        if project is not None and getattr(project, "root", None):
+            project_root = str(project.root)
+        return build_macro_resolver(
+            roots,
+            converter_path,
+            cache_dir=cache_dir,
+            project_root=project_root,
+        )
+
     def preview(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": True, "preview": empty_preview_payload()}
         parameters, scripts, quality = split_preview_request(request)
-        return {
-            "ok": True,
-            "preview": preview_payload(self.session.project, parameters, scripts, quality=quality),
-        }
+        resolver = self._macro_resolver()
+        payload = preview_payload(
+            self.session.project, parameters, scripts, quality=quality,
+            macro_resolver=resolver,
+        )
+        _flush_macro_manifest(resolver)
+        return {"ok": True, "preview": payload}
 
     def preview_2d(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": True, "preview": empty_preview_2d_payload()}
         parameters, scripts, quality = split_preview_request(request)
-        return {
-            "ok": True,
-            "preview": preview_2d_payload(self.session.project, parameters, scripts, quality=quality),
-        }
+        resolver = self._macro_resolver()
+        payload = preview_2d_payload(
+            self.session.project, parameters, scripts, quality=quality,
+            macro_resolver=resolver,
+        )
+        _flush_macro_manifest(resolver)
+        return {"ok": True, "preview": payload}
+
+
+def _flush_macro_manifest(resolver: Any) -> None:
+    """预览后 best-effort 落盘项目宏依赖清单（失败不影响预览）。"""
+    flush = getattr(resolver, "flush_manifest", None)
+    if callable(flush):
+        try:
+            flush()
+        except Exception:  # noqa: BLE001 — 清单落盘绝不影响预览
+            pass
 
 
 def normalize_quality(quality: Any) -> str:
@@ -62,6 +103,7 @@ def preview_payload(
     overrides: dict[str, Any] | None = None,
     script_overrides: dict[str, str] | None = None,
     quality: str = "fast",
+    macro_resolver: Any = None,
 ) -> dict[str, Any]:
     scripts = script_overrides or {}
     result = preview_3d_script(
@@ -70,6 +112,8 @@ def preview_payload(
         setup_script=script_for(project, ScriptType.MASTER, scripts),
         unknown_command_policy="warn",
         quality=normalize_quality(quality),
+        macro_resolver=macro_resolver,
+        macro_guid_map=project.called_macro_guid_map(),
     )
     payload = preview_3d_to_three_payload(result)
     payload["warnings"] = result.warnings
@@ -91,6 +135,7 @@ def preview_2d_payload(
     overrides: dict[str, Any] | None = None,
     script_overrides: dict[str, str] | None = None,
     quality: str = "fast",
+    macro_resolver: Any = None,
 ) -> dict[str, Any]:
     scripts = script_overrides or {}
     result = preview_2d_script(
@@ -101,6 +146,8 @@ def preview_2d_payload(
         quality=normalize_quality(quality),
         # P3a：PROJECT2 顶视图投影需要 3D 脚本执行结果（同一组 scripts 覆盖）
         script_3d=script_for(project, ScriptType.SCRIPT_3D, scripts),
+        macro_resolver=macro_resolver,
+        macro_guid_map=project.called_macro_guid_map(),
     )
     return {
         "lines": [{"from": list(p1), "to": list(p2)} for p1, p2 in result.lines],

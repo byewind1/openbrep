@@ -816,6 +816,31 @@ class CompilerConfig:
 
 
 @dataclass
+class LibraryConfig:
+    """宏解析图库上下文（GSM CALL 依赖，2026-09-12 GSM-CALL 研究 P2）。
+
+    roots：图库根列表，按优先级排序。每项可以是
+      - 包含 .gsm 文件树的目录；
+      - .lcf 容器文件（按需 extractcontainer 到缓存）；
+      - .libpack 包（先 extractpackage 再解内层 .lcf）。
+    不写死任何 Archicad 安装/Teamwork 缓存路径；本机 Archicad Library
+    Packages 目录作为最低优先级兜底自动探测（library_context 负责）。
+    cache_dir：转换/解包容器的内容寻址缓存根；空 = 平台默认用户缓存目录。
+    """
+
+    roots: list[str] = None  # type: ignore[assignment]  # dataclass 默认在 __post_init__
+    cache_dir: str = ""
+
+    def __post_init__(self):
+        if self.roots is None:
+            self.roots = []
+        elif not isinstance(self.roots, list):
+            self.roots = []
+        else:
+            self.roots = [str(r) for r in self.roots if str(r).strip()]
+
+
+@dataclass
 class VisionConfig:
     """Vision Harness 配置（P5b 设计 §10-D5/D9，P5c 加 critic_pass）。
 
@@ -885,6 +910,7 @@ class GDLAgentConfig:
     compiler: CompilerConfig = field(default_factory=CompilerConfig)
     revisions: RevisionsConfig = field(default_factory=RevisionsConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    library: LibraryConfig = field(default_factory=LibraryConfig)
     knowledge_dir: str = "./knowledge"
     user_knowledge_dir: str = "./user_knowledge"
     templates_dir: str = "./templates"
@@ -984,12 +1010,18 @@ class GDLAgentConfig:
             agent_cfg.agent_loop_budget
         )
 
+        library_data = data.get("library", {})
+        if not isinstance(library_data, dict):
+            library_data = {}
+        library_cfg = pick(LibraryConfig, library_data)
+
         return cls(
             llm=llm_cfg,
             agent=agent_cfg,
             compiler=compiler_cfg,
             revisions=revisions_cfg,
             vision=vision_cfg,
+            library=library_cfg,
             knowledge_dir=data.get("knowledge_dir", "./knowledge"),
             user_knowledge_dir=data.get("user_knowledge_dir", "./user_knowledge"),
             templates_dir=data.get("templates_dir", "./templates"),
@@ -1061,6 +1093,10 @@ class GDLAgentConfig:
             },
             "revisions": {
                 "keep_last_n": self.revisions.keep_last_n,
+            },
+            "library": {
+                "roots": list(self.library.roots),
+                "cache_dir": self.library.cache_dir or "",
             },
             "vision": {
                 "pass_raw_image": self.vision.pass_raw_image,

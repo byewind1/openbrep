@@ -16,7 +16,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 
 DEFAULT_FOR_LIMIT = 5000
@@ -37,6 +37,9 @@ class PreviewSourceRef:
     # 子程序），行号含端点；顶层命令为单行 (line, line)。可选字段向后兼容。
     segment_start: int | None = None
     segment_end: int | None = None
+    # P3（CALL 执行）：该 mesh 由宏产生的宏名链（"外层/内层"）；顶层脚本直接
+    # 产生的 mesh 为 None。可选字段向后兼容。
+    macro: str | None = None
 
 
 @dataclass
@@ -58,6 +61,63 @@ class PreviewWarning:
     message: str
     level: str = "warning"
     code: str = "PREVIEW_WARN"
+
+
+# ── CALL 宏解析协议（P1/P3，GSM-CALL 研究 2026-09-12） ─────────────────────
+# gdl_previewer 不 import library_context（保持无重依赖、可被 benchmark/语义
+# 验证等离线路径复用）；解析器由调用方以 callable 注入，返回 MacroLookup。
+
+
+@dataclass
+class MacroLookup:
+    """CALL 宏解析结果（openbrep.library_context.build_macro_resolver 的返回协议）。
+
+    status:
+      "resolved"  — 找到宏；guid/scripts/parameters/called_macros 已填充
+      "missing"   — 已配置图库中没有该名称的宏
+      "ambiguous" — 多个同名候选且 GUID 无法唯一区分（禁止静默选第一个）
+      "error"     — 解析/转换过程出错（密码保护、转换器不可用、容器不可读等）
+    message 为人类可读诊断（结构化 warning 直接透传）；source 为解析来源
+    （图库根/容器路径），用于 "已解析自 …" 诊断。
+    """
+
+    status: str
+    name: str
+    guid: str | None = None
+    message: str = ""
+    source: str = ""
+    # 宏默认参数（原始值，字符串/数字均可，预览器自行归一化）
+    parameters: dict[str, Any] = field(default_factory=dict)
+    # ScriptType.value → 脚本文本（"1d.gdl"/"2d.gdl"/"3d.gdl" 等）
+    scripts: dict[str, str] = field(default_factory=dict)
+    # 宏自身的 calledmacros 名称 → GUID 表（嵌套 CALL 的 GUID 提示）
+    called_macros: dict[str, str] = field(default_factory=dict)
+
+
+# 注入预览器的宏解析器协议：(宏名, GUID 提示) → MacroLookup
+MacroResolver = Callable[[str, "str | None"], MacroLookup]
+
+
+# ── CALL 执行闸门（P3）────────────────────────────────────────────────────
+# 执行的是递归的不受信任脚本（图库宏），必须有限深/限次/限时三道闸门。
+DEFAULT_CALL_DEPTH_LIMIT = 16   # 最大 CALL 嵌套深度
+DEFAULT_CALL_BUDGET = 256       # 一次预览内 CALL 总次数预算（全 runtime 共享）
+
+
+@dataclass
+class _CallBudget:
+    """CALL 执行共享预算：顶层 runtime 自建，child runtime 复用同一对象。
+
+    start/limit 构成共享 wall-clock deadline（limit <= 0 关闭耗时闸门）；
+    total_calls 为全链路的 CALL 总次数；warned_* 保证闸门警告只发一次。
+    """
+
+    start: float
+    limit: float
+    max_calls: int = DEFAULT_CALL_BUDGET
+    total_calls: int = 0
+    warned_budget: bool = False
+    warned_timeout: bool = False
 
 
 @dataclass
@@ -95,6 +155,8 @@ def preview_2d_script(
     quality: str = "fast",
     script_3d: str | None = None,
     wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
+    macro_resolver: MacroResolver | None = None,
+    macro_guid_map: Mapping[str, str] | None = None,
 ) -> Preview2DResult:
     """Preview a 2D GDL script using MVP command subset.
 
@@ -102,6 +164,10 @@ def preview_2d_script(
     首次遇到 PROJECT2 时用同一组 parameters/setup/for_limit/quality/
     unknown_command_policy 起内部 runtime 执行 3D 脚本并缓存 meshes；
     不传 script_3d 时 PROJECT2 行为与 P3a 前逐字节一致（占位警告）。
+
+    macro_resolver / macro_guid_map（可选，P3）：CALL 宏解析器与调用方脚本
+    的 calledmacros 名称→GUID 提示表；不传时 CALL 只发 MACRO_NO_RESOLVER
+    结构化诊断（P1），不产生几何。
     """
     runtime = _PreviewRuntime(
         parameters=parameters,
@@ -112,6 +178,8 @@ def preview_2d_script(
         setup_script=setup_script or "",
         script_3d=script_3d,
         wall_clock_limit=wall_clock_limit,
+        macro_resolver=macro_resolver,
+        macro_guid_map=macro_guid_map,
     )
     if setup_script:
         runtime.execute(setup_script or "", mode="setup")
@@ -129,8 +197,13 @@ def preview_3d_script(
     unknown_command_policy: str = "warn",
     quality: str = "fast",
     wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
+    macro_resolver: MacroResolver | None = None,
+    macro_guid_map: Mapping[str, str] | None = None,
 ) -> Preview3DResult:
-    """Preview a 3D GDL script using MVP command subset."""
+    """Preview a 3D GDL script using MVP command subset.
+
+    macro_resolver / macro_guid_map（可选，P3）：见 preview_2d_script。
+    """
     runtime = _PreviewRuntime(
         parameters=parameters,
         for_limit=for_limit,
@@ -138,6 +211,8 @@ def preview_3d_script(
         unknown_command_policy=unknown_command_policy,
         quality=quality,
         wall_clock_limit=wall_clock_limit,
+        macro_resolver=macro_resolver,
+        macro_guid_map=macro_guid_map,
     )
     if setup_script:
         runtime.execute(setup_script or "", mode="setup")
@@ -156,6 +231,8 @@ def preview_scripts(
     unknown_command_policy: str = "warn",
     quality: str = "fast",
     wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
+    macro_resolver: MacroResolver | None = None,
+    macro_guid_map: Mapping[str, str] | None = None,
 ) -> PreviewResult:
     """Preview both 2D and 3D scripts and merge warnings."""
     p2d = preview_2d_script(
@@ -168,6 +245,8 @@ def preview_scripts(
         quality=quality,
         script_3d=script_3d,
         wall_clock_limit=wall_clock_limit,
+        macro_resolver=macro_resolver,
+        macro_guid_map=macro_guid_map,
     )
     p3d = preview_3d_script(
         script_3d,
@@ -178,6 +257,8 @@ def preview_scripts(
         unknown_command_policy=unknown_command_policy,
         quality=quality,
         wall_clock_limit=wall_clock_limit,
+        macro_resolver=macro_resolver,
+        macro_guid_map=macro_guid_map,
     )
     return PreviewResult(
         preview_2d=p2d,
@@ -204,6 +285,10 @@ class _PreviewRuntime:
         setup_script: str = "",
         script_3d: str | None = None,
         wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
+        macro_resolver: MacroResolver | None = None,
+        macro_guid_map: Mapping[str, str] | None = None,
+        _call_budget: "_CallBudget | None" = None,
+        _macro_chain: tuple[str, ...] = (),
     ):
         self.env = _normalize_parameters(parameters or {})
         # P3a：PROJECT2 顶视图投影——内部 3D runtime 需要的 setup/3D 脚本
@@ -225,6 +310,20 @@ class _PreviewRuntime:
         self.quality = (quality or "fast").strip().lower()
         if self.quality not in {"fast", "accurate"}:
             self.quality = "fast"
+
+        # P3（CALL 执行）：宏解析器 + 当前脚本的 calledmacros 名称→GUID 提示表。
+        # _macro_chain 为当前 CALL 链上的宏名（不含顶层脚本），用于递归环检测
+        # 与 source_ref.macro / 警告前缀的链式拼接；_call_budget 一次预览内全
+        # runtime 共享（顶层自建，child 复用）。
+        self._macro_resolver = macro_resolver
+        self._macro_guid_map: dict[str, str] = dict(macro_guid_map or {})
+        self._macro_chain: tuple[str, ...] = tuple(_macro_chain)
+        self._call_budget = _call_budget or _CallBudget(
+            start=time.monotonic(),
+            limit=self.wall_clock_limit,
+        )
+        # CALL 诊断去重（同一 runtime 内同一 宏名+code 只警一次，避免循环刷屏）
+        self._call_warned: set[tuple[str, str]] = set()
 
         self._transform_stack: list[tuple[tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]], tuple[float, float, float]]] = []
         self._A = _identity3()
@@ -446,6 +545,15 @@ class _PreviewRuntime:
                 idx += 1
                 continue
 
+            # P3（CALL）：在 setup 跳过逻辑之前拦截。setup 模式跳过 CALL
+            # （与 BLOCK 等几何命令一致——master script 里的 CALL 不执行，
+            # MVP 近似：Archicad 中 master script 的 CALL 实际会执行）。
+            if re.match(r"^CALL\b", line, re.IGNORECASE):
+                if mode != "setup":
+                    self._handle_call(line, line_no, mode)
+                idx += 1
+                continue
+
             if mode == "setup":
                 idx += 1
                 continue
@@ -640,6 +748,247 @@ class _PreviewRuntime:
         except Exception as exc:
             self._warn(line_no, f"IF 条件解析失败 `{condition}`: {exc}")
             return None
+
+    # ── CALL 宏执行（P3 MVP）────────────────────────────────────────────
+    # 设计取舍（MVP 近似，注释留痕）：
+    # - PARAMETERS ALL 不区分参数与局部变量，caller 整个 env 直接合并覆盖。
+    # - master script 以 mode="setup" 执行，其中的 CALL 不生效（嵌套 master
+    #   委托极少见；真需要时扩展 setup 模式下的受限 CALL）。
+    # - child 只回写几何与警告，不回写 env / 变换 / PUT 栈——天然隔离。
+    # - 严格模式（strict / unknown_command_policy="error"）不为 CALL 新增抛错
+    #   路径：CALL 是有明确诊断码的已知命令，诊断保持 warning（复用 _warn 而
+    #   非 _handle_unknown_command——后者只对真正未知的命令生效）。
+    # - unknown_command_policy="ignore" 同样静默 CALL 诊断（用户显式选择不
+    #   看告警），但闸门依然生效（只跳过执行）。
+
+    def _call_warn(self, line_no: int, msg: str, *, code: str, dedupe_key: str = "") -> None:
+        """CALL 诊断出口：policy=ignore 时静默；dedupe_key 非空时同键只警一次。"""
+        if self.unknown_command_policy == "ignore":
+            return
+        if dedupe_key:
+            key = (code, dedupe_key)
+            if key in self._call_warned:
+                return
+            self._call_warned.add(key)
+        self._warn(line_no, msg, command="CALL", code=code)
+
+    def _handle_call(self, line: str, line_no: int, mode: str) -> None:
+        """解析并执行/诊断一条 CALL 语句（mode 为 "2d" 或 "3d"）。"""
+        spec = _parse_call_statement(line)
+        if spec is None:
+            self._call_warn(
+                line_no,
+                f"CALL 语句无法解析（缺少引号包裹的宏名），已跳过: {line[:80]}",
+                code="MACRO_PARSE_FAIL",
+            )
+            return
+        name, param_kind, param_entries, had_malformed = spec
+        if had_malformed:
+            self._call_warn(
+                line_no,
+                f"CALL '{name}' 的 PARAMETERS 列表含无法解析的条目，已忽略该条目",
+                code="MACRO_PARSE_FAIL",
+            )
+
+        budget = self._call_budget
+        # 共享 wall-clock 闸门：累计耗时超限后跳过后续所有 CALL
+        if budget.limit > 0 and (time.monotonic() - budget.start) > budget.limit:
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：宏执行累计耗时超过上限 {budget.limit:g} 秒，跳过后续 CALL",
+                code="MACRO_TIMEOUT",
+                dedupe_key="__timeout__",
+            )
+            return
+        # 总次数预算（全链路共享）
+        if budget.total_calls >= budget.max_calls:
+            self._call_warn(
+                line_no,
+                f"CALL 总次数超过预算 {budget.max_calls}，跳过后续 CALL（含 '{name}'）",
+                code="MACRO_BUDGET",
+                dedupe_key="__budget__",
+            )
+            return
+
+        if self._macro_resolver is None:
+            # P1：不执行也要可诊断——区分"脚本本身无几何"与"几何在宏中"。
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：宏依赖未解析（未配置图库上下文），几何可能在宏中",
+                code="MACRO_NO_RESOLVER",
+                dedupe_key=name,
+            )
+            return
+
+        # 递归环：同一解析链中宏名重复出现
+        if name in self._macro_chain:
+            chain_text = "/".join((*self._macro_chain, name))
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：检测到宏递归环（{chain_text}），已跳过",
+                code="MACRO_RECURSION",
+                dedupe_key=name,
+            )
+            return
+        # 嵌套深度闸门
+        if len(self._macro_chain) >= DEFAULT_CALL_DEPTH_LIMIT:
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：宏嵌套深度超过上限 {DEFAULT_CALL_DEPTH_LIMIT}，已跳过",
+                code="MACRO_DEPTH_LIMIT",
+                dedupe_key=name,
+            )
+            return
+
+        # GUID 提示：当前脚本的 calledmacros 表（精确匹配失败再大小写不敏感）
+        guid_hint = self._macro_guid_map.get(name)
+        if guid_hint is None:
+            for k, v in self._macro_guid_map.items():
+                if k.upper() == name.upper():
+                    guid_hint = v
+                    break
+
+        try:
+            lookup = self._macro_resolver(name, guid_hint)
+        except Exception as exc:  # 解析器自身异常按 error 诊断，不崩溃
+            lookup = MacroLookup(status="error", name=name, message=f"宏解析器异常: {exc}")
+
+        if lookup.status == "missing":
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：宏未找到。{lookup.message}".rstrip(),
+                code="MACRO_MISSING",
+                dedupe_key=name,
+            )
+            return
+        if lookup.status == "ambiguous":
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：宏名存在多个候选，无法唯一确定。{lookup.message}".rstrip(),
+                code="MACRO_AMBIGUOUS",
+                dedupe_key=name,
+            )
+            return
+        if lookup.status != "resolved":
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：宏解析出错。{lookup.message}".rstrip(),
+                code="MACRO_ERROR",
+                dedupe_key=name,
+            )
+            return
+
+        # resolved 但带非空 message（典型：按名称命中但 GUID 不符）→ 透传告警
+        if lookup.message:
+            self._call_warn(
+                line_no,
+                f"CALL '{name}'：{lookup.message}",
+                code="MACRO_GUID_MISMATCH",
+                dedupe_key=name,
+            )
+
+        budget.total_calls += 1
+
+        # 参数环境：宏默认值 → PARAMETERS 覆盖（表达式在 caller env 中求值）
+        child_env = _normalize_parameters(lookup.parameters)
+        if param_kind == "all":
+            # MVP 近似：不区分参数与局部变量，caller 整个 env 覆盖宏默认
+            for k, v in self.env.items():
+                child_env[str(k).upper()] = v
+        else:
+            for pname, expr in param_entries:
+                value = self._eval_call_param(expr, line_no)
+                if value is not None:
+                    child_env[pname.upper()] = value
+
+        # child 的 FOR 耗时闸门沿用"剩余时间"（共享 deadline 由 budget 保证）
+        if budget.limit > 0:
+            remaining = max(0.0, budget.limit - (time.monotonic() - budget.start))
+        else:
+            remaining = 0.0
+
+        child = _PreviewRuntime(
+            parameters=child_env,
+            for_limit=self.for_limit,
+            strict=self.strict,
+            unknown_command_policy=self.unknown_command_policy,
+            quality=self.quality,
+            wall_clock_limit=remaining,
+            macro_resolver=self._macro_resolver,
+            macro_guid_map=lookup.called_macros,
+            _call_budget=budget,
+            _macro_chain=(*self._macro_chain, name),
+        )
+        # 变换继承：拷贝 caller 当前 _A/_t（不共享可变状态），child 的变换栈
+        # 为空；child 内 ADD/DEL 不回写 caller（天然隔离）。
+        child._A = tuple(tuple(row) for row in self._A)
+        child._t = tuple(self._t)
+
+        # 先执行宏的 master script（setup 模式；其中的 CALL 不生效，MVP 近似）
+        master = lookup.scripts.get("1d.gdl")
+        if master:
+            child.execute(master, mode="setup")
+        script_key = "2d.gdl" if mode == "2d" else "3d.gdl"
+        mode_text = "2D" if mode == "2d" else "3D"
+        macro_script = lookup.scripts.get(script_key)
+        if not macro_script:
+            self._call_warn(
+                line_no,
+                f"宏 '{name}' 没有 {mode_text} 脚本，已跳过",
+                code="MACRO_NO_SCRIPT",
+                dedupe_key=f"{name}::{mode}",
+            )
+            return
+        child.execute(macro_script, mode=mode)
+        child.finish()
+
+        chain_label = "/".join((*self._macro_chain, name))
+
+        # 结果合并：3d → meshes/wires；2d → 各裸 tuple 列表
+        if mode == "3d":
+            for mesh in child.result_3d.meshes:
+                if mesh.source_ref is not None and mesh.source_ref.macro is None:
+                    # 仅设置宏内直接产生的 mesh；嵌套 CALL 的 mesh 已带完整链
+                    mesh.source_ref.macro = chain_label
+                self.result_3d.meshes.append(mesh)
+            self.result_3d.wires.extend(child.result_3d.wires)
+        else:
+            self.result_2d.lines.extend(child.result_2d.lines)
+            self.result_2d.polygons.extend(child.result_2d.polygons)
+            self.result_2d.circles.extend(child.result_2d.circles)
+            self.result_2d.arcs.extend(child.result_2d.arcs)
+
+        # child 警告透传：文本加 [宏 链] 前缀；structured 保留 line/command/code
+        for w in child._warnings:
+            self._warnings.append(f"[宏 {chain_label}] {w}")
+        for ws in child._warnings_structured:
+            self._warnings_structured.append(
+                PreviewWarning(
+                    line=ws.line,
+                    command=ws.command,
+                    message=f"[宏 {chain_label}] {ws.message}",
+                    level=ws.level,
+                    code=ws.code,
+                )
+            )
+
+    def _eval_call_param(self, expr: str, line_no: int) -> Any:
+        """PARAMETERS 覆盖值求值：在 caller env 中求值；去引号字符串字面量与
+        caller env 中的字符串值按字符串传递（参考 _normalize_parameters 的
+        字符串保留逻辑）；数值走 _eval_expr。求值失败返回 None（已告警）。"""
+        text = (expr or "").strip()
+        if not text:
+            self._warn(line_no, "CALL PARAMETERS 含空表达式，已跳过该参数", command="CALL")
+            return None
+        # 字符串字面量（单/双/反引号）
+        if len(text) >= 2 and text[0] in {'"', "'", "`"} and text[-1] == text[0]:
+            return text[1:-1]
+        # caller env 中的字符串变量
+        if re.match(r"^[A-Za-z_]\w*$", text):
+            value = self.env.get(text.upper())
+            if isinstance(value, str):
+                return value
+        return self._eval_expr(text, line_no)
 
     def _handle_transform(self, line: str, line_no: int) -> bool:
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\b\s*(.*)$", line)
@@ -928,6 +1277,10 @@ class _PreviewRuntime:
                 unknown_command_policy=self.unknown_command_policy,
                 quality=self.quality,
                 wall_clock_limit=self.wall_clock_limit,
+                macro_resolver=self._macro_resolver,
+                macro_guid_map=self._macro_guid_map,
+                _call_budget=self._call_budget,
+                _macro_chain=self._macro_chain,
             )
             if self._setup_script:
                 inner.execute(self._setup_script, mode="setup")
@@ -1730,6 +2083,86 @@ def _split_args(text: str) -> list[str]:
     if tail:
         args.append(tail)
     return args
+
+
+def _split_call_args(text: str) -> list[str]:
+    """CALL PARAMETERS 列表的拆分：引号（' " `）与括号都感知。
+
+    _split_args 只跟踪括号深度，引号内逗号（如 name="a,b"）会被错拆——
+    CALL 解析用这个本地 splitter，_split_args 的全局语义不动（其他命令
+    依赖现状）。
+    """
+    if not text:
+        return []
+    args: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    quote: str | None = None
+    for ch in text:
+        if quote is not None:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in {'"', "'", "`"}:
+            quote = ch
+            cur.append(ch)
+            continue
+        if ch == "(":
+            depth += 1
+            cur.append(ch)
+            continue
+        if ch == ")":
+            depth = max(0, depth - 1)
+            cur.append(ch)
+            continue
+        if ch == "," and depth == 0:
+            args.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    tail = "".join(cur).strip()
+    if tail:
+        args.append(tail)
+    return args
+
+
+def _parse_call_statement(
+    line: str,
+) -> tuple[str, str, list[tuple[str, str]], bool] | None:
+    """解析 CALL 语句 → (宏名, 参数模式, [(参数名, 表达式)], 含畸形条目)。
+
+    宏名 = CALL 后第一个引号（单/双/反引号）包裹串，可含中文/空格/任意字符。
+    参数模式："none"（无 PARAMETERS 或列表为空，全用宏默认）/ "all"
+    （PARAMETERS ALL，大小写不敏感）/ "list"（name = expr 列表，按引号+括号
+    感知的 _split_call_args 拆分）。无引号名 → None（调用方发
+    MACRO_PARSE_FAIL）。列表中无 `=` 的条目被跳过并计入"含畸形条目"。
+    """
+    m = re.match(r"""^CALL\s+(['"`])(.*?)\1(.*)$""", line, re.IGNORECASE)
+    if not m:
+        return None
+    name = m.group(2)
+    rest = (m.group(3) or "").strip()
+    if not rest:
+        return name, "none", [], False
+    m_params = re.match(r"^PARAMETERS\b(.*)$", rest, re.IGNORECASE)
+    if not m_params:
+        return None  # 宏名后跟了非 PARAMETERS 的内容，按解析失败处理
+    params_text = (m_params.group(1) or "").strip()
+    if not params_text:
+        return name, "none", [], False
+    if params_text.upper() == "ALL":
+        return name, "all", [], False
+    entries: list[tuple[str, str]] = []
+    malformed = False
+    for part in _split_call_args(params_text):
+        pname, sep, expr = part.partition("=")
+        pname = pname.strip()
+        if not sep or not pname:
+            malformed = True
+            continue
+        entries.append((pname, expr.strip()))
+    return name, "list", entries, malformed
 
 
 def _extract_points_2d(values: list[float], n: int) -> list[Point2D] | None:

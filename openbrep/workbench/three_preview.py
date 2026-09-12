@@ -33,6 +33,8 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
                 # P1e 相关代码段（可选字段，向后兼容）：无则为 None
                 "segment_start": mesh.source_ref.segment_start,
                 "segment_end": mesh.source_ref.segment_end,
+                # P3 CALL 宏链（可选字段，向后兼容）：非宏几何为 None
+                "macro": getattr(mesh.source_ref, "macro", None),
             }
         meshes.append(item)
 
