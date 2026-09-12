@@ -22,6 +22,11 @@ from typing import Any, Callable, Mapping
 DEFAULT_FOR_LIMIT = 5000
 DEFAULT_WALL_CLOCK_LIMIT = 10.0  # seconds; wall-clock gate for FOR loops
 
+# 2D 文本字号的名义出图比例（1:50）：GDL 文本是纸张 mm，Archicad 按出图
+# 比例映射到模型空间；预览无比例上下文，取平面符号最常用的 1:50，使
+# size_mm × 0.001 × 50 = 模型单位字高在 fit 视图下比例可读。
+PREVIEW_TEXT_NOMINAL_SCALE = 50.0
+
 
 Point2D = tuple[float, float]
 Point3D = tuple[float, float, float]
@@ -124,8 +129,10 @@ class _CallBudget:
 class PreviewText:
     """2D 文本项（TEXT2/RICHTEXT2 链）：位置已过 2D 变换，size 为模型单位。
 
-    size = 样式字号 mm × 0.001（GDL 文本是纸张尺寸，MVP 不随 MUL2 缩放，
-    见 _handle_2d 文本链注释）。
+    size = 样式字号 mm × 0.001 × PREVIEW_TEXT_NOMINAL_SCALE。GDL 文本是纸张
+    尺寸，Archicad 按出图比例映射到模型空间；预览无比例上下文，取名义 1:50
+    （平面符号的常用比例），使文本在 fit 视图下比例可读（取舍见 _handle_2d
+    文本链注释）。
     """
 
     x: float
@@ -1348,8 +1355,9 @@ class _PreviewRuntime:
                         command=cmd,
                     )
                 else:
-                    # mm → 模型单位；GDL 文本是纸张尺寸，不随 MUL2 缩放（取舍见上）
-                    size = float(style["size_mm"]) * 0.001
+                    # mm → 模型单位：纸张尺寸 × 名义出图比例 1:50（不随 MUL2
+                    # 缩放，取舍见 PREVIEW_TEXT_NOMINAL_SCALE 注释）
+                    size = float(style["size_mm"]) * 0.001 * PREVIEW_TEXT_NOMINAL_SCALE
             px, py = self._p2(vals[0], vals[1])
             self.result_2d.texts.append(PreviewText(x=px, y=py, text=text, size=size))
             return True
@@ -1710,8 +1718,9 @@ class _PreviewRuntime:
             if style is None:
                 self._warn(line_no, f"段落 '{par_name}' 引用了未定义的样式 '{style_name}'", command="RICHTEXT2")
             else:
-                # mm → 模型单位；GDL 文本是纸张尺寸，不随 MUL2 缩放（MVP 取舍）
-                size = float(style["size_mm"]) * 0.001
+                # mm → 模型单位：纸张尺寸 × 名义出图比例 1:50（不随 MUL2
+                # 缩放，取舍见 PREVIEW_TEXT_NOMINAL_SCALE 注释）
+                size = float(style["size_mm"]) * 0.001 * PREVIEW_TEXT_NOMINAL_SCALE
         px, py = self._p2(x, y)
         self.result_2d.texts.append(PreviewText(x=px, y=py, text=str(par["text"]), size=size))
 

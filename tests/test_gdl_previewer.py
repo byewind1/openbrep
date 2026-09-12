@@ -2059,7 +2059,7 @@ class TestTextChain(unittest.TestCase):
 
     def test_full_chain_emit_text_with_transform(self):
         # mul2 A/0.3, B/0.21（A=0.3, B=0.21 → 等比 1）+ add2 平移生效；
-        # size = 1.2mm × 0.001，不随 MUL2 缩放
+        # size = 1.2mm × 0.001 × 50（名义 1:50 出图比例），不随 MUL2 缩放
         script = (
             "mul2 A/0.3, B/0.21\n"
             "add2 178.4960276837, -9.652005022221\n"
@@ -2070,7 +2070,7 @@ class TestTextChain(unittest.TestCase):
         self.assertEqual(len(res.texts), 1)
         t = res.texts[0]
         self.assertEqual(t.text, "GAS")
-        self.assertAlmostEqual(t.size, 0.0012, places=9)
+        self.assertAlmostEqual(t.size, 0.0012 * 50, places=9)
         # 位置过 _p2（继承 mul2/add2 变换）
         self.assertAlmostEqual(t.x, -178.2779917466 + 178.4960276837, places=9)
         self.assertAlmostEqual(t.y, 9.654526543995 - 9.652005022221, places=9)
@@ -2086,7 +2086,7 @@ class TestTextChain(unittest.TestCase):
         res = preview_2d_script(script)
         self.assertEqual(len(res.texts), 1)
         self.assertEqual(res.texts[0].text, "hi")
-        self.assertAlmostEqual(res.texts[0].size, 0.002, places=9)
+        self.assertAlmostEqual(res.texts[0].size, 0.002 * 50, places=9)
         self.assertEqual(res.texts[0].x, 1.0)
         self.assertEqual(res.texts[0].y, 2.0)
         # 顶层 SET STYLE 不再落入静默 no-op，也不报"未支持命令"
@@ -2161,4 +2161,4 @@ class TestP4SilentAndMacroMerge(unittest.TestCase):
         self.assertEqual(res.polygon_contours, [True])
         self.assertEqual(len(res.texts), 1)
         self.assertEqual(res.texts[0].text, "LBL")
-        self.assertAlmostEqual(res.texts[0].size, 0.001, places=9)
+        self.assertAlmostEqual(res.texts[0].size, 0.001 * 50, places=9)

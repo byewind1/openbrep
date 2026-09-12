@@ -454,7 +454,19 @@ Architecture notes:
   picks, content-addressed conversion cache at `~/.openbrep/cache/library`,
   best-effort `.openbrep/dependencies/library-parts.json` manifest). Never
   hardcode Teamwork cache paths; never redistribute library content. Still
-  open: Archicad online authoritative preview (research doc P4).
+  open: Archicad online authoritative preview (research doc P4). 2D coverage
+  for real library symbols (same day): unified POLY2 engine (POLY2_/POLY2_A/
+  POLY2_B/POLY2_B{5}, frame_fill bits, arc status codes 900+3000/4000/4001,
+  2000, 1000/800 with degradation, -1 hole split, ~10° tessellation), rich
+  text chain (DEFINE STYLE{2}/PARAGRAPH…ENDPARAGRAPH/TEXTBLOCK/RICHTEXT2/
+  TEXT2 + top-level SET STYLE tracking; glyph height is paper mm mapped at a
+  nominal 1:50 print scale — `PREVIEW_TEXT_NOMINAL_SCALE` — not scaled by
+  MUL2), FILL/LINE_PROPERTY/HOTLINE2/HOTARC2 silently recognized. Payload
+  gains `polygon_fills`/`polygon_contours` (aligned with `polygons`) and
+  `texts`; the React 2D viewport honors them (old payloads without the arrays
+  keep the previous fill+stroke appearance). Failure results are cached
+  in-memory only — disk cache stores successes (a transient extractcontainer
+  failure once poisoned the on-disk cache permanently).
 
 
 ## benchmark 黄金语料规范（corpus maintenance）
