@@ -1696,7 +1696,8 @@ button:focus-visible {
   min-height: 0;
   display: grid;
   place-items: center;
-  background: var(--bg-canvas);
+  /* 图纸风格：白底黑线，与 Archicad 2D 符号窗口一致（工作台其他面板仍暗色） */
+  background: #ffffff;
 }
 
 .preview2d-svg {
@@ -1706,26 +1707,26 @@ button:focus-visible {
 }
 
 .preview2d-line {
-  stroke: var(--accent-soft);
+  stroke: #1e293b;
   stroke-width: 0.012;
   vector-effect: non-scaling-stroke;
 }
 
 .preview2d-polygon {
-  fill: var(--accent-muted);
-  stroke: var(--accent-soft);
+  fill: #e2e8f0;
+  stroke: #1e293b;
   stroke-width: 0.012;
   vector-effect: non-scaling-stroke;
 }
 
 .preview2d-text {
-  fill: var(--accent-soft);
+  fill: #1e293b;
   /* GDL 文本是纸张尺寸：字号随 viewBox 缩放（真实比例），不做非缩放处理 */
   user-select: none;
 }
 
 .preview2d-empty {
-  color: var(--text-muted);
+  color: #64748b;
   font-size: 12px;
 }
 
