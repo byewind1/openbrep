@@ -52,16 +52,28 @@ git push origin vX.Y.Z
 ```
 
 The two `rev-parse` commands must print the same commit hash. The tag push will
-trigger the installer build workflow. For `v*` tags, that workflow should:
+trigger the Tauri release workflow (`.github/workflows/release-tauri.yml`).
+For `v*` tags, that workflow should:
 
-1. Build macOS and Windows installer zip files.
-2. Smoke-test the generated zips before upload.
-3. Upload them as workflow artifacts.
-4. Create or update the matching GitHub Release.
-5. Attach `OpenBrep-*-macOS.zip` and `OpenBrep-*-Windows.zip` as release assets.
-6. State supported OS versions and CPU architectures in the GitHub Release
+1. Build the macOS (dmg) and Windows (msi + NSIS exe) installers.
+2. Smoke-test the frozen backend before upload.
+3. Sign updater artifacts (`*.sig`) and generate the `latest.json` updater
+   manifest when the `TAURI_SIGNING_PRIVATE_KEY` /
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets are present.
+4. Upload everything as workflow artifacts.
+5. Create or update the matching GitHub Release (as a **draft**).
+6. Attach the installers, updater artifacts, and `latest.json` as release
+   assets.
+7. State supported OS versions and CPU architectures in the GitHub Release
    notes. Do not publish a generic `macOS` claim when the asset is only
    `arm64` or only `x86_64`.
+
+After verifying the draft, publish it (`gh release edit vX.Y.Z
+--draft=false`) — the in-app auto-update endpoint
+(`releases/latest/download/latest.json`) only resolves for published releases.
+The desktop app checks this endpoint on launch via `tauri-plugin-updater`;
+see the "Desktop Auto-Update Channel" section in `AGENTS.md` for the signing
+key contract.
 
 ## Package Smoke Guardrails
 

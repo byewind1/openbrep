@@ -336,6 +336,25 @@ export const zh = {
   'layout.expandRight': '展开右栏',
   'drawer.collapseTitle': '收起底部抽屉',
   'drawer.expandTitle': '展开底部抽屉',
+
+  // 自动更新（Tauri 桌面端，tauri-plugin-updater）
+  'update.banner.title': '发现新版本 {version}',
+  'update.banner.current': '当前 {version}',
+  'update.banner.action': '立即更新',
+  'update.banner.later': '稍后',
+  'update.banner.retry': '重试',
+  'update.banner.downloading': '正在下载更新…',
+  'update.banner.installing': '下载完成，正在安装并重启…',
+  'update.banner.failed': '自动更新失败',
+  'update.banner.manual': '前往下载页',
+  'update.settings.title': '软件更新',
+  'update.settings.current': '当前版本 {version}',
+  'update.settings.check': '检查更新',
+  'update.settings.checking': '检查中…',
+  'update.settings.latest': '已是最新版本',
+  'update.settings.available': '发现新版本 {version}',
+  'update.settings.error': '检查失败，请稍后重试',
+  'update.settings.notDesktop': '仅桌面安装版支持自动更新',
 } as const
 
 export type LocaleKey = keyof typeof zh

@@ -3,6 +3,9 @@
   "identifier": "default",
   "description": "Default OpenBrep capabilities",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  },
   "permissions": [
     "core:default",
     "shell:allow-execute",

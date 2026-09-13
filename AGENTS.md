@@ -654,6 +654,9 @@ docs together:
 ```text
 pyproject.toml
 openbrep/__init__.py
+src-tauri/tauri.conf.json
+src-tauri/Cargo.toml (then refresh src-tauri/Cargo.lock via cargo check)
+frontend/package.json
 README.md
 README.zh-CN.md
 INSTALL_CN.md
@@ -737,12 +740,40 @@ gh run watch <run-id> --exit-status
 gh release view vX.Y.Z --json tagName,name,url,assets,isDraft,isPrerelease,targetCommitish
 ```
 
-The GitHub Release should contain the expected installer assets:
+The GitHub Release should contain the expected installer assets (Tauri
+pipeline, plus the updater manifest and signatures that power in-app
+auto-update):
 
 ```text
-OpenBrep-free-macOS.zip
-OpenBrep-free-Windows.zip
+OpenBrep_<ver>_aarch64.dmg            (macOS installer)
+OpenBrep_aarch64.app.tar.gz(.sig)     (macOS updater artifact)
+OpenBrep_<ver>_x64_en-US.msi          (Windows installer)
+OpenBrep_<ver>_x64-setup.exe(.sig)    (Windows updater artifact)
+latest.json                           (updater manifest, consumed by tauri-plugin-updater)
 ```
+
+### Desktop Auto-Update Channel
+
+The Tauri desktop app checks
+`https://github.com/byewind1/openbrep/releases/latest/download/latest.json`
+on launch (`tauri-plugin-updater`, Rust commands in `src-tauri/src/main.rs`).
+For the channel to work:
+
+- Repo secrets `TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must exist (minisign keypair; the public
+  half lives in `src-tauri/tauri.conf.json` `plugins.updater.pubkey`). Without
+  them the workflow still builds but produces no `.sig`/`latest.json`, and
+  in-app update silently reports failure.
+- The Release must leave **draft** state — `releases/latest/download/` is not
+  visible while the Release is a draft. After the workflow creates the draft,
+  verify assets and publish with `gh release edit vX.Y.Z --draft=false`.
+- The private key must never enter the repo; the maintainer keeps the local
+  copy at `~/.openbrep/updater/` (created by `npx @tauri-apps/cli@2 signer
+  generate`). Losing it means all future updates must be signed with a new
+  keypair and the pubkey rotated in `tauri.conf.json`.
+- macOS in-place update additionally assumes a code-signed app; unsigned
+  builds fall back in the UI to the manual download page (Windows NSIS updates
+  work unsigned).
 
 The Release notes must state platform compatibility explicitly:
 

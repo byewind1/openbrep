@@ -5,11 +5,109 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
+use tauri_plugin_updater::UpdaterExt;
 
 struct BackendState {
     child: Mutex<Option<Child>>,
     api_url: String,
+}
+
+/// Cached result of the last successful update check, so the download step
+/// does not need a second network round-trip.
+struct UpdaterState {
+    update: Mutex<Option<tauri_plugin_updater::Update>>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct UpdateInfo {
+    version: String,
+    current_version: String,
+    notes: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Open the GitHub Releases page in the system browser (manual-download
+/// fallback when in-place update is unavailable or fails).
+#[tauri::command]
+fn open_releases_page() -> Result<(), String> {
+    tauri_plugin_opener::open_url(
+        "https://github.com/byewind1/openbrep/releases/latest",
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn updater_check(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let info = update.as_ref().map(|u| UpdateInfo {
+        version: u.version.to_string(),
+        current_version: u.current_version.to_string(),
+        notes: u.body.clone(),
+    });
+
+    let state = app.state::<UpdaterState>();
+    *state.update.lock().unwrap() = update;
+
+    Ok(info)
+}
+
+#[tauri::command]
+async fn updater_download_and_install(app: tauri::AppHandle) -> Result<(), String> {
+    // Prefer the cached Update from updater_check; re-check if the frontend
+    // skipped the check step.
+    let cached = {
+        let state = app.state::<UpdaterState>();
+        let taken = state.update.lock().unwrap().take();
+        taken
+    };
+    let update = match cached {
+        Some(u) => u,
+        None => app
+            .updater()
+            .map_err(|e| e.to_string())?
+            .check()
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "no update available".to_string())?,
+    };
+
+    let mut downloaded: u64 = 0;
+    let app_progress = app.clone();
+    update
+        .download_and_install(
+            move |chunk_len, total| {
+                downloaded += chunk_len as u64;
+                let _ = app_progress.emit(
+                    "updater-progress",
+                    UpdateProgress { downloaded, total },
+                );
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Required on macOS/Linux after install; on Windows the NSIS installer
+    // has already taken over the process by this point.
+    app.restart();
 }
 
 /// Locate the backend: bundled PyInstaller sidecar (Tauri externalBin
@@ -156,6 +254,18 @@ fn shutdown_backend(state: &BackendState) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(UpdaterState {
+            update: Mutex::new(None),
+        })
+        .invoke_handler(tauri::generate_handler![
+            app_version,
+            open_releases_page,
+            updater_check,
+            updater_download_and_install
+        ])
         .setup(|app| {
             let (child, ready_url, api_url) = spawn_backend(app).map_err(|msg| {
                 // Log to stderr (terminal / Console.app) before the app exits.

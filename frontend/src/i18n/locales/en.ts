@@ -340,4 +340,23 @@ export const en: Record<LocaleKey, string> = {
   'layout.expandRight': 'Expand right panel',
   'drawer.collapseTitle': 'Collapse bottom drawer',
   'drawer.expandTitle': 'Expand bottom drawer',
+
+  // Auto-update (Tauri desktop, tauri-plugin-updater)
+  'update.banner.title': 'New version {version} available',
+  'update.banner.current': 'current {version}',
+  'update.banner.action': 'Update now',
+  'update.banner.later': 'Later',
+  'update.banner.retry': 'Retry',
+  'update.banner.downloading': 'Downloading update…',
+  'update.banner.installing': 'Downloaded. Installing and restarting…',
+  'update.banner.failed': 'Automatic update failed',
+  'update.banner.manual': 'Open download page',
+  'update.settings.title': 'App updates',
+  'update.settings.current': 'Version {version}',
+  'update.settings.check': 'Check for updates',
+  'update.settings.checking': 'Checking…',
+  'update.settings.latest': 'Up to date',
+  'update.settings.available': 'New version {version} available',
+  'update.settings.error': 'Check failed, please try again later',
+  'update.settings.notDesktop': 'Auto-update is only available in the desktop app',
 }

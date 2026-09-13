@@ -1,0 +1,29 @@
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: var(--accent-muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.update-banner-text {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-banner-current {
+  opacity: 0.65;
+}
+
+.update-banner-progress {
+  width: 160px;
+  height: 6px;
+}

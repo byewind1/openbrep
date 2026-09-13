@@ -11,6 +11,7 @@ import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
 import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
 import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
+import { UpdateBanner } from './update/UpdateBanner'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { PreviewWorkspaceStage, type CenterView } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
@@ -381,6 +382,7 @@ export function WorkbenchApp() {
         backendNotice={backendNotice}
         onClearError={clearLastError}
       />
+      <UpdateBanner />
       <ResizableWorkspaceGrid
         previewWorkspaceOpen={centerView !== 'editor'}
         loading={loading}
