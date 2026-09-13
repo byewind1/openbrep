@@ -1173,6 +1173,68 @@ test('setPreviewQuality refreshes 2D preview too when the 2D tab is active', asy
   expect(preview2d).toEqual(['accurate'])
 })
 
+test('reconciles an injected preview whose quality differs from the selected tier', async () => {
+  const calls: unknown[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async (_p, _s, quality) => {
+        calls.push(quality)
+        return { meshes: [{ name: 'refined', vertices: [[0, 0, 0]], faces: [] }], wires: [], warnings: [], quality }
+      },
+    }),
+  )
+  // 模拟 hydrate：快照内嵌 preview 是 fast 档，而当前选择是 accurate（默认）
+  store.setState({
+    preview: { meshes: [{ name: 'coarse', vertices: [[0, 0, 0]], faces: [] }], wires: [], quality: 'fast' },
+  })
+
+  await vi.waitFor(() => expect(calls).toEqual(['accurate']))
+  expect(store.getState().preview?.meshes[0]?.name).toBe('refined')
+  expect(store.getState().preview?.quality).toBe('accurate')
+  // 收敛后不再重复拉取
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(calls).toEqual(['accurate'])
+})
+
+test('does not refetch when the injected preview already matches the selected tier', async () => {
+  const fetchPreview = vi.fn(async () => ({ meshes: [], wires: [], warnings: [] }))
+  const store = createWorkbenchStore(makeApi({ fetchPreview }))
+
+  store.setState({
+    preview: { meshes: [{ name: 'fine', vertices: [[0, 0, 0]], faces: [] }], wires: [], quality: 'accurate' },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(fetchPreview).not.toHaveBeenCalled()
+})
+
+test('does not refetch legacy payloads without a self-described quality', async () => {
+  const fetchPreview = vi.fn(async () => ({ meshes: [], wires: [], warnings: [] }))
+  const store = createWorkbenchStore(makeApi({ fetchPreview }))
+
+  store.setState({
+    preview: { meshes: [{ name: 'legacy', vertices: [[0, 0, 0]], faces: [] }], wires: [] },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(fetchPreview).not.toHaveBeenCalled()
+})
+
+test('stops retrying when the quality refetch fails', async () => {
+  const fetchPreview = vi.fn(async () => {
+    throw new Error('backend down')
+  })
+  const store = createWorkbenchStore(makeApi({ fetchPreview }))
+
+  store.setState({
+    preview: { meshes: [{ name: 'coarse', vertices: [[0, 0, 0]], faces: [] }], wires: [], quality: 'fast' },
+  })
+  await vi.waitFor(() => expect(fetchPreview).toHaveBeenCalledTimes(1))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(fetchPreview).toHaveBeenCalledTimes(1)
+})
+
 test('loadPreview3D carries the current store quality', async () => {
   const calls: unknown[] = []
   const store = createWorkbenchStore(

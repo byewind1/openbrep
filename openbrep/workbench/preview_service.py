@@ -118,6 +118,8 @@ def preview_payload(
     payload = preview_3d_to_three_payload(result)
     payload["warnings"] = result.warnings
     payload["verification"] = preview_verification(scripts)
+    # 自描述质量档：前端据此发现"显示中的预览"与所选质量档不一致并自动重取
+    payload["quality"] = normalize_quality(quality)
     return payload
 
 
@@ -127,6 +129,7 @@ def empty_preview_payload() -> dict[str, Any]:
         "wires": [],
         "warnings": [],
         "verification": preview_verification({}),
+        "quality": "fast",
     }
 
 
@@ -169,6 +172,7 @@ def preview_2d_payload(
         ],
         "warnings": result.warnings,
         "verification": preview_verification(scripts),
+        "quality": normalize_quality(quality),
     }
 
 
@@ -183,6 +187,7 @@ def empty_preview_2d_payload() -> dict[str, Any]:
         "arcs": [],
         "warnings": [],
         "verification": preview_verification({}),
+        "quality": "fast",
     }
 
 

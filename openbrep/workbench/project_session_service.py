@@ -824,7 +824,9 @@ def project_to_snapshot(
 ) -> dict[str, Any]:
     if project is None:
         return empty_project_snapshot()
-    preview = preview_payload(project)
+    # 快照预览直接按 workbench 默认质量档（accurate）生成，使"打开项目即所见"
+    # 与前端默认精细档一致，避免加载后再为质量档二次生成
+    preview = preview_payload(project, quality="accurate")
     # P11：vl.gdl 的 VALUES 声明解析一次，供参数 payload 的 options/range 使用。
     values_map = parse_values_declarations(project.get_script(ScriptType.PARAM))
     return {

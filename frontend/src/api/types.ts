@@ -88,6 +88,8 @@ export interface PreviewPayload {
   wires: number[][][]
   warnings?: string[]
   verification?: PreviewVerification
+  /** 生成该 payload 的质量档（自描述）；缺省视为旧后端，不参与质量对账 */
+  quality?: PreviewQuality
 }
 
 export interface Preview2DPayload {
