@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:8766",
-    "beforeDevCommand": "python3 scripts/obr7.py --tauri",
-    "beforeBuildCommand": "cd frontend && npm run build"
+    "beforeDevCommand": "python3 ../scripts/obr7.py --tauri",
+    "beforeBuildCommand": "cd ../frontend && npm run build"
   },
   "app": {
     "windows": [
