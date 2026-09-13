@@ -1,7 +1,7 @@
-# openbrep v1.0.0 安装指南（中文）
+# openbrep v0.9.0 安装指南（中文）
 
 > 针对设计师用户的分步骤安装教程
-> 当前正式版本：v1.0.0
+> 当前正式版本：v0.9.0
 > 难度：⭐️ 小白可用
 
 ---
@@ -24,24 +24,22 @@ OpenBrep 现在按用户类型分三条安装路径。普通用户不要从 `git
 https://github.com/byewind1/openbrep/releases/latest
 ```
 
-下载对应系统的压缩包：
+下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep-free-macOS.zip`
-- Windows：`OpenBrep-free-Windows.zip`
+- macOS：`OpenBrep_0.9.0_aarch64.dmg`（Apple Silicon）
+- Windows：`OpenBrep_0.9.0_x64_en-US.msi` 或 `OpenBrep_0.9.0_x64-setup.exe`
 
-当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 14 Sonoma 或更高版本；当前 zip 不覆盖 Intel Mac。
+当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 14 Sonoma 或更高版本；当前不覆盖 Intel Mac。
 
-macOS 解压后进入 `OpenBrep` 文件夹，双击 `OpenBrep.command` 启动；Windows 解压后运行 `OpenBrep.exe`。这种方式最接近普通软件安装，不需要用户执行 `git pull` 或手动安装 Python 依赖。
+macOS 打开 dmg 后把 OpenBrep 拖入「应用程序」；Windows 运行 msi / setup.exe 按向导安装。这种方式最接近普通软件安装，不需要用户执行 `git pull` 或手动安装 Python 依赖。
 
-macOS 第一次运行如果提示来自未知开发者，请右键 `OpenBrep.command`，选择“打开”，再在系统提示里确认。启动后浏览器会自动打开 OpenBrep；如果没有自动打开，默认访问 `http://127.0.0.1:8501`，或查看终端窗口里显示的本机地址。
+macOS 第一次运行如果提示来自未知开发者，请在「应用程序」里右键 OpenBrep，选择“打开”，再在系统提示里确认。
 
-如果仍然打不开，通常是因为当前 macOS zip 还没有完成 Developer ID 签名和 Apple 公证，Gatekeeper 会把浏览器下载的包标记为隔离。临时处理办法：
+如果仍然打不开，通常是因为当前 macOS 包还没有完成 Developer ID 签名和 Apple 公证，Gatekeeper 会把浏览器下载的包标记为隔离。临时处理办法：
 
 ```bash
-xattr -dr com.apple.quarantine /path/to/OpenBrep
+xattr -dr com.apple.quarantine /Applications/OpenBrep.app
 ```
-
-更简单的做法：在终端里输入 `xattr -dr com.apple.quarantine `，注意最后留一个空格，然后把解压后的 `OpenBrep` 文件夹拖进终端，回车执行。完成后再双击 `OpenBrep.command`。
 
 我们会准备正式签名并公证的 macOS 包，届时不再需要这个手动步骤。
 
@@ -254,7 +252,7 @@ openbrep 需要调用 AI（如 Claude、GPT-4）。
 
 ### Step 4：启动应用
 
-#### 稳定入口：Streamlit UI
+#### 稳定入口：React 工作台
 
 在 openbrep 文件夹内，运行：
 
@@ -264,37 +262,18 @@ obr
 
 **会发生什么：**
 
-1. 终端显示 `OpenBrep UI 已启动：http://localhost:8501`
-2. 不会自动打开浏览器
-3. 请在你的常用浏览器中手动访问 `http://localhost:8501`（或直接使用已收藏地址）
-
-**如果浏览器没自动打开，手动访问：**
-
-```
-http://localhost:8501
-```
-
-#### 开发者预览：React Workbench
-
-如果你在 `react-workbench-poc` 分支，或者合并后仓库里已经包含 `frontend/`
-目录，可以用新的代码优先工作台：
-
-```bash
-./obr7
-```
-
-它会同时启动本地 Python API 和 React/Vite 前端，并自动打开浏览器。终端会打印
-实际地址，例如：
+1. 终端同时启动本地 Python API 和 React 工作台，并自动打开浏览器
+2. 终端会打印实际地址，例如：
 
 ```text
 [obr7] OpenBrep Workbench: http://127.0.0.1:5174
 [obr7] API: http://127.0.0.1:8765
 ```
 
-`obr7` 适合直接打开 HSF 项目、编辑 `3d.gdl` / `2d.gdl` / XML、保存回磁盘、
-运行 mock 编译、查看诊断和预览。它目前是 developer preview，不替代
-Streamlit；Tapir/Archicad 实时联动、Pro UX 和剩余兼容路径仍以 Streamlit 为
-fallback。
+3. 如果浏览器没自动打开，手动访问终端里打印的 Workbench 地址
+
+`obr` 适合直接打开 HSF 项目、编辑 `3d.gdl` / `2d.gdl` / XML、保存回磁盘、
+运行编译、查看诊断和预览。Streamlit 界面已从 v0.9.0 起完全移除。
 
 常用选项：
 
@@ -359,12 +338,12 @@ obr serve --stop      # 停止后台服务
 
 ## 常见问题排查
 
-### Q：启动时报错 "OpenBrep UI 默认端口 8501 已被占用"
+### Q：启动时报错端口 8765 已被占用
 
-**A：** 说明有旧的 `obr` / `streamlit` 进程还在占着端口。先检查：
+**A：** 说明有旧的 `obr` / `obr7` 进程还在占着端口。先检查：
 
 ```bash
-lsof -iTCP:8501 -sTCP:LISTEN
+lsof -iTCP:8765 -sTCP:LISTEN
 ```
 
 找到 PID 后关闭旧进程，再重新运行：
@@ -376,18 +355,18 @@ obr
 
 ---
 
-### Q：启动时报错 "ModuleNotFoundError: No module named 'streamlit'"
+### Q：启动时报错 "ModuleNotFoundError"
 
 **A：** 说明依赖没装成功。回到 Step 2，再跑一遍：
 
 ```bash
-pip install -e ".[ui]"
+pip install -e "."
 ```
 
 如果还是失败，用清华源：
 
 ```bash
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[ui]"
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e "."
 ```
 
 ---

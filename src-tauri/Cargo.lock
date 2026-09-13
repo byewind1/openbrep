@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "openbrep"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",

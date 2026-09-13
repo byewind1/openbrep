@@ -1052,7 +1052,7 @@ class TestReleaseDocs(unittest.TestCase):
 
     def test_package_version_is_current_release(self):
         from openbrep import __version__
-        self.assertEqual(__version__, "1.0.0")
+        self.assertEqual(__version__, "0.9.0")
 
     def test_pyproject_version_matches_package_version(self):
         from openbrep import __version__

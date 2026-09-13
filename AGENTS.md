@@ -605,10 +605,12 @@ working tree is clean
 
 ## Release / Installer SOP
 
-> ⚠️ 本节写于 Streamlit/PyInstaller 时代，安装包流水线正在向 Tauri
-> （`.github/workflows/release-tauri.yml`）迁移；涉及 Streamlit 打包的段落
-> （如 "Known PyInstaller/Streamlit packaging requirements"）已过期，发布前
-> 请与维护者确认当前流程。
+> ⚠️ 自 v0.9.0（2026-09-13）起，tag 触发的发布流水线只有
+> `.github/workflows/release-tauri.yml`（Tauri 桌面安装包：macOS dmg、
+> Windows msi/exe）。旧 PyInstaller 流水线 `build-installers.yml` 已摘掉
+> tag 触发器，仅保留 workflow_dispatch 手动入口；下文中涉及
+> Streamlit/PyInstaller 打包与 `OpenBrep-free-*.zip` 资产的段落随之过期，
+> 仅在该手动流水线重新启用时适用。
 
 Only run this section when the user explicitly asks for a release, installer
 build, version bump, or public package update. Do not tag or publish a release

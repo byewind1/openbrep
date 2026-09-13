@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v1.0.0 — Tauri 桌面工作台正式落地。React + Tauri + Python sidecar 全栈架构，Streamlit 完全退役，自愈编译循环与知识图谱驱动稳定运行。
+> 正式发布版本 v0.9.0 — Tauri 桌面工作台正式落地。React + Tauri + Python sidecar 全栈架构，Streamlit 完全退役，自愈编译循环与知识图谱驱动稳定运行。
 
 ---
 
@@ -43,21 +43,21 @@
 
 ### 推荐：下载桌面包（普通用户）
 
-访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的压缩包：
+访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep-free-macOS.zip`
-- Windows：`OpenBrep-free-Windows.zip`
+- macOS：`OpenBrep_0.9.0_aarch64.dmg`（Apple Silicon）
+- Windows：`OpenBrep_0.9.0_x64_en-US.msi` 或 `OpenBrep_0.9.0_x64-setup.exe`
 
-Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 14 Sonoma or later. Intel Mac is not covered by the current macOS zip.
+Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 14 Sonoma or later. Intel Mac is not covered by the current macOS build.
 
-On macOS, unzip it, open the `OpenBrep` folder, and double-click `OpenBrep.command`. On Windows, unzip it and run `OpenBrep.exe`. This path does not require users to learn `git clone`, `git pull`, or manual Python dependency installation first.
+On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer. This path does not require users to learn `git clone`, `git pull`, or manual Python dependency installation first.
 
 Temporary macOS Gatekeeper workaround:
 
-The current macOS zip is not yet Developer ID signed and notarized. If macOS shows security warnings or blocks the app even after you confirm the prompts, remove the quarantine flag from the unzipped folder:
+The current macOS build is not yet Developer ID signed and notarized. If macOS shows security warnings or blocks the app even after you confirm the prompts, remove the quarantine flag:
 
 ```bash
-xattr -dr com.apple.quarantine /path/to/OpenBrep
+xattr -dr com.apple.quarantine /Applications/OpenBrep.app
 ```
 
 Tip: type `xattr -dr com.apple.quarantine ` in Terminal, keep the trailing space, drag the unzipped `OpenBrep` folder into Terminal, then press Enter. After that, run `OpenBrep.command` again.
@@ -110,7 +110,7 @@ obr
 
 ## 工作台架构
 
-OpenBrep v1.0 采用全栈桌面架构：
+OpenBrep v0.9 采用全栈桌面架构：
 
 ```
 React 前端 (Vite + Monaco + Three.js)
@@ -377,7 +377,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
-| v1.0.0 | Tauri 桌面工作台正式落地：彻底退役 Streamlit（79 个文件 + 24 个 UI 测试），迁移域逻辑至 `openbrep/workbench/`，初始化 Rust/Tauri v2 桌面壳，实现 Python sidecar 启动握手、stderr relay、SPA 静态服务、关窗孤儿进程防护；674 测试全绿（见 docs/releases/v1.0.0.md） |
+| v0.9.0 | Tauri 桌面工作台正式落地：彻底退役 Streamlit（79 个文件 + 24 个 UI 测试），迁移域逻辑至 `openbrep/workbench/`，初始化 Rust/Tauri v2 桌面壳，实现 Python sidecar 启动握手、stderr relay、SPA 静态服务、关窗孤儿进程防护；另含语义修复环、Vision Harness、GSM CALL 宏依赖解析、Copilot 集成、质量台账等（见 docs/releases/v0.9.0.md） |
 | v0.8.0 | React 工作台成为默认 UI：合并 react-workbench 分支，`obr` 默认启动 React + Monaco + Three.js 工作台，Streamlit 降级为 fallback；新增 Verification 一等 seam（`openbrep/verification.py`），把散落的 static/lint/compile/plan_checks 聚合成统一验证报告，AI 生成后展示置信度、检查结果、残余风险；CREATE 路径 compile 状态显式可见，MODIFY 路径含 compile + auto-repair 证据（见 docs/releases/v0.8.0.md） |
 | v0.7.0 | GDL 资产生命周期里程碑：新增 modify / repair 前后 revision 快照、`obr history` / `obr rollback`、工程级变更摘要、GDLContractChecker 合规检查输出，以及 `--compare mock|real` 对比编译（见 docs/releases/v0.7.0.md） |
 | v0.6.12 | GDL 知识库校准收口：完成 P0-P6 批次的官方文档/社区/本地知识交叉校验，修正核心命令语义、参数结构、2D/3D 投影与高级几何边界，并补充 Pro 层商业化 Skill 开发方向（见 docs/releases/v0.6.12.md） |

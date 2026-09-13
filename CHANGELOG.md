@@ -5,12 +5,14 @@ Format: [Semantic Versioning](https://semver.org), entries newest-first.
 
 ---
 
-## [1.0.0] — 2026-06-21
+## [0.9.0] — 2026-09-13
+
+> 版本口径：本里程碑曾短暂以 v1.0.0 口径准备（2026-06-21，仅文档与版本号，未打 tag、未发布 Release），现撤回 1.0 编号，以 v0.9.0 正式发布。发布说明见 `docs/releases/v0.9.0.md`。
 
 ### Milestone: Tauri 桌面工作台正式落地
 
 **架构**
-- Streamlit 完全退役（v0.9.0 规划 → v1.0.0 落地）：删除 `ui/` 目录 79 个文件及 24 个 UI 测试
+- Streamlit 完全退役：删除 `ui/` 目录 79 个文件及 24 个 UI 测试
 - 域逻辑迁移：`classify_code_blocks` / `preview_3d_to_three_payload` / `local_file_dialog` 从 UI 层迁移至 `openbrep/workbench/`
 - Tauri v2 桌面壳（`src-tauri/`）：Rust 主进程 spawn Python sidecar，通过 stdout 握手协议（`OBR7_READY_URL=`）获取服务地址后打开 Webview 窗口
 - `workbench_api.py` 新增 `--static-dir` 单端口模式：同时服务 API 与 `frontend/dist/` 静态资源，带路径遍历防护和 SPA index.html fallback
@@ -21,12 +23,24 @@ Format: [Semantic Versioning](https://semver.org), entries newest-first.
 - Rust：`shutdown_backend` 增加 kill 后等待循环（最长 3s），防止 Python 孤儿进程
 - Vite：注入 `VITE_IS_TAURI`（由 `TAURI_ENV_TARGET_TRIPLE` 自动检测），前端可据此分支渲染
 
+**功能累积（v0.8.0 → v0.9.0）**
+- 语义修复环（`openbrep/runtime/semantic_repair.py`）：编译通过后再跑语义验证，阻塞性问题触发有界修复轮
+- 命名对齐与保留字角色检查（`openbrep/naming_alignment.py`）
+- 确定性微修改（`openbrep/runtime/micro_modify.py`）：纯参数值修改不走 LLM
+- Vision Harness（`openbrep/vision/harness.py`）：图片输入四段管线，CREATE 带图需用户确认抽取结果
+- GSM CALL 宏依赖解析与图库上下文（`openbrep/library_context.py`），2D 预览覆盖 POLY2 全族与富文本链
+- Copilot 集成（`openbrep/workbench/copilot_service.py` + `obr serve`）
+- 统一供应商注册表 `[[llm.providers]]`、会话级模型覆盖、模型可见性
+- 质量台账（`openbrep/quality/`）与 Reflector/Curator 经验蒸馏
+- Benchmark 黄金语料录制/回放，CI 离线回归门禁
+
 **CI**
-- 新增 `.github/workflows/release-tauri.yml`：`v*` tag 触发 macOS / Windows 矩阵 Tauri 构建并上传 artifacts
+- 新增 `.github/workflows/release-tauri.yml`：`v*` tag 触发 macOS / Windows 矩阵 Tauri 构建并上传 Release
+- 旧 PyInstaller 流水线 `build-installers.yml` 不再随 tag 触发（保留 workflow_dispatch 手动入口）
 
 **质量**
-- 674 个测试全绿（`python3 run_tests.py`）
-- `cargo check` 通过（Rust 1.96 stable，0 error，0 warning）
+- 2641 个 Python 测试全绿（`python -m pytest tests/ -q`）
+- `cargo check` 通过（Rust stable，0 error，0 warning）
 
 ---
 

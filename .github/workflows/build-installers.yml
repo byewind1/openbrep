@@ -1,10 +1,9 @@
 name: Build installers
 
+# 旧 PyInstaller/Streamlit 流水线：自 v0.9.0 起发布产物以 release-tauri.yml 为准，
+# 本流水线不再随 tag 自动触发，仅保留手动入口（workflow_dispatch）。
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
