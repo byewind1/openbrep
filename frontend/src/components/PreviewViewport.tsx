@@ -1,4 +1,4 @@
-import { ContactShadows, Edges, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
+import { ContactShadows, Edges, GizmoHelper, GizmoViewport, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
 import { Canvas, useThree } from '@react-three/fiber'
 import type { ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -331,7 +331,6 @@ export function PreviewViewport({
           {/* 大坐标模型（毫米级脚本）居中渲染，避免 float32 抖动与深度量化闪烁 */}
           <group position={bounds.center}>
             {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
-            <axesHelper args={[1.4]} />
             {preview?.meshes.map((mesh, index) =>
               hiddenParts.has(index) ? null : (
                 <MeshView
@@ -367,6 +366,10 @@ export function PreviewViewport({
           {/* P2a 对比叠加：任务前版本半透明 ghost；offset 用当前 bounds.center
               （同世界坐标系，减同一中心即对齐） */}
           {showGhost && previewGhost ? <PreviewGhostOverlay ghost={previewGhost} boundsCenter={bounds.center} /> : null}
+          {/* 方向指示坐标系：右上角跟随相机旋转（不遮挡模型，替代原物体原点的 axesHelper） */}
+          <GizmoHelper alignment="top-right" margin={[56, 56]}>
+            <GizmoViewport labelColor="#c7d2e2" axisHeadScale={0.9} />
+          </GizmoHelper>
         </Canvas>
         {selection ? (
           <PreviewPickingBar
