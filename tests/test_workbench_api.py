@@ -875,7 +875,7 @@ def test_workbench_session_creates_project_from_prompt(tmp_path):
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -913,7 +913,7 @@ def test_project_create_pipeline_receives_saved_codex_auto_mode_and_provider(tmp
     class FakePipeline:
         instance = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.config = GDLAgentConfig()
             self.codex_provider = None
             FakePipeline.instance = self
@@ -943,7 +943,7 @@ def test_project_create_pipeline_receives_saved_codex_auto_mode_and_provider(tmp
 
 def test_workbench_session_create_uses_configured_output_dir(tmp_path):
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -965,7 +965,7 @@ def test_workbench_session_create_prefers_workspace_hsf(tmp_path):
     与 Save As 自动落点同口径；请求显式 output_dir 仍最高优先。"""
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -1000,7 +1000,7 @@ def test_workbench_session_creates_project_from_image_prompt(tmp_path):
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -1036,7 +1036,7 @@ def test_workbench_session_creates_project_from_image_prompt(tmp_path):
 
 def test_workbench_session_rejects_unsupported_image_mime_for_create(tmp_path):
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):  # pragma: no cover - validation should stop first
@@ -1131,6 +1131,91 @@ def test_workbench_session_choose_project_directory_handles_cancel():
 
     assert response["ok"] is False
     assert response["cancelled"] is True
+
+
+def test_workbench_session_choose_project_directory_reports_dialog_unavailable():
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser():
+        raise DialogUnavailableError("tkinter is not available")
+
+    session = WorkbenchSession(directory_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/dialog/open-directory", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+    assert "tkinter" in response["error"]
+
+
+def test_workbench_session_choose_output_directory_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser():
+        raise DialogUnavailableError("PowerShell is not available for native dialogs.")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", directory_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/dialog/output-directory", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_choose_converter_file_reports_dialog_unavailable():
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser():
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_import_gdl_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser(purpose):
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/project/import-gdl", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_import_blender_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser(purpose):
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/project/import-blender", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_import_gsm_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser(purpose):
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/project/import-gsm", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
 
 
 def test_workbench_session_apply_persists_loaded_hsf_parameters(tmp_path):
@@ -2047,7 +2132,7 @@ def test_workbench_session_distill_history_intent_happy_path(tmp_path):
             return LLMResponse(content="请把书架层板数改成 5，并保留现有 3D 代码。", model="mock", usage={}, finish_reason="stop")
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def _make_llm(self, request):
@@ -2111,7 +2196,7 @@ def test_workbench_session_distill_history_llm_failure_passthrough(tmp_path):
             raise RuntimeError("upstream quota exhausted")
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def _make_llm(self, request):
@@ -2143,7 +2228,7 @@ def test_workbench_session_distill_history_trims_to_recent_messages(tmp_path):
             return LLMResponse(content="整理结果", model="mock", usage={}, finish_reason="stop")
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def _make_llm(self, request):
@@ -2593,7 +2678,7 @@ def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_pat
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -2627,7 +2712,7 @@ def test_workbench_session_generate_passes_reference_image_to_pipeline(tmp_path)
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -2664,7 +2749,7 @@ def test_workbench_session_normalizes_vision_provider_errors(tmp_path):
     hsf_dir = project.save_to_disk()
 
     class FailingVisionPipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):
@@ -2693,7 +2778,7 @@ def test_workbench_session_rejects_oversized_generate_image(tmp_path):
     too_large = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode()
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):  # pragma: no cover - validation should stop first
@@ -2720,7 +2805,7 @@ def test_workbench_session_generate_reports_pipeline_failure(tmp_path):
     hsf_dir = project.save_to_disk()
 
     class FailingPipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):
@@ -2740,7 +2825,7 @@ def test_workbench_session_generate_delivers_output_when_verification_fails(tmp_
     hsf_dir = project.save_to_disk()
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):
@@ -2765,7 +2850,7 @@ def test_workbench_session_generate_delivers_output_when_verification_fails(tmp_
 
 def test_workbench_session_create_delivers_output_when_verification_fails(tmp_path):
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -3317,7 +3402,7 @@ def _rename_pipeline_cls(object_type="", gsm_artifact=False):
     class _Pipe:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):

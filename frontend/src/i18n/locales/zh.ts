@@ -317,6 +317,12 @@ export const zh = {
   'preview.empty.hint': '打开/新建项目，或在 AI 面板描述一个构件',
   'editor.empty.title': '未打开脚本',
   'editor.empty.hint': '从工作区打开项目，或用 AI 生成',
+
+  // 中间栏视图切换（脚本 / 3D / 2D 三舞台互斥，常驻 DOM 保状态）
+  'stage.tabsAria': '中间区视图',
+  'stage.view.script': '脚本',
+  'stage.view.3d': '3D',
+  'stage.view.2d': '2D',
   'assistant.empty.title': '开始你的 GDL 工作流',
   'assistant.empty.hint': '用自然语言生成或修改 Archicad 构件',
   'assistant.empty.example.generate': '生成一个参数化书架',

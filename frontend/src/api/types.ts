@@ -341,6 +341,10 @@ export interface WorkbenchSnapshot {
   compiler?: CompilerSettings
   llm?: LlmSettings
   error?: string
+  /** 用户取消了原生文件/目录选择对话框（区别于失败，不报错） */
+  cancelled?: boolean
+  /** 原生对话框在本平台不可用（如 Windows 无 PowerShell 且无 tkinter）；与 cancelled 区分 */
+  unavailable?: boolean
   session_id?: string
   project_epoch?: number
   /** 后端 snapshot 的工作区块：无附着为 null（P3-d1） */
@@ -503,6 +507,7 @@ export interface DirectoryChoiceResult extends Partial<WorkbenchSnapshot> {
   ok: boolean
   path?: string
   cancelled?: boolean
+  unavailable?: boolean
   error?: string
 }
 
@@ -511,6 +516,7 @@ export interface FileChoiceResult {
   path?: string
   compiler?: CompilerSettings
   cancelled?: boolean
+  unavailable?: boolean
   error?: string
 }
 

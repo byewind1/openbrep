@@ -29,7 +29,7 @@ def _sha(b: bytes) -> str:
 class TestServiceExtractionPersist(unittest.TestCase):
     def _make_pipeline(self, extractions, events):
         class FakePipeline:
-            def __init__(self, trace_dir="./traces"):
+            def __init__(self, trace_dir="./traces", config_path=None):
                 self.trace_dir = trace_dir
 
             def execute(self, request):

@@ -716,6 +716,67 @@ protocol = "openai"
             self.assertEqual(reloaded.llm.resolve_api_base(), "https://opencode.ai/zen/go/v1")
             self.assertEqual(reloaded.llm.custom_providers[0]["name"], "opencode-go")
 
+    def test_provider_without_api_falls_back_to_top_level_and_roundtrips(self):
+        """B1：未显式配置 api/base_url 的 provider 依赖顶层 api_base 兜底；
+        save→load 往返不得把"未配置"固化成"显式为空"而丢失兜底。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "ymg-gpt-5.3-codex"
+api_base = "https://integrate.api.nvidia.com/v1"
+
+[[llm.providers]]
+name = "ymg"
+api_key = "ymg-key"
+models = ["ymg-gpt-5.3-codex"]
+'''.strip(), encoding="utf-8")
+
+            config = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(
+                config.llm.resolve_api_base(), "https://integrate.api.nvidia.com/v1"
+            )
+            self.assertEqual(config.llm.resolve_api_key(), "ymg-key")
+
+            config.save(str(config_path))
+
+            saved_text = config_path.read_text(encoding="utf-8")
+            self.assertNotIn('api = ""', saved_text)
+
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(
+                reloaded.llm.resolve_api_base(), "https://integrate.api.nvidia.com/v1"
+            )
+            self.assertEqual(reloaded.llm.resolve_api_key(), "ymg-key")
+
+    def test_provider_explicit_empty_api_roundtrips_without_fallback(self):
+        """显式写 api = "" 的 provider 语义是"绝不回退顶层"，往返后保持不变。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "ymg-gpt-5.3-codex"
+api_base = "https://integrate.api.nvidia.com/v1"
+
+[[llm.providers]]
+name = "ymg"
+api = ""
+api_key = "ymg-key"
+models = ["ymg-gpt-5.3-codex"]
+'''.strip(), encoding="utf-8")
+
+            config = GDLAgentConfig.load(str(config_path))
+            self.assertIsNone(config.llm.resolve_api_base())
+
+            config.save(str(config_path))
+
+            saved_text = config_path.read_text(encoding="utf-8")
+            self.assertIn('api = ""', saved_text)
+
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertIsNone(reloaded.llm.resolve_api_base())
+            self.assertEqual(reloaded.llm.resolve_api_key(), "ymg-key")
+
     def test_llm_default_alias_for_model(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = self._load(tmpdir, '''

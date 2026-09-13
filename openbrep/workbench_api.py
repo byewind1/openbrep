@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.hsf_project import HSFProject
 from openbrep.llm import LLMAdapter
+from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.blender_import_service import WorkbenchBlenderImportService
@@ -371,6 +372,8 @@ class WorkbenchSession:
             return {"ok": False, "error": f"Unsupported file chooser purpose: {purpose}"}
         try:
             selected = self._choose_file_for_purpose(purpose)
+        except DialogUnavailableError as exc:
+            return {"ok": False, "unavailable": True, "error": str(exc)}
         except Exception as exc:
             return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not selected:
@@ -394,6 +397,8 @@ class WorkbenchSession:
     def choose_output_directory(self) -> dict[str, Any]:
         try:
             selected = self.directory_chooser()
+        except DialogUnavailableError as exc:
+            return {"ok": False, "unavailable": True, "error": str(exc)}
         except Exception as exc:
             return {"ok": False, "error": f"Directory chooser failed: {exc}"}
         if not selected:

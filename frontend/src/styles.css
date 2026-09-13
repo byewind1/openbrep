@@ -834,14 +834,38 @@ button:focus-visible {
 
 .workbench-main-stage,
 .editor-stage,
-.preview-workspace-stage {
+.preview-workspace-stage,
+.preview-2d-stage {
   min-width: 0;
   background: var(--main-stage-bg);
 }
 
-.preview-workspace-stage {
+/* 中间栏视图切换（脚本 / 3D / 2D）：切换条 + 三舞台容器；
+   容器作为 workspace-grid 的中栏唯一 grid item，舞台在其内部互斥显示 */
+.center-stage {
+  min-width: 0;
   min-height: 0;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--main-stage-bg);
+}
+
+.center-stage-body {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.preview-workspace-stage,
+.preview-2d-stage {
+  min-height: 0;
+  display: grid;
+}
+
+/* 2D 视口在工作台舞台里撑满（rail 挂载点靠 .viewport-panel 拉伸，此处显式给高） */
+.preview-2d-stage .viewport-surface {
+  height: 100%;
 }
 
 .script-tree {

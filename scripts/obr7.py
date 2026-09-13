@@ -138,6 +138,29 @@ def resolve_shared_config_path(root: Path) -> Path | None:
     return next((path for path in candidates if path.exists()), None)
 
 
+USER_CONFIG_PATH = Path.home() / ".openbrep" / "config.toml"
+
+
+def resolve_launch_config_path(root: Path) -> Path | None:
+    """API 子进程最终使用的 config.toml（B2）。
+
+    优先 resolve_shared_config_path（env / git common-dir / root 已有配置）。
+    打包态（root 是应用资源目录，无 pyproject.toml）下找不到已有配置时，
+    回退到用户级目录 ~/.openbrep/config.toml 并确保父目录存在——
+    否则全新安装会把 config.toml 写进 .app/Contents/Resources（破坏签名）或
+    Windows Program Files（PermissionError，保存 key 静默 500）。
+    开发态（root 有 pyproject.toml）找不到配置时保持 None：维持
+    cwd/config.toml + example 自动复制的既有行为。
+    """
+    shared = resolve_shared_config_path(root)
+    if shared is not None:
+        return shared
+    if (root / "pyproject.toml").exists():
+        return None
+    USER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return USER_CONFIG_PATH
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start the OpenBrep React workbench.")
     parser.add_argument("--api-port", type=int, default=None, help="Workbench API port. Overrides OBR7_API_PORT.")
@@ -367,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
 
     env = os.environ.copy()
     env["VITE_OPENBREP_API"] = api_url
-    config_path = resolve_shared_config_path(root)
+    config_path = resolve_launch_config_path(root)
     if config_path and not env.get("GDL_AGENT_CONFIG"):
         env["GDL_AGENT_CONFIG"] = str(config_path)
         print(f"[obr7] Config: {config_path}")

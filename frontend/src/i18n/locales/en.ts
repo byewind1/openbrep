@@ -321,6 +321,12 @@ export const en: Record<LocaleKey, string> = {
   'preview.empty.hint': 'Open or create a project, or describe a component in the AI panel',
   'editor.empty.title': 'No script loaded',
   'editor.empty.hint': 'Open a project from the workspace, or generate with AI',
+
+  // Center stage view switch (script / 3D / 2D stages stay mounted, display-toggled)
+  'stage.tabsAria': 'Center stage views',
+  'stage.view.script': 'Script',
+  'stage.view.3d': '3D',
+  'stage.view.2d': '2D',
   'assistant.empty.title': 'Start your GDL workflow',
   'assistant.empty.hint': 'Generate or modify Archicad components in natural language',
   'assistant.empty.example.generate': 'Generate a parametric bookshelf',

@@ -32,6 +32,20 @@ class WorkbenchAssistantService:
     def __init__(self, session: Any) -> None:
         self.session = session
 
+    def _new_pipeline(self):
+        """构造 pipeline 时显式传 session 解析出的 config 路径（B3）。
+
+        pipeline 每请求新建，TaskPipeline 默认 GDLAgentConfig.load(None) 只有
+        env/cwd 逻辑；git worktree 下直接启动时会与 session 的
+        resolve_workbench_config_path（含 git-common-dir 逻辑）解析到不同的
+        config.toml，丢自定义 provider 的 alias→target_model 映射。config_path
+        为 None（旧式替身 session）时不传，保持原行为。
+        """
+        cfg_path = getattr(self.session, "config_path", None)
+        if cfg_path is None:
+            return self.session.pipeline_class(trace_dir="./traces")
+        return self.session.pipeline_class(trace_dir="./traces", config_path=str(cfg_path))
+
     def assistant_reply(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()
         if not message:
@@ -98,7 +112,7 @@ class WorkbenchAssistantService:
         """
         from openbrep.runtime.pipeline import TaskRequest
 
-        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        pipeline = self._new_pipeline()
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model
             if self.session.llm_api_key:
@@ -268,7 +282,7 @@ class WorkbenchAssistantService:
         先建 pipeline 并灌 session 的 llm_model/api_key/api_base/assistant_settings，
         再经 pipeline._make_llm 拿适配器（与 generate 路径共用同一套配置解析）。
         """
-        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        pipeline = self._new_pipeline()
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model
             if self.session.llm_api_key:
@@ -616,7 +630,7 @@ class WorkbenchAssistantService:
         should_cancel: Any | None = None,
     ) -> tuple[Any, TaskRequest]:
         """构造 generate 用的 pipeline 与 TaskRequest，供同步/流式复用。"""
-        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        pipeline = self._new_pipeline()
         intent = str(body.get("intent") or "MODIFY")
         epoch_at_start = getattr(self.session, "project_epoch", None)
         request = TaskRequest(

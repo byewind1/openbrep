@@ -445,10 +445,15 @@ def provider_entry_to_toml(entry: dict) -> dict:
     normalized = normalize_provider_entry(entry)
     out: dict = {
         "name": normalized["name"],
-        "api": normalized["api"],
         "api_mode": normalized["api_mode"],
         "api_key": normalized["api_key"],
     }
+    # B1：api 键只在原条目显式提供过 api/base_url（_explicit_base，含 codex 强制
+    # 形态）或值非空时才写出。无条件写 `api = ""` 会让重载时 normalize 把
+    # "保存产生的空 api" 误判为"显式为空"，从而关掉顶层 api_base 兜底
+    # （save→load 往返丢配置的实证断点）。
+    if normalized.get("_explicit_base") or normalized["api"]:
+        out["api"] = normalized["api"]
     if normalized.get("default_model"):
         out["default_model"] = normalized["default_model"]
     out["models"] = normalized.get("models", [])

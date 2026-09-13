@@ -12,7 +12,7 @@ import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
 import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
 import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
-import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
+import { PreviewWorkspaceStage, type CenterView } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { useConfigAutoRefresh } from './useConfigAutoRefresh'
 
@@ -29,7 +29,8 @@ export function WorkbenchApp() {
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
-  const [previewWorkspaceOpen, setPreviewWorkspaceOpen] = useState(false)
+  // 中间栏视图：脚本 / 3D / 2D 三舞台互斥（默认编辑器，不改既有默认体验）
+  const [centerView, setCenterView] = useState<CenterView>('editor')
   const [editorFocus, setEditorFocus] = useState<{
     scriptName: string
     line: number | null
@@ -213,17 +214,17 @@ export function WorkbenchApp() {
     }
   }, [activeRailPanel, refreshTapirStatus])
 
-  // 打开/切换到有路径的项目时默认进入预览舞台（建筑师视角先看几何）；
+  // 打开/切换到有路径的项目时默认进入 3D 预览舞台（建筑师视角先看几何）；
   // 点开脚本时再切回编辑器舞台（见 openScriptInEditor）。
   const projectPath = project?.path ?? null
   useEffect(() => {
     if (projectPath) {
-      setPreviewWorkspaceOpen(true)
+      setCenterView('3d')
     }
   }, [projectPath])
 
   function openScriptInEditor(scriptName: string) {
-    setPreviewWorkspaceOpen(false)
+    setCenterView('editor')
     void openScript(scriptName)
   }
 
@@ -381,7 +382,7 @@ export function WorkbenchApp() {
         onClearError={clearLastError}
       />
       <ResizableWorkspaceGrid
-        previewWorkspaceOpen={previewWorkspaceOpen}
+        previewWorkspaceOpen={centerView !== 'editor'}
         loading={loading}
         left={(
           <WorkbenchLeftRail
@@ -424,8 +425,9 @@ export function WorkbenchApp() {
         )}
         main={(
           <PreviewWorkspaceStage
-            previewWorkspaceOpen={previewWorkspaceOpen}
+            centerView={centerView}
             preview={preview}
+            preview2d={preview2d}
             warnings={warnings}
             activeScriptName={activeScriptName}
             activeScriptContent={activeScriptContent}
@@ -434,10 +436,11 @@ export function WorkbenchApp() {
             activeFocusLine={activeFocusLine}
             activeFocusEndLine={activeFocusEndLine}
             activeFocusKey={activeFocusKey}
-            onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
+            onCenterViewChange={setCenterView}
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onChangeScript={updateActiveScriptContent}
             onRefreshPreview={() => void loadPreview3D()}
+            onLoadPreview2D={() => void loadPreview2D()}
             onRevealSource={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine)}
           />
         )}
@@ -461,7 +464,7 @@ export function WorkbenchApp() {
             onSetActiveRailPanel={setActiveRailPanel}
             onLoadPreview3D={() => void loadPreview3D()}
             onLoadPreview2D={() => void loadPreview2D()}
-            onExpandPreview={() => setPreviewWorkspaceOpen(true)}
+            onExpandPreview={() => setCenterView('3d')}
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onRefreshTapirStatus={() => void refreshTapirStatus()}
             onReloadTapirLibraries={() => void reloadTapirLibraries()}

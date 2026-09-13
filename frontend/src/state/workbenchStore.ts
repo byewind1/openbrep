@@ -291,7 +291,7 @@ function initialWorkbenchState() {
     configRevision: null,
     chatAbortController: null,
     interruptedContext: null,
-    activeRailPanel: '3d' as const,
+    activeRailPanel: 'ai' as const,
     assistantBusy: false,
     assistantMessages: [],
     assistantDraftSeed: null,

@@ -15,6 +15,7 @@ from typing import Any, Callable
 from openbrep.config import is_codex_qualified_model
 from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, normalize_project_after_import
+from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.naming import (
     DEFAULT_PROJECT_NAME,
     project_name_from_prompt,
@@ -236,6 +237,8 @@ class WorkbenchProjectSessionService:
         if not raw_path:
             try:
                 raw_path = self.session._choose_file_for_purpose("gdl")
+            except DialogUnavailableError as exc:
+                return {"ok": False, "unavailable": True, "error": str(exc)}
             except Exception as exc:
                 return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not raw_path:
@@ -301,6 +304,8 @@ class WorkbenchProjectSessionService:
         if not raw_path:
             try:
                 raw_path = self.session._choose_file_for_purpose("gsm")
+            except DialogUnavailableError as exc:
+                return {"ok": False, "unavailable": True, "error": str(exc)}
             except Exception as exc:
                 return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not raw_path:
@@ -664,6 +669,8 @@ class WorkbenchProjectSessionService:
         if not raw_parent:
             try:
                 raw_parent = self.session.directory_chooser()
+            except DialogUnavailableError as exc:
+                return {"ok": False, "unavailable": True, "error": str(exc)}
             except Exception as exc:
                 return {"ok": False, "error": f"Directory chooser failed: {exc}"}
         if not raw_parent:
@@ -737,6 +744,8 @@ class WorkbenchProjectSessionService:
     def choose_and_load_hsf_directory(self) -> dict[str, Any]:
         try:
             selected = self.session.directory_chooser()
+        except DialogUnavailableError as exc:
+            return {"ok": False, "unavailable": True, "error": str(exc)}
         except Exception as exc:
             return {"ok": False, "error": f"Directory chooser failed: {exc}"}
         if not selected:

@@ -873,6 +873,81 @@ test('failed GDL import keeps the current project and records an error', async (
   expect(store.getState().loading).toBe(false)
 })
 
+test('cancelled GDL import file chooser is silent (no lastError)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importGdlFile: async () => ({
+        ok: false,
+        cancelled: true,
+        error: 'GDL file selection cancelled.',
+        project: { name: 'Fallback' },
+        parameters: [],
+        preview: { meshes: [], wires: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().importGdlFile()
+
+  expect(store.getState().project?.name).toBe('Chair')
+  expect(store.getState().lastError).toBeNull()
+  expect(store.getState().loading).toBe(false)
+})
+
+test('unavailable GDL import file chooser records an error (not silent)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importGdlFile: async () => ({
+        ok: false,
+        unavailable: true,
+        error: 'tkinter is not available for native dialogs',
+        project: { name: 'Fallback' },
+        parameters: [],
+        preview: { meshes: [], wires: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().importGdlFile()
+
+  expect(store.getState().lastError).toBe('tkinter is not available for native dialogs')
+  expect(store.getState().loading).toBe(false)
+})
+
+test('browseProjectDirectory records an error when the native dialog is unavailable', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      chooseProjectDirectory: async () => ({
+        ok: false,
+        unavailable: true,
+        error: 'PowerShell is not available for native dialogs.',
+      }),
+    }),
+  )
+
+  await store.getState().browseProjectDirectory()
+
+  expect(store.getState().lastError).toBe('PowerShell is not available for native dialogs.')
+  expect(store.getState().loading).toBe(false)
+})
+
+test('browseProjectDirectory stays silent on user cancel', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      chooseProjectDirectory: async () => ({ ok: false, cancelled: true, error: 'Directory selection cancelled.' }),
+    }),
+  )
+
+  await store.getState().browseProjectDirectory()
+
+  expect(store.getState().lastError).toBeNull()
+  expect(store.getState().loading).toBe(false)
+})
+
 test('imports a GSM file as a decompiled HSF project and opens its default script', async () => {
   const store = createWorkbenchStore(
     makeApi({
@@ -2455,7 +2530,13 @@ test('adopts code blocks from an assistant history message into dirty script buf
 test('sets active rail panel', () => {
   const store = createWorkbenchStore(makeApi())
 
-  store.getState().setActiveRailPanel('ai')
+  store.getState().setActiveRailPanel('3d')
+
+  expect(store.getState().activeRailPanel).toBe('3d')
+})
+
+test('active rail panel defaults to the AI chat panel', () => {
+  const store = createWorkbenchStore(makeApi())
 
   expect(store.getState().activeRailPanel).toBe('ai')
 })

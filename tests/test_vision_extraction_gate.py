@@ -262,7 +262,7 @@ def _sha(b: bytes) -> str:
 class _GatePipeline:
     """service 测试用假 pipeline：confirm_extraction → 早退；confirmed → 交付。"""
 
-    def __init__(self, trace_dir="./traces"):
+    def __init__(self, trace_dir="./traces", config_path=None):
         self.trace_dir = trace_dir
 
     def execute(self, request: TaskRequest) -> TaskResult:

@@ -65,7 +65,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       if (snapshot.ok === false) {
         set({
           loading: false,
-          lastError: snapshot.error ?? 'Failed to import GDL file.',
+          lastError: snapshot.cancelled ? null : snapshot.error ?? 'Failed to import GDL file.',
         })
         return
       }
@@ -84,7 +84,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       if (snapshot.ok === false) {
         set({
           loading: false,
-          lastError: snapshot.error ?? 'Failed to import GSM file.',
+          lastError: snapshot.cancelled ? null : snapshot.error ?? 'Failed to import GSM file.',
         })
         return
       }
@@ -103,7 +103,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       if (snapshot.ok === false) {
         set({
           loading: false,
-          lastError: snapshot.error ?? 'Failed to import Blender script.',
+          lastError: snapshot.cancelled ? null : snapshot.error ?? 'Failed to import Blender script.',
         })
         return
       }
