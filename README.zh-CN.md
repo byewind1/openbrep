@@ -50,7 +50,7 @@
 
 > 注意：当前 Tauri 桌面包不内嵌 Python 运行时和源码资源，启动时调用系统 `python3` 运行仓库内的 `scripts/obr7.py`，仍需先完成源码安装。零依赖的独立安装包将在后续版本提供。
 
-Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 14 Sonoma or later. Intel Mac is not covered by the current macOS build.
+Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). Intel Mac is not covered by the current macOS build.
 
 On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer.
 

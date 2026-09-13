@@ -31,7 +31,7 @@ https://github.com/byewind1/openbrep/releases/latest
 
 > 注意：当前 Tauri 桌面包不内嵌 Python 运行时和源码资源，启动时调用系统 `python3` 运行仓库内的 `scripts/obr7.py`，因此仍需本机装好 Python 3.11+ 并完成「开发者方式：源码安装」。零依赖的独立安装包将在后续版本提供。
 
-当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 14 Sonoma 或更高版本；当前不覆盖 Intel Mac。
+当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 11 Big Sur 或更高版本（按发布二进制实测 `minos 11.0`）；当前不覆盖 Intel Mac。
 
 macOS 打开 dmg 后把 OpenBrep 拖入「应用程序」；Windows 运行 msi / setup.exe 按向导安装。
 
