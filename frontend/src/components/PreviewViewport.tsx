@@ -94,7 +94,7 @@ export function PreviewViewport({
   const [viewPreset, setViewPreset] = useState<PreviewViewPreset>('iso')
   const [fitNonce, setFitNonce] = useState(0)
   const [showEdges, setShowEdges] = useState(true)
-  const [showGrid, setShowGrid] = useState(true)
+  const [showGrid, setShowGrid] = useState(false)
   const [displayMode, setDisplayMode] = useState<PreviewDisplayMode>('solid')
   const [selection, setSelection] = useState<PreviewSelection | null>(null)
   // 部件隐藏是纯视图态：不进 store、不持久化，预览刷新后重置
@@ -175,7 +175,7 @@ export function PreviewViewport({
     setCameraMode('perspective')
     setViewPreset('iso')
     setShowEdges(true)
-    setShowGrid(true)
+    setShowGrid(false)
     setDisplayMode('solid')
     setHiddenParts(new Set())
     setShowShadows(null)

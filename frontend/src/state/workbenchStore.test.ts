@@ -1142,11 +1142,11 @@ test('setPreviewQuality updates state and refetches 3D preview with the tier', a
     }),
   )
 
-  expect(store.getState().previewQuality).toBe('fast')
-  await store.getState().setPreviewQuality('accurate')
-
   expect(store.getState().previewQuality).toBe('accurate')
-  expect(calls).toEqual(['accurate'])
+  await store.getState().setPreviewQuality('fast')
+
+  expect(store.getState().previewQuality).toBe('fast')
+  expect(calls).toEqual(['fast'])
   expect(store.getState().preview?.meshes[0]?.name).toBe('quality-block')
 })
 

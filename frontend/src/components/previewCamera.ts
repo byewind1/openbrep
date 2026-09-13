@@ -29,13 +29,13 @@ export function perspectiveDistanceForBounds(bounds: PreviewBounds, viewportWidt
   const verticalFov = degreesToRadians(PREVIEW_CAMERA_FOV_DEGREES)
   const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect)
   const fitFov = Math.max(Math.min(verticalFov, horizontalFov), degreesToRadians(1))
-  return Math.max((bounds.radius / Math.sin(fitFov / 2)) * 1.18, 2.5)
+  return Math.max((bounds.radius / Math.sin(fitFov / 2)) * 1.05, 2.5)
 }
 
 export function orthographicZoomForBounds(bounds: PreviewBounds, viewportWidth: number, viewportHeight: number): number {
   const safeViewportMin = Math.max(Math.min(viewportWidth, viewportHeight), 1)
   const maxWorldSize = Math.max(bounds.size[0], bounds.size[1], bounds.size[2], 0.5)
-  return Math.max(28, safeViewportMin / (maxWorldSize * 1.65))
+  return Math.max(28, safeViewportMin / (maxWorldSize * 1.15))
 }
 
 export function computePreviewBounds(preview: PreviewPayload | null): PreviewBounds {
