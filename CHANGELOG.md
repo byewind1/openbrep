@@ -5,6 +5,25 @@ Format: [Semantic Versioning](https://semver.org), entries newest-first.
 
 ---
 
+## [0.9.1] — 2026-09-13
+
+### 安装包真正独立可用（下载安装即可用）
+
+**打包**
+- 新增 `openbrep-backend.spec`：PyInstaller onefile 冻结 Python 后端为 sidecar 二进制 `obr7-backend`，内嵌 openbrep 包、知识库（free 层）、skills、前端构建产物与 litellm 数据文件
+- Tauri 通过 `bundle.externalBin` 打包 sidecar；`src-tauri/src/main.rs` 启动时优先使用内嵌 sidecar，开发态回退系统 `python3 scripts/obr7.py`；Windows 下设 `CREATE_NO_WINDOW` 避免控制台窗口闪现
+- `scripts/obr7.py` 支持冻结态：资源根切换到 `sys._MEIPASS`，运行时 cwd 落到可写的 `~/.openbrep/workspace`（避免写入只读的 .app 资源目录），API 进程内运行（冻结二进制无 `python -m` 子进程可用），daemon 子进程直接拉起二进制本身
+- 发布流水线：构建前端 → 冻结后端 → 冻结后端冒烟（起服务、验 `/api/snapshot` 与前端首页）→ Tauri 打包；两平台均冒烟
+
+**构建修复（v0.9.0 tag 首轮 CI 暴露）**
+- `tauri.conf.json` 的 beforeBuild/beforeDev 钩子按 src-tauri 工作目录修正相对路径（`cd ../frontend`）
+- 补齐 Windows 构建必需的 `icons/icon.ico`
+
+**测试**
+- `tests/test_obr7_launcher.py` 新增冻结态用例（runtime root、daemon argv），24 个全绿
+
+---
+
 ## [0.9.0] — 2026-09-13
 
 > 版本口径：本里程碑曾短暂以 v1.0.0 口径准备（2026-06-21，仅文档与版本号，未打 tag、未发布 Release），现撤回 1.0 编号，以 v0.9.0 正式发布。发布说明见 `docs/releases/v0.9.0.md`。

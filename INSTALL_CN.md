@@ -1,7 +1,7 @@
-# openbrep v0.9.0 安装指南（中文）
+# openbrep v0.9.1 安装指南（中文）
 
 > 针对设计师用户的分步骤安装教程
-> 当前正式版本：v0.9.0
+> 当前正式版本：v0.9.1
 > 难度：⭐️ 小白可用
 
 ---
@@ -26,10 +26,10 @@ https://github.com/byewind1/openbrep/releases/latest
 
 下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.9.0_aarch64.dmg`（Apple Silicon）
-- Windows：`OpenBrep_0.9.0_x64_en-US.msi` 或 `OpenBrep_0.9.0_x64-setup.exe`
+- macOS：`OpenBrep_0.9.1_aarch64.dmg`（Apple Silicon）
+- Windows：`OpenBrep_0.9.1_x64_en-US.msi` 或 `OpenBrep_0.9.1_x64-setup.exe`
 
-> 注意：当前 Tauri 桌面包不内嵌 Python 运行时和源码资源，启动时调用系统 `python3` 运行仓库内的 `scripts/obr7.py`，因此仍需本机装好 Python 3.11+ 并完成「开发者方式：源码安装」。零依赖的独立安装包将在后续版本提供。
+v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
 当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 11 Big Sur 或更高版本（按发布二进制实测 `minos 11.0`）；当前不覆盖 Intel Mac。
 

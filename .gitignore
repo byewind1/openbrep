@@ -62,3 +62,4 @@ scripts/gen_keys.py
 scripts/gen_license.py
 scripts/pack_pro.py
 tests/fixtures/blender/make_bookshelf/
+src-tauri/binaries/

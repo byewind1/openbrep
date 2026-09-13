@@ -12,27 +12,49 @@ struct BackendState {
     api_url: String,
 }
 
-/// Locate the Python interpreter: OBR7_PYTHON env → "python3".
-fn python_exe() -> String {
-    std::env::var("OBR7_PYTHON").unwrap_or_else(|_| "python3".to_string())
-}
-
-/// Find obr7.py: packaged resource dir → dev fallback via CARGO_MANIFEST_DIR.
-fn find_obr7(app: &tauri::App) -> std::path::PathBuf {
+/// Locate the backend: bundled PyInstaller sidecar (Tauri externalBin
+/// "binaries/obr7-backend") → dev fallback `python3 scripts/obr7.py`.
+/// Returns a ready-to-spawn Command plus a human-readable description.
+fn backend_command(app: &tauri::App) -> (Command, String) {
+    let exe_name = if cfg!(windows) { "obr7-backend.exe" } else { "obr7-backend" };
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(res) = app.path().resource_dir() {
-        let candidate = res.join("scripts").join("obr7.py");
-        if candidate.exists() {
-            return candidate;
+        candidates.push(res.join(exe_name));
+        candidates.push(res.join("binaries").join(exe_name));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(exe_name));
         }
     }
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    for candidate in &candidates {
+        if candidate.exists() {
+            // mut 仅在 Windows 下用于 creation_flags；macOS/Linux 上允许 unused_mut
+            #[allow(unused_mut)]
+            let mut cmd = Command::new(candidate);
+            // 避免 Windows 上 console 子系统 sidecar 弹出黑色控制台窗口
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            return (cmd, candidate.display().to_string());
+        }
+    }
+
+    // Dev fallback: repo checkout + system Python
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .join("scripts")
-        .join("obr7.py")
+        .join("obr7.py");
+    let python = std::env::var("OBR7_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let mut cmd = Command::new(&python);
+    cmd.arg(&script);
+    (cmd, format!("{python} {}", script.display()))
 }
 
-/// Spawn the Python backend and return (Child, ready_url, api_url).
+/// Spawn the backend and return (Child, ready_url, api_url).
 ///
 /// stderr is captured and relayed to our stderr so crash traces are visible
 /// in the terminal (dev) or macOS Console.app (bundled).
@@ -40,17 +62,16 @@ fn find_obr7(app: &tauri::App) -> std::path::PathBuf {
 /// Returns Err if the process fails to start OR does not emit OBR7_READY_URL
 /// within the timeout — so the caller can surface a visible error instead of
 /// opening a dead window.
-fn spawn_backend(script: &std::path::Path) -> Result<(Child, String, String), String> {
-    let python = python_exe();
+fn spawn_backend(app: &tauri::App) -> Result<(Child, String, String), String> {
+    let (mut cmd, desc) = backend_command(app);
 
-    let mut child = Command::new(&python)
-        .arg(script)
+    let mut child = cmd
         .arg("--tauri")
         .arg("--no-open")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped()) // piped so we can relay lines; inherit() drops them in bundles
         .spawn()
-        .map_err(|e| format!("Failed to start OpenBrep backend ({python}): {e}"))?;
+        .map_err(|e| format!("Failed to start OpenBrep backend ({desc}): {e}"))?;
 
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
@@ -84,8 +105,7 @@ fn spawn_backend(script: &std::path::Path) -> Result<(Child, String, String), St
         .recv_timeout(Duration::from_secs(60))
         .map_err(|_| {
             "OpenBrep backend did not start within 60 s.\n\
-             Check that Python 3 is installed and that config.toml is valid.\n\
-             Run `python3 scripts/obr7.py --tauri` in a terminal to see the full error."
+             Try running the bundled obr7-backend binary in a terminal to see the full error."
                 .to_string()
         })?;
 
@@ -137,9 +157,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let script = find_obr7(app);
-
-            let (child, ready_url, api_url) = spawn_backend(&script).map_err(|msg| {
+            let (child, ready_url, api_url) = spawn_backend(app).map_err(|msg| {
                 // Log to stderr (terminal / Console.app) before the app exits.
                 eprintln!("[openbrep] Fatal startup error: {msg}");
                 // Propagate as a boxed error so Tauri exits cleanly.

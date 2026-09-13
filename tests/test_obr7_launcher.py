@@ -295,3 +295,63 @@ def test_daemon_stop_when_not_running(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "未在运行" in out
+
+
+def test_runtime_root_dev_mode():
+    launcher = load_launcher_module()
+    assert launcher.FROZEN is False
+    root = launcher._runtime_root()
+    assert (root / "scripts" / "obr7.py").exists()
+
+
+def test_runtime_root_frozen_uses_meipass(tmp_path, monkeypatch):
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "FROZEN", True)
+    monkeypatch.setattr(launcher.sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert launcher._runtime_root() == tmp_path
+
+
+def test_daemon_spawn_frozen_child_argv_is_binary_only(tmp_path, monkeypatch, capsys):
+    """冻结态 daemon 子进程必须直接拉起二进制本身（无 python 脚本路径参数）。"""
+    import json as _json
+
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "FROZEN", True)
+    monkeypatch.setattr(launcher.sys, "_MEIPASS", str(tmp_path), raising=False)
+    log_path = tmp_path / "obr7.log"
+    state_path = tmp_path / "obr7.json"
+    monkeypatch.setattr(launcher, "DAEMON_LOG_PATH", log_path)
+    monkeypatch.setattr(launcher, "DAEMON_STATE_PATH", state_path)
+
+    popen_calls = []
+
+    class DummyPopen:
+        def __init__(self, argv, **kwargs):
+            popen_calls.append((argv, kwargs))
+
+            class _P:
+                pid = 4242
+
+                @staticmethod
+                def poll():
+                    # 模拟子进程存活；随后由状态文件驱动 ready 退出等待
+                    state_path.write_text(_json.dumps({"pid": 4242, "ready": True, "api_port": 8765}), encoding="utf-8")
+                    return None
+
+            self._p = _P()
+
+        def poll(self):
+            return self._p.poll()
+
+        @property
+        def pid(self):
+            return self._p.pid
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", DummyPopen)
+    args = launcher.parse_args(["--daemon"])
+    rc = launcher.daemon_spawn(args)
+
+    assert rc == 0
+    argv, kwargs = popen_calls[0]
+    assert argv == [launcher.sys.executable, "--daemon-child"]
+    assert kwargs["cwd"] is None  # 冻结态 cwd 不能是只读的 _MEIPASS

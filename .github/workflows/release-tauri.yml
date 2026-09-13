@@ -47,11 +47,61 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install Python dependencies
-        run: pip install -e "."
+        run: pip install -e "." pyinstaller
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Build frontend (sidecar 内嵌静态资源)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Freeze Python backend (PyInstaller onefile sidecar)
+        run: pyinstaller --clean --noconfirm openbrep-backend.spec
+
+      # 冒烟：冻结后端必须能独立启动并服务 API + 前端（无需系统 Python 环境）
+      - name: Smoke-test frozen backend (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ./dist/obr7-backend --tauri --no-open &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8765/api/snapshot > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8765/api/snapshot > /dev/null
+          curl -sf http://127.0.0.1:8765/ | grep -qi "<title\|<div id=\"root\""
+
+      - name: Smoke-test frozen backend (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath ./dist/obr7-backend.exe -ArgumentList '--tauri','--no-open' -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            foreach ($i in 1..60) {
+              try { Invoke-WebRequest -Uri 'http://127.0.0.1:8765/api/snapshot' -UseBasicParsing -TimeoutSec 2 | Out-Null; $ok = $true; break } catch { Start-Sleep 1 }
+            }
+            if (-not $ok) { throw 'frozen backend did not respond on /api/snapshot' }
+            $html = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing -TimeoutSec 5
+            if ($html.Content -notmatch '<div id="root"') { throw 'frontend index.html not served' }
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Stage sidecar for Tauri externalBin
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/binaries
+          TRIPLE='${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}'
+          if [ '${{ runner.os }}' = 'Windows' ]; then SRC=dist/obr7-backend.exe; else SRC=dist/obr7-backend; fi
+          cp "$SRC" "src-tauri/binaries/obr7-backend-${TRIPLE}${EXE_EXT}"
+          ls -la src-tauri/binaries/
+        env:
+          EXE_EXT: ${{ runner.os == 'Windows' && '.exe' || '' }}
 
       # 纯构建：不传 tagName/releaseName/GITHUB_TOKEN —— 绝不在秘密门禁
       # 通过前创建或上传任何 GitHub Release（上传由下方 publish-release 负责）。

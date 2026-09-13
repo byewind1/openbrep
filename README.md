@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.9.0 — Tauri 桌面工作台正式落地。React + Tauri + Python sidecar 全栈架构，Streamlit 完全退役，自愈编译循环与知识图谱驱动稳定运行。
+> 正式发布版本 v0.9.1 — Tauri 桌面工作台正式落地。React + Tauri + Python sidecar 全栈架构，Streamlit 完全退役，自愈编译循环与知识图谱驱动稳定运行。
 
 ---
 
@@ -45,10 +45,10 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.9.0_aarch64.dmg`（Apple Silicon）
-- Windows：`OpenBrep_0.9.0_x64_en-US.msi` 或 `OpenBrep_0.9.0_x64-setup.exe`
+- macOS：`OpenBrep_0.9.1_aarch64.dmg`（Apple Silicon）
+- Windows：`OpenBrep_0.9.1_x64_en-US.msi` 或 `OpenBrep_0.9.1_x64-setup.exe`
 
-> Note: the current Tauri packages do not embed a Python runtime or the source tree — they invoke the system `python3` against `scripts/obr7.py`, so a source install (see below) is still required. A zero-dependency standalone installer is planned for a later release.
+v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
 Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). Intel Mac is not covered by the current macOS build.
 
@@ -392,6 +392,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.9.1 | 安装包真正独立可用：PyInstaller 冻结 Python 后端为 Tauri sidecar（onefile 内嵌 openbrep/知识库/前端产物），下载安装即可用，不再需要本机 Python 与源码；修复 tauri 钩子相对路径与 Windows 缺 icon.ico 的构建问题（见 docs/releases/v0.9.1.md） |
 | v0.9.0 | Tauri 桌面工作台正式落地：彻底退役 Streamlit（79 个文件 + 24 个 UI 测试），迁移域逻辑至 `openbrep/workbench/`，初始化 Rust/Tauri v2 桌面壳，实现 Python sidecar 启动握手、stderr relay、SPA 静态服务、关窗孤儿进程防护；另含语义修复环、Vision Harness、GSM CALL 宏依赖解析、Copilot 集成、质量台账等（见 docs/releases/v0.9.0.md） |
 | v0.8.0 | React 工作台成为默认 UI：合并 react-workbench 分支，`obr` 默认启动 React + Monaco + Three.js 工作台，Streamlit 降级为 fallback；新增 Verification 一等 seam（`openbrep/verification.py`），把散落的 static/lint/compile/plan_checks 聚合成统一验证报告，AI 生成后展示置信度、检查结果、残余风险；CREATE 路径 compile 状态显式可见，MODIFY 路径含 compile + auto-repair 证据（见 docs/releases/v0.8.0.md） |
 | v0.7.0 | GDL 资产生命周期里程碑：新增 modify / repair 前后 revision 快照、`obr history` / `obr rollback`、工程级变更摘要、GDLContractChecker 合规检查输出，以及 `--compare mock|real` 对比编译（见 docs/releases/v0.7.0.md） |
