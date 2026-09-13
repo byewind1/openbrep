@@ -355,6 +355,17 @@ export const zh = {
   'update.settings.available': '发现新版本 {version}',
   'update.settings.error': '检查失败，请稍后重试',
   'update.settings.notDesktop': '仅桌面安装版支持自动更新',
+  'update.dialog.title': '软件更新',
+  'update.dialog.titleNew': '发现新版本 {version}',
+  'update.dialog.highlights': '更新要点',
+  'update.dialog.noNotes': '暂无更新要点，可查看完整更新说明',
+  'update.dialog.fullNotes': '完整更新说明',
+  'update.dialog.close': '关闭',
+  'update.pill.title': '当前版本 {version}，点击查看更新',
+  'update.pill.new': '有更新',
+  'update.kind.feature': '新增',
+  'update.kind.fix': '修复',
+  'update.kind.other': '其他',
 } as const
 
 export type LocaleKey = keyof typeof zh

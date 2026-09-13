@@ -2,6 +2,7 @@ import type { WorkbenchProject } from '../api/types'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { useT } from '../i18n'
+import { UpdatePill } from '../workbench/update/UpdatePill'
 
 interface TopMenuProps {
   project: WorkbenchProject | null
@@ -109,6 +110,7 @@ export function TopMenu({
         </button>
       </nav>
       <div className="topbar-status">
+        <UpdatePill />
         {currentModel ? (
           <button
             type="button"

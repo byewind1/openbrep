@@ -7,11 +7,12 @@ import { useT } from '../i18n'
 import type { AssistantImageAttachment, CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useUiPrefsStore } from '../state/uiPrefsStore'
+import { useUpdateStore } from '../state/updateStore'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
 import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
 import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
-import { UpdateBanner } from './update/UpdateBanner'
+import { UpdateDialog } from './update/UpdateDialog'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
 import { PreviewWorkspaceStage, type CenterView } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
@@ -25,6 +26,11 @@ export function WorkbenchApp() {
   useEffect(() => {
     document.documentElement.lang = locale
   }, [locale])
+
+  // 桌面端启动时静默检查更新（仅 Tauri 环境；结果驱动顶栏版本 pill 徽标）
+  useEffect(() => {
+    void useUpdateStore.getState().check()
+  }, [])
 
   const { confirm, prompt, dialogNode } = useThemedDialog()
 
@@ -382,7 +388,7 @@ export function WorkbenchApp() {
         backendNotice={backendNotice}
         onClearError={clearLastError}
       />
-      <UpdateBanner />
+      <UpdateDialog />
       <ResizableWorkspaceGrid
         previewWorkspaceOpen={centerView !== 'editor'}
         loading={loading}

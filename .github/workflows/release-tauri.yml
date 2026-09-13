@@ -180,11 +180,30 @@ jobs:
           find release-artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.tar.gz' -o -name '*.sig' \) -exec cp {} release/ \;
           ls -la release
 
-      # latest.json 是 updater 的更新清单：version + 各平台更新包 URL + minisign 签名。
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" release/* --clobber --repo "$GH_REPO"
+          else
+            gh release create "$TAG_NAME" release/* \
+              --repo "$GH_REPO" \
+              --verify-tag \
+              --title "OpenBrep $TAG_NAME" \
+              --generate-notes \
+              --draft
+          fi
+
+      # latest.json 是 updater 的更新清单：version + 各平台更新包 URL + minisign 签名
+      # + notes（Release 正文，客户端更新对话框据此展示更新要点）。
       # macOS 更新包是 .app.tar.gz，Windows 是 NSIS 的 *-setup.exe。
       # secrets 未配置时不会有 .sig，跳过清单生成（构建仍可发布，更新通道不生效）。
       - name: Generate updater manifest (latest.json)
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
           GH_REPO: ${{ github.repository }}
         run: |
@@ -195,6 +214,7 @@ jobs:
             echo "no updater artifacts found, skipping latest.json"
             exit 0
           fi
+          gh release view "$TAG_NAME" --repo "$GH_REPO" --json body -q .body > release/notes.md || true
           python3 - "$TAG_NAME" "$GH_REPO" "$APP_TAR" "$NSIS_EXE" <<'EOF'
           import json, os, sys, datetime
           tag, repo, app_tar, nsis_exe = sys.argv[1:5]
@@ -213,30 +233,18 @@ jobs:
                   "signature": sig_of(nsis_exe),
                   "url": f"https://github.com/{repo}/releases/download/{tag}/{nsis_exe}",
               }
+          notes = ""
+          if os.path.exists("release/notes.md"):
+              with open("release/notes.md") as f:
+                  notes = f.read().strip()
           manifest = {
               "version": tag,
-              "notes": f"https://github.com/{repo}/releases/tag/{tag}",
+              "notes": notes or f"https://github.com/{repo}/releases/tag/{tag}",
               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "platforms": platforms,
           }
           with open("release/latest.json", "w") as f:
               json.dump(manifest, f, indent=2)
-          print(json.dumps(manifest, indent=2))
+          print(json.dumps(manifest, indent=2)[:2000])
           EOF
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ github.ref_name }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" release/* --clobber --repo "$GH_REPO"
-          else
-            gh release create "$TAG_NAME" release/* \
-              --repo "$GH_REPO" \
-              --verify-tag \
-              --title "OpenBrep $TAG_NAME" \
-              --generate-notes \
-              --draft
-          fi
+          gh release upload "$TAG_NAME" release/latest.json --clobber --repo "$GH_REPO"
