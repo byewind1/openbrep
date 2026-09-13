@@ -6,8 +6,8 @@
 
 ## 快速开始
 
-1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载 `OpenBrep-*-macOS.zip` 或 `OpenBrep-*-Windows.zip`
-2. 解压后运行 `OpenBrep`
+1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载桌面安装包（macOS：`OpenBrep_*_aarch64.dmg`；Windows：`OpenBrep_*_x64-setup.exe` 或 `.msi`）
+2. 安装后从「应用程序」/ 开始菜单启动 OpenBrep（独立桌面窗口，无需浏览器）
 3. 命令行 / 开发者用户再使用 `git clone` 或 `pipx` 安装
 
 
