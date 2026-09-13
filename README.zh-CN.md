@@ -48,9 +48,11 @@
 - macOS：`OpenBrep_0.9.0_aarch64.dmg`（Apple Silicon）
 - Windows：`OpenBrep_0.9.0_x64_en-US.msi` 或 `OpenBrep_0.9.0_x64-setup.exe`
 
+> 注意：当前 Tauri 桌面包不内嵌 Python 运行时和源码资源，启动时调用系统 `python3` 运行仓库内的 `scripts/obr7.py`，仍需先完成源码安装。零依赖的独立安装包将在后续版本提供。
+
 Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 14 Sonoma or later. Intel Mac is not covered by the current macOS build.
 
-On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer. This path does not require users to learn `git clone`, `git pull`, or manual Python dependency installation first.
+On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer.
 
 Temporary macOS Gatekeeper workaround:
 
