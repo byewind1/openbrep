@@ -712,6 +712,14 @@ possible:
 ruby -e 'require "yaml"; YAML.load_file(".github/workflows/build-installers.yml"); puts "yaml ok"'
 ```
 
+The CI smoke tests only exercise the frozen backend binary, not the full
+desktop app shell. Before tagging a release (or immediately after downloading
+the built dmg from the workflow artifacts), launch the real `.app` once on a
+local machine: a window must appear and the workbench must load. A setup-hook
+panic (for example a duplicate window label) passes all CI smoke tests but
+crashes the installed app instantly — v0.9.0–v0.9.2 shipped with exactly this
+bug.
+
 ### Commit And Tag
 
 ```bash
