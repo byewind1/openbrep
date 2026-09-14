@@ -153,6 +153,20 @@ jobs:
           }
           python scripts/secret_scan.py --tree $staging --report text
 
+      # Tauri v2 生成的 macOS 更新包固定叫 OpenBrep.app.tar.gz（不带架构后缀）。
+      # 两条 macOS 腿的产物会在 publish 阶段平铺到同一目录，必须加架构后缀避免互相覆盖，
+      # latest.json 的 find 模式（*aarch64.app.tar.gz / *x64.app.tar.gz）也依赖该后缀。
+      - name: Arch-suffix macOS updater artifacts
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          cd src-tauri/target/release/bundle/macos
+          SUFFIX='${{ matrix.triple == 'aarch64-apple-darwin' && 'aarch64' || 'x64' }}'
+          for f in OpenBrep.app.tar.gz OpenBrep.app.tar.gz.sig; do
+            if [ -f "$f" ]; then mv "$f" "OpenBrep_${SUFFIX}${f#OpenBrep}"; fi
+          done
+          ls -la
+
       - name: Upload macOS artifacts
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
