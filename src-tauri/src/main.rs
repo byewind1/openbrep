@@ -50,12 +50,15 @@ fn open_releases_page() -> Result<(), String> {
 
 #[tauri::command]
 async fn updater_check(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    let update = app
-        .updater()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
+    let update_result = app.updater().map_err(|e| e.to_string())?.check().await;
+    let update = match update_result {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("[updater] check failed: {e}");
+            return Err(e.to_string());
+        }
+    };
+    eprintln!("[updater] check ok: has_update={}", update.is_some());
 
     let info = update.as_ref().map(|u| UpdateInfo {
         version: u.version.to_string(),

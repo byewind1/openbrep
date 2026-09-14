@@ -781,9 +781,21 @@ For the channel to work:
   copy at `~/.openbrep/updater/` (created by `npx @tauri-apps/cli@2 signer
   generate`). Losing it means all future updates must be signed with a new
   keypair and the pubkey rotated in `tauri.conf.json`.
-- macOS in-place update additionally assumes a code-signed app; unsigned
-  builds fall back in the UI to the manual download page (Windows NSIS updates
-  work unsigned).
+- The webview loads the sidecar's `http://127.0.0.1:<port>` URL, which is a
+  **remote origin**: Tauri v2 rejects custom commands from remote origins
+  ("not allowed by ACL") unless they are declared in `src-tauri/build.rs`
+  (`AppManifest::new().commands(&[...])`) AND allowed in
+  `src-tauri/capabilities/default.json` (`allow-<command>` entries, kebab-case).
+  Any new custom command invoked from the frontend must be added to both.
+- The sidecar-embedded `frontend/dist` must be built with
+  `TAURI_ENV_TARGET_TRIPLE` set (→ `VITE_IS_TAURI=true`); otherwise the updater
+  UI is tree-shaken out of the bundle entirely. The CI "Build frontend" step
+  sets this explicitly — do not remove it. Frontend Tauri detection uses
+  `__TAURI_INTERNALS__` (always injected), not `__TAURI__` (requires
+  `withGlobalTauri`).
+- macOS in-place update worked unsigned in the v0.9.6 end-to-end test
+  (0.9.4→0.9.5); if Gatekeeper ever blocks it, the UI falls back to the manual
+  download page (Windows NSIS updates work unsigned).
 
 The Release notes must state platform compatibility explicitly:
 

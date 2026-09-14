@@ -83,7 +83,15 @@ export function UpdateDialog() {
           <p className="themed-dialog-message">{t('update.settings.checking')}</p>
         ) : null}
         {!info && checked && !checking ? (
-          <p className="themed-dialog-message">{t('update.settings.latest')}</p>
+          error ? (
+            <p className="themed-dialog-message update-dialog-error">
+              {t('update.settings.error')}
+              <br />
+              <small>{error}</small>
+            </p>
+          ) : (
+            <p className="themed-dialog-message">{t('update.settings.latest')}</p>
+          )
         ) : null}
 
         {info ? (

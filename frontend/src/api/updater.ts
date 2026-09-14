@@ -23,11 +23,11 @@ export interface UpdateProgress {
 }
 
 export function isTauriDesktop(): boolean {
-  return (
-    Boolean(import.meta.env.VITE_IS_TAURI) &&
-    typeof window !== 'undefined' &&
-    '__TAURI__' in window
-  )
+  // __TAURI_INTERNALS__ 是 Tauri 始终注入的 IPC 入口（@tauri-apps/api 实际走它）；
+  // __TAURI__ 全局对象只有 withGlobalTauri 开启才有，不能作为唯一判据。
+  if (typeof window === 'undefined' || !import.meta.env.VITE_IS_TAURI) return false
+  const w = window as unknown as Record<string, unknown>
+  return '__TAURI_INTERNALS__' in w || '__TAURI__' in w
 }
 
 export async function fetchAppVersion(): Promise<string | null> {

@@ -9,6 +9,10 @@
   "permissions": [
     "core:default",
     "shell:allow-execute",
-    "shell:allow-kill"
+    "shell:allow-kill",
+    "allow-app-version",
+    "allow-open-releases-page",
+    "allow-updater-check",
+    "allow-updater-download-and-install"
   ]
 }

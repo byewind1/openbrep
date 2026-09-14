@@ -62,9 +62,14 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # 关键：必须带 TAURI_ENV_TARGET_TRIPLE 构建——sidecar 内嵌的这份 dist
+      # 才是桌面子窗口实际加载的前端；缺该变量时 VITE_IS_TAURI=false，
+      # 更新 pill/检查逻辑会被 tree-shake 掉（v0.9.2–v0.9.5 的静默故障）。
       - name: Build frontend (sidecar 内嵌静态资源)
         working-directory: frontend
         run: npm run build
+        env:
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.triple }}
 
       - name: Freeze Python backend (PyInstaller onefile sidecar)
         run: pyinstaller --clean --noconfirm openbrep-backend.spec
