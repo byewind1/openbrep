@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载桌面安装包（macOS：`OpenBrep_*_aarch64.dmg`（Apple Silicon）或 `OpenBrep_*_x64.dmg`（Intel，自 v0.9.5 起）；Windows：`OpenBrep_*_x64-setup.exe` 或 `.msi`）
+1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载桌面安装包（macOS：`OpenBrep_*_aarch64.dmg`（Apple Silicon）或 `OpenBrep_*_x64.dmg`（Intel）；Windows：`OpenBrep_*_x64-setup.exe` 或 `.msi`）
 2. 安装后从「应用程序」/ 开始菜单启动 OpenBrep（独立桌面窗口，无需浏览器）
 3. 命令行 / 开发者用户再使用 `git clone` 或 `pipx` 安装
 
@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.9.4 — 桌面安装包稳定可用：修复启动崩溃，品牌图标完整呈现（机器人 + 完整霓虹三角），自动更新通道就绪。
+> 正式发布版本 v0.9.5 — macOS 安装包新增 Intel 版：Apple Silicon 与 Intel（x86_64）双 dmg，自动更新通道同步覆盖 Intel 客户端。
 
 ---
 
@@ -45,12 +45,12 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.9.4_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.9.4_x64.dmg`（Intel，自 v0.9.5 起）
-- Windows：`OpenBrep_0.9.4_x64_en-US.msi` 或 `OpenBrep_0.9.4_x64-setup.exe`
+- macOS：`OpenBrep_0.9.5_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.9.5_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.9.5_x64_en-US.msi` 或 `OpenBrep_0.9.5_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
-Current macOS package compatibility: both Apple Silicon (`arm64`, M1/M2/M3/M4) and Intel (`x86_64`) packages are provided, requiring macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). The Intel build runs on the GitHub `macos-15-intel` runner (supported until 2027-08). Note: **Intel packages ship starting with v0.9.5** — v0.9.4 and earlier have Apple Silicon only.
+Current macOS package compatibility: both Apple Silicon (`arm64`, M1/M2/M3/M4) and Intel (`x86_64`) packages are provided, requiring macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). The Intel build runs on the GitHub `macos-15-intel` runner (supported until 2027-08).
 
 On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer.
 
@@ -392,6 +392,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.9.5 | macOS 安装包新增 Intel（x86_64）版：CI 加 `macos-15-intel` 构建腿，`latest.json` 更新清单同步支持 `darwin-x86_64`（见 docs/releases/v0.9.5.md） |
 | v0.9.4 | 图标修订：完整三角形构图 + 右缘文字残影遮罩抹除（见 docs/releases/v0.9.4.md） |
 | v0.9.3 | 稳定性补丁：修复桌面包启动即崩溃（tauri.conf.json 静态 main 窗口与代码建窗 label 冲突，v0.9.0–v0.9.2 均受影响）；Release SOP 增加真机启动验证（见 docs/releases/v0.9.3.md） |
 | v0.9.2 | 桌面版自动更新：tauri-plugin-updater + GitHub Releases latest.json，顶栏版本 pill 弹出更新对话框（更新要点/进度/失败降级），签名的 in-place 更新；安装包启用 OpenBrep 品牌图标替换 Tauri 占位图（见 docs/releases/v0.9.2.md） |
