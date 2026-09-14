@@ -106,8 +106,9 @@ def preview_payload(
     macro_resolver: Any = None,
 ) -> dict[str, Any]:
     scripts = script_overrides or {}
+    script_3d = script_for(project, ScriptType.SCRIPT_3D, scripts)
     result = preview_3d_script(
-        script_for(project, ScriptType.SCRIPT_3D, scripts),
+        script_3d,
         parameters=parameter_values(project, overrides),
         setup_script=script_for(project, ScriptType.MASTER, scripts),
         unknown_command_policy="warn",
@@ -117,10 +118,26 @@ def preview_payload(
     )
     payload = preview_3d_to_three_payload(result)
     payload["warnings"] = result.warnings
+    if not result.meshes and not result.wires and not _has_executable_statement(script_3d):
+        # P14：空 3D 脚本 / "! Hidden Script."（加密保护构件）原本静默空白，
+        # 显式告知原因
+        payload["warnings"] = [
+            *result.warnings,
+            "3D 脚本为空或为隐藏（受保护）脚本，无可预览几何",
+        ]
     payload["verification"] = preview_verification(scripts)
     # 自描述质量档：前端据此发现"显示中的预览"与所选质量档不一致并自动重取
     payload["quality"] = normalize_quality(quality)
     return payload
+
+
+def _has_executable_statement(script: str) -> bool:
+    """脚本是否含有可执行语句（非空行、非 ! 注释行）。"""
+    for raw in (script or "").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("!"):
+            return True
+    return False
 
 
 def empty_preview_payload() -> dict[str, Any]:

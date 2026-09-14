@@ -78,7 +78,7 @@
         },
         "C18": {
           "success": false,
-          "criteria_failures": 3
+          "criteria_failures": 4
         },
         "C19": {
           "success": true,

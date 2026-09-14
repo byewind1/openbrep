@@ -317,6 +317,21 @@ class _PreviewRuntime:
         _macro_chain: tuple[str, ...] = (),
     ):
         self.env = _normalize_parameters(parameters or {})
+        # GDL 属性类型选择器常量（IND(MATERIAL, ...) 等的首参；P14）——仅被
+        # IND stub 消费，数值本身无意义；setdefault 保证脚本/参数可覆盖。
+        for _i, _sel in enumerate(
+            ("MATERIAL", "LINE_TYPE", "FILL_TYPE", "STYLE", "PEN",
+             "BUILDING_MATERIAL", "COMPOSITE", "PROFILE"),
+            start=1,
+        ):
+            self.env.setdefault(_sel, float(_i))
+        # GDL 内置常量/全局的静态预览默认值（P14）：PI 为数学常量；
+        # GLOB_MODPAR_NAME 表示"正在编辑的参数名"（UI 交互用），静态预览
+        # 无编辑上下文 → 空串，所有 `IF GLOB_MODPAR_NAME="x"` 分支按假处理。
+        self.env.setdefault("PI", math.pi)
+        self.env.setdefault("GLOB_MODPAR_NAME", "")
+        # NSP = PUT 栈当前值个数（GDL 内置只读全局），PUT/GET/USE 时同步
+        self.env.setdefault("NSP", 0.0)
         # P3a：PROJECT2 顶视图投影——内部 3D runtime 需要的 setup/3D 脚本
         # 与缓存。_script_3d 为 None 时 PROJECT2 保持占位警告（行为不变）。
         self._setup_script = setup_script or ""
@@ -360,6 +375,8 @@ class _PreviewRuntime:
         self._current_style: str | None = None
         self._poly2_status_warned: set[int] = set()
         self._tangent_fallback_warned = False
+        self._binary_warned = False
+        self._coor_warned = False
 
         self._transform_stack: list[tuple[tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]], tuple[float, float, float]]] = []
         self._A = _identity3()
@@ -380,6 +397,10 @@ class _PreviewRuntime:
         self._vects: list[Point3D] = []
         self._edges: list[tuple[int, int]] = []  # (p1, p2) 0-based vertex indices
         self._pgons: list[list[int]] = []  # each is a list of signed edge IDs
+        # BASE 命令的编号偏移（GDL：BASE 重置 VERT/EDGE 内部计数器）
+        self._vert_base = 0
+        self._edge_base = 0
+        self._cut_warned = False
 
         # RULED chain welding state — consecutive RULED segments whose
         # base ring coincides with the previous segment's top ring are
@@ -404,6 +425,12 @@ class _PreviewRuntime:
 
         # Function dispatch table for expression evaluation.
         self._funcs = dict(_ALLOWED_FUNCS)
+        # GET/USE 在表达式里读 PUT 栈（P14：U 型楼梯 `get(1)` 实例）——需要
+        # 运行期状态，绑定到实例方法。GET 弹出、USE 不弹。
+        self._funcs["GET"] = self._func_get
+        self._funcs["USE"] = self._func_use
+        # NTR() = 当前变换栈深度（GDL 内置；如 C18 金字塔天窗 `DEL NTR()-n`）
+        self._funcs["NTR"] = lambda: float(len(self._transform_stack))
 
         self.result_2d = Preview2DResult()
         self.result_3d = Preview3DResult()
@@ -439,6 +466,17 @@ class _PreviewRuntime:
         while idx < end:
             line_no, line = lines[idx]
             if _is_label_line(line):
+                idx += 1
+                continue
+
+            # P14：顶层冒号多语句（`hrr: dsl=dsr: roffl=roffr`、
+            # `HOTSPOT ...,1: unID=unID+1` 等真实图库写法）。逐条按独立逻辑
+            # 行执行；与 P13 单行 IF 冒号语义一致（IF c THEN s1: s2 → s2
+            # 无条件执行）。标签行已在上面跳过，不受冒号影响。
+            colon_parts = _split_colon_statements(line)
+            if len(colon_parts) > 1:
+                for part in colon_parts:
+                    self._exec_block([(line_no, part)], 0, 1, mode=mode)
                 idx += 1
                 continue
 
@@ -485,7 +523,20 @@ class _PreviewRuntime:
                 if_block = (lines[idx][0], lines[endif_idx][0])
                 self._block_stack.append(if_block)
                 try:
-                    if should_run:
+                    if else_idx is not None and else_idx == endif_idx:
+                        # ELSE 同行带语句（P14）：块结束于该行；真分支执行
+                        # IF..ELSE 之间的语句，假分支执行 ELSE 同行语句。
+                        else_inline = re.match(
+                            r"^ELSE\b\s*(.+)$", lines[else_idx][1], re.IGNORECASE
+                        )
+                        if should_run:
+                            self._exec_block(lines, idx + 1, else_idx, mode=mode)
+                        elif else_inline is not None:
+                            self._exec_inline_statement(
+                                else_inline.group(1), lines[else_idx][0],
+                                lines, else_idx, mode, condition_true=True,
+                            )
+                    elif should_run:
                         body_end = else_idx if else_idx is not None else endif_idx
                         self._exec_block(lines, idx + 1, body_end, mode=mode)
                     elif else_idx is not None:
@@ -625,12 +676,14 @@ class _PreviewRuntime:
                 vals = self._eval_args(_split_args(args_text), line_no)
                 if vals is not None:
                     self._put_stack.extend(vals)
+                    self.env["NSP"] = float(len(self._put_stack))
                 idx += 1
                 continue
 
             # GROUP/ENDGROUP/PLACEGROUP（P14）：3D 组布尔构造。仅 3d 模式
-            # 执行；2d/setup 模式静默跳过（组是纯 3D 构造）。
-            if re.match(r"^(GROUP|ENDGROUP|PLACEGROUP)\b", line, re.IGNORECASE):
+            # 执行；2d/setup 模式静默跳过（组是纯 3D 构造）。KILLGROUP 删除
+            # 组定义（预览近似：组内容已烘焙，删除只影响后续引用）。
+            if re.match(r"^(GROUP|ENDGROUP|PLACEGROUP|KILLGROUP)\b", line, re.IGNORECASE):
                 if mode == "3d":
                     self._handle_group_command(line, line_no)
                 idx += 1
@@ -689,10 +742,12 @@ class _PreviewRuntime:
             # FILL / LINE_PROPERTY（P4）：属性设置语句，同样无几何副作用。
             # WALLHOLE / WALLNICHE（P14）：墙体开洞构造，只影响 Archicad 里的
             # 宿主墙，无自身几何；SECT_FILL 是属性设置。HOTSPOT/HOTLINE/HOTARC
-            # 系（含 2D 变体）是捕捉点/辅助线，不渲染。
+            # 系（含 2D 变体）是捕捉点/辅助线，不渲染。MODEL（SOLID/SURFACE/
+            # WIRE 显示模式）与 SECT_ATTRS（剖面属性）、SHADOW（阴影开关）
+            # 对预览无几何副作用。
             if re.match(
                 r"^(RESOL|TOLER|MATERIAL|PEN|XFORM|SET|VALUES|FILL|LINE_PROPERTY"
-                r"|WALLHOLE|WALLNICHE|SECT_FILL"
+                r"|WALLHOLE|WALLNICHE|SECT_FILL|SECT_ATTRS|MODEL|SHADOW"
                 r"|HOTSPOT2?|HOTLINE2?|HOTARC2?)\b",
                 line, re.IGNORECASE,
             ):
@@ -878,22 +933,35 @@ class _PreviewRuntime:
         if_idx: int,
         end: int,
     ) -> tuple[int | None, int | None]:
-        """Find ELSE/ENDIF matching IF at if_idx. Returns (else_idx, endif_idx)."""
-        depth = 1
+        """Find ELSE/ENDIF matching IF at if_idx. Returns (else_idx, endif_idx).
+
+        else_idx == endif_idx 表示 ELSE 同行带语句的形式（GDL：ELSE 后同行
+        有命令即关闭整个 IF 块，不再需要 ENDIF——DAU 停车场构件实例）。
+        嵌套块级 IF 递归跳过（其自身可能由 ELSE 同行语句终止，扁平深度计数
+        无法表达——DAU line 48 回归）。
+        """
         else_idx: int | None = None
-        for i in range(if_idx + 1, end):
+        i = if_idx + 1
+        while i < end:
             _, line = lines[i]
             cmd = _extract_command(line)
             if cmd == "IF":
-                # P9：单行 IF 不计深度（同 _find_matching_endif）。
+                # P9：单行 IF（IF cond THEN stmt，自包含）不消耗 ENDIF。
                 if _extract_inline_if(line) is None:
-                    depth += 1
+                    _, sub_endif = self._find_matching_if_bounds(lines, i, end)
+                    if sub_endif is None:
+                        return else_idx, None
+                    i = sub_endif + 1
+                    continue
             elif cmd == "ENDIF":
-                depth -= 1
-                if depth == 0:
-                    return else_idx, i
-            elif cmd == "ELSE" and depth == 1 and else_idx is None:
-                else_idx = i
+                return else_idx, i
+            elif cmd == "ELSE":
+                if re.match(r"^ELSE\b\s*\S", line, re.IGNORECASE):
+                    # ELSE 同行带语句：块到此结束
+                    return (i if else_idx is None else else_idx), i
+                if else_idx is None:
+                    else_idx = i
+            i += 1
         return else_idx, None
 
     def _eval_condition(self, condition: str, line_no: int) -> bool | None:
@@ -1605,143 +1673,26 @@ class _PreviewRuntime:
     ) -> list[list[Point2D]]:
         """把 (x, y, status) 记录流展开为轮廓点列（局部坐标，未过 _p2）。
 
-        状态码分类按十进制数值区间（官方文档写作 s & 900 / s & 3000 等，
-        但它们是数值不是位标志——900 & 4000 ≠ 0，位与无法互斥区分）：
-        [600,700) 填充属性 / [700,800) 段属性（跳过）/ [800,900) 切线向量 /
-        [900,1000) 圆心 / [1000,2000) 切线弧 / [2000,3000) 半径+圆心角弧 /
-        [3000,4000) 弧终点 / ≥4000 起角+圆心角（4000/4001 同等对待）。
-        s & 1 的边可见性 MVP 忽略（画全部轮廓）；s == -1 轮廓结束（洞分隔）
-        ——洞按独立多边形 emit，填充不做布尔减除。
+        核心逻辑在模块级 _expand_status_records_to_contours（P14 起 3D
+        PRISM_/CPRISM 复用）；这里只接告警去重状态。
         """
-        contours: list[list[Point2D]] = []
-        current: list[Point2D] = []
-        pending_center: Point2D | None = None
-        pending_tangent: Point2D | None = None
 
-        def flush() -> None:
-            nonlocal current
-            if current:
-                contours.append(current)
-                current = []
+        def warn(msg: str) -> None:
+            self._warn(line_no, msg, command=cmd)
 
-        def append_arc(pts: list[Point2D], exact_end: Point2D | None = None) -> None:
-            if not pts:
-                return
-            if current and _dist2(pts[0], current[-1]) <= 1e-18:
-                pts = pts[1:]
-            if exact_end is not None and pts:
-                pts[-1] = exact_end
-            current.extend(pts)
-
-        def warn_status_once(code: int, msg: str) -> None:
+        def warn_status(code: int, msg: str) -> None:
             if code not in self._poly2_status_warned:
                 self._poly2_status_warned.add(code)
                 self._warn(line_no, msg, command=cmd)
 
-        for x, y, s in records:
-            if s == -1:
-                # 轮廓结束（洞分隔）
-                flush()
-                pending_center = None
-                pending_tangent = None
-                continue
+        def warn_tangent(msg: str) -> None:
+            if not self._tangent_fallback_warned:
+                self._tangent_fallback_warned = True
+                self._warn(line_no, msg, command=cmd)
 
-            if pending_center is not None:
-                # 圆心记录之后：本记录决定弧
-                cx, cy = pending_center
-                pending_center = None
-                if not current:
-                    self._warn(line_no, f"{cmd} 圆心记录前没有轮廓点，已跳过该弧", command=cmd)
-                    continue
-                px, py = current[-1]
-                r = math.hypot(px - cx, py - cy)
-                if s >= 4000:
-                    # 起角 + 圆心角（度）
-                    append_arc(_arc_tessellate(cx, cy, r, x, y))
-                elif 3000 <= s < 4000:
-                    # 弧终点：方向由三点叉积定，退化（共线）按逆时针半圆劣弧
-                    a0 = math.degrees(math.atan2(py - cy, px - cx))
-                    a1 = math.degrees(math.atan2(y - cy, x - cx))
-                    cross = (px - cx) * (y - cy) - (py - cy) * (x - cx)
-                    if cross > 1e-12:
-                        sweep = (a1 - a0) % 360.0
-                    elif cross < -1e-12:
-                        sweep = -((a0 - a1) % 360.0)
-                    else:
-                        sweep = 180.0
-                    append_arc(_arc_tessellate(cx, cy, r, a0, sweep), exact_end=(x, y))
-                else:
-                    warn_status_once(s, f"{cmd} 圆心后的弧记录状态码 {s} 无法识别，按角点处理")
-                    current.append((x, y))
-                continue
-
-            if 600 <= s < 800:
-                # 填充/段属性记录：不计入轮廓、不告警
-                continue
-            if 800 <= s < 900:
-                # 切线方向向量（供紧随的切线弧使用）
-                pending_tangent = (x, y)
-                continue
-            if 900 <= s < 1000:
-                # 圆心（不在轮廓上），下一记录决定弧
-                pending_center = (x, y)
-                continue
-            if 1000 <= s < 2000:
-                # 切线弧到端点 (x,y)；切线由前置 800 记录给出
-                if pending_tangent is None or not current:
-                    if not self._tangent_fallback_warned:
-                        self._tangent_fallback_warned = True
-                        self._warn(line_no, f"{cmd} 切线弧无可用切线，退化为直线", command=cmd)
-                    current.append((x, y))
-                    pending_tangent = None
-                    continue
-                arc = _tangent_arc_points(current[-1], pending_tangent, (x, y))
-                pending_tangent = None
-                if arc is None:
-                    if not self._tangent_fallback_warned:
-                        self._tangent_fallback_warned = True
-                        self._warn(line_no, f"{cmd} 切线弧几何退化，退化为直线", command=cmd)
-                    current.append((x, y))
-                    continue
-                append_arc(arc, exact_end=(x, y))
-                continue
-            if 2000 <= s < 3000:
-                # 半径 + 圆心角弧：从当前点出发，x=半径，y=圆心角（正=逆时针）
-                if not current:
-                    self._warn(line_no, f"{cmd} 半径弧记录前没有轮廓点，已跳过", command=cmd)
-                    continue
-                r = abs(x)
-                sweep = y
-                px, py = current[-1]
-                # MVP 近似：圆心取"上一段方向"的左/右法向（sweep>0 → 左侧）；
-                # 无前一段时用 +x 方向
-                if len(current) >= 2:
-                    dx = px - current[-2][0]
-                    dy = py - current[-2][1]
-                else:
-                    dx, dy = 1.0, 0.0
-                length = math.hypot(dx, dy)
-                if length <= 1e-12 or r <= 1e-12:
-                    continue
-                nx, ny = -dy / length, dx / length  # 左法向
-                side = 1.0 if sweep >= 0 else -1.0
-                cx, cy = px + nx * r * side, py + ny * r * side
-                a0 = math.degrees(math.atan2(py - cy, px - cx))
-                append_arc(_arc_tessellate(cx, cy, r, a0, sweep))
-                continue
-            if s >= 3000:
-                # 孤立的弧终点/角度记录（前面没有圆心）——不合法但别崩
-                warn_status_once(s, f"{cmd} 弧记录状态码 {s} 缺少前置圆心记录，已跳过")
-                continue
-            if s >= 64:
-                # 未知状态码：按角点处理，每个码值只警一次
-                warn_status_once(s, f"{cmd} 未知状态码 {s}，按角点处理")
-            # s & 1（边可见性）MVP 忽略：画全部轮廓
-            current.append((x, y))
-            pending_tangent = None
-
-        flush()
-        return contours
+        return _expand_status_records_to_contours(
+            records, warn=warn, warn_status=warn_status, warn_tangent=warn_tangent
+        )
 
     # ── P4：2D 文本链 ────────────────────────────────────────────────────
 
@@ -1831,6 +1782,126 @@ class _PreviewRuntime:
             return None
         return f"{float(value):g}"
 
+    def _split_prism_contours(
+        self, values: list[float], n: int, line_no: int, cmd: str
+    ) -> list[list[Point2D]] | None:
+        """PRISM_ 三元组节点拆轮廓：状态码 -1 = 当前轮廓结束；弧状态码
+        （600 起）走与 2D POLY2 共享的展开器。非三元组布局，或既无洞也
+        无弧时返回 None（调用方走旧路径，行为逐字节不变）。
+        """
+        if len(values) < 3 * n:
+            return None
+        records = [
+            (
+                float(values[3 * i]),
+                float(values[3 * i + 1]),
+                int(round(float(values[3 * i + 2]))),
+            )
+            for i in range(n)
+        ]
+        has_holes = any(s == -1 for _, _, s in records)
+        has_arcs = any(s >= 600 for _, _, s in records)
+        if not has_holes and not has_arcs:
+            return None
+
+        if has_arcs:
+            def warn(msg: str) -> None:
+                self._warn(line_no, f"{cmd} {msg}", command=cmd)
+
+            def warn_status(code: int, msg: str) -> None:
+                if code not in self._poly2_status_warned:
+                    self._poly2_status_warned.add(code)
+                    self._warn(line_no, f"{cmd} {msg}", command=cmd)
+
+            def warn_tangent(msg: str) -> None:
+                if not self._tangent_fallback_warned:
+                    self._tangent_fallback_warned = True
+                    self._warn(line_no, f"{cmd} {msg}", command=cmd)
+
+            raw_contours = _expand_status_records_to_contours(
+                records, warn=warn, warn_status=warn_status, warn_tangent=warn_tangent
+            )
+        else:
+            # 纯 -1 轮廓拆分（无弧）：直角点快速路径
+            raw_contours = []
+            current: list[Point2D] = []
+            for x, y, s in records:
+                if s == -1:
+                    if current and (
+                        abs(x - current[0][0]) > _POLY_EPS or abs(y - current[0][1]) > _POLY_EPS
+                    ):
+                        current.append((x, y))
+                    if current:
+                        raw_contours.append(current)
+                    current = []
+                else:
+                    current.append((x, y))
+            if current:
+                raw_contours.append(current)
+
+        contours: list[list[Point2D]] = []
+        for contour in raw_contours:
+            contour = _dedupe_ring(contour)
+            if len(contour) >= 3:
+                contours.append(contour)
+        return contours or None
+
+    def _emit_prism(self, cmd: str, vals: list[float], line_no: int) -> None:
+        """PRISM/PRISM_/CPRISM_ 共享的棱柱输出（P14 从 _handle_3d 提取）。"""
+        n = int(round(vals[0]))
+        h = float(vals[1])
+        if n <= 2:
+            self._warn(line_no, f"{cmd} 顶点数必须 >= 3")
+            return
+
+        # P14：PRISM_ 三元组状态码 -1 = 轮廓结束（洞/多轮廓），弧状态码
+        # （900 圆心 / 3000 弧终点 / 4000 起角+圆心角等）走共享展开器。
+        # 纯直线无洞时保持旧路径逐字节不变。
+        contours = self._split_prism_contours(vals[2:], n, line_no, cmd)
+        if contours is not None:
+            outer, holes = contours[0], contours[1:]
+            if holes:
+                mesh, wires = _make_prism_mesh_with_holes(
+                    outer,
+                    holes,
+                    h,
+                    self._offset(),
+                    transform=self._A,
+                    name=cmd,
+                    source_ref=self._source_ref_3d(line_no, cmd),
+                    warn=lambda msg: self._warn(line_no, msg, command=cmd),
+                )
+            else:
+                mesh, wires = _make_prism_mesh(
+                    outer,
+                    h,
+                    self._offset(),
+                    transform=self._A,
+                    name=cmd,
+                    source_ref=self._source_ref_3d(line_no, cmd),
+                    warn=lambda msg: self._warn(line_no, msg, command=cmd),
+                )
+            self._emit_mesh3d(mesh)
+            self._emit_wires3d(wires)
+            return
+
+        pts = _extract_points_2d(vals[2:], n)
+        if not pts:
+            self._warn(line_no, f"{cmd} 顶点数据不足，已跳过")
+            return
+
+        mesh, wires = _make_prism_mesh(
+            pts,
+            h,
+            self._offset(),
+            transform=self._A,
+            name=cmd,
+            source_ref=self._source_ref_3d(line_no, cmd),
+            warn=lambda msg: self._warn(line_no, msg, command=cmd),
+        )
+        self._emit_mesh3d(mesh)
+        self._emit_wires3d(wires)
+
     def _handle_3d(self, line: str, line_no: int) -> bool:
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\b\s*(.*)$", line)
         if not m:
@@ -1838,6 +1909,12 @@ class _PreviewRuntime:
 
         cmd = m.group(1).upper()
         args_text = (m.group(2) or "").strip()
+        # 命令的 {n} 版本标签（如 vert{2}、xWALL_{2}）：剥离后按基本形态解析
+        # （P14；RULED 分支原有的自带剥离因此成为冗余，保留无害）。CPRISM_{4}
+        # 的参数布局不同，变体号保留在 cmd_variant 供其分支使用。
+        m_variant = re.match(r"^\{(\d+)\}\s*", args_text)
+        cmd_variant = m_variant.group(1) if m_variant else ""
+        args_text = re.sub(r"^\{\d+\}\s*", "", args_text)
         args_raw = _split_args(args_text)
         if cmd != "RULED":
             self._reset_ruled_chain()
@@ -1946,8 +2023,9 @@ class _PreviewRuntime:
         if cmd == "EDGE":
             vals = self._eval_args(args_raw, line_no)
             if vals is not None and len(vals) >= 2:
-                p1 = int(round(float(vals[0]))) - 1  # GDL is 1-based
-                p2 = int(round(float(vals[1]))) - 1
+                # 顶点 id 按当前 BASE 编号解释（P14）
+                p1 = int(round(float(vals[0]))) - 1 + self._vert_base
+                p2 = int(round(float(vals[1]))) - 1 + self._vert_base
                 if 0 <= p1 < len(self._verts) and 0 <= p2 < len(self._verts):
                     self._edges.append((p1, p2))
                 else:
@@ -1981,6 +2059,8 @@ class _PreviewRuntime:
             self._vects.clear()
             self._edges.clear()
             self._pgons.clear()
+            self._vert_base = 0
+            self._edge_base = 0
             return True
 
         if cmd in {"PRISM", "PRISM_"}:
@@ -1988,60 +2068,110 @@ class _PreviewRuntime:
             if vals is None or len(vals) < 4:
                 self._warn(line_no, f"{cmd} 参数不足或解析失败")
                 return True
+            self._emit_prism(cmd, vals, line_no)
+            return True
 
-            n = int(round(vals[0]))
-            h = float(vals[1])
-            if n <= 2:
-                self._warn(line_no, f"{cmd} 顶点数必须 >= 3")
+        if cmd in {"CPRISM", "CPRISM_"}:
+            # CPRISM 系 = PRISM 前置 3 个材质名（字面量或变量名）。剥掉材质
+            # 参数后走 PRISM 同一路径（P14）；预览不渲染材质，直接丢弃。
+            raw = list(args_raw)
+            if len(raw) < 5:
+                self._warn(line_no, f"{cmd} 参数不足或解析失败")
                 return True
-
-            # P14：PRISM_ 三元组状态码 -1 = 轮廓结束（洞/多轮廓）。含 -1 时
-            # 走轮廓拆分路径（洞桥接耳切盖帽 + 洞壁侧墙）；无 -1 保持旧路径
-            # 逐字节不变。
-            contours = _split_prism_contours(vals[2:], n)
-            if contours is not None:
-                outer, holes = contours[0], contours[1:]
-                if holes:
-                    mesh, wires = _make_prism_mesh_with_holes(
-                        outer,
-                        holes,
-                        h,
-                        self._offset(),
-                        transform=self._A,
-                        name=cmd,
-                        source_ref=self._source_ref_3d(line_no, cmd),
-                        warn=lambda msg: self._warn(line_no, msg, command=cmd),
-                    )
-                else:
-                    mesh, wires = _make_prism_mesh(
-                        outer,
-                        h,
-                        self._offset(),
-                        transform=self._A,
-                        name=cmd,
-                        source_ref=self._source_ref_3d(line_no, cmd),
-                        warn=lambda msg: self._warn(line_no, msg, command=cmd),
-                    )
-                self._emit_mesh3d(mesh)
-                self._emit_wires3d(wires)
+            raw = raw[3:]
+            if cmd_variant == "4":
+                # cprism_{4}（视图拖入生成）：mask, n, h, 其后每节点 5 元组
+                # (x, y, z, status, mat)。z/逐节点材质忽略（预览近似）。
+                head = self._eval_args(raw[:3], line_no)
+                if head is None:
+                    self._warn(line_no, f"{cmd} 头部参数解析失败")
+                    return True
+                n4 = int(round(head[1]))
+                if n4 <= 2:
+                    self._warn(line_no, f"{cmd} 顶点数必须 >= 3")
+                    return True
+                flat: list[float] = []
+                ok4 = True
+                for k in range(n4):
+                    t5 = raw[3 + 5 * k : 3 + 5 * k + 5]
+                    if len(t5) < 5:
+                        ok4 = False
+                        break
+                    node_vals = self._eval_args([t5[0], t5[1], t5[3]], line_no)
+                    if node_vals is None:
+                        ok4 = False
+                        break
+                    flat.extend([node_vals[0], node_vals[1], node_vals[2]])
+                if not ok4:
+                    self._warn(line_no, f"{cmd} 节点数据不足，已跳过")
+                    return True
+                self._emit_prism(cmd, [float(n4), float(head[2]), *flat], line_no)
                 return True
-
-            pts = _extract_points_2d(vals[2:], n)
-            if not pts:
-                self._warn(line_no, f"{cmd} 顶点数据不足，已跳过")
+            vals = self._eval_args(raw, line_no)
+            if vals is None or len(vals) < 4:
+                self._warn(line_no, f"{cmd} 参数不足或解析失败")
                 return True
+            self._emit_prism(cmd, vals, line_no)
+            return True
 
-            mesh, wires = _make_prism_mesh(
-                pts,
-                h,
-                self._offset(),
-                transform=self._A,
-                name=cmd,
-                source_ref=self._source_ref_3d(line_no, cmd),
-                warn=lambda msg: self._warn(line_no, msg, command=cmd),
-            )
-            self._emit_mesh3d(mesh)
-            self._emit_wires3d(wires)
+        if cmd.startswith("XWALL") or cmd in {"BWALL", "BWALL_", "CWORKWALL_"}:
+            # 墙元素命令（xWALL_{2} 等）：整墙几何参数复杂，暂不支持——显式
+            # 降级警告而不是静默空输出。
+            self._warn(line_no, f"{cmd} 墙元素暂不支持预览，已跳过", command=cmd)
+            return True
+
+        if cmd == "BINARY":
+            # BINARY 引用 GSM 内嵌二进制 3D 段（专有格式），无法从源码预览。
+            # 一段脚本常有多条 BINARY（按材质分段），只警一次。
+            if not self._binary_warned:
+                self._binary_warned = True
+                self._warn(line_no, "BINARY 二进制 3D 段暂不支持预览，已跳过", command=cmd)
+            return True
+
+        if cmd in {"COOR", "CCOUNT"}:
+            # COOR 两种形态：下标闭环形式 `COOR 2, -1, -2, ...`（幕墙转角
+            # 窗棂）把当前 vert 池连成 PGON 面；coor{3} 内联坐标形式参数
+            # 布局依变体而异，暂不支持——显式降级，只警一次。
+            if cmd == "COOR" and cmd_variant != "3":
+                vals = self._eval_args(args_raw, line_no)
+                if vals is not None and len(vals) >= 4:
+                    ids = [int(round(v)) for v in vals[1:]]
+                    base_ids = [abs(i) + self._vert_base for i in ids]
+                    edge_ids: list[int] = []
+                    ok = all(1 <= v <= len(self._verts) for v in base_ids)
+                    if ok:
+                        for k in range(len(base_ids)):
+                            p1 = base_ids[k] - 1
+                            p2 = base_ids[(k + 1) % len(base_ids)] - 1
+                            self._edges.append((p1, p2))
+                            edge_ids.append(len(self._edges) - self._edge_base)
+                        if edge_ids:
+                            self._pgons.append(edge_ids)
+                    else:
+                        self._warn(line_no, "COOR 顶点索引越界，已忽略", command=cmd)
+                return True
+            if not self._coor_warned:
+                self._coor_warned = True
+                self._warn(line_no, f"{cmd} 内联坐标块暂不支持预览，已跳过", command=cmd)
+            return True
+
+        if cmd in {"CUTPLANE", "CUTEND", "CUTFORM", "CUTPOLY", "CUTPOLYA", "CUTSHAPE"}:
+            # 裁切族（CUTPLANE...CUTEND 等）：真实 CSG 半空间裁剪暂不支持，
+            # 几何保持未裁剪——显式降级，整个 runtime 只警一次。
+            if not self._cut_warned:
+                self._cut_warned = True
+                self._warn(
+                    line_no,
+                    f"{cmd} 裁切命令暂不支持，几何将保持未裁剪形态",
+                    command=cmd,
+                )
+            return True
+
+        if cmd == "BASE":
+            # BASE 重置 VERT/EDGE/VECT 的内部编号（GDL Reference）——记录
+            # 偏移，后续 EDGE/PGON/COOR 的下标按偏移解释。
+            self._vert_base = len(self._verts)
+            self._edge_base = len(self._edges)
             return True
 
         if cmd == "RULED":
@@ -2259,6 +2389,18 @@ class _PreviewRuntime:
         self._ruled_chain_top_idx = idx_top
         return True
 
+    def _func_get(self, n: float) -> float:
+        items = self._put_get(max(1, int(round(float(n)))), 0)
+        if not items:
+            raise ValueError("GET 栈空")
+        return items[-1]
+
+    def _func_use(self, n: float) -> float:
+        items = self._put_use(max(1, int(round(float(n)))), 0)
+        if not items:
+            raise ValueError("USE 栈空")
+        return items[-1]
+
     def _eval_args(self, args_raw: list[str], line_no: int) -> list[float] | None:
         vals: list[float] = []
         for arg in args_raw:
@@ -2406,6 +2548,10 @@ class _PreviewRuntime:
     @staticmethod
     def _group_name_key(arg: str) -> str | None:
         text = (arg or "").strip()
+        # 组名可带一层括号（GDL 允许表达式形式：PLACEGROUP ("name")）
+        m_paren = re.match(r"^\((.*)\)$", text)
+        if m_paren:
+            text = m_paren.group(1).strip()
         m = re.match(r'^"([^"]*)"$', text)
         if m:
             return m.group(1).upper()
@@ -2414,9 +2560,12 @@ class _PreviewRuntime:
         return None
 
     def _resolve_group_ref(self, token: str) -> str | None:
-        """组引用解析：引号名 → 组名；裸标识符 → 组变量（ADDGROUP 结果）
-        优先，其次按组名。"""
+        """组引用解析：引号名（可带一层括号）→ 组名；裸标识符 → 组变量
+        （ADDGROUP 结果）优先，其次按组名。"""
         text = (token or "").strip()
+        m_paren = re.match(r"^\((.*)\)$", text)
+        if m_paren:
+            text = m_paren.group(1).strip()
         m = re.match(r'^"([^"]*)"$', text)
         if m:
             return m.group(1).upper()
@@ -2465,6 +2614,14 @@ class _PreviewRuntime:
                 self._warn(line_no, "ENDGROUP 没有对应 GROUP，已忽略")
             return
         # PLACEGROUP
+        if cmd == "KILLGROUP":
+            key = self._group_name_key(arg)
+            if key is not None:
+                self._groups.pop(key, None)
+                self._group_vars = {
+                    name: ref for name, ref in self._group_vars.items() if ref != key
+                }
+            return
         key = self._resolve_group_ref(arg)
         if key is None or key not in self._groups:
             self._warn(line_no, f"PLACEGROUP 引用了未定义的组 `{arg[:60]}`，已跳过")
@@ -2518,7 +2675,8 @@ class _PreviewRuntime:
         self._groups[first] = self._group_bool_content(func, keys)
 
     def _place_group(self, key: str) -> None:
-        """把组内容按当前变换放入结果（拷贝，不共享引用）。"""
+        """把组内容按当前变换放入结果（拷贝，不共享引用）。嵌套放置
+        （GROUP 定义内的 PLACEGROUP）经 _emit_* 路由进外层组。"""
         group = self._groups.get(key)
         if group is None:
             return
@@ -2534,9 +2692,9 @@ class _PreviewRuntime:
                 placed.x.append(px)
                 placed.y.append(py)
                 placed.z.append(pz)
-            self.result_3d.meshes.append(placed)
+            self._emit_mesh3d(placed)
         for wire in group["wires"]:
-            self.result_3d.wires.append([_apply_affine(p, self._A, self._t) for p in wire])
+            self._emit_wires3d([[_apply_affine(p, self._A, self._t) for p in wire]])
 
     def _put_get(self, n: int, line_no: int) -> list[float] | None:
         if n > len(self._put_stack):
@@ -2547,6 +2705,7 @@ class _PreviewRuntime:
         start = len(self._put_stack) - n
         values = self._put_stack[start:]
         del self._put_stack[start:]
+        self.env["NSP"] = float(len(self._put_stack))
         return values
 
     def _put_use(self, n: int, line_no: int) -> list[float] | None:
@@ -2639,7 +2798,7 @@ class _PreviewRuntime:
         """Resolve signed edge IDs to an ordered chain of 0-based vertex indices."""
         segments: list[tuple[int, int]] = []
         for eid in edge_ids:
-            idx = abs(eid) - 1
+            idx = abs(eid) - 1 + self._edge_base  # 边 id 按当前 BASE 编号（P14）
             if idx < 0 or idx >= len(self._edges):
                 return None
             p1, p2 = self._edges[idx]
@@ -2878,7 +3037,8 @@ def _split_inline_else(text: str) -> tuple[str, str] | None:
 
 
 def _split_colon_statements(text: str) -> list[str]:
-    """按 GDL 语句分隔符 `:` 拆分语句列表；`"..."` 字符串字面量内的 `:` 不拆。
+    """按 GDL 语句分隔符 `:` 拆分语句列表；字符串字面量（`"..."` 与 GDL
+    反引号原样字符串 `` `...` ``，如 `比例感知 `）内的 `:` 不拆（P14）。
 
     返回去空白后的语句片段列表；无 `:` 时返回 [text]（原样单条，逐字节不变）。
     """
@@ -2886,13 +3046,18 @@ def _split_colon_statements(text: str) -> list[str]:
         return []
     parts: list[str] = []
     cur: list[str] = []
-    in_string = False
+    quote: str | None = None
     for ch in text:
-        if ch == '"':
-            in_string = not in_string
+        if quote is not None:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in {'"', "`"}:
+            quote = ch
             cur.append(ch)
             continue
-        if ch == ":" and not in_string:
+        if ch == ":":
             parts.append("".join(cur).strip())
             cur = []
             continue
@@ -3073,6 +3238,148 @@ def _tangent_arc_points(
     a1 = math.degrees(math.atan2(end[1] - cy, end[0] - cx))
     sweep = (a1 - a0) % 360.0 if rs > 0 else -((a0 - a1) % 360.0)
     return _arc_tessellate(cx, cy, r, a0, sweep)
+
+
+def _expand_status_records_to_contours(
+    records: list[tuple[float, float, int]],
+    *,
+    warn: Callable[[str], None],
+    warn_status: Callable[[int, str], None],
+    warn_tangent: Callable[[str], None],
+) -> list[list[Point2D]]:
+    """把 (x, y, status) 记录流展开为轮廓点列（2D POLY2 与 3D PRISM_ 系共享）。
+
+    状态码分类按十进制数值区间（官方文档写作 s & 900 / s & 3000 等，
+    但它们是数值不是位标志——900 & 4000 ≠ 0，位与无法互斥区分）：
+    [600,700) 填充属性 / [700,800) 段属性（跳过）/ [800,900) 切线向量 /
+    [900,1000) 圆心 / [1000,2000) 切线弧 / [2000,3000) 半径+圆心角弧 /
+    [3000,4000) 弧终点 / ≥4000 起角+圆心角（4000/4001 同等对待）。
+    s & 1 的边可见性 MVP 忽略（画全部轮廓）；s == -1 轮廓结束（洞分隔）
+    ——洞按独立多边形返回，填充不做布尔减除。
+
+    warn 为普通告警；warn_status 按状态码去重；warn_tangent 为切线弧
+    降级告警（三者的去重状态均由调用方持有）。
+    """
+    contours: list[list[Point2D]] = []
+    current: list[Point2D] = []
+    pending_center: Point2D | None = None
+    pending_tangent: Point2D | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            contours.append(current)
+            current = []
+
+    def append_arc(pts: list[Point2D], exact_end: Point2D | None = None) -> None:
+        if not pts:
+            return
+        if current and _dist2(pts[0], current[-1]) <= 1e-18:
+            pts = pts[1:]
+        if exact_end is not None and pts:
+            pts[-1] = exact_end
+        current.extend(pts)
+
+    for x, y, s in records:
+        if s == -1:
+            # 轮廓结束（洞分隔）
+            flush()
+            pending_center = None
+            pending_tangent = None
+            continue
+
+        if pending_center is not None:
+            # 圆心记录之后：本记录决定弧
+            cx, cy = pending_center
+            pending_center = None
+            if not current:
+                warn("圆心记录前没有轮廓点，已跳过该弧")
+                continue
+            px, py = current[-1]
+            r = math.hypot(px - cx, py - cy)
+            if s >= 4000:
+                # 起角 + 圆心角（度）
+                append_arc(_arc_tessellate(cx, cy, r, x, y))
+            elif 3000 <= s < 4000:
+                # 弧终点：方向由三点叉积定，退化（共线）按逆时针半圆劣弧
+                a0 = math.degrees(math.atan2(py - cy, px - cx))
+                a1 = math.degrees(math.atan2(y - cy, x - cx))
+                cross = (px - cx) * (y - cy) - (py - cy) * (x - cx)
+                if cross > 1e-12:
+                    sweep = (a1 - a0) % 360.0
+                elif cross < -1e-12:
+                    sweep = -((a0 - a1) % 360.0)
+                else:
+                    sweep = 180.0
+                append_arc(_arc_tessellate(cx, cy, r, a0, sweep), exact_end=(x, y))
+            else:
+                warn_status(s, f"圆心后的弧记录状态码 {s} 无法识别，按角点处理")
+                current.append((x, y))
+            continue
+
+        if 600 <= s < 800:
+            # 填充/段属性记录：不计入轮廓、不告警
+            continue
+        if 800 <= s < 900:
+            # 切线方向向量（供紧随的切线弧使用）
+            pending_tangent = (x, y)
+            continue
+        if 900 <= s < 1000:
+            # 圆心（不在轮廓上），下一记录决定弧
+            pending_center = (x, y)
+            continue
+        if 1000 <= s < 2000:
+            # 切线弧到端点 (x,y)；切线由前置 800 记录给出
+            if pending_tangent is None or not current:
+                warn_tangent("切线弧无可用切线，退化为直线")
+                current.append((x, y))
+                pending_tangent = None
+                continue
+            arc = _tangent_arc_points(current[-1], pending_tangent, (x, y))
+            pending_tangent = None
+            if arc is None:
+                warn_tangent("切线弧几何退化，退化为直线")
+                current.append((x, y))
+                continue
+            append_arc(arc, exact_end=(x, y))
+            continue
+        if 2000 <= s < 3000:
+            # 半径 + 圆心角弧：从当前点出发，x=半径，y=圆心角（正=逆时针）
+            if not current:
+                warn("半径弧记录前没有轮廓点，已跳过")
+                continue
+            r = abs(x)
+            sweep = y
+            px, py = current[-1]
+            # MVP 近似：圆心取"上一段方向"的左/右法向（sweep>0 → 左侧）；
+            # 无前一段时用 +x 方向
+            if len(current) >= 2:
+                dx = px - current[-2][0]
+                dy = py - current[-2][1]
+            else:
+                dx, dy = 1.0, 0.0
+            length = math.hypot(dx, dy)
+            if length <= 1e-12 or r <= 1e-12:
+                continue
+            nx, ny = -dy / length, dx / length  # 左法向
+            side = 1.0 if sweep >= 0 else -1.0
+            cx, cy = px + nx * r * side, py + ny * r * side
+            a0 = math.degrees(math.atan2(py - cy, px - cx))
+            append_arc(_arc_tessellate(cx, cy, r, a0, sweep))
+            continue
+        if s >= 3000:
+            # 孤立的弧终点/角度记录（前面没有圆心）——不合法但别崩
+            warn_status(s, f"弧记录状态码 {s} 缺少前置圆心记录，已跳过")
+            continue
+        if s >= 64:
+            # 未知状态码：按角点处理，每个码值只警一次
+            warn_status(s, f"未知状态码 {s}，按角点处理")
+        # s & 1（边可见性）MVP 忽略：画全部轮廓
+        current.append((x, y))
+        pending_tangent = None
+
+    flush()
+    return contours
 
 
 def _quality_profile(quality: str) -> dict[str, Any]:
@@ -3730,38 +4037,6 @@ def _dedupe_ring(points: list[Point2D]) -> list[Point2D]:
     return out
 
 
-def _split_prism_contours(values: list[float], n: int) -> list[list[Point2D]] | None:
-    """PRISM_ 三元组节点拆轮廓：状态码 -1 = 当前轮廓结束（其坐标通常与
-    该轮廓首点重合）。非三元组布局或不含 -1 返回 None（调用方走旧无洞
-    路径，行为逐字节不变）。返回 [外轮廓, 洞1, ...]，轮廓不含重复闭合点。
-    """
-    if len(values) < 3 * n:
-        return None
-    statuses = [int(round(float(values[3 * i + 2]))) for i in range(n)]
-    if -1 not in statuses:
-        return None
-    contours: list[list[Point2D]] = []
-    current: list[Point2D] = []
-    for i in range(n):
-        x = float(values[3 * i])
-        y = float(values[3 * i + 1])
-        if statuses[i] == -1:
-            if current and (
-                abs(x - current[0][0]) > _POLY_EPS or abs(y - current[0][1]) > _POLY_EPS
-            ):
-                current.append((x, y))
-            current = _dedupe_ring(current)
-            if len(current) >= 3:
-                contours.append(current)
-            current = []
-        else:
-            current.append((x, y))
-    current = _dedupe_ring(current)
-    if len(current) >= 3:
-        contours.append(current)
-    return contours or None
-
-
 def _segment_clear(
     h: Point2D,
     hvid: int,
@@ -4055,6 +4330,15 @@ _ALLOWED_FUNCS = {
     "MAX": lambda *x: max(x),
     # P14：GDL NOT 的函数形态 not(x)（_translate_gdl_expr 译为大写调用）
     "NOT": lambda x: 0.0 if abs(float(x)) > 1e-12 else 1.0,
+    # P14：IND(MATERIAL, name) / IND(LINE_TYPE, name) 等属性索引查询——预览
+    # 无属性表，返回 1 占位（下游仅用作 SET MATERIAL 等 no-op 语句的参数）。
+    "IND": lambda *a: 1.0,
+    # P14：REQUEST(...) 环境查询——预览无宿主环境，返回 0（不写出参）。
+    "REQUEST": lambda *a: 0.0,
+    # P14：ATN = 角度制反正切（GDL 三角函数全部角度制）；STRSTR 子串
+    # 1-based 位置（未找到返回 0），参数先按字符串化。
+    "ATN": lambda x: math.degrees(math.atan(x)),
+    "STRSTR": lambda s, sub: float(str(s).find(str(sub)) + 1),
 }
 
 
@@ -4085,6 +4369,15 @@ def _translate_gdl_expr(text: str) -> str:
         if ch in {'"', "'", "`"}:
             quote = ch
             out.append('"')
+            i += 1
+            continue
+        if ch == "{":
+            # GDL 函数/命令的 {n} 版本标签（如 REQUEST{2}）：引号外直接跳过
+            j = text.find("}", i + 1)
+            if j != -1 and text[i + 1 : j].isdigit():
+                i = j + 1
+                continue
+            out.append(ch)
             i += 1
             continue
         if ch.isalpha() or ch == "_":
@@ -4488,7 +4781,17 @@ def _eval_ast(
         fn = funcs.get(fname)
         if fn is None:
             raise ValueError(f"函数 {node.func.id} 不支持")
-        args = [_eval_ast(a, env, funcs=funcs, missing_names_zero=missing_names_zero) for a in node.args]
+        args = []
+        for a in node.args:
+            try:
+                args.append(_eval_ast(a, env, funcs=funcs, missing_names_zero=missing_names_zero))
+            except Exception:
+                # IND/REQUEST 是属性/环境查询 stub（P14）：参数（如未定义的
+                # 材质名变量）求值失败时以 0 占位，避免整段脚本刷屏告警
+                if fname in {"IND", "REQUEST"}:
+                    args.append(0.0)
+                else:
+                    raise
         return float(fn(*args))
 
     raise ValueError("表达式语法不支持")

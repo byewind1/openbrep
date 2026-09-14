@@ -2400,3 +2400,187 @@ class TestP14RealWorldWindowSupport(unittest.TestCase):
         script = 'GROUP "g"\nBLOCK 1,1,1\n'
         res = preview_3d_script(script)
         self.assertTrue(any("GROUP/ENDGROUP 未平衡" in w for w in res.warnings))
+
+
+class TestP14bRealWorldLibraryParts(unittest.TestCase):
+    """P14 第二批：真实图库构件（DAU 停车场、坡道、楼梯、幕墙窗棂）需要的
+    预览能力——{n} 变体、CPRISM 系、ELSE 同行终止、NSP/PUT 栈、ATN/PI/
+    STRSTR、顶层冒号多语句、CUTPLANE/BINARY/XWALL 降级、BASE/COOR 拓扑。"""
+
+    def test_command_variant_tag_stripped(self):
+        # vert{2} 等 {n} 版本标签：剥离后按基本形态解析
+        script = (
+            "vert{2} 0, 0, 0, 1\n"
+            "vert{2} 1, 0, 0, 1\n"
+            "vert{2} 0, 1, 0, 1\n"
+            "edge 1, 2, -1, -1, 0\n"
+            "edge 2, 3, -1, -1, 0\n"
+            "edge 3, 1, -1, -1, 0\n"
+            "pgon 3, 0, -1, 1, 2, 3\n"
+            "body -1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+
+    def test_else_inline_statement_terminates_block(self):
+        # ELSE 同行带语句 = 整个 IF 块结束（无需 ENDIF）
+        script = (
+            "IF flag = 1 THEN\n"
+            "  BLOCK 1, 1, 1\n"
+            "ELSE BLOCK 2, 2, 2\n"
+            "ENDIF\n"
+            "BLOCK 3, 3, 3\n"
+        )
+        res = preview_3d_script(script, parameters={"flag": 1})
+        self.assertEqual(len(res.meshes), 2)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+        self.assertAlmostEqual(max(res.meshes[1].x), 3.0)
+        res_off = preview_3d_script(script, parameters={"flag": 0})
+        self.assertEqual(len(res_off.meshes), 2)
+        self.assertAlmostEqual(max(res_off.meshes[0].x), 2.0)
+
+    def test_nested_block_if_closed_by_inline_else(self):
+        # DAU 实例：外层块 IF 的嵌套块 IF 由 ELSE 同行语句终止，外层 ENDIF
+        # 不能被误吞
+        script = (
+            "IF a = 1 THEN\n"
+            "  IF b = 0 THEN\n"
+            "    BLOCK 1, 1, 1\n"
+            "  ELSE BLOCK 2, 2, 2\n"
+            "ENDIF\n"
+            "BLOCK 9, 9, 9\n"
+        )
+        res = preview_3d_script(script, parameters={"a": 1, "b": 0})
+        self.assertEqual(len(res.meshes), 2)
+        res2 = preview_3d_script(script, parameters={"a": 1, "b": 1})
+        self.assertEqual(len(res2.meshes), 2)
+        self.assertAlmostEqual(max(res2.meshes[0].x), 2.0)
+
+    def test_top_level_colon_statements(self):
+        # 顶层冒号多语句；反引号字符串内的冒号不拆
+        script = "x = 1: y = 2\nBLOCK x + y, 1, 1\n"
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 3.0)
+
+        script_bt = "s = `比例:1`\nIF s = `比例:1` THEN\nBLOCK 1, 1, 1\nENDIF\n"
+        res_bt = preview_3d_script(script_bt)
+        self.assertEqual(len(res_bt.meshes), 1)
+
+    def test_nsp_put_use_builtins(self):
+        # NSP = PUT 栈值个数；use(nsp) 消费全部
+        script = (
+            "PUT 0, 0, 0, 15\n"
+            "PUT 1, 0, 0, 15\n"
+            "PUT 1, 1, 0, 15\n"
+            "n = NSP / 4\n"
+            "PRISM_ n, 0.5, USE(NSP)\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.5)
+
+    def test_atn_pi_strstr_glob_modpar(self):
+        script = (
+            "ang = ATN(1)\n"
+            "IF STRSTR(\"abc\", \"b\") = 2 THEN\n"
+            "BLOCK PI / 4 * 0 + 1, 1, 1\n"
+            "ENDIF\n"
+            "IF GLOB_MODPAR_NAME = \"x\" THEN\n"
+            "BLOCK 9, 9, 9\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+
+    def test_get_in_expression(self):
+        script = "PUT 0.7\nv = GET(1)\nBLOCK v, 1, 1\n"
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 0.7)
+
+    def test_cprism_basic_and_v4(self):
+        script = (
+            'CPRISM_ "m1", "m2", "m3", 4, 0.2,\n'
+            "0, 0, 15,\n1, 0, 15,\n1, 1, 15,\n0, 1, 15\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.2)
+
+        script_v4 = (
+            "cprism_{4} lm, lm, lm, 7,\n"
+            "4, 0.3,\n"
+            "0, 0, 0, 15, lm,\n"
+            "2, 0, 0, 15, lm,\n"
+            "2, 2, 0, 15, lm,\n"
+            "0, 2, 0, -1, lm\n"
+        )
+        res_v4 = preview_3d_script(script_v4, parameters={"lm": 1})
+        self.assertEqual(len(res_v4.meshes), 1)
+        self.assertAlmostEqual(max(res_v4.meshes[0].x), 2.0)
+
+    def test_prism_arc_status_codes(self):
+        # 900 圆心 + 4015 起角/圆心角弧：直角边 + 四分之一圆角
+        script = (
+            "PRISM_ 5, 0.1,\n"
+            "0, 0, 15,\n"
+            "1, 0, 900,\n"
+            "0, 90, 4015,\n"
+            "0, 1, 15,\n"
+            "0, 0, -1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        # 弧展开后顶点数远大于 5
+        self.assertGreater(len(res.meshes[0].x), 10)
+
+    def test_xwall_binary_cutplane_warn_once(self):
+        script = (
+            "BINARY 0, 1, 1\n"
+            "BINARY 0, 1, 2\n"
+            "XWALL_{2} 1, 2, 3, 4, 1\n"
+            "CUTPLANE\n"
+            "BLOCK 1, 1, 1\n"
+            "CUTEND\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)  # 未裁剪，保留 BLOCK
+        binary_warns = [w for w in res.warnings if "BINARY" in w]
+        cut_warns = [w for w in res.warnings if "暂不支持" in w and "CUT" in w.upper()]
+        xwall_warns = [w for w in res.warnings if "XWALL" in w]
+        self.assertEqual(len(binary_warns), 1)
+        self.assertEqual(len(cut_warns), 1)
+        self.assertEqual(len(xwall_warns), 1)
+
+    def test_base_and_coor_polygon(self):
+        script = (
+            "BASE\n"
+            "VERT 0, 0, 0\n"
+            "VERT 1, 0, 0\n"
+            "VERT 0, 1, 0\n"
+            "COOR 2, -1, -2, -3\n"
+            "BODY 1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+
+    def test_ntr_transform_stack_depth(self):
+        # NTR() = 变换栈深度（GDL 内置）；DEL NTR()-n 清空到指定深度
+        res = preview_3d_script("ADDX 1\nADDX 2\nDEL NTR()\nBLOCK 1, 1, 1\n")
+        self.assertAlmostEqual(min(res.meshes[0].x), 0.0)
+        res2 = preview_3d_script("ADDX 1\nADDX 2\nDEL NTR() - 1\nBLOCK 1, 1, 1\n")
+        self.assertAlmostEqual(min(res2.meshes[0].x), 1.0)
+
+    def test_killgroup_and_paren_group_ref(self):
+        script = (
+            'GROUP "g1"\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDGROUP\n"
+            'PLACEGROUP ("g1")\n'
+            'KILLGROUP ("g1")\n'
+            'PLACEGROUP ("g1")\n'
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)  # 删除后第二次放置为空
