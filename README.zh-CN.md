@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.9.3 — 修复桌面安装包启动即崩溃（窗口 label 冲突），v0.9.2 用户请直接覆盖安装。自动更新与品牌图标自本版起真正可用。
+> 正式发布版本 v0.9.4 — 桌面安装包稳定可用：修复启动崩溃，品牌图标完整呈现（机器人 + 完整霓虹三角），自动更新通道就绪。
 
 ---
 
@@ -45,8 +45,8 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.9.3_aarch64.dmg`（Apple Silicon）
-- Windows：`OpenBrep_0.9.3_x64_en-US.msi` 或 `OpenBrep_0.9.3_x64-setup.exe`
+- macOS：`OpenBrep_0.9.4_aarch64.dmg`（Apple Silicon）
+- Windows：`OpenBrep_0.9.4_x64_en-US.msi` 或 `OpenBrep_0.9.4_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
@@ -379,6 +379,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.9.4 | 图标修订：完整三角形构图 + 右缘文字残影遮罩抹除（见 docs/releases/v0.9.4.md） |
 | v0.9.3 | 稳定性补丁：修复桌面包启动即崩溃（tauri.conf.json 静态 main 窗口与代码建窗 label 冲突，v0.9.0–v0.9.2 均受影响）；Release SOP 增加真机启动验证（见 docs/releases/v0.9.3.md） |
 | v0.9.2 | 桌面版自动更新：tauri-plugin-updater + GitHub Releases latest.json，顶栏版本 pill 弹出更新对话框（更新要点/进度/失败降级），签名的 in-place 更新；安装包启用 OpenBrep 品牌图标替换 Tauri 占位图（见 docs/releases/v0.9.2.md） |
 | v0.9.1 | 安装包真正独立可用：PyInstaller 冻结 Python 后端为 Tauri sidecar（onefile 内嵌 openbrep/知识库/前端产物），下载安装即可用，不再需要本机 Python 与源码；修复 tauri 钩子相对路径与 Windows 缺 icon.ico 的构建问题（见 docs/releases/v0.9.1.md） |
