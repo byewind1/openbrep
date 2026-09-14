@@ -26,12 +26,12 @@ https://github.com/byewind1/openbrep/releases/latest
 
 下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.9.4_aarch64.dmg`（Apple Silicon）
+- macOS：`OpenBrep_0.9.4_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.9.4_x64.dmg`（Intel）
 - Windows：`OpenBrep_0.9.4_x64_en-US.msi` 或 `OpenBrep_0.9.4_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
-当前 macOS 包兼容性：仅支持 Apple Silicon（`arm64`，M1/M2/M3/M4），需要 macOS 11 Big Sur 或更高版本（按发布二进制实测 `minos 11.0`）；当前不覆盖 Intel Mac。
+当前 macOS 包兼容性：Apple Silicon 包（`arm64`，M1/M2/M3/M4）与 Intel 包（`x86_64`）均提供，需要 macOS 11 Big Sur 或更高版本（按发布二进制实测 `minos 11.0`）；Intel 构建基于 GitHub `macos-15-intel` runner（官方支持到 2027-08）。注意：**Intel 包自下一个版本（v0.9.5）起发布**，v0.9.4 及更早版本仅有 Apple Silicon 包。
 
 macOS 打开 dmg 后把 OpenBrep 拖入「应用程序」；Windows 运行 msi / setup.exe 按向导安装。
 

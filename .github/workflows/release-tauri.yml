@@ -17,8 +17,15 @@ jobs:
         include:
           - os: macos-latest
             artifact-name: OpenBrep-macOS
+            triple: aarch64-apple-darwin
+          # macos-15-intel：GitHub 仅剩的 Intel (x86_64) macOS runner，
+          # 官方支持到 2027-08（之后 GitHub 不再提供 x86_64 macOS 镜像）。
+          - os: macos-15-intel
+            artifact-name: OpenBrep-macOS-Intel
+            triple: x86_64-apple-darwin
           - os: windows-latest
             artifact-name: OpenBrep-Windows
+            triple: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
 
@@ -45,6 +52,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          # 两条 macOS 腿 runner.os 同为 macOS，必须按 triple 分缓存
+          shared-key: ${{ matrix.triple }}
 
       - name: Install Python dependencies
         run: pip install -e "." pyinstaller
@@ -96,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p src-tauri/binaries
-          TRIPLE='${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}'
+          TRIPLE='${{ matrix.triple }}'
           if [ '${{ runner.os }}' = 'Windows' ]; then SRC=dist/obr7-backend.exe; else SRC=dist/obr7-backend; fi
           cp "$SRC" "src-tauri/binaries/obr7-backend-${TRIPLE}${EXE_EXT}"
           ls -la src-tauri/binaries/
@@ -111,7 +120,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           # Set before Tauri CLI so vite.config.ts picks up VITE_IS_TAURI=true
-          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.triple }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -208,25 +217,31 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          APP_TAR=$(basename "$(find release -name '*.app.tar.gz' | head -1)" || true)
+          APP_TAR_ARM=$(basename "$(find release -name '*aarch64.app.tar.gz' | head -1)" || true)
+          APP_TAR_X64=$(basename "$(find release -name '*x64.app.tar.gz' | head -1)" || true)
           NSIS_EXE=$(basename "$(find release -name '*-setup.exe' ! -name '*.sig' | head -1)" || true)
-          if [ -z "$APP_TAR" ] && [ -z "$NSIS_EXE" ]; then
+          if [ -z "$APP_TAR_ARM" ] && [ -z "$APP_TAR_X64" ] && [ -z "$NSIS_EXE" ]; then
             echo "no updater artifacts found, skipping latest.json"
             exit 0
           fi
           gh release view "$TAG_NAME" --repo "$GH_REPO" --json body -q .body > release/notes.md || true
-          python3 - "$TAG_NAME" "$GH_REPO" "$APP_TAR" "$NSIS_EXE" <<'EOF'
+          python3 - "$TAG_NAME" "$GH_REPO" "$APP_TAR_ARM" "$APP_TAR_X64" "$NSIS_EXE" <<'EOF'
           import json, os, sys, datetime
-          tag, repo, app_tar, nsis_exe = sys.argv[1:5]
+          tag, repo, app_tar_arm, app_tar_x64, nsis_exe = sys.argv[1:6]
           def sig_of(name):
               path = os.path.join("release", name + ".sig")
               with open(path) as f:
                   return f.read().strip()
           platforms = {}
-          if app_tar:
+          if app_tar_arm:
               platforms["darwin-aarch64"] = {
-                  "signature": sig_of(app_tar),
-                  "url": f"https://github.com/{repo}/releases/download/{tag}/{app_tar}",
+                  "signature": sig_of(app_tar_arm),
+                  "url": f"https://github.com/{repo}/releases/download/{tag}/{app_tar_arm}",
+              }
+          if app_tar_x64:
+              platforms["darwin-x86_64"] = {
+                  "signature": sig_of(app_tar_x64),
+                  "url": f"https://github.com/{repo}/releases/download/{tag}/{app_tar_x64}",
               }
           if nsis_exe:
               platforms["windows-x86_64"] = {

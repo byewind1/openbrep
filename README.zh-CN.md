@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载桌面安装包（macOS：`OpenBrep_*_aarch64.dmg`；Windows：`OpenBrep_*_x64-setup.exe` 或 `.msi`）
+1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载桌面安装包（macOS：`OpenBrep_*_aarch64.dmg`（Apple Silicon）或 `OpenBrep_*_x64.dmg`（Intel，自 v0.9.5 起）；Windows：`OpenBrep_*_x64-setup.exe` 或 `.msi`）
 2. 安装后从「应用程序」/ 开始菜单启动 OpenBrep（独立桌面窗口，无需浏览器）
 3. 命令行 / 开发者用户再使用 `git clone` 或 `pipx` 安装
 
@@ -45,12 +45,12 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.9.4_aarch64.dmg`（Apple Silicon）
+- macOS：`OpenBrep_0.9.4_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.9.4_x64.dmg`（Intel，自 v0.9.5 起）
 - Windows：`OpenBrep_0.9.4_x64_en-US.msi` 或 `OpenBrep_0.9.4_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
-Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). Intel Mac is not covered by the current macOS build.
+Current macOS package compatibility: both Apple Silicon (`arm64`, M1/M2/M3/M4) and Intel (`x86_64`) packages are provided, requiring macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). The Intel build runs on the GitHub `macos-15-intel` runner (supported until 2027-08). Note: **Intel packages ship starting with v0.9.5** — v0.9.4 and earlier have Apple Silicon only.
 
 On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer.
 

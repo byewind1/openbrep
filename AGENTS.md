@@ -753,11 +753,13 @@ pipeline, plus the updater manifest and signatures that power in-app
 auto-update):
 
 ```text
-OpenBrep_<ver>_aarch64.dmg            (macOS installer)
-OpenBrep_aarch64.app.tar.gz(.sig)     (macOS updater artifact)
+OpenBrep_<ver>_aarch64.dmg            (macOS installer, Apple Silicon)
+OpenBrep_aarch64.app.tar.gz(.sig)     (macOS updater artifact, Apple Silicon)
+OpenBrep_<ver>_x64.dmg                (macOS installer, Intel — macos-15-intel runner)
+OpenBrep_x64.app.tar.gz(.sig)         (macOS updater artifact, Intel)
 OpenBrep_<ver>_x64_en-US.msi          (Windows installer)
 OpenBrep_<ver>_x64-setup.exe(.sig)    (Windows updater artifact)
-latest.json                           (updater manifest, consumed by tauri-plugin-updater)
+latest.json                           (updater manifest: darwin-aarch64 / darwin-x86_64 / windows-x86_64)
 ```
 
 ### Desktop Auto-Update Channel
