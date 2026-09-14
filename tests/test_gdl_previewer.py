@@ -2162,3 +2162,210 @@ class TestP4SilentAndMacroMerge(unittest.TestCase):
         self.assertEqual(len(res.texts), 1)
         self.assertEqual(res.texts[0].text, "LBL")
         self.assertAlmostEqual(res.texts[0].size, 0.001 * 50, places=9)
+
+
+class TestP14RealWorldWindowSupport(unittest.TestCase):
+    """P14：真实图库窗构件（向日葵格子窗）需要的预览能力——括号感知条件、
+    DIM/二维数组、字符串数组比较、GROUP 布尔近似、PRISM_ 轮廓洞、LIN_、
+    以及 WALLHOLE/SECT_FILL/HOTSPOT 等已知非渲染命令。"""
+
+    def test_condition_paren_aware_or_and(self):
+        # 旧实现在括号内的 or 处切碎 → 条件求值失败 → 整个 IF 块（含 ELSE）
+        # 被跳过，零几何。修复后 ELSE 正常执行。
+        script = (
+            "IF (a=4 or a=24) and flag THEN\n"
+            "BLOCK 9, 9, 9\n"
+            "ELSE\n"
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script, parameters={"a": 1, "flag": 0})
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+
+        res_if = preview_3d_script(script, parameters={"a": 4, "flag": 1})
+        self.assertEqual(len(res_if.meshes), 1)
+        self.assertAlmostEqual(max(res_if.meshes[0].x), 9.0)
+
+    def test_condition_pipe_and_ampersand(self):
+        script = (
+            "IF (a = 1 | a = 2) & b > 0 THEN\n"
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script, parameters={"a": 2, "b": 1})
+        self.assertEqual(len(res.meshes), 1)
+        res_no = preview_3d_script(script, parameters={"a": 3, "b": 1})
+        self.assertEqual(len(res_no.meshes), 0)
+
+    def test_dim_2d_array_and_element_assign(self):
+        script = (
+            "dim coord[3][2]\n"
+            "coord[1][1] = 5\n"
+            "coord[2][2] = coord[1][1] + 1\n"
+            "coord[num+2][1] = 7\n"
+            "BLOCK coord[1][1], coord[2][2], 1\n"
+        )
+        res = preview_3d_script(script, parameters={"num": 0})
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 5.0)
+        self.assertAlmostEqual(max(res.meshes[0].y), 6.0)
+
+    def test_dim_dynamic_array_and_nested_subscript(self):
+        script = (
+            "dim idx[]\n"
+            "dim val[][2]\n"
+            "idx[1] = 2\n"
+            "val[1][1] = 3\n"
+            "val[2][1] = 4\n"
+            "BLOCK val[idx[1]][1], 1, 1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 4.0)
+
+    def test_string_array_and_string_condition(self):
+        script = (
+            'dim pt[2]\n'
+            'pt[1] = "无"\n'
+            'pt[2] = "开"\n'
+            'IF pt[2]="开" or pt[2]="左开" THEN\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+            'IF pt[1]="开" THEN\n'
+            "BLOCK 2, 2, 2\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+
+    def test_backtick_string_and_not_func_and_exor(self):
+        script = (
+            "trim = `开`\n"
+            "IF trim <> `关` THEN\n"
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+            "x = 5 * not(z)\n"
+            "y = 2 * (a exor b)\n"
+            "ADDX x + y\n"
+            "BLOCK 1, 1, 1\n"
+        )
+        res = preview_3d_script(script, parameters={"z": 0, "a": 1, "b": 0})
+        self.assertEqual(len(res.meshes), 2)
+        self.assertAlmostEqual(max(res.meshes[1].x), 8.0)
+
+    def test_group_place_and_bool_approximation(self):
+        script = (
+            'GROUP "ga"\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDGROUP\n"
+            'GROUP "gb"\n'
+            "ADDX 5\n"
+            "BLOCK 1, 1, 1\n"
+            "DEL 1\n"
+            "ENDGROUP\n"
+            "u = ADDGROUP(\"ga\",\"gb\")\n"
+            "s = SUBGROUP(\"ga\",\"gb\")\n"
+            "i = ISECTGROUP(\"ga\",\"gb\")\n"
+            "PLACEGROUP u\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 2)
+
+        res_sub = preview_3d_script(script.replace("PLACEGROUP u", "PLACEGROUP s"))
+        # SUBGROUP(a,b) ≈ 并集：减体一并渲染（与 P14 前组内几何直出一致）
+        self.assertEqual(len(res_sub.meshes), 2)
+
+        res_isect = preview_3d_script(script.replace("PLACEGROUP u", "PLACEGROUP i"))
+        self.assertEqual(len(res_isect.meshes), 1)
+        # ISECTGROUP(a,b) ≈ b：gb 的 BLOCK 在 x=5 处
+        self.assertAlmostEqual(max(res_isect.meshes[0].x), 6.0)
+
+    def test_group_bool_statement_form(self):
+        # 语句形式（无赋值目标）：结果回写第一个算子组
+        script = (
+            'GROUP "body"\n'
+            "BLOCK 4, 1, 1\n"
+            "ENDGROUP\n"
+            'GROUP "holes"\n'
+            "ADDX 1\n"
+            "CYLIND 0.5, 0.1\n"
+            "DEL 1\n"
+            "ENDGROUP\n"
+            'SUBGROUP "body", "holes"\n'
+            'PLACEGROUP "body"\n'
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 2)
+
+    def test_inline_if_then_else(self):
+        script = (
+            "IF flag=1 THEN x=3 ELSE x=1\n"
+            "BLOCK x, 1, 1\n"
+        )
+        res_on = preview_3d_script(script, parameters={"flag": 1})
+        self.assertAlmostEqual(max(res_on.meshes[0].x), 3.0)
+        res_off = preview_3d_script(script, parameters={"flag": 0})
+        self.assertAlmostEqual(max(res_off.meshes[0].x), 1.0)
+
+    def test_group_content_not_rendered_until_placed(self):
+        script = (
+            'GROUP "hidden"\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDGROUP\n"
+            "BLOCK 2, 2, 2\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 2.0)
+
+    def test_prism_hole_contour(self):
+        # 外方框 + 内方洞：状态码 -1 结束轮廓
+        script = (
+            "PRISM_ 10, 0.1,\n"
+            "0,0,15,\n0,2,15,\n2,2,15,\n2,0,15,\n0,0,-1,\n"
+            "0.5,0.5,15,\n0.5,1.5,15,\n1.5,1.5,15,\n1.5,0.5,15,\n0.5,0.5,-1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertFalse(any("盖帽三角化失败" in w for w in res.warnings))
+        mesh = res.meshes[0]
+        # 顶点：外 4 + 内 4，底顶两环 = 16；面：侧壁 2 环 ×4×2 = 16，
+        # 盖帽每盖 8 三角 ×2 = 16，共 32
+        self.assertEqual(len(mesh.x), 16)
+        self.assertEqual(len(mesh.i), 32)
+
+    def test_prism_hole_cap_covers_opening_not_glass(self):
+        # 洞区域必须不在盖帽面上：洞中心点的 z 面不存在 → 用面数近似校验
+        # （外轮廓盖帽回退会多出警告）
+        script = (
+            "PRISM_ 10, 0.1,\n"
+            "0,0,15,\n0,2,15,\n2,2,15,\n2,0,15,\n0,0,-1,\n"
+            "0.5,0.5,15,\n0.5,1.5,15,\n1.5,1.5,15,\n1.5,0.5,15,\n0.5,0.5,-1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertFalse(any("回退外轮廓盖帽" in w for w in res.warnings))
+
+    def test_lin_3d_wire(self):
+        script = "ADDX 1\nLIN_ 0,0,0, 2,0,0\n"
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.wires), 1)
+        self.assertEqual(res.wires[0][0], (1.0, 0.0, 0.0))
+        self.assertEqual(res.wires[0][1], (3.0, 0.0, 0.0))
+
+    def test_wallhole_sect_fill_hotspot_are_silent(self):
+        script = (
+            "SECT_FILL 16,-1,1,1\n"
+            "WALLHOLE 4,1, 0,0,15, 1,0,15, 1,1,15, 0,1,15\n"
+            "HOTSPOT 0,0,0,1\n"
+            "BLOCK 1,1,1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+
+    def test_group_endgroup_imbalance_warns_and_recovers(self):
+        script = 'GROUP "g"\nBLOCK 1,1,1\n'
+        res = preview_3d_script(script)
+        self.assertTrue(any("GROUP/ENDGROUP 未平衡" in w for w in res.warnings))

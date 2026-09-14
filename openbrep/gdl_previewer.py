@@ -365,6 +365,16 @@ class _PreviewRuntime:
         self._A = _identity3()
         self._t = (0.0, 0.0, 0.0)
 
+        # GROUP 布尔组（P14，预览近似）：命名组内容存储 + ADDGROUP 等运算结果
+        # 的匿名组变量表 + GROUP/ENDGROUP 定义栈。组内的 mesh/wire 先进组存储，
+        # PLACEGROUP 才把组内容（按当前变换）放进结果。不做真实 CSG：
+        # ADDGROUP=并集，SUBGROUP(a,b)≈a，ISECTGROUP(a,b)≈b（详见
+        # _handle_group_bool_assign）。
+        self._groups: dict[str, dict[str, list]] = {}
+        self._group_vars: dict[str, str] = {}
+        self._group_stack: list[str] = []
+        self._group_anon_seq = 0
+
         # Mesh topology state (VERT/VECT/EDGE/PGON/BODY)
         self._verts: list[Point3D] = []
         self._vects: list[Point3D] = []
@@ -415,6 +425,10 @@ class _PreviewRuntime:
             self._A = _identity3()
             self._t = (0.0, 0.0, 0.0)
 
+        if self._group_stack:
+            self._warn(0, f"GROUP/ENDGROUP 未平衡，自动收敛 ENDGROUP {len(self._group_stack)}")
+            self._group_stack.clear()
+
         self.result_2d.warnings.extend(self._warnings)
         self.result_3d.warnings.extend(self._warnings)
         self.result_2d.warnings_structured.extend(self._warnings_structured)
@@ -432,12 +446,22 @@ class _PreviewRuntime:
             if inline_if is not None:
                 condition, statement = inline_if
                 should_run = self._eval_condition(condition, line_no)
+                # P14：单行 IF…THEN…ELSE…（GDL 允许同行 ELSE）：顶层 ELSE
+                # 拆分，THEN 语句由条件门控，ELSE 语句仅在条件为假时执行。
+                else_statement = None
+                else_split = _split_inline_else(statement)
+                if else_split is not None:
+                    statement, else_statement = else_split
                 # P13：Archicad 语义对齐——单行 IF 同行只允许一条条件语句
                 # （GDL Reference Guide AC23 p323）；`:` 后的语句无条件执行，
                 # 由 _exec_inline_statement 的 condition_true 门控首句。
                 self._exec_inline_statement(
                     statement, line_no, lines, idx, mode, condition_true=should_run
                 )
+                if else_statement is not None and should_run is False:
+                    self._exec_inline_statement(
+                        else_statement, line_no, lines, idx, mode, condition_true=True
+                    )
                 idx += 1
                 continue
 
@@ -480,11 +504,45 @@ class _PreviewRuntime:
 
             # Assignment (except FOR header)
             if not re.match(r"^FOR\b", line, re.IGNORECASE):
+                # DIM 数组声明（GDL 数组 1-based；重复声明即重置）
+                m_dim = re.match(r"^DIM\s+(.+)$", line, re.IGNORECASE)
+                if m_dim:
+                    self._handle_dim(m_dim.group(1), line_no)
+                    idx += 1
+                    continue
+                # GROUP 布尔运算赋值：v = ADDGROUP/SUBGROUP/ISECTGROUP(...)
+                m_group_assign = re.match(
+                    r"^([A-Za-z_]\w*)\s*=\s*(ADDGROUP|SUBGROUP|ISECTGROUP)\s*\((.*)\)\s*$",
+                    line,
+                    re.IGNORECASE,
+                )
+                if m_group_assign:
+                    self._handle_group_bool_assign(
+                        m_group_assign.group(1),
+                        m_group_assign.group(2).upper(),
+                        m_group_assign.group(3),
+                        line_no,
+                    )
+                    idx += 1
+                    continue
+                # 数组元素赋值：name[i] = expr / name[i][j] = expr
+                m_array_assign = re.match(
+                    r"^([A-Za-z_]\w*)\s*((?:\[[^\]]*\])+)\s*=\s*(.+)$", line
+                )
+                if m_array_assign:
+                    self._handle_array_assign(
+                        m_array_assign.group(1),
+                        m_array_assign.group(2),
+                        m_array_assign.group(3),
+                        line_no,
+                    )
+                    idx += 1
+                    continue
                 m_assign = self._ASSIGN_RE.match(line)
                 if m_assign:
                     name = m_assign.group(1)
                     expr = m_assign.group(2)
-                    value = self._eval_expr(expr, line_no)
+                    value = self._eval_any(expr, line_no)
                     if value is not None:
                         self.env[name.upper()] = value
                     idx += 1
@@ -570,6 +628,31 @@ class _PreviewRuntime:
                 idx += 1
                 continue
 
+            # GROUP/ENDGROUP/PLACEGROUP（P14）：3D 组布尔构造。仅 3d 模式
+            # 执行；2d/setup 模式静默跳过（组是纯 3D 构造）。
+            if re.match(r"^(GROUP|ENDGROUP|PLACEGROUP)\b", line, re.IGNORECASE):
+                if mode == "3d":
+                    self._handle_group_command(line, line_no)
+                idx += 1
+                continue
+
+            # ADDGROUP/SUBGROUP/ISECTGROUP 语句形式（无赋值目标，结果回写第
+            # 一个算子组）；赋值形式在上面的赋值分发里拦截。
+            m_group_stmt = re.match(
+                r"^(ADDGROUP|SUBGROUP|ISECTGROUP)\s*(?:\((.*)\)|\s+(.*))$",
+                line, re.IGNORECASE,
+            )
+            if m_group_stmt:
+                if mode == "3d":
+                    args_text = m_group_stmt.group(2)
+                    if args_text is None:
+                        args_text = m_group_stmt.group(3) or ""
+                    self._handle_group_bool_statement(
+                        m_group_stmt.group(1).upper(), args_text, line_no
+                    )
+                idx += 1
+                continue
+
             # P4（2D 文本链）：SET STYLE "name" 跟踪当前样式（供 TEXT2 用）。
             # 必须在下方静默 no-op 正则（含 SET）之前拦截；其余 SET * 保持原
             # no-op 行为不变。setup/3d 模式不需要——落入原 no-op。
@@ -604,8 +687,13 @@ class _PreviewRuntime:
             # VALUES "A" RANGE [..]）对预览无几何副作用：SET 无副作用处理，
             # VALUES 属参数脚本范畴，在 2D/3D 中静默忽略，均不告警。
             # FILL / LINE_PROPERTY（P4）：属性设置语句，同样无几何副作用。
+            # WALLHOLE / WALLNICHE（P14）：墙体开洞构造，只影响 Archicad 里的
+            # 宿主墙，无自身几何；SECT_FILL 是属性设置。HOTSPOT/HOTLINE/HOTARC
+            # 系（含 2D 变体）是捕捉点/辅助线，不渲染。
             if re.match(
-                r"^(RESOL|TOLER|MATERIAL|PEN|XFORM|SET|VALUES|FILL|LINE_PROPERTY)\b",
+                r"^(RESOL|TOLER|MATERIAL|PEN|XFORM|SET|VALUES|FILL|LINE_PROPERTY"
+                r"|WALLHOLE|WALLNICHE|SECT_FILL"
+                r"|HOTSPOT2?|HOTLINE2?|HOTARC2?)\b",
                 line, re.IGNORECASE,
             ):
                 idx += 1
@@ -1016,8 +1104,8 @@ class _PreviewRuntime:
                 if mesh.source_ref is not None and mesh.source_ref.macro is None:
                     # 仅设置宏内直接产生的 mesh；嵌套 CALL 的 mesh 已带完整链
                     mesh.source_ref.macro = chain_label
-                self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(child.result_3d.wires)
+                self._emit_mesh3d(mesh)
+            self._emit_wires3d(child.result_3d.wires)
         else:
             self.result_2d.lines.extend(child.result_2d.lines)
             self.result_2d.polygons.extend(child.result_2d.polygons)
@@ -1767,8 +1855,8 @@ class _PreviewRuntime:
                 transform=self._A,
                 source_ref=self._source_ref_3d(line_no, cmd),
             )
-            self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(wires)
+            self._emit_mesh3d(mesh)
+            self._emit_wires3d(wires)
             return True
 
         if cmd == "CYLIND":
@@ -1791,8 +1879,8 @@ class _PreviewRuntime:
                 transform=self._A,
                 source_ref=self._source_ref_3d(line_no, cmd),
             )
-            self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(wires)
+            self._emit_mesh3d(mesh)
+            self._emit_wires3d(wires)
             return True
 
         if cmd == "CONE":
@@ -1816,8 +1904,8 @@ class _PreviewRuntime:
                 transform=self._A,
                 source_ref=self._source_ref_3d(line_no, cmd),
             )
-            self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(wires)
+            self._emit_mesh3d(mesh)
+            self._emit_wires3d(wires)
             return True
 
         if cmd == "SPHERE":
@@ -1837,8 +1925,8 @@ class _PreviewRuntime:
                 transform=self._A,
                 source_ref=self._source_ref_3d(line_no, cmd),
             )
-            self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(wires)
+            self._emit_mesh3d(mesh)
+            self._emit_wires3d(wires)
             return True
 
         # ── low-level mesh: VERT / VECT / EDGE / PGON / BODY ──────────────
@@ -1887,7 +1975,7 @@ class _PreviewRuntime:
         if cmd == "BODY":
             mesh = self._build_mesh_from_topology(line_no)
             if mesh is not None:
-                self.result_3d.meshes.append(mesh)
+                self._emit_mesh3d(mesh)
             # Clear topology for next BODY (a script can have multiple bodies)
             self._verts.clear()
             self._vects.clear()
@@ -1907,6 +1995,37 @@ class _PreviewRuntime:
                 self._warn(line_no, f"{cmd} 顶点数必须 >= 3")
                 return True
 
+            # P14：PRISM_ 三元组状态码 -1 = 轮廓结束（洞/多轮廓）。含 -1 时
+            # 走轮廓拆分路径（洞桥接耳切盖帽 + 洞壁侧墙）；无 -1 保持旧路径
+            # 逐字节不变。
+            contours = _split_prism_contours(vals[2:], n)
+            if contours is not None:
+                outer, holes = contours[0], contours[1:]
+                if holes:
+                    mesh, wires = _make_prism_mesh_with_holes(
+                        outer,
+                        holes,
+                        h,
+                        self._offset(),
+                        transform=self._A,
+                        name=cmd,
+                        source_ref=self._source_ref_3d(line_no, cmd),
+                        warn=lambda msg: self._warn(line_no, msg, command=cmd),
+                    )
+                else:
+                    mesh, wires = _make_prism_mesh(
+                        outer,
+                        h,
+                        self._offset(),
+                        transform=self._A,
+                        name=cmd,
+                        source_ref=self._source_ref_3d(line_no, cmd),
+                        warn=lambda msg: self._warn(line_no, msg, command=cmd),
+                    )
+                self._emit_mesh3d(mesh)
+                self._emit_wires3d(wires)
+                return True
+
             pts = _extract_points_2d(vals[2:], n)
             if not pts:
                 self._warn(line_no, f"{cmd} 顶点数据不足，已跳过")
@@ -1921,8 +2040,8 @@ class _PreviewRuntime:
                 source_ref=self._source_ref_3d(line_no, cmd),
                 warn=lambda msg: self._warn(line_no, msg, command=cmd),
             )
-            self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(wires)
+            self._emit_mesh3d(mesh)
+            self._emit_wires3d(wires)
             return True
 
         if cmd == "RULED":
@@ -2003,8 +2122,18 @@ class _PreviewRuntime:
                 source_ref=self._source_ref_3d(line_no, cmd),
                 warn=lambda msg: self._warn(line_no, msg, command=cmd),
             )
-            self.result_3d.meshes.append(mesh)
-            self.result_3d.wires.extend(wires)
+            self._emit_mesh3d(mesh)
+            self._emit_wires3d(wires)
+            return True
+
+        if cmd == "LIN_":
+            vals = self._eval_args(args_raw, line_no)
+            if vals is None or len(vals) < 6:
+                self._warn(line_no, "LIN_ 参数不足或解析失败")
+                return True
+            p1 = _apply_affine((float(vals[0]), float(vals[1]), float(vals[2])), self._A, self._t)
+            p2 = _apply_affine((float(vals[3]), float(vals[4]), float(vals[5])), self._A, self._t)
+            self._emit_wires3d([[p1, p2]])
             return True
 
         return False
@@ -2046,8 +2175,8 @@ class _PreviewRuntime:
             source_ref=self._source_ref_3d(line_no, cmd),
             warn=lambda msg: self._warn(line_no, msg, command=cmd),
         )
-        self.result_3d.meshes.append(mesh)
-        self.result_3d.wires.extend(wires)
+        self._emit_mesh3d(mesh)
+        self._emit_wires3d(wires)
         # Top ring world coords are the last n vertices before any cap centroid
         self._ruled_chain_mesh = mesh
         self._ruled_chain_top = top_world
@@ -2124,7 +2253,7 @@ class _PreviewRuntime:
         top_loop = [(mesh.x[i], mesh.y[i], mesh.z[i]) for i in idx_top]
         if closed:
             top_loop = top_loop + [top_loop[0]]
-        self.result_3d.wires.append(top_loop)
+        self._emit_wires3d([top_loop])
 
         self._ruled_chain_top = top_world
         self._ruled_chain_top_idx = idx_top
@@ -2168,6 +2297,226 @@ class _PreviewRuntime:
         except Exception as exc:
             self._warn(line_no, f"表达式解析失败 `{text}`: {exc}")
             return None
+
+    def _eval_any(self, expr: str | None, line_no: int) -> float | str | None:
+        """赋值右值求值：数值或字符串（字符串字面量/字符串变量/字符串数组
+        元素原样返回 str）。失败告警并返回 None。"""
+        if expr is None:
+            return None
+        text = expr.strip()
+        if not text:
+            self._warn(line_no, "空表达式")
+            return None
+        try:
+            return _safe_eval_any(text, self.env, funcs=self._funcs)
+        except Exception as exc:
+            self._warn(line_no, f"表达式解析失败 `{text}`: {exc}")
+            return None
+
+    # ── DIM / 数组元素赋值（P14）─────────────────────────────────────────
+    # GDL 数组 1-based；dim 声明即重置；写入超出声明长度自动扩展（动态数组
+    # 语义，如 dim arr[] 后逐元素赋值）；读取越界在 _eval_ast 里返回 0。
+
+    _DIM_DECL_RE = re.compile(r"^([A-Za-z_]\w*)\s*((?:\[[^\]]*\])*)$")
+
+    def _handle_dim(self, decls_text: str, line_no: int) -> None:
+        for decl in decls_text.split(","):
+            decl = decl.strip()
+            if not decl:
+                continue
+            m = self._DIM_DECL_RE.match(decl)
+            if not m:
+                self._warn(line_no, f"DIM 声明无法解析: {decl[:60]}")
+                continue
+            name = m.group(1).upper()
+            dims: list[int] = []
+            ok = True
+            for raw in re.findall(r"\[([^\]]*)\]", m.group(2)):
+                raw = raw.strip()
+                if not raw:
+                    dims.append(0)  # dim arr[]：动态（空）数组
+                    continue
+                value = self._eval_expr(raw, line_no)
+                if value is None:
+                    ok = False
+                    break
+                dims.append(max(0, int(round(float(value)))))
+            if not ok:
+                continue
+            self.env[name] = self._make_array(dims)
+
+    @staticmethod
+    def _make_array(dims: list[int]) -> list:
+        if not dims:
+            return []
+        if len(dims) == 1:
+            return [0.0] * dims[0]
+        return [_PreviewRuntime._make_array(dims[1:]) for _ in range(dims[0])]
+
+    def _handle_array_assign(self, name: str, idx_text: str, rhs: str, line_no: int) -> None:
+        key = name.upper()
+        indices: list[int] = []
+        for raw in re.findall(r"\[([^\]]*)\]", idx_text):
+            value = self._eval_expr(raw, line_no)
+            if value is None:
+                return
+            idx = int(round(float(value)))
+            if idx < 1:
+                self._warn(line_no, f"数组下标越界: {key}[{idx}]，已跳过")
+                return
+            indices.append(idx)
+        if not indices:
+            return
+        value = self._eval_any(rhs, line_no)
+        if value is None:
+            return
+        arr = self.env.get(key)
+        if not isinstance(arr, list):
+            arr = []
+            self.env[key] = arr
+        target = arr
+        for idx in indices[:-1]:
+            while len(target) < idx:
+                target.append(0.0)
+            child = target[idx - 1]
+            if not isinstance(child, list):
+                child = []
+                target[idx - 1] = child
+            target = child
+        last = indices[-1]
+        while len(target) < last:
+            target.append(0.0)
+        target[last - 1] = value
+
+    # ── GROUP 布尔组（P14，预览近似）─────────────────────────────────────
+
+    def _emit_mesh3d(self, mesh: PreviewMesh3D) -> None:
+        """mesh 出口：GROUP 定义期间进当前组，否则进结果。"""
+        if self._group_stack:
+            self._groups[self._group_stack[-1]]["meshes"].append(mesh)
+        else:
+            self.result_3d.meshes.append(mesh)
+
+    def _emit_wires3d(self, wires: list[list[Point3D]]) -> None:
+        if self._group_stack:
+            self._groups[self._group_stack[-1]]["wires"].extend(wires)
+        else:
+            self.result_3d.wires.extend(wires)
+
+    @staticmethod
+    def _group_name_key(arg: str) -> str | None:
+        text = (arg or "").strip()
+        m = re.match(r'^"([^"]*)"$', text)
+        if m:
+            return m.group(1).upper()
+        if re.match(r"^[A-Za-z_]\w*$", text):
+            return text.upper()
+        return None
+
+    def _resolve_group_ref(self, token: str) -> str | None:
+        """组引用解析：引号名 → 组名；裸标识符 → 组变量（ADDGROUP 结果）
+        优先，其次按组名。"""
+        text = (token or "").strip()
+        m = re.match(r'^"([^"]*)"$', text)
+        if m:
+            return m.group(1).upper()
+        if re.match(r"^[A-Za-z_]\w*$", text):
+            return self._group_vars.get(text.upper(), text.upper())
+        return None
+
+    def _handle_group_command(self, line: str, line_no: int) -> None:
+        m = re.match(r"^([A-Za-z_]\w*)\b\s*(.*)$", line)
+        if not m:
+            return
+        cmd = m.group(1).upper()
+        arg = (m.group(2) or "").strip()
+        if cmd == "GROUP":
+            key = self._group_name_key(arg)
+            if key is None:
+                self._warn(line_no, f"GROUP 名称无法解析，已跳过: {arg[:60]}")
+                return
+            self._groups[key] = {"meshes": [], "wires": []}
+            self._group_stack.append(key)
+            return
+        if cmd == "ENDGROUP":
+            if self._group_stack:
+                self._group_stack.pop()
+            else:
+                self._warn(line_no, "ENDGROUP 没有对应 GROUP，已忽略")
+            return
+        # PLACEGROUP
+        key = self._resolve_group_ref(arg)
+        if key is None or key not in self._groups:
+            self._warn(line_no, f"PLACEGROUP 引用了未定义的组 `{arg[:60]}`，已跳过")
+            return
+        self._place_group(key)
+
+    def _group_bool_content(self, func: str, keys: list[str | None]) -> dict[str, list]:
+        """组布尔运算内容（预览近似，不做真实 CSG）：
+
+        - ADDGROUP(a, b) = 两算子并集
+        - SUBGROUP(a, b) ≈ a + b 并集（减体一并渲染：与 P14 前"组内几何直出"
+          的旧行为一致；螺栓孔等减体可见，参数响应检查也能观察到孔阵列随
+          hole_count 变化）
+        - ISECTGROUP(a, b) ≈ b（门窗标准用法是 ISECTGROUP(洞口容器, 细节)，
+          取细节最接近真实交集；取并集会把容器渲染成实心板盖住一切）
+        """
+        chosen: list[str] = []
+        if func in {"ADDGROUP", "SUBGROUP"}:
+            chosen = [k for k in keys if k is not None and k in self._groups]
+        else:  # ISECTGROUP
+            for k in reversed(keys):
+                if k is not None and k in self._groups:
+                    chosen = [k]
+                    break
+        content: dict[str, list] = {"meshes": [], "wires": []}
+        for k in chosen:
+            content["meshes"].extend(self._groups[k]["meshes"])
+            content["wires"].extend(self._groups[k]["wires"])
+        return content
+
+    def _handle_group_bool_assign(self, name: str, func: str, args_text: str, line_no: int) -> None:
+        """g = ADDGROUP/SUBGROUP/ISECTGROUP(...) 赋值形式：结果存入匿名组并
+        绑定组变量（语义见 _group_bool_content）。"""
+        tokens = [t.strip() for t in _split_args(args_text) if t.strip()]
+        keys = [self._resolve_group_ref(t) for t in tokens]
+        self._group_anon_seq += 1
+        anon = f"__GRP_{self._group_anon_seq}"
+        self._groups[anon] = self._group_bool_content(func, keys)
+        self._group_vars[name.upper()] = anon
+
+    def _handle_group_bool_statement(self, func: str, args_text: str, line_no: int) -> None:
+        """ADDGROUP/SUBGROUP/ISECTGROUP 语句形式（无赋值目标）：GDL 语义为
+        结果回写第一个算子组，如 SUBGROUP "beam", "holes" 把孔从梁里减掉。
+        """
+        tokens = [t.strip() for t in _split_args(args_text) if t.strip()]
+        keys = [self._resolve_group_ref(t) for t in tokens]
+        if not keys or keys[0] is None or keys[0] not in self._groups:
+            self._warn(line_no, f"{func} 的第一个算子不是已定义的组，已跳过")
+            return
+        first = keys[0]
+        self._groups[first] = self._group_bool_content(func, keys)
+
+    def _place_group(self, key: str) -> None:
+        """把组内容按当前变换放入结果（拷贝，不共享引用）。"""
+        group = self._groups.get(key)
+        if group is None:
+            return
+        for mesh in group["meshes"]:
+            placed = PreviewMesh3D(
+                name=mesh.name,
+                x=[], y=[], z=[],
+                i=list(mesh.i), j=list(mesh.j), k=list(mesh.k),
+                source_ref=mesh.source_ref,
+            )
+            for x, y, z in zip(mesh.x, mesh.y, mesh.z):
+                px, py, pz = _apply_affine((x, y, z), self._A, self._t)
+                placed.x.append(px)
+                placed.y.append(py)
+                placed.z.append(pz)
+            self.result_3d.meshes.append(placed)
+        for wire in group["wires"]:
+            self.result_3d.wires.append([_apply_affine(p, self._A, self._t) for p in wire])
 
     def _put_get(self, n: int, line_no: int) -> list[float] | None:
         if n > len(self._put_stack):
@@ -2466,6 +2815,46 @@ def _extract_inline_if(line: str) -> tuple[str, str] | None:
     if not condition or not statement:
         return None
     return condition, statement
+
+
+def _split_inline_else(text: str) -> tuple[str, str] | None:
+    """在括号/引号之外找单行 IF 语句部分里的顶层 ELSE 关键字，拆成
+    (THEN 语句, ELSE 语句)；无顶层 ELSE 或任一侧为空返回 None。"""
+    depth = 0
+    quote: str | None = None
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in {'"', "'", "`"}:
+            quote = ch
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+            i += 1
+            continue
+        if ch == ")":
+            depth -= 1
+            i += 1
+            continue
+        if depth == 0 and text[i:i + 4].upper() == "ELSE":
+            before_ok = i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")
+            after = i + 4
+            after_ok = after >= n or not (text[after].isalnum() or text[after] == "_")
+            if before_ok and after_ok:
+                then_part = text[:i].strip()
+                else_part = text[after:].strip()
+                if then_part and else_part:
+                    return then_part, else_part
+                return None
+        i += 1
+    return None
 
 
 def _split_colon_statements(text: str) -> list[str]:
@@ -3079,7 +3468,17 @@ def _triangulate_polygon(
             for idx in remaining:
                 if idx in (i0, i1, i2):
                     continue
-                if _point_in_triangle2(p0, p1, p2, points[idx]):
+                q = points[idx]
+                # P14：洞桥接轮廓含坐标重合的缝顶点（不同索引）——与三角形
+                # 顶点重合的点不算阻挡，否则桥附近的耳永远剪不掉。对无重合
+                # 点的旧输入这是 no-op，行为逐字节不变。
+                if (
+                    (abs(q[0] - p0[0]) <= _POLY_EPS and abs(q[1] - p0[1]) <= _POLY_EPS)
+                    or (abs(q[0] - p1[0]) <= _POLY_EPS and abs(q[1] - p1[1]) <= _POLY_EPS)
+                    or (abs(q[0] - p2[0]) <= _POLY_EPS and abs(q[1] - p2[1]) <= _POLY_EPS)
+                ):
+                    continue
+                if _point_in_triangle2(p0, p1, p2, q):
                     blocked = True
                     break
             if blocked:
@@ -3298,6 +3697,204 @@ def _make_prism_mesh(
     return _build_mesh(name, verts, faces, source_ref=source_ref), wires
 
 
+def _dedupe_ring(points: list[Point2D]) -> list[Point2D]:
+    """去掉相邻（含首尾环绕）坐标重合点。lowall=0 这类参数化脚本退化时
+    轮廓自带重复点，零长边在 GDL 中是 no-op。无重复点时行为不变。"""
+    out: list[Point2D] = []
+    for p in points:
+        if out and abs(p[0] - out[-1][0]) <= _POLY_EPS and abs(p[1] - out[-1][1]) <= _POLY_EPS:
+            continue
+        out.append(p)
+    while len(out) > 1 and abs(out[0][0] - out[-1][0]) <= _POLY_EPS and abs(out[0][1] - out[-1][1]) <= _POLY_EPS:
+        out.pop()
+    return out
+
+
+def _split_prism_contours(values: list[float], n: int) -> list[list[Point2D]] | None:
+    """PRISM_ 三元组节点拆轮廓：状态码 -1 = 当前轮廓结束（其坐标通常与
+    该轮廓首点重合）。非三元组布局或不含 -1 返回 None（调用方走旧无洞
+    路径，行为逐字节不变）。返回 [外轮廓, 洞1, ...]，轮廓不含重复闭合点。
+    """
+    if len(values) < 3 * n:
+        return None
+    statuses = [int(round(float(values[3 * i + 2]))) for i in range(n)]
+    if -1 not in statuses:
+        return None
+    contours: list[list[Point2D]] = []
+    current: list[Point2D] = []
+    for i in range(n):
+        x = float(values[3 * i])
+        y = float(values[3 * i + 1])
+        if statuses[i] == -1:
+            if current and (
+                abs(x - current[0][0]) > _POLY_EPS or abs(y - current[0][1]) > _POLY_EPS
+            ):
+                current.append((x, y))
+            current = _dedupe_ring(current)
+            if len(current) >= 3:
+                contours.append(current)
+            current = []
+        else:
+            current.append((x, y))
+    current = _dedupe_ring(current)
+    if len(current) >= 3:
+        contours.append(current)
+    return contours or None
+
+
+def _segment_clear(
+    h: Point2D,
+    hvid: int,
+    v: Point2D,
+    vvid: int,
+    merged: list[tuple[Point2D, int]],
+    hole: list[tuple[Point2D, int]],
+) -> bool:
+    """桥接线段 H-V 是否与任何环边相交（跳过与 H/V 关联的边）。"""
+    for ring in (merged, hole):
+        m = len(ring)
+        for e in range(m):
+            a, aid = ring[e]
+            b, bid = ring[(e + 1) % m]
+            if hvid in (aid, bid) or vvid in (aid, bid):
+                continue
+            if _segments_intersect2(h, v, a, b):
+                return False
+    return True
+
+
+def _splice_holes(
+    outer: list[Point2D], holes: list[list[Point2D]]
+) -> list[tuple[Point2D, int]] | None:
+    """把洞轮廓桥接进外轮廓，得到可被简单多边形耳切的单一带缝轮廓。
+
+    返回 [(点, 底环顶点 id)]；顶点 id 与 _make_prism_mesh_with_holes 的底环
+    编号一致（外轮廓 0..n0-1，洞依次接续）。每个洞取最右点 H，在已合并
+    轮廓上找与 H 线段不相交的最近顶点 V 做桥；H 与 V 在结果中各出现两次
+    （缝）。找不到安全桥返回 None（调用方回退）。
+    """
+    merged: list[tuple[Point2D, int]] = [(p, i) for i, p in enumerate(outer)]
+    next_id = len(outer)
+    for hole in holes:
+        if len(hole) < 3:
+            continue
+        hole_items = [(p, next_id + i) for i, p in enumerate(hole)]
+        next_id += len(hole)
+        # 最右点（x 最大，并列取 y 最小）
+        hi = max(
+            range(len(hole_items)),
+            key=lambda i: (hole_items[i][0][0], -hole_items[i][0][1]),
+        )
+        h_pt, h_vid = hole_items[hi]
+        # 洞的绕行方向须与外轮廓相反
+        hole_seq = [hole_items[(hi + k) % len(hole_items)] for k in range(len(hole_items))]
+        if _polygon_signed_area2(outer) * _polygon_signed_area2([p for p, _ in hole_seq]) > 0:
+            hole_seq = [hole_items[hi]] + [
+                hole_items[(hi - k) % len(hole_items)] for k in range(1, len(hole_items))
+            ]
+        candidates = sorted(
+            range(len(merged)),
+            key=lambda i: (merged[i][0][0] - h_pt[0]) ** 2 + (merged[i][0][1] - h_pt[1]) ** 2,
+        )
+        bridge = None
+        for ci in candidates:
+            v_pt, v_vid = merged[ci]
+            if _segment_clear(h_pt, h_vid, v_pt, v_vid, merged, hole_items):
+                bridge = ci
+                break
+        if bridge is None:
+            return None
+        v_pt, v_vid = merged[bridge]
+        merged = (
+            merged[: bridge + 1]
+            + hole_seq
+            + [(h_pt, h_vid), (v_pt, v_vid)]
+            + merged[bridge + 1 :]
+        )
+    return merged
+
+
+def _make_prism_mesh_with_holes(
+    outer: list[Point2D],
+    holes: list[list[Point2D]],
+    h: float,
+    offset: Point3D,
+    *,
+    transform: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]] | None = None,
+    name: str = "PRISM_",
+    source_ref: PreviewSourceRef | None = None,
+    warn: Callable[[str], None] | None = None,
+) -> tuple[PreviewMesh3D, list[list[Point3D]]]:
+    """带洞棱柱（P14）：每个轮廓环（外轮廓 + 各洞）独立侧壁；盖帽把洞
+    桥接进外轮廓后耳切。桥接/耳切失败回退外轮廓盖帽（洞被盖住）并告警。
+    """
+    A = transform or _identity3()
+    rings = [outer] + holes
+    ring_starts: list[int] = []
+    s = 0
+    for ring in rings:
+        ring_starts.append(s)
+        s += len(ring)
+    n_base = s
+
+    verts: list[Point3D] = []
+    for ring in rings:
+        verts.extend(_apply_affine((x, y, 0.0), A, offset) for x, y in ring)
+    for ring in rings:
+        verts.extend(_apply_affine((x, y, h), A, offset) for x, y in ring)
+
+    faces: list[tuple[int, int, int]] = []
+    # 侧壁：外轮廓与洞壁各自成环
+    for rs, ring in zip(ring_starts, rings):
+        size = len(ring)
+        for i in range(size):
+            j = (i + 1) % size
+            bi, bj = rs + i, rs + j
+            ti, tj = n_base + rs + i, n_base + rs + j
+            faces.append((bi, bj, tj))
+            faces.append((bi, tj, ti))
+
+    # 盖帽：洞桥接 + 耳切
+    cap_done = False
+    merged = _splice_holes(outer, holes)
+    if merged is not None:
+        pts = [p for p, _ in merged]
+        tris = _triangulate_polygon(pts)
+        if tris:
+            for a, b, c in tris:
+                va, vb, vc = merged[a][1], merged[b][1], merged[c][1]
+                if va == vb or vb == vc or va == vc:
+                    continue  # 桥缝退化三角形
+                faces.append((va, vc, vb))  # 底盖：法向朝下
+                faces.append((n_base + va, n_base + vb, n_base + vc))  # 顶盖
+            cap_done = True
+    if not cap_done:
+        if warn is not None:
+            warn(f"{name} 含洞轮廓盖帽三角化失败，回退外轮廓盖帽（洞被盖住）")
+        n0 = len(outer)
+        use_earclip, tris0, _ = _plan_cap_triangulation(outer)
+        if use_earclip:
+            for a, b, c in tris0:
+                faces.append((a, c, b))
+                faces.append((n_base + a, n_base + b, n_base + c))
+        else:
+            for i in range(1, n0 - 1):
+                faces.append((0, i + 1, i))
+                faces.append((n_base, n_base + i, n_base + i + 1))
+
+    wires: list[list[Point3D]] = []
+    for rs, ring in zip(ring_starts, rings):
+        size = len(ring)
+        base_loop = [verts[rs + i] for i in range(size)]
+        top_loop = [verts[n_base + rs + i] for i in range(size)]
+        wires.append(base_loop + [base_loop[0]])
+        wires.append(top_loop + [top_loop[0]])
+        for i in range(size):
+            wires.append([verts[rs + i], verts[n_base + rs + i]])
+
+    return _build_mesh(name, verts, faces, source_ref=source_ref), wires
+
+
 def _make_tube_mesh(
     path: list[Point3D],
     section: list[Point2D],
@@ -3436,7 +4033,115 @@ _ALLOWED_FUNCS = {
     "ROUND": lambda x: float(round(x)),
     "MIN": lambda *x: min(x),
     "MAX": lambda *x: max(x),
+    # P14：GDL NOT 的函数形态 not(x)（_translate_gdl_expr 译为大写调用）
+    "NOT": lambda x: 0.0 if abs(float(x)) > 1e-12 else 1.0,
 }
+
+
+def _translate_gdl_expr(text: str) -> str:
+    """把 GDL 表达式表面语法翻译成 Python ast 可解析的形式（P14）。
+
+    引号/反引号字符串内容原样保留（两端统一转成 `"`），只在引号外替换：
+    - 反引号原样字符串 `` `...` `` → "..."
+    - AND/OR/NOT/EXOR 关键字（任意大小写）→ and/or/not / !=
+    - `<>` → `!=`；`!=` 保留；单个 `=` → `==`（GDL 表达式里 = 即相等比较）
+    - 单个 `|` → or；单个 `&` → and
+    - `^` → `**`
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    quote: str | None = None
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            if ch == quote:
+                out.append('"')
+                quote = None
+            else:
+                out.append(ch)
+            i += 1
+            continue
+        if ch in {'"', "'", "`"}:
+            quote = ch
+            out.append('"')
+            i += 1
+            continue
+        if ch.isalpha() or ch == "_":
+            j = i
+            while j < n and (text[j].isalnum() or text[j] == "_"):
+                j += 1
+            word = text[i:j]
+            upper = word.upper()
+            if upper == "AND":
+                out.append(" and ")
+            elif upper == "OR":
+                out.append(" or ")
+            elif upper == "NOT":
+                # not(x) 函数形态（GDL 常用）→ NOT( 函数调用（Python 的 not
+                # 关键字优先级太低，`a * not(x)` 是语法错误）；NOT x 关键词
+                # 形态仍译为 not。
+                k = j
+                while k < n and text[k] in " \t":
+                    k += 1
+                if k < n and text[k] == "(":
+                    out.append("NOT")
+                else:
+                    out.append(" not ")
+            elif upper == "EXOR":
+                out.append(" != ")
+            else:
+                out.append(word)
+            i = j
+            continue
+        if ch == "<" and i + 1 < n and text[i + 1] == ">":
+            out.append("!=")
+            i += 2
+            continue
+        if ch == "!" and i + 1 < n and text[i + 1] == "=":
+            out.append("!=")
+            i += 2
+            continue
+        if ch in "<>" and i + 1 < n and text[i + 1] == "=":
+            out.append(ch + "=")
+            i += 2
+            continue
+        if ch == "=":
+            out.append("==")
+            i += 2 if i + 1 < n and text[i + 1] == "=" else 1
+            continue
+        if ch == "|":
+            out.append(" or ")
+            i += 1
+            continue
+        if ch == "&":
+            out.append(" and ")
+            i += 1
+            continue
+        if ch == "^":
+            out.append("**")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _safe_eval_any(
+    expr: str,
+    env: dict[str, Any],
+    *,
+    funcs: dict[str, Any] | None = None,
+    missing_names_zero: bool = False,
+) -> float | str:
+    """数值/字符串表达式求值：结果为 str 时原样返回，否则返回 float。"""
+    node = ast.parse(_translate_gdl_expr(expr.strip()).strip(), mode="eval")
+    value = _eval_ast(node.body, env, funcs=funcs, missing_names_zero=missing_names_zero)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        raise ValueError("表达式结果是数组")
+    return float(value)
 
 
 def _safe_eval_expr(
@@ -3447,22 +4152,125 @@ def _safe_eval_expr(
     missing_names_zero: bool = False,
 ) -> float:
     """Evaluate numeric expression with a very small safe AST subset."""
-    text = expr.strip().replace("^", "**")
-    node = ast.parse(text, mode="eval")
-    return float(_eval_ast(node.body, env, funcs=funcs, missing_names_zero=missing_names_zero))
+    value = _safe_eval_any(expr, env, funcs=funcs, missing_names_zero=missing_names_zero)
+    if isinstance(value, str):
+        raise ValueError("表达式结果是字符串")
+    return float(value)
 
 
-def _string_value(src: str, env: dict[str, Any]) -> str | None:
-    """Interpret a condition operand as a string: quoted literal or a
-    string-valued env name. Returns None when it cannot be a string."""
+def _string_value(src: str, env: dict[str, Any], *, funcs: dict[str, Any] | None = None) -> str | None:
+    """Interpret a condition operand as a string: quoted/backtick literal,
+    a string-valued env name, or a string-valued array element (name[i] /
+    name[i][j]). Returns None when it cannot be a string."""
     s = (src or "").strip()
+    if len(s) >= 2 and s[0] == "`" and s[-1] == "`":
+        # GDL 反引号原样字符串（LP_XMLConverter 常用，如 `关`）
+        return s[1:-1]
     if len(s) >= 2 and s[0] == s[-1] and s[0] in {'"', "'"}:
         return s[1:-1]
     if re.match(r"^[A-Za-z_]\w*$", s):
         value = env.get(s.upper())
         if isinstance(value, str):
             return value
+        return None
+    if re.match(r"^[A-Za-z_]\w*(?:\[[^\]]+\])+$", s):
+        try:
+            value = _safe_eval_any(s, env, funcs=funcs)
+        except Exception:
+            return None
+        return value if isinstance(value, str) else None
     return None
+
+
+def _strip_outer_parens(text: str) -> str:
+    """去掉包裹整个表达式的冗余外层括号（可多层）。引号/反引号内的括号
+    不计深度；括号未闭合或未包裹整个表达式时返回原文。"""
+    s = text.strip()
+    while len(s) >= 2 and s[0] == "(":
+        depth = 0
+        quote: str | None = None
+        closes_at_end = False
+        balanced = False
+        for i, ch in enumerate(s):
+            if quote is not None:
+                if ch == quote:
+                    quote = None
+                continue
+            if ch in {'"', "'", "`"}:
+                quote = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    closes_at_end = i == len(s) - 1
+                    balanced = True
+                    break
+                if depth < 0:
+                    break
+        if not balanced or not closes_at_end:
+            break
+        s = s[1:-1].strip()
+    return s
+
+
+def _split_logical_top(text: str, kind: str) -> list[str] | None:
+    """在括号/引号之外按逻辑运算符切分条件文本。
+
+    kind="or" 匹配 OR 关键字与单个 `|`；kind="and" 匹配 AND 与单个 `&`。
+    无顶层运算符返回 None；切出空片段（如 `a |`）视为非法，同样返回 None
+    （交回上层按整体求值，保留旧的报错路径）。
+    """
+    word = "OR" if kind == "or" else "AND"
+    char = "|" if kind == "or" else "&"
+    parts: list[str] = []
+    depth = 0
+    quote: str | None = None
+    start = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in {'"', "'", "`"}:
+            quote = ch
+            i += 1
+            continue
+        if ch in "([":
+            depth += 1
+            i += 1
+            continue
+        if ch in ")]":
+            depth -= 1
+            i += 1
+            continue
+        if depth == 0:
+            if ch == char:
+                parts.append(text[start:i])
+                i += 1
+                start = i
+                continue
+            if text[i:i + len(word)].upper() == word:
+                before_ok = i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")
+                after = i + len(word)
+                after_ok = after >= n or not (text[after].isalnum() or text[after] == "_")
+                if before_ok and after_ok:
+                    parts.append(text[start:i])
+                    i = after
+                    start = after
+                    continue
+        i += 1
+    if not parts:
+        return None
+    parts.append(text[start:])
+    stripped = [part.strip() for part in parts]
+    if any(not part for part in stripped):
+        return None
+    return stripped
 
 
 def _safe_eval_condition(
@@ -3471,17 +4279,22 @@ def _safe_eval_condition(
     *,
     funcs: dict[str, Any] | None = None,
 ) -> bool:
-    text = (condition or "").strip()
+    text = _strip_outer_parens((condition or "").strip())
     if not text:
         raise ValueError("空条件")
 
-    # GDL commonly uses numeric boolean expressions. Support simple logical
-    # composition without attempting to emulate the full language.
-    for op in (" OR ", " AND "):
-        parts = re.split(rf"\b{op.strip()}\b", text, flags=re.IGNORECASE)
-        if len(parts) > 1:
-            values = [_safe_eval_condition(part, env, funcs=funcs) for part in parts]
-            return any(values) if op.strip() == "OR" else all(values)
+    # GDL 条件常用逻辑组合。AND/OR 拆分必须括号感知（P14）：旧实现用
+    # 正则 \bOR\b 直接切，`(a=4 or b=24) and c` 会在括号内的 or 处切碎，
+    # 导致整个 IF 块（含 ELSE）被跳过。OR 优先级低于 AND（先拆 OR）。
+    # 单个 `|` / `&` 视同 OR / AND（GDL 允许）。
+    parts = _split_logical_top(text, "or")
+    if parts is not None:
+        values = [_safe_eval_condition(part, env, funcs=funcs) for part in parts]
+        return any(values)
+    parts = _split_logical_top(text, "and")
+    if parts is not None:
+        values = [_safe_eval_condition(part, env, funcs=funcs) for part in parts]
+        return all(values)
 
     # P9：前级 NOT（逻辑优先级最高）。AND/OR 已在上面拆分，因此这里 NOT
     # 只作用于自己的操作数：`NOT a AND b` → `(NOT a) AND (b)`。
@@ -3520,8 +4333,8 @@ def _safe_eval_condition(
             return left >= right - 1e-9
         raise ValueError(f"条件运算符不支持: {op}")
 
-    left_s = _string_value(left_src, env)
-    right_s = _string_value(right_src, env)
+    left_s = _string_value(left_src, env, funcs=funcs)
+    right_s = _string_value(right_src, env, funcs=funcs)
     if left_s is not None and right_s is not None:
         if op == "=":
             return left_s == right_s
@@ -3537,7 +4350,7 @@ def _eval_ast(
     *,
     funcs: dict[str, Any] | None = None,
     missing_names_zero: bool = False,
-) -> float:
+) -> Any:
     funcs = funcs if funcs is not None else _ALLOWED_FUNCS
 
     if isinstance(node, ast.Constant):
@@ -3545,6 +4358,9 @@ def _eval_ast(
             return 1.0 if node.value else 0.0
         if isinstance(node.value, (int, float)):
             return float(node.value)
+        if isinstance(node.value, str):
+            # 字符串字面量（含反引号原样字符串，_translate_gdl_expr 已统一引号）
+            return node.value
         raise ValueError("常量类型不支持")
 
     if isinstance(node, ast.Name):
@@ -3553,7 +4369,33 @@ def _eval_ast(
             if missing_names_zero:
                 return 0.0
             raise ValueError(f"未定义变量 {node.id}")
-        return float(env[key])
+        value = env[key]
+        if isinstance(value, list):
+            return value  # 数组原样返回，由下标/赋值消费
+        if isinstance(value, str):
+            # 数值形态字符串（如宏默认参数 "0.25"）按数值消费；真正的
+            # 字符串参数（"直棂"）保留 str，供字符串比较/赋值使用。
+            try:
+                return float(value)
+            except ValueError:
+                return value
+        return float(value)
+
+    if isinstance(node, ast.Subscript):
+        base = _eval_ast(node.value, env, funcs=funcs, missing_names_zero=missing_names_zero)
+        if not isinstance(base, list):
+            raise ValueError("下标作用于非数组变量")
+        if isinstance(node.slice, ast.Slice):
+            raise ValueError("数组切片不支持")
+        index = _eval_ast(node.slice, env, funcs=funcs, missing_names_zero=missing_names_zero)
+        if not isinstance(index, (int, float)) or isinstance(index, (str, bool)):
+            raise ValueError("数组下标不是数值")
+        idx = int(round(float(index)))
+        if idx < 1:
+            raise ValueError(f"数组下标越界: {idx}")
+        if idx > len(base):
+            return 0.0  # GDL 未初始化/越界元素读作 0（预览近似）
+        return base[idx - 1]  # GDL 数组 1-based
 
     if isinstance(node, ast.BinOp):
         left = _eval_ast(node.left, env, funcs=funcs, missing_names_zero=missing_names_zero)
@@ -3572,12 +4414,51 @@ def _eval_ast(
             return left % right
         raise ValueError("二元运算符不支持")
 
+    if isinstance(node, ast.Compare):
+        # 由 _translate_gdl_expr 的 = → == 翻译进入；支持数值与字符串比较
+        if len(node.ops) != 1:
+            raise ValueError("链式比较不支持")
+        left = _eval_ast(node.left, env, funcs=funcs, missing_names_zero=missing_names_zero)
+        right = _eval_ast(node.comparators[0], env, funcs=funcs, missing_names_zero=missing_names_zero)
+        op = node.ops[0]
+        if isinstance(left, str) or isinstance(right, str):
+            if isinstance(left, str) and isinstance(right, str):
+                if isinstance(op, ast.Eq):
+                    return 1.0 if left == right else 0.0
+                if isinstance(op, ast.NotEq):
+                    return 1.0 if left != right else 0.0
+            raise ValueError("比较运算的操作数类型不支持")
+        if isinstance(op, ast.Eq):
+            return 1.0 if abs(left - right) <= 1e-9 else 0.0
+        if isinstance(op, ast.NotEq):
+            return 1.0 if abs(left - right) > 1e-9 else 0.0
+        if isinstance(op, ast.Lt):
+            return 1.0 if left < right else 0.0
+        if isinstance(op, ast.LtE):
+            return 1.0 if left <= right + 1e-9 else 0.0
+        if isinstance(op, ast.Gt):
+            return 1.0 if left > right else 0.0
+        if isinstance(op, ast.GtE):
+            return 1.0 if left >= right - 1e-9 else 0.0
+        raise ValueError("比较运算符不支持")
+
+    if isinstance(node, ast.BoolOp):
+        values = _eval_ast_bool_operands(node, env, funcs, missing_names_zero)
+        if isinstance(node.op, ast.And):
+            return 1.0 if all(values) else 0.0
+        if isinstance(node.op, ast.Or):
+            return 1.0 if any(values) else 0.0
+        raise ValueError("逻辑运算符不支持")
+
     if isinstance(node, ast.UnaryOp):
         v = _eval_ast(node.operand, env, funcs=funcs, missing_names_zero=missing_names_zero)
         if isinstance(node.op, ast.UAdd):
             return +v
         if isinstance(node.op, ast.USub):
             return -v
+        if isinstance(node.op, ast.Not):
+            # GDL NOT 是函数式 not(x)，翻译后落在 Python 的 not 上
+            return 0.0 if _truthy(v) else 1.0
         raise ValueError("一元运算符不支持")
 
     if isinstance(node, ast.Call):
@@ -3591,3 +4472,23 @@ def _eval_ast(
         return float(fn(*args))
 
     raise ValueError("表达式语法不支持")
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return len(value) > 0
+    if isinstance(value, (int, float)):
+        return abs(float(value)) > 1e-12
+    raise ValueError("逻辑运算的操作数类型不支持")
+
+
+def _eval_ast_bool_operands(
+    node: ast.BoolOp,
+    env: dict[str, Any],
+    funcs: dict[str, Any],
+    missing_names_zero: bool,
+) -> list[bool]:
+    return [
+        _truthy(_eval_ast(v, env, funcs=funcs, missing_names_zero=missing_names_zero))
+        for v in node.values
+    ]
