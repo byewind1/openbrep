@@ -2435,12 +2435,32 @@ class _PreviewRuntime:
             if key is None:
                 self._warn(line_no, f"GROUP 名称无法解析，已跳过: {arg[:60]}")
                 return
-            self._groups[key] = {"meshes": [], "wires": []}
+            # GDL 语义：组内容存储在 GROUP 语句生效的坐标系里（组外变换不
+            # 进入组内容；组内 ADD/DEL 正常生效），PLACEGROUP 时应用当前
+            # 变换。因此进入组定义时把工作变换重置为单位变换并记下基线，
+            # ENDGROUP 时恢复——否则"定义时烘焙 + 放置时叠加"会双重变换
+            # （向日葵格子窗 addx -a/2 未 DEL，框被平移两次的错位来源）。
+            self._groups[key] = {
+                "meshes": [],
+                "wires": [],
+                "baseline": (self._A, self._t),
+                "baseline_stack_depth": len(self._transform_stack),
+            }
             self._group_stack.append(key)
+            self._A = _identity3()
+            self._t = (0.0, 0.0, 0.0)
             return
         if cmd == "ENDGROUP":
             if self._group_stack:
-                self._group_stack.pop()
+                key = self._group_stack.pop()
+                group = self._groups.get(key)
+                if group is not None:
+                    baseline = group.get("baseline")
+                    if baseline is not None:
+                        self._A, self._t = baseline
+                    base_depth = group.get("baseline_stack_depth")
+                    if base_depth is not None and len(self._transform_stack) < base_depth:
+                        self._warn(line_no, "组内 DEL 越界消费了 GROUP 外的变换")
             else:
                 self._warn(line_no, "ENDGROUP 没有对应 GROUP，已忽略")
             return

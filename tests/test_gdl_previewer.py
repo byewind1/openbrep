@@ -2347,6 +2347,37 @@ class TestP14RealWorldWindowSupport(unittest.TestCase):
         res = preview_3d_script(script)
         self.assertFalse(any("回退外轮廓盖帽" in w for w in res.warnings))
 
+    def test_group_baseline_no_double_transform(self):
+        # 组外变换（GROUP 前生效）不进入组内容，PLACEGROUP 只应用一次当前
+        # 变换——向日葵格子窗 addx -a/2 未 DEL 导致框体双移位的回归测试。
+        script = (
+            "ADDX 1\n"
+            'GROUP "g"\n'
+            "BLOCK 2, 1, 1\n"
+            "ENDGROUP\n"
+            'PLACEGROUP "g"\n'
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(min(res.meshes[0].x), 1.0)
+        self.assertAlmostEqual(max(res.meshes[0].x), 3.0)
+
+    def test_group_place_many_under_different_transforms(self):
+        # 定义一次、在不同变换下多次放置（椅子腿模式）
+        script = (
+            'GROUP "leg"\n'
+            "BLOCK 0.1, 0.1, 1\n"
+            "ENDGROUP\n"
+            'PLACEGROUP "leg"\n'
+            "ADDX 2\n"
+            'PLACEGROUP "leg"\n'
+            "DEL 1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 2)
+        self.assertAlmostEqual(min(res.meshes[0].x), 0.0)
+        self.assertAlmostEqual(min(res.meshes[1].x), 2.0)
+
     def test_lin_3d_wire(self):
         script = "ADDX 1\nLIN_ 0,0,0, 2,0,0\n"
         res = preview_3d_script(script)
