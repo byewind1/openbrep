@@ -389,6 +389,10 @@ def _run_frozen(
     api_thread = _start_api_inprocess(api_port, static_dir)
     if not wait_for_url(
         f"{api_url}/api/snapshot",
+        # 冻结态冷启动要把整个 openbrep（含 litellm 等重依赖） import 进内存，
+        # 老 Intel 机器首次启动可能远超默认 12s——这里给足预算；真正的失败
+        # 由 Tauri 外壳通过"子进程提前退出"检出。
+        timeout=60.0,
         waiting_msg="正在等待后端 API 就绪…",
     ):
         print("[obr7] 后端启动超时，请检查环境配置。", file=sys.stderr)
