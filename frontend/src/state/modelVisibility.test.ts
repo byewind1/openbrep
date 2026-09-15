@@ -141,14 +141,14 @@ describe('buildVisibilityCatalog', () => {
     },
   }
 
-  test('default rules: custom configured → visible; official with key → visible; without key → hidden; ollama → visible', () => {
+  test('default rules: custom configured → visible; official with key → visible; without key and ollama → hidden', () => {
     const catalog = buildVisibilityCatalog(llmSettings, { connected: false, models: [] })
     const bySlug = new Map(catalog.map((p) => [p.slug, p]))
     expect(bySlug.get('ymg')?.defaultVisible).toBe(true)
     expect(bySlug.get('ymg')?.kind).toBe('custom')
     expect(bySlug.get('deepseek')?.defaultVisible).toBe(true)
     expect(bySlug.get('zhipu')?.defaultVisible).toBe(false)
-    expect(bySlug.get('ollama')?.defaultVisible).toBe(true)
+    expect(bySlug.get('ollama')?.defaultVisible).toBe(false)
     expect(bySlug.has('openai-codex')).toBe(false)
   })
 

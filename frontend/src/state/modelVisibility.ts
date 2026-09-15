@@ -252,8 +252,9 @@ export function buildVisibilityCatalog(
       label: providerName,
       kind: 'official',
       models: models.map((m) => ({ id: m.id, label: m.label })),
-      // ollama 本地模型无需 key 即已配置；其余官方预设需 provider_keys 有 key
-      defaultVisible: providerName === 'ollama' || models.some((m) => m.has_api_key),
+      // Ollama 本地模型无需 key，但不代表用户一定运行了 Ollama；默认隐藏，
+      // 用户可在模型可见性面板中显式开启。其余官方预设需 provider_keys 有 key。
+      defaultVisible: models.some((m) => m.has_api_key),
     })
   }
   if (codex.connected && codex.models.length > 0) {
