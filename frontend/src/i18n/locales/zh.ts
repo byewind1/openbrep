@@ -171,6 +171,7 @@ export const zh = {
   // P11 参数面板：参数 UI / 参数脚本 视图切换 + 枚举下拉
   'parameter.view.params': '参数',
   'parameter.view.script': '参数脚本',
+  'parameter.view.panel': '面板',
   'parameter.enumFallback': '当前值：{value}（不在 VALUES 列表）',
   'parameter.script.saved': '已保存',
   'parameter.script.unsaved': '未保存',

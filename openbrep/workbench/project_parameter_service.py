@@ -15,6 +15,28 @@ class WorkbenchProjectParameterService:
     def __init__(self, session: Any) -> None:
         self.session = session
 
+    def ui_layout(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """L0b：解析 ui.gdl → Archicad 风格参数面板控件树。body.parameters
+        为草稿覆盖，只影响 IF 分支裁剪，不落盘。"""
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project first."}
+        from openbrep.hsf_project import ScriptType
+        from openbrep.ui_layout import parse_ui_layout
+
+        overrides = body.get("parameters") if isinstance(body, dict) else None
+        if not isinstance(overrides, dict):
+            overrides = None
+        layout = parse_ui_layout(
+            self.session.project.get_script(ScriptType.UI) or "",
+            parameters=parameter_values(self.session.project, overrides),
+            values_declarations=parse_values_declarations(
+                self.session.project.get_script(ScriptType.PARAM) or ""
+            ),
+        )
+        payload = layout.to_dict()
+        payload["ok"] = True
+        return payload
+
     def _values_for(self, name: str) -> dict[str, Any] | None:
         """当前项目 vl.gdl 中该参数的 VALUES 声明（无项目/无声明 → None）。"""
         if self.session.project is None:

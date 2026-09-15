@@ -118,6 +118,34 @@ export interface AuthoritativePreviewResult {
   error?: string
 }
 
+/** L0b：ui.gdl 解析出的 Archicad 风格参数面板控件 */
+export interface UIControl {
+  type: 'infield' | 'outfield' | 'groupbox' | 'separator' | 'button' | string
+  param?: string | null
+  x: number
+  y: number
+  w: number
+  h: number
+  text?: string | null
+  options?: Array<{ value: unknown; label: string } | string> | null
+  line?: number
+  raw?: string
+}
+
+export interface UILayoutPayload {
+  ok: boolean
+  title?: string | null
+  pages?: number[]
+  active_page?: number | null
+  width?: number
+  height?: number
+  controls?: UIControl[]
+  unsupported?: string[]
+  warnings?: string[]
+  has_infield?: boolean
+  error?: string
+}
+
 export interface Preview2DPayload {
   lines: Array<{ from: [number, number]; to: [number, number] }>
   polygons: Array<Array<[number, number]>>

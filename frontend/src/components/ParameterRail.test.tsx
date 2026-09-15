@@ -111,15 +111,16 @@ describe('ParameterRail enum dropdown (P11)', () => {
   })
 })
 
-describe('ParameterRail view toggle (P11)', () => {
-  test('defaults to the parameters view with both tabs present', () => {
+describe('ParameterRail view toggle (P11 + L0b)', () => {
+  test('defaults to the parameters view with three tabs present', () => {
     const params = [makeParam()]
     render(<ParameterRail {...baseProps({ parameters: params })} />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['参数', '参数脚本'])
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['参数', '面板', '参数脚本'])
     expect(tabs[0].getAttribute('aria-selected')).toBe('true')
     expect(tabs[1].getAttribute('aria-selected')).toBe('false')
+    expect(tabs[2].getAttribute('aria-selected')).toBe('false')
   })
 
   test('switching to the script tab embeds the script editor for vl.gdl', async () => {

@@ -175,6 +175,7 @@ export const en: Record<LocaleKey, string> = {
   // P11 parameter panel: UI / parameter script view toggle + enum dropdown
   'parameter.view.params': 'Parameters',
   'parameter.view.script': 'Parameter Script',
+  'parameter.view.panel': 'Panel',
   'parameter.enumFallback': 'Current: {value} (not in VALUES list)',
   'parameter.script.saved': 'Saved',
   'parameter.script.unsaved': 'Unsaved',
