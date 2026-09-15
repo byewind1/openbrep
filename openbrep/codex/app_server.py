@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import signal
+import shutil
 import subprocess
 import threading
 import time
@@ -72,6 +73,37 @@ def default_codex_home() -> Path:
     因此不会继承开发者/日常 Codex CLI 的登录态。
     """
     return Path.home() / ".openbrep" / "codex"
+
+
+def resolve_codex_binary(binary: str = "codex") -> str | None:
+    """Resolve Codex for both shell-launched and Finder-launched processes.
+
+    GUI apps on macOS do not load the user's shell startup files, so a global
+    npm/Homebrew install can be absent from ``PATH`` even though it works in a
+    terminal. Explicit paths and PATH remain authoritative; fallback locations
+    cover the standard per-user npm/Homebrew installs without invoking a shell.
+    """
+    value = str(binary or "codex").strip()
+    if not value:
+        value = "codex"
+    if Path(value).is_absolute():
+        return value if Path(value).is_file() and os.access(value, os.X_OK) else None
+    found = shutil.which(value)
+    if found:
+        return found
+    home = Path.home()
+    candidates = (
+        home / ".npm-global" / "bin" / value,
+        home / ".local" / "bin" / value,
+        home / ".bun" / "bin" / value,
+        home / ".hermes" / "node" / "bin" / value,
+        Path("/opt/homebrew/bin") / value,
+        Path("/usr/local/bin") / value,
+    )
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def parse_codex_version(user_agent: str) -> tuple[int, int, int] | None:
@@ -170,7 +202,8 @@ class StdioJsonRpcTransport:
         self.codex_home.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ)
         env["CODEX_HOME"] = str(self.codex_home)
-        argv = [self.codex_binary, *self.extra_args]
+        resolved_binary = resolve_codex_binary(self.codex_binary)
+        argv = [resolved_binary or self.codex_binary, *self.extra_args]
         # 日志不输出 codex_home（auth 文件所在路径属敏感信息，见 D1 秘密门禁）
         self.logger.info("starting codex app-server: argv=%s", argv)
         try:

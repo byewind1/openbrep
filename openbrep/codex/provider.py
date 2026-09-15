@@ -34,6 +34,7 @@ from openbrep.codex.app_server import (
     CodexAppServerError,
     CodexCliUnavailableError,
     default_codex_home,
+    resolve_codex_binary,
 )
 from openbrep.codex.errors import error_response
 from openbrep.codex.turn import CodexTurnResult, CodexTurnRunner
@@ -417,7 +418,7 @@ class CodexProvider:
     def cli_available(self) -> bool:
         if self._cli_available is not None:
             return self._cli_available
-        return shutil.which(self.codex_binary) is not None
+        return resolve_codex_binary(self.codex_binary) is not None
 
     # ── 内部：客户端生命周期 ─────────────────────────────────
 
@@ -479,7 +480,7 @@ class CodexProvider:
                     self._client = self._client_factory()
                 else:
                     self._client = CodexAppServerClient(
-                        codex_binary=self.codex_binary,
+                        codex_binary=resolve_codex_binary(self.codex_binary) or self.codex_binary,
                         codex_home=self.codex_home,
                     )
                 # P0-1：新 client 是新的账户会话——in-flight 旧请求不得回写缓存

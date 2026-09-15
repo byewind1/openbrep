@@ -19,9 +19,22 @@ from openbrep.codex.app_server import (
     CodexAppServerClient,
     CodexAppServerError,
     StdioJsonRpcTransport,
+    resolve_codex_binary,
 )
 
 FAKE_SERVER = Path(__file__).resolve().parent / "fake_codex_app_server.py"
+
+
+def test_resolve_codex_binary_finds_user_npm_bin_without_path(monkeypatch, tmp_path):
+    """Finder-launched apps must find a user-level npm install absent from PATH."""
+    binary = tmp_path / ".npm-global" / "bin" / "codex"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr("openbrep.codex.app_server.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("openbrep.codex.app_server.shutil.which", lambda _name: None)
+
+    assert resolve_codex_binary() == str(binary)
 
 
 class _MemoryTransport:
