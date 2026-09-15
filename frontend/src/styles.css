@@ -1787,14 +1787,15 @@ button:focus-visible {
 
 .preview2d-line {
   stroke: #1e293b;
-  stroke-width: 0.012;
+  /* non-scaling-stroke uses screen pixels, not model metres. */
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .preview2d-polygon {
   fill: #e2e8f0;
   stroke: #1e293b;
-  stroke-width: 0.012;
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 

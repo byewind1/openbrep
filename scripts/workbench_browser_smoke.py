@@ -228,6 +228,7 @@ def run_smoke(
                         page.locator(".script-tree-item", has_text="3d.gdl").first.click()
                         page.locator(".monaco-editor").first.wait_for(timeout=int(timeout_seconds * 1000))
                         right_rail = page.locator(".workbench-right-rail")
+                        right_rail.get_by_role("button", name="3D", exact=True).click()
                         right_handle = page.get_by_role("button", name="Resize right workspace panel")
                         right_handle.wait_for(timeout=int(timeout_seconds * 1000))
                         editor = page.locator(".monaco-editor").first
@@ -293,8 +294,8 @@ def run_smoke(
                                     "narrowed_toolbar_w": narrowed_toolbar_actions_box["width"] if narrowed_toolbar_actions_box else None,
                                     "rows": [initial_toolbar_rows, widened_toolbar_rows, narrowed_toolbar_rows],
                                 }
-                        preview_controls_ok = body_has_preview_controls(body)
-                        page.get_by_role("button", name=re.compile(r"Expand|展开")).click()
+                        preview_controls_ok = body_has_preview_controls(right_rail.inner_text())
+                        right_rail.get_by_role("button", name=re.compile(r"Expand|展开")).click()
                         page.wait_for_function(
                             "() => document.body.innerText.includes('Dock') || document.body.innerText.includes('停靠')",
                             timeout=int(timeout_seconds * 1000),

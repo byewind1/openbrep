@@ -2,6 +2,16 @@ import type { AssistantMessage, AssistantStreamEvent } from '../api/types'
 import type { WorkbenchApi } from './workbenchStore'
 import { createWorkbenchStore } from './workbenchStore'
 
+test('initial load discovers Archicad before the preview source is used', async () => {
+  const api = makeApi()
+  const expected = await api.fetchTapirStatus()
+  expected.tapir!.archicad_connected = true
+  api.fetchTapirStatus = async () => expected
+  const store = createWorkbenchStore(api)
+  await store.getState().load()
+  expect(store.getState().tapirStatus).toEqual(expected.tapir)
+})
+
 function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
   return {
     fetchSnapshot: async () => ({
