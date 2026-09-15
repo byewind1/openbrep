@@ -1364,8 +1364,8 @@ def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str
         if getattr(provider, "cli_available", False) is not True:
             return "未检测到 Codex CLI。请先安装 Codex CLI 后重试。"
         status = provider.status(refresh=True)
-        if not status.get("connected"):
-            return "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
+        if not status.get("codex_ready", status.get("connected")):
+            return "Codex app-server 尚未就绪，请点击重启后重试。"
         if status.get("state") == "quota_exhausted":
             return QUOTA_ERROR_TEXT
         provider.validate_reasoning_effort(model, reasoning_effort)

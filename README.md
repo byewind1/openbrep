@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.10.1 — 修复 macOS Finder 启动时无法发现已安装 Codex CLI；继续提供 Apple Silicon 与 Intel 双安装包。
+> 正式发布版本 v0.10.2 — 修复 macOS Finder 启动时无法发现已安装 Codex CLI；继续提供 Apple Silicon 与 Intel 双安装包。
 
 ---
 
@@ -45,8 +45,8 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.10.1_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.1_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.10.1_x64_en-US.msi` 或 `OpenBrep_0.10.1_x64-setup.exe`
+- macOS：`OpenBrep_0.10.2_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.2_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.10.2_x64_en-US.msi` 或 `OpenBrep_0.10.2_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
@@ -392,7 +392,8 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
-| v0.10.1 | 修复 macOS Finder 启动时无法发现已安装 Codex CLI（支持用户级 npm/Bun/Hermes 与 Homebrew 路径）（见 docs/releases/v0.10.1.md） |
+| v0.10.2 | Codex 供应商兼容、app-server runtime 单实例锁，以及 CLI 可运行状态与订阅登录状态分离（见 docs/releases/v0.10.2.md） |
+| v0.10.2 | 修复 macOS Finder 启动时无法发现已安装 Codex CLI（支持用户级 npm/Bun/Hermes 与 Homebrew 路径）（见 docs/releases/v0.10.2.md） |
 | v0.10.0 | Archicad 权威预览通道、真实库部件预览覆盖、Archicad 风格 `ui.gdl` 参数面板与 Tauri 启动错误页（见 docs/releases/v0.10.0.md） |
 | v0.9.6 | 修复自动更新在安装包中静默失效（sidecar 内嵌前端丢失 VITE_IS_TAURI 标记 + 远程来源命令被 ACL 拒绝 + 环境判据过严，v0.9.2–v0.9.5 均受影响）（见 docs/releases/v0.9.6.md） |
 | v0.9.5 | macOS 安装包新增 Intel（x86_64）版：CI 加 `macos-15-intel` 构建腿，`latest.json` 更新清单同步支持 `darwin-x86_64`（见 docs/releases/v0.9.5.md） |

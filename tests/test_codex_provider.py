@@ -2652,13 +2652,13 @@ class TestCodexProviderChatWire(unittest.TestCase):
         root = Path(tempfile.gettempdir())
         return [p.name for p in root.glob("openbrep-codex-turn-*")]
 
-    def test_chat_signed_out_fails_closed(self):
-        with self._provider() as provider:  # 未登录
-            with self.assertRaises(CodexNotSignedInError):
-                provider.chat(
-                    [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
-                    model="gpt-5.6-luna",
-                )
+    def test_chat_signed_out_uses_available_codex_provider(self):
+        with self._provider() as provider:  # 非 ChatGPT provider 也可用
+            result = provider.chat(
+                [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+                model="gpt-5.6-luna",
+            )
+            self.assertEqual(result.finish_reason, "stop")
 
     def test_chat_quota_exhausted_fails_closed(self):
         with self._provider(

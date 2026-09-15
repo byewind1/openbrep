@@ -67,12 +67,9 @@ class CodexAppServerError(RuntimeError):
 
 
 def default_codex_home() -> Path:
-    """独立用户级 CODEX_HOME：~/.openbrep/codex。
-
-    与 obr7 的 ~/.openbrep/{run,logs} 同一用户数据目录，但绝不使用 ~/.codex，
-    因此不会继承开发者/日常 Codex CLI 的登录态。
-    """
-    return Path.home() / ".openbrep" / "codex"
+    """Use the user's Codex home so cc-switch/provider settings are honored."""
+    configured = os.environ.get("CODEX_HOME", "").strip()
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"
 
 
 def resolve_codex_binary(binary: str = "codex") -> str | None:
@@ -193,6 +190,7 @@ class StdioJsonRpcTransport:
         # POSIX：启动时捕获进程组 id，close() 时即使直接子进程已退出也要
         # 回收组内后代（避免 app-server 退出后遗留孙进程）。
         self._pgid: int | None = None
+        self._home_lock = None
 
     # ── 生命周期 ─────────────────────────────────────────────
 
@@ -200,6 +198,19 @@ class StdioJsonRpcTransport:
         if self._proc is not None:
             return
         self.codex_home.mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            import fcntl
+            lock_path = self.codex_home / ".openbrep-app-server.lock"
+            self._home_lock = open(lock_path, "a+")
+            try:
+                fcntl.flock(self._home_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                self._home_lock.close()
+                self._home_lock = None
+                raise CodexAppServerError(
+                    "Codex app-server runtime 已被另一个 OpenBrep 实例占用。",
+                    category="runtime_conflict",
+                ) from exc
         env = dict(os.environ)
         env["CODEX_HOME"] = str(self.codex_home)
         resolved_binary = resolve_codex_binary(self.codex_binary)
@@ -222,6 +233,9 @@ class StdioJsonRpcTransport:
             )
         except FileNotFoundError as exc:
             self._proc = None
+            if self._home_lock is not None:
+                self._home_lock.close()
+                self._home_lock = None
             raise CodexCliUnavailableError(
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
             ) from exc
@@ -475,6 +489,14 @@ class StdioJsonRpcTransport:
             # （app-server 派生的 helper）；按进程组兜底回收，避免遗留子进程。
             self._signal_group(pgid, signal.SIGTERM)
             self._signal_group(pgid, signal.SIGKILL)
+        if self._home_lock is not None:
+            try:
+                import fcntl
+                fcntl.flock(self._home_lock.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            self._home_lock.close()
+            self._home_lock = None
         reader, self._reader = self._reader, None
         if reader is not None:
             reader.join(timeout=2.0)

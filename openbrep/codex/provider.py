@@ -683,6 +683,7 @@ class CodexProvider:
                 client, gen = self._snapshot(heal=False)
                 result = self._read_account(client)
                 result["codex_available"] = True
+                result["codex_ready"] = True
                 if not result.get("connected") and self._login_pending:
                     # 登录进行中：未完成前不返回账户，状态为 login_started
                     result = {
@@ -1211,7 +1212,7 @@ class CodexProvider:
         status = self.status(refresh=refresh)
         if not status.get("connected"):
             raise CodexNotSignedInError(
-                "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
+                "尚未连接 ChatGPT，无法读取模型目录。请先登录。"
             )
         raw = client.model_list()
         models: list[dict[str, Any]] = []
@@ -1340,10 +1341,8 @@ class CodexProvider:
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
             )
         status = self.status(refresh=True)
-        if not status.get("connected"):
-            raise CodexNotSignedInError(
-                "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
-            )
+        if not status.get("codex_ready", status.get("connected")):
+            raise CodexAppServerError("Codex app-server 尚未就绪。", category="not_started")
         if status.get("state") == "quota_exhausted":
             raise CodexAppServerError(
                 "ChatGPT 订阅额度已耗尽或已达到用量上限。"
