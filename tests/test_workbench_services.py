@@ -1544,6 +1544,20 @@ def test_codex_status_error_response_redacts_secrets(tmp_path):
     assert "a0327bbe" not in str(response.get("error"))
 
 
+def test_llm_settings_preserves_stable_codex_error_message(tmp_path):
+    """The settings snapshot must not collapse a Codex failure into unknown."""
+    config = GDLAgentConfig()
+
+    class _FailingProvider(_FakeCodexProvider):
+        def status(self, *, refresh=False):
+            raise CodexNotSignedInError("not signed in")
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _FailingProvider())
+    codex = service.llm_settings()["codex"]
+    assert codex["state"] == "error"
+    assert codex["error"] == "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
+
+
 def test_codex_service_responses_never_leak_secrets(tmp_path):
     config = GDLAgentConfig()
     provider = _FakeCodexProvider(status=_signed_in_status(), models=_codex_models_payload())

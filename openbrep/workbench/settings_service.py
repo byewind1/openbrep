@@ -269,8 +269,11 @@ class WorkbenchSettingsService:
             return None
         try:
             return self.codex_provider.status()
-        except Exception:
-            return {"state": "error", "connected": False, "account": None}
+        except Exception as exc:
+            # Keep the same stable code/message contract as the explicit status
+            # route.  Omitting these fields made llm_settings() render the
+            # misleading generic "connection status unknown" message.
+            return {"state": "error", "connected": False, "account": None, **error_response(exc)}
 
     @classmethod
     def _codex_error(cls, exc: BaseException, fallback: str = DEFAULT_FALLBACK) -> dict[str, Any]:

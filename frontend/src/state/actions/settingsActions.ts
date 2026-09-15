@@ -88,16 +88,30 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
     },
 
     async loadCodexCatalog() {
-      const status = await api.fetchCodexStatus()
+      // app-server may still be replacing a crashed instance when the pill is
+      // opened. Retry briefly and keep a previously loaded catalog on a
+      // transient failure so one race cannot make Codex disappear from the UI.
+      let status = await api.fetchCodexStatus()
+      for (const delay of [150, 450]) {
+        if (status.ok && status.connected) break
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        status = await api.fetchCodexStatus()
+      }
       if (!status.ok || !status.connected) {
-        set({ codexCatalog: { connected: false, models: [], loaded: true } })
+        set((state) => ({
+          codexCatalog: {
+            connected: state.codexCatalog.connected,
+            models: state.codexCatalog.models,
+            loaded: true,
+          },
+        }))
         return
       }
       const models = await api.fetchCodexModels()
       set({
         codexCatalog: {
           connected: true,
-          models: models.ok ? (models.models ?? []) : [],
+          models: models.ok ? (models.models ?? []) : get().codexCatalog.models,
           loaded: true,
         },
       })
