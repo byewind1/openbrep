@@ -48,6 +48,13 @@ hiddenimports = [
     *collect_submodules("openbrep"),
     *collect_submodules("litellm"),
     *collect_submodules("mcp"),
+    # tiktoken discovers encodings through the separately packaged
+    # ``tiktoken_ext`` plugin namespace.  PyInstaller cannot reliably infer
+    # this dynamic import, so keep the registry and OpenAI encodings in the
+    # frozen sidecar explicitly.
+    "tiktoken",
+    "tiktoken_ext",
+    "tiktoken_ext.openai_public",
     "click",
     "rich",
     "typer",

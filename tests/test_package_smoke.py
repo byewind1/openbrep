@@ -3,6 +3,14 @@ from pathlib import Path
 from urllib.error import HTTPError
 
 
+def test_backend_spec_includes_tiktoken_encoding_plugins():
+    """Frozen sidecar must retain tiktoken's plugin-based encoding registry."""
+    spec = Path(__file__).resolve().parents[1] / "openbrep-backend.spec"
+    text = spec.read_text(encoding="utf-8")
+    for module in ("tiktoken", "tiktoken_ext", "tiktoken_ext.openai_public"):
+        assert f'"{module}"' in text
+
+
 def _load_package_smoke():
     path = Path(__file__).resolve().parents[1] / "scripts" / "package_smoke.py"
     spec = importlib.util.spec_from_file_location("_package_smoke_test", path)

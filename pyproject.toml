@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbrep"
-version = "0.10.4"
+version = "0.10.5"
 description = "AI GDL Workbench for ArchiCAD — knowledge-graph driven, self-healing compile loop, Tauri desktop"
 readme = "README.md"
 license = { text = "MIT" }
@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "litellm>=1.40.0",
+    "tiktoken>=0.7.0",
     "click>=8.1.0,<8.2.0",
     "rich>=13.0.0",
     "typer>=0.9.1",
