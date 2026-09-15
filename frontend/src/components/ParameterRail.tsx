@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { AddParameterInlineForm } from './AddParameterInlineForm'
 import { ParameterMetadataEditor } from './ParameterMetadataEditor'
+import { ArchicadParamPanel } from './ArchicadParamPanel'
 import { useT } from '../i18n'
 import type { AddParameterRequest, UpdateParameterRequest, WorkbenchParameter } from '../api/types'
 
@@ -31,7 +32,7 @@ interface ParameterRailProps {
   onParamScriptSave?: () => void
 }
 
-type ParameterPanelView = 'params' | 'script'
+type ParameterPanelView = 'params' | 'script' | 'panel'
 
 export function ParameterRail({
   title,
@@ -70,6 +71,15 @@ export function ParameterRail({
           onClick={() => setView('params')}
         >
           {t('parameter.view.params')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'panel'}
+          className={`rail-tab${view === 'panel' ? ' active' : ''}`}
+          onClick={() => setView('panel')}
+        >
+          {t('parameter.view.panel')}
         </button>
         <button
           type="button"
@@ -126,6 +136,12 @@ export function ParameterRail({
             </section>
           ))}
         </>
+      ) : view === 'panel' ? (
+        <ArchicadParamPanel
+          parameters={renderedSections.flatMap((section) => section.parameters)}
+          draftParameters={draftParameters}
+          onChange={onChange}
+        />
       ) : (
         <div className="parameter-script-view">
           <div className="panel-heading">

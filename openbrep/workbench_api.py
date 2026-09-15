@@ -430,8 +430,13 @@ class WorkbenchSession:
         parameters = overrides if isinstance(overrides, dict) else None
         return authoritative_preview_payload(self.project, parameters, self.tapir)
 
+    def project_ui_layout(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """L0b：解析 ui.gdl → Archicad 风格参数面板控件树。"""
+        return self.project_service.ui_layout(body if isinstance(body, dict) else {})
+
     def list_project_scripts(self) -> dict[str, Any]:
         return self.project_service.list_project_scripts()
+
 
     def get_project_script(self, script_name: str) -> dict[str, Any]:
         return self.project_service.get_project_script(script_name)
@@ -716,8 +721,12 @@ class WorkbenchSession:
             overrides = body.get("parameters") if isinstance(body, dict) else None
             return self.preview_authoritative(overrides if isinstance(overrides, dict) else None)
 
+        if normalized_method == "POST" and route == "/api/project/ui-layout":
+            return self.project_ui_layout(body if isinstance(body, dict) else {})
+
         if normalized_method == "POST" and route == "/api/preview/2d":
             return self.preview_2d(body)
+
 
         if normalized_method == "GET" and route == "/api/project/scripts":
             return self.list_project_scripts()

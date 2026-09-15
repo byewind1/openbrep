@@ -229,6 +229,24 @@ def test_workbench_authoritative_preview_requires_project():
     assert "project" in response["error"].lower() or "项目" in response["error"]
 
 
+def test_workbench_ui_layout_requires_project():
+    session = WorkbenchSession(tapir_import_ok=False)
+    response = session.route("POST", "/api/project/ui-layout")
+    assert response["ok"] is False
+
+
+def test_workbench_ui_layout_parses_project_ui_script(tmp_path):
+    project = HSFProject.create_new("UiLayoutShelf", str(tmp_path))
+    project.set_script(ScriptType.UI, 'UI_INFIELD{2} A, 110, 20, 90, 20\nUI_OUTFIELD "宽度", 20, 20, 80, 16\n')
+    session = WorkbenchSession(tapir_import_ok=False)
+    session.project = project
+    response = session.route("POST", "/api/project/ui-layout")
+    assert response["ok"] is True
+    assert response["has_infield"] is True
+    params = [c["param"] for c in response["controls"] if c["type"] == "infield"]
+    assert "A" in params
+
+
 def test_workbench_authoritative_preview_reshapes_meshes(tmp_path):
     project = HSFProject.create_new("AuthShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()

@@ -13,6 +13,8 @@ import type {
   ClearProjectMemoryResult,
   CompileResult,
   CreateProjectResult,
+  UILayoutPayload,
+
   DeleteMemoryLessonResult,
   IgnoreMemoryLessonResult,
   DistilledLesson,
@@ -178,6 +180,22 @@ export async function fetchAuthoritativePreview(
       body: JSON.stringify(parameters ? { parameters } : {}),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+/** L0b：解析当前项目 ui.gdl → Archicad 风格参数面板控件树。
+ *  parameters 为草稿覆盖（只影响 IF 分支裁剪，不落盘）。 */
+export async function fetchUiLayout(
+  parameters?: Record<string, unknown>,
+): Promise<UILayoutPayload> {
+  return requestJson<UILayoutPayload>(
+    '/api/project/ui-layout',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parameters ? { parameters } : {}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', has_infield: false, controls: [] },
   )
 }
 

@@ -92,6 +92,9 @@ class WorkbenchProjectService:
     def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
         return self.parameter_service.apply(changes)
 
+    def ui_layout(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.parameter_service.ui_layout(body)
+
     def add_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.parameter_service.add_project_parameter(body)
 
