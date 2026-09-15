@@ -282,3 +282,12 @@ jobs:
           print(json.dumps(manifest, indent=2)[:2000])
           EOF
           gh release upload "$TAG_NAME" release/latest.json --clobber --repo "$GH_REPO"
+
+      # 所有构建、秘密扫描和 updater manifest 生成均完成后，才将草稿公开。
+      # updater 使用 releases/latest，必须发布状态才能让客户端读取 latest.json。
+      - name: Publish release after all gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$TAG_NAME" --draft=false --repo "$GH_REPO"
