@@ -21,7 +21,11 @@ from openbrep.workbench.compiler_service import WorkbenchCompilerService
 from openbrep.workbench.copilot_service import WorkbenchCopilotService
 from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
-from openbrep.workbench.preview_service import preview_2d_payload, preview_payload
+from openbrep.workbench.preview_service import (
+    authoritative_preview_payload,
+    preview_2d_payload,
+    preview_payload,
+)
 from openbrep.workbench.project_parameter_service import apply_parameter_values
 from openbrep.workbench.project_service import (
     WorkbenchProjectService,
@@ -419,6 +423,13 @@ class WorkbenchSession:
     def preview_2d(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.project_service.preview_2d(overrides)
 
+    def preview_authoritative(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+        """P15：Archicad 权威预览（后台 Archicad 真实求值当前物件）。"""
+        if self.project is None:
+            return {"ok": False, "error": "Create or open a project first."}
+        parameters = overrides if isinstance(overrides, dict) else None
+        return authoritative_preview_payload(self.project, parameters, self.tapir)
+
     def list_project_scripts(self) -> dict[str, Any]:
         return self.project_service.list_project_scripts()
 
@@ -700,6 +711,10 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/preview":
             return self.preview(body)
+
+        if normalized_method == "POST" and route == "/api/preview/authoritative":
+            overrides = body.get("parameters") if isinstance(body, dict) else None
+            return self.preview_authoritative(overrides if isinstance(overrides, dict) else None)
 
         if normalized_method == "POST" and route == "/api/preview/2d":
             return self.preview_2d(body)

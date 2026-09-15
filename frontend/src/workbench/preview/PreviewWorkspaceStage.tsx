@@ -3,6 +3,7 @@ import type { Preview2DPayload, PreviewPayload } from '../../api/types'
 import { useWorkbenchStore } from '../../state/useWorkbenchStore'
 import { PanelEmpty } from '../../components/PanelEmpty'
 import { useT } from '../../i18n'
+import { usePreview2DSource, usePreviewSource } from './usePreviewSource'
 
 const ScriptEditor = lazy(() => import('../../components/ScriptEditor').then((m) => ({ default: m.ScriptEditor })))
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
@@ -59,6 +60,9 @@ export function PreviewWorkspaceStage({
   // P2a：任务前版本 ghost 快照，视口只读消费
   const previewGhost = useWorkbenchStore((state) => state.previewGhost)
   const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
+  // Archicad 权威预览：来源切换/缓存/错误在 store，这里只解析出当前应显示的 payload
+  const { preview: displayPreview, sourceControl } = usePreviewSource(preview)
+  const { preview: displayPreview2d, sourceControl: sourceControl2d } = usePreview2DSource(preview2d)
 
   function selectView(view: CenterView) {
     // 首次切到 2D 且还没有数据时触发加载（与右栏 2D tab 同一 action）
@@ -78,8 +82,8 @@ export function PreviewWorkspaceStage({
         <section className={`workbench-main-stage preview-workspace-stage${centerView === '3d' ? '' : ' stage-hidden'}`}>
           <Suspense fallback={<div className="viewport-loading" />}>
             <PreviewViewport
-              preview={preview}
-              warnings={warnings}
+              preview={displayPreview}
+              warnings={displayPreview?.warnings ?? warnings}
               variant="workspace"
               expanded
               hasDirtyScripts={hasDirtyScripts}
@@ -90,6 +94,7 @@ export function PreviewWorkspaceStage({
               onQualityChange={(quality) => void setPreviewQuality(quality)}
               previewGhost={previewGhost}
               previewGhostLabel={previewGhostLabel}
+              sourceControl={sourceControl}
               actions={
                 onRefreshPreview ? (
                   <button
@@ -107,7 +112,11 @@ export function PreviewWorkspaceStage({
         </section>
         <section className={`workbench-main-stage preview-2d-stage${centerView === '2d' ? '' : ' stage-hidden'}`}>
           <Suspense fallback={<div className="viewport-loading" />}>
-            <Preview2DViewport preview={preview2d} warnings={warnings} />
+            <Preview2DViewport
+              preview={displayPreview2d}
+              warnings={displayPreview2d?.warnings ?? warnings}
+              sourceControl={sourceControl2d}
+            />
           </Suspense>
         </section>
         <section className={`workbench-main-stage editor-stage${centerView === 'editor' ? '' : ' stage-hidden'}`}>

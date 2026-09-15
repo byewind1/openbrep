@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   askAssistant,
   confirmModifyPlan,
+  fetchAuthoritativePreview,
   fetchPreview,
   fetchPreview2D,
   generateWithAssistant,
@@ -59,6 +60,61 @@ describe('fetchPreview2D quality param (P1b)', () => {
     expect(url).toBe('/api/preview/2d')
     const body = JSON.parse(String(init.body))
     expect(body.quality).toBe('accurate')
+  })
+})
+
+describe('fetchAuthoritativePreview (Archicad 权威预览)', () => {
+  function stubAuthoritative(body: unknown) {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => body,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  test('posts parameter overrides to the authoritative route', async () => {
+    const fetchMock = stubAuthoritative({
+      ok: true,
+      preview: { meshes: [], wires: [], warnings: [], source: 'archicad', appliedParameters: ['A'], skippedParameters: [] },
+    })
+
+    const result = await fetchAuthoritativePreview({ A: 1.2 })
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/preview/authoritative')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ parameters: { A: 1.2 } })
+    expect(result.ok).toBe(true)
+    expect(result.preview?.source).toBe('archicad')
+  })
+
+  test('omits the parameters field when not provided (backend uses current values)', async () => {
+    const fetchMock = stubAuthoritative({ ok: true, preview: { meshes: [], wires: [] } })
+
+    await fetchAuthoritativePreview()
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({})
+  })
+
+  test('returns ok:false with an error when the backend reports failure', async () => {
+    stubAuthoritative({ ok: false, error: 'Archicad 未连接' })
+
+    const result = await fetchAuthoritativePreview({ A: 1 })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('Archicad 未连接')
+    expect(result.preview).toBeUndefined()
+  })
+
+  test('falls back to a local error when the backend is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connection refused') }))
+
+    const result = await fetchAuthoritativePreview({})
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('OpenBrep local API is not available.')
   })
 })
 

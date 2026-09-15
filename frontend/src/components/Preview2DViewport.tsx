@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Preview2DPayload } from '../api/types'
+import type { PreviewSourceControl } from './PreviewViewport'
 import {
   clampView2D,
   computeBounds2D,
@@ -14,13 +15,14 @@ import {
 interface Preview2DViewportProps {
   preview: Preview2DPayload | null
   warnings: string[]
+  sourceControl?: PreviewSourceControl
 }
 
 /**
  * 2D 预览视口（P3c）：滚轮以光标为锚点缩放、左键拖拽平移、双击复位。
  * 视口几何数学在 preview2dView.ts（纯函数），本组件只持有 viewBox 状态。
  */
-export function Preview2DViewport({ preview, warnings }: Preview2DViewportProps) {
+export function Preview2DViewport({ preview, warnings, sourceControl }: Preview2DViewportProps) {
   const bounds = useMemo(() => computeBounds2D(preview), [preview])
   const boundsKey = bounds ? `${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}` : ''
   const entityCount = preview ? geometryCount(preview) : 0
@@ -128,7 +130,39 @@ export function Preview2DViewport({ preview, warnings }: Preview2DViewportProps)
           <span>2D View</span>
           <span>{entityCount} entities</span>
         </div>
+        {sourceControl ? (
+          <div className="viewport-toolbar-actions">
+            <button
+              type="button"
+              className={`viewport-action-button${sourceControl.active ? '' : ' active'}`}
+              onClick={() => sourceControl.onModeChange('local')}
+            >
+              本地
+            </button>
+            <button
+              type="button"
+              className={`viewport-action-button${sourceControl.active ? ' active' : ''}`}
+              disabled={sourceControl.available === false}
+              onClick={() => sourceControl.onModeChange('authoritative')}
+              title={sourceControl.available === false ? 'Archicad 未连接，无法使用权威预览' : undefined}
+            >
+              AC权威
+            </button>
+            {sourceControl.active ? (
+              <button
+                type="button"
+                className={`viewport-action-button${sourceControl.stale ? ' viewport-action-attention' : ''}`}
+                disabled={sourceControl.loading}
+                onClick={sourceControl.onRefresh}
+              >
+                {sourceControl.loading ? '刷新中…' : '刷新权威'}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
+      {sourceControl?.error ? <div className="viewport-source-error">{sourceControl.error}</div> : null}
+      {sourceControl?.stale && !sourceControl.error ? <div className="viewport-source-stale">参数已变更，请刷新权威预览</div> : null}
       <div className="preview2d-surface">
         {hasGeometry && preview ? (
           <svg
@@ -201,7 +235,7 @@ export function Preview2DViewport({ preview, warnings }: Preview2DViewportProps)
       </div>
       <footer className="viewport-footer">
         <span className="viewport-fidelity-hint" title="The built-in previewer renders a GDL subset. Compile and open in Archicad for the final result.">
-          Approximate preview · verify in Archicad
+          {sourceControl?.showingAuthoritative ? 'Archicad authoritative' : 'Approximate preview · verify in Archicad'}
         </span>
         <span>
           {entityCount} entities | {warnings.length} warnings

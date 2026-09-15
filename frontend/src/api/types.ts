@@ -74,6 +74,13 @@ export interface PreviewSourceRef {
   segment_end?: number | null
 }
 
+export interface PreviewMeshColor {
+  /** RGB 0-1 浮点（Archicad 权威预览逐 mesh 颜色） */
+  red: number
+  green: number
+  blue: number
+}
+
 export interface PreviewMesh {
   name: string
   vertices: number[][]
@@ -81,6 +88,8 @@ export interface PreviewMesh {
   /** 生成该 mesh 的 GDL 命令打点（openbrep/gdl_previewer.py 逐命令记录）；
    *  RULED 焊接合并等产物可能没有，此时无法溯源跳转 */
   source_ref?: PreviewSourceRef | null
+  /** 权威预览逐 mesh 颜色（RGB 0-1）；本地近似预览不带，渲染回退到模式默认色 */
+  color?: PreviewMeshColor
 }
 
 export interface PreviewPayload {
@@ -90,6 +99,23 @@ export interface PreviewPayload {
   verification?: PreviewVerification
   /** 生成该 payload 的质量档（自描述）；缺省视为旧后端，不参与质量对账 */
   quality?: PreviewQuality
+}
+
+/** Archicad 权威预览（/api/preview/authoritative）：meshes/wires 与本地
+ *  PreviewPayload 形状一致，额外带来源、包围盒与参数应用元数据 */
+export interface AuthoritativePreviewPayload extends PreviewPayload {
+  source?: string
+  bounds?: Record<string, number>
+  appliedParameters?: string[]
+  skippedParameters?: string[]
+  /** 同一次 Archicad 求值返回的权威 2D primitives */
+  preview2d?: Preview2DPayload
+}
+
+export interface AuthoritativePreviewResult {
+  ok: boolean
+  preview?: AuthoritativePreviewPayload
+  error?: string
 }
 
 export interface Preview2DPayload {

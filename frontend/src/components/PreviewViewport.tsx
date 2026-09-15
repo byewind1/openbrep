@@ -8,7 +8,7 @@ import { BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerat
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
-import type { PreviewGhostLabel } from '../state/workbenchStoreTypes'
+import type { PreviewGhostLabel, PreviewSourceMode } from '../state/workbenchStoreTypes'
 import { useT } from '../i18n'
 import { PanelEmpty } from './PanelEmpty'
 import { ExplodeControls } from './ExplodeControls'
@@ -61,9 +61,30 @@ interface PreviewViewportProps {
   previewGhost?: PreviewPayload | null
   /** ghost 快照原因（i18n key），视口角落标签用 */
   previewGhostLabel?: PreviewGhostLabel | null
+  /** Archicad 权威预览来源控制（usePreviewSource 注入）；缺省 = 只本地模式 */
+  sourceControl?: PreviewSourceControl
 }
 
 type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
+
+/** 3D 预览来源控制（Archicad 权威预览）：由 usePreviewSource hook 组装注入，
+ *  视口只读消费。缺省（不传）= 纯本地模式，不渲染来源切换 UI */
+export interface PreviewSourceControl {
+  /** Archicad 当前可连接；false 时权威模式入口禁用 */
+  available?: boolean
+  /** 当前选中来源是否为 Archicad 权威 */
+  active: boolean
+  /** 权威取数进行中（刷新按钮 disabled） */
+  loading: boolean
+  /** 权威取数失败原文（如 "Archicad 未连接"）；非 null 时视口显示的是本地预览 */
+  error: string | null
+  /** 取数后参数又变了：轻提示用户手动刷新 */
+  stale: boolean
+  /** 当前画布实际显示的是权威 payload（active 且有缓存且无错误） */
+  showingAuthoritative: boolean
+  onModeChange: (mode: PreviewSourceMode) => void
+  onRefresh: () => void
+}
 
 const DISPLAY_MODES: Array<{ id: PreviewDisplayMode; label: string; title: string }> = [
   { id: 'solid', label: '实体', title: 'Solid shaded, uniform color' },
@@ -88,6 +109,7 @@ export function PreviewViewport({
   onQualityChange,
   previewGhost,
   previewGhostLabel,
+  sourceControl,
 }: PreviewViewportProps) {
   const t = useT()
   const [cameraMode, setCameraMode] = useState<PreviewCameraMode>('perspective')
@@ -192,6 +214,41 @@ export function PreviewViewport({
           <span>{preview?.meshes.length ?? 0} meshes</span>
         </div>
         <div className="viewport-toolbar-actions">
+          {sourceControl ? (
+            <>
+              <button
+                type="button"
+                className={`viewport-action-button${sourceControl.active ? '' : ' active'}`}
+                onClick={() => sourceControl.onModeChange('local')}
+                title="Built-in approximate preview (instant, follows parameter edits)"
+              >
+                本地
+              </button>
+              <button
+                type="button"
+                className={`viewport-action-button${sourceControl.active ? ' active' : ''}`}
+                disabled={sourceControl.available === false}
+                onClick={() => sourceControl.onModeChange('authoritative')}
+                title={sourceControl.available === false
+                  ? 'Archicad 未连接，无法使用权威预览'
+                  : 'Archicad 权威预览（调用 Archicad 渲染，不跟随参数改动，需手动刷新）'}
+              >
+                AC权威
+              </button>
+              {sourceControl.active ? (
+                <button
+                  type="button"
+                  className={`viewport-action-button${sourceControl.stale ? ' viewport-action-attention' : ''}`}
+                  disabled={sourceControl.loading}
+                  onClick={sourceControl.onRefresh}
+                  title={sourceControl.stale ? '参数已变，点击刷新权威预览' : 'Refresh authoritative preview from Archicad'}
+                >
+                  {sourceControl.loading ? '刷新中…' : '刷新权威'}
+                </button>
+              ) : null}
+              <span className="viewport-toolbar-sep" aria-hidden="true" />
+            </>
+          ) : null}
           {DISPLAY_MODES.map((mode) => (
             <button
               key={mode.id}
@@ -287,6 +344,20 @@ export function PreviewViewport({
         {/* 空态层：浮在 canvas 上（pointer-events: none），有内容时不渲染 */}
         {isEmpty ? (
           <PanelEmpty overlay icon="◻" title={t('preview.empty.title')} hint={t('preview.empty.hint')} />
+        ) : null}
+        {/* 权威预览标注：显示权威 payload 时左上角徽章 */}
+        {sourceControl?.showingAuthoritative ? (
+          <div className="viewport-authoritative-tag">Archicad 权威</div>
+        ) : null}
+        {/* 权威预览轻提示：取数后参数又变了，不自动重取，等用户点「刷新权威」 */}
+        {sourceControl?.active && sourceControl.stale ? (
+          <div className="viewport-authoritative-stale">参数已变，点击「刷新权威」更新</div>
+        ) : null}
+        {/* 权威取数失败：错误原文上屏（不静默），画布保持显示本地预览 */}
+        {sourceControl?.active && sourceControl.error ? (
+          <div className="viewport-authoritative-error" role="alert">
+            权威预览失败：{sourceControl.error}
+          </div>
         ) : null}
         {/* absolute + inset:0：见 styles.css .canvas-wrap 注释，
             防止 canvas 的内联 px 宽度反向撑住容器导致无法收缩 */}
@@ -413,8 +484,15 @@ export function PreviewViewport({
         <span>
           {cameraMode === 'orthographic' ? 'Orthographic' : 'Perspective'} | {viewPreset.toUpperCase()}
         </span>
-        <span className="viewport-fidelity-hint" title="The built-in previewer renders a GDL subset. Compile and open in Archicad for the final result.">
-          Approximate preview · verify in Archicad
+        <span
+          className="viewport-fidelity-hint"
+          title={
+            sourceControl?.showingAuthoritative
+              ? 'Rendered by Archicad with the current parameter overrides.'
+              : 'The built-in previewer renders a GDL subset. Compile and open in Archicad for the final result.'
+          }
+        >
+          {sourceControl?.showingAuthoritative ? 'Archicad 权威预览（由 Archicad 渲染）' : 'Approximate preview · verify in Archicad'}
         </span>
         <span>
           {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings | {sourceLabel}
@@ -770,12 +848,18 @@ function PartMesh({
   }
 
   const isMono = displayMode === 'mono'
+  // 权威预览逐 mesh 颜色（RGB 0-1 → three.js Color）；本地预览无 color 字段，
+  // 回退 solid 统一色。random/wire 按部件 hash 取色、mono 单色，均不消费 mesh.color
+  const meshColor = useMemo(
+    () => (mesh.color ? new Color(mesh.color.red, mesh.color.green, mesh.color.blue) : null),
+    [mesh],
+  )
   const color =
     displayMode === 'random'
       ? hashColor(componentColorIdentity(mesh.name, index, colorCompId))
       : isMono
         ? MONO_COLOR
-        : SOLID_COLOR
+        : (meshColor ?? SOLID_COLOR)
   // mono 的材质参数与原分支一致（roughness/metalness/envMapIntensity 不同）
   const shading = isMono
     ? { roughness: 0.7, metalness: 0.0, envMapIntensity: 0.6 }

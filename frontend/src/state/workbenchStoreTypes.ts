@@ -8,6 +8,7 @@ import type {
   AssistantImageAttachment,
   AssistantMessage,
   AssistantResult,
+  AuthoritativePreviewResult,
   ClearProjectMemoryResult,
   CompileResult,
   CompilerSettings,
@@ -94,6 +95,8 @@ export interface WorkbenchApi {
     scripts?: Record<string, string>,
     quality?: PreviewQuality,
   ) => Promise<Preview2DPayload>
+  /** Archicad 权威预览（/api/preview/authoritative）；parameters 缺省 = 后端用当前参数值 */
+  fetchAuthoritativePreview: (parameters?: Record<string, unknown>) => Promise<AuthoritativePreviewResult>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
@@ -207,6 +210,9 @@ export interface WorkbenchApi {
 
 export type BackendErrorKind = 'down' | 'starting' | 'timeout'
 
+/** 3D 预览来源：本地内置近似预览（默认）/ Archicad 权威预览（手动刷新） */
+export type PreviewSourceMode = 'local' | 'authoritative'
+
 /** P2a ghost 快照原因（i18n key）；扩展新原因时保持该 union 与 zh/en 文案同步 */
 export type PreviewGhostLabel = 'preview.ghost.preTask'
 
@@ -229,6 +235,17 @@ export interface WorkbenchState {
   previewGhost: PreviewPayload | null
   /** ghost 快照原因（i18n key，目前只有"任务前"）；与 previewGhost 同生共死 */
   previewGhostLabel: PreviewGhostLabel | null
+  /** 3D 预览来源（Archicad 权威预览）：'local' = 内置近似预览（默认，行为不变） */
+  previewSourceMode: PreviewSourceMode
+  /** 最近一次成功的权威预览 payload；独立于 preview，本地近似预览刷新链不受影响 */
+  previewAuthoritative: PreviewPayload | null
+  /** 与 3D 同一次 Archicad 求值返回的 2D primitives */
+  previewAuthoritative2d: Preview2DPayload | null
+  previewAuthoritativeLoading: boolean
+  /** 权威取数失败（如 Archicad 未连接）：视口上屏显示，同时回退显示本地预览 */
+  previewAuthoritativeError: string | null
+  /** 权威取数时 draftParameters 的 JSON 指纹；与当前指纹不一致 = 参数已变（轻提示刷新） */
+  previewAuthoritativeParamsKey: string | null
   warnings: string[]
   loading: boolean
   applying: boolean
@@ -402,6 +419,10 @@ export interface WorkbenchState {
   loadPreview2D: () => Promise<void>
   /** 切换预览质量档并立即重取预览（2D tab 活跃时一并刷新） */
   setPreviewQuality: (quality: PreviewQuality) => Promise<void>
+  /** 切换 3D 预览来源；首次切到权威模式且无缓存时立即取一次 */
+  setPreviewSourceMode: (mode: PreviewSourceMode) => Promise<void>
+  /** 显式刷新 Archicad 权威预览（不跟随参数改动自动触发） */
+  loadAuthoritativePreview: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean
 }

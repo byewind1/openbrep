@@ -150,6 +150,111 @@ def empty_preview_payload() -> dict[str, Any]:
     }
 
 
+def authoritative_preview_payload(
+    project: HSFProject,
+    overrides: dict[str, Any] | None,
+    tapir_adapter: Any,
+) -> dict[str, Any]:
+    """P15：Archicad 权威预览——让后台 Archicad 用真实引擎求值当前物件。
+
+    图库物件按项目名（HSF 目录名）在当前活动图库中查找；参数取
+    paramlist 当前值 + 调用方覆盖。返回与本地预览相同的 three.js payload
+    形状，外加 source="archicad" 与参数应用明细。add-on 返回的 vertices/
+    faces 是扁平数组，这里恢复成三元组。
+    """
+    if tapir_adapter is None:
+        return {"ok": False, "error": "Archicad 连接不可用"}
+    parameters = parameter_values(project, overrides)
+    result = tapir_adapter.evaluate_library_part(
+        lib_part_name=project.name,
+        parameters=parameters,
+        want=["mesh3d", "prims2d"],
+    )
+    if not result.get("ok"):
+        return {"ok": False, "error": str(result.get("error") or "权威求值失败")}
+
+    meshes: list[dict[str, Any]] = []
+    for raw_mesh in result.get("meshes") or []:
+        if not isinstance(raw_mesh, dict):
+            continue
+        flat_v = raw_mesh.get("vertices") or []
+        flat_f = raw_mesh.get("faces") or []
+        vertices = [list(flat_v[i:i + 3]) for i in range(0, len(flat_v) - 2, 3)]
+        vertex_count = len(vertices)
+        raw_faces = [list(flat_f[i:i + 3]) for i in range(0, len(flat_f) - 2, 3)]
+        faces = [
+            face for face in raw_faces
+            if all(isinstance(index, int) and 0 <= index < vertex_count for index in face)
+        ]
+        item: dict[str, Any] = {
+            "name": str(raw_mesh.get("name") or "body"),
+            "vertices": vertices,
+            "faces": faces,
+        }
+        color = raw_mesh.get("color")
+        if isinstance(color, dict):
+            item["color"] = color
+        meshes.append(item)
+
+    warnings: list[str] = []
+    invalid_face_count = int(result.get("invalidFaceCount") or 0)
+    if invalid_face_count:
+        warnings.append(f"Archicad 返回 {invalid_face_count} 个退化子多边形，已忽略其非法三角面")
+
+    preview2d = _authoritative_preview_2d(result.get("preview2d"), warnings)
+    payload: dict[str, Any] = {
+        "meshes": meshes,
+        "wires": [],
+        "warnings": warnings,
+        "source": "archicad",
+        "bounds": result.get("bounds"),
+        "appliedParameters": result.get("appliedParameters") or [],
+        "skippedParameters": result.get("skippedParameters") or [],
+        "preview2d": preview2d,
+    }
+    return {"ok": True, "preview": payload}
+
+
+def _authoritative_preview_2d(raw: Any, warnings: list[str]) -> dict[str, Any]:
+    """Normalize the add-on's compact 2D primitive payload for Preview2DViewport."""
+    if not isinstance(raw, dict):
+        return empty_preview_2d_payload()
+    polygons: list[list[list[float]]] = []
+    polygon_fills: list[bool] = []
+    for item in raw.get("polygons") or []:
+        if not isinstance(item, dict):
+            continue
+        flat = item.get("points") or []
+        polygons.append([list(flat[i:i + 2]) for i in range(0, len(flat) - 1, 2)])
+        polygon_fills.append(bool(item.get("filled")))
+    arcs = []
+    circles = []
+    for item in raw.get("arcs") or []:
+        if not isinstance(item, dict):
+            continue
+        normalized = {key: float(item.get(key) or 0.0) for key in ("cx", "cy", "r", "a0", "a1")}
+        if item.get("whole"):
+            circles.append({key: normalized[key] for key in ("cx", "cy", "r")})
+        else:
+            arcs.append(normalized)
+    unsupported = int(raw.get("unsupportedCount") or 0)
+    approximated = int(raw.get("approximatedCurveCount") or 0)
+    if unsupported:
+        warnings.append(f"Archicad 2D 中有 {unsupported} 个当前无法表示的 primitive")
+    if approximated:
+        warnings.append(f"Archicad 2D 中有 {approximated} 条多段线/多边形曲线以弦线近似")
+    return {
+        "lines": list(raw.get("lines") or []),
+        "polygons": polygons,
+        "polygon_fills": polygon_fills,
+        "polygon_contours": [True] * len(polygons),
+        "circles": circles,
+        "arcs": arcs,
+        "texts": list(raw.get("texts") or []),
+        "warnings": list(warnings),
+    }
+
+
 def preview_2d_payload(
     project: HSFProject,
     overrides: dict[str, Any] | None = None,

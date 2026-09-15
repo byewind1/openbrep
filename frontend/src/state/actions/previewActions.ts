@@ -1,7 +1,9 @@
 import type { PreviewQuality } from '../../api/types'
-import type { WorkbenchActionContext } from '../workbenchStoreTypes'
+import type { PreviewSourceMode, WorkbenchActionContext } from '../workbenchStoreTypes'
 
 export function createPreviewActions({ api, get, set }: WorkbenchActionContext) {
+  let authoritativeRequestSerial = 0
+
   function dirtyScriptBuffers() {
     return Object.fromEntries(
       Object.entries(get().dirtyScripts)
@@ -29,6 +31,41 @@ export function createPreviewActions({ api, get, set }: WorkbenchActionContext) 
       if (get().activeRailPanel === '2d') {
         await get().loadPreview2D()
       }
+    },
+
+    async setPreviewSourceMode(mode: PreviewSourceMode) {
+      if (mode === get().previewSourceMode) return
+      set({ previewSourceMode: mode })
+      // 首次切到权威模式立即取一次；之后只由「刷新权威」显式触发，
+      // 不跟随参数改动自动重取（每次调用 Archicad 成本高）
+      if (mode === 'authoritative' && !get().previewAuthoritative && !get().previewAuthoritativeLoading) {
+        await get().loadAuthoritativePreview()
+      }
+    },
+
+    async loadAuthoritativePreview() {
+      const draft = get().draftParameters
+      const requestedProjectEpoch = get().projectEpoch
+      const requestSerial = ++authoritativeRequestSerial
+      set({ previewAuthoritativeLoading: true, previewAuthoritativeError: null })
+      const result = await api.fetchAuthoritativePreview(draft)
+      // Archicad 求值可能较慢。切项目或后发刷新完成后，旧响应不得回写。
+      if (requestSerial !== authoritativeRequestSerial || get().projectEpoch !== requestedProjectEpoch) return
+      if (!result.ok || !result.preview) {
+        // 失败不清空已有数据、不动本地 preview：视口回退显示本地预览，错误原文上屏
+        set({
+          previewAuthoritativeLoading: false,
+          previewAuthoritativeError: result.error ?? 'Authoritative preview failed.',
+        })
+        return
+      }
+      set({
+        previewAuthoritativeLoading: false,
+        previewAuthoritativeError: null,
+        previewAuthoritative: result.preview,
+        previewAuthoritative2d: result.preview.preview2d ?? null,
+        previewAuthoritativeParamsKey: JSON.stringify(draft),
+      })
     },
   }
 }

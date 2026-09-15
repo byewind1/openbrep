@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { Preview2DPayload } from '../api/types'
 import { Preview2DViewport } from './Preview2DViewport'
 import { fitView2D, toViewBoxString } from './preview2dView'
@@ -125,5 +125,32 @@ describe('Preview2DViewport (P3c)', () => {
     }
     const { container } = render(<Preview2DViewport preview={preview} warnings={[]} />)
     expect(container.querySelector('.preview2d-text')).toBeNull()
+  })
+
+  test('shows authoritative source controls and explicit stale state', () => {
+    const onModeChange = vi.fn()
+    const onRefresh = vi.fn()
+    render(
+      <Preview2DViewport
+        preview={samplePreview()}
+        warnings={[]}
+        sourceControl={{
+          active: true,
+          loading: false,
+          error: null,
+          stale: true,
+          showingAuthoritative: true,
+          onModeChange,
+          onRefresh,
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Archicad authoritative')).toBeTruthy()
+    expect(screen.getByText('参数已变更，请刷新权威预览')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '本地' }))
+    fireEvent.click(screen.getByRole('button', { name: '刷新权威' }))
+    expect(onModeChange).toHaveBeenCalledWith('local')
+    expect(onRefresh).toHaveBeenCalledTimes(1)
   })
 })

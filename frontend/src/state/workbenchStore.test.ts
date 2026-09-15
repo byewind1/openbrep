@@ -63,6 +63,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       workspace: '/workspace',
     }),
     fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
+    fetchAuthoritativePreview: async () => ({ ok: false, error: 'Archicad 未连接' }),
     fetchPreview2D: async () => ({
       lines: [{ from: [0, 0], to: [1, 1] }],
       polygons: [],
@@ -1384,6 +1385,170 @@ test('loadPreview3D verifies dirty editor buffers without saving first', async (
   expect(calls).toEqual([{ parameters: {}, scripts: { '3d.gdl': 'BLOCK 2, 1, 1' } }])
   expect(store.getState().preview?.meshes[0]?.name).toBe('dirty-block')
   expect(store.getState().warnings).toEqual(['preview uses editor buffer'])
+})
+
+describe('Archicad 权威预览来源', () => {
+  const AUTHORITATIVE_PREVIEW = {
+    meshes: [
+      {
+        name: 'body_1',
+        vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+        faces: [[0, 1, 2]],
+        color: { red: 0.5, green: 0.6, blue: 0.7 },
+      },
+    ],
+    wires: [],
+    warnings: [],
+    source: 'archicad',
+    preview2d: {
+      lines: [{ from: [0, 0] as [number, number], to: [1, 0] as [number, number] }],
+      polygons: [],
+      circles: [],
+      arcs: [],
+      warnings: [],
+    },
+  }
+
+  test('switching to authoritative mode fetches once and caches the payload', async () => {
+    const fetchAuthoritativePreview = vi.fn(async () => ({ ok: true, preview: AUTHORITATIVE_PREVIEW }))
+    const store = createWorkbenchStore(makeApi({ fetchAuthoritativePreview }))
+
+    expect(store.getState().previewSourceMode).toBe('local')
+
+    await store.getState().setPreviewSourceMode('authoritative')
+
+    expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+    expect(store.getState().previewSourceMode).toBe('authoritative')
+    expect(store.getState().previewAuthoritative?.meshes[0]?.name).toBe('body_1')
+    expect(store.getState().previewAuthoritative?.meshes[0]?.color).toEqual({ red: 0.5, green: 0.6, blue: 0.7 })
+    expect(store.getState().previewAuthoritative2d?.lines).toHaveLength(1)
+    expect(store.getState().previewAuthoritativeError).toBeNull()
+    expect(store.getState().previewAuthoritativeLoading).toBe(false)
+
+    // 切回本地再切回权威：已有缓存，不重复调用 Archicad
+    await store.getState().setPreviewSourceMode('local')
+    await store.getState().setPreviewSourceMode('authoritative')
+    expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+    expect(store.getState().previewSourceMode).toBe('authoritative')
+  })
+
+  test('draft parameter changes do not auto-refetch the authoritative preview', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchAuthoritativePreview = vi.fn(async () => ({ ok: true, preview: AUTHORITATIVE_PREVIEW }))
+      const store = createWorkbenchStore(makeApi({ fetchAuthoritativePreview }))
+
+      await store.getState().setPreviewSourceMode('authoritative')
+      expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+      expect(store.getState().previewAuthoritativeParamsKey).toBe('{}')
+
+      // 参数改动只走本地近似预览的防抖刷新；权威预览不重取，指纹留在旧值 → stale
+      await store.getState().setDraftParameter('A', 2)
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+      expect(store.getState().previewAuthoritativeParamsKey).toBe('{}')
+      expect(store.getState().draftParameters).toEqual({ A: 2 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('manual refresh re-fetches with the current draft parameters', async () => {
+    const seen: Array<Record<string, unknown> | undefined> = []
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchAuthoritativePreview: async (parameters) => {
+          seen.push(parameters)
+          return { ok: true, preview: AUTHORITATIVE_PREVIEW }
+        },
+      }),
+    )
+
+    await store.getState().setPreviewSourceMode('authoritative')
+    store.setState({ draftParameters: { A: 2 } })
+    await store.getState().loadAuthoritativePreview()
+
+    expect(seen).toEqual([{}, { A: 2 }])
+    expect(store.getState().previewAuthoritativeParamsKey).toBe('{"A":2}')
+  })
+
+  test('a failed fetch stores the error and keeps the local preview untouched', async () => {
+    const localPreview = { meshes: [{ name: 'local', vertices: [], faces: [] }], wires: [], warnings: [] }
+    const store = createWorkbenchStore(
+      makeApi({ fetchAuthoritativePreview: async () => ({ ok: false, error: 'Archicad 未连接' }) }),
+    )
+    store.setState({ preview: localPreview })
+
+    await store.getState().setPreviewSourceMode('authoritative')
+
+    expect(store.getState().previewAuthoritativeError).toBe('Archicad 未连接')
+    expect(store.getState().previewAuthoritative).toBeNull()
+    expect(store.getState().previewAuthoritative2d).toBeNull()
+    expect(store.getState().preview).toBe(localPreview)
+    expect(store.getState().previewAuthoritativeLoading).toBe(false)
+  })
+
+  test('a failed refresh after a success keeps the cached payload and shows the error', async () => {
+    let fail = false
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchAuthoritativePreview: async () =>
+          fail ? { ok: false, error: '门窗类物件需要宿主墙' } : { ok: true, preview: AUTHORITATIVE_PREVIEW },
+      }),
+    )
+
+    await store.getState().setPreviewSourceMode('authoritative')
+    expect(store.getState().previewAuthoritative).not.toBeNull()
+
+    fail = true
+    await store.getState().loadAuthoritativePreview()
+
+    expect(store.getState().previewAuthoritativeError).toBe('门窗类物件需要宿主墙')
+    expect(store.getState().previewAuthoritative?.meshes[0]?.name).toBe('body_1')
+  })
+
+  test('project switches reset the authoritative state back to local mode', async () => {
+    const fetchAuthoritativePreview = vi.fn(async () => ({ ok: true, preview: AUTHORITATIVE_PREVIEW }))
+    const store = createWorkbenchStore(makeApi({ fetchAuthoritativePreview }))
+
+    await store.getState().setPreviewSourceMode('authoritative')
+    expect(store.getState().previewAuthoritative).not.toBeNull()
+
+    await store.getState().load()
+
+    expect(store.getState().previewSourceMode).toBe('local')
+    expect(store.getState().previewAuthoritative).toBeNull()
+    expect(store.getState().previewAuthoritativeError).toBeNull()
+    expect(store.getState().previewAuthoritativeParamsKey).toBeNull()
+  })
+
+  test('a late authoritative response cannot leak across a project switch', async () => {
+    let resolvePreview: ((value: { ok: true; preview: typeof AUTHORITATIVE_PREVIEW }) => void) | undefined
+    const pendingPreview = new Promise<{ ok: true; preview: typeof AUTHORITATIVE_PREVIEW }>((resolve) => {
+      resolvePreview = resolve
+    })
+    const store = createWorkbenchStore(
+      makeApi({ fetchAuthoritativePreview: async () => pendingPreview }),
+    )
+
+    store.setState({ projectEpoch: 1 })
+    const loading = store.getState().setPreviewSourceMode('authoritative')
+    store.setState({
+      projectEpoch: 2,
+      previewSourceMode: 'local',
+      previewAuthoritative: null,
+      previewAuthoritativeLoading: false,
+      previewAuthoritativeError: null,
+      previewAuthoritativeParamsKey: null,
+    })
+    resolvePreview?.({ ok: true, preview: AUTHORITATIVE_PREVIEW })
+    await loading
+
+    expect(store.getState().previewSourceMode).toBe('local')
+    expect(store.getState().previewAuthoritative).toBeNull()
+    expect(store.getState().previewAuthoritativeLoading).toBe(false)
+  })
 })
 
 test('updates compiler settings through the API', async () => {

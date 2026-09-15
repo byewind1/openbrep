@@ -8,6 +8,7 @@ import type {
   TapirStatus,
 } from '../../api/types'
 import { useWorkbenchStore } from '../../state/useWorkbenchStore'
+import { usePreview2DSource, usePreviewSource } from '../preview/usePreviewSource'
 
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
 const Preview2DViewport = lazy(() => import('../../components/Preview2DViewport').then((m) => ({ default: m.Preview2DViewport })))
@@ -127,6 +128,9 @@ export function WorkbenchRightRail({
   // P2a：任务前版本 ghost 快照，视口只读消费
   const previewGhost = useWorkbenchStore((state) => state.previewGhost)
   const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
+  // Archicad 权威预览：来源切换/缓存/错误在 store，这里只解析出当前应显示的 payload
+  const { preview: displayPreview, sourceControl } = usePreviewSource(preview)
+  const { preview: displayPreview2d, sourceControl: sourceControl2d } = usePreview2DSource(preview2d)
   return (
     <aside className="workbench-right-rail right-rail">
       <div className="rail-tabs" role="tablist" aria-label="Right rail panels">
@@ -154,8 +158,8 @@ export function WorkbenchRightRail({
         {activeRailPanel === '3d' ? (
           <Suspense fallback={<div className="viewport-loading" />}>
             <PreviewViewport
-              preview={preview}
-              warnings={warnings}
+              preview={displayPreview}
+              warnings={displayPreview?.warnings ?? warnings}
               hasDirtyScripts={hasDirtyScripts}
               onExpand={onExpandPreview}
               onFloat={onFloatPreview}
@@ -164,6 +168,7 @@ export function WorkbenchRightRail({
               onQualityChange={(quality) => void setPreviewQuality(quality)}
               previewGhost={previewGhost}
               previewGhostLabel={previewGhostLabel}
+              sourceControl={sourceControl}
               actions={(
                 <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
                   Update
@@ -173,7 +178,11 @@ export function WorkbenchRightRail({
           </Suspense>
         ) : activeRailPanel === '2d' ? (
           <Suspense fallback={<div className="viewport-loading" />}>
-            <Preview2DViewport preview={preview2d} warnings={warnings} />
+            <Preview2DViewport
+              preview={displayPreview2d}
+              warnings={displayPreview2d?.warnings ?? warnings}
+              sourceControl={sourceControl2d}
+            />
           </Suspense>
         ) : activeRailPanel === 'inspect' ? (
           <Suspense fallback={<div className="viewport-loading" />}>

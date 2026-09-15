@@ -9,6 +9,7 @@ import type {
   AssistantMessage,
   AssistantResult,
   AssistantStreamEvent,
+  AuthoritativePreviewResult,
   ClearProjectMemoryResult,
   CompileResult,
   CreateProjectResult,
@@ -162,6 +163,22 @@ export async function fetchPreview2D(
     { preview: fallbackPreview2D },
   )
   return response.preview
+}
+
+/** Archicad 权威预览：调用 Archicad 渲染当前项目（成本高，只由用户显式刷新触发）。
+ *  parameters 缺省时后端用当前参数值。ok:false 时 error 原文由视口上屏展示。 */
+export async function fetchAuthoritativePreview(
+  parameters?: Record<string, unknown>,
+): Promise<AuthoritativePreviewResult> {
+  return requestJson<AuthoritativePreviewResult>(
+    '/api/preview/authoritative',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parameters ? { parameters } : {}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
 }
 
 export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> {

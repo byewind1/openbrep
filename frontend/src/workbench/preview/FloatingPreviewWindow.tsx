@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { PreviewPayload } from '../../api/types'
 import { useWorkbenchStore } from '../../state/useWorkbenchStore'
+import { usePreviewSource } from './usePreviewSource'
 
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
 
@@ -21,6 +22,8 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
   // P2a：任务前版本 ghost 快照，视口只读消费
   const previewGhost = useWorkbenchStore((state) => state.previewGhost)
   const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
+  // Archicad 权威预览：来源切换/缓存/错误在 store，这里只解析出当前应显示的 payload
+  const { preview: displayPreview, sourceControl } = usePreviewSource(preview)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [fullscreen, setFullscreen] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
@@ -102,8 +105,8 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
       <div className="floating-preview-body">
         <Suspense fallback={<div className="viewport-loading" />}>
           <PreviewViewport
-            preview={preview}
-            warnings={warnings}
+            preview={displayPreview}
+            warnings={displayPreview?.warnings ?? warnings}
             variant="floating"
             hasDirtyScripts={hasDirtyScripts}
             onRevealSource={onRevealSource}
@@ -111,6 +114,7 @@ export function FloatingPreviewWindow({ open, preview, warnings, hasDirtyScripts
             onQualityChange={(quality) => void setPreviewQuality(quality)}
             previewGhost={previewGhost}
             previewGhostLabel={previewGhostLabel}
+            sourceControl={sourceControl}
           />
         </Suspense>
       </div>

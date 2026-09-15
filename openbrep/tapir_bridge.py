@@ -178,9 +178,13 @@ class TapirBridge:
     """
 
     TAPIR_ADDON_ID = "TapirCommand"
+    # OpenBrep Add-On 的 Add-On Commands 命名空间（openbrep-addon 仓
+    # EvaluateLibraryPartCommand::GetNamespace）
+    OPENBREP_ADDON_ID = "OpenBrep"
 
     def __init__(self):
         self._conn = None
+        self._last_connection_error = ""
         self._last_log_size = 0
         self._error_log_path: Optional[Path] = None
         self._error_callback: Optional[Callable] = None
@@ -191,12 +195,19 @@ class TapirBridge:
     def connect(self) -> bool:
         """尝试连接 Archicad，返回是否成功。"""
         if not _AC_AVAILABLE:
+            self._last_connection_error = "Archicad Python API 未安装"
             return False
         try:
-            self._conn = ACConnection.connect()
+            # ACConnection.connect() 会偷读当前进程的 ``--port`` 参数。工作台
+            # API 自身也以 ``--port 8765`` 启动，若直接调用会误把 8765 当成
+            # Archicad 端口且不再扫描官方 19723..19743 范围。
+            archicad_port = ACConnection.find_first_port()
+            self._conn = ACConnection.connect(archicad_port) if archicad_port else None
+            self._last_connection_error = "" if self._conn is not None else "未发现可连接的 Archicad 实例"
             return self._conn is not None
-        except Exception:
+        except Exception as exc:
             self._conn = None
+            self._last_connection_error = str(exc)
             return False
 
     def is_available(self) -> bool:
@@ -227,6 +238,7 @@ class TapirBridge:
             "archicad_connected": ac_ok,
             "tapir_available": tapir_ok,
             "version": version,
+            "connection_error": self._last_connection_error,
         }
 
     # ── 核心命令 ────────────────────────────────────────────────────────
@@ -577,17 +589,45 @@ class TapirBridge:
 
     # ── 内部工具 ────────────────────────────────────────────────────────
 
-    def _tapir_call(self, command_name: str, params: dict):
-        """向 Tapir Add-On 发送命令。"""
+    def _tapir_call(self, command_name: str, params: dict, addon_id: str | None = None):
+        """向 Tapir Add-On（默认）或 OpenBrep Add-On 发送命令。"""
         if self._conn is None:
             raise RuntimeError("未连接 Archicad")
-        ac_params = self._conn.types.AddOnCommandParameters()
-        for k, v in params.items():
-            setattr(ac_params, k, v)
+        # Graphisoft 的 AddOnCommandParameters 是无字段占位类型；自定义命令的
+        # schema 只在 Archicad 侧注册，Python 客户端不会动态生成对应属性。
+        # ExecuteAddOnCommand 特意允许这里直接传 dict，由请求容器原样序列化。
         return self._conn.commands.ExecuteAddOnCommand(
-            self._conn.types.AddOnCommandId(self.TAPIR_ADDON_ID, command_name),
-            ac_params
+            self._conn.types.AddOnCommandId(addon_id or self.TAPIR_ADDON_ID, command_name),
+            params,
         )
+
+    def evaluate_library_part(
+        self,
+        lib_part_name: str = "",
+        lib_part_guid: str = "",
+        parameters: Optional[dict] = None,
+        want: Optional[list[str]] = None,
+    ) -> dict:
+        """调用 OpenBrep Add-On 的 EvaluateLibraryPart 权威求值命令（P15）。
+
+        Archicad 用当前活动图库 + 覆盖参数真实求值物件，返回
+        {success, meshes[{name, vertices(扁平xyz), faces(扁平ijk), color}],
+        bounds, appliedParameters, skippedParameters} 或
+        {success: False, errorMessage}。
+        """
+        params: dict = {}
+        if lib_part_name:
+            params["libPartName"] = lib_part_name
+        if lib_part_guid:
+            params["libPartGuid"] = lib_part_guid
+        if parameters:
+            params["parameters"] = parameters
+        if want:
+            params["want"] = want
+        raw = self._tapir_call("EvaluateLibraryPart", params, addon_id=self.OPENBREP_ADDON_ID)
+        if hasattr(raw, "__dict__") and not isinstance(raw, dict):
+            raw = {k: v for k, v in vars(raw).items() if not k.startswith("_")}
+        return raw if isinstance(raw, dict) else {"success": False, "errorMessage": str(raw)}
 
 
 # ── 单例 ──────────────────────────────────────────────────────────────────

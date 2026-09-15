@@ -222,6 +222,120 @@ def test_workbench_tapir_loads_and_applies_selected_parameters():
     ]
 
 
+def test_workbench_authoritative_preview_requires_project():
+    session = WorkbenchSession(tapir_import_ok=False)
+    response = session.route("POST", "/api/preview/authoritative")
+    assert response["ok"] is False
+    assert "project" in response["error"].lower() or "项目" in response["error"]
+
+
+def test_workbench_authoritative_preview_reshapes_meshes(tmp_path):
+    project = HSFProject.create_new("AuthShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    captured = {}
+
+    class FakeBridge:
+        def get_status(self):
+            return {"archicad_connected": True, "tapir_available": True, "version": "Archicad"}
+
+        def evaluate_library_part(self, lib_part_name="", lib_part_guid="", parameters=None, want=None):
+            captured["name"] = lib_part_name
+            captured["parameters"] = parameters
+            captured["want"] = want
+            return {
+                "success": True,
+                "meshes": [{
+                    "name": "body_1",
+                    "vertices": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                    "faces": [0, 1, 2, -1, 1, 2],
+                    "color": {"red": 0.5, "green": 0.6, "blue": 0.7},
+                }],
+                "bounds": {"xMin": 0.0, "xMax": 1.0},
+                "appliedParameters": ["A"],
+                "skippedParameters": [],
+                "invalidFaceCount": 1,
+                "preview2d": {
+                    "lines": [{"from": [0.0, 0.0], "to": [1.0, 0.0]}],
+                    "polygons": [{"points": [0.0, 0.0, 1.0, 0.0, 0.0, 1.0], "filled": True}],
+                    "arcs": [{"cx": 2.0, "cy": 3.0, "r": 1.0, "a0": 0.0, "a1": 360.0, "whole": True}],
+                    "texts": [],
+                    "unsupportedCount": 0,
+                    "approximatedCurveCount": 1,
+                },
+            }
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+    )
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    response = session.route(
+        "POST",
+        "/api/preview/authoritative",
+        {"parameters": {"A": 1.25}},
+    )
+
+    assert response["ok"] is True
+    assert captured["name"] == "AuthShelf"
+    assert captured["parameters"]["A"] == 1.25
+    assert "parameters" not in captured["parameters"]
+    assert captured["want"] == ["mesh3d", "prims2d"]
+    preview = response["preview"]
+    assert preview["source"] == "archicad"
+    assert preview["meshes"][0]["vertices"] == [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    assert preview["meshes"][0]["faces"] == [[0, 1, 2]]
+    assert preview["meshes"][0]["color"] == {"red": 0.5, "green": 0.6, "blue": 0.7}
+    assert preview["bounds"]["xMax"] == 1.0
+    assert preview["preview2d"]["lines"][0]["to"] == [1.0, 0.0]
+    assert preview["preview2d"]["polygons"][0] == [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+    assert preview["preview2d"]["circles"] == [{"cx": 2.0, "cy": 3.0, "r": 1.0}]
+    assert any("退化子多边形" in warning for warning in preview["warnings"])
+    assert any("弦线近似" in warning for warning in preview["warnings"])
+
+
+def test_workbench_authoritative_preview_error_passthrough(tmp_path):
+    project = HSFProject.create_new("AuthShelf2", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FakeBridge:
+        def get_status(self):
+            return {"archicad_connected": True, "tapir_available": True, "version": "Archicad"}
+
+        def evaluate_library_part(self, lib_part_name="", lib_part_guid="", parameters=None, want=None):
+            return {"success": False, "errorMessage": "门窗/天窗类物件需要宿主墙"}
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+    )
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    response = session.route("POST", "/api/preview/authoritative")
+    assert response["ok"] is False
+    assert "宿主墙" in response["error"]
+
+
+def test_workbench_authoritative_preview_without_archicad(tmp_path):
+    project = HSFProject.create_new("AuthShelf3", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FakeBridge:
+        def get_status(self):
+            return {"archicad_connected": False}
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+    )
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    response = session.route("POST", "/api/preview/authoritative")
+    assert response["ok"] is False
+    assert "Archicad" in response["error"]
+
+
 def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
     project = HSFProject.create_new("LoadedShelf", str(tmp_path))
     project.parameters.append(GDLParameter("shelf_count", "Integer", "Shelves", "4"))
@@ -1921,7 +2035,7 @@ def test_workbench_session_assistant_explains_loaded_project(tmp_path):
     project = HSFProject.create_new("ExplainedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()
 
-    session = WorkbenchSession()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     response = session.route("POST", "/api/assistant", {"message": "解释这个构件"})
 
@@ -1935,7 +2049,7 @@ def test_workbench_session_assistant_explains_parameter_mentions(tmp_path):
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
     hsf_dir = project.save_to_disk()
 
-    session = WorkbenchSession()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     response = session.route("POST", "/api/assistant", {"message": "详细解释 A 参数"})
 
