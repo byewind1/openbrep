@@ -36,6 +36,7 @@ try:
     from archicad import ACConnection
     _AC_AVAILABLE = True
 except ImportError:
+    ACConnection = None
     _AC_AVAILABLE = False
 
 try:

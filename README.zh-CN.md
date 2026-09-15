@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.9.6 — 修复自动更新在安装包中静默失效（v0.9.2–v0.9.5 受影响）；macOS 提供 Apple Silicon 与 Intel 双安装包。
+> 正式发布版本 v0.10.0 — Archicad 权威预览、真实库部件覆盖与 Archicad 风格参数面板；macOS 提供 Apple Silicon 与 Intel 双安装包。
 
 ---
 
@@ -45,8 +45,8 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.9.6_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.9.6_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.9.6_x64_en-US.msi` 或 `OpenBrep_0.9.6_x64-setup.exe`
+- macOS：`OpenBrep_0.10.0_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.0_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.10.0_x64_en-US.msi` 或 `OpenBrep_0.10.0_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
@@ -379,6 +379,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.10.0 | Archicad 权威预览通道、真实库部件预览覆盖、Archicad 风格 `ui.gdl` 参数面板与 Tauri 启动错误页（见 docs/releases/v0.10.0.md） |
 | v0.9.6 | 修复自动更新在安装包中静默失效（sidecar 内嵌前端丢失 VITE_IS_TAURI 标记 + 远程来源命令被 ACL 拒绝 + 环境判据过严，v0.9.2–v0.9.5 均受影响）（见 docs/releases/v0.9.6.md） |
 | v0.9.5 | macOS 安装包新增 Intel（x86_64）版：CI 加 `macos-15-intel` 构建腿，`latest.json` 更新清单同步支持 `darwin-x86_64`（见 docs/releases/v0.9.5.md） |
 | v0.9.4 | 图标修订：完整三角形构图 + 右缘文字残影遮罩抹除（见 docs/releases/v0.9.4.md） |
