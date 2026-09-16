@@ -32,7 +32,7 @@ describe('AiSettingsPanel save-and-verify', () => {
     expect(screen.getByTestId('chatgpt-codex-card')).toBeTruthy()
   })
 
-  test('starts the ChatGPT login step directly when Codex is signed out', async () => {
+  test('opens the Codex status area while starting ChatGPT login', async () => {
     render(
       <AiSettingsPanel
         llmSettings={makeSettings()}
@@ -42,7 +42,7 @@ describe('AiSettingsPanel save-and-verify', () => {
     )
 
     fireEvent.click(screen.getByTestId('codex-model-drawer-open'))
-    expect(await screen.findByTestId('codex-login-row')).toBeTruthy()
+    await waitFor(() => expect(screen.getByTestId('codex-toggle').getAttribute('aria-expanded')).toBe('true'))
     expect(screen.queryByTestId('codex-model-drawer')).toBeNull()
   })
 

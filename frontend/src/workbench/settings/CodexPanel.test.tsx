@@ -79,6 +79,23 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     expect(panel.textContent ?? '').not.toMatch(/authUrl|loginId|token|jwt/i)
   })
 
+  test('top connection card starts ChatGPT login instead of only expanding settings', async () => {
+    mockedLogin.mockResolvedValue({ ok: true, state: 'login_started' })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(await screen.findByTestId('codex-model-drawer-open'))
+    await waitFor(() => expect(mockedLogin).toHaveBeenCalledTimes(1))
+    expect(await screen.findByTestId('codex-login-pending')).toBeTruthy()
+    expect(screen.getByTestId('codex-model-drawer-open').textContent).toMatch(/登录中/)
+  })
+
   test('signed in shows masked account, models and explicit save confirm', async () => {
     mockedStatus.mockResolvedValue({
       ok: true,

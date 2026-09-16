@@ -540,16 +540,22 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
             </span>
             <button
               type="button"
+              disabled={codexBusy || loginStarted}
               onClick={() => {
                 if (codexStatus?.connected) setCodexDrawerOpen(true)
                 else {
                   setContinueToCodexModels(true)
                   setCodexExpanded(true)
+                  void handleCodexLogin()
                 }
               }}
               data-testid="codex-model-drawer-open"
             >
-              {codexStatus?.connected ? t('settings.ai.connection.chooseModel') : t('settings.ai.connection.connect')}
+              {codexStatus?.connected
+                ? t('settings.ai.connection.chooseModel')
+                : loginStarted
+                  ? t('settings.ai.codex.loginPending')
+                  : t('settings.ai.connection.connect')}
             </button>
           </div>
         </div>
