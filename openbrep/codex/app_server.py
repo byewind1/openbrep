@@ -67,9 +67,14 @@ class CodexAppServerError(RuntimeError):
 
 
 def default_codex_home() -> Path:
-    """Use the user's Codex home so cc-switch/provider settings are honored."""
+    """Return OpenBrep's isolated user-level Codex home.
+
+    The ChatGPT subscription session belongs to OpenBrep. Reusing the developer
+    CLI's ``~/.codex`` lets unrelated config/provider state and app-server locks
+    interfere with browser login completion.
+    """
     configured = os.environ.get("CODEX_HOME", "").strip()
-    return Path(configured).expanduser() if configured else Path.home() / ".codex"
+    return Path(configured).expanduser() if configured else Path.home() / ".openbrep" / "codex"
 
 
 def resolve_codex_binary(binary: str = "codex") -> str | None:
