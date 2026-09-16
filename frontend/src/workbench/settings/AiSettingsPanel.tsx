@@ -62,6 +62,8 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [pendingCodexModel, setPendingCodexModel] = useState<string | null>(null)
   const [codexCancelling, setCodexCancelling] = useState(false)
   const [codexRestarting, setCodexRestarting] = useState(false)
+  const [codexDrawerOpen, setCodexDrawerOpen] = useState(false)
+  const [codexExpanded, setCodexExpanded] = useState(false)
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const groups = llmSettings.model_groups
@@ -473,6 +475,41 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
 
   return (
     <div className="settings-panel-form">
+      <div className="llm-connection-wizard" data-testid="llm-connection-wizard">
+        <div className="llm-connection-card" data-testid="openai-api-card">
+          <div>
+            <strong>{t('settings.ai.connection.apiTitle')}</strong>
+            <p>{t('settings.ai.connection.apiHint')}</p>
+          </div>
+          <span className={`connection-state ${!isCodexModel && modelAvailable ? 'is-ready' : ''}`}>
+            {!isCodexModel && modelAvailable ? t('settings.ai.connection.ready') : t('settings.ai.connection.configure')}
+          </span>
+        </div>
+        <div className="llm-connection-card" data-testid="chatgpt-codex-card">
+          <div>
+            <strong>{t('settings.ai.connection.codexTitle')}</strong>
+            <p>{t('settings.ai.connection.codexHint')}</p>
+          </div>
+          <button type="button" onClick={() => setCodexDrawerOpen(true)} data-testid="codex-model-drawer-open">
+            {codexStatus?.connected ? t('settings.ai.connection.chooseModel') : t('settings.ai.connection.connect')}
+          </button>
+        </div>
+      </div>
+      {codexDrawerOpen ? (
+        <CodexModelDrawer
+          models={codexModels}
+          connected={codexStatus?.connected === true}
+          current={currentId}
+          pending={pendingCodexModel}
+          switching={switching}
+          onClose={() => setCodexDrawerOpen(false)}
+          onConnect={() => {
+            setCodexDrawerOpen(false)
+            setCodexExpanded(true)
+          }}
+          onSelect={requestCodexModelSwitch}
+        />
+      ) : null}
       <div className="settings-row">
         <span>{t('settings.ai.modelLabel')}</span>
         <code className={`settings-model-display ${effectiveModelAvailable ? 'valid' : 'invalid'}`}>
@@ -543,6 +580,8 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         />
       ) : null}
       <CodexSection
+        expanded={codexExpanded}
+        onExpandedChange={setCodexExpanded}
         status={codexStatus}
         models={codexModels}
         busy={codexBusy}
@@ -627,11 +666,74 @@ function testErrorText(result: LlmConnectionTestResult | null) {
   return result.detail || result.error || 'Connection test failed.'
 }
 
+function CodexModelDrawer({
+  models,
+  connected,
+  current,
+  pending,
+  switching,
+  onClose,
+  onConnect,
+  onSelect,
+}: {
+  models: CodexModelInfo[]
+  connected: boolean
+  current: string
+  pending: string | null
+  switching: boolean
+  onClose: () => void
+  onConnect: () => void
+  onSelect: (model: string) => void
+}) {
+  const t = useT()
+  return (
+    <div className="codex-model-drawer-backdrop" data-testid="codex-model-drawer">
+      <aside className="codex-model-drawer" role="dialog" aria-modal="true" aria-label={t('settings.ai.connection.drawerTitle')}>
+        <div className="codex-model-drawer-header">
+          <div>
+            <span className="settings-kicker">ChatGPT / Codex</span>
+            <h3>{t('settings.ai.connection.drawerTitle')}</h3>
+          </div>
+          <button type="button" onClick={onClose} aria-label={t('settings.ai.connection.close')}>{t('settings.ai.connection.close')}</button>
+        </div>
+        {!connected ? (
+          <div className="codex-model-drawer-empty">
+            <p>{t('settings.ai.connection.connectFirst')}</p>
+            <button type="button" onClick={onConnect}>{t('settings.ai.connection.openConnection')}</button>
+          </div>
+        ) : models.length === 0 ? (
+          <p className="settings-test-result">{t('settings.ai.codex.noModels')}</p>
+        ) : (
+          <div className="codex-model-drawer-list" role="listbox">
+            {models.map((model) => (
+              <button
+                key={model.id}
+                type="button"
+                role="option"
+                aria-selected={model.id === current}
+                className={model.id === current ? 'is-current' : model.id === pending ? 'is-pending' : ''}
+                disabled={switching}
+                onClick={() => onSelect(model.id)}
+              >
+                <span>{model.label}</span>
+                <small>{model.model}</small>
+                {model.id === current ? <em>{t('settings.ai.connection.current')}</em> : null}
+              </button>
+            ))}
+          </div>
+        )}
+      </aside>
+    </div>
+  )
+}
+
 function emptyCodexStatus(): CodexStatus {
   return { state: 'signed_out', codex_available: true, connected: false, account: null }
 }
 
 function CodexSection({
+  expanded,
+  onExpandedChange,
   status,
   models,
   busy,
@@ -670,6 +772,8 @@ function CodexSection({
   onRoutingModeDraftChange,
   onSaveRoutingMode,
 }: {
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
   status: CodexStatus | null
   models: CodexModelInfo[]
   busy: boolean
@@ -710,30 +814,29 @@ function CodexSection({
   onSaveRoutingMode: () => void
 }) {
   const t = useT()
-  const [codexExpanded, setCodexExpanded] = useState(false)
   const state = status?.state ?? 'signed_out'
   const connected = status?.connected === true
   const rateLimits = status?.rate_limits
   const statusSummary = connected ? t('settings.ai.codex.connectedLabel') : t('settings.ai.codex.notConnectedLabel')
   useEffect(() => {
     if (connected || current.startsWith('openai-codex/') || loginStarted || state === 'crashed' || state === 'error' || state === 'quota_exhausted') {
-      setCodexExpanded(true)
+      onExpandedChange(true)
     }
-  }, [connected, current, loginStarted, state])
+  }, [connected, current, loginStarted, state, onExpandedChange])
 
   return (
     <div className="settings-codex-section" data-testid="codex-section">
       <button
         type="button"
         className="settings-row-header"
-        aria-expanded={codexExpanded}
+        aria-expanded={expanded}
         data-testid="codex-toggle"
-        onClick={() => setCodexExpanded((expanded) => !expanded)}
+        onClick={() => onExpandedChange(!expanded)}
       >
-        {t('settings.ai.codex.sectionTitle')} {codexExpanded ? '▾' : '▸'}
+        {t('settings.ai.codex.sectionTitle')} {expanded ? '▾' : '▸'}
         <span className="settings-hint">{t('settings.ai.codex.collapsedSummary', { state: statusSummary })}</span>
       </button>
-      {codexExpanded ? <>
+      {expanded ? <>
       <p className="settings-hint" data-testid="codex-modify-note">
         {t('settings.ai.codex.modifyNotOpen')}
       </p>

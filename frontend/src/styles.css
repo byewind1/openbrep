@@ -3248,6 +3248,63 @@ button:focus-visible {
   gap: 8px;
 }
 
+.llm-connection-wizard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.llm-connection-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 84px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle, #d9d9d9);
+  border-radius: 12px;
+  background: var(--surface-raised, #fafafa);
+}
+
+.llm-connection-card strong { display: block; font-size: 13px; }
+.llm-connection-card p { margin: 6px 0 0; color: var(--text-muted, #777); font-size: 11px; line-height: 1.4; }
+.llm-connection-card button { white-space: nowrap; }
+.connection-state { color: var(--text-muted, #777); font-size: 11px; white-space: nowrap; }
+.connection-state.is-ready { color: #16803c; }
+
+.codex-model-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(15 23 42 / 28%);
+}
+
+.codex-model-drawer {
+  width: min(420px, 92vw);
+  height: 100%;
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--surface, #fff);
+  box-shadow: -12px 0 32px rgb(15 23 42 / 18%);
+}
+
+.codex-model-drawer-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
+.codex-model-drawer-header h3 { margin: 4px 0 0; font-size: 18px; }
+.settings-kicker { color: var(--text-muted, #777); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.codex-model-drawer-list { display: grid; gap: 8px; }
+.codex-model-drawer-list button { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; width: 100%; padding: 12px; text-align: left; border: 1px solid var(--border-subtle, #d9d9d9); border-radius: 10px; background: transparent; }
+.codex-model-drawer-list button:hover:not(:disabled), .codex-model-drawer-list button.is-current { border-color: var(--accent, #2563eb); background: rgb(37 99 235 / 7%); }
+.codex-model-drawer-list small { grid-column: 1; color: var(--text-muted, #777); font-size: 10px; }
+.codex-model-drawer-list em { grid-column: 2; grid-row: 1 / span 2; color: var(--accent, #2563eb); font-size: 10px; font-style: normal; }
+.codex-model-drawer-empty { padding: 24px 0; color: var(--text-muted, #777); }
+
+@media (max-width: 640px) {
+  .llm-connection-wizard { grid-template-columns: 1fr; }
+}
+
 .settings-model-row > input {
   min-width: 0;
 }

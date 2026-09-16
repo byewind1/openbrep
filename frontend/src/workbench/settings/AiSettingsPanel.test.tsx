@@ -18,6 +18,34 @@ function makeSettings(overrides: Partial<LlmSettings> = {}): LlmSettings {
 }
 
 describe('AiSettingsPanel save-and-verify', () => {
+  test('shows separate API and ChatGPT Codex connection cards', () => {
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn().mockResolvedValue({ ok: true })}
+      />,
+    )
+
+    expect(screen.getByTestId('llm-connection-wizard')).toBeTruthy()
+    expect(screen.getByTestId('openai-api-card')).toBeTruthy()
+    expect(screen.getByTestId('chatgpt-codex-card')).toBeTruthy()
+  })
+
+  test('opens the Codex model drawer from the connection card', async () => {
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn().mockResolvedValue({ ok: true })}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('codex-model-drawer-open'))
+    expect(await screen.findByTestId('codex-model-drawer')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '关闭' })).toBeTruthy()
+  })
+
   test('saving a bad key still saves, then surfaces the connection failure', async () => {
     const onSaveApiKey = vi.fn().mockResolvedValue({ ok: true })
     const failed: LlmConnectionTestResult = {
