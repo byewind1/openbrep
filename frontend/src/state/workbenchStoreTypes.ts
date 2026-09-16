@@ -133,7 +133,7 @@ export interface WorkbenchApi {
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   fetchConfigRevision: () => Promise<ConfigRevisionResult>
   openConfig: () => Promise<{ ok: boolean; error?: string }>
-  testLlmConnection: () => Promise<LlmConnectionTestResult>
+  testLlmConnection: (model?: string, reasoningEffort?: string) => Promise<LlmConnectionTestResult>
   updateLlmModel: (
     model: string,
     reasoningEffort?: string,
@@ -325,7 +325,7 @@ export interface WorkbenchState {
   browseOutputDirectory: () => Promise<CompilerSettings | null>
   setCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettings>
   openConfig: () => Promise<void>
-  testLlmConnection: () => Promise<LlmConnectionTestResult>
+  testLlmConnection: (model?: string, reasoningEffort?: string) => Promise<LlmConnectionTestResult>
   switchLlmModel: (
     model: string,
     reasoningEffort?: string,

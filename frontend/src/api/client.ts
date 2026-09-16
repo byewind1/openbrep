@@ -615,10 +615,17 @@ export async function openConfig(): Promise<{ ok: boolean; error?: string }> {
   )
 }
 
-export async function testLlmConnection(): Promise<LlmConnectionTestResult> {
+export async function testLlmConnection(model?: string, reasoningEffort?: string): Promise<LlmConnectionTestResult> {
+  const body: Record<string, string> = {}
+  if (model) body.model = model
+  if (reasoningEffort) body.reasoning_effort = reasoningEffort
   return requestJson<LlmConnectionTestResult>(
     '/api/settings/llm/test',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
     { ok: false, error: 'OpenBrep local API is not available.', category: 'llm_configuration' },
   )
 }

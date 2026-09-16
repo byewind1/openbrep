@@ -260,6 +260,15 @@ describe('Codex BYOA API (D1)', () => {
     expect(result.state).toBe('signed_out')
   })
 
+  test('connection test can target the selected Codex model', async () => {
+    const fetchMock = stubFetch({ ok: true, model: 'openai-codex/gpt-5.6-luna' })
+    const { testLlmConnection } = await import('./client')
+    await testLlmConnection('openai-codex/gpt-5.6-luna', 'high')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/settings/llm/test')
+    expect(JSON.parse(String(init.body))).toEqual({ model: 'openai-codex/gpt-5.6-luna', reasoning_effort: 'high' })
+  })
+
   test('codexLoginStart POSTs login/start without a body secret', async () => {
     const fetchMock = stubFetch({ ok: true, state: 'login_started' })
     const { codexLoginStart } = await import('./client')

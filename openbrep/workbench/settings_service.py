@@ -874,6 +874,8 @@ class WorkbenchSettingsService:
 
         test_config = copy.deepcopy(self.session.config)
         test_config.llm.model = model
+        if is_codex_qualified_model(model):
+            test_config.llm.reasoning_effort = str(body.get("reasoning_effort") or "").strip()
         test_config.llm.assistant_settings = str(body.get("assistant_settings") or self.session.assistant_settings)
         # 连接测试省 token 但不能砍太狠：强制思考的模型（如 kimi-k2.7-code）
         # 需要 reasoning 余量，max_tokens=8/16 会只出思考不出正文，误报失败

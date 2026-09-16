@@ -3270,6 +3270,7 @@ button:focus-visible {
 .llm-connection-card strong { display: block; font-size: 13px; }
 .llm-connection-card p { margin: 6px 0 0; color: var(--text-muted, #777); font-size: 11px; line-height: 1.4; }
 .llm-connection-card button { white-space: nowrap; }
+.connection-card-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .connection-state { color: var(--text-muted, #777); font-size: 11px; white-space: nowrap; }
 .connection-state.is-ready { color: #16803c; }
 
@@ -3300,6 +3301,8 @@ button:focus-visible {
 .codex-model-drawer-list small { grid-column: 1; color: var(--text-muted, #777); font-size: 10px; }
 .codex-model-drawer-list em { grid-column: 2; grid-row: 1 / span 2; color: var(--accent, #2563eb); font-size: 10px; font-style: normal; }
 .codex-model-drawer-empty { padding: 24px 0; color: var(--text-muted, #777); }
+.codex-drawer-confirm { display: grid; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border-subtle, #d9d9d9); }
+.codex-drawer-confirm label { display: grid; gap: 6px; font-size: 11px; }
 
 @media (max-width: 640px) {
   .llm-connection-wizard { grid-template-columns: 1fr; }

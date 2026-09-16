@@ -43,8 +43,8 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
       await api.openConfig()
     },
 
-    async testLlmConnection() {
-      return api.testLlmConnection()
+    async testLlmConnection(model?: string, reasoningEffort?: string) {
+      return api.testLlmConnection(model, reasoningEffort)
     },
 
     async switchLlmModel(

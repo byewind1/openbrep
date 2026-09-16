@@ -265,6 +265,36 @@ def test_settings_service_connection_test_failure_returns_full_detail(tmp_path, 
     assert server_body in response["detail"]
 
 
+def test_settings_service_codex_probe_uses_selected_model_and_effort_without_saving(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    config.llm.reasoning_effort = ""
+    session = _make_settings_session(config, config_path)
+    seen: dict[str, str] = {}
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            return SimpleNamespace(model="openai-codex/gpt-5.6-luna")
+
+    def factory(llm_config):
+        seen["model"] = llm_config.model
+        seen["reasoning_effort"] = llm_config.reasoning_effort
+        return _FakeAdapter()
+
+    service = WorkbenchSettingsService(session, llm_adapter_factory=factory)
+    response = service.test_llm_settings({
+        "model": "openai-codex/gpt-5.6-luna",
+        "reasoning_effort": "high",
+    })
+
+    assert response["ok"] is True
+    assert seen == {"model": "openai-codex/gpt-5.6-luna", "reasoning_effort": "high"}
+    assert config.llm.model == "deepseek-chat"
+    assert config.llm.reasoning_effort == ""
+    assert not config_path.exists()
+
+
 def test_format_llm_exception_detail_handles_plain_exception():
     from openbrep.workbench.settings_service import format_llm_exception_detail
 

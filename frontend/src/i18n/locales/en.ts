@@ -103,6 +103,11 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.connection.connectFirst': 'Connect ChatGPT first to read the models available to your account.',
   'settings.ai.connection.openConnection': 'Open connection settings',
   'settings.ai.connection.current': 'Current',
+  'settings.ai.connection.signedInPending': 'Signed in · verification required',
+  'settings.ai.connection.codexReady': 'Codex connected',
+  'settings.ai.connection.verify': 'Connect and verify',
+  'settings.ai.connection.verifying': 'Connecting…',
+  'settings.ai.connection.verifyFailed': 'Codex connection verification failed',
   // Codex BYOA (D1): ChatGPT subscription login & dynamic models
   'settings.ai.codex.sectionTitle': 'ChatGPT Codex (subscription)',
   'settings.ai.codex.modifyNotOpen': 'MODIFY is available, but still experimental; it requires the local Codex CLI and a ChatGPT account.',

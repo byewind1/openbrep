@@ -21,7 +21,7 @@ import { ModelVisibilityPanel } from './ModelVisibilityPanel'
 interface AiSettingsPanelProps {
   llmSettings: LlmSettings
   onOpenConfig: () => void
-  onTestConnection: () => Promise<LlmConnectionTestResult>
+  onTestConnection: (model?: string, reasoningEffort?: string) => Promise<LlmConnectionTestResult>
   onModelChange?: (
     model: string,
     reasoningEffort?: string,
@@ -64,6 +64,10 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [codexRestarting, setCodexRestarting] = useState(false)
   const [codexDrawerOpen, setCodexDrawerOpen] = useState(false)
   const [codexExpanded, setCodexExpanded] = useState(false)
+  const [continueToCodexModels, setContinueToCodexModels] = useState(false)
+  const [codexVerifying, setCodexVerifying] = useState(false)
+  const [codexVerifiedModel, setCodexVerifiedModel] = useState<string | null>(null)
+  const [codexConnectionError, setCodexConnectionError] = useState<string | null>(null)
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const groups = llmSettings.model_groups
@@ -153,6 +157,17 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       loginPollRef.current = null
     }
   }, [loginStarted])
+
+  useEffect(() => {
+    if (continueToCodexModels && codexStatus?.connected) {
+      setContinueToCodexModels(false)
+      setCodexDrawerOpen(true)
+    }
+  }, [codexStatus?.connected, continueToCodexModels])
+
+  useEffect(() => {
+    if (!codexStatus?.connected) setCodexVerifiedModel(null)
+  }, [codexStatus?.connected])
 
   async function handleCodexLogin() {
     setCodexBusy(true)
@@ -314,6 +329,31 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       setSwitchError(error instanceof Error ? error.message : t('settings.ai.switchFailed'))
     } finally {
       setSwitching(false)
+    }
+  }
+
+  async function connectCodexModel() {
+    const model = pendingCodexModel
+    if (!onModelChange || !model || codexVerifying) return
+    setCodexVerifying(true)
+    setCodexConnectionError(null)
+    try {
+      const result = await onTestConnection(model, pendingEffort || undefined)
+      setTestResult(result)
+      if (!result.ok) {
+        setCodexConnectionError(testErrorText(result))
+        return
+      }
+      if (pendingEffort) await onModelChange(model, pendingEffort)
+      else await onModelChange(model)
+      setCodexVerifiedModel(model)
+      setPendingCodexModel(null)
+      setPendingEffort('')
+      setCodexDrawerOpen(false)
+    } catch (error) {
+      setCodexConnectionError(error instanceof Error ? error.message : t('settings.ai.connection.verifyFailed'))
+    } finally {
+      setCodexVerifying(false)
     }
   }
 
@@ -490,9 +530,28 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
             <strong>{t('settings.ai.connection.codexTitle')}</strong>
             <p>{t('settings.ai.connection.codexHint')}</p>
           </div>
-          <button type="button" onClick={() => setCodexDrawerOpen(true)} data-testid="codex-model-drawer-open">
-            {codexStatus?.connected ? t('settings.ai.connection.chooseModel') : t('settings.ai.connection.connect')}
-          </button>
+          <div className="connection-card-actions">
+            <span className={`connection-state ${codexVerifiedModel ? 'is-ready' : ''}`}>
+              {codexVerifiedModel
+                ? t('settings.ai.connection.codexReady')
+                : codexStatus?.connected
+                  ? t('settings.ai.connection.signedInPending')
+                  : t('settings.ai.codex.notConnectedLabel')}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (codexStatus?.connected) setCodexDrawerOpen(true)
+                else {
+                  setContinueToCodexModels(true)
+                  setCodexExpanded(true)
+                }
+              }}
+              data-testid="codex-model-drawer-open"
+            >
+              {codexStatus?.connected ? t('settings.ai.connection.chooseModel') : t('settings.ai.connection.connect')}
+            </button>
+          </div>
         </div>
       </div>
       {codexDrawerOpen ? (
@@ -502,12 +561,22 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
           current={currentId}
           pending={pendingCodexModel}
           switching={switching}
+          verifying={codexVerifying}
+          error={codexConnectionError}
+          pendingEffort={pendingEffort}
+          pendingEffortOptions={pendingEffortOptions}
           onClose={() => setCodexDrawerOpen(false)}
-          onConnect={() => {
+          onOpenConnection={() => {
             setCodexDrawerOpen(false)
+            setContinueToCodexModels(true)
             setCodexExpanded(true)
           }}
           onSelect={requestCodexModelSwitch}
+          onPendingEffortChange={(value) => {
+            setPendingEffort(value)
+            setCodexConnectionError(null)
+          }}
+          onConnect={() => void connectCodexModel()}
         />
       ) : null}
       <div className="settings-row">
@@ -672,18 +741,30 @@ function CodexModelDrawer({
   current,
   pending,
   switching,
+  verifying,
+  error,
+  pendingEffort,
+  pendingEffortOptions,
   onClose,
+  onOpenConnection,
   onConnect,
   onSelect,
+  onPendingEffortChange,
 }: {
   models: CodexModelInfo[]
   connected: boolean
   current: string
   pending: string | null
   switching: boolean
+  verifying: boolean
+  error: string | null
+  pendingEffort: string
+  pendingEffortOptions: { effort: string; description?: string }[]
   onClose: () => void
+  onOpenConnection: () => void
   onConnect: () => void
   onSelect: (model: string) => void
+  onPendingEffortChange: (value: string) => void
 }) {
   const t = useT()
   return (
@@ -699,11 +780,11 @@ function CodexModelDrawer({
         {!connected ? (
           <div className="codex-model-drawer-empty">
             <p>{t('settings.ai.connection.connectFirst')}</p>
-            <button type="button" onClick={onConnect}>{t('settings.ai.connection.openConnection')}</button>
+            <button type="button" onClick={onOpenConnection}>{t('settings.ai.connection.openConnection')}</button>
           </div>
         ) : models.length === 0 ? (
           <p className="settings-test-result">{t('settings.ai.codex.noModels')}</p>
-        ) : (
+        ) : (<>
           <div className="codex-model-drawer-list" role="listbox">
             {models.map((model) => (
               <button
@@ -721,7 +802,32 @@ function CodexModelDrawer({
               </button>
             ))}
           </div>
-        )}
+          {pending ? (
+            <div className="codex-drawer-confirm" data-testid="codex-drawer-confirm">
+              <span>{t('settings.ai.confirmSwitch', { model: pending })}</span>
+              {pendingEffortOptions.length > 0 ? (
+                <label>
+                  {t('settings.ai.codex.effortLabel')}
+                  <select
+                    aria-label={t('settings.ai.codex.effortLabel')}
+                    value={pendingEffort}
+                    disabled={verifying}
+                    onChange={(event) => onPendingEffortChange(event.target.value)}
+                  >
+                    <option value="">{t('settings.ai.codex.effortDefault')}</option>
+                    {pendingEffortOptions.map((option) => (
+                      <option key={option.effort} value={option.effort}>{option.effort}{option.description ? ` — ${option.description}` : ''}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {error ? <p className="settings-test-result error">{error}</p> : null}
+              <button type="button" disabled={verifying} onClick={onConnect}>
+                {verifying ? t('settings.ai.connection.verifying') : t('settings.ai.connection.verify')}
+              </button>
+            </div>
+          ) : null}
+        </>)}
       </aside>
     </div>
   )

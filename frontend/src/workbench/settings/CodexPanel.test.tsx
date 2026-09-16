@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AiSettingsPanel } from './AiSettingsPanel'
 import type { LlmConnectionTestResult, LlmSettings } from '../../api/types'
@@ -115,6 +115,89 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     expect(onModelChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText('确认切换'))
     await waitFor(() => expect(onModelChange).toHaveBeenCalledWith('openai-codex/gpt-5.6-luna'))
+  })
+
+  test('drawer keeps model, effort, and real connection verification in one flow', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'deepseek-chat',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [{
+        id: 'openai-codex/gpt-5.6-luna',
+        label: 'GPT-5.6 Luna',
+        model: 'gpt-5.6-luna',
+        supported_reasoning_efforts: [{ effort: 'high', description: 'Deep' }],
+      }],
+    })
+    const onModelChange = vi.fn().mockResolvedValue(undefined)
+    const onTestConnection = vi.fn().mockResolvedValue({ ok: true, message: 'LLM connection OK', duration_ms: 42 })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={onTestConnection}
+        onModelChange={onModelChange}
+      />,
+    )
+
+    await screen.findByText(/jo\*\*\*@example\.com/)
+    fireEvent.click(screen.getByTestId('codex-model-drawer-open'))
+    const drawer = await screen.findByTestId('codex-model-drawer')
+    fireEvent.click(within(drawer).getByRole('option', { name: /GPT-5.6 Luna/ }))
+
+    const confirm = within(drawer).getByTestId('codex-drawer-confirm')
+    fireEvent.change(within(confirm).getByLabelText('推理强度（reasoning effort）'), { target: { value: 'high' } })
+    fireEvent.click(within(confirm).getByRole('button', { name: '连接并验证' }))
+
+    await waitFor(() => expect(onModelChange).toHaveBeenCalledWith('openai-codex/gpt-5.6-luna', 'high'))
+    await waitFor(() => expect(onTestConnection).toHaveBeenCalledWith('openai-codex/gpt-5.6-luna', 'high'))
+    expect(await screen.findByText(/Codex 已连接/)).toBeTruthy()
+    expect(screen.queryByTestId('codex-model-drawer')).toBeNull()
+  })
+
+  test('failed Codex turn verification does not save the selected model', async () => {
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'signed_in',
+      codex_available: true,
+      connected: true,
+      account: { email_masked: 'jo***@example.com', plan_type: 'pro' },
+      model: 'deepseek-chat',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [{ id: 'openai-codex/gpt-5.6-luna', label: 'GPT-5.6 Luna', model: 'gpt-5.6-luna' }],
+    })
+    const onModelChange = vi.fn().mockResolvedValue(undefined)
+    const onTestConnection = vi.fn().mockResolvedValue({ ok: false, error: 'Codex turn failed' })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={onTestConnection}
+        onModelChange={onModelChange}
+      />,
+    )
+
+    await screen.findByText(/jo\*\*\*@example\.com/)
+    fireEvent.click(screen.getByTestId('codex-model-drawer-open'))
+    const drawer = await screen.findByTestId('codex-model-drawer')
+    fireEvent.click(within(drawer).getByRole('option', { name: /GPT-5.6 Luna/ }))
+    fireEvent.click(within(drawer).getByRole('button', { name: '连接并验证' }))
+
+    expect(await within(drawer).findByText('Codex turn failed')).toBeTruthy()
+    expect(onModelChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('codex-model-drawer')).toBeTruthy()
   })
 
   test('no CLI state shows install guidance and no login button', async () => {

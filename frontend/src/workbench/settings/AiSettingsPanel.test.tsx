@@ -32,7 +32,7 @@ describe('AiSettingsPanel save-and-verify', () => {
     expect(screen.getByTestId('chatgpt-codex-card')).toBeTruthy()
   })
 
-  test('opens the Codex model drawer from the connection card', async () => {
+  test('starts the ChatGPT login step directly when Codex is signed out', async () => {
     render(
       <AiSettingsPanel
         llmSettings={makeSettings()}
@@ -42,8 +42,8 @@ describe('AiSettingsPanel save-and-verify', () => {
     )
 
     fireEvent.click(screen.getByTestId('codex-model-drawer-open'))
-    expect(await screen.findByTestId('codex-model-drawer')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '关闭' })).toBeTruthy()
+    expect(await screen.findByTestId('codex-login-row')).toBeTruthy()
+    expect(screen.queryByTestId('codex-model-drawer')).toBeNull()
   })
 
   test('saving a bad key still saves, then surfaces the connection failure', async () => {

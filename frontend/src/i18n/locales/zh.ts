@@ -100,6 +100,11 @@ export const zh = {
   'settings.ai.connection.connectFirst': '请先连接 ChatGPT，才能读取账户可用模型。',
   'settings.ai.connection.openConnection': '打开连接设置',
   'settings.ai.connection.current': '当前',
+  'settings.ai.connection.signedInPending': '已登录 · 待验证',
+  'settings.ai.connection.codexReady': 'Codex 已连接',
+  'settings.ai.connection.verify': '连接并验证',
+  'settings.ai.connection.verifying': '正在连接…',
+  'settings.ai.connection.verifyFailed': 'Codex 连接验证失败',
   // Codex BYOA（D1）：ChatGPT 订阅登录与动态模型
   'settings.ai.codex.sectionTitle': 'ChatGPT Codex（订阅）',
   'settings.ai.codex.modifyNotOpen': 'MODIFY 已可用，但仍处于观察期；需要本机 Codex CLI 和 ChatGPT 账号。',
