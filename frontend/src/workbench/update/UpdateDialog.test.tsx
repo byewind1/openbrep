@@ -77,7 +77,7 @@ describe('UpdateDialog', () => {
   })
 
   test('update button drives download then installing state', async () => {
-    mockDownload.mockImplementation(async (onProgress) => {
+    mockDownload.mockImplementation(async (_channel, onProgress) => {
       onProgress({ downloaded: 10, total: 20 })
     })
     openDialogWith({ info: sampleInfo })
@@ -96,6 +96,7 @@ describe('UpdateDialog', () => {
     expect(await screen.findByText('自动更新失败')).toBeTruthy()
     fireEvent.click(screen.getByText('完整更新说明'))
     expect(mockOpenPage).toHaveBeenCalledTimes(1)
+    expect(mockOpenPage).toHaveBeenCalledWith('stable')
     expect(screen.getByText('重试')).toBeTruthy()
   })
 

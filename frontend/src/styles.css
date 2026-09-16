@@ -3672,6 +3672,11 @@ button:focus-visible {
   text-align: right;
 }
 
+.settings-update-channel-warning {
+  grid-column: 1 / -1;
+  color: var(--warning) !important;
+}
+
 .settings-code-list {
   display: grid;
   gap: 4px;

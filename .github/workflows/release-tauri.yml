@@ -3,8 +3,14 @@ name: Release Tauri Desktop
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+
+concurrency:
+  group: tauri-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 permissions:
   contents: write
@@ -32,6 +38,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # main 构建使用“下一补丁版 + nightly 时间戳/运行号”的合法 semver。
+      # 稳定 tag 构建保持仓库声明版本不变。只改 Tauri bundle 版本即可；
+      # 前后端应用版本均由 Tauri package_info 读取。
+      - name: Set development build version
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+
+          path = Path("src-tauri/tauri.conf.json")
+          config = json.loads(path.read_text())
+          major, minor, patch = map(int, config["version"].split("-")[0].split("."))
+          stamp = subprocess.check_output(
+              ["git", "show", "-s", "--format=%cd", "--date=format:%Y%m%d", os.environ["GITHUB_SHA"]],
+              text=True,
+          ).strip()
+          run = os.environ["GITHUB_RUN_NUMBER"]
+          config["version"] = f"{major}.{minor}.{patch + 1}-nightly.{stamp}.{run}"
+          path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+          print(config["version"])
+          PY
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -291,3 +321,101 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
           GH_REPO: ${{ github.repository }}
         run: gh release edit "$TAG_NAME" --draft=false --repo "$GH_REPO"
+
+  publish-nightly:
+    if: github.ref == 'refs/heads/main'
+    needs: build-tauri
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Collect rolling development assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          # Two alternating slots keep the manifest atomic: upload into the
+          # inactive slot first, then switch nightly.json to those signatures.
+          SLOT=$((GITHUB_RUN_NUMBER % 2))
+          cp "$(find release-artifacts -name '*aarch64.app.tar.gz' | head -1)" "release/OpenBrep-nightly-${SLOT}-aarch64.app.tar.gz"
+          cp "$(find release-artifacts -name '*aarch64.app.tar.gz.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-aarch64.app.tar.gz.sig"
+          cp "$(find release-artifacts -name '*x64.app.tar.gz' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.app.tar.gz"
+          cp "$(find release-artifacts -name '*x64.app.tar.gz.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.app.tar.gz.sig"
+          cp "$(find release-artifacts -name '*-setup.exe' ! -name '*.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-setup.exe"
+          cp "$(find release-artifacts -name '*-setup.exe.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-setup.exe.sig"
+          cp "$(find release-artifacts/OpenBrep-macOS -name '*.dmg' | head -1)" "release/OpenBrep-nightly-${SLOT}-aarch64.dmg"
+          cp "$(find release-artifacts/OpenBrep-macOS-Intel -name '*.dmg' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.dmg"
+          cp "$(find release-artifacts/OpenBrep-Windows -name '*.msi' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.msi"
+          ls -la release
+
+      - name: Create or update rolling development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view nightly --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload nightly release/* --clobber --repo "$GH_REPO"
+          else
+            gh release create nightly release/* \
+              --repo "$GH_REPO" \
+              --target "$GITHUB_SHA" \
+              --title "OpenBrep Development Builds" \
+              --notes "Rolling development builds from main. These builds may be unstable." \
+              --prerelease
+          fi
+
+      - name: Generate development updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, json, os, subprocess
+          from pathlib import Path
+
+          repo = os.environ["GH_REPO"]
+          # Every matrix leg used the same generated semver. Recompute it from
+          # the checked-out stable version plus the shared run number/date.
+          stable = json.loads(Path("src-tauri/tauri.conf.json").read_text())["version"]
+          major, minor, patch = map(int, stable.split("-")[0].split("."))
+          stamp = subprocess.check_output(
+              ["git", "show", "-s", "--format=%cd", "--date=format:%Y%m%d", os.environ["GITHUB_SHA"]],
+              text=True,
+          ).strip()
+          version = f"{major}.{minor}.{patch + 1}-nightly.{stamp}.{os.environ['GITHUB_RUN_NUMBER']}"
+          slot = int(os.environ["GITHUB_RUN_NUMBER"]) % 2
+
+          def signature(name):
+              return Path("release", name + ".sig").read_text().strip()
+
+          base = f"https://github.com/{repo}/releases/download/nightly"
+          platforms = {
+              "darwin-aarch64": {
+                  "signature": signature(f"OpenBrep-nightly-{slot}-aarch64.app.tar.gz"),
+                  "url": f"{base}/OpenBrep-nightly-{slot}-aarch64.app.tar.gz",
+              },
+              "darwin-x86_64": {
+                  "signature": signature(f"OpenBrep-nightly-{slot}-x64.app.tar.gz"),
+                  "url": f"{base}/OpenBrep-nightly-{slot}-x64.app.tar.gz",
+              },
+              "windows-x86_64": {
+                  "signature": signature(f"OpenBrep-nightly-{slot}-setup.exe"),
+                  "url": f"{base}/OpenBrep-nightly-{slot}-setup.exe",
+              },
+          }
+          manifest = {
+              "version": version,
+              "notes": f"Development build from main ({os.environ['GITHUB_SHA'][:12]}).",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms,
+          }
+          Path("release/nightly.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+          gh release upload nightly release/nightly.json --clobber --repo "$GH_REPO"

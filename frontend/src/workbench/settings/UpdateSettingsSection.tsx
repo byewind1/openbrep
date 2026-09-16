@@ -1,4 +1,5 @@
-import { isTauriDesktop, openReleasesPage } from '../../api/updater'
+import { useEffect, useState } from 'react'
+import { isTauriDesktop, openReleasesPage, type UpdateChannel } from '../../api/updater'
 import { useT } from '../../i18n'
 import { useUpdateStore } from '../../state/updateStore'
 
@@ -10,6 +11,8 @@ import { useUpdateStore } from '../../state/updateStore'
 export function UpdateSettingsSection() {
   const t = useT()
   const currentVersion = useUpdateStore((s) => s.currentVersion)
+  const channel = useUpdateStore((s) => s.channel)
+  const setChannel = useUpdateStore((s) => s.setChannel)
   const info = useUpdateStore((s) => s.info)
   const checking = useUpdateStore((s) => s.checking)
   const checked = useUpdateStore((s) => s.checked)
@@ -17,6 +20,18 @@ export function UpdateSettingsSection() {
   const phase = useUpdateStore((s) => s.phase)
   const check = useUpdateStore((s) => s.check)
   const openDialog = useUpdateStore((s) => s.openDialog)
+  const [draftChannel, setDraftChannel] = useState<UpdateChannel>(channel)
+
+  useEffect(() => setDraftChannel(channel), [channel])
+
+  function saveChannel() {
+    if (draftChannel === channel) return
+    const message = draftChannel === 'development'
+      ? t('update.settings.developmentConfirm')
+      : t('update.settings.stableConfirm')
+    if (!window.confirm(message)) return
+    setChannel(draftChannel)
+  }
 
   return (
     <div className="settings-metadata-grid">
@@ -42,7 +57,7 @@ export function UpdateSettingsSection() {
             {phase === 'error' || (error && checked) ? (
               <>
                 <span className="settings-save-error">{t('update.settings.error')}</span>
-                <button type="button" onClick={() => void openReleasesPage()}>
+                <button type="button" onClick={() => void openReleasesPage(channel)}>
                   {t('update.banner.manual')}
                 </button>
               </>
@@ -52,6 +67,26 @@ export function UpdateSettingsSection() {
           <span>{t('update.settings.notDesktop')}</span>
         )}
       </div>
+      <span>{t('update.settings.channel')}</span>
+      <div className="settings-actions inline">
+        <select
+          aria-label={t('update.settings.channel')}
+          value={draftChannel}
+          onChange={(event) => setDraftChannel(event.target.value as UpdateChannel)}
+        >
+          <option value="stable">{t('update.settings.channelStable')}</option>
+          <option value="development">{t('update.settings.channelDevelopment')}</option>
+        </select>
+        <button type="button" disabled={draftChannel === channel} onClick={saveChannel}>
+          {t('update.settings.saveChannel')}
+        </button>
+        {draftChannel !== channel ? <span>{t('update.settings.unsavedChannel')}</span> : null}
+      </div>
+      {channel === 'development' ? (
+        <span className="settings-update-channel-warning">
+          {t('update.settings.developmentWarning')}
+        </span>
+      ) : null}
     </div>
   )
 }

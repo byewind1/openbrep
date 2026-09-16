@@ -22,6 +22,8 @@ export interface UpdateProgress {
   total: number | null
 }
 
+export type UpdateChannel = 'stable' | 'development'
+
 export function isTauriDesktop(): boolean {
   // __TAURI_INTERNALS__ 是 Tauri 始终注入的 IPC 入口（@tauri-apps/api 实际走它）；
   // __TAURI__ 全局对象只有 withGlobalTauri 开启才有，不能作为唯一判据。
@@ -36,9 +38,9 @@ export async function fetchAppVersion(): Promise<string | null> {
 }
 
 /** 静默检查更新；无更新或失败（断网/无 Release）均返回 null 的语义由调用方区分。 */
-export async function checkForUpdate(): Promise<UpdateInfo | null> {
+export async function checkForUpdate(channel: UpdateChannel): Promise<UpdateInfo | null> {
   if (!isTauriDesktop()) return null
-  return invoke<UpdateInfo | null>('updater_check')
+  return invoke<UpdateInfo | null>('updater_check', { channel })
 }
 
 /**
@@ -46,6 +48,7 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
  * 进度事件 listen 失败时降级为无进度模式（能力配置缺失时仍可用）。
  */
 export async function downloadAndInstallUpdate(
+  channel: UpdateChannel,
   onProgress: (progress: UpdateProgress) => void,
 ): Promise<void> {
   let unlisten: UnlistenFn | undefined
@@ -57,14 +60,14 @@ export async function downloadAndInstallUpdate(
     unlisten = undefined
   }
   try {
-    await invoke('updater_download_and_install')
+    await invoke('updater_download_and_install', { channel })
   } finally {
     unlisten?.()
   }
 }
 
 /** 在系统浏览器打开 Release 页（自动更新失败时的手动下载降级路径）。 */
-export async function openReleasesPage(): Promise<void> {
+export async function openReleasesPage(channel: UpdateChannel): Promise<void> {
   if (!isTauriDesktop()) return
-  await invoke('open_releases_page')
+  await invoke('open_releases_page', { channel })
 }

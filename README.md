@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.10.5 — 修复冻结版后端缺失 tiktoken 编码插件导致 Codex 模型无法连接；继续提供 Apple Silicon 与 Intel 双安装包。
+> 正式发布版本 v0.10.7 — 默认隐藏未配置的 Ollama 模型，并继续提供 Apple Silicon、Intel 与 Windows 安装包。
 
 ---
 
@@ -45,8 +45,8 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.10.5_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.5_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.10.5_x64_en-US.msi` 或 `OpenBrep_0.10.5_x64-setup.exe`
+- macOS：`OpenBrep_0.10.7_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.7_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.10.7_x64_en-US.msi` 或 `OpenBrep_0.10.7_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
@@ -98,13 +98,13 @@ obr
 ### 源码升级
 
 ```bash
-cd openbrep
-git pull origin main
-bash install.sh   # 有新依赖时重跑，无害
-obr
+obr source-update --repo /path/to/openbrep --dry-run
+obr source-update --repo /path/to/openbrep
 ```
 
 > 个人配置（config.toml / API Key）升级后保持不变，无需重新配置。
+> 桌面稳定版/开发版通道与源码更新的区别见
+> [更新通道与开发者源码更新](docs/DEVELOPER_UPDATES.zh-CN.md)。
 
 需要 Python 3.10+。真实编译（.gsm 输出）需要安装 ArchiCAD 28/29。
 
@@ -392,6 +392,8 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.10.7 | 默认隐藏未配置的 Ollama 模型；需要时可在模型可见性设置中启用（见 docs/releases/v0.10.7.md） |
+| v0.10.6 | 同步 Python、前端与 Tauri 发布版本元数据 |
 | v0.10.5 | 修复冻结版后端缺失 tiktoken 编码插件导致 `Unknown encoding cl100k_base`（见 docs/releases/v0.10.5.md） |
 | v0.10.4 | v0.10.2 内容，另修复已撤回 npm 依赖导致三平台构建失败并升级发布 Node 至 22（见 docs/releases/v0.10.4.md） |
 | v0.10.2 | Codex 供应商兼容、app-server runtime 单实例锁，以及 CLI 可运行状态与订阅登录状态分离（构建失败，已由 v0.10.4 替代；见 docs/releases/v0.10.2.md） |

@@ -19,8 +19,10 @@ const initialState = useUpdateStore.getState()
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.clear()
   mockIsTauri.mockReturnValue(true)
-  useUpdateStore.setState(initialState, true)
+  useUpdateStore.setState({ ...initialState, channel: 'stable' }, true)
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
 
 describe('UpdateSettingsSection', () => {
@@ -64,5 +66,28 @@ describe('UpdateSettingsSection', () => {
     expect(checking.disabled).toBe(true)
     resolve(null)
     expect(await screen.findByText('已是最新版本')).toBeTruthy()
+  })
+
+  test('channel selection stays draft until explicitly saved and confirmed', () => {
+    render(<UpdateSettingsSection />)
+    fireEvent.change(screen.getByLabelText('更新通道'), { target: { value: 'development' } })
+    expect(useUpdateStore.getState().channel).toBe('stable')
+    expect(window.localStorage.getItem('openbrep.update-channel')).toBeNull()
+    expect(screen.getByText('有未保存的通道变更')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('保存通道'))
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    expect(useUpdateStore.getState().channel).toBe('development')
+    expect(window.localStorage.getItem('openbrep.update-channel')).toBe('development')
+    expect(screen.getByText(/开发版随 main 构建/)).toBeTruthy()
+  })
+
+  test('cancelled channel confirmation does not persist', () => {
+    vi.mocked(window.confirm).mockReturnValue(false)
+    render(<UpdateSettingsSection />)
+    fireEvent.change(screen.getByLabelText('更新通道'), { target: { value: 'development' } })
+    fireEvent.click(screen.getByText('保存通道'))
+    expect(useUpdateStore.getState().channel).toBe('stable')
+    expect(window.localStorage.getItem('openbrep.update-channel')).toBeNull()
   })
 })

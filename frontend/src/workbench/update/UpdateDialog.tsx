@@ -25,6 +25,7 @@ const KIND_LABEL: Record<HighlightKind, 'update.kind.feature' | 'update.kind.fix
 export function UpdateDialog() {
   const t = useT()
   const open = useUpdateStore((s) => s.dialogOpen)
+  const channel = useUpdateStore((s) => s.channel)
   const info = useUpdateStore((s) => s.info)
   const currentVersion = useUpdateStore((s) => s.currentVersion)
   const checked = useUpdateStore((s) => s.checked)
@@ -129,7 +130,7 @@ export function UpdateDialog() {
         ) : null}
 
         <div className="themed-dialog-actions">
-          <button type="button" onClick={() => void openReleasesPage()}>
+          <button type="button" onClick={() => void openReleasesPage(channel)}>
             {t('update.dialog.fullNotes')}
           </button>
           {!info && !checking ? (

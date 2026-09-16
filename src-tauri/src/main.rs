@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_updater::UpdaterExt;
 
+const STABLE_UPDATE_ENDPOINT: &str =
+    "https://github.com/byewind1/openbrep/releases/latest/download/latest.json";
+const DEVELOPMENT_UPDATE_ENDPOINT: &str =
+    "https://github.com/byewind1/openbrep/releases/download/nightly/nightly.json";
+
 /// 首次启动（Gatekeeper 校验 + PyInstaller 解包 + 冷 Python import）在老
 /// Intel 机器上可能远超 60 秒；超时只兜底"进程活着但挂住"的情况，子进程
 /// 提前退出会被立即检出。
@@ -24,7 +29,19 @@ struct BackendState {
 /// Cached result of the last successful update check, so the download step
 /// does not need a second network round-trip.
 struct UpdaterState {
-    update: Mutex<Option<tauri_plugin_updater::Update>>,
+    update: Mutex<Option<CachedUpdate>>,
+}
+
+struct CachedUpdate {
+    channel: UpdateChannel,
+    update: tauri_plugin_updater::Update,
+}
+
+#[derive(serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum UpdateChannel {
+    Stable,
+    Development,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -41,24 +58,59 @@ struct UpdateProgress {
 }
 
 #[tauri::command]
-fn app_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
 }
 
 /// Open the GitHub Releases page in the system browser (manual-download
 /// fallback when in-place update is unavailable or fails).
 #[tauri::command]
-fn open_releases_page() -> Result<(), String> {
+fn open_releases_page(channel: UpdateChannel) -> Result<(), String> {
+    let url = match channel {
+        UpdateChannel::Stable => "https://github.com/byewind1/openbrep/releases/latest",
+        UpdateChannel::Development => "https://github.com/byewind1/openbrep/releases/tag/nightly",
+    };
     tauri_plugin_opener::open_url(
-        "https://github.com/byewind1/openbrep/releases/latest",
+        url,
         None::<&str>,
     )
     .map_err(|e| e.to_string())
 }
 
+fn updater_for_channel(
+    app: &tauri::AppHandle,
+    channel: UpdateChannel,
+) -> Result<tauri_plugin_updater::Updater, String> {
+    let endpoint = match channel {
+        UpdateChannel::Stable => STABLE_UPDATE_ENDPOINT,
+        UpdateChannel::Development => DEVELOPMENT_UPDATE_ENDPOINT,
+    }
+    .parse()
+    .map_err(|e| format!("invalid updater endpoint: {e}"))?;
+
+    let mut builder = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|e| e.to_string())?;
+
+    if channel == UpdateChannel::Stable {
+        // An explicit switch from a prerelease build back to Stable is a
+        // supported rollback, even when the latest stable semver is lower.
+        builder = builder.version_comparator(|current, remote| {
+            (!current.pre.is_empty() && remote.version.pre.is_empty())
+                || remote.version > current
+        });
+    }
+
+    builder.build().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-async fn updater_check(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    let update_result = app.updater().map_err(|e| e.to_string())?.check().await;
+async fn updater_check(
+    app: tauri::AppHandle,
+    channel: UpdateChannel,
+) -> Result<Option<UpdateInfo>, String> {
+    let update_result = updater_for_channel(&app, channel)?.check().await;
     let update = match update_result {
         Ok(u) => u,
         Err(e) => {
@@ -75,13 +127,16 @@ async fn updater_check(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, Stri
     });
 
     let state = app.state::<UpdaterState>();
-    *state.update.lock().unwrap() = update;
+    *state.update.lock().unwrap() = update.map(|update| CachedUpdate { channel, update });
 
     Ok(info)
 }
 
 #[tauri::command]
-async fn updater_download_and_install(app: tauri::AppHandle) -> Result<(), String> {
+async fn updater_download_and_install(
+    app: tauri::AppHandle,
+    channel: UpdateChannel,
+) -> Result<(), String> {
     // Prefer the cached Update from updater_check; re-check if the frontend
     // skipped the check step.
     let cached = {
@@ -90,10 +145,8 @@ async fn updater_download_and_install(app: tauri::AppHandle) -> Result<(), Strin
         taken
     };
     let update = match cached {
-        Some(u) => u,
-        None => app
-            .updater()
-            .map_err(|e| e.to_string())?
+        Some(cached) if cached.channel == channel => cached.update,
+        _ => updater_for_channel(&app, channel)?
             .check()
             .await
             .map_err(|e| e.to_string())?
