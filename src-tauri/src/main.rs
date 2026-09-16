@@ -183,6 +183,23 @@ fn backend_command(app: &tauri::App) -> (Command, String) {
     if let Ok(res) = app.path().resource_dir() {
         candidates.push(res.join(exe_name));
         candidates.push(res.join("binaries").join(exe_name));
+        // Tauri externalBin keeps the target triple in packaged sidecar names
+        // on Windows (for example obr7-backend-x86_64-pc-windows-msvc.exe).
+        // The desktop shell must resolve that name itself because it launches
+        // the sidecar directly instead of using the shell plugin.
+        for dir in [res.clone(), res.join("binaries")] {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if name.starts_with("obr7-backend-")
+                        && (cfg!(windows) && name.ends_with(".exe") || !cfg!(windows))
+                    {
+                        candidates.push(path);
+                    }
+                }
+            }
+        }
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
