@@ -1,7 +1,7 @@
-# openbrep v0.10.8 安装指南（中文）
+# openbrep v0.10.9 安装指南（中文）
 
 > 针对设计师用户的分步骤安装教程
-> 当前正式版本：v0.10.8
+> 当前正式版本：v0.10.9
 > 难度：⭐️ 小白可用
 
 ---
@@ -26,8 +26,8 @@ https://github.com/byewind1/openbrep/releases/latest
 
 下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.10.8_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.8_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.10.8_x64_en-US.msi` 或 `OpenBrep_0.10.8_x64-setup.exe`
+- macOS：`OpenBrep_0.10.9_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.9_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.10.9_x64_en-US.msi` 或 `OpenBrep_0.10.9_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
