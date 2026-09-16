@@ -39,7 +39,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # main 构建使用“下一补丁版 + nightly 时间戳/运行号”的合法 semver。
+      # main 构建使用“下一补丁版 + 数字运行号”的合法 semver。
+      # MSI 将预发布标识映射到 Windows 版本字段，因此该标识必须为
+      # 不大于 65535 的单个数字，不能使用 nightly.YYYYMMDD.N。
       # 稳定 tag 构建保持仓库声明版本不变。只改 Tauri bundle 版本即可；
       # 前后端应用版本均由 Tauri package_info 读取。
       - name: Set development build version
@@ -47,18 +49,14 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os
           from pathlib import Path
 
           path = Path("src-tauri/tauri.conf.json")
           config = json.loads(path.read_text())
           major, minor, patch = map(int, config["version"].split("-")[0].split("."))
-          stamp = subprocess.check_output(
-              ["git", "show", "-s", "--format=%cd", "--date=format:%Y%m%d", os.environ["GITHUB_SHA"]],
-              text=True,
-          ).strip()
           run = os.environ["GITHUB_RUN_NUMBER"]
-          config["version"] = f"{major}.{minor}.{patch + 1}-nightly.{stamp}.{run}"
+          config["version"] = f"{major}.{minor}.{patch + 1}-{run}"
           path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
           print(config["version"])
           PY
@@ -376,19 +374,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import datetime, json, os, subprocess
+          import datetime, json, os
           from pathlib import Path
 
           repo = os.environ["GH_REPO"]
           # Every matrix leg used the same generated semver. Recompute it from
-          # the checked-out stable version plus the shared run number/date.
+          # the checked-out stable version plus the shared run number.
           stable = json.loads(Path("src-tauri/tauri.conf.json").read_text())["version"]
           major, minor, patch = map(int, stable.split("-")[0].split("."))
-          stamp = subprocess.check_output(
-              ["git", "show", "-s", "--format=%cd", "--date=format:%Y%m%d", os.environ["GITHUB_SHA"]],
-              text=True,
-          ).strip()
-          version = f"{major}.{minor}.{patch + 1}-nightly.{stamp}.{os.environ['GITHUB_RUN_NUMBER']}"
+          version = f"{major}.{minor}.{patch + 1}-{os.environ['GITHUB_RUN_NUMBER']}"
           slot = int(os.environ["GITHUB_RUN_NUMBER"]) % 2
 
           def signature(name):
