@@ -20,6 +20,15 @@ STABLE_MESSAGES: dict[str, str] = {
     "version_incompatible": "Codex CLI 版本与 OpenBrep 不兼容，请升级 Codex CLI 后重试。",
     "codex_crashed": "Codex app-server 进程异常退出。请点击「重启」恢复连接。",
     "quota_exhausted": "ChatGPT 订阅额度已耗尽或已达到用量上限。请稍后重试、等待重置，或切换到其他模型/提供商。",
+    # 双入口（2026-09-17）：local 入口不可用 / 账户操作错入口
+    "codex_entry_unavailable": (
+        "本机 Codex 配置当前不可用（未安装 CLI、未配置模型或未登录）。"
+        "请到 AI 设置查看具体原因后重试。"
+    ),
+    "codex_entry_managed_only": (
+        "本机 Codex 配置入口不管理登录与额度。请在终端用 Codex CLI 完成登录，"
+        "或切换到「ChatGPT 账户登录（OpenBrep 托管）」入口。"
+    ),
     # D6：Fixed 模式 effort 门禁（保存与运行时共用，稳定文案零回显）
     "unsupported_reasoning_effort": (
         "当前模型不支持所选 reasoning effort（推理强度），请求已拒绝。"

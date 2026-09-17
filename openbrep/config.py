@@ -592,6 +592,13 @@ class LLMConfig:
     # D9：Auto 路由必须显式 opt-in；全新/旧配置默认 fixed。
     # 无效值按 fixed 解释并在下次显式保存时规范化，绝不意外启用 Auto。
     codex_routing_mode: str = "fixed"
+    # 双入口（2026-09-17）：Codex 链路走哪条入口。
+    # `managed`（默认，保持既有行为）= OpenBrep 托管 ChatGPT 登录
+    # （~/.openbrep/codex）；`local` = 只读消费用户自己的 Codex 配置
+    # （CODEX_HOME / ~/.codex），不接管认证。UI 把 local 标为推荐，但默认值
+    # 不悄悄改动既有配置：全新用户本机没有 Codex 配置，只有托管入口可用。
+    # 无效值一律按默认解释（fail safe），保存时只写规范枚举。
+    codex_entry: str = "managed"
 
     @property
     def providers(self) -> list[dict]:
@@ -634,6 +641,12 @@ class LLMConfig:
     def effective_codex_routing_mode(self) -> str:
         """Return the fail-closed routing mode (``fixed`` or ``auto``)."""
         return "auto" if str(self.codex_routing_mode or "").strip() == "auto" else "fixed"
+
+    def effective_codex_entry(self) -> str:
+        """Codex 入口（双入口 2026-09-17）：只认两个枚举值，其余按默认。"""
+        from openbrep.codex.entry import normalize_codex_entry
+
+        return normalize_codex_entry(self.codex_entry)
 
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
@@ -1062,6 +1075,7 @@ class GDLAgentConfig:
         providers = normalize_provider_list(self.llm.providers)
         self.llm.providers = providers
         self.llm.codex_routing_mode = self.llm.effective_codex_routing_mode()
+        self.llm.codex_entry = self.llm.effective_codex_entry()
         # D12：单保存边界规范化（负数/非整数 → 0 = 用默认；绝不崩、绝不静默放大）。
         self.agent.agent_loop_budget = _normalize_agent_loop_budget(
             self.agent.agent_loop_budget
@@ -1079,6 +1093,12 @@ class GDLAgentConfig:
                 "reasoning_effort": self.llm.reasoning_effort or "",
                 # D9：显式 opt-in；写盘只允许规范枚举。
                 "codex_routing_mode": self.llm.effective_codex_routing_mode(),
+                # 双入口：只有非默认（managed）时才落盘，旧配置模板零变化。
+                **(
+                    {"codex_entry": self.llm.effective_codex_entry()}
+                    if self.llm.effective_codex_entry() != "managed"
+                    else {}
+                ),
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
@@ -1131,6 +1151,8 @@ class GDLAgentConfig:
             lines.append(f'reasoning_effort = "{self.llm.reasoning_effort}"')
         if self.llm.effective_codex_routing_mode() == "auto":
             lines.append('codex_routing_mode = "auto"')
+        if self.llm.effective_codex_entry() != "managed":
+            lines.append(f'codex_entry = "{self.llm.effective_codex_entry()}"')
         if self.llm.api_base:
             lines.append(f'api_base = "{self.llm.api_base}"')
         lines += [

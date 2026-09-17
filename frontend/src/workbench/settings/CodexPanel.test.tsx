@@ -5,6 +5,8 @@ import type { LlmConnectionTestResult, LlmSettings } from '../../api/types'
 
 vi.mock('../../api/client', () => ({
   fetchCodexStatus: vi.fn(),
+  fetchCodexEntry: vi.fn(),
+  saveCodexEntry: vi.fn(),
   codexLoginStart: vi.fn(),
   codexLoginCancel: vi.fn(),
   codexLoginDeviceCode: vi.fn(),
@@ -14,6 +16,7 @@ vi.mock('../../api/client', () => ({
 }))
 
 import {
+  fetchCodexEntry,
   codexLoginCancel,
   codexLoginDeviceCode,
   codexLoginStart,
@@ -21,9 +24,12 @@ import {
   codexRestart,
   fetchCodexModels,
   fetchCodexStatus,
+  saveCodexEntry,
 } from '../../api/client'
 
 const mockedStatus = vi.mocked(fetchCodexStatus)
+const mockedEntry = vi.mocked(fetchCodexEntry)
+const mockedSaveEntry = vi.mocked(saveCodexEntry)
 const mockedLogin = vi.mocked(codexLoginStart)
 const mockedCancel = vi.mocked(codexLoginCancel)
 const mockedDeviceCode = vi.mocked(codexLoginDeviceCode)
@@ -56,6 +62,21 @@ describe('AiSettingsPanel Codex BYOA section', () => {
       account: null,
     })
     mockedModels.mockResolvedValue({ ok: true, models: [] })
+    mockedEntry.mockResolvedValue({
+      ok: true,
+      entry: 'managed',
+      entries: [
+        { entry: 'local', label: 'Codex 本机配置', auth_source: 'codex_config', recommended: true },
+        {
+          entry: 'managed',
+          label: 'ChatGPT 账户登录（OpenBrep 托管）',
+          auth_source: 'openbrep_managed',
+          recommended: false,
+        },
+      ],
+      local_hint: { detected: false, state: 'unconfigured', models: 0, home_kind: 'user_default' },
+    })
+    mockedSaveEntry.mockResolvedValue({ ok: true, entry: 'local' })
   })
 
   test('signed out shows the login button and starts the browser flow only', async () => {
@@ -763,5 +784,140 @@ describe('D9 Codex Auto routing opt-in', () => {
       'low',
       'auto',
     ))
+  })
+})
+
+describe('双入口 Codex 链路（2026-09-17）', () => {
+  test('默认托管入口：展示入口选择、当前链路与来源，切换前不写盘', async () => {
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    const select = (await screen.findByTestId('codex-entry-select')) as HTMLSelectElement
+    expect(select.value).toBe('managed')
+    expect(screen.getByTestId('codex-entry-active').textContent).toMatch(/OpenBrep 托管/)
+    expect((screen.getByTestId('codex-entry-save') as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.change(select, { target: { value: 'local' } })
+    // 改 draft 绝不隐式写配置（设置页统一 draft + 显式保存）
+    expect(mockedSaveEntry).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('codex-entry-save'))
+    await waitFor(() => expect(mockedSaveEntry).toHaveBeenCalledWith('local'))
+    expect(await screen.findByTestId('codex-entry-feedback')).toBeTruthy()
+  })
+
+  test('本机配置入口已就绪：状态卡显示 home 来源与认证来源，不显示 OpenBrep 登录按钮', async () => {
+    mockedEntry.mockResolvedValue({
+      ok: true,
+      entry: 'managed',
+      entries: [],
+      local_hint: { detected: true, state: 'ready', models: 2, home_kind: 'user_default' },
+    })
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'ready',
+      codex_available: true,
+      connected: true,
+      account: null,
+      entry: 'local',
+      entry_label: 'Codex 本机配置',
+      codex_home_kind: 'user_default',
+      auth_source: 'codex_config',
+      models_source: 'model_catalog_json',
+      provider: 'deepseek',
+      model: 'openai-codex/deepseek-v4-flash',
+      model_available: true,
+    })
+    mockedModels.mockResolvedValue({
+      ok: true,
+      models: [
+        {
+          id: 'openai-codex/deepseek-v4-flash',
+          label: 'DeepSeek V4 Flash',
+          model: 'deepseek-v4-flash',
+          source: 'codex_config',
+        },
+      ],
+    })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({ model: 'openai-codex/deepseek-v4-flash', codex_entry: 'local' })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    const active = await screen.findByTestId('codex-entry-active')
+    expect(active.textContent).toMatch(/本机配置/)
+    expect(active.textContent).toMatch(/本机默认位置/)
+    expect(active.textContent).toMatch(/认证：你的 Codex 配置/)
+    expect(active.textContent).toMatch(/deepseek/)
+    // 本机入口不接管认证：没有 OpenBrep 的登录按钮
+    expect(screen.queryByTestId('codex-login-button')).toBeNull()
+    // 模型来源在列表标题与抽屉里都标注清楚
+    expect(screen.getByTestId('codex-models-label').textContent).toMatch(/Codex 配置/)
+    fireEvent.click(screen.getByTestId('codex-model-drawer-open'))
+    expect((await screen.findByTestId('codex-drawer-source')).textContent).toMatch(/来自 Codex 配置/)
+  })
+
+  test('本机配置缺失：三态提示可操作，并提供切换到托管登录的显式入口', async () => {
+    mockedEntry.mockResolvedValue({
+      ok: true,
+      entry: 'local',
+      entries: [],
+      local_hint: { detected: false, state: 'unconfigured', models: 0, home_kind: 'user_default' },
+    })
+    mockedStatus.mockResolvedValue({
+      ok: true,
+      state: 'unconfigured',
+      codex_available: true,
+      connected: false,
+      account: null,
+      entry: 'local',
+      codex_home_kind: 'user_default',
+      auth_source: 'codex_config',
+      error: '未检测到本机 Codex 配置。请先在终端运行 codex login 完成 Codex CLI 初始化，再回到这里刷新。',
+    })
+    mockedLogin.mockResolvedValue({ ok: true, state: 'login_started' })
+    mockedSaveEntry.mockResolvedValue({ ok: true, entry: 'managed' })
+
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({ codex_entry: 'local' })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    const hint = await screen.findByTestId('codex-unconfigured')
+    expect(hint.textContent).toMatch(/codex login/)
+    expect(screen.queryByTestId('codex-login-button')).toBeNull()
+
+    // 「连接我的 ChatGPT」在本机入口下 = 显式切到托管入口再登录（绝不静默切换）
+    fireEvent.click(await screen.findByTestId('codex-model-drawer-open'))
+    await waitFor(() => expect(mockedSaveEntry).toHaveBeenCalledWith('managed'))
+    await waitFor(() => expect(mockedLogin).toHaveBeenCalledTimes(1))
+    expect(await screen.findByTestId('codex-login-pending')).toBeTruthy()
+  })
+
+  test('入口清单一律来自后端枚举，前端不硬编码入口名', async () => {
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings()}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(mockedEntry).toHaveBeenCalled())
+    const options = Array.from(
+      (await screen.findByTestId('codex-entry-select')).querySelectorAll('option'),
+    ).map((option) => option.value)
+    expect(options).toEqual(['local', 'managed'])
   })
 })

@@ -1365,6 +1365,10 @@ def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str
             return "未检测到 Codex CLI。请先安装 Codex CLI 后重试。"
         status = provider.status(refresh=True)
         if not status.get("codex_ready", status.get("connected")):
+            # 双入口（2026-09-17）：local 入口的不可用原因各有稳定文案，直接透传
+            hint = str(status.get("error") or "").strip()
+            if status.get("entry") == "local" and hint:
+                return hint
             return "Codex app-server 尚未就绪，请点击重启后重试。"
         if status.get("state") == "quota_exhausted":
             return QUOTA_ERROR_TEXT

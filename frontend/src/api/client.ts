@@ -25,6 +25,8 @@ import type {
   SetDistilledLessonStatusRequest,
   SetDistilledLessonStatusResult,
   MockCompileResponse,
+  CodexEntry,
+  CodexEntryResult,
   CodexDeviceCodeResult,
   CodexLoginCancelResult,
   CodexLoginStartResult,
@@ -701,6 +703,28 @@ export async function codexRestart(): Promise<CodexRestartResult> {
   return requestJson<CodexRestartResult>(
     '/api/settings/llm/codex/restart',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+// ── 双入口（2026-09-17）：Codex 链路入口读取 / 切换 ────────────────────────
+
+export async function fetchCodexEntry(): Promise<CodexEntryResult> {
+  return requestJson<CodexEntryResult>(
+    '/api/settings/llm/codex/entry',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function saveCodexEntry(entry: CodexEntry): Promise<CodexEntryResult> {
+  return requestJson<CodexEntryResult>(
+    '/api/settings/llm/codex/entry',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry }),
+    },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }

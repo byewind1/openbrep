@@ -699,6 +699,10 @@ class TaskPipeline:
                 provider = get_default_codex_provider()
             if provider is None:
                 raise RuntimeError("provider unavailable")
+            # 双入口（2026-09-17）：Auto 路由同样走当前配置选定的入口
+            from openbrep.codex.provider import bind_codex_entry
+
+            bind_codex_entry(provider, self.config)
             status = provider.status(refresh=True)
             catalog = (
                 provider.models(refresh=True)

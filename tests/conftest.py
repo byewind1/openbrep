@@ -25,6 +25,12 @@ if _real_config.is_file():
 
 os.environ.setdefault("GDL_AGENT_CONFIG", str(_tmp_config))
 
+# 双入口（2026-09-17）：Codex app-server 互斥锁默认落在 ``~/.openbrep/run``，
+# 按 home 摘要命名。测试全部用临时 home，绝不能把锁文件写进开发机的
+# ``~/.openbrep``（那是运行时目录，不是测试垃圾桶）；这里统一改到本次会话的
+# 临时目录，与 GDL_AGENT_CONFIG 同一套隔离思路。
+os.environ.setdefault("OPENBREP_CODEX_LOCK_DIR", str(_tmp_dir / "codex-locks"))
+
 # 全量测试统一禁用 rich 彩色/加粗输出：cli/main.py 的 ``console = Console()`` 在
 # 模块导入时做终端自动检测，tty / TTY_COMPATIBLE / FORCE_COLOR 任一命中都会启用
 # color_system，而 rich 默认 ``highlight=True`` 会把数字渲染成 \x1b[1m 加粗，

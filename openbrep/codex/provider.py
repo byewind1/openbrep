@@ -33,10 +33,19 @@ from openbrep.codex.app_server import (
     CodexAppServerClient,
     CodexAppServerError,
     CodexCliUnavailableError,
-    default_codex_home,
     resolve_codex_binary,
 )
+from openbrep.codex.entry import (
+    ENTRY_LOCAL,
+    ENTRY_MANAGED,
+    codex_home_for_entry,
+    codex_home_kind,
+    entry_auth_source,
+    entry_label,
+    normalize_codex_entry,
+)
 from openbrep.codex.errors import error_response
+from openbrep.codex.local_config import local_entry_verdict, read_local_codex_config
 from openbrep.codex.turn import CodexTurnResult, CodexTurnRunner
 from openbrep.config import CODEX_PROVIDER_NAME
 
@@ -107,6 +116,25 @@ def default_codex_provider() -> "CodexProvider":
         return _default_provider
 
 
+def bind_codex_entry(provider: Any, config: Any) -> str:
+    """把 ``config.llm.codex_entry`` 应用到 provider（双入口 2026-09-17）。
+
+    进程共享 provider 的入口归属由调用方的配置决定：llm 适配器、设置服务、
+    pipeline 都在使用前经这里绑定一次。替身 provider（测试注入）没有
+    ``set_entry``、旧式 config 没有该字段时一律静默跳过，绝不改变既有语义。
+    返回实际生效的入口（无法解析时返回空串）。
+    """
+    setter = getattr(provider, "set_entry", None)
+    getter = getattr(getattr(config, "llm", None), "effective_codex_entry", None)
+    if not callable(setter) or not callable(getter):
+        return ""
+    try:
+        return str(setter(getter()))
+    except Exception as exc:  # noqa: BLE001 —— 入口绑定失败不掩盖真实错误
+        _LOGGER.warning("codex 入口绑定失败（%s）", exc.__class__.__name__)
+        return ""
+
+
 class CodexNotSignedInError(RuntimeError):
     """未登录 ChatGPT——动态模型目录不可读（fail closed）。"""
 
@@ -127,6 +155,16 @@ class CodexUnsupportedEffortError(RuntimeError):
     """
 
     code = "unsupported_reasoning_effort"
+
+
+class CodexEntryManagedOnlyError(RuntimeError):
+    """该操作只对 OpenBrep 托管入口有意义（双入口 2026-09-17）。
+
+    ``local`` 入口明确不接管认证：登录/登出/取消/额度这些账户操作在它下面
+    一律拒绝，绝不偷偷切到托管入口或改写用户的 ``~/.codex``。
+    """
+
+    code = "codex_entry_managed_only"
 
 
 def mask_email(email: str) -> str:
@@ -351,6 +389,7 @@ class CodexProvider:
         self,
         *,
         codex_home: str | Path | None = None,
+        entry: str | None = None,
         codex_binary: str = "codex",
         client_factory: Callable[[], Any] | None = None,
         browser_opener: Callable[[str], Any] | None = None,
@@ -361,7 +400,15 @@ class CodexProvider:
         min_codex_version: tuple[int, int, int] = MIN_CODEX_VERSION,
         logger: logging.Logger | None = None,
     ) -> None:
-        self.codex_home = Path(codex_home) if codex_home is not None else default_codex_home()
+        # 双入口（2026-09-17）：home 由入口决定；显式传入 codex_home 时以参数为准
+        # （测试/嵌入方覆盖），入口只决定语义（是否托管认证）。
+        # 未显式给入口时按 managed 构造（既有 app-server 语义）；生产调用方一律
+        # 用 set_entry(config.llm.effective_codex_entry()) 把配置里的入口带进来。
+        self._entry = normalize_codex_entry(entry if entry is not None else ENTRY_MANAGED)
+        self._explicit_home = codex_home is not None
+        self.codex_home = (
+            Path(codex_home) if codex_home is not None else codex_home_for_entry(self._entry)
+        )
         self.codex_binary = codex_binary
         self._client_factory = client_factory
         self._browser_opener = browser_opener or webbrowser.open
@@ -419,6 +466,62 @@ class CodexProvider:
         if self._cli_available is not None:
             return self._cli_available
         return resolve_codex_binary(self.codex_binary) is not None
+
+    # ── 双入口（local / managed，2026-09-17）────────────────
+
+    @property
+    def entry(self) -> str:
+        return self._entry
+
+    def set_entry(self, entry: object) -> str:
+        """切换 Codex 入口；home 变化时关闭旧 app-server 并失效全部缓存。
+
+        ``local`` = 只读消费用户自己的 Codex 配置；``managed`` = OpenBrep 托管
+        ChatGPT 登录。两个入口的 home 不同，切换必须关掉旧 app-server（否则旧
+        进程会一直占着那把 home 锁）。
+        """
+        target = normalize_codex_entry(entry)
+        if target == self._entry:
+            return self._entry
+        with self._op_lock:
+            self._entry = target
+            if not self._explicit_home:
+                self.codex_home = codex_home_for_entry(target)
+            with self._lock:
+                client, self._client = self._client, None
+                self._pending_login_id = None
+                self._login_pending = False
+                self._login_failure = None
+                self._login_start_inflight = None
+                # 换 home = 换账户会话：旧 in-flight RPC 结果不得回写新缓存
+                self._bump_generation()
+            if client is not None:
+                try:
+                    client.close()
+                except Exception as exc:  # noqa: BLE001 —— 切换入口不掩盖后续错误
+                    self._logger.warning(
+                        "codex 入口切换时关闭旧 app-server 失败（%s）",
+                        exc.__class__.__name__,
+                    )
+        return self._entry
+
+    def _entry_metadata(self) -> dict[str, Any]:
+        """入口元信息：状态卡据此展示「哪条链路、哪个 home、哪个认证来源」。"""
+        return {
+            "entry": self._entry,
+            "entry_label": entry_label(self._entry),
+            # 只回符号枚举，绝不回路径（D1：auth 路径不出模块）
+            "codex_home_kind": codex_home_kind(self.codex_home, self._entry),
+            "auth_source": entry_auth_source(self._entry),
+        }
+
+    def _require_managed_entry(self) -> None:
+        """账户操作门禁：``local`` 入口不接管认证，绝不偷偷写用户的 home。"""
+        if self._entry != ENTRY_MANAGED:
+            raise CodexEntryManagedOnlyError(
+                "本机 Codex 配置入口不管理登录与额度。请在终端用 Codex CLI 完成登录，"
+                "或切换到「ChatGPT 账户登录（OpenBrep 托管）」入口。"
+            )
 
     # ── 内部：客户端生命周期 ─────────────────────────────────
 
@@ -482,6 +585,9 @@ class CodexProvider:
                     self._client = CodexAppServerClient(
                         codex_binary=resolve_codex_binary(self.codex_binary) or self.codex_binary,
                         codex_home=self.codex_home,
+                        entry=self._entry,
+                        # local 入口对用户的 Codex home 零写入：连目录都不建
+                        create_home=self._entry == ENTRY_MANAGED,
                     )
                 # P0-1：新 client 是新的账户会话——in-flight 旧请求不得回写缓存
                 self._bump_generation()
@@ -643,7 +749,14 @@ class CodexProvider:
         login_started（登录进行中，未完成前不返回账户）| quota_exhausted |
         crashed | error。永不返回 token / JWT / account id / auth 路径；
         signed_in 只含脱敏邮箱、plan_type 与脱敏额度摘要。
+
+        双入口（2026-09-17）：``local`` 入口不驱动 app-server、不接管认证，
+        状态只读用户自己的 Codex 配置（no_cli | unconfigured | signed_out |
+        ready）。返回值恒带 ``entry`` / ``codex_home_kind`` / ``auth_source``
+        （符号枚举，绝不含 auth 路径）。
         """
+        if self._entry == ENTRY_LOCAL:
+            return self._local_status()
         now = time.monotonic()
         client: Any | None = None
         with self._lock:
@@ -753,6 +866,7 @@ class CodexProvider:
                     "code": stable["code"],
                     "error": stable["error"],
                 }
+        result = {**self._entry_metadata(), **result}
         with self._lock:
             # P0-1：只有 RPC 期间会话未变迁（client 与 generation 均未变）
             # 才允许写缓存
@@ -761,6 +875,36 @@ class CodexProvider:
                 self._status_ts = time.monotonic()
                 self._status_gen = gen
         return dict(result)
+
+    def _local_status(self) -> dict[str, Any]:
+        """本机配置入口的三态：只读解析，不打 app-server、不写盘、不查凭据值。
+
+        「已登录 / 可用」对这条链路意味着「配置里有模型，且认证条件已满足」：
+        要么 home 里有 ChatGPT 登录态（auth.json），要么 provider 自带凭据
+        （例如 cc-switch 写入的 base_url + bearer）。
+        """
+        cli_available = self.cli_available
+        data = read_local_codex_config(self.codex_home)
+        verdict = local_entry_verdict(data, cli_available=cli_available)
+        status: dict[str, Any] = {
+            "state": verdict["state"],
+            "connected": verdict["connected"],
+            "codex_available": cli_available,
+            "codex_ready": verdict["connected"],
+            "account": None,
+            **self._entry_metadata(),
+            "auth_present": bool(
+                data.get("chatgpt_auth") or data.get("provider_credential")
+            ),
+            "models_source": data.get("models_source") or "",
+            "model": data.get("model") or "",
+            "provider": data.get("provider_label") or "",
+        }
+        if verdict["code"]:
+            status["code"] = verdict["code"]
+        if verdict["error"]:
+            status["error"] = verdict["error"]
+        return status
 
     def _read_account(self, client: Any) -> dict[str, Any]:
         raw = client.account_read()
@@ -811,6 +955,7 @@ class CodexProvider:
 
     def rate_limits(self, *, refresh: bool = False) -> dict[str, Any]:
         """account/rateLimits/read 的脱敏摘要；未登录 fail closed。"""
+        self._require_managed_entry()
         if not self.cli_available:
             raise CodexCliUnavailableError(
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
@@ -1051,8 +1196,9 @@ class CodexProvider:
 
         返回 {state: "login_started", method: "chatgpt"}；调用方通过
         status(refresh=True) 轮询登录结果（account/login/completed 通知
-        由 app-server 内部处理并触发本 provider 状态更新）。
+       由 app-server 内部处理并触发本 provider 状态更新）。
         """
+        self._require_managed_entry()
         with self._op_lock:
             self._ensure_can_login()
             client, result, login_id = self._login_start_type("chatgpt")
@@ -1082,6 +1228,7 @@ class CodexProvider:
         这是完成授权所必需的产品信息（用户需在浏览器输入该码），
         不是 token/JWT/请求头；loginId 只保存在 provider 内部用于取消。
         """
+        self._require_managed_entry()
         with self._op_lock:
             self._ensure_can_login()
             client, result, login_id = self._login_start_type("chatgptDeviceCode")
@@ -1112,6 +1259,7 @@ class CodexProvider:
         - 无 pending 且已登录：返回 signed_in，**不执行 logout**（切换账号必须先显式断开）。
         - 无 pending 且未登录：幂等返回 signed_out。
         """
+        self._require_managed_entry()
         with self._op_lock:
             with self._lock:
                 login_id, self._pending_login_id = self._pending_login_id, None
@@ -1149,6 +1297,7 @@ class CodexProvider:
 
     def logout(self) -> dict[str, Any]:
         """退出登录；未连接时也是幂等的 signed_out。"""
+        self._require_managed_entry()
         with self._op_lock:
             if self.cli_available:
                 client = self._get_client()
@@ -1192,7 +1341,13 @@ class CodexProvider:
         只允许已登录读取；未登录 / 无 CLI 一律报错（fail closed，不 fallback）。
         结果按 models_ttl 缓存：llm_settings 的可用性检查与登录轮询共享目录，
         不重复打 app-server。
+
+        双入口（2026-09-17）：``local`` 入口的目录来自用户自己的 Codex 配置
+        （model_catalog_json / config.toml / models_cache.json），只读且不打
+        app-server；``managed`` 入口行为不变（账户 model/list）。
         """
+        if self._entry == ENTRY_LOCAL:
+            return self._local_models()
         now = time.monotonic()
         with self._lock:
             if (
@@ -1265,6 +1420,41 @@ class CodexProvider:
                 self._models_gen = gen
         return models
 
+    def _local_models(self) -> list[dict[str, Any]]:
+        """本机配置入口的模型目录：用户配置里声明什么就提供什么，绝不编造。"""
+        data = read_local_codex_config(self.codex_home)
+        models: list[dict[str, Any]] = []
+        for raw in data.get("models") or []:
+            if not isinstance(raw, dict):
+                continue
+            model_id = str(raw.get("model") or "").strip()
+            if not model_id:
+                continue
+            efforts = [
+                {
+                    "effort": str(item.get("effort") or ""),
+                    "description": str(item.get("description") or ""),
+                }
+                for item in raw.get("efforts") or []
+                if isinstance(item, dict) and str(item.get("effort") or "").strip()
+            ]
+            label = str(raw.get("label") or model_id)
+            models.append(
+                {
+                    "id": f"{CODEX_PROVIDER_NAME}/{model_id}",
+                    "label": label,
+                    "model": model_id,
+                    "display_name": label if label != model_id else "",
+                    "hidden": False,
+                    "specialty": None,
+                    "supported_reasoning_efforts": efforts,
+                    "default_reasoning_effort": str(raw.get("default_effort") or ""),
+                    # 前端在模型抽屉里按来源分组标注（D 双入口 2026-09-17）
+                    "source": "codex_config",
+                }
+            )
+        return models
+
     # ── D3：CHAT / EXPLAIN 安全调用 ─────────────────────────
 
     def _supported_efforts(self, model: str) -> list[str]:
@@ -1301,11 +1491,17 @@ class CodexProvider:
                 "reasoning effort 格式不合法，请求已拒绝。请到 AI 设置重新选择。"
             )
         supported = self._supported_efforts(model)
-        if effort not in supported:
-            raise CodexUnsupportedEffortError(
-                "当前模型不支持所选 reasoning effort，请求已拒绝。"
-                "请到 AI 设置中选择该模型支持的 effort。"
-            )
+        if effort in supported:
+            return
+        if self._entry == ENTRY_LOCAL and not supported:
+            # 本机配置入口不接管 effort 语义：用户自己的 Codex 配置
+            # （model_reasoning_effort 等）才是事实源。目录未声明该模型的
+            # effort 时，放行格式合法的值，由 Codex CLI 自己决定如何处理。
+            return
+        raise CodexUnsupportedEffortError(
+            "当前模型不支持所选 reasoning effort，请求已拒绝。"
+            "请到 AI 设置中选择该模型支持的 effort。"
+        )
 
     def chat(
         self,
@@ -1342,6 +1538,13 @@ class CodexProvider:
             )
         status = self.status(refresh=True)
         if not status.get("codex_ready", status.get("connected")):
+            if self._entry == ENTRY_LOCAL:
+                # 本机配置入口的不可用原因（没装 CLI / 没配置 / 没登录）各有稳定
+                # 文案，直接透传 category 供 API 边界映射。
+                raise CodexAppServerError(
+                    str(status.get("error") or "本机 Codex 配置当前不可用。"),
+                    category="codex_entry_unavailable",
+                )
             raise CodexAppServerError("Codex app-server 尚未就绪。", category="not_started")
         if status.get("state") == "quota_exhausted":
             raise CodexAppServerError(

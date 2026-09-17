@@ -419,15 +419,21 @@ class LLMAdapter:
         没有可用 provider 时返回 None（调用方 fail closed，绝不自动回退）。
         """
         provider = getattr(self, "codex_provider", None)
-        if provider is not None:
-            return provider
-        try:
-            from openbrep.codex.provider import get_default_codex_provider
+        if provider is None:
+            try:
+                from openbrep.codex.provider import get_default_codex_provider
 
-            return get_default_codex_provider()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("codex provider 读取失败（%s）", exc.__class__.__name__)
+                provider = get_default_codex_provider()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("codex provider 读取失败（%s）", exc.__class__.__name__)
+                return None
+        if provider is None:
             return None
+        # 双入口（2026-09-17）：进程共享 provider 的归属由当前 config 决定。
+        from openbrep.codex.provider import bind_codex_entry
+
+        bind_codex_entry(provider, getattr(self, "config", None))
+        return provider
 
     def _codex_turn_generate(self, msg_dicts: list, model: str, **kwargs) -> LLMResponse:
         """CHAT/EXPLAIN、文本 CREATE 与图片 CREATE 走 Codex app-server turn

@@ -20,6 +20,7 @@ import itertools
 import json
 import logging
 import os
+import shlex
 import signal
 import shutil
 import subprocess
@@ -28,6 +29,13 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable
+
+from openbrep.codex.entry import (
+    ENTRY_MANAGED,
+    codex_home_for_entry,
+    lock_path_for_home,
+    managed_codex_home,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,14 +75,21 @@ class CodexAppServerError(RuntimeError):
 
 
 def default_codex_home() -> Path:
-    """Return OpenBrep's isolated user-level Codex home.
+    """兼容入口：OpenBrep **托管**入口的 Codex home（``~/.openbrep/codex``）。
 
-    The ChatGPT subscription session belongs to OpenBrep. Reusing the developer
-    CLI's ``~/.codex`` lets unrelated config/provider state and app-server locks
-    interfere with browser login completion.
+    双入口（2026-09-17）之后，home 由入口决定：``local`` 入口跟随
+    ``CODEX_HOME``／``~/.codex``（见 ``openbrep/codex/entry.py``），``managed``
+    入口保持私有目录。本函数只服务后者，调用方需要按入口解析时请用
+    ``codex_home_for_entry()``。
     """
-    configured = os.environ.get("CODEX_HOME", "").strip()
-    return Path(configured).expanduser() if configured else Path.home() / ".openbrep" / "codex"
+    return managed_codex_home()
+
+
+# 登录 shell 解析缓存：GUI（Finder 启动的 .app）继承的是精简 PATH，找不到用户
+# 终端里的 codex。解析一次并缓存，避免每次状态轮询都开 shell。
+_LOGIN_SHELL_CACHE: dict[str, Any] = {}
+_LOGIN_SHELL_MISS = object()
+_LOGIN_SHELL_TIMEOUT_SECONDS = 5.0
 
 
 def resolve_codex_binary(binary: str = "codex") -> str | None:
@@ -84,6 +99,9 @@ def resolve_codex_binary(binary: str = "codex") -> str | None:
     npm/Homebrew install can be absent from ``PATH`` even though it works in a
     terminal. Explicit paths and PATH remain authoritative; fallback locations
     cover the standard per-user npm/Homebrew installs without invoking a shell.
+    When every static location misses, the login shell is asked once (cached) —
+    that is the only way to cover installs the user put on ``PATH`` in their own
+    rc files, which is the common case for the packaged (dmg) build.
     """
     value = str(binary or "codex").strip()
     if not value:
@@ -105,6 +123,45 @@ def resolve_codex_binary(binary: str = "codex") -> str | None:
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
+    return _resolve_via_login_shell(value)
+
+
+def _resolve_via_login_shell(name: str) -> str | None:
+    """Best-effort: ask the user's login shell where ``name`` lives.
+
+    Only reached after PATH and the static candidates failed, only on POSIX, and
+    cached per name. The shell output is validated as an absolute, executable
+    file before it is used, and never logged verbatim.
+    """
+    cached = _LOGIN_SHELL_CACHE.get(name)
+    if cached is not None:
+        return None if cached is _LOGIN_SHELL_MISS else str(cached)
+    resolved = _run_login_shell_lookup(name)
+    _LOGIN_SHELL_CACHE[name] = resolved if resolved is not None else _LOGIN_SHELL_MISS
+    return resolved
+
+
+def _run_login_shell_lookup(name: str) -> str | None:
+    if os.name != "posix" or os.environ.get("OPENBREP_DISABLE_LOGIN_SHELL"):
+        return None
+    shell = os.environ.get("SHELL", "").strip() or "/bin/zsh"
+    if not Path(shell).is_file():
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 —— 只执行用户自己的登录 shell
+            [shell, "-lic", f"command -v {shlex.quote(name)}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=_LOGIN_SHELL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in reversed(str(proc.stdout or "").splitlines()):
+        candidate = line.strip()
+        if candidate.startswith("/") and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return candidate
     return None
 
 
@@ -154,12 +211,18 @@ class StdioJsonRpcTransport:
         *,
         codex_binary: str = "codex",
         codex_home: str | Path | None = None,
+        entry: str = ENTRY_MANAGED,
+        create_home: bool = True,
         extra_args: tuple[str, ...] = ("app-server",),
         rpc_timeout: float = 10.0,
         logger: logging.Logger | None = None,
     ) -> None:
         self.codex_binary = codex_binary
-        self.codex_home = Path(codex_home) if codex_home is not None else default_codex_home()
+        self.codex_home = (
+            Path(codex_home) if codex_home is not None else codex_home_for_entry(entry)
+        )
+        # local 入口对用户的 Codex home 零写入：连目录都不建（由 Codex CLI 自己管）
+        self.create_home = bool(create_home)
         self.extra_args = extra_args
         self.rpc_timeout = rpc_timeout
         self.logger = logger or _LOGGER
@@ -202,10 +265,15 @@ class StdioJsonRpcTransport:
     def start(self) -> None:
         if self._proc is not None:
             return
-        self.codex_home.mkdir(parents=True, exist_ok=True)
+        if self.create_home:
+            self.codex_home.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
             import fcntl
-            lock_path = self.codex_home / ".openbrep-app-server.lock"
+
+            # 互斥锁落在 OpenBrep 自己的 run 目录（按 home 摘要命名）：
+            # local 入口承诺对用户 Codex home 零写入，锁文件也不例外。
+            lock_path = lock_path_for_home(self.codex_home)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
             self._home_lock = open(lock_path, "a+")
             try:
                 fcntl.flock(self._home_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -672,6 +740,8 @@ class CodexAppServerClient:
         transport: Any | None = None,
         codex_binary: str = "codex",
         codex_home: str | Path | None = None,
+        entry: str = ENTRY_MANAGED,
+        create_home: bool = True,
         rpc_timeout: float = 10.0,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -679,6 +749,8 @@ class CodexAppServerClient:
         self._transport = transport or StdioJsonRpcTransport(
             codex_binary=codex_binary,
             codex_home=codex_home,
+            entry=entry,
+            create_home=create_home,
             rpc_timeout=rpc_timeout,
             logger=self._logger,
         )

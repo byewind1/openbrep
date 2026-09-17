@@ -193,6 +193,8 @@ export interface LlmSettings {
   reasoning_effort?: string
   /** D9：Codex 路由显式 opt-in；缺失/未知均由后端按 fixed 处理。 */
   codex_routing_mode?: 'fixed' | 'auto'
+  /** 双入口（2026-09-17）：Codex 链路入口（默认 managed，保持既有行为） */
+  codex_entry?: CodexEntry
   /** D1：ChatGPT Codex（openai-codex）连接状态。provider 未拉起时为 null */
   codex?: CodexStatus | null
 }
@@ -203,6 +205,10 @@ export interface LlmSettings {
 
 export type CodexState =
   | 'no_cli'
+  /** 双入口（2026-09-17）：本机配置入口专用——没有可读的 Codex 配置/模型 */
+  | 'unconfigured'
+  /** 双入口（2026-09-17）：本机配置入口专用——配置与认证条件都已满足 */
+  | 'ready'
   | 'version_incompatible'
   | 'signed_out'
   | 'signed_in'
@@ -241,6 +247,17 @@ export interface CodexStatus {
   codex_available: boolean
   connected: boolean
   account: CodexAccount | null
+  /** 双入口（2026-09-17）：这条链路走哪个 Codex 入口 */
+  entry?: CodexEntry
+  entry_label?: string
+  /** home 的符号化来源（绝不回传路径）：user_default | env_override | managed | custom */
+  codex_home_kind?: string
+  /** 认证来源：codex_config（用户自己的 Codex 配置）| openbrep_managed */
+  auth_source?: string
+  /** 模型目录来源：model_catalog_json | config | models_cache（本机配置入口） */
+  models_source?: string
+  /** 本机配置入口命中的 provider 展示名（如 deepseek） */
+  provider?: string
   /** D2：脱敏额度摘要（已登录且上游返回时存在） */
   rate_limits?: CodexRateLimits | null
   /** crashed 状态下为 true：UI 提供「重启」动作 */
@@ -250,6 +267,33 @@ export interface CodexStatus {
   /** 当前配置模型（llmSettings.model），便于 UI 判断可用性 */
   model?: string
   model_available?: boolean
+  error?: string
+}
+
+/** 双入口（2026-09-17）：Codex 链路入口。local = 只读使用本机 Codex 配置；
+ *  managed = OpenBrep 托管 ChatGPT 登录。 */
+export type CodexEntry = 'local' | 'managed'
+
+export interface CodexEntryInfo {
+  entry: CodexEntry
+  label: string
+  auth_source: string
+  recommended: boolean
+}
+
+export interface CodexEntryResult {
+  ok: boolean
+  entry?: CodexEntry
+  entries?: CodexEntryInfo[]
+  /** 只读探测：本机是否已有可用的 Codex 配置（供 UI 给推荐入口加提示） */
+  local_hint?: {
+    detected: boolean
+    state: string
+    models: number
+    home_kind: string
+  }
+  llm?: LlmSettings
+  code?: string
   error?: string
 }
 
@@ -265,6 +309,8 @@ export interface CodexModelInfo {
   supported_reasoning_efforts?: { effort: string; description?: string }[]
   /** D6：该模型的默认 reasoning effort（model/list.defaultReasoningEffort） */
   default_reasoning_effort?: string
+  /** 双入口（2026-09-17）：模型目录来源（codex_config = 本机 Codex 配置） */
+  source?: string
 }
 
 export interface CodexLoginStartResult {

@@ -260,6 +260,11 @@ class WorkbenchSettingsService:
                 from openbrep.codex.provider import default_codex_provider
 
                 self.codex_provider = default_codex_provider()
+        # 双入口（2026-09-17）：这条链路走哪个入口由会话配置决定。替身 provider
+        # 没有 set_entry（测试注入），静默跳过，保持既有语义。
+        from openbrep.codex.provider import bind_codex_entry
+
+        bind_codex_entry(self.codex_provider, self.session.config)
         return self.codex_provider
 
     def _known_codex_status(self) -> dict[str, Any] | None:
@@ -409,6 +414,10 @@ class WorkbenchSettingsService:
             return self.codex_rate_limits()
         if method == "GET" and route == "/api/settings/llm/codex/models":
             return self.codex_models()
+        if method == "GET" and route == "/api/settings/llm/codex/entry":
+            return self.codex_entry()
+        if method == "POST" and route == "/api/settings/llm/codex/entry":
+            return self.codex_entry(body or {})
         return {"ok": False, "error": f"Unknown route: {method} {route}"}
 
     def llm_settings(self) -> dict[str, Any]:
@@ -419,7 +428,24 @@ class WorkbenchSettingsService:
         codex_block = None
         codex_usable = False
         if codex is not None:
-            codex_block = {key: codex.get(key) for key in ("state", "connected", "codex_available", "account")}
+            codex_block = {
+                key: codex.get(key)
+                for key in (
+                    "state",
+                    "connected",
+                    "codex_available",
+                    "account",
+                    # 双入口（2026-09-17）：状态卡要说清这条链路是哪个入口、
+                    # 哪个 home、哪个认证来源，以及不可用的原因。
+                    "entry",
+                    "entry_label",
+                    "codex_home_kind",
+                    "auth_source",
+                    "models_source",
+                    "provider",
+                    "login_error",
+                )
+            }
             if codex.get("error"):
                 codex_block["error"] = stabilize_message(codex.get("code"), str(codex["error"]))
             # 只有当前模型本身是 codex 订阅模型时才查目录（避免无谓 RPC）
@@ -448,6 +474,8 @@ class WorkbenchSettingsService:
             "reasoning_effort": str(self.session.config.llm.reasoning_effort or ""),
             # D9：Auto 必须显式保存；默认 fixed，前端只把此事实源装入 draft。
             "codex_routing_mode": self.session.config.llm.effective_codex_routing_mode(),
+            # 双入口：生效入口（默认 managed，保持既有行为）
+            "codex_entry": self.session.config.llm.effective_codex_entry(),
             "codex": codex_block,
         }
 
@@ -782,6 +810,83 @@ class WorkbenchSettingsService:
             ),
         )
         return payload
+
+    # ── 双入口（2026-09-17）：Codex 链路走哪条入口 ─────────
+
+    def codex_entry(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """GET/POST /api/settings/llm/codex/entry：读取或切换 Codex 入口。
+
+        - ``managed``（默认，保持既有行为）：OpenBrep 托管 ChatGPT 登录
+          （~/.openbrep/codex）；
+        - ``local``（UI 标为推荐）：只读消费用户自己的 Codex 配置
+          （CODEX_HOME / ~/.codex），不接管认证。
+
+        切换是用户显式动作，写 OpenBrep 自己的 config.toml（绝不写 Codex home），
+        且只写规范枚举；值未变化时不落盘。
+        """
+        from openbrep.codex.entry import (
+            CODEX_ENTRIES,
+            entry_auth_source,
+            entry_label,
+            is_codex_entry,
+            normalize_codex_entry,
+        )
+
+        def describe(entry: str) -> dict[str, Any]:
+            return {
+                "entry": entry,
+                "label": entry_label(entry),
+                "auth_source": entry_auth_source(entry),
+                "recommended": entry == "local",
+            }
+
+        current = normalize_codex_entry(getattr(self.session.config.llm, "codex_entry", ""))
+        if body is None:
+            return {
+                "ok": True,
+                "entry": current,
+                "entries": [describe(item) for item in CODEX_ENTRIES],
+                "local_hint": self._local_codex_hint(),
+            }
+        raw = str(body.get("entry") or "").strip().lower()
+        if not is_codex_entry(raw):
+            return {
+                "ok": False,
+                "code": "invalid_codex_entry",
+                "error": "Codex 入口只允许 local（本机配置）或 managed（OpenBrep 托管）。",
+            }
+        if raw != current:
+            self.session.config.llm.codex_entry = raw
+            save_workbench_config(self.session.config, self.session.config_path)
+        return {
+            "ok": True,
+            "entry": raw,
+            "entries": [describe(item) for item in CODEX_ENTRIES],
+            "local_hint": self._local_codex_hint(),
+            "llm": self.llm_settings(),
+        }
+
+    @staticmethod
+    def _local_codex_hint() -> dict[str, Any]:
+        """只读探测本机 Codex 配置是否可用（供 UI 给「推荐」入口加提示）。
+
+        只回枚举与布尔，不回路径、不回凭据——用户机器上有没有配好 Codex，
+        决定 UI 要不要把本机配置入口往前推。
+        """
+        from openbrep.codex.entry import codex_home_for_entry, codex_home_kind
+        from openbrep.codex.local_config import local_entry_verdict, read_local_codex_config
+
+        try:
+            data = read_local_codex_config(codex_home_for_entry("local"))
+            verdict = local_entry_verdict(data, cli_available=True)
+        except Exception:  # noqa: BLE001 —— 探测失败只表示「没提示」，绝不阻塞设置页
+            return {"detected": False, "state": "error", "models": 0, "home_kind": ""}
+        return {
+            "detected": bool(data.get("config_present")),
+            "state": verdict["state"],
+            "models": len(data.get("models") or []),
+            "home_kind": codex_home_kind(codex_home_for_entry("local"), "local"),
+        }
 
     def codex_login_start(self) -> dict[str, Any]:
         """POST /api/settings/llm/codex/login/start：只触发终端用户浏览器 flow。

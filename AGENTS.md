@@ -388,6 +388,25 @@ Architecture notes:
   --tauri --daemon` as the C++ add-on's only launch entry; it hard-fails when
   `frontend/dist` is missing. Copilot chat deliberately bypasses
   `/api/assistant` intent routing — no project required, no file mutation.
+- Codex dual entry (2026-09-17): the Codex chain has two coexisting entries,
+  resolved in `openbrep/codex/entry.py` — `local` (read-only consumer of the
+  user's own Codex setup: `CODEX_HOME` or `~/.codex`) and `managed` (the
+  existing OpenBrep-hosted ChatGPT login in `~/.openbrep/codex`, still the
+  default so old configs and the connection wizard keep working). The local
+  entry parses models/providers in `openbrep/codex/local_config.py`
+  (`model_catalog_json` → config `model` → `models_cache.json`) and never
+  writes to the Codex home: the app-server mutex moved to
+  `~/.openbrep/run/codex-app-server-<sha12>.lock` (override
+  `OPENBREP_CODEX_LOCK_DIR`) and `create_home=False`. Local status is three
+  states — `no_cli` / `unconfigured` / `signed_out` / `ready` — reported with
+  `entry`, `codex_home_kind` and `auth_source` (symbolic only: D1 still forbids
+  auth paths in payloads). Login/logout/cancel/rate-limits are managed-only
+  (`codex_entry_managed_only`) on the local entry. Selected via
+  `llm.codex_entry` (written only when non-default) +
+  `GET/POST /api/settings/llm/codex/entry`; all callers bind the shared
+  provider through `bind_codex_entry(provider, config)`. `codex` binary
+  resolution now falls back to the user's login shell (cached) so the packaged
+  app finds a codex that only exists on the user's shell PATH.
 - Session-level model override + model visibility (2026-09-04, D16): chat-side
   model switching (model pill + slash `/model`) goes through
   `POST /api/session/llm/model` — it only sets the session override (lazy attrs

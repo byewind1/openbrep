@@ -3294,6 +3294,7 @@ button:focus-visible {
 
 .codex-model-drawer-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
 .codex-model-drawer-header h3 { margin: 4px 0 0; font-size: 18px; }
+.codex-model-drawer-header small { display: block; margin-top: 6px; color: var(--text-muted, #777); font-size: 10px; }
 .settings-kicker { color: var(--text-muted, #777); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .codex-model-drawer-list { display: grid; gap: 8px; }
 .codex-model-drawer-list button { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; width: 100%; padding: 12px; text-align: left; border: 1px solid var(--border-subtle, #d9d9d9); border-radius: 10px; background: transparent; }

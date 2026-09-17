@@ -3849,6 +3849,63 @@ def test_codex_status_route_three_states_distinguishable(tmp_path):
     assert no_cli["codex_available"] is False
 
 
+def test_codex_entry_route_switches_chain_and_never_leaks_paths(tmp_path, monkeypatch):
+    """双入口（2026-09-17）：入口可读可切，切换后状态卡元信息齐全且零路径泄露。"""
+    local_home = tmp_path / "local-codex"
+    local_home.mkdir()
+    (local_home / "config.toml").write_text(
+        'model = "deepseek-v4-flash"\nmodel_provider = "custom"\n'
+        "[model_providers.custom]\n"
+        'name = "deepseek"\nbase_url = "https://api.deepseek.com"\n'
+        "requires_openai_auth = false\n"
+        'experimental_bearer_token = "sk-never-echoed"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(local_home))
+    client = _RouteFakeCodexClient()
+    # 这条链路按入口解析 home（不钉死显式 home），才能验证 local 入口读本机配置
+    from openbrep.codex.provider import CodexProvider
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.settings_service.codex_provider_factory = lambda: CodexProvider(
+        client_factory=lambda: client, cli_available=True,
+    )
+
+    listed = session.route("GET", "/api/settings/llm/codex/entry")
+    assert listed["ok"] is True
+    assert listed["entry"] == "managed"
+    assert {item["entry"] for item in listed["entries"]} == {"local", "managed"}
+    recommended = [item for item in listed["entries"] if item["recommended"]]
+    assert [item["entry"] for item in recommended] == ["local"]
+    assert listed["local_hint"]["detected"] is True
+
+    switched = session.route("POST", "/api/settings/llm/codex/entry", {"entry": "local"})
+    assert switched["ok"] is True and switched["entry"] == "local"
+    assert session.settings_service.session.config.llm.codex_entry == "local"
+    assert 'codex_entry = "local"' in (tmp_path / "config.toml").read_text(encoding="utf-8")
+
+    status = session.route("GET", "/api/settings/llm/codex/status")
+    assert status["entry"] == "local"
+    assert status["state"] == "ready" and status["connected"] is True
+    assert status["auth_source"] == "codex_config"
+    assert status["codex_home_kind"] == "env_override"
+    flat = str(status) + str(switched)
+    assert ".codex" not in flat
+    assert "sk-never-echoed" not in flat
+    assert "codex_home" not in status
+
+    # 本机配置入口不接管认证：登录路由显式拒绝，并指向可执行动作
+    login = session.route("POST", "/api/settings/llm/codex/login/start", {})
+    assert login["ok"] is False
+    assert login["code"] == "codex_entry_managed_only"
+    assert client.login_calls == 0
+
+    rejected = session.route("POST", "/api/settings/llm/codex/entry", {"entry": "anthropic"})
+    assert rejected["ok"] is False
+    assert rejected["code"] == "invalid_codex_entry"
+    assert session.settings_service.session.config.llm.codex_entry == "local"
+
+
 def test_codex_login_start_route_opens_browser_and_returns_state_only(tmp_path):
     client = _RouteFakeCodexClient()
     session, opened = _route_codex_session(tmp_path, client)
