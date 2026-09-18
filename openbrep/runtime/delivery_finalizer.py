@@ -129,6 +129,8 @@ class FinalizeDeliveryInputs:
     explanation: str = ""
     # 已有 after 时是否校验指纹与当前/验证源一致
     validate_existing_after: bool = True
+    # ST03 F2：继续操作关联（写入 after revision metadata，刷新后可追溯）
+    continue_from: Optional[dict] = None
 
 
 def _epoch_ok(inputs: FinalizeDeliveryInputs) -> bool:
@@ -225,6 +227,11 @@ def _create_after_revision(
                     "run_id": inputs.run_id,
                     "role": "after",
                     "source_fingerprint": fingerprint,
+                    **(
+                        {"continue_from": dict(inputs.continue_from)}
+                        if isinstance(inputs.continue_from, dict) and inputs.continue_from
+                        else {}
+                    ),
                 },
             },
             trigger=(inputs.intent or "modify").lower(),

@@ -417,13 +417,39 @@ export async function saveProjectRevision(message = ''): Promise<SaveRevisionRes
   )
 }
 
-export async function restoreProjectRevision(revisionId: string): Promise<RestoreRevisionResponse> {
+export async function restoreProjectRevision(
+  revisionId: string,
+  draftPolicy?: import('./types').RestoreDraftPolicy | null,
+): Promise<RestoreRevisionResponse> {
   return requestJson<RestoreRevisionResponse>(
     '/api/project/revision/restore',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ revision_id: revisionId }),
+      body: JSON.stringify(
+        draftPolicy
+          ? { revision_id: revisionId, draft_policy: draftPolicy }
+          : { revision_id: revisionId },
+      ),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function getProjectRevisionDiff(
+  fromRevisionId: string,
+  toRevisionId?: string | null,
+): Promise<import('./types').RevisionDiffResponse> {
+  return requestJson<import('./types').RevisionDiffResponse>(
+    '/api/project/revision/diff',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // to 省略或 __working__ → before→当前工作源（ST03 partial_change）
+      body: JSON.stringify({
+        from_revision_id: fromRevisionId,
+        to_revision_id: toRevisionId ?? undefined,
+      }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
@@ -1047,12 +1073,17 @@ export async function setDistilledLessonStatus(
   )
 }
 
+export interface GenerateContinueOptions {
+  continueFrom?: import('./types').DeliveryContinueFrom | null
+}
+
 export async function generateWithAssistant(
   message: string,
   assistantSettings = '',
   images: AssistantImageAttachment[] = [],
   history: AssistantHistoryItem[] = [],
   signal?: AbortSignal,
+  options?: GenerateContinueOptions,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
@@ -1063,6 +1094,7 @@ export async function generateWithAssistant(
         message,
         assistant_settings: assistantSettings,
         history,
+        continue_from: options?.continueFrom ?? undefined,
         ...assistantImagesPayload(images),
       }),
     },
@@ -1158,6 +1190,7 @@ export async function generateWithAssistantStream(
   onEvent?: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
   history: AssistantHistoryItem[] = [],
+  continueFrom?: import('./types').DeliveryContinueFrom | null,
 ): Promise<GenerateResult> {
   const response = await fetch(`${API_BASE}/api/assistant/generate`, {
     method: 'POST',
@@ -1167,6 +1200,7 @@ export async function generateWithAssistantStream(
       assistant_settings: assistantSettings,
       history,
       stream: true,
+      continue_from: continueFrom ?? undefined,
       ...assistantImagesPayload(images),
     }),
     signal,
@@ -1181,6 +1215,7 @@ export async function requestModifyPlan(
   images: AssistantImageAttachment[] = [],
   signal?: AbortSignal,
   history: AssistantHistoryItem[] = [],
+  continueFrom?: import('./types').DeliveryContinueFrom | null,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
@@ -1194,6 +1229,7 @@ export async function requestModifyPlan(
         intent: 'MODIFY',
         confirm_plan: true,
         stream: false,
+        continue_from: continueFrom ?? undefined,
         ...assistantImagesPayload(images),
       }),
     },

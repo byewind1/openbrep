@@ -74,6 +74,9 @@ class WorkbenchProjectService:
     def restore_project_revision(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.revision_service.restore_project_revision(body)
 
+    def get_revision_diff(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.revision_service.get_revision_diff(body)
+
     def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.preview_service.preview(overrides)
 

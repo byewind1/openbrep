@@ -337,7 +337,7 @@ def _provenance(result: Any, context: dict) -> dict:
     before_revision = delivery_source.get("before_revision_id") if delivery_source else None
     if before_revision is None:
         before_revision = metadata.get("before_revision_id") or None
-    return {
+    provenance = {
         "commit": context.get("commit"),
         "score_profile": SCORE_PROFILE,
         "model_route": model_route,
@@ -350,6 +350,32 @@ def _provenance(result: Any, context: dict) -> dict:
             (delivery_source or {}).get("source_fingerprint") or None
         ),
     }
+    # ST03：继续关系是交付溯源，而不是 prompt 输入。只保留规范化字段，
+    # 原始指令沿用质量账本的隐私上限，避免任意 request metadata 泄漏进档案。
+    continue_from = context.get("continue_from")
+    if not isinstance(continue_from, dict):
+        raw_continue = metadata.get("continue_from")
+        continue_from = raw_continue if isinstance(raw_continue, dict) else None
+    if continue_from:
+        linked: dict[str, str] = {}
+        origin_run_id = str(
+            continue_from.get("origin_run_id") or continue_from.get("run_id") or ""
+        ).strip()
+        original_instruction = str(
+            continue_from.get("original_instruction")
+            or continue_from.get("instruction")
+            or ""
+        ).strip()
+        intent = str(continue_from.get("intent") or "").strip()
+        if origin_run_id:
+            linked["origin_run_id"] = origin_run_id[:128]
+        if original_instruction:
+            linked["original_instruction"] = _truncate(original_instruction)
+        if intent:
+            linked["intent"] = intent[:32]
+        if linked:
+            provenance["continue_from"] = linked
+    return provenance
 
 
 def build_quality_record(

@@ -4887,6 +4887,107 @@ button:focus-visible {
   cursor: not-allowed;
 }
 
+/* ── ST03 交付状态卡 ─────────────────────────────────── */
+.assistant-delivery {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 11px;
+  display: grid;
+  gap: 6px;
+}
+.assistant-delivery.is-incomplete {
+  border-color: var(--status-warning-border, #b45309);
+  background: color-mix(in srgb, var(--status-warning-border, #b45309) 8%, var(--bg-panel));
+}
+.assistant-delivery.is-neutral {
+  border-color: var(--border-strong);
+  opacity: 0.95;
+}
+.assistant-delivery-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.assistant-delivery-title {
+  font-size: 12px;
+}
+.assistant-delivery-run {
+  font-style: normal;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  opacity: 0.75;
+}
+.assistant-delivery-badge.is-pass {
+  color: #16a34a;
+  font-weight: 700;
+}
+.assistant-delivery-headline {
+  margin: 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+.assistant-delivery-reason,
+.assistant-delivery-unlinked,
+.assistant-delivery-continued {
+  margin: 0;
+  opacity: 0.85;
+}
+.assistant-delivery-before-after {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, monospace;
+}
+.assistant-delivery-before-after code {
+  font-size: 10px;
+}
+.assistant-delivery-snapshot-split {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.assistant-delivery-files ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.assistant-delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.assistant-delivery-actions button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.assistant-delivery-diff {
+  border-top: 1px solid var(--border-strong);
+  padding-top: 6px;
+}
+.assistant-delivery-diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.assistant-delivery-diff-body {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px;
+  background: var(--bg-muted, rgba(127, 127, 127, 0.08));
+  border-radius: 4px;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+.assistant-delivery-instruction summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
 /* ── MODIFY 验收报告卡（V5） ─────────────────────────── */
 .acceptance-card {
   margin-top: 10px;

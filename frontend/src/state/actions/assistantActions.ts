@@ -1,4 +1,4 @@
-import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
+import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, DeliveryContinueFrom, DeliveryPresentation, DeliverySource, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -18,6 +18,132 @@ const EXTRACTION_PENDING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n🖼️ 读图�
 const EXTRACTION_EXECUTING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n⏳ 正在按已确认的读图结果生成…`
 const EXTRACTION_CANCELLED_CONTENT = '⏹ 已取消本次创建。'
 const INTERRUPTED_CONTENT = '⏹ 已中断'
+
+/** 去掉 undefined 键，避免 toEqual/持久化时出现无意义字段 */
+function compactExtras<T extends Record<string, unknown>>(extras: T): Partial<T> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined) out[key] = value
+  }
+  return out as Partial<T>
+}
+
+/** ST03 F2：历史发送时附带 delivery/continue 元数据（LLM 载荷仍只用 role/content）。 */
+function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
+  const meta: NonNullable<AssistantHistoryItem['meta']> = {}
+  if (message.delivery) meta.delivery = message.delivery
+  if (message.deliverySource) meta.delivery_source = message.deliverySource
+  if (message.deliveryContinueFrom) meta.delivery_continue_from = message.deliveryContinueFrom
+  if (message.originalInstruction) meta.original_instruction = message.originalInstruction
+  if (message.runId) meta.run_id = message.runId
+  if (message.changedFiles?.length) meta.changed_files = message.changedFiles
+  if (message.errorCategory) meta.error_category = message.errorCategory
+  // 任务类 assistant 消息即使无 delivery 也写入 meta.delivery=null 标记，
+  // 便于刷新后区分「本就没有卡」与「旧记录未关联」
+  if (message.role === 'assistant' && (message.delivery || message.deliverySource || message.changedFiles?.length)) {
+    if (!('delivery' in meta)) meta.delivery = null
+  }
+  return { role: message.role, content: message.content, meta: Object.keys(meta).length ? meta : undefined }
+}
+
+/**
+ * ST03 F2：刷新后 hydrate 历史。
+ * - 有 delivery meta → 原样恢复卡片
+ * - assistant 任务类消息缺 delivery → 明确 unlinked（旧记录，未关联）
+ * - 无任务痕迹的 explain 消息不强行插卡
+ */
+export function hydrateHistoryMessages(messages: AssistantMessage[]): AssistantMessage[] {
+  return (messages ?? []).map((raw) => {
+    const message = normalizeHistoryMessage(raw)
+    if (message.role !== 'assistant') return message
+    if (message.delivery) return message
+    const looksLikeTaskResult =
+      Boolean(message.deliverySource) ||
+      Boolean(message.deliveryContinueFrom) ||
+      Boolean(message.runId) ||
+      Boolean(message.changedFiles?.length) ||
+      /Changed files:/i.test(message.content) ||
+      /旧记录，未关联/.test(message.content)
+    if (!looksLikeTaskResult) {
+      // meta 明确写了 delivery:null（保存时的任务消息）
+      const rawDelivery = (raw as { delivery?: DeliveryPresentation | null }).delivery
+      const nestedDelivery = (raw as { meta?: { delivery?: DeliveryPresentation | null } }).meta?.delivery
+      if (rawDelivery === null || nestedDelivery === null) {
+        return { ...message, delivery: unlinkedDeliveryPresentation() }
+      }
+      return message
+    }
+    return {
+      ...message,
+      delivery: unlinkedDeliveryPresentation(),
+      deliverySource: message.deliverySource ?? null,
+      runId: message.runId ?? null,
+    }
+  })
+}
+
+/** 后端历史字段（snake_case / meta）→ AssistantMessage */
+function normalizeHistoryMessage(raw: AssistantMessage): AssistantMessage {
+  const bag = raw as AssistantMessage & Record<string, unknown>
+  const meta = (bag.meta ?? {}) as Record<string, unknown>
+  const delivery =
+    (bag.delivery as DeliveryPresentation | undefined) ??
+    (meta.delivery as DeliveryPresentation | undefined)
+  const deliverySource =
+    (bag.deliverySource as DeliverySource | null | undefined) ??
+    ((bag.delivery_source as DeliverySource | null | undefined) ??
+      (meta.delivery_source as DeliverySource | null | undefined))
+  const deliveryContinueFrom =
+    (bag.deliveryContinueFrom as DeliveryContinueFrom | null | undefined) ??
+    ((bag.delivery_continue_from as DeliveryContinueFrom | null | undefined) ??
+      (meta.delivery_continue_from as DeliveryContinueFrom | null | undefined))
+  const originalInstruction =
+    (bag.originalInstruction as string | undefined) ??
+    ((bag.original_instruction as string | undefined) ??
+      (meta.original_instruction as string | undefined))
+  const runId =
+    (bag.runId as string | null | undefined) ??
+    ((bag.run_id as string | null | undefined) ?? (meta.run_id as string | null | undefined))
+  const changedFiles =
+    (bag.changedFiles as string[] | undefined) ??
+    ((bag.changed_files as string[] | undefined) ?? (meta.changed_files as string[] | undefined))
+  return {
+    ...raw,
+    delivery: delivery || undefined,
+    deliverySource: deliverySource ?? undefined,
+    deliveryContinueFrom: deliveryContinueFrom ?? undefined,
+    originalInstruction: originalInstruction || undefined,
+    runId: runId ?? undefined,
+    changedFiles: changedFiles || undefined,
+  }
+}
+
+function unlinkedDeliveryPresentation(): DeliveryPresentation {
+  return {
+    state: null,
+    status: 'unlinked',
+    unlinked: true,
+    headline: '旧记录，未关联交付版本',
+    reason: '该记录产生于 delivery_source 契约之前，或刷新后未能恢复关联；无法定位 before/after',
+    show_success_badge: false,
+    show_before_after: false,
+    show_changed_files: false,
+    can_recover: false,
+    can_continue: false,
+    can_view_diff: false,
+    diff_target: null,
+    recover_revision_id: null,
+    before_revision_id: null,
+    after_revision_id: null,
+    changed_files: [],
+    run_id: null,
+    error_code: null,
+    check_status: 'unknown',
+    version_status: null,
+    original_instruction: null,
+    continued_from: null,
+  }
+}
 
 /**
  * HF4：把 store 的 assistantMessages 组装成发给后端的对话历史载荷。
@@ -111,7 +237,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // 无项目时不写盘：聊天历史存在 <项目>/.openbrep/ 下，
     // 纯聊天不应触发任何落盘，也避免后端报错污染 lastError
     if (!get().project) return
-    const result = await api.saveAssistantHistory(get().assistantMessages)
+    // ST03 F2：持久化 delivery/continue 元数据（后端 rewrite 提取 flat/meta）
+    const messages = get().assistantMessages.map(withHistoryMeta)
+    const result = await api.saveAssistantHistory(messages as AssistantMessage[])
     if (!result.ok && result.error) {
       set({ lastError: result.error })
     }
@@ -134,28 +262,44 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     epoch: number,
     initialContent: string,
     thinkingSteps: AssistantThinkingStep[],
+    originalInstruction?: string,
   ) {
     if (projectSwitchedSince(epoch)) {
       discardStaleResult('Generation result discarded: project switched during the request.')
       return
     }
     const changedFiles = result.assistant?.changed_files ?? []
+    const delivery: DeliveryPresentation | undefined = result.assistant?.delivery ?? undefined
+    const deliverySource: DeliverySource | null | undefined = result.assistant?.delivery_source
+    const continueFrom: DeliveryContinueFrom | null | undefined = result.assistant?.continue_from
+    // U05：未产生源码变化时，文案与 changed files 不得伪称已修复
+    const noSourceChange = delivery?.status === 'no_change' || delivery?.status === 'unlinked'
     const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
     const finalReply =
       result.ok && result.assistant
         ? `${result.assistant.reply}${suffix}`
         : formatAssistantRequestError(result.error, 'Generation request failed.')
     const replyExtras = result.ok
-      ? {
+      ? compactExtras({
           changedFiles,
           verification: result.assistant?.verification ?? undefined,
           acceptance: result.assistant?.acceptance ?? undefined,
           thinkingSteps: [...thinkingSteps],
-          // P5e：MODIFY 流式完成聚合处复用事件提取（只读卡片数据源；
-          // 无 vision_analysis_done 事件时 undefined，不污染消息）
           visionExtractions: extractVisionExtractions(result.events),
-        }
-      : { errorCategory: classifyAssistantError(finalReply), thinkingSteps: [...thinkingSteps] }
+          delivery,
+          deliverySource: deliverySource ?? null,
+          deliveryContinueFrom: continueFrom ?? null,
+          originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
+          runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+        })
+      : compactExtras({
+          errorCategory: classifyAssistantError(finalReply),
+          thinkingSteps: [...thinkingSteps],
+          delivery,
+          deliverySource: deliverySource ?? null,
+          originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
+          runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+        })
     set((state) => ({
       assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(state.assistantMessages, finalReply, replyExtras),
@@ -165,6 +309,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       draftParameters: {},
       // 模式级 skill 提案（P2-d）：成功交付后弹"沉淀提案"确认卡；无提案则清掉旧的
       pendingSkillProposal: result.ok ? (result.skill_proposal ?? null) : state.pendingSkillProposal,
+      // continue 载荷已消费（新 run 自己的 delivery_source 才是权威）
+      pendingDeliveryContinue: null,
+      compileLog: noSourceChange && delivery?.headline
+        ? [delivery.headline, ...state.compileLog].slice(0, 20)
+        : state.compileLog,
     }))
     await persistAssistantHistory()
     if (result.ok) {
@@ -280,7 +429,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         }
         return
       }
-      set({ assistantMessages: result.messages ?? [] })
+      // ST03 F2：刷新后恢复 delivery 卡；旧/缺关联记录显示 unlinked
+      set({ assistantMessages: hydrateHistoryMessages(result.messages ?? []) })
     },
 
     async clearAssistantHistory() {
@@ -421,6 +571,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     async generateAssistantChanges(message: string, images: AssistantImageAttachment[] = []) {
       const trimmed = message.trim()
       if (!trimmed) return
+      const continueFrom = get().pendingDeliveryContinue
+      set({ pendingDeliveryContinue: null })
       const history = buildAssistantHistory(get().assistantMessages)
       set((state) => ({
         assistantBusy: true,
@@ -441,12 +593,20 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       const epoch = get().projectEpoch
-      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, images, history)
+      const result = await api.generateWithAssistant(
+        trimmed,
+        get().llmSettings.assistant_settings,
+        images,
+        history,
+        undefined,
+        { continueFrom },
+      )
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Generation result discarded: project switched during the request.')
         return
       }
       const changedFiles = result.assistant?.changed_files ?? []
+      const delivery = result.assistant?.delivery ?? undefined
       const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
       const eventSummary = formatAssistantEventSummary(result.events)
       const reply =
@@ -454,14 +614,26 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           ? `${result.assistant.reply}${suffix}${eventSummary}`
           : formatAssistantRequestError(result.error, 'Generation request failed.')
       const replyExtras = result.ok
-        ? {
+        ? compactExtras({
             changedFiles,
             verification: result.assistant?.verification ?? undefined,
             acceptance: result.assistant?.acceptance ?? undefined,
-            // P5e：非流式 MODIFY 同源提取（与 CREATE 路径一致，只读卡片）
             visionExtractions: extractVisionExtractions(result.events),
-          }
-        : { errorCategory: classifyAssistantError(reply) }
+            delivery,
+            deliverySource: result.assistant?.delivery_source ?? null,
+            deliveryContinueFrom: result.assistant?.continue_from ?? null,
+            originalInstruction:
+              continueFrom?.original_instruction || delivery?.original_instruction || undefined,
+            runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+          })
+        : compactExtras({
+            errorCategory: classifyAssistantError(reply),
+            delivery,
+            deliverySource: result.assistant?.delivery_source ?? null,
+            originalInstruction:
+              continueFrom?.original_instruction || delivery?.original_instruction || undefined,
+            runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+          })
       set((state) => ({
         assistantBusy: false,
         assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply, replyExtras),
@@ -469,6 +641,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         preview: result.preview ?? state.preview,
         warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
         draftParameters: {},
+        pendingDeliveryContinue: null,
       }))
       await persistAssistantHistory()
       if (result.ok) {
@@ -491,13 +664,24 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
 
       const hasProject = !!get().project
       const interrupted = get().interruptedContext
+      const deliveryContinue = get().pendingDeliveryContinue
+      // Consume the link once. The pending plan carries its own request metadata;
+      // cancellation, aborts, and save failures must not tag the next user task.
+      set({ pendingDeliveryContinue: null })
 
       // Follow-up after an interrupt: "继续" retries the original
+      // ST03：delivery continue 已带回原始指令；「继续」只在 interrupt 上下文生效
       let finalMessage = trimmed
       let intent = detectChatIntent(trimmed, hasProject)
-      if (interrupted && isResumeMessage(trimmed)) {
+      if (interrupted && isResumeMessage(trimmed) && !deliveryContinue) {
         finalMessage = interrupted.message
         intent = detectChatIntent(interrupted.message, hasProject)
+      }
+      // delivery continue：点「继续」且已有 pendingDeliveryContinue 时，指令已由
+      // continueDelivery 注入；这里只保证 intent 按原始指令重判
+      if (deliveryContinue && isResumeMessage(trimmed)) {
+        finalMessage = deliveryContinue.original_instruction || finalMessage
+        intent = detectChatIntent(finalMessage, hasProject)
       }
 
       // P2a ghost：任务发起时快照"任务前"预览（修改前后对比用）。
@@ -540,7 +724,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           const epoch = get().projectEpoch
-          const planResult = await api.requestModifyPlan(finalMessage, settings, images, controller.signal, history)
+          const continueFrom = deliveryContinue
+          const planResult = await api.requestModifyPlan(
+            finalMessage,
+            settings,
+            images,
+            controller.signal,
+            history,
+            continueFrom,
+          )
           if (projectSwitchedSince(epoch)) {
             discardStaleResult('Generation result discarded: project switched during the request.')
             return
@@ -569,7 +761,13 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           // 计划失败回落 / micro_modify / V1 DSL 命中：直接展示执行结果
-          await finishModifyStream(planResult, epoch, pendingAssistantMessage('generate', images), [])
+          await finishModifyStream(
+            planResult,
+            epoch,
+            pendingAssistantMessage('generate', images),
+            [],
+            continueFrom?.original_instruction || finalMessage,
+          )
         } else if (intent === 'debug') {
           // DEBUG 不走确认门：默认走 agent loop 流式路径，实时显示每一步事件
           const settings = get().llmSettings.assistant_settings ?? ''
@@ -594,6 +792,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           }
           const epoch = get().projectEpoch
           const thinkingSteps: AssistantThinkingStep[] = []
+          const debugContinueFrom = deliveryContinue
 
           const result = await api.generateWithAssistantStream(
             finalMessage,
@@ -614,8 +813,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             },
             controller.signal,
             history,
+            debugContinueFrom,
           )
-          await finishModifyStream(result, epoch, initialContent, thinkingSteps)
+          await finishModifyStream(
+            result,
+            epoch,
+            initialContent,
+            thinkingSteps,
+            debugContinueFrom?.original_instruction || finalMessage,
+          )
         } else {
           // explain
           const history = buildAssistantHistory(get().assistantMessages)
@@ -685,6 +891,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         const result = await api.confirmModifyPlan(false)
         set((state) => ({
           pendingPlan: null,
+          pendingDeliveryContinue: null,
           assistantMessages: replacePendingAssistantMessage(state.assistantMessages, '⏹ 已取消本次修改。'),
         }))
         if (!result.ok && result.error) {

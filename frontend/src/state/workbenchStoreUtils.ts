@@ -48,6 +48,12 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     revisions: [],
     latestRevisionId: null,
     revisionLoading: false,
+    // ST03：换项目/恢复 before 后清掉跨项目 pending，避免旧任务污染新项目面板
+    pendingPlan: null,
+    pendingExtraction: null,
+    pendingSkillProposal: null,
+    pendingDeliveryContinue: null,
+    interruptedContext: null,
     mockCompileResult: null,
     // snapshot 的 workspace 块原样透传（无附着为 null）
     workspace: snapshot.workspace ?? null,

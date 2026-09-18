@@ -267,6 +267,56 @@ def compare_revisions(project_dir: str | Path, from_revision_id: str, to_revisio
     return "".join(chunks) or f"No source differences between {from_revision_id} and {to_revision_id}.\n"
 
 
+WORKING_TREE_SENTINEL = "__working__"
+
+
+def compare_revision_to_working_tree(project_dir: str | Path, from_revision_id: str) -> str:
+    """ST03 F1：revision 快照 → 当前工作源的 unified diff。
+
+    partial_change 没有 after revision 时，UI「查看差异」必须对比
+    before → 当前工作树，而不是 before → before（后者必然为空）。
+    """
+    root = _resolve_project_root(project_dir)
+    from_dir = _find_revision_dir(root, from_revision_id)
+    from_manifest = _read_manifest(from_dir)
+    revision_files = list(from_manifest.get("files") or [])
+    working_files = _collect_source_files(root)
+    files = sorted(set(revision_files) | set(working_files))
+    label = WORKING_TREE_SENTINEL
+
+    chunks: list[str] = []
+    for rel_path in files:
+        from_text = _read_revision_text(from_dir / rel_path)
+        working_path = root / rel_path
+        to_text = _read_revision_text(working_path) if working_path.exists() else ""
+        if from_text == to_text:
+            continue
+        chunks.extend(
+            unified_diff(
+                from_text.splitlines(keepends=True),
+                to_text.splitlines(keepends=True),
+                fromfile=f"{from_revision_id}/{rel_path}",
+                tofile=f"{label}/{rel_path}",
+            )
+        )
+        if chunks and not chunks[-1].endswith("\n"):
+            chunks[-1] += "\n"
+
+    return "".join(chunks) or f"No source differences between {from_revision_id} and working tree.\n"
+
+
+def compare_revision_to_target(
+    project_dir: str | Path,
+    from_revision_id: str,
+    to_revision_id: str | None,
+) -> str:
+    """ST03：to 为空/WORKING_TREE_SENTINEL → 对比当前工作源。"""
+    target = (to_revision_id or "").strip()
+    if not target or target == WORKING_TREE_SENTINEL:
+        return compare_revision_to_working_tree(project_dir, from_revision_id)
+    return compare_revisions(project_dir, from_revision_id, target)
+
+
 def get_latest_revision_id(project_dir: str | Path) -> str | None:
     """Return the latest revision id, if present."""
     root = _resolve_project_root(project_dir)

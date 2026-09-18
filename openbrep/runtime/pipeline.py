@@ -204,6 +204,8 @@ class TaskRequest:
     epoch_guard: Optional[Callable[[], bool]] = None
     confirm_extraction: bool = False       # 提取确认门（P5d-2）：GUI CREATE 带图置 True（提取后早退等确认）
     confirmed_extractions: Optional[list[dict]] = None  # 用户确认/编辑后的提取 dict 列表（跳过 harness 重建 plans）
+    # ST03 F2：继续操作显式关联原 run + 原始指令（进入 metadata/quality/revision，不进 prompt）
+    continue_from: Optional[dict] = None
 
 
 @dataclass
@@ -417,6 +419,10 @@ class TaskPipeline:
             merged = dict(result.metadata or {})
             merged["injected_skills"] = injected
             merged["run_id"] = run_id
+            # ST03 F2：continue 关联在 pipeline 入口合并（trace/quality/revision 可追溯）
+            continue_from = getattr(request, "continue_from", None)
+            if isinstance(continue_from, dict) and continue_from:
+                merged["continue_from"] = dict(continue_from)
             execution = dict(merged.get("execution") or {})
             execution.setdefault("llm_calls", None)     # 未埋点路径 = unavailable
             execution.setdefault("tool_calls", None)
@@ -513,6 +519,7 @@ class TaskPipeline:
         existing_after = metadata.get("after_revision_id") or None
         verified_fp = metadata.get("verified_source_fingerprint") or None
         compile_meta = metadata.get("compile_revision_metadata") or None
+        continue_from = metadata.get("continue_from") if isinstance(metadata.get("continue_from"), dict) else None
 
         inputs = FinalizeDeliveryInputs(
             run_id=run_id,
@@ -528,6 +535,7 @@ class TaskPipeline:
             verified_source_fingerprint=verified_fp,
             epoch_guard=getattr(request, "epoch_guard", None),
             compile_metadata=compile_meta if isinstance(compile_meta, dict) else None,
+            continue_from=continue_from,
         )
         delivery_source, warnings = finalize_delivery(inputs)
         apply_delivery_source_to_result(result, delivery_source, warnings)
@@ -623,6 +631,8 @@ class TaskPipeline:
                     # 记 null，消费端显示「旧记录，未关联」，禁止 latest 猜测
                     "after_revision": (ds.after_revision_id if ds else None),
                     "delivery_source": (ds.to_dict() if ds else None),
+                    # ST03 F2：continue 溯源进入质量档案（刷新后可重新读取）
+                    "continue_from": (result.metadata or {}).get("continue_from"),
                 },
             )
             path = write_record(project.root, record)

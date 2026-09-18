@@ -519,8 +519,14 @@ export function WorkbenchApp() {
               revisions={revisions}
               latestRevisionId={latestRevisionId}
               loading={revisionLoading}
+              hasUnsavedDrafts={hasAnyDirtyScript || hasDraftChanges()}
               onSave={(message) => void saveRevision(message)}
-              onRestore={(revisionId) => void restoreRevision(revisionId)}
+              onRestore={(revisionId, options) =>
+                void restoreRevision(revisionId, {
+                  draftPolicy: options?.draftPolicy ?? 'discard',
+                  source: 'revision_panel',
+                })
+              }
             />
           </Suspense>
         }

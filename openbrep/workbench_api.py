@@ -352,6 +352,9 @@ class WorkbenchSession:
     def restore_project_revision(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.restore_project_revision(body)
 
+    def get_project_revision_diff(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.project_service.get_revision_diff(body)
+
     def project_git_status(self) -> dict[str, Any]:
         return self.git_service.status()
 
@@ -648,6 +651,9 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/revision/restore":
             return self.restore_project_revision(body)
+
+        if normalized_method == "POST" and route == "/api/project/revision/diff":
+            return self.get_project_revision_diff(body)
 
         if normalized_method == "GET" and route == "/api/project/git":
             return self.project_git_status()
