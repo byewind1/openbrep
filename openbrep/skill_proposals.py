@@ -32,9 +32,10 @@ SCHEMA_VERSION = 1
 
 STATUS_DRAFT = "draft"
 STATUS_APPROVING = "approving"   # 审批副作用进行中/上次中断（可重启继续收敛）
+STATUS_REJECTING = "rejecting"   # 拒绝副作用进行中/上次中断（可重启继续收敛）
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
-STATUSES = (STATUS_DRAFT, STATUS_APPROVING, STATUS_APPROVED, STATUS_REJECTED)
+STATUSES = (STATUS_DRAFT, STATUS_APPROVING, STATUS_REJECTING, STATUS_APPROVED, STATUS_REJECTED)
 
 VERIFY_UNVERIFIED = "unverified"
 VERIFY_VERIFIED = "verified"
@@ -44,6 +45,12 @@ VERIFY_CLAIMS_UNVERIFIED = "claims_unverified"
 
 # 候选引用 revision 时的 ST02 统一引用 reason（外部引用，交付对替换时不清理）
 PROTECTION_REASON = "pending_candidate"
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _safe_managed_id(value: Any) -> bool:
+    text = str(value or "")
+    return bool(text and _SAFE_ID_RE.fullmatch(text))
 
 
 # ── 项目身份 ─────────────────────────────────────────────
@@ -164,7 +171,13 @@ def proposal_dir(project_root: Any) -> Path:
 
 
 def candidate_path(project_root: Any, proposal_id: str) -> Path:
-    return proposal_dir(project_root) / f"{proposal_id}.json"
+    if not _safe_managed_id(proposal_id):
+        raise ValueError("unsafe proposal id")
+    root = proposal_dir(project_root).resolve()
+    target = (root / f"{proposal_id}.json").resolve()
+    if target.parent != root:
+        raise ValueError("proposal path escapes proposal store")
+    return target
 
 
 def _atomic_write_json(target: Path, payload: dict[str, Any]) -> None:
@@ -190,8 +203,8 @@ def utc_now() -> str:
 def save_candidate(project_root: Any, candidate: dict[str, Any]) -> Path:
     """原子写候选；返回写盘路径。异常向上抛（审批路径据此保留可重试语义）。"""
     proposal_id = str(candidate.get("proposal_id") or "").strip()
-    if not proposal_id:
-        raise ValueError("candidate requires proposal_id")
+    if not _safe_managed_id(proposal_id):
+        raise ValueError("candidate requires a safe proposal_id")
     target = candidate_path(project_root, proposal_id)
     _atomic_write_json(target, candidate)
     return target
@@ -200,7 +213,7 @@ def save_candidate(project_root: Any, candidate: dict[str, Any]) -> Path:
 def load_candidate(project_root: Any, proposal_id: str) -> Optional[dict[str, Any]]:
     """按 proposal_id 读候选；缺失/坏文件返回 None（不抛出）。"""
     proposal_id = str(proposal_id or "").strip()
-    if not proposal_id or "/" in proposal_id or "\\" in proposal_id or proposal_id.startswith("."):
+    if not _safe_managed_id(proposal_id):
         return None
     path = candidate_path(project_root, proposal_id)
     try:
@@ -226,6 +239,10 @@ def list_candidates(project_root: Any) -> list[dict[str, Any]]:
             logger.warning("skill proposal 跳过不可解析文件 %s: %s", path, exc)
             continue
         if isinstance(data, dict):
+            proposal_id = str(data.get("proposal_id") or "")
+            if not _safe_managed_id(proposal_id) or proposal_id != path.stem:
+                logger.warning("skill proposal 跳过不安全或名称不一致的文件 %s", path)
+                continue
             candidates.append(data)
     candidates.sort(key=lambda item: str(item.get("created_at") or ""))
     return candidates
@@ -252,8 +269,23 @@ def quality_runs_path(project_root: Any) -> Path:
     return Path(project_root) / ".openbrep" / "quality" / "runs"
 
 
+def _safe_changed_file(value: Any) -> bool:
+    text = str(value or "")
+    path = Path(text)
+    if not text or path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+        return False
+    return (len(path.parts) == 1 and path.suffix.lower() == ".xml") or (
+        len(path.parts) >= 2 and path.parts[0] == "scripts"
+    )
+
+
 def _load_quality_record(project_root: Any, run_id: str) -> Optional[dict[str, Any]]:
-    path = quality_runs_path(project_root) / f"{run_id}.json"
+    if not _safe_managed_id(run_id):
+        return None
+    root = quality_runs_path(project_root).resolve()
+    path = (root / f"{run_id}.json").resolve()
+    if path.parent != root:
+        return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -291,7 +323,13 @@ def revisions_root(project_root: Any) -> Path:
 
 
 def revision_dir(project_root: Any, revision_id: str) -> Path:
-    return revisions_root(project_root) / str(revision_id)
+    root = revisions_root(project_root).resolve()
+    if not _safe_managed_id(revision_id):
+        raise ValueError("unsafe revision id")
+    path = (root / str(revision_id)).resolve()
+    if path.parent != root:
+        raise ValueError("revision path escapes revisions root")
+    return path
 
 
 def _validate_ref(project_root: Path, record: Optional[dict[str, Any]], ref: dict[str, Any]) -> dict[str, Any]:
@@ -301,8 +339,12 @@ def _validate_ref(project_root: Path, record: Optional[dict[str, Any]], ref: dic
     只有全部通过才算 evidence_complete；任何一项不过都给出可读原因。
     """
     reasons: list[str] = []
+    if not _safe_managed_id(ref.get("run_id")):
+        reasons.append("run_id_invalid")
     if not record:
-        return {"ok": False, "reasons": ["run_record_missing"], "revision_fingerprint": None}
+        if "run_id_invalid" not in reasons:
+            reasons.append("run_record_missing")
+        return {"ok": False, "reasons": reasons, "revision_fingerprint": None}
 
     source_ref = record.get("project_ref") or {}
     if str(source_ref.get("path_hash") or "") != path_hash(project_root):
@@ -321,11 +363,17 @@ def _validate_ref(project_root: Path, record: Optional[dict[str, Any]], ref: dic
     fingerprint = delivery.get("source_fingerprint") or provenance.get("source_fingerprint")
     if not after:
         reasons.append("after_revision_missing")
+    elif not _safe_managed_id(after):
+        reasons.append("revision_id_invalid")
     if not fingerprint:
         reasons.append("source_fingerprint_missing")
 
     revision_fingerprint: Optional[str] = None
-    if after:
+    for changed_file in ref.get("changed_files") or []:
+        if not _safe_changed_file(changed_file):
+            reasons.append(f"changed_file_path_invalid:{changed_file}")
+
+    if after and _safe_managed_id(after):
         rev_path = revision_dir(project_root, str(after))
         if not rev_path.is_dir():
             reasons.append("revision_dir_missing")
@@ -460,6 +508,17 @@ def project_selection(project_root: Any, project_name: str) -> dict[str, Any]:
 # ── 候选 → artifact 所有权 ───────────────────────────────
 
 
+def is_valid_skill_name(name: Any) -> bool:
+    """Skill 文件名统一校验：拒绝路径、隐藏/保留名和控制字符。"""
+    if not isinstance(name, str) or not name or name != name.strip():
+        return False
+    if name in (".", "..") or name.upper() == "README" or name[0] == ".":
+        return False
+    if any(ord(ch) < 32 for ch in name):
+        return False
+    return not any(ch in name for ch in ('/', "\\", "\x00", "<", ">", ":", '"', "|", "?", "*"))
+
+
 def content_digest(content: str) -> str:
     return "sha256:" + hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()
 
@@ -468,7 +527,12 @@ def read_skill_artifact(skills_dir: Any, name: str) -> Optional[dict[str, Any]]:
     """读取 skills_dir/<name>.md 的正文/frontmatter（不存在返回 None）。"""
     from openbrep.skills_loader import _split_frontmatter
 
-    path = Path(skills_dir) / f"{name}.md"
+    if not is_valid_skill_name(name):
+        return None
+    root = Path(skills_dir).expanduser().resolve()
+    path = (root / f"{name}.md").resolve()
+    if path.parent != root:
+        return None
     try:
         text = path.read_text(encoding="utf-8")
     except Exception:
@@ -493,15 +557,31 @@ def artifact_ownership(
     - 正文与候选 content 不一致 → content_mismatch；
     只有两者一致才允许续跑 verify / 允许拒绝回收。
     """
-    artifact = read_skill_artifact(skills_dir, name)
+    if not is_valid_skill_name(name):
+        return {"owned": False, "reason": "invalid_skill_name", "path": None}
+    root = Path(skills_dir).expanduser().resolve()
+    expected_path = root / f"{name}.md"
+    resolved_path = expected_path.resolve()
+    if resolved_path.parent != root:
+        return {
+            "owned": False,
+            "reason": "artifact_path_escape",
+            "path": str(expected_path),
+        }
+    artifact = read_skill_artifact(root, name)
     if artifact is None:
-        return {"owned": False, "reason": "artifact_missing", "path": str(Path(skills_dir) / f"{name}.md")}
+        return {"owned": False, "reason": "artifact_missing", "path": str(expected_path)}
     meta = artifact.get("meta") or {}
     trace_id = str(meta.get("source_trace_id") or "")
     if trace_id != str(proposal_id):
         return {"owned": False, "reason": "foreign_artifact", "path": artifact["path"], "artifact_trace_id": trace_id}
     if str(artifact.get("body") or "").strip() != str(content or "").strip():
-        return {"owned": False, "reason": "content_mismatch", "path": artifact["path"]}
+        return {
+            "owned": False,
+            "trace_owned": True,
+            "reason": "content_mismatch",
+            "path": artifact["path"],
+        }
     return {"owned": True, "reason": "", "path": artifact["path"]}
 
 
@@ -534,23 +614,34 @@ def register_candidate_protection(project_root: Any, candidate: dict[str, Any]) 
 
 
 def reconcile_candidate_protections(project_root: Any) -> dict[str, Any]:
-    """重启/列候选时对账：给所有未拒绝候选重新登记保护（幂等收敛）。"""
+    """重启/列候选时对账，并把结果持久化回候选。"""
     reconciled: list[str] = []
     errors: list[dict[str, str]] = []
     for candidate in list_candidates(project_root):
         if str(candidate.get("status") or "") == STATUS_REJECTED:
+            release = release_candidate_protection(project_root, candidate)
+            candidate["protection"] = {
+                "registered": [],
+                "errors": release["errors"],
+                "released": not release["errors"],
+                "checked_at": utc_now(),
+            }
+            save_candidate(project_root, candidate)
             continue
         result = register_candidate_protection(project_root, candidate)
+        candidate["protection"] = {**result, "checked_at": utc_now()}
+        save_candidate(project_root, candidate)
         reconciled.extend(result.get("registered") or [])
         errors.extend(result.get("errors") or [])
     return {"reconciled": sorted(set(reconciled)), "errors": errors}
 
 
-def release_candidate_protection(project_root: Any, candidate: dict[str, Any]) -> int:
+def release_candidate_protection(project_root: Any, candidate: dict[str, Any]) -> dict[str, Any]:
     """解除候选登记的保护引用（拒绝/删除候选时调用）。"""
     from openbrep.revisions import unregister_revision_protection
 
     removed = 0
+    errors: list[dict[str, str]] = []
     proposal_id = str(candidate.get("proposal_id") or "")
     for ref in candidate.get("source_refs") or []:
         if not isinstance(ref, dict):
@@ -564,4 +655,5 @@ def release_candidate_protection(project_root: Any, candidate: dict[str, Any]) -
             )
         except Exception as exc:
             logger.warning("候选 %s 保护解除失败（%s）: %s", proposal_id, revision, exc)
-    return removed
+            errors.append({"revision": revision, "error": str(exc)})
+    return {"removed": removed, "errors": errors}

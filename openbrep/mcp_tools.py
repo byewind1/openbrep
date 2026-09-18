@@ -65,6 +65,7 @@ from openbrep.revisions import (
     list_revisions,
     restore_revision,
 )
+from openbrep.skill_proposals import is_valid_skill_name
 from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.naming import safe_project_name, unique_project_name
@@ -1038,21 +1039,7 @@ _TRIGGER_SECTION_MARKERS = ("触发关键词", "activation keywords", "适用场
 def _is_valid_skill_name(name: Any) -> bool:
     """skill 名合法性：非空字符串、无首尾空白、非 ./.. /隐藏文件 /README、
     不含路径分隔符或控制字符。"""
-    if not isinstance(name, str) or not name:
-        return False
-    if name != name.strip():
-        return False
-    if name in (".", ".."):
-        return False
-    if name.upper() == "README":
-        return False
-    if name[0] == ".":
-        return False
-    if any(ord(ch) < 32 for ch in name):
-        return False
-    if any(ch in name for ch in ('/', "\\", "\x00", "<", ">", ":", '"', "|", "?", "*")):
-        return False
-    return True
+    return is_valid_skill_name(name)
 
 
 def _fm_scalar_field(value: Any) -> str:
@@ -1273,14 +1260,33 @@ def _has_trigger_section(content: str) -> bool:
     return False
 
 
-def _write_verified_evidence(target: Path, block: dict) -> None:
-    """晋升落盘：status 翻 verified + 写 verified_evidence 块（复用 skills_loader
-    的公开行级写接口；失败静默——证据缺失不影响 status 已落盘）。"""
-    rewrite_skill_frontmatter(
-        target,
-        updates={"status": "verified"},
-        nested_blocks={"verified_evidence": block},
+def _write_verified_evidence(target: Path, block: dict) -> bool:
+    """晋升落盘：status 与证据必须作为同一次成功写入被确认。"""
+    try:
+        return bool(rewrite_skill_frontmatter(
+            target,
+            updates={"status": "verified"},
+            nested_blocks={"verified_evidence": block},
+        ))
+    except Exception:
+        return False
+
+
+def _promotion_failed(name: str, gate: str, trace_id: str, evidence: dict) -> dict:
+    result = _make_error(
+        "skill_promotion_failed",
+        "skill 验证通过，但晋升状态写盘失败；产物保持 proposed，可重试。",
+        trace_id,
+        details={"name": name, "gate": gate},
     )
+    result.update({
+        "name": name,
+        "gate": gate,
+        "passed": False,
+        "status": "proposed",
+        "evidence": evidence,
+    })
+    return result
 
 
 def _verify_full_gate(
@@ -1358,7 +1364,7 @@ def _verify_full_gate(
 
     passed = bool(compile_success and semantic_passed)
     if passed:
-        _write_verified_evidence(
+        promoted = _write_verified_evidence(
             target,
             {
                 "gate": "full",
@@ -1368,6 +1374,8 @@ def _verify_full_gate(
                 "at": today,
             },
         )
+        if not promoted:
+            return _promotion_failed(name, "full", trace_id, evidence)
     return {
         "ok": True,
         "name": name,
@@ -1399,7 +1407,7 @@ def _verify_structural_gate(
         "at": today,
     }
     if passed:
-        _write_verified_evidence(
+        promoted = _write_verified_evidence(
             target,
             {
                 "gate": "structural",
@@ -1408,6 +1416,8 @@ def _verify_structural_gate(
                 "at": today,
             },
         )
+        if not promoted:
+            return _promotion_failed(name, "structural", trace_id, evidence)
     return {
         "ok": True,
         "name": name,

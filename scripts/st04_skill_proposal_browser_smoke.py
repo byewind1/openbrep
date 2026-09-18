@@ -406,28 +406,32 @@ def run_smoke(*, timeout: float = 60.0, headed: bool = False) -> dict[str, Any]:
 
             # ── ST04-restore-on-load：预置持久候选 → 刷新（≈重启）→ 自动恢复审批卡 ──
             restore_id = seed_restore_candidate(project_root)
+            seeded_listing = get_json(f"{api_url}/api/skill/proposals")
             page.reload(wait_until="domcontentloaded")
             page.wait_for_function(
                 "() => document.title.trim() === 'OpenBrep Workbench'", timeout=int(timeout * 1000)
             )
-            page.evaluate(_store_import_script())
             page.wait_for_function(
-                "() => { const s = window.st04Store && window.st04Store.getState(); return !!(s && s.project); }",
+                """() => Array.from(document.querySelectorAll('.skill-proposal-card'))
+                    .some((node) => (node.textContent || '').includes('restored_stair_pattern'))""",
                 timeout=int(timeout * 1000),
             )
-            page.wait_for_timeout(1200)
-            restore_probe = page.evaluate(
-                """() => {
-                    const s = window.st04Store.getState();
-                    return s.pendingSkillProposal ? s.pendingSkillProposal.proposal_id : null;
-                }"""
+            restored_card = page.locator(".skill-proposal-card").filter(
+                has_text="restored_stair_pattern"
             )
+            seeded_ids = [
+                item.get("proposal_id")
+                for item in seeded_listing.get("proposals", [])
+                if isinstance(item, dict)
+            ]
             cases.append({
                 "case": "ST04-restore-on-load",
-                "passed": restore_probe == restore_id
-                and page.locator(".skill-proposal-card").count() > 0,
-                "restored_proposal_id": restore_probe,
-                "card_count": page.locator(".skill-proposal-card").count(),
+                "passed": restore_id in seeded_ids and restored_card.count() > 0,
+                "api_proposal_ids": seeded_ids,
+                "restored_card_text": restored_card.first.inner_text()[:300]
+                if restored_card.count()
+                else "",
+                "card_count": restored_card.count(),
             })
             browser.close()
 

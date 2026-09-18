@@ -7,13 +7,12 @@
   （draft），登记 ST02 证据保护；
 - ``list_proposals`` : GET /api/skill/proposals —— 列当前项目候选并做保护对账；
 - ``confirm``  : POST /api/skill/confirm —— 有 proposal_id 走 store（校验项目身份；
-  draft/approving → approved/rejected），无 proposal_id 保留原自动 harvest 行为。
+  draft/approving/rejecting → approved/rejected），无 proposal_id 保留原自动 harvest 行为。
 
 审批状态机（返工后）：
-``draft`` → 先持久化 ``approving`` 意图 → 外部副作用（propose_skill / verify_skill）
-→ 最终状态写盘。最终写盘失败返回 retryable error，磁盘停在 ``approving``；同一
-proposal_id 重试时会核对 artifact 所有权（frontmatter source_trace_id + 正文摘要）
-后收敛，不重复创建、不丢用户决策。
+批准先持久化 ``approving``，拒绝先持久化 ``rejecting``，再执行外部副作用并落
+终态。最终写盘或产物回收失败返回 retryable error；同一 proposal_id 重试时会按
+持久化意图和 artifact 所有权收敛，不重复创建、不丢用户决策。
 
 纪律：
 - 候选先落盘再审批；未审批候选绝不进 SkillsLoader（只在 .openbrep 下）；
@@ -36,6 +35,7 @@ from openbrep.skill_proposals import (
     STATUS_APPROVED,
     STATUS_APPROVING,
     STATUS_DRAFT,
+    STATUS_REJECTING,
     STATUS_REJECTED,
     VERIFY_CLAIMS_UNVERIFIED,
     VERIFY_FAILED,
@@ -295,7 +295,7 @@ class SkillProposalService:
                 proposal_id=proposal_id,
             )
 
-        if body.get("approve") is not True:
+        if status == STATUS_REJECTING or body.get("approve") is not True:
             # draft / approving / approved 都可拒绝：approved 的拒绝是"撤销"，
             # 只回收所有权属于本候选的产物（已 verified 也拉回 deprecated）。
             return self._reject(root, candidate)
@@ -309,9 +309,43 @@ class SkillProposalService:
         self._try_save(root, candidate)
 
     def _reject(self, root: Path, candidate: dict[str, Any]) -> dict[str, Any]:
-        # 先回收已证明属于本 proposal 的产物（已 verified 也拉回 deprecated，避免
-        # "候选被拒但 skill 仍激活"的分叉）；外部同名文件不动。
+        # 先持久化拒绝意图，再执行 artifact 回收。进程在任一点退出时，同一
+        # proposal_id 都能从 rejecting 状态继续收敛。
+        if str(candidate.get("status") or STATUS_DRAFT) != STATUS_REJECTING:
+            candidate = {
+                **candidate,
+                "status": STATUS_REJECTING,
+                "attempt": {"started_at": utc_now(), "kind": "reject"},
+                "updated_at": utc_now(),
+                "error": None,
+            }
+            try:
+                save_candidate(root, candidate)
+            except Exception as exc:
+                return _error(
+                    "SKILL_PROPOSAL_STATE_SAVE_FAILED",
+                    f"拒绝意图写盘失败，未执行产物回收（可重试）：{exc}",
+                    retryable=True,
+                    proposal_id=str(candidate.get("proposal_id") or ""),
+                )
+
         reclaim = self._reclaim_artifact(candidate)
+        if reclaim.get("required") and not reclaim.get("reclaimed"):
+            candidate["verification"] = {
+                "state": VERIFY_UNVERIFIED,
+                "decision": "rejecting",
+                "reclaimed": reclaim,
+            }
+            candidate["error"] = str(reclaim.get("reason") or "artifact reclaim failed")
+            candidate["updated_at"] = utc_now()
+            self._try_save(root, candidate)
+            return _error(
+                "SKILL_PROPOSAL_RECLAIM_FAILED",
+                "skill 产物回收失败，候选保留在 rejecting，可用同一 proposal_id 重试。",
+                retryable=True,
+                proposal_id=str(candidate.get("proposal_id") or ""),
+                reclaimed=reclaim,
+            )
         candidate["status"] = STATUS_REJECTED
         candidate["updated_at"] = utc_now()
         candidate["verification"] = {
@@ -331,14 +365,22 @@ class SkillProposalService:
                 proposal_id=str(candidate.get("proposal_id") or ""),
                 reclaimed=reclaim,
             )
-        released = release_candidate_protection(root, candidate)
+        release = release_candidate_protection(root, candidate)
+        candidate["protection"] = {
+            "registered": [],
+            "errors": release["errors"],
+            "released": not release["errors"],
+            "checked_at": utc_now(),
+        }
+        self._try_save(root, candidate)
         self._feedback(candidate, "rejected", f"用户拒绝了 skill 候选：{candidate.get('name')}")
         return {
             "ok": True,
             "discarded": True,
             "proposal_id": str(candidate.get("proposal_id") or ""),
             "status": STATUS_REJECTED,
-            "released_protections": released,
+            "released_protections": release["removed"],
+            "protection": candidate["protection"],
             "reclaimed": reclaim,
             "message": "已丢弃 skill 候选。",
         }
@@ -348,15 +390,38 @@ class SkillProposalService:
         skills_dir = Path(skill_harvest.resolve_skills_dir())
         name = str(candidate.get("name") or "")
         proposal_id = str(candidate.get("proposal_id") or "")
-        ownership = artifact_ownership(skills_dir, name, proposal_id, str(candidate.get("content") or ""))
-        if not ownership.get("owned"):
-            return {"reclaimed": False, "reason": ownership.get("reason"), "path": ownership.get("path")}
+        ownership = artifact_ownership(
+            skills_dir,
+            name,
+            proposal_id,
+            str(candidate.get("content") or ""),
+        )
+        if not ownership.get("owned") and not ownership.get("trace_owned"):
+            return {
+                "reclaimed": ownership.get("reason") == "artifact_missing",
+                "required": False,
+                "reason": ownership.get("reason"),
+                "path": ownership.get("path"),
+            }
         try:
-            ok = rewrite_skill_frontmatter(Path(ownership["path"]), updates={"status": "deprecated"})
+            ok = rewrite_skill_frontmatter(
+                Path(ownership["path"]),
+                updates={"status": "deprecated"},
+            )
         except Exception as exc:
             logger.warning("artifact reclaim failed: %s", exc)
-            return {"reclaimed": False, "reason": f"rewrite_failed:{exc}", "path": ownership.get("path")}
-        return {"reclaimed": bool(ok), "reason": "" if ok else "no_frontmatter", "path": ownership.get("path")}
+            return {
+                "reclaimed": False,
+                "required": True,
+                "reason": f"rewrite_failed:{exc}",
+                "path": ownership.get("path"),
+            }
+        return {
+            "reclaimed": bool(ok),
+            "required": True,
+            "reason": "" if ok else "no_frontmatter",
+            "path": ownership.get("path"),
+        }
 
     def _approve(self, root: Path, candidate: dict[str, Any]) -> dict[str, Any]:
         from openbrep.mcp_tools import propose_skill, verify_skill
@@ -451,7 +516,7 @@ class SkillProposalService:
 
         # 4) K08：存在未核验技术断言时，纯 structural 不得晋升
         unverified_claims = (candidate.get("claims") or {}).get("unverified") or []
-        if unverified_claims and not candidate.get("slice"):
+        if unverified_claims:
             verification = {
                 "state": VERIFY_CLAIMS_UNVERIFIED,
                 "passed": False,
@@ -506,6 +571,25 @@ class SkillProposalService:
             "error": None if passed else _mcp_error_message(verify),
             "unverified_claims": unverified_claims,
         }
+        if verify.get("ok") is not True:
+            candidate = {
+                **candidate,
+                "status": STATUS_APPROVING,
+                "verification": verification,
+                "error": _mcp_error_message(verify),
+                "updated_at": utc_now(),
+            }
+            self._try_save(root, candidate)
+            return _error(
+                "SKILL_VERIFY_FAILED",
+                _mcp_error_message(verify),
+                retryable=True,
+                proposal_id=proposal_id,
+                skill=name,
+                verified=False,
+                path=candidate.get("approved_path"),
+                verification=verification,
+            )
         candidate = {
             **candidate,
             "status": STATUS_APPROVED,

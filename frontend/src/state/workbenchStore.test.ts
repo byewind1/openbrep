@@ -3713,16 +3713,17 @@ test('confirmPendingSkillProposal without a pending proposal sets lastError (P2-
 
 test('load restores a restorable skill proposal from the store (ST04)', async () => {
   const approving = { ...SKILL_PROPOSAL, proposal_id: 'sp_approving', status: 'approving' as const, updated_at: '2026-09-18T00:00:00Z' }
+  const rejecting = { ...SKILL_PROPOSAL, proposal_id: 'sp_rejecting', status: 'rejecting' as const, updated_at: '2026-09-18T01:00:00Z' }
   const draft = { ...SKILL_PROPOSAL, proposal_id: 'sp_draft', status: 'draft' as const, updated_at: '2026-09-18T02:00:00Z' }
   const approved = { ...SKILL_PROPOSAL, proposal_id: 'sp_done', status: 'approved' as const }
   const store = createWorkbenchStore(
     makeApi({
-      listSkillProposals: async () => ({ ok: true, proposals: [draft, approved, approving], total: 3 }),
+      listSkillProposals: async () => ({ ok: true, proposals: [draft, approved, approving, rejecting], total: 4 }),
     }),
   )
   await store.getState().load()
-  // approving（上次写盘失败）优先展示以便重试
-  expect(store.getState().pendingSkillProposal?.proposal_id).toBe('sp_approving')
+  // rejecting 是已持久化的用户决定，优先恢复以便完成回收。
+  expect(store.getState().pendingSkillProposal?.proposal_id).toBe('sp_rejecting')
 })
 
 test('load clears pending when the store has no restorable proposal (ST04)', async () => {
@@ -3777,6 +3778,49 @@ test('confirmPendingSkillProposal reject failure does not claim discarded (ST04)
   expect(state.pendingSkillProposal).toEqual(SKILL_PROPOSAL)
   expect(state.assistantMessages.at(-1)?.content).toContain('拒绝失败')
   expect(state.assistantMessages.at(-1)?.content).not.toContain('已丢弃')
+})
+
+test('confirmPendingSkillProposal resumes durable rejecting intent (ST04)', async () => {
+  const calls: boolean[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async (approve: boolean) => {
+        calls.push(approve)
+        return { ok: true, discarded: true }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({
+    pendingSkillProposal: { ...SKILL_PROPOSAL, status: 'rejecting' },
+  })
+
+  await store.getState().confirmPendingSkillProposal(true)
+
+  expect(calls).toEqual([false])
+  expect(store.getState().pendingSkillProposal).toBeNull()
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('已丢弃')
+  expect(store.getState().assistantMessages.at(-1)?.content).not.toContain('未激活产物')
+})
+
+test('confirmPendingSkillProposal honors explicit retryable errors (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async () => ({
+        ok: false,
+        code: 'SKILL_PROPOSAL_RECLAIM_FAILED',
+        error: 'reclaim failed',
+        retryable: true,
+      }),
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: { ...SKILL_PROPOSAL, status: 'rejecting' } })
+
+  await store.getState().confirmPendingSkillProposal(false)
+
+  expect(store.getState().pendingSkillProposal?.status).toBe('rejecting')
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('可重试')
 })
 
 // ── P2a：修改前后对比 ghost 快照 ─────────────────────────────────────────

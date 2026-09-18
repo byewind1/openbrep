@@ -942,14 +942,16 @@ function SkillProposalCard({
         </div>
       ) : null}
       <div className="skill-proposal-actions">
-        <button
-          type="button"
-          className="plan-confirm-approve"
-          disabled={busy}
-          onClick={() => onConfirm?.(true)}
-        >
-          {t('assistant.skillProposal.approve')}
-        </button>
+        {proposal.status !== 'rejecting' ? (
+          <button
+            type="button"
+            className="plan-confirm-approve"
+            disabled={busy}
+            onClick={() => onConfirm?.(true)}
+          >
+            {t('assistant.skillProposal.approve')}
+          </button>
+        ) : null}
         <button
           type="button"
           className="plan-confirm-reject"

@@ -833,6 +833,36 @@ def test_verify_skill_structural_gate_requires_trigger_section_and_pattern_type(
     assert no_pattern["evidence"]["structural"]["frontmatter_complete"] is False
 
 
+def test_verify_skill_reports_promotion_write_failure(tmp_path, monkeypatch):
+    skills_dir = tmp_path / "skills"
+    propose_skill(
+        "promotion_failure",
+        "# 策略\n\n## 触发关键词\n- 楼梯\n",
+        pattern_type="structural-pattern",
+        skills_dir=str(skills_dir),
+    )
+    monkeypatch.setattr("openbrep.mcp_tools.rewrite_skill_frontmatter", lambda *a, **k: False)
+
+    result = verify_skill("promotion_failure", skills_dir=str(skills_dir))
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "skill_promotion_failed"
+    assert result["passed"] is False
+    assert result["status"] == "proposed"
+    loader = SkillsLoader(str(skills_dir))
+    loader.load()
+    assert loader.skill_meta("promotion_failure")["status"] == "proposed"
+
+    def raise_write_error(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("openbrep.mcp_tools.rewrite_skill_frontmatter", raise_write_error)
+    raised = verify_skill("promotion_failure", skills_dir=str(skills_dir))
+    assert raised["ok"] is False
+    assert raised["error"]["code"] == "skill_promotion_failed"
+    assert raised["status"] == "proposed"
+
+
 def test_verify_skill_missing_returns_skill_not_found(tmp_path):
     result = verify_skill("ghost_skill", skills_dir=str(tmp_path / "skills"))
     assert result["ok"] is False

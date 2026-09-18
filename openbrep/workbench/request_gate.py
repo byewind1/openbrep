@@ -57,6 +57,10 @@ def is_lock_free_route(normalized_method: str, route: str) -> bool:
     a long time and must never hold the lock (accepted residual risk: the load
     that follows a successful open-directory dialog happens unlocked).
     """
+    # ST04 proposal listing reconciles revision protections and persists the
+    # observable result, so this single GET participates in session serialization.
+    if normalized_method == "GET" and route == "/api/skill/proposals":
+        return False
     if normalized_method == "GET":
         return True
     if route.startswith("/api/dialog/"):

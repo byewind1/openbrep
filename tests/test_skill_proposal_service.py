@@ -27,12 +27,17 @@ from openbrep.quality.schema import QualityRecord
 from openbrep.quality.store import write_record
 from openbrep.skills_loader import SkillsLoader
 from openbrep.skill_proposals import (
+    artifact_ownership,
     candidate_path,
     detect_explicit_skill_request,
     list_candidates,
     load_candidate,
     path_hash,
+    resolve_source_refs,
+    save_candidate,
 )
+from openbrep.revisions import load_revision_protections, register_revision_protection
+from openbrep.runtime.skill_harvest import collect_script_excerpts
 from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.workbench.skill_proposal_service import SkillProposalService
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
@@ -251,6 +256,65 @@ class TestProposePersistence(_ServiceCase):
         self.assertFalse(result["evidence"]["evidence_complete"])
         self.assertIn("revision_dir_missing", result["evidence"]["validation_reasons"])
 
+    def test_source_refs_reject_unsafe_run_revision_and_changed_file_paths(self):
+        revision_id = _write_quality_run(self.project)
+        record_file = (
+            self.project.root / ".openbrep" / "quality" / "runs" / "r_2026_test.json"
+        )
+        data = json.loads(record_file.read_text(encoding="utf-8"))
+        data["provenance"]["delivery_source"]["after_revision_id"] = "../outside"
+        data["provenance"]["delivery_source"]["changed_files"] = [
+            "scripts/3d.gdl",
+            "../../secret.gdl",
+            "/tmp/external.gdl",
+        ]
+        record_file.write_text(json.dumps(data), encoding="utf-8")
+
+        ref = resolve_source_refs(self.project.root, ["r_2026_test"])[0]
+        self.assertFalse(ref["evidence_complete"])
+        self.assertIn("revision_id_invalid", ref["validation"]["reasons"])
+        self.assertIn("changed_file_path_invalid:../../secret.gdl", ref["validation"]["reasons"])
+        self.assertIn("changed_file_path_invalid:/tmp/external.gdl", ref["validation"]["reasons"])
+        self.assertEqual(revision_id[:1], "r")
+
+        unsafe_run = resolve_source_refs(self.project.root, ["../../outside"])[0]
+        self.assertFalse(unsafe_run["evidence_complete"])
+        self.assertIn("run_id_invalid", unsafe_run["validation"]["reasons"])
+
+    def test_script_excerpts_never_read_unsafe_or_unvalidated_revision_paths(self):
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "secret.gdl").write_text("BLOCK 99, 99, 99\n", encoding="utf-8")
+        refs = [{
+            "revision": str(outside),
+            "changed_files": ["secret.gdl", "../../outside/secret.gdl"],
+            "evidence_complete": True,
+            "validation": {"ok": False, "reasons": ["revision_id_invalid"]},
+        }]
+        excerpts = collect_script_excerpts(
+            self.project, refs, project_root=self.project.root
+        )
+        self.assertEqual(excerpts, {})
+
+    def test_artifact_lookup_rejects_name_and_symlink_escape(self):
+        outside = self.tmp / "outside.md"
+        outside.write_text("---\nstatus: verified\n---\nexternal\n", encoding="utf-8")
+        escaped = artifact_ownership(
+            self.skills_dir,
+            "../outside",
+            "sp_safe",
+            "external",
+        )
+        self.assertFalse(escaped["owned"])
+        self.assertEqual(escaped["reason"], "invalid_skill_name")
+
+        link = self.skills_dir / "linked.md"
+        link.symlink_to(outside)
+        linked = artifact_ownership(self.skills_dir, "linked", "sp_safe", "external")
+        self.assertFalse(linked["owned"])
+        self.assertEqual(linked["reason"], "artifact_path_escape")
+        self.assertIn("status: verified", outside.read_text(encoding="utf-8"))
+
     def test_k02_same_content_twice_single_candidate_and_survives_restart(self):
         _write_quality_run(self.project)
         first, _ = self.propose()
@@ -267,6 +331,22 @@ class TestProposePersistence(_ServiceCase):
         self.assertEqual(listed["total"], 1)
         self.assertEqual(listed["proposals"][0]["proposal_id"], first["proposal_id"])
         self.assertEqual(listed["proposals"][0]["content"], first["content"])
+
+    def test_malicious_candidate_id_cannot_escape_store_during_reconciliation(self):
+        directory = self.project.root / ".openbrep" / "memory" / "skill-proposals"
+        directory.mkdir(parents=True, exist_ok=True)
+        malicious = {
+            "proposal_id": "../../escaped",
+            "status": "draft",
+            "source_refs": [],
+        }
+        (directory / "payload.json").write_text(json.dumps(malicious), encoding="utf-8")
+
+        with self.assertRaises(ValueError):
+            save_candidate(self.project.root, malicious)
+        listed = SkillProposalService(self.session).list_proposals()
+        self.assertEqual(listed["proposals"], [])
+        self.assertFalse((self.project.root / ".openbrep" / "escaped.json").exists())
 
     def test_k08_old_material_revision_null_evidence_incomplete(self):
         result, _ = self.propose()  # 没有任何质量档案
@@ -516,8 +596,8 @@ class TestRouteAndGate(_ServiceCase):
         # 新 POST 路由必须默认锁定（不加入 LOCK_FREE_POST_ROUTES）
         self.assertFalse(is_lock_free_route("POST", "/api/skill/proposals"))
         self.assertFalse(is_lock_free_route("POST", "/api/skill/confirm"))
-        # GET 列表天然只读
-        self.assertTrue(is_lock_free_route("GET", "/api/skill/proposals"))
+        # 列表会做保护对账并持久化结果，因此必须串行化。
+        self.assertFalse(is_lock_free_route("GET", "/api/skill/proposals"))
 
     def test_service_route_dispatch(self):
         _write_quality_run(self.project)
@@ -543,6 +623,35 @@ class TestRouteAndGate(_ServiceCase):
         legacy = service.route("POST", "/api/skill/confirm", {"approve": True})
         self.assertFalse(legacy["ok"])
         self.assertEqual(legacy["code"], "NO_PENDING_SKILL_PROPOSAL")
+
+    def test_reconciliation_persists_current_result_and_cleans_rejected_refs(self):
+        revision_id = _write_quality_run(self.project)
+        proposal, _ = self.propose()
+        stored = load_candidate(self.project.root, proposal["proposal_id"])
+        stored["protection"] = {"registered": [], "errors": [{"error": "stale"}]}
+        save_candidate(self.project.root, stored)
+
+        listed = SkillProposalService(self.session).list_proposals()
+        protection = listed["proposals"][0]["protection"]
+        self.assertEqual(protection["registered"], [revision_id])
+        self.assertEqual(protection["errors"], [])
+        self.assertEqual(
+            load_candidate(self.project.root, proposal["proposal_id"])["protection"]["registered"],
+            [revision_id],
+        )
+
+        stored = load_candidate(self.project.root, proposal["proposal_id"])
+        stored["status"] = "rejected"
+        save_candidate(self.project.root, stored)
+        register_revision_protection(
+            self.project.root,
+            revision_id,
+            reason="pending_candidate",
+            run_id=proposal["proposal_id"],
+        )
+        SkillProposalService(self.session).list_proposals()
+        remaining = load_revision_protections(self.project.root).get(revision_id, [])
+        self.assertFalse(any(entry.get("run_id") == proposal["proposal_id"] for entry in remaining))
 
 
 # ── 6. 审批状态机 / 所有权 / 故障注入（返工） ─────────────
@@ -649,6 +758,83 @@ class TestApprovalStateMachine(_ServiceCase):
         self.assertEqual(result["reclaimed"]["reason"], "foreign_artifact")
         self.assertIn("status: active", foreign.read_text(encoding="utf-8"))
 
+    def test_reject_reclaims_trace_owned_artifact_after_body_edit(self):
+        proposal = self._proposal()
+        approved = self._approve(proposal["proposal_id"])
+        self.assertTrue(approved["verified"], approved)
+        artifact = self.skills_dir / "spiral_stair_stack.md"
+        artifact.write_text(
+            artifact.read_text(encoding="utf-8").replace("总步数参数化堆叠", "人工编辑后的正文"),
+            encoding="utf-8",
+        )
+
+        rejected = self._approve(proposal["proposal_id"], approve=False)
+
+        self.assertTrue(rejected["ok"], rejected)
+        self.assertTrue(rejected["reclaimed"]["reclaimed"])
+        loader = SkillsLoader(str(self.skills_dir))
+        loader.load()
+        self.assertEqual(loader.skill_meta("spiral_stair_stack")["status"], "deprecated")
+        self.assertIsNone(loader.get_by_name("spiral_stair_stack"))
+
+    def test_reject_reports_protection_release_failure(self):
+        proposal = self._proposal()
+        with patch(
+            "openbrep.revisions.unregister_revision_protection",
+            side_effect=OSError("protection store unavailable"),
+        ):
+            rejected = self._approve(proposal["proposal_id"], approve=False)
+        self.assertTrue(rejected["ok"], rejected)
+        self.assertTrue(rejected["protection"]["errors"])
+        stored = load_candidate(self.project.root, proposal["proposal_id"])
+        self.assertFalse(stored["protection"]["released"])
+        self.assertTrue(stored["protection"]["errors"])
+
+    def test_reject_reclaim_failure_is_retryable_and_converges(self):
+        proposal = self._proposal()
+        approved = self._approve(proposal["proposal_id"])
+        self.assertTrue(approved["verified"], approved)
+
+        with patch(
+            "openbrep.workbench.skill_proposal_service.rewrite_skill_frontmatter",
+            return_value=False,
+        ):
+            failed = self._approve(proposal["proposal_id"], approve=False)
+        self.assertFalse(failed["ok"])
+        self.assertEqual(failed["code"], "SKILL_PROPOSAL_RECLAIM_FAILED")
+        self.assertTrue(failed["retryable"])
+        on_disk = load_candidate(self.project.root, proposal["proposal_id"])
+        self.assertEqual(on_disk["status"], "rejecting")
+        loader = SkillsLoader(str(self.skills_dir))
+        loader.load()
+        self.assertIsNotNone(loader.get_by_name("spiral_stair_stack"))
+
+        # durable rejecting intent wins even if a stale client retries approve=true.
+        retried = self._approve(proposal["proposal_id"], approve=True)
+        self.assertTrue(retried["ok"], retried)
+        self.assertEqual(
+            load_candidate(self.project.root, proposal["proposal_id"])["status"],
+            "rejected",
+        )
+        loader.load()
+        self.assertIsNone(loader.get_by_name("spiral_stair_stack"))
+
+    def test_verification_promotion_failure_stays_retryable(self):
+        proposal = self._proposal()
+        with patch(
+            "openbrep.mcp_tools.rewrite_skill_frontmatter",
+            return_value=False,
+        ):
+            failed = self._approve(proposal["proposal_id"])
+        self.assertFalse(failed["ok"])
+        self.assertEqual(failed["code"], "SKILL_VERIFY_FAILED")
+        self.assertTrue(failed["retryable"])
+        stored = load_candidate(self.project.root, proposal["proposal_id"])
+        self.assertEqual(stored["status"], "approving")
+        loader = SkillsLoader(str(self.skills_dir))
+        loader.load()
+        self.assertEqual(loader.skill_meta("spiral_stair_stack")["status"], "proposed")
+
 
 class TestClaimsGuard(_ServiceCase):
     def test_structural_promotion_capped_when_unverified_claims(self):
@@ -704,6 +890,41 @@ class TestClaimsGuard(_ServiceCase):
         self.assertEqual(result["evidence"]["project_selection"]["project"], "SpiralStair")
         kinds = {claim["kind"] for claim in result["claims"]["unverified"]}
         self.assertIn("measurement_experience", kinds)
+
+    def test_unverified_claim_with_compilable_slice_does_not_promote(self):
+        _write_quality_run(self.project)
+        content = json.dumps(
+            {
+                "name": "stair_claim_with_slice",
+                "pattern_type": "repeating_geometry",
+                "content": (
+                    "## 适用场景 / When to Use\n用于参数化楼梯踏步的重复排布。\n\n"
+                    "## 经验取值\n踏步高 25mm 是推荐经验，应由维护者另行核验后再作为通用知识。"
+                ),
+                "slice": {
+                    "params": {"A": 1.0, "B": 1.0, "ZZYZX": 1.0},
+                    "scripts": {"3d": "BLOCK A, B, ZZYZX\n"},
+                },
+            },
+            ensure_ascii=False,
+        )
+        proposal, _ = self.propose(llm_content=content)
+        self.assertTrue(proposal["claims"]["unverified"])
+        approved = self._approve_claim(proposal["proposal_id"])
+        self.assertTrue(approved["ok"], approved)
+        self.assertFalse(approved["verified"])
+        self.assertEqual(approved["verification"]["state"], "claims_unverified")
+        loader = SkillsLoader(str(self.skills_dir))
+        loader.load()
+        self.assertEqual(loader.skill_meta("stair_claim_with_slice")["status"], "proposed")
+
+    def _approve_claim(self, proposal_id):
+        with patch(
+            "openbrep.runtime.skill_harvest.resolve_skills_dir", return_value=str(self.skills_dir)
+        ):
+            return SkillProposalService(self.session).confirm(
+                {"proposal_id": proposal_id, "approve": True}
+            )
 
 
 class TestExplicitStreamRoute(_ServiceCase):

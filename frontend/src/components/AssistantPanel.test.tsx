@@ -566,6 +566,20 @@ describe('AssistantPanel skill proposal card (P2-d)', () => {
     expect(screen.getByText(/状态: approving/)).toBeTruthy()
   })
 
+  test('ST04: rejecting status only offers rejection retry', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{ ...proposal, status: 'rejecting' }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/状态: rejecting/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '批准沉淀' })).toBeNull()
+    expect(screen.getByRole('button', { name: '忽略' })).toBeTruthy()
+  })
+
   test('approve and ignore buttons call onConfirmSkillProposal with the right flag', () => {
     const onConfirm = vi.fn()
     render(<AssistantPanel {...baseProps} hasProject pendingSkillProposal={proposal} onConfirmSkillProposal={onConfirm} />)

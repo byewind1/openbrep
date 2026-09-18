@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from openbrep.feedback import append_feedback
+from openbrep.skill_proposals import is_valid_skill_name
 from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -123,17 +124,7 @@ def _dedup_collision(skills_dir: Any, name: str, pattern_type: str) -> bool:
 
 def _valid_skill_name(name: Any) -> bool:
     """skill 名合法性（与 mcp_tools._is_valid_skill_name 对齐）。"""
-    if not isinstance(name, str) or not name:
-        return False
-    if name != name.strip() or name in (".", "..") or name.upper() == "README":
-        return False
-    if name[0] == ".":
-        return False
-    if any(ord(ch) < 32 for ch in name):
-        return False
-    if any(ch in name for ch in ('/', "\\", "\x00", "<", ">", ":", '"', "|", "?", "*")):
-        return False
-    return True
+    return is_valid_skill_name(name)
 
 
 def _extract_json(text: str) -> Optional[Any]:
@@ -395,8 +386,25 @@ def collect_script_excerpts(
         if not isinstance(ref, dict):
             continue
         revision = str(ref.get("revision") or "").strip()
+        if (
+            revision
+            and project_root is not None
+            and not bool((ref.get("validation") or {}).get("ok"))
+        ):
+            continue
         for item in ref.get("changed_files") or []:
             rel = str(item)
+            rel_obj = Path(rel)
+            if (
+                not rel
+                or rel_obj.is_absolute()
+                or any(part in ("", ".", "..") for part in rel_obj.parts)
+                or not (
+                    (len(rel_obj.parts) == 1 and rel_obj.suffix.lower() == ".xml")
+                    or (len(rel_obj.parts) >= 2 and rel_obj.parts[0] == "scripts")
+                )
+            ):
+                continue
             changed.append(rel)
             if revision and rel not in revision_by_file:
                 revision_by_file[rel] = revision
@@ -410,11 +418,14 @@ def collect_script_excerpts(
         name = Path(rel_path).name
         revision = revision_by_file.get(rel_path)
         if revisions_root is not None and revision:
-            candidate = revisions_root / revision
+            candidate = (revisions_root / revision).resolve()
+            if candidate.parent != revisions_root.resolve():
+                continue
             for probe in (candidate / name, candidate / rel_path):
                 try:
-                    if probe.is_file():
-                        excerpts[rel_path] = probe.read_text(encoding="utf-8")[:limit]
+                    resolved_probe = probe.resolve()
+                    if resolved_probe.is_relative_to(candidate) and resolved_probe.is_file():
+                        excerpts[rel_path] = resolved_probe.read_text(encoding="utf-8")[:limit]
                         break
                 except Exception:
                     continue

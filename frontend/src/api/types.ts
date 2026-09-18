@@ -1086,8 +1086,8 @@ export interface SkillProposal {
     params?: Record<string, unknown>
     scripts?: Record<string, string>
   } | null
-  /** ST04：draft（待审）/ approving（副作用中/上次写盘失败可重试）/ approved / rejected */
-  status?: 'draft' | 'approving' | 'approved' | 'rejected'
+  /** ST04：draft（待审）/ approving/rejecting（副作用中或可重试）/ approved / rejected */
+  status?: 'draft' | 'approving' | 'rejecting' | 'approved' | 'rejected'
   /** ST04：验证态与用户决策分离；claims_unverified = 含未核验技术断言，未晋升 */
   verification?: {
     state?: 'unverified' | 'verified' | 'failed' | 'claims_unverified'
@@ -1156,6 +1156,7 @@ export interface SkillProposalConfirmResult {
   message?: string
   code?: string
   error?: string
+  retryable?: boolean
 }
 
 export interface SkillProposalListResult {

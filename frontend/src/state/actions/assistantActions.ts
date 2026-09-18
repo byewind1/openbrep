@@ -6,13 +6,17 @@ import { attachmentLabel } from '../../components/assistantImage'
 import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
 
 /**
- * ST04：从持久候选里挑一个可以继续审批的（draft；approving = 上次最终写盘失败，
- * 优先展示以便重试收敛）；没有则返回 null。
+ * ST04：从持久候选里挑一个可以继续审批的。rejecting 是已持久化的拒绝意图，
+ * 最高优先恢复；approving 是上次审批写盘失败，其次恢复以便重试收敛。
  */
 function pickRestorableSkillProposal(proposals: SkillProposal[]): SkillProposal | null {
-  const restorable = proposals.filter((p) => p.status === 'draft' || p.status === 'approving')
+  const restorable = proposals.filter(
+    (p) => p.status === 'draft' || p.status === 'approving' || p.status === 'rejecting',
+  )
   if (!restorable.length) return null
   return [...restorable].sort((a, b) => {
+    const rejectingDelta = (b.status === 'rejecting' ? 1 : 0) - (a.status === 'rejecting' ? 1 : 0)
+    if (rejectingDelta !== 0) return rejectingDelta
     const approvingDelta = (b.status === 'approving' ? 1 : 0) - (a.status === 'approving' ? 1 : 0)
     if (approvingDelta !== 0) return approvingDelta
     return String(b.updated_at ?? b.created_at ?? '').localeCompare(String(a.updated_at ?? a.created_at ?? ''))
@@ -993,14 +997,17 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       const epoch = get().projectEpoch
-      const result = await api.confirmSkillProposal(approve, proposal.proposal_id)
+      const effectiveApprove = proposal.status === 'rejecting' ? false : approve
+      const result = await api.confirmSkillProposal(effectiveApprove, proposal.proposal_id)
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Skill proposal result discarded: project switched during the request.')
         return
       }
       if (!result.ok) {
-        const actionLabel = approve ? '沉淀' : '拒绝'
-        const retryable = result.code === undefined || result.code.endsWith('SAVE_FAILED')
+        const actionLabel = effectiveApprove ? '沉淀' : '拒绝'
+        const retryable = result.retryable === true
+          || result.code === undefined
+          || result.code.endsWith('SAVE_FAILED')
         set((state) => ({
           // 保留卡片：用户可以直接重试（后端返回 retryable 的路径）
           pendingSkillProposal: state.pendingSkillProposal,
@@ -1019,7 +1026,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         pendingSkillProposal: null,
         assistantMessages: replacePendingAssistantMessage(
           state.assistantMessages,
-          approve
+          effectiveApprove
             ? result.verified
               ? `✅ skill「${proposal.name}」已沉淀并通过验证（${result.gate} 门禁）`
               : `📝 skill「${proposal.name}」已落盘为未激活产物（验证未过/含未核验断言），暂不可用`
