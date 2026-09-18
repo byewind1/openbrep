@@ -325,14 +325,30 @@ def _provenance(result: Any, context: dict) -> dict:
         if effective and str(effective) not in model_route:
             model_route.append(str(effective))
     knowledge_sources = object_plan.get("knowledge_sources") or []
+    # ST02：只消费 delivery_source 显式引用，不再把 latest 当 after。
+    # 旧记录缺字段 → after=None，consumer 显示「旧记录，未关联」。
+    delivery_source = context.get("delivery_source")
+    if not isinstance(delivery_source, dict):
+        raw_ds = metadata.get("delivery_source")
+        delivery_source = raw_ds if isinstance(raw_ds, dict) else None
+    after_revision = context.get("after_revision")
+    if after_revision is None and delivery_source is not None:
+        after_revision = delivery_source.get("after_revision_id") or None
+    before_revision = delivery_source.get("before_revision_id") if delivery_source else None
+    if before_revision is None:
+        before_revision = metadata.get("before_revision_id") or None
     return {
         "commit": context.get("commit"),
         "score_profile": SCORE_PROFILE,
         "model_route": model_route,
         "knowledge_snapshot": ",".join(str(s) for s in knowledge_sources) or None,
         "learning_snapshot": None,
-        "before_revision": metadata.get("before_revision_id") or None,
-        "after_revision": context.get("after_revision"),
+        "before_revision": before_revision or None,
+        "after_revision": after_revision or None,
+        "delivery_source": delivery_source,
+        "source_fingerprint": (
+            (delivery_source or {}).get("source_fingerprint") or None
+        ),
     }
 
 

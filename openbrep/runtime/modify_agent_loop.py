@@ -703,6 +703,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         changed_files=list(registry.changed_files.keys()),
         compile_result=compile_result,
         semantic_issues=[issue.detail for issue in semantic_result.issues if issue.blocking],
+        revision_id=before_revision_id or None,
     )
 
     # diff 范围护栏（v1 advisory）：update_script 全量替换且变更行 > 50% 时警告
@@ -730,6 +731,28 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     )
     output_parts.append(verification_report.to_summary_text())
 
+    # ST02：验证后捕获源指纹；after 由 pipeline delivery finalizer 创建
+    loop_metadata = _agent_loop_metadata(
+        diff_warnings=diff_warnings,
+        diff_ratios=diff_ratios,
+        write_methods=dict(registry.write_methods),
+        acceptance=acceptance,
+        # P5e：vision 提取透出（同 P5d-1 形状，前端只读卡片数据源；无图时空列表不写）
+        vision_extractions=vision_extractions,
+        llm_calls=llm_calls,
+        tool_calls=tool_calls_used,
+        budget_exhausted=budget_exhausted,
+        cancelled=cancelled,
+        before_revision_id=before_revision_id,
+        changed_files=list(registry.changed_files.keys()),
+    )
+    try:
+        from openbrep.source_fingerprint import compute_source_fingerprint
+
+        loop_metadata["verified_source_fingerprint"] = compute_source_fingerprint(project.root)
+    except Exception:
+        pass
+
     return TaskResult(
         success=verification_report.passed,
         intent=intent,
@@ -738,19 +761,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         project=project,
         compile_result=compile_result,
         verification=verification_report.to_dict(),
-        metadata=_agent_loop_metadata(
-            diff_warnings=diff_warnings,
-            diff_ratios=diff_ratios,
-            write_methods=dict(registry.write_methods),
-            acceptance=acceptance,
-            # P5e：vision 提取透出（同 P5d-1 形状，前端只读卡片数据源；无图时空列表不写）
-            vision_extractions=vision_extractions,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls_used,
-            budget_exhausted=budget_exhausted,
-            cancelled=cancelled,
-            before_revision_id=before_revision_id,
-        ),
+        metadata=loop_metadata,
     )
 
 
@@ -766,12 +777,14 @@ def _agent_loop_metadata(
     budget_exhausted: bool,
     cancelled: bool,
     before_revision_id: str | None,
+    changed_files: list[str] | None = None,
 ) -> dict:
     """agent loop 的 TaskResult.metadata 组装（vision_extractions 有值才写入）。
 
     G1：llm_calls/tool_calls/budget_exhausted/cancelled 是 loop 内的真实计数器
     （此前只存在于人类可读状态行「工具调用 6/18 次」），结构化透出供质量账本
     统一接口读取——禁止下游解析文本反推。
+    ST02：before_revision_id + changed_files 供 delivery finalizer 绑定 after。
     """
     metadata: dict = {
         "agent_loop": {
@@ -790,6 +803,8 @@ def _agent_loop_metadata(
         },
         "before_revision_id": before_revision_id or None,
     }
+    if changed_files is not None:
+        metadata["changed_files"] = sorted(set(changed_files))
     if vision_extractions:
         metadata["vision_extractions"] = vision_extractions
     return metadata

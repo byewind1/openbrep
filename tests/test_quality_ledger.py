@@ -473,15 +473,26 @@ class TestRobustness:
             r1.metadata["run_id"], r2.metadata["run_id"]}
 
     def test_readonly_project_dir_delivery_unaffected(self, tmp_path):
-        """红队 2：项目目录只读 → 交付结果不受影响，仅 warning。"""
+        """ST02：项目目录只读 → after 快照写盘失败，不宣称完整成功；观察层仍不炸。
+
+        旧行为（revisions 纯 observer）下交付 success=True；ST02 起 after-revision
+        是交付源绑定的一部分，snapshot_failed 时 TaskResult 不宣称完整成功，
+        但保留验证子结果与可恢复工作源，质量账本写失败仍为 best-effort warning。
+        """
         project = _make_project(tmp_path)
         openbrep_dir = project.root / ".openbrep"
         openbrep_dir.mkdir(exist_ok=True)
-        openbrep_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)  # 只读：无法建 quality/runs
+        openbrep_dir.chmod(stat.S_IRUSR | stat.S_IRUSR | stat.S_IXUSR)  # 只读
         pipeline = _make_pipeline(tmp_path)
         try:
             result = pipeline.execute(_request(project, tmp_path, "做一个书架", "CREATE"))
-            assert result.success is True  # 交付不受影响
+            # 交付契约：快照失败不宣称完整成功
+            assert result.success is False
+            ds = (result.metadata or {}).get("delivery_source") or {}
+            assert ds.get("state") == "snapshot_failed"
+            assert ds.get("after_revision_id") is None
+            # 验证子结果保留，工作源未回滚删除
+            assert result.scripts or result.plain_text
             assert _read_records(project) == []  # 档案未写入但不炸
         finally:
             openbrep_dir.chmod(stat.S_IRWXU)

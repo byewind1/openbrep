@@ -1281,6 +1281,7 @@ class CodexModifyBridge:
                 ),
             },
             "before_revision_id": self.before_revision_id or None,
+            "changed_files": sorted(dict(self.registry.changed_files).keys()),
             "codex_modify": {
                 "model": self.model,
                 "reasoning_effort": self.reasoning_effort,
@@ -1302,6 +1303,15 @@ class CodexModifyBridge:
         # schema/fields/confidence/skipped，前端只读卡片数据源；无图不写）
         if self.vision_extractions:
             metadata["vision_extractions"] = self.vision_extractions
+        # ST02：验证后捕获源指纹；after 由 pipeline delivery finalizer 绑定
+        try:
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            metadata["verified_source_fingerprint"] = compute_source_fingerprint(
+                self.project.root
+            )
+        except Exception:
+            pass
         return TaskResult(
             success=verification_report.passed and not aborted_delivery,
             intent=self.intent,

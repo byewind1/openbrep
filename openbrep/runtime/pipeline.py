@@ -431,6 +431,14 @@ class TaskPipeline:
         except Exception:
             pass
 
+        # 3b. ST02 交付源终结器：在写 trace/quality 前完成一次。
+        # 共享契约：真实终局 + 验证结果 + 实际变更 → 明确 delivery_source；
+        # 失败不伪造 after；快照失败时 TaskResult 不宣称完整成功。
+        try:
+            self._finalize_delivery_source(request, result, run_id=run_id)
+        except Exception:
+            logger.debug("delivery finalizer failed", exc_info=True)
+
         # 4. Trace (never blocks execution)
         try:
             trace_path = self.tracer.record(request, result, run_id=run_id)
@@ -439,7 +447,7 @@ class TaskPipeline:
             pass
 
         # 4b. G1 质量账本：单点写入（成功失败路径都覆盖），best-effort ——
-        # 写失败只 warning，绝不改变 TaskResult 或抛出。
+        # 写失败只 warning，绝不改变 TaskResult 或抛出。observer 不得改判交付。
         self._write_quality_record(request, result, run_id=run_id)
 
         # 5. AC-2：成功交付后沉淀紧凑项目记忆（规则式、零额外 LLM）。
@@ -450,6 +458,78 @@ class TaskPipeline:
             logger.debug("Failed to record delivery memory", exc_info=True)
 
         return result
+
+    def _finalize_delivery_source(
+        self, request: TaskRequest, result: TaskResult, *, run_id: str
+    ) -> None:
+        """ST02：pipeline 唯一 delivery_source 终结点（写 trace/quality 之前）。"""
+        from openbrep.runtime.delivery_finalizer import (
+            DeliverySource,
+            FinalizeDeliveryInputs,
+            apply_delivery_source_to_result,
+            finalize_delivery,
+        )
+
+        metadata = dict(result.metadata or {})
+        # handler 路径已自行终结（例如测试注入）→ 不重复处理
+        if DeliverySource.from_dict(metadata.get("delivery_source")) is not None:
+            return
+
+        project = result.project or request.project
+        intent = (result.intent or request.intent or "").upper()
+        execution = metadata.get("execution") or {}
+        codex_meta = metadata.get("codex_modify") or {}
+        interrupted = bool(
+            execution.get("cancelled")
+            or execution.get("timeout")
+            or execution.get("budget_exhausted")
+            or codex_meta.get("cancelled")
+            or codex_meta.get("epoch_violated")
+            or metadata.get("epoch_violated")
+        )
+        verification = result.verification
+        if isinstance(verification, dict) and verification:
+            verified = bool(verification.get("passed"))
+        elif result.compile_result is not None:
+            verified = bool(result.compile_result.success) and bool(result.success)
+        else:
+            verified = bool(result.success)
+
+        changed_files = _delivery_changed_files(result)
+        claimed_change = bool(changed_files) or intent in (
+            "MODIFY",
+            "DEBUG",
+            "REPAIR",
+            "CREATE",
+            "IMAGE",
+        )
+        # CHAT/解释类：无变更且无修改意图 → unchanged，不制造 revision
+        if intent == "CHAT":
+            claimed_change = False
+            verified = bool(result.success) if not changed_files else verified
+
+        before_id = metadata.get("before_revision_id") or None
+        existing_after = metadata.get("after_revision_id") or None
+        verified_fp = metadata.get("verified_source_fingerprint") or None
+        compile_meta = metadata.get("compile_revision_metadata") or None
+
+        inputs = FinalizeDeliveryInputs(
+            run_id=run_id,
+            project=project,
+            intent=intent,
+            handler_success=bool(result.success),
+            claimed_change=claimed_change,
+            changed_files=changed_files,
+            interrupted=interrupted,
+            verified=verified,
+            before_revision_id=before_id,
+            existing_after_revision_id=existing_after,
+            verified_source_fingerprint=verified_fp,
+            epoch_guard=getattr(request, "epoch_guard", None),
+            compile_metadata=compile_meta if isinstance(compile_meta, dict) else None,
+        )
+        delivery_source, warnings = finalize_delivery(inputs)
+        apply_delivery_source_to_result(result, delivery_source, warnings)
 
     def _append_feedback(self, project_root: Any, event: dict) -> bool:
         """append_feedback 的 pipeline 包装：自动带上当前 run_id（复用 trace_id 字段）。"""
@@ -464,6 +544,7 @@ class TaskPipeline:
 
         - 只观测：不进任何 prompt、不改任何判定、不影响 TaskResult；
         - 无项目（未落盘 HSF 目录）无处落档 → 跳过（与 feedback 同语义）；
+        - after_revision 只消费 delivery_source 显式引用，不再把 latest 当 after；
         - 写成功后向 feedback.jsonl 留一条 quality_recorded 指针（关联键 run_id）。
         """
         if not self.quality_ledger_enabled:
@@ -472,10 +553,21 @@ class TaskPipeline:
             project = result.project or request.project
             if project is None:
                 return
+            # epoch 变化：不给新项目写质量档案
+            epoch_guard = getattr(request, "epoch_guard", None)
+            if callable(epoch_guard):
+                try:
+                    if not epoch_guard():
+                        logger.info("quality ledger skipped: project epoch changed")
+                        return
+                except Exception:
+                    pass
             from openbrep.quality.evaluator import build_quality_record, repo_commit
             from openbrep.quality.store import write_record
+            from openbrep.runtime.delivery_finalizer import DeliverySource
 
             execution = (result.metadata or {}).get("execution") or {}
+            ds = DeliverySource.from_dict((result.metadata or {}).get("delivery_source"))
             record = build_quality_record(
                 request,
                 result,
@@ -485,10 +577,10 @@ class TaskPipeline:
                 context={
                     "commit": repo_commit(),
                     "model": str(getattr(self.config.llm, "model", "") or ""),
-                    "after_revision": (
-                        get_latest_revision_id(project.root)
-                        if _can_revision_project(project) else None
-                    ),
+                    # 显式引用：verified_change 时才非空；缺 delivery_source 的旧运行
+                    # 记 null，消费端显示「旧记录，未关联」，禁止 latest 猜测
+                    "after_revision": (ds.after_revision_id if ds else None),
+                    "delivery_source": (ds.to_dict() if ds else None),
                 },
             )
             path = write_record(project.root, record)
@@ -496,7 +588,12 @@ class TaskPipeline:
                 self._append_feedback(project.root, {
                     "kind": "quality_recorded",
                     "summary": f"质量档案已记录（{run_id}，outcome={record.outcome}）",
-                    "detail": {"run_id": run_id, "outcome": record.outcome},
+                    "detail": {
+                        "run_id": run_id,
+                        "outcome": record.outcome,
+                        "delivery_state": (ds.state if ds else None),
+                        "after_revision": (ds.after_revision_id if ds else None),
+                    },
                 })
         except Exception as exc:  # best-effort：观测层任何失败只 warning
             logger.warning("quality ledger write failed (best-effort): %s", exc)
@@ -1231,6 +1328,7 @@ class TaskPipeline:
         _graph_powered_repair = False
         _MAX_CREATE_REPAIR = 3
         _create_repair_rounds = 0
+        create_metadata: dict = {}
 
         if not self.config.compiler.path:
             compile_not_run_reason = (
@@ -1339,7 +1437,7 @@ class TaskPipeline:
 
                 # 编译通过后创建 Revision（与 MODIFY 路径对称）
                 if compile_result is not None and compile_result.success and cleaned:
-                    _create_auto_revision(
+                    _create_rev, _create_warn = _create_auto_revision(
                         project,
                         message="auto: after create (compile ok)",
                         trigger="create",
@@ -1355,6 +1453,9 @@ class TaskPipeline:
                             "explanation": "",
                         },
                     )
+                    create_metadata["after_revision_id"] = _create_rev
+                    if _create_warn:
+                        create_metadata.setdefault("revision_warnings", []).append(_create_warn)
                     logger.info(
                         "[create] compile ok after %d repair round(s); revision created",
                         _create_repair_rounds,
@@ -1413,7 +1514,7 @@ class TaskPipeline:
             and compile_result.success
             and cleaned
         ):
-            _create_auto_revision(
+            _sem_after_id, _sem_after_warn = _create_auto_revision(
                 project,
                 message="auto: after create (semantic repair)",
                 trigger="create",
@@ -1429,6 +1530,10 @@ class TaskPipeline:
                     "explanation": "",
                 },
             )
+            if _sem_after_id:
+                create_metadata["after_revision_id"] = _sem_after_id
+            if _sem_after_warn:
+                create_metadata.setdefault("revision_warnings", []).append(_sem_after_warn)
         # ─────────────────────────────────────────────────────────────────────
 
         # 反馈信号采集（只采集，best-effort；不改判定）：
@@ -1480,7 +1585,7 @@ class TaskPipeline:
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
 
-        result_metadata: dict = {}
+        result_metadata: dict = dict(create_metadata)
         if vision_extractions:
             # P5d-1：vision 提取透出（无提取时为空 dict，避免污染 metadata）
             result_metadata["vision_extractions"] = vision_extractions
@@ -1489,6 +1594,15 @@ class TaskPipeline:
             # D6：任务结果元数据记录实际 effective model/effort
             # （来自真实 turn 结果，与 fake server 实收逐字节一致）
             result_metadata["codex_effective"] = dict(codex_effective)
+        if cleaned:
+            try:
+                from openbrep.source_fingerprint import compute_source_fingerprint
+
+                result_metadata["verified_source_fingerprint"] = compute_source_fingerprint(
+                    project.root
+                )
+            except Exception:
+                pass
         return TaskResult(
             success=verification_report.passed,
             intent=request.intent or "CREATE",
@@ -1647,6 +1761,25 @@ class TaskPipeline:
         if revision_warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {w}" for w in revision_warnings))
 
+        micro_meta = {
+            "acceptance": acceptance,
+            "changed_files": ["paramlist.xml"],
+            # G1：确定性微修改零 LLM 零工具调用（真实计数，非文本反推）
+            "execution": {"llm_calls": 0, "tool_calls": 0},
+            "before_revision_id": _revision_id or None,
+            "micro_modify": {
+                "param": micro.param_name,
+                "from": micro.old_value,
+                "to": micro.new_value,
+            },
+        }
+        try:
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            micro_meta["verified_source_fingerprint"] = compute_source_fingerprint(project.root)
+        except Exception:
+            pass
+
         return TaskResult(
             success=compile_result.success if compile_result is not None else True,
             intent="MODIFY",
@@ -1654,13 +1787,7 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=revision_warnings,
-            metadata={
-                "acceptance": acceptance,
-                "changed_files": ["paramlist.xml"],
-                # G1：确定性微修改零 LLM 零工具调用（真实计数，非文本反推）
-                "execution": {"llm_calls": 0, "tool_calls": 0},
-                "before_revision_id": _revision_id or None,
-            },
+            metadata=micro_meta,
         )
 
     def _try_param_modify(self, request: TaskRequest) -> Optional[TaskResult]:
@@ -1900,6 +2027,24 @@ class TaskPipeline:
         if outcome.warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {w}" for w in outcome.warnings))
 
+        param_meta: dict = {
+            "param_modify": {
+                "plan": plan.to_dict(),
+                "compile_success": compile_result.success if compile_result is not None else None,
+                "semantic_issues": semantic_issues,
+                "changed_files": outcome.changed_files or [],
+            },
+            "acceptance": acceptance,
+            "before_revision_id": outcome.revision_id or None,
+            **(result_metadata_extra or {}),
+        }
+        try:
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            param_meta["verified_source_fingerprint"] = compute_source_fingerprint(project.root)
+        except Exception:
+            pass
+
         return TaskResult(
             success=compile_result.success if compile_result is not None else True,
             intent="MODIFY",
@@ -1907,17 +2052,7 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=outcome.warnings,
-            metadata={
-                "param_modify": {
-                    "plan": plan.to_dict(),
-                    "compile_success": compile_result.success if compile_result is not None else None,
-                    "semantic_issues": semantic_issues,
-                    "changed_files": outcome.changed_files or [],
-                },
-                "acceptance": acceptance,
-                "before_revision_id": outcome.revision_id or None,
-                **(result_metadata_extra or {}),
-            },
+            metadata=param_meta,
         )
 
     def _handle_modify_agent_loop(self, request: TaskRequest) -> TaskResult:
@@ -2273,6 +2408,8 @@ class TaskPipeline:
             )
             if after_revision_warning:
                 revision_warnings.append(after_revision_warning)
+        else:
+            _after_revision_id = None
 
         if revision_warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {warning}" for warning in revision_warnings))
@@ -2297,6 +2434,20 @@ class TaskPipeline:
         output_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
 
+        modify_metadata: dict = {
+            "before_revision_id": before_revision_id or None,
+            "after_revision_id": _after_revision_id or None,
+        }
+        if cleaned:
+            try:
+                from openbrep.source_fingerprint import compute_source_fingerprint
+
+                modify_metadata["verified_source_fingerprint"] = compute_source_fingerprint(
+                    project.root
+                )
+            except Exception:
+                pass
+
         return TaskResult(
             success=verification_report.passed,
             intent=request.intent or "MODIFY",
@@ -2312,6 +2463,7 @@ class TaskPipeline:
                 "attempted": _sem_outcome.rounds_attempted,
                 "accepted": _sem_outcome.accepted_rounds,
             },
+            metadata=modify_metadata,
         )
 
     # ── Initialization Helpers ────────────────────────────
@@ -2911,11 +3063,18 @@ def _delivery_changed_files(result: TaskResult) -> list[str]:
     主交付路径（CREATE / MODIFY agent loop / script update）把变更文件放
     result.scripts 的 key；确定性路径（micro/param modify）不带 scripts，
     回退查 metadata（含嵌套的 param_modify / micro_modify 子表）。
+    ST02：metadata.changed_files 优先于 scripts（与契约字段名对齐）。
     """
+    meta = result.metadata or {}
+    explicit = meta.get("changed_files")
+    if explicit:
+        if isinstance(explicit, dict):
+            explicit = explicit.get("changed_files") or explicit.get("files") or []
+        if explicit:
+            return sorted(str(p) for p in explicit)
     files = [str(p) for p in (result.scripts or {}).keys()]
     if files:
         return sorted(files)
-    meta = result.metadata or {}
     for key in ("changed_files", "param_modify", "micro_modify"):
         raw = meta.get(key)
         if isinstance(raw, dict):

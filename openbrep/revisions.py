@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from difflib import unified_diff
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,8 @@ OPENBREP_DIR = ".openbrep"
 REVISIONS_DIR = "revisions"
 LATEST_FILE = "latest"
 ARTIFACTS_DIR = "artifacts"
+# ST02：受保护 revision 引用集合（统一引用接口，不扫描任意文本推断）
+PROTECTIONS_FILE = "revision_protections.json"
 
 
 @dataclass(frozen=True)
@@ -125,14 +127,21 @@ def create_revision(
     _write_latest(root, revision_id)
 
     # Auto-prune: keep disk usage bounded（[revisions] keep_last_n 可配置，0 = 禁用；
-    # 非阻塞：失败只记日志不上抛）
+    # 非阻塞：失败只记日志不上抛）。受保护引用不自动删。
     keep_last_n = _auto_prune_keep_last_n()
+    prune_warnings: list[str] = []
     if keep_last_n > 0:
         try:
-            prune_revisions(root, keep_last_n=keep_last_n)
+            prune_result = prune_revisions(root, keep_last_n=keep_last_n)
+            prune_warnings = list(getattr(prune_result, "warnings", None) or [])
         except Exception as _prune_exc:
             import logging as _logging
             _logging.getLogger(__name__).debug("Auto-prune revisions failed: %s", _prune_exc)
+    if prune_warnings:
+        # manifest metadata 附带 prune 报告，便于验收/调试；不阻塞创建
+        manifest.setdefault("metadata", {})
+        if isinstance(manifest["metadata"], dict):
+            manifest["metadata"]["prune_warnings"] = prune_warnings
 
     return _revision_from_manifest(revision_dir, manifest)
 
@@ -588,20 +597,151 @@ def _auto_prune_keep_last_n() -> int:
     return value
 
 
-def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> int:
-    """Delete oldest revisions beyond keep_last_n.
+@dataclass
+class PruneResult:
+    """prune 结果：deleted 保持向后兼容的整数语义；warnings 报告保护溢出。"""
 
-    Args:
-        project_dir:  HSF project root (must pass is_hsf_project_dir check).
-        keep_last_n:  Number of newest revisions to retain. Must be >= 1.
+    deleted: int = 0
+    kept_ids: list[str] = field(default_factory=list)
+    protected_kept: list[str] = field(default_factory=list)
+    overflow_protection: bool = False
+    warnings: list[str] = field(default_factory=list)
 
-    Returns:
-        Number of revision directories deleted.
+    def __int__(self) -> int:
+        return self.deleted
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, bool):
+            return NotImplemented
+        if isinstance(other, int):
+            return self.deleted == other
+        if isinstance(other, PruneResult):
+            return self.deleted == other.deleted
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.deleted)
+
+
+def _protections_path(project_root: Path) -> Path:
+    return project_root / OPENBREP_DIR / REVISIONS_DIR / PROTECTIONS_FILE
+
+
+def load_revision_protections(project_dir: str | Path) -> dict[str, list[dict[str, Any]]]:
+    """读取受保护 revision 引用：{revision_id: [{reason, run_id, ref, registered_at}]}。"""
+    root = _resolve_project_root(project_dir)
+    path = _protections_path(root)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for rev_id, entries in data.items():
+        if isinstance(entries, list):
+            out[str(rev_id)] = [e for e in entries if isinstance(e, dict)]
+        elif isinstance(entries, dict):
+            out[str(rev_id)] = [entries]
+    return out
+
+
+def _write_revision_protections(
+    project_root: Path,
+    protections: dict[str, list[dict[str, Any]]],
+) -> None:
+    path = _protections_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(protections, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def register_revision_protection(
+    project_dir: str | Path,
+    revision_id: str,
+    *,
+    reason: str,
+    run_id: str | None = None,
+    ref: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """统一引用接口：登记一条受保护引用（幂等：同 reason+run_id 不重复）。"""
+    root = _resolve_project_root(project_dir)
+    rev_id = str(revision_id or "").strip()
+    if not rev_id:
+        raise ValueError("revision_id is required for protection")
+    protections = load_revision_protections(root)
+    entries = list(protections.get(rev_id) or [])
+    key = (reason or "", run_id or "")
+    for existing in entries:
+        if (str(existing.get("reason") or ""), str(existing.get("run_id") or "")) == key:
+            return existing
+    entry = {
+        "reason": reason or "explicit",
+        "run_id": run_id,
+        "ref": dict(ref or {}),
+        "registered_at": datetime.now(timezone.utc).isoformat(),
+    }
+    entries.append(entry)
+    protections[rev_id] = entries
+    _write_revision_protections(root, protections)
+    return entry
+
+
+def unregister_revision_protection(
+    project_dir: str | Path,
+    revision_id: str,
+    *,
+    reason: str | None = None,
+    run_id: str | None = None,
+) -> int:
+    """解除保护：可按 reason/run_id 过滤；返回删除的引用条数。"""
+    root = _resolve_project_root(project_dir)
+    rev_id = str(revision_id or "")
+    protections = load_revision_protections(root)
+    entries = list(protections.get(rev_id) or [])
+    kept = []
+    removed = 0
+    for entry in entries:
+        match = True
+        if reason is not None and str(entry.get("reason") or "") != reason:
+            match = False
+        if run_id is not None and str(entry.get("run_id") or "") != str(run_id):
+            match = False
+        if match:
+            removed += 1
+        else:
+            kept.append(entry)
+    if removed:
+        if kept:
+            protections[rev_id] = kept
+        else:
+            protections.pop(rev_id, None)
+        _write_revision_protections(root, protections)
+    return removed
+
+
+def protected_revision_ids(project_dir: str | Path) -> set[str]:
+    """当前仍被引用保护的 revision id 集合（引用存在即保护，即使目录已删）。"""
+    protections = load_revision_protections(project_dir)
+    return {rev_id for rev_id, entries in protections.items() if entries}
+
+
+def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> PruneResult:
+    """Delete oldest unprotected revisions beyond keep_last_n.
 
     Safety guarantees:
     - The latest revision (pointed to by .openbrep/latest) is never deleted.
-    - If fewer than keep_last_n revisions exist, nothing is deleted.
+    - Explicitly protected revisions (current-run before / latest successful after /
+      host-acceptance / pending-candidate refs) are never auto-deleted.
+    - If protection causes retained count to exceed keep_last_n, report clearly
+      in ``warnings`` instead of silently exceeding.
     - Deletion failures are logged but do not abort the rest of pruning.
+    - Old unprotected records already deleted are gone; consumers show evidence
+      unavailable and must not re-fabricate them.
     """
     import logging as _logging
     _logger = _logging.getLogger(__name__)
@@ -609,16 +749,29 @@ def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> int:
     keep_last_n = max(1, keep_last_n)
     root = _resolve_project_root(project_dir)
     revisions = list_revisions(root)
-    if len(revisions) <= keep_last_n:
-        return 0
+    result = PruneResult()
+    if not revisions:
+        return result
 
     latest_id = get_latest_revision_id(root)
-    to_delete = revisions[:-keep_last_n]  # oldest revisions
+    protected = protected_revision_ids(root)
+    if latest_id:
+        protected = set(protected) | {latest_id}
+
+    # 保留窗口：最近 keep_last_n 条 + 全部受保护 + latest
+    keep_window_ids = {rev.revision_id for rev in revisions[-keep_last_n:]}
+    retain_ids = set(keep_window_ids) | protected
+    if latest_id:
+        retain_ids.add(latest_id)
+
     deleted = 0
-    for rev in to_delete:
-        if rev.revision_id == latest_id:
-            # Never delete the currently active revision
-            _logger.debug("prune_revisions: skipping latest revision %s", rev.revision_id)
+    protected_kept: list[str] = []
+    kept_ids: list[str] = []
+    for rev in revisions:
+        if rev.revision_id in retain_ids:
+            kept_ids.append(rev.revision_id)
+            if rev.revision_id in protected:
+                protected_kept.append(rev.revision_id)
             continue
         try:
             shutil.rmtree(rev.path)
@@ -626,10 +779,21 @@ def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> int:
             _logger.debug("prune_revisions: deleted %s", rev.revision_id)
         except Exception as exc:
             _logger.warning("prune_revisions: failed to delete %s: %s", rev.revision_id, exc)
+            kept_ids.append(rev.revision_id)
 
+    result.deleted = deleted
+    result.kept_ids = kept_ids
+    result.protected_kept = protected_kept
+    if len(retain_ids) > keep_last_n:
+        result.overflow_protection = True
+        result.warnings.append(
+            f"受保护 revision 数量导致保留数超过 keep_last_n="
+            f"{keep_last_n}（protected+window={len(retain_ids)}）；"
+            "解除保护后将按保留策略处理"
+        )
     if deleted:
-        _logger.info("prune_revisions: deleted %d revision(s), kept %d", deleted, keep_last_n)
-    return deleted
+        _logger.info("prune_revisions: deleted %d revision(s), kept %d", deleted, len(kept_ids))
+    return result
 
 
 def _vision_extraction_hashes(project_root: Path) -> list:
