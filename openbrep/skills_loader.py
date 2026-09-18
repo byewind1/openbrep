@@ -487,12 +487,12 @@ class SkillsLoader:
     ) -> list[tuple[str, dict[str, Any]]]:
         """自定义 skill 自动匹配：返回 (name, 详情) 列表。
 
-        ST04 返工：本函数**保留旧选择行为**（score >= 1 即注入），只附带
-        source/reason/强信号标记供审计。收紧自动匹配（strong 才注入 + 骨架模板
-        不自动注入）需要同时重录 create+modify 黄金语料，而当前环境修改套件所依赖
-        的 chat-completions provider 没有可用凭据（provider_keys 全是占位符，
-        只有 local Codex 可用），因此 item 8 的收紧标记为 BLOCKED，详见实施回执。
-        收紧开关已就绪：`detail["strong"]` + name.startswith("_")。
+        ST04 item 8 现状（BLOCKED，见实施回执）：保留旧选择行为（score >= 1 即
+        注入），只附带 source/reason/强信号标记供审计。收紧需要同时重录
+        create+modify 黄金语料，而本机可用录制通道都不达标：
+        - modify：唯一免 key 的 chat 通道是本地 qwen2.5:7b，实测 15/20 < 基线 20/20；
+        - create：local Codex 可用但并发录制大量 90s turn 超时，产出低于基线 13/20。
+        收紧开关已就绪：`detail["strong"]` + `name.startswith("_")`。
         """
         instruction_lower = instruction.lower()
         instruction_tokens = set(_tokenize(instruction_lower))

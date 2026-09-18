@@ -80,12 +80,12 @@ class TestSkillsLoader(unittest.TestCase):
         self.assertTrue(by_name["my_project_skill"]["reason"])
 
     def test_generic_body_match_is_reported_as_suspected_mismatch(self):
-        """ST04 item 8 诊断（未完成收紧，见实施回执 BLOCKED）：
+        """ST04 item 8 诊断（收紧 BLOCKED，见实施回执）：如实标注"疑似误匹配"。
 
-        旋转楼梯语料里 skill_dougong 会因正文通用词（zzyzx/宽度/ROT/数字）被自动
-        注入到无关任务；本测试只固定"诊断能如实标注这是疑似误匹配"，不代表认可该
-        注入。收紧（strong 才注入 + 骨架模板跳过）需要重录 create+modify 语料，
-        当前环境修改套件没有可用 chat-completions 凭据，故保留诊断为可观察证据。
+        这不代表认可该注入：旋转楼梯语料里 skill_dougong 会因正文通用词
+        （zzyzx/宽度/ROT/数字）被注入到无关任务。收紧需要重录 create+modify 语料，
+        本机唯一免 key 的 modify 通道（qwen2.5:7b）实测 15/20、低于基线，故保留诊断
+        作为可观察证据，等有合格录制通道后再收紧。
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir)
