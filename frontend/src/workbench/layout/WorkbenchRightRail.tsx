@@ -127,6 +127,10 @@ export function WorkbenchRightRail({
   const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
   // P2a：任务前版本 ghost 快照，视口只读消费
   const previewGhost = useWorkbenchStore((state) => state.previewGhost)
+  // ST03：delivery 卡动作直接挂 store，不另建第二套工作台 state
+  const recoverDeliveryBefore = useWorkbenchStore((state) => state.recoverDeliveryBefore)
+  const viewRevisionDiff = useWorkbenchStore((state) => state.viewRevisionDiff)
+  const continueDelivery = useWorkbenchStore((state) => state.continueDelivery)
   const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
   // Archicad 权威预览：来源切换/缓存/错误在 store，这里只解析出当前应显示的 payload
   const { preview: displayPreview, sourceControl } = usePreviewSource(preview)
@@ -210,6 +214,22 @@ export function WorkbenchRightRail({
             onOpenScript={onOpenScript}
             onSaveRevision={onSaveRevision}
             onRevealLine={onRevealLine}
+            onRecoverDelivery={async (presentation, policy) => {
+              await recoverDeliveryBefore(presentation, { draftPolicy: policy, source: 'delivery' })
+            }}
+            onViewDeliveryDiff={async (presentation) => {
+              const fromId = presentation.before_revision_id
+              const toId = presentation.after_revision_id || presentation.before_revision_id
+              if (!fromId || !toId) return null
+              return viewRevisionDiff(fromId, toId)
+            }}
+            onContinueDelivery={(payload) => {
+              void continueDelivery({
+                originRunId: payload.originRunId,
+                originalInstruction: payload.originalInstruction,
+                intent: payload.presentation.state ?? undefined,
+              })
+            }}
             modelOptions={modelOptions}
             currentModel={currentModel}
             onSessionModelChange={onSessionModelChange}

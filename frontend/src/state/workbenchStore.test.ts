@@ -255,7 +255,10 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       ok: true,
       git: { enabled: true, initialized: true, dirty: false, changes: [], last_commit: 'def5678' },
     }),
-    restoreProjectRevision: async (revisionId: string) => ({
+    restoreProjectRevision: async (
+      revisionId: string,
+      draftPolicy?: 'discard' | 'keep' | null,
+    ) => ({
       ok: true,
       restored_revision_id: revisionId,
       latest_revision_id: 'r0003',
@@ -263,6 +266,19 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
       preview: { meshes: [], wires: [], warnings: ['restored'] },
       warnings: ['restored'],
+      restore: {
+        revision_id: revisionId,
+        draft_policy: draftPolicy ?? null,
+        hsf_reloaded: true,
+        preview_cleared: true,
+      },
+    }),
+    getProjectRevisionDiff: async (fromRevisionId: string, toRevisionId: string) => ({
+      ok: true,
+      from_revision_id: fromRevisionId,
+      to_revision_id: toRevisionId,
+      diff: `--- ${fromRevisionId}\n+++ ${toRevisionId}\n`,
+      changed: fromRevisionId !== toRevisionId,
     }),
     mockCompile: async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 12 }),
     revealArtifact: async (path = '') => ({ ok: true, path: path || '/workspace/output/Chair.gsm' }),
@@ -2805,11 +2821,13 @@ test('generate assistant message refreshes preview and records changed files', a
   expect(store.getState().activeScriptName).toBe('3d.gdl')
   expect(store.getState().mockCompileResult?.success).toBe(true)
   expect(store.getState().compileLog[0]).toContain('Mock compile passed')
-  expect(store.getState().assistantMessages.at(-1)).toEqual({
-    role: 'assistant',
-    content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
-    changedFiles: ['scripts/3d.gdl'],
-  })
+  expect(store.getState().assistantMessages.at(-1)).toEqual(
+    expect.objectContaining({
+      role: 'assistant',
+      content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
+      changedFiles: ['scripts/3d.gdl'],
+    }),
+  )
 })
 
 test('generateAssistantChanges passes image attachments to the API', async () => {
@@ -2895,11 +2913,13 @@ test('generateAssistantChanges exposes image generation failures as lastError', 
   ])
 
   expect(store.getState().lastError).toBe(error)
-  expect(store.getState().assistantMessages.at(-1)).toEqual({
-    role: 'assistant',
-    content: error,
-    errorCategory: 'general',
-  })
+  expect(store.getState().assistantMessages.at(-1)).toEqual(
+    expect.objectContaining({
+      role: 'assistant',
+      content: error,
+      errorCategory: 'general',
+    }),
+  )
 })
 
 test('generateAssistantChanges labels llm configuration errors', async () => {

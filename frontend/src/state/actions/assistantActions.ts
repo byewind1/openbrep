@@ -1,4 +1,4 @@
-import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
+import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, DeliveryContinueFrom, DeliveryPresentation, DeliverySource, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
@@ -18,6 +18,15 @@ const EXTRACTION_PENDING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n🖼️ 读图�
 const EXTRACTION_EXECUTING_CONTENT = `${ASSISTANT_PENDING_PREFIX}\n⏳ 正在按已确认的读图结果生成…`
 const EXTRACTION_CANCELLED_CONTENT = '⏹ 已取消本次创建。'
 const INTERRUPTED_CONTENT = '⏹ 已中断'
+
+/** 去掉 undefined 键，避免 toEqual/持久化时出现无意义字段 */
+function compactExtras<T extends Record<string, unknown>>(extras: T): Partial<T> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined) out[key] = value
+  }
+  return out as Partial<T>
+}
 
 /**
  * HF4：把 store 的 assistantMessages 组装成发给后端的对话历史载荷。
@@ -134,28 +143,44 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     epoch: number,
     initialContent: string,
     thinkingSteps: AssistantThinkingStep[],
+    originalInstruction?: string,
   ) {
     if (projectSwitchedSince(epoch)) {
       discardStaleResult('Generation result discarded: project switched during the request.')
       return
     }
     const changedFiles = result.assistant?.changed_files ?? []
+    const delivery: DeliveryPresentation | undefined = result.assistant?.delivery ?? undefined
+    const deliverySource: DeliverySource | null | undefined = result.assistant?.delivery_source
+    const continueFrom: DeliveryContinueFrom | null | undefined = result.assistant?.continue_from
+    // U05：未产生源码变化时，文案与 changed files 不得伪称已修复
+    const noSourceChange = delivery?.status === 'no_change' || delivery?.status === 'unlinked'
     const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
     const finalReply =
       result.ok && result.assistant
         ? `${result.assistant.reply}${suffix}`
         : formatAssistantRequestError(result.error, 'Generation request failed.')
     const replyExtras = result.ok
-      ? {
+      ? compactExtras({
           changedFiles,
           verification: result.assistant?.verification ?? undefined,
           acceptance: result.assistant?.acceptance ?? undefined,
           thinkingSteps: [...thinkingSteps],
-          // P5e：MODIFY 流式完成聚合处复用事件提取（只读卡片数据源；
-          // 无 vision_analysis_done 事件时 undefined，不污染消息）
           visionExtractions: extractVisionExtractions(result.events),
-        }
-      : { errorCategory: classifyAssistantError(finalReply), thinkingSteps: [...thinkingSteps] }
+          delivery,
+          deliverySource: deliverySource ?? null,
+          deliveryContinueFrom: continueFrom ?? null,
+          originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
+          runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+        })
+      : compactExtras({
+          errorCategory: classifyAssistantError(finalReply),
+          thinkingSteps: [...thinkingSteps],
+          delivery,
+          deliverySource: deliverySource ?? null,
+          originalInstruction: originalInstruction || delivery?.original_instruction || undefined,
+          runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+        })
     set((state) => ({
       assistantBusy: false,
       assistantMessages: replacePendingAssistantMessage(state.assistantMessages, finalReply, replyExtras),
@@ -165,6 +190,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       draftParameters: {},
       // 模式级 skill 提案（P2-d）：成功交付后弹"沉淀提案"确认卡；无提案则清掉旧的
       pendingSkillProposal: result.ok ? (result.skill_proposal ?? null) : state.pendingSkillProposal,
+      // continue 载荷已消费（新 run 自己的 delivery_source 才是权威）
+      pendingDeliveryContinue: null,
+      compileLog: noSourceChange && delivery?.headline
+        ? [delivery.headline, ...state.compileLog].slice(0, 20)
+        : state.compileLog,
     }))
     await persistAssistantHistory()
     if (result.ok) {
@@ -441,12 +471,21 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       const epoch = get().projectEpoch
-      const result = await api.generateWithAssistant(trimmed, get().llmSettings.assistant_settings, images, history)
+      const continueFrom = get().pendingDeliveryContinue
+      const result = await api.generateWithAssistant(
+        trimmed,
+        get().llmSettings.assistant_settings,
+        images,
+        history,
+        undefined,
+        { continueFrom },
+      )
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Generation result discarded: project switched during the request.')
         return
       }
       const changedFiles = result.assistant?.changed_files ?? []
+      const delivery = result.assistant?.delivery ?? undefined
       const suffix = changedFiles.length ? `\n\nChanged files: ${changedFiles.join(', ')}` : ''
       const eventSummary = formatAssistantEventSummary(result.events)
       const reply =
@@ -454,14 +493,26 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           ? `${result.assistant.reply}${suffix}${eventSummary}`
           : formatAssistantRequestError(result.error, 'Generation request failed.')
       const replyExtras = result.ok
-        ? {
+        ? compactExtras({
             changedFiles,
             verification: result.assistant?.verification ?? undefined,
             acceptance: result.assistant?.acceptance ?? undefined,
-            // P5e：非流式 MODIFY 同源提取（与 CREATE 路径一致，只读卡片）
             visionExtractions: extractVisionExtractions(result.events),
-          }
-        : { errorCategory: classifyAssistantError(reply) }
+            delivery,
+            deliverySource: result.assistant?.delivery_source ?? null,
+            deliveryContinueFrom: result.assistant?.continue_from ?? null,
+            originalInstruction:
+              continueFrom?.original_instruction || delivery?.original_instruction || undefined,
+            runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+          })
+        : compactExtras({
+            errorCategory: classifyAssistantError(reply),
+            delivery,
+            deliverySource: result.assistant?.delivery_source ?? null,
+            originalInstruction:
+              continueFrom?.original_instruction || delivery?.original_instruction || undefined,
+            runId: result.assistant?.run_id ?? delivery?.run_id ?? null,
+          })
       set((state) => ({
         assistantBusy: false,
         assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply, replyExtras),
@@ -469,6 +520,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         preview: result.preview ?? state.preview,
         warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
         draftParameters: {},
+        pendingDeliveryContinue: null,
       }))
       await persistAssistantHistory()
       if (result.ok) {
@@ -491,13 +543,21 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
 
       const hasProject = !!get().project
       const interrupted = get().interruptedContext
+      const deliveryContinue = get().pendingDeliveryContinue
 
       // Follow-up after an interrupt: "继续" retries the original
+      // ST03：delivery continue 已带回原始指令；「继续」只在 interrupt 上下文生效
       let finalMessage = trimmed
       let intent = detectChatIntent(trimmed, hasProject)
-      if (interrupted && isResumeMessage(trimmed)) {
+      if (interrupted && isResumeMessage(trimmed) && !deliveryContinue) {
         finalMessage = interrupted.message
         intent = detectChatIntent(interrupted.message, hasProject)
+      }
+      // delivery continue：点「继续」且已有 pendingDeliveryContinue 时，指令已由
+      // continueDelivery 注入；这里只保证 intent 按原始指令重判
+      if (deliveryContinue && isResumeMessage(trimmed)) {
+        finalMessage = deliveryContinue.original_instruction || finalMessage
+        intent = detectChatIntent(finalMessage, hasProject)
       }
 
       // P2a ghost：任务发起时快照"任务前"预览（修改前后对比用）。
@@ -540,7 +600,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           const epoch = get().projectEpoch
-          const planResult = await api.requestModifyPlan(finalMessage, settings, images, controller.signal, history)
+          const continueFrom = get().pendingDeliveryContinue
+          const planResult = await api.requestModifyPlan(
+            finalMessage,
+            settings,
+            images,
+            controller.signal,
+            history,
+            continueFrom,
+          )
           if (projectSwitchedSince(epoch)) {
             discardStaleResult('Generation result discarded: project switched during the request.')
             return
@@ -569,7 +637,13 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           // 计划失败回落 / micro_modify / V1 DSL 命中：直接展示执行结果
-          await finishModifyStream(planResult, epoch, pendingAssistantMessage('generate', images), [])
+          await finishModifyStream(
+            planResult,
+            epoch,
+            pendingAssistantMessage('generate', images),
+            [],
+            continueFrom?.original_instruction || finalMessage,
+          )
         } else if (intent === 'debug') {
           // DEBUG 不走确认门：默认走 agent loop 流式路径，实时显示每一步事件
           const settings = get().llmSettings.assistant_settings ?? ''
@@ -594,6 +668,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           }
           const epoch = get().projectEpoch
           const thinkingSteps: AssistantThinkingStep[] = []
+          const debugContinueFrom = get().pendingDeliveryContinue
 
           const result = await api.generateWithAssistantStream(
             finalMessage,
@@ -614,8 +689,15 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             },
             controller.signal,
             history,
+            debugContinueFrom,
           )
-          await finishModifyStream(result, epoch, initialContent, thinkingSteps)
+          await finishModifyStream(
+            result,
+            epoch,
+            initialContent,
+            thinkingSteps,
+            debugContinueFrom?.original_instruction || finalMessage,
+          )
         } else {
           // explain
           const history = buildAssistantHistory(get().assistantMessages)

@@ -20,6 +20,10 @@ from openbrep.explainer.service import (
 from openbrep.feedback import append_feedback
 from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import ImageRef, TaskRequest
+from openbrep.workbench.delivery_presentation import (
+    delivery_payload_from_result,
+    normalize_continue_from,
+)
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_service import validate_image_payload
 from openbrep.workbench.settings_service import effective_session_reasoning_effort
@@ -31,6 +35,68 @@ logger = logging.getLogger(__name__)
 class WorkbenchAssistantService:
     def __init__(self, session: Any) -> None:
         self.session = session
+
+    @staticmethod
+    def _merge_continue_from(result: Any, continue_from: dict[str, Any] | None) -> Any:
+        """ST03：继续操作显式关联原 run（只写 metadata，不改 prompt）。"""
+        if not continue_from:
+            return result
+        try:
+            metadata = dict(getattr(result, "metadata", None) or {})
+            metadata["continue_from"] = dict(continue_from)
+            result.metadata = metadata
+        except Exception:
+            logger.debug("continue_from metadata attach skipped", exc_info=True)
+        return result
+
+    @staticmethod
+    def _assistant_delivery_block(
+        result: Any,
+        *,
+        instruction: str = "",
+        continue_from: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return delivery_payload_from_result(
+            result,
+            original_instruction=instruction or None,
+            continue_from=continue_from,
+        )
+
+    @staticmethod
+    def _generate_assistant_dict(
+        result: Any,
+        *,
+        instruction: str = "",
+        continue_from: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """三处 generate 路径共用的 assistant 载荷（含 ST03 delivery）。"""
+        scripts = result.scripts or {}
+        delivery = WorkbenchAssistantService._assistant_delivery_block(
+            result,
+            instruction=instruction,
+            continue_from=continue_from,
+        )
+        presentation = delivery.get("presentation") or {}
+        # partial_change / snapshot_failed：已改文件以 delivery_source 为准，
+        # 不再只报 handler 声称的 scripts keys（避免把空 scripts 说成无修改）。
+        if presentation.get("state") in {"partial_change", "snapshot_failed"}:
+            changed_files = list(presentation.get("changed_files") or [])
+            if not changed_files:
+                changed_files = list(scripts.keys())
+        else:
+            changed_files = list(scripts.keys())
+        return {
+            "kind": "generate",
+            "reply": result.plain_text,
+            "changed_files": changed_files,
+            "intent": result.intent,
+            "verification": result.verification,
+            "acceptance": result.metadata.get("acceptance"),
+            "delivery_source": delivery.get("delivery_source"),
+            "delivery": presentation,
+            "run_id": presentation.get("run_id"),
+            "continue_from": delivery.get("continue_from"),
+        }
 
     def _new_pipeline(self):
         """构造 pipeline 时显式传 session 解析出的 config 路径（B3）。
@@ -345,10 +411,12 @@ class WorkbenchAssistantService:
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
 
+        continue_from = normalize_continue_from(body.get("continue_from"))
         pipeline, request = self._build_generate_pipeline(
             body, image_payload, on_event=on_event
         )
         result = pipeline.execute(request)
+        result = self._merge_continue_from(result, continue_from)
         # skill 效果回写（GUI 侧通道，best-effort）：失败任务按注入 skill 计 fail_count
         self._safe_skill_outcome(result)
         # success=False 只在"无可交付物"时才视为硬失败；验证未过但有产出时
@@ -366,14 +434,11 @@ class WorkbenchAssistantService:
         proposal = self._safe_harvest(result, message)
         response: dict[str, Any] = {
             "ok": True,
-            "assistant": {
-                "kind": "generate",
-                "reply": result.plain_text,
-                "changed_files": list((result.scripts or {}).keys()),
-                "intent": result.intent,
-                "verification": result.verification,
-                "acceptance": result.metadata.get("acceptance"),
-            },
+            "assistant": self._generate_assistant_dict(
+                result,
+                instruction=message,
+                continue_from=continue_from,
+            ),
             "preview": preview_payload(self.session.project),
             "warnings": [],
             "events": events,
@@ -402,8 +467,10 @@ class WorkbenchAssistantService:
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
 
+        continue_from = normalize_continue_from(body.get("continue_from"))
         pipeline, request = self._build_generate_pipeline(body, image_payload, on_event=on_event)
         result = pipeline.execute(request)
+        result = self._merge_continue_from(result, continue_from)
         if result.metadata.get("awaiting_confirmation"):
             # 存 session pending_plan（含原始 body 与项目代次，确认时校验不跨项目）
             self.session.pending_plan = {
@@ -429,14 +496,11 @@ class WorkbenchAssistantService:
         proposal = self._safe_harvest(result, instruction)
         response: dict[str, Any] = {
             "ok": True,
-            "assistant": {
-                "kind": "generate",
-                "reply": result.plain_text,
-                "changed_files": list((result.scripts or {}).keys()),
-                "intent": result.intent,
-                "verification": result.verification,
-                "acceptance": result.metadata.get("acceptance"),
-            },
+            "assistant": self._generate_assistant_dict(
+                result,
+                instruction=instruction,
+                continue_from=continue_from,
+            ),
             "preview": preview_payload(self.session.project),
             "warnings": [],
             "events": events,
@@ -565,12 +629,15 @@ class WorkbenchAssistantService:
         def should_cancel():
             return cancel_event is not None and cancel_event.is_set()
 
+        continue_from = normalize_continue_from(body.get("continue_from"))
+
         def run_pipeline():
             try:
                 pipeline, request = self._build_generate_pipeline(
                     body, image_payload, on_event=on_event, should_cancel=should_cancel
                 )
                 result = pipeline.execute(request)
+                result = self._merge_continue_from(result, continue_from)
                 if not result.success and result.project is None and not (result.plain_text or result.scripts):
                     error = result.error or "Generation failed."
                     if image_payload["image_b64"] or image_payload.get("images"):
@@ -586,14 +653,11 @@ class WorkbenchAssistantService:
                 self.session.project.save_to_disk()
                 done_data: dict[str, Any] = {
                     "ok": True,
-                    "assistant": {
-                        "kind": "generate",
-                        "reply": result.plain_text,
-                        "changed_files": list((result.scripts or {}).keys()),
-                        "intent": result.intent,
-                        "verification": result.verification,
-                        "acceptance": result.metadata.get("acceptance"),
-                    },
+                    "assistant": self._generate_assistant_dict(
+                        result,
+                        instruction=message,
+                        continue_from=continue_from,
+                    ),
                     "preview": preview_payload(self.session.project),
                     "warnings": [],
                 }

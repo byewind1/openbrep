@@ -122,7 +122,14 @@ export interface WorkbenchApi {
   getProjectScript: (scriptName: string) => Promise<ProjectScriptContentResponse | null>
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
   saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
-  restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
+  restoreProjectRevision: (
+    revisionId: string,
+    draftPolicy?: import('../api/types').RestoreDraftPolicy | null,
+  ) => Promise<RestoreRevisionResponse>
+  getProjectRevisionDiff: (
+    fromRevisionId: string,
+    toRevisionId: string,
+  ) => Promise<import('../api/types').RevisionDiffResponse>
   fetchProjectGitStatus: () => Promise<ProjectGitResponse>
   initializeProjectGit: () => Promise<ProjectGitResponse>
   updateProjectGitSettings: (enabled: boolean) => Promise<ProjectGitResponse>
@@ -177,6 +184,7 @@ export interface WorkbenchApi {
     images?: AssistantImageAttachment[],
     history?: AssistantHistoryItem[],
     signal?: AbortSignal,
+    options?: { continueFrom?: import('../api/types').DeliveryContinueFrom | null },
   ) => Promise<GenerateResult>
   generateWithAssistantStream: (
     message: string,
@@ -185,6 +193,7 @@ export interface WorkbenchApi {
     onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
     signal?: AbortSignal,
     history?: AssistantHistoryItem[],
+    continueFrom?: import('../api/types').DeliveryContinueFrom | null,
   ) => Promise<GenerateResult>
   requestModifyPlan: (
     message: string,
@@ -192,6 +201,7 @@ export interface WorkbenchApi {
     images?: AssistantImageAttachment[],
     signal?: AbortSignal,
     history?: AssistantHistoryItem[],
+    continueFrom?: import('../api/types').DeliveryContinueFrom | null,
   ) => Promise<GenerateResult>
   confirmModifyPlan: (
     approve: boolean,
@@ -261,6 +271,8 @@ export interface WorkbenchState {
   configRevision: string | null
   chatAbortController: AbortController | null
   interruptedContext: { message: string; intent: string } | null
+  /** ST03：delivery continue 上下文（原 run + 原始指令；项目切换/恢复后清空） */
+  pendingDeliveryContinue: import('../api/types').DeliveryContinueFrom | null
   activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
@@ -392,7 +404,21 @@ export interface WorkbenchState {
   distillLessons: () => Promise<void>
   setDistilledLessonStatus: (fingerprint: string, decision: 'promote' | 'reject' | 'demote') => Promise<void>
   saveRevision: (message?: string) => Promise<void>
-  restoreRevision: (revisionId: string) => Promise<void>
+  restoreRevision: (
+    revisionId: string,
+    options?: import('./actions/revisionActions').RestoreRevisionOptions,
+  ) => Promise<void>
+  viewRevisionDiff: (fromRevisionId: string, toRevisionId: string) => Promise<string | null>
+  recoverDeliveryBefore: (
+    presentation: import('../api/types').DeliveryPresentation | null | undefined,
+    options?: { draftPolicy?: import('../api/types').RestoreDraftPolicy; source?: string },
+  ) => Promise<boolean>
+  continueDelivery: (payload: {
+    originRunId: string | null
+    originalInstruction: string
+    intent?: string
+  }) => Promise<void>
+  clearPendingDeliveryContinue: () => void
   loadProjectGitStatus: () => Promise<void>
   initializeProjectGit: () => Promise<void>
   setProjectGitEnabled: (enabled: boolean) => Promise<void>

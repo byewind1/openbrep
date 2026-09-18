@@ -61,7 +61,87 @@ export interface ProjectRevision {
   compile: Record<string, unknown>
   explanation: string
   is_latest: boolean
+  /** ST02/ST03：revision 与 delivery run 的关联（manifest.metadata.delivery） */
+  delivery?: {
+    run_id?: string | null
+    role?: string | null
+    source_fingerprint?: string | null
+  } | null
 }
+
+// ── ST03：交付状态展示（映射 ST02 delivery_source）────────────────────────
+export type DeliverySourceState =
+  | 'verified_change'
+  | 'unchanged'
+  | 'partial_change'
+  | 'failed_no_change'
+  | 'snapshot_failed'
+
+export type DeliveryPresentationStatus =
+  | 'completed'
+  | 'incomplete'
+  | 'no_change'
+  | 'failed'
+  | 'snapshot_failed'
+  | 'unlinked'
+
+/** ST02 冻结契约（TaskResult.metadata.delivery_source） */
+export interface DeliverySource {
+  schema_version: number
+  run_id: string
+  state: DeliverySourceState
+  before_revision_id: string | null
+  after_revision_id: string | null
+  source_fingerprint: string | null
+  changed_files: string[]
+  snapshot_status: string
+  error_code: string | null
+}
+
+/** ST03 工作台展示态（openbrep/workbench/delivery_presentation.py） */
+export interface DeliveryPresentation {
+  state: DeliverySourceState | null
+  status: DeliveryPresentationStatus
+  unlinked: boolean
+  headline: string
+  reason: string
+  show_success_badge: boolean
+  show_before_after: boolean
+  show_changed_files: boolean
+  can_recover: boolean
+  can_continue: boolean
+  can_view_diff: boolean
+  recover_revision_id: string | null
+  before_revision_id: string | null
+  after_revision_id: string | null
+  changed_files: string[]
+  run_id: string | null
+  error_code: string | null
+  check_status: 'passed' | 'failed' | 'unknown'
+  version_status: string | null
+  original_instruction: string | null
+  continued_from?: {
+    origin_run_id?: string | null
+    original_instruction?: string | null
+  } | null
+}
+
+export interface DeliveryContinueFrom {
+  origin_run_id: string
+  original_instruction: string
+  intent?: string
+}
+
+/** generate 响应 assistant.delivery 完整载荷 */
+export interface DeliveryPayload {
+  delivery_source: DeliverySource | null
+  presentation: DeliveryPresentation
+  continue_from: DeliveryContinueFrom | null
+  original_instruction?: string | null
+}
+
+export type RestoreDraftPolicy = 'discard' | 'keep'
+
 
 export interface PreviewSourceRef {
   script_type: string
@@ -661,6 +741,15 @@ export interface AssistantMessage {
   images?: AssistantImageAttachment[]
   // 读图提取卡片（P5d-1，只读）：vision 提取结果渲染（仅当前会话内存活）
   visionExtractions?: VisionExtraction[]
+  /** ST03：交付状态展示（session-only；刷新后降级 unlinked） */
+  delivery?: DeliveryPresentation
+  /** ST03：原始 ST02 dict + continue 关联（session-only） */
+  deliverySource?: DeliverySource | null
+  deliveryContinueFrom?: DeliveryContinueFrom | null
+  /** 本条 assistant 消息对应的用户原始指令（continue 用） */
+  originalInstruction?: string
+  /** 本条任务的 run_id（ST02 delivery_source.run_id） */
+  runId?: string | null
 }
 
 // ── 读图提取卡片（P5d-1，只读）─────────────────────────────────────────────
@@ -1009,6 +1098,12 @@ export interface GenerateResult {
     intent: string
     verification?: VerificationReport | null
     acceptance?: ModifyAcceptance | null
+    /** ST03：原始 ST02 delivery_source */
+    delivery_source?: DeliverySource | null
+    /** ST03：工作台展示态 */
+    delivery?: DeliveryPresentation | null
+    run_id?: string | null
+    continue_from?: DeliveryContinueFrom | null
   } | null
   preview?: PreviewPayload | null
   warnings?: string[]
@@ -1075,6 +1170,22 @@ export interface RestoreRevisionResponse extends Partial<WorkbenchSnapshot> {
   restored_revision_id?: string
   revision?: ProjectRevision
   latest_revision_id?: string | null
+  error?: string
+  /** ST03：恢复结果回执（HSF 重载 + 预览失效） */
+  restore?: {
+    revision_id: string
+    draft_policy?: RestoreDraftPolicy | null
+    hsf_reloaded?: boolean
+    preview_cleared?: boolean
+  }
+}
+
+export interface RevisionDiffResponse {
+  ok: boolean
+  from_revision_id?: string
+  to_revision_id?: string
+  diff?: string
+  changed?: boolean
   error?: string
 }
 

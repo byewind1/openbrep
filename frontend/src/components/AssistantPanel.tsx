@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, CodexModelInfo, LlmModelOption, LlmSettings, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, CodexModelInfo, DeliveryPresentation, LlmModelOption, LlmSettings, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
+import { DeliveryCard, shouldSuppressAutoFixLabel } from './DeliveryCard'
 import { ExtractionCardList, ExtractionConfirmCard } from './ExtractionCard'
 import { ModelPill } from './ModelPill'
 import { PanelEmpty } from './PanelEmpty'
@@ -22,6 +23,15 @@ interface AssistantPanelProps {
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => void
   onRevealLine?: (scriptName: string, lineNumber: number) => void
+  /** ST03：delivery 卡动作 */
+  onRecoverDelivery?: (presentation: DeliveryPresentation, policy: 'discard' | 'keep') => void | Promise<void>
+  onViewDeliveryDiff?: (presentation: DeliveryPresentation) => Promise<string | null>
+  onContinueDelivery?: (payload: {
+    originRunId: string | null
+    originalInstruction: string
+    intent?: string
+    presentation: DeliveryPresentation
+  }) => void
   modelOptions?: LlmModelOption[]
   currentModel?: string
   /** D16：聊天侧模型切换 = 会话级（不写 config.toml）；slash /model 与 pill 共用 */
@@ -72,6 +82,9 @@ export function AssistantPanel({
   onOpenScript,
   onSaveRevision,
   onRevealLine,
+  onRecoverDelivery,
+  onViewDeliveryDiff,
+  onContinueDelivery,
   modelOptions = [],
   currentModel = '',
   onSessionModelChange,
@@ -441,7 +454,44 @@ export function AssistantPanel({
                   ) : null}
                 </div>
               ) : null}
-              {message.verification ? <VerificationCard report={message.verification} onRevealLine={onRevealLine} /> : null}
+              {message.delivery ? (
+                <DeliveryCard
+                  delivery={message.delivery}
+                  originalInstruction={message.originalInstruction || findOriginalInstruction(messages, index)}
+                  busy={busy}
+                  onRecover={
+                    onRecoverDelivery
+                      ? (policy) => onRecoverDelivery(message.delivery!, policy)
+                      : undefined
+                  }
+                  onViewDiff={
+                    onViewDeliveryDiff && message.delivery
+                      ? () => onViewDeliveryDiff(message.delivery!)
+                      : undefined
+                  }
+                  onContinue={
+                    onContinueDelivery && message.delivery
+                      ? () =>
+                          onContinueDelivery({
+                            originRunId: message.delivery!.run_id ?? message.runId ?? null,
+                            originalInstruction:
+                              message.originalInstruction ||
+                              findOriginalInstruction(messages, index) ||
+                              message.delivery!.original_instruction ||
+                              '',
+                            presentation: message.delivery!,
+                          })
+                      : undefined
+                  }
+                />
+              ) : null}
+              {message.verification ? (
+                <VerificationCard
+                  report={message.verification}
+                  onRevealLine={onRevealLine}
+                  suppressAutoFixLabel={shouldSuppressAutoFixLabel(message.delivery)}
+                />
+              ) : null}
               {message.acceptance ? <AcceptanceCard acceptance={message.acceptance} /> : null}
               {message.role === 'assistant' && message.content.includes('```') ? (
                 <button type="button" disabled={busy} onClick={() => onAdoptCode(index)}>
@@ -668,6 +718,16 @@ function errorCategoryLabel(category: NonNullable<AssistantMessage['errorCategor
   if (category === 'llm') return 'LLM settings'
   if (category === 'compile') return 'Compile'
   return 'Error'
+}
+
+/** ST03：continue 用的原始指令（消息字段优先，否则取最近一条 user 消息全文） */
+function findOriginalInstruction(messages: AssistantMessage[], assistantIndex: number): string {
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      return messages[index].content.trim()
+    }
+  }
+  return ''
 }
 
 // revision 信息取触发本次生成的用户指令（往前找最近一条 user 消息），截断防止过长
@@ -1089,9 +1149,12 @@ const STATUS_ICON: Record<string, string> = {
 function VerificationCard({
   report,
   onRevealLine,
+  suppressAutoFixLabel = false,
 }: {
   report: VerificationReport
   onRevealLine?: (scriptName: string, lineNumber: number) => void
+  /** ST03：delivery 表明未产生源码变化/未完成时，不显示「已修复」 */
+  suppressAutoFixLabel?: boolean
 }) {
   const compileCheck = report.checks.find((c) => c.check_type === 'compile')
   const isSkippedNoCompiler =
@@ -1140,7 +1203,7 @@ function VerificationCard({
           ⚠️ 未配置 LP_XMLConverter，跳过编译验证。请在设置中配置编译器路径以获得完整校验。
         </p>
       ) : null}
-      {report.fixes_applied.length ? (
+      {report.fixes_applied.length && !suppressAutoFixLabel ? (
         <p className="assistant-verification-fixes">
           已修复：{report.fixes_applied.slice(0, 2).join('；')}
         </p>
