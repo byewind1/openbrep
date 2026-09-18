@@ -31,6 +31,9 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+# 确保用仓库代码而不是 site-packages 里的旧 openbrep（脚本 cwd 可能不同）
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def find_free_port() -> int:
@@ -103,6 +106,40 @@ def create_fixture_project(work_dir: str | Path) -> Path:
     )
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
     return Path(project.save_to_disk())
+
+
+def seed_restore_candidate(project_root: Path) -> str:
+    """把一条 draft 候选直接写进项目 store，用于验证"重启/加载后恢复审批卡"。"""
+    from openbrep.skill_proposals import project_identity, save_candidate
+
+    identity = project_identity(project_root, "St04SkillProposal")
+    proposal_id = "sp_st04_smoke_restore"
+    candidate = {
+        "schema_version": 1,
+        "proposal_id": proposal_id,
+        "project": identity,
+        "project_epoch": None,
+        "instruction": "把这轮修改沉淀成楼梯skill",
+        "name": "restored_stair_pattern",
+        "pattern_type": "repeating_geometry",
+        "content": "## 适用场景 / When to Use\n加载后应恢复的持久候选。\n\n## 写法要点\n- 用 FOR 循环堆叠。",
+        "slice": None,
+        "fingerprint": "sha256:" + "0" * 64,
+        "source_refs": [],
+        "evidence_complete": False,
+        "claims": {"unverified": [], "project_selection": None},
+        "artifact": None,
+        "protection": None,
+        "status": "draft",
+        "verification": {"state": "unverified"},
+        "created_at": "2026-09-18T00:00:00+00:00",
+        "updated_at": "2026-09-18T00:00:00+00:00",
+        "error": None,
+        "store_error": None,
+        "approved_path": None,
+    }
+    save_candidate(project_root, candidate)
+    return proposal_id
 
 
 CANDIDATE = {
@@ -365,6 +402,32 @@ def run_smoke(*, timeout: float = 60.0, headed: bool = False) -> dict[str, Any]:
                     and reject_body.get("proposal_id") == "sp_st04_smoke_0001"
                 ),
                 "request": reject_body,
+            })
+
+            # ── ST04-restore-on-load：预置持久候选 → 刷新（≈重启）→ 自动恢复审批卡 ──
+            restore_id = seed_restore_candidate(project_root)
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_function(
+                "() => document.title.trim() === 'OpenBrep Workbench'", timeout=int(timeout * 1000)
+            )
+            page.evaluate(_store_import_script())
+            page.wait_for_function(
+                "() => { const s = window.st04Store && window.st04Store.getState(); return !!(s && s.project); }",
+                timeout=int(timeout * 1000),
+            )
+            page.wait_for_timeout(1200)
+            restore_probe = page.evaluate(
+                """() => {
+                    const s = window.st04Store.getState();
+                    return s.pendingSkillProposal ? s.pendingSkillProposal.proposal_id : null;
+                }"""
+            )
+            cases.append({
+                "case": "ST04-restore-on-load",
+                "passed": restore_probe == restore_id
+                and page.locator(".skill-proposal-card").count() > 0,
+                "restored_proposal_id": restore_probe,
+                "card_count": page.locator(".skill-proposal-card").count(),
             })
             browser.close()
 

@@ -535,6 +535,37 @@ describe('AssistantPanel skill proposal card (P2-d)', () => {
     expect(screen.getByText(/证据不完整/)).toBeTruthy()
   })
 
+  test('ST04: unverified technical claims are surfaced (K08)', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{
+          name: 'stair_spacing_rule',
+          pattern_type: 'repeating_geometry',
+          content: '## 适用场景 / When to Use\n正文。',
+          status: 'draft',
+          claims: { unverified: [{ kind: 'measurement_experience', snippet: '踏步高 25mm 经验值' }] },
+        }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/含未核验技术断言/)).toBeTruthy()
+    expect(screen.getByText(/踏步高 25mm 经验值/)).toBeTruthy()
+  })
+
+  test('ST04: approving status is visible for retry', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{ ...proposal, status: 'approving' }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/状态: approving/)).toBeTruthy()
+  })
+
   test('approve and ignore buttons call onConfirmSkillProposal with the right flag', () => {
     const onConfirm = vi.fn()
     render(<AssistantPanel {...baseProps} hasProject pendingSkillProposal={proposal} onConfirmSkillProposal={onConfirm} />)

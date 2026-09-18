@@ -505,11 +505,8 @@ class WorkbenchSession:
         return self.assistant_service.extract_assistant_code_blocks(body)
 
     def generate_with_assistant(self, body: dict[str, Any]):
-        if body.get("stream"):
-            import threading
-            cancel_event = threading.Event()
-            return self.assistant_service.generate_with_assistant_stream(body, cancel_event=cancel_event)
-        return self.assistant_service.generate_with_assistant(body)
+        """薄转发：流式/同步与显式沉淀前置判定都在 assistant_service 内。"""
+        return self.assistant_service.generate_with_assistant_route(body)
 
     def modify_confirm(self, body: dict[str, Any]):
         """计划确认门：approve 后带已确认计划执行（stream 走 SSE）；拒绝/无 pending 各自返回。"""

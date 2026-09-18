@@ -1086,16 +1086,35 @@ export interface SkillProposal {
     params?: Record<string, unknown>
     scripts?: Record<string, string>
   } | null
-  /** ST04：draft（待审）/ approved（用户已批准）/ rejected */
-  status?: 'draft' | 'approved' | 'rejected'
-  /** ST04：验证态与用户决策分离；failed 表示产物保留但未激活 */
+  /** ST04：draft（待审）/ approving（副作用中/上次写盘失败可重试）/ approved / rejected */
+  status?: 'draft' | 'approving' | 'approved' | 'rejected'
+  /** ST04：验证态与用户决策分离；claims_unverified = 含未核验技术断言，未晋升 */
   verification?: {
-    state?: 'unverified' | 'verified' | 'failed'
+    state?: 'unverified' | 'verified' | 'failed' | 'claims_unverified'
     passed?: boolean
     gate?: string
     status?: string
     error?: string | null
+    unverified_claims?: Array<{ kind?: string; snippet?: string }>
   } | null
+  /** ST04 K08：未核验技术断言 + 项目选择标注 */
+  claims?: {
+    unverified?: Array<{ kind?: string; snippet?: string }>
+    project_selection?: {
+      project?: string
+      path_hash?: string
+      note?: string
+    } | null
+  } | null
+  /** ST04：落盘产物所有权记录（proposal_id + 内容摘要 + 路径） */
+  artifact?: {
+    name?: string
+    path?: string
+    content_digest?: string
+    proposal_id?: string
+    written_at?: string
+  } | null
+  protection?: { registered?: string[]; errors?: unknown[]; checked_at?: string } | null
   error?: string | null
   created_at?: string
   updated_at?: string
@@ -1110,8 +1129,15 @@ export interface SkillProposal {
     source_run_ids?: string[]
     revisions?: string[]
     source_fingerprints?: string[]
-    /** ST04：false = 旧资料/未绑定 after，不作为已验证知识 */
+    /** ST04：false = 旧资料/未绑定 after/严格校验不过，不作为已验证知识 */
     evidence_complete?: boolean
+    /** ST04：严格校验未通过的原因（project/revision/fingerprint…） */
+    validation_reasons?: string[]
+    project_selection?: {
+      project?: string
+      path_hash?: string
+      note?: string
+    } | null
   } | null
 }
 

@@ -915,6 +915,17 @@ function SkillProposalCard({
           {evidenceNote}
         </p>
       ) : null}
+      {proposal.claims?.unverified?.length ? (
+        <p className="skill-proposal-claims">
+          ⚠ {t('assistant.skillProposal.claimsUnverified')}
+          {': '}
+          {(proposal.claims.unverified ?? [])
+            .map((claim) => claim.snippet ?? claim.kind ?? '')
+            .filter(Boolean)
+            .slice(0, 2)
+            .join(' / ')}
+        </p>
+      ) : null}
       <pre className="skill-proposal-content">{proposal.content}</pre>
       {evidence && (evidence.changed_files?.length || evidence.project || evidence.source_run_ids?.length) ? (
         <div className="skill-proposal-section">

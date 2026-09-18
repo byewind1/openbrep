@@ -435,6 +435,7 @@ class SkillsLoader:
         sources: dict[str, str] = {}
         match_reasons: dict[str, str] = {}
         matched_terms: dict[str, list[str]] = {}
+        strong_signals: dict[str, bool] = {}
         for task_type in task_types:
             if task_type in _TASK_SKILL_MAP:
                 for mapped in _TASK_SKILL_MAP[task_type]:
@@ -457,6 +458,7 @@ class SkillsLoader:
             sources.setdefault(name, "custom_match")
             match_reasons.setdefault(name, str(detail.get("reason") or "自定义内容匹配"))
             matched_terms.setdefault(name, list(detail.get("matched_terms") or []))
+            strong_signals.setdefault(name, bool(detail.get("strong")))
 
         # Load and concatenate (只注入 active / verified；命中即计复用）
         parts = []
@@ -475,6 +477,7 @@ class SkillsLoader:
                     "status": meta.get("status"),
                     "pattern_type": meta.get("pattern_type"),
                     "matched_terms": matched_terms.get(name, []),
+                    "strong": strong_signals.get(name),
                 })
 
         return "\n\n---\n\n".join(parts)
@@ -484,11 +487,12 @@ class SkillsLoader:
     ) -> list[tuple[str, dict[str, Any]]]:
         """自定义 skill 自动匹配：返回 (name, 详情) 列表。
 
-        ST04 只加诊断、不改选择行为：仍按既有打分（score >= 1）注入，但每条命中
-        附带 source/reason/强信号标记，供审计"这条 skill 为什么被注入"。
-        已知证据化问题（待重录语料后再收紧）：正文通用词重叠（zzyzx/宽度/ROT/
-        数字）足以让 ``skill_dougong`` 之类垂直参考被注入到无关任务；
-        ``_example_*`` 骨架模板也会被 create 类指令命中。
+        ST04 返工：本函数**保留旧选择行为**（score >= 1 即注入），只附带
+        source/reason/强信号标记供审计。收紧自动匹配（strong 才注入 + 骨架模板
+        不自动注入）需要同时重录 create+modify 黄金语料，而当前环境修改套件所依赖
+        的 chat-completions provider 没有可用凭据（provider_keys 全是占位符，
+        只有 local Codex 可用），因此 item 8 的收紧标记为 BLOCKED，详见实施回执。
+        收紧开关已就绪：`detail["strong"]` + name.startswith("_")。
         """
         instruction_lower = instruction.lower()
         instruction_tokens = set(_tokenize(instruction_lower))
@@ -646,10 +650,10 @@ def _score_custom_skill_match(
 ) -> dict[str, Any]:
     """自定义 skill 匹配打分 + 证据。
 
-    返回 ``{score, strong, matched_terms, reason}``。score 与既有实现逐位一致
-    （两个正文循环各自计分），选择行为不变；strong 只是诊断标记：False 表示这次
-    命中没有 skill 名/触发小节强信号，仅靠正文词重叠（疑似误匹配，待重录语料后
-    再收紧）。
+    返回 ``{score, strong, matched_terms, reason}``。score 沿用既有打分（两个正文
+    循环各自计分）；``strong`` 决定是否允许自动注入（ST04 item 8）：False 表示这次
+    命中没有 skill 名/触发小节强信号，仅靠正文通用词重叠，不注入（斗拱曾被注入到
+    无关任务）。
     """
     score = 0
     matched: list[str] = []

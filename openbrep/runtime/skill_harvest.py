@@ -223,8 +223,10 @@ def _validate_proposal(raw: Any, project) -> Optional[dict]:
     content = content.strip()
     if len(content) < _CONTENT_MIN_CHARS or len(content) > _CONTENT_MAX_CHARS:
         return None
-    # 禁贴实例代码：出现 [FILE: 块视为贴了实例代码
-    if "[FILE:" in content or "[FILE：" in content:
+    # 禁贴实例代码：出现真实 [FILE: path] 结构视为贴了实例代码（空标记 [FILE:] 只是提及协议）
+    from openbrep.file_blocks import has_file_blocks
+
+    if has_file_blocks(content):
         return None
     # 禁含项目名
     project_name = getattr(project, "name", "") or ""
@@ -374,21 +376,64 @@ def _summarize_source_refs(source_refs: Any) -> str:
     return "\n".join(lines) or "（没有可引用的运行记录；这是旧资料，证据不完整）"
 
 
-def collect_script_excerpts(project: Any, source_refs: Any, *, limit: int = _EXPLICIT_MAX_SCRIPT_CHARS) -> dict[str, str]:
-    """按 source_refs.changed_files 收集当前项目脚本节选（找不到就不给）。"""
+def collect_script_excerpts(
+    project: Any,
+    source_refs: Any,
+    *,
+    project_root: Any = None,
+    limit: int = _EXPLICIT_MAX_SCRIPT_CHARS,
+) -> dict[str, str]:
+    """按 source_refs.changed_files 收集脚本节选。
+
+    ST04 返工：优先读 source_ref 指向的 after revision 快照（证据权威源），
+    只有该 revision 不可读时才回落当前工作树（此时 source_ref 已被标记
+    evidence_complete=false，不会被当成已核验知识）。
+    """
     changed: list[str] = []
+    revision_by_file: dict[str, str] = {}
     for ref in source_refs or []:
-        if isinstance(ref, dict):
-            for item in ref.get("changed_files") or []:
-                changed.append(str(item))
+        if not isinstance(ref, dict):
+            continue
+        revision = str(ref.get("revision") or "").strip()
+        for item in ref.get("changed_files") or []:
+            rel = str(item)
+            changed.append(rel)
+            if revision and rel not in revision_by_file:
+                revision_by_file[rel] = revision
+
+    excerpts: dict[str, str] = {}
+    revisions_root = None
+    if project_root is not None:
+        revisions_root = Path(project_root) / ".openbrep" / "revisions"
+
+    for rel_path in dict.fromkeys(changed):
+        name = Path(rel_path).name
+        revision = revision_by_file.get(rel_path)
+        if revisions_root is not None and revision:
+            candidate = revisions_root / revision
+            for probe in (candidate / name, candidate / rel_path):
+                try:
+                    if probe.is_file():
+                        excerpts[rel_path] = probe.read_text(encoding="utf-8")[:limit]
+                        break
+                except Exception:
+                    continue
+            if rel_path in excerpts:
+                continue
+
+    # 回落当前工作树：只覆盖"没有 revision 证据"的文件；有 revision 但读不到时
+    # 不回落到工作树（不把后续工作树内容冒充成 revision 内容）。
     scripts = getattr(project, "scripts", None) or {}
     by_value = {}
     for stype, content in scripts.items():
         value = getattr(stype, "value", None)
         if value:
             by_value[str(value)] = str(content or "")
-    excerpts: dict[str, str] = {}
     for rel_path in dict.fromkeys(changed):
+        if rel_path in excerpts:
+            continue
+        if revision_by_file.get(rel_path) and revisions_root is not None:
+            continue
         stem = Path(rel_path).name
         if stem in by_value:
             excerpts[rel_path] = by_value[stem][:limit]
@@ -424,17 +469,23 @@ def distill_explicit_skill(
     source_refs: Any,
     llm: Any,
     skills_dir: Any,
+    *,
+    project_root: Any = None,
 ) -> dict[str, Any]:
     """显式沉淀提炼：一次 LLM 调用 + 严格校验，失败返回显式错误码。
 
     返回 ``{"ok": True, "proposal": {...}}`` 或
     ``{"ok": False, "code": ..., "error": ...}``（code 见下）。绝不抛出。
+    ``project_root`` 用于优先读 source_ref 指向的 after revision 快照。
     """
     if llm is None:
         return {"ok": False, "code": "SKILL_PROPOSAL_LLM_UNAVAILABLE", "error": "无法构造提炼用的 LLM 适配器。"}
     try:
         messages = build_explicit_harvest_messages(
-            project, instruction, source_refs, collect_script_excerpts(project, source_refs)
+            project,
+            instruction,
+            source_refs,
+            collect_script_excerpts(project, source_refs, project_root=project_root),
         )
         resp = llm.generate(
             messages,

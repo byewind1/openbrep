@@ -257,6 +257,7 @@ export const zh = {
   'assistant.skillProposal.status': '状态',
   'assistant.skillProposal.evidenceComplete': '证据完整（已绑定 revision {rev}）',
   'assistant.skillProposal.evidenceIncomplete': '证据不完整（旧资料/未绑定 after，未核验）',
+  'assistant.skillProposal.claimsUnverified': '含未核验技术断言（不作为已验证知识）',
 
   // D16 会话级模型 pill（切换只作用当前会话，不写 config.toml）
   'assistant.modelPill.override': '会话覆盖',

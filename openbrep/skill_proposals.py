@@ -31,13 +31,16 @@ PROPOSAL_DIR_REL = Path(".openbrep") / "memory" / "skill-proposals"
 SCHEMA_VERSION = 1
 
 STATUS_DRAFT = "draft"
+STATUS_APPROVING = "approving"   # 审批副作用进行中/上次中断（可重启继续收敛）
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
-STATUSES = (STATUS_DRAFT, STATUS_APPROVED, STATUS_REJECTED)
+STATUSES = (STATUS_DRAFT, STATUS_APPROVING, STATUS_APPROVED, STATUS_REJECTED)
 
 VERIFY_UNVERIFIED = "unverified"
 VERIFY_VERIFIED = "verified"
 VERIFY_FAILED = "failed"
+# 技术断言未核验：产物可保留为 proposed，但绝不晋升为已验证知识（K08）
+VERIFY_CLAIMS_UNVERIFIED = "claims_unverified"
 
 # 候选引用 revision 时的 ST02 统一引用 reason（外部引用，交付对替换时不清理）
 PROTECTION_REASON = "pending_candidate"
@@ -82,6 +85,16 @@ _POSITIVE_PATTERNS = (
 _NEGATIVE_PATTERNS = (
     re.compile(r"(不|别|无需|无须|不需要|不用|取消|放弃|暂不|先不)\s*[^，。,.!?！？]{0,6}(保存|沉淀|提炼|存为)"),
     re.compile(r"\b(don'?t|do not|no need|never|cancel|skip)\b.{0,24}\b(save|distill|persist)\b", re.IGNORECASE),
+    # 疑问句是询问"怎么做/为什么/要不要"，不是执行命令（"如何保存为技能？"）
+    re.compile(
+        r"(为什么|为何|怎么|怎样|如何|能否|可否|是否|要不要|需要吗|可以吗)"
+        r"[^，。,.!?！？]{0,16}(保存|沉淀|提炼|存为|skill|技能)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(why|how|should|shall|can|could|would|may|do i|does)\b.{0,40}\b(save|distill|persist)\b",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -273,6 +286,67 @@ def latest_run_id(project_root: Any, *, require_delivery: bool = True) -> Option
     return records[-1][1] if records else None
 
 
+def revisions_root(project_root: Any) -> Path:
+    return Path(project_root) / ".openbrep" / "revisions"
+
+
+def revision_dir(project_root: Any, revision_id: str) -> Path:
+    return revisions_root(project_root) / str(revision_id)
+
+
+def _validate_ref(project_root: Path, record: Optional[dict[str, Any]], ref: dict[str, Any]) -> dict[str, Any]:
+    """严格校验一条 source_ref：项目身份 / delivery state / revision 存在 / 指纹一致。
+
+    返回 ``{"ok": bool, "reasons": [str], "revision_fingerprint": str|None}``。
+    只有全部通过才算 evidence_complete；任何一项不过都给出可读原因。
+    """
+    reasons: list[str] = []
+    if not record:
+        return {"ok": False, "reasons": ["run_record_missing"], "revision_fingerprint": None}
+
+    source_ref = record.get("project_ref") or {}
+    if str(source_ref.get("path_hash") or "") != path_hash(project_root):
+        reasons.append("project_identity_mismatch")
+
+    provenance = record.get("provenance") or {}
+    delivery = provenance.get("delivery_source")
+    if not isinstance(delivery, dict):
+        reasons.append("delivery_source_missing")
+        delivery = {}
+    state = str(delivery.get("state") or "")
+    if state != "verified_change":
+        reasons.append(f"delivery_state_not_verified_change:{state or 'missing'}")
+
+    after = delivery.get("after_revision_id") or provenance.get("after_revision")
+    fingerprint = delivery.get("source_fingerprint") or provenance.get("source_fingerprint")
+    if not after:
+        reasons.append("after_revision_missing")
+    if not fingerprint:
+        reasons.append("source_fingerprint_missing")
+
+    revision_fingerprint: Optional[str] = None
+    if after:
+        rev_path = revision_dir(project_root, str(after))
+        if not rev_path.is_dir():
+            reasons.append("revision_dir_missing")
+        else:
+            try:
+                from openbrep.source_fingerprint import compute_revision_fingerprint
+
+                revision_fingerprint = compute_revision_fingerprint(rev_path)
+            except Exception as exc:  # 指纹算不出 = 证据不可信
+                logger.warning("revision %s 指纹计算失败: %s", after, exc)
+                reasons.append("revision_fingerprint_unreadable")
+            if (
+                revision_fingerprint
+                and fingerprint
+                and str(revision_fingerprint) != str(fingerprint)
+            ):
+                reasons.append("revision_fingerprint_mismatch")
+
+    return {"ok": not reasons, "reasons": reasons, "revision_fingerprint": revision_fingerprint}
+
+
 def _ref_from_record(run_id: str, record: Optional[dict[str, Any]]) -> dict[str, Any]:
     """把质量档案映射成候选 source_ref；缺证据时 revision/fingerprint 为空。"""
     if not record:
@@ -283,6 +357,7 @@ def _ref_from_record(run_id: str, record: Optional[dict[str, Any]]) -> dict[str,
             "source_fingerprint": None,
             "intent": None,
             "changed_files": [],
+            "delivery_state": None,
             "evidence_complete": False,
         }
     provenance = record.get("provenance") or {}
@@ -307,11 +382,13 @@ def _ref_from_record(run_id: str, record: Optional[dict[str, Any]]) -> dict[str,
 def resolve_source_refs(
     project_root: Any, run_ids: Optional[list[str]] = None
 ) -> list[dict[str, Any]]:
-    """解析候选的证据引用。
+    """解析候选的证据引用并逐条严格校验。
 
     - 显式 run_ids：逐条读质量档案（缺失也保留 run_id，但 evidence_complete=False）；
     - 未给 run_ids：取最近一次有 after 的交付运行；没有任何质量记录 → 空列表（旧资料
       允许 revision=null，但 evidence_complete=false）。
+    - 每条 ref 附 ``validation``：项目身份 / delivery state / revision 目录存在 /
+      revision 实际指纹与记录指纹一致；任一不过 → evidence_complete=false。
     """
     project_root = Path(project_root)
     ids = [str(item).strip() for item in (run_ids or []) if str(item).strip()]
@@ -320,7 +397,15 @@ def resolve_source_refs(
         if latest is None:
             return []
         ids = [latest]
-    return [_ref_from_record(run_id, _load_quality_record(project_root, run_id)) for run_id in ids]
+    refs: list[dict[str, Any]] = []
+    for run_id in ids:
+        record = _load_quality_record(project_root, run_id)
+        ref = _ref_from_record(run_id, record)
+        validation = _validate_ref(project_root, record, ref)
+        ref["validation"] = validation
+        ref["evidence_complete"] = bool(validation["ok"])
+        refs.append(ref)
+    return refs
 
 
 def evidence_complete(source_refs: Any) -> bool:
@@ -330,11 +415,102 @@ def evidence_complete(source_refs: Any) -> bool:
     return all(bool(ref.get("evidence_complete")) for ref in refs)
 
 
-def register_candidate_protection(project_root: Any, candidate: dict[str, Any]) -> list[str]:
-    """把候选引用的 after revision 登记进 ST02 保护集合（幂等）。"""
+# ── 技术断言未核验（K08） ────────────────────────────────
+
+_MEASUREMENT_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:mm|MM|毫米|cm|CM|厘米)")
+_HEURISTIC_WORDS = ("经验", "推荐", "通常", "一般", "建议", "常用", "惯例", "自述", "实测", "实践证明")
+_TECH_TOKEN_RE = re.compile(r"\b(?:PRISM_|SPLIT|MUL2|ADDZ|GOSUB|CALL|ROT|BLOCK)\b")
+
+
+def detect_unverified_claims(content: str, *, limit: int = 8) -> list[dict[str, str]]:
+    """从候选正文里识别"未核验的技术断言"（K08）。
+
+    - ``measurement_experience``：出现了 mm/cm 经验值且同行带经验/推荐/通常等措辞
+      （如"25/50mm 经验"）；
+    - ``asserted_technique``：出现 GDL 技术词且同行是自述式断言（经验/自述/实测等）。
+
+    纯规则、可解释；命中项只用于"标注未核验、不得晋升"，不判内容对错。
+    """
+    claims: list[dict[str, str]] = []
+    for raw_line in (content or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        has_heuristic = any(word in line for word in _HEURISTIC_WORDS)
+        if not has_heuristic:
+            continue
+        if _MEASUREMENT_RE.search(line):
+            claims.append({"kind": "measurement_experience", "snippet": line[:160]})
+        elif _TECH_TOKEN_RE.search(line):
+            claims.append({"kind": "asserted_technique", "snippet": line[:160]})
+        if len(claims) >= limit:
+            break
+    return claims
+
+
+def project_selection(project_root: Any, project_name: str) -> dict[str, Any]:
+    """项目选择标注：经验/技术断言来自哪个项目、未跨项目核验。"""
+    return {
+        "project": str(project_name or ""),
+        "path_hash": path_hash(project_root),
+        "note": "经验值/技术断言来自该项目用例，未跨项目核验",
+    }
+
+
+# ── 候选 → artifact 所有权 ───────────────────────────────
+
+
+def content_digest(content: str) -> str:
+    return "sha256:" + hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()
+
+
+def read_skill_artifact(skills_dir: Any, name: str) -> Optional[dict[str, Any]]:
+    """读取 skills_dir/<name>.md 的正文/frontmatter（不存在返回 None）。"""
+    from openbrep.skills_loader import _split_frontmatter
+
+    path = Path(skills_dir) / f"{name}.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    body, meta, has_fm = _split_frontmatter(text)
+    return {
+        "path": str(path),
+        "text": text,
+        "body": body,
+        "meta": meta or {},
+        "has_frontmatter": bool(has_fm),
+    }
+
+
+def artifact_ownership(
+    skills_dir: Any, name: str, proposal_id: str, content: str
+) -> dict[str, Any]:
+    """判定磁盘上的同名 skill 是否由本 proposal 写出的（所有权 + 内容摘要）。
+
+    - 文件不存在 → owned=False / artifact_missing；
+    - frontmatter ``source_trace_id`` != proposal_id → foreign_artifact；
+    - 正文与候选 content 不一致 → content_mismatch；
+    只有两者一致才允许续跑 verify / 允许拒绝回收。
+    """
+    artifact = read_skill_artifact(skills_dir, name)
+    if artifact is None:
+        return {"owned": False, "reason": "artifact_missing", "path": str(Path(skills_dir) / f"{name}.md")}
+    meta = artifact.get("meta") or {}
+    trace_id = str(meta.get("source_trace_id") or "")
+    if trace_id != str(proposal_id):
+        return {"owned": False, "reason": "foreign_artifact", "path": artifact["path"], "artifact_trace_id": trace_id}
+    if str(artifact.get("body") or "").strip() != str(content or "").strip():
+        return {"owned": False, "reason": "content_mismatch", "path": artifact["path"]}
+    return {"owned": True, "reason": "", "path": artifact["path"]}
+
+
+def register_candidate_protection(project_root: Any, candidate: dict[str, Any]) -> dict[str, Any]:
+    """把候选引用的 after revision 登记进 ST02 保护集合（幂等，可观察）。"""
     from openbrep.revisions import register_revision_protection
 
     registered: list[str] = []
+    errors: list[dict[str, str]] = []
     proposal_id = str(candidate.get("proposal_id") or "")
     for ref in candidate.get("source_refs") or []:
         if not isinstance(ref, dict):
@@ -353,7 +529,21 @@ def register_candidate_protection(project_root: Any, candidate: dict[str, Any]) 
             registered.append(revision)
         except Exception as exc:  # 保护登记失败不阻断候选落盘，但如实记录
             logger.warning("候选 %s 保护登记失败（%s）: %s", proposal_id, revision, exc)
-    return registered
+            errors.append({"revision": revision, "error": str(exc)})
+    return {"registered": registered, "errors": errors}
+
+
+def reconcile_candidate_protections(project_root: Any) -> dict[str, Any]:
+    """重启/列候选时对账：给所有未拒绝候选重新登记保护（幂等收敛）。"""
+    reconciled: list[str] = []
+    errors: list[dict[str, str]] = []
+    for candidate in list_candidates(project_root):
+        if str(candidate.get("status") or "") == STATUS_REJECTED:
+            continue
+        result = register_candidate_protection(project_root, candidate)
+        reconciled.extend(result.get("registered") or [])
+        errors.extend(result.get("errors") or [])
+    return {"reconciled": sorted(set(reconciled)), "errors": errors}
 
 
 def release_candidate_protection(project_root: Any, candidate: dict[str, Any]) -> int:

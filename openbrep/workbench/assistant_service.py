@@ -637,10 +637,35 @@ class WorkbenchAssistantService:
             return {"ok": False, "error": f"skill 候选列表读取失败：{exc}", "proposals": []}
 
     @staticmethod
-    def _is_explicit_skill_request(message: str) -> bool:
+    def is_explicit_skill_request(message: str) -> bool:
+        """公开判定：显式"沉淀成 skill"请求（workbench_api 流式前置用）。"""
         from openbrep.skill_proposals import detect_explicit_skill_request
 
         return detect_explicit_skill_request(message)
+
+    @staticmethod
+    def _is_explicit_skill_request(message: str) -> bool:
+        return WorkbenchAssistantService.is_explicit_skill_request(message)
+
+    def generate_with_assistant_route(self, body: dict[str, Any]):
+        """统一入口：显式沉淀同步处理（SSE 仍收 done），其余按 stream 分流。
+
+        workbench_api.route 在锁内调用本方法，因此显式沉淀的候选写入发生在返回
+        生成器之前——不会出现"锁已释放、生成器迭代期间项目已切换"的写入漂移。
+        """
+        message = str(body.get("message") or "").strip()
+        if body.get("stream") and message and self.is_explicit_skill_request(message):
+            result = self.generate_with_assistant({**body, "stream": False})
+
+            def _explicit_done():
+                yield {"type": "done", "data": result}
+
+            return _explicit_done()
+        if body.get("stream"):
+            import threading
+
+            return self.generate_with_assistant_stream(body, cancel_event=threading.Event())
+        return self.generate_with_assistant(body)
 
     def _explicit_skill_response(self, message: str) -> dict[str, Any]:
         """显式沉淀的 assistant 载荷（ok/失败都带明确 code，不报 completed）。"""

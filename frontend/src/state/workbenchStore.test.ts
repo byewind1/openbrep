@@ -389,6 +389,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     requestModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
     confirmModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
     confirmSkillProposal: async () => ({ ok: false, error: 'not loaded' }),
+    listSkillProposals: async () => ({ ok: true, proposals: [], total: 0 }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
       changed: parameters,
@@ -3706,6 +3707,76 @@ test('confirmPendingSkillProposal without a pending proposal sets lastError (P2-
   await store.getState().load()
   await store.getState().confirmPendingSkillProposal(true)
   expect(store.getState().lastError).toContain('没有待确认的 skill 提案')
+})
+
+// ── ST04 返工：重启恢复 + 失败保留可重试 ────────────────────────────────
+
+test('load restores a restorable skill proposal from the store (ST04)', async () => {
+  const approving = { ...SKILL_PROPOSAL, proposal_id: 'sp_approving', status: 'approving' as const, updated_at: '2026-09-18T00:00:00Z' }
+  const draft = { ...SKILL_PROPOSAL, proposal_id: 'sp_draft', status: 'draft' as const, updated_at: '2026-09-18T02:00:00Z' }
+  const approved = { ...SKILL_PROPOSAL, proposal_id: 'sp_done', status: 'approved' as const }
+  const store = createWorkbenchStore(
+    makeApi({
+      listSkillProposals: async () => ({ ok: true, proposals: [draft, approved, approving], total: 3 }),
+    }),
+  )
+  await store.getState().load()
+  // approving（上次写盘失败）优先展示以便重试
+  expect(store.getState().pendingSkillProposal?.proposal_id).toBe('sp_approving')
+})
+
+test('load clears pending when the store has no restorable proposal (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      listSkillProposals: async () => ({
+        ok: true,
+        proposals: [{ ...SKILL_PROPOSAL, proposal_id: 'sp_done', status: 'approved' as const }],
+        total: 1,
+      }),
+    }),
+  )
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+  await store.getState().load()
+  expect(store.getState().pendingSkillProposal).toBeNull()
+})
+
+test('confirmPendingSkillProposal failure keeps the card for retry (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async () => ({
+        ok: false,
+        code: 'SKILL_PROPOSAL_STATE_SAVE_FAILED',
+        error: 'disk full',
+      }),
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+
+  await store.getState().confirmPendingSkillProposal(true)
+
+  const state = store.getState()
+  expect(state.pendingSkillProposal).toEqual(SKILL_PROPOSAL)
+  expect(state.assistantMessages.at(-1)?.content).toContain('沉淀失败')
+  expect(state.assistantMessages.at(-1)?.content).toContain('可重试')
+  expect(state.assistantMessages.at(-1)?.content).not.toContain('已沉淀并通过验证')
+})
+
+test('confirmPendingSkillProposal reject failure does not claim discarded (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async () => ({ ok: false, error: 'state save failed' }),
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+
+  await store.getState().confirmPendingSkillProposal(false)
+
+  const state = store.getState()
+  expect(state.pendingSkillProposal).toEqual(SKILL_PROPOSAL)
+  expect(state.assistantMessages.at(-1)?.content).toContain('拒绝失败')
+  expect(state.assistantMessages.at(-1)?.content).not.toContain('已丢弃')
 })
 
 // ── P2a：修改前后对比 ghost 快照 ─────────────────────────────────────────

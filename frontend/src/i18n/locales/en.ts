@@ -261,6 +261,7 @@ export const en: Record<LocaleKey, string> = {
   'assistant.skillProposal.status': 'Status',
   'assistant.skillProposal.evidenceComplete': 'Evidence linked (revision {rev})',
   'assistant.skillProposal.evidenceIncomplete': 'Evidence incomplete (old material, unverified)',
+  'assistant.skillProposal.claimsUnverified': 'Contains unverified technical claims (not verified knowledge)',
 
   // D16 session-level model pill (switching applies to this session only, never writes config.toml)
   'assistant.modelPill.override': 'Session override',

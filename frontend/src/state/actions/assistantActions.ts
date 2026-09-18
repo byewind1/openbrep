@@ -1,9 +1,23 @@
-import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, DeliveryContinueFrom, DeliveryPresentation, DeliverySource, GenerateResult, PendingExtraction, PendingPlan, VisionExtraction } from '../../api/types'
+import type { AssistantHistoryItem, AssistantImageAttachment, AssistantStreamEvent, AssistantThinkingStep, DeliveryContinueFrom, DeliveryPresentation, DeliverySource, GenerateResult, PendingExtraction, PendingPlan, SkillProposal, VisionExtraction } from '../../api/types'
 import type { AssistantMessage } from '../../api/types'
 import type { PreviewGhostLabel, WorkbenchActionContext } from '../workbenchStoreTypes'
 import { detectChatIntent, isResumeMessage } from '../chatIntent'
 import { attachmentLabel } from '../../components/assistantImage'
 import { classifyAssistantError, formatAssistantRequestError, hydrateSnapshot, normalizeScriptName } from '../workbenchStoreUtils'
+
+/**
+ * ST04：从持久候选里挑一个可以继续审批的（draft；approving = 上次最终写盘失败，
+ * 优先展示以便重试收敛）；没有则返回 null。
+ */
+function pickRestorableSkillProposal(proposals: SkillProposal[]): SkillProposal | null {
+  const restorable = proposals.filter((p) => p.status === 'draft' || p.status === 'approving')
+  if (!restorable.length) return null
+  return [...restorable].sort((a, b) => {
+    const approvingDelta = (b.status === 'approving' ? 1 : 0) - (a.status === 'approving' ? 1 : 0)
+    if (approvingDelta !== 0) return approvingDelta
+    return String(b.updated_at ?? b.created_at ?? '').localeCompare(String(a.updated_at ?? a.created_at ?? ''))
+  })[0]
+}
 
 /** P2a ghost 快照原因：任务前（i18n key，zh/en 见 locales） */
 const PREVIEW_GHOST_LABEL_PRE_TASK: PreviewGhostLabel = 'preview.ghost.preTask'
@@ -422,6 +436,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     },
 
     async loadAssistantHistory() {
+      // ST04：项目加载/重启/切换后恢复持久候选（失败不影响历史加载）
+      await get().restoreSkillProposals()
       const result = await api.listAssistantHistory()
       if (!result.ok) {
         if (result.error) {
@@ -431,6 +447,17 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }
       // ST03 F2：刷新后恢复 delivery 卡；旧/缺关联记录显示 unlinked
       set({ assistantMessages: hydrateHistoryMessages(result.messages ?? []) })
+    },
+
+    async restoreSkillProposals() {
+      if (typeof api.listSkillProposals !== 'function') return
+      try {
+        const result = await api.listSkillProposals()
+        if (!result?.ok) return
+        set({ pendingSkillProposal: pickRestorableSkillProposal(result.proposals ?? []) })
+      } catch {
+        // best-effort：恢复失败不清空现有卡片，也不阻塞项目加载
+      }
     },
 
     async clearAssistantHistory() {
@@ -958,7 +985,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     },
 
     async confirmPendingSkillProposal(approve: boolean) {
-      // 模式级 skill 提案（P2-d）：approve → propose+verify 双闸晋升；false → 丢弃
+      // 模式级 skill 提案（P2-d）/ 显式候选（ST04）：approve → propose+verify；
+      // false → 丢弃。失败必须保留卡片与重试入口，且绝不显示成功文案。
       const proposal = get().pendingSkillProposal
       if (!proposal) {
         set({ lastError: '没有待确认的 skill 提案。' })
@@ -970,22 +998,35 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         discardStaleResult('Skill proposal result discarded: project switched during the request.')
         return
       }
+      if (!result.ok) {
+        const actionLabel = approve ? '沉淀' : '拒绝'
+        const retryable = result.code === undefined || result.code.endsWith('SAVE_FAILED')
+        set((state) => ({
+          // 保留卡片：用户可以直接重试（后端返回 retryable 的路径）
+          pendingSkillProposal: state.pendingSkillProposal,
+          assistantMessages: replacePendingAssistantMessage(
+            state.assistantMessages,
+            `❌ skill「${proposal.name}」${actionLabel}失败：${result.error ?? '未知错误'}${
+              retryable ? '（可重试）' : ''
+            }`,
+          ),
+          lastError: result.error ?? null,
+        }))
+        await persistAssistantHistory()
+        return
+      }
       set((state) => ({
         pendingSkillProposal: null,
         assistantMessages: replacePendingAssistantMessage(
           state.assistantMessages,
           approve
-            ? result.ok
-              ? result.verified
-                ? `✅ skill「${proposal.name}」已沉淀并通过验证（${result.gate} 门禁）`
-                : `📝 skill「${proposal.name}」已落盘为未激活产物（验证未过，暂不可用）`
-              : `❌ skill「${proposal.name}」沉淀失败：${result.error ?? '未知错误'}`
+            ? result.verified
+              ? `✅ skill「${proposal.name}」已沉淀并通过验证（${result.gate} 门禁）`
+              : `📝 skill「${proposal.name}」已落盘为未激活产物（验证未过/含未核验断言），暂不可用`
             : `🗑 已丢弃 skill 提案「${proposal.name}」。`,
         ),
+        lastError: null,
       }))
-      if (!result.ok && result.error) {
-        set({ lastError: result.error })
-      }
       await persistAssistantHistory()
     },
   }

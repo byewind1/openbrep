@@ -216,6 +216,8 @@ export interface WorkbenchApi {
     proposalId?: string,
     signal?: AbortSignal,
   ) => Promise<import('../api/types').SkillProposalConfirmResult>
+  // ST04：项目加载/重启后恢复持久候选（GET /api/skill/proposals）
+  listSkillProposals: () => Promise<import('../api/types').SkillProposalListResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>
@@ -363,6 +365,8 @@ export interface WorkbenchState {
   /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建；false 取消清态 */
   confirmPendingExtraction: (extractions: VisionExtraction[], approve: boolean) => Promise<void>
   confirmPendingSkillProposal: (approve: boolean) => Promise<void>
+  /** ST04：项目加载/重启后从 store 恢复最近一个待审/审批中候选到审批卡 */
+  restoreSkillProposals: () => Promise<void>
   reloadRuntimeSettings: () => Promise<void>
   pollConfigRevision: () => Promise<void>
   refreshTapirStatus: () => Promise<void>

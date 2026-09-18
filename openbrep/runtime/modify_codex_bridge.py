@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 import logging
 import queue
-import re
 import shutil
 import tempfile
 import time
@@ -66,9 +65,6 @@ BUDGET_EXHAUSTED_TOOL_TEXT = "工具预算已耗尽，无法执行更多工具�
 DUPLICATE_CALL_TEXT = "该工具调用已处理过（重复回调），结果已在上一次执行中返回，本次不重复执行。"
 FORBIDDEN_TOOL_TEXT = "工具 {name} 不在开放工具列表内，调用被拒绝。"
 UNHANDLED_SERVER_REQUEST_TEXT = "method not found"
-
-# 真实 [FILE: path] 交付块：冒号后必须有非空路径；空标记 [FILE:] 只是提及协议。
-_FILE_BLOCK_RE = re.compile(r"\[FILE:[ \t]*[^\]\s][^\]]*\]")
 
 # 纵深防御：即使 fake/恶意 app-server 伪造写路径名，也必须在进入 registry
 # 前被拒绝；允许名单只来自 registry.definitions()。
@@ -1353,12 +1349,14 @@ def _tool_digest(tool_log: list[dict]) -> str:
 
 
 def _has_file_blocks(text: str) -> bool:
-    """只识别真实 ``[FILE: path]`` 交付块。
+    """只识别真实 ``[FILE: path]`` 交付块（共享 matcher，空标记 [FILE:] 不算）。
 
     提及空标记 ``[FILE:]``（例如在解释里引用协议本身）不算交付块，不能因此报
     协议错误；冒号后必须跟着非空路径。K09。
     """
-    return _FILE_BLOCK_RE.search(text or "") is not None
+    from openbrep.file_blocks import has_file_blocks
+
+    return has_file_blocks(text)
 
 
 def _llm_model_name(llm) -> str:

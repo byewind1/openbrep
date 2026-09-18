@@ -79,11 +79,13 @@ class TestSkillsLoader(unittest.TestCase):
         self.assertEqual(by_name["my_project_skill"]["source"], "custom_match")
         self.assertTrue(by_name["my_project_skill"]["reason"])
 
-    def test_body_only_match_is_flagged_as_suspected_mismatch(self):
-        """ST04 审计证据：仅正文通用词重叠的命中会被标成"疑似误匹配"。
+    def test_generic_body_match_is_reported_as_suspected_mismatch(self):
+        """ST04 item 8 诊断（未完成收紧，见实施回执 BLOCKED）：
 
-        这不是对错误行为的认可，而是把旋转楼梯语料里 skill_dougong 的注入原因
-        固定下来，为重录语料后的收紧提供对照。
+        旋转楼梯语料里 skill_dougong 会因正文通用词（zzyzx/宽度/ROT/数字）被自动
+        注入到无关任务；本测试只固定"诊断能如实标注这是疑似误匹配"，不代表认可该
+        注入。收紧（strong 才注入 + 骨架模板跳过）需要重录 create+modify 语料，
+        当前环境修改套件没有可用 chat-completions 凭据，故保留诊断为可观察证据。
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir)
@@ -96,7 +98,7 @@ class TestSkillsLoader(unittest.TestCase):
 
         detail = loader.last_injected_details[0]
         self.assertEqual(detail["name"], "skill_dougong")
-        self.assertEqual(detail["source"], "custom_match")
+        self.assertFalse(detail["strong"])
         self.assertIn("疑似误匹配", detail["reason"])
 
     def test_explicit_filename_match_keeps_diagnostic_source(self):
