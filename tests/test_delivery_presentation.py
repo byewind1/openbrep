@@ -502,20 +502,6 @@ class TestRevisionServiceRestoreAndDiff:
         request = TaskRequest(user_input="把层板数改成 5", intent="MODIFY", continue_from=continue_from)
         assert request.continue_from == continue_from
 
-    def test_quality_context_includes_continue_from(self, tmp_path):
-        """pipeline 质量档案 context 携带 continue_from（刷新后可重读）。"""
-        from openbrep.runtime.pipeline import TaskPipeline
-
-        pipeline = TaskPipeline.__new__(TaskPipeline)
-        pipeline.quality_ledger_enabled = False
-        # 写入路径的 context 构造在 _write_quality_record；此处验证 source 含 continue_from
-        source = open(
-            "/Users/ren/MAC工作/工作/code/开源项目/gdl-agent/.worktrees/st03-delivery-ui/openbrep/runtime/pipeline.py",
-            encoding="utf-8",
-        ).read()
-        assert '"continue_from": (result.metadata or {}).get("continue_from")' in source
-        assert "continue_from=continue_from" in source
-
     def test_unlinked_helper_stable(self):
         p = unlinked_delivery_presentation()
         assert p["status"] == STATUS_UNLINKED

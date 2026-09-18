@@ -157,6 +157,43 @@ class TestR01VerifiedChangeBindsAfter:
         assert records[0]["provenance"]["before_revision"] == ds.before_revision_id
         assert records[0]["provenance"]["source_fingerprint"] == ds.source_fingerprint
 
+    def test_continue_linkage_persists_in_quality_and_after_revision(self, tmp_path):
+        """ST03 F2：继续关系进入真实质量档案与本轮新建 after。"""
+        project = _make_project(tmp_path)
+        pipeline = _make_pipeline(tmp_path)
+        pipeline._make_llm = lambda _req: _agent_loop_llm_updates(
+            "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.018\nDEL 1\nEND\n"
+        )
+        continue_from = {
+            "origin_run_id": "r_origin",
+            "original_instruction": "给书架加一层层板",
+        }
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(
+                _request(
+                    project,
+                    tmp_path,
+                    "继续完成上一轮修改",
+                    intent="MODIFY",
+                    continue_from=continue_from,
+                )
+            )
+
+        ds = _delivery(result)
+        assert ds.state == "verified_change"
+        records = _quality_records(project)
+        assert records[0]["provenance"]["continue_from"] == continue_from
+
+        manifest_path = (
+            project.root
+            / ".openbrep"
+            / "revisions"
+            / ds.after_revision_id
+            / "manifest.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["metadata"]["delivery"]["continue_from"] == continue_from
+
     def test_codex_agent_loop_binds_after(self, tmp_path):
         """Codex 桥接路径：假 app-server 成功流 → delivery_source.after 与验证后源一致。"""
         from tests.test_codex_modify_bridge import (

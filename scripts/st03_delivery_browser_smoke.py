@@ -367,7 +367,7 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
             cases.append(
                 {
                     "case": "F1/U01-diff",
-                    "passed": api_diff_ok and (f1_to_working or "PRIM" in f1_diff_text or api_diff_ok),
+                    "passed": api_diff_ok and (f1_to_working or "PRIM" in f1_diff_text),
                     "api_working_diff": api_diff_ok,
                     "ui_diff_contains_prim_or_working": f1_to_working or "PRIM" in f1_diff_text,
                     "api_diff_prefix": (api_diff.get("diff") or "")[:160],
