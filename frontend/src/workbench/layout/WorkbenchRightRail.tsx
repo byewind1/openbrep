@@ -219,8 +219,12 @@ export function WorkbenchRightRail({
             }}
             onViewDeliveryDiff={async (presentation) => {
               const fromId = presentation.before_revision_id
-              const toId = presentation.after_revision_id || presentation.before_revision_id
-              if (!fromId || !toId) return null
+              if (!fromId) return null
+              // F1：partial 无 after → before→工作源；有 after → before→after；禁止 before→before
+              let toId: string | null = presentation.after_revision_id ?? null
+              if (presentation.diff_target === 'working') toId = null
+              else if (!toId && presentation.diff_target !== 'after') toId = null
+              if (toId === fromId) toId = null
               return viewRevisionDiff(fromId, toId)
             }}
             onContinueDelivery={(payload) => {

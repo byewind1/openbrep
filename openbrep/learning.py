@@ -61,6 +61,8 @@ class ChatTranscriptEntry:
     timestamp: str
     source: str = ""
     project_name: str = ""
+    # ST03：可选结构化元数据（delivery presentation / continue_from / run_id）
+    meta: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -285,6 +287,7 @@ class ErrorLearningStore:
             content = _message_content_to_text(message.get("content", ""))
             if not content:
                 continue
+            meta = message.get("meta") if isinstance(message.get("meta"), dict) else None
             entries.append(
                 ChatTranscriptEntry(
                     role=str(message.get("role", "")),
@@ -292,6 +295,7 @@ class ErrorLearningStore:
                     timestamp=now,
                     source=source,
                     project_name=project_name,
+                    meta=meta,
                 )
             )
         if not entries:
@@ -320,12 +324,34 @@ class ErrorLearningStore:
                 timestamp = message.timestamp or now
                 entry_source = message.source or source
                 entry_project = message.project_name or project_name
+                meta = message.meta if isinstance(message.meta, dict) else None
             else:
                 content = _message_content_to_text(message.get("content", ""))
                 role = str(message.get("role", ""))
                 timestamp = now
                 entry_source = source
                 entry_project = project_name
+                raw_meta = message.get("meta")
+                if isinstance(raw_meta, dict):
+                    meta = raw_meta
+                else:
+                    # 兼容扁平字段（前端可能直接带 delivery/run_id/...）
+                    flat = {
+                        key: message[key]
+                        for key in (
+                            "delivery",
+                            "delivery_source",
+                            "delivery_continue_from",
+                            "original_instruction",
+                            "run_id",
+                            "changed_files",
+                            "verification",
+                            "acceptance",
+                            "error_category",
+                        )
+                        if key in message and message[key] is not None
+                    }
+                    meta = flat or None
             if not content:
                 continue
             entries.append(
@@ -335,6 +361,7 @@ class ErrorLearningStore:
                     timestamp=timestamp,
                     source=entry_source,
                     project_name=entry_project,
+                    meta=meta if isinstance(meta, dict) else None,
                 )
             )
 
@@ -918,23 +945,28 @@ def _lesson_to_dict(lesson: ErrorLesson) -> dict[str, Any]:
 
 
 def _chat_entry_from_dict(data: dict[str, Any]) -> ChatTranscriptEntry:
+    meta = data.get("meta")
     return ChatTranscriptEntry(
         role=str(data.get("role", "")),
         content=str(data.get("content", "")),
         timestamp=str(data.get("timestamp", "")),
         source=str(data.get("source", "")),
         project_name=str(data.get("project_name", "")),
+        meta=meta if isinstance(meta, dict) else None,
     )
 
 
-def _chat_entry_to_dict(entry: ChatTranscriptEntry) -> dict[str, str]:
-    return {
+def _chat_entry_to_dict(entry: ChatTranscriptEntry) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "role": entry.role,
         "content": entry.content,
         "timestamp": entry.timestamp,
         "source": entry.source,
         "project_name": entry.project_name,
     }
+    if entry.meta:
+        payload["meta"] = entry.meta
+    return payload
 
 
 def _message_content_to_text(content: Any) -> str:

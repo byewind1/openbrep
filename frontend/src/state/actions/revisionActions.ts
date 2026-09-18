@@ -144,11 +144,16 @@ export function createRevisionActions({ api, get, set }: WorkbenchActionContext)
 
     restoreRevision,
 
-    async viewRevisionDiff(fromRevisionId: string, toRevisionId: string): Promise<string | null> {
+    async viewRevisionDiff(fromRevisionId: string, toRevisionId?: string | null): Promise<string | null> {
       const fromId = fromRevisionId.trim()
-      const toId = toRevisionId.trim()
-      if (!fromId || !toId) return null
-      const result = await api.getProjectRevisionDiff(fromId, toId)
+      if (!fromId) return null
+      const toId = (toRevisionId ?? '').trim()
+      // F1：to 为空 → before→当前工作源；禁止把 to 填成 from（before→before 必空）
+      if (toId && toId === fromId) {
+        set({ lastError: 'Invalid diff target: from and to revision are identical.' })
+        return null
+      }
+      const result = await api.getProjectRevisionDiff(fromId, toId || null)
       if (!result.ok) {
         set({ lastError: result.error ?? 'Failed to load revision diff.' })
         return null

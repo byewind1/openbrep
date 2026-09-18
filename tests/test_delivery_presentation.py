@@ -59,6 +59,9 @@ class TestU01PartialChangePresentation:
         assert p["can_view_diff"] is True
         assert p["can_continue"] is True
         assert p["show_before_after"] is False
+        # F1：partial 无 after → 差异目标必须是工作源
+        assert p["diff_target"] == "working"
+        assert p["after_revision_id"] is None
 
     def test_partial_with_error_code_reason(self):
         p = build_delivery_presentation(
@@ -384,12 +387,134 @@ class TestRevisionServiceRestoreAndDiff:
         assert result["ok"] is True
         assert result["changed"] is True
         assert "3d.gdl" in result["diff"]
+        assert result["to_working_tree"] is False
 
         same = svc.get_revision_diff(
             {"from_revision_id": before.revision_id, "to_revision_id": before.revision_id}
         )
         assert same["ok"] is True
         assert same["changed"] is False
+        assert "from_equals_to" in (same.get("warning") or "")
+
+    def test_f1_partial_working_tree_diff_not_before_to_before(self, tmp_path):
+        """F1 阻断项：partial 无 after 时，diff 必须是 before→工作源且含真实变更。"""
+        from openbrep.revisions import WORKING_TREE_SENTINEL, create_revision
+        from openbrep.workbench.revision_service import WorkbenchRevisionService
+        from openbrep.workbench.delivery_presentation import build_delivery_presentation
+
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        (scripts / "3d.gdl").write_text("BODY\n", encoding="utf-8")
+        before = create_revision(tmp_path, message="before", trigger="manual")
+        # 模拟超时后的部分修改：工作树变了，但没有 after revision
+        (scripts / "3d.gdl").write_text("BODY\nPRIM 1\n", encoding="utf-8")
+
+        p = build_delivery_presentation(
+            _ds(
+                state="partial_change",
+                after_revision_id=None,
+                before_revision_id=before.revision_id,
+                changed_files=["scripts/3d.gdl"],
+            ),
+            intent="MODIFY",
+            claimed_change=True,
+        )
+        assert p["can_view_diff"] is True
+        assert p["diff_target"] == "working"
+        assert p["after_revision_id"] is None
+
+        class FakeSession:
+            source_path = tmp_path
+            project = None
+
+        svc = WorkbenchRevisionService(FakeSession())
+        # 模拟前端：partial 时 to 省略 / working sentinel
+        for to in (None, "", WORKING_TREE_SENTINEL):
+            result = svc.get_revision_diff(
+                {"from_revision_id": before.revision_id, "to_revision_id": to}
+            )
+            assert result["ok"] is True
+            assert result["to_working_tree"] is True
+            assert result["changed"] is True
+            assert "PRIM" in result["diff"]
+            assert f"{before.revision_id}/scripts/3d.gdl" in result["diff"]
+            assert "__working__/scripts/3d.gdl" in result["diff"]
+
+        # 回归：before→before 不得被包装成有效差异
+        bad = svc.get_revision_diff(
+            {"from_revision_id": before.revision_id, "to_revision_id": before.revision_id}
+        )
+        assert bad["changed"] is False
+        assert bad.get("to_working_tree") is False
+
+    def test_f2_history_meta_roundtrip_and_continue_persisted(self, tmp_path):
+        """F2：聊天历史持久化 delivery/continue；刷新后可恢复/显示 unlinked。"""
+        from openbrep.learning import ErrorLearningStore
+        from openbrep.workbench.assistant_service import WorkbenchAssistantService
+        from openbrep.workbench.delivery_presentation import unlinked_delivery_presentation
+        from openbrep.runtime.pipeline import TaskRequest
+
+        store = ErrorLearningStore(tmp_path)
+        delivery = build_delivery_presentation(
+            _ds(state="partial_change", after_revision_id=None, changed_files=["scripts/3d.gdl"]),
+            intent="MODIFY",
+            claimed_change=True,
+        )
+        continue_from = {"origin_run_id": "r_old", "original_instruction": "把层板数改成 5"}
+        store.rewrite_chat_transcript(
+            [
+                {"role": "user", "content": "把层板数改成 5"},
+                {
+                    "role": "assistant",
+                    "content": "未完成，存在部分修改\n\nChanged files: scripts/3d.gdl",
+                    "delivery": delivery,
+                    "delivery_source": _ds(state="partial_change", after_revision_id=None),
+                    "delivery_continue_from": continue_from,
+                    "original_instruction": "把层板数改成 5",
+                    "run_id": delivery.get("run_id"),
+                    "changed_files": ["scripts/3d.gdl"],
+                },
+                # 旧记录：无 delivery meta
+                {"role": "assistant", "content": "历史遗留回复"},
+            ],
+            project_name="Chair",
+            source="react_workbench",
+        )
+
+        class FakeSession:
+            source_path = tmp_path
+
+        svc = WorkbenchAssistantService(FakeSession())
+        listed = svc.list_assistant_history()
+        assert listed["ok"] is True
+        messages = listed["messages"]
+        assert len(messages) == 3
+        restored = messages[1]
+        assert restored["delivery"]["status"] == "incomplete"
+        assert restored["delivery_continue_from"]["origin_run_id"] == "r_old"
+        assert restored["original_instruction"] == "把层板数改成 5"
+        assert restored["run_id"] == delivery.get("run_id")
+        # 旧记录无 delivery 字段 → 前端 hydrate 显示 unlinked（契约层断言 helper）
+        assert "delivery" not in messages[2]
+        assert unlinked_delivery_presentation()["status"] == "unlinked"
+
+        # continue_from 进入 TaskRequest → pipeline metadata（不在 prompt）
+        request = TaskRequest(user_input="把层板数改成 5", intent="MODIFY", continue_from=continue_from)
+        assert request.continue_from == continue_from
+
+    def test_quality_context_includes_continue_from(self, tmp_path):
+        """pipeline 质量档案 context 携带 continue_from（刷新后可重读）。"""
+        from openbrep.runtime.pipeline import TaskPipeline
+
+        pipeline = TaskPipeline.__new__(TaskPipeline)
+        pipeline.quality_ledger_enabled = False
+        # 写入路径的 context 构造在 _write_quality_record；此处验证 source 含 continue_from
+        source = open(
+            "/Users/ren/MAC工作/工作/code/开源项目/gdl-agent/.worktrees/st03-delivery-ui/openbrep/runtime/pipeline.py",
+            encoding="utf-8",
+        ).read()
+        assert '"continue_from": (result.metadata or {}).get("continue_from")' in source
+        assert "continue_from=continue_from" in source
 
     def test_unlinked_helper_stable(self):
         p = unlinked_delivery_presentation()

@@ -38,7 +38,16 @@ def _u01() -> dict:
     assert p["can_recover"] is True and p["can_view_diff"] is True
     assert "scripts/3d.gdl" in p["changed_files"]
     assert "未完成" in p["headline"]
-    return {"case": "U01", "passed": True, "headline": p["headline"], "recover": p["recover_revision_id"]}
+    # F1：partial 差异目标必须是工作源，不是 before→before
+    assert p["diff_target"] == "working"
+    assert p["after_revision_id"] is None
+    return {
+        "case": "U01",
+        "passed": True,
+        "headline": p["headline"],
+        "recover": p["recover_revision_id"],
+        "diff_target": p["diff_target"],
+    }
 
 
 def _u02() -> dict:

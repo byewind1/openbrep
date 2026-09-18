@@ -98,37 +98,55 @@ class WorkbenchRevisionService:
         }
 
     def get_revision_diff(self, body: dict[str, Any]) -> dict[str, Any]:
-        """ST03：查看差异——包装 revisions.compare_revisions。"""
+        """ST03：查看差异。
+
+        - to_revision_id 为 after revision → before→after
+        - to_revision_id 为空 / `__working__` → before→当前工作源（partial_change 契约）
+        - from==to 且非 working → 明确空 diff（禁止 before→before 占位伪差异）
+        """
         if self.session.source_path is None:
             return {"ok": False, "error": "Load an HSF project before reading revision diffs."}
+        from openbrep.revisions import WORKING_TREE_SENTINEL, compare_revision_to_target
+
         from_revision_id = str(body.get("from_revision_id") or "").strip()
-        to_revision_id = str(body.get("to_revision_id") or "").strip()
+        raw_to = body.get("to_revision_id")
+        to_revision_id = "" if raw_to is None else str(raw_to).strip()
         if not from_revision_id:
             return {"ok": False, "error": "from_revision_id is required."}
-        if not to_revision_id:
-            return {"ok": False, "error": "to_revision_id is required."}
-        if from_revision_id == to_revision_id:
+        target_is_working = (not to_revision_id) or to_revision_id == WORKING_TREE_SENTINEL
+        if (not target_is_working) and from_revision_id == to_revision_id:
             return {
                 "ok": True,
                 "from_revision_id": from_revision_id,
                 "to_revision_id": to_revision_id,
+                "to_working_tree": False,
                 "diff": "",
                 "changed": False,
+                "error": None,
+                "warning": "from_equals_to; use working-tree target for partial_change",
             }
         try:
-            from openbrep.revisions import compare_revisions
-
-            diff_text = compare_revisions(self.session.source_path, from_revision_id, to_revision_id)
+            diff_text = compare_revision_to_target(
+                self.session.source_path,
+                from_revision_id,
+                None if target_is_working else to_revision_id,
+            )
         except FileNotFoundError as exc:
             return {"ok": False, "error": f"Revision not found: {exc}"}
         except Exception as exc:
             return {"ok": False, "error": f"Failed to compare revisions: {exc}"}
+        effective_to = WORKING_TREE_SENTINEL if target_is_working else to_revision_id
         return {
             "ok": True,
             "from_revision_id": from_revision_id,
-            "to_revision_id": to_revision_id,
+            "to_revision_id": effective_to,
+            "to_working_tree": target_is_working,
             "diff": diff_text or "",
-            "changed": bool(diff_text and diff_text.strip()),
+            "changed": bool(
+                diff_text
+                and diff_text.strip()
+                and not diff_text.startswith("No source differences")
+            ),
         }
 
 
@@ -171,10 +189,14 @@ def _revision_delivery_meta(revision) -> dict[str, Any] | None:
         delivery = meta.get("delivery")
         if not isinstance(delivery, dict):
             return None
-        return {
+        out = {
             "run_id": delivery.get("run_id"),
             "role": delivery.get("role"),
             "source_fingerprint": delivery.get("source_fingerprint"),
         }
+        continue_from = delivery.get("continue_from")
+        if isinstance(continue_from, dict) and continue_from:
+            out["continue_from"] = continue_from
+        return out
     except Exception:
         return None

@@ -71,6 +71,7 @@ def unlinked_delivery_presentation() -> dict[str, Any]:
         "can_recover": False,
         "can_continue": False,
         "can_view_diff": False,
+        "diff_target": None,
         "recover_revision_id": None,
         "before_revision_id": None,
         "after_revision_id": None,
@@ -126,7 +127,9 @@ def build_delivery_presentation(
         "show_changed_files": bool(files),
         "can_recover": bool(ds.before_revision_id),
         "can_continue": False,
-        "can_view_diff": bool(ds.before_revision_id and (ds.after_revision_id or files)),
+        # F1：diff 目标显式化——有 after 用 after，否则用 working tree（禁止 before→before）
+        "can_view_diff": bool(ds.before_revision_id and (ds.after_revision_id or files or ds.state != STATE_VERIFIED_CHANGE)),
+        "diff_target": None,
         "recover_revision_id": ds.before_revision_id,
         "before_revision_id": ds.before_revision_id,
         "after_revision_id": ds.after_revision_id,
@@ -138,6 +141,10 @@ def build_delivery_presentation(
         "original_instruction": original_instruction or None,
         "continued_from": dict(continued_from) if continued_from else None,
     }
+    if ds.before_revision_id and ds.after_revision_id:
+        base["diff_target"] = "after"
+    elif ds.before_revision_id and ds.state != STATE_UNCHANGED:
+        base["diff_target"] = "working"
 
     if ds.state == STATE_VERIFIED_CHANGE:
         base.update(
@@ -149,6 +156,7 @@ def build_delivery_presentation(
             can_recover=bool(ds.before_revision_id),
             can_continue=False,
             can_view_diff=bool(ds.before_revision_id and ds.after_revision_id),
+            diff_target="after" if (ds.before_revision_id and ds.after_revision_id) else None,
             check_status="passed",
         )
         return base
@@ -166,6 +174,7 @@ def build_delivery_presentation(
             # 修改请求无 diff：允许用户继续描述，不把「继续」当独立重试
             can_continue=bool(claimed_change),
             can_view_diff=False,
+            diff_target=None,
         )
         return base
 
@@ -180,7 +189,9 @@ def build_delivery_presentation(
             show_changed_files=bool(files) or bool(ds.before_revision_id),
             can_recover=bool(ds.before_revision_id),
             can_continue=True,
+            # F1：partial 无 after → 差异目标必须是工作源，不是 before→before
             can_view_diff=bool(ds.before_revision_id),
+            diff_target="working" if ds.before_revision_id else None,
         )
         return base
 
@@ -195,6 +206,7 @@ def build_delivery_presentation(
             can_recover=bool(ds.before_revision_id),
             can_continue=bool(original_instruction),
             can_view_diff=False,
+            diff_target=None,
         )
         return base
 
@@ -217,6 +229,11 @@ def build_delivery_presentation(
         can_recover=bool(ds.before_revision_id),
         can_continue=bool(original_instruction) or bool(ds.before_revision_id),
         can_view_diff=bool(ds.before_revision_id),
+        diff_target=(
+            "after"
+            if ds.before_revision_id and ds.after_revision_id
+            else ("working" if ds.before_revision_id else None)
+        ),
         check_status=check_status,
         version_status=version_status or "failed",
     )

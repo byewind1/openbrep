@@ -25,11 +25,14 @@ function makeContext(initial: Record<string, unknown>) {
         preview_cleared: true,
       },
     })),
-    getProjectRevisionDiff: vi.fn(async (fromId: string, toId: string) => ({
+    getProjectRevisionDiff: vi.fn(async (fromId: string, toId?: string | null) => ({
       ok: true,
       from_revision_id: fromId,
-      to_revision_id: toId,
-      diff: '--- r0001/scripts/3d.gdl\n+++ r0002/scripts/3d.gdl\n',
+      to_revision_id: toId ?? '__working__',
+      to_working_tree: !toId,
+      diff: toId
+        ? `--- ${fromId}\n+++ ${toId}\n`
+        : `--- ${fromId}/scripts/3d.gdl\n+++ __working__/scripts/3d.gdl\n+PRIM 1\n`,
       changed: true,
     })),
   } as unknown as WorkbenchApi
@@ -195,6 +198,23 @@ describe('ST03 recoverDeliveryBefore / viewRevisionDiff / continueDelivery', () 
     const text = await createRevisionActions({ api, get, set }).viewRevisionDiff('r0001', 'r0002')
     expect(api.getProjectRevisionDiff).toHaveBeenCalledWith('r0001', 'r0002')
     expect(text).toContain('r0001')
+  })
+
+  test('F1 partial：to 为空时请求工作源 diff，而不是 before→before', async () => {
+    const { api, get, set, state } = makeContext({})
+    const text = await createRevisionActions({ api, get, set }).viewRevisionDiff('r0001', null)
+    expect(api.getProjectRevisionDiff).toHaveBeenCalledWith('r0001', null)
+    expect(text).toContain('__working__')
+    expect(text).toContain('PRIM')
+    expect(state.lastError).toBeNull()
+  })
+
+  test('F1 回归：from==to 被拒绝，不假装有差异', async () => {
+    const { api, get, set, state } = makeContext({})
+    const text = await createRevisionActions({ api, get, set }).viewRevisionDiff('r0001', 'r0001')
+    expect(api.getProjectRevisionDiff).not.toHaveBeenCalled()
+    expect(text).toBeNull()
+    expect(String(state.lastError)).toContain('identical')
   })
 
   test('U06 continueDelivery：带回原始指令并写入 pendingDeliveryContinue', async () => {

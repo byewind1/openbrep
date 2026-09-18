@@ -185,6 +185,21 @@ describe('DeliveryCard ST03', () => {
     expect(screen.getByTestId('delivery-continued-from').textContent).toContain('r_old')
   })
 
+  test('F1 partial：diff_target=working，before 有 after=null', () => {
+    render(
+      <DeliveryCard
+        delivery={partialPresentation({ diff_target: 'working' })}
+        onViewDiff={vi.fn()}
+        onRecover={vi.fn()}
+        onContinue={vi.fn()}
+      />,
+    )
+    const card = document.querySelector('[data-delivery-state="partial_change"]')
+    expect(card).toBeTruthy()
+    expect(screen.getByTestId('delivery-view-diff')).toBeTruthy()
+    expect(screen.queryByTestId('delivery-before-after')).toBeNull()
+  })
+
   test('shouldSuppressAutoFixLabel：未变化/未完成抑制已修复', () => {
     expect(shouldSuppressAutoFixLabel(partialPresentation({ status: 'no_change' }))).toBe(true)
     expect(shouldSuppressAutoFixLabel(partialPresentation({ status: 'incomplete' }))).toBe(true)

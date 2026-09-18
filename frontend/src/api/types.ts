@@ -111,6 +111,8 @@ export interface DeliveryPresentation {
   can_recover: boolean
   can_continue: boolean
   can_view_diff: boolean
+  /** F1：差异目标 — after=before→after；working=before→当前工作源 */
+  diff_target?: 'after' | 'working' | null
   recover_revision_id: string | null
   before_revision_id: string | null
   after_revision_id: string | null
@@ -722,6 +724,17 @@ export interface ModifyAcceptance {
 export interface AssistantHistoryItem {
   role: 'user' | 'assistant'
   content: string
+  /** ST03 F2：持久化 delivery/continue 关联（不进 LLM prompt） */
+  meta?: {
+    delivery?: DeliveryPresentation | null
+    delivery_source?: DeliverySource | null
+    delivery_continue_from?: DeliveryContinueFrom | null
+    original_instruction?: string | null
+    run_id?: string | null
+    changed_files?: string[]
+    error_category?: string
+    [key: string]: unknown
+  } | null
 }
 
 export interface AssistantMessage {
@@ -1184,9 +1197,12 @@ export interface RevisionDiffResponse {
   ok: boolean
   from_revision_id?: string
   to_revision_id?: string
+  /** true = to 是当前工作源（partial_change 契约） */
+  to_working_tree?: boolean
   diff?: string
   changed?: boolean
   error?: string
+  warning?: string
 }
 
 export interface ProjectGitStatus {

@@ -438,14 +438,18 @@ export async function restoreProjectRevision(
 
 export async function getProjectRevisionDiff(
   fromRevisionId: string,
-  toRevisionId: string,
+  toRevisionId?: string | null,
 ): Promise<import('./types').RevisionDiffResponse> {
   return requestJson<import('./types').RevisionDiffResponse>(
     '/api/project/revision/diff',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from_revision_id: fromRevisionId, to_revision_id: toRevisionId }),
+      // to 省略或 __working__ → before→当前工作源（ST03 partial_change）
+      body: JSON.stringify({
+        from_revision_id: fromRevisionId,
+        to_revision_id: toRevisionId ?? undefined,
+      }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )

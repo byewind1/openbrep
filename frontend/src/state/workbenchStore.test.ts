@@ -273,12 +273,15 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
         preview_cleared: true,
       },
     }),
-    getProjectRevisionDiff: async (fromRevisionId: string, toRevisionId: string) => ({
+    getProjectRevisionDiff: async (fromRevisionId: string, toRevisionId?: string | null) => ({
       ok: true,
       from_revision_id: fromRevisionId,
-      to_revision_id: toRevisionId,
-      diff: `--- ${fromRevisionId}\n+++ ${toRevisionId}\n`,
-      changed: fromRevisionId !== toRevisionId,
+      to_revision_id: toRevisionId ?? '__working__',
+      to_working_tree: !toRevisionId,
+      diff: toRevisionId
+        ? `--- ${fromRevisionId}\n+++ ${toRevisionId}\n`
+        : `--- ${fromRevisionId}/scripts/3d.gdl\n+++ __working__/scripts/3d.gdl\n+PRIM 1\n`,
+      changed: true,
     }),
     mockCompile: async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 12 }),
     revealArtifact: async (path = '') => ({ ok: true, path: path || '/workspace/output/Chair.gsm' }),

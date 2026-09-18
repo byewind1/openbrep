@@ -128,7 +128,7 @@ export interface WorkbenchApi {
   ) => Promise<RestoreRevisionResponse>
   getProjectRevisionDiff: (
     fromRevisionId: string,
-    toRevisionId: string,
+    toRevisionId?: string | null,
   ) => Promise<import('../api/types').RevisionDiffResponse>
   fetchProjectGitStatus: () => Promise<ProjectGitResponse>
   initializeProjectGit: () => Promise<ProjectGitResponse>
@@ -408,7 +408,7 @@ export interface WorkbenchState {
     revisionId: string,
     options?: import('./actions/revisionActions').RestoreRevisionOptions,
   ) => Promise<void>
-  viewRevisionDiff: (fromRevisionId: string, toRevisionId: string) => Promise<string | null>
+  viewRevisionDiff: (fromRevisionId: string, toRevisionId?: string | null) => Promise<string | null>
   recoverDeliveryBefore: (
     presentation: import('../api/types').DeliveryPresentation | null | undefined,
     options?: { draftPolicy?: import('../api/types').RestoreDraftPolicy; source?: string },

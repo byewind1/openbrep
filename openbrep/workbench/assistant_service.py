@@ -216,11 +216,27 @@ class WorkbenchAssistantService:
             return {"ok": True, "messages": []}
         try:
             entries = ErrorLearningStore(self.session.source_path).list_chat_transcript()
-            messages = [
-                {"role": entry.role if entry.role in {"user", "assistant"} else "assistant", "content": entry.content}
-                for entry in entries
-                if entry.content
-            ]
+            messages = []
+            for entry in entries:
+                if not entry.content:
+                    continue
+                role = entry.role if entry.role in {"user", "assistant"} else "assistant"
+                item: dict[str, Any] = {"role": role, "content": entry.content}
+                meta = entry.meta if isinstance(entry.meta, dict) else None
+                if meta:
+                    # ST03 F2：把持久化的 delivery / continue 关联原样带回前端
+                    for key in (
+                        "delivery",
+                        "delivery_source",
+                        "delivery_continue_from",
+                        "original_instruction",
+                        "run_id",
+                        "changed_files",
+                        "error_category",
+                    ):
+                        if key in meta and meta[key] is not None:
+                            item[key] = meta[key]
+                messages.append(item)
         except Exception as exc:
             return {"ok": False, "error": f"Failed to load assistant history: {exc}", "messages": []}
         return {"ok": True, "messages": messages}
@@ -721,6 +737,8 @@ class WorkbenchAssistantService:
             # 计划确认门（V3）：仅 GUI MODIFY 请求置 True；确认后经 confirmed_plan 注入
             confirm_plan=bool(body.get("confirm_plan")) and intent == "MODIFY",
             confirmed_plan=body.get("confirmed_plan") if isinstance(body.get("confirmed_plan"), dict) else None,
+            # ST03 F2：继续关联进入 TaskRequest → pipeline metadata（先于 finalize）
+            continue_from=normalize_continue_from(body.get("continue_from")),
         )
         # D10：会话层 project epoch 守卫（Codex modify 桥接在长任务中拒绝
         # 项目切换后的后续 mutation；非 codex 路径不使用该字段）

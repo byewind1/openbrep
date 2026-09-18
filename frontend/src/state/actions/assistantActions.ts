@@ -28,6 +28,123 @@ function compactExtras<T extends Record<string, unknown>>(extras: T): Partial<T>
   return out as Partial<T>
 }
 
+/** ST03 F2：历史发送时附带 delivery/continue 元数据（LLM 载荷仍只用 role/content）。 */
+function withHistoryMeta(message: AssistantMessage): AssistantHistoryItem {
+  const meta: NonNullable<AssistantHistoryItem['meta']> = {}
+  if (message.delivery) meta.delivery = message.delivery
+  if (message.deliverySource) meta.delivery_source = message.deliverySource
+  if (message.deliveryContinueFrom) meta.delivery_continue_from = message.deliveryContinueFrom
+  if (message.originalInstruction) meta.original_instruction = message.originalInstruction
+  if (message.runId) meta.run_id = message.runId
+  if (message.changedFiles?.length) meta.changed_files = message.changedFiles
+  if (message.errorCategory) meta.error_category = message.errorCategory
+  // 任务类 assistant 消息即使无 delivery 也写入 meta.delivery=null 标记，
+  // 便于刷新后区分「本就没有卡」与「旧记录未关联」
+  if (message.role === 'assistant' && (message.delivery || message.deliverySource || message.changedFiles?.length)) {
+    if (!('delivery' in meta)) meta.delivery = null
+  }
+  return { role: message.role, content: message.content, meta: Object.keys(meta).length ? meta : undefined }
+}
+
+/**
+ * ST03 F2：刷新后 hydrate 历史。
+ * - 有 delivery meta → 原样恢复卡片
+ * - assistant 任务类消息缺 delivery → 明确 unlinked（旧记录，未关联）
+ * - 无任务痕迹的 explain 消息不强行插卡
+ */
+export function hydrateHistoryMessages(messages: AssistantMessage[]): AssistantMessage[] {
+  return (messages ?? []).map((raw) => {
+    const message = normalizeHistoryMessage(raw)
+    if (message.role !== 'assistant') return message
+    if (message.delivery) return message
+    const looksLikeTaskResult =
+      Boolean(message.deliverySource) ||
+      Boolean(message.deliveryContinueFrom) ||
+      Boolean(message.runId) ||
+      Boolean(message.changedFiles?.length) ||
+      /Changed files:/i.test(message.content) ||
+      /旧记录，未关联/.test(message.content)
+    if (!looksLikeTaskResult) {
+      // meta 明确写了 delivery:null（保存时的任务消息）
+      const rawDelivery = (raw as { delivery?: DeliveryPresentation | null }).delivery
+      const nestedDelivery = (raw as { meta?: { delivery?: DeliveryPresentation | null } }).meta?.delivery
+      if (rawDelivery === null || nestedDelivery === null) {
+        return { ...message, delivery: unlinkedDeliveryPresentation() }
+      }
+      return message
+    }
+    return {
+      ...message,
+      delivery: unlinkedDeliveryPresentation(),
+      deliverySource: message.deliverySource ?? null,
+      runId: message.runId ?? null,
+    }
+  })
+}
+
+/** 后端历史字段（snake_case / meta）→ AssistantMessage */
+function normalizeHistoryMessage(raw: AssistantMessage): AssistantMessage {
+  const bag = raw as AssistantMessage & Record<string, unknown>
+  const meta = (bag.meta ?? {}) as Record<string, unknown>
+  const delivery =
+    (bag.delivery as DeliveryPresentation | undefined) ??
+    (meta.delivery as DeliveryPresentation | undefined)
+  const deliverySource =
+    (bag.deliverySource as DeliverySource | null | undefined) ??
+    ((bag.delivery_source as DeliverySource | null | undefined) ??
+      (meta.delivery_source as DeliverySource | null | undefined))
+  const deliveryContinueFrom =
+    (bag.deliveryContinueFrom as DeliveryContinueFrom | null | undefined) ??
+    ((bag.delivery_continue_from as DeliveryContinueFrom | null | undefined) ??
+      (meta.delivery_continue_from as DeliveryContinueFrom | null | undefined))
+  const originalInstruction =
+    (bag.originalInstruction as string | undefined) ??
+    ((bag.original_instruction as string | undefined) ??
+      (meta.original_instruction as string | undefined))
+  const runId =
+    (bag.runId as string | null | undefined) ??
+    ((bag.run_id as string | null | undefined) ?? (meta.run_id as string | null | undefined))
+  const changedFiles =
+    (bag.changedFiles as string[] | undefined) ??
+    ((bag.changed_files as string[] | undefined) ?? (meta.changed_files as string[] | undefined))
+  return {
+    ...raw,
+    delivery: delivery || undefined,
+    deliverySource: deliverySource ?? undefined,
+    deliveryContinueFrom: deliveryContinueFrom ?? undefined,
+    originalInstruction: originalInstruction || undefined,
+    runId: runId ?? undefined,
+    changedFiles: changedFiles || undefined,
+  }
+}
+
+function unlinkedDeliveryPresentation(): DeliveryPresentation {
+  return {
+    state: null,
+    status: 'unlinked',
+    unlinked: true,
+    headline: '旧记录，未关联交付版本',
+    reason: '该记录产生于 delivery_source 契约之前，或刷新后未能恢复关联；无法定位 before/after',
+    show_success_badge: false,
+    show_before_after: false,
+    show_changed_files: false,
+    can_recover: false,
+    can_continue: false,
+    can_view_diff: false,
+    diff_target: null,
+    recover_revision_id: null,
+    before_revision_id: null,
+    after_revision_id: null,
+    changed_files: [],
+    run_id: null,
+    error_code: null,
+    check_status: 'unknown',
+    version_status: null,
+    original_instruction: null,
+    continued_from: null,
+  }
+}
+
 /**
  * HF4：把 store 的 assistantMessages 组装成发给后端的对话历史载荷。
  *
@@ -120,7 +237,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // 无项目时不写盘：聊天历史存在 <项目>/.openbrep/ 下，
     // 纯聊天不应触发任何落盘，也避免后端报错污染 lastError
     if (!get().project) return
-    const result = await api.saveAssistantHistory(get().assistantMessages)
+    // ST03 F2：持久化 delivery/continue 元数据（后端 rewrite 提取 flat/meta）
+    const messages = get().assistantMessages.map(withHistoryMeta)
+    const result = await api.saveAssistantHistory(messages as AssistantMessage[])
     if (!result.ok && result.error) {
       set({ lastError: result.error })
     }
@@ -310,7 +429,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         }
         return
       }
-      set({ assistantMessages: result.messages ?? [] })
+      // ST03 F2：刷新后恢复 delivery 卡；旧/缺关联记录显示 unlinked
+      set({ assistantMessages: hydrateHistoryMessages(result.messages ?? []) })
     },
 
     async clearAssistantHistory() {
