@@ -342,6 +342,10 @@ class SkillsLoader:
         # 重置，记录本次实际注入的 skill 名。pipeline 在任务结束时读取它并写进
         # TaskResult.metadata["injected_skills"]；fail_count 回写在 GUI 侧完成。
         self.last_injected: list[str] = []
+        # ST04：匹配来源与理由（同样只读旁路，注入文本不变）。每条：
+        # {name, source, reason, status, pattern_type, matched_terms}
+        # source 取值：task_type / explicit_word / custom_match。
+        self.last_injected_details: list[dict[str, Any]] = []
 
     def load(self) -> None:
         """Load all .md files from the skills directory (excluding README).
@@ -414,6 +418,7 @@ class SkillsLoader:
             self.load()
 
         self.last_injected = []  # 本次调用开头重置注入侧通道
+        self.last_injected_details = []
 
         if not self._skills:
             return ""
@@ -425,21 +430,33 @@ class SkillsLoader:
         if error and "debug" not in task_types:
             task_types.append("debug")
 
-        # Collect matching skill files
+        # Collect matching skill files（记录每个名字的来源，供审计输出）
         skill_names: list[str] = []
+        sources: dict[str, str] = {}
+        match_reasons: dict[str, str] = {}
+        matched_terms: dict[str, list[str]] = {}
         for task_type in task_types:
             if task_type in _TASK_SKILL_MAP:
-                skill_names.extend(_TASK_SKILL_MAP[task_type])
+                for mapped in _TASK_SKILL_MAP[task_type]:
+                    skill_names.append(mapped)
+                    sources.setdefault(mapped, "task_type")
+                    match_reasons.setdefault(mapped, f"任务类型 {task_type} 的内置映射")
 
         # Also check for exact filename matches
         # (user might have custom skills like "curtain_wall.md")
-        for word in instruction.lower().split():
+        instruction_words = instruction.lower().split()
+        for word in instruction_words:
             if len(word) > 3 and word in self._skills:
                 if word not in skill_names:
                     skill_names.append(word)
+                sources.setdefault(word, "explicit_word")
+                match_reasons.setdefault(word, "指令里显式出现了该 skill 名")
 
-        for name in self._match_custom_skills(instruction, set(skill_names)):
+        for name, detail in self._match_custom_skills(instruction, set(skill_names)):
             skill_names.append(name)
+            sources.setdefault(name, "custom_match")
+            match_reasons.setdefault(name, str(detail.get("reason") or "自定义内容匹配"))
+            matched_terms.setdefault(name, list(detail.get("matched_terms") or []))
 
         # Load and concatenate (只注入 active / verified；命中即计复用）
         parts = []
@@ -450,25 +467,46 @@ class SkillsLoader:
                 seen.add(name)
                 self._count_reuse(name)
                 self.last_injected.append(name)
+                meta = self.skill_meta(name)
+                self.last_injected_details.append({
+                    "name": name,
+                    "source": sources.get(name, "unknown"),
+                    "reason": match_reasons.get(name, ""),
+                    "status": meta.get("status"),
+                    "pattern_type": meta.get("pattern_type"),
+                    "matched_terms": matched_terms.get(name, []),
+                })
 
         return "\n\n---\n\n".join(parts)
 
-    def _match_custom_skills(self, instruction: str, selected: set[str], *, limit: int = 2) -> list[str]:
+    def _match_custom_skills(
+        self, instruction: str, selected: set[str], *, limit: int = 2
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """自定义 skill 自动匹配：返回 (name, 详情) 列表。
+
+        ST04 只加诊断、不改选择行为：仍按既有打分（score >= 1）注入，但每条命中
+        附带 source/reason/强信号标记，供审计"这条 skill 为什么被注入"。
+        已知证据化问题（待重录语料后再收紧）：正文通用词重叠（zzyzx/宽度/ROT/
+        数字）足以让 ``skill_dougong`` 之类垂直参考被注入到无关任务；
+        ``_example_*`` 骨架模板也会被 create 类指令命中。
+        """
         instruction_lower = instruction.lower()
         instruction_tokens = set(_tokenize(instruction_lower))
-        matches: list[tuple[int, str]] = []
+        matches: list[tuple[int, str, dict[str, Any]]] = []
 
         for name, content in self._skills.items():
             if name in selected or name in _DEFAULT_SKILL_NAMES:
                 continue
             if not self._is_injectable(name):
                 continue  # proposed / deprecated 不参与匹配
-            score = _score_custom_skill_match(name, content, instruction_lower, instruction_tokens)
-            if score >= 1:
-                matches.append((score, name))
+            detail = _score_custom_skill_match(
+                name, content, instruction_lower, instruction_tokens
+            )
+            if detail["score"] >= 1:
+                matches.append((detail["score"], name, detail))
 
         matches.sort(key=lambda item: (-item[0], item[1]))
-        return [name for _, name in matches[:limit]]
+        return [(name, detail) for _, name, detail in matches[:limit]]
 
     def get_by_name(self, name: str) -> Optional[str]:
         """Get a specific skill by filename (without extension).
@@ -566,32 +604,102 @@ def _tokenize(text: str) -> list[str]:
     return [token for token in re.split(r"[^a-z0-9_一-鿿]+", text.lower()) if len(token) >= 2]
 
 
+# ST04：正文/触发词重叠里的"通用词"——出现在任何 GDL 模型里的协议词、命令名、
+# 单位数字、预留参数名。这些词命中不构成领域匹配证据（斗拱 skill 曾因此被注入到
+# 门窗/书桌/桥架等无关任务）。中文通用词同样列在此。
+_MATCH_STOPWORDS: frozenset[str] = frozenset({
+    # 英文功能词/协议词
+    "the", "and", "for", "with", "from", "not", "are", "you", "your", "use", "used",
+    "using", "can", "will", "must", "may", "this", "that", "then", "than", "when",
+    "where", "which", "into", "out", "one", "two", "all", "any", "its", "has", "have",
+    # GDL / HSF 协议词与常用命令名
+    "gdl", "xml", "hsf", "gsm", "script", "scripts", "param", "params", "parameter",
+    "parameters", "object", "objects", "value", "values", "name", "names", "type",
+    "types", "code", "file", "files", "block", "prism", "rot", "add", "addz", "del",
+    "for", "next", "then", "if", "endif", "end", "call", "gosub", "return",
+    "a", "b", "c", "zzyzx", "width", "height", "depth", "length",
+    # 中文通用词
+    "参数", "脚本", "默认", "宽度", "高度", "深度", "长度", "构件", "对象", "模型",
+    "生成", "创建", "修改", "尺寸", "单位", "定义", "说明", "示例", "参考", "项目",
+    "文件", "结构", "类型", "名称", "使用", "实现", "支持", "需要", "可以", "以及",
+})
+
+
+def _is_meaningful_match_token(token: str) -> bool:
+    """通用词/纯数字不作为领域匹配证据。"""
+    text = (token or "").strip().lower()
+    if len(text) < 2 or text in _MATCH_STOPWORDS:
+        return False
+    if re.fullmatch(r"[0-9][0-9a-z_.\-]*", text):
+        return False
+    return True
+
+
 def _iter_skill_files(skills_dir: Path) -> list[Path]:
     public_files = sorted(skills_dir.glob("*.md"))
     pro_files = sorted((skills_dir / "pro").glob("*.md"))
     return public_files + pro_files
 
 
-def _score_custom_skill_match(name: str, content: str, instruction_lower: str, instruction_tokens: set[str]) -> int:
+def _score_custom_skill_match(
+    name: str, content: str, instruction_lower: str, instruction_tokens: set[str]
+) -> dict[str, Any]:
+    """自定义 skill 匹配打分 + 证据。
+
+    返回 ``{score, strong, matched_terms, reason}``。score 与既有实现逐位一致
+    （两个正文循环各自计分），选择行为不变；strong 只是诊断标记：False 表示这次
+    命中没有 skill 名/触发小节强信号，仅靠正文词重叠（疑似误匹配，待重录语料后
+    再收紧）。
+    """
     score = 0
+    matched: list[str] = []
     name_tokens = set(_tokenize(name.replace("_", " ").replace("-", " ")))
-    score += 2 * len(name_tokens & instruction_tokens)
+    name_hits = sorted(name_tokens & instruction_tokens)
+    score += 2 * len(name_hits)
+    matched.extend(name_hits)
 
     activation_text = _extract_activation_text(content).lower()
     activation_terms = _activation_terms(activation_text)
+    activation_hits: list[str] = []
     for term in activation_terms:
         if term and term in instruction_lower:
             score += 3
+            activation_hits.append(term)
 
     body = content[:3000].lower()
+    body_hits: list[str] = []
     for token in instruction_tokens:
         if token in body:
             score += 1
+            body_hits.append(token)
     for token in set(_tokenize(body)):
         if token in instruction_lower:
+            # 与既有打分保持一致：两个正文循环各自计分（不跨循环去重），
+            # 否则会改变注入选择顺序（prompt 变化 → 语料回放未命中）。
             score += 1
+            body_hits.append(token)
 
-    return score
+    # strong=True 表示命中"强信号"（skill 名 token 或触发小节词）。仅正文重叠的命中
+    # 会标成"疑似误匹配"供审计，但当前不改变注入判定（ST04 只加诊断）。
+    strong = bool(name_hits or activation_hits)
+    meaningful_body = sorted({t for t in body_hits if _is_meaningful_match_token(t)})
+    generic_body = sorted({t for t in body_hits if not _is_meaningful_match_token(t)})
+    if name_hits:
+        reason = f"skill 名命中指令词：{'、'.join(name_hits[:5])}"
+    elif activation_hits:
+        reason = f"触发小节词命中：{'、'.join(activation_hits[:3])}"
+    elif meaningful_body:
+        reason = f"正文领域词重叠：{'、'.join(meaningful_body[:5])}"
+    elif generic_body:
+        reason = f"仅正文通用词重叠（疑似误匹配，待重录语料后收紧）：{'、'.join(generic_body[:5])}"
+    else:
+        reason = "无命中"
+    return {
+        "score": score,
+        "strong": strong,
+        "matched_terms": sorted(set(matched) | set(activation_hits)),
+        "reason": reason,
+    }
 
 
 def _extract_activation_text(content: str) -> str:

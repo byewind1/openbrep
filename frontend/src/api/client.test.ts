@@ -304,3 +304,53 @@ describe('Codex BYOA API (D1)', () => {
     expect(result.ok).toBe(true)
   })
 })
+
+describe('skill proposal routes (ST04)', () => {
+  function stubJson(payload: unknown) {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => payload,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  test('confirmSkillProposal sends proposal_id when provided', async () => {
+    const fetchMock = stubJson({ ok: true, verified: true })
+    const { confirmSkillProposal } = await import('./client')
+    await confirmSkillProposal(true, 'sp_1')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/skill/confirm')
+    const body = JSON.parse(String(init.body))
+    expect(body).toEqual({ approve: true, proposal_id: 'sp_1' })
+  })
+
+  test('confirmSkillProposal keeps legacy body without proposal_id', async () => {
+    const fetchMock = stubJson({ ok: true, discarded: true })
+    const { confirmSkillProposal } = await import('./client')
+    await confirmSkillProposal(false)
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ approve: false })
+  })
+
+  test('listSkillProposals GETs the proposals route', async () => {
+    const fetchMock = stubJson({ ok: true, proposals: [], total: 0 })
+    const { listSkillProposals } = await import('./client')
+    const result = await listSkillProposals()
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/skill/proposals')
+    expect(init.method).toBe('GET')
+    expect(result.ok).toBe(true)
+  })
+
+  test('proposeSkillCandidate POSTs instruction and source_run_ids', async () => {
+    const fetchMock = stubJson({ ok: true, proposal_id: 'sp_2', status: 'draft' })
+    const { proposeSkillCandidate } = await import('./client')
+    await proposeSkillCandidate('沉淀成 skill', ['r_1'])
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/skill/proposals')
+    const body = JSON.parse(String(init.body))
+    expect(body.instruction).toBe('沉淀成 skill')
+    expect(body.source_run_ids).toEqual(['r_1'])
+  })
+})

@@ -117,6 +117,10 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Assistant message is empty."}
 
+        # ST04：显式"沉淀成 skill / 保存为技能"走提案路径，绕过修改代码流程
+        if self._is_explicit_skill_request(message):
+            return self._explicit_skill_response(message)
+
         # D3：用户选中的是 ChatGPT Codex（openai-codex）订阅模型 → CHAT/EXPLAIN
         # 由该模型完成（ephemeral thread + 临时只读 cwd + approval never）。
         # 无项目（CHAT）不创建任何目录；有项目（EXPLAIN）经 pipeline 只读摘要
@@ -408,6 +412,10 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Generation message is empty."}
 
+        # ST04：显式 skill 沉淀请求绕开 MODIFY/编译工具链，直接产出持久候选
+        if self._is_explicit_skill_request(message):
+            return self._explicit_skill_response(message)
+
         gate_error = self._codex_modify_gate(body)
         if gate_error is not None:
             return {"ok": False, "error": gate_error}
@@ -594,19 +602,77 @@ class WorkbenchAssistantService:
         return harvest_for_session(self.session, result, instruction)
 
     def confirm_skill_proposal(self, body: dict[str, Any]) -> dict[str, Any]:
-        """POST /api/skill/confirm：审批待确认 skill 提案。
+        """POST /api/skill/confirm：审批 skill 提案/候选。
 
-        approve=True → propose_skill 落盘（status=proposed）→ 立即 verify_skill
-        双闸晋升 → 结果进响应；approve=False → 丢弃。两种结局都写
-        skill_proposal_outcome 反馈事件。无 pending / 跨项目失效 → 明确错误码。
+        带 proposal_id → 从持久候选 store 读取并审批（校验项目身份，draft →
+        approved/rejected）；不带 → 保留原 session.pending_skill_proposal 行为。
         """
         try:
-            from openbrep.runtime.skill_harvest import confirm_skill_proposal as _confirm
-
-            return _confirm(self.session, body)
+            return self._skill_proposal_service().confirm(body)
         except Exception as exc:
             logger.warning("skill proposal confirm failed: %s", exc)
             return {"ok": False, "error": f"Skill proposal confirm failed: {exc}"}
+
+    # ── ST04：显式 skill 沉淀（assistant 文本路由与 REST 路由共用同一 service）──
+
+    def _skill_proposal_service(self):
+        from openbrep.workbench.skill_proposal_service import SkillProposalService
+
+        return SkillProposalService(self.session)
+
+    def propose_skill_candidate(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/skill/proposals 的 assistant 侧入口。"""
+        try:
+            return self._skill_proposal_service().propose(body)
+        except Exception as exc:
+            logger.warning("skill proposal failed: %s", exc)
+            return {"ok": False, "code": "SKILL_PROPOSAL_FAILED", "error": f"skill 沉淀失败：{exc}"}
+
+    def list_skill_proposals(self) -> dict[str, Any]:
+        """GET /api/skill/proposals 的 assistant 侧入口。"""
+        try:
+            return self._skill_proposal_service().list_proposals()
+        except Exception as exc:
+            logger.warning("skill proposal list failed: %s", exc)
+            return {"ok": False, "error": f"skill 候选列表读取失败：{exc}", "proposals": []}
+
+    @staticmethod
+    def _is_explicit_skill_request(message: str) -> bool:
+        from openbrep.skill_proposals import detect_explicit_skill_request
+
+        return detect_explicit_skill_request(message)
+
+    def _explicit_skill_response(self, message: str) -> dict[str, Any]:
+        """显式沉淀的 assistant 载荷（ok/失败都带明确 code，不报 completed）。"""
+        result = self.propose_skill_candidate({"instruction": message})
+        if not result.get("ok"):
+            error = str(result.get("error") or "skill 沉淀失败。")
+            return {
+                "ok": False,
+                "code": result.get("code"),
+                "error": error,
+                "assistant": {"kind": "skill_proposal", "reply": error},
+                "skill_proposal": None,
+                "events": [],
+            }
+        proposal_id = result.get("proposal_id")
+        name = result.get("name")
+        path = f".openbrep/memory/skill-proposals/{proposal_id}.json"
+        evidence = result.get("evidence") or {}
+        evidence_note = (
+            "证据完整" if evidence.get("evidence_complete") else "证据不完整（旧资料/未绑定 after，未核验）"
+        )
+        reply = (
+            f"已生成待审 skill 候选「{name}」（{proposal_id}）。\n"
+            f"候选路径：{path}\n"
+            f"状态：draft（需你确认后才沉淀）。{evidence_note}。"
+        )
+        return {
+            "ok": True,
+            "assistant": {"kind": "skill_proposal", "reply": reply},
+            "skill_proposal": result,
+            "events": [],
+        }
 
     def generate_with_assistant_stream(
         self, body: dict[str, Any], cancel_event: Any | None = None
@@ -622,6 +688,13 @@ class WorkbenchAssistantService:
         message = str(body.get("message") or "").strip()
         if not message:
             yield {"type": "error", "data": {"error": "Generation message is empty."}}
+            return
+
+        # ST04：显式 skill 沉淀请求 → 直接产出候选，不启动 pipeline / 工具链
+        if self._is_explicit_skill_request(message):
+            result = self._explicit_skill_response(message)
+            result.setdefault("events", [])
+            yield {"type": "done", "data": result}
             return
 
         gate_error = self._codex_modify_gate(body)

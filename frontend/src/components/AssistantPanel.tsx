@@ -895,6 +895,12 @@ function SkillProposalCard({
 }) {
   const t = useT()
   const evidence = proposal.evidence ?? null
+  const revisions = evidence?.revisions ?? []
+  const evidenceNote = evidence
+    ? evidence.evidence_complete
+      ? t('assistant.skillProposal.evidenceComplete', { rev: revisions[0] ?? '-' })
+      : t('assistant.skillProposal.evidenceIncomplete')
+    : null
   return (
     <div className="skill-proposal-card" role="group" aria-label={t('assistant.skillProposal.title')}>
       <div className="skill-proposal-header">
@@ -902,12 +908,22 @@ function SkillProposalCard({
         <span className="skill-proposal-type">{proposal.pattern_type}</span>
       </div>
       <p className="skill-proposal-name">{proposal.name}</p>
+      {proposal.status || evidenceNote ? (
+        <p className="skill-proposal-status">
+          {proposal.status ? `${t('assistant.skillProposal.status')}: ${proposal.status}` : null}
+          {proposal.status && evidenceNote ? ' · ' : null}
+          {evidenceNote}
+        </p>
+      ) : null}
       <pre className="skill-proposal-content">{proposal.content}</pre>
-      {evidence && (evidence.changed_files?.length || evidence.project) ? (
+      {evidence && (evidence.changed_files?.length || evidence.project || evidence.source_run_ids?.length) ? (
         <div className="skill-proposal-section">
           <strong>{t('assistant.skillProposal.evidence')}</strong>
           <ul>
             {evidence.project ? <li>{t('assistant.skillProposal.project')}: {evidence.project}</li> : null}
+            {(evidence.source_run_ids ?? []).map((run, i) => (
+              <li key={`${run}-${i}`}>{run}</li>
+            ))}
             {(evidence.changed_files ?? []).map((file, i) => (
               <li key={`${file}-${i}`}>{file}</li>
             ))}

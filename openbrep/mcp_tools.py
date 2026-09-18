@@ -1517,15 +1517,25 @@ def reuse_skill(query: str, skills_dir: str = "./skills") -> dict:
             loader = SkillsLoader(str(skills_path))
             loader.load()
             skills_text = loader.get_for_task(query)
+            details = {
+                str(item.get("name")): item
+                for item in (getattr(loader, "last_injected_details", None) or [])
+                if isinstance(item, dict)
+            }
             matched = []
             for name, body in _skill_blocks_from_injected(loader, skills_text):
                 meta = loader.skill_meta(name)
+                detail = details.get(name) or {}
                 matched.append({
                     "name": name,
                     "status": meta.get("status"),
                     "pattern_type": meta.get("pattern_type"),
                     "reuse_count": meta.get("reuse_count"),
                     "excerpt": body[:200],
+                    # ST04：匹配来源与理由（审计用；不改变注入文本）
+                    "source": detail.get("source"),
+                    "reason": detail.get("reason"),
+                    "matched_terms": detail.get("matched_terms") or [],
                 })
             return {
                 "ok": True,

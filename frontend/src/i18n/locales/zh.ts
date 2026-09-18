@@ -248,12 +248,15 @@ export const zh = {
   'assistant.plan.confirm': '确认修改',
   'assistant.plan.cancel': '取消',
 
-  // 模式级 skill 提案（P2-d）
+  // 模式级 skill 提案（P2-d / ST04）
   'assistant.skillProposal.title': '沉淀为 skill 提案',
   'assistant.skillProposal.evidence': '证据',
   'assistant.skillProposal.project': '来源项目',
   'assistant.skillProposal.approve': '批准沉淀',
   'assistant.skillProposal.ignore': '忽略',
+  'assistant.skillProposal.status': '状态',
+  'assistant.skillProposal.evidenceComplete': '证据完整（已绑定 revision {rev}）',
+  'assistant.skillProposal.evidenceIncomplete': '证据不完整（旧资料/未绑定 after，未核验）',
 
   // D16 会话级模型 pill（切换只作用当前会话，不写 config.toml）
   'assistant.modelPill.override': '会话覆盖',

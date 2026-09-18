@@ -3604,10 +3604,20 @@ test('confirmPendingPlan without a pending plan sets lastError (V3)', async () =
 // ── 模式级 skill 提案（P2-d） ─────────────────────────────
 
 const SKILL_PROPOSAL = {
+  proposal_id: 'sp_20260918_abc123',
+  status: 'draft' as const,
   name: 'shelf_loop_pattern',
   pattern_type: 'shelf_loop',
   content: '## 适用场景 / When to Use\n层板循环对象。\n\n## 写法要点\n- FOR 循环 + ADD/DEL 配对。',
-  evidence: { intent: 'MODIFY', changed_files: ['scripts/3d.gdl'], project: 'Shelf' },
+  evidence: {
+    source: 'explicit',
+    intent: 'MODIFY',
+    changed_files: ['scripts/3d.gdl'],
+    project: 'Shelf',
+    source_run_ids: ['r_2026_test'],
+    revisions: ['r0002'],
+    evidence_complete: true,
+  },
 }
 
 test('sendChat stores skill proposal from generate result (P2-d)', async () => {
@@ -3647,10 +3657,12 @@ test('successful generate without proposal clears stale skill proposal (P2-d)', 
 
 test('confirmPendingSkillProposal(true) approves and clears the proposal (P2-d)', async () => {
   let approveArg: boolean | null = null
+  let proposalIdArg: string | undefined
   const store = createWorkbenchStore(
     makeApi({
-      confirmSkillProposal: async (approve: boolean) => {
+      confirmSkillProposal: async (approve: boolean, proposalId?: string) => {
         approveArg = approve
+        proposalIdArg = proposalId
         return { ok: true, skill: 'shelf_loop_pattern', verified: true, gate: 'structural', status: 'verified' }
       },
     }),
@@ -3662,6 +3674,8 @@ test('confirmPendingSkillProposal(true) approves and clears the proposal (P2-d)'
 
   const state = store.getState()
   expect(approveArg).toBe(true)
+  // ST04：审批必须带上持久候选 ID，让后端走 store 路径
+  expect(proposalIdArg).toBe('sp_20260918_abc123')
   expect(state.pendingSkillProposal).toBeNull()
   expect(state.assistantMessages.at(-1)?.content).toContain('已沉淀并通过验证')
 })
@@ -4284,4 +4298,21 @@ test('loadCodexCatalog fetches dynamic catalog only when connected', async () =>
   expect(disconnected.getState().codexCatalog.connected).toBe(false)
   expect(disconnected.getState().codexCatalog.models).toEqual([])
   expect(modelsCalled).toBe(false)
+})
+
+test('sendAssistantMessage surfaces an explicit skill proposal from the explain route (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      askAssistant: async () => ({
+        ok: true,
+        assistant: { kind: 'skill_proposal', reply: '已生成待审 skill 候选。' },
+        skill_proposal: SKILL_PROPOSAL,
+      }),
+    }),
+  )
+  await store.getState().load()
+
+  await store.getState().sendAssistantMessage('把这轮修改沉淀成楼梯skill')
+
+  expect(store.getState().pendingSkillProposal).toEqual(SKILL_PROPOSAL)
 })

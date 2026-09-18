@@ -39,6 +39,7 @@ from openbrep.workbench.settings_service import (
     load_workbench_config,
     resolve_workbench_config_path,
 )
+from openbrep.workbench.skill_proposal_service import SkillProposalService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
 from openbrep.workbench.workspace_service import (
     init_workspace as ws_init_workspace,
@@ -127,6 +128,7 @@ class WorkbenchSession:
         self.git_service = WorkbenchGitService(self)
         self.blender_import_service = WorkbenchBlenderImportService(self)
         self.assistant_service = WorkbenchAssistantService(self)
+        self.skill_proposal_service = SkillProposalService(self)
         self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
@@ -513,13 +515,6 @@ class WorkbenchSession:
         """计划确认门：approve 后带已确认计划执行（stream 走 SSE）；拒绝/无 pending 各自返回。"""
         return self.assistant_service.confirm_modify(body)
 
-    def skill_confirm(self, body: dict[str, Any]):
-        """POST /api/skill/confirm：审批待确认 skill 提案（薄转发，request_gate 锁内）。
-
-        approve → propose_skill 落盘 + 立即 verify_skill 双闸晋升；reject → 丢弃。
-        """
-        return self.assistant_service.confirm_skill_proposal(body)
-
     def _knowledge_status(self) -> dict[str, Any]:
         """Return current knowledge base status (Free/Pro doc counts and path info)."""
         try:
@@ -804,8 +799,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/modify/confirm":
             return self.modify_confirm(body)
 
-        if normalized_method == "POST" and route == "/api/skill/confirm":
-            return self.skill_confirm(body)
+        if route in ("/api/skill/proposals", "/api/skill/confirm"):
+            # ST04：显式沉淀候选 + 审批（有 proposal_id 走 store，无则旧 pending）
+            return self.skill_proposal_service.route(normalized_method, route, body)
 
         if normalized_method == "GET" and route == "/api/knowledge/status":
             return self._knowledge_status()

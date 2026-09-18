@@ -560,6 +560,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           result.ok ? {} : { errorCategory: classifyAssistantError(reply) },
         ),
         lastError: result.ok ? null : reply,
+        // ST04：显式沉淀请求走 explain 通道时也带回候选
+        pendingSkillProposal: result.skill_proposal ?? state.pendingSkillProposal,
       }))
       await persistAssistantHistory()
     },
@@ -642,6 +644,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         warnings: result.warnings ?? result.preview?.warnings ?? state.warnings,
         draftParameters: {},
         pendingDeliveryContinue: null,
+        // ST04：非流式 generate 也消费显式/自动 skill 候选，弹审批卡
+        pendingSkillProposal: result.ok ? (result.skill_proposal ?? null) : state.pendingSkillProposal,
       }))
       await persistAssistantHistory()
       if (result.ok) {
@@ -961,7 +965,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       const epoch = get().projectEpoch
-      const result = await api.confirmSkillProposal(approve)
+      const result = await api.confirmSkillProposal(approve, proposal.proposal_id)
       if (projectSwitchedSince(epoch)) {
         discardStaleResult('Skill proposal result discarded: project switched during the request.')
         return
@@ -974,7 +978,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             ? result.ok
               ? result.verified
                 ? `✅ skill「${proposal.name}」已沉淀并通过验证（${result.gate} 门禁）`
-                : `📝 skill「${proposal.name}」已落盘为 proposed（验证未过，暂不注入）`
+                : `📝 skill「${proposal.name}」已落盘为未激活产物（验证未过，暂不可用）`
               : `❌ skill「${proposal.name}」沉淀失败：${result.error ?? '未知错误'}`
             : `🗑 已丢弃 skill 提案「${proposal.name}」。`,
         ),

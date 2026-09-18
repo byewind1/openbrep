@@ -210,7 +210,12 @@ export interface WorkbenchApi {
     signal?: AbortSignal,
     history?: AssistantHistoryItem[],
   ) => Promise<GenerateResult>
-  confirmSkillProposal: (approve: boolean, signal?: AbortSignal) => Promise<import('../api/types').SkillProposalConfirmResult>
+  // ST04：proposalId 用于审批持久候选 store；省略时保留旧 pending 行为
+  confirmSkillProposal: (
+    approve: boolean,
+    proposalId?: string,
+    signal?: AbortSignal,
+  ) => Promise<import('../api/types').SkillProposalConfirmResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>

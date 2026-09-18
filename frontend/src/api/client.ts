@@ -67,7 +67,9 @@ import type {
   SaveAssistantHistoryResult,
   SaveScriptResponse,
   SaveRevisionResponse,
+  SkillProposal,
   SkillProposalConfirmResult,
+  SkillProposalListResult,
   SummarizeMemoryResult,
   TapirActionResult,
   TapirStatusResult,
@@ -1265,6 +1267,7 @@ export async function confirmModifyPlan(
 /** 模式级 skill 提案（P2-d）：审批待确认提案；approve → propose+verify 双闸晋升。 */
 export async function confirmSkillProposal(
   approve: boolean,
+  proposalId?: string,
   signal?: AbortSignal,
 ): Promise<SkillProposalConfirmResult> {
   return requestJson<SkillProposalConfirmResult>(
@@ -1272,10 +1275,36 @@ export async function confirmSkillProposal(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approve }),
+      // ST04：带 proposal_id 时审批持久候选 store；不带则保留旧 pending 行为
+      body: JSON.stringify(proposalId ? { approve, proposal_id: proposalId } : { approve }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
     signal,
+  )
+}
+
+export async function listSkillProposals(): Promise<SkillProposalListResult> {
+  return requestJson<SkillProposalListResult>(
+    '/api/skill/proposals',
+    { method: 'GET' },
+    { ok: false, proposals: [] },
+  )
+}
+
+export async function proposeSkillCandidate(
+  instruction: string,
+  sourceRunIds?: string[],
+): Promise<SkillProposal | { ok: false; error?: string }> {
+  return requestJson<SkillProposal | { ok: false; error?: string }>(
+    '/api/skill/proposals',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        sourceRunIds && sourceRunIds.length ? { instruction, source_run_ids: sourceRunIds } : { instruction },
+      ),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

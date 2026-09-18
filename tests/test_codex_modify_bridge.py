@@ -1527,3 +1527,38 @@ def test_codex_lite_harness_extraction_dispatches_turn():
     roles = [m.get("role") for m in provider.calls[0]["messages"]]
     assert roles == ["system", "user"]
     assert "视觉结构分析器" in str(provider.calls[0]["messages"][0].get("content") or "")
+
+
+def test_has_file_blocks_requires_real_path():
+    """K09：只有真实 [FILE: path] 才触发协议警告；空标记 [FILE:] 只是提及协议。"""
+    from openbrep.runtime.modify_codex_bridge import _has_file_blocks
+
+    assert _has_file_blocks("[FILE: scripts/3d.gdl]\nBLOCK 1,1,1\nEND") is True
+    assert _has_file_blocks("见协议里的 [FILE: path] 写法。") is True
+    # 空标记 / 只有空白 / 无冒号内容：不算交付块
+    assert _has_file_blocks("本通道不接收 [FILE:] 交付块。") is False
+    assert _has_file_blocks("[FILE:   ]") is False
+    assert _has_file_blocks("[FILE]") is False
+    assert _has_file_blocks("") is False
+
+
+def test_plain_explanation_with_empty_file_marker_does_not_warn(tmp_path):
+    """K09 端到端：解释文本里出现 [FILE:] 空标记不产生 [FILE:] 协议警告。"""
+    harness = _FakeServerHarness(tmp_path)
+    _write_script(
+        tmp_path,
+        [
+            [_final("说明：本通道不接收 [FILE:] 交付块，请用工具调用落盘。")],
+        ],
+    )
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(_request(tmp_path, project))
+        assert "检测到回复中的 [FILE:] 内容" not in (result.plain_text or "")
+    finally:
+        provider.close()
+        harness.cleanup()

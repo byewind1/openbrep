@@ -887,6 +887,8 @@ export interface AssistantResult {
     kind: string
     reply: string
   }
+  /** ST04：显式"保存为技能"请求即使走 explain 通道也带回候选，供审批卡展示 */
+  skill_proposal?: SkillProposal | null
   error?: string
 }
 
@@ -1073,8 +1075,10 @@ export interface PendingPlan {
   risk: string
 }
 
-// ── 模式级 skill 提案（P2-d）：成功 CREATE/MODIFY 后提炼，用户确认后才落盘晋升 ──
+// ── 模式级 skill 提案（P2-d/ST04）：成功交付后自动提炼，或用户显式"保存为技能"──
 export interface SkillProposal {
+  /** ST04：持久候选 ID；审批时回传以走 store 路径 */
+  proposal_id?: string
   name: string
   pattern_type: string
   content: string
@@ -1082,23 +1086,56 @@ export interface SkillProposal {
     params?: Record<string, unknown>
     scripts?: Record<string, string>
   } | null
+  /** ST04：draft（待审）/ approved（用户已批准）/ rejected */
+  status?: 'draft' | 'approved' | 'rejected'
+  /** ST04：验证态与用户决策分离；failed 表示产物保留但未激活 */
+  verification?: {
+    state?: 'unverified' | 'verified' | 'failed'
+    passed?: boolean
+    gate?: string
+    status?: string
+    error?: string | null
+  } | null
+  error?: string | null
+  created_at?: string
+  updated_at?: string
+  reused?: boolean
   evidence?: {
     intent?: string
     changed_files?: string[]
     project?: string
+    project_path_hash?: string
+    /** ST04：证据来源（显式沉淀为 explicit） */
+    source?: string
+    source_run_ids?: string[]
+    revisions?: string[]
+    source_fingerprints?: string[]
+    /** ST04：false = 旧资料/未绑定 after，不作为已验证知识 */
+    evidence_complete?: boolean
   } | null
 }
 
 export interface SkillProposalConfirmResult {
   ok: boolean
+  proposal_id?: string
   skill?: string
   verified?: boolean
   gate?: string
   status?: string
   path?: string
   discarded?: boolean
+  already_decided?: boolean
+  released_protections?: number
+  verification?: SkillProposal['verification']
   message?: string
   code?: string
+  error?: string
+}
+
+export interface SkillProposalListResult {
+  ok: boolean
+  proposals: SkillProposal[]
+  total?: number
   error?: string
 }
 

@@ -327,6 +327,148 @@ def maybe_harvest(
     return proposal
 
 
+# ── 显式沉淀（ST04）：用户点名"把这轮修改沉淀成 skill" ─────
+#
+# 与自动 harvest 的差别：
+# - 触发来自用户的显式指令（路由判定在 openbrep.skill_proposals），不是任务成功门禁；
+# - 提炼材料是"被引用的运行记录 + 变更脚本节选"，而不是一次 TaskResult；
+# - 失败必须显式返回错误码（不能像自动路径那样静默 None），因为用户明确要求了
+#   一次沉淀，需要知道是 JSON 非法还是 LLM 不可用，才能重试。
+
+_EXPLICIT_MAX_SCRIPT_CHARS = 2000
+
+
+def _explicit_system_prompt() -> str:
+    enum_hint = " / ".join(sorted(PATTERN_TYPES))
+    return (
+        "你是 GDL 模式提炼器。用户明确要求把一次【已完成的修改】沉淀成可复用 skill。"
+        "请从中提炼一个【模式级】skill 提案：抽象出可复用的写法与纪律，而不是复述本次实例。\n\n"
+        "只输出一个 JSON 对象，不要 Markdown 代码块标记，不要任何解释文字：\n"
+        '{"name": "<英文蛇形 skill 名>", "pattern_type": "<枚举值>", '
+        '"content": "<markdown 模式说明>", "slice": <可选参数/脚本骨架>}\n\n'
+        f"pattern_type 只能是以下之一：{enum_hint}\n\n"
+        "硬性纪律：\n"
+        "- content 必须是模式级抽象：含触发场景、写法要点、注意事项；"
+        "必须包含 '## 适用场景 / When to Use' 小节；80-6000 字；\n"
+        "- 禁止贴本次实例代码（禁止 [FILE: 块）；禁止出现项目名/专有名词；\n"
+        "- slice 可选：{params: {参数名: 值或{value, type}}, "
+        'scripts: {"3d": "...", "2d": "..."}}，脚本用占位参数名，不要实例尺寸。'
+    )
+
+
+def _summarize_source_refs(source_refs: Any) -> str:
+    lines: list[str] = []
+    for ref in source_refs or []:
+        if not isinstance(ref, dict):
+            continue
+        lines.append(
+            "- run {run} | revision {rev} | 指纹 {fp} | 意图 {intent} | 变更 {files} | 证据{ev}".format(
+                run=ref.get("run_id") or "?",
+                rev=ref.get("revision") or "无",
+                fp=ref.get("source_fingerprint") or "无",
+                intent=ref.get("intent") or "?",
+                files="、".join(ref.get("changed_files") or []) or "无",
+                ev="完整" if ref.get("evidence_complete") else "不完整",
+            )
+        )
+    return "\n".join(lines) or "（没有可引用的运行记录；这是旧资料，证据不完整）"
+
+
+def collect_script_excerpts(project: Any, source_refs: Any, *, limit: int = _EXPLICIT_MAX_SCRIPT_CHARS) -> dict[str, str]:
+    """按 source_refs.changed_files 收集当前项目脚本节选（找不到就不给）。"""
+    changed: list[str] = []
+    for ref in source_refs or []:
+        if isinstance(ref, dict):
+            for item in ref.get("changed_files") or []:
+                changed.append(str(item))
+    scripts = getattr(project, "scripts", None) or {}
+    by_value = {}
+    for stype, content in scripts.items():
+        value = getattr(stype, "value", None)
+        if value:
+            by_value[str(value)] = str(content or "")
+    excerpts: dict[str, str] = {}
+    for rel_path in dict.fromkeys(changed):
+        stem = Path(rel_path).name
+        if stem in by_value:
+            excerpts[rel_path] = by_value[stem][:limit]
+    return excerpts
+
+
+def build_explicit_harvest_messages(
+    project: Any,
+    instruction: str,
+    source_refs: Any,
+    excerpts: dict[str, str] | None = None,
+) -> list[dict]:
+    """构造显式沉淀的一次 LLM 调用消息（提炼 prompt 单点定义）。"""
+    excerpts = excerpts or {}
+    excerpt_text = "\n\n".join(
+        f"### {path}\n```gdl\n{content}\n```" for path, content in excerpts.items()
+    ) or "（没有可用的脚本节选）"
+    user = (
+        f"用户指令：{instruction}\n"
+        f"项目名：{getattr(project, 'name', '')}\n\n"
+        f"引用的运行记录：\n{_summarize_source_refs(source_refs)}\n\n"
+        f"变更脚本节选（仅作模式提炼素材，不要照抄）：\n{excerpt_text}"
+    )
+    return [
+        {"role": "system", "content": _explicit_system_prompt()},
+        {"role": "user", "content": user},
+    ]
+
+
+def distill_explicit_skill(
+    project: Any,
+    instruction: str,
+    source_refs: Any,
+    llm: Any,
+    skills_dir: Any,
+) -> dict[str, Any]:
+    """显式沉淀提炼：一次 LLM 调用 + 严格校验，失败返回显式错误码。
+
+    返回 ``{"ok": True, "proposal": {...}}`` 或
+    ``{"ok": False, "code": ..., "error": ...}``（code 见下）。绝不抛出。
+    """
+    if llm is None:
+        return {"ok": False, "code": "SKILL_PROPOSAL_LLM_UNAVAILABLE", "error": "无法构造提炼用的 LLM 适配器。"}
+    try:
+        messages = build_explicit_harvest_messages(
+            project, instruction, source_refs, collect_script_excerpts(project, source_refs)
+        )
+        resp = llm.generate(
+            messages,
+            temperature=_HARVEST_TEMPERATURE,
+            max_tokens=_HARVEST_MAX_TOKENS,
+            stream=False,
+        )
+    except Exception as exc:
+        logger.warning("显式 skill 提炼 LLM 失败: %s", exc)
+        return {"ok": False, "code": "SKILL_PROPOSAL_LLM_FAILED", "error": f"LLM 提炼失败：{exc}"}
+
+    raw = _extract_json(getattr(resp, "content", "") or "")
+    if not isinstance(raw, dict):
+        return {
+            "ok": False,
+            "code": "SKILL_PROPOSAL_INVALID_JSON",
+            "error": "LLM 未返回合法 JSON 对象，未生成候选（可重试）。",
+        }
+    proposal = _validate_proposal(raw, project)
+    if proposal is None:
+        return {
+            "ok": False,
+            "code": "SKILL_PROPOSAL_INVALID_CONTENT",
+            "error": "LLM 输出未通过候选校验（缺触发小节/含实例代码/含项目名等），未生成候选。",
+        }
+    if _dedup_collision(skills_dir, proposal["name"], proposal["pattern_type"]):
+        return {
+            "ok": False,
+            "code": "SKILL_PROPOSAL_DUPLICATE",
+            "error": f"已有同名 skill 或同 pattern_type 的已生效 skill：{proposal['name']}",
+        }
+    return {"ok": True, "proposal": proposal}
+
+
 def store_pending_proposal(
     session,
     result,

@@ -252,12 +252,15 @@ export const en: Record<LocaleKey, string> = {
   'assistant.plan.confirm': 'Confirm changes',
   'assistant.plan.cancel': 'Cancel',
 
-  // Skill harvest proposal (P2-d)
+  // Skill harvest proposal (P2-d / ST04)
   'assistant.skillProposal.title': 'Save as skill proposal',
   'assistant.skillProposal.evidence': 'Evidence',
   'assistant.skillProposal.project': 'Source project',
   'assistant.skillProposal.approve': 'Approve & save',
   'assistant.skillProposal.ignore': 'Ignore',
+  'assistant.skillProposal.status': 'Status',
+  'assistant.skillProposal.evidenceComplete': 'Evidence linked (revision {rev})',
+  'assistant.skillProposal.evidenceIncomplete': 'Evidence incomplete (old material, unverified)',
 
   // D16 session-level model pill (switching applies to this session only, never writes config.toml)
   'assistant.modelPill.override': 'Session override',
