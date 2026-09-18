@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "external_calls": {
+    "network": 0,
+    "model": 0,
+    "archicad": 0
+  },
+  "events": [
+    {
+      "id": "param_patch_miss_1",
+      "kind": "tool_result",
+      "tool": "patch_script",
+      "ok": false,
+      "error_code": "MATCH_NOT_FOUND",
+      "match_count": 0,
+      "state": "before_top_option"
+    },
+    {
+      "id": "param_patch_miss_2",
+      "kind": "tool_result",
+      "tool": "patch_script",
+      "ok": false,
+      "error_code": "MATCH_NOT_FOUND",
+      "match_count": 0,
+      "state": "before_top_option"
+    },
+    {
+      "id": "parameter_and_1d_saved",
+      "kind": "state_transition",
+      "tool": "update_script",
+      "ok": true,
+      "from": "before_top_option",
+      "to": "partial_top_option",
+      "changed_files": [
+        "paramlist.xml",
+        "scripts/1d.gdl"
+      ]
+    },
+    {
+      "id": "turn_timeout",
+      "kind": "interruption",
+      "error_code": "TIMEOUT",
+      "state": "partial_top_option"
+    },
+    {
+      "id": "retry_completed",
+      "kind": "state_transition",
+      "tool": "patch_script",
+      "ok": true,
+      "from": "partial_top_option",
+      "to": "after_top_option",
+      "changed_files": [
+        "scripts/3d.gdl"
+      ]
+    },
+    {
+      "id": "skill_request_checked_only",
+      "kind": "assistant_result",
+      "intent": "explicit_skill_request",
+      "result": "checked_without_artifact",
+      "artifacts": []
+    }
+  ]
+}
