@@ -3569,6 +3569,32 @@ test('sendChat modify falls back to direct result when plan request fails (V3)',
   expect(state.assistantMessages.at(-1)?.content).toContain('直接执行完成')
 })
 
+test.each(['cancel', 'abort', 'save-failure'] as const)(
+  'ST03 continuation does not leak into a new task after %s', async (exit) => {
+    const links: unknown[] = []
+    let calls = 0
+    const store = createWorkbenchStore(makeApi({
+      requestModifyPlan: async (_message, _settings, _images, _signal, _history, link) => {
+        links.push(link)
+        if (++calls === 1 && exit === 'abort') throw new DOMException('Stopped', 'AbortError')
+        return { ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }
+      },
+      confirmModifyPlan: async () => ({ ok: true, cancelled: true }),
+    }))
+    await store.getState().load()
+    const flush = store.getState().flushDirtyScripts
+    if (exit === 'save-failure') store.setState({ flushDirtyScripts: async () => ({ ok: false, didSave: false }) })
+    await store.getState().continueDelivery({
+      originRunId: 'r_original', originalInstruction: '给书架加一层层板',
+    })
+    if (exit === 'cancel') await store.getState().confirmPendingPlan(false)
+    store.setState({ flushDirtyScripts: flush })
+    await store.getState().sendChat('把颜色改成红色')
+    expect(links.at(-1)).toBeNull()
+    expect(store.getState().assistantMessages.at(-2)?.content).toBe('把颜色改成红色')
+  },
+)
+
 test('confirmPendingPlan without a pending plan sets lastError (V3)', async () => {
   const store = createWorkbenchStore(makeApi())
   await store.getState().load()

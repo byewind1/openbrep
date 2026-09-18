@@ -84,11 +84,12 @@ def terminate_process(process: subprocess.Popen[str]) -> None:
             pass
 
 
-def create_fixture_project(work_dir: str | Path) -> Path:
-    from openbrep.hsf_project import HSFProject, ScriptType
+def create_fixture_project(work_dir: str | Path) -> tuple[Path, str]:
+    from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
     from openbrep.revisions import create_revision
 
     project = HSFProject.create_new("St03DeliveryUI", str(work_dir))
+    project.parameters.append(GDLParameter(name="shelf_count", type_tag="Integer", description="层板数", value="3"))
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
     project.set_script(ScriptType.SCRIPT_2D, "PROJECT2 3, 270, 2\n")
     root = Path(project.save_to_disk())
@@ -244,6 +245,16 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
     try:
         temp_root = tempfile.TemporaryDirectory(prefix="openbrep_st03_ui_")
         project_root, before_id = create_fixture_project(temp_root.name)
+        # Never inherit the developer's configuration or use a live model.
+        config_path = Path(temp_root.name) / "smoke.toml"
+        config_path.write_text(
+            '[llm]\nmodel = "st03/smoke"\n'
+            '[[llm.providers]]\nname = "st03"\napi = "http://127.0.0.1:1/v1"\n'
+            'api_key = "smoke-only"\nmodels = ["smoke"]\n'
+            '[compiler]\nmode = "mock"\npath = ""\n',
+            encoding="utf-8",
+        )
+        env["GDL_AGENT_CONFIG"] = str(config_path)
         process = subprocess.Popen(
             command,
             cwd=str(root_path),
@@ -305,7 +316,16 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
             page.wait_for_timeout(800)
             close_settings_drawer()
 
-            body0 = page.locator("body").inner_text(timeout=5000)
+            # Vite module import exposes the actual store for observations, not a fake.
+            page.evaluate("""async () => {
+                window.st03Store = (await import('/src/state/workbenchStore.ts')).workbenchStore;
+            }""")
+            def draft_state():
+                return page.evaluate("""() => {
+                    const s = window.st03Store.getState();
+                    return {scripts: s.scriptContents, dirty: s.dirtyScripts,
+                            params: s.draftParameters, project: s.project?.path};
+                }""")
 
             # ── U01 partial 卡 ──────────────────────────────────────────
             u01_card = page.locator('[data-delivery-state="partial_change"]').first
@@ -377,6 +397,9 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
 
             # ── F2/U04：刷新后 delivery 卡仍在 / 旧记录 unlinked ────────
             page.reload(wait_until="domcontentloaded")
+            page.evaluate("""async () => {
+                window.st03Store = (await import('/src/state/workbenchStore.ts')).workbenchStore;
+            }""")
             page.wait_for_function(ready_script(), timeout=int(timeout * 1000))
             close_settings_drawer()
             try:
@@ -430,11 +453,14 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
             if u06_run.count():
                 u06_detail["run"] = u06_run.get_attribute("title") or u06_run.inner_text()
             if u06_instr.count():
+                u06_instr.locator("xpath=..").locator("summary").click()
                 u06_detail["instruction"] = u06_instr.inner_text()
                 u06_ok = u06_ok or "把层板数改成 5" in u06_detail["instruction"]
-            # run id 可追溯也作为 U06 证据
-            if page.locator('[data-testid="delivery-run"]').count() >= 2:
-                u06_ok = u06_ok or True
+            u06_ok = (
+                "r_st03_browser_partial" in u06_detail.get("continued_from", "")
+                and u06_detail.get("instruction") == "把层板数改成 5"
+                and page.locator('[data-testid="delivery-run"]').count() >= 2
+            )
             cases.append({"case": "U06-visible", "passed": u06_ok, **u06_detail})
 
             # ── U02/U03 恢复草稿保护 ────────────────────────────────────
@@ -479,6 +505,10 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
                     )
                 )
 
+            page.evaluate("""() => window.st03Store.setState({draftParameters: {A: 2.5}})""")
+            drafts_before = draft_state()
+            source_before = (project_root / "scripts/3d.gdl").read_text()
+            draft_created = "! st03 draft" in drafts_before["scripts"].get("3d.gdl", "")
             # U02：恢复 → 取消
             u02_detail = {
                 "edit_error": None if "st03 draft" in (edit_note or "") else (edit_note or "")[:180],
@@ -497,10 +527,16 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
                 body2 = page.locator("body").inner_text(timeout=3000)
                 u02_detail["no_restore"] = "Restored revision" not in body2
                 u02_detail["card_still_partial"] = page.locator('[data-delivery-state="partial_change"]').count() > 0
-                u02_passed = bool(u02_detail["no_restore"] and u02_detail["card_still_partial"])
+                u02_detail["drafts_unchanged"] = draft_state() == drafts_before
+                u02_detail["source_unchanged"] = (project_root / "scripts/3d.gdl").read_text() == source_before
+                u02_passed = bool(draft_created and u02_detail["no_restore"]
+                                  and u02_detail["drafts_unchanged"] and u02_detail["source_unchanged"])
             cases.append({"case": "U02", "passed": u02_passed, **u02_detail})
 
             # U03：保留草稿并恢复
+            page.evaluate("""() => window.st03Store.setState({
+                previewGhost: {meshes: [], wires: [], warnings: ['st03-stale-preview']}
+            })""")
             u03_detail = {"keep_clicked": js_click("delivery-recover-keep")}
             page.wait_for_timeout(600)
             dialog = page.locator('[role="dialog"]').first
@@ -516,7 +552,14 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
                 u03_detail["restore_log"] = "Restored revision" in body3
                 u03_detail["drafts_kept"] = "drafts kept" in body3
                 u03_detail["body_snip"] = body3[-500:]
-                u03_passed = bool(u03_detail.get("restore_log"))
+                u03_detail["drafts_preserved"] = draft_state() == drafts_before
+                u03_detail["source_is_before"] = (project_root / "scripts/3d.gdl").read_bytes() == (project_root / ".openbrep/revisions" / before_id / "scripts/3d.gdl").read_bytes()
+                u03_detail["stale_preview_cleared"] = page.evaluate(
+                    "() => window.st03Store.getState().previewGhost === null"
+                )
+                u03_passed = all(u03_detail.get(k) for k in (
+                    "restore_log", "drafts_kept", "drafts_preserved", "source_is_before", "stale_preview_cleared"
+                ))
             cases.append({"case": "U03", "passed": u03_passed, **u03_detail})
 
             # ── U06：点击继续（放在恢复用例之后，避免 busy 遮挡恢复入口）──
@@ -529,28 +572,65 @@ def run_smoke(*, root: Path | None = None, timeout: float = 60.0, headed: bool =
             continue_btn = page.locator('[data-testid="delivery-continue"]').first
             u06_click = {"continue_btn": continue_btn.count(), "clicked_continue": False}
             if continue_btn.count():
-                u06_click["clicked_continue"] = bool(
-                    page.evaluate(
-                        """
-                        () => {
-                            const el = document.querySelector('[data-testid="delivery-continue"]');
-                            if (!el || el.disabled) return false;
-                            el.click();
-                            return true;
-                        }
-                        """
-                    )
-                )
-                page.wait_for_timeout(800)
-                body6 = page.locator("body").inner_text(timeout=3000)
-                u06_click["busy_or_pending"] = "Thinking" in body6 or "继续" in body6
-            cases.append(
-                {
-                    "case": "U06-click",
-                    "passed": bool(u06_click["clicked_continue"]),
-                    **u06_click,
-                }
-            )
+                with page.expect_response(
+                    lambda response: response.url.endswith('/api/assistant/generate')
+                    and response.request.method == 'POST', timeout=20000
+                ) as response_info:
+                    continue_btn.click(force=True)
+                response = response_info.value
+                request_body = response.request.post_data_json
+                result = response.json()
+                ds = (result.get("assistant") or {}).get("delivery_source") or {}
+                u06_click.update({
+                    "request": {k: request_body.get(k) for k in ("message", "continue_from")},
+                    "delivery_source": ds,
+                    "new_run": ds.get("run_id") not in (None, "r_st03_browser_partial"),
+                    "own_revisions": bool(ds.get("before_revision_id") and ds.get("after_revision_id")
+                                          and ds["before_revision_id"] != ds["after_revision_id"]),
+                })
+                u06_click["clicked_continue"] = True
+                page.wait_for_timeout(700)
+            cases.append({
+                "case": "U06-click",
+                "passed": bool(u06_click.get("new_run") and u06_click.get("own_revisions")
+                               and u06_click.get("request", {}).get("message") == "把层板数改成 5"
+                               and (u06_click.get("request", {}).get("continue_from") or {}).get("origin_run_id") == "r_st03_browser_partial"
+                               and (u06_click.get("request", {}).get("continue_from") or {}).get("original_instruction") == "把层板数改成 5"),
+                **u06_click,
+            })
+
+            # U04: hold an old task response, open another real project, then release it.
+            other_root, _ = create_fixture_project(Path(temp_root.name) / "other")
+            held = []
+            def hold_generate(route):
+                held.append(route)
+            page.route("**/api/assistant/generate", hold_generate)
+            page.evaluate("""() => {
+                window.st03OldTask = window.st03Store.getState().sendChat('把颜色改成红色');
+            }""")
+            deadline = time.monotonic() + 10
+            while not held and time.monotonic() < deadline:
+                page.wait_for_timeout(50)
+            if not held:
+                raise AssertionError("U04: old task request was not captured")
+            page.evaluate("async path => await window.st03Store.getState().loadProjectPath(path)", str(other_root))
+            def project_state():
+                return page.evaluate("""() => {
+                    const s = window.st03Store.getState();
+                    return {project: s.project, scripts: s.scriptContents,
+                            revisions: s.revisions, panel: s.activeRailPanel,
+                            messages: s.assistantMessages, preview: s.preview};
+                }""")
+            switched = project_state()
+            held[0].fulfill(status=200, content_type="application/json", body=json.dumps({
+                "ok": True, "assistant": {"kind": "generate", "reply": "STALE_ST03_RESULT",
+                "changed_files": ["scripts/3d.gdl"], "intent": "MODIFY"},
+                "preview": {"meshes": [], "wires": [], "warnings": ["STALE_ST03_PREVIEW"]},
+            }))
+            page.evaluate("async () => await window.st03OldTask")
+            new_project_preserved = Path(project_state()["project"]["path"]).resolve() == other_root.resolve()
+            cases.append({"case": "U04-project-switch", "passed": project_state() == switched and new_project_preserved,
+                          "new_project_preserved": new_project_preserved})
 
             # 截图证据
             try:

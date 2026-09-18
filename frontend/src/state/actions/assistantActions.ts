@@ -571,6 +571,8 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     async generateAssistantChanges(message: string, images: AssistantImageAttachment[] = []) {
       const trimmed = message.trim()
       if (!trimmed) return
+      const continueFrom = get().pendingDeliveryContinue
+      set({ pendingDeliveryContinue: null })
       const history = buildAssistantHistory(get().assistantMessages)
       set((state) => ({
         assistantBusy: true,
@@ -591,7 +593,6 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         return
       }
       const epoch = get().projectEpoch
-      const continueFrom = get().pendingDeliveryContinue
       const result = await api.generateWithAssistant(
         trimmed,
         get().llmSettings.assistant_settings,
@@ -664,6 +665,9 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       const hasProject = !!get().project
       const interrupted = get().interruptedContext
       const deliveryContinue = get().pendingDeliveryContinue
+      // Consume the link once. The pending plan carries its own request metadata;
+      // cancellation, aborts, and save failures must not tag the next user task.
+      set({ pendingDeliveryContinue: null })
 
       // Follow-up after an interrupt: "继续" retries the original
       // ST03：delivery continue 已带回原始指令；「继续」只在 interrupt 上下文生效
@@ -720,7 +724,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
             return
           }
           const epoch = get().projectEpoch
-          const continueFrom = get().pendingDeliveryContinue
+          const continueFrom = deliveryContinue
           const planResult = await api.requestModifyPlan(
             finalMessage,
             settings,
@@ -788,7 +792,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
           }
           const epoch = get().projectEpoch
           const thinkingSteps: AssistantThinkingStep[] = []
-          const debugContinueFrom = get().pendingDeliveryContinue
+          const debugContinueFrom = deliveryContinue
 
           const result = await api.generateWithAssistantStream(
             finalMessage,
@@ -887,6 +891,7 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
         const result = await api.confirmModifyPlan(false)
         set((state) => ({
           pendingPlan: null,
+          pendingDeliveryContinue: null,
           assistantMessages: replacePendingAssistantMessage(state.assistantMessages, '⏹ 已取消本次修改。'),
         }))
         if (!result.ok && result.error) {
