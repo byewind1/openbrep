@@ -132,7 +132,14 @@ def create_revision(
     prune_warnings: list[str] = []
     if keep_last_n > 0:
         try:
-            prune_result = prune_revisions(root, keep_last_n=keep_last_n)
+            # The new revision's parent is the delivery ``before`` snapshot.
+            # Keep it through this prune pass; the delivery finalizer registers
+            # the durable current-pair protections immediately afterwards.
+            prune_result = prune_revisions(
+                root,
+                keep_last_n=keep_last_n,
+                extra_protected_ids={parent_revision_id} if parent_revision_id else None,
+            )
             prune_warnings = list(getattr(prune_result, "warnings", None) or [])
         except Exception as _prune_exc:
             import logging as _logging
@@ -142,6 +149,10 @@ def create_revision(
         manifest.setdefault("metadata", {})
         if isinstance(manifest["metadata"], dict):
             manifest["metadata"]["prune_warnings"] = prune_warnings
+        # The first manifest write happens before pruning.  Persist the report
+        # added above so callers and later diagnostics see the same metadata as
+        # the returned Revision object.
+        _write_json(revision_dir / "manifest.json", manifest)
 
     return _revision_from_manifest(revision_dir, manifest)
 
@@ -704,10 +715,62 @@ def _write_revision_protections(
 ) -> None:
     path = _protections_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(
         json.dumps(protections, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    tmp_path.replace(path)
+
+
+def replace_delivery_revision_protections(
+    project_dir: str | Path,
+    *,
+    before_revision_id: str | None,
+    after_revision_id: str | None,
+    run_id: str,
+) -> None:
+    """Atomically retain only the current delivery pair.
+
+    External protection reasons (host acceptance / pending candidate) are left
+    untouched.  A partial run passes ``after_revision_id=None``: its recovery
+    point replaces the previous current-run before while the last successful
+    after remains protected.
+    """
+    root = _resolve_project_root(project_dir)
+    protections = load_revision_protections(root)
+    delivery_reasons = {"current_run_before"}
+    if after_revision_id:
+        # A completed delivery supersedes the whole previous delivery pair.
+        # A partial delivery supersedes only the recovery ``before`` and keeps
+        # the last known-good after protected.
+        delivery_reasons.add("latest_successful_after")
+    for revision_id, entries in list(protections.items()):
+        kept = [
+            entry for entry in entries
+            if str(entry.get("reason") or "") not in delivery_reasons
+        ]
+        if kept:
+            protections[revision_id] = kept
+        else:
+            protections.pop(revision_id, None)
+
+    now = datetime.now(timezone.utc).isoformat()
+    if before_revision_id:
+        protections.setdefault(str(before_revision_id), []).append({
+            "reason": "current_run_before",
+            "run_id": run_id,
+            "ref": {"kind": "delivery_before", "run_id": run_id},
+            "registered_at": now,
+        })
+    if after_revision_id:
+        protections.setdefault(str(after_revision_id), []).append({
+            "reason": "latest_successful_after",
+            "run_id": run_id,
+            "ref": {"kind": "delivery_after", "run_id": run_id},
+            "registered_at": now,
+        })
+    _write_revision_protections(root, protections)
 
 
 def register_revision_protection(
@@ -780,7 +843,12 @@ def protected_revision_ids(project_dir: str | Path) -> set[str]:
     return {rev_id for rev_id, entries in protections.items() if entries}
 
 
-def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> PruneResult:
+def prune_revisions(
+    project_dir: str | Path,
+    keep_last_n: int = 20,
+    *,
+    extra_protected_ids: set[str | None] | None = None,
+) -> PruneResult:
     """Delete oldest unprotected revisions beyond keep_last_n.
 
     Safety guarantees:
@@ -805,6 +873,7 @@ def prune_revisions(project_dir: str | Path, keep_last_n: int = 20) -> PruneResu
 
     latest_id = get_latest_revision_id(root)
     protected = protected_revision_ids(root)
+    protected.update(str(rid) for rid in (extra_protected_ids or set()) if rid)
     if latest_id:
         protected = set(protected) | {latest_id}
 
@@ -857,7 +926,12 @@ def _vision_extraction_hashes(project_root: Path) -> list:
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp_path = path.with_name(f".{path.name}.write.tmp")
+    tmp_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
 
 
 def _revision_from_manifest(revision_dir: Path, manifest: dict[str, Any]) -> Revision:

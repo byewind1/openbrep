@@ -442,8 +442,11 @@ class TaskPipeline:
         # 失败不伪造 after；快照失败时 TaskResult 不宣称完整成功。
         try:
             self._finalize_delivery_source(request, result, run_id=run_id)
-        except Exception:
-            logger.debug("delivery finalizer failed", exc_info=True)
+        except Exception as exc:
+            logger.exception("delivery finalizer failed")
+            self._record_delivery_finalizer_failure(
+                request, result, run_id=run_id, error=exc,
+            )
 
         # 4. Trace (never blocks execution)
         try:
@@ -502,13 +505,11 @@ class TaskPipeline:
             verified = bool(result.success)
 
         changed_files = _delivery_changed_files(result)
-        claimed_change = bool(changed_files) or intent in (
-            "MODIFY",
-            "DEBUG",
-            "REPAIR",
-            "CREATE",
-            "IMAGE",
-        )
+        # ``claimed_change`` means the handler reports concrete source output,
+        # not merely that the routed intent was mutating.  A MODIFY turn may
+        # legitimately conclude that no edit is needed; successful write tools
+        # and deterministic paths expose their files through changed_files.
+        claimed_change = bool(changed_files)
         # CHAT/解释类：无变更且无修改意图 → unchanged，不制造 revision
         if intent == "CHAT":
             claimed_change = False
@@ -538,6 +539,47 @@ class TaskPipeline:
         )
         delivery_source, warnings = finalize_delivery(inputs)
         apply_delivery_source_to_result(result, delivery_source, warnings)
+
+    def _record_delivery_finalizer_failure(
+        self,
+        request: TaskRequest,
+        result: TaskResult,
+        *,
+        run_id: str,
+        error: Exception,
+    ) -> None:
+        """Fail closed for mutating tasks when the shared finalizer crashes."""
+        from openbrep.runtime.delivery_finalizer import (
+            ERR_DELIVERY_FINALIZER_FAILED,
+            SNAPSHOT_FAILED,
+            SNAPSHOT_NOT_ATTEMPTED,
+            STATE_SNAPSHOT_FAILED,
+            STATE_UNCHANGED,
+            DeliverySource,
+            apply_delivery_source_to_result,
+        )
+
+        metadata = dict(result.metadata or {})
+        intent = (result.intent or request.intent or "").upper()
+        changed_files = _delivery_changed_files(result)
+        mutating = bool(changed_files) or intent in {
+            "MODIFY", "DEBUG", "REPAIR", "CREATE", "IMAGE",
+        }
+        delivery_source = DeliverySource(
+            run_id=run_id,
+            state=STATE_SNAPSHOT_FAILED if mutating else STATE_UNCHANGED,
+            before_revision_id=metadata.get("before_revision_id") or None,
+            after_revision_id=None,
+            source_fingerprint=metadata.get("verified_source_fingerprint") or None,
+            changed_files=changed_files,
+            snapshot_status=SNAPSHOT_FAILED if mutating else SNAPSHOT_NOT_ATTEMPTED,
+            error_code=ERR_DELIVERY_FINALIZER_FAILED,
+        )
+        apply_delivery_source_to_result(
+            result,
+            delivery_source,
+            [f"交付版本终结失败：{error}"],
+        )
 
     def _append_feedback(self, project_root: Any, event: dict) -> bool:
         """append_feedback 的 pipeline 包装：自动带上当前 run_id（复用 trace_id 字段）。"""

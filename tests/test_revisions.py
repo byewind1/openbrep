@@ -416,6 +416,24 @@ class TestPruneRevisions(unittest.TestCase):
             self.assertEqual(remaining_ids, {"r0003", "r0004", "r0005", "r0006", "r0007"})
             self.assertEqual(get_latest_revision_id(project), "r0007")
 
+    def test_auto_prune_warning_is_persisted_in_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self._make_project(tmpdir)
+            with self._keep_last_n_env(1):
+                before = create_revision(project, "before")
+                after = create_revision(
+                    project,
+                    "after",
+                    parent_revision_id=before.revision_id,
+                )
+
+            manifest = json.loads(
+                (after.path / "manifest.json").read_text(encoding="utf-8")
+            )
+            warnings = manifest.get("metadata", {}).get("prune_warnings") or []
+            self.assertTrue(warnings)
+            self.assertIn("keep_last_n=1", warnings[0])
+
     def test_create_revision_auto_prune_disabled_when_keep_last_n_zero(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = self._make_project(tmpdir)
