@@ -277,11 +277,17 @@ class TestR04ClaimedChangeNoDiff:
         mock_llm = _agent_loop_llm_updates(original)
         pipeline._make_llm = lambda _req: mock_llm
         with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
-            result = pipeline.execute(_request(project, tmp_path, "把层板厚度微调一下"))
+            result = pipeline.execute(_request(project, tmp_path, "把3D脚本原样重写一遍"))
         ds = _delivery(result)
         # 编译通过不能当作「修改完成」
         assert ds.state == "unchanged"
         assert ds.after_revision_id is None
+        assert ds.error_code == "no_source_change"
+        assert result.success is False
+        assert result.error == "no_source_change"
+        records = _quality_records(project)
+        assert records
+        assert records[0]["outcome"] != "completed"
 
 
 # ── R05：写一部分后 timeout/cancel ────────────────────────
@@ -320,6 +326,7 @@ class TestR05PartialChangeInterrupted:
         before_dir = project.root / ".openbrep" / "revisions" / ds.before_revision_id
         assert before_dir.is_dir()
         assert (before_dir / "scripts" / "3d.gdl").exists()
+        assert ds.before_revision_id in protected_revision_ids(project.root)
 
 
 # ── R06：after / ledger 写盘失败 ──────────────────────────
@@ -351,6 +358,7 @@ class TestR06SnapshotAndLedgerFailures:
         assert ds.snapshot_status == "failed"
         assert result.success is False
         assert result.error
+        assert ds.before_revision_id in protected_revision_ids(project.root)
         # 验证子结果保留
         assert result.verification is not None
         assert (result.verification or {}).get("passed") is True
@@ -367,6 +375,29 @@ class TestR06SnapshotAndLedgerFailures:
         assert ds.state == "verified_change"
         assert ds.after_revision_id
         assert result.success is True
+
+    def test_finalizer_exception_is_explicit_delivery_failure(self, tmp_path):
+        project = _make_project(tmp_path)
+        pipeline = _make_pipeline(tmp_path)
+        pipeline._make_llm = lambda _req: _agent_loop_llm_updates(
+            "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.02\nDEL 1\nEND\n"
+        )
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()), \
+             patch.object(
+                 TaskPipeline,
+                 "_finalize_delivery_source",
+                 side_effect=RuntimeError("finalizer exploded"),
+             ):
+            result = pipeline.execute(_request(project, tmp_path, "加一层层板"))
+
+        ds = _delivery(result)
+        assert ds.state == "snapshot_failed"
+        assert ds.error_code == "delivery_finalizer_failed"
+        assert ds.after_revision_id is None
+        assert result.success is False
+        records = _quality_records(project)
+        assert records
+        assert records[0]["outcome"] != "completed"
 
 
 # ── R07：微修改 / 老路径 after / 无重复 ───────────────────
@@ -471,6 +502,36 @@ class TestR08EpochChanged:
 
 
 class TestR09ProtectedPrune:
+    def test_auto_prune_keep_one_preserves_current_delivery_pair(self, tmp_path):
+        project = _make_project(tmp_path)
+        pipeline = _make_pipeline(tmp_path)
+        cfg_path = tmp_path / "cfg_revisions_keep_one.toml"
+        cfg_path.write_text("[revisions]\nkeep_last_n = 1\n", encoding="utf-8")
+
+        with patch.dict("os.environ", {"GDL_AGENT_CONFIG": str(cfg_path)}), \
+             patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            pipeline._make_llm = lambda _req: _agent_loop_llm_updates(
+                "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.02\nDEL 1\nEND\n"
+            )
+            first = pipeline.execute(_request(project, tmp_path, "加一层层板"))
+            first_ds = _delivery(first)
+            assert (project.root / ".openbrep" / "revisions" / first_ds.before_revision_id).is_dir()
+
+            pipeline._make_llm = lambda _req: _agent_loop_llm_updates(
+                "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nADDZ ZZYZX\n"
+                "BLOCK A, B, 0.02\nDEL 2\nEND\n"
+            )
+            second = pipeline.execute(_request(project, tmp_path, "再加一层层板"))
+
+        second_ds = _delivery(second)
+        assert second_ds.state == "verified_change"
+        remaining = {r.revision_id for r in list_revisions(project.root)}
+        assert second_ds.before_revision_id in remaining
+        assert second_ds.after_revision_id in remaining
+        protections = protected_revision_ids(project.root)
+        assert protections == {second_ds.before_revision_id, second_ds.after_revision_id}
+        assert first_ds.before_revision_id not in protections
+        assert first_ds.after_revision_id not in protections
     def test_keep_last_n_protects_before_after(self, tmp_path):
         project = _make_project(tmp_path)
         root = project.root
@@ -562,6 +623,7 @@ class TestR10ExternalChangeBetweenVerifyAndSnapshot:
             run_id="r10",
             project=project,
             intent="MODIFY",
+            handler_success=True,
             claimed_change=True,
             changed_files=["scripts/3d.gdl"],
             verified=True,
@@ -665,9 +727,11 @@ class TestDeliverySourceContract:
     def test_finalize_classify_unchanged_vs_partial(self):
         base = dict(run_id="r1", project=None, intent="MODIFY")
         ds, _ = finalize_delivery(FinalizeDeliveryInputs(
-            **base, claimed_change=True, changed_files=[], verified=True,
+            **base, handler_success=True, claimed_change=True,
+            changed_files=[], verified=True,
         ))
         assert ds.state == "unchanged"
+        assert ds.error_code == "no_source_change"
         ds2, _ = finalize_delivery(FinalizeDeliveryInputs(
             **base, claimed_change=True, changed_files=["scripts/3d.gdl"],
             interrupted=True, verified=False, before_revision_id="r0001",
@@ -675,6 +739,26 @@ class TestDeliverySourceContract:
         assert ds2.state == "partial_change"
         assert ds2.after_revision_id is None
         assert ds2.before_revision_id == "r0001"
+
+    def test_failed_handler_with_changed_source_never_creates_after(self, tmp_path):
+        project = _make_project(tmp_path)
+        before = create_revision(project.root, "before failed handler")
+        (project.root / "scripts" / "3d.gdl").write_text(
+            "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nEND\n", encoding="utf-8",
+        )
+        ds, _ = finalize_delivery(FinalizeDeliveryInputs(
+            run_id="r_failed_handler",
+            project=project,
+            intent="MODIFY",
+            handler_success=False,
+            claimed_change=True,
+            changed_files=["scripts/3d.gdl"],
+            interrupted=False,
+            verified=True,
+            before_revision_id=before.revision_id,
+        ))
+        assert ds.state == "partial_change"
+        assert ds.after_revision_id is None
 
 
 # ── modify_acceptance 集成：revision 检查可引用 after ──────

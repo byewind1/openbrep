@@ -46,9 +46,9 @@ ERR_EPOCH_CHANGED = "epoch_changed"
 ERR_AFTER_FINGERPRINT_MISMATCH = "after_fingerprint_mismatch"
 ERR_EXISTING_AFTER_INVALID = "existing_after_invalid"
 ERR_NOT_REVISIONABLE = "not_revisionable"
+ERR_NO_SOURCE_CHANGE = "no_source_change"
+ERR_DELIVERY_FINALIZER_FAILED = "delivery_finalizer_failed"
 
-_PROTECTION_BEFORE = "current_run_before"
-_PROTECTION_AFTER = "latest_successful_after"
 _PROTECTION_HOST = "host_acceptance"
 _PROTECTION_CANDIDATE = "pending_candidate"
 
@@ -178,13 +178,13 @@ def classify_delivery_state(
 
     if not has_change:
         # 无工具解释/只检查；或明确修改但没有 diff（编译通过≠修改完成）
-        if inputs.claimed_change and not inputs.interrupted:
-            return STATE_UNCHANGED, None
-        if inputs.interrupted:
+        if inputs.interrupted or not inputs.handler_success:
             return STATE_FAILED_NO_CHANGE, None
+        if inputs.claimed_change:
+            return STATE_UNCHANGED, ERR_NO_SOURCE_CHANGE
         return STATE_UNCHANGED, None
 
-    if inputs.interrupted:
+    if inputs.interrupted or not inputs.handler_success:
         # 写一部分后 timeout/cancel/tool error：after 必须为 null
         return STATE_PARTIAL_CHANGE, None
 
@@ -244,7 +244,6 @@ def _create_after_revision(
                 f"after 快照指纹与创建时源指纹不一致：{after_id}"
             )
             return after_id, fingerprint, ERR_AFTER_FINGERPRINT_MISMATCH
-        _register_protections(project, inputs, after_id)
         return after_id, fingerprint, None
     except Exception as exc:
         logger.warning("delivery finalizer: after snapshot failed: %s", exc)
@@ -257,36 +256,23 @@ def intent_label(intent: str) -> str:
 
 
 def _register_protections(project: Any, inputs: FinalizeDeliveryInputs, after_id: str | None) -> None:
-    """统一引用接口：登记受保护 revision，不扫描任意文本。"""
+    """原子替换当前交付保护；外部候选/宿主保护不受影响。"""
     try:
-        from openbrep.revisions import register_revision_protection
+        from openbrep.revisions import replace_delivery_revision_protections
     except Exception:
         return
     root = getattr(project, "root", None)
     if not root:
         return
-    if inputs.before_revision_id:
-        try:
-            register_revision_protection(
-                root,
-                inputs.before_revision_id,
-                reason=_PROTECTION_BEFORE,
-                run_id=inputs.run_id,
-                ref={"kind": "delivery_before", "run_id": inputs.run_id},
-            )
-        except Exception:
-            logger.debug("register before protection failed", exc_info=True)
-    if after_id:
-        try:
-            register_revision_protection(
-                root,
-                after_id,
-                reason=_PROTECTION_AFTER,
-                run_id=inputs.run_id,
-                ref={"kind": "delivery_after", "run_id": inputs.run_id},
-            )
-        except Exception:
-            logger.debug("register after protection failed", exc_info=True)
+    try:
+        replace_delivery_revision_protections(
+            root,
+            before_revision_id=inputs.before_revision_id,
+            after_revision_id=after_id,
+            run_id=inputs.run_id,
+        )
+    except Exception:
+        logger.debug("replace delivery protections failed", exc_info=True)
 
 
 def register_external_protection(
@@ -368,6 +354,7 @@ def finalize_delivery(
                 source_fingerprint = compute_source_fingerprint(project.root)
             except Exception:
                 source_fingerprint = None
+            _register_protections(project, inputs, None)
         return (
             DeliverySource(
                 run_id=inputs.run_id,
@@ -401,6 +388,7 @@ def finalize_delivery(
             "验证完成后源文件被外部修改，拒绝将旧验证绑定到新源"
             f"（error={ERR_SOURCE_CHANGED_AFTER_VERIFICATION}）"
         )
+        _register_protections(project, inputs, None)
         return (
             DeliverySource(
                 run_id=inputs.run_id,
@@ -433,7 +421,7 @@ def finalize_delivery(
                         source_fingerprint=current_fp,
                         changed_files=changed_files,
                         snapshot_status=SNAPSHOT_SKIPPED,
-                        error_code=None,
+                        error_code=ERR_NO_SOURCE_CHANGE,
                     ),
                     warnings,
                 )
@@ -475,6 +463,7 @@ def finalize_delivery(
             )
         except Exception as exc:
             warnings.append(f"读取已有 after 快照失败：{after_id} ({exc})")
+            _register_protections(project, inputs, None)
             return (
                 DeliverySource(
                     run_id=inputs.run_id,
@@ -495,6 +484,7 @@ def finalize_delivery(
                     f"已有 after 快照指纹与验证后源不一致：{after_id}"
                     f"（error={ERR_EXISTING_AFTER_INVALID}）"
                 )
+                _register_protections(project, inputs, None)
                 return (
                     DeliverySource(
                         run_id=inputs.run_id,
@@ -532,6 +522,7 @@ def finalize_delivery(
         warnings=warnings,
     )
     if create_err or not after_id:
+        _register_protections(project, inputs, None)
         return (
             DeliverySource(
                 run_id=inputs.run_id,
@@ -552,6 +543,7 @@ def finalize_delivery(
         warnings.append(
             "after 指纹与验证后源不一致，拒绝宣称 verified_change"
         )
+        _register_protections(project, inputs, None)
         return (
             DeliverySource(
                 run_id=inputs.run_id,
@@ -566,6 +558,7 @@ def finalize_delivery(
             warnings,
         )
 
+    _register_protections(project, inputs, after_id)
     return (
         DeliverySource(
             run_id=inputs.run_id,
@@ -619,11 +612,23 @@ def apply_delivery_source_to_result(
                 result.error = delivery_source.error_code or "delivery_snapshot_failed"
         except Exception:
             pass
-    # partial_change / failed_no_change 也不得宣称 verified 成功
+    # partial_change / failed_no_change，以及明确修改却没有真实 diff，均不得
+    # 宣称完整成功。CHAT/解释类 unchanged 没有该 error_code，仍可成功。
     if delivery_source.state in (STATE_PARTIAL_CHANGE, STATE_FAILED_NO_CHANGE):
         try:
-            if getattr(result, "success", False) and delivery_source.changed_files:
+            if getattr(result, "success", False):
                 result.success = False
+        except Exception:
+            pass
+    if (
+        delivery_source.state == STATE_UNCHANGED
+        and delivery_source.error_code == ERR_NO_SOURCE_CHANGE
+    ):
+        try:
+            if getattr(result, "success", False):
+                result.success = False
+            if not getattr(result, "error", None):
+                result.error = ERR_NO_SOURCE_CHANGE
         except Exception:
             pass
     return result
