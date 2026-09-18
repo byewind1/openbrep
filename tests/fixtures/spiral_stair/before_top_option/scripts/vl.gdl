@@ -1,0 +1,11 @@
+﻿! =========================================================
+! Parameter Script - ranges and locks
+! Derived / synced parameters are locked so the proportional
+! system (dou-kou style ratios) cannot be broken by hand.
+! =========================================================
+VALUES "diameter" RANGE [1.0, 3.0]
+VALUES "height" RANGE [2.0, 5.0]
+VALUES "num_steps" RANGE [4, 30]
+VALUES "step_riser" RANGE [0.10, 0.25] ! Fixed: renamed from riser_height to avoid global RISER_HEIGHT conflict
+VALUES "total_rotation" RANGE [90, 720]
+LOCK "stair_radius", "pole_radius", "handrail_height", "step_riser", "A", "B", "ZZYZX"  ! Fixed: step_riser renamed and locked
