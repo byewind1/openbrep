@@ -24,6 +24,7 @@ import shlex
 import signal
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from collections import deque
@@ -259,6 +260,7 @@ class StdioJsonRpcTransport:
         # 回收组内后代（避免 app-server 退出后遗留孙进程）。
         self._pgid: int | None = None
         self._home_lock = None
+        self._home_lock_dir: Path | None = None
 
     # ── 生命周期 ─────────────────────────────────────────────
 
@@ -273,17 +275,79 @@ class StdioJsonRpcTransport:
             # 互斥锁落在 OpenBrep 自己的 run 目录（按 home 摘要命名）：
             # local 入口承诺对用户 Codex home 零写入，锁文件也不例外。
             lock_path = lock_path_for_home(self.codex_home)
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            self._home_lock = open(lock_path, "a+")
             try:
-                fcntl.flock(self._home_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                self._home_lock.close()
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                # Finder/桌面沙箱可能禁止访问 ~/.openbrep/run；把运行时锁
+                # 降级到系统临时目录（仍按 home 摘要隔离），不触碰 auth/home。
+                fallback = Path(tempfile.gettempdir()) / "openbrep-codex-locks"
+                fallback.mkdir(parents=True, exist_ok=True)
+                lock_path = lock_path_for_home(self.codex_home, run_dir=fallback)
+            try:
+                self._home_lock = open(lock_path, "a+")
+            except PermissionError:
+                # 某些 macOS 沙箱策略连锁文件 open 都会返回 EPERM；直接走
+                # 目录锁路径，避免把可启动性绑定到受限文件操作上。
                 self._home_lock = None
-                raise CodexAppServerError(
-                    "Codex app-server runtime 已被另一个 OpenBrep 实例占用。",
-                    category="runtime_conflict",
-                ) from exc
+                fallback = Path(tempfile.gettempdir()) / "openbrep-codex-locks"
+                fallback.mkdir(parents=True, exist_ok=True)
+                lock_path = lock_path_for_home(self.codex_home, run_dir=fallback)
+                lock_dir = Path(f"{lock_path}.d")
+                try:
+                    lock_dir.mkdir()
+                except FileExistsError as exc:
+                    owner = lock_dir / "pid"
+                    stale = False
+                    try:
+                        pid = int(owner.read_text().strip())
+                        os.kill(pid, 0)
+                    except (FileNotFoundError, ValueError, ProcessLookupError):
+                        stale = True
+                    except PermissionError:
+                        stale = False
+                    if stale:
+                        try:
+                            owner.unlink(missing_ok=True)
+                            lock_dir.rmdir()
+                            lock_dir.mkdir()
+                        except OSError:
+                            stale = False
+                    if not stale:
+                        raise CodexAppServerError(
+                            "Codex app-server runtime 已被另一个 OpenBrep 实例占用。",
+                            category="runtime_conflict",
+                        ) from exc
+                (lock_dir / "pid").write_text(str(os.getpid()))
+                self._home_lock_dir = lock_dir
+            if self._home_lock is None:
+                # 已经使用目录锁；无需再执行文件 flock 分支。
+                pass
+            else:
+                try:
+                    fcntl.flock(self._home_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except PermissionError:
+                    # macOS 受限运行环境可能允许创建文件，却拒绝对该目录执行
+                    # flock(2)（EPERM）。用 mkdir 的原子性提供同等的跨进程互斥，
+                    # 并记录 PID 以便清理崩溃遗留锁；正常环境仍优先使用 flock。
+                    self._home_lock.close()
+                    self._home_lock = None
+                    lock_dir = Path(f"{lock_path}.d")
+                    try:
+                        lock_dir.mkdir()
+                    except FileExistsError as exc:
+                        raise CodexAppServerError(
+                            "Codex app-server runtime 已被另一个 OpenBrep 实例占用。",
+                            category="runtime_conflict",
+                        ) from exc
+                    (lock_dir / "pid").write_text(str(os.getpid()))
+                    self._home_lock_dir = lock_dir
+                except BlockingIOError as exc:
+                    self._home_lock.close()
+                    self._home_lock = None
+                    raise CodexAppServerError(
+                        "Codex app-server runtime 已被另一个 OpenBrep 实例占用。",
+                        category="runtime_conflict",
+                    ) from exc
         env = dict(os.environ)
         env["CODEX_HOME"] = str(self.codex_home)
         resolved_binary = resolve_codex_binary(self.codex_binary)
@@ -570,6 +634,13 @@ class StdioJsonRpcTransport:
                 pass
             self._home_lock.close()
             self._home_lock = None
+        if self._home_lock_dir is not None:
+            try:
+                (self._home_lock_dir / "pid").unlink(missing_ok=True)
+                self._home_lock_dir.rmdir()
+            except OSError:
+                pass
+            self._home_lock_dir = None
         reader, self._reader = self._reader, None
         if reader is not None:
             reader.join(timeout=2.0)

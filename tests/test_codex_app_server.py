@@ -37,6 +37,30 @@ def test_resolve_codex_binary_finds_user_npm_bin_without_path(monkeypatch, tmp_p
     assert resolve_codex_binary() == str(binary)
 
 
+def test_stdio_transport_falls_back_when_flock_is_not_permitted(monkeypatch, tmp_path):
+    """受限 macOS 沙箱对 flock 返回 EPERM 时仍可启动并释放互斥锁。"""
+    import fcntl
+
+    real_flock = fcntl.flock
+
+    def denied_flock(*args, **kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(fcntl, "flock", denied_flock)
+    lock_dir = tmp_path / "locks"
+    monkeypatch.setenv("OPENBREP_CODEX_LOCK_DIR", str(lock_dir))
+    transport = StdioJsonRpcTransport(
+        codex_binary=sys.executable,
+        codex_home=tmp_path / "home",
+        extra_args=(str(FAKE_SERVER),),
+    )
+    transport.start()
+    assert transport._home_lock is None
+    assert transport._home_lock_dir is not None
+    transport.close()
+    assert not transport._home_lock_dir
+
+
 class _MemoryTransport:
     """脚本化内存 transport：start 无操作，call 按脚本返回或抛错。"""
 

@@ -22,6 +22,7 @@ import logging
 import re
 import shutil
 import threading
+import tempfile
 import time
 import webbrowser
 from collections import deque
@@ -457,6 +458,7 @@ class CodexProvider:
         # replacement，保证 in-flight RPC 结果不会跨 restart 写回 provider 状态。
         self._op_lock = threading.Lock()
         self._closed = False
+        self._runtime_codex_home: Path | None = None
         atexit.register(self.close)
 
     # ── CLI 探测 ─────────────────────────────────────────────
@@ -591,7 +593,45 @@ class CodexProvider:
                     )
                 # P0-1：新 client 是新的账户会话——in-flight 旧请求不得回写缓存
                 self._bump_generation()
-                self._client.start()
+                try:
+                    self._client.start()
+                except CodexAppServerError as exc:
+                    # macOS 桌面/沙箱环境可能允许读取 managed home 的 auth，
+                    # 却拒绝 Codex CLI 在其中初始化 sqlite runtime。将运行态
+                    # 放到可写临时 home，并只读链接 auth/models cache；不复制、
+                    # 不修改凭据文件。
+                    transport = getattr(self._client, "transport", None)
+                    stderr = getattr(transport, "stderr_tail", lambda: "")()
+                    if (
+                        not self._explicit_home
+                        and self._entry == ENTRY_MANAGED
+                        and "failed to initialize sqlite state runtime" in stderr
+                        and self._runtime_codex_home is None
+                    ):
+                        failed = self._client
+                        try:
+                            failed.close()
+                        except Exception:
+                            pass
+                        runtime_home = Path(tempfile.mkdtemp(prefix="openbrep-codex-runtime-"))
+                        for name in ("auth.json", "models_cache.json"):
+                            source = self.codex_home / name
+                            target = runtime_home / name
+                            if source.exists():
+                                try:
+                                    target.symlink_to(source)
+                                except OSError:
+                                    pass
+                        self._runtime_codex_home = runtime_home
+                        self._client = CodexAppServerClient(
+                            codex_binary=resolve_codex_binary(self.codex_binary) or self.codex_binary,
+                            codex_home=runtime_home,
+                            entry=self._entry,
+                            create_home=True,
+                        )
+                        self._client.start()
+                    else:
+                        raise
                 try:
                     self._check_version(self._client)
                 except Exception:
