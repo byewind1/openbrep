@@ -5,6 +5,7 @@ script's own declared A/B/ZZYZX dimensions.
 """
 
 import unittest
+from pathlib import Path
 
 from openbrep.gdl_previewer import PreviewMesh3D, Preview3DResult
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
@@ -12,6 +13,7 @@ from openbrep.semantic_verifier import (
     _perturb_value,
     check_bounding_box_against_dimensions,
     check_mesh_health,
+    sweep_parameter_observations,
     sweep_parameters,
     verify_semantics,
 )
@@ -216,6 +218,75 @@ class TestSweepParameters(unittest.TestCase):
         # (alphabetically first) could ever be flagged, so at most 3 issues total.
         self.assertLessEqual(len(issues), 3)
 
+    def test_proven_derived_parameters_use_relationship_checks_not_driver_sweeps(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("diameter", "Length", "", "2.0"))
+        project.add_parameter(GDLParameter("derived", "Length", "", "1.0"))
+        project.scripts[ScriptType.MASTER] = (
+            "A = diameter\nB = diameter\nderived = diameter / 2\n"
+        )
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+
+        report = sweep_parameter_observations(project)
+
+        self.assertIn("DIAMETER", report.tested_names)
+        self.assertNotIn("A", report.tested_names)
+        self.assertNotIn("B", report.tested_names)
+        self.assertNotIn("DERIVED", report.tested_names)
+        self.assertEqual(report.sample_for("A").kind, "relationship")
+        self.assertEqual(report.sample_for("A").status, "tested")
+        self.assertEqual(report.sample_for("DERIVED").status, "tested")
+        self.assertEqual(report.tested, 2)
+        self.assertEqual(report.unknown, 0)
+
+    def test_disconnected_input_still_reports_unresponsive(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("diameter", "Length", "", "2.0"))
+        project.add_parameter(GDLParameter("derived", "Length", "", "1.0"))
+        project.scripts[ScriptType.MASTER] = "derived = diameter / 2\n"
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+
+        report = sweep_parameter_observations(project)
+
+        self.assertTrue(any(
+            issue.check_type == "sweep_unresponsive" and "DIAMETER" in issue.detail
+            for issue in report.issues
+        ))
+
+    def test_fixture_boolean_toggle_changes_geometry_and_is_not_persisted(self):
+        root = Path(__file__).parent / "fixtures" / "spiral_stair" / "after_top_option"
+        before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        project = HSFProject.load_from_disk(root)
+
+        report = sweep_parameter_observations(project)
+
+        sample = report.sample_for("SHOW_TOP_TREAD")
+        self.assertEqual(sample.status, "unknown")
+        self.assertTrue(sample.geometry_changed)
+        self.assertEqual(
+            before,
+            {path: path.read_bytes() for path in root.rglob("*") if path.is_file()},
+        )
+
+    def test_range_and_material_skips_have_explicit_reasons(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("fixed_len", "Length", "", "2"))
+        project.add_parameter(GDLParameter("count", "Integer", "", "1"))
+        project.add_parameter(GDLParameter("surface", "Material", "", "1"))
+        project.scripts[ScriptType.PARAM] = (
+            'VALUES "fixed_len" RANGE [2, 2]\n'
+            'VALUES "count" RANGE [1, 2]\n'
+        )
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK count, 1, 1\n"
+
+        report = sweep_parameter_observations(project)
+
+        self.assertEqual(report.sample_for("FIXED_LEN").reason, "no_legal_alternative")
+        self.assertEqual(report.sample_for("SURFACE").reason, "non_geometry_parameter")
+        self.assertEqual(report.sample_for("COUNT").candidate_value, 2)
+        self.assertEqual(report.eligible, len(report.tested_names))
+        self.assertGreater(report.total_parameters, report.eligible)
+
 
 class TestVerifySemantics(unittest.TestCase):
     def _project(self, name: str = "T") -> HSFProject:
@@ -264,6 +335,8 @@ class TestVerifySemantics(unittest.TestCase):
         result = verify_semantics(project)
         self.assertTrue(result.passed)  # non-blocking: informational only
         self.assertTrue(any(i.check_type == "sweep_unresponsive" for i in result.issues))
+        self.assertIsNotNone(result.sweep)
+        self.assertIn("N_SHELVES", result.sweep.tested_names)
 
     def test_sweep_false_skips_parameter_sweep_entirely(self):
         project = self._project()
@@ -271,6 +344,7 @@ class TestVerifySemantics(unittest.TestCase):
         project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
         result = verify_semantics(project, sweep=False)
         self.assertFalse(any(i.check_type.startswith("sweep_") for i in result.issues))
+        self.assertIsNone(result.sweep)
 
 
 if __name__ == "__main__":

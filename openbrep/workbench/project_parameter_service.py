@@ -39,6 +39,42 @@ class WorkbenchProjectParameterService:
         payload["ok"] = True
         return payload
 
+    def effective_parameters(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Evaluate saved parameters plus optional draft overrides without writes."""
+        if self.session.project is None:
+            return {"ok": False, "error": "Create or open a project first."}
+        from openbrep.hsf_project import ScriptType
+        from openbrep.parameter_observation import observe_parameters
+
+        overrides = body.get("parameters") if isinstance(body, dict) else None
+        if not isinstance(overrides, dict):
+            overrides = {}
+        project = self.session.project
+        observation = observe_parameters(
+            project.parameters,
+            project.get_script(ScriptType.MASTER) or "",
+            parameter_values(project, overrides),
+            overrides=overrides,
+            parameter_script=project.get_script(ScriptType.PARAM) or "",
+        )
+        return {
+            "ok": True,
+            "project_path": str(project.root),
+            "project_epoch": getattr(self.session, "project_epoch", None),
+            "source_fingerprint": compute_source_fingerprint(project.root),
+            "supported": observation.supported,
+            "parameters": [item.to_dict() for item in observation.parameters],
+            "diagnostics": [
+                {
+                    "code": item.code,
+                    "line": item.line,
+                    "command": item.command,
+                    "message": item.message,
+                }
+                for item in observation.diagnostics
+            ],
+        }
+
     def _values_for(self, name: str) -> dict[str, Any] | None:
         """当前项目 vl.gdl 中该参数的 VALUES 声明（无项目/无声明 → None）。"""
         if self.session.project is None:

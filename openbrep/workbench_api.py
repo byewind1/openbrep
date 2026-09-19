@@ -742,6 +742,11 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/parameters":
             return self.add_project_parameter(body)
 
+        if route == "/api/project/parameters/effective" and normalized_method in {"GET", "POST"}:
+            return self.project_service.effective_parameters(
+                body if normalized_method == "POST" and isinstance(body, dict) else {}
+            )
+
         if normalized_method == "POST" and route == "/api/project/parameters/update":
             return self.update_project_parameter(body)
 

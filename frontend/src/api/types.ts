@@ -32,6 +32,38 @@ export interface WorkbenchParameter {
   range?: number[] | null
 }
 
+export type EffectiveParameterRole = 'input' | 'derived' | 'unknown' | 'material'
+
+export interface EffectiveParameterObservation {
+  name: string
+  role: EffectiveParameterRole
+  source_value: unknown
+  requested_value: unknown
+  effective_value: unknown
+  read_only: boolean
+  depends_on: string[]
+  sources: string[]
+  reason: string | null
+}
+
+export interface EffectiveParameterDiagnostic {
+  code: string
+  line: number
+  command: string
+  message: string
+}
+
+export interface EffectiveParametersResult {
+  ok: boolean
+  project_path?: string
+  project_epoch?: number
+  source_fingerprint?: string | null
+  supported?: boolean
+  parameters?: EffectiveParameterObservation[]
+  diagnostics?: EffectiveParameterDiagnostic[]
+  error?: string
+}
+
 export interface ProjectScript {
   name: string
   path: string
@@ -529,6 +561,7 @@ export interface WorkbenchSnapshot {
   unavailable?: boolean
   session_id?: string
   project_epoch?: number
+  source_fingerprint?: string | null
   /** 后端 snapshot 的工作区块：无附着为 null（P3-d1） */
   workspace?: WorkspaceInfo | null
 }
@@ -1296,6 +1329,7 @@ export interface SaveScriptResponse {
   ok?: boolean
   success: boolean
   saved_at: string
+  source_fingerprint?: string | null
   error?: string
 }
 

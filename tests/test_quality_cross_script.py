@@ -70,3 +70,43 @@ def test_gosub_body_and_ui_only_are_seen(tmp_path):
     graph = build_cross_script_graph(root)
     assert graph.scripts["ui.gdl"]["read"]
     assert graph.eligibility["ui_width"]["role"] == "ui_only"
+
+
+def test_quality_uses_conservative_shared_parameter_roles(tmp_path):
+    root = tmp_path / "Roles"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    (root / "paramlist.xml").write_text(
+        """<ParamSection><Parameters>
+        <Length Name="width"><Value>2</Value></Length>
+        <Length Name="radius"><Value>1</Value></Length>
+        <Length Name="pole"><Value>0.1</Value></Length>
+        <Length Name="conditional"><Value>0</Value></Length>
+        <Length Name="left"><Value>0</Value></Length>
+        <Length Name="right"><Value>0</Value></Length>
+        </Parameters></ParamSection>""",
+        encoding="utf-8",
+    )
+    (scripts / "1d.gdl").write_text(
+        "radius = width / 2\n"
+        "pole = radius * 0.1\n"
+        "IF width > 0 THEN conditional = width\n"
+        "left = right + 1\n"
+        "right = left + 1\n",
+        encoding="utf-8",
+    )
+    (scripts / "3d.gdl").write_text(
+        "CYLIND 1, pole\nBLOCK conditional, 1, 1\n",
+        encoding="utf-8",
+    )
+
+    graph = build_cross_script_graph(root)
+
+    assert graph.eligibility["width"]["role"] == "geometry_driver"
+    assert graph.eligibility["radius"]["role"] == "derived"
+    assert graph.eligibility["radius"]["depends_on"] == ["width"]
+    assert graph.eligibility["pole"]["depends_on"] == ["width"]
+    assert graph.eligibility["conditional"]["role"] == "unknown"
+    assert graph.eligibility["conditional"]["reason"] == "conditional_assignment"
+    assert graph.eligibility["left"]["role"] == "unknown"
+    assert graph.eligibility["right"]["role"] == "unknown"

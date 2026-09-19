@@ -171,6 +171,72 @@ class PreviewResult:
     warnings: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ParameterEvaluationDiagnostic:
+    code: str
+    line: int
+    command: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ParameterEnvironmentResult:
+    values: dict[str, Any]
+    runtime_values: dict[str, Any] = field(default_factory=dict, repr=False)
+    diagnostics: list[ParameterEvaluationDiagnostic] = field(default_factory=list)
+
+    @property
+    def supported(self) -> bool:
+        return not self.diagnostics
+
+
+def evaluate_parameter_environment(
+    setup_script: str,
+    parameters: Mapping[str, Any] | None = None,
+    *,
+    for_limit: int = DEFAULT_FOR_LIMIT,
+    wall_clock_limit: float = DEFAULT_WALL_CLOCK_LIMIT,
+) -> ParameterEnvironmentResult:
+    """Execute a Master script and return declared parameter values only.
+
+    This is a read-only observation of the same runtime used by local preview.
+    It deliberately excludes internal variables and built-in globals from the
+    public result.
+    """
+    source_values = dict(parameters or {})
+    original_names = {str(name).upper(): str(name) for name in source_values}
+    runtime = _PreviewRuntime(
+        parameters=source_values,
+        for_limit=for_limit,
+        unknown_command_policy="warn",
+        wall_clock_limit=wall_clock_limit,
+        observe_setup=True,
+    )
+    runtime.execute(setup_script or "", mode="setup")
+    runtime.finish()
+
+    values = {
+        original: runtime.env.get(normalized, source_values[original])
+        for normalized, original in original_names.items()
+    }
+    diagnostics: list[ParameterEvaluationDiagnostic] = []
+    for warning in runtime.result_3d.warnings_structured:
+        code = warning.code
+        if code == "PREVIEW_WARN" and warning.message.startswith("表达式解析失败"):
+            code = "PARAM_EVAL_FAILED"
+        diagnostics.append(ParameterEvaluationDiagnostic(
+            code=code,
+            line=warning.line,
+            command=warning.command,
+            message=warning.message,
+        ))
+    return ParameterEnvironmentResult(
+        values=values,
+        runtime_values=dict(runtime.env),
+        diagnostics=diagnostics,
+    )
+
+
 def preview_2d_script(
     script_2d: str,
     parameters: dict[str, Any] | None = None,
@@ -315,6 +381,7 @@ class _PreviewRuntime:
         macro_guid_map: Mapping[str, str] | None = None,
         _call_budget: "_CallBudget | None" = None,
         _macro_chain: tuple[str, ...] = (),
+        observe_setup: bool = False,
     ):
         self.env = _normalize_parameters(parameters or {})
         # GDL 属性类型选择器常量（IND(MATERIAL, ...) 等的首参；P14）——仅被
@@ -351,6 +418,7 @@ class _PreviewRuntime:
         self.quality = (quality or "fast").strip().lower()
         if self.quality not in {"fast", "accurate"}:
             self.quality = "fast"
+        self._observe_setup = bool(observe_setup)
 
         # P3（CALL 执行）：宏解析器 + 当前脚本的 calledmacros 名称→GUID 提示表。
         # _macro_chain 为当前 CALL 链上的宏名（不含顶层脚本），用于递归环检测
@@ -758,12 +826,27 @@ class _PreviewRuntime:
             # （与 BLOCK 等几何命令一致——master script 里的 CALL 不执行，
             # MVP 近似：Archicad 中 master script 的 CALL 实际会执行）。
             if re.match(r"^CALL\b", line, re.IGNORECASE):
-                if mode != "setup":
+                if mode == "setup" and self._observe_setup:
+                    self._warn(
+                        line_no,
+                        "Master CALL cannot be evaluated locally",
+                        command="CALL",
+                        code="PARAM_EVAL_UNSUPPORTED_CALL",
+                    )
+                elif mode != "setup":
                     self._handle_call(line, line_no, mode)
                 idx += 1
                 continue
 
             if mode == "setup":
+                if self._observe_setup:
+                    command = _extract_command(line)
+                    self._warn(
+                        line_no,
+                        f"Master statement {command or line} cannot be evaluated locally",
+                        command=command,
+                        code="PARAM_EVAL_UNSUPPORTED",
+                    )
                 idx += 1
                 continue
 

@@ -2,7 +2,7 @@ import { ParameterRail } from '../../components/ParameterRail'
 import { ScriptTree } from '../../components/ScriptTree'
 import { WorkspacePanel } from '../workspace/WorkspacePanel'
 import type { WorkspaceInfo, WorkspaceSearchHit } from '../../api/types'
-import type { AddParameterRequest, ProjectScript, UpdateParameterRequest, WorkbenchParameter } from '../../api/types'
+import type { AddParameterRequest, EffectiveParameterObservation, ProjectScript, UpdateParameterRequest, WorkbenchParameter } from '../../api/types'
 
 interface WorkbenchLeftRailProps {
   workspace: WorkspaceInfo | null
@@ -28,6 +28,7 @@ interface WorkbenchLeftRailProps {
   }
   parameterIssues: string[]
   draftParameters: Record<string, unknown>
+  effectiveParameters?: Record<string, EffectiveParameterObservation>
   applying: boolean
   onSelectScript: (name: string) => void
   onChangeParameter: (name: string, value: unknown) => void
@@ -67,6 +68,7 @@ export function WorkbenchLeftRail({
   groupedParameters,
   parameterIssues,
   draftParameters,
+  effectiveParameters = {},
   applying,
   onSelectScript,
   onChangeParameter,
@@ -111,6 +113,7 @@ export function WorkbenchLeftRail({
         ]}
         parameterIssues={parameterIssues}
         draftParameters={draftParameters}
+        effectiveParameters={effectiveParameters}
         onChange={onChangeParameter}
         onApply={onApplyParameters}
         onReset={onResetParameters}

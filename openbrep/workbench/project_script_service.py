@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.source_fingerprint import compute_source_fingerprint
 
 
 SCRIPT_FILE_ORDER = [
@@ -73,6 +74,7 @@ class WorkbenchProjectScriptService:
             "ok": True,
             "success": True,
             "saved_at": datetime.now(timezone.utc).isoformat(),
+            "source_fingerprint": compute_source_fingerprint(self.session.project.root),
         }
 
 

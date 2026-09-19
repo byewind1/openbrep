@@ -49,6 +49,8 @@ export function WorkbenchApp() {
   const parameters = useWorkbenchStore((state) => state.parameters)
   const parameterIssues = useWorkbenchStore((state) => state.parameterIssues)
   const draftParameters = useWorkbenchStore((state) => state.draftParameters)
+  const effectiveParameters = useWorkbenchStore((state) => state.effectiveParameters)
+  const projectEpoch = useWorkbenchStore((state) => state.projectEpoch)
   const preview = useWorkbenchStore((state) => state.preview)
   const preview2d = useWorkbenchStore((state) => state.preview2d)
   const warnings = useWorkbenchStore((state) => state.warnings)
@@ -119,6 +121,7 @@ export function WorkbenchApp() {
   const deleteProjectParameter = useWorkbenchStore((state) => state.deleteProjectParameter)
   const validateProjectParameters = useWorkbenchStore((state) => state.validateProjectParameters)
   const resetDraftParameters = useWorkbenchStore((state) => state.resetDraftParameters)
+  const refreshEffectiveParameters = useWorkbenchStore((state) => state.refreshEffectiveParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const newProject = useWorkbenchStore((state) => state.newProject)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
@@ -229,6 +232,10 @@ export function WorkbenchApp() {
       setCenterView('3d')
     }
   }, [projectPath])
+
+  useEffect(() => {
+    if (projectPath) void refreshEffectiveParameters()
+  }, [projectEpoch, projectPath, refreshEffectiveParameters])
 
   function openScriptInEditor(scriptName: string) {
     setCenterView('editor')
@@ -415,6 +422,7 @@ export function WorkbenchApp() {
             groupedParameters={grouped}
             parameterIssues={parameterIssues}
             draftParameters={draftParameters}
+            effectiveParameters={effectiveParameters}
             applying={applying}
             onSelectScript={openScriptInEditor}
             onChangeParameter={(name, value) => void setDraftParameter(name, value)}

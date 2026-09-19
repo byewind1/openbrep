@@ -21,7 +21,12 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse
 from openbrep.object_planner import GDLObjectPlan
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
-from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
+from openbrep.semantic_verifier import (
+    ParameterSweepReport,
+    ParameterSweepSample,
+    SemanticIssue,
+    SemanticVerificationResult,
+)
 from openbrep.static_checker import StaticCheckResult, StaticError, StaticChecker
 from openbrep.verification import (
     CheckStatus,
@@ -339,6 +344,35 @@ class TestBuildVerificationReport(unittest.TestCase):
         self.assertIsNotNone(semantic_chk)
         self.assertEqual(semantic_chk.status, CheckStatus.PASS)
         self.assertTrue(r.passed)
+
+    def test_semantic_sweep_counts_are_serialized_structurally(self):
+        sweep = ParameterSweepReport(
+            samples=[
+                ParameterSweepSample(
+                    name="A", role="input", kind="driver", status="tested",
+                    source_value=1, candidate_value=1.5, geometry_changed=True,
+                ),
+                ParameterSweepSample(
+                    name="MAT", role="material", kind="driver", status="skipped",
+                    reason="non_geometry_parameter",
+                ),
+            ],
+            eligible=1,
+            total_parameters=2,
+        )
+        report = build_verification_report(
+            intent="CREATE",
+            project=_project_with_3d(),
+            static_result=_static(),
+            semantic_result=SemanticVerificationResult(passed=True, sweep=sweep),
+        )
+
+        payload = report.to_dict()["parameter_sweep"]
+        self.assertEqual(payload["tested"], 1)
+        self.assertEqual(payload["skipped"], 1)
+        self.assertEqual(payload["eligible"], 1)
+        self.assertEqual(payload["total_parameters"], 2)
+        self.assertEqual(payload["coverage"], 1.0)
 
     def test_semantic_fail_lowers_passed_and_records_error(self):
         r = build_verification_report(
@@ -704,4 +738,3 @@ class TestAccidentRegression(unittest.TestCase):
         # 报告摘要不再是全绿
         text = report.to_summary_text()
         self.assertIn("❌", text)
-

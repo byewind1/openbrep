@@ -39,6 +39,7 @@ import type {
   CompilerSettingsResult,
   ConfigRevisionResult,
   DirectoryChoiceResult,
+  EffectiveParametersResult,
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
@@ -546,6 +547,23 @@ export async function applyParameters(parameters: Record<string, unknown>): Prom
       body: JSON.stringify({ parameters }),
     },
     { ok: true, changed: parameters, ...fallbackSnapshot },
+  )
+}
+
+export async function fetchEffectiveParameters(
+  parameters?: Record<string, unknown>,
+): Promise<EffectiveParametersResult> {
+  const hasDraft = parameters !== undefined
+  return requestJson<EffectiveParametersResult>(
+    '/api/project/parameters/effective',
+    hasDraft
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parameters }),
+        }
+      : { method: 'GET' },
+    { ok: false, parameters: [], diagnostics: [], error: 'OpenBrep local API is not available.' },
   )
 }
 

@@ -20,6 +20,9 @@ import type {
 
   DeleteMemoryLessonResult,
   DirectoryChoiceResult,
+  EffectiveParameterDiagnostic,
+  EffectiveParameterObservation,
+  EffectiveParametersResult,
   DeleteParameterResult,
   DistilledLessonsResult,
   DistillLessonsResult,
@@ -97,6 +100,7 @@ export interface WorkbenchApi {
   ) => Promise<Preview2DPayload>
   /** Archicad 权威预览（/api/preview/authoritative）；parameters 缺省 = 后端用当前参数值 */
   fetchAuthoritativePreview: (parameters?: Record<string, unknown>) => Promise<AuthoritativePreviewResult>
+  fetchEffectiveParameters: (parameters?: Record<string, unknown>) => Promise<EffectiveParametersResult>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
@@ -242,6 +246,11 @@ export interface WorkbenchState {
   parameters: WorkbenchParameter[]
   parameterIssues: string[]
   draftParameters: Record<string, unknown>
+  sourceFingerprint: string | null
+  effectiveParameters: Record<string, EffectiveParameterObservation>
+  effectiveParameterDiagnostics: EffectiveParameterDiagnostic[]
+  effectiveParametersBusy: boolean
+  effectiveParametersError: string | null
   preview: PreviewPayload | null
   preview2d: Preview2DPayload | null
   /** 预览质量档（P1b）：会话态，不持久化到用户配置 */
@@ -393,6 +402,7 @@ export interface WorkbenchState {
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<boolean>
   deleteProjectParameter: (name: string) => Promise<boolean>
   validateProjectParameters: () => Promise<void>
+  refreshEffectiveParameters: (parameters?: Record<string, unknown>) => Promise<void>
   applyDraftParameters: () => Promise<void>
   resetDraftParameters: () => void
   refreshProjectWorkspace: (options?: ProjectWorkspaceRefreshOptions) => Promise<void>
