@@ -32,7 +32,7 @@ false positives that block a correct CREATE are not.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 from openbrep.gdl_ast import ControlBlock, GeometryCall, parse_gdl_script
 from openbrep.static_checker import RESERVED_PARAMS
@@ -46,6 +46,7 @@ __all__ = [
     "SemanticVerificationResult",
     "check_mesh_health",
     "check_bounding_box_against_dimensions",
+    "sweep_parameter_observations",
     "sweep_parameters",
     "verify_semantics",
 ]
@@ -70,6 +71,107 @@ class SemanticIssue:
 class SemanticVerificationResult:
     passed: bool
     issues: list[SemanticIssue] = field(default_factory=list)
+    sweep: "ParameterSweepReport | None" = None
+
+
+@dataclass
+class ParameterSweepSample:
+    name: str
+    role: str
+    kind: str
+    status: str
+    source_value: Any = None
+    candidate_value: Any = None
+    effective_value: Any = None
+    geometry_changed: bool | None = None
+    reason: str | None = None
+    depends_on: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "role": self.role,
+            "kind": self.kind,
+            "status": self.status,
+            "source_value": self.source_value,
+            "candidate_value": self.candidate_value,
+            "effective_value": self.effective_value,
+            "geometry_changed": self.geometry_changed,
+            "reason": self.reason,
+            "depends_on": list(self.depends_on),
+        }
+
+
+@dataclass
+class ParameterSweepReport:
+    issues: list[SemanticIssue] = field(default_factory=list)
+    samples: list[ParameterSweepSample] = field(default_factory=list)
+    eligible: int = 0
+    total_parameters: int = 0
+
+    @property
+    def tested_names(self) -> list[str]:
+        return [
+            sample.name for sample in self.samples
+            if sample.kind == "driver" and sample.status in {"tested", "unknown"}
+        ]
+
+    @property
+    def tested(self) -> int:
+        return sum(
+            sample.kind == "driver" and sample.status == "tested"
+            for sample in self.samples
+        )
+
+    @property
+    def skipped(self) -> int:
+        return sum(
+            sample.kind == "driver" and sample.status == "skipped"
+            for sample in self.samples
+        )
+
+    @property
+    def unknown(self) -> int:
+        return sum(
+            sample.kind == "driver" and sample.status == "unknown"
+            for sample in self.samples
+        )
+
+    @property
+    def failed(self) -> int:
+        return sum(
+            sample.kind == "driver" and sample.status == "failed"
+            for sample in self.samples
+        )
+
+    @property
+    def coverage(self) -> float:
+        attempted = len(self.tested_names)
+        return attempted / self.eligible if self.eligible else 1.0
+
+    @property
+    def total_parameter_coverage(self) -> float:
+        return len(self.tested_names) / self.total_parameters if self.total_parameters else 1.0
+
+    def sample_for(self, name: str) -> ParameterSweepSample:
+        normalized = name.upper()
+        for sample in self.samples:
+            if sample.name.upper() == normalized:
+                return sample
+        raise KeyError(name)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tested": self.tested,
+            "skipped": self.skipped,
+            "unknown": self.unknown,
+            "failed": self.failed,
+            "eligible": self.eligible,
+            "total_parameters": self.total_parameters,
+            "coverage": self.coverage,
+            "total_parameter_coverage": self.total_parameter_coverage,
+            "samples": [sample.to_dict() for sample in self.samples],
+        }
 
 
 def _scene_bbox(meshes: list) -> Optional[tuple[float, float, float, float, float, float]]:
@@ -145,108 +247,198 @@ def _perturb_value(value: float, delta_ratio: float, *, is_boolean: bool = False
     return value * (1 + delta_ratio)
 
 
+def sweep_parameter_observations(
+    project: Optional["HSFProject"],
+    *,
+    delta_ratio: float = DEFAULT_SWEEP_DELTA_RATIO,
+    max_params: int = DEFAULT_SWEEP_MAX_PARAMS,
+    baseline_result: "Preview3DResult | None" = None,
+    baseline_effective: dict[str, Any] | None = None,
+) -> ParameterSweepReport:
+    """Sweep eligible inputs and verify proven derived relationships."""
+    report = ParameterSweepReport()
+    if project is None:
+        return report
+
+    from openbrep.hsf_project import ScriptType
+    from openbrep.gdl_previewer import evaluate_parameter_environment, preview_3d_script
+    from openbrep.parameter_observation import (
+        classify_parameter_roles,
+        select_alternative_value,
+    )
+    from openbrep.workbench.project_parameter_service import (
+        parameter_values,
+        parse_values_declarations,
+    )
+
+    script_3d = project.get_script(ScriptType.SCRIPT_3D) or ""
+    if not script_3d.strip():
+        return report
+
+    setup_script = project.get_script(ScriptType.MASTER) or ""
+    source_params = parameter_values(project)
+    report.total_parameters = len(project.parameters)
+    if not source_params:
+        return report
+
+    parameter_by_name = {parameter.name.upper(): parameter for parameter in project.parameters}
+    roles = classify_parameter_roles(
+        parameter_by_name,
+        setup_script,
+        parameter_types={name: parameter.type_tag for name, parameter in parameter_by_name.items()},
+    ).roles
+    domains = {
+        name.upper(): value
+        for name, value in parse_values_declarations(
+            project.get_script(ScriptType.PARAM) or ""
+        ).items()
+    }
+
+    baseline_environment = None
+    if baseline_effective is None:
+        evaluated_baseline = evaluate_parameter_environment(setup_script, source_params)
+        baseline_effective = evaluated_baseline.values
+        baseline_environment = evaluated_baseline.runtime_values
+    if baseline_result is None:
+        try:
+            baseline_result = preview_3d_script(
+                script_3d, parameters=baseline_environment or baseline_effective,
+                unknown_command_policy="warn", quality="fast",
+            )
+        except Exception:
+            return report
+
+    baseline_bbox = _scene_bbox(baseline_result.meshes)
+    if baseline_bbox is None:
+        return report
+
+    baseline_sig = _mesh_signature(baseline_result)
+    eligible: list[tuple[str, Any, Any]] = []
+    derived_roles = {name: role for name, role in roles.items() if role.role == "derived"}
+
+    for name in sorted(parameter_by_name):
+        parameter = parameter_by_name[name]
+        role = roles[name]
+        baseline_value = source_params.get(name)
+        if role.role == "derived":
+            continue
+        if not isinstance(baseline_value, (int, float)):
+            report.samples.append(ParameterSweepSample(
+                name=name, role=role.role, kind="driver", status="skipped",
+                source_value=baseline_value, reason="non_numeric_parameter",
+            ))
+            continue
+        domain = domains.get(name, {})
+        selection = select_alternative_value(
+            baseline_value,
+            parameter.type_tag,
+            options=domain.get("options"),
+            value_range=domain.get("range"),
+            delta_ratio=delta_ratio,
+        )
+        if selection.value is None:
+            report.samples.append(ParameterSweepSample(
+                name=name, role=role.role, kind="driver", status="skipped",
+                source_value=baseline_value, reason=selection.reason,
+            ))
+            continue
+        eligible.append((name, baseline_value, selection.value))
+
+    report.eligible = len(eligible)
+    for name, baseline_value, candidate in eligible[:max_params]:
+        role = roles[name]
+        perturbed_source = dict(source_params)
+        perturbed_source[name] = candidate
+
+        try:
+            perturbed_environment = evaluate_parameter_environment(
+                setup_script, perturbed_source,
+            )
+            perturbed_result = preview_3d_script(
+                script_3d, parameters=perturbed_environment.runtime_values,
+                unknown_command_policy="warn", quality="fast",
+            )
+        except Exception as exc:
+            report.issues.append(SemanticIssue(
+                check_type="sweep_preview_error",
+                detail=f"参数 {name} 扫描时预览异常（不计入失败）：{exc}",
+                blocking=False,
+            ))
+            report.samples.append(ParameterSweepSample(
+                name=name, role=role.role, kind="driver", status="failed",
+                source_value=baseline_value, candidate_value=candidate,
+                reason="preview_error",
+            ))
+            continue
+
+        perturbed_bbox = _scene_bbox(perturbed_result.meshes)
+        changed = _mesh_signature(perturbed_result) != baseline_sig if perturbed_bbox else True
+        report.samples.append(ParameterSweepSample(
+            name=name,
+            role=role.role,
+            kind="driver",
+            status="unknown" if role.role == "unknown" else "tested",
+            source_value=baseline_value,
+            candidate_value=candidate,
+            effective_value=perturbed_environment.values.get(name),
+            geometry_changed=changed,
+            reason=role.reason,
+        ))
+        if perturbed_bbox is None:
+            is_boolean = parameter_by_name[name].type_tag == "Boolean"
+            is_expected_toggle_off = is_boolean and baseline_value == 1.0
+            report.issues.append(SemanticIssue(
+                check_type="sweep_mesh_vanished",
+                detail=f"参数 {name} 从 {baseline_value:.3g} 改为 "
+                       f"{candidate:.3g} 后，几何完全消失",
+                blocking=not is_expected_toggle_off,
+            ))
+        elif not changed:
+            report.issues.append(SemanticIssue(
+                check_type="sweep_unresponsive",
+                detail=f"参数 {name} 从 {baseline_value:.3g} 改为 "
+                       f"{candidate:.3g} 后，几何完全无变化",
+                blocking=False,
+            ))
+
+        for derived_name, derived_role in derived_roles.items():
+            if name not in derived_role.depends_on:
+                continue
+            before_value = baseline_effective.get(derived_name)
+            after_value = perturbed_environment.values.get(derived_name)
+            relationship_changed = before_value != after_value
+            report.samples.append(ParameterSweepSample(
+                name=derived_name,
+                role="derived",
+                kind="relationship",
+                status="tested",
+                source_value=before_value,
+                candidate_value=after_value,
+                effective_value=after_value,
+                geometry_changed=changed,
+                reason=None if relationship_changed else "derived_value_unchanged",
+                depends_on=(name,),
+            ))
+            if not relationship_changed:
+                report.issues.append(SemanticIssue(
+                    check_type="sweep_relationship_unresponsive",
+                    detail=f"上游参数 {name} 改变后，派生参数 {derived_name} 未变化",
+                    blocking=False,
+                ))
+
+    return report
+
+
 def sweep_parameters(
     project: Optional["HSFProject"],
     *,
     delta_ratio: float = DEFAULT_SWEEP_DELTA_RATIO,
     max_params: int = DEFAULT_SWEEP_MAX_PARAMS,
 ) -> list[SemanticIssue]:
-    """Perturb each declared numeric parameter one at a time and re-preview.
-
-    Requires a working baseline preview to sweep against; if the baseline
-    itself has no mesh, mesh_health already reports that and sweeping adds no
-    signal, so this returns [] early instead of piling on.
-    """
-    if project is None:
-        return []
-
-    from openbrep.hsf_project import ScriptType
-    from openbrep.gdl_previewer import preview_3d_script
-    from openbrep.workbench.project_parameter_service import parameter_values
-
-    script_3d = project.get_script(ScriptType.SCRIPT_3D) or ""
-    if not script_3d.strip():
-        return []
-
-    setup_script = project.get_script(ScriptType.MASTER) or ""
-    baseline_params = parameter_values(project)
-    if not baseline_params:
-        return []
-
-    # Boolean-ness is a property of the parameter's declared type, never of
-    # its current numeric value. Only genuinely Boolean params get toggled by
-    # _perturb_value; a Length/RealNum sitting at exactly 1.0 must scale.
-    boolean_param_names = {
-        p.name.upper() for p in project.parameters if p.type_tag == "Boolean"
-    }
-
-    try:
-        baseline_result = preview_3d_script(
-            script_3d, parameters=baseline_params, setup_script=setup_script,
-            unknown_command_policy="warn", quality="fast",
-        )
-    except Exception:
-        return []  # can't sweep from a baseline that doesn't even preview
-
-    baseline_bbox = _scene_bbox(baseline_result.meshes)
-    if baseline_bbox is None:
-        return []  # mesh_empty already covers this case
-
-    baseline_sig = _mesh_signature(baseline_result)
-    issues: list[SemanticIssue] = []
-
-    for name in sorted(baseline_params.keys())[:max_params]:
-        baseline_value = baseline_params[name]
-        # P9：字符串参数（如 String 型 pattern_type）不参与数值扫掠——扰动
-        # 字符串没有数值意义，直接跳过，避免制造无意义的 sweep_preview_error。
-        if not isinstance(baseline_value, (int, float)):
-            continue
-        is_boolean = name in boolean_param_names
-        perturbed_params = dict(baseline_params)
-        perturbed_params[name] = _perturb_value(
-            baseline_value, delta_ratio, is_boolean=is_boolean
-        )
-
-        try:
-            perturbed_result = preview_3d_script(
-                script_3d, parameters=perturbed_params, setup_script=setup_script,
-                unknown_command_policy="warn", quality="fast",
-            )
-        except Exception as exc:
-            issues.append(SemanticIssue(
-                check_type="sweep_preview_error",
-                detail=f"参数 {name} 扫描时预览异常（不计入失败）：{exc}",
-                blocking=False,
-            ))
-            continue
-
-        perturbed_bbox = _scene_bbox(perturbed_result.meshes)
-        if perturbed_bbox is None:
-            # Toggling a Boolean "hasXxx" flag off (1 → 0) is *expected* to
-            # remove optional geometry — that's what the flag is for. Only
-            # treat vanishing as a real bug when it wasn't an intentional
-            # off-switch: scaled params, or a flag turning ON that erases
-            # everything. The exemption is type-gated: a Length/RealNum whose
-            # value happens to be 1.0 is not a toggle, so its vanishing is
-            # still treated as a real bug.
-            is_expected_toggle_off = is_boolean and baseline_value == 1.0
-            issues.append(SemanticIssue(
-                check_type="sweep_mesh_vanished",
-                detail=f"参数 {name} 从 {baseline_value:.3g} 改为 "
-                       f"{perturbed_params[name]:.3g} 后，几何完全消失",
-                blocking=not is_expected_toggle_off,
-            ))
-            continue
-
-        if _mesh_signature(perturbed_result) == baseline_sig:
-            issues.append(SemanticIssue(
-                check_type="sweep_unresponsive",
-                detail=f"参数 {name} 从 {baseline_params[name]:.3g} 改为 "
-                       f"{perturbed_params[name]:.3g} 后，几何完全无变化",
-                blocking=False,
-            ))
-
-    return issues
+    """Backward-compatible issue-only view of the structured sweep report."""
+    return sweep_parameter_observations(
+        project, delta_ratio=delta_ratio, max_params=max_params,
+    ).issues
 
 
 def check_mesh_health(script_3d: str, result: "Preview3DResult") -> list[SemanticIssue]:
@@ -341,15 +533,16 @@ def verify_semantics(
         return SemanticVerificationResult(passed=True)
 
     try:
-        from openbrep.gdl_previewer import preview_3d_script
+        from openbrep.gdl_previewer import evaluate_parameter_environment, preview_3d_script
         from openbrep.workbench.project_parameter_service import parameter_values
 
         setup_script = project.get_script(ScriptType.MASTER) or ""
-        params = parameter_values(project)
+        source_params = parameter_values(project)
+        evaluated = evaluate_parameter_environment(setup_script, source_params)
+        params = evaluated.values
         result = preview_3d_script(
             script_3d,
-            parameters=params,
-            setup_script=setup_script,
+            parameters=evaluated.runtime_values,
             unknown_command_policy="warn",
             quality="fast",
         )
@@ -367,10 +560,16 @@ def verify_semantics(
 
     issues = check_mesh_health(script_3d, result)
     issues.extend(check_bounding_box_against_dimensions(result, dims, tolerance=tolerance))
+    sweep_report = None
     if sweep:
-        issues.extend(sweep_parameters(
-            project, delta_ratio=sweep_delta_ratio, max_params=sweep_max_params,
-        ))
+        sweep_report = sweep_parameter_observations(
+            project,
+            delta_ratio=sweep_delta_ratio,
+            max_params=sweep_max_params,
+            baseline_result=result,
+            baseline_effective=params,
+        )
+        issues.extend(sweep_report.issues)
 
     passed = not any(issue.blocking for issue in issues)
-    return SemanticVerificationResult(passed=passed, issues=issues)
+    return SemanticVerificationResult(passed=passed, issues=issues, sweep=sweep_report)

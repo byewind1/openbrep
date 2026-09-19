@@ -4,7 +4,7 @@ import { AddParameterInlineForm } from './AddParameterInlineForm'
 import { ParameterMetadataEditor } from './ParameterMetadataEditor'
 import { ArchicadParamPanel } from './ArchicadParamPanel'
 import { useT } from '../i18n'
-import type { AddParameterRequest, UpdateParameterRequest, WorkbenchParameter } from '../api/types'
+import type { AddParameterRequest, EffectiveParameterObservation, UpdateParameterRequest, WorkbenchParameter } from '../api/types'
 
 // P11：参数面板「参数脚本」tab 复用现有脚本编辑器组件（Monaco），
 // 与主编辑器一致走 lazy 加载，避免启动即拉 monaco 体积。
@@ -16,6 +16,7 @@ interface ParameterRailProps {
   sections?: Array<{ title: string; parameters: WorkbenchParameter[] }>
   parameterIssues: string[]
   draftParameters: Record<string, unknown>
+  effectiveParameters?: Record<string, EffectiveParameterObservation>
   onChange: (name: string, value: unknown) => void
   onApply: () => void
   onReset: () => void
@@ -40,6 +41,7 @@ export function ParameterRail({
   sections,
   parameterIssues,
   draftParameters,
+  effectiveParameters = {},
   onChange,
   onApply,
   onReset,
@@ -129,6 +131,7 @@ export function ParameterRail({
                     key={parameter.name}
                     parameter={parameter}
                     value={draftParameters[parameter.name] ?? parseParameterValue(parameter)}
+                    observation={effectiveParameters[parameter.name]}
                     onChange={onChange}
                   />
                 ))}
@@ -176,21 +179,45 @@ export function ParameterRail({
 function ParameterControl({
   parameter,
   value,
+  observation,
   onChange,
 }: {
   parameter: WorkbenchParameter
   value: unknown
+  observation?: EffectiveParameterObservation
   onChange: (name: string, value: unknown) => void
 }) {
   const label = parameter.name
+  const readOnly = observation?.read_only === true
+  const evidenceTitle = observation
+    ? [...observation.sources, observation.reason].filter(Boolean).join('\n')
+    : label
+  const valueSummary = observation && (
+    observation.role === 'derived'
+    || !observedValuesEqual(observation.requested_value, observation.effective_value)
+  )
+    ? `${formatObservedValue(observation.requested_value)} → ${formatObservedValue(observation.effective_value)}`
+    : null
+  const nameNode = (
+    <span className="parameter-name-wrap" title={evidenceTitle}>
+      <span className="parameter-name">{label}</span>
+      {valueSummary ? (
+        <span className="parameter-effective-value">
+          <span>{valueSummary}</span>
+          <span className="parameter-effective-source">本地近似</span>
+        </span>
+      ) : null}
+    </span>
+  )
   if (parameter.type_tag === 'Boolean') {
     return (
       <label className="parameter-control compact-control">
-        <span className="parameter-name" title={label}>{label}</span>
+        {nameNode}
         <input
           className="toggle-input"
           type="checkbox"
           checked={Boolean(value)}
+          disabled={readOnly}
           onChange={(event) => onChange(parameter.name, event.currentTarget.checked)}
         />
       </label>
@@ -203,8 +230,8 @@ function ParameterControl({
   if (parameter.options && parameter.options.length > 0) {
     return (
       <label className="parameter-control compact-control">
-        <span className="parameter-name" title={label}>{label}</span>
-        <EnumSelect parameter={parameter} value={value} onChange={onChange} />
+        {nameNode}
+        <EnumSelect parameter={parameter} value={value} onChange={onChange} disabled={readOnly} />
       </label>
     )
   }
@@ -212,13 +239,14 @@ function ParameterControl({
   if (parameter.type_tag === 'Integer') {
     return (
       <label className="parameter-control compact-control">
-        <span className="parameter-name" title={label}>{label}</span>
+        {nameNode}
         <input
           className="numeric-input"
           type="number"
           min={0}
           step={1}
           value={Number(value)}
+          disabled={readOnly}
           onChange={(event) => onChange(parameter.name, Number(event.currentTarget.value))}
         />
       </label>
@@ -228,12 +256,13 @@ function ParameterControl({
   if (['Length', 'Angle', 'RealNum'].includes(parameter.type_tag)) {
     return (
       <label className="parameter-control compact-control">
-        <span className="parameter-name" title={label}>{label}</span>
+        {nameNode}
         <input
           className="numeric-input"
           type="number"
           step={parameter.type_tag === 'Angle' ? 1 : 0.01}
           value={Number(value)}
+          disabled={readOnly}
           onChange={(event) => onChange(parameter.name, Number(event.currentTarget.value))}
         />
       </label>
@@ -242,11 +271,12 @@ function ParameterControl({
 
   return (
     <label className="parameter-control compact-control">
-      <span className="parameter-name" title={label}>{label}</span>
+      {nameNode}
       <input
         className="text-input"
         type="text"
         value={String(value)}
+        disabled={readOnly}
         onChange={(event) => onChange(parameter.name, event.currentTarget.value)}
       />
     </label>
@@ -259,10 +289,12 @@ function EnumSelect({
   parameter,
   value,
   onChange,
+  disabled = false,
 }: {
   parameter: WorkbenchParameter
   value: unknown
   onChange: (name: string, value: unknown) => void
+  disabled?: boolean
 }) {
   const t = useT()
   const options = parameter.options ?? []
@@ -278,7 +310,7 @@ function EnumSelect({
   }
 
   return (
-    <select className="enum-select" value={matched ? current : NOT_IN_VALUES} onChange={handleChange}>
+    <select className="enum-select" value={matched ? current : NOT_IN_VALUES} onChange={handleChange} disabled={disabled}>
       {!matched ? (
         <option value={NOT_IN_VALUES}>{t('parameter.enumFallback', { value: current })}</option>
       ) : null}
@@ -289,6 +321,18 @@ function EnumSelect({
       ))}
     </select>
   )
+}
+
+function formatObservedValue(value: unknown): string {
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(Number(value.toPrecision(10)))
+  return String(value ?? '')
+}
+
+function observedValuesEqual(left: unknown, right: unknown): boolean {
+  const leftNumber = typeof left === 'number' ? left : Number(left)
+  const rightNumber = typeof right === 'number' ? right : Number(right)
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber === rightNumber
+  return left === right
 }
 
 function parseParameterValue(parameter: WorkbenchParameter): unknown {

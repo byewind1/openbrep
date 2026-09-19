@@ -179,6 +179,32 @@ class TestOutcomeMapping:
         assert self._map(result) == "not_evaluable"
 
 
+def test_quality_parametricity_consumes_structured_sweep_counts():
+    from openbrep.quality.evaluator import _artifact_quality
+
+    result = _StubResult(verification={
+        "passed": True,
+        "checks": [{"check_type": "semantic", "status": "pass"}],
+        "parameter_sweep": {
+            "tested": 4,
+            "skipped": 2,
+            "unknown": 1,
+            "failed": 0,
+            "eligible": 5,
+            "total_parameters": 9,
+            "coverage": 0.8,
+            "total_parameter_coverage": 4 / 9,
+            "samples": [],
+        },
+    })
+
+    parametricity = _artifact_quality(result)["parametricity"]
+    assert parametricity["tested"] == 4
+    assert parametricity["skipped"] == 2
+    assert parametricity["unknown"] == 1
+    assert parametricity["coverage"] == 0.8
+    assert parametricity["total_parameter_coverage"] == 4 / 9
+
 # ── AC-G0-3 全路径契约 ────────────────────────────────────
 
 class TestCreatePath:

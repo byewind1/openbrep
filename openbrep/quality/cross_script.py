@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from openbrep.parameter_observation import classify_parameter_roles
+
 SCRIPT_NAMES = ("1d.gdl", "2d.gdl", "3d.gdl", "vl.gdl", "ui.gdl")
 PARAM_TYPES = {
     "Length",
@@ -319,6 +321,26 @@ def _eligibility(
     graph: CrossScriptGraph,
     enums: dict[str, list[Any]],
 ) -> None:
+    role_analysis = classify_parameter_roles(
+        params.keys(),
+        texts.get("1d.gdl", ""),
+        parameter_types={name: param["type"] for name, param in params.items()},
+    )
+    geometry_parameter_names: set[str] = set()
+    for name in params:
+        for script in ("2d.gdl", "3d.gdl"):
+            source_lines = texts.get(script, "").splitlines()
+            for item in graph.scripts.get(script, {}).get("read", []):
+                if item["name"] != name or not (0 < item["line"] <= len(source_lines)):
+                    continue
+                if GEOMETRY_WORDS.search(source_lines[item["line"] - 1]):
+                    geometry_parameter_names.add(name)
+    indirect_geometry_drivers = {
+        dependency
+        for name in geometry_parameter_names
+        for dependency in role_analysis.roles[name].depends_on
+    }
+
     for name, param in params.items():
         evidence: list[str] = []
         values: list[Any] = []
@@ -337,14 +359,22 @@ def _eligibility(
                 texts.get(script, "").splitlines()[item["line"] - 1] if texts.get(script) else ""
             )
         ]
-        master_write = any(
-            item["name"] == name for item in graph.scripts.get("1d.gdl", {}).get("write", [])
-        )
-        if param["type"] in {"Material", "PenColor", "FillPattern", "LineType"}:
+        shared_role = role_analysis.roles[name]
+        reason = shared_role.reason
+        depends_on = list(shared_role.depends_on)
+        if shared_role.role == "material":
             role = "material"
             evidence.append("material-like parameter type")
-        elif geometry_refs:
-            role = "derived" if master_write else "geometry_driver"
+        elif shared_role.role == "derived":
+            role = "derived"
+            evidence.append("unconditionally derived by Master script")
+            if geometry_refs:
+                evidence.append("referenced by a 2D/3D geometry command")
+        elif shared_role.role == "unknown":
+            role = "unknown"
+            evidence.append(f"role not proven: {reason or 'unknown'}")
+        elif geometry_refs or name in indirect_geometry_drivers:
+            role = "geometry_driver"
             evidence.append("referenced by a 2D/3D geometry command")
         elif all_refs and all(script == "ui.gdl" for script, _ in all_refs):
             role = "ui_only"
@@ -352,9 +382,6 @@ def _eligibility(
         elif param["type"] == "Boolean" and all_refs:
             role = "visibility"
             evidence.append("Boolean used in script condition")
-        elif master_write:
-            role = "derived"
-            evidence.append("assigned by Master script")
         else:
             role = "unknown"
         if name in enums:
@@ -386,7 +413,13 @@ def _eligibility(
             and values == [0, 1]
         ):
             evidence.append("default numeric domain; absolute step=1")
-        graph.eligibility[name] = {"role": role, "test_values": values, "evidence_lines": evidence}
+        graph.eligibility[name] = {
+            "role": role,
+            "test_values": values,
+            "evidence_lines": evidence,
+            "depends_on": depends_on,
+            "reason": reason,
+        }
 
 
 def build_cross_script_graph(project_root: Any) -> CrossScriptGraph:

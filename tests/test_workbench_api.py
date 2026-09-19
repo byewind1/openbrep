@@ -9,6 +9,7 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.learning import ErrorLearningStore
 from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import TaskResult
+from openbrep.source_fingerprint import compute_source_fingerprint
 import openbrep.workbench_api as workbench_api
 from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.workbench.workspace_service import init_workspace
@@ -1475,6 +1476,7 @@ def test_workbench_session_saves_project_script_content(tmp_path):
     assert response["ok"] is True
     assert response["success"] is True
     assert response["saved_at"]
+    assert response["source_fingerprint"] == compute_source_fingerprint(hsf_dir)
     assert "ADDZ 2" in reloaded.get_script(ScriptType.SCRIPT_3D)
 
 

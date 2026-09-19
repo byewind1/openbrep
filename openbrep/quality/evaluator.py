@@ -29,8 +29,8 @@ _CROSS_SCRIPT_BUDGET_SEC = 0.5
 # 语义验证 sweep 口径标注（AC-G1-3：如实记录现状口径，本单不改扰动逻辑）：
 # semantic_verifier.DEFAULT_SWEEP_MAX_PARAMS=12、数值 +50% 单向扰动、String 跳过。
 _SWEEP_METHOD = (
-    "semantic_verifier param sweep（≤12 个数值参数，+50% 单向扰动，"
-    "Boolean 0/1 翻转，String 跳过）"
+    "semantic_verifier role-aware param sweep（≤12 个独立驱动，"
+    "VALUES/RANGE 合法替代值，Boolean 0/1 翻转，派生关系复算）"
 )
 # sweep issue 在 verification dict 里的可识别标记（我们自己生成的稳定文案）：
 # errors_caught 条目带 "[<check_type>]" 前缀；remaining_risks 只存 detail 文本。
@@ -208,10 +208,19 @@ def _artifact_quality(result: Any) -> dict:
         for name, marker in _SWEEP_MARKERS.items()
     }
     if semantic_ran:
+        structured_sweep = verification.get("parameter_sweep") or {}
         parametricity = {
             "status": "measured",
             "score": None,      # 响应率评分属 G2/§3.3，本单不出分
-            "coverage": None,
+            "coverage": structured_sweep.get("coverage"),
+            "total_parameter_coverage": structured_sweep.get("total_parameter_coverage"),
+            "tested": structured_sweep.get("tested"),
+            "skipped": structured_sweep.get("skipped"),
+            "unknown": structured_sweep.get("unknown"),
+            "failed": structured_sweep.get("failed"),
+            "eligible": structured_sweep.get("eligible"),
+            "total_parameters": structured_sweep.get("total_parameters"),
+            "samples": list(structured_sweep.get("samples") or []),
             "method": _SWEEP_METHOD,
             "sweep_issues": sweep_counts,
         }

@@ -22,6 +22,11 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
       : {}),
     project: snapshot.project,
     parameters: snapshot.parameters,
+    sourceFingerprint: snapshot.source_fingerprint ?? null,
+    effectiveParameters: {},
+    effectiveParameterDiagnostics: [],
+    effectiveParametersBusy: false,
+    effectiveParametersError: null,
     preview: snapshot.preview,
     preview2d: null,
     // P2a：ghost 锚定"任务前"版本，换项目即失效（load/打开/新建/导入/关闭都走这里）

@@ -79,6 +79,7 @@ class VerificationReport:
     remaining_risks: list[str] = field(default_factory=list)
     confidence: str = "low"     # low | medium | high
     graph_powered: bool = False  # 本次任务使用了图谱约束或诊断
+    parameter_sweep: dict | None = None
 
     # ── derived views ───────────────────────────────────────
 
@@ -131,6 +132,7 @@ class VerificationReport:
             "warnings_caught": list(self.warnings_caught),
             "fixes_applied": list(self.fixes_applied),
             "remaining_risks": list(self.remaining_risks),
+            **({"parameter_sweep": self.parameter_sweep} if self.parameter_sweep is not None else {}),
         }
 
     def to_trace_dict(self) -> dict:
@@ -487,6 +489,10 @@ def build_verification_report(
     # 4b. semantic verification (geometry-level, via gdl_previewer — works even
     # without a configured LP_XMLConverter)
     if semantic_result is not None:
+        from openbrep.semantic_verifier import ParameterSweepReport
+
+        if isinstance(semantic_result.sweep, ParameterSweepReport):
+            report.parameter_sweep = semantic_result.sweep.to_dict()
         blocking_issues = [i for i in semantic_result.issues if i.blocking]
         info_issues = [i for i in semantic_result.issues if not i.blocking]
         for issue in info_issues:

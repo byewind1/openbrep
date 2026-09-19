@@ -73,6 +73,14 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       workspace: '/workspace',
     }),
     fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
+    fetchEffectiveParameters: async () => ({
+      ok: true,
+      project_path: '/workspace/Chair',
+      source_fingerprint: null,
+      supported: true,
+      parameters: [],
+      diagnostics: [],
+    }),
     fetchAuthoritativePreview: async () => ({ ok: false, error: 'Archicad 未连接' }),
     fetchPreview2D: async () => ({
       lines: [{ from: [0, 0], to: [1, 1] }],
@@ -511,6 +519,76 @@ test('updates draft parameter without changing saved parameter value', async () 
 
   expect(store.getState().draftParameters.A).toBe(2)
   expect(store.getState().parameters[0].value).toBe('1.0')
+})
+
+test('effective parameter response is discarded after project epoch changes', async () => {
+  let resolveEffective!: (value: any) => void
+  const pending = new Promise<any>((resolve) => { resolveEffective = resolve })
+  const store = createWorkbenchStore(makeApi({
+    fetchEffectiveParameters: async () => pending,
+  } as any))
+  store.setState({
+    project: { name: 'Chair', path: '/workspace/Chair' },
+    projectEpoch: 1,
+    sourceFingerprint: 'fp-chair',
+  } as any)
+
+  const request = (store.getState() as any).refreshEffectiveParameters()
+  store.setState({ projectEpoch: 2, project: { name: 'Table', path: '/workspace/Table' } } as any)
+  resolveEffective({
+    ok: true,
+    project_path: '/workspace/Chair',
+    project_epoch: 1,
+    source_fingerprint: 'fp-chair',
+    supported: true,
+    parameters: [{ name: 'A', role: 'derived', effective_value: 2, read_only: true }],
+    diagnostics: [],
+  })
+  await request
+
+  expect((store.getState() as any).effectiveParameters).toEqual({})
+})
+
+test('newer effective parameter request wins and fingerprint mismatch is discarded', async () => {
+  let resolveFirst!: (value: any) => void
+  const first = new Promise<any>((resolve) => { resolveFirst = resolve })
+  let calls = 0
+  const store = createWorkbenchStore(makeApi({
+    fetchEffectiveParameters: async () => {
+      calls += 1
+      if (calls === 1) return first
+      return {
+        ok: true,
+        project_path: '/workspace/Chair',
+        project_epoch: 1,
+        source_fingerprint: 'wrong-fingerprint',
+        supported: true,
+        parameters: [{ name: 'A', role: 'derived', effective_value: 3, read_only: true }],
+        diagnostics: [],
+      }
+    },
+  } as any))
+  store.setState({
+    project: { name: 'Chair', path: '/workspace/Chair' },
+    projectEpoch: 1,
+    sourceFingerprint: 'fp-chair',
+    draftParameters: { A: 2 },
+  } as any)
+
+  const oldRequest = (store.getState() as any).refreshEffectiveParameters({ A: 1.5 })
+  await (store.getState() as any).refreshEffectiveParameters({ A: 2 })
+  resolveFirst({
+    ok: true,
+    project_path: '/workspace/Chair',
+    project_epoch: 1,
+    source_fingerprint: 'fp-chair',
+    supported: true,
+    parameters: [{ name: 'A', role: 'derived', effective_value: 1.5, read_only: true }],
+    diagnostics: [],
+  })
+  await oldRequest
+
+  expect((store.getState() as any).effectiveParameters).toEqual({})
 })
 
 test('applyDraftParameters applies changes and runs mock diagnostics', async () => {
@@ -1126,6 +1204,72 @@ test('saveActiveScript clears dirty state after successful save', async () => {
   expect(store.getState().mockCompileResult?.success).toBe(true)
   expect(store.getState().compileLog[0]).toContain('Mock compile passed')
   expect(store.getState().compileLog.some((entry) => entry.includes('Saved 3d.gdl'))).toBe(true)
+})
+
+test('saveActiveScript refreshes effective values against the new source fingerprint', async () => {
+  let effectiveCalls = 0
+  const store = createWorkbenchStore(makeApi({
+    saveProjectScript: async () => ({
+      success: true,
+      saved_at: '2026-05-27T09:00:00',
+      source_fingerprint: 'fp-after-save',
+    }),
+    fetchEffectiveParameters: async () => {
+      effectiveCalls += 1
+      return {
+        ok: true,
+        project_path: '/workspace/Chair',
+        source_fingerprint: 'fp-after-save',
+        supported: true,
+        parameters: [],
+        diagnostics: [],
+      }
+    },
+  }))
+  await store.getState().load()
+  store.getState().updateActiveScriptContent('changed master content')
+
+  await store.getState().saveActiveScript()
+
+  expect(store.getState().sourceFingerprint).toBe('fp-after-save')
+  expect(effectiveCalls).toBe(1)
+})
+
+test('flushDirtyScripts refreshes effective values once after all saved fingerprints advance', async () => {
+  let saveCalls = 0
+  let effectiveCalls = 0
+  const store = createWorkbenchStore(makeApi({
+    saveProjectScript: async () => {
+      saveCalls += 1
+      return {
+        success: true,
+        saved_at: '2026-05-27T09:00:00',
+        source_fingerprint: `fp-save-${saveCalls}`,
+      }
+    },
+    fetchEffectiveParameters: async () => {
+      effectiveCalls += 1
+      return {
+        ok: true,
+        project_path: '/workspace/Chair',
+        source_fingerprint: 'fp-save-2',
+        supported: true,
+        parameters: [],
+        diagnostics: [],
+      }
+    },
+  }))
+  await store.getState().load()
+  store.setState({
+    scriptContents: { '3d.gdl': 'BLOCK 1, 2, 3', '2d.gdl': 'LINE2 0, 0, 1, 1' },
+    dirtyScripts: { '3d.gdl': true, '2d.gdl': true },
+  })
+
+  const result = await store.getState().flushDirtyScripts()
+
+  expect(result).toEqual({ ok: true, didSave: true })
+  expect(store.getState().sourceFingerprint).toBe('fp-save-2')
+  expect(effectiveCalls).toBe(1)
 })
 
 test('saveActiveScript records save failures without clearing dirty state', async () => {
@@ -3029,7 +3173,19 @@ test('generateAssistantChanges refreshes parameters after successful MODIFY (HF3
 })
 
 test('refreshProjectWorkspace refreshParameters preserves unsaved drafts (HF3)', async () => {
-  const store = createWorkbenchStore(makeApi())
+  let snapshotCalls = 0
+  const store = createWorkbenchStore(makeApi({
+    fetchSnapshot: async () => {
+      snapshotCalls += 1
+      return {
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1', is_fixed: false }],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        source_fingerprint: snapshotCalls === 1 ? 'fp-loaded-source' : 'fp-refreshed-source',
+      }
+    },
+  }))
   await store.getState().load()
   // 用户改过但未 Apply 的草稿值
   store.getState().setDraftParameter('A', 2)
@@ -3044,6 +3200,7 @@ test('refreshProjectWorkspace refreshParameters preserves unsaved drafts (HF3)',
 
   expect(store.getState().parameters.length).toBeGreaterThan(0)
   expect(store.getState().draftParameters).toEqual({ A: 2 })
+  expect(store.getState().sourceFingerprint).toBe('fp-refreshed-source')
 })
 
 test('setDraftParameter debounces rapid preview requests while updating draft immediately', async () => {

@@ -98,6 +98,9 @@ class WorkbenchProjectService:
     def ui_layout(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.parameter_service.ui_layout(body)
 
+    def effective_parameters(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.parameter_service.effective_parameters(body)
+
     def add_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.parameter_service.add_project_parameter(body)
 
