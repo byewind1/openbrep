@@ -33,6 +33,7 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.runtime.modify_codex_bridge import CodexModifyTurnDriver
 from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest
 from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
+from openbrep.source_fingerprint import compute_source_fingerprint
 
 FAKE_SERVER = str(Path(__file__).resolve().parent / "fake_codex_app_server.py")
 
@@ -261,6 +262,52 @@ def test_success_flow_tools_audited_and_scripts_changed(tmp_path):
         assert all(e.get("request_ids") for e in audit)
         # 写路径唯一入口是 ModifyToolRegistry：changed_files ⊆ tool_log 工具
         assert set(result.scripts.keys()) <= {"scripts/3d.gdl"}
+    finally:
+        provider.close()
+        harness.cleanup()
+
+
+def test_structured_parameter_tool_visible_and_binds_before_after(tmp_path):
+    harness = _FakeServerHarness(tmp_path)
+    config = _codex_config()
+    provider = harness.provider()
+    pipeline = _pipeline(config, provider, tmp_path)
+    project = _make_project(tmp_path)
+    project.save_to_disk()
+    fingerprint = compute_source_fingerprint(project.root)
+    _write_script(tmp_path, [[
+        _tool("read_parameters"),
+        _tool("edit_parameters", {
+            "expected_source_fingerprint": fingerprint,
+            "operations": [{
+                "op": "add", "name": "show_top_tread", "type": "Boolean",
+                "value": 1, "description": "显示顶部踏步",
+            }],
+        }),
+        _tool("compile_script"),
+        _final("参数已添加并编译通过。"),
+    ]])
+    try:
+        with patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()):
+            result = pipeline.execute(
+                _request(tmp_path, project, user_input="增加显示顶部踏步参数")
+            )
+        assert result.success, result.plain_text
+        assert project.get_parameter("show_top_tread").value == "1"
+        assert set(result.scripts) == {"paramlist.xml"}
+        delivery = result.metadata["delivery_source"]
+        assert delivery["state"] == "verified_change"
+        assert delivery["before_revision_id"]
+        assert delivery["after_revision_id"]
+        assert delivery["before_revision_id"] != delivery["after_revision_id"]
+        threads = harness.read_params("thread/start")
+        names = {item["name"] for item in threads[0]["dynamicTools"]}
+        assert {"read_parameters", "edit_parameters"} <= names
+        audit = result.metadata["codex_modify"]["tool_audit"]
+        assert [item["tool"] for item in audit] == [
+            "read_parameters", "edit_parameters", "compile_script"
+        ]
+        assert all(item["executed"] and item["ok"] for item in audit)
     finally:
         provider.close()
         harness.cleanup()
@@ -1148,8 +1195,10 @@ def _wire_digest(recs: list[dict]) -> str:
 # 任何「无图路径」改动都会改变该摘要 → 回归即红。
 # HF6（本分支）把 knowledge/core/gdl_command_selection.md 注入 MODIFY 的
 # generation_context（system 提示），prompt 变更是本单目标本身而非回归；
-# 基线已按新摘要重录（c2420473...）。golden corpus 重录由维护者另行决定。
-HF2_NO_IMAGE_WIRE_SHA256 = "c2420473341da9a7592219bef46dab5b710eba1d774b32389358d6ac9fe8c6ac"
+# 基线曾按 HF6 摘要重录（c2420473...）。ST05 新增 read_parameters /
+# edit_parameters schema 及结构化参数协议，属于明确 prompt 变更；审计后的新摘要
+# 为 d3dc122d...。benchmark golden corpus 需按受影响套件重录。
+HF2_NO_IMAGE_WIRE_SHA256 = "d3dc122d430e01307070efcdaff9f678bde017ab3b20d6ea9c348399e791c67f"
 
 # 桥接 thread 的 system 消息标识（baseInstructions 中必含的协议锚点）
 _BRIDGE_SYSTEM_MARK = "Agent Loop 工作模式（本次任务生效，Codex 动态工具桥接）"

@@ -137,6 +137,10 @@ class HSFProject:
 
         # Parameters (ordered list — order matters in ArchiCAD)
         self.parameters: list[GDLParameter] = []
+        # Loaded paramlist source is retained so structured parameter edits can
+        # preserve unknown-but-valid child content and untouched node spelling.
+        self._paramlist_raw: str | None = None
+        self._paramlist_had_bom: bool = True
 
         # Scripts (only populated scripts are written to disk)
         self.scripts: dict[ScriptType, str] = {}
@@ -182,9 +186,13 @@ class HSFProject:
         # Load paramlist.xml
         paramlist_path = root / "paramlist.xml"
         if paramlist_path.exists():
-            proj.parameters = parse_paramlist_xml(
-                paramlist_path.read_text(encoding="utf-8-sig")
-            )
+            paramlist_bytes = paramlist_path.read_bytes()
+            proj._paramlist_had_bom = paramlist_bytes.startswith(b"\xef\xbb\xbf")
+            # Normal load/save intentionally still exercises the canonical
+            # builder (import normalization relies on that lossless check).
+            # Structured mutations set ``_paramlist_raw`` only after their
+            # own atomic, lossless commit so subsequent compile saves retain it.
+            proj.parameters = parse_paramlist_xml(paramlist_bytes.decode("utf-8-sig"))
 
         # Load scripts
         scripts_dir = root / "scripts"
@@ -236,10 +244,28 @@ class HSFProject:
         )
 
         # Write paramlist.xml
-        self._write_file(
-            self.root / "paramlist.xml",
-            build_paramlist_xml(self.parameters)
-        )
+        paramlist_content = self._paramlist_raw
+        if paramlist_content is not None:
+            # Keep the raw document only while it still represents the current
+            # in-memory model. Legacy callers that mutate ``parameters``
+            # directly continue to get a rebuilt document.
+            try:
+                from openbrep.paramlist_builder import (
+                    parameters_semantically_equal,
+                    parse_paramlist_xml,
+                )
+
+                if not parameters_semantically_equal(
+                    parse_paramlist_xml(paramlist_content), self.parameters
+                ):
+                    paramlist_content = None
+            except Exception:
+                paramlist_content = None
+        if paramlist_content is None:
+            paramlist_content = build_paramlist_xml(self.parameters)
+            self._paramlist_raw = paramlist_content
+            self._paramlist_had_bom = True
+        self._write_file(self.root / "paramlist.xml", paramlist_content)
 
         # Write ancestry.xml
         self._write_file(

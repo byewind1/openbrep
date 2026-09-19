@@ -69,6 +69,8 @@ def _architect_status(stage: str, **ctx) -> dict[str, object]:
 
 # 工具内部名 → 建筑师显示名 + 阶段
 _TOOL_DISPLAY: dict[str, tuple[str, str]] = {
+    "read_parameters": ("读取参数", "locate"),
+    "edit_parameters": ("编辑参数", "modify"),
     "update_script": ("修改脚本", "modify"),
     "patch_script": ("局部编辑", "modify"),
     "compile_script": ("编译验证", "compile"),
@@ -129,6 +131,8 @@ _AGENT_LOOP_PROTOCOL = """
 ## Agent Loop 工作模式（本次任务生效）
 
 你可以使用以下工具，通过 tool_calls 自主推进任务：
+- read_parameters：读取参数与当前 source_fingerprint
+- edit_parameters：结构化批量修改参数（add/set_value/set_description/delete，全或无）
 - patch_script：局部编辑（精确匹配替换若干段文本，diff 级最小改动；优先使用）
 - update_script：全量重写一个脚本/参数文件（仅当需要整文件重写时才用）
 - compile_script：编译当前工程，返回成功或错误信息
@@ -137,13 +141,13 @@ _AGENT_LOOP_PROTOCOL = """
 - preview_geometry：轻量渲染 3D 脚本，返回 mesh 数量与包围盒
 
 工作纪律：
-1. 局部改动优先用 patch_script 做最小 diff，整文件重写才用 update_script；每次修改后调用 compile_script 验证；
+1. 参数增删和值/描述修改必须优先用 edit_parameters；先 read_parameters 取得指纹，SOURCE_CHANGED 后重新读取；脚本局部改动优先用 patch_script，整文件重写才用 update_script；每次修改后调用 compile_script 验证；
 2. 编译失败时根据错误信息继续修复，可用 query_knowledge(mode=diagnose) 诊断；
 3. 工具调用预算共 {budget} 次，请规划使用，不要重复调用同一工具空转；
 4. 确认完成后，直接以纯文本答复总结改动与编译结果（不再发起 tool_calls）；
 5. 若预算不足，如实说明当前进度与遗留问题，禁止谎报完成；
 6. 本次任务不使用 [FILE:] 交付格式：改动必须通过工具调用落盘
-   （patch_script / update_script），[FILE:] 块仅作兼容兜底，不作为交付通道。
+   （edit_parameters / patch_script / update_script），[FILE:] 块仅作兼容兜底，不作为交付通道。
 """
 
 # 计划确认门协议（V3）：confirm_plan=True 时，先做一次无工具的计划调用，
@@ -468,6 +472,8 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         )
         if _warning:
             logger.warning("agent loop before-revision: %s", _warning)
+
+    registry.on_before_write = _ensure_before_revision
 
     llm_calls = 0
     tool_calls_used = 0

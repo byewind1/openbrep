@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import ToolCall, ToolDefinition
+from openbrep.parameter_mutations import compact_result_json, mutate_parameters
+from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.static_checker import StaticChecker, find_prose_leaks
 
 logger = logging.getLogger(__name__)
@@ -187,6 +190,7 @@ class ModifyToolRegistry:
         output_gsm: str,
         apply_changes: Callable[[HSFProject, dict[str, str]], None],
         on_event: Optional[Callable] = None,
+        on_before_write: Optional[Callable[[], None]] = None,
     ) -> None:
         self.project = project
         self.compiler = compiler
@@ -194,6 +198,7 @@ class ModifyToolRegistry:
         # 复用 GDLAgent._apply_changes 的参数表/脚本落盘语义，不复制其逻辑
         self._apply_changes = apply_changes
         self.on_event = on_event or (lambda *_: None)
+        self.on_before_write = on_before_write or (lambda: None)
         self.changed_files: dict[str, str] = {}
         # diff 范围护栏：记录每个可写文件的修改前内容与最近一次写入方式
         self._baseline_content: dict[str, str] = {
@@ -207,6 +212,57 @@ class ModifyToolRegistry:
 
     def definitions(self) -> list[ToolDefinition]:
         return [
+            ToolDefinition(
+                name="read_parameters",
+                description=(
+                    "读取当前参数表和 source_fingerprint。调用 edit_parameters 前先用本工具取得"
+                    "最新指纹；SOURCE_CHANGED 后必须重新读取，禁止猜测哈希。"
+                ),
+                parameters={"type": "object", "properties": {}},
+            ),
+            ToolDefinition(
+                name="edit_parameters",
+                description=(
+                    "结构化、全或无地编辑参数表；优先于对 paramlist.xml 做文本补丁。"
+                    "支持 add、set_value、set_description、delete。rename/type_change 暂不支持。"
+                    "expected_source_fingerprint 必须来自 read_parameters 或上一条成功写入结果。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "expected_source_fingerprint": {
+                            "type": "string",
+                            "description": "read_parameters 返回的完整 sha256:... 指纹",
+                        },
+                        "operations": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "op": {
+                                        "type": "string",
+                                        "enum": ["add", "set_value", "set_description", "delete"],
+                                    },
+                                    "name": {"type": "string"},
+                                    "type": {"type": "string"},
+                                    "value": {
+                                        "anyOf": [
+                                            {"type": "string"},
+                                            {"type": "number"},
+                                            {"type": "integer"},
+                                            {"type": "boolean"},
+                                        ]
+                                    },
+                                    "description": {"type": "string"},
+                                },
+                                "required": ["op", "name"],
+                            },
+                        },
+                    },
+                    "required": ["expected_source_fingerprint", "operations"],
+                },
+            ),
             ToolDefinition(
                 name="update_script",
                 description=(
@@ -292,6 +348,8 @@ class ModifyToolRegistry:
     def execute(self, call: ToolCall) -> ToolExecutionResult:
         """执行一次工具调用并记日志；任何异常都降级为 ok=False 的结果回填。"""
         handler = {
+            "read_parameters": self._read_parameters,
+            "edit_parameters": self._edit_parameters,
             "update_script": self._update_script,
             "patch_script": self._patch_script,
             "compile_script": self._compile_script,
@@ -303,7 +361,11 @@ class ModifyToolRegistry:
             result = ToolExecutionResult(
                 name=call.name,
                 ok=False,
-                summary=f"未知工具：{call.name}。可用工具：update_script / patch_script / compile_script / run_static_check / query_knowledge / preview_geometry",
+                summary=(
+                    f"未知工具：{call.name}。可用工具：read_parameters / edit_parameters / "
+                    "update_script / patch_script / compile_script / run_static_check / "
+                    "query_knowledge / preview_geometry"
+                ),
             )
         else:
             try:
@@ -320,6 +382,113 @@ class ModifyToolRegistry:
         return result
 
     # ── 各工具实现（薄封装） ───────────────────────────────
+
+    def _read_parameters(self, _args: dict) -> ToolExecutionResult:
+        if not self.project.root.is_dir() or not (self.project.root / _PARAMLIST_NAME).is_file():
+            return ToolExecutionResult(
+                name="read_parameters",
+                ok=False,
+                summary=(
+                    '{"ok":false,"source_fingerprint":null,'
+                    '"error_code":"SOURCE_UNAVAILABLE"}'
+                ),
+                data={
+                    "ok": False,
+                    "source_fingerprint": None,
+                    "error_code": "SOURCE_UNAVAILABLE",
+                },
+            )
+        try:
+            fingerprint = compute_source_fingerprint(self.project.root)
+        except Exception as exc:
+            return ToolExecutionResult(
+                name="read_parameters",
+                ok=False,
+                summary=json.dumps(
+                    {
+                        "ok": False,
+                        "source_fingerprint": None,
+                        "error_code": "SOURCE_UNAVAILABLE",
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            )
+        payload = {
+            "ok": True,
+            # Keep this first so it survives model-facing truncation on very
+            # large parameter tables.
+            "source_fingerprint": fingerprint,
+            "parameters": [
+                {
+                    "name": param.name,
+                    "type": param.type_tag,
+                    "value": param.value,
+                    "description": param.description,
+                    "fixed": bool(param.is_fixed),
+                }
+                for param in self.project.parameters
+            ],
+            "error_code": None,
+        }
+        model_payload = payload
+        encoded = json.dumps(model_payload, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded) > _MAX_TOOL_RESULT_CHARS:
+            model_payload = {
+                "ok": True,
+                "source_fingerprint": fingerprint,
+                "parameter_count": len(payload["parameters"]),
+                "parameters": [
+                    {
+                        "name": item["name"],
+                        "type": item["type"],
+                        "value": item["value"],
+                        "fixed": item["fixed"],
+                    }
+                    for item in payload["parameters"][:12]
+                ],
+                "parameters_truncated": True,
+                "error_code": None,
+            }
+            encoded = json.dumps(model_payload, ensure_ascii=False, separators=(",", ":"))
+            while (
+                len(encoded) > _MAX_TOOL_RESULT_CHARS
+                and model_payload["parameters"]
+            ):
+                model_payload["parameters"].pop()
+                encoded = json.dumps(
+                    model_payload, ensure_ascii=False, separators=(",", ":")
+                )
+        return ToolExecutionResult(
+            name="read_parameters",
+            ok=True,
+            summary=encoded,
+            data=payload,
+        )
+
+    def _edit_parameters(self, args: dict) -> ToolExecutionResult:
+        result = mutate_parameters(
+            self.project,
+            expected_source_fingerprint=str(args.get("expected_source_fingerprint") or ""),
+            operations=args.get("operations"),
+            before_commit=self.on_before_write,
+        )
+        payload = result.to_dict()
+        if result.ok and result.changed_files:
+            rendered = _render_param_text(self.project.parameters)
+            self.changed_files[_PARAMLIST_NAME] = rendered
+            self.write_methods[_PARAMLIST_NAME] = "edit_parameters"
+            self.on_event(
+                "status",
+                {"stage": "modify", "message": "✏️ 已结构化更新 paramlist.xml"},
+            )
+        return ToolExecutionResult(
+            name="edit_parameters",
+            ok=result.ok,
+            summary=compact_result_json(result),
+            data=payload,
+        )
 
     def _update_script(self, args: dict) -> ToolExecutionResult:
         file_path = normalize_script_path(str(args.get("file_path") or ""))
@@ -540,13 +709,20 @@ class ModifyToolRegistry:
     def _compile_script(self, _args: dict) -> ToolExecutionResult:
         hsf_dir = self.project.save_to_disk()
         self.last_compile_result = self.compiler.hsf2libpart(str(hsf_dir), self.output_gsm)
+        try:
+            source_fingerprint = compute_source_fingerprint(self.project.root)
+        except Exception:
+            source_fingerprint = None
         if self.last_compile_result.success:
             self.on_event("status", {"stage": "compile", "message": "✅ 编译通过"})
             return ToolExecutionResult(
                 name="compile_script",
                 ok=True,
-                summary="编译通过。",
-                data={"success": True},
+                summary=(
+                    "编译通过。"
+                    + (f" source_fingerprint={source_fingerprint}" if source_fingerprint else "")
+                ),
+                data={"success": True, "source_fingerprint": source_fingerprint},
             )
         error_text = "\n".join(
             part for part in [self.last_compile_result.stderr or "", self.last_compile_result.stdout or ""] if part.strip()
@@ -559,7 +735,11 @@ class ModifyToolRegistry:
             name="compile_script",
             ok=False,
             summary=f"编译失败：\n{_truncate(error_text, _MAX_COMPILE_ERROR_CHARS)}",
-            data={"success": False, "error": error_text},
+            data={
+                "success": False,
+                "error": error_text,
+                "source_fingerprint": source_fingerprint,
+            },
         )
 
     def _run_static_check(self, _args: dict) -> ToolExecutionResult:

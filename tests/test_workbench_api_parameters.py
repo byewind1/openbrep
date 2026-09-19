@@ -4,6 +4,7 @@ from pathlib import Path
 
 from openbrep.hsf_project import GDLParameter, HSFProject
 from openbrep.paramlist_builder import parse_paramlist_xml
+from openbrep.source_fingerprint import compute_source_fingerprint
 from openbrep.workbench_api import WorkbenchSession
 
 
@@ -31,6 +32,7 @@ def test_add_parameter_success_persists_paramlist_xml(tmp_path):
     )
 
     assert result["ok"] is True
+    assert result["source_fingerprint"] == compute_source_fingerprint(session.project.root)
     assert result["added"]["name"] == "seat_height"
     assert any(param["name"] == "seat_height" for param in result["parameters"])
     assert session.source_path is not None

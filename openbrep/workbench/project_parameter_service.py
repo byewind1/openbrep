@@ -4,7 +4,9 @@ import re
 from typing import Any
 
 from openbrep.hsf_project import GDLParameter, HSFProject, VALID_PARAM_TYPES
+from openbrep.parameter_mutations import mutate_parameters
 from openbrep.paramlist_builder import validate_paramlist
+from openbrep.source_fingerprint import compute_source_fingerprint
 
 
 GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -50,22 +52,50 @@ class WorkbenchProjectParameterService:
     def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": False, "error": "Create or open a project before applying parameters."}
-        changed = apply_parameter_values(self.session.project, changes)
-        if changed and self.session.source_path is not None:
-            self.session.project.save_to_disk()
+        known = {param.name for param in self.session.project.parameters}
+        operations = [
+            {"op": "set_value", "name": name, "value": value}
+            for name, value in changes.items()
+            if name in known
+        ]
+        if operations and self.session.source_path is not None:
+            result = mutate_parameters(
+                self.session.project,
+                expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                operations=operations,
+            )
+            if not result.ok:
+                return {"ok": False, "error": result.error, "error_code": result.error_code}
+            changed = {op["name"]: changes[op["name"]] for op in operations}
+        else:
+            changed = apply_parameter_values(self.session.project, changes)
         return {"ok": True, "changed": changed, **self.session.snapshot()}
 
     def add_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.session.project is None:
             return {"ok": False, "error": "Create or open a project before adding parameters."}
-        try:
-            param = build_parameter_from_authoring_request(self.session.project, body)
-            self.session.project.add_parameter(param)
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
-
         if self.session.source_path is not None:
-            self.session.project.save_to_disk()
+            result = mutate_parameters(
+                self.session.project,
+                expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                operations=[{
+                    "op": "add",
+                    "name": body.get("name"),
+                    "type": body.get("type_tag"),
+                    "value": body.get("value"),
+                    "description": body.get("description"),
+                }],
+            )
+            if not result.ok:
+                return {"ok": False, "error": result.error, "error_code": result.error_code}
+            param = self.session.project.get_parameter(str(body.get("name") or "").strip())
+        else:
+            try:
+                param = build_parameter_from_authoring_request(self.session.project, body)
+                self.session.project.add_parameter(param)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+        assert param is not None
         return {
             "ok": True,
             "added": parameter_to_dict(param, values=self._values_for(param.name)),
@@ -91,16 +121,37 @@ class WorkbenchProjectParameterService:
             )
             if param.is_fixed and (new_name != param.name or new_type != param.type_tag):
                 return {"ok": False, "error": f"Fixed parameter '{param.name}' cannot be renamed or retagged"}
-            if "value" in body:
-                param.value = coerce_parameter_value(new_type, body.get("value"))
-            if "description" in body:
-                param.description = str(body.get("description") or "").strip()
+            structured_only = new_name == param.name and new_type == param.type_tag
+            if structured_only and self.session.source_path is not None:
+                operations = []
+                if "value" in body:
+                    operations.append({"op": "set_value", "name": param.name, "value": body.get("value")})
+                if "description" in body:
+                    operations.append({
+                        "op": "set_description",
+                        "name": param.name,
+                        "description": body.get("description"),
+                    })
+                if operations:
+                    result = mutate_parameters(
+                        self.session.project,
+                        expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                        operations=operations,
+                    )
+                    if not result.ok:
+                        return {"ok": False, "error": result.error, "error_code": result.error_code}
+                    param = self.session.project.get_parameter(param.name)
+            else:
+                if "value" in body:
+                    param.value = coerce_parameter_value(new_type, body.get("value"))
+                if "description" in body:
+                    param.description = str(body.get("description") or "").strip()
             param.name = new_name
             param.type_tag = new_type
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        if self.session.source_path is not None:
+        if self.session.source_path is not None and not structured_only:
             self.session.project.save_to_disk()
         return {
             "ok": True,
@@ -115,11 +166,18 @@ class WorkbenchProjectParameterService:
         param = self.session.project.get_parameter(name)
         if param is None:
             return {"ok": False, "error": f"Parameter '{name}' not found"}
-        if param.is_fixed:
-            return {"ok": False, "error": f"Fixed parameter '{name}' cannot be deleted"}
-        self.session.project.remove_parameter(name)
         if self.session.source_path is not None:
-            self.session.project.save_to_disk()
+            result = mutate_parameters(
+                self.session.project,
+                expected_source_fingerprint=compute_source_fingerprint(self.session.project.root),
+                operations=[{"op": "delete", "name": name}],
+            )
+            if not result.ok:
+                return {"ok": False, "error": result.error, "error_code": result.error_code}
+        else:
+            if param.is_fixed:
+                return {"ok": False, "error": f"Fixed parameter '{name}' cannot be deleted"}
+            self.session.project.remove_parameter(name)
         return {
             "ok": True,
             "deleted": name,

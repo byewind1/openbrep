@@ -608,6 +608,8 @@ _MODIFY_BRIDGE_PROTOCOL = """
 ## Agent Loop 工作模式（本次任务生效，Codex 动态工具桥接）
 
 你可以通过工具调用接口使用以下工具，自主推进任务：
+- read_parameters：读取参数与当前 source_fingerprint
+- edit_parameters：结构化批量修改参数（add/set_value/set_description/delete，全或无）
 - patch_script：局部编辑（精确匹配替换若干段文本，diff 级最小改动；优先使用）
 - update_script：全量重写一个脚本/参数文件（仅当需要整文件重写时才用）
 - compile_script：编译当前工程，返回成功或错误信息
@@ -616,14 +618,15 @@ _MODIFY_BRIDGE_PROTOCOL = """
 - preview_geometry：轻量渲染 3D 脚本，返回 mesh 数量与包围盒
 
 工作纪律：
-1. 局部改动优先用 patch_script 做最小 diff，整文件重写才用 update_script；
-   每次修改后调用 compile_script 验证；
+1. 参数增删和值/描述修改必须优先用 edit_parameters；先 read_parameters 取得指纹，
+   SOURCE_CHANGED 后重新读取；脚本局部改动优先用 patch_script，整文件重写才用
+   update_script；每次修改后调用 compile_script 验证；
 2. 编译失败时根据错误信息继续修复，可用 query_knowledge(mode=diagnose) 诊断；
 3. 工具调用预算共 {budget} 次，请规划使用，不要重复调用同一工具空转；
 4. 确认完成后，直接以纯文本答复总结改动与编译结果（不再发起工具调用）；
 5. 若预算不足，如实说明当前进度与遗留问题，禁止谎报完成；
 6. 本通道不接收 [FILE:] 交付块：改动必须通过工具调用落盘
-   （patch_script / update_script），回复里的 [FILE:] 内容不会被应用；
+   （edit_parameters / patch_script / update_script），回复里的 [FILE:] 内容不会被应用；
 7. 完成声明会经过独立的编译 + 语义验证门禁核验，未通过会被打回并附上
    确定性证据，请在剩余预算内继续用工具修复。
 """
@@ -831,6 +834,7 @@ class CodexModifyBridge:
             apply_changes=agent._apply_changes,
             on_event=self.on_event,
         )
+        self.registry.on_before_write = self._ensure_before_revision
         self.tools = self.registry.definitions()
         self.tool_specs = _dynamic_tool_specs(self.tools)
         self.allowlist = _tool_allowlist(self.tools)

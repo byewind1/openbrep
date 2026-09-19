@@ -21,6 +21,7 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import MockLLM
 from openbrep.runtime.modify_agent_tools import ModifyToolRegistry, normalize_script_path
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
+from openbrep.source_fingerprint import compute_source_fingerprint
 
 
 # ── 公共构造 ──────────────────────────────────────────────
@@ -65,6 +66,36 @@ def _make_registry(project: HSFProject, tmp_path) -> ModifyToolRegistry:
 # ── Agent loop 主流程 ─────────────────────────────────────
 
 class TestAgentLoopFlow(unittest.TestCase):
+    def test_structured_parameter_edit_creates_one_before_and_verified_after(self):
+        project = _make_project(self.tmp)
+        project.save_to_disk()
+        fingerprint = compute_source_fingerprint(project.root)
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "read_parameters", "arguments": {}}]},
+            {"tool_calls": [{"name": "edit_parameters", "arguments": {
+                "expected_source_fingerprint": fingerprint,
+                "operations": [{
+                    "op": "add", "name": "show_top_tread", "type": "Boolean",
+                    "value": 1, "description": "显示顶部踏步",
+                }],
+            }}]},
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "参数已添加并编译通过。",
+        ])
+        result = _make_pipeline(mock_llm, self.tmp).execute(
+            _make_request(project, self.tmp, user_input="增加显示顶部踏步参数")
+        )
+
+        self.assertTrue(result.success, result.plain_text)
+        self.assertEqual(result.project.get_parameter("show_top_tread").value, "1")
+        self.assertEqual(set(result.scripts), {"paramlist.xml"})
+        delivery = result.metadata["delivery_source"]
+        self.assertEqual(delivery["state"], "verified_change")
+        self.assertTrue(delivery["before_revision_id"])
+        self.assertTrue(delivery["after_revision_id"])
+        self.assertNotEqual(delivery["before_revision_id"], delivery["after_revision_id"])
+        self.assertEqual(delivery["changed_files"], ["paramlist.xml"])
+
     def test_normal_termination_applies_scripts_and_compiles(self):
         """改脚本 → 编译 → 纯文本完成：正常退出，变更落进工程与 TaskResult。"""
         new_3d = "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.018\nDEL 1\nEND\n"
@@ -353,6 +384,36 @@ class TestModifyToolRegistry(unittest.TestCase):
         self.assertIn("非法 file_path", bad_path.summary)
         empty = registry.execute(_call("update_script", {"file_path": "scripts/3d.gdl", "content": "  "}))
         self.assertFalse(empty.ok)
+
+    def test_structured_parameter_tool_contract_is_visible_and_compact(self):
+        project = _make_project(self.tmp)
+        project.save_to_disk()
+        before_calls: list[str] = []
+        registry = _make_registry(project, self.tmp)
+        registry.on_before_write = lambda: before_calls.append("before")
+        definitions = {tool.name: tool for tool in registry.definitions()}
+        self.assertIn("read_parameters", definitions)
+        self.assertIn("edit_parameters", definitions)
+        schema = definitions["edit_parameters"].parameters
+        self.assertEqual(
+            schema["properties"]["operations"]["items"]["properties"]["op"]["enum"],
+            ["add", "set_value", "set_description", "delete"],
+        )
+
+        read = registry.execute(_call("read_parameters", {}))
+        self.assertTrue(read.ok)
+        edited = registry.execute(_call("edit_parameters", {
+            "expected_source_fingerprint": read.data["source_fingerprint"],
+            "operations": [{
+                "op": "add", "name": "show_top_tread", "type": "Boolean", "value": 1,
+            }],
+        }))
+        self.assertTrue(edited.ok)
+        self.assertEqual(before_calls, ["before"])
+        self.assertEqual(edited.data["changed_files"], ["paramlist.xml"])
+        self.assertNotIn('"parameters"', edited.summary)
+        self.assertIn("source_fingerprint", edited.summary)
+        self.assertIn("paramlist.xml", registry.changed_files)
 
     def test_update_script_applies_paramlist_changes(self):
         project = _make_project(self.tmp)

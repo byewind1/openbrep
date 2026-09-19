@@ -838,7 +838,7 @@ def project_to_snapshot(
     preview = preview_payload(project, quality="accurate")
     # P11：vl.gdl 的 VALUES 声明解析一次，供参数 payload 的 options/range 使用。
     values_map = parse_values_declarations(project.get_script(ScriptType.PARAM))
-    return {
+    snapshot = {
         "project": {
             "name": project.name,
             "source": source,
@@ -851,6 +851,13 @@ def project_to_snapshot(
         "preview": preview,
         "warnings": preview.get("warnings", []),
     }
+    try:
+        from openbrep.source_fingerprint import compute_source_fingerprint
+
+        snapshot["source_fingerprint"] = compute_source_fingerprint(project.root)
+    except Exception:
+        snapshot["source_fingerprint"] = None
+    return snapshot
 
 
 def validate_image_payload(body: dict[str, Any]) -> dict[str, Any]:
