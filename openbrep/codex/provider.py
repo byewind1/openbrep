@@ -21,8 +21,8 @@ import atexit
 import logging
 import re
 import shutil
-import threading
 import tempfile
+import threading
 import time
 import webbrowser
 from collections import deque
@@ -597,15 +597,18 @@ class CodexProvider:
                     self._client.start()
                 except CodexAppServerError as exc:
                     # macOS 桌面/沙箱环境可能允许读取 managed home 的 auth，
-                    # 却拒绝 Codex CLI 在其中初始化 sqlite runtime。将运行态
-                    # 放到可写临时 home，并只读链接 auth/models cache；不复制、
-                    # 不修改凭据文件。
+                    # 却拒绝 Codex CLI 在其中初始化 sqlite runtime；多个合法
+                    # OpenBrep 实例也不能共享同一 runtime 锁。两种情况都把
+                    # 运行态放到隔离临时 home，并只读链接 auth/models cache。
                     transport = getattr(self._client, "transport", None)
                     stderr = getattr(transport, "stderr_tail", lambda: "")()
                     if (
                         not self._explicit_home
                         and self._entry == ENTRY_MANAGED
-                        and "failed to initialize sqlite state runtime" in stderr
+                        and (
+                            getattr(exc, "category", None) == "runtime_conflict"
+                            or "failed to initialize sqlite state runtime" in stderr
+                        )
                         and self._runtime_codex_home is None
                     ):
                         failed = self._client
@@ -624,7 +627,9 @@ class CodexProvider:
                                     pass
                         self._runtime_codex_home = runtime_home
                         self._client = CodexAppServerClient(
-                            codex_binary=resolve_codex_binary(self.codex_binary) or self.codex_binary,
+                            codex_binary=(
+                                resolve_codex_binary(self.codex_binary) or self.codex_binary
+                            ),
                             codex_home=runtime_home,
                             entry=self._entry,
                             create_home=True,
@@ -1629,6 +1634,7 @@ class CodexProvider:
                 return
             self._closed = True
             client, self._client = self._client, None
+            runtime_home, self._runtime_codex_home = self._runtime_codex_home, None
             self._pending_login_id = None
             self._login_pending = False
             self._login_start_inflight = None
@@ -1644,3 +1650,5 @@ class CodexProvider:
                     "codex app-server 关闭失败（category=%s）",
                     category or exc.__class__.__name__,
                 )
+        if runtime_home is not None:
+            shutil.rmtree(runtime_home, ignore_errors=True)

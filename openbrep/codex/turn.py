@@ -8,10 +8,10 @@ approval never 的安全 CHAT/EXPLAIN。
 - 通知（无 id 帧，v2 信封）：turn/started、item/started、item/agentMessage/delta、
   item/completed、turn/completed、error
 - turn/interrupt（threadId, turnId）→ {}
-- thread/delete（threadId）→ {}
 
 安全不变量（D3 派单）：
-- 每个 turn 使用全新 ephemeral thread，结束即删（thread/delete），无持久化、无会话复用。
+- 每个 turn 使用全新 ephemeral thread，不持久化、无会话复用；ephemeral thread
+  不调用 thread/delete（Codex 0.155 会明确拒绝删除未持久化线程）。
 - 只读 sandbox + approval never + 参数面不含任何工具（shell/patch/MCP/fs 均不存在）。
 - 输入只来自 OpenBrep 构建的 system/user 文本；不加载 home AGENTS/skills/plugins
   （CODEX_HOME 独立 + 临时 cwd 无 AGENTS.md + 不传 custom/developer instructions）。
@@ -55,7 +55,7 @@ TURN_START_FAILED_TEXT = "Codex 对话启动失败，请稍后重试。"
 _DEFAULT_TURN_TIMEOUT = 90.0
 # 取消/超时检查轮询间隔（秒）：兼顾响应度与忙等开销。
 _POLL_INTERVAL = 0.25
-# turn/interrupt 与 thread/delete 的等待窗口（秒）：best-effort 清理，不阻塞过久。
+# turn/interrupt 的等待窗口（秒）：best-effort 清理，不阻塞过久。
 _CLEANUP_WAIT = 3.0
 
 
@@ -353,14 +353,6 @@ class CodexTurnRunner:
         except Exception as exc:  # noqa: BLE001 —— 只记稳定事件名
             self._logger.warning("codex turn interrupt 失败（%s）", exc.__class__.__name__)
 
-    def _cleanup_thread(self, thread_id: str | None) -> None:
-        if not thread_id:
-            return
-        try:
-            self._client.thread_delete({"threadId": thread_id})
-        except Exception as exc:  # noqa: BLE001
-            self._logger.warning("codex thread 清理失败（%s）", exc.__class__.__name__)
-
     # ── 主流程 ─────────────────────────────────────────────────────────────
 
     def _drive(
@@ -494,7 +486,6 @@ class CodexTurnRunner:
                 except Exception:  # noqa: BLE001
                     pass
             collector.close()
-            self._cleanup_thread(collector.thread_id)
 
     @staticmethod
     def _record_item(

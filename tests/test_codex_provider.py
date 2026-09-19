@@ -329,6 +329,53 @@ class TestMaskEmail(unittest.TestCase):
         self.assertEqual(mask_email(None), "")
 
 
+def test_close_removes_temporary_runtime_home(tmp_path):
+    runtime_home = tmp_path / "runtime"
+    runtime_home.mkdir()
+    (runtime_home / "state_5.sqlite").write_text("runtime")
+    provider = CodexProvider(codex_home=tmp_path / "managed", cli_available=False)
+    provider._runtime_codex_home = runtime_home
+
+    provider.close()
+
+    assert not runtime_home.exists()
+
+
+def test_runtime_conflict_retries_with_isolated_home(monkeypatch, tmp_path):
+    managed_home = tmp_path / "managed"
+    managed_home.mkdir()
+    (managed_home / "auth.json").write_text("{}")
+    clients = []
+
+    class _Client:
+        def __init__(self, **kwargs):
+            self.home = Path(kwargs["codex_home"])
+            self.closed = False
+            clients.append(self)
+
+        def start(self):
+            if len(clients) == 1:
+                raise CodexAppServerError("occupied", category="runtime_conflict")
+            return {}
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr("openbrep.codex.provider.CodexAppServerClient", _Client)
+    provider = CodexProvider(cli_available=True)
+    provider.codex_home = managed_home
+
+    client = provider._get_client()
+
+    assert client is clients[1]
+    assert clients[0].closed
+    assert clients[1].home != managed_home
+    assert (clients[1].home / "auth.json").is_symlink()
+    runtime_home = clients[1].home
+    provider.close()
+    assert not runtime_home.exists()
+
+
 if __name__ == "__main__":
     unittest.main()
 

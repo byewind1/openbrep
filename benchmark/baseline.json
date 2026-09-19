@@ -1,20 +1,20 @@
 {
   "version": 1,
-  "generated_at": "2026-09-02T13:31:19",
-  "commit": "458fbc25d257658edeebd0366ce701eaaef7a13d",
+  "generated_at": "2026-09-20T04:20:29",
+  "commit": "84ffd1a68133229a9d82b6830cdfaec4a22ce75d",
   "mode": "mock",
   "suites": {
     "create": {
       "corpus": "benchmark/fixtures/llm_corpus/create.jsonl",
-      "pass": 13,
+      "pass": 15,
       "tasks": {
         "C01": {
           "success": true,
           "criteria_failures": 0
         },
         "C02": {
-          "success": false,
-          "criteria_failures": 1
+          "success": true,
+          "criteria_failures": 0
         },
         "C03": {
           "success": true,
@@ -53,7 +53,7 @@
           "criteria_failures": 0
         },
         "C12": {
-          "success": false,
+          "success": true,
           "criteria_failures": 0
         },
         "C13": {
@@ -78,7 +78,7 @@
         },
         "C18": {
           "success": false,
-          "criteria_failures": 4
+          "criteria_failures": 1
         },
         "C19": {
           "success": true,
@@ -86,7 +86,7 @@
         },
         "C20": {
           "success": false,
-          "criteria_failures": 3
+          "criteria_failures": 2
         }
       }
     },
