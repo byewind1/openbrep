@@ -80,6 +80,7 @@ class VerificationReport:
     confidence: str = "low"     # low | medium | high
     graph_powered: bool = False  # 本次任务使用了图谱约束或诊断
     parameter_sweep: dict | None = None
+    project_contract: dict | None = None
 
     # ── derived views ───────────────────────────────────────
 
@@ -93,6 +94,7 @@ class VerificationReport:
         for c in self.checks:
             if c.status == CheckStatus.FAIL and c.check_type in (
                 "static", "compile", "plan_check", "semantic", "reserved_param_semantic_bug",
+                "project_contract",
             ):
                 return False
         return True
@@ -132,7 +134,14 @@ class VerificationReport:
             "warnings_caught": list(self.warnings_caught),
             "fixes_applied": list(self.fixes_applied),
             "remaining_risks": list(self.remaining_risks),
-            **({"parameter_sweep": self.parameter_sweep} if self.parameter_sweep is not None else {}),
+            **(
+                {"parameter_sweep": self.parameter_sweep}
+                if self.parameter_sweep is not None else {}
+            ),
+            **(
+                {"project_contract": self.project_contract}
+                if self.project_contract is not None else {}
+            ),
         }
 
     def to_trace_dict(self) -> dict:
@@ -192,6 +201,13 @@ class VerificationReport:
             lines.append(
                 f"- 语义验证：{_status_icon(semantic_chk.status)} "
                 f"{semantic_chk.detail or semantic_chk.status.value}"
+            )
+
+        contract_chk = _find(self.checks, "project_contract")
+        if contract_chk:
+            lines.append(
+                f"- 项目合同：{_status_icon(contract_chk.status)} "
+                f"{contract_chk.detail or contract_chk.status.value}"
             )
 
         plan_checks = [c for c in self.checks if c.check_type == "plan_check"]
@@ -497,7 +513,7 @@ def build_verification_report(
         info_issues = [i for i in semantic_result.issues if not i.blocking]
         for issue in info_issues:
             report.remaining_risks.append(issue.detail)
-        if semantic_result.passed:
+        if not blocking_issues:
             checks.append(VerificationCheck(
                 name="语义验证", check_type="semantic",
                 status=CheckStatus.PASS, detail="无问题",
@@ -508,6 +524,40 @@ def build_verification_report(
             checks.append(VerificationCheck(
                 name="语义验证", check_type="semantic", status=CheckStatus.FAIL,
                 detail=f"{len(blocking_issues)} 个问题",
+            ))
+
+        contract = semantic_result.project_contract
+        if contract is not None and contract.applicability != "not_applicable":
+            report.project_contract = contract.to_dict()
+            blocking_failures = [
+                item for item in contract.checks
+                if item.status == "fail" and item.blocking
+            ]
+            unknown_checks = [item for item in contract.checks if item.status == "unknown"]
+            nonblocking_failures = [
+                item for item in contract.checks
+                if item.status == "fail" and not item.blocking
+            ]
+            for item in blocking_failures:
+                report.errors_caught.append(f"[project_contract:{item.check_id}] {item.detail}")
+            for item in unknown_checks + nonblocking_failures:
+                report.remaining_risks.append(
+                    f"[project_contract:{item.check_id}] {item.detail}"
+                )
+            if blocking_failures:
+                contract_status = CheckStatus.FAIL
+                detail = f"{len(blocking_failures)} 个阻断问题"
+            elif unknown_checks or nonblocking_failures:
+                contract_status = CheckStatus.UNKNOWN
+                detail = f"{len(unknown_checks)} 项未知"
+            else:
+                contract_status = CheckStatus.PASS
+                detail = "全部可观测约束通过"
+            checks.append(VerificationCheck(
+                name="项目合同",
+                check_type="project_contract",
+                status=contract_status,
+                detail=detail,
             ))
 
     # 4c. reserved-param semantic bug（保留名被误用到错误维度角色：

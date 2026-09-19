@@ -244,12 +244,18 @@ def semantic_verify(path: str, sweep: bool = True) -> dict:
                 {"check_type": i.check_type, "detail": i.detail, "blocking": i.blocking}
                 for i in result.issues
             ]
-            return {
+            payload = {
                 "ok": True,
                 "passed": result.passed,
                 "issues": issues,
                 "trace_id": trace_id,
             }
+            if (
+                result.project_contract is not None
+                and result.project_contract.applicability != "not_applicable"
+            ):
+                payload["project_contract"] = result.project_contract.to_dict()
+            return payload
         except Exception as exc:
             return _make_error("mcp_internal_error", f"semantic_verify 失败: {exc}", trace_id)
 
@@ -509,7 +515,13 @@ def _verify_project(root: Path, sweep: bool = True) -> dict:
             {"check_type": i.check_type, "detail": i.detail, "blocking": i.blocking}
             for i in result.issues
         ]
-        return {"passed": result.passed, "issues": issues}
+        payload = {"passed": result.passed, "issues": issues}
+        if (
+            result.project_contract is not None
+            and result.project_contract.applicability != "not_applicable"
+        ):
+            payload["project_contract"] = result.project_contract.to_dict()
+        return payload
     except Exception as exc:
         return {
             "passed": False,

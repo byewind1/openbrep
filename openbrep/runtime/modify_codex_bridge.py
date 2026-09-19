@@ -1156,7 +1156,7 @@ class CodexModifyBridge:
         # 反馈信号采集（只采集，best-effort；不改变任何判定/交付语义）
         if not self.cancelled and not self.epoch_violated:
             from openbrep.feedback import append_feedback
-            blocking_issues = [i for i in semantic_result.issues if i.blocking]
+            blocking_issues = semantic_result.blocking_issues
             if gate_unresolved and compile_result is not None and not compile_result.success:
                 append_feedback(self.project.root, {
                     "kind": "compile_failure",
@@ -1227,7 +1227,7 @@ class CodexModifyBridge:
             parameter_changes=parameter_changes,
             changed_files=list(self.registry.changed_files.keys()),
             compile_result=compile_result,
-            semantic_issues=[i.detail for i in semantic_result.issues if i.blocking],
+            semantic_issues=[i.detail for i in semantic_result.blocking_issues],
         )
 
         diff_warnings, diff_ratios = self.registry.diff_scope_warnings()

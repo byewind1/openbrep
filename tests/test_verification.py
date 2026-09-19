@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from openbrep.compiler import CompileResult
+from openbrep.contracts.stair import StairContractCheck, StairContractReport
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse
 from openbrep.object_planner import GDLObjectPlan
@@ -401,6 +402,72 @@ class TestBuildVerificationReport(unittest.TestCase):
         semantic_chk = _find_check(r, "semantic")
         self.assertEqual(semantic_chk.status, CheckStatus.PASS)
         self.assertIn("预览崩了", r.remaining_risks)
+
+    def test_project_contract_unknown_is_structured_risk_not_failure(self):
+        contract = StairContractReport(
+            applicability="applicable",
+            contract_hash="sha256:abc",
+            checks=[StairContractCheck(
+                check_id="baluster_tread_alignment",
+                status="unknown",
+                expected="pairwise equal elevations",
+                evidence_source="unavailable",
+                blocking=True,
+                detail="缺少组件身份",
+            )],
+        )
+        report = build_verification_report(
+            intent="CREATE",
+            project=_project_with_3d(),
+            static_result=_static(),
+            semantic_result=SemanticVerificationResult(passed=True, project_contract=contract),
+        )
+
+        check = _find_check(report, "project_contract")
+        self.assertEqual(check.status, CheckStatus.UNKNOWN)
+        self.assertTrue(report.passed)
+        self.assertEqual(report.to_dict()["project_contract"]["contract_hash"], "sha256:abc")
+        self.assertTrue(any("缺少组件身份" in risk for risk in report.remaining_risks))
+
+    def test_project_contract_blocking_failure_blocks_unified_report(self):
+        contract = StairContractReport(
+            applicability="applicable",
+            contract_hash="sha256:def",
+            checks=[StairContractCheck(
+                check_id="step_riser_relation",
+                status="fail",
+                observed=0.3,
+                expected=0.2,
+                tolerance=1e-6,
+                evidence_source="master_parameter_environment",
+                blocking=True,
+                detail="step_riser 必须等于 height / num_steps",
+            )],
+        )
+        report = build_verification_report(
+            intent="MODIFY",
+            project=_project_with_3d(),
+            static_result=_static(),
+            semantic_result=SemanticVerificationResult(passed=True, project_contract=contract),
+        )
+
+        self.assertFalse(report.passed)
+        self.assertEqual(_find_check(report, "project_contract").status, CheckStatus.FAIL)
+        self.assertTrue(any("step_riser_relation" in error for error in report.errors_caught))
+
+    def test_not_applicable_project_contract_does_not_add_gate(self):
+        report = build_verification_report(
+            intent="CREATE",
+            project=_project_with_3d(),
+            static_result=_static(),
+            semantic_result=SemanticVerificationResult(
+                passed=True,
+                project_contract=StairContractReport(applicability="not_applicable"),
+            ),
+        )
+
+        self.assertIsNone(_find_check(report, "project_contract"))
+        self.assertNotIn("project_contract", report.to_dict())
 
 
 # ── pipeline integration ───────────────────────────────────

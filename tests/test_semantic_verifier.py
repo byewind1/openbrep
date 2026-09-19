@@ -4,10 +4,13 @@ the lightweight gdl_previewer and compare the resulting mesh against the
 script's own declared A/B/ZZYZX dimensions.
 """
 
+import json
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
-from openbrep.gdl_previewer import PreviewMesh3D, Preview3DResult
+from openbrep.gdl_previewer import Preview3DResult, PreviewMesh3D
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.semantic_verifier import (
     _perturb_value,
@@ -302,6 +305,8 @@ class TestVerifySemantics(unittest.TestCase):
         project.scripts[ScriptType.SCRIPT_3D] = ""
         result = verify_semantics(project)
         self.assertTrue(result.passed)
+        self.assertEqual(result.issues, [])
+        self.assertIsNone(result.project_contract)
 
     def test_default_box_matching_reserved_params_passes(self):
         project = self._project()
@@ -345,6 +350,88 @@ class TestVerifySemantics(unittest.TestCase):
         result = verify_semantics(project, sweep=False)
         self.assertFalse(any(i.check_type.startswith("sweep_") for i in result.issues))
         self.assertIsNone(result.sweep)
+
+    def test_explicit_stair_contract_reuses_semantic_evaluation_and_preview(self):
+        fixture = Path(__file__).parent / "fixtures" / "spiral_stair" / "after_top_option"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "stair"
+            shutil.copytree(fixture, root)
+            contract_path = root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text(json.dumps({
+                "schema_version": 1,
+                "type": "spiral_stair",
+                "parameter_bindings": {
+                    "height": "height",
+                    "num_steps": "num_steps",
+                    "step_riser": "step_riser",
+                    "show_top_tread": "show_top_tread",
+                },
+                "geometry_bindings": {
+                    "treads": {"command": "PRISM_", "source_line": 48},
+                },
+                "constraints": {},
+                "provenance": {"source": "test_profile"},
+            }), encoding="utf-8")
+            project = HSFProject.load_from_disk(str(root))
+
+            result = verify_semantics(project, sweep=False)
+
+        self.assertIsNotNone(result.project_contract)
+        self.assertEqual(result.project_contract.applicability, "applicable")
+        top_count = next(
+            check for check in result.project_contract.checks
+            if check.check_id == "top_tread_count"
+        )
+        self.assertEqual(top_count.status, "pass")
+        self.assertEqual(top_count.observed, 16)
+
+    def test_explicit_invalid_contract_fails_semantic_result(self):
+        fixture = Path(__file__).parent / "fixtures" / "spiral_stair" / "after_top_option"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "stair"
+            shutil.copytree(fixture, root)
+            contract_path = root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text("{broken", encoding="utf-8")
+            project = HSFProject.load_from_disk(str(root))
+
+            result = verify_semantics(project, sweep=False)
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.project_contract.applicability, "invalid")
+
+    def test_empty_3d_script_does_not_bypass_invalid_explicit_contract(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("T", work_dir=tmpdir)
+            project.save_to_disk()
+            project.scripts[ScriptType.SCRIPT_3D] = ""
+            contract_path = project.root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text("{broken", encoding="utf-8")
+
+            result = verify_semantics(project, sweep=False)
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.project_contract.applicability, "invalid")
+
+    def test_preview_exception_does_not_bypass_invalid_explicit_contract(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("T", work_dir=tmpdir)
+            project.save_to_disk()
+            contract_path = project.root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text("{broken", encoding="utf-8")
+
+            with unittest.mock.patch(
+                "openbrep.gdl_previewer.preview_3d_script",
+                side_effect=RuntimeError("preview failed"),
+            ):
+                result = verify_semantics(project, sweep=False)
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.project_contract.applicability, "invalid")
+        self.assertTrue(any(issue.check_type == "preview_error" for issue in result.issues))
 
 
 if __name__ == "__main__":

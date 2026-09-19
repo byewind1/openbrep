@@ -18,6 +18,7 @@ import pytest
 
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
+from openbrep.contracts.stair import StairContractCheck, StairContractReport
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
@@ -79,6 +80,26 @@ def _blocking(code: str = "mesh_empty") -> SemanticIssue:
         check_type=code,
         detail="3d.gdl 中检测到几何命令，但预览渲染出 0 个 mesh（几何可能未实际生效）",
         blocking=True,
+    )
+
+
+def _contract_blocking() -> SemanticVerificationResult:
+    return SemanticVerificationResult(
+        passed=False,
+        project_contract=StairContractReport(
+            applicability="applicable",
+            contract_hash="sha256:test",
+            checks=[StairContractCheck(
+                check_id="step_riser_relation",
+                status="fail",
+                observed=0.3,
+                expected=0.2,
+                tolerance=1e-6,
+                evidence_source="master_parameter_environment",
+                blocking=True,
+                detail="step_riser 必须等于 height / num_steps",
+            )],
+        ),
     )
 
 
@@ -152,6 +173,26 @@ class TestSemanticRepairAccepted:
         check = _semantic_check(result)
         assert check is not None and check["status"] == "pass"
         assert "几何语义验证" in _llm_texts(mock_llm)
+
+    def test_blocking_project_contract_does_not_trigger_automatic_repair(self, tmp_path: Path):
+        compiler_mock = MagicMock()
+        compiler_mock.hsf2libpart.return_value = _ok_compile()
+        pipeline, mock_llm = _make_pipeline(GDL_REPAIR_REPLY, compiler_mock)
+
+        with patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            return_value=_contract_blocking(),
+        ) as sem_mock:
+            result = _run_create(pipeline, tmp_path)
+
+        assert sem_mock.call_count == 1
+        assert "几何语义验证" not in _llm_texts(mock_llm)
+        assert result.success is False
+        contract_check = next(
+            check for check in result.verification["checks"]
+            if check["check_type"] == "project_contract"
+        )
+        assert contract_check["status"] == "fail"
 
 
 # ── 2. semantic pass → no repair ──
