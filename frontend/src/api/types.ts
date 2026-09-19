@@ -232,6 +232,56 @@ export interface AuthoritativePreviewResult {
   error?: string
 }
 
+export type HostVerificationRecordStatus = 'passed' | 'failed' | 'unsupported' | 'identity_unverified'
+export type HostVerificationStatus = HostVerificationRecordStatus | 'not_checked' | 'stale'
+
+export interface HostVerificationRecord {
+  schema_version?: number
+  record_id: string
+  run_id?: string | null
+  revision?: string | null
+  status: HostVerificationRecordStatus
+  source_fingerprint: string
+  contract_hash?: string | null
+  gsm_sha256?: string | null
+  parameter_fingerprint: string
+  requested_parameters: Record<string, unknown>
+  applied_parameters: string[]
+  skipped_parameters: string[]
+  loaded_identity?: Record<string, unknown> | null
+  identity_status?: string
+  archicad_version?: string | null
+  addon_version?: string | null
+  started_at?: string
+  finished_at?: string | null
+  diagnostics?: string[]
+  stale?: boolean
+  stale_reasons?: string[]
+}
+
+export interface HostVerificationCurrent {
+  status: HostVerificationStatus
+  stale: boolean
+  stale_reasons: string[]
+  record_id?: string
+  source_fingerprint?: string
+  [key: string]: unknown
+}
+
+export interface HostVerificationRequest {
+  parameters: Record<string, unknown>
+  expected_project_epoch: number
+  expected_source_fingerprint: string
+}
+
+export interface HostVerificationRunResult {
+  ok: boolean
+  verification?: HostVerificationRecord
+  current?: boolean
+  stale?: boolean
+  error?: string
+}
+
 /** L0b：ui.gdl 解析出的 Archicad 风格参数面板控件 */
 export interface UIControl {
   type: 'infield' | 'outfield' | 'groupbox' | 'separator' | 'button' | string

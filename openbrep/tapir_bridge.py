@@ -630,6 +630,38 @@ class TapirBridge:
             raw = {k: v for k, v in vars(raw).items() if not k.startswith("_")}
         return raw if isinstance(raw, dict) else {"success": False, "errorMessage": str(raw)}
 
+    def verify_library_part_artifact(
+        self,
+        *,
+        gsm_path: str,
+        gsm_sha256: str,
+        lib_part_name: str = "",
+        lib_part_guid: str = "",
+        parameters: Optional[dict] = None,
+        want: Optional[list[str]] = None,
+    ) -> dict:
+        """Ask the OpenBrep Add-On to load and verify one exact GSM artifact."""
+        raw = self._tapir_call(
+            "VerifyLibraryPartArtifact",
+            {
+                "gsmPath": gsm_path,
+                "gsmSha256": gsm_sha256,
+                "libPartName": lib_part_name,
+                "libPartGuid": lib_part_guid,
+                "parameters": dict(parameters or {}),
+                "want": list(want or []),
+                "restoreLibraryState": True,
+                "rollbackElements": True,
+            },
+            addon_id=self.OPENBREP_ADDON_ID,
+        )
+        if hasattr(raw, "__dict__") and not isinstance(raw, dict):
+            raw = {k: v for k, v in vars(raw).items() if not k.startswith("_")}
+        return raw if isinstance(raw, dict) else {
+            "success": False,
+            "errorMessage": str(raw),
+        }
+
 
 # ── 单例 ──────────────────────────────────────────────────────────────────
 

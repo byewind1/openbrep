@@ -355,6 +355,35 @@ def test_workbench_authoritative_preview_without_archicad(tmp_path):
     assert "Archicad" in response["error"]
 
 
+def test_host_verification_routes_are_explicit_and_separate_from_preview():
+    session = WorkbenchSession(tapir_import_ok=False)
+
+    class FakeHostVerificationService:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, body):
+            self.calls.append(("run", body))
+            return {"ok": True, "verification": {"status": "passed"}}
+
+        def current(self, body):
+            self.calls.append(("current", body))
+            return {"ok": True, "status": "not_checked"}
+
+    fake = FakeHostVerificationService()
+    session.host_verification_service = fake
+
+    post = session.route("POST", "/api/verification/host", {"parameters": {"A": 2}})
+    get = session.route("GET", "/api/verification/host")
+
+    assert post["verification"]["status"] == "passed"
+    assert get["status"] == "not_checked"
+    assert fake.calls == [
+        ("run", {"parameters": {"A": 2}}),
+        ("current", {}),
+    ]
+
+
 def test_workbench_session_loads_hsf_directory_and_snapshots_project(tmp_path):
     project = HSFProject.create_new("LoadedShelf", str(tmp_path))
     project.parameters.append(GDLParameter("shelf_count", "Integer", "Shelves", "4"))

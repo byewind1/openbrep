@@ -30,6 +30,10 @@ import type {
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  HostVerificationCurrent,
+  HostVerificationRecord,
+  HostVerificationRequest,
+  HostVerificationRunResult,
   ImportAssistantHistoryResult,
   DistillAssistantHistoryResult,
   IgnoreMemoryLessonResult,
@@ -100,6 +104,8 @@ export interface WorkbenchApi {
   ) => Promise<Preview2DPayload>
   /** Archicad 权威预览（/api/preview/authoritative）；parameters 缺省 = 后端用当前参数值 */
   fetchAuthoritativePreview: (parameters?: Record<string, unknown>) => Promise<AuthoritativePreviewResult>
+  fetchHostVerification: () => Promise<HostVerificationCurrent>
+  runHostVerification: (request: HostVerificationRequest) => Promise<HostVerificationRunResult>
   fetchEffectiveParameters: (parameters?: Record<string, unknown>) => Promise<EffectiveParametersResult>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   newProject: () => Promise<WorkbenchSnapshot>
@@ -272,6 +278,10 @@ export interface WorkbenchState {
   previewAuthoritativeError: string | null
   /** 权威取数时 draftParameters 的 JSON 指纹；与当前指纹不一致 = 参数已变（轻提示刷新） */
   previewAuthoritativeParamsKey: string | null
+  hostVerification: HostVerificationRecord | null
+  hostVerificationLoading: boolean
+  hostVerificationError: string | null
+  hostVerificationParamsKey: string | null
   warnings: string[]
   loading: boolean
   applying: boolean
@@ -468,6 +478,8 @@ export interface WorkbenchState {
   setPreviewSourceMode: (mode: PreviewSourceMode) => Promise<void>
   /** 显式刷新 Archicad 权威预览（不跟随参数改动自动触发） */
   loadAuthoritativePreview: () => Promise<void>
+  loadHostVerification: () => Promise<void>
+  runHostVerification: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean
 }

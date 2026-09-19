@@ -27,6 +27,7 @@ import {
   fetchPreview,
   fetchEffectiveParameters,
   fetchAuthoritativePreview,
+  fetchHostVerification,
   fetchRuntimeSettings,
   fetchTapirStatus,
   fetchSnapshot,
@@ -85,6 +86,7 @@ import {
   workspaceScan,
   workspaceSearch,
   trashWorkspaceProject,
+  runHostVerification,
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
@@ -108,6 +110,8 @@ const defaultWorkbenchApi: WorkbenchApi = {
   fetchPreview,
   fetchEffectiveParameters,
   fetchAuthoritativePreview,
+  fetchHostVerification,
+  runHostVerification,
   listSkillProposals,
   workspaceInit,
   workspaceOpen,
@@ -296,6 +300,10 @@ function initialWorkbenchState() {
     previewAuthoritativeLoading: false,
     previewAuthoritativeError: null,
     previewAuthoritativeParamsKey: null,
+    hostVerification: null,
+    hostVerificationLoading: false,
+    hostVerificationError: null,
+    hostVerificationParamsKey: null,
     warnings: [],
     loading: false,
     applying: false,

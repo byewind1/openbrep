@@ -24,11 +24,21 @@ export function usePreviewSource(localPreview: PreviewPayload | null): {
   const setPreviewSourceMode = useWorkbenchStore((state) => state.setPreviewSourceMode)
   const loadAuthoritativePreview = useWorkbenchStore((state) => state.loadAuthoritativePreview)
   const tapirStatus = useWorkbenchStore((state) => state.tapirStatus)
+  const hostVerification = useWorkbenchStore((state) => state.hostVerification)
+  const hostVerificationLoading = useWorkbenchStore((state) => state.hostVerificationLoading)
+  const hostVerificationError = useWorkbenchStore((state) => state.hostVerificationError)
+  const hostVerificationParamsKey = useWorkbenchStore((state) => state.hostVerificationParamsKey)
+  const runHostVerification = useWorkbenchStore((state) => state.runHostVerification)
+  const dirtyScripts = useWorkbenchStore((state) => state.dirtyScripts)
+  const sourceFingerprint = useWorkbenchStore((state) => state.sourceFingerprint)
 
   const active = mode === 'authoritative'
   // 出错时回退本地预览（需求：保持显示上一次的本地预览，错误不静默）
   const showingAuthoritative = active && authoritative !== null && error === null
   const stale = active && paramsKey !== null && paramsKey !== JSON.stringify(draftParameters)
+  const verificationStale = Boolean(hostVerification?.stale)
+    || Boolean(hostVerification && hostVerification.source_fingerprint !== sourceFingerprint)
+    || (hostVerificationParamsKey !== null && hostVerificationParamsKey !== JSON.stringify(draftParameters))
 
   return {
     preview: showingAuthoritative ? authoritative : localPreview,
@@ -41,6 +51,11 @@ export function usePreviewSource(localPreview: PreviewPayload | null): {
       showingAuthoritative,
       onModeChange: (next: PreviewSourceMode) => void setPreviewSourceMode(next),
       onRefresh: () => void loadAuthoritativePreview(),
+      verificationStatus: verificationStale ? 'stale' : (hostVerification?.status ?? 'not_checked'),
+      verificationLoading: hostVerificationLoading,
+      verificationError: hostVerificationError,
+      verificationDisabled: Object.values(dirtyScripts).some(Boolean),
+      onVerify: () => void runHostVerification(),
     },
   }
 }
@@ -59,10 +74,20 @@ export function usePreview2DSource(localPreview: Preview2DPayload | null): {
   const setPreviewSourceMode = useWorkbenchStore((state) => state.setPreviewSourceMode)
   const loadAuthoritativePreview = useWorkbenchStore((state) => state.loadAuthoritativePreview)
   const tapirStatus = useWorkbenchStore((state) => state.tapirStatus)
+  const hostVerification = useWorkbenchStore((state) => state.hostVerification)
+  const hostVerificationLoading = useWorkbenchStore((state) => state.hostVerificationLoading)
+  const hostVerificationError = useWorkbenchStore((state) => state.hostVerificationError)
+  const hostVerificationParamsKey = useWorkbenchStore((state) => state.hostVerificationParamsKey)
+  const runHostVerification = useWorkbenchStore((state) => state.runHostVerification)
+  const dirtyScripts = useWorkbenchStore((state) => state.dirtyScripts)
+  const sourceFingerprint = useWorkbenchStore((state) => state.sourceFingerprint)
 
   const active = mode === 'authoritative'
   const showingAuthoritative = active && authoritative !== null && error === null
   const stale = active && paramsKey !== null && paramsKey !== JSON.stringify(draftParameters)
+  const verificationStale = Boolean(hostVerification?.stale)
+    || Boolean(hostVerification && hostVerification.source_fingerprint !== sourceFingerprint)
+    || (hostVerificationParamsKey !== null && hostVerificationParamsKey !== JSON.stringify(draftParameters))
   return {
     preview: showingAuthoritative ? authoritative : localPreview,
     sourceControl: {
@@ -74,6 +99,11 @@ export function usePreview2DSource(localPreview: Preview2DPayload | null): {
       showingAuthoritative,
       onModeChange: (next: PreviewSourceMode) => void setPreviewSourceMode(next),
       onRefresh: () => void loadAuthoritativePreview(),
+      verificationStatus: verificationStale ? 'stale' : (hostVerification?.status ?? 'not_checked'),
+      verificationLoading: hostVerificationLoading,
+      verificationError: hostVerificationError,
+      verificationDisabled: Object.values(dirtyScripts).some(Boolean),
+      onVerify: () => void runHostVerification(),
     },
   }
 }

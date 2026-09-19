@@ -7,7 +7,7 @@ import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveC
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerator, ShaderMaterial, Vector3 } from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
+import type { HostVerificationStatus, PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
 import type { PreviewGhostLabel, PreviewSourceMode } from '../state/workbenchStoreTypes'
 import { useT } from '../i18n'
 import { PanelEmpty } from './PanelEmpty'
@@ -84,6 +84,11 @@ export interface PreviewSourceControl {
   showingAuthoritative: boolean
   onModeChange: (mode: PreviewSourceMode) => void
   onRefresh: () => void
+  verificationStatus?: HostVerificationStatus
+  verificationLoading?: boolean
+  verificationError?: string | null
+  verificationDisabled?: boolean
+  onVerify?: () => void
 }
 
 const DISPLAY_MODES: Array<{ id: PreviewDisplayMode; label: string; title: string }> = [
@@ -246,6 +251,22 @@ export function PreviewViewport({
                   {sourceControl.loading ? '刷新中…' : '刷新权威'}
                 </button>
               ) : null}
+              {sourceControl.onVerify ? (
+                <>
+                  <button
+                    type="button"
+                    className="viewport-action-button"
+                    disabled={sourceControl.available === false || sourceControl.verificationLoading || sourceControl.verificationDisabled}
+                    onClick={sourceControl.onVerify}
+                    title={sourceControl.verificationDisabled ? '请先保存或取消脚本修改' : '编译当前已保存源码并在 Archicad 中核验准确 GSM'}
+                  >
+                    {sourceControl.verificationLoading ? '验收中…' : '运行 AC 验收'}
+                  </button>
+                  <span className={`viewport-verification-status is-${sourceControl.verificationStatus ?? 'not_checked'}`}>
+                    {hostVerificationLabel(sourceControl.verificationStatus ?? 'not_checked')}
+                  </span>
+                </>
+              ) : null}
               <span className="viewport-toolbar-sep" aria-hidden="true" />
             </>
           ) : null}
@@ -354,9 +375,11 @@ export function PreviewViewport({
           <div className="viewport-authoritative-stale">参数已变，点击「刷新权威」更新</div>
         ) : null}
         {/* 权威取数失败：错误原文上屏（不静默），画布保持显示本地预览 */}
-        {sourceControl?.active && sourceControl.error ? (
+        {(sourceControl?.active && sourceControl.error) || sourceControl?.verificationError ? (
           <div className="viewport-authoritative-error" role="alert">
-            权威预览失败：{sourceControl.error}
+            {sourceControl.verificationError
+              ? `AC 验收失败：${sourceControl.verificationError}`
+              : `权威预览失败：${sourceControl.error}`}
           </div>
         ) : null}
         {/* absolute + inset:0：见 styles.css .canvas-wrap 注释，
@@ -500,6 +523,17 @@ export function PreviewViewport({
       </footer>
     </section>
   )
+}
+
+function hostVerificationLabel(status: HostVerificationStatus): string {
+  return {
+    passed: '已验收',
+    failed: '未通过',
+    unsupported: '不支持',
+    identity_unverified: '身份未核验',
+    not_checked: '未验收',
+    stale: '已过期',
+  }[status]
 }
 
 function previewSourceLabel(preview: PreviewPayload | null, hasDirtyScripts: boolean) {

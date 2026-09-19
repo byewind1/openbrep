@@ -140,6 +140,8 @@ describe('Preview2DViewport (P3c)', () => {
           error: null,
           stale: true,
           showingAuthoritative: true,
+          verificationStatus: 'identity_unverified',
+          onVerify: vi.fn(),
           onModeChange,
           onRefresh,
         }}
@@ -148,6 +150,7 @@ describe('Preview2DViewport (P3c)', () => {
 
     expect(screen.getByText('Archicad authoritative')).toBeTruthy()
     expect(screen.getByText('参数已变更，请刷新权威预览')).toBeTruthy()
+    expect(screen.getByText('身份未核验')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '本地' }))
     fireEvent.click(screen.getByRole('button', { name: '刷新权威' }))
     expect(onModeChange).toHaveBeenCalledWith('local')
