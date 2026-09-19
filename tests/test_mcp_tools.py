@@ -190,6 +190,21 @@ def test_semantic_verify_well_formed_project_passes(tmp_path):
     result = semantic_verify(str(hsf_dir))
     assert result["ok"] is True
     assert result["passed"] is True
+    assert "project_contract" not in result
+
+
+def test_semantic_verify_exposes_explicit_contract_failure(tmp_path):
+    _project, hsf_dir = _make_project(tmp_path)
+    contract_path = Path(hsf_dir) / ".openbrep" / "contracts" / "stair.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text("{broken", encoding="utf-8")
+
+    result = semantic_verify(str(hsf_dir), sweep=False)
+
+    assert result["ok"] is True
+    assert result["passed"] is False
+    assert result["project_contract"]["applicability"] == "invalid"
+    assert result["project_contract"]["checks"][0]["check_id"] == "contract_valid"
 
 
 def test_all_tools_return_unified_error_shape_for_missing_path(tmp_path):

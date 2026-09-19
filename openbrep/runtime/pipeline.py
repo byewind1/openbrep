@@ -1779,7 +1779,7 @@ class TaskPipeline:
             from openbrep.semantic_verifier import verify_semantics
 
             semantic_result = verify_semantics(project)
-            blocking = [issue for issue in semantic_result.issues if issue.blocking]
+            blocking = semantic_result.blocking_issues
             semantic_issues = [issue.detail for issue in blocking]
             if blocking:
                 semantic_note = "⚠️ 几何验证警告：\n" + "\n".join(f"- {issue.detail}" for issue in blocking)
@@ -2040,7 +2040,7 @@ class TaskPipeline:
             from openbrep.semantic_verifier import verify_semantics
 
             semantic_result = verify_semantics(project)
-            semantic_issues = [issue.detail for issue in semantic_result.issues if issue.blocking]
+            semantic_issues = [issue.detail for issue in semantic_result.blocking_issues]
         except Exception:
             pass
 

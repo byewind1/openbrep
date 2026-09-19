@@ -111,8 +111,8 @@ def _completion_gate(project, registry, compiler, gsm_path: str):
     compile_result = compiler.hsf2libpart(str(hsf_dir), gsm_path)
     registry.last_compile_result = compile_result
     semantic_result = verify_semantics(project)
-    blocking = [i for i in semantic_result.issues if i.blocking]
-    if compile_result.success and not blocking:
+    blocking = semantic_result.blocking_issues
+    if compile_result.success and semantic_result.passed and not blocking:
         return True, "", semantic_result
     parts = ["完成门禁未通过，当前状态还不能交付："]
     if not compile_result.success:
@@ -643,7 +643,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
 
     # ── 反馈信号采集（只采集，best-effort；不改变任何判定/交付语义）──
     if not cancelled:
-        blocking_issues = [issue for issue in semantic_result.issues if issue.blocking]
+        blocking_issues = semantic_result.blocking_issues
         if gate_unresolved and compile_result is not None and not compile_result.success:
             pipeline._append_feedback(project.root, {
                 "kind": "compile_failure",
@@ -708,7 +708,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
         parameter_changes=parameter_changes,
         changed_files=list(registry.changed_files.keys()),
         compile_result=compile_result,
-        semantic_issues=[issue.detail for issue in semantic_result.issues if issue.blocking],
+        semantic_issues=[issue.detail for issue in semantic_result.blocking_issues],
         revision_id=before_revision_id or None,
     )
 

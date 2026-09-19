@@ -32,12 +32,13 @@ false positives that block a correct CREATE are not.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from openbrep.gdl_ast import ControlBlock, GeometryCall, parse_gdl_script
 from openbrep.static_checker import RESERVED_PARAMS
 
 if TYPE_CHECKING:
+    from openbrep.contracts.stair import StairContractReport
     from openbrep.gdl_previewer import Preview3DResult
     from openbrep.hsf_project import HSFProject
 
@@ -72,6 +73,23 @@ class SemanticVerificationResult:
     passed: bool
     issues: list[SemanticIssue] = field(default_factory=list)
     sweep: "ParameterSweepReport | None" = None
+    project_contract: "StairContractReport | None" = None
+
+    @property
+    def blocking_issues(self) -> list[SemanticIssue]:
+        result = [issue for issue in self.issues if issue.blocking]
+        if self.project_contract is None:
+            return result
+        result.extend(
+            SemanticIssue(
+                check_type=f"project_contract:{check.check_id}",
+                detail=check.detail,
+                blocking=True,
+            )
+            for check in self.project_contract.checks
+            if check.status == "fail" and check.blocking
+        )
+        return result
 
 
 @dataclass
@@ -519,9 +537,10 @@ def verify_semantics(
 ) -> SemanticVerificationResult:
     """Preview the project's 3D script and run geometry-level sanity checks.
 
-    Safe no-op (passed=True, no issues) when project is None or has no 3D
-    script. Never raises: a previewer crash is reported as a non-blocking
-    `preview_error` issue rather than propagating.
+    Safe no-op (passed=True, no issues) when project is None. An empty 3D
+    script still evaluates an explicit project contract. Never raises: a
+    previewer crash is reported as a non-blocking ``preview_error`` while
+    contract checks without geometry evidence remain unknown.
     """
     if project is None:
         return SemanticVerificationResult(passed=True)
@@ -530,16 +549,43 @@ def verify_semantics(
 
     script_3d = project.get_script(ScriptType.SCRIPT_3D) or ""
     if not script_3d.strip():
-        return SemanticVerificationResult(passed=True)
+        from openbrep.contracts.stair import CONTRACT_RELATIVE_PATH
 
+        if not (project.root / CONTRACT_RELATIVE_PATH).is_file():
+            return SemanticVerificationResult(passed=True)
     try:
-        from openbrep.gdl_previewer import evaluate_parameter_environment, preview_3d_script
+        from openbrep.gdl_previewer import evaluate_parameter_environment
         from openbrep.workbench.project_parameter_service import parameter_values
 
         setup_script = project.get_script(ScriptType.MASTER) or ""
         source_params = parameter_values(project)
         evaluated = evaluate_parameter_environment(setup_script, source_params)
         params = evaluated.values
+    except Exception as exc:
+        from openbrep.contracts.stair import evaluate_stair_contract
+
+        project_contract = evaluate_stair_contract(
+            project,
+            evaluated=None,
+            preview=None,
+        )
+        verification = SemanticVerificationResult(
+            passed=False,
+            issues=[SemanticIssue(
+                check_type="preview_error",
+                detail=f"语义参数求值异常（不计入失败）：{exc}",
+                blocking=False,
+            )],
+            project_contract=project_contract,
+        )
+        verification.passed = not verification.blocking_issues
+        return verification
+
+    preview_ok = True
+    preview_issues: list[SemanticIssue] = []
+    try:
+        from openbrep.gdl_previewer import preview_3d_script
+
         result = preview_3d_script(
             script_3d,
             parameters=evaluated.runtime_values,
@@ -547,21 +593,39 @@ def verify_semantics(
             quality="fast",
         )
     except Exception as exc:
+        preview_ok = False
+        result = None
+        preview_issues.append(SemanticIssue(
+            check_type="preview_error",
+            detail=f"语义预览执行异常（不计入失败）：{exc}",
+            blocking=False,
+        ))
+
+    try:
+        from openbrep.contracts.stair import evaluate_stair_contract
+        project_contract = evaluate_stair_contract(
+            project,
+            evaluated=evaluated,
+            preview=result,
+        )
+    except Exception as exc:
         return SemanticVerificationResult(
-            passed=True,
+            passed=False,
             issues=[SemanticIssue(
-                check_type="preview_error",
-                detail=f"语义预览执行异常（不计入失败）：{exc}",
-                blocking=False,
+                check_type="project_contract_error",
+                detail=f"项目合同检查异常：{exc}",
+                blocking=True,
             )],
         )
 
     dims = {name: params[name] for name in RESERVED_PARAMS if name in params}
 
-    issues = check_mesh_health(script_3d, result)
-    issues.extend(check_bounding_box_against_dimensions(result, dims, tolerance=tolerance))
+    issues = list(preview_issues)
+    if result is not None:
+        issues.extend(check_mesh_health(script_3d, result))
+        issues.extend(check_bounding_box_against_dimensions(result, dims, tolerance=tolerance))
     sweep_report = None
-    if sweep:
+    if sweep and preview_ok and result is not None:
         sweep_report = sweep_parameter_observations(
             project,
             delta_ratio=sweep_delta_ratio,
@@ -571,5 +635,11 @@ def verify_semantics(
         )
         issues.extend(sweep_report.issues)
 
-    passed = not any(issue.blocking for issue in issues)
-    return SemanticVerificationResult(passed=passed, issues=issues, sweep=sweep_report)
+    verification = SemanticVerificationResult(
+        passed=False,
+        issues=issues,
+        sweep=sweep_report,
+        project_contract=project_contract,
+    )
+    verification.passed = not verification.blocking_issues
+    return verification

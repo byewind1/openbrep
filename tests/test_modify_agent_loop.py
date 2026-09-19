@@ -494,6 +494,10 @@ from openbrep.semantic_verifier import (  # noqa: E402
     SemanticIssue,
     SemanticVerificationResult,
 )
+from openbrep.contracts.stair import (  # noqa: E402
+    StairContractCheck,
+    StairContractReport,
+)
 
 
 def _blocking_semantic():
@@ -528,6 +532,42 @@ class TestCompletionGate(unittest.TestCase):
         self.assertIn("mesh_empty", convo)
         self.assertIn("打回 1 次", result.plain_text)
         self.assertTrue(result.success)
+
+    def test_gate_rejects_blocking_project_contract_without_generic_issue(self):
+        contract_failure = SemanticVerificationResult(
+            passed=False,
+            project_contract=StairContractReport(
+                applicability="applicable",
+                contract_hash="sha256:test",
+                checks=[StairContractCheck(
+                    check_id="step_riser_relation",
+                    status="fail",
+                    observed=0.3,
+                    expected=0.2,
+                    tolerance=1e-6,
+                    evidence_source="master_parameter_environment",
+                    blocking=True,
+                    detail="step_riser 必须等于 height / num_steps",
+                )],
+            ),
+        )
+        mock_llm = MockLLM(responses=[
+            {"content": "改完了。", "tool_calls": []},
+            {"content": "无法满足合同，停止。", "tool_calls": []},
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            side_effect=[contract_failure, SemanticVerificationResult(passed=True)],
+        ):
+            with __import__("tempfile").TemporaryDirectory() as tmp:
+                from pathlib import Path
+                tmp_path = Path(tmp)
+                pipeline = _make_pipeline(mock_llm, tmp_path)
+                result = pipeline.execute(_make_request(_make_project(tmp_path), tmp_path))
+
+        self.assertEqual(mock_llm.call_count, 2)
+        self.assertIn("project_contract:step_riser_relation", str(mock_llm.call_history))
+        self.assertIn("打回 1 次", result.plain_text)
 
     def test_gate_rejections_bounded(self):
         """连续谎报：打回 MAX_GATE_REJECTIONS 次后强制交付并如实标注。"""
