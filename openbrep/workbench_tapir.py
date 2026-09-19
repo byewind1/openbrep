@@ -141,6 +141,53 @@ class WorkbenchTapirAdapter:
             return {"ok": False, "error": str(raw.get("errorMessage") or "权威求值失败")}
         return {"ok": True, **raw}
 
+    def verify_library_part_artifact(self, **request: Any) -> dict[str, Any]:
+        """Verify that Archicad evaluated the exact GSM artifact in ``request``."""
+        if not self.tapir_import_ok or self.get_bridge_fn is None:
+            return {
+                "ok": False,
+                "code": "unsupported",
+                "error": "Tapir bridge 未导入",
+            }
+        try:
+            bridge = self._require_bridge()
+            status = bridge.get_status() if hasattr(bridge, "get_status") else {}
+            if isinstance(status, dict) and not status.get("archicad_connected"):
+                return {
+                    "ok": False,
+                    "code": "disconnected",
+                    "error": "Archicad 未连接",
+                }
+            verify = getattr(bridge, "verify_library_part_artifact", None)
+            if not callable(verify):
+                return {
+                    "ok": False,
+                    "code": "unsupported",
+                    "error": "当前 OpenBrep Add-On 不支持产物身份验收",
+                }
+            raw = verify(**request)
+        except Exception as exc:
+            error = str(exc)
+            return {
+                "ok": False,
+                "code": "unsupported" if _is_unsupported_command(error) else "host_error",
+                "error": error,
+            }
+        if not isinstance(raw, dict):
+            return {
+                "ok": False,
+                "code": "host_error",
+                "error": f"产物身份验收返回格式异常: {type(raw).__name__}",
+            }
+        if raw.get("success") is not True:
+            error = str(raw.get("errorMessage") or "产物身份验收失败")
+            return {
+                "ok": False,
+                "code": "unsupported" if _is_unsupported_command(error) else "host_error",
+                "error": error,
+            }
+        return {"ok": True, **raw}
+
     def _action(self, ok: bool, message: str) -> dict[str, Any]:
         return {"ok": ok, "message": message, "tapir": self.snapshot()}
 
@@ -173,3 +220,11 @@ class WorkbenchTapirAdapter:
         if bridge_status.get("archicad_connected"):
             return "Archicad 已连接，但 Tapir 不可用"
         return "Archicad 未运行或 Tapir 未安装"
+
+
+def _is_unsupported_command(error: str) -> bool:
+    lowered = error.lower()
+    return any(
+        marker in lowered
+        for marker in ("unknown command", "unsupported", "not supported", "does not support")
+    )

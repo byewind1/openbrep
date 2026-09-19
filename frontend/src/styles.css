@@ -1392,6 +1392,27 @@ button:focus-visible {
   color: var(--accent-soft);
 }
 
+.viewport-verification-status {
+  min-width: 44px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.viewport-verification-status.is-passed {
+  color: var(--success);
+}
+
+.viewport-verification-status.is-failed,
+.viewport-verification-status.is-identity_unverified {
+  color: var(--danger);
+}
+
+.viewport-verification-status.is-unsupported,
+.viewport-verification-status.is-stale {
+  color: var(--warning);
+}
+
 .viewport-toolbar-sep {
   width: 1px;
   height: 16px;

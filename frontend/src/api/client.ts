@@ -43,6 +43,9 @@ import type {
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  HostVerificationCurrent,
+  HostVerificationRequest,
+  HostVerificationRunResult,
   ImportAssistantHistoryResult,
   DistillAssistantHistoryResult,
   WorkspaceScanResult,
@@ -183,6 +186,28 @@ export async function fetchAuthoritativePreview(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(parameters ? { parameters } : {}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchHostVerification(): Promise<HostVerificationCurrent> {
+  return requestJson<HostVerificationCurrent>(
+    '/api/verification/host',
+    { method: 'GET' },
+    { status: 'not_checked', stale: false, stale_reasons: [] },
+  )
+}
+
+export async function runHostVerification(
+  request: HostVerificationRequest,
+): Promise<HostVerificationRunResult> {
+  return requestJson<HostVerificationRunResult>(
+    '/api/verification/host',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )

@@ -17,6 +17,7 @@ from openbrep.codex.provider import CodexNotSignedInError
 from openbrep.workbench import settings_service
 from openbrep.workbench.settings_service import WorkbenchSettingsService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
+from openbrep.workbench_tapir import WorkbenchTapirAdapter
 
 
 def test_settings_service_updates_compiler_settings_and_persists_config(tmp_path):
@@ -758,6 +759,71 @@ def test_tapir_service_normalizes_missing_parameter_edits():
 
     assert response == {"ok": True}
     assert calls == [None]
+
+
+def test_tapir_artifact_verification_distinguishes_unavailable_host_capabilities():
+    unavailable = WorkbenchTapirAdapter(False, None, lambda: "now")
+    assert unavailable.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc") == {
+        "ok": False,
+        "code": "unsupported",
+        "error": "Tapir bridge 未导入",
+    }
+
+    class DisconnectedBridge:
+        def get_status(self):
+            return {"archicad_connected": False}
+
+    disconnected = WorkbenchTapirAdapter(True, lambda: DisconnectedBridge(), lambda: "now")
+    assert disconnected.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "disconnected"
+
+    class LegacyBridge:
+        def get_status(self):
+            return {"archicad_connected": True}
+
+    legacy = WorkbenchTapirAdapter(True, lambda: LegacyBridge(), lambda: "now")
+    assert legacy.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "unsupported"
+
+    class UnsupportedBridge(LegacyBridge):
+        def verify_library_part_artifact(self, **_request):
+            return {"success": False, "errorMessage": "Unknown command VerifyLibraryPartArtifact"}
+
+    unsupported = WorkbenchTapirAdapter(True, lambda: UnsupportedBridge(), lambda: "now")
+    assert unsupported.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "unsupported"
+
+
+def test_tapir_artifact_verification_preserves_verified_host_evidence():
+    requests = []
+
+    class Bridge:
+        def get_status(self):
+            return {"archicad_connected": True}
+
+        def verify_library_part_artifact(self, **request):
+            requests.append(request)
+            return {
+                "success": True,
+                "identityStatus": "verified",
+                "loadedIdentity": {"gsmSha256": "abc", "path": "/library/x.gsm"},
+                "archicadVersion": "29.0",
+                "addonVersion": "0.9.6",
+            }
+
+    adapter = WorkbenchTapirAdapter(True, lambda: Bridge(), lambda: "now")
+    result = adapter.verify_library_part_artifact(
+        gsm_path="/artifacts/x.gsm",
+        gsm_sha256="abc",
+        parameters={"A": 2.0},
+        want=["identity"],
+    )
+
+    assert result["ok"] is True
+    assert result["loadedIdentity"] == {"gsmSha256": "abc", "path": "/library/x.gsm"}
+    assert requests == [{
+        "gsm_path": "/artifacts/x.gsm",
+        "gsm_sha256": "abc",
+        "parameters": {"A": 2.0},
+        "want": ["identity"],
+    }]
 
 
 def test_git_service_initializes_enables_and_commits_hsf_project(tmp_path):

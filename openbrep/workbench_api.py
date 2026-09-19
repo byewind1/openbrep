@@ -20,6 +20,7 @@ from openbrep.workbench.blender_import_service import WorkbenchBlenderImportServ
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
 from openbrep.workbench.copilot_service import WorkbenchCopilotService
 from openbrep.workbench.git_service import WorkbenchGitService
+from openbrep.workbench.host_verification_service import HostVerificationService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
 from openbrep.workbench.preview_service import (
     authoritative_preview_payload,
@@ -138,6 +139,7 @@ class WorkbenchSession:
             now_text_fn=now_text_fn or _now_text,
         )
         self.tapir_service = WorkbenchTapirService(self.tapir)
+        self.host_verification_service = HostVerificationService(self)
 
     @property
     def project(self) -> HSFProject | None:
@@ -718,6 +720,12 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/preview/authoritative":
             overrides = body.get("parameters") if isinstance(body, dict) else None
             return self.preview_authoritative(overrides if isinstance(overrides, dict) else None)
+
+        if normalized_method == "POST" and route == "/api/verification/host":
+            return self.host_verification_service.run(body)
+
+        if normalized_method == "GET" and route == "/api/verification/host":
+            return self.host_verification_service.current(body)
 
         if normalized_method == "POST" and route == "/api/project/ui-layout":
             return self.project_ui_layout(body if isinstance(body, dict) else {})

@@ -3,6 +3,7 @@ import type { PreviewSourceMode, WorkbenchActionContext } from '../workbenchStor
 
 export function createPreviewActions({ api, get, set }: WorkbenchActionContext) {
   let authoritativeRequestSerial = 0
+  let hostVerificationRequestSerial = 0
 
   function dirtyScriptBuffers() {
     return Object.fromEntries(
@@ -65,6 +66,68 @@ export function createPreviewActions({ api, get, set }: WorkbenchActionContext) 
         previewAuthoritative: result.preview,
         previewAuthoritative2d: result.preview.preview2d ?? null,
         previewAuthoritativeParamsKey: JSON.stringify(draft),
+      })
+    },
+
+    async loadHostVerification() {
+      const requestedProjectEpoch = get().projectEpoch
+      const requestSerial = ++hostVerificationRequestSerial
+      const paramsKey = JSON.stringify(get().draftParameters)
+      const result = await api.fetchHostVerification()
+      if (requestSerial !== hostVerificationRequestSerial || get().projectEpoch !== requestedProjectEpoch) return
+      if (result.status === 'not_checked' || !result.record_id) {
+        set({ hostVerification: null, hostVerificationError: null, hostVerificationParamsKey: paramsKey })
+        return
+      }
+      set({
+        hostVerification: {
+          ...(result as unknown as import('../../api/types').HostVerificationRecord),
+          stale: result.stale,
+          stale_reasons: result.stale_reasons,
+        },
+        hostVerificationError: null,
+        hostVerificationParamsKey: paramsKey,
+      })
+    },
+
+    async runHostVerification() {
+      if (Object.values(get().dirtyScripts).some(Boolean)) {
+        set({ hostVerificationError: '请先保存或取消脚本修改，再运行 AC 验收。' })
+        return
+      }
+      const requestedProjectEpoch = get().projectEpoch
+      const requestedSourceFingerprint = get().sourceFingerprint ?? ''
+      const parameters = { ...get().draftParameters }
+      const paramsKey = JSON.stringify(parameters)
+      const requestSerial = ++hostVerificationRequestSerial
+      set({ hostVerificationLoading: true, hostVerificationError: null })
+      const result = await api.runHostVerification({
+        parameters,
+        expected_project_epoch: requestedProjectEpoch,
+        expected_source_fingerprint: requestedSourceFingerprint,
+      })
+      if (requestSerial !== hostVerificationRequestSerial) return
+      const inputsChanged = (
+        get().projectEpoch !== requestedProjectEpoch
+        || get().sourceFingerprint !== requestedSourceFingerprint
+        || JSON.stringify(get().draftParameters) !== paramsKey
+      )
+      if (inputsChanged || result.current === false || result.stale === true) {
+        set({ hostVerificationLoading: false })
+        return
+      }
+      if (!result.ok || !result.verification) {
+        set({
+          hostVerificationLoading: false,
+          hostVerificationError: result.error ?? 'AC 验收失败。',
+        })
+        return
+      }
+      set({
+        hostVerification: result.verification,
+        hostVerificationLoading: false,
+        hostVerificationError: null,
+        hostVerificationParamsKey: paramsKey,
       })
     },
   }

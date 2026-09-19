@@ -14,6 +14,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadRevisions()
       await get().loadAssistantHistory()
       await get().loadMemoryStatus()
+      await get().loadHostVerification()
       set({ loading: false })
     },
 
@@ -35,6 +36,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadRevisions()
       await get().loadAssistantHistory()
       await get().loadMemoryStatus()
+      await get().loadHostVerification()
       set({ loading: false })
     },
 

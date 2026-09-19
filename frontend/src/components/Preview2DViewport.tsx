@@ -158,6 +158,21 @@ export function Preview2DViewport({ preview, warnings, sourceControl }: Preview2
                 {sourceControl.loading ? '刷新中…' : '刷新权威'}
               </button>
             ) : null}
+            {sourceControl.onVerify ? (
+              <>
+                <button
+                  type="button"
+                  className="viewport-action-button"
+                  disabled={sourceControl.available === false || sourceControl.verificationLoading || sourceControl.verificationDisabled}
+                  onClick={sourceControl.onVerify}
+                >
+                  {sourceControl.verificationLoading ? '验收中…' : '运行 AC 验收'}
+                </button>
+                <span className={`viewport-verification-status is-${sourceControl.verificationStatus ?? 'not_checked'}`}>
+                  {hostVerificationLabel(sourceControl.verificationStatus ?? 'not_checked')}
+                </span>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -243,6 +258,17 @@ export function Preview2DViewport({ preview, warnings, sourceControl }: Preview2
       </footer>
     </section>
   )
+}
+
+function hostVerificationLabel(status: NonNullable<PreviewSourceControl['verificationStatus']>): string {
+  return {
+    passed: '已验收',
+    failed: '未通过',
+    unsupported: '不支持',
+    identity_unverified: '身份未核验',
+    not_checked: '未验收',
+    stale: '已过期',
+  }[status]
 }
 
 function geometryCount(preview: Preview2DPayload) {

@@ -82,6 +82,8 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       diagnostics: [],
     }),
     fetchAuthoritativePreview: async () => ({ ok: false, error: 'Archicad 未连接' }),
+    fetchHostVerification: async () => ({ status: 'not_checked', stale: false, stale_reasons: [] }),
+    runHostVerification: async () => ({ ok: false, error: 'Archicad 未连接' }),
     fetchPreview2D: async () => ({
       lines: [{ from: [0, 0], to: [1, 1] }],
       polygons: [],
@@ -1722,6 +1724,82 @@ describe('Archicad 权威预览来源', () => {
     expect(store.getState().previewSourceMode).toBe('local')
     expect(store.getState().previewAuthoritative).toBeNull()
     expect(store.getState().previewAuthoritativeLoading).toBe(false)
+  })
+})
+
+describe('Archicad host verification', () => {
+  const PASSED_RECORD = {
+    schema_version: 1,
+    record_id: 'hv_1',
+    status: 'passed' as const,
+    source_fingerprint: 'sha256:source',
+    contract_hash: 'sha256:contract',
+    gsm_sha256: 'gsm-hash',
+    parameter_fingerprint: 'sha256:params',
+    requested_parameters: { height: 3.2 },
+    applied_parameters: ['height'],
+    skipped_parameters: [],
+    loaded_identity: { gsm_sha256: 'gsm-hash', path: '/library/stair.gsm' },
+    identity_status: 'verified',
+    archicad_version: '29.0',
+    addon_version: '0.9.6',
+    started_at: '2026-09-20T00:00:00Z',
+    finished_at: '2026-09-20T00:00:01Z',
+    diagnostics: [],
+  }
+
+  test('runs only on saved scripts and binds the request to current project inputs', async () => {
+    const runHostVerification = vi.fn(async () => ({
+      ok: true,
+      current: true,
+      stale: false,
+      verification: PASSED_RECORD,
+    }))
+    const store = createWorkbenchStore(makeApi({ runHostVerification }))
+    store.setState({
+      projectEpoch: 4,
+      sourceFingerprint: 'sha256:source',
+      draftParameters: { height: 3.2 },
+      dirtyScripts: {},
+    })
+
+    await store.getState().runHostVerification()
+
+    expect(runHostVerification).toHaveBeenCalledWith({
+      parameters: { height: 3.2 },
+      expected_project_epoch: 4,
+      expected_source_fingerprint: 'sha256:source',
+    })
+    expect(store.getState().hostVerification?.status).toBe('passed')
+    expect(store.getState().hostVerificationError).toBeNull()
+  })
+
+  test('blocks dirty scripts without issuing a verification request', async () => {
+    const runHostVerification = vi.fn()
+    const store = createWorkbenchStore(makeApi({ runHostVerification }))
+    store.setState({ dirtyScripts: { '3d.gdl': true } })
+
+    await store.getState().runHostVerification()
+
+    expect(runHostVerification).not.toHaveBeenCalled()
+    expect(store.getState().hostVerificationError).toContain('保存')
+  })
+
+  test('drops a late result after project or parameter changes', async () => {
+    let resolveResult: ((value: { ok: true; current: true; stale: false; verification: typeof PASSED_RECORD }) => void) | undefined
+    const pending = new Promise<{ ok: true; current: true; stale: false; verification: typeof PASSED_RECORD }>((resolve) => {
+      resolveResult = resolve
+    })
+    const store = createWorkbenchStore(makeApi({ runHostVerification: async () => pending }))
+    store.setState({ projectEpoch: 4, sourceFingerprint: 'sha256:source', draftParameters: { height: 3.2 } })
+
+    const running = store.getState().runHostVerification()
+    store.setState({ projectEpoch: 5, draftParameters: { height: 2.9 }, hostVerification: null })
+    resolveResult?.({ ok: true, current: true, stale: false, verification: PASSED_RECORD })
+    await running
+
+    expect(store.getState().hostVerification).toBeNull()
+    expect(store.getState().hostVerificationLoading).toBe(false)
   })
 })
 

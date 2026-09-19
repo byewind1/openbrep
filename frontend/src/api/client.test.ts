@@ -3,11 +3,13 @@ import {
   askAssistant,
   confirmModifyPlan,
   fetchAuthoritativePreview,
+  fetchHostVerification,
   fetchPreview,
   fetchPreview2D,
   generateWithAssistant,
   generateWithAssistantStream,
   requestModifyPlan,
+  runHostVerification,
   updateLlmModel,
   updateSessionLlmModel,
 } from './client'
@@ -115,6 +117,51 @@ describe('fetchAuthoritativePreview (Archicad 权威预览)', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toBe('OpenBrep local API is not available.')
+  })
+})
+
+describe('host verification uses a separate explicit API', () => {
+  test('reads current evidence without invoking authoritative preview', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ status: 'not_checked', stale: false, stale_reasons: [] }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchHostVerification()
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/verification/host')
+    expect(init.method).toBe('GET')
+    expect(result.status).toBe('not_checked')
+  })
+
+  test('runs verification with source, epoch, and parameter guards', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        current: true,
+        stale: false,
+        verification: { status: 'passed', record_id: 'hv_1' },
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await runHostVerification({
+      parameters: { height: 3.2 },
+      expected_project_epoch: 4,
+      expected_source_fingerprint: 'sha256:source',
+    })
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/verification/host')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({
+      parameters: { height: 3.2 },
+      expected_project_epoch: 4,
+      expected_source_fingerprint: 'sha256:source',
+    })
   })
 })
 

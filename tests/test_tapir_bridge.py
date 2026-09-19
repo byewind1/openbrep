@@ -64,6 +64,45 @@ def test_evaluate_library_part_forwards_requested_outputs():
     }]
 
 
+def test_verify_library_part_artifact_forwards_hash_and_path():
+    calls = []
+
+    class FakeCommands:
+        def ExecuteAddOnCommand(self, command_id, parameters):
+            calls.append((command_id, parameters))
+            return {"success": True, "identityStatus": "verified"}
+
+    bridge = TapirBridge()
+    bridge._conn = SimpleNamespace(
+        types=SimpleNamespace(AddOnCommandId=lambda namespace, name: (namespace, name)),
+        commands=FakeCommands(),
+    )
+
+    result = bridge.verify_library_part_artifact(
+        gsm_path="/tmp/stair.gsm",
+        gsm_sha256="abc",
+        lib_part_name="Stair",
+        lib_part_guid="guid",
+        parameters={"A": 2.0},
+        want=["identity", "mesh3d"],
+    )
+
+    assert result["success"] is True
+    assert calls == [(
+        ("OpenBrep", "VerifyLibraryPartArtifact"),
+        {
+            "gsmPath": "/tmp/stair.gsm",
+            "gsmSha256": "abc",
+            "libPartName": "Stair",
+            "libPartGuid": "guid",
+            "parameters": {"A": 2.0},
+            "want": ["identity", "mesh3d"],
+            "restoreLibraryState": True,
+            "rollbackElements": True,
+        },
+    )]
+
+
 def test_connect_scans_archicad_ports_instead_of_consuming_workbench_port(monkeypatch):
     calls = []
     connection = object()

@@ -39,6 +39,10 @@ export function hydrateSnapshot(snapshot: WorkbenchSnapshot, fallbackCompiler: C
     previewAuthoritativeLoading: false,
     previewAuthoritativeError: null,
     previewAuthoritativeParamsKey: null,
+    hostVerification: null,
+    hostVerificationLoading: false,
+    hostVerificationError: null,
+    hostVerificationParamsKey: null,
     // P6b：换项目即丢弃未消费的整理指令草稿，防止旧项目结果填进新项目输入框
     assistantDraftSeed: null,
     warnings: snapshot.warnings ?? snapshot.preview?.warnings ?? [],

@@ -176,4 +176,19 @@ describe('PreviewViewport authoritative source (Archicad 权威预览)', () => {
     expect(screen.getByRole('alert').textContent).toContain('Archicad 未连接')
     expect(screen.queryByText('Archicad 权威')).toBeNull()
   })
+
+  test('runs host verification explicitly and renders its independent status', () => {
+    const onVerify = vi.fn()
+    render(
+      <PreviewViewport
+        preview={makePreview()}
+        warnings={[]}
+        sourceControl={makeSourceControl({ verificationStatus: 'passed', onVerify })}
+      />,
+    )
+
+    expect(screen.getByText('已验收')).toBeTruthy()
+    screen.getByRole('button', { name: '运行 AC 验收' }).click()
+    expect(onVerify).toHaveBeenCalledTimes(1)
+  })
 })
