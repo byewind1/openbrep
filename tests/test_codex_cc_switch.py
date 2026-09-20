@@ -203,6 +203,43 @@ def test_default_test_environment_never_points_at_developer_cc_switch_home() -> 
     assert configured.name == "missing-cc-switch.db"
 
 
+def test_catalog_accepts_cc_switch_camel_case_model_shape(tmp_path: Path) -> None:
+    path = tmp_path / "camel-case.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE providers ("
+        "id TEXT, app_type TEXT, name TEXT, is_current INTEGER, settings_config TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO providers VALUES (?, ?, ?, ?, ?)",
+        (
+            "deepseek",
+            "codex",
+            "DeepSeek",
+            0,
+            _settings(
+                model="deepseek-v4-flash",
+                catalog={
+                    "models": [
+                        {
+                            "model": "deepseek-v4-flash",
+                            "displayName": "DeepSeek V4 Flash",
+                            "reasoningLevels": ["low", "high", "max"],
+                        }
+                    ]
+                },
+            ),
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    model = CcSwitchRegistry(path).catalog().providers[0].models[0]
+
+    assert model.label == "DeepSeek V4 Flash"
+    assert model.efforts == ("low", "high", "max")
+
+
 def test_materialized_home_has_private_permissions_and_local_catalog(tmp_path: Path) -> None:
     runtime = CcSwitchRuntimeConfig(
         provider_id="deepseek",

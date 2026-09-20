@@ -229,6 +229,7 @@ def _normalize_model(raw: Any) -> CcSwitchModelInfo | None:
         raw.get("supported_reasoning_levels")
         or raw.get("supportedReasoningEfforts")
         or raw.get("supported_reasoning_efforts")
+        or raw.get("reasoningLevels")
     )
     default_effort = _clean_text(
         raw.get("default_reasoning_level")
