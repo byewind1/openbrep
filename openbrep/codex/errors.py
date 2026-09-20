@@ -11,6 +11,7 @@ from openbrep.codex.app_server import CodexAppServerError
 from openbrep.codex.redact import redact_secrets
 
 DEFAULT_FALLBACK = "Codex 操作失败，请稍后重试。"
+RUNTIME_CONFLICT_MESSAGE = "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
 
 # 稳定文案表：按异常 code（类属性）与 CodexAppServerError.category 映射
 STABLE_MESSAGES: dict[str, str] = {
@@ -46,6 +47,8 @@ STABLE_MESSAGES: dict[str, str] = {
     "rpc_error": "Codex app-server 请求失败，请稍后重试。",
     "login_failed": "登录服务返回异常，请稍后重试或重新连接。",
     "closed": "Codex app-server 已关闭，请重启工作台后重试。",
+    "runtime_conflict": RUNTIME_CONFLICT_MESSAGE,
+    "codex_runtime_conflict": RUNTIME_CONFLICT_MESSAGE,
 }
 
 
@@ -55,8 +58,9 @@ def error_response(exc: BaseException, fallback: str = DEFAULT_FALLBACK) -> dict
         # 先按 category 细分（CodexAppServerError.code 恒为 codex_app_server，
         # 若先查 code 会盖掉 timeout/process_exited 等细分文案）
         category = getattr(exc, "category", None) or "codex_app_server"
+        code = "codex_runtime_conflict" if category == "runtime_conflict" else "codex_app_server"
         return {
-            "code": "codex_app_server",
+            "code": code,
             "error": STABLE_MESSAGES.get(category, fallback),
         }
     code = getattr(exc, "code", None)

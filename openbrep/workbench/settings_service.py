@@ -444,6 +444,7 @@ class WorkbenchSettingsService:
                     "models_source",
                     "provider",
                     "login_error",
+                    "code",
                 )
             }
             if codex.get("error"):
@@ -998,11 +999,37 @@ class WorkbenchSettingsService:
             # 不压 temperature=0：端点约束与 thinking 模式绑定（kimi-k2.6 关思考
             # 只允许 0.6、k2.7-code 只允许 1），硬塞 0 会 400 误报。temperature
             # 交给 adapter 按 provider 条目级/顶层解析（与生产调用同一行为）。
-            response = self.llm_adapter_factory(test_config.llm).generate(
+            adapter = self.llm_adapter_factory(test_config.llm)
+            generate_kwargs: dict[str, Any] = {"timeout": 20}
+            if is_codex_qualified_model(model):
+                adapter.codex_provider = self._codex_provider()
+                generate_kwargs.update(
+                    codex_intent="CHAT",
+                    codex_reasoning_effort=test_config.llm.codex_reasoning_effort(),
+                )
+            response = adapter.generate(
                 [{"role": "user", "content": "Reply with OK."}],
-                timeout=20,
+                **generate_kwargs,
             )
         except Exception as exc:
+            if is_codex_qualified_model(model):
+                current: BaseException | None = exc
+                stable = error_response(exc)
+                seen: set[int] = set()
+                while current is not None and id(current) not in seen:
+                    seen.add(id(current))
+                    candidate = error_response(current)
+                    if candidate["code"] != "codex_error":
+                        stable = candidate
+                        break
+                    current = current.__cause__ or current.__context__
+                return {
+                    "ok": False,
+                    **stable,
+                    "category": stable["code"],
+                    "model": model,
+                    "duration_ms": int((time.perf_counter() - start) * 1000),
+                }
             return {
                 "ok": False,
                 "error": str(exc) or exc.__class__.__name__,

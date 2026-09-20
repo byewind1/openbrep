@@ -277,9 +277,11 @@ def test_codex_chat_no_project_creates_no_files(tmp_path):
     assert result.plain_text == "这是 Codex 的回复。"
     assert result.scripts == {}
     assert before == after, "无项目 CHAT 不得在工作区创建/修改任何文件"
-    assert len(provider.calls) == 1
-    assert provider.calls[0]["model"] == "openai-codex/gpt-5.6-luna"
-    messages = provider.calls[0]["messages"]
+    assert len(provider.calls) == 2
+    classification_call, chat_call = provider.calls
+    assert "CREATE_SKILL" in classification_call["messages"][-1]["content"]
+    assert chat_call["model"] == "openai-codex/gpt-5.6-luna"
+    messages = chat_call["messages"]
     assert messages[-1]["content"] == "今天天气如何？"
     assert messages[0]["content"].startswith("你是 openbrep 的内置助手")
     # 无项目：不注入项目上下文
@@ -310,8 +312,10 @@ def test_codex_explain_with_project_does_not_create_revision(tmp_path):
     assert result.success is True
     assert result.plain_text == "这个构件是一个书架。"
     assert before_count == after_count, "EXPLAIN 不得创建 revision"
-    assert len(provider.calls) == 1
-    system = provider.calls[0]["messages"][0]["content"]
+    assert len(provider.calls) == 2
+    classification_call, chat_call = provider.calls
+    assert "CREATE_SKILL" in classification_call["messages"][-1]["content"]
+    system = chat_call["messages"][0]["content"]
     assert "当前工程解释上下文" in system
     assert "ExplainShelf" in system
     # 只读摘要：脚本以摘要小节出现（截取前几行），不是完整脚本透传
@@ -402,7 +406,8 @@ def test_codex_explain_prompt_keeps_existing_chat_contract(tmp_path):
             ],
         )
     )
-    messages = provider.calls[0]["messages"]
+    assert len(provider.calls) == 2
+    messages = provider.calls[-1]["messages"]
     assert messages[0]["role"] == "system"
     assert messages[0]["content"].startswith("你是 openbrep 的内置助手")
     assert messages[-1]["content"] == "继续"

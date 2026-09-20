@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from openbrep.codex.app_server import CodexAppServerError
+from openbrep.codex.errors import error_response
 from openbrep.codex.turn import (
     INTERRUPTED_TEXT,
     NO_FINAL_MESSAGE_TEXT,
@@ -1037,7 +1038,12 @@ class CodexModifyBridge:
                         exc.category or exc.__class__.__name__,
                     )
                     outcome = CodexModifyTurnOutcome(
-                        finish_reason="error", error=TURN_ERROR_TEXT,
+                        finish_reason="error",
+                        error=(
+                            error_response(exc)["error"]
+                            if exc.category == "runtime_conflict"
+                            else TURN_ERROR_TEXT
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001 —— 稳定文案兜底
                     self.logger.warning(
@@ -1401,6 +1407,12 @@ def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str
             "当前模型不支持所选 reasoning effort，请求已拒绝。"
             "请到 AI 设置中选择该模型支持的 effort。"
         )
+    except CodexAppServerError as exc:
+        _LOGGER.warning(
+            "codex modify ready 检查失败（category=%s）",
+            exc.category or exc.__class__.__name__,
+        )
+        return error_response(exc)["error"]
     except Exception as exc:  # noqa: BLE001 —— 兜底稳定文案
         category = getattr(exc, "category", None)
         _LOGGER.warning(

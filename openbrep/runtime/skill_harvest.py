@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from openbrep.feedback import append_feedback
+from openbrep.llm import codex_chat_generate_kwargs
 from openbrep.skill_proposals import is_valid_skill_name
 from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 
@@ -301,6 +302,7 @@ def maybe_harvest(
             temperature=_HARVEST_TEMPERATURE,
             max_tokens=_HARVEST_MAX_TOKENS,
             stream=False,
+            **codex_chat_generate_kwargs(llm),
         )
     except Exception as exc:
         logger.warning("skill_harvest LLM 提炼失败，静默跳过: %s", exc)
@@ -503,6 +505,7 @@ def distill_explicit_skill(
             temperature=_HARVEST_TEMPERATURE,
             max_tokens=_HARVEST_MAX_TOKENS,
             stream=False,
+            **codex_chat_generate_kwargs(llm),
         )
     except Exception as exc:
         logger.warning("显式 skill 提炼 LLM 失败: %s", exc)

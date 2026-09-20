@@ -28,6 +28,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from openbrep.compiler import CompileResult
+from openbrep.codex.app_server import CodexAppServerError
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.runtime.modify_codex_bridge import CodexModifyTurnDriver
@@ -1002,6 +1003,60 @@ def test_codex_modify_without_cli_fails_closed_zero_rpc(tmp_path):
     finally:
         provider.close()
         harness.cleanup()
+
+
+def test_codex_modify_runtime_conflict_during_readiness_is_actionable(tmp_path):
+    class _ConflictingProvider:
+        cli_available = True
+
+        def status(self, *, refresh=False):
+            raise CodexAppServerError("lock owner pid=123", category="runtime_conflict")
+
+    config = _codex_config()
+    pipeline = _pipeline(config, _ConflictingProvider(), tmp_path)
+    project = _make_project(tmp_path)
+
+    result = pipeline.execute(_request(tmp_path, project))
+
+    expected = "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+    assert result.success is False
+    assert result.plain_text == expected
+    assert result.error == expected
+
+
+def test_codex_modify_runtime_conflict_during_turn_is_actionable(tmp_path):
+    class _ReadyProvider:
+        cli_available = True
+
+        def status(self, *, refresh=False):
+            return {"state": "signed_in", "connected": True, "codex_ready": True}
+
+        def validate_reasoning_effort(self, model, reasoning_effort):
+            return None
+
+        def _snapshot(self):
+            return object(), 1
+
+    class _ConflictingDriver:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run(self, _current_input):
+            raise CodexAppServerError("lock owner pid=456", category="runtime_conflict")
+
+    config = _codex_config()
+    pipeline = _pipeline(config, _ReadyProvider(), tmp_path)
+    project = _make_project(tmp_path)
+
+    with (
+        patch("openbrep.runtime.modify_codex_bridge.CodexModifyTurnDriver", _ConflictingDriver),
+        patch("openbrep.semantic_verifier.verify_semantics", return_value=_sem_pass()),
+    ):
+        result = pipeline.execute(_request(tmp_path, project))
+
+    expected = "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+    assert result.success is False
+    assert expected in result.plain_text
 
 
 def test_no_file_delivery_channel(tmp_path):

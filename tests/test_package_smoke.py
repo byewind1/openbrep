@@ -20,6 +20,38 @@ def _load_package_smoke():
     return module
 
 
+def test_desktop_lifecycle_contract_requires_single_instance_before_setup():
+    smoke = _load_package_smoke()
+    repo_root = Path(__file__).resolve().parents[1]
+
+    smoke.validate_desktop_lifecycle_contract(repo_root)
+
+
+def test_desktop_lifecycle_contract_rejects_plugin_after_setup(tmp_path):
+    smoke = _load_package_smoke()
+    tauri_dir = tmp_path / "src-tauri"
+    source_dir = tauri_dir / "src"
+    source_dir.mkdir(parents=True)
+    (tauri_dir / "Cargo.toml").write_text(
+        '[dependencies]\ntauri-plugin-single-instance = "2"\n',
+        encoding="utf-8",
+    )
+    (source_dir / "main.rs").write_text(
+        ".setup(|app| {})\n"
+        ".plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {}))\n"
+        "fn shutdown_backend() {}\n"
+        "WindowEvent::Destroyed\n",
+        encoding="utf-8",
+    )
+
+    try:
+        smoke.validate_desktop_lifecycle_contract(tmp_path)
+    except RuntimeError as exc:
+        assert "before .setup" in str(exc)
+    else:
+        raise AssertionError("plugin ordering violation was accepted")
+
+
 class _Response:
     def __init__(self, status: int, body: bytes):
         self.status = status

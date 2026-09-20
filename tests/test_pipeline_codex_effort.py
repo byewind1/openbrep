@@ -347,8 +347,9 @@ def test_fixed_failure_no_fallback_to_other_model(tmp_path):
             assert params.get("model") == "gpt-5.6-luna", (
                 f"发现指向其他模型的请求: {params}"
             )
-        # 失败后没有后续轮次（单次 CHAT 调用；无重试升级）
-        assert len(turns) == 1
+        # 两个固定阶段：Skill 意图分类 + 用户 CHAT。失败后没有第三次重试，
+        # 且上面的逐请求断言保证两个阶段都没有升级/切换模型。
+        assert len(turns) == 2
     finally:
         provider.close()
         harness.cleanup()
