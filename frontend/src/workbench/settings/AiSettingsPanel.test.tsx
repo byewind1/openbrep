@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { AiSettingsPanel } from './AiSettingsPanel'
 import type { LlmConnectionTestResult, LlmSettings } from '../../api/types'
 
@@ -17,7 +17,83 @@ function makeSettings(overrides: Partial<LlmSettings> = {}): LlmSettings {
   }
 }
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('AiSettingsPanel save-and-verify', () => {
+  test('refreshes one incomplete cc-switch provider without selecting a model', async () => {
+    const onModelChange = vi.fn().mockResolvedValue(undefined)
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/entry')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          entry: 'local',
+          entries: [],
+          local_hint: { detected: true, state: 'ready', models: 1, home_kind: 'user_default' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.endsWith('/status')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          state: 'ready',
+          connected: true,
+          codex_available: true,
+          account: null,
+          entry: 'local',
+          model_available: true,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      const refreshed = url.endsWith('/models/refresh')
+      return new Response(JSON.stringify({
+        ok: true,
+        cc_switch_detected: true,
+        providers: [{
+          id: 'geili',
+          name: 'Geili',
+          is_current: true,
+          catalog_source: refreshed ? 'runtime' : 'config_default',
+          catalog_complete: refreshed,
+          runnable: true,
+        }],
+        models: [{
+          id: 'openai-codex/ccswitch/geili/gpt-5.6-sol',
+          label: 'GPT-5.6 Sol',
+          model: 'gpt-5.6-sol',
+          source: 'cc_switch',
+          provider_id: 'geili',
+          provider_label: 'Geili',
+          catalog_source: refreshed ? 'runtime' : 'config_default',
+          catalog_complete: refreshed,
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <AiSettingsPanel
+        llmSettings={makeSettings({
+          model: 'openai-codex/ccswitch/geili/gpt-5.6-sol',
+          codex_entry: 'local',
+        })}
+        onOpenConfig={() => {}}
+        onTestConnection={vi.fn().mockResolvedValue({ ok: true })}
+        onModelChange={onModelChange}
+      />,
+    )
+
+    const refresh = await screen.findByRole('button', { name: '刷新 Geili 模型目录' })
+    expect(screen.getByText('目录未完整同步')).toBeTruthy()
+    fireEvent.click(refresh)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/llm/codex/models/refresh',
+      expect.objectContaining({ method: 'POST' }),
+    ))
+    expect(onModelChange).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByText('目录未完整同步')).toBeNull())
+  })
+
   test('shows separate API and ChatGPT Codex connection cards', () => {
     render(
       <AiSettingsPanel
