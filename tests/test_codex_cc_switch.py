@@ -12,7 +12,10 @@ from openbrep.codex.cc_switch import (
     CcSwitchProviderMissingError,
     CcSwitchProviderUnusableError,
     CcSwitchRegistry,
+    CcSwitchRuntimeConfig,
+    CcSwitchRuntimeError,
     CcSwitchSchemaUnsupportedError,
+    materialize_runtime_home,
 )
 
 LEAK_CANARY = "SECRET_CANARY_cc_switch_47a9"
@@ -191,3 +194,52 @@ def test_environment_override_selects_registry_database(
     catalog = CcSwitchRegistry().catalog()
 
     assert [provider.id for provider in catalog.providers] == ["deepseek", "geili"]
+
+
+def test_materialized_home_has_private_permissions_and_local_catalog(tmp_path: Path) -> None:
+    runtime = CcSwitchRuntimeConfig(
+        provider_id="deepseek",
+        config_toml=(
+            'model = "deepseek-v4-flash"\n'
+            'model_catalog_json = "/never/use/source-catalog.json"\n'
+            'model_provider = "custom"\n'
+        ),
+        auth_payload={"OPENAI_API_KEY": LEAK_CANARY},
+        model_catalog_payload={"models": [{"slug": "deepseek-v4-flash"}]},
+        fingerprint="f" * 64,
+    )
+
+    home = materialize_runtime_home(runtime, parent=tmp_path)
+
+    assert home.parent == tmp_path
+    assert home.stat().st_mode & 0o777 == 0o700
+    assert {path.name for path in home.iterdir()} == {
+        "auth.json",
+        "config.toml",
+        "model_catalog.json",
+    }
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in home.iterdir())
+    config_text = (home / "config.toml").read_text(encoding="utf-8")
+    assert config_text.count("model_catalog_json") == 1
+    assert 'model_catalog_json = "model_catalog.json"' in config_text
+    assert "/never/use" not in config_text
+    assert json.loads((home / "auth.json").read_text(encoding="utf-8")) == {
+        "OPENAI_API_KEY": LEAK_CANARY
+    }
+
+
+def test_materialization_failure_removes_partial_home(tmp_path: Path) -> None:
+    runtime = CcSwitchRuntimeConfig(
+        provider_id="deepseek",
+        config_toml='model = "deepseek-v4-flash"\n',
+        auth_payload={"not-json-serializable": {object()}},
+        model_catalog_payload=None,
+        fingerprint="f" * 64,
+    )
+
+    with pytest.raises(CcSwitchRuntimeError) as caught:
+        materialize_runtime_home(runtime, parent=tmp_path)
+
+    assert caught.value.code == "cc_switch_runtime_failed"
+    assert list(tmp_path.iterdir()) == []
+    assert LEAK_CANARY not in str(caught.value)

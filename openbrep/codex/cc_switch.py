@@ -11,7 +11,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -418,3 +420,92 @@ class CcSwitchRegistry:
         if target in catalog_ids:
             raise _stable_error(CcSwitchProviderUnusableError)
         raise _stable_error(CcSwitchProviderMissingError)
+
+
+def _private_json_bytes(payload: Any) -> bytes:
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise _stable_error(CcSwitchRuntimeError) from exc
+    try:
+        return (
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise _stable_error(CcSwitchRuntimeError) from exc
+
+
+def _runtime_config_text(config_toml: str, *, has_catalog: bool) -> str:
+    """Replace only the top-level catalog path with the isolated local file."""
+    output: list[str] = []
+    in_top_level = True
+    assignment = re.compile(r"^\s*model_catalog_json\s*=")
+    for line in config_toml.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("["):
+            in_top_level = False
+        if in_top_level and assignment.match(line):
+            continue
+        output.append(line)
+    if has_catalog:
+        output.insert(0, 'model_catalog_json = "model_catalog.json"')
+    return "\n".join(output).rstrip() + "\n"
+
+
+def _write_private_file(path: Path, data: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
+
+
+def materialize_runtime_home(
+    runtime: CcSwitchRuntimeConfig,
+    *,
+    parent: Path | None = None,
+) -> Path:
+    """Create one permission-restricted Codex home for a cc-switch provider."""
+    home: Path | None = None
+    try:
+        home = Path(
+            tempfile.mkdtemp(
+                prefix="openbrep-codex-ccswitch-",
+                dir=os.fspath(parent) if parent is not None else None,
+            )
+        )
+        os.chmod(home, 0o700)
+        catalog = runtime.model_catalog_payload
+        config = _runtime_config_text(
+            runtime.config_toml,
+            has_catalog=catalog is not None,
+        )
+        _write_private_file(home / "config.toml", config.encode("utf-8"))
+        _write_private_file(home / "auth.json", _private_json_bytes(runtime.auth_payload))
+        if catalog is not None:
+            _write_private_file(
+                home / "model_catalog.json",
+                _private_json_bytes(catalog),
+            )
+        return home
+    except Exception as exc:
+        if home is not None:
+            shutil.rmtree(home, ignore_errors=True)
+        if isinstance(exc, CcSwitchRuntimeError):
+            raise
+        raise _stable_error(CcSwitchRuntimeError) from exc
+
+
+def remove_runtime_home(path: Path | None) -> None:
+    """Best-effort cleanup for an OpenBrep-owned cc-switch runtime home."""
+    if path is not None:
+        shutil.rmtree(path, ignore_errors=True)

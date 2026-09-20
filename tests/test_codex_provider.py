@@ -15,6 +15,16 @@ from collections import deque
 from pathlib import Path
 
 from openbrep.codex.app_server import CodexAppServerError, CodexCliUnavailableError
+from openbrep.codex.cc_switch import (
+    CcSwitchCatalog,
+    CcSwitchModelInfo,
+    CcSwitchProviderInfo,
+    CcSwitchProviderMissingError,
+    CcSwitchRuntimeConfig,
+    CcSwitchRuntimeError,
+)
+from openbrep.codex.entry import ENTRY_LOCAL, ENTRY_MANAGED
+from openbrep.codex.model_ref import build_cc_switch_model_ref
 from openbrep.codex.provider import (
     CodexNotSignedInError,
     CodexProvider,
@@ -339,6 +349,149 @@ def test_close_removes_temporary_runtime_home(tmp_path):
     provider.close()
 
     assert not runtime_home.exists()
+
+
+class _CcSwitchRegistryStub:
+    def __init__(self) -> None:
+        self.missing: set[str] = set()
+
+    def catalog(self) -> CcSwitchCatalog:
+        providers = tuple(
+            CcSwitchProviderInfo(
+                id=provider_id,
+                name=provider_id.upper(),
+                is_current=provider_id == "a",
+                models=(CcSwitchModelInfo(model="same-model", label="Same"),),
+                catalog_source="model_catalog",
+                catalog_complete=True,
+                runnable=True,
+            )
+            for provider_id in ("a", "b")
+            if provider_id not in self.missing
+        )
+        return CcSwitchCatalog(detected=True, providers=providers)
+
+    def runtime_config(self, provider_id: str) -> CcSwitchRuntimeConfig:
+        if provider_id in self.missing:
+            raise CcSwitchProviderMissingError("stable missing provider")
+        return CcSwitchRuntimeConfig(
+            provider_id=provider_id,
+            config_toml=(
+                'model = "same-model"\n'
+                f'model_provider = "provider_{provider_id}"\n'
+            ),
+            auth_payload={"OPENAI_API_KEY": f"test-key-{provider_id}"},
+            model_catalog_payload={"models": [{"slug": "same-model"}]},
+            fingerprint=provider_id * 64,
+        )
+
+
+def test_select_cc_switch_model_replaces_client_and_runtime_home(tmp_path):
+    registry = _CcSwitchRegistryStub()
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        codex_home=tmp_path / "terminal-codex",
+        cli_available=True,
+        cc_switch_registry_factory=lambda: registry,
+        runtime_home_parent=tmp_path,
+    )
+    provider.select_model(build_cc_switch_model_ref("a", "same-model"))
+    first_home = provider._runtime_codex_home
+
+    class _Client:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    client = _Client()
+    provider._client = client
+    first_generation = provider._generation
+
+    selected = provider.select_model(build_cc_switch_model_ref("b", "same-model"))
+
+    assert selected.provider_id == "b"
+    assert client.closed is True
+    assert first_home is not None and not first_home.exists()
+    assert provider._runtime_codex_home is not None
+    assert provider._runtime_codex_home != first_home
+    assert provider._generation > first_generation
+    assert 'model_provider = "provider_b"' in (
+        provider._runtime_codex_home / "config.toml"
+    ).read_text(encoding="utf-8")
+    provider.close()
+
+
+def test_select_cc_switch_model_fails_closed_when_exact_provider_disappears(tmp_path):
+    registry = _CcSwitchRegistryStub()
+    registry.missing.add("a")
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        cli_available=True,
+        cc_switch_registry_factory=lambda: registry,
+        runtime_home_parent=tmp_path,
+    )
+
+    with unittest.TestCase().assertRaises(CcSwitchProviderMissingError):
+        provider.select_model(build_cc_switch_model_ref("a", "same-model"))
+
+    assert provider._runtime_codex_home is None
+    provider.close()
+
+
+def test_switching_entry_removes_cc_switch_runtime_home(tmp_path):
+    registry = _CcSwitchRegistryStub()
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        cli_available=True,
+        cc_switch_registry_factory=lambda: registry,
+        runtime_home_parent=tmp_path,
+    )
+    provider.select_model(build_cc_switch_model_ref("a", "same-model"))
+    runtime_home = provider._runtime_codex_home
+
+    assert provider.set_entry(ENTRY_MANAGED) == ENTRY_MANAGED
+
+    assert runtime_home is not None and not runtime_home.exists()
+    assert provider._runtime_codex_home is None
+    provider.close()
+
+
+def test_cc_switch_app_server_start_failure_removes_runtime_home(monkeypatch, tmp_path):
+    registry = _CcSwitchRegistryStub()
+    captured: dict[str, object] = {}
+
+    class _FailingClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def start(self):
+            raise CodexAppServerError("upstream canary", category="process_exited")
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr("openbrep.codex.provider.CodexAppServerClient", _FailingClient)
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        cli_available=True,
+        cc_switch_registry_factory=lambda: registry,
+        runtime_home_parent=tmp_path,
+    )
+    provider.select_model(build_cc_switch_model_ref("a", "same-model"))
+    runtime_home = provider._runtime_codex_home
+
+    with unittest.TestCase().assertRaises(CcSwitchRuntimeError) as caught:
+        provider._get_client()
+
+    assert caught.exception.code == "cc_switch_runtime_failed"
+    assert captured["codex_home"] == runtime_home
+    assert captured["create_home"] is True
+    assert captured["closed"] is True
+    assert runtime_home is not None and not runtime_home.exists()
+    assert provider._runtime_codex_home is None
+    assert provider._selected_cc_switch is None
+    provider.close()
 
 
 def test_runtime_conflict_retries_with_isolated_home(monkeypatch, tmp_path):
