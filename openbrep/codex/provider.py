@@ -482,6 +482,7 @@ class CodexProvider:
         self._cc_switch_runtime_models: dict[
             str, tuple[str, list[dict[str, Any]]]
         ] = {}
+        self._cc_switch_runtime_failures: dict[str, str] = {}
         atexit.register(self.close)
 
     # ── CLI 探测 ─────────────────────────────────────────────
@@ -1715,6 +1716,30 @@ class CodexProvider:
             except CcSwitchError:
                 runtime = None
             cached = self._cc_switch_runtime_models.get(provider.id)
+            if (
+                runtime is not None
+                and provider.runnable
+                and not provider.catalog_complete
+                and not (
+                    cached is not None and cached[0] == runtime.fingerprint
+                )
+                and self._cc_switch_runtime_failures.get(provider.id)
+                != runtime.fingerprint
+            ):
+                try:
+                    self._refresh_cc_switch_provider_models(
+                        provider_id=provider.id,
+                        provider_info=provider,
+                        runtime=runtime,
+                    )
+                    self._cc_switch_runtime_failures.pop(provider.id, None)
+                    cached = self._cc_switch_runtime_models.get(provider.id)
+                except Exception:
+                    # Keep the static default model available when an isolated
+                    # runtime cannot refresh. The explicit refresh button can
+                    # retry later.
+                    self._cc_switch_runtime_failures[provider.id] = runtime.fingerprint
+                    cached = None
             if runtime is not None and cached is not None and cached[0] == runtime.fingerprint:
                 provider_models = [dict(item) for item in cached[1]]
             models.extend(provider_models)
@@ -1747,6 +1772,100 @@ class CodexProvider:
             "diagnostics": [item.to_public_dict() for item in catalog.diagnostics],
         }
 
+    def _refresh_cc_switch_provider_models(
+        self,
+        *,
+        provider_id: str,
+        provider_info: Any,
+        runtime: Any,
+    ) -> None:
+        runtime_home = materialize_runtime_home(
+            runtime,
+            parent=self._runtime_home_parent,
+        )
+        client: Any | None = None
+        try:
+            if self._client_factory is not None:
+                client = self._client_factory()
+            else:
+                client = CodexAppServerClient(
+                    codex_binary=(
+                        resolve_codex_binary(self.codex_binary) or self.codex_binary
+                    ),
+                    codex_home=runtime_home,
+                    entry=self._entry,
+                    create_home=True,
+                )
+            client.start()
+            self._check_version(client)
+            raw = client.model_list()
+            refreshed: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for item in raw.get("data") or []:
+                if not isinstance(item, dict):
+                    continue
+                model_id = str(item.get("id") or item.get("model") or "").strip()
+                if not model_id or model_id in seen:
+                    continue
+                seen.add(model_id)
+                efforts: list[dict[str, str]] = []
+                for option in item.get("supportedReasoningEfforts") or []:
+                    if not isinstance(option, dict):
+                        continue
+                    effort = str(option.get("reasoningEffort") or "").strip()
+                    if not _EFFORT_RE.match(effort):
+                        continue
+                    efforts.append(
+                        {
+                            "effort": effort,
+                            "description": str(option.get("description") or "")[
+                                :_MAX_EFFORT_DESC_LEN
+                            ],
+                        }
+                    )
+                default_effort = str(item.get("defaultReasoningEffort") or "").strip()
+                if default_effort not in {entry["effort"] for entry in efforts}:
+                    default_effort = ""
+                label = str(item.get("displayName") or model_id)
+                refreshed.append(
+                    {
+                        "id": build_cc_switch_model_ref(provider_id, model_id),
+                        "label": label,
+                        "model": model_id,
+                        "display_name": label if label != model_id else "",
+                        "hidden": bool(item.get("hidden")),
+                        "specialty": item.get("modelSpecialty"),
+                        "supported_reasoning_efforts": efforts,
+                        "default_reasoning_effort": default_effort,
+                        "provider_id": provider_id,
+                        "provider_label": provider_info.name,
+                        "source": "cc_switch",
+                        "catalog_source": "runtime",
+                        "catalog_complete": True,
+                    }
+                )
+            if not refreshed:
+                raise CcSwitchCatalogUnavailableError(
+                    "cc-switch 模型目录暂不可用。"
+                )
+            self._cc_switch_runtime_models[provider_id] = (
+                runtime.fingerprint,
+                refreshed,
+            )
+        except CcSwitchError:
+            raise
+        except Exception as exc:
+            raise CcSwitchCatalogUnavailableError(
+                "cc-switch 模型目录暂不可用。"
+            ) from exc
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            remove_runtime_home(runtime_home)
+
     def refresh_cc_switch_models(self, provider_id: str) -> dict[str, Any]:
         """Refresh one provider through an isolated app-server model/list call."""
         if self._entry != ENTRY_LOCAL:
@@ -1773,92 +1892,12 @@ class CodexProvider:
                     "cc-switch 供应商配置不可用。"
                 )
             runtime = registry.runtime_config(provider_id)
-            runtime_home = materialize_runtime_home(
-                runtime,
-                parent=self._runtime_home_parent,
+            self._cc_switch_runtime_failures.pop(provider_id, None)
+            self._refresh_cc_switch_provider_models(
+                provider_id=provider_id,
+                provider_info=provider_info,
+                runtime=runtime,
             )
-            client: Any | None = None
-            try:
-                if self._client_factory is not None:
-                    client = self._client_factory()
-                else:
-                    client = CodexAppServerClient(
-                        codex_binary=(
-                            resolve_codex_binary(self.codex_binary) or self.codex_binary
-                        ),
-                        codex_home=runtime_home,
-                        entry=self._entry,
-                        create_home=True,
-                    )
-                client.start()
-                self._check_version(client)
-                raw = client.model_list()
-                refreshed: list[dict[str, Any]] = []
-                seen: set[str] = set()
-                for item in raw.get("data") or []:
-                    if not isinstance(item, dict):
-                        continue
-                    model_id = str(item.get("id") or item.get("model") or "").strip()
-                    if not model_id or model_id in seen:
-                        continue
-                    seen.add(model_id)
-                    efforts: list[dict[str, str]] = []
-                    for option in item.get("supportedReasoningEfforts") or []:
-                        if not isinstance(option, dict):
-                            continue
-                        effort = str(option.get("reasoningEffort") or "").strip()
-                        if not _EFFORT_RE.match(effort):
-                            continue
-                        efforts.append(
-                            {
-                                "effort": effort,
-                                "description": str(option.get("description") or "")[
-                                    :_MAX_EFFORT_DESC_LEN
-                                ],
-                            }
-                        )
-                    default_effort = str(item.get("defaultReasoningEffort") or "").strip()
-                    if default_effort not in {entry["effort"] for entry in efforts}:
-                        default_effort = ""
-                    label = str(item.get("displayName") or model_id)
-                    refreshed.append(
-                        {
-                            "id": build_cc_switch_model_ref(provider_id, model_id),
-                            "label": label,
-                            "model": model_id,
-                            "display_name": label if label != model_id else "",
-                            "hidden": bool(item.get("hidden")),
-                            "specialty": item.get("modelSpecialty"),
-                            "supported_reasoning_efforts": efforts,
-                            "default_reasoning_effort": default_effort,
-                            "provider_id": provider_id,
-                            "provider_label": provider_info.name,
-                            "source": "cc_switch",
-                            "catalog_source": "runtime",
-                            "catalog_complete": True,
-                        }
-                    )
-                if not refreshed:
-                    raise CcSwitchCatalogUnavailableError(
-                        "cc-switch 模型目录暂不可用。"
-                    )
-                self._cc_switch_runtime_models[provider_id] = (
-                    runtime.fingerprint,
-                    refreshed,
-                )
-            except CcSwitchError:
-                raise
-            except Exception as exc:
-                raise CcSwitchCatalogUnavailableError(
-                    "cc-switch 模型目录暂不可用。"
-                ) from exc
-            finally:
-                if client is not None:
-                    try:
-                        client.close()
-                    except Exception:
-                        pass
-                remove_runtime_home(runtime_home)
         return self.model_catalog()
 
     # ── D3：CHAT / EXPLAIN 安全调用 ─────────────────────────

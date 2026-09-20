@@ -856,9 +856,27 @@ def test_local_model_catalog_groups_all_cc_switch_providers_without_secrets(
     monkeypatch.setenv("CODEX_HOME", str(home))
     config = GDLAgentConfig()
     config.llm.codex_entry = "local"
+    class _CatalogClient:
+        closed = False
+
+        def start(self):
+            return None
+
+        def model_list(self):
+            return {
+                "data": [
+                    {"id": "gpt-5.6-sol", "displayName": "GPT-5.6 Sol"},
+                    {"id": "gpt-5.6-terra", "displayName": "GPT-5.6 Terra"},
+                ]
+            }
+
+        def close(self):
+            self.closed = True
+
     provider = CodexProvider(
         entry=ENTRY_LOCAL,
         cli_available=True,
+        client_factory=_CatalogClient,
         cc_switch_registry_factory=_CatalogRegistryStub,
     )
     service = _service(config, tmp_path / "config.toml", provider)
@@ -869,12 +887,13 @@ def test_local_model_catalog_groups_all_cc_switch_providers_without_secrets(
             "openai-codex/terminal-current-model",
             "openai-codex/ccswitch/deepseek/deepseek-v4-flash",
             "openai-codex/ccswitch/deepseek/same-model",
-            "openai-codex/ccswitch/geili/same-model",
+            "openai-codex/ccswitch/geili/gpt-5.6-sol",
+            "openai-codex/ccswitch/geili/gpt-5.6-terra",
         ]
         assert payload["cc_switch_detected"] is True
         assert [(item["id"], item["catalog_complete"]) for item in payload["providers"]] == [
-            ("deepseek", True),
-            ("geili", False),
+                ("deepseek", True),
+                ("geili", True),
         ]
         assert payload["models"][1]["provider_id"] == "deepseek"
         assert payload["models"][3]["provider_id"] == "geili"
