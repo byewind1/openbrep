@@ -581,6 +581,58 @@ def test_refresh_cc_switch_models_caches_only_selected_provider_and_cleans_home(
     provider.close()
 
 
+def test_model_catalog_auto_refreshes_incomplete_runnable_cc_switch_provider(tmp_path):
+    class _IncompleteRegistry(_CcSwitchRegistryStub):
+        def catalog(self):
+            catalog = super().catalog()
+            providers = tuple(
+                CcSwitchProviderInfo(
+                    id=item.id,
+                    name=item.name,
+                    is_current=item.is_current,
+                    models=item.models,
+                    catalog_source="config_default" if item.id == "a" else item.catalog_source,
+                    catalog_complete=False if item.id == "a" else item.catalog_complete,
+                    runnable=item.runnable,
+                )
+                for item in catalog.providers
+            )
+            return CcSwitchCatalog(
+                detected=catalog.detected,
+                providers=providers,
+                diagnostics=catalog.diagnostics,
+            )
+
+    refresh_client = _FakeCodexClient(
+        models=[
+            {"id": "gpt-5.6-sol", "displayName": "GPT-5.6 Sol"},
+            {"id": "gpt-5.6-terra", "displayName": "GPT-5.6 Terra"},
+        ]
+    )
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        cli_available=True,
+        client_factory=lambda: refresh_client,
+        cc_switch_registry_factory=_IncompleteRegistry,
+        runtime_home_parent=tmp_path,
+    )
+
+    payload = provider.model_catalog()
+
+    models = [
+        item["model"]
+        for item in payload["models"]
+        if item.get("provider_id") == "a"
+    ]
+    assert models == ["gpt-5.6-sol", "gpt-5.6-terra"]
+    provider_a = next(item for item in payload["providers"] if item["id"] == "a")
+    assert provider_a["catalog_source"] == "runtime"
+    assert provider_a["catalog_complete"] is True
+    assert refresh_client.closed is True
+    assert list(tmp_path.iterdir()) == []
+    provider.close()
+
+
 def test_runtime_conflict_retries_with_isolated_home(monkeypatch, tmp_path):
     managed_home = tmp_path / "managed"
     managed_home.mkdir()
