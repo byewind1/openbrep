@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from openbrep.llm import LLMAdapter
+from openbrep.llm import LLMAdapter, codex_chat_generate_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,9 @@ class SkillCreator:
 
     # ── Intent classification ────────────────────────────
 
+    def _generate(self, messages: list[dict]):
+        return self.llm.generate(messages, **codex_chat_generate_kwargs(self.llm))
+
     def classify_intent(self, user_input: str) -> str:
         """
         Classify user intent related to skill management.
@@ -137,7 +140,7 @@ class SkillCreator:
         """
         prompt = _CLASSIFICATION_PROMPT.format(user_input=user_input)
         try:
-            resp = self.llm.generate([{"role": "user", "content": prompt}])
+            resp = self._generate([{"role": "user", "content": prompt}])
             text = resp.content.strip().upper()
             if "CREATE_SKILL" in text:
                 return "CREATE_SKILL"
@@ -161,7 +164,7 @@ class SkillCreator:
 
         messages = self._build_guide_messages()
         try:
-            resp = self.llm.generate(messages)
+            resp = self._generate(messages)
             reply = resp.content
         except Exception as exc:
             reply = f"无法启动技能创建对话：{exc}"
@@ -184,7 +187,7 @@ class SkillCreator:
 
         messages = self._build_guide_messages()
         try:
-            resp = self.llm.generate(messages)
+            resp = self._generate(messages)
             reply = resp.content
         except Exception as exc:
             reply = f"对话出错：{exc}"
@@ -222,7 +225,7 @@ class SkillCreator:
             suggested_name=self._suggested_name or "custom_skill",
         )
 
-        resp = self.llm.generate([{"role": "user", "content": prompt}])
+        resp = self._generate([{"role": "user", "content": prompt}])
         raw = resp.content
 
         # Parse filename and content

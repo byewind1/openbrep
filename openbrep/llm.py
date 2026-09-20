@@ -26,6 +26,21 @@ from openbrep.config import (
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = tuple(p.native_prefix for p in PROVIDER_PROFILES if p.native_prefix)
 
+
+def codex_chat_generate_kwargs(adapter) -> dict[str, str]:
+    """Return explicit CHAT routing only for an adapter using a Codex model."""
+    config = getattr(adapter, "config", None)
+    model = str(getattr(config, "model", "") or "")
+    if not model.startswith("openai-codex/"):
+        return {}
+    effort_resolver = getattr(config, "codex_reasoning_effort", None)
+    effort = str(effort_resolver() if callable(effort_resolver) else "").strip()
+    return {
+        "codex_intent": "CHAT",
+        "codex_reasoning_effort": effort,
+    }
+
+
 @dataclass
 class _ResolvedModelTarget:
     configured_model: str

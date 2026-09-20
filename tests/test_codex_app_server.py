@@ -21,8 +21,21 @@ from openbrep.codex.app_server import (
     StdioJsonRpcTransport,
     resolve_codex_binary,
 )
+from openbrep.codex.errors import error_response
 
 FAKE_SERVER = Path(__file__).resolve().parent / "fake_codex_app_server.py"
+
+
+def test_runtime_conflict_has_stable_actionable_error_response():
+    exc = CodexAppServerError("raw owner detail", category="runtime_conflict")
+
+    payload = error_response(exc)
+
+    assert payload == {
+        "code": "codex_runtime_conflict",
+        "error": "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。",
+    }
+    assert "raw owner detail" not in payload["error"]
 
 
 def test_resolve_codex_binary_finds_user_npm_bin_without_path(monkeypatch, tmp_path):

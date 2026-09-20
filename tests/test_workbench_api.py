@@ -1910,6 +1910,47 @@ def test_workbench_session_tests_llm_connection_success(tmp_path, monkeypatch):
     assert captured_models == ["deepseek-chat"]
 
 
+def test_workbench_session_tests_codex_connection_through_chat_provider_without_saving(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    seen: dict[str, object] = {}
+    provider = object()
+
+    class FakeLLMAdapter:
+        def __init__(self, config):
+            seen["model"] = config.model
+            seen["effort"] = config.reasoning_effort
+
+        def generate(self, _messages, **kwargs):
+            seen["kwargs"] = kwargs
+            seen["provider"] = getattr(self, "codex_provider", None)
+            return type("Response", (), {"model": "openai-codex/gpt-5.6-sol"})()
+
+    monkeypatch.setattr(workbench_api, "LLMAdapter", FakeLLMAdapter)
+    session = WorkbenchSession(config_path=config_path)
+    original_model = session.llm_model
+    session.settings_service.codex_provider = provider
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm/test",
+        {"model": "openai-codex/gpt-5.6-sol", "reasoning_effort": "high"},
+    )
+
+    assert response["ok"] is True
+    assert seen["model"] == "openai-codex/gpt-5.6-sol"
+    assert seen["effort"] == "high"
+    assert seen["kwargs"] == {
+        "timeout": 20,
+        "codex_intent": "CHAT",
+        "codex_reasoning_effort": "high",
+    }
+    assert seen["provider"] is provider
+    assert session.llm_model == original_model
+    assert not config_path.exists()
+
+
 def test_workbench_session_tests_llm_connection_reports_configuration_error(tmp_path, monkeypatch):
     class FakeLLMAdapter:
         def __init__(self, config):
@@ -4358,7 +4399,7 @@ def test_assistant_codex_explain_with_project_no_revision(tmp_path):
     response = session.route("POST", "/api/assistant", {"message": "解释一下这个构件"})
 
     assert response["ok"] is True
-    assert provider.chat_calls == 1
+    assert provider.chat_calls == 2
     after = len(list(revisions_dir.iterdir())) if revisions_dir.exists() else 0
     assert before == after, "EXPLAIN 不得创建 revision"
     # 项目未被修改（UTF-8 BOM 是 HSF 保存的既有行为，去掉后再比较）

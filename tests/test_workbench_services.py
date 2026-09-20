@@ -272,10 +272,13 @@ def test_settings_service_codex_probe_uses_selected_model_and_effort_without_sav
     config.llm.model = "deepseek-chat"
     config.llm.reasoning_effort = ""
     session = _make_settings_session(config, config_path)
-    seen: dict[str, str] = {}
+    seen: dict[str, object] = {}
+    provider = object()
 
     class _FakeAdapter:
-        def generate(self, *_args, **_kwargs):
+        def generate(self, *_args, **kwargs):
+            seen["kwargs"] = kwargs
+            seen["provider"] = getattr(self, "codex_provider", None)
             return SimpleNamespace(model="openai-codex/gpt-5.6-luna")
 
     def factory(llm_config):
@@ -283,17 +286,50 @@ def test_settings_service_codex_probe_uses_selected_model_and_effort_without_sav
         seen["reasoning_effort"] = llm_config.reasoning_effort
         return _FakeAdapter()
 
-    service = WorkbenchSettingsService(session, llm_adapter_factory=factory)
+    service = WorkbenchSettingsService(
+        session,
+        llm_adapter_factory=factory,
+        codex_provider=provider,
+    )
     response = service.test_llm_settings({
         "model": "openai-codex/gpt-5.6-luna",
         "reasoning_effort": "high",
     })
 
     assert response["ok"] is True
-    assert seen == {"model": "openai-codex/gpt-5.6-luna", "reasoning_effort": "high"}
+    assert seen["model"] == "openai-codex/gpt-5.6-luna"
+    assert seen["reasoning_effort"] == "high"
+    assert seen["kwargs"] == {
+        "timeout": 20,
+        "codex_intent": "CHAT",
+        "codex_reasoning_effort": "high",
+    }
+    assert seen["provider"] is provider
     assert config.llm.model == "deepseek-chat"
     assert config.llm.reasoning_effort == ""
     assert not config_path.exists()
+
+
+def test_settings_service_non_codex_probe_does_not_send_codex_kwargs(tmp_path):
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    session = _make_settings_session(config, tmp_path / "config.toml")
+    seen: dict[str, object] = {}
+
+    class _FakeAdapter:
+        def generate(self, *_args, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(model="deepseek-chat")
+
+    service = WorkbenchSettingsService(
+        session,
+        llm_adapter_factory=lambda _config: _FakeAdapter(),
+    )
+
+    response = service.test_llm_settings({"model": "deepseek-chat"})
+
+    assert response["ok"] is True
+    assert seen == {"timeout": 20}
 
 
 def test_format_llm_exception_detail_handles_plain_exception():

@@ -84,9 +84,11 @@ class FakeLLM:
         self.content = content
         self.error = error
         self.calls = 0
+        self.last_kwargs = {}
 
     def generate(self, messages, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
         if self.error:
             raise RuntimeError("llm exploded")
         return LLMResponse(content=self.content, model="fake", usage={}, finish_reason="stop")
@@ -142,6 +144,28 @@ class TestHarvestGate(unittest.TestCase):
         self.assertEqual(proposal["pattern_type"], "shelf_loop")
         self.assertEqual(llm.calls, 1)
         self.assertIn("When to Use", proposal["content"])
+
+    def test_codex_harvest_uses_chat_intent(self):
+        llm = FakeLLM(_proposal_json())
+        llm.config = SimpleNamespace(
+            model="openai-codex/gpt-5.6-sol",
+            codex_reasoning_effort=lambda: "high",
+        )
+
+        proposal = skill_harvest.maybe_harvest(
+            _verified_result(self.project),
+            "给书架加三层板",
+            self.project,
+            llm,
+            self.skills_dir,
+        )
+
+        self.assertIsNotNone(proposal)
+        self.assertEqual(llm.last_kwargs["codex_intent"], "CHAT")
+        self.assertEqual(llm.last_kwargs["codex_reasoning_effort"], "high")
+        self.assertEqual(llm.last_kwargs["temperature"], 0.0)
+        self.assertEqual(llm.last_kwargs["max_tokens"], 900)
+        self.assertIs(llm.last_kwargs["stream"], False)
 
     def test_intent_restricted_to_create_modify(self):
         for intent in ("DEBUG", "REPAIR", "CHAT"):

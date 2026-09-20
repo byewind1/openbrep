@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -68,6 +69,27 @@ def skills_dir():
 
 
 class TestSkillCreator:
+    def test_codex_classification_uses_chat_intent(self, skills_dir):
+        seen = {}
+
+        class _CodexLLM:
+            config = SimpleNamespace(
+                model="openai-codex/gpt-5.6-sol",
+                codex_reasoning_effort=lambda: "high",
+            )
+
+            def generate(self, _messages, **kwargs):
+                seen.update(kwargs)
+                return SimpleNamespace(content="NONE")
+
+        creator = SkillCreator(_CodexLLM(), str(skills_dir))
+
+        assert creator.classify_intent("修改楼梯") == "NONE"
+        assert seen == {
+            "codex_intent": "CHAT",
+            "codex_reasoning_effort": "high",
+        }
+
     def test_classify_intent_create(self, mock_llm, skills_dir):
         creator = SkillCreator(mock_llm, str(skills_dir))
         intent = creator.classify_intent("我想创建一个门窗技能")
