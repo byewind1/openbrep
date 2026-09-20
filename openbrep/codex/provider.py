@@ -1064,6 +1064,28 @@ class CodexProvider:
         （例如 cc-switch 写入的 base_url + bearer）。
         """
         cli_available = self.cli_available
+        if self._selected_cc_switch is not None:
+            provider_id, model, _fingerprint = self._selected_cc_switch
+            return {
+                "state": "ready" if cli_available else "no_cli",
+                "connected": cli_available,
+                "codex_available": cli_available,
+                "codex_ready": cli_available,
+                "account": None,
+                **self._entry_metadata(),
+                "auth_present": True,
+                "models_source": "cc_switch",
+                "model": model,
+                "provider": provider_id,
+                **(
+                    {}
+                    if cli_available
+                    else {
+                        "code": "codex_cli_unavailable",
+                        "error": "未检测到 Codex CLI，请先安装 Codex CLI 后重试。",
+                    }
+                ),
+            }
         data = read_local_codex_config(self._active_codex_home())
         verdict = local_entry_verdict(data, cli_available=cli_available)
         status: dict[str, Any] = {
@@ -1642,6 +1664,19 @@ class CodexProvider:
 
         目录漂移/解析失败一律返回空列表（调用方 fail closed）。
         """
+        if str(model or "").startswith(f"{CODEX_PROVIDER_NAME}/ccswitch/"):
+            try:
+                parsed = parse_codex_model_ref(model)
+                catalog = self._cc_switch_registry_factory().catalog()
+            except Exception:  # noqa: BLE001
+                return []
+            for provider in catalog.providers:
+                if provider.id != parsed.provider_id:
+                    continue
+                for entry in provider.models:
+                    if entry.model == parsed.model:
+                        return list(entry.efforts)
+            return []
         try:
             catalog = self.models()
         except Exception:  # noqa: BLE001 —— 目录不可读 = 无法证明 effort 合法
@@ -1712,6 +1747,8 @@ class CodexProvider:
         本方法负责：fail closed 门禁（CLI / 登录 / 额度 / 崩溃）+ 临时 cwd
         生命周期（用完即删，绝不落在项目/工作区）。
         """
+        if str(model or "").startswith(f"{CODEX_PROVIDER_NAME}/"):
+            self.select_model(model)
         if not self.cli_available:
             raise CodexCliUnavailableError(
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"

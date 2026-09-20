@@ -494,6 +494,29 @@ def test_cc_switch_app_server_start_failure_removes_runtime_home(monkeypatch, tm
     provider.close()
 
 
+def test_chat_binds_cc_switch_provider_before_readiness_checks(tmp_path):
+    registry = _CcSwitchRegistryStub()
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        cli_available=False,
+        cc_switch_registry_factory=lambda: registry,
+        runtime_home_parent=tmp_path,
+    )
+
+    with unittest.TestCase().assertRaises(CodexCliUnavailableError):
+        provider.chat(
+            [{"role": "user", "content": "hello"}],
+            model=build_cc_switch_model_ref("b", "same-model"),
+        )
+
+    assert provider._selected_cc_switch is not None
+    assert provider._selected_cc_switch[:2] == ("b", "same-model")
+    assert 'model_provider = "provider_b"' in (
+        provider._runtime_codex_home / "config.toml"
+    ).read_text(encoding="utf-8")
+    provider.close()
+
+
 def test_runtime_conflict_retries_with_isolated_home(monkeypatch, tmp_path):
     managed_home = tmp_path / "managed"
     managed_home.mkdir()

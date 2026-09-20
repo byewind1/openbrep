@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from openbrep.codex.app_server import CodexAppServerError
 from openbrep.codex.errors import error_response
+from openbrep.codex.model_ref import wire_model_name
 from openbrep.codex.turn import (
     INTERRUPTED_TEXT,
     NO_FINAL_MESSAGE_TEXT,
@@ -41,7 +42,6 @@ from openbrep.codex.turn import (
     TIMEOUT_TEXT,
     TURN_ERROR_TEXT,
     build_turn_prompt,
-    wire_model_name,
 )
 from openbrep.llm import ToolCall, ToolDefinition
 
@@ -1388,6 +1388,9 @@ def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str
     from openbrep.codex.provider import CodexNotSignedInError, CodexUnsupportedEffortError
 
     try:
+        selector = getattr(provider, "select_model", None)
+        if callable(selector) and str(model or "").startswith("openai-codex/"):
+            selector(model)
         if getattr(provider, "cli_available", False) is not True:
             return "未检测到 Codex CLI。请先安装 Codex CLI 后重试。"
         status = provider.status(refresh=True)
