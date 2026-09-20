@@ -517,6 +517,70 @@ def test_chat_binds_cc_switch_provider_before_readiness_checks(tmp_path):
     provider.close()
 
 
+def test_managed_model_catalog_never_reads_cc_switch_registry():
+    client = _FakeCodexClient(
+        account={"type": "chatgpt", "email": "jo@example.com", "planType": "pro"}
+    )
+
+    def forbidden_registry():
+        raise AssertionError("managed entry must not inspect cc-switch")
+
+    provider = CodexProvider(
+        entry=ENTRY_MANAGED,
+        cli_available=True,
+        client_factory=lambda: client,
+        cc_switch_registry_factory=forbidden_registry,
+    )
+    try:
+        payload = provider.model_catalog()
+        assert payload["cc_switch_detected"] is False
+        assert [item["model"] for item in payload["models"]] == [
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+        ]
+    finally:
+        provider.close()
+
+
+def test_refresh_cc_switch_models_caches_only_selected_provider_and_cleans_home(tmp_path):
+    registry = _CcSwitchRegistryStub()
+    refresh_client = _FakeCodexClient(
+        models=[
+            {
+                "id": "runtime-only/model",
+                "displayName": "Runtime Model",
+                "supportedReasoningEfforts": [
+                    {"reasoningEffort": "high", "description": "Deep"}
+                ],
+                "defaultReasoningEffort": "high",
+            }
+        ]
+    )
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        cli_available=True,
+        client_factory=lambda: refresh_client,
+        cc_switch_registry_factory=lambda: registry,
+        runtime_home_parent=tmp_path,
+    )
+
+    payload = provider.refresh_cc_switch_models("a")
+
+    runtime_model = next(
+        item for item in payload["models"] if item.get("provider_id") == "a"
+    )
+    assert runtime_model["id"] == (
+        "openai-codex/ccswitch/a/runtime-only%2Fmodel"
+    )
+    assert runtime_model["catalog_source"] == "runtime"
+    assert runtime_model["default_reasoning_effort"] == "high"
+    provider_b = next(item for item in payload["providers"] if item["id"] == "b")
+    assert provider_b["catalog_source"] == "model_catalog"
+    assert refresh_client.closed is True
+    assert list(tmp_path.iterdir()) == []
+    provider.close()
+
+
 def test_runtime_conflict_retries_with_isolated_home(monkeypatch, tmp_path):
     managed_home = tmp_path / "managed"
     managed_home.mkdir()

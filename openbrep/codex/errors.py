@@ -35,6 +35,12 @@ STABLE_MESSAGES: dict[str, str] = {
         "当前模型不支持所选 reasoning effort（推理强度），请求已拒绝。"
         "请到 AI 设置中重新选择该模型支持的 effort。"
     ),
+    "cc_switch_unavailable": "未检测到可用的 cc-switch 注册表。",
+    "cc_switch_schema_unsupported": "cc-switch 数据结构不受支持。",
+    "cc_switch_provider_missing": "cc-switch 供应商已不存在，请重新选择。",
+    "cc_switch_provider_unusable": "cc-switch 供应商配置不可用。",
+    "cc_switch_catalog_unavailable": "cc-switch 模型目录暂不可用。",
+    "cc_switch_runtime_failed": "cc-switch Codex 运行环境启动失败。",
     # P0-1 状态门禁（CodexAppServerError.category）
     "already_signed_in": "已连接 ChatGPT 账号。切换账号请先点击「断开连接」退出当前账号，再登录新账号。",
     "login_already_pending": "已有登录流程正在进行。请先取消当前登录，再重新发起。",

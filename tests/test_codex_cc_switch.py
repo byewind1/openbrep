@@ -196,6 +196,13 @@ def test_environment_override_selects_registry_database(
     assert [provider.id for provider in catalog.providers] == ["deepseek", "geili"]
 
 
+def test_default_test_environment_never_points_at_developer_cc_switch_home() -> None:
+    configured = Path(os.environ["OPENBREP_CC_SWITCH_DB"])
+
+    assert "obr_test_config_" in str(configured)
+    assert configured.name == "missing-cc-switch.db"
+
+
 def test_materialized_home_has_private_permissions_and_local_catalog(tmp_path: Path) -> None:
     runtime = CcSwitchRuntimeConfig(
         provider_id="deepseek",

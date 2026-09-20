@@ -1135,6 +1135,7 @@ class _FakeCodexProvider:
         self.cancel_calls = 0
         self.rate_limits_calls = 0
         self.restart_calls = 0
+        self.refresh_calls: list[str] = []
 
     def status(self, *, refresh=False):
         self.status_calls += 1
@@ -1176,6 +1177,27 @@ class _FakeCodexProvider:
         if self.models_result is None:
             raise CodexNotSignedInError("尚未连接 ChatGPT。请先登录。")
         return self.models_result
+
+    def model_catalog(self):
+        return {
+            "models": self.models(),
+            "providers": [
+                {
+                    "id": "deepseek",
+                    "name": "DeepSeek",
+                    "is_current": False,
+                    "catalog_source": "model_catalog",
+                    "catalog_complete": True,
+                    "runnable": True,
+                }
+            ],
+            "cc_switch_detected": True,
+            "diagnostics": [],
+        }
+
+    def refresh_cc_switch_models(self, provider_id: str):
+        self.refresh_calls.append(provider_id)
+        return self.model_catalog()
 
 
 def _make_codex_service(config, config_path, provider=None, factory=None):
@@ -1307,6 +1329,52 @@ def test_codex_models_fail_closed_when_signed_out(tmp_path):
     response = service.codex_models()
     assert response["ok"] is False
     assert response["code"] == "not_signed_in"
+
+
+def test_codex_models_include_secret_free_provider_summary(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_models()
+
+    assert response["cc_switch_detected"] is True
+    assert response["providers"] == [
+        {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "is_current": False,
+            "catalog_source": "model_catalog",
+            "catalog_complete": True,
+            "runnable": True,
+        }
+    ]
+
+
+def test_codex_models_refresh_accepts_only_provider_id(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    rejected = service.codex_route(
+        "POST",
+        "/api/settings/llm/codex/models/refresh",
+        {"provider_id": "deepseek", "api_key": "SECRET_CANARY"},
+    )
+    accepted = service.codex_route(
+        "POST",
+        "/api/settings/llm/codex/models/refresh",
+        {"provider_id": "deepseek"},
+    )
+
+    assert rejected == {
+        "ok": False,
+        "code": "invalid_request",
+        "error": "请求参数无效。",
+    }
+    assert provider.refresh_calls == ["deepseek"]
+    assert accepted["ok"] is True
+    assert accepted["cc_switch_detected"] is True
 
 
 def test_llm_settings_codex_block_and_availability(tmp_path, monkeypatch):

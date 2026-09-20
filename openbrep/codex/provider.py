@@ -38,6 +38,7 @@ from openbrep.codex.app_server import (
 )
 from openbrep.codex.cc_switch import (
     CcSwitchCatalogUnavailableError,
+    CcSwitchError,
     CcSwitchProviderMissingError,
     CcSwitchProviderUnusableError,
     CcSwitchRegistry,
@@ -56,7 +57,7 @@ from openbrep.codex.entry import (
 )
 from openbrep.codex.errors import error_response
 from openbrep.codex.local_config import local_entry_verdict, read_local_codex_config
-from openbrep.codex.model_ref import CodexModelRef, parse_codex_model_ref
+from openbrep.codex.model_ref import CodexModelRef, build_cc_switch_model_ref, parse_codex_model_ref
 from openbrep.codex.turn import CodexTurnResult, CodexTurnRunner
 from openbrep.config import CODEX_PROVIDER_NAME
 
@@ -478,6 +479,9 @@ class CodexProvider:
         self._closed = False
         self._runtime_codex_home: Path | None = None
         self._selected_cc_switch: tuple[str, str, str] | None = None
+        self._cc_switch_runtime_models: dict[
+            str, tuple[str, list[dict[str, Any]]]
+        ] = {}
         atexit.register(self.close)
 
     # ── CLI 探测 ─────────────────────────────────────────────
@@ -583,11 +587,15 @@ class CodexProvider:
                 raise CcSwitchProviderUnusableError(
                     "cc-switch 供应商配置不可用。"
                 )
-            if parsed.model not in {model.model for model in provider_info.models}:
+            runtime = registry.runtime_config(parsed.provider_id)
+            known_models = {model.model for model in provider_info.models}
+            cached = self._cc_switch_runtime_models.get(parsed.provider_id)
+            if cached is not None and cached[0] == runtime.fingerprint:
+                known_models.update(str(item.get("model") or "") for item in cached[1])
+            if parsed.model not in known_models:
                 raise CcSwitchCatalogUnavailableError(
                     "所选模型不在该 cc-switch 供应商目录中。"
                 )
-            runtime = registry.runtime_config(parsed.provider_id)
             selected = (parsed.provider_id, parsed.model, runtime.fingerprint)
             if (
                 self._selected_cc_switch == selected
@@ -1549,7 +1557,7 @@ class CodexProvider:
         app-server；``managed`` 入口行为不变（账户 model/list）。
         """
         if self._entry == ENTRY_LOCAL:
-            return self._local_models()
+            return self.model_catalog()["models"]
         now = time.monotonic()
         with self._lock:
             if (
@@ -1622,7 +1630,7 @@ class CodexProvider:
                 self._models_gen = gen
         return models
 
-    def _local_models(self) -> list[dict[str, Any]]:
+    def _local_current_models(self) -> list[dict[str, Any]]:
         """本机配置入口的模型目录：用户配置里声明什么就提供什么，绝不编造。"""
         data = read_local_codex_config(self._active_codex_home())
         models: list[dict[str, Any]] = []
@@ -1656,6 +1664,202 @@ class CodexProvider:
                 }
             )
         return models
+
+    @staticmethod
+    def _cc_switch_model_entry(provider: Any, model: Any) -> dict[str, Any]:
+        public = model.to_public_dict()
+        return {
+            "id": build_cc_switch_model_ref(provider.id, model.model),
+            "label": model.label,
+            "model": model.model,
+            "display_name": model.label if model.label != model.model else "",
+            "hidden": False,
+            "specialty": None,
+            "supported_reasoning_efforts": public["supported_reasoning_efforts"],
+            "default_reasoning_effort": public["default_reasoning_effort"],
+            "provider_id": provider.id,
+            "provider_label": provider.name,
+            "source": "cc_switch",
+            "catalog_source": provider.catalog_source,
+            "catalog_complete": provider.catalog_complete,
+        }
+
+    def model_catalog(self) -> dict[str, Any]:
+        """Return models plus secret-free cc-switch provider metadata."""
+        if self._entry != ENTRY_LOCAL:
+            return {
+                "models": self.models(),
+                "providers": [],
+                "cc_switch_detected": False,
+                "diagnostics": [],
+            }
+        models = self._local_current_models()
+        try:
+            registry = self._cc_switch_registry_factory()
+            catalog = registry.catalog()
+        except CcSwitchError as exc:
+            return {
+                "models": models,
+                "providers": [],
+                "cc_switch_detected": False,
+                "diagnostics": [error_response(exc)],
+            }
+        providers: list[dict[str, Any]] = []
+        for provider in catalog.providers:
+            provider_models = [
+                self._cc_switch_model_entry(provider, model)
+                for model in provider.models
+            ]
+            try:
+                runtime = registry.runtime_config(provider.id)
+            except CcSwitchError:
+                runtime = None
+            cached = self._cc_switch_runtime_models.get(provider.id)
+            if runtime is not None and cached is not None and cached[0] == runtime.fingerprint:
+                provider_models = [dict(item) for item in cached[1]]
+            models.extend(provider_models)
+            providers.append(
+                {
+                    "id": provider.id,
+                    "name": provider.name,
+                    "is_current": provider.is_current,
+                    "catalog_source": (
+                        "runtime"
+                        if runtime is not None
+                        and cached is not None
+                        and cached[0] == runtime.fingerprint
+                        else provider.catalog_source
+                    ),
+                    "catalog_complete": (
+                        True
+                        if runtime is not None
+                        and cached is not None
+                        and cached[0] == runtime.fingerprint
+                        else provider.catalog_complete
+                    ),
+                    "runnable": provider.runnable,
+                }
+            )
+        return {
+            "models": models,
+            "providers": providers,
+            "cc_switch_detected": catalog.detected,
+            "diagnostics": [item.to_public_dict() for item in catalog.diagnostics],
+        }
+
+    def refresh_cc_switch_models(self, provider_id: str) -> dict[str, Any]:
+        """Refresh one provider through an isolated app-server model/list call."""
+        if self._entry != ENTRY_LOCAL:
+            raise CcSwitchProviderUnusableError(
+                "cc-switch 模型刷新只可用于本机 Codex 配置入口。"
+            )
+        if not self.cli_available:
+            raise CodexCliUnavailableError(
+                "未检测到 Codex CLI，请先安装 Codex CLI 后重试。"
+            )
+        with self._op_lock:
+            registry = self._cc_switch_registry_factory()
+            catalog = registry.catalog()
+            provider_info = next(
+                (provider for provider in catalog.providers if provider.id == provider_id),
+                None,
+            )
+            if provider_info is None:
+                raise CcSwitchProviderMissingError(
+                    "cc-switch 供应商已不存在，请重新选择。"
+                )
+            if not provider_info.runnable:
+                raise CcSwitchProviderUnusableError(
+                    "cc-switch 供应商配置不可用。"
+                )
+            runtime = registry.runtime_config(provider_id)
+            runtime_home = materialize_runtime_home(
+                runtime,
+                parent=self._runtime_home_parent,
+            )
+            client: Any | None = None
+            try:
+                if self._client_factory is not None:
+                    client = self._client_factory()
+                else:
+                    client = CodexAppServerClient(
+                        codex_binary=(
+                            resolve_codex_binary(self.codex_binary) or self.codex_binary
+                        ),
+                        codex_home=runtime_home,
+                        entry=self._entry,
+                        create_home=True,
+                    )
+                client.start()
+                self._check_version(client)
+                raw = client.model_list()
+                refreshed: list[dict[str, Any]] = []
+                seen: set[str] = set()
+                for item in raw.get("data") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    model_id = str(item.get("id") or item.get("model") or "").strip()
+                    if not model_id or model_id in seen:
+                        continue
+                    seen.add(model_id)
+                    efforts: list[dict[str, str]] = []
+                    for option in item.get("supportedReasoningEfforts") or []:
+                        if not isinstance(option, dict):
+                            continue
+                        effort = str(option.get("reasoningEffort") or "").strip()
+                        if not _EFFORT_RE.match(effort):
+                            continue
+                        efforts.append(
+                            {
+                                "effort": effort,
+                                "description": str(option.get("description") or "")[
+                                    :_MAX_EFFORT_DESC_LEN
+                                ],
+                            }
+                        )
+                    default_effort = str(item.get("defaultReasoningEffort") or "").strip()
+                    if default_effort not in {entry["effort"] for entry in efforts}:
+                        default_effort = ""
+                    label = str(item.get("displayName") or model_id)
+                    refreshed.append(
+                        {
+                            "id": build_cc_switch_model_ref(provider_id, model_id),
+                            "label": label,
+                            "model": model_id,
+                            "display_name": label if label != model_id else "",
+                            "hidden": bool(item.get("hidden")),
+                            "specialty": item.get("modelSpecialty"),
+                            "supported_reasoning_efforts": efforts,
+                            "default_reasoning_effort": default_effort,
+                            "provider_id": provider_id,
+                            "provider_label": provider_info.name,
+                            "source": "cc_switch",
+                            "catalog_source": "runtime",
+                            "catalog_complete": True,
+                        }
+                    )
+                if not refreshed:
+                    raise CcSwitchCatalogUnavailableError(
+                        "cc-switch 模型目录暂不可用。"
+                    )
+                self._cc_switch_runtime_models[provider_id] = (
+                    runtime.fingerprint,
+                    refreshed,
+                )
+            except CcSwitchError:
+                raise
+            except Exception as exc:
+                raise CcSwitchCatalogUnavailableError(
+                    "cc-switch 模型目录暂不可用。"
+                ) from exc
+            finally:
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                remove_runtime_home(runtime_home)
+        return self.model_catalog()
 
     # ── D3：CHAT / EXPLAIN 安全调用 ─────────────────────────
 
