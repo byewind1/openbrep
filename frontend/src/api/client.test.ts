@@ -341,6 +341,31 @@ describe('Codex BYOA API (D1)', () => {
     expect(result.models?.[0]?.id).toBe('openai-codex/gpt-5.6-luna')
   })
 
+  test('refreshCodexModels POSTs only the selected provider id', async () => {
+    const fetchMock = stubFetch({
+      ok: true,
+      cc_switch_detected: true,
+      providers: [{
+        id: 'deepseek',
+        name: 'DeepSeek',
+        is_current: false,
+        catalog_source: 'runtime',
+        catalog_complete: true,
+        runnable: true,
+      }],
+      models: [],
+    })
+    const { refreshCodexModels } = await import('./client')
+
+    const result = await refreshCodexModels('deepseek')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/settings/llm/codex/models/refresh')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ provider_id: 'deepseek' })
+    expect(result.providers?.[0]?.catalog_source).toBe('runtime')
+  })
+
   test('codexLogout POSTs logout', async () => {
     const fetchMock = stubFetch({ ok: true, state: 'signed_out' })
     const { codexLogout } = await import('./client')

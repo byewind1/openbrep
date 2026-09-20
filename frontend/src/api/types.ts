@@ -462,7 +462,7 @@ export interface CodexEntryResult {
 }
 
 export interface CodexModelInfo {
-  /** provider-qualified id：openai-codex/<model>（与 API-key OpenAI 分离） */
+  /** Stable id: legacy openai-codex/<model> or cc-switch-qualified ref. */
   id: string
   label: string
   model: string
@@ -475,6 +475,20 @@ export interface CodexModelInfo {
   default_reasoning_effort?: string
   /** 双入口（2026-09-17）：模型目录来源（codex_config = 本机 Codex 配置） */
   source?: string
+  /** cc-switch stable provider id/label; absent for managed and local-current models. */
+  provider_id?: string
+  provider_label?: string
+  catalog_source?: 'model_catalog' | 'config_default' | 'runtime' | string
+  catalog_complete?: boolean
+}
+
+export interface CodexProviderInfo {
+  id: string
+  name: string
+  is_current: boolean
+  catalog_source: 'model_catalog' | 'config_default' | 'runtime' | string
+  catalog_complete: boolean
+  runnable: boolean
 }
 
 export interface CodexLoginStartResult {
@@ -520,6 +534,9 @@ export interface CodexRateLimitsResult {
 export interface CodexModelsResult {
   ok: boolean
   models?: CodexModelInfo[]
+  providers?: CodexProviderInfo[]
+  cc_switch_detected?: boolean
+  diagnostics?: { code: string; message: string; provider_id?: string }[]
   code?: string
   error?: string
 }
