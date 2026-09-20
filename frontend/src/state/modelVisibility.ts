@@ -258,13 +258,26 @@ export function buildVisibilityCatalog(
     })
   }
   if (codex.connected && codex.models.length > 0) {
-    providers.push({
-      slug: 'openai-codex',
-      label: 'openai-codex',
-      kind: 'codex',
-      models: codex.models.map((m) => ({ id: m.id, label: m.label })),
-      defaultVisible: true,
-    })
+    const codexGroups = new Map<string, { label: string; models: CodexModelInfo[] }>()
+    for (const model of codex.models) {
+      const isCcSwitch = model.source === 'cc_switch' && Boolean(model.provider_id)
+      const slug = isCcSwitch
+        ? `openai-codex:ccswitch:${model.provider_id}`
+        : 'openai-codex'
+      const label = isCcSwitch ? (model.provider_label || model.provider_id || slug) : 'openai-codex'
+      const group = codexGroups.get(slug) ?? { label, models: [] }
+      group.models.push(model)
+      codexGroups.set(slug, group)
+    }
+    for (const [slug, group] of codexGroups) {
+      providers.push({
+        slug,
+        label: group.label,
+        kind: 'codex',
+        models: group.models.map((m) => ({ id: m.id, label: m.label })),
+        defaultVisible: true,
+      })
+    }
   }
   return providers
 }

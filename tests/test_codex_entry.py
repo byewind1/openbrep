@@ -12,6 +12,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from openbrep.codex.cc_switch import (
+    CcSwitchCatalog,
+    CcSwitchModelInfo,
+    CcSwitchProviderInfo,
+    CcSwitchRuntimeConfig,
+)
 from openbrep.codex.entry import (
     DEFAULT_CODEX_ENTRY,
     ENTRY_LOCAL,
@@ -33,6 +39,50 @@ from openbrep.workbench.settings_service import WorkbenchSettingsService
 
 _SECRET_TOKEN = "sk-supersecret-deepseek-token"
 _SECRET_KEY = "sk-second-secret-key"
+
+
+class _CatalogRegistryStub:
+    def catalog(self) -> CcSwitchCatalog:
+        return CcSwitchCatalog(
+            detected=True,
+            providers=(
+                CcSwitchProviderInfo(
+                    id="deepseek",
+                    name="DeepSeek",
+                    is_current=False,
+                    models=(
+                        CcSwitchModelInfo(
+                            "deepseek-v4-flash",
+                            "DeepSeek V4 Flash",
+                            efforts=("low", "high", "max"),
+                            default_effort="high",
+                        ),
+                        CcSwitchModelInfo("same-model", "Same Model"),
+                    ),
+                    catalog_source="model_catalog",
+                    catalog_complete=True,
+                    runnable=True,
+                ),
+                CcSwitchProviderInfo(
+                    id="geili",
+                    name="给力",
+                    is_current=True,
+                    models=(CcSwitchModelInfo("same-model", "Same Model"),),
+                    catalog_source="config_default",
+                    catalog_complete=False,
+                    runnable=True,
+                ),
+            ),
+        )
+
+    def runtime_config(self, provider_id: str) -> CcSwitchRuntimeConfig:
+        return CcSwitchRuntimeConfig(
+            provider_id=provider_id,
+            config_toml='model = "same-model"\nmodel_provider = "custom"\n',
+            auth_payload={"OPENAI_API_KEY": _SECRET_TOKEN},
+            model_catalog_payload=None,
+            fingerprint=provider_id * 64,
+        )
 
 # 复用 provider 的秘密门禁口径（D1）：这些字段名与取值绝不允许出现在 API payload 里
 _FORBIDDEN_KEYS = {
@@ -790,6 +840,46 @@ def test_service_codex_models_route_returns_local_catalog(tmp_path, monkeypatch)
             "openai-codex/deepseek-v4-pro",
         ]
         _assert_no_secrets(payload, "codex/models")
+    finally:
+        provider.close()
+
+
+def test_local_model_catalog_groups_all_cc_switch_providers_without_secrets(
+    tmp_path,
+    monkeypatch,
+):
+    home = _write_local_home(
+        tmp_path,
+        config_text=_CUSTOM_PROVIDER_CONFIG,
+        catalog=_catalog("terminal-current-model"),
+    )
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    config = GDLAgentConfig()
+    config.llm.codex_entry = "local"
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        cli_available=True,
+        cc_switch_registry_factory=_CatalogRegistryStub,
+    )
+    service = _service(config, tmp_path / "config.toml", provider)
+    try:
+        payload = service.codex_route("GET", "/api/settings/llm/codex/models")
+        ids = [model["id"] for model in payload["models"]]
+        assert ids == [
+            "openai-codex/terminal-current-model",
+            "openai-codex/ccswitch/deepseek/deepseek-v4-flash",
+            "openai-codex/ccswitch/deepseek/same-model",
+            "openai-codex/ccswitch/geili/same-model",
+        ]
+        assert payload["cc_switch_detected"] is True
+        assert [(item["id"], item["catalog_complete"]) for item in payload["providers"]] == [
+            ("deepseek", True),
+            ("geili", False),
+        ]
+        assert payload["models"][1]["provider_id"] == "deepseek"
+        assert payload["models"][3]["provider_id"] == "geili"
+        assert payload["models"][1]["source"] == "cc_switch"
+        _assert_no_secrets(payload, "cc-switch codex/models")
     finally:
         provider.close()
 

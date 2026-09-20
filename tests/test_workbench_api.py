@@ -4075,6 +4075,7 @@ def test_codex_routes_registered_lock_free():
 
     assert "/api/settings/llm/codex/login/start" in LOCK_FREE_POST_ROUTES
     assert "/api/settings/llm/codex/logout" in LOCK_FREE_POST_ROUTES
+    assert "/api/settings/llm/codex/models/refresh" in LOCK_FREE_POST_ROUTES
 
 
 def test_snapshot_llm_codex_block_and_no_secrets(tmp_path):

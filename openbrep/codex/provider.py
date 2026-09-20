@@ -36,6 +36,16 @@ from openbrep.codex.app_server import (
     CodexCliUnavailableError,
     resolve_codex_binary,
 )
+from openbrep.codex.cc_switch import (
+    CcSwitchCatalogUnavailableError,
+    CcSwitchError,
+    CcSwitchProviderMissingError,
+    CcSwitchProviderUnusableError,
+    CcSwitchRegistry,
+    CcSwitchRuntimeError,
+    materialize_runtime_home,
+    remove_runtime_home,
+)
 from openbrep.codex.entry import (
     ENTRY_LOCAL,
     ENTRY_MANAGED,
@@ -47,6 +57,7 @@ from openbrep.codex.entry import (
 )
 from openbrep.codex.errors import error_response
 from openbrep.codex.local_config import local_entry_verdict, read_local_codex_config
+from openbrep.codex.model_ref import CodexModelRef, build_cc_switch_model_ref, parse_codex_model_ref
 from openbrep.codex.turn import CodexTurnResult, CodexTurnRunner
 from openbrep.config import CODEX_PROVIDER_NAME
 
@@ -400,6 +411,8 @@ class CodexProvider:
         rate_limits_ttl: float | None = None,
         min_codex_version: tuple[int, int, int] = MIN_CODEX_VERSION,
         logger: logging.Logger | None = None,
+        cc_switch_registry_factory: Callable[[], CcSwitchRegistry] | None = None,
+        runtime_home_parent: str | Path | None = None,
     ) -> None:
         # 双入口（2026-09-17）：home 由入口决定；显式传入 codex_home 时以参数为准
         # （测试/嵌入方覆盖），入口只决定语义（是否托管认证）。
@@ -418,6 +431,12 @@ class CodexProvider:
         self.status_ttl = status_ttl
         self.min_codex_version = min_codex_version
         self._logger = logger or _LOGGER
+        self._cc_switch_registry_factory = (
+            cc_switch_registry_factory or CcSwitchRegistry
+        )
+        self._runtime_home_parent = (
+            Path(runtime_home_parent) if runtime_home_parent is not None else None
+        )
         self._client: Any | None = None
         self._lock = threading.RLock()
         # P0-1：账户会话 generation——任何 client 替换 / 登出 / 重启 / 关闭 /
@@ -459,6 +478,10 @@ class CodexProvider:
         self._op_lock = threading.Lock()
         self._closed = False
         self._runtime_codex_home: Path | None = None
+        self._selected_cc_switch: tuple[str, str, str] | None = None
+        self._cc_switch_runtime_models: dict[
+            str, tuple[str, list[dict[str, Any]]]
+        ] = {}
         atexit.register(self.close)
 
     # ── CLI 探测 ─────────────────────────────────────────────
@@ -491,6 +514,11 @@ class CodexProvider:
                 self.codex_home = codex_home_for_entry(target)
             with self._lock:
                 client, self._client = self._client, None
+                runtime_home, self._runtime_codex_home = (
+                    self._runtime_codex_home,
+                    None,
+                )
+                self._selected_cc_switch = None
                 self._pending_login_id = None
                 self._login_pending = False
                 self._login_failure = None
@@ -505,7 +533,103 @@ class CodexProvider:
                         "codex 入口切换时关闭旧 app-server 失败（%s）",
                         exc.__class__.__name__,
                     )
+            remove_runtime_home(runtime_home)
         return self._entry
+
+    def _active_codex_home(self) -> Path:
+        return self._runtime_codex_home or self.codex_home
+
+    def select_model(self, model_ref: str) -> CodexModelRef:
+        """Atomically bind a stable model reference to its Codex runtime."""
+        parsed = parse_codex_model_ref(model_ref)
+        with self._op_lock:
+            if parsed.kind == "legacy":
+                if self._selected_cc_switch is None:
+                    return parsed
+                with self._lock:
+                    client, self._client = self._client, None
+                    runtime_home, self._runtime_codex_home = (
+                        self._runtime_codex_home,
+                        None,
+                    )
+                    self._selected_cc_switch = None
+                    self._bump_generation()
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception as exc:  # noqa: BLE001
+                        self._logger.warning(
+                            "codex 供应商切换时关闭旧进程失败（%s）",
+                            exc.__class__.__name__,
+                        )
+                remove_runtime_home(runtime_home)
+                return parsed
+
+            if self._entry != ENTRY_LOCAL:
+                raise CcSwitchProviderUnusableError(
+                    "cc-switch 模型只可用于本机 Codex 配置入口。"
+                )
+            registry = self._cc_switch_registry_factory()
+            catalog = registry.catalog()
+            provider_info = next(
+                (
+                    provider
+                    for provider in catalog.providers
+                    if provider.id == parsed.provider_id
+                ),
+                None,
+            )
+            if provider_info is None:
+                raise CcSwitchProviderMissingError(
+                    "cc-switch 供应商已不存在，请重新选择。"
+                )
+            if not provider_info.runnable:
+                raise CcSwitchProviderUnusableError(
+                    "cc-switch 供应商配置不可用。"
+                )
+            runtime = registry.runtime_config(parsed.provider_id)
+            known_models = {model.model for model in provider_info.models}
+            cached = self._cc_switch_runtime_models.get(parsed.provider_id)
+            if cached is not None and cached[0] == runtime.fingerprint:
+                known_models.update(str(item.get("model") or "") for item in cached[1])
+            if parsed.model not in known_models:
+                raise CcSwitchCatalogUnavailableError(
+                    "所选模型不在该 cc-switch 供应商目录中。"
+                )
+            selected = (parsed.provider_id, parsed.model, runtime.fingerprint)
+            if (
+                self._selected_cc_switch == selected
+                and self._runtime_codex_home is not None
+                and self._runtime_codex_home.is_dir()
+            ):
+                return parsed
+
+            new_home = materialize_runtime_home(
+                runtime,
+                parent=self._runtime_home_parent,
+            )
+            with self._lock:
+                client, self._client = self._client, None
+                old_home, self._runtime_codex_home = (
+                    self._runtime_codex_home,
+                    new_home,
+                )
+                self._selected_cc_switch = selected
+                self._pending_login_id = None
+                self._login_pending = False
+                self._login_failure = None
+                self._login_start_inflight = None
+                self._bump_generation()
+            if client is not None:
+                try:
+                    client.close()
+                except Exception as exc:  # noqa: BLE001
+                    self._logger.warning(
+                        "codex 供应商切换时关闭旧进程失败（%s）",
+                        exc.__class__.__name__,
+                    )
+            remove_runtime_home(old_home)
+            return parsed
 
     def _entry_metadata(self) -> dict[str, Any]:
         """入口元信息：状态卡据此展示「哪条链路、哪个 home、哪个认证来源」。"""
@@ -586,16 +710,35 @@ class CodexProvider:
                 else:
                     self._client = CodexAppServerClient(
                         codex_binary=resolve_codex_binary(self.codex_binary) or self.codex_binary,
-                        codex_home=self.codex_home,
+                        codex_home=self._active_codex_home(),
                         entry=self._entry,
                         # local 入口对用户的 Codex home 零写入：连目录都不建
-                        create_home=self._entry == ENTRY_MANAGED,
+                        create_home=(
+                            self._entry == ENTRY_MANAGED
+                            or self._selected_cc_switch is not None
+                        ),
                     )
                 # P0-1：新 client 是新的账户会话——in-flight 旧请求不得回写缓存
                 self._bump_generation()
                 try:
                     self._client.start()
                 except CodexAppServerError as exc:
+                    if self._selected_cc_switch is not None:
+                        failed, self._client = self._client, None
+                        runtime_home, self._runtime_codex_home = (
+                            self._runtime_codex_home,
+                            None,
+                        )
+                        self._selected_cc_switch = None
+                        self._bump_generation()
+                        try:
+                            failed.close()
+                        except Exception:
+                            pass
+                        remove_runtime_home(runtime_home)
+                        raise CcSwitchRuntimeError(
+                            "cc-switch Codex 运行环境启动失败。"
+                        ) from exc
                     # macOS 桌面/沙箱环境可能允许读取 managed home 的 auth，
                     # 却拒绝 Codex CLI 在其中初始化 sqlite runtime；多个合法
                     # OpenBrep 实例也不能共享同一 runtime 锁。两种情况都把
@@ -929,7 +1072,29 @@ class CodexProvider:
         （例如 cc-switch 写入的 base_url + bearer）。
         """
         cli_available = self.cli_available
-        data = read_local_codex_config(self.codex_home)
+        if self._selected_cc_switch is not None:
+            provider_id, model, _fingerprint = self._selected_cc_switch
+            return {
+                "state": "ready" if cli_available else "no_cli",
+                "connected": cli_available,
+                "codex_available": cli_available,
+                "codex_ready": cli_available,
+                "account": None,
+                **self._entry_metadata(),
+                "auth_present": True,
+                "models_source": "cc_switch",
+                "model": model,
+                "provider": provider_id,
+                **(
+                    {}
+                    if cli_available
+                    else {
+                        "code": "codex_cli_unavailable",
+                        "error": "未检测到 Codex CLI，请先安装 Codex CLI 后重试。",
+                    }
+                ),
+            }
+        data = read_local_codex_config(self._active_codex_home())
         verdict = local_entry_verdict(data, cli_available=cli_available)
         status: dict[str, Any] = {
             "state": verdict["state"],
@@ -1392,7 +1557,7 @@ class CodexProvider:
         app-server；``managed`` 入口行为不变（账户 model/list）。
         """
         if self._entry == ENTRY_LOCAL:
-            return self._local_models()
+            return self.model_catalog()["models"]
         now = time.monotonic()
         with self._lock:
             if (
@@ -1465,9 +1630,9 @@ class CodexProvider:
                 self._models_gen = gen
         return models
 
-    def _local_models(self) -> list[dict[str, Any]]:
+    def _local_current_models(self) -> list[dict[str, Any]]:
         """本机配置入口的模型目录：用户配置里声明什么就提供什么，绝不编造。"""
-        data = read_local_codex_config(self.codex_home)
+        data = read_local_codex_config(self._active_codex_home())
         models: list[dict[str, Any]] = []
         for raw in data.get("models") or []:
             if not isinstance(raw, dict):
@@ -1500,6 +1665,202 @@ class CodexProvider:
             )
         return models
 
+    @staticmethod
+    def _cc_switch_model_entry(provider: Any, model: Any) -> dict[str, Any]:
+        public = model.to_public_dict()
+        return {
+            "id": build_cc_switch_model_ref(provider.id, model.model),
+            "label": model.label,
+            "model": model.model,
+            "display_name": model.label if model.label != model.model else "",
+            "hidden": False,
+            "specialty": None,
+            "supported_reasoning_efforts": public["supported_reasoning_efforts"],
+            "default_reasoning_effort": public["default_reasoning_effort"],
+            "provider_id": provider.id,
+            "provider_label": provider.name,
+            "source": "cc_switch",
+            "catalog_source": provider.catalog_source,
+            "catalog_complete": provider.catalog_complete,
+        }
+
+    def model_catalog(self) -> dict[str, Any]:
+        """Return models plus secret-free cc-switch provider metadata."""
+        if self._entry != ENTRY_LOCAL:
+            return {
+                "models": self.models(),
+                "providers": [],
+                "cc_switch_detected": False,
+                "diagnostics": [],
+            }
+        models = self._local_current_models()
+        try:
+            registry = self._cc_switch_registry_factory()
+            catalog = registry.catalog()
+        except CcSwitchError as exc:
+            return {
+                "models": models,
+                "providers": [],
+                "cc_switch_detected": False,
+                "diagnostics": [error_response(exc)],
+            }
+        providers: list[dict[str, Any]] = []
+        for provider in catalog.providers:
+            provider_models = [
+                self._cc_switch_model_entry(provider, model)
+                for model in provider.models
+            ]
+            try:
+                runtime = registry.runtime_config(provider.id)
+            except CcSwitchError:
+                runtime = None
+            cached = self._cc_switch_runtime_models.get(provider.id)
+            if runtime is not None and cached is not None and cached[0] == runtime.fingerprint:
+                provider_models = [dict(item) for item in cached[1]]
+            models.extend(provider_models)
+            providers.append(
+                {
+                    "id": provider.id,
+                    "name": provider.name,
+                    "is_current": provider.is_current,
+                    "catalog_source": (
+                        "runtime"
+                        if runtime is not None
+                        and cached is not None
+                        and cached[0] == runtime.fingerprint
+                        else provider.catalog_source
+                    ),
+                    "catalog_complete": (
+                        True
+                        if runtime is not None
+                        and cached is not None
+                        and cached[0] == runtime.fingerprint
+                        else provider.catalog_complete
+                    ),
+                    "runnable": provider.runnable,
+                }
+            )
+        return {
+            "models": models,
+            "providers": providers,
+            "cc_switch_detected": catalog.detected,
+            "diagnostics": [item.to_public_dict() for item in catalog.diagnostics],
+        }
+
+    def refresh_cc_switch_models(self, provider_id: str) -> dict[str, Any]:
+        """Refresh one provider through an isolated app-server model/list call."""
+        if self._entry != ENTRY_LOCAL:
+            raise CcSwitchProviderUnusableError(
+                "cc-switch 模型刷新只可用于本机 Codex 配置入口。"
+            )
+        if not self.cli_available:
+            raise CodexCliUnavailableError(
+                "未检测到 Codex CLI，请先安装 Codex CLI 后重试。"
+            )
+        with self._op_lock:
+            registry = self._cc_switch_registry_factory()
+            catalog = registry.catalog()
+            provider_info = next(
+                (provider for provider in catalog.providers if provider.id == provider_id),
+                None,
+            )
+            if provider_info is None:
+                raise CcSwitchProviderMissingError(
+                    "cc-switch 供应商已不存在，请重新选择。"
+                )
+            if not provider_info.runnable:
+                raise CcSwitchProviderUnusableError(
+                    "cc-switch 供应商配置不可用。"
+                )
+            runtime = registry.runtime_config(provider_id)
+            runtime_home = materialize_runtime_home(
+                runtime,
+                parent=self._runtime_home_parent,
+            )
+            client: Any | None = None
+            try:
+                if self._client_factory is not None:
+                    client = self._client_factory()
+                else:
+                    client = CodexAppServerClient(
+                        codex_binary=(
+                            resolve_codex_binary(self.codex_binary) or self.codex_binary
+                        ),
+                        codex_home=runtime_home,
+                        entry=self._entry,
+                        create_home=True,
+                    )
+                client.start()
+                self._check_version(client)
+                raw = client.model_list()
+                refreshed: list[dict[str, Any]] = []
+                seen: set[str] = set()
+                for item in raw.get("data") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    model_id = str(item.get("id") or item.get("model") or "").strip()
+                    if not model_id or model_id in seen:
+                        continue
+                    seen.add(model_id)
+                    efforts: list[dict[str, str]] = []
+                    for option in item.get("supportedReasoningEfforts") or []:
+                        if not isinstance(option, dict):
+                            continue
+                        effort = str(option.get("reasoningEffort") or "").strip()
+                        if not _EFFORT_RE.match(effort):
+                            continue
+                        efforts.append(
+                            {
+                                "effort": effort,
+                                "description": str(option.get("description") or "")[
+                                    :_MAX_EFFORT_DESC_LEN
+                                ],
+                            }
+                        )
+                    default_effort = str(item.get("defaultReasoningEffort") or "").strip()
+                    if default_effort not in {entry["effort"] for entry in efforts}:
+                        default_effort = ""
+                    label = str(item.get("displayName") or model_id)
+                    refreshed.append(
+                        {
+                            "id": build_cc_switch_model_ref(provider_id, model_id),
+                            "label": label,
+                            "model": model_id,
+                            "display_name": label if label != model_id else "",
+                            "hidden": bool(item.get("hidden")),
+                            "specialty": item.get("modelSpecialty"),
+                            "supported_reasoning_efforts": efforts,
+                            "default_reasoning_effort": default_effort,
+                            "provider_id": provider_id,
+                            "provider_label": provider_info.name,
+                            "source": "cc_switch",
+                            "catalog_source": "runtime",
+                            "catalog_complete": True,
+                        }
+                    )
+                if not refreshed:
+                    raise CcSwitchCatalogUnavailableError(
+                        "cc-switch 模型目录暂不可用。"
+                    )
+                self._cc_switch_runtime_models[provider_id] = (
+                    runtime.fingerprint,
+                    refreshed,
+                )
+            except CcSwitchError:
+                raise
+            except Exception as exc:
+                raise CcSwitchCatalogUnavailableError(
+                    "cc-switch 模型目录暂不可用。"
+                ) from exc
+            finally:
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                remove_runtime_home(runtime_home)
+        return self.model_catalog()
+
     # ── D3：CHAT / EXPLAIN 安全调用 ─────────────────────────
 
     def _supported_efforts(self, model: str) -> list[str]:
@@ -1507,6 +1868,19 @@ class CodexProvider:
 
         目录漂移/解析失败一律返回空列表（调用方 fail closed）。
         """
+        if str(model or "").startswith(f"{CODEX_PROVIDER_NAME}/ccswitch/"):
+            try:
+                parsed = parse_codex_model_ref(model)
+                catalog = self._cc_switch_registry_factory().catalog()
+            except Exception:  # noqa: BLE001
+                return []
+            for provider in catalog.providers:
+                if provider.id != parsed.provider_id:
+                    continue
+                for entry in provider.models:
+                    if entry.model == parsed.model:
+                        return list(entry.efforts)
+            return []
         try:
             catalog = self.models()
         except Exception:  # noqa: BLE001 —— 目录不可读 = 无法证明 effort 合法
@@ -1577,6 +1951,8 @@ class CodexProvider:
         本方法负责：fail closed 门禁（CLI / 登录 / 额度 / 崩溃）+ 临时 cwd
         生命周期（用完即删，绝不落在项目/工作区）。
         """
+        if str(model or "").startswith(f"{CODEX_PROVIDER_NAME}/"):
+            self.select_model(model)
         if not self.cli_available:
             raise CodexCliUnavailableError(
                 f"未检测到 Codex CLI（{self.codex_binary}）。请先安装 Codex CLI 后重试。"
@@ -1635,6 +2011,7 @@ class CodexProvider:
             self._closed = True
             client, self._client = self._client, None
             runtime_home, self._runtime_codex_home = self._runtime_codex_home, None
+            self._selected_cc_switch = None
             self._pending_login_id = None
             self._login_pending = False
             self._login_start_inflight = None
@@ -1650,5 +2027,4 @@ class CodexProvider:
                     "codex app-server 关闭失败（category=%s）",
                     category or exc.__class__.__name__,
                 )
-        if runtime_home is not None:
-            shutil.rmtree(runtime_home, ignore_errors=True)
+        remove_runtime_home(runtime_home)

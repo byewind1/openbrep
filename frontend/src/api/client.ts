@@ -744,6 +744,18 @@ export async function fetchCodexModels(): Promise<CodexModelsResult> {
   )
 }
 
+export async function refreshCodexModels(providerId: string): Promise<CodexModelsResult> {
+  return requestJson<CodexModelsResult>(
+    '/api/settings/llm/codex/models/refresh',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider_id: providerId }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
 // ── Codex BYOA（D2）：取消 / 设备码 / 额度 / 重启 ───────────────────────────
 
 export async function codexLoginCancel(): Promise<CodexLoginCancelResult> {

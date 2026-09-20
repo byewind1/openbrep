@@ -27,11 +27,14 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-from openbrep.compiler import CompileResult
 from openbrep.codex.app_server import CodexAppServerError
+from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
-from openbrep.runtime.modify_codex_bridge import CodexModifyTurnDriver
+from openbrep.runtime.modify_codex_bridge import (
+    CodexModifyTurnDriver,
+    _modify_ready_error,
+)
 from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest
 from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
 from openbrep.source_fingerprint import compute_source_fingerprint
@@ -48,6 +51,32 @@ def _sem_blocking() -> SemanticVerificationResult:
         passed=False,
         issues=[SemanticIssue(check_type="mesh_empty", detail="几何为空", blocking=True)],
     )
+
+
+def test_modify_readiness_binds_model_before_status_check() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class _Provider:
+        cli_available = True
+
+        def select_model(self, model: str):
+            calls.append(("select", model))
+
+        def status(self, *, refresh: bool):
+            calls.append(("status", str(refresh)))
+            return {"state": "ready", "connected": True, "codex_ready": True}
+
+        def validate_reasoning_effort(self, model: str, effort: str):
+            calls.append(("effort", f"{model}:{effort}"))
+
+    model = "openai-codex/ccswitch/provider-a/same-model"
+
+    assert _modify_ready_error(_Provider(), model, "high") is None
+    assert calls == [
+        ("select", model),
+        ("status", "True"),
+        ("effort", f"{model}:high"),
+    ]
 
 
 class _FailingCompiler:
@@ -199,6 +228,9 @@ def test_modify_wire_params_strip_codex_namespace_only():
     )
     assert driver._thread_start_params()["model"] == "gpt-5.6-luna"
     assert driver._turn_start_params("th-1", "hi")["model"] == "gpt-5.6-luna"
+    driver._model = "openai-codex/ccswitch/deepseek/team%2Fmodel%20v4"
+    assert driver._thread_start_params()["model"] == "team/model v4"
+    assert driver._turn_start_params("th-1", "hi")["model"] == "team/model v4"
     driver._model = "other-provider/model"
     assert driver._thread_start_params()["model"] == "other-provider/model"
 

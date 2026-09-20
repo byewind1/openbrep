@@ -8,6 +8,7 @@ import {
   codexRestart,
   fetchCodexModels,
   fetchCodexStatus,
+  refreshCodexModels,
   saveCodexEntry,
 } from '../../api/client'
 import type {
@@ -15,6 +16,8 @@ import type {
   CodexEntry,
   CodexEntryInfo,
   CodexModelInfo,
+  CodexModelsResult,
+  CodexProviderInfo,
   CodexStatus,
   LlmConnectionTestResult,
   LlmSettings,
@@ -58,6 +61,8 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   // ── Codex BYOA（D1+D2）：ChatGPT 订阅连接状态 ──
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null)
   const [codexModels, setCodexModels] = useState<CodexModelInfo[]>([])
+  const [codexProviders, setCodexProviders] = useState<CodexProviderInfo[]>([])
+  const [refreshingProvider, setRefreshingProvider] = useState<string | null>(null)
   const [codexBusy, setCodexBusy] = useState(false)
   const [loginStarted, setLoginStarted] = useState(false)
   const [deviceCode, setDeviceCode] = useState<{ verificationUrl: string; userCode: string } | null>(null)
@@ -79,6 +84,11 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [entryInfos, setEntryInfos] = useState<CodexEntryInfo[]>([])
   const [localHint, setLocalHint] = useState<{ detected: boolean; state: string; models: number } | null>(null)
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  function applyCodexCatalog(result: CodexModelsResult) {
+    setCodexModels(result.ok ? (result.models ?? []) : [])
+    setCodexProviders(result.ok ? (result.providers ?? []) : [])
+  }
 
   const groups = llmSettings.model_groups
   const customModels = groups?.custom ?? []
@@ -152,7 +162,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       if (status.connected) {
         const models = await fetchCodexModels()
         if (!cancelled) {
-          setCodexModels(models.ok ? (models.models ?? []) : [])
+          applyCodexCatalog(models)
           if (!models.ok) setCodexError(models.error ?? null)
         }
       }
@@ -178,7 +188,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
           setLoginStarted(false)
           if (status.connected) {
             const models = await fetchCodexModels()
-            setCodexModels(models.ok ? (models.models ?? []) : [])
+            applyCodexCatalog(models)
             if (!models.ok) setCodexError(models.error ?? null)
           }
         }
@@ -279,7 +289,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         setCodexStatus(status)
         if (status.connected) {
           const models = await fetchCodexModels()
-          setCodexModels(models.ok ? (models.models ?? []) : [])
+          applyCodexCatalog(models)
           if (!models.ok) setCodexError(models.error ?? null)
         }
       } else {
@@ -321,6 +331,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         setDeviceCode(null)
         setDeviceCodeCopied(false)
         setCodexModels([])
+        setCodexProviders([])
         setPendingCodexModel(null)
         setCodexStatus({ ...emptyCodexStatus(), state: 'signed_out' })
       } else {
@@ -347,6 +358,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       setPendingCodexModel(null)
       setPendingEffort('')
       setCodexModels([])
+      setCodexProviders([])
       setEntryFeedback({ ok: true, text: t('settings.ai.codex.entrySaved') })
       // 入口换了 → 账户/状态/模型目录全部重新解析（本机入口不驱动 app-server）
       const status = await fetchCodexStatus()
@@ -354,7 +366,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       setCodexError(status.ok ? null : (status.error ?? null))
       if (status.connected) {
         const models = await fetchCodexModels()
-        setCodexModels(models.ok ? (models.models ?? []) : [])
+        applyCodexCatalog(models)
       }
       return true
     } catch (error) {
@@ -365,6 +377,26 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       return false
     } finally {
       setEntrySaving(false)
+    }
+  }
+
+  async function handleCodexCatalogRefresh(providerId: string) {
+    if (refreshingProvider) return
+    setRefreshingProvider(providerId)
+    setCodexError(null)
+    try {
+      const result = await refreshCodexModels(providerId)
+      if (!result.ok) {
+        setCodexError(result.error ?? t('settings.ai.codex.catalogRefreshFailed'))
+        return
+      }
+      applyCodexCatalog(result)
+    } catch (error) {
+      setCodexError(
+        error instanceof Error ? error.message : t('settings.ai.codex.catalogRefreshFailed'),
+      )
+    } finally {
+      setRefreshingProvider(null)
     }
   }
 
@@ -759,6 +791,8 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         onExpandedChange={setCodexExpanded}
         status={codexStatus}
         models={codexModels}
+        providers={codexProviders}
+        refreshingProvider={refreshingProvider}
         entry={codexEntry}
         entryDraft={entryDraft}
         entryInfos={entryInfos}
@@ -788,6 +822,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         onCopyDeviceCode={() => void copyDeviceCode()}
         onLogout={() => void handleCodexLogout()}
         onSelect={requestCodexModelSwitch}
+        onRefreshProvider={(providerId) => void handleCodexCatalogRefresh(providerId)}
         onConfirm={() => void confirmCodexModelSwitch()}
         onCancel={() => {
           setPendingCodexModel(null)
@@ -853,6 +888,22 @@ function testErrorText(result: LlmConnectionTestResult | null) {
   return result.detail || result.error || 'Connection test failed.'
 }
 
+function groupCodexModels(models: CodexModelInfo[]) {
+  const groups = new Map<string, { label: string; models: CodexModelInfo[] }>()
+  for (const model of models) {
+    const key = model.source === 'cc_switch' && model.provider_id
+      ? model.provider_id
+      : 'openai-codex'
+    const label = model.source === 'cc_switch'
+      ? (model.provider_label || model.provider_id || key)
+      : 'ChatGPT / Codex'
+    const group = groups.get(key) ?? { label, models: [] }
+    group.models.push(model)
+    groups.set(key, group)
+  }
+  return [...groups.entries()].map(([id, group]) => ({ id, ...group }))
+}
+
 function CodexModelDrawer({
   models,
   connected,
@@ -888,6 +939,7 @@ function CodexModelDrawer({
   onPendingEffortChange: (value: string) => void
 }) {
   const t = useT()
+  const groups = groupCodexModels(models)
   return (
     <div className="codex-model-drawer-backdrop" data-testid="codex-model-drawer">
       <aside className="codex-model-drawer" role="dialog" aria-modal="true" aria-label={t('settings.ai.connection.drawerTitle')}>
@@ -908,7 +960,9 @@ function CodexModelDrawer({
           <p className="settings-test-result">{t('settings.ai.codex.noModels')}</p>
         ) : (<>
           <div className="codex-model-drawer-list" role="listbox">
-            {models.map((model) => (
+            {groups.map((group) => <div className="codex-model-provider-group" key={group.id}>
+              <div className="settings-row-header">{group.label}</div>
+              {group.models.map((model) => (
               <button
                 key={model.id}
                 type="button"
@@ -922,7 +976,8 @@ function CodexModelDrawer({
                 <small>{model.model}</small>
                 {model.id === current ? <em>{t('settings.ai.connection.current')}</em> : null}
               </button>
-            ))}
+              ))}
+            </div>)}
           </div>
           {pending ? (
             <div className="codex-drawer-confirm" data-testid="codex-drawer-confirm">
@@ -964,6 +1019,8 @@ function CodexSection({
   onExpandedChange,
   status,
   models,
+  providers,
+  refreshingProvider,
   entry,
   entryDraft,
   entryInfos,
@@ -998,6 +1055,7 @@ function CodexSection({
   onCopyDeviceCode,
   onLogout,
   onSelect,
+  onRefreshProvider,
   onEntryDraftChange,
   onSaveEntry,
   onSwitchToManaged,
@@ -1013,6 +1071,8 @@ function CodexSection({
   onExpandedChange: (expanded: boolean) => void
   status: CodexStatus | null
   models: CodexModelInfo[]
+  providers: CodexProviderInfo[]
+  refreshingProvider: string | null
   // 双入口（2026-09-17）：Codex 链路入口（draft + 显式保存）
   entry: CodexEntry
   entryDraft: CodexEntry
@@ -1049,6 +1109,7 @@ function CodexSection({
   onCopyDeviceCode: () => void
   onLogout: () => void
   onSelect: (model: string) => void
+  onRefreshProvider: (providerId: string) => void
   onEntryDraftChange: (value: CodexEntry) => void
   onSaveEntry: () => void
   onSwitchToManaged: () => void
@@ -1061,6 +1122,8 @@ function CodexSection({
   onSaveRoutingMode: () => void
 }) {
   const t = useT()
+  const modelGroups = groupCodexModels(models)
+  const providerById = new Map(providers.map((provider) => [provider.id, provider]))
   const state = status?.state ?? 'signed_out'
   const connected = status?.connected === true
   const rateLimits = status?.rate_limits
@@ -1314,7 +1377,31 @@ function CodexSection({
             </p>
           ) : (
             <div className="settings-model-list">
-              {models.map((m) => (
+              {modelGroups.map((group) => {
+                const provider = providerById.get(group.id)
+                return <div className="settings-codex-provider-group" key={group.id}>
+                  <div className="settings-visibility-group-header">
+                    <strong>{group.label}</strong>
+                    {provider?.is_current ? (
+                      <span className="settings-hint">{t('settings.ai.codex.ccSwitchCurrent')}</span>
+                    ) : null}
+                    {provider && !provider.catalog_complete ? (
+                      <>
+                        <span className="settings-hint">{t('settings.ai.codex.catalogIncomplete')}</span>
+                        <button
+                          type="button"
+                          className="workspace-icon-button"
+                          aria-label={t('settings.ai.codex.catalogRefreshLabel', { provider: provider.name })}
+                          title={t('settings.ai.codex.catalogRefreshLabel', { provider: provider.name })}
+                          disabled={refreshingProvider !== null || !provider.runnable}
+                          onClick={() => onRefreshProvider(provider.id)}
+                        >
+                          {refreshingProvider === provider.id ? '…' : '↻'}
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                  {group.models.map((m) => (
                 <button
                   key={m.id}
                   type="button"
@@ -1325,7 +1412,9 @@ function CodexSection({
                 >
                   {m.label}
                 </button>
-              ))}
+                  ))}
+                </div>
+              })}
             </div>
           )}
           {current.startsWith('openai-codex/') && !pending ? (

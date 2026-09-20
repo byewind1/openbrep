@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
 from openbrep.codex.app_server import CodexAppServerError
+from openbrep.codex.model_ref import wire_model_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,14 +59,6 @@ _POLL_INTERVAL = 0.25
 # turn/interrupt 的等待窗口（秒）：best-effort 清理，不阻塞过久。
 _CLEANUP_WAIT = 3.0
 
-
-def wire_model_name(model: str) -> str:
-    """Return the model identifier accepted by the Codex app-server wire API.
-
-    ``openai-codex/`` is an OpenBrep configuration/provider namespace, not
-    part of the model id accepted by the ChatGPT-account app-server.
-    """
-    return model.removeprefix("openai-codex/")
 
 # 额度类错误信号（CodexErrorInfo / 错误文本关键字；命中后映射稳定 quota 文案，
 # 绝不把上游错误原文拼进返回）。

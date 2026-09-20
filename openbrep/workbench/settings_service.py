@@ -414,6 +414,8 @@ class WorkbenchSettingsService:
             return self.codex_rate_limits()
         if method == "GET" and route == "/api/settings/llm/codex/models":
             return self.codex_models()
+        if method == "POST" and route == "/api/settings/llm/codex/models/refresh":
+            return self.codex_models_refresh(body or {})
         if method == "GET" and route == "/api/settings/llm/codex/entry":
             return self.codex_entry()
         if method == "POST" and route == "/api/settings/llm/codex/entry":
@@ -968,10 +970,35 @@ class WorkbenchSettingsService:
         """GET /api/settings/llm/codex/models：model/list 动态目录（不硬编码）。"""
         try:
             provider = self._codex_provider()
+            catalog_reader = getattr(provider, "model_catalog", None)
+            if callable(catalog_reader):
+                return {"ok": True, **catalog_reader()}
             models = provider.models()
         except Exception as exc:
             return self._codex_error(exc)
         return {"ok": True, "models": models}
+
+    def codex_models_refresh(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Refresh one cc-switch provider without accepting runtime material."""
+        if set(body) != {"provider_id"}:
+            return {
+                "ok": False,
+                "code": "invalid_request",
+                "error": "请求参数无效。",
+            }
+        provider_id = body.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            return {
+                "ok": False,
+                "code": "invalid_request",
+                "error": "请求参数无效。",
+            }
+        try:
+            provider = self._codex_provider()
+            payload = provider.refresh_cc_switch_models(provider_id.strip())
+        except Exception as exc:
+            return self._codex_error(exc)
+        return {"ok": True, **payload}
 
     def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         model = str(body.get("model") or self.session.llm_model).strip()

@@ -47,6 +47,7 @@ LOCK_FREE_POST_ROUTES = frozenset({
     # D2：restart 只重建 codex app-server 子进程（不触碰 session/project），
     # JSON-RPC 帧由 transport 内部锁串行化，无需 session 级锁。
     "/api/settings/llm/codex/restart",
+    "/api/settings/llm/codex/models/refresh",
 })
 
 
