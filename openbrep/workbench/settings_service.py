@@ -444,6 +444,7 @@ class WorkbenchSettingsService:
                     "models_source",
                     "provider",
                     "login_error",
+                    "code",
                 )
             }
             if codex.get("error"):
@@ -1011,6 +1012,24 @@ class WorkbenchSettingsService:
                 **generate_kwargs,
             )
         except Exception as exc:
+            if is_codex_qualified_model(model):
+                current: BaseException | None = exc
+                stable = error_response(exc)
+                seen: set[int] = set()
+                while current is not None and id(current) not in seen:
+                    seen.add(id(current))
+                    candidate = error_response(current)
+                    if candidate["code"] != "codex_error":
+                        stable = candidate
+                        break
+                    current = current.__cause__ or current.__context__
+                return {
+                    "ok": False,
+                    **stable,
+                    "category": stable["code"],
+                    "model": model,
+                    "duration_ms": int((time.perf_counter() - start) * 1000),
+                }
             return {
                 "ok": False,
                 "error": str(exc) or exc.__class__.__name__,

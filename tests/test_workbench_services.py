@@ -310,6 +310,40 @@ def test_settings_service_codex_probe_uses_selected_model_and_effort_without_sav
     assert not config_path.exists()
 
 
+def test_settings_service_codex_probe_runtime_conflict_is_stable_and_secret_free(tmp_path):
+    from openbrep.codex.app_server import CodexAppServerError
+
+    config = GDLAgentConfig()
+    session = _make_settings_session(config, tmp_path / "config.toml")
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            root = CodexAppServerError(
+                "Authorization: Bearer PROBE-SECRET",
+                category="runtime_conflict",
+            )
+            raise RuntimeError(
+                "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+            ) from root
+
+    service = WorkbenchSettingsService(
+        session,
+        llm_adapter_factory=lambda _config: _FakeAdapter(),
+        codex_provider=object(),
+    )
+
+    response = service.test_llm_settings({"model": "openai-codex/gpt-5.6-sol"})
+
+    assert response["ok"] is False
+    assert response["code"] == "codex_runtime_conflict"
+    assert response["category"] == "codex_runtime_conflict"
+    assert response["error"] == (
+        "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+    )
+    assert "detail" not in response
+    assert "PROBE-SECRET" not in str(response)
+
+
 def test_settings_service_non_codex_probe_does_not_send_codex_kwargs(tmp_path):
     config = GDLAgentConfig()
     config.llm.model = "deepseek-chat"
@@ -1688,6 +1722,31 @@ def test_llm_settings_preserves_stable_codex_error_message(tmp_path):
     codex = service.llm_settings()["codex"]
     assert codex["state"] == "error"
     assert codex["error"] == "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
+
+
+def test_codex_runtime_conflict_survives_status_and_settings_boundaries(tmp_path):
+    from openbrep.codex.app_server import CodexAppServerError
+
+    config = GDLAgentConfig()
+
+    class _ConflictingProvider(_FakeCodexProvider):
+        def status(self, *, refresh=False):
+            raise CodexAppServerError(
+                "lock owner pid=123 Authorization: Bearer STATUS-SECRET",
+                category="runtime_conflict",
+            )
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _ConflictingProvider())
+    expected = "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+
+    status = service.codex_status()
+    settings = service.llm_settings()["codex"]
+
+    assert status["code"] == "codex_runtime_conflict"
+    assert status["error"] == expected
+    assert settings["code"] == "codex_runtime_conflict"
+    assert settings["error"] == expected
+    assert "STATUS-SECRET" not in str({"status": status, "settings": settings})
 
 
 def test_codex_service_responses_never_leak_secrets(tmp_path):
