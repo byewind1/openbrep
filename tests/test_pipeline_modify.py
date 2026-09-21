@@ -1051,8 +1051,32 @@ class TestGenerationResultPlan(unittest.TestCase):
 class TestReleaseDocs(unittest.TestCase):
 
     def test_package_version_is_current_release(self):
+        """`__version__` 必须与桌面发布版本一致。
+
+        版本单一事实源是 `src-tauri/tauri.conf.json`（Tauri 打包与
+        `latest.json` 都用它）。此前这里硬编码版本号，发版时必须手改测试，
+        v0.10.10 就是这么漏掉了 `__version__` 与 README/INSTALL_CN 的同步，
+        所以改为读取该文件。
+        """
+        import json
+
         from openbrep import __version__
-        self.assertEqual(__version__, "0.10.9")
+
+        current = json.loads(
+            Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8")
+        )["version"]
+        self.assertEqual(__version__, current)
+
+    def test_frontend_and_cargo_versions_match_tauri(self):
+        import json
+
+        current = json.loads(
+            Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8")
+        )["version"]
+        package_json = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
+        self.assertEqual(package_json["version"], current)
+        cargo = Path("src-tauri/Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn(f'version = "{current}"', cargo)
 
     def test_pyproject_version_matches_package_version(self):
         from openbrep import __version__

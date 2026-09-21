@@ -245,12 +245,27 @@ jobs:
           if gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" release/* --clobber --repo "$GH_REPO"
           else
-            gh release create "$TAG_NAME" release/* \
-              --repo "$GH_REPO" \
-              --verify-tag \
-              --title "OpenBrep $TAG_NAME" \
-              --generate-notes \
-              --draft
+            # 发布说明以 docs/releases/<tag>.md 为准（仓库约定，见 RELEASE_PROCESS.md）。
+            # --generate-notes 只对 PR 有效，本仓库提交直推 main，产物会只剩一行
+            # "Full Changelog"，所以仅在缺少发布说明文件时才回退，并显式告警。
+            NOTES_FILE="docs/releases/${TAG_NAME}.md"
+            if [ -f "$NOTES_FILE" ]; then
+              echo "using release notes from $NOTES_FILE"
+              gh release create "$TAG_NAME" release/* \
+                --repo "$GH_REPO" \
+                --verify-tag \
+                --title "OpenBrep $TAG_NAME" \
+                --notes-file "$NOTES_FILE" \
+                --draft
+            else
+              echo "::warning title=Missing release notes::${NOTES_FILE} not found; falling back to --generate-notes"
+              gh release create "$TAG_NAME" release/* \
+                --repo "$GH_REPO" \
+                --verify-tag \
+                --title "OpenBrep $TAG_NAME" \
+                --generate-notes \
+                --draft
+            fi
           fi
 
       # latest.json 是 updater 的更新清单：version + 各平台更新包 URL + minisign 签名

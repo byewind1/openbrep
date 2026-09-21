@@ -5,6 +5,62 @@ Format: [Semantic Versioning](https://semver.org), entries newest-first.
 
 ---
 
+## [0.10.10] — 2026-09-21
+
+> 完整发布说明见 `docs/releases/v0.10.10.md`。
+
+### 预览材质
+
+- 新增离线材质文档与预设（`openbrep/materials.py`，项目内 `.openbrep/materials.json`）：
+  木材 / 金属 / 玻璃 / 塑料四套家族预设，带颜色、粗糙度、金属度、透明度、IOR
+- 语义材质预设：按参数名 / 描述 / 用户指令推断材质家族（橡木桌面 → wood，金属桌腿 → metal）
+- 命名 GDL 材质真实生效：`DEFINE MATERIAL` / `MATERIAL "name"` 作用于预览网格，
+  材质 ID 大小写不敏感匹配
+- 没有材质文件时按参数推断兜底，不再退回灰色占位（`chair_ok` 实测 8 个网格全部解析）
+- 材质前/后变化写入 MODIFY 验收报告；未解析材质明确 warn，不伪装通过
+- 预览棚光与色调映射调整（AgX + RoomEnvironment）
+- 新增 `openbrep/runtime/visual_self_check.py`：真实 Three.js 渲染截图自检，
+  引擎不可用时返回 `unverified`（`OPENBREP_VISUAL_CHECK=1/0` 可强制开关）
+
+### Codex 接入
+
+- 双入口（`openbrep/codex/entry.py`）：新增 `local` 本机配置入口，跟随 `CODEX_HOME`
+  或标准 `~/.codex`，只读解析模型 / provider，不管理认证；默认仍为托管登录，
+  既有配置行为不变
+- app-server 互斥锁迁出 Codex home（`~/.openbrep/run/`，`OPENBREP_CODEX_LOCK_DIR` 可覆盖）
+- cc-switch 多供应商路由（`openbrep/codex/cc_switch.py`）：只读注册表适配、
+  模型按供应商分组、目录开关与自动刷新、结构化 `provider/model` 引用
+- `codex` 可执行文件解析回退到用户登录 shell 的 PATH
+
+### 交付可信度（ST02 / ST03 / ST07 / ST08）
+
+- 新增 `openbrep/source_fingerprint.py`：受管源文件集合的确定性 `sha256:` 指纹
+- 新增 `openbrep/runtime/delivery_finalizer.py`：成功修改绑定真实 after-revision，
+  失败不得伪造
+- 新增 `openbrep/workbench/delivery_presentation.py` 与前端 `DeliveryCard`：
+  已验证 / 部分修改 / 快照失败 / 旧记录 / 无 diff 五种状态如实展示
+- 新增 `openbrep/workbench/host_verification_service.py`：宿主验证绑定精确产物指纹
+
+### 参数与技能
+
+- 新增 `openbrep/parameter_mutations.py`：`paramlist.xml` 无损原子结构化修改
+- 新增 `openbrep/parameter_observation.py`：只读参数角色与生效值观测，保守证明
+- 新增 `openbrep/skill_proposals.py` + `workbench/skill_proposal_service.py`：
+  技能提案可审阅、可恢复审批，未审批候选不进入技能检索
+- 新增 `openbrep/contracts/stair.py`：显式绑定的螺旋楼梯工程合同求值
+
+### 其他
+
+- 创建会话隔离与历史批量删除
+- Python 测试 3003 passed；前端 vitest 721 passed + `tsc` 干净
+
+## [0.10.0 – 0.10.9] — 2026-09
+
+各版本发布说明见 `docs/releases/v0.10.*.md`（含独立 Codex 会话目录、
+ChatGPT/Codex 连接修复、Windows sidecar 启动修复、模型可见性与发布元数据校准）。
+
+---
+
 ## [0.9.1] — 2026-09-13
 
 ### 安装包真正独立可用（下载安装即可用）

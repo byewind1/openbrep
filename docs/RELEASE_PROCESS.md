@@ -39,6 +39,14 @@ rewriting `main`.
 
 ## Tagging
 
+Before tagging, write the release notes file `docs/releases/vX.Y.Z.md` and add a
+matching `CHANGELOG.md` entry, then commit them to `main`. The release workflow
+uses that file verbatim as the GitHub Release body (and therefore as the
+`latest.json` `notes` payload the in-app update dialog parses). `--generate-notes`
+is only a fallback for tags with no notes file — it derives "What's Changed"
+from merged PRs, and this repository pushes most work straight to `main`, so
+relying on it produces an essentially empty release body.
+
 After the release PR is merged:
 
 ```bash

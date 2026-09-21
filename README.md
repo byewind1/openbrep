@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.10.9 — 修复 Windows 安装包启动时窗口空白，并继续提供 Apple Silicon、Intel 与 Windows 安装包。
+> 正式发布版本 v0.10.10 — 预览支持材质（语义材质预设 + 命名 GDL 材质渲染），并继续提供 Apple Silicon、Intel 与 Windows 安装包。
 
 ---
 
@@ -45,8 +45,8 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.10.9_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.9_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.10.9_x64_en-US.msi` 或 `OpenBrep_0.10.9_x64-setup.exe`
+- macOS：`OpenBrep_0.10.10_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.10_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.10.10_x64_en-US.msi` 或 `OpenBrep_0.10.10_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
@@ -392,6 +392,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.10.10 | 预览材质落地（语义材质预设、命名 GDL 材质真实渲染、材质变化进入验收报告），Codex 双入口与 cc-switch 多供应商路由，交付绑定真实 after-revision（见 docs/releases/v0.10.10.md） |
 | v0.10.9 | 修复 Windows 安装包启动时窗口空白，并修复 ChatGPT/Codex 连接流程（见 docs/releases/v0.10.9.md） |
 | v0.10.6 | 同步 Python、前端与 Tauri 发布版本元数据 |
 | v0.10.5 | 修复冻结版后端缺失 tiktoken 编码插件导致 `Unknown encoding cl100k_base`（见 docs/releases/v0.10.5.md） |
