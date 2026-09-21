@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import { PreviewViewport } from './PreviewViewport'
@@ -59,6 +59,16 @@ function makePreview(): PreviewPayload {
     wires: [],
   }
 }
+
+test('material preview activates on arrival but preserves an explicit display choice', () => {
+  const { rerender } = render(<PreviewViewport preview={makePreview()} warnings={[]} />)
+  const colored = { ...makePreview(), materials: { wood: { color: '#A87848', roughness: 0.6, metalness: 0, opacity: 1, transmission: 0, ior: 1.5 } } }
+  rerender(<PreviewViewport preview={colored} warnings={[]} />)
+  expect(screen.getByText('材质').className).toContain('active')
+  fireEvent.click(screen.getByText('实体'))
+  rerender(<PreviewViewport preview={{ ...colored }} warnings={[]} />)
+  expect(screen.getByText('实体').className).toContain('active')
+})
 
 describe('PreviewViewport empty state (P4-C)', () => {
   test('shows the empty overlay with guidance when preview is null', () => {

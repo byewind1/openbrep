@@ -46,7 +46,10 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
         if len(points) >= 2:
             wires.append(points)
 
-    return {"meshes": meshes, "wires": wires}
+    payload = {"meshes": meshes, "wires": wires}
+    if data.materials:
+        payload["materials"] = data.materials
+    return payload
 
 
 def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> str:

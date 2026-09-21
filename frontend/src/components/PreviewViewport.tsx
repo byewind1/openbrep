@@ -124,7 +124,8 @@ export function PreviewViewport({
   const [fitNonce, setFitNonce] = useState(0)
   const [showEdges, setShowEdges] = useState(true)
   const [showGrid, setShowGrid] = useState(false)
-  const [displayMode, setDisplayMode] = useState<PreviewDisplayMode>('solid')
+  const [chosenDisplayMode, setDisplayMode] = useState<PreviewDisplayMode | null>(null)
+  const displayMode: PreviewDisplayMode = chosenDisplayMode ?? (Object.keys(preview?.materials ?? {}).length ? 'material' : 'solid')
   const [selection, setSelection] = useState<PreviewSelection | null>(null)
   // 部件隐藏是纯视图态：不进 store、不持久化，预览刷新后重置
   const [hiddenParts, setHiddenParts] = useState<ReadonlySet<number>>(new Set())
@@ -205,7 +206,7 @@ export function PreviewViewport({
     setViewPreset('iso')
     setShowEdges(true)
     setShowGrid(false)
-    setDisplayMode('solid')
+    setDisplayMode(null)
     setHiddenParts(new Set())
     setShowShadows(null)
     setSection(null)

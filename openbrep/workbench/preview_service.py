@@ -118,8 +118,19 @@ def preview_payload(
         macro_guid_map=project.called_macro_guid_map(),
     )
     payload = preview_3d_to_three_payload(result)
-    payload["materials"] = load_materials(project.root)[0]["slots"]
-    payload["warnings"] = result.warnings
+    document, material_warnings = load_materials(project.root)
+    payload["materials"] = {**document["slots"], **result.materials}
+    payload["warnings"] = [*result.warnings, *material_warnings]
+    known = {key.casefold() for key in payload["materials"]}
+    unresolved = sum(not mesh.material_id or mesh.material_id.casefold() not in known for mesh in result.meshes)
+    payload["material_check"] = {
+        "status": "unresolved" if unresolved else ("resolved" if result.meshes else "empty"),
+        "unresolved_meshes": unresolved,
+        "total_meshes": len(result.meshes),
+        "visual_verified": False,
+    }
+    if unresolved and payload["materials"]:
+        payload["warnings"].append(f"{unresolved} 个网格未解析材质，材质效果尚未验证")
     if not result.meshes and not result.wires and not _has_executable_statement(script_3d):
         # P14：空 3D 脚本 / "! Hidden Script."（加密保护构件）原本静默空白，
         # 显式告知原因

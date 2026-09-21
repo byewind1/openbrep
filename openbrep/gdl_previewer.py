@@ -166,6 +166,7 @@ class Preview3DResult:
     wires: list[list[Point3D]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     warnings_structured: list[PreviewWarning] = field(default_factory=list)
+    materials: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -806,10 +807,30 @@ class _PreviewRuntime:
             # MATERIAL and SET MATERIAL affect following 3D geometry.  The
             # preview needs the symbolic parameter name, not its value: an
             # unbound offline project gives every Material parameter index 0.
+            definition = re.match(r'^DEFINE\s+MATERIAL\s+"([^"]+)"\s+(.+)$', line, re.IGNORECASE)
+            if definition and mode in ("setup", "3d"):
+                name, args = definition.groups()
+                values = self._eval_args(_split_args(args), line_no)
+                if values and len(values) == 4 and values[0] == 2 and all(math.isfinite(v) and 0 <= v <= 1 for v in values[1:]):
+                    key = "gdl:" + "/".join((*self._macro_chain, name))
+                    self.result_3d.materials[key] = {
+                        "label": name,
+                        "color": "#" + "".join(f"{int(v * 255 + 0.5):02X}" for v in values[1:]),
+                        "roughness": 0.5, "metalness": 0.0,
+                        "opacity": 1.0, "transmission": 0.0, "ior": 1.5,
+                    }
+                else:
+                    self._warn(line_no, "材质定义无法在本地预览解析；仅支持 DEFINE MATERIAL 类型 2 的 RGB", command="DEFINE MATERIAL", code="MATERIAL_UNRESOLVED")
+                idx += 1
+                continue
             m_material = re.match(r"^(?:SET\s+)?MATERIAL\s+(.+)$", line, re.IGNORECASE)
-            if mode == "3d" and m_material:
+            if mode in ("setup", "3d") and m_material:
                 token = m_material.group(1).strip()
-                if re.fullmatch(r"[A-Za-z_]\w*", token):
+                if token.startswith('"') and token.endswith('"'):
+                    self._current_material_id = "gdl:" + "/".join((*self._macro_chain, token[1:-1]))
+                    if self._current_material_id not in self.result_3d.materials:
+                        self._warn(line_no, f"命名材质 {token} 未解析，当前颜色不能用于材质验收", command="MATERIAL", code="MATERIAL_UNRESOLVED")
+                elif re.fullmatch(r"[A-Za-z_]\w*", token):
                     # A project can be previewed with script overrides before
                     # its parameter list is refreshed, so retain an unknown
                     # bare token too.  Known aliases resolve to their source
@@ -1289,6 +1310,7 @@ class _PreviewRuntime:
 
         # 结果合并：3d → meshes/wires；2d → 各裸 tuple 列表
         if mode == "3d":
+            self.result_3d.materials.update(child.result_3d.materials)
             for mesh in child.result_3d.meshes:
                 if mesh.source_ref is not None and mesh.source_ref.macro is None:
                     # 仅设置宏内直接产生的 mesh；嵌套 CALL 的 mesh 已带完整链
