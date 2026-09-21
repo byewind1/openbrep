@@ -3,5 +3,5 @@ import type { PreviewMaterial, PreviewMesh, PreviewPayload } from '../api/types'
 export function materialForMesh(preview: PreviewPayload, mesh: PreviewMesh): PreviewMaterial | null {
   const id = mesh.material_id
   if (!id || !preview.materials) return null
-  return preview.materials[id] ?? null
+  return preview.materials[id] ?? preview.materials[id.toLowerCase()] ?? preview.materials[id.toUpperCase()] ?? null
 }

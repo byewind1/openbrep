@@ -20,4 +20,12 @@ describe('materialForMesh', () => {
     expect(materialForMesh({ meshes: [mesh], wires: [] }, mesh)).toBeNull()
     expect(materialForMesh({ meshes: [mesh], wires: [], materials: {} }, mesh)).toBeNull()
   })
+
+  test('matches material ids case-insensitively across GDL and JSON', () => {
+    const preview: PreviewPayload = {
+      meshes: [mesh], wires: [],
+      materials: { mat_top: { color: '#A87848', roughness: 0.62, metalness: 0, opacity: 1, transmission: 0, ior: 1.5 } },
+    }
+    expect(materialForMesh(preview, { ...mesh, material_id: 'MAT_TOP' })?.color).toBe('#A87848')
+  })
 })
