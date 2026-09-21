@@ -4,7 +4,7 @@ import type { ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveCamera as PerspectiveCameraType } from 'three'
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerator, ShaderMaterial, Vector3 } from 'three'
+import { AgXToneMapping, BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerator, SRGBColorSpace, ShaderMaterial, Vector3 } from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { HostVerificationStatus, PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
@@ -392,6 +392,11 @@ export function PreviewViewport({
           onCreated={({ gl }) => {
             // P1c：材质 clippingPlanes（局部剖切）依赖渲染器开关
             gl.localClippingEnabled = true
+            // 与 GLB 查看器一致：AgX 压高光、保留金属层次，避免木材发灰和
+            // 黑色金属直接糊成一团。颜色输入/输出统一走 sRGB。
+            gl.toneMapping = AgXToneMapping
+            gl.toneMappingExposure = 0.9
+            gl.outputColorSpace = SRGBColorSpace
           }}
           onPointerMissed={() => {
             // TransformControls gizmo 的点击不算空白：不清选中
@@ -407,9 +412,9 @@ export function PreviewViewport({
           <PreviewCameraRig bounds={bounds} mode={cameraMode} preset={viewPreset} fitNonce={fitNonce} />
           <color attach="background" args={['#0a0e14']} />
           <StudioEnvironment />
-          <ambientLight intensity={0.25} />
+          <ambientLight intensity={0.08} />
           <directionalLight position={[3, -4, 5]} intensity={1.1} />
-          <directionalLight position={[-4, 2, 3]} intensity={0.5} color="#7cc7f5" />
+          <directionalLight position={[-4, 2, 3]} intensity={0.5} color="#9fb4cc" />
           {/* 接地软阴影（P1b）：落在 bounds 底面；frames 默认每帧重捕，
               隐藏舞台（display:none）恢复后自愈。wire/xray 默认关（消隐线框下
               阴影是噪声），用户可手动开。 */}
