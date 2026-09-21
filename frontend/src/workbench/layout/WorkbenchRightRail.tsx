@@ -48,6 +48,7 @@ interface WorkbenchRightRailProps {
   onChat: (message: string, images?: AssistantImageAttachment[]) => void
   onStop: () => void
   onClearAssistantHistory: () => void
+  onDeleteAssistantMessages?: (indices: number[]) => void | Promise<void>
   onAdoptAssistantCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => void
@@ -103,6 +104,7 @@ export function WorkbenchRightRail({
   onChat,
   onStop,
   onClearAssistantHistory,
+  onDeleteAssistantMessages,
   onAdoptAssistantCode,
   onOpenScript,
   onSaveRevision,
@@ -210,6 +212,7 @@ export function WorkbenchRightRail({
             onChat={onChat}
             onStop={onStop}
             onClearHistory={onClearAssistantHistory}
+            onDeleteMessages={onDeleteAssistantMessages}
             onAdoptCode={onAdoptAssistantCode}
             onOpenScript={onOpenScript}
             onSaveRevision={onSaveRevision}

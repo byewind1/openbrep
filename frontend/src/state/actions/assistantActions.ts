@@ -473,6 +473,16 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       set({ assistantMessages: [] })
     },
 
+    resetAssistantConversation() {
+      set({ assistantMessages: [], pendingExtraction: null, pendingPlan: null })
+    },
+
+    async deleteAssistantMessages(indices: number[]) {
+      const remove = new Set(indices)
+      set((state) => ({ assistantMessages: state.assistantMessages.filter((_, index) => !remove.has(index)) }))
+      await persistAssistantHistory()
+    },
+
     /** P6a：从另一个项目追加合并聊天记录到当前项目（纯文件操作，无 LLM）。 */
     async importAssistantHistory(sourcePath: string) {
       const result = await api.importAssistantHistory(sourcePath)

@@ -19,6 +19,7 @@ interface AssistantPanelProps {
   onChat: (message: string, images?: AssistantImageAttachment[]) => void
   onStop: () => void
   onClearHistory: () => void
+  onDeleteMessages?: (indices: number[]) => void | Promise<void>
   onAdoptCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => void
@@ -78,6 +79,7 @@ export function AssistantPanel({
   onChat,
   onStop,
   onClearHistory,
+  onDeleteMessages,
   onAdoptCode,
   onOpenScript,
   onSaveRevision,
@@ -110,7 +112,22 @@ export function AssistantPanel({
   const [attachments, setAttachments] = useState<AttachedImage[]>([])
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [selectedMessages, setSelectedMessages] = useState<Set<number>>(new Set())
   const t = useT()
+  const { confirm, dialogNode } = useThemedDialog()
+
+  async function deleteSelectedMessages() {
+    if (!selectedMessages.size || !onDeleteMessages) return
+    const ok = await confirm({
+      title: '删除选中的聊天记录',
+      message: `确定删除选中的 ${selectedMessages.size} 条聊天记录吗？删除后它们不会再进入后续对话。`,
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (!ok) return
+    await onDeleteMessages(Array.from(selectedMessages).sort((a, b) => a - b))
+    setSelectedMessages(new Set())
+  }
 
   // P6b：store 的整理指令草稿到达 → 填入输入框、关抽屉、聚焦，绝不自动发送
   useEffect(() => {
@@ -378,6 +395,11 @@ export function AssistantPanel({
           <button type="button" disabled={busy || messages.length === 0} onClick={onClearHistory}>
             Clear
           </button>
+          {onDeleteMessages && selectedMessages.size > 0 ? (
+            <button type="button" disabled={busy} onClick={() => void deleteSelectedMessages()}>
+              Delete selected ({selectedMessages.size})
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="assistant-thread">
@@ -387,6 +409,21 @@ export function AssistantPanel({
               className={`assistant-message ${message.role}${message.interrupted ? ' is-interrupted' : ''}`}
               key={`${message.role}-${index}`}
             >
+              {onDeleteMessages ? (
+                <input
+                  type="checkbox"
+                  aria-label={`选择第 ${index + 1} 条聊天记录`}
+                  checked={selectedMessages.has(index)}
+                  onChange={(event) => {
+                    setSelectedMessages((current) => {
+                      const next = new Set(current)
+                      if (event.target.checked) next.add(index)
+                      else next.delete(index)
+                      return next
+                    })
+                  }}
+                />
+              ) : null}
               <span>
                 {message.role === 'user' ? '你' : 'OpenBrep'}
                 {message.interrupted ? (
@@ -528,6 +565,7 @@ export function AssistantPanel({
           <SkillProposalCard proposal={pendingSkillProposal} busy={busy} onConfirm={onConfirmSkillProposal} />
         ) : null}
       </div>
+      {dialogNode}
       <form className="assistant-input" aria-label="Assistant input" onSubmit={submitMessage} onDragOver={handleDragOver} onDrop={handleDrop}>
         <div className="assistant-input-wrap">
           {pickerMode === 'commands' && visibleCommands.length > 0 && (

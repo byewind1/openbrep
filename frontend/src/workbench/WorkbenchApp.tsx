@@ -159,6 +159,8 @@ export function WorkbenchApp() {
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
+  const deleteAssistantMessages = useWorkbenchStore((state) => state.deleteAssistantMessages)
+  const resetAssistantConversation = useWorkbenchStore((state) => state.resetAssistantConversation)
   const loadMemoryLessons = useWorkbenchStore((state) => state.loadMemoryLessons)
   const summarizeProjectMemory = useWorkbenchStore((state) => state.summarizeProjectMemory)
   const updateMemoryLesson = useWorkbenchStore((state) => state.updateMemoryLesson)
@@ -186,6 +188,8 @@ export function WorkbenchApp() {
         confirmLabel: t('chat.confirmCreateOk'),
       })
       if (!ok) return
+      // 新建物件使用全新的聊天上下文，避免旧项目记录进入 CREATE prompt。
+      resetAssistantConversation()
     }
     await sendChat(message, images)
   }
@@ -493,6 +497,7 @@ export function WorkbenchApp() {
             onChat={(message, images) => void handleChat(message, images)}
             onStop={stopChat}
             onClearAssistantHistory={() => void clearAssistantHistory()}
+            onDeleteAssistantMessages={(indices) => deleteAssistantMessages(indices)}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
             onOpenScript={openScriptInEditor}
             onSaveRevision={(message) => void saveRevision(message)}

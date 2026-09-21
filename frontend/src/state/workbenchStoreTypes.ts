@@ -398,6 +398,8 @@ export interface WorkbenchState {
   setActiveRailPanel: (panel: '3d' | '2d' | 'inspect' | 'ai') => void
   loadAssistantHistory: () => Promise<void>
   clearAssistantHistory: () => Promise<void>
+  resetAssistantConversation: () => void
+  deleteAssistantMessages: (indices: number[]) => Promise<void>
   importAssistantHistory: (sourcePath: string) => Promise<void>
   /** P6b：LLM 把当前项目聊天记录整理成指令 → 填入 AI 输入框草稿（不自动发送） */
   distillAssistantHistory: () => Promise<void>
