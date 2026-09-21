@@ -129,6 +129,8 @@ def preview_payload(
         "total_meshes": len(result.meshes),
         "visual_verified": False,
     }
+    from openbrep.runtime.visual_self_check import check_preview_visual
+    payload["visual_check"] = check_preview_visual(payload)
     if unresolved and payload["materials"]:
         payload["warnings"].append(f"{unresolved} 个网格未解析材质，材质效果尚未验证")
     if not result.meshes and not result.wires and not _has_executable_statement(script_3d):
