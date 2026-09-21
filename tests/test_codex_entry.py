@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -498,6 +499,16 @@ def test_provider_local_effort_is_delegated_to_codex_config(tmp_path):
         provider.close()
 
 
+def _existing_shell() -> str:
+    """登录 shell 回退只有在 SHELL 指向真实存在的文件时才会执行。
+
+    生产代码默认 ``/bin/zsh``（macOS 形状），Linux CI 上没有 zsh；若把 SHELL
+    写死为 ``/bin/zsh``，这些用例在 CI 上会因为「shell 不存在」而走不到被测
+    分支（甚至反向失败）。这里挑一个当前机器上确实存在的 shell。
+    """
+    return shutil.which("zsh") or shutil.which("sh") or "/bin/sh"
+
+
 def test_provider_set_entry_switches_home_and_closes_old_client(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "local-home"))
     monkeypatch.setenv("OPENBREP_CODEX_HOME", str(tmp_path / "managed-home"))
@@ -510,7 +521,13 @@ def test_provider_set_entry_switches_home_and_closes_old_client(tmp_path, monkey
         def close(self):
             closed.append("closed")
 
-    provider = CodexProvider(entry=ENTRY_MANAGED, client_factory=lambda: _FakeClient())
+    # 本用例只验证入口切换语义；显式给定 cli_available，避免结论取决于开发机
+    # 是否真的装了 codex（CI 上没有，之前会误报 CodexCliUnavailableError）。
+    provider = CodexProvider(
+        entry=ENTRY_MANAGED,
+        client_factory=lambda: _FakeClient(),
+        cli_available=True,
+    )
     try:
         assert provider.codex_home == tmp_path / "managed-home"
         provider._get_client()  # 建立 app-server 连接（替身 client）
@@ -634,12 +651,13 @@ def test_resolve_codex_binary_falls_back_to_login_shell(monkeypatch, tmp_path):
     monkeypatch.setattr(app_server.shutil, "which", lambda _name: None)
     monkeypatch.setattr(app_server.Path, "home", lambda: tmp_path / "empty-home")
     monkeypatch.setattr(app_server.subprocess, "run", fake_run)
-    monkeypatch.setenv("SHELL", "/bin/zsh")
+    shell = _existing_shell()
+    monkeypatch.setenv("SHELL", shell)
     monkeypatch.delenv("OPENBREP_DISABLE_LOGIN_SHELL", raising=False)
 
     assert app_server.resolve_codex_binary() == str(binary)
     assert len(calls) == 1
-    assert calls[0][:2] == ["/bin/zsh", "-lic"]
+    assert calls[0][:2] == [shell, "-lic"]
     # 结果缓存：第二次不再开 shell
     assert app_server.resolve_codex_binary() == str(binary)
     assert len(calls) == 1
@@ -651,7 +669,7 @@ def test_resolve_codex_binary_rejects_non_executable_shell_output(monkeypatch, t
     monkeypatch.setattr(app_server, "_LOGIN_SHELL_CACHE", {})
     monkeypatch.setattr(app_server.shutil, "which", lambda _name: None)
     monkeypatch.setattr(app_server.Path, "home", lambda: tmp_path / "empty-home")
-    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("SHELL", _existing_shell())
 
     class _Completed:
         stdout = "codex not found\n/does/not/exist/codex\n"
