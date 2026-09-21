@@ -58,6 +58,10 @@ def preview_geometry_summary(project: HSFProject) -> dict[str, Any]:
         from openbrep.materials import load_materials
         visual_payload = preview_3d_to_three_payload(result_3d)
         slots, _ = load_materials(project.root)
+        if not slots["slots"]:
+            from openbrep.materials import infer_material_slots, normalize_slots
+            inferred, _ = normalize_slots(infer_material_slots(project.parameters, project.name))
+            slots["slots"] = inferred
         visual_payload["materials"] = {**slots["slots"], **visual_payload.get("materials", {})}
         summary["visual_check"] = check_preview_visual(visual_payload)
         materials = {k.casefold(): v for k, v in {**slots['slots'], **result_3d.materials}.items()}
