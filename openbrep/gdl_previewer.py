@@ -57,6 +57,10 @@ class PreviewMesh3D:
     j: list[int]
     k: list[int]
     source_ref: PreviewSourceRef | None = None
+    # The Material parameter token active when this mesh was emitted.  This is
+    # deliberately symbolic: offline Material parameter values are often all
+    # zero, so their evaluated numeric values cannot identify a surface.
+    material_id: str | None = None
 
 
 @dataclass
@@ -384,6 +388,14 @@ class _PreviewRuntime:
         observe_setup: bool = False,
     ):
         self.env = _normalize_parameters(parameters or {})
+        # Keep the source spelling of Material parameters while expressions use
+        # the normalized uppercase environment.  Assignments can alias one
+        # material parameter; numeric expressions intentionally have no id.
+        self._material_symbols = {
+            str(name).upper(): str(name)
+            for name in (parameters or {})
+        }
+        self._current_material_id: str | None = None
         # GDL 属性类型选择器常量（IND(MATERIAL, ...) 等的首参；P14）——仅被
         # IND stub 消费，数值本身无意义；setdefault 保证脚本/参数可覆盖。
         for _i, _sel in enumerate(
@@ -664,6 +676,13 @@ class _PreviewRuntime:
                     value = self._eval_any(expr, line_no)
                     if value is not None:
                         self.env[name.upper()] = value
+                    alias = re.fullmatch(r"[A-Za-z_]\w*", expr.strip())
+                    if alias and alias.group(0).upper() in self._material_symbols:
+                        self._material_symbols[name.upper()] = self._material_symbols[
+                            alias.group(0).upper()
+                        ]
+                    else:
+                        self._material_symbols.pop(name.upper(), None)
                     idx += 1
                     continue
 
@@ -781,6 +800,23 @@ class _PreviewRuntime:
                 m_set_style = re.match(r'^SET\s+STYLE\s+"([^"]*)"', line, re.IGNORECASE)
                 if m_set_style:
                     self._current_style = m_set_style.group(1)
+                idx += 1
+                continue
+
+            # MATERIAL and SET MATERIAL affect following 3D geometry.  The
+            # preview needs the symbolic parameter name, not its value: an
+            # unbound offline project gives every Material parameter index 0.
+            m_material = re.match(r"^(?:SET\s+)?MATERIAL\s+(.+)$", line, re.IGNORECASE)
+            if mode == "3d" and m_material:
+                token = m_material.group(1).strip()
+                if re.fullmatch(r"[A-Za-z_]\w*", token):
+                    # A project can be previewed with script overrides before
+                    # its parameter list is refreshed, so retain an unknown
+                    # bare token too.  Known aliases resolve to their source
+                    # Material parameter spelling.
+                    self._current_material_id = self._material_symbols.get(token.upper(), token)
+                else:
+                    self._current_material_id = None
                 idx += 1
                 continue
 
@@ -1228,6 +1264,8 @@ class _PreviewRuntime:
         # 为空；child 内 ADD/DEL 不回写 caller（天然隔离）。
         child._A = tuple(tuple(row) for row in self._A)
         child._t = tuple(self._t)
+        child._current_material_id = self._current_material_id
+        child._material_symbols.update(self._material_symbols)
 
         # 先执行宏的 master script（setup 模式；其中的 CALL 不生效，MVP 近似）
         master = lookup.scripts.get("1d.gdl")
@@ -2617,6 +2655,8 @@ class _PreviewRuntime:
 
     def _emit_mesh3d(self, mesh: PreviewMesh3D) -> None:
         """mesh 出口：GROUP 定义期间进当前组，否则进结果。"""
+        if mesh.material_id is None:
+            mesh.material_id = self._current_material_id
         if self._group_stack:
             self._groups[self._group_stack[-1]]["meshes"].append(mesh)
         else:

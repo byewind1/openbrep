@@ -24,6 +24,8 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
             if _valid_face(mesh.i[idx], mesh.j[idx], mesh.k[idx], vertex_count)
         ]
         item = {"name": mesh.name, "vertices": vertices, "faces": faces}
+        if mesh.material_id is not None:
+            item["material_id"] = mesh.material_id
         if mesh.source_ref is not None:
             item["source_ref"] = {
                 "script_type": mesh.source_ref.script_type,

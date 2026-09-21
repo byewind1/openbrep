@@ -895,6 +895,18 @@ class TestGDLPreviewer2DCommands(unittest.TestCase):
         self.assertFalse(any("SET" in w for w in r3d.warnings))
         self.assertEqual(len(r3d.meshes), 1)
 
+    def test_material_parameter_identity_stays_distinct_when_indices_match(self):
+        result = preview_3d_script(
+            "MATERIAL mat_top\nBLOCK 1, 1, 0.1\n"
+            "MATERIAL mat_leg\nCYLIND 1, 0.05\n",
+            parameters={"mat_top": 0, "mat_leg": 0},
+        )
+
+        self.assertEqual(
+            [mesh.material_id for mesh in result.meshes],
+            ["mat_top", "mat_leg"],
+        )
+
     def test_values_silently_ignored_in_2d_and_3d(self):
         values = 'VALUES "A" RANGE [0.30, 3.00]\n'
         r2d = preview_2d_script(values + "RECT2 0, 0, 1, 1\n")

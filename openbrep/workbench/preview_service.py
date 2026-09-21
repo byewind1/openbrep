@@ -4,6 +4,7 @@ from typing import Any
 
 from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.materials import load_materials
 from openbrep.workbench.project_parameter_service import parameter_values
 from openbrep.workbench.three_preview import preview_3d_to_three_payload
 
@@ -117,6 +118,7 @@ def preview_payload(
         macro_guid_map=project.called_macro_guid_map(),
     )
     payload = preview_3d_to_three_payload(result)
+    payload["materials"] = load_materials(project.root)[0]["slots"]
     payload["warnings"] = result.warnings
     if not result.meshes and not result.wires and not _has_executable_statement(script_3d):
         # P14：空 3D 脚本 / "! Hidden Script."（加密保护构件）原本静默空白，

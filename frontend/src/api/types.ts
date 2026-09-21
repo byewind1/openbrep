@@ -204,6 +204,19 @@ export interface PreviewMesh {
   source_ref?: PreviewSourceRef | null
   /** 权威预览逐 mesh 颜色（RGB 0-1）；本地近似预览不带，渲染回退到模式默认色 */
   color?: PreviewMeshColor
+  /** OpenBrep symbolic Material parameter name (offline preview). */
+  material_id?: string | null
+}
+
+export interface PreviewMaterial {
+  family?: string
+  label?: string
+  color: string
+  roughness: number
+  metalness: number
+  opacity: number
+  transmission: number
+  ior: number
 }
 
 export interface PreviewPayload {
@@ -213,6 +226,7 @@ export interface PreviewPayload {
   verification?: PreviewVerification
   /** 生成该 payload 的质量档（自描述）；缺省视为旧后端，不参与质量对账 */
   quality?: PreviewQuality
+  materials?: Record<string, PreviewMaterial>
 }
 
 /** Archicad 权威预览（/api/preview/authoritative）：meshes/wires 与本地

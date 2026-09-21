@@ -1634,6 +1634,17 @@ class TaskPipeline:
             # P8 交付完整性（CREATE/IMAGE 专属；MODIFY 路径不传 → 不启用）
             enable_delivery_integrity=(request.intent in ("CREATE", "IMAGE")),
         )
+        # Save material intent only for a deliverable project.  It is inferred
+        # from existing generated Material parameters, so no extra LLM call or
+        # prompt change is introduced.
+        if verification_report.passed and request.intent in ("CREATE", "IMAGE"):
+            from openbrep.materials import infer_material_slots, save_materials
+            inferred = infer_material_slots(project.parameters, request.user_input)
+            if inferred:
+                try:
+                    save_materials(project.root, {"version": 1, "slots": inferred})
+                except (OSError, ValueError) as exc:
+                    logger.warning("Material metadata save skipped: %s", exc)
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
 

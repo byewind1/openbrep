@@ -22,6 +22,7 @@ class TestThreePreview(unittest.TestCase):
                         command="BLOCK",
                         label="3D line 7 BLOCK",
                     ),
+                    material_id="mat_top",
                 )
             ],
             wires=[[(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)]],
@@ -32,6 +33,7 @@ class TestThreePreview(unittest.TestCase):
         self.assertEqual(payload["meshes"][0]["name"], "block")
         self.assertEqual(len(payload["meshes"][0]["vertices"]), 3)
         self.assertEqual(payload["meshes"][0]["faces"], [[0, 1, 2]])
+        self.assertEqual(payload["meshes"][0]["material_id"], "mat_top")
         self.assertEqual(
             payload["meshes"][0]["source_ref"],
             {

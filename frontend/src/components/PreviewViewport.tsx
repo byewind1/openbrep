@@ -26,6 +26,7 @@ import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
 import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
 import { sectionPlaneParams } from './previewSection'
+import { materialForMesh } from './previewMaterials'
 import type { SectionState } from './previewSection'
 import {
   computePreviewBounds,
@@ -65,7 +66,7 @@ interface PreviewViewportProps {
   sourceControl?: PreviewSourceControl
 }
 
-type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
+type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono' | 'material'
 
 /** 3D 预览来源控制（Archicad 权威预览）：由 usePreviewSource hook 组装注入，
  *  视口只读消费。缺省（不传）= 纯本地模式，不渲染来源切换 UI */
@@ -97,6 +98,7 @@ const DISPLAY_MODES: Array<{ id: PreviewDisplayMode; label: string; title: strin
   { id: 'wire', label: '线框', title: 'Feature edges only (hidden line)' },
   { id: 'xray', label: 'X光', title: 'X-ray fresnel ghost' },
   { id: 'mono', label: '单色', title: 'Flat unlit single color' },
+  { id: 'material', label: '材质', title: 'Semantic PBR materials' },
 ]
 
 export function PreviewViewport({
@@ -156,7 +158,7 @@ export function PreviewViewport({
   const parts = useMemo(() => {
     // wire 与 random 同为逐部件 hash 取色（chip 色与渲染一致）
     if (displayMode === 'random' || displayMode === 'wire') return buildPartsView(preview, 'random', null, hiddenParts)
-    return buildPartsView(preview, 'flat', MODE_COLOR[displayMode], hiddenParts)
+    return buildPartsView(preview, 'flat', displayMode === 'material' ? SOLID_COLOR : MODE_COLOR[displayMode], hiddenParts)
   }, [preview, displayMode, hiddenParts])
   const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
   // P4-C 空态：真的没内容（未编译 / 空网格）才显示，加载中由 Suspense fallback 管
@@ -430,6 +432,7 @@ export function PreviewViewport({
                 <MeshView
                   key={`${mesh.name}-${index}`}
                   mesh={mesh}
+                  preview={preview}
                   index={index}
                   showEdges={showEdges}
                   displayMode={displayMode}
@@ -633,7 +636,7 @@ const CANVAS_BG_COLOR = '#05070d'
 const SELECTION_COLOR = '#ffc94d'
 
 // 统一单色模式的显示色（部件面板 chip 与渲染共用；random/wire 为逐部件 hash 色，不在此列）
-const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random' | 'wire'>, string> = {
+const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random' | 'wire' | 'material'>, string> = {
   solid: SOLID_COLOR,
   mono: MONO_COLOR,
   xray: XRAY_COLOR,
@@ -719,6 +722,7 @@ function StudioEnvironment() {
 
 function MeshView({
   mesh,
+  preview,
   index,
   showEdges,
   displayMode,
@@ -732,6 +736,7 @@ function MeshView({
   onJump,
 }: {
   mesh: PreviewMesh
+  preview: PreviewPayload | null
   index: number
   showEdges: boolean
   displayMode: PreviewDisplayMode
@@ -774,6 +779,7 @@ function MeshView({
             <PartMesh
               part={part}
               mesh={mesh}
+              preview={preview}
               index={index}
               showEdges={showEdges}
               displayMode={displayMode}
@@ -795,6 +801,7 @@ function MeshView({
     <PartMesh
       part={{ compId: 0, geometry, centroid: [0, 0, 0] }}
       mesh={mesh}
+      preview={preview}
       index={index}
       showEdges={showEdges}
       displayMode={displayMode}
@@ -816,6 +823,7 @@ function MeshView({
 function PartMesh({
   part,
   mesh,
+  preview,
   index,
   showEdges,
   displayMode,
@@ -828,6 +836,7 @@ function PartMesh({
 }: {
   part: ExplodedPart
   mesh: PreviewMesh
+  preview: PreviewPayload | null
   index: number
   showEdges: boolean
   displayMode: PreviewDisplayMode
@@ -882,6 +891,7 @@ function PartMesh({
   }
 
   const isMono = displayMode === 'mono'
+  const semanticMaterial = preview ? materialForMesh(preview, mesh) : null
   // 权威预览逐 mesh 颜色（RGB 0-1 → three.js Color）；本地预览无 color 字段，
   // 回退 solid 统一色。random/wire 按部件 hash 取色、mono 单色，均不消费 mesh.color
   const meshColor = useMemo(
@@ -897,13 +907,37 @@ function PartMesh({
   // mono 的材质参数与原分支一致（roughness/metalness/envMapIntensity 不同）
   const shading = isMono
     ? { roughness: 0.7, metalness: 0.0, envMapIntensity: 0.6 }
-    : { roughness: 0.5, metalness: 0.05, envMapIntensity: 0.75 }
+    : { roughness: semanticMaterial?.roughness ?? 0.5, metalness: semanticMaterial?.metalness ?? 0.05, envMapIntensity: 0.75 }
+  const materialColor = displayMode === 'material' && semanticMaterial ? semanticMaterial.color : color
+  if (displayMode === 'material' && semanticMaterial?.transmission) {
+    return (
+      <mesh geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+        <meshPhysicalMaterial
+          color={semanticMaterial.color}
+          roughness={semanticMaterial.roughness}
+          metalness={semanticMaterial.metalness}
+          transmission={semanticMaterial.transmission}
+          ior={semanticMaterial.ior}
+          transparent
+          opacity={semanticMaterial.opacity}
+          envMapIntensity={0.75}
+          side={DoubleSide}
+          emissive={selected ? SELECTION_COLOR : '#000000'}
+          emissiveIntensity={0.4}
+          clippingPlanes={clippingPlanes}
+        />
+        {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} clippingPlanes={clippingPlanes} /> : null}
+      </mesh>
+    )
+  }
   return (
     <mesh geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
       <meshStandardMaterial
-        color={color}
+        color={materialColor}
         roughness={shading.roughness}
         metalness={shading.metalness}
+        transparent={displayMode === 'material' && Boolean(semanticMaterial && semanticMaterial.opacity < 1)}
+        opacity={displayMode === 'material' ? semanticMaterial?.opacity ?? 1 : 1}
         envMapIntensity={shading.envMapIntensity}
         side={DoubleSide}
         emissive={selected ? SELECTION_COLOR : '#000000'}
