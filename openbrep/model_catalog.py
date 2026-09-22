@@ -212,6 +212,36 @@ class ModelSpec:
 
 
 @dataclass(frozen=True)
+class ModelSelection:
+    """One call's effective model choice, kept out of the shared configuration.
+
+    Carries the selector string rather than a :class:`ModelIdentity` because the
+    routing policies that produce it (the Codex D8/D13 table in particular) work
+    from the account catalogue and may name a model the static catalog does not
+    know; the selector is exactly what the adapter consumes today.
+
+    ``selection`` exists so a routed call never has to mutate and restore
+    ``config.llm`` — the configuration stays the saved fact for the whole call,
+    including the exception path.
+    """
+
+    model: str
+    reasoning_effort: str = ""
+    policy: str = ""
+    route_reason: str = ""
+
+    def as_metadata(self) -> dict[str, str]:
+        """Route provenance for task metadata (never for prompts)."""
+
+        return {
+            "policy": self.policy,
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
+            "reason": self.route_reason,
+        }
+
+
+@dataclass(frozen=True)
 class _Entry:
     """One published selector set pointing at one spec."""
 

@@ -40,7 +40,7 @@ from openbrep.explainer.context_builder import (
 from openbrep.explainer.service import explain_parameter_context, explain_project_context, explain_script_context
 from openbrep.compiler import CompileComparison, CompileResult, CompileSnapshot, HSFCompiler, MockHSFCompiler
 from openbrep.chat_history import trim_history_messages
-from openbrep.config import GDLAgentConfig
+from openbrep.config import GDLAgentConfig, is_codex_qualified_model
 from openbrep.core import GDLAgent
 from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
@@ -55,6 +55,7 @@ from openbrep.knowledge_selector import (
 )
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
+from openbrep.model_catalog import ModelSelection
 from openbrep.object_planner import plan_gdl_object
 from openbrep.project_context import (
     ProjectContext,
@@ -206,6 +207,10 @@ class TaskRequest:
     confirmed_extractions: Optional[list[dict]] = None  # 用户确认/编辑后的提取 dict 列表（跳过 harness 重建 plans）
     # ST03 F2：继续操作显式关联原 run + 原始指令（进入 metadata/quality/revision，不进 prompt）
     continue_from: Optional[dict] = None
+    # R4：本次调用的显式模型选择（Codex Auto 路由注入）。None = 用配置里的已保存
+    # model/effort。替代"临时改写 config.llm 再恢复"的旧做法：选择随请求不可变地
+    # 传递，共享 config 在整次调用期间保持已保存值。绝不进入任何 prompt。
+    selection: Optional["ModelSelection"] = None
 
 
 @dataclass
@@ -879,14 +884,17 @@ class TaskPipeline:
             on_event("status", {"stage": "budget", "message": unavailable.error})
             return result
 
-        original_model = self.config.llm.model
-        original_effort = self.config.llm.reasoning_effort
-
         def run(decision: CodexRouteDecision) -> TaskResult:
-            self.config.llm.model = decision.model
-            self.config.llm.reasoning_effort = decision.reasoning_effort
+            # R4：把本次调用选定的 model/effort 作为显式选择传下去，绝不临时改写
+            # config.llm —— 配置在整个调用期间（含异常路径）保持已保存值。
+            selection = ModelSelection(
+                model=decision.model,
+                reasoning_effort=decision.reasoning_effort,
+                policy="codex_auto",
+                route_reason=decision.reason,
+            )
             try:
-                return self._handle_gdl(request)
+                return self._handle_gdl(replace(request, selection=selection))
             except Exception:  # noqa: BLE001 — never reflect upstream text in Auto metadata/UI
                 return TaskResult(
                     success=False,
@@ -901,20 +909,15 @@ class TaskPipeline:
                 error=decision.error,
             )
 
-        try:
-            return run_auto_route(
-                complexity=complexity,
-                catalog=catalog,
-                status=status,
-                run=run,
-                make_stop_result=make_stop,
-                on_event=on_event,
-                should_cancel=request.should_cancel,
-            )
-        finally:
-            # Auto is per-call routing. Saved Fixed model/effort remain the config fact source.
-            self.config.llm.model = original_model
-            self.config.llm.reasoning_effort = original_effort
+        return run_auto_route(
+            complexity=complexity,
+            catalog=catalog,
+            status=status,
+            run=run,
+            make_stop_result=make_stop,
+            on_event=on_event,
+            should_cancel=request.should_cancel,
+        )
 
     def _handle_codex_chat(self, request: TaskRequest) -> TaskResult:
         """Codex 模型 CHAT/EXPLAIN（D3）：ephemeral thread + 临时只读 cwd +
@@ -984,8 +987,22 @@ class TaskPipeline:
             # 稳定文案）；此处只兜底，绝不把上游原文透传给用户。
             return TaskResult(success=False, intent="CHAT", error=str(exc))
 
+    def _effective_llm_config(self, selection: "ModelSelection | None" = None):
+        """本次调用生效的 llm 配置：显式选择优先，绝不改写共享 config。
+
+        无选择时直接返回 ``config.llm`` 本身（调用点语义与改动前逐字一致）；
+        有选择时返回一份替换了 model/effort 的副本，供本次 adapter 与 effort
+        解析使用。配置对象本身在整个调用期间保持不变。
+        """
+
+        cfg = self.config.llm
+        if selection is None:
+            return cfg
+        return replace(cfg, model=selection.model, reasoning_effort=selection.reasoning_effort)
+
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
+        effective = self._effective_llm_config(request.selection)
         llm = self._make_llm(request)
         compiler = self._make_compiler()
 
@@ -998,14 +1015,15 @@ class TaskPipeline:
         # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
         # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
         codex_kwargs: dict = {}
-        if self._is_codex_model_selected() and request.intent in ("CREATE", "IMAGE"):
+        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
             codex_kwargs = {
                 "codex_intent": "CREATE",
                 "codex_should_cancel": request.should_cancel,
                 "codex_on_event": request.on_event,
                 # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
-                # provider.chat 运行时刻再校验支持性，fail closed）
-                "codex_reasoning_effort": self.config.llm.codex_reasoning_effort(),
+                # provider.chat 运行时刻再校验支持性，fail closed）。
+                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
+                "codex_reasoning_effort": effective.codex_reasoning_effort(),
             }
 
         # Ensure project exists
@@ -2537,9 +2555,11 @@ class TaskPipeline:
 
         Key/base selection is centralized in LLMConfig.resolve_api_key/
         resolve_api_base to avoid diverging UI/runtime routing behavior.
+        R4：``request.selection`` 提供本次调用的 model/effort，写入的是配置副本
+        （``_effective_llm_config``），共享 config 不被改写。
         """
         import dataclasses
-        cfg = self.config.llm
+        cfg = self._effective_llm_config(request.selection)
 
         resolved = cfg.resolve_api_key(cfg.model)
         if resolved:

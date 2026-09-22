@@ -290,10 +290,23 @@ class _RecordingPipeline(TaskPipeline):
     def __init__(self, *args, outcomes=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.seen = []
+        self.selections = []
+        self.config_seen_during_call = []
         self.outcomes = list(outcomes or [TaskResult(success=True, intent="CREATE")])
 
     def _handle_gdl(self, request):
-        self.seen.append((self.config.llm.model, self.config.llm.reasoning_effort, request))
+        # R4：调用期间共享 config 必须保持已保存值；本次生效的 model/effort 只能
+        # 来自请求携带的显式选择。`seen` 继续记录生效组合，语义与改动前一致。
+        selection = getattr(request, "selection", None)
+        self.config_seen_during_call.append(
+            (self.config.llm.model, self.config.llm.reasoning_effort)
+        )
+        self.selections.append(selection)
+        if selection is not None:
+            effective = (selection.model, selection.reasoning_effort)
+        else:
+            effective = (self.config.llm.model, self.config.llm.reasoning_effort)
+        self.seen.append((*effective, request))
         return self.outcomes.pop(0)
 
 
@@ -315,6 +328,44 @@ def test_fixed_pipeline_request_fingerprint_is_unchanged_and_never_probes_provid
     assert pipeline.seen == [(LUNA_MODEL, "medium", request)]
     assert provider.status_calls == provider.model_calls == 0
     assert "codex_auto_route" not in result.metadata
+
+
+def test_auto_routing_passes_an_explicit_selection_without_touching_config(tmp_path):
+    """R4: the routed pair travels as a selection; config stays the saved fact."""
+
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-sol"
+    config.llm.reasoning_effort = "medium"
+    config.llm.codex_routing_mode = "auto"
+    pipeline = _RecordingPipeline(
+        config=config,
+        codex_provider=_Provider(),
+        trace_dir=str(tmp_path / "traces"),
+    )
+
+    result = pipeline.execute(TaskRequest(user_input="创建简单构件", intent="CREATE"))
+
+    assert result.success
+    selection = pipeline.selections[0]
+    assert selection is not None
+    assert (selection.model, selection.reasoning_effort) == (LUNA_MODEL, "low")
+    assert selection.policy == "codex_auto"
+    assert selection.route_reason
+    # The shared config was never rewritten, during or after the call.
+    assert pipeline.config_seen_during_call == [
+        ("openai-codex/gpt-5.6-sol", "medium"),
+    ]
+    assert (config.llm.model, config.llm.reasoning_effort) == (
+        "openai-codex/gpt-5.6-sol",
+        "medium",
+    )
+    # The selection is what reaches the adapter; the saved model is untouched.
+    from dataclasses import replace as _replace
+
+    request = TaskRequest(user_input="创建简单构件", intent="CREATE")
+    routed = _replace(request, selection=selection)
+    assert LUNA_MODEL in pipeline._make_llm(routed)._resolve_model_string()
+    assert config.llm.model in pipeline._make_llm(request)._resolve_model_string()
 
 
 def test_auto_pipeline_uses_policy_and_restores_saved_fixed_pair(tmp_path):
@@ -343,7 +394,12 @@ def test_auto_pipeline_restores_saved_fixed_pair_after_generation_exception(tmp_
     """The per-call Auto override must not leak when generation raises."""
     class ExplodingPipeline(_RecordingPipeline):
         def _handle_gdl(self, request):
-            self.seen.append((self.config.llm.model, self.config.llm.reasoning_effort, request))
+            selection = request.selection
+            self.config_seen_during_call.append(
+                (self.config.llm.model, self.config.llm.reasoning_effort)
+            )
+            self.selections.append(selection)
+            self.seen.append((selection.model, selection.reasoning_effort, request))
             raise RuntimeError("simulated generation failure")
 
     config = GDLAgentConfig()
