@@ -885,22 +885,27 @@ class TaskPipeline:
             return result
 
         def run(decision: CodexRouteDecision) -> TaskResult:
-            # R4：把本次调用选定的 model/effort 作为显式选择传下去，绝不临时改写
-            # config.llm —— 配置在整个调用期间（含异常路径）保持已保存值。
-            selection = ModelSelection(
+            # R4：把本次调用选定的 model/effort 作为显式选择挂在**请求**上，绝不动
+            # config.llm（配置是已保存事实源）。这里就地写 request 而不是传副本：
+            # _handle_gdl 本就会就地写 request.project，后续升级尝试与 execute 末尾的
+            # delivery/quality finalizer 都依赖同一个请求对象看到该项目。
+            request.selection = ModelSelection(
                 model=decision.model,
                 reasoning_effort=decision.reasoning_effort,
                 policy="codex_auto",
                 route_reason=decision.reason,
             )
             try:
-                return self._handle_gdl(replace(request, selection=selection))
+                return self._handle_gdl(request)
             except Exception:  # noqa: BLE001 — never reflect upstream text in Auto metadata/UI
                 return TaskResult(
                     success=False,
                     intent=request.intent or "CREATE",
                     error="Codex Auto 路由执行失败，任务已停止。",
                 )
+            finally:
+                # 选择是本次尝试的调用上下文，不留给后续路径（配置本就未变）。
+                request.selection = None
 
         def make_stop(decision: CodexRouteDecision) -> TaskResult:
             return TaskResult(
