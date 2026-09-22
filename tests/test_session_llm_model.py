@@ -86,6 +86,84 @@ def test_session_model_clear_override_restores_config_default(tmp_path, monkeypa
     assert config_path.read_bytes() == before
 
 
+def test_session_model_validator_acceptance_set_is_unchanged_by_the_catalog(tmp_path, monkeypatch):
+    """R3: the catalog is the primary validator, but acceptance must not move.
+
+    The legacy predicate is re-implemented here as the reference; the catalog is
+    strictly narrower than it (verified in R1), so routing through the catalog
+    plus the documented fallback must accept exactly the same set.
+    """
+
+    from openbrep.config import ALL_MODELS, model_to_provider
+    from openbrep.model_catalog import ModelResolutionError, build_model_catalog
+
+    _clear_llm_env_keys(monkeypatch)
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    config.llm.provider_keys = {"zhipu": "zk-1"}
+    config.llm.custom_providers = [
+        {
+            "name": "gw",
+            "api": "https://gw.example.test/v1",
+            "api_key": "test-gw-key",
+            "default_model": "kimi-k3",
+            "models": ["kimi-k3"],
+        },
+        {"name": "pa", "api": "https://a.example.test/v1", "models": ["shared"]},
+        {"name": "pb", "api": "https://b.example.test/v1", "models": ["shared"]},
+    ]
+    service = _make_service(config, config_path)
+    _write_config(config_path, config)
+
+    def legacy(model: str) -> bool:
+        if model in ALL_MODELS:
+            return True
+        if config.llm._find_custom_provider_match(model) is not None:
+            return True
+        return model_to_provider(model) == "ollama"
+
+    catalog = build_model_catalog(config)
+    references = [
+        "glm-4-flash",
+        "glm-4.6v",
+        "gemini/gemini-2.5-flash",
+        "ollama/qwen3:8b",
+        "ollama/llama3.1:8b",       # open family
+        "ollama/",                  # legacy-only degenerate prefix
+        "ollama",
+        "kimi-k3",                  # configured alias
+        "gw",                       # provider name → default model
+        "GW",                       # case variant of a config provider name
+        "gw/kimi-k3",
+        "gw/never-listed",          # direct connect (catalog refuses, legacy accepts)
+        "shared",                   # colliding bare alias (order pick)
+        "pa/shared",
+        "pb/shared",
+        "glm-4-fla",
+        "not-a-real-model",
+        "GPT-5.4",                  # preset case variant (catalog refuses, legacy refuses)
+    ]
+
+    mismatches = []
+    for reference in references:
+        expected = legacy(reference)
+        actual = service._catalog_known_model(reference)
+        if actual != expected:
+            mismatches.append((reference, expected, actual))
+        # Sanity: the catalog's own verdict explains every accepted case.
+        if actual:
+            try:
+                catalog.resolve(reference)
+            except ModelResolutionError:
+                assert reference in {"ollama/", "gw/never-listed", "shared"}, reference
+
+    assert mismatches == []
+    # The two documented leniencies stay accepted rather than being silently dropped.
+    assert service._catalog_known_model("gw/never-listed") is True
+    assert service._catalog_known_model("shared") is True
+
+
 def test_session_model_unknown_model_fails_closed(tmp_path, monkeypatch):
     _clear_llm_env_keys(monkeypatch)
     config_path = tmp_path / "config.toml"
