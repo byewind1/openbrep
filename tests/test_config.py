@@ -512,6 +512,62 @@ class TestResolveCredentials(_CleanEnvMixin, unittest.TestCase):
         self.assertEqual(cred.api_key, "ymg-key")
         self.assertEqual(cred.api_base, "https://api.ymg.com/v1")
 
+    def test_explicit_custom_provider_ref_beats_colliding_bare_model(self):
+        """Qualified identity must select its provider even when model IDs collide."""
+        cfg = LLMConfig(
+            model="provider-b/shared-model",
+            custom_providers=[
+                {
+                    "name": "provider-a",
+                    "api": "https://a.example.test/v1",
+                    "api_key": "test-provider-a-key",
+                    "models": ["shared-model"],
+                },
+                {
+                    "name": "provider-b",
+                    "api": "https://b.example.test/v1",
+                    "api_key": "test-provider-b-key",
+                    "models": ["shared-model"],
+                },
+            ],
+        )
+
+        cred = cfg.resolve_credentials()
+
+        self.assertEqual(cred.source, "custom_provider")
+        self.assertEqual(cred.provider, "provider-b")
+        self.assertEqual(cred.api_base, "https://b.example.test/v1")
+
+    def test_credential_precedence_is_custom_then_provider_then_top_level_then_env(self):
+        """Every higher-priority configured credential shields lower sources."""
+        self._clear_llm_env()
+        os.environ["DEEPSEEK_API_KEY"] = "env-key"
+        self.addCleanup(lambda: os.environ.pop("DEEPSEEK_API_KEY", None))
+
+        cfg = LLMConfig(
+            model="deepseek-chat",
+            api_key="test-top-level-key",
+            provider_keys={"deepseek": "test-provider-key"},
+            custom_providers=[
+                {
+                    "name": "gateway",
+                    "api": "https://gateway.example.test/v1",
+                    "api_key": "test-custom-key",
+                    "models": ["deepseek-chat"],
+                }
+            ],
+        )
+        self.assertEqual(cfg.resolve_credentials().source, "custom_provider")
+
+        cfg.custom_providers = []
+        self.assertEqual(cfg.resolve_credentials().source, "provider_keys")
+
+        cfg.provider_keys = {}
+        self.assertEqual(cfg.resolve_credentials().source, "top_level")
+
+        cfg.api_key = None
+        self.assertEqual(cfg.resolve_credentials().source, "env")
+
     def test_provider_keys_source_carries_console_url(self):
         self._clear_llm_env()
         cfg = LLMConfig(model="qwen-max", provider_keys={"aliyun": "aliyun-key"})
