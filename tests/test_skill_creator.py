@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openbrep.skill_creator import SkillCreator, SkillCreationResult
+from openbrep.skill_creator import (
+    SkillCreator,
+    SkillCreationResult,
+    has_skill_signal,
+)
 
 
 def _extract_user_input(last: str) -> str:
@@ -84,7 +88,8 @@ class TestSkillCreator:
 
         creator = SkillCreator(_CodexLLM(), str(skills_dir))
 
-        assert creator.classify_intent("修改楼梯") == "NONE"
+        # 必须带技能信号才会走到 LLM；否则规则前置直接 NONE。
+        assert creator.classify_intent("把这个做法存成技能") == "NONE"
         assert seen == {
             "codex_intent": "CHAT",
             "codex_reasoning_effort": "high",
@@ -104,6 +109,52 @@ class TestSkillCreator:
         creator = SkillCreator(mock_llm, str(skills_dir))
         intent = creator.classify_intent("你好，今天天气不错")
         assert intent == "NONE"
+
+    def test_classify_intent_skips_llm_without_skill_signal(self, mock_llm, skills_dir):
+        """无技能信号 → 直接 NONE，不产生任何 LLM 调用。"""
+        creator = SkillCreator(mock_llm, str(skills_dir))
+        mock_llm.generate = MagicMock(
+            side_effect=AssertionError("rule prefilter must not call LLM")
+        )
+        for text in (
+            "你好，今天天气不错",
+            "修改楼梯",
+            "把层板数改成 5",
+            "解释一下 3d.gdl",
+            "生成一个旋转楼梯，层高 3000",
+            "",
+            "   ",
+        ):
+            assert creator.classify_intent(text) == "NONE", text
+        mock_llm.generate.assert_not_called()
+
+    def test_classify_intent_calls_llm_when_skill_signal_present(self, mock_llm, skills_dir):
+        """有技能信号 → 仍走 LLM，可得到 CREATE/LIST（与旧行为一致）。"""
+        creator = SkillCreator(mock_llm, str(skills_dir))
+        assert creator.classify_intent("我想创建一个门窗技能") == "CREATE_SKILL"
+        assert creator.classify_intent("查看已有技能") == "LIST_SKILLS"
+
+    def test_original_none_set_not_shrunk_by_prefilter(self, mock_llm, skills_dir):
+        """原先会判 NONE 的消息，在规则前置后仍全部是 NONE。"""
+        creator = SkillCreator(mock_llm, str(skills_dir))
+        former_none = (
+            "你好，今天天气不错",
+            "修改楼梯的踏步数量",
+            "这个构件的参数是什么意思",
+            "把高度改成 3000",
+            "今天帮我看看这段脚本",
+        )
+        for text in former_none:
+            assert creator.classify_intent(text) == "NONE", text
+
+    def test_has_skill_signal_covers_create_and_list_phrasings(self):
+        assert has_skill_signal("把漏窗做法存成技能")
+        assert has_skill_signal("列出技能")
+        assert has_skill_signal("List Skills")
+        assert has_skill_signal("save this as a skill")
+        assert not has_skill_signal("改成 5 个层板")
+        assert not has_skill_signal("")
+        assert not has_skill_signal("   ")
 
     def test_start_conversation(self, mock_llm, skills_dir):
         creator = SkillCreator(mock_llm, str(skills_dir))

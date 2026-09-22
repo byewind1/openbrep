@@ -91,6 +91,38 @@ _FRONTMATTER_SKELETON = (
     "---\n\n"
 )
 
+# 规则前置过滤：无技能信号的 CHAT 直接 NONE，不调 LLM。
+# 信号取自 D0 规则基线同源词表（scripts/decisions_eval.py），刻意偏宽——
+# 有信号仍走 LLM（与旧行为一致），无信号才短路。隐式创建若完全不含这些词
+# 会被判 NONE，这是本步接受的代价（计划 M2 第一步）。
+_SKILL_SIGNAL_NEEDLES: tuple[str, ...] = (
+    "技能",
+    "skill",
+    "模板",
+    "template",
+    "复用",
+    "规范",
+    "错题",
+    "记下来",
+    "沉淀",
+    "固化",
+    "存成",
+    "做法存",
+    "learn this",
+    "save as skill",
+    "list skill",
+    "show skill",
+    "skill list",
+)
+
+
+def has_skill_signal(user_input: str) -> bool:
+    """True when the message might be about skill create/list management."""
+    text = (user_input or "").casefold()
+    if not text.strip():
+        return False
+    return any(needle.casefold() in text for needle in _SKILL_SIGNAL_NEEDLES)
+
 
 @dataclass
 class SkillCreationResult:
@@ -137,7 +169,13 @@ class SkillCreator:
         Classify user intent related to skill management.
 
         Returns: "CREATE_SKILL", "LIST_SKILLS", or "NONE".
+
+        Messages without skill-signal words short-circuit to NONE so ordinary
+        CHAT no longer pays an LLM round-trip just to keep the skill wizard
+        closed. Messages with signals use the same LLM classifier as before.
         """
+        if not has_skill_signal(user_input):
+            return "NONE"
         prompt = _CLASSIFICATION_PROMPT.format(user_input=user_input)
         try:
             resp = self._generate([{"role": "user", "content": prompt}])

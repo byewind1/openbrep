@@ -171,15 +171,14 @@ class TestPipelineChat(unittest.TestCase):
             with patch("openbrep.runtime.pipeline.resolve_parameter_targets", return_value=[]):
                 with patch("openbrep.runtime.pipeline.build_project_context", return_value={"gsm_name": "chair"}):
                     with patch("openbrep.runtime.pipeline.explain_project_context", return_value=ProjectExplanation(overall_goal="chair")):
-                        with patch("openbrep.runtime.pipeline.build_chat_explanation_reply", return_value="简要拆解"):
-                            pipeline.execute(request)
+                        with patch("openbrep.runtime.pipeline.build_chat_explanation_reply", return_value="简要拆解") as mock_reply:
+                            result = pipeline.execute(request)
 
+        self.assertEqual(result.plain_text, "简要拆解")
+        mock_reply.assert_called_once()
+        # 无技能信号：规则前置短路，不再为 skill 分类调用 LLM。
         call_args = pipeline._make_llm(request).generate.call_args
-        self.assertIsNotNone(call_args)
-        # LLM is called for skill intent classification before explainer shortcut
-        msg_list = call_args.args[0] if call_args.args else []
-        self.assertGreater(len(msg_list), 0)
-        self.assertIn("分类器", str(msg_list[0]))
+        self.assertIsNone(call_args)
 
 
 if __name__ == "__main__":
@@ -277,9 +276,10 @@ def test_codex_chat_no_project_creates_no_files(tmp_path):
     assert result.plain_text == "这是 Codex 的回复。"
     assert result.scripts == {}
     assert before == after, "无项目 CHAT 不得在工作区创建/修改任何文件"
-    assert len(provider.calls) == 2
-    classification_call, chat_call = provider.calls
-    assert "CREATE_SKILL" in classification_call["messages"][-1]["content"]
+    # 无技能信号：规则前置短路，不产生分类 LLM 调用。
+    assert len(provider.calls) == 1
+    chat_call = provider.calls[0]
+    assert "CREATE_SKILL" not in chat_call["messages"][-1]["content"]
     assert chat_call["model"] == "openai-codex/gpt-5.6-luna"
     messages = chat_call["messages"]
     assert messages[-1]["content"] == "今天天气如何？"
@@ -312,9 +312,9 @@ def test_codex_explain_with_project_does_not_create_revision(tmp_path):
     assert result.success is True
     assert result.plain_text == "这个构件是一个书架。"
     assert before_count == after_count, "EXPLAIN 不得创建 revision"
-    assert len(provider.calls) == 2
-    classification_call, chat_call = provider.calls
-    assert "CREATE_SKILL" in classification_call["messages"][-1]["content"]
+    # 无技能信号：规则前置短路，不产生分类 LLM 调用。
+    assert len(provider.calls) == 1
+    chat_call = provider.calls[0]
     system = chat_call["messages"][0]["content"]
     assert "当前工程解释上下文" in system
     assert "ExplainShelf" in system
@@ -406,7 +406,8 @@ def test_codex_explain_prompt_keeps_existing_chat_contract(tmp_path):
             ],
         )
     )
-    assert len(provider.calls) == 2
+    # 无技能信号：规则前置短路，不产生分类 LLM 调用。
+    assert len(provider.calls) == 1
     messages = provider.calls[-1]["messages"]
     assert messages[0]["role"] == "system"
     assert messages[0]["content"].startswith("你是 openbrep 的内置助手")

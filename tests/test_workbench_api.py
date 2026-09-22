@@ -4400,7 +4400,8 @@ def test_assistant_codex_explain_with_project_no_revision(tmp_path):
     response = session.route("POST", "/api/assistant", {"message": "解释一下这个构件"})
 
     assert response["ok"] is True
-    assert provider.chat_calls == 2
+    # 无技能信号：规则前置短路，不再为 skill 分类调用 LLM。
+    assert provider.chat_calls == 1
     after = len(list(revisions_dir.iterdir())) if revisions_dir.exists() else 0
     assert before == after, "EXPLAIN 不得创建 revision"
     # 项目未被修改（UTF-8 BOM 是 HSF 保存的既有行为，去掉后再比较）
