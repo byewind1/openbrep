@@ -48,6 +48,13 @@ Open families and deliberate boundaries, all required to survive the R3 migratio
 - Built-in preset membership is exact-case, mirroring ``model in ALL_MODELS`` in
   the validator. Custom aliases and upstream ids remain case-insensitive, which
   is what ``find_custom_provider_match`` does.
+- A qualified reference is matched after stripping both halves
+  (``" gw /a1"`` addresses provider ``gw``), mirroring the read path. A provider
+  whose *name* contains ``/`` therefore publishes no ``name/model`` spelling at
+  all: splitting on the first ``/`` could never parse it back to that provider,
+  so the name and the entry aliases stay addressable while the qualified form is
+  not claimed. A provider with no name contributes its aliases and upstream ids
+  only, since it has no addressable prefix.
 - The validator treats an empty reference as the configured default model
   (``find_custom_provider_match`` falls back on a falsy target); this resolver
   always reports ``model_reference_required``. Callers must pass a real string.
@@ -55,7 +62,12 @@ Open families and deliberate boundaries, all required to survive the R3 migratio
   **not** modelled here. Today
   ``_match_within_provider(..., explicit_ref=True)`` accepts it, so R3 must keep
   accepting it wherever settings validation accepts it today; this closed
-  resolver will not resolve such a reference.
+  resolver will not resolve such a reference. The same applies to the
+  ``name/<id>`` spelling of a provider whose name contains ``/``.
+- The bare reserved Codex identity ``openai-codex`` resolves to nothing: it names
+  a provider, not a model. The validator accepts the string only because the
+  reserved provider entry exists, and the adapter would dispatch it without a
+  model id.
 """
 
 from __future__ import annotations
@@ -188,14 +200,33 @@ class ModelCatalog:
         target = str(reference or "").strip()
         if not target:
             raise ModelResolutionError("model_reference_required", "Model reference is required.")
-        claimants = self.selectors.get(target.lower(), ())
+
+        # The read path splits a qualified reference on its first "/" and strips
+        # both halves before matching, so " gw /a1" addresses provider gw. Try
+        # that interpretation first, exactly as find_custom_provider_match does,
+        # then fall back to the reference as written.
+        lookups: list[tuple[str, str]] = []
+        if "/" in target:
+            head, _, rest = target.partition("/")
+            normalized = f"{head.strip()}/{rest.strip()}"
+            lookups.append((normalized.lower(), normalized))
+        lookups.append((target.lower(), target))
+
+        claimants: tuple[ModelSpec, ...] = ()
+        written = target
+        for key, original in lookups:
+            found = self.selectors.get(key, ())
+            if found:
+                claimants, written = found, original
+                break
+
         if claimants:
             # Built-in preset membership is exact-case, mirroring the closed
             # validator's ``model in ALL_MODELS`` test; custom aliases and
             # upstream ids stay case-insensitive, mirroring
             # ``find_custom_provider_match``'s ``.lower()`` comparison.
             exact = tuple(
-                spec for spec in claimants if spec.source != "builtin" or spec.reference == target
+                spec for spec in claimants if spec.source != "builtin" or spec.reference == written
             )
             claimants = exact
         if len(claimants) > 1:
@@ -388,12 +419,17 @@ def _config_entries(config) -> list[_Entry]:
             continue
         provider = normalize_provider_entry(dict(raw_provider))
         name = provider["name"]
-        if not name or name == CODEX_PROVIDER_NAME:
+        if name == CODEX_PROVIDER_NAME:
             # Reserved Codex identity is never a generic config provider.
             continue
         models = iter_custom_provider_model_entries(provider)
         api_mode = str(provider.get("api_mode") or "chat_completions")
         kind: ModelKind = "codex" if api_mode == API_MODE_CODEX_APP_SERVER else "chat"
+        # Qualified references are parsed by splitting on the FIRST "/" and
+        # requiring the head to equal the provider name, so a name containing
+        # "/" can never be written back as name/model. Publishing such a
+        # spelling would claim a reference the read path routes elsewhere.
+        qualified_ok = bool(name) and "/" not in name
         model_specs: dict[str, ModelSpec] = {}
 
         def spec_for(alias: str, target: str) -> ModelSpec:
@@ -416,11 +452,20 @@ def _config_entries(config) -> list[_Entry]:
             alias = entry["alias"]
             target = entry["model"]
             # Documented behaviour of find_custom_provider_match: an entry
-            # answers to its alias, its upstream model id, and the
-            # provider-qualified form of either.
-            selectors = (alias, target, f"{name}/{alias}", f"{name}/{target}")
-            entries.append(_Entry(spec=spec_for(alias, target), selectors=selectors))
+            # answers to its alias, its upstream model id, and — when the
+            # provider name is addressable — the provider-qualified form of
+            # either.
+            selectors = [alias, target]
+            if qualified_ok:
+                selectors += [f"{name}/{alias}", f"{name}/{target}"]
+            entries.append(
+                _Entry(spec=spec_for(alias, target), selectors=tuple(dict.fromkeys(selectors)))
+            )
 
+        if not name:
+            # A provider with no name has no addressable prefix; its aliases
+            # still route today, so they stay published.
+            continue
         default_model = str(provider.get("default_model") or "").strip()
         alias, target, listed = _provider_name_target(name, models, default_model)
         # The provider name points at the same spec as the model it addresses, so
@@ -428,9 +473,11 @@ def _config_entries(config) -> list[_Entry]:
         # ambiguity. An unlisted default id stays reachable through the provider
         # name and its qualified form only: the bare id has no configuration
         # entry and the adapter cannot route it.
-        selectors = [name, f"{name}/{target}"]
-        if listed:
-            selectors.extend([alias, target, f"{name}/{alias}"])
+        selectors = [name]
+        if qualified_ok:
+            selectors.append(f"{name}/{target}")
+            if listed:
+                selectors.extend([alias, target, f"{name}/{alias}"])
         entries.append(
             _Entry(
                 spec=spec_for(alias, target),

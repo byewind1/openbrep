@@ -354,6 +354,71 @@ def test_default_model_naming_an_unlisted_id_stays_addressable():
     assert caught.value.code == "unknown_model"
 
 
+def test_provider_name_containing_slash_publishes_no_qualified_spelling():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                {
+                    "name": "gw/15",
+                    "api": "https://gw15.example.test/v1",
+                    "models": [{"alias": "a1", "model": "m1"}],
+                }
+            ]
+        )
+    )
+
+    assert catalog.resolve("a1").provider == "gw/15"
+    assert catalog.resolve("gw/15").identity.model_id == "m1"
+    # Splitting on the first "/" could never parse this back to that provider, so
+    # the spelling is not claimed.
+    with pytest.raises(ModelResolutionError) as caught:
+        catalog.resolve("gw/15/a1")
+    assert caught.value.code == "unknown_model"
+
+
+def test_nameless_provider_aliases_stay_addressable():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                {"name": "", "api": "https://anon.example.test/v1", "models": ["anon-model"]}
+            ]
+        )
+    )
+
+    spec = catalog.resolve("anon-model")
+
+    assert spec.source == "config"
+    assert spec.provider == ""
+    assert spec.identity.model_id == "anon-model"
+    # No prefix means no qualified spelling and no provider-name selector.
+    with pytest.raises(ModelResolutionError):
+        catalog.resolve("/anon-model")
+
+
+def test_segment_whitespace_in_qualified_references_is_normalised():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                {"name": "gw", "api": "https://gw.example.test/v1", "models": ["m1"]}
+            ]
+        )
+    )
+
+    expected = catalog.resolve("gw/m1")
+
+    for padded in (" gw /m1", "gw/ m1", "gw /m1"):
+        assert catalog.resolve(padded) is expected
+
+
+def test_bare_reserved_codex_identity_is_not_a_model():
+    catalog = build_model_catalog(_config(), codex_models=[_luna_entry()])
+
+    with pytest.raises(ModelResolutionError) as caught:
+        catalog.resolve("openai-codex")
+    assert caught.value.code == "unknown_model"
+    assert catalog.resolve("openai-codex/gpt-5.6-luna").kind == "codex"
+
+
 def test_several_aliases_of_one_upstream_model_share_a_single_spec():
     catalog = build_model_catalog(
         _config(
