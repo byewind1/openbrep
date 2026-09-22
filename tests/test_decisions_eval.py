@@ -211,6 +211,19 @@ def test_draft_labels_mark_themselves_as_not_verdict_grade():
     assert all("human verification" in record.notes for record in labeled)
 
 
+def test_record_id_is_derived_from_the_stored_text():
+    """A truncated record must not look like a distinct sample from its own text."""
+
+    long_text = "把漏窗的做法存成技能 " + "细节 " * 200
+    record = d0.make_record(long_text)
+
+    assert len(record.text) == d0._MAX_TEXT_CHARS
+    assert record.id == d0.sample_id(record.text)
+    # Two long texts sharing the first 400 chars collapse to one sample.
+    other = d0.make_record(long_text + "另一段结尾")
+    assert other.id == record.id
+
+
 def test_dataset_writers_refuse_paths_inside_a_git_worktree(tmp_path):
     worktree = tmp_path / "repo"
     (worktree / ".git").mkdir(parents=True)
@@ -571,12 +584,61 @@ def test_unscored_records_keep_the_recall_denominator_honest():
     assert metrics["unknown_or_failed"] == 1
 
 
-def test_error_samples_are_redacted_and_truncated():
-    assert d0.redact_error_sample("RuntimeError: boom") == "RuntimeError: boom"
-    assert "redacted" in d0.redact_error_sample(
-        "failed for /Users/ren/project/3d.gdl (line 3)"
+def test_error_samples_keep_only_the_kind():
+    """Reports must not carry sample text, even when a backend echoes it."""
+
+    assert d0.redact_error_sample("RuntimeError: boom") == "RuntimeError: [message withheld]"
+    assert d0.redact_error_sample(
+        "TypeSafeBadRequestError: upstream rejected 把漏窗的做法存成技能"
+    ) == "TypeSafeBadRequestError: [message withheld]"
+    assert "3d.gdl" not in d0.redact_error_sample("failed for /Users/ren/project/3d.gdl")
+    assert d0.redact_error_sample("") == ""
+    assert len(d0.redact_error_sample("x" * 500)) <= 90
+
+
+def test_content_duplicates_block_the_verdict_even_with_distinct_ids():
+    """Ids may come from another tool; the gate must judge the text itself."""
+
+    records = [
+        d0.Record(
+            id=f"{index:012d}",
+            text="把漏窗的做法存成技能" if index % 2 else "现在有哪些技能？",
+            label="CREATE_SKILL" if index % 2 else "LIST_SKILLS",
+            labeler="human",
+        )
+        for index in range(300)
+    ]
+    stats = d0.dataset_stats(records)
+
+    assert stats["duplicate_ids"] == 0
+    assert stats["duplicate_texts"] == 298
+
+    result = d0.evaluate_gates(stats, {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)})
+    rows = {row["gate"]: row for row in result["dataset_gates"]}
+    assert rows["unique_samples"]["status"] == "FAIL"
+    assert result["verdict"] == "INSUFFICIENT"
+
+
+def test_report_persists_only_redacted_error_samples(tmp_path):
+    metrics = {"llm": _metrics(0.8, 0.1)}
+    metrics["llm"]["error_samples"] = [
+        "TimeoutError: upstream echoed 把漏窗的做法存成技能",
+        "failed for /Users/ren/project/3d.gdl",
+    ]
+
+    target = d0.write_report(
+        tmp_path / "reports",
+        stats=_stats(400, 200, 80),
+        metrics_by_backend=metrics,
+        gate_result=d0.evaluate_gates(_stats(400, 200, 80), metrics),
+        unavailable={},
+        config={},
     )
-    assert len(d0.redact_error_sample("x" * 500)) == 160
+    payload = (target / "report.json").read_text(encoding="utf-8")
+
+    assert "把漏窗的做法存成技能" not in payload
+    assert "/Users/ren" not in payload
+    assert "message withheld" in payload
 
 
 def test_report_writer_refuses_paths_inside_a_git_worktree(tmp_path):

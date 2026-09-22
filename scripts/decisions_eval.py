@@ -181,9 +181,12 @@ def make_record(
     notes: str = "",
 ) -> Record:
     cleaned = " ".join(str(text or "").split())
+    stored = cleaned[:_MAX_TEXT_CHARS]
     return Record(
-        id=sample_id(cleaned),
-        text=cleaned[:_MAX_TEXT_CHARS],
+        # Hash what is stored, so two records with the same text always share an
+        # id and a truncated record cannot masquerade as a distinct sample.
+        id=sample_id(stored),
+        text=stored,
         label=label,
         labeler=labeler,
         source=source,
@@ -266,6 +269,10 @@ def dataset_stats(records: Sequence[Record]) -> dict[str, Any]:
         and unlabeled == 0
         and all((record.labeler or "") in HUMAN_LABELERS for record in records),
         "duplicate_ids": len(records) - len({record.id for record in records}),
+        # Content-level duplicates catch datasets whose ids were assigned by hand
+        # or by another tool, where the same text can arrive with distinct ids.
+        "duplicate_texts": len(records)
+        - len({" ".join(record.text.split()) for record in records}),
     }
 
 
@@ -811,9 +818,16 @@ def evaluate_gates(
         },
         {
             "gate": "unique_samples",
-            "requirement": "0 duplicate ids",
-            "observed": stats["duplicate_ids"],
-            "status": "PASS" if stats["duplicate_ids"] == 0 else "FAIL",
+            "requirement": "0 duplicate ids and 0 duplicate texts",
+            "observed": {
+                "ids": stats["duplicate_ids"],
+                "texts": stats.get("duplicate_texts", 0),
+            },
+            "status": (
+                "PASS"
+                if stats["duplicate_ids"] == 0 and stats.get("duplicate_texts", 0) == 0
+                else "FAIL"
+            ),
         },
     ]
     baseline = metrics_by_backend.get("llm")
@@ -960,12 +974,18 @@ def _metric_table(metrics_by_backend: dict[str, dict[str, Any]]) -> str:
 
 
 def redact_error_sample(text: str) -> str:
-    """Error strings may echo input text; drop anything that looks sensitive."""
+    """Reduce an error string to its kind.
+
+    Backends routinely echo the input inside error text (an upstream 4xx body,
+    for instance), and the report is a privacy artefact it must not carry sample
+    text at all. Only the exception type / error code survives.
+    """
 
     cleaned = " ".join(str(text).split())
-    if sensitive_reason(cleaned):
-        return "[redacted: matched a sensitive pattern]"
-    return cleaned[:160]
+    if not cleaned:
+        return ""
+    kind = cleaned.split(":", 1)[0].split(" ", 1)[0][:60] or "error"
+    return f"{kind}: [message withheld]"
 
 
 def write_report(
