@@ -143,6 +143,13 @@ def test_session_model_validator_acceptance_set_is_unchanged_by_the_catalog(tmp_
         "glm-4-fla",
         "not-a-real-model",
         "GPT-5.4",                  # preset case variant (catalog refuses, legacy refuses)
+        "",                         # legacy falsy fallback / no match
+        " ",
+        "\t",
+        "   glm-4-flash   ",        # padded preset: catalog would trim, legacy does not
+        " ollama/qwen3:8b ",        # padded open-family tag
+        "  gw/never-listed  ",      # padded direct connect
+        " gw ",
     ]
 
     mismatches = []
@@ -156,7 +163,8 @@ def test_session_model_validator_acceptance_set_is_unchanged_by_the_catalog(tmp_
             try:
                 catalog.resolve(reference)
             except ModelResolutionError:
-                assert reference in {"ollama/", "gw/never-listed", "shared"}, reference
+                lenient = {"ollama/", "gw/never-listed", "shared", "gw"}
+                assert reference.strip() in lenient, reference
 
     assert mismatches == []
     # The two documented leniencies stay accepted rather than being silently dropped.

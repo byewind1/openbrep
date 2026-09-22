@@ -606,27 +606,28 @@ class WorkbenchSettingsService:
         - 裸 alias 冲突时按配置顺序取第一条。
 
         回退只保留既有宽容度，不放宽语义：目录解析成功即接受；失败时沿用原谓词。
-        接受集合与替换前逐例一致（由测试固定）。
+        目录只在引用**已经规范化**（非空且无首尾空白）时参与判定，因为目录内部会
+        裁剪空白而旧谓词不会——否则带空白/空引用会从拒绝变成接受。接受集合因此与
+        替换前逐例一致（由测试固定）。
         """
 
         from openbrep.model_catalog import ModelResolutionError
 
-        target = str(model or "").strip()
-        if not target:
-            # 旧谓词对空串会回退到配置默认模型（falsy fallback）。调用方在上游
-            # 已拒绝缺失/空 model，这里保持原语义以免改变边界行为。
-            target = str(self.session.config.llm.model or "").strip()
-            if not target:
-                return False
-        try:
-            self._model_catalog().resolve(target)
+        raw = str(model or "")
+        target = raw.strip()
+        # 目录自身会裁剪空白，旧谓词不会：只对已经规范化的引用走目录，否则逐字
+        # 沿用原谓词，接受集合与替换前逐例一致（含空串与带空白引用）。
+        if target and raw == target:
+            try:
+                self._model_catalog().resolve(target)
+                return True
+            except ModelResolutionError:
+                pass
+        # 兜底两支保持原样：自定义 provider（含 provider/<未列出 id> 直连与裸 alias
+        # 冲突时的顺序取第一条），以及任何 ollama 前缀（本地自由形态 id）。
+        if self.session.config.llm._find_custom_provider_match(raw) is not None:
             return True
-        except ModelResolutionError:
-            pass
-        if self.session.config.llm._find_custom_provider_match(target) is not None:
-            return True
-        # 第三支保持原样：任何 ollama 前缀都算已知（本地自由形态 id，含退化前缀）。
-        return model_to_provider(target) == "ollama"
+        return model_to_provider(raw) == "ollama"
 
     def update_session_llm_model(self, body: dict[str, Any]) -> dict[str, Any]:
         """D16 会话级模型切换：只改 session 生效模型（+ 会话级 effort），config.toml 零写入。
