@@ -51,10 +51,13 @@ Open families and deliberate boundaries, all required to survive the R3 migratio
 - A qualified reference is matched after stripping both halves
   (``" gw /a1"`` addresses provider ``gw``), mirroring the read path. A provider
   whose *name* contains ``/`` therefore publishes no ``name/model`` spelling at
-  all: splitting on the first ``/`` could never parse it back to that provider,
-  so the name and the entry aliases stay addressable while the qualified form is
-  not claimed. A provider with no name contributes its aliases and upstream ids
-  only, since it has no addressable prefix.
+  all: splitting on the first ``/`` could never parse it back to that provider.
+- A bare selector that itself contains ``/`` is published only when no
+  configured provider claims its head: the read path sends any such reference to
+  the provider named by the head first, so the bare spelling is otherwise
+  unreachable as written (it joins the direct-connect boundary below). A
+  provider with no name contributes its aliases and upstream ids only, since it
+  has no addressable prefix.
 - The validator treats an empty reference as the configured default model
   (``find_custom_provider_match`` falls back on a falsy target); this resolver
   always reports ``model_reference_required``. Callers must pass a real string.
@@ -72,7 +75,8 @@ Open families and deliberate boundaries, all required to survive the R3 migratio
   ``openai-codex/...`` spelling to the subscription path, so a configured alias
   or upstream id spelled that way is dead config and publishes no selector. In
   any *other* case the adapter would fall through to the generic config path,
-  but the catalog still refuses spellings of the reserved identity — a
+  but the catalog still refuses spellings of the reserved identity — including a
+  provider named as a case variant (whose own model ids keep routing) — a
   deliberate fail-closed narrowing of a contrived configuration.
 """
 
@@ -212,6 +216,7 @@ class ModelCatalog:
         # that interpretation first, exactly as find_custom_provider_match does,
         # then fall back to the reference as written.
         lookups: list[tuple[str, str, bool]] = []
+        head = ""
         if "/" in target:
             head, _, rest = target.partition("/")
             normalized = f"{head.strip()}/{rest.strip()}"
@@ -224,10 +229,15 @@ class ModelCatalog:
             found = self.selectors.get(key, ())
             if is_normalized:
                 # Only the custom-provider direct-connect parse strips inner
-                # whitespace. Literal identities (preset membership, the Codex
-                # prefix) are compared as written, so they are never reached
-                # through a padded spelling.
-                found = tuple(spec for spec in found if spec.source == "config")
+                # whitespace, and it does so only under a head that names the
+                # provider. Literal identities (preset membership, the Codex
+                # prefix) are never reached through a padded spelling.
+                head_lower = head.strip().lower()
+                found = tuple(
+                    spec
+                    for spec in found
+                    if spec.source == "config" and spec.provider.lower() == head_lower
+                )
             if found:
                 claimants, written = found, original
                 break
@@ -427,24 +437,47 @@ def _provider_name_target(
     return name, name, False
 
 
+def _is_reserved_reference(value: str) -> bool:
+    """Whether a spelling names the reserved Codex identity, in any case."""
+
+    return is_codex_qualified_model(value.strip().lower())
+
+
 def _config_entries(config) -> list[_Entry]:
     llm = getattr(config, "llm", config)
+    providers = [
+        normalize_provider_entry(dict(raw))
+        for raw in list(getattr(llm, "custom_providers", None) or [])
+        if isinstance(raw, Mapping)
+    ]
+    # The read path splits any "/"-containing reference on its first "/" and
+    # treats the head as a provider name, so a bare selector whose head names a
+    # configured provider is never reached as written. Only qualified forms may
+    # be published in that situation.
+    provider_heads = {
+        provider["name"].strip().lower() for provider in providers if provider["name"]
+    }
+
+    def publishable_bare(selector: str) -> bool:
+        if _is_reserved_reference(selector):
+            return False
+        if "/" not in selector:
+            return True
+        return selector.partition("/")[0].strip().lower() not in provider_heads
+
     entries: list[_Entry] = []
-    for raw_provider in list(getattr(llm, "custom_providers", None) or []):
-        if not isinstance(raw_provider, Mapping):
-            continue
-        provider = normalize_provider_entry(dict(raw_provider))
+    for provider in providers:
         name = provider["name"]
-        if name == CODEX_PROVIDER_NAME:
-            # Reserved Codex identity is never a generic config provider.
+        if name.strip() == CODEX_PROVIDER_NAME:
+            # Only the exact reserved identity is forced to codex_app_server with
+            # no models by the loader; its aliases cannot route.
             continue
         models = iter_custom_provider_model_entries(provider)
         api_mode = str(provider.get("api_mode") or "chat_completions")
         kind: ModelKind = "codex" if api_mode == API_MODE_CODEX_APP_SERVER else "chat"
         # Qualified references are parsed by splitting on the FIRST "/" and
         # requiring the head to equal the provider name, so a name containing
-        # "/" can never be written back as name/model. Publishing such a
-        # spelling would claim a reference the read path routes elsewhere.
+        # "/" can never be written back as name/model.
         qualified_ok = bool(name) and "/" not in name
         model_specs: dict[str, ModelSpec] = {}
 
@@ -470,14 +503,14 @@ def _config_entries(config) -> list[_Entry]:
             # Documented behaviour of find_custom_provider_match: an entry
             # answers to its alias, its upstream model id, and — when the
             # provider name is addressable — the provider-qualified form of
-            # either. Any spelling that names the reserved Codex identity is
-            # dropped: the adapter dispatches every ``openai-codex/...`` string
-            # to the subscription path, so a config alias spelled that way is
-            # dead config, not a routable reference.
-            selectors = [alias, target]
+            # either.
+            selectors = [item for item in (alias, target) if publishable_bare(item)]
             if qualified_ok:
-                selectors += [f"{name}/{alias}", f"{name}/{target}"]
-            selectors = [item for item in selectors if not is_codex_qualified_model(item)]
+                selectors += [
+                    item
+                    for item in (f"{name}/{alias}", f"{name}/{target}")
+                    if not _is_reserved_reference(item)
+                ]
             if not selectors:
                 continue
             entries.append(
@@ -495,12 +528,15 @@ def _config_entries(config) -> list[_Entry]:
         # ambiguity. An unlisted default id stays reachable through the provider
         # name and its qualified form only: the bare id has no configuration
         # entry and the adapter cannot route it.
-        selectors = [name]
+        selectors = [name] if publishable_bare(name) else []
         if qualified_ok:
-            selectors.append(f"{name}/{target}")
+            candidates = [f"{name}/{target}"]
             if listed:
-                selectors.extend([alias, target, f"{name}/{alias}"])
-        selectors = [item for item in selectors if not is_codex_qualified_model(item)]
+                candidates += [f"{name}/{alias}"]
+            selectors += [item for item in candidates if not _is_reserved_reference(item)]
+            if listed:
+                # The bare spelling is only reachable when the entry owns it.
+                selectors += [item for item in (alias, target) if publishable_bare(item)]
         if not selectors:
             continue
         entries.append(

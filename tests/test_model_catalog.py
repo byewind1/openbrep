@@ -23,6 +23,12 @@ def _config(**llm_kwargs) -> GDLAgentConfig:
     return config
 
 
+def _provider(name: str, models: list, **extra) -> dict:
+    """A configured provider entry; the endpoint value is never asserted here."""
+
+    return {"name": name, "api": "https://entry.example.test/v1", "models": models, **extra}
+
+
 def _two_provider_config() -> GDLAgentConfig:
     return _config(
         custom_providers=[
@@ -458,6 +464,105 @@ def test_literal_identities_are_never_reached_through_a_padded_spelling():
         with pytest.raises(ModelResolutionError) as caught:
             catalog.resolve(padded)
         assert caught.value.code == "unknown_model"
+
+
+def test_reserved_identity_case_variants_never_shadow_codex_or_the_validator():
+    """A case-variant alias must not claim the lowercased reserved key."""
+
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                {
+                    "name": "v",
+                    "api": "https://v.example.test/v1",
+                    "models": [{"alias": "Openai-Codex/gpt-5.6-luna", "model": "up"}],
+                }
+            ]
+        ),
+        codex_models=[_luna_entry()],
+    )
+
+    spec = catalog.resolve("openai-codex/gpt-5.6-luna")
+
+    assert (spec.source, spec.provider) == ("codex", "openai-codex")
+    assert [item.reference for item in catalog.by_source("codex")] == ["openai-codex/gpt-5.6-luna"]
+    assert catalog.resolve("up").provider == "v"
+
+
+def test_provider_named_as_a_reserved_identity_variant_is_not_addressable():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                {"name": "Openai-Codex", "api": "https://c.example.test/v1", "models": ["sneaked"]}
+            ]
+        )
+    )
+
+    # The entry's own model id still routes, exactly as the read path has it...
+    assert catalog.resolve("sneaked").provider == "Openai-Codex"
+    # ...but every spelling of the reserved identity stays refused, in any case.
+    for rejected in ("openai-codex", "Openai-Codex", "openai-codex/sneaked"):
+        with pytest.raises(ModelResolutionError) as caught:
+            catalog.resolve(rejected)
+        assert caught.value.code == "unknown_model"
+
+
+def test_padded_qualified_reference_must_name_the_claimant_provider():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                _provider("gw", [{"alias": "a1", "model": "m1"}]),
+                _provider("gw/15", [{"alias": "a1", "model": "m1"}]),
+                _provider("own", [{"alias": "x", "model": "v9/foo"}]),
+            ]
+        )
+    )
+
+    # The read path strips both halves, so padding inside a form that names the
+    # owning provider is still resolvable.
+    assert catalog.resolve(" gw /a1").provider == "gw"
+    assert catalog.resolve("own/ v9/foo").provider == "own"
+    # Padding must not invent a provider match: the head names a slash-name
+    # provider, or names no provider at all.
+    for rejected in (" gw /15", " v9 /foo"):
+        with pytest.raises(ModelResolutionError) as caught:
+            catalog.resolve(rejected)
+        assert caught.value.code == "unknown_model"
+
+
+def test_padded_alias_containing_a_slash_is_not_normalised_into_a_provider_match():
+    """Without a provider owning the head, only the whole alias form resolves."""
+
+    catalog = build_model_catalog(
+        _config(custom_providers=[_provider("gw", [{"alias": "x", "model": "v1/foo"}])])
+    )
+
+    assert catalog.resolve("v1/foo").provider == "gw"
+    with pytest.raises(ModelResolutionError) as caught:
+        catalog.resolve(" v1 /foo")
+    assert caught.value.code == "unknown_model"
+
+
+def test_bare_selector_with_a_slash_is_not_published_when_a_provider_owns_the_head():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                _provider("gw", ["m1"]),
+                _provider("gw/15", [{"alias": "a1", "model": "m1"}]),
+            ]
+        )
+    )
+
+    # The read path splits first: "gw/15" is provider gw with model id "15",
+    # which is the documented direct-connect boundary, not this catalog's entry.
+    with pytest.raises(ModelResolutionError):
+        catalog.resolve("gw/15")
+    assert catalog.resolve("a1").provider == "gw/15"
+    # With no provider owning the head the bare spelling stays addressable.
+    lone = build_model_catalog(
+        _config(custom_providers=[_provider("gw/15", [{"alias": "a1", "model": "m1"}])])
+    )
+    assert lone.resolve("gw/15").provider == "gw/15"
 
 
 def test_configured_alias_spelled_as_a_codex_reference_never_shadows_codex():
