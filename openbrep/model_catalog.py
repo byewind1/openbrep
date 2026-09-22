@@ -26,10 +26,22 @@ Scope discipline:
   entry shadows the built-in preset it overrides, which is what today's read
   path and the settings payload already do.
 
-Capability values are three-state. ``unsupported`` is asserted only where the
-current pipeline demonstrably treats a model that way (absence from
-``VISION_MODELS`` / ``REASONING_MODELS`` for built-in presets); custom and
-dynamically discovered models stay ``unknown`` until a caller supplies evidence.
+Capabilities are three-state and every value is currently ``unknown``, including
+for built-in presets. ``openbrep/config.py`` still carries ``VISION_MODELS`` /
+``REASONING_MODELS``, but nothing in the repository reads them, so they cannot
+justify a claim in either direction — asserting ``unsupported`` from a table
+with no reader would let a future consumer refuse input that works today. The
+one backed fact is Codex reasoning support, which the account catalogue's
+``supported_reasoning_efforts`` states and ``WorkbenchSettingsService`` actually
+enforces. R2 derives the rest from real call sites and may then use
+``unsupported`` for facts with a reader.
+
+Out of scope here, and required to survive the R3 migration:
+
+- ``provider/<id>`` direct connect for an id the provider does not list. Today
+  ``_match_within_provider(..., explicit_ref=True)`` accepts it; this resolver is
+  closed over the models it knows, so such a reference raises ``unknown_model``.
+  R3 must keep accepting it wherever settings validation accepts it today.
 """
 
 from __future__ import annotations
@@ -42,8 +54,6 @@ from openbrep.config import (
     ALL_MODELS,
     API_MODE_CODEX_APP_SERVER,
     CODEX_PROVIDER_NAME,
-    REASONING_MODELS,
-    VISION_MODELS,
     is_codex_qualified_model,
     iter_custom_provider_model_entries,
     normalize_provider_entry,
@@ -256,19 +266,59 @@ def _builtin_entries() -> list[_Entry]:
             display_name=reference,
             api_mode="anthropic_messages" if provider == "anthropic" else "chat_completions",
             kind="chat",
-            capabilities=ModelCapabilities(
-                vision=SUPPORTED if reference in VISION_MODELS else UNSUPPORTED,
-                reasoning=SUPPORTED if reference in REASONING_MODELS else UNSUPPORTED,
-                # No existing fact table describes tool support; R2 derives it
-                # from real call sites instead of guessing here.
-                tools=UNKNOWN,
-            ),
+            # No capability fact exists for presets: the legacy VISION_MODELS /
+            # REASONING_MODELS constants have no reader in the repository, and
+            # llm.py attempts image input for whatever model is configured.
+            capabilities=ModelCapabilities(),
             source="builtin",
         )
         # Only the preset string itself is published: bare upstream ids such as
         # "qwen2.5:14b" are not selectable today, so they are not claimed here.
         entries.append(_Entry(spec=spec, selectors=(reference,)))
     return entries
+
+
+def _config_spec(
+    provider_name: str,
+    alias: str,
+    target: str,
+    api_mode: str,
+    kind: ModelKind,
+) -> ModelSpec:
+    return ModelSpec(
+        identity=ModelIdentity(provider=provider_name, model_id=target, reference=alias),
+        display_name=alias,
+        api_mode=api_mode,
+        kind=kind,
+        capabilities=ModelCapabilities(),
+        source="config",
+    )
+
+
+def _provider_name_target(
+    name: str,
+    models: Sequence[Mapping[str, str]],
+    default_model: str,
+) -> tuple[str, str] | None:
+    """Which model the bare provider name addresses, mirroring the read path.
+
+    ``_match_within_provider`` resolves an empty remainder to the default model
+    (by alias or upstream id), synthesises ``(default_model, default_model)``
+    when that id is not listed, and otherwise falls back to the first listed
+    model — then to a ``(name, name)`` synthetic entry when nothing is listed.
+    """
+
+    if default_model:
+        lowered = default_model.lower()
+        for entry in models:
+            if lowered in {entry["alias"].lower(), entry["model"].lower()}:
+                return entry["alias"], entry["model"]
+        return default_model, default_model
+    if models:
+        return models[0]["alias"], models[0]["model"]
+    if name:
+        return name, name
+    return None
 
 
 def _config_entries(config) -> list[_Entry]:
@@ -283,53 +333,40 @@ def _config_entries(config) -> list[_Entry]:
             # Reserved Codex identity is never a generic config provider.
             continue
         models = iter_custom_provider_model_entries(provider)
-        if not models:
-            continue
         api_mode = str(provider.get("api_mode") or "chat_completions")
         kind: ModelKind = "codex" if api_mode == API_MODE_CODEX_APP_SERVER else "chat"
-        default_model = str(provider.get("default_model") or "").strip()
-        default_lower = default_model.lower()
-        alias_lowers = {entry["alias"].lower() for entry in models}
+        model_specs: dict[tuple[str, str], ModelSpec] = {}
+
+        def spec_for(alias: str, target: str) -> ModelSpec:
+            """One spec per routable (alias, upstream id) pair of this provider."""
+
+            key = (alias.lower(), target.lower())
+            spec = model_specs.get(key)
+            if spec is None:
+                spec = _config_spec(name, alias, target, api_mode, kind)
+                model_specs[key] = spec
+            return spec
 
         for entry in models:
             alias = entry["alias"]
             target = entry["model"]
             # Documented behaviour of find_custom_provider_match: an entry
-            # answers to its alias, its upstream model id, the provider-qualified
-            # form of either, and — when it is the provider's default model — the
-            # provider name itself.
-            selectors = [alias, target, f"{name}/{alias}", f"{name}/{target}"]
-            if default_lower and alias.lower() == default_lower:
-                selectors.append(name)
-            spec = ModelSpec(
-                identity=ModelIdentity(provider=name, model_id=target, reference=alias),
-                display_name=alias,
-                api_mode=api_mode,
-                kind=kind,
-                capabilities=ModelCapabilities(),
-                source="config",
-            )
-            entries.append(_Entry(spec=spec, selectors=tuple(dict.fromkeys(selectors))))
+            # answers to its alias, its upstream model id, and the
+            # provider-qualified form of either.
+            selectors = (alias, target, f"{name}/{alias}", f"{name}/{target}")
+            entries.append(_Entry(spec=spec_for(alias, target), selectors=selectors))
 
-        if default_lower and default_lower not in alias_lowers:
-            # A default_model naming an upstream id no alias lists still answers
-            # to the provider name (again mirroring _match_within_provider).
-            spec = ModelSpec(
-                identity=ModelIdentity(
-                    provider=name, model_id=default_model, reference=default_model
-                ),
-                display_name=default_model,
-                api_mode=api_mode,
-                kind=kind,
-                capabilities=ModelCapabilities(),
-                source="config",
+        default_model = str(provider.get("default_model") or "").strip()
+        name_target = _provider_name_target(name, models, default_model)
+        if name_target is not None:
+            # The provider name points at the same spec as the model it
+            # addresses, so naming the default model explicitly never turns into
+            # a false ambiguity.
+            alias, target = name_target
+            selectors = tuple(
+                dict.fromkeys([alias, target, name, f"{name}/{target}", f"{name}/{alias}"])
             )
-            entries.append(
-                _Entry(
-                    spec=spec,
-                    selectors=(default_model, name, f"{name}/{default_model}"),
-                )
-            )
+            entries.append(_Entry(spec=spec_for(alias, target), selectors=selectors))
     return entries
 
 
@@ -361,6 +398,8 @@ def _codex_entries(codex_models: Iterable[Mapping[str, object]]) -> list[_Entry]
             api_mode=API_MODE_CODEX_APP_SERVER,
             kind="codex",
             capabilities=ModelCapabilities(
+                # Backed fact: the account catalogue states it and
+                # WorkbenchSettingsService refuses efforts outside it.
                 reasoning=SUPPORTED if any(efforts) else UNKNOWN,
                 # The account catalogue carries no modality fact, and no tool
                 # fact has been derived yet: both stay unproven.
