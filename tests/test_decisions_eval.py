@@ -409,7 +409,16 @@ def _stats(total: int, chinese: int, gdl: int, *, human: bool = True) -> dict:
     }
 
 
-def _metrics(recall: float, false_skill: float) -> dict:
+def _metrics(
+    recall: float,
+    false_skill: float,
+    *,
+    error_rate: float = 0.0,
+    fallback_used: int = 0,
+    total: int = 400,
+) -> dict:
+    """Metric shape as produced by compute_metrics (healthy backend by default)."""
+
     return {
         "positive_recall": recall,
         "positive_miss_rate": round(1 - recall, 4),
@@ -417,7 +426,12 @@ def _metrics(recall: float, false_skill: float) -> dict:
         "latency_p50_ms": 1.0,
         "latency_p95_ms": 2.0,
         "calibration_ece": None,
-        "error_rate": 0.0,
+        "error_rate": error_rate,
+        "error_samples": [],
+        "fallback_used": fallback_used,
+        "total": total,
+        "scored": total,
+        "unknown_or_failed": 0,
     }
 
 
@@ -431,6 +445,7 @@ def test_gates_refuse_a_verdict_when_the_dataset_is_too_small():
         "FAIL",
         "FAIL",
         "FAIL",
+        "PASS",
         "PASS",
         "NOT_PROBED",
     ]
@@ -471,6 +486,7 @@ def test_gates_refuse_a_verdict_when_labels_are_not_human_verified():
         "min_chinese": "PASS",
         "min_gdl_terms": "PASS",
         "all_labeled": "PASS",
+        "unique_samples": "PASS",
         "baseline_sanity": "NOT_PROBED",
     }
 
@@ -502,12 +518,92 @@ def test_gates_pass_only_when_recall_and_false_skill_rate_clear_the_baseline():
     assert worse_wizard["verdict"] == "NO-GO"
 
 
+def test_gates_reject_a_backend_that_only_inherits_the_baseline():
+    """A backend that fails on everything must not be scored as the baseline."""
+
+    result = d0.evaluate_gates(
+        _stats(400, 200, 80),
+        {
+            "llm": _metrics(0.8, 0.10),
+            # Identical numbers to the baseline - exactly what fallback yields.
+            "typesafe": _metrics(0.8, 0.10, error_rate=1.0, fallback_used=400),
+        },
+    )
+
+    assert result["verdict"] == "NO-GO"
+    checks = {
+        check["gate"]: check["status"]
+        for check in result["per_backend"]["typesafe"]["checks"]
+    }
+    assert checks["backend_answers_for_itself"] == "FAIL"
+    assert checks["positive_recall_ratio_vs_llm"] == "PASS"
+    assert result["per_backend"]["typesafe"]["passed"] is False
+
+
+def test_gates_reject_duplicate_samples():
+    stats = _stats(400, 200, 80)
+    stats["duplicate_ids"] = 297
+
+    result = d0.evaluate_gates(stats, {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)})
+
+    assert result["verdict"] == "INSUFFICIENT"
+    rows = {row["gate"]: row["status"] for row in result["dataset_gates"]}
+    assert rows["unique_samples"] == "FAIL"
+
+
+def test_unscored_records_keep_the_recall_denominator_honest():
+    records = [
+        d0.make_record("技能一", label="CREATE_SKILL", labeler="human"),
+        d0.make_record("技能二", label="CREATE_SKILL", labeler="human"),
+        d0.make_record("普通", label="NONE", labeler="human"),
+    ]
+    results = [
+        d0.BackendResult(label="CREATE_SKILL", latency_ms=1.0),
+        d0.BackendResult(label=None, error="boom", latency_ms=1.0),  # failed on a positive
+        d0.BackendResult(label="NONE", latency_ms=1.0),
+    ]
+
+    metrics = d0.compute_metrics(records, results)
+
+    assert metrics["confusion"]["CREATE_SKILL"]["UNSCORED"] == 1
+    assert metrics["per_label"]["CREATE_SKILL"]["support"] == 2
+    assert metrics["positive_recall"] == 0.5  # not 1.0
+    assert metrics["unknown_or_failed"] == 1
+
+
+def test_error_samples_are_redacted_and_truncated():
+    assert d0.redact_error_sample("RuntimeError: boom") == "RuntimeError: boom"
+    assert "redacted" in d0.redact_error_sample(
+        "failed for /Users/ren/project/3d.gdl (line 3)"
+    )
+    assert len(d0.redact_error_sample("x" * 500)) == 160
+
+
+def test_report_writer_refuses_paths_inside_a_git_worktree(tmp_path):
+    worktree = tmp_path / "repo"
+    (worktree / ".git").mkdir(parents=True)
+
+    with pytest.raises(SystemExit):
+        d0.write_report(
+            worktree / "reports",
+            stats=_stats(1, 1, 0),
+            metrics_by_backend={"llm": _metrics(1.0, 0.0)},
+            gate_result=d0.evaluate_gates(_stats(1, 1, 0), {"llm": _metrics(1.0, 0.0)}),
+            unavailable={},
+            config={},
+        )
+
+
 def test_gates_treat_a_missing_baseline_as_not_passing():
     result = d0.evaluate_gates(_stats(400, 200, 80), {"typesafe": _metrics(0.9, 0.05)})
 
     assert result["verdict"] == "NO-GO"
     checks = {c["gate"]: c["status"] for c in result["per_backend"]["typesafe"]["checks"]}
-    assert set(checks.values()) == {"FAIL"}
+    # The comparison gates cannot be satisfied without a reference row, while the
+    # backend's own health check still passes.
+    assert checks["positive_recall_ratio_vs_llm"] == "FAIL"
+    assert checks["false_skill_rate_not_worse_than_llm"] == "FAIL"
+    assert checks["backend_answers_for_itself"] == "PASS"
 
 
 # ── report ───────────────────────────────────────────────────────────────────

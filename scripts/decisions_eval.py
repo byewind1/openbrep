@@ -663,7 +663,12 @@ def expected_calibration_error(
 def compute_metrics(records: Sequence[Record], results: Sequence[BackendResult]) -> dict[str, Any]:
     """Confusion matrix, per-class precision/recall, wizard rates, latency, ECE."""
 
-    confusion = {gold: {pred: 0 for pred in LABELS} for gold in LABELS}
+    # "UNSCORED" records keep their gold support: dropping them would shrink the
+    # denominator and silently inflate recall for a backend that fails on the
+    # samples it gets wrong.
+    confusion = {
+        gold: {pred: 0 for pred in (*LABELS, "UNSCORED")} for gold in LABELS
+    }
     errors = 0
     latencies: list[float] = []
     calibration: list[tuple[float, bool]] = []
@@ -679,6 +684,8 @@ def compute_metrics(records: Sequence[Record], results: Sequence[BackendResult])
                 error_samples.append(result.error[:160])
         if result.label is None:
             unknown += 1
+            if record.label in LABELS:
+                confusion[record.label]["UNSCORED"] += 1
             continue
         if result.fallback_used:
             fallbacks += 1
@@ -697,7 +704,7 @@ def compute_metrics(records: Sequence[Record], results: Sequence[BackendResult])
     for label in LABELS:
         true_positive = confusion[label][label]
         predicted = sum(confusion[gold][label] for gold in LABELS)
-        actual = sum(confusion[label].values())
+        actual = sum(confusion[label].values())  # includes UNSCORED
         per_label[label] = {
             "support": actual,
             "precision": _safe_div(true_positive, predicted),
@@ -802,6 +809,12 @@ def evaluate_gates(
             "observed": stats["unlabeled"],
             "status": "PASS" if stats["unlabeled"] == 0 else "FAIL",
         },
+        {
+            "gate": "unique_samples",
+            "requirement": "0 duplicate ids",
+            "observed": stats["duplicate_ids"],
+            "status": "PASS" if stats["duplicate_ids"] == 0 else "FAIL",
+        },
     ]
     baseline = metrics_by_backend.get("llm")
     per_backend: dict[str, dict[str, Any]] = {}
@@ -853,6 +866,21 @@ def evaluate_gates(
                     "status": "PASS" if ok else "FAIL",
                 }
             )
+        checks.append(
+            {
+                "gate": "backend_answers_for_itself",
+                "requirement": "0 errors, 0 fallbacks",
+                "observed": {
+                    "error_rate": metrics["error_rate"],
+                    "fallback_used": metrics["fallback_used"],
+                },
+                "status": (
+                    "PASS"
+                    if not metrics["error_rate"] and not metrics["fallback_used"]
+                    else "FAIL"
+                ),
+            }
+        )
         per_backend[name] = {
             "checks": checks,
             "passed": all(check["status"] in {"PASS", "REFERENCE"} for check in checks),
@@ -931,6 +959,15 @@ def _metric_table(metrics_by_backend: dict[str, dict[str, Any]]) -> str:
     return header + "\n".join(rows)
 
 
+def redact_error_sample(text: str) -> str:
+    """Error strings may echo input text; drop anything that looks sensitive."""
+
+    cleaned = " ".join(str(text).split())
+    if sensitive_reason(cleaned):
+        return "[redacted: matched a sensitive pattern]"
+    return cleaned[:160]
+
+
 def write_report(
     out_dir: str | Path,
     *,
@@ -941,6 +978,11 @@ def write_report(
     unavailable: dict[str, str],
     config: dict[str, Any],
 ) -> Path:
+    assert_not_in_git_worktree(out_dir)
+    for metrics in metrics_by_backend.values():
+        metrics["error_samples"] = [
+            redact_error_sample(sample) for sample in metrics.get("error_samples", [])
+        ]
     target_dir = Path(out_dir).expanduser() / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target_dir.mkdir(parents=True, exist_ok=True)
     payload = {
