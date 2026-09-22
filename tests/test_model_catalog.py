@@ -670,6 +670,8 @@ def test_open_family_local_tags_resolve_without_a_catalog_entry():
     assert catalog.by_source("open") == ()
     with pytest.raises(ModelResolutionError):
         catalog.resolve("ollama/")
+    # The identity carries the stripped tag, mirroring find_custom_provider_match.
+    assert catalog.resolve("ollama/ llama3.1:8b").identity.model_id == "llama3.1:8b"
 
 
 def test_provider_with_no_models_is_still_addressable_by_name():

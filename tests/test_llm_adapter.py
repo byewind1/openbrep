@@ -705,6 +705,44 @@ class TestLLMErrorClassification(unittest.TestCase):
 class TestUnifiedProviderResolution(unittest.TestCase):
     """统一注册表（api/api_mode 新键名 + ${VAR} 插值）在 adapter 解析链路上的行为。"""
 
+    def test_drop_params_follows_the_wire_model_not_the_alias_name(self):
+        """R2：传输兼容按解析后的 wire model 判定，与 alias 文本无关。"""
+
+        def run(provider_name, alias, target, wire):
+            config = LLMConfig(
+                model=alias,
+                api_key="test-key",
+                custom_providers=[
+                    {
+                        "name": provider_name,
+                        "api": "https://gateway.example.com/v1",
+                        "api_key": "test-gateway-key",
+                        "models": [{"alias": alias, "model": target}],
+                    }
+                ],
+            )
+            adapter = LLMAdapter(config)
+            response = MagicMock()
+            response.choices = [MagicMock()]
+            response.choices[0].message.content = "ok"
+            response.choices[0].finish_reason = "stop"
+            response.model = wire
+            response.usage = {"prompt_tokens": 1}
+            adapter._litellm = MagicMock()
+            adapter._litellm.completion.return_value = response
+            adapter.generate([{"role": "user", "content": "hi"}], stream=False)
+            return adapter._litellm.completion.call_args.kwargs
+
+        # The alias name says "gpt-5"; the wire model is not a reasoning model.
+        kwargs = run("gateway", "gpt-5-fast", "glm-4-flash", "openai/glm-4-flash")
+        self.assertEqual(kwargs["model"], "openai/glm-4-flash")
+        self.assertNotIn("drop_params", kwargs)
+
+        # The alias name says nothing; the wire model is a reasoning model.
+        kwargs = run("ymg", "ymg-gpt-5.4", "gpt-5.4", "openai/gpt-5.4")
+        self.assertEqual(kwargs["model"], "openai/gpt-5.4")
+        self.assertTrue(kwargs["drop_params"])
+
     def test_anthropic_messages_api_mode_resolves_anthropic_prefix(self):
         config = LLMConfig(
             model="claude-fable-5",
