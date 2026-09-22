@@ -315,6 +315,68 @@ def test_typesafe_backend_sends_the_frozen_question_and_parses_the_answer():
     assert set(question.criteria) == set(d0.LABELS)
 
 
+def test_backend_identity_reports_what_actually_ran():
+    """The report's provenance block must not be decorative."""
+
+    assert d0.LLMBackend(classify=lambda _text: "NONE", model="m1").identity() == "m1"
+    assert d0.RuleBackend().identity() is None
+
+    # The fake declares model="jev-test" the way the SDK reports response.model.
+    backend = d0.TypeSafeBackend(client=_FakeTypeSafeClient({"把漏窗做法存成技能": "CREATE_SKILL"}))
+    assert backend.identity() is None          # nothing observed before the call
+    backend.classify("把漏窗做法存成技能")
+
+    assert backend.identity() == "jev-test"
+
+
+def test_baseline_override_only_counts_as_an_override_when_it_changes_the_model():
+    assert d0.baseline_override_of(None, "prod") is None
+    assert d0.baseline_override_of("prod", "prod") is None      # pinning is not overriding
+    assert d0.baseline_override_of("weaker", "prod") == "weaker"
+    assert d0.baseline_override_of("weaker", None) == "weaker"  # unknown production
+    assert d0.production_model() == d0.production_model()       # resolvable, never raises
+
+
+def test_cmd_run_records_provenance_and_refuses_an_overridden_baseline(tmp_path):
+    """The CLI is the documented entry point: its wiring needs its own test."""
+
+    records = [
+        d0.make_record(f"生成第 {index} 个方块", label="NONE", labeler="human")
+        for index in range(3)
+    ]
+    dataset = tmp_path / "hand.jsonl"
+    d0.write_jsonl(dataset, records)
+
+    def run(*extra: str) -> dict:
+        args = d0.build_parser().parse_args(
+            [
+                "--data-dir",
+                str(tmp_path / "data"),
+                "run",
+                "--dataset",
+                str(dataset),
+                "--backends",
+                "rule",
+                *extra,
+            ]
+        )
+        assert d0.cmd_run(args) == 0
+        report = sorted((tmp_path / "data" / "reports").glob("*/report.json"))[-1]
+        return json.loads(report.read_text(encoding="utf-8"))
+
+    overridden = run("--baseline-model", "some-weaker-model")
+    rows = {row["gate"]: row["status"] for row in overridden["gates"]["dataset_gates"]}
+    assert rows["production_baseline"] == "FAIL"
+    assert any("overridden" in reason for reason in overridden["gates"]["reasons"])
+    assert overridden["config"]["baseline_model"] == "some-weaker-model"
+    assert overridden["config"]["backend_identity"] == {"rule": None}
+
+    plain = run()
+    rows = {row["gate"]: row["status"] for row in plain["gates"]["dataset_gates"]}
+    assert rows["production_baseline"] == "PASS"
+    assert plain["config"]["baseline_model"] is None
+
+
 def test_typesafe_backend_reports_errors_instead_of_raising():
     backend = d0.TypeSafeBackend(client=_FakeTypeSafeClient({}, error=TimeoutError("slow")))
 
@@ -791,6 +853,22 @@ def test_compute_metrics_carries_the_dataset_fingerprint():
 
     assert metrics["fingerprint"] == d0.dataset_fingerprint(records)
     assert metrics["fingerprint"] == d0.dataset_stats(records)["fingerprint"]
+
+
+def test_binding_gate_needs_a_present_fingerprint():
+    """Two missing fingerprints must not read as a match (None == None)."""
+
+    stats = _stats(400, 200, 80)
+    stats.pop("fingerprint")
+    metrics = {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)}
+    for entry in metrics.values():
+        entry.pop("fingerprint")
+
+    result = d0.evaluate_gates(stats, metrics)
+
+    rows = {row["gate"]: row["status"] for row in result["dataset_gates"]}
+    assert rows["metrics_match_dataset"] == "FAIL"
+    assert result["verdict"] == "INSUFFICIENT"
 
 
 def test_gates_bind_the_metrics_to_the_dataset_fingerprint():

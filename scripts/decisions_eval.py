@@ -829,6 +829,27 @@ def probe_backend(backend: Backend) -> dict[str, Any]:
     return {"ok": not misses, "misses": misses}
 
 
+def production_model() -> str | None:
+    """The production default model, when the config can be resolved."""
+
+    try:
+        from openbrep.config import GDLAgentConfig
+
+        return GDLAgentConfig.load().llm.model or None
+    except Exception:  # noqa: BLE001 - provenance must never break a run
+        return None
+
+
+def baseline_override_of(requested: str | None, production: str | None) -> str | None:
+    """Treat an explicit pin of the production model as no override at all."""
+
+    if requested is None:
+        return None
+    if production is not None and requested == production:
+        return None
+    return requested
+
+
 def evaluate_gates(
     stats: dict[str, Any],
     metrics_by_backend: dict[str, dict[str, Any]],
@@ -897,9 +918,10 @@ def evaluate_gates(
             "status": (
                 "PASS"
                 if metrics_by_backend
+                and stats.get("fingerprint")
                 and all(
-                    metrics.get("fingerprint") == stats.get("fingerprint")
-                    and metrics.get("total") == stats.get("total")
+                    metrics.get("fingerprint") == stats["fingerprint"]
+                    and metrics.get("total") == stats["total"]
                     for metrics in metrics_by_backend.values()
                 )
                 else "FAIL"
@@ -909,7 +931,7 @@ def evaluate_gates(
             # The recall gate is relative to the baseline, so a weakened baseline
             # would make GO easier: a verdict needs the production model.
             "gate": "production_baseline",
-            "requirement": "no --baseline-model override",
+            "requirement": "baseline is the production model",
             "observed": baseline_override,
             "status": "PASS" if not baseline_override else "FAIL",
         },
@@ -1263,7 +1285,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         stats,
         metrics_by_backend,
         sanity=sanity,
-        baseline_override=args.baseline_model or None,
+        baseline_override=baseline_override_of(
+            args.baseline_model or None, production_model()
+        ),
     )
     out_dir = Path(args.out_dir).expanduser() if args.out_dir else data_dir / "reports"
     target = write_report(
