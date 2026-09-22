@@ -87,27 +87,11 @@ ALL_MODELS = [
     "ollama/deepseek-coder-v2:16b",
 ]
 
-VISION_MODELS = {
-    "qwen-vl-plus",
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "claude-sonnet-4-6",
-    "claude-opus-4-6",
-    "claude-haiku-4-5-20251001",
-    "gemini/gemini-2.5-flash",
-    "gemini/gemini-2.5-pro",
-}
-
-REASONING_MODELS = {
-    "deepseek-v4-flash",
-    "deepseek-v4-pro",
-    "qwq-plus",
-    "o3",
-    "o3-mini",
-    "o4-mini",
-}
+# Capability facts (vision / reasoning / tools) are NOT declared here: they were
+# previously carried as two name sets (VISION_MODELS / REASONING_MODELS) that no
+# code path ever read, so they described no behaviour. Request-shape constraints
+# live in openbrep/model_catalog.transport_compat(); model facts belong to the
+# catalog (openbrep/model_catalog.py), which keeps unproven values as `unknown`.
 
 
 # ── Provider 注册表（LLM 链路单一事实来源）──────────────────────────────────

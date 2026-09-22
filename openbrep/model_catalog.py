@@ -156,6 +156,41 @@ class ModelCapabilities:
 
 
 @dataclass(frozen=True)
+class TransportCompat:
+    """Transport quirks of one resolved wire model — not model capabilities.
+
+    Keyed on the resolved wire string (what the client library actually sends),
+    because that is what the transport constraints apply to: an alias may name
+    anything while the wire model decides the request shape.
+    """
+
+    drop_params: bool = False
+    omit_temperature: bool = False
+
+
+# Tokens that mark an OpenAI reasoning-model wire id. ``drop_params`` only covers
+# the gpt-5/codex family; the responses transport additionally omits
+# temperature for the o-series, which silently ignores it.
+_DROP_PARAMS_TOKENS: tuple[str, ...] = ("gpt-5", "codex")
+_OMIT_TEMPERATURE_TOKENS: tuple[str, ...] = ("gpt-5", "codex", "o1", "o3", "o4")
+
+
+def transport_compat(wire_model: str) -> TransportCompat:
+    """Return the request-shape constraints for a resolved wire model.
+
+    Single place for the decision that used to be a string check at each call
+    site; the Codex app-server path never reaches it (it is dispatched before
+    the client library is consulted).
+    """
+
+    lowered = str(wire_model or "").lower()
+    return TransportCompat(
+        drop_params=any(token in lowered for token in _DROP_PARAMS_TOKENS),
+        omit_temperature=any(token in lowered for token in _OMIT_TEMPERATURE_TOKENS),
+    )
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     """One catalog entry: identity plus the facts needed to route a request."""
 

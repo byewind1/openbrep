@@ -789,6 +789,60 @@ def test_catalog_agrees_with_the_settings_validator_except_on_documented_ambigui
             assert production["model"] == spec.identity.model_id
 
 
+def test_transport_compat_reproduces_the_previous_string_checks_exactly():
+    """R2: the centralised rule must be byte-equivalent to the checks it replaced."""
+
+    from openbrep.config import ALL_MODELS, provider_profile_for_model
+    from openbrep.model_catalog import transport_compat
+
+    def legacy_drop_params(model: str) -> bool:
+        lowered = model.lower()
+        return "gpt-5" in lowered or "codex" in lowered
+
+    def legacy_omit_temperature(model: str) -> bool:
+        lowered = model.lower()
+        return any(token in lowered for token in ("gpt-5", "codex", "o1", "o3", "o4"))
+
+    corpus = set(ALL_MODELS)
+    for reference in ALL_MODELS:
+        profile = provider_profile_for_model(reference)
+        if profile is not None and profile.native_prefix and "/" not in reference:
+            corpus.add(f"{profile.native_prefix}{reference}")
+        corpus.add(reference.upper())
+    corpus |= {
+        "openai/gpt-5.4",
+        "openai-codex/gpt-5.6-luna",
+        "openai/o3-mini",
+        "openai/o4-mini",
+        "o1-preview",
+        "ollama/qwen3:8b",
+        "glm-4-flash",
+        "deepseek-v4-flash",
+        "",
+    }
+
+    for wire_model in sorted(corpus):
+        compat = transport_compat(wire_model)
+        assert compat.drop_params == legacy_drop_params(wire_model), wire_model
+        assert compat.omit_temperature == legacy_omit_temperature(wire_model), wire_model
+
+
+def test_transport_compat_keeps_the_o_series_asymmetry():
+    from openbrep.model_catalog import transport_compat
+
+    # The o-series silently ignores temperature but never needed drop_params;
+    # that asymmetry is the behaviour the adapter has always had.
+    o_series = transport_compat("openai/o3-mini")
+    assert o_series.omit_temperature is True
+    assert o_series.drop_params is False
+
+    gpt5 = transport_compat("openai/gpt-5.4")
+    assert (gpt5.drop_params, gpt5.omit_temperature) == (True, True)
+
+    plain = transport_compat("glm-4-flash")
+    assert (plain.drop_params, plain.omit_temperature) == (False, False)
+
+
 def test_catalog_is_deterministic_and_read_only():
     config = _two_provider_config()
     providers_before = copy.deepcopy(config.llm.custom_providers)
