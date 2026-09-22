@@ -588,14 +588,45 @@ class WorkbenchSettingsService:
 
     _MODEL_MISSING = object()
 
+    def _model_catalog(self):
+        """只读模型目录（R3）：校验路径的结构化事实源。"""
+
+        from openbrep.model_catalog import build_model_catalog
+
+        return build_model_catalog(self.session.config)
+
     def _catalog_known_model(self, model: str) -> bool:
-        """非 codex 模型的目录校验（D16 会话路由 fail closed 用）：
-        官方预设 / 自定义 provider 目录 / ollama 自由形态本地 id 三者之一。"""
-        if model in ALL_MODELS:
+        """非 codex 模型的目录校验（D16 会话路由 fail closed 用）。
+
+        R3：以只读目录为**主**校验器（严格解析、身份结构化、冲突显式报错），
+        再对目录有意拒绝的两类引用回退到既有读路径——它们今天被校验器接受，
+        直接替换会让既有配置突然解析失败：
+
+        - `provider/<未列出 id>` 直连（`_match_within_provider(explicit_ref=True)`）；
+        - 裸 alias 冲突时按配置顺序取第一条。
+
+        回退只保留既有宽容度，不放宽语义：目录解析成功即接受；失败时沿用原谓词。
+        接受集合与替换前逐例一致（由测试固定）。
+        """
+
+        from openbrep.model_catalog import ModelResolutionError
+
+        target = str(model or "").strip()
+        if not target:
+            # 旧谓词对空串会回退到配置默认模型（falsy fallback）。调用方在上游
+            # 已拒绝缺失/空 model，这里保持原语义以免改变边界行为。
+            target = str(self.session.config.llm.model or "").strip()
+            if not target:
+                return False
+        try:
+            self._model_catalog().resolve(target)
             return True
-        if self.session.config.llm._find_custom_provider_match(model) is not None:
+        except ModelResolutionError:
+            pass
+        if self.session.config.llm._find_custom_provider_match(target) is not None:
             return True
-        return model_to_provider(model) == "ollama"
+        # 第三支保持原样：任何 ollama 前缀都算已知（本地自由形态 id，含退化前缀）。
+        return model_to_provider(target) == "ollama"
 
     def update_session_llm_model(self, body: dict[str, Any]) -> dict[str, Any]:
         """D16 会话级模型切换：只改 session 生效模型（+ 会话级 effort），config.toml 零写入。
