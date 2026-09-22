@@ -290,10 +290,27 @@ class _RecordingPipeline(TaskPipeline):
     def __init__(self, *args, outcomes=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.seen = []
+        self.selections = []
+        self.config_seen_during_call = []
+        self.request_ids = []
+        self.project_presence = []
         self.outcomes = list(outcomes or [TaskResult(success=True, intent="CREATE")])
 
     def _handle_gdl(self, request):
-        self.seen.append((self.config.llm.model, self.config.llm.reasoning_effort, request))
+        # R4：调用期间共享 config 必须保持已保存值；本次生效的 model/effort 只能
+        # 来自请求携带的显式选择。`seen` 继续记录生效组合，语义与改动前一致。
+        selection = getattr(request, "selection", None)
+        self.request_ids.append(id(request))
+        self.project_presence.append(request.project is not None)
+        self.config_seen_during_call.append(
+            (self.config.llm.model, self.config.llm.reasoning_effort)
+        )
+        self.selections.append(selection)
+        if selection is not None:
+            effective = (selection.model, selection.reasoning_effort)
+        else:
+            effective = (self.config.llm.model, self.config.llm.reasoning_effort)
+        self.seen.append((*effective, request))
         return self.outcomes.pop(0)
 
 
@@ -315,6 +332,49 @@ def test_fixed_pipeline_request_fingerprint_is_unchanged_and_never_probes_provid
     assert pipeline.seen == [(LUNA_MODEL, "medium", request)]
     assert provider.status_calls == provider.model_calls == 0
     assert "codex_auto_route" not in result.metadata
+
+
+def test_auto_routing_passes_an_explicit_selection_without_touching_config(tmp_path):
+    """R4: the routed pair travels as a selection; config stays the saved fact."""
+
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-sol"
+    config.llm.reasoning_effort = "medium"
+    config.llm.codex_routing_mode = "auto"
+    SAVED_PAIR = ("openai-codex/gpt-5.6-sol", "medium")
+    pipeline = _RecordingPipeline(
+        config=config,
+        codex_provider=_Provider(),
+        trace_dir=str(tmp_path / "traces"),
+    )
+
+    result = pipeline.execute(TaskRequest(user_input="创建简单构件", intent="CREATE"))
+
+    assert result.success
+    selection = pipeline.selections[0]
+    assert selection is not None
+    assert (selection.model, selection.reasoning_effort) == (LUNA_MODEL, "low")
+    assert selection.policy == "codex_auto"
+    assert selection.route_reason
+    # The shared config was never rewritten, during or after the call.
+    assert pipeline.config_seen_during_call == [SAVED_PAIR]
+    assert (config.llm.model, config.llm.reasoning_effort) == SAVED_PAIR
+    # The routed attempt ran on the pipeline's own request object, so anything it
+    # writes there (project) stays visible to later attempts and the finalizers.
+    assert len(set(pipeline.request_ids)) == 1
+    # The effective config carries the routed pair; the shared config is a literal
+    # constant that must survive building it (a mutating implementation would fail).
+    effective = pipeline._effective_llm_config(selection)
+    assert (effective.model, effective.reasoning_effort) == (LUNA_MODEL, "low")
+    assert effective is not config.llm
+    assert (config.llm.model, config.llm.reasoning_effort) == SAVED_PAIR
+    # Both requests (routed and unrouted) still resolve through the same adapter seam.
+    request = TaskRequest(user_input="创建简单构件", intent="CREATE")
+    request.selection = selection
+    assert LUNA_MODEL in pipeline._make_llm(request)._resolve_model_string()
+    request.selection = None
+    assert config.llm.model in pipeline._make_llm(request)._resolve_model_string()
+    assert (config.llm.model, config.llm.reasoning_effort) == SAVED_PAIR
 
 
 def test_auto_pipeline_uses_policy_and_restores_saved_fixed_pair(tmp_path):
@@ -339,11 +399,68 @@ def test_auto_pipeline_uses_policy_and_restores_saved_fixed_pair(tmp_path):
     assert result.metadata["codex_auto_route"]["decisions"][0]["reason"]
 
 
+def test_escalation_attempt_continues_the_failed_attempts_project(tmp_path):
+    """R4 regression: the escalated retry must inherit attempt 1's project.
+
+    ``_handle_gdl`` creates the project on first entry and writes it back onto the
+    request object; every later attempt (and the execute-time finalizers) read it
+    from there. Building each attempt from a request *copy* silently broke that.
+    """
+
+    class _EscalatingPipeline(_RecordingPipeline):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.created = 0
+
+        def _handle_gdl(self, request):
+            self.selections.append(getattr(request, "selection", None))
+            self.config_seen_during_call.append(
+                (self.config.llm.model, self.config.llm.reasoning_effort)
+            )
+            attempt = len(self.project_presence) + 1
+            if request.project is None:
+                self.created += 1
+                request.project = HSFProject.create_new(
+                    "d9_escalation", work_dir=str(tmp_path)
+                )
+            self.project_presence.append(request.project is not None)
+            if attempt == 1:
+                return TaskResult(success=False, intent="CREATE", verification=_verification())
+            return TaskResult(success=True, intent="CREATE", project=request.project)
+
+    config = GDLAgentConfig()
+    config.llm.model = LUNA_MODEL
+    config.llm.codex_routing_mode = "auto"
+    pipeline = _EscalatingPipeline(
+        config=config,
+        codex_provider=_Provider(catalog=CATALOG_TERRA_HIGH),
+        trace_dir=str(tmp_path / "traces"),
+    )
+
+    result = pipeline.execute(
+        TaskRequest(user_input="create a curtain wall system from scratch", intent="CREATE")
+    )
+
+    assert result.success
+    assert pipeline.created == 1, "the escalated attempt created a fresh project"
+    assert pipeline.project_presence == [True, True]
+    assert [selection.model for selection in pipeline.selections] == [LUNA_MODEL, TERRA_MODEL]
+    assert [selection.reasoning_effort for selection in pipeline.selections] == ["high", "high"]
+    assert (config.llm.model, config.llm.reasoning_effort) == (LUNA_MODEL, "")
+    # The selection is per-attempt context: it must not survive the routing.
+    assert all(getattr(sel, "policy", "") == "codex_auto" for sel in pipeline.selections)
+
+
 def test_auto_pipeline_restores_saved_fixed_pair_after_generation_exception(tmp_path):
     """The per-call Auto override must not leak when generation raises."""
     class ExplodingPipeline(_RecordingPipeline):
         def _handle_gdl(self, request):
-            self.seen.append((self.config.llm.model, self.config.llm.reasoning_effort, request))
+            selection = request.selection
+            self.config_seen_during_call.append(
+                (self.config.llm.model, self.config.llm.reasoning_effort)
+            )
+            self.selections.append(selection)
+            self.seen.append((selection.model, selection.reasoning_effort, request))
             raise RuntimeError("simulated generation failure")
 
     config = GDLAgentConfig()
