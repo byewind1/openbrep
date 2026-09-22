@@ -419,6 +419,75 @@ def test_bare_reserved_codex_identity_is_not_a_model():
     assert catalog.resolve("openai-codex/gpt-5.6-luna").kind == "codex"
 
 
+def test_reserved_codex_identity_stays_unaddressable_when_the_entry_exists():
+    """Production seeds a reserved provider entry; it must not become a model."""
+
+    from openbrep.config import ensure_codex_provider_entry
+
+    config = _config()
+    entry = ensure_codex_provider_entry(config)
+    entry["models"] = ["sneaked-in"]  # even a tampered entry publishes nothing
+    catalog = build_model_catalog(config, codex_models=[_luna_entry()])
+
+    for rejected in ("openai-codex", "sneaked-in"):
+        with pytest.raises(ModelResolutionError):
+            catalog.resolve(rejected)
+    assert catalog.resolve("openai-codex/gpt-5.6-luna").source == "codex"
+
+
+def test_codex_identity_is_matched_exactly_like_the_adapter_prefix():
+    catalog = build_model_catalog(_config(), codex_models=[_luna_entry()])
+
+    assert catalog.resolve("openai-codex/gpt-5.6-luna").kind == "codex"
+    for variant in (
+        "OPENAI-CODEX/gpt-5.6-luna",
+        "Openai-Codex/gpt-5.6-luna",
+        "openai-codex/GPT-5.6-LUNA",
+        " openai-codex /gpt-5.6-luna",
+    ):
+        with pytest.raises(ModelResolutionError) as caught:
+            catalog.resolve(variant)
+        assert caught.value.code == "unknown_model"
+
+
+def test_literal_identities_are_never_reached_through_a_padded_spelling():
+    catalog = build_model_catalog(_config())
+
+    assert catalog.resolve("gemini/gemini-2.5-flash").source == "builtin"
+    for padded in (" gemini /gemini-2.5-flash", "gemini /gemini-2.5-flash"):
+        with pytest.raises(ModelResolutionError) as caught:
+            catalog.resolve(padded)
+        assert caught.value.code == "unknown_model"
+
+
+def test_configured_alias_spelled_as_a_codex_reference_never_shadows_codex():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                {
+                    "name": "v",
+                    "api": "https://v.example.test/v1",
+                    "models": [{"alias": "openai-codex/gpt-5.6-luna", "model": "up"}],
+                }
+            ]
+        ),
+        codex_models=[_luna_entry()],
+    )
+
+    spec = catalog.resolve("openai-codex/gpt-5.6-luna")
+
+    # The adapter sends every openai-codex/... string to the subscription path.
+    assert (spec.source, spec.kind, spec.provider) == ("codex", "codex", "openai-codex")
+    # The configured entry stays reachable by its upstream id; only the alias
+    # spelling that names the reserved identity is dead config.
+    assert catalog.resolve("up").provider == "v"
+    # A case variant the adapter would route to the config provider is still
+    # refused: the catalog never publishes a reserved-identity spelling.
+    with pytest.raises(ModelResolutionError) as caught:
+        catalog.resolve("OPENAI-CODEX/gpt-5.6-luna")
+    assert caught.value.code == "unknown_model"
+
+
 def test_several_aliases_of_one_upstream_model_share_a_single_spec():
     catalog = build_model_catalog(
         _config(

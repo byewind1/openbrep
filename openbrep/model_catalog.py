@@ -68,6 +68,12 @@ Open families and deliberate boundaries, all required to survive the R3 migratio
   a provider, not a model. The validator accepts the string only because the
   reserved provider entry exists, and the adapter would dispatch it without a
   model id.
+- Codex references outrank configuration: the adapter dispatches any exact-case
+  ``openai-codex/...`` spelling to the subscription path, so a configured alias
+  or upstream id spelled that way is dead config and publishes no selector. In
+  any *other* case the adapter would fall through to the generic config path,
+  but the catalog still refuses spellings of the reserved identity — a
+  deliberate fail-closed narrowing of a contrived configuration.
 """
 
 from __future__ import annotations
@@ -205,28 +211,38 @@ class ModelCatalog:
         # both halves before matching, so " gw /a1" addresses provider gw. Try
         # that interpretation first, exactly as find_custom_provider_match does,
         # then fall back to the reference as written.
-        lookups: list[tuple[str, str]] = []
+        lookups: list[tuple[str, str, bool]] = []
         if "/" in target:
             head, _, rest = target.partition("/")
             normalized = f"{head.strip()}/{rest.strip()}"
-            lookups.append((normalized.lower(), normalized))
-        lookups.append((target.lower(), target))
+            lookups.append((normalized.lower(), normalized, True))
+        lookups.append((target.lower(), target, False))
 
         claimants: tuple[ModelSpec, ...] = ()
         written = target
-        for key, original in lookups:
+        for key, original, is_normalized in lookups:
             found = self.selectors.get(key, ())
+            if is_normalized:
+                # Only the custom-provider direct-connect parse strips inner
+                # whitespace. Literal identities (preset membership, the Codex
+                # prefix) are compared as written, so they are never reached
+                # through a padded spelling.
+                found = tuple(spec for spec in found if spec.source == "config")
             if found:
                 claimants, written = found, original
                 break
 
         if claimants:
-            # Built-in preset membership is exact-case, mirroring the closed
-            # validator's ``model in ALL_MODELS`` test; custom aliases and
-            # upstream ids stay case-insensitive, mirroring
+            # Built-in presets and Codex identities are matched exact-case: the
+            # validator tests ``model in ALL_MODELS`` and
+            # ``is_codex_qualified_model`` / ``m["id"] == model`` literally, and
+            # the adapter dispatches Codex on the exact ``openai-codex/`` prefix.
+            # Custom aliases and upstream ids stay case-insensitive, mirroring
             # ``find_custom_provider_match``'s ``.lower()`` comparison.
             exact = tuple(
-                spec for spec in claimants if spec.source != "builtin" or spec.reference == written
+                spec
+                for spec in claimants
+                if spec.source not in ("builtin", "codex") or spec.reference == written
             )
             claimants = exact
         if len(claimants) > 1:
@@ -454,10 +470,16 @@ def _config_entries(config) -> list[_Entry]:
             # Documented behaviour of find_custom_provider_match: an entry
             # answers to its alias, its upstream model id, and — when the
             # provider name is addressable — the provider-qualified form of
-            # either.
+            # either. Any spelling that names the reserved Codex identity is
+            # dropped: the adapter dispatches every ``openai-codex/...`` string
+            # to the subscription path, so a config alias spelled that way is
+            # dead config, not a routable reference.
             selectors = [alias, target]
             if qualified_ok:
                 selectors += [f"{name}/{alias}", f"{name}/{target}"]
+            selectors = [item for item in selectors if not is_codex_qualified_model(item)]
+            if not selectors:
+                continue
             entries.append(
                 _Entry(spec=spec_for(alias, target), selectors=tuple(dict.fromkeys(selectors)))
             )
@@ -478,6 +500,9 @@ def _config_entries(config) -> list[_Entry]:
             selectors.append(f"{name}/{target}")
             if listed:
                 selectors.extend([alias, target, f"{name}/{alias}"])
+        selectors = [item for item in selectors if not is_codex_qualified_model(item)]
+        if not selectors:
+            continue
         entries.append(
             _Entry(
                 spec=spec_for(alias, target),
