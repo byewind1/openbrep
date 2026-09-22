@@ -339,6 +339,33 @@ def test_auto_pipeline_uses_policy_and_restores_saved_fixed_pair(tmp_path):
     assert result.metadata["codex_auto_route"]["decisions"][0]["reason"]
 
 
+def test_auto_pipeline_restores_saved_fixed_pair_after_generation_exception(tmp_path):
+    """The per-call Auto override must not leak when generation raises."""
+    class ExplodingPipeline(_RecordingPipeline):
+        def _handle_gdl(self, request):
+            self.seen.append((self.config.llm.model, self.config.llm.reasoning_effort, request))
+            raise RuntimeError("simulated generation failure")
+
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-sol"
+    config.llm.reasoning_effort = "medium"
+    config.llm.codex_routing_mode = "auto"
+    pipeline = ExplodingPipeline(
+        config=config,
+        codex_provider=_Provider(),
+        trace_dir=str(tmp_path / "traces"),
+    )
+
+    result = pipeline.execute(TaskRequest(user_input="创建简单构件", intent="CREATE"))
+
+    assert not result.success
+    assert pipeline.seen[0][:2] == (LUNA_MODEL, "low")
+    assert (config.llm.model, config.llm.reasoning_effort) == (
+        "openai-codex/gpt-5.6-sol",
+        "medium",
+    )
+
+
 def test_auto_pipeline_simple_task_uses_terra_fallback_when_luna_missing(tmp_path):
     config = GDLAgentConfig()
     config.llm.model = LUNA_MODEL
