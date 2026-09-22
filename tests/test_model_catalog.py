@@ -342,11 +342,95 @@ def test_default_model_naming_an_unlisted_id_stays_addressable():
     )
 
     by_provider = catalog.resolve("gw")
-    by_name = catalog.resolve("upstream-only")
+    by_name = catalog.resolve("gw/upstream-only")
 
     assert by_provider is by_name
     assert by_provider.identity.model_id == "upstream-only"
     assert catalog.resolve("listed-model").identity.model_id == "listed-model"
+    # The bare unlisted id has no configuration entry and the adapter cannot
+    # route it, so the catalog must not publish it as selectable.
+    with pytest.raises(ModelResolutionError) as caught:
+        catalog.resolve("upstream-only")
+    assert caught.value.code == "unknown_model"
+
+
+def test_several_aliases_of_one_upstream_model_share_a_single_spec():
+    catalog = build_model_catalog(
+        _config(
+            custom_providers=[
+                {
+                    "name": "dual",
+                    "api": "https://dual.example.test/v1",
+                    "models": [
+                        {"alias": "alpha", "model": "same-up"},
+                        {"alias": "beta", "model": "same-up"},
+                    ],
+                }
+            ]
+        )
+    )
+
+    by_upstream = catalog.resolve("same-up")
+    by_alpha = catalog.resolve("alpha")
+    by_beta = catalog.resolve("beta")
+    by_qualified = catalog.resolve("dual/same-up")
+
+    assert by_alpha is by_beta is by_upstream is by_qualified
+    assert by_alpha.identity.qualified_id == "dual/same-up"
+    assert catalog.resolve("dual/beta") is by_alpha
+
+
+def test_preset_membership_is_exact_case_while_custom_aliases_are_not():
+    catalog = build_model_catalog(_config())
+
+    assert catalog.resolve("glm-4-flash").provider == "zhipu"
+    for variant in ("GLM-4-FLASH", "GPT-5.4"):
+        with pytest.raises(ModelResolutionError) as caught:
+            catalog.resolve(variant)
+        assert caught.value.code == "unknown_model"
+
+    custom = build_model_catalog(
+        _config(
+            custom_providers=[
+                {
+                    "name": "gateway",
+                    "api": "https://gateway.example.test/v1",
+                    "models": [{"alias": "My-GPT", "model": "gpt-5.4"}],
+                }
+            ]
+        )
+    )
+    assert custom.resolve("my-gpt") is custom.resolve("My-GPT")
+
+
+def test_bare_provider_prefix_without_a_model_id_resolves_to_nothing():
+    catalog = build_model_catalog(_config())
+
+    for reference in ("ollama/", "ollama"):
+        with pytest.raises(ModelResolutionError) as caught:
+            catalog.resolve(reference)
+        assert caught.value.code == "unknown_model"
+
+
+def test_open_family_local_tags_resolve_without_a_catalog_entry():
+    catalog = build_model_catalog(_config())
+
+    for reference in ("ollama/llama3.1:8b", "ollama/qwen2.5:7b"):
+        spec = catalog.resolve(reference)
+        assert spec.source == "open"
+        assert spec.provider == "ollama"
+        assert spec.reference == reference
+        assert spec.capabilities.as_dict() == {
+            "vision": UNKNOWN,
+            "reasoning": UNKNOWN,
+            "tools": UNKNOWN,
+        }
+    # A preset tag still resolves as its built-in entry, and synthesised open
+    # entries are not part of the catalog listing.
+    assert catalog.resolve("ollama/qwen3:8b").source == "builtin"
+    assert catalog.by_source("open") == ()
+    with pytest.raises(ModelResolutionError):
+        catalog.resolve("ollama/")
 
 
 def test_provider_with_no_models_is_still_addressable_by_name():
@@ -388,6 +472,20 @@ def test_catalog_agrees_with_the_settings_validator_except_on_documented_ambigui
         },
         {"name": "pa", "api": "https://a.example.test/v1", "models": ["shared"]},
         {"name": "pb", "api": "https://b.example.test/v1", "models": ["shared"]},
+        {
+            "name": "dual",
+            "api": "https://dual.example.test/v1",
+            "models": [
+                {"alias": "alpha", "model": "same-up"},
+                {"alias": "beta", "model": "same-up"},
+            ],
+        },
+        {
+            "name": "ghost",
+            "api": "https://ghost.example.test/v1",
+            "default_model": "ghost-model",
+            "models": ["ghost-listed"],
+        },
     ]
     config = _config(custom_providers=providers)
     catalog = build_model_catalog(config)
@@ -409,11 +507,22 @@ def test_catalog_agrees_with_the_settings_validator_except_on_documented_ambigui
         "glm-4-flash",
         "gemini/gemini-2.5-flash",
         "ollama/qwen3:8b",
+        "ollama/llama3.1:8b",
+        "ollama/qwen2.5:7b",
         "kimi-k3",
         "opencode-go",
         "opencode-go/kimi-k3",
         "my-gpt",
         "gw/gpt-5.4",
+        "alpha",
+        "beta",
+        "same-up",
+        "dual/same-up",
+        "dual/beta",
+        "ghost",
+        "ghost/ghost-model",
+        "ghost-model",
+        "ghost-listed",
         "pa/shared",
         "not-a-real-model",
         "shared",  # the one documented divergence

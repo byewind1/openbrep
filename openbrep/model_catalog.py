@@ -36,12 +36,26 @@ one backed fact is Codex reasoning support, which the account catalogue's
 enforces. R2 derives the rest from real call sites and may then use
 ``unsupported`` for facts with a reader.
 
-Out of scope here, and required to survive the R3 migration:
+Open families and deliberate boundaries, all required to survive the R3 migration:
 
-- ``provider/<id>`` direct connect for an id the provider does not list. Today
-  ``_match_within_provider(..., explicit_ref=True)`` accepts it; this resolver is
-  closed over the models it knows, so such a reference raises ``unknown_model``.
-  R3 must keep accepting it wherever settings validation accepts it today.
+- ``ollama/<tag>`` is an open set: the closed validator accepts any tag
+  (``model_to_provider(model) == "ollama"``) and the adapter routes it without a
+  credential, so ``resolve`` synthesises an entry for it instead of failing.
+  Synthesised entries are intentionally absent from ``specs``.
+- A bare provider prefix with no model id (``ollama/``) resolves to nothing. The
+  validator's prefix test accepts the string, but no model exists behind it, so
+  refusing it is deliberate strictness rather than an oversight.
+- Built-in preset membership is exact-case, mirroring ``model in ALL_MODELS`` in
+  the validator. Custom aliases and upstream ids remain case-insensitive, which
+  is what ``find_custom_provider_match`` does.
+- The validator treats an empty reference as the configured default model
+  (``find_custom_provider_match`` falls back on a falsy target); this resolver
+  always reports ``model_reference_required``. Callers must pass a real string.
+- ``provider/<id>`` direct connect for an id the provider does not list is
+  **not** modelled here. Today
+  ``_match_within_provider(..., explicit_ref=True)`` accepts it, so R3 must keep
+  accepting it wherever settings validation accepts it today; this closed
+  resolver will not resolve such a reference.
 """
 
 from __future__ import annotations
@@ -62,7 +76,7 @@ from openbrep.config import (
 
 CapabilityState = Literal["supported", "unsupported", "unknown"]
 ModelKind = Literal["chat", "codex"]
-CatalogSource = Literal["builtin", "config", "codex"]
+CatalogSource = Literal["builtin", "config", "codex", "open"]
 
 SUPPORTED: CapabilityState = "supported"
 UNSUPPORTED: CapabilityState = "unsupported"
@@ -72,6 +86,12 @@ UNKNOWN: CapabilityState = "unknown"
 # which shadow built-in presets. Mirrors the existing read path.
 _SOURCE_RANK: dict[str, int] = {"config": 0, "codex": 1, "builtin": 2}
 _SORTED_SOURCES: tuple[str, ...] = ("builtin", "config", "codex")
+
+# Providers whose model ids are an open set that the closed settings validator
+# accepts and the adapter routes without a catalog entry: today
+# ``_catalog_known_model`` treats any ``ollama/<id>`` as known (local tags come
+# and go), so the resolver must not turn them into ``unknown_model``.
+_OPEN_FAMILIES: tuple[tuple[str, str], ...] = (("ollama/", "ollama"),)
 
 
 class ModelResolutionError(Exception):
@@ -169,6 +189,15 @@ class ModelCatalog:
         if not target:
             raise ModelResolutionError("model_reference_required", "Model reference is required.")
         claimants = self.selectors.get(target.lower(), ())
+        if claimants:
+            # Built-in preset membership is exact-case, mirroring the closed
+            # validator's ``model in ALL_MODELS`` test; custom aliases and
+            # upstream ids stay case-insensitive, mirroring
+            # ``find_custom_provider_match``'s ``.lower()`` comparison.
+            exact = tuple(
+                spec for spec in claimants if spec.source != "builtin" or spec.reference == target
+            )
+            claimants = exact
         if len(claimants) > 1:
             raise ModelResolutionError(
                 "ambiguous_model_reference",
@@ -176,6 +205,11 @@ class ModelCatalog:
                 target,
             )
         if not claimants:
+            open_spec = _open_family_spec(target)
+            if open_spec is not None:
+                # Open families have no bounded membership, so the entry is
+                # synthesised here and is deliberately absent from ``specs``.
+                return open_spec
             raise ModelResolutionError("unknown_model", f"未知模型引用 {target!r}。", target)
         return claimants[0]
 
@@ -214,6 +248,28 @@ def build_model_catalog(
         ),
     )
     return ModelCatalog(specs=tuple(ordered), selectors=MappingProxyType(selectors))
+
+
+def _open_family_spec(reference: str) -> ModelSpec | None:
+    """Synthesise an entry for a provider whose model ids are an open set."""
+
+    lowered = reference.lower()
+    for prefix, provider in _OPEN_FAMILIES:
+        if lowered.startswith(prefix) and len(reference) > len(prefix):
+            return ModelSpec(
+                identity=ModelIdentity(
+                    provider=provider,
+                    model_id=reference[len(prefix):],
+                    reference=reference,
+                ),
+                display_name=reference,
+                api_mode="chat_completions",
+                kind="chat",
+                # A local tag states nothing about modality or tools.
+                capabilities=ModelCapabilities(),
+                source="open",
+            )
+    return None
 
 
 def _merge_selectors(entries: Sequence[_Entry]) -> dict[str, tuple[ModelSpec, ...]]:
@@ -299,26 +355,29 @@ def _provider_name_target(
     name: str,
     models: Sequence[Mapping[str, str]],
     default_model: str,
-) -> tuple[str, str] | None:
+) -> tuple[str, str, bool]:
     """Which model the bare provider name addresses, mirroring the read path.
 
     ``_match_within_provider`` resolves an empty remainder to the default model
     (by alias or upstream id), synthesises ``(default_model, default_model)``
     when that id is not listed, and otherwise falls back to the first listed
     model — then to a ``(name, name)`` synthetic entry when nothing is listed.
+
+    The third element reports whether the pair is a listed model, which decides
+    whether the bare upstream id itself is a routable reference.
     """
 
     if default_model:
         lowered = default_model.lower()
         for entry in models:
             if lowered in {entry["alias"].lower(), entry["model"].lower()}:
-                return entry["alias"], entry["model"]
-        return default_model, default_model
+                return entry["alias"], entry["model"], True
+        return default_model, default_model, False
     if models:
-        return models[0]["alias"], models[0]["model"]
+        return models[0]["alias"], models[0]["model"], True
     if name:
-        return name, name
-    return None
+        return name, name, False
+    return name, name, False
 
 
 def _config_entries(config) -> list[_Entry]:
@@ -335,12 +394,18 @@ def _config_entries(config) -> list[_Entry]:
         models = iter_custom_provider_model_entries(provider)
         api_mode = str(provider.get("api_mode") or "chat_completions")
         kind: ModelKind = "codex" if api_mode == API_MODE_CODEX_APP_SERVER else "chat"
-        model_specs: dict[tuple[str, str], ModelSpec] = {}
+        model_specs: dict[str, ModelSpec] = {}
 
         def spec_for(alias: str, target: str) -> ModelSpec:
-            """One spec per routable (alias, upstream id) pair of this provider."""
+            """One spec per routable upstream model of this provider.
 
-            key = (alias.lower(), target.lower())
+            Keying on the upstream id (not on the alias) keeps several aliases of
+            one model from being reported as an ambiguity: they are the same
+            routable model, and the first listed alias becomes its display
+            reference while every alias stays resolvable.
+            """
+
+            key = target.lower()
             spec = model_specs.get(key)
             if spec is None:
                 spec = _config_spec(name, alias, target, api_mode, kind)
@@ -357,16 +422,21 @@ def _config_entries(config) -> list[_Entry]:
             entries.append(_Entry(spec=spec_for(alias, target), selectors=selectors))
 
         default_model = str(provider.get("default_model") or "").strip()
-        name_target = _provider_name_target(name, models, default_model)
-        if name_target is not None:
-            # The provider name points at the same spec as the model it
-            # addresses, so naming the default model explicitly never turns into
-            # a false ambiguity.
-            alias, target = name_target
-            selectors = tuple(
-                dict.fromkeys([alias, target, name, f"{name}/{target}", f"{name}/{alias}"])
+        alias, target, listed = _provider_name_target(name, models, default_model)
+        # The provider name points at the same spec as the model it addresses, so
+        # naming the default model explicitly never turns into a false
+        # ambiguity. An unlisted default id stays reachable through the provider
+        # name and its qualified form only: the bare id has no configuration
+        # entry and the adapter cannot route it.
+        selectors = [name, f"{name}/{target}"]
+        if listed:
+            selectors.extend([alias, target, f"{name}/{alias}"])
+        entries.append(
+            _Entry(
+                spec=spec_for(alias, target),
+                selectors=tuple(dict.fromkeys(selectors)),
             )
-            entries.append(_Entry(spec=spec_for(alias, target), selectors=selectors))
+        )
     return entries
 
 
