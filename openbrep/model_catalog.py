@@ -11,9 +11,10 @@ Scope discipline:
   ``model_to_provider``, ``normalize_provider_entry``); credentials stay in
   ``LLMConfig.resolve_credentials``. Nothing here resolves secrets, probes
   networks, contacts ``cc-switch``, or writes files.
-- Production code does not consume it yet. Capability/compat migration (R2) and
-  settings/session adoption (R3) land separately, each behind its own
-  verification gate.
+- Production consumption is partial by design: the adapter uses
+  :func:`transport_compat` for request shaping (R2), while catalog *resolution*
+  is still unconsumed — settings/session adoption (R3) lands separately behind
+  its own verification gate.
 - Identity is ``provider`` + ``model_id``, but ``reference`` remains the exact
   selector string OpenBrep already stores and displays (``glm-4-flash``,
   ``gemini/gemini-2.5-flash``, ``openai-codex/gpt-5.6-luna``). Inventing a new
@@ -27,14 +28,14 @@ Scope discipline:
   path and the settings payload already do.
 
 Capabilities are three-state and every value is currently ``unknown``, including
-for built-in presets. ``openbrep/config.py`` still carries ``VISION_MODELS`` /
-``REASONING_MODELS``, but nothing in the repository reads them, so they cannot
-justify a claim in either direction — asserting ``unsupported`` from a table
-with no reader would let a future consumer refuse input that works today. The
-one backed fact is Codex reasoning support, which the account catalogue's
+for built-in presets. The retired ``VISION_MODELS`` / ``REASONING_MODELS`` sets
+in ``openbrep/config.py`` described no behaviour — no code path ever read them —
+so they were removed rather than migrated; asserting ``unsupported`` from a table
+with no reader would let a consumer refuse input that works today. The one backed
+fact is Codex reasoning support, which the account catalogue's
 ``supported_reasoning_efforts`` states and ``WorkbenchSettingsService`` actually
-enforces. R2 derives the rest from real call sites and may then use
-``unsupported`` for facts with a reader.
+enforces. Request-shape constraints live in :func:`transport_compat`, which keys
+on the resolved wire model rather than on a capability.
 
 Open families and deliberate boundaries, all required to survive the R3 migration:
 
@@ -347,11 +348,16 @@ def _open_family_spec(reference: str) -> ModelSpec | None:
 
     lowered = reference.lower()
     for prefix, provider in _OPEN_FAMILIES:
-        if lowered.startswith(prefix) and len(reference) > len(prefix):
+        if lowered.startswith(prefix):
+            # The read path strips the remainder, so the identity must too:
+            # "ollama/ Al" is the tag "Al", not " Al".
+            model_id = reference[len(prefix):].strip()
+            if not model_id:
+                continue
             return ModelSpec(
                 identity=ModelIdentity(
                     provider=provider,
-                    model_id=reference[len(prefix):],
+                    model_id=model_id,
                     reference=reference,
                 ),
                 display_name=reference,
