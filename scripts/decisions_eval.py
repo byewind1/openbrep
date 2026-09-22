@@ -249,6 +249,13 @@ def assert_not_in_git_worktree(path: str | Path) -> None:
             )
 
 
+_ERROR_KIND_RE = re.compile(
+    r"(?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Warning|Exit)"
+    r"|[A-Z]{1,6}[-_]?[0-9]{3,}"
+    r"|[A-Za-z_]*[Ee]rr(?:or)?[-_]?[0-9]+)"
+)
+
+
 def dataset_fingerprint(records: Sequence[Record]) -> str:
     """Content hash of the exact dataset a verdict is issued for.
 
@@ -443,6 +450,11 @@ class Backend:
     def classify(self, text: str) -> BackendResult:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def identity(self) -> str | None:
+        """Model/endpoint actually used, for the report's provenance block."""
+
+        return None
+
 
 class RuleBackend(Backend):
     name = "rule"
@@ -471,6 +483,7 @@ class LLMBackend(Backend):
         self._classify = classify
         self._model = model
         self._creator = None
+        self._effective_model: str | None = None
 
     def _ensure(self) -> Callable[[str], str]:
         if self._classify is None:
@@ -486,6 +499,7 @@ class LLMBackend(Backend):
                     # means: valid for plumbing dry-runs, wrong for a verdict.
                     # The definitive D0 run must use the production default.
                     llm_config = replace(llm_config, model=self._model)
+                self._effective_model = llm_config.model or None
                 # Same skills directory as the pipeline resolves for production.
                 project_root = Path(__file__).resolve().parent.parent
                 self._creator = SkillCreator(
@@ -494,6 +508,9 @@ class LLMBackend(Backend):
                 )
             self._classify = self._creator.classify_intent
         return self._classify
+
+    def identity(self) -> str | None:
+        return self._effective_model or self._model
 
     def classify(self, text: str) -> BackendResult:
         started = time.perf_counter()
@@ -518,6 +535,7 @@ class TypeSafeBackend(Backend):
     def __init__(self, client: Any | None = None, model: str | None = None) -> None:
         self._client = client
         self._model = model
+        self._observed_model: str | None = None
         self._owns_client = client is None
 
     def _ensure_client(self) -> Any:
@@ -533,6 +551,9 @@ class TypeSafeBackend(Backend):
                 raise RuntimeError("TYPESAFE_API_KEY is not set")
             self._client = TypeSafeClient()
         return self._client
+
+    def identity(self) -> str | None:
+        return self._observed_model or self._model
 
     @staticmethod
     def build_question() -> Any:
@@ -555,6 +576,7 @@ class TypeSafeBackend(Backend):
                 str(key).upper(): float(value)
                 for key, value in dict(answer.probabilities).items()
             }
+            self._observed_model = str(getattr(response, "model", "") or "") or self._model
             usage = getattr(response, "usage", None)
         except Exception as exc:  # noqa: BLE001 — evaluation must not abort on a backend error
             return BackendResult(
@@ -757,6 +779,9 @@ def compute_metrics(records: Sequence[Record], results: Sequence[BackendResult])
         "confusion": confusion,
         "per_label": per_label,
         "total": total,
+        # Provenance: the gate compares this against the dataset's own fingerprint,
+        # so numbers computed on another record set can never carry a verdict.
+        "fingerprint": dataset_fingerprint(records),
         "scored": sum(1 for result in results if result.label is not None),
         "unknown_or_failed": unknown,
         "error_rate": round(errors / total, 4) if total else None,
@@ -809,6 +834,7 @@ def evaluate_gates(
     metrics_by_backend: dict[str, dict[str, Any]],
     *,
     sanity: dict[str, dict[str, Any]] | None = None,
+    baseline_override: str | None = None,
 ) -> dict[str, Any]:
     """Apply the pre-registered gates and return a verdict.
 
@@ -860,19 +886,32 @@ def evaluate_gates(
             # Binding: the metrics must have been computed on this very dataset,
             # otherwise the verdict describes records the numbers never saw.
             "gate": "metrics_match_dataset",
-            "requirement": "every backend scored all records",
+            "requirement": "every backend scored this exact dataset",
             "observed": {
-                name: metrics["total"] for name, metrics in metrics_by_backend.items()
+                name: {
+                    "fingerprint": metrics.get("fingerprint"),
+                    "total": metrics.get("total"),
+                }
+                for name, metrics in metrics_by_backend.items()
             },
             "status": (
                 "PASS"
                 if metrics_by_backend
                 and all(
-                    metrics["total"] == stats["total"]
+                    metrics.get("fingerprint") == stats.get("fingerprint")
+                    and metrics.get("total") == stats.get("total")
                     for metrics in metrics_by_backend.values()
                 )
                 else "FAIL"
             ),
+        },
+        {
+            # The recall gate is relative to the baseline, so a weakened baseline
+            # would make GO easier: a verdict needs the production model.
+            "gate": "production_baseline",
+            "requirement": "no --baseline-model override",
+            "observed": baseline_override,
+            "status": "PASS" if not baseline_override else "FAIL",
         },
     ]
     baseline = metrics_by_backend.get("llm")
@@ -961,12 +1000,17 @@ def evaluate_gates(
     )
     dataset_ok = all(row["status"] in {"PASS", "NOT_PROBED"} for row in rows)
     labels_ok = stats["human_verified"] and stats["unlabeled"] == 0
+    # An unhealthy baseline labels nothing itself, so the candidate would end up
+    # compared against fallback output (the round-1 evasion, one level up).
+    baseline_healthy = baseline is None or (
+        not baseline.get("error_rate") and not baseline.get("fallback_used")
+    )
     # Only a non-baseline backend can carry a GO: the "llm" row is the reference
     # the others are compared against.
     candidates = {name: entry for name, entry in per_backend.items() if name != "llm"}
     # A GO/NO-GO verdict is a *measured* statement: it needs an adequate dataset,
     # human labels, and at least one candidate backend that actually ran.
-    if not dataset_ok or not labels_ok or not candidates:
+    if not dataset_ok or not labels_ok or not candidates or not baseline_healthy:
         verdict = "INSUFFICIENT"
     elif any(entry["passed"] for entry in candidates.values()):
         verdict = "GO"
@@ -982,10 +1026,23 @@ def evaluate_gates(
         )
     if not stats["human_verified"]:
         reasons.append(f"labels not human-verified (labelers: {stats['labelers']})")
+    if not baseline_healthy:
+        reasons.append(
+            "llm baseline is unhealthy (errors or fallbacks): its labels are not a reference"
+        )
+    if baseline_override:
+        reasons.append(
+            f"baseline model overridden with {baseline_override!r}: not a verdict-grade run"
+        )
     if not metrics_by_backend:
         reasons.append("no backend was measured")
     elif not candidates:
         reasons.append("no comparable backend requested (only the llm baseline)")
+    if verdict == "NO-GO":
+        for name, entry in sorted(per_backend.items()):
+            failed = [check["gate"] for check in entry["checks"] if check["status"] == "FAIL"]
+            if failed:
+                reasons.append(f"{name} failed: {', '.join(failed)}")
     return {
         "dataset_gates": rows,
         "sanity": sanity,
@@ -1034,10 +1091,10 @@ def redact_error_sample(text: str) -> str:
     if not cleaned:
         return ""
     kind = cleaned.split(":", 1)[0].strip()
-    # Only a plausible exception-type / error-code identifier may survive: error
-    # text without a prefix is usually the echoed input itself (CJK sentences have
-    # no spaces, so a "first token" rule would leak the whole sample).
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", kind):
+    # Only an exception type or an error code may survive. Anything else is the
+    # echoed input: CJK sentences have no spaces (a "first token" rule leaks the
+    # whole sample) and a bare identifier can be the sample text itself.
+    if not _ERROR_KIND_RE.fullmatch(kind):
         kind = "error"
     return f"{kind[:60]}: [message withheld]"
 
@@ -1202,7 +1259,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         baseline_backend = next(backend for backend in backends if backend.name == "llm")
         sanity["llm"] = probe_backend(baseline_backend)
         print(f"  llm sanity: {'ok' if sanity['llm']['ok'] else sanity['llm']['misses']}")
-    gate_result = evaluate_gates(stats, metrics_by_backend, sanity=sanity)
+    gate_result = evaluate_gates(
+        stats,
+        metrics_by_backend,
+        sanity=sanity,
+        baseline_override=args.baseline_model or None,
+    )
     out_dir = Path(args.out_dir).expanduser() if args.out_dir else data_dir / "reports"
     target = write_report(
         out_dir,
@@ -1213,6 +1275,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         config={
             "dataset": str(dataset),
             "backends": [b.name for b in backends],
+            "baseline_model": args.baseline_model or None,
+            "backend_identity": {b.name: b.identity() for b in backends},
             "failure_injection": args.failure_injection,
             "gates": GATES,
         },

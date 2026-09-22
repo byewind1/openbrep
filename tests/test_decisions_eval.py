@@ -435,6 +435,12 @@ def test_percentile_interpolates_between_neighbours():
 
 # ── gates ────────────────────────────────────────────────────────────────────
 
+def _fingerprint() -> str:
+    """The fingerprint shared by the synthetic stats/metrics helpers."""
+
+    return d0.dataset_fingerprint([d0.make_record("合成样本")])
+
+
 def _stats(total: int, chinese: int, gdl: int, *, human: bool = True) -> dict:
     return {
         "total": total,
@@ -447,7 +453,7 @@ def _stats(total: int, chinese: int, gdl: int, *, human: bool = True) -> dict:
         "duplicate_ids": 0,
         "duplicate_texts": 0,
         # Real stats always carry this; the report writer requires it.
-        "fingerprint": d0.dataset_fingerprint([d0.make_record("合成样本")]),
+        "fingerprint": _fingerprint(),
     }
 
 
@@ -462,6 +468,7 @@ def _metrics(
     """Metric shape as produced by compute_metrics (healthy backend by default)."""
 
     return {
+        "fingerprint": _fingerprint(),
         "positive_recall": recall,
         "positive_miss_rate": round(1 - recall, 4),
         "false_skill_rate": false_skill,
@@ -491,6 +498,7 @@ def test_gates_refuse_a_verdict_when_the_dataset_is_too_small():
         "FAIL",
         "FAIL",
         "FAIL",
+        "PASS",
         "PASS",
         "PASS",
         "PASS",
@@ -535,6 +543,7 @@ def test_gates_refuse_a_verdict_when_labels_are_not_human_verified():
         "all_labeled": "PASS",
         "unique_samples": "PASS",
         "metrics_match_dataset": "PASS",
+        "production_baseline": "PASS",
         "baseline_sanity": "NOT_PROBED",
     }
 
@@ -633,6 +642,11 @@ def test_error_samples_keep_only_the_kind():
     # A CJK sentence has no spaces: a "first token" rule would leak all of it.
     assert d0.redact_error_sample("把漏窗的做法存成技能，参数字段复用") == (
         "error: [message withheld]"
+    )
+    # An identifier-shaped string can be the sample text itself, not an error kind.
+    assert d0.redact_error_sample("PrismBlockSecret: leaked") == "error: [message withheld]"
+    assert d0.redact_error_sample("HTTP_503: upstream unavailable") == (
+        "HTTP_503: [message withheld]"
     )
     assert d0.redact_error_sample("") == ""
     assert len(d0.redact_error_sample("x" * 500)) <= 90
@@ -767,6 +781,99 @@ def test_gates_never_issue_a_verdict_without_a_measured_candidate():
     baseline_only = d0.evaluate_gates(stats, {"llm": _metrics(0.8, 0.1)})
     assert baseline_only["verdict"] == "INSUFFICIENT"
     assert any("no comparable backend" in reason for reason in baseline_only["reasons"])
+
+
+def test_compute_metrics_carries_the_dataset_fingerprint():
+    """The production metrics must emit it, not just the test helper."""
+
+    records = [d0.make_record("生成一个方块", label="NONE", labeler="human")]
+    metrics = d0.compute_metrics(records, [])
+
+    assert metrics["fingerprint"] == d0.dataset_fingerprint(records)
+    assert metrics["fingerprint"] == d0.dataset_stats(records)["fingerprint"]
+
+
+def test_gates_bind_the_metrics_to_the_dataset_fingerprint():
+    """Same row count is not enough: the numbers must describe this dataset."""
+
+    stats = _stats(400, 200, 80)
+    foreign = _metrics(0.9, 0.05)
+    foreign["fingerprint"] = d0.dataset_fingerprint(
+        [d0.make_record("另一个数据集", label="NONE", labeler="human")]
+    )
+
+    result = d0.evaluate_gates(stats, {"llm": _metrics(0.8, 0.1), "typesafe": foreign})
+
+    rows = {row["gate"]: row["status"] for row in result["dataset_gates"]}
+    assert rows["metrics_match_dataset"] == "FAIL"
+    assert result["verdict"] == "INSUFFICIENT"
+
+
+def test_gates_refuse_a_verdict_on_an_unhealthy_baseline():
+    """A fallback-inherited baseline is no reference: GO would be vacuous."""
+
+    result = d0.evaluate_gates(
+        _stats(400, 200, 80),
+        {
+            "llm": _metrics(0.8, 0.1, error_rate=1.0, fallback_used=320),
+            "typesafe": _metrics(0.9, 0.05),
+        },
+    )
+
+    assert result["verdict"] == "INSUFFICIENT"
+    assert any("baseline is unhealthy" in reason for reason in result["reasons"])
+
+
+def test_gates_refuse_a_verdict_when_the_baseline_was_overridden():
+    result = d0.evaluate_gates(
+        _stats(400, 200, 80),
+        {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)},
+        baseline_override="deepseek-chat",
+    )
+
+    rows = {row["gate"]: row["status"] for row in result["dataset_gates"]}
+    assert rows["production_baseline"] == "FAIL"
+    assert result["verdict"] == "INSUFFICIENT"
+    assert any("overridden" in reason for reason in result["reasons"])
+
+
+def test_no_go_verdicts_state_why():
+    """A rejection must name the checks that failed."""
+
+    weak = _metrics(0.5, 0.1)
+    result = d0.evaluate_gates(_stats(400, 200, 80), {"llm": _metrics(0.8, 0.1), "typesafe": weak})
+
+    assert result["verdict"] == "NO-GO"
+    assert any("typesafe failed" in reason for reason in result["reasons"])
+
+
+def test_a_fully_labeled_draft_dataset_is_not_human_verified():
+    """The labeler clause alone must block a verdict (no unlabeled short-circuit)."""
+
+    drafts = [
+        d0.make_record(f"样本 {index}", label="NONE", labeler="assistant-draft")
+        for index in range(3)
+    ]
+    stats = d0.dataset_stats(drafts)
+
+    assert stats["unlabeled"] == 0
+    assert stats["human_verified"] is False
+
+
+def test_a_failing_baseline_probe_blocks_the_verdict():
+    result = d0.evaluate_gates(
+        _stats(400, 200, 80),
+        {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)},
+        sanity={
+            "llm": {
+                "ok": False,
+                "misses": [{"id": "x", "expected": "CREATE_SKILL", "observed": "ERROR"}],
+            }
+        },
+    )
+
+    assert result["verdict"] == "INSUFFICIENT"
+    assert "sanity probes" in " ".join(result["reasons"])
 
 
 def test_gates_treat_a_missing_baseline_as_not_passing():
