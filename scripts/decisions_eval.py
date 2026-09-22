@@ -249,6 +249,21 @@ def assert_not_in_git_worktree(path: str | Path) -> None:
             )
 
 
+def dataset_fingerprint(records: Sequence[Record]) -> str:
+    """Content hash of the exact dataset a verdict is issued for.
+
+    A verdict is only meaningful for one dataset; the report records this hash so
+    the numbers can never be quoted against a different (or later-edited) set.
+    """
+
+    payload = [
+        {"id": record.id, "text": record.text, "label": record.label, "labeler": record.labeler}
+        for record in records
+    ]
+    blob = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def dataset_stats(records: Sequence[Record]) -> dict[str, Any]:
     labels = {label: 0 for label in LABELS}
     for record in records:
@@ -259,8 +274,12 @@ def dataset_stats(records: Sequence[Record]) -> dict[str, Any]:
     return {
         "total": len(records),
         "labels": labels,
-        "chinese": sum(1 for record in records if record.has_cjk),
-        "gdl_terms": sum(1 for record in records if record.gdl_terms),
+        # Binds the verdict to exactly this set of records.
+        "fingerprint": dataset_fingerprint(records),
+        # Recomputed from the text: a dataset must not be able to satisfy the
+        # composition gates by carrying fabricated flags.
+        "chinese": sum(1 for record in records if has_cjk(record.text)),
+        "gdl_terms": sum(1 for record in records if gdl_term_hits(record.text)),
         "unlabeled": unlabeled,
         "labelers": labelers,
         # "Verified" means every record carries a label from a human labeler; an
@@ -297,7 +316,7 @@ def build_candidates(
     rng = random.Random(seed)
     buckets: dict[str, dict[str, str]] = {}
     skipped_sensitive = 0
-    duplicate_texts = 0
+    corpus_duplicate_texts = 0
     for path in sorted(Path(traces_dir).glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -313,7 +332,7 @@ def build_candidates(
         bucket = buckets.setdefault(intent, {})
         identity = sample_id(text)
         if identity in bucket:
-            duplicate_texts += 1
+            corpus_duplicate_texts += 1
         bucket[identity] = text
 
     records: list[Record] = []
@@ -341,7 +360,9 @@ def build_candidates(
                 "traces_dir": str(traces_dir),
                 "sampled_per_intent": sampled,
                 "skipped_sensitive": skipped_sensitive,
-                "duplicate_texts": duplicate_texts,
+                # Corpus-scope diagnostic: how many trace records collapsed. The
+                # dataset-scope counter of the same name lives in dataset_stats.
+                "corpus_duplicate_texts": corpus_duplicate_texts,
                 "available_per_intent": {k: len(v) for k, v in sorted(buckets.items())},
                 "deduplicated": len(records) - len(result),
             }
@@ -501,7 +522,12 @@ class TypeSafeBackend(Backend):
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            from typesafe_sdk import TypeSafeClient
+            try:
+                from typesafe_sdk import TypeSafeClient
+            except ImportError as exc:  # pragma: no cover - depends on the environment
+                raise RuntimeError(
+                    "typesafe backend needs the optional SDK: pip install typesafe-sdk"
+                ) from exc
 
             if not os.environ.get("TYPESAFE_API_KEY"):
                 raise RuntimeError("TYPESAFE_API_KEY is not set")
@@ -787,8 +813,9 @@ def evaluate_gates(
     """Apply the pre-registered gates and return a verdict.
 
     ``INSUFFICIENT`` blocks ``GO`` whenever the dataset misses the pre-registered
-    minimums or the labels are not human-verified; ``NO-GO`` means the dataset was
-    adequate and no backend cleared every gate.
+    minimums, the labels are not human-verified, the metrics do not belong to the
+    evaluated dataset, or no candidate backend was measured; ``NO-GO`` means the
+    dataset was adequate and a measured candidate failed at least one gate.
     """
 
     rows: list[dict[str, Any]] = [
@@ -826,6 +853,24 @@ def evaluate_gates(
             "status": (
                 "PASS"
                 if stats["duplicate_ids"] == 0 and stats.get("duplicate_texts", 0) == 0
+                else "FAIL"
+            ),
+        },
+        {
+            # Binding: the metrics must have been computed on this very dataset,
+            # otherwise the verdict describes records the numbers never saw.
+            "gate": "metrics_match_dataset",
+            "requirement": "every backend scored all records",
+            "observed": {
+                name: metrics["total"] for name, metrics in metrics_by_backend.items()
+            },
+            "status": (
+                "PASS"
+                if metrics_by_backend
+                and all(
+                    metrics["total"] == stats["total"]
+                    for metrics in metrics_by_backend.values()
+                )
                 else "FAIL"
             ),
         },
@@ -919,7 +964,9 @@ def evaluate_gates(
     # Only a non-baseline backend can carry a GO: the "llm" row is the reference
     # the others are compared against.
     candidates = {name: entry for name, entry in per_backend.items() if name != "llm"}
-    if not dataset_ok or not labels_ok:
+    # A GO/NO-GO verdict is a *measured* statement: it needs an adequate dataset,
+    # human labels, and at least one candidate backend that actually ran.
+    if not dataset_ok or not labels_ok or not candidates:
         verdict = "INSUFFICIENT"
     elif any(entry["passed"] for entry in candidates.values()):
         verdict = "GO"
@@ -935,7 +982,9 @@ def evaluate_gates(
         )
     if not stats["human_verified"]:
         reasons.append(f"labels not human-verified (labelers: {stats['labelers']})")
-    if dataset_ok and labels_ok and not candidates:
+    if not metrics_by_backend:
+        reasons.append("no backend was measured")
+    elif not candidates:
         reasons.append("no comparable backend requested (only the llm baseline)")
     return {
         "dataset_gates": rows,
@@ -984,8 +1033,13 @@ def redact_error_sample(text: str) -> str:
     cleaned = " ".join(str(text).split())
     if not cleaned:
         return ""
-    kind = cleaned.split(":", 1)[0].split(" ", 1)[0][:60] or "error"
-    return f"{kind}: [message withheld]"
+    kind = cleaned.split(":", 1)[0].strip()
+    # Only a plausible exception-type / error-code identifier may survive: error
+    # text without a prefix is usually the echoed input itself (CJK sentences have
+    # no spaces, so a "first token" rule would leak the whole sample).
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", kind):
+        kind = "error"
+    return f"{kind[:60]}: [message withheld]"
 
 
 def write_report(
@@ -1031,6 +1085,7 @@ def write_report(
         f"- 标签分布：{stats['labels']}",
         f"- 未标注：{stats['unlabeled']}；labelers：{stats['labelers']}",
         f"- 人工核验：{stats['human_verified']}",
+        f"- 数据集指纹：`{stats['fingerprint']}`",
         "",
         "## 指标",
         "",

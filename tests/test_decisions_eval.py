@@ -10,9 +10,33 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
+import types
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _offline_typesafe_sdk(monkeypatch):
+    """Keep the suite hermetic: the optional typesafe-sdk is never required.
+
+    The TypeSafe backend imports ``Choice`` from the SDK at call time; CI installs
+    only the declared extras, so every test runs against this stub (whether or not
+    the real SDK happens to be installed on the developer's machine).
+    """
+
+    module = types.ModuleType("typesafe_sdk")
+
+    @dataclass
+    class Choice:
+        instructions: str
+        criteria: dict
+
+    module.Choice = Choice
+    module.TypeSafeClient = object
+    monkeypatch.setitem(sys.modules, "typesafe_sdk", module)
 
 
 def _load_module():
@@ -168,7 +192,9 @@ def test_build_candidates_filters_dedupes_and_is_deterministic(tmp_path):
     texts = sorted(record.text for record in first)
     assert texts == ["把漏窗做法存成技能", "生成一个旋转楼梯"]
     assert diagnostics["skipped_sensitive"] == 1
-    assert diagnostics["duplicate_texts"] == 1
+    assert diagnostics["corpus_duplicate_texts"] == 1
+    # Must not shadow the dataset-scope counter read by the unique_samples gate.
+    assert "duplicate_texts" not in diagnostics
     assert diagnostics["available_per_intent"] == {"CHAT": 2}
     assert [record.id for record in first] == [record.id for record in second]
     assert all(record.label is None for record in first)
@@ -419,6 +445,9 @@ def _stats(total: int, chinese: int, gdl: int, *, human: bool = True) -> dict:
         "labelers": ["human"] if human else ["assistant-draft"],
         "human_verified": human,
         "duplicate_ids": 0,
+        "duplicate_texts": 0,
+        # Real stats always carry this; the report writer requires it.
+        "fingerprint": d0.dataset_fingerprint([d0.make_record("合成样本")]),
     }
 
 
@@ -450,7 +479,11 @@ def _metrics(
 
 def test_gates_refuse_a_verdict_when_the_dataset_is_too_small():
     result = d0.evaluate_gates(
-        _stats(10, 5, 1), {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)}
+        _stats(10, 5, 1),
+        {
+            "llm": _metrics(0.8, 0.1, total=10),
+            "typesafe": _metrics(0.9, 0.05, total=10),
+        },
     )
 
     assert result["verdict"] == "INSUFFICIENT"
@@ -458,6 +491,7 @@ def test_gates_refuse_a_verdict_when_the_dataset_is_too_small():
         "FAIL",
         "FAIL",
         "FAIL",
+        "PASS",
         "PASS",
         "PASS",
         "NOT_PROBED",
@@ -500,6 +534,7 @@ def test_gates_refuse_a_verdict_when_labels_are_not_human_verified():
         "min_gdl_terms": "PASS",
         "all_labeled": "PASS",
         "unique_samples": "PASS",
+        "metrics_match_dataset": "PASS",
         "baseline_sanity": "NOT_PROBED",
     }
 
@@ -588,10 +623,17 @@ def test_error_samples_keep_only_the_kind():
     """Reports must not carry sample text, even when a backend echoes it."""
 
     assert d0.redact_error_sample("RuntimeError: boom") == "RuntimeError: [message withheld]"
+    assert d0.redact_error_sample("HTTP 400 Bad Request") == "error: [message withheld]"
     assert d0.redact_error_sample(
         "TypeSafeBadRequestError: upstream rejected 把漏窗的做法存成技能"
     ) == "TypeSafeBadRequestError: [message withheld]"
-    assert "3d.gdl" not in d0.redact_error_sample("failed for /Users/ren/project/3d.gdl")
+    assert d0.redact_error_sample("failed for /Users/ren/project/3d.gdl") == (
+        "error: [message withheld]"
+    )
+    # A CJK sentence has no spaces: a "first token" rule would leak all of it.
+    assert d0.redact_error_sample("把漏窗的做法存成技能，参数字段复用") == (
+        "error: [message withheld]"
+    )
     assert d0.redact_error_sample("") == ""
     assert len(d0.redact_error_sample("x" * 500)) <= 90
 
@@ -616,6 +658,48 @@ def test_content_duplicates_block_the_verdict_even_with_distinct_ids():
     result = d0.evaluate_gates(stats, {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)})
     rows = {row["gate"]: row for row in result["dataset_gates"]}
     assert rows["unique_samples"]["status"] == "FAIL"
+    assert result["verdict"] == "INSUFFICIENT"
+
+
+def test_dataset_fingerprint_binds_the_verdict_to_one_dataset():
+    """A verdict must be quotable only for the exact dataset it was computed on."""
+
+    base = [
+        d0.make_record(f"把层板数改成 {index}", label="NONE", labeler="human") for index in range(3)
+    ]
+
+    fingerprint = d0.dataset_fingerprint(base)
+    assert fingerprint == d0.dataset_fingerprint(list(base))
+    assert d0.dataset_stats(base)["fingerprint"] == fingerprint
+    # Reordering, relabeling or editing the text yields a different dataset.
+    assert d0.dataset_fingerprint(list(reversed(base))) != fingerprint
+    relabeled = [base[0], d0.make_record(base[1].text, label="CREATE", labeler="human"), base[2]]
+    assert d0.dataset_fingerprint(relabeled) != fingerprint
+
+
+def test_composition_gates_ignore_fabricated_metadata():
+    """Chinese/GDL counts must come from the text, not from stored flags."""
+
+    records = [
+        d0.Record(
+            id=f"{index:012d}",
+            text=f"please refactor the shelf component number {index}",
+            label="NONE",
+            labeler="human",
+            has_cjk=True,          # fabricated
+            gdl_terms=["gdl"],     # fabricated
+        )
+        for index in range(300)
+    ]
+
+    stats = d0.dataset_stats(records)
+
+    assert stats["chinese"] == 0
+    assert stats["gdl_terms"] == 0
+    result = d0.evaluate_gates(stats, {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05)})
+    rows = {row["gate"]: row["status"] for row in result["dataset_gates"]}
+    assert rows["min_chinese"] == "FAIL"
+    assert rows["min_gdl_terms"] == "FAIL"
     assert result["verdict"] == "INSUFFICIENT"
 
 
@@ -656,6 +740,35 @@ def test_report_writer_refuses_paths_inside_a_git_worktree(tmp_path):
         )
 
 
+def test_gates_bind_the_metrics_to_the_evaluated_dataset():
+    """Numbers from another dataset must not produce a verdict for this one."""
+
+    stats = _stats(400, 200, 80)
+    result = d0.evaluate_gates(
+        stats,
+        {"llm": _metrics(0.8, 0.1), "typesafe": _metrics(0.9, 0.05, total=399)},
+    )
+
+    rows = {row["gate"]: row["status"] for row in result["dataset_gates"]}
+    assert rows["metrics_match_dataset"] == "FAIL"
+    assert result["verdict"] == "INSUFFICIENT"
+    assert any("dataset gates" in reason for reason in result["reasons"])
+
+
+def test_gates_never_issue_a_verdict_without_a_measured_candidate():
+    """No measurement means no verdict: neither GO nor a measured NO-GO."""
+
+    stats = _stats(400, 200, 80)
+
+    nothing_measured = d0.evaluate_gates(stats, {})
+    assert nothing_measured["verdict"] == "INSUFFICIENT"
+    assert any("no backend was measured" in reason for reason in nothing_measured["reasons"])
+
+    baseline_only = d0.evaluate_gates(stats, {"llm": _metrics(0.8, 0.1)})
+    assert baseline_only["verdict"] == "INSUFFICIENT"
+    assert any("no comparable backend" in reason for reason in baseline_only["reasons"])
+
+
 def test_gates_treat_a_missing_baseline_as_not_passing():
     result = d0.evaluate_gates(_stats(400, 200, 80), {"typesafe": _metrics(0.9, 0.05)})
 
@@ -694,6 +807,8 @@ def test_report_writes_markdown_and_json_with_the_verdict(tmp_path):
     assert payload["gates"]["verdict"] == "GO"
     assert payload["pre_registered"]["gates"] == d0.GATES
     assert payload["dataset"]["total"] == 400
+    assert payload["dataset"]["fingerprint"] == stats["fingerprint"]
+    assert stats["fingerprint"] in markdown
 
 
 def test_pre_registered_constants_are_frozen():
