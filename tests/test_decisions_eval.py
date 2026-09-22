@@ -334,7 +334,7 @@ def test_baseline_override_only_counts_as_an_override_when_it_changes_the_model(
     assert d0.baseline_override_of("prod", "prod") is None      # pinning is not overriding
     assert d0.baseline_override_of("weaker", "prod") == "weaker"
     assert d0.baseline_override_of("weaker", None) == "weaker"  # unknown production
-    assert d0.production_model() == d0.production_model()       # resolvable, never raises
+    assert d0.production_model() is not None  # conftest seeds a resolvable config
 
 
 def test_cmd_run_records_provenance_and_refuses_an_overridden_baseline(tmp_path):
@@ -375,6 +375,16 @@ def test_cmd_run_records_provenance_and_refuses_an_overridden_baseline(tmp_path)
     rows = {row["gate"]: row["status"] for row in plain["gates"]["dataset_gates"]}
     assert rows["production_baseline"] == "PASS"
     assert plain["config"]["baseline_model"] is None
+
+    # Pinning the production model is an honest run, not an override: this is
+    # the wiring the CLI test must protect (the helper alone cannot).
+    production = d0.production_model()
+    assert production is not None
+    pinned = run("--baseline-model", production)
+    rows = {row["gate"]: row["status"] for row in pinned["gates"]["dataset_gates"]}
+    assert rows["production_baseline"] == "PASS"
+    assert not any("overridden" in reason for reason in pinned["gates"]["reasons"])
+    assert pinned["config"]["baseline_model"] == production
 
 
 def test_typesafe_backend_reports_errors_instead_of_raising():
