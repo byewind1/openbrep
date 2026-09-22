@@ -22,6 +22,7 @@ from openbrep.config import (
     LLMConfig,
     provider_profile_for_model,
 )
+from openbrep.model_catalog import transport_compat
 
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = tuple(p.native_prefix for p in PROVIDER_PROFILES if p.native_prefix)
@@ -549,8 +550,7 @@ class LLMAdapter:
         if instructions:
             resp_kwargs["instructions"] = instructions
 
-        model_lower = model.lower()
-        if any(token in model_lower for token in ("gpt-5", "codex", "o1", "o3", "o4")):
+        if transport_compat(model).omit_temperature:
             # OpenAI 推理模型的 temperature 约束：不传 = 模型默认（与 chat 路径
             # drop_params 的净效果一致），避免 gpt-5 400 / o 系静默忽略
             kwargs.pop("temperature", None)
@@ -679,8 +679,7 @@ class LLMAdapter:
             "stream": True,
         }
 
-        model_lower = model.lower()
-        if "gpt-5" in model_lower or "codex" in model_lower:
+        if transport_compat(model).drop_params:
             completion_kwargs["drop_params"] = True
 
         # 透传用户配置的 extra_body（如 DeepSeek 的 thinking={"type": "disabled"}）。
@@ -814,8 +813,7 @@ class LLMAdapter:
             "tool_choice": tool_choice,
         }
 
-        model_lower = model.lower()
-        if "gpt-5" in model_lower or "codex" in model_lower:
+        if transport_compat(model).drop_params:
             completion_kwargs["drop_params"] = True
 
         extra_body = self._effective_extra_body(resolved)
@@ -983,8 +981,7 @@ class LLMAdapter:
             "stream": True,
         }
 
-        model_lower = model.lower()
-        if "gpt-5" in model_lower or "codex" in model_lower:
+        if transport_compat(model).drop_params:
             completion_kwargs["drop_params"] = True
 
         extra_body = self._effective_extra_body(resolved)
