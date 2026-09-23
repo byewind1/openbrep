@@ -77,6 +77,48 @@ def test_builtin_preset_keeps_its_reference_provider_and_transport():
     assert spec.kind == "chat"
 
 
+def test_resolve_selection_adds_role_tier_without_resolving_credentials():
+    catalog = build_model_catalog(_config())
+
+    resolved = catalog.resolve_selection(
+        "glm-4-flash",
+        role="main",
+        tier="balanced",
+        reasoning_effort="low",
+    )
+
+    assert resolved.model == "glm-4-flash"
+    assert resolved.transport == "litellm"
+    assert resolved.credential_source is None
+    assert resolved.as_metadata()["tier"] == "balanced"
+
+
+def test_resolve_selection_marks_codex_transport_and_role():
+    catalog = build_model_catalog(
+        _config(),
+        codex_models=[
+            {
+                "id": "openai-codex/gpt-5.6-luna",
+                "supported_reasoning_efforts": [{"effort": "high"}],
+            }
+        ],
+    )
+
+    resolved = catalog.resolve_selection(
+        "openai-codex/gpt-5.6-luna",
+        role="create",
+        tier="slow",
+        reasoning_effort="high",
+    )
+
+    assert resolved.transport == "codex_app_server"
+    assert (resolved.role, resolved.tier, resolved.reasoning_effort) == (
+        "create",
+        "slow",
+        "high",
+    )
+
+
 def test_native_prefixed_presets_round_trip_their_reference_unchanged():
     catalog = build_model_catalog(_config())
 

@@ -233,6 +233,45 @@ class ModelSpec:
 
 
 @dataclass(frozen=True)
+class ResolvedModel:
+    """One model resolved for a role/tier without touching configuration.
+
+    ``descriptor`` is the existing immutable ``ModelSpec``. Credential lookup
+    deliberately stays outside this read-only object; the field records only a
+    symbolic source when a future caller has one. This is the bridge between
+    the catalog and role-aware routing, not a second provider registry.
+    """
+
+    descriptor: ModelSpec
+    role: TaskRole
+    tier: ModelTier | None
+    transport: str
+    credential_source: str | None = None
+    reasoning_effort: str = ""
+    fallback_index: int = 0
+
+    @property
+    def model(self) -> str:
+        """The exact selector the existing adapter accepts."""
+
+        return self.descriptor.reference
+
+    def as_metadata(self) -> dict[str, object]:
+        """Serializable provenance with no credential material."""
+
+        return {
+            "model": self.model,
+            "provider": self.descriptor.provider,
+            "role": self.role,
+            "tier": self.tier,
+            "transport": self.transport,
+            "credential_source": self.credential_source,
+            "reasoning_effort": self.reasoning_effort,
+            "fallback_index": self.fallback_index,
+        }
+
+
+@dataclass(frozen=True)
 class ModelSelection:
     """One call's effective model choice, kept out of the shared configuration.
 
@@ -362,6 +401,32 @@ class ModelCatalog:
                 return open_spec
             raise ModelResolutionError("unknown_model", f"未知模型引用 {target!r}。", target)
         return claimants[0]
+
+    def resolve_selection(
+        self,
+        reference: str,
+        *,
+        role: TaskRole = "main",
+        tier: ModelTier | None = None,
+        reasoning_effort: str = "",
+        fallback_index: int = 0,
+    ) -> ResolvedModel:
+        """Resolve a model plus role-aware routing context.
+
+        The operation is pure and strict like :meth:`resolve`; it does not
+        inspect credentials, contact a provider, or write configuration.
+        """
+
+        spec = self.resolve(reference)
+        transport = "codex_app_server" if spec.kind == "codex" else "litellm"
+        return ResolvedModel(
+            descriptor=spec,
+            role=role,
+            tier=tier,
+            transport=transport,
+            reasoning_effort=str(reasoning_effort or ""),
+            fallback_index=int(fallback_index),
+        )
 
     def by_source(self, source: CatalogSource) -> tuple[ModelSpec, ...]:
         """Reachable entries from one source, in catalog order."""
