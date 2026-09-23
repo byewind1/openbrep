@@ -74,9 +74,31 @@ class CodexRouteDecision:
     escalation: bool = False
     untested_escalation: bool = False
 
+    @property
+    def role(self) -> str:
+        """The task role owned by this Auto route.
+
+        This module currently handles CREATE Auto routing. Keeping the value on
+        the decision makes that boundary explicit for later role-aware routing.
+        """
+
+        return "create"
+
+    @property
+    def tier(self) -> str | None:
+        """High-level CREATE preference derived from the normalized complexity."""
+
+        if self.complexity == "complex":
+            return "slow"
+        if self.complexity in {"simple", "medium"}:
+            return "balanced"
+        return None
+
     def to_metadata(self) -> dict[str, Any]:
         return {
             "mode": "auto",
+            "role": self.role,
+            "tier": self.tier,
             "complexity": self.complexity,
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,

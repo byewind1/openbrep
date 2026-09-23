@@ -55,6 +55,7 @@ def test_d8_simple_medium_initial_route_remains_luna_low(complexity):
     decision = choose_initial_route(complexity, CATALOG, SIGNED_IN)
     assert decision.ok
     assert (decision.model, decision.reasoning_effort) == (LUNA_MODEL, "low")
+    assert (decision.role, decision.tier) == ("create", "balanced")
     assert "simple/medium CREATE primary" in decision.reason
 
 
@@ -62,6 +63,7 @@ def test_d13_complex_initial_route_is_luna_high():
     decision = choose_initial_route("complex", CATALOG, SIGNED_IN)
     assert decision.ok
     assert (decision.model, decision.reasoning_effort) == (LUNA_MODEL, "high")
+    assert (decision.role, decision.tier) == ("create", "slow")
     assert "D13 complex CREATE primary" in decision.reason
 
 
@@ -222,7 +224,9 @@ def test_runner_records_effective_route_reason_and_escalation_flags():
     assert seen == [(LUNA_MODEL, "high"), (TERRA_MODEL, "high")]
     decisions = result.metadata["codex_auto_route"]["decisions"]
     assert decisions[0]["reason"]
+    assert (decisions[0]["role"], decisions[0]["tier"]) == ("create", "slow")
     assert decisions[0]["escalation"] is False
+    assert (decisions[1]["role"], decisions[1]["tier"]) == ("create", "slow")
     assert decisions[1]["untested_escalation"] is False
     assert any(kind == "status" and data.get("stage") == "retry" for kind, data in events)
 
@@ -355,6 +359,7 @@ def test_auto_routing_passes_an_explicit_selection_without_touching_config(tmp_p
     assert selection is not None
     assert (selection.model, selection.reasoning_effort) == (LUNA_MODEL, "low")
     assert selection.policy == "codex_auto"
+    assert (selection.role, selection.tier) == ("create", "balanced")
     assert selection.route_reason
     # The shared config was never rewritten, during or after the call.
     assert pipeline.config_seen_during_call == [SAVED_PAIR]
@@ -446,6 +451,10 @@ def test_escalation_attempt_continues_the_failed_attempts_project(tmp_path):
     assert pipeline.project_presence == [True, True]
     assert [selection.model for selection in pipeline.selections] == [LUNA_MODEL, TERRA_MODEL]
     assert [selection.reasoning_effort for selection in pipeline.selections] == ["high", "high"]
+    assert [(selection.role, selection.tier) for selection in pipeline.selections] == [
+        ("create", "slow"),
+        ("create", "slow"),
+    ]
     assert (config.llm.model, config.llm.reasoning_effort) == (LUNA_MODEL, "")
     # The selection is per-attempt context: it must not survive the routing.
     assert all(getattr(sel, "policy", "") == "codex_auto" for sel in pipeline.selections)

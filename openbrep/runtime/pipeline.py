@@ -894,6 +894,8 @@ class TaskPipeline:
                 reasoning_effort=decision.reasoning_effort,
                 policy="codex_auto",
                 route_reason=decision.reason,
+                role="create",
+                tier=decision.tier,
             )
             try:
                 return self._handle_gdl(request)

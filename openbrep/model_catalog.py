@@ -100,6 +100,8 @@ from openbrep.config import (
 CapabilityState = Literal["supported", "unsupported", "unknown"]
 ModelKind = Literal["chat", "codex"]
 CatalogSource = Literal["builtin", "config", "codex", "open"]
+TaskRole = Literal["main", "create", "modify", "vision", "repair", "compact", "judge"]
+ModelTier = Literal["smol", "balanced", "slow"]
 
 SUPPORTED: CapabilityState = "supported"
 UNSUPPORTED: CapabilityState = "unsupported"
@@ -229,8 +231,12 @@ class ModelSelection:
     reasoning_effort: str = ""
     policy: str = ""
     route_reason: str = ""
+    # Stable routing context. The role/tier explain the selection; they do not
+    # alter prompts or the saved provider configuration.
+    role: TaskRole = "main"
+    tier: ModelTier | None = None
 
-    def as_metadata(self) -> dict[str, str]:
+    def as_metadata(self) -> dict[str, object]:
         """Route provenance for task metadata (never for prompts)."""
 
         return {
@@ -238,6 +244,8 @@ class ModelSelection:
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,
             "reason": self.route_reason,
+            "role": self.role,
+            "tier": self.tier,
         }
 
 
