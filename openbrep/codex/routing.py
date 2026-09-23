@@ -17,10 +17,11 @@ filesystem, or configuration side effects live here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from openbrep.codex.redact import redact_secrets
+from openbrep.model_catalog import ModelTier, TaskRole
 
 LUNA_MODEL = "openai-codex/gpt-5.6-luna"
 TERRA_MODEL = "openai-codex/gpt-5.6-terra"
@@ -74,18 +75,10 @@ class CodexRouteDecision:
     escalation: bool = False
     untested_escalation: bool = False
 
-    @property
-    def role(self) -> str:
-        """The task role owned by this Auto route.
-
-        This module currently handles CREATE Auto routing. Keeping the value on
-        the decision makes that boundary explicit for later role-aware routing.
-        """
-
-        return "create"
+    role: TaskRole = "create"
 
     @property
-    def tier(self) -> str | None:
+    def tier(self) -> ModelTier | None:
         """High-level CREATE preference derived from the normalized complexity."""
 
         if self.complexity == "complex":
@@ -278,11 +271,17 @@ def run_auto_route(
     make_stop_result: Callable[[CodexRouteDecision], AutoRouteResult],
     on_event: Callable[[str, dict[str, Any]], None],
     should_cancel: Callable[[], bool] | None = None,
+    role: TaskRole = "create",
 ) -> AutoRouteResult:
-    """Execute the D8/D13 policy with one bounded, visible escalation at most."""
+    """Execute the D8/D13 policy with one bounded, visible escalation at most.
+
+    The concrete D8/D13 model table remains unchanged. ``role`` only annotates
+    the resulting selections so CREATE and IMAGE calls can share the adapter
+    while retaining distinct model-selection provenance.
+    """
 
     catalog_snapshot = [dict(item) for item in catalog if isinstance(item, Mapping)]
-    initial = choose_initial_route(complexity, catalog_snapshot, status)
+    initial = replace(choose_initial_route(complexity, catalog_snapshot, status), role=role)
     decisions = [initial.to_metadata()]
     if not initial.ok:
         result = make_stop_result(initial)
@@ -304,7 +303,10 @@ def run_auto_route(
         )
         return first
 
-    escalation = choose_escalation(initial, first.verification, catalog_snapshot, attempts=0)
+    escalation = replace(
+        choose_escalation(initial, first.verification, catalog_snapshot, attempts=0),
+        role=role,
+    )
     decisions.append(escalation.to_metadata())
     if not escalation.ok:
         _attach_metadata(first, decisions, stopped=escalation)
@@ -325,11 +327,14 @@ def run_auto_route(
         )
         return second
 
-    exhausted = choose_escalation(
-        escalation,
-        second.verification,
-        catalog_snapshot,
-        attempts=1,
+    exhausted = replace(
+        choose_escalation(
+            escalation,
+            second.verification,
+            catalog_snapshot,
+            attempts=1,
+        ),
+        role=role,
     )
     decisions.append(exhausted.to_metadata())
     _attach_metadata(second, decisions, stopped=exhausted)
@@ -432,6 +437,9 @@ def _attach_metadata(
         "mode": "auto",
         "decisions": [dict(item) for item in decisions],
     }
+    if decisions:
+        route["role"] = decisions[0].get("role")
+        route["tier"] = decisions[0].get("tier")
     if stopped is not None:
         route["stopped"] = {"code": stopped.code, "reason": stopped.reason}
     metadata["codex_auto_route"] = route

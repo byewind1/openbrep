@@ -231,6 +231,25 @@ def test_runner_records_effective_route_reason_and_escalation_flags():
     assert any(kind == "status" and data.get("stage") == "retry" for kind, data in events)
 
 
+def test_runner_preserves_non_create_role_in_route_metadata():
+    result = run_auto_route(
+        complexity="simple",
+        catalog=CATALOG,
+        status=SIGNED_IN,
+        run=lambda _decision: _Result(True),
+        make_stop_result=lambda _decision: _Result(False),
+        on_event=lambda *_: None,
+        role="vision",
+    )
+
+    route = result.metadata["codex_auto_route"]
+    assert (route["role"], route["tier"]) == ("vision", "balanced")
+    assert (route["decisions"][0]["role"], route["decisions"][0]["tier"]) == (
+        "vision",
+        "balanced",
+    )
+
+
 def test_complex_full_chain_decisions_metadata_ends_in_exhausted():
     seen = []
 

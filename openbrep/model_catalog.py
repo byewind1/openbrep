@@ -103,6 +103,25 @@ CatalogSource = Literal["builtin", "config", "codex", "open"]
 TaskRole = Literal["main", "create", "modify", "vision", "repair", "compact", "judge"]
 ModelTier = Literal["smol", "balanced", "slow"]
 
+
+def role_for_intent(intent: str) -> TaskRole:
+    """Map a pipeline intent to the stable model-selection role.
+
+    This is metadata and policy context only. It does not choose a model and
+    must not be used as a second intent router.
+    """
+
+    normalized = str(intent or "").strip().upper()
+    if normalized == "CREATE":
+        return "create"
+    if normalized == "IMAGE":
+        return "vision"
+    if normalized == "MODIFY":
+        return "modify"
+    if normalized in {"DEBUG", "REPAIR"}:
+        return "repair"
+    return "main"
+
 SUPPORTED: CapabilityState = "supported"
 UNSUPPORTED: CapabilityState = "unsupported"
 UNKNOWN: CapabilityState = "unknown"

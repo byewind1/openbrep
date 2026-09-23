@@ -14,6 +14,7 @@ from openbrep.model_catalog import (
     ModelCatalog,
     ModelResolutionError,
     build_model_catalog,
+    role_for_intent,
 )
 
 
@@ -27,6 +28,22 @@ def _provider(name: str, models: list, **extra) -> dict:
     """A configured provider entry; the endpoint value is never asserted here."""
 
     return {"name": name, "api": "https://entry.example.test/v1", "models": models, **extra}
+
+
+@pytest.mark.parametrize(
+    ("intent", "role"),
+    [
+        ("CREATE", "create"),
+        ("IMAGE", "vision"),
+        ("MODIFY", "modify"),
+        ("DEBUG", "repair"),
+        ("REPAIR", "repair"),
+        ("CHAT", "main"),
+        ("", "main"),
+    ],
+)
+def test_role_for_intent_is_metadata_mapping_only(intent, role):
+    assert role_for_intent(intent) == role
 
 
 def _two_provider_config() -> GDLAgentConfig:

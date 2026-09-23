@@ -55,7 +55,7 @@ from openbrep.knowledge_selector import (
 )
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
-from openbrep.model_catalog import ModelSelection
+from openbrep.model_catalog import ModelSelection, role_for_intent
 from openbrep.object_planner import plan_gdl_object
 from openbrep.project_context import (
     ProjectContext,
@@ -845,6 +845,7 @@ class TaskPipeline:
 
         on_event = request.on_event or (lambda *_: None)
         complexity = classify_create_complexity(request.user_input)
+        role = role_for_intent(request.intent)
         try:
             provider = self.codex_provider
             if provider is None:
@@ -870,6 +871,7 @@ class TaskPipeline:
                 code="auto_catalog_unavailable",
                 error="无法读取当前 ChatGPT 账户的模型目录，Auto 路由已停止。",
                 complexity=complexity,
+                role=role,
             )
             result = TaskResult(
                 success=False,
@@ -894,7 +896,7 @@ class TaskPipeline:
                 reasoning_effort=decision.reasoning_effort,
                 policy="codex_auto",
                 route_reason=decision.reason,
-                role="create",
+                role=decision.role,
                 tier=decision.tier,
             )
             try:
@@ -924,6 +926,7 @@ class TaskPipeline:
             make_stop_result=make_stop,
             on_event=on_event,
             should_cancel=request.should_cancel,
+            role=role,
         )
 
     def _handle_codex_chat(self, request: TaskRequest) -> TaskResult:
