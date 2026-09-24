@@ -9,8 +9,9 @@ policy.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import Literal, Mapping
+from typing import Any, Literal, Mapping
 
 from openbrep.model_catalog import ModelSelection, ModelTier, TaskRole
 
@@ -59,6 +60,84 @@ class RetryRouter:
     def __post_init__(self) -> None:
         if self.cooldown_seconds < 0:
             raise ValueError("cooldown_seconds must be non-negative")
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any] | None) -> "RetryRouter":
+        """Build a safe router from the optional ``[llm.retry]`` table.
+
+        Unknown roles, malformed candidates, invalid cooldowns, and unsupported
+        revert policies are ignored or normalized to the inert defaults. This
+        keeps configuration loading fail closed and avoids making retry policy a
+        second source of model identity rules.
+        """
+
+        data = raw if isinstance(raw, Mapping) else {}
+        chains: dict[TaskRole, tuple[FallbackCandidate, ...]] = {}
+        raw_chains = data.get("fallback_chains")
+        valid_roles = {"main", "create", "modify", "vision", "repair", "compact", "judge"}
+        if isinstance(raw_chains, Mapping):
+            for raw_role, entries in raw_chains.items():
+                role = str(raw_role or "").strip()
+                if role not in valid_roles or not isinstance(entries, (list, tuple)):
+                    continue
+                parsed: list[FallbackCandidate] = []
+                for item in entries:
+                    if not isinstance(item, Mapping):
+                        continue
+                    model = str(item.get("model") or "").strip()
+                    if not model:
+                        continue
+                    tier = str(item.get("tier") or "").strip() or None
+                    if tier not in {None, "smol", "balanced", "slow"}:
+                        tier = None
+                    parsed.append(
+                        FallbackCandidate(
+                            model=model,
+                            reasoning_effort=str(item.get("reasoning_effort") or "").strip(),
+                            tier=tier,
+                        )
+                    )
+                if parsed:
+                    chains[role] = tuple(parsed)  # type: ignore[assignment]
+
+        try:
+            cooldown = float(data.get("cooldown_seconds", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            cooldown = 0.0
+        if not math.isfinite(cooldown) or cooldown < 0:
+            cooldown = 0.0
+        revert = str(data.get("revert_policy") or "per_request").strip()
+        if revert not in {"per_request", "primary_after_success"}:
+            revert = "per_request"
+        return cls(fallback_chains=chains, cooldown_seconds=cooldown, revert_policy=revert)
+
+    def as_config(self) -> dict[str, Any]:
+        """Serialize only normalized, non-default retry policy values."""
+
+        chains = {
+            role: [
+                {
+                    "model": candidate.model,
+                    **(
+                        {"reasoning_effort": candidate.reasoning_effort}
+                        if candidate.reasoning_effort
+                        else {}
+                    ),
+                    **({"tier": candidate.tier} if candidate.tier else {}),
+                }
+                for candidate in candidates
+            ]
+            for role, candidates in self.fallback_chains.items()
+            if candidates
+        }
+        result: dict[str, Any] = {}
+        if chains:
+            result["fallback_chains"] = chains
+        if self.cooldown_seconds:
+            result["cooldown_seconds"] = self.cooldown_seconds
+        if self.revert_policy != "per_request":
+            result["revert_policy"] = self.revert_policy
+        return result
 
     def candidates(
         self,

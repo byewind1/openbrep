@@ -94,3 +94,39 @@ def test_revert_policy_returns_primary_only_after_success():
 def test_negative_cooldown_is_rejected():
     with pytest.raises(ValueError, match="cooldown_seconds"):
         RetryRouter(cooldown_seconds=-1)
+
+
+def test_from_mapping_normalizes_invalid_entries_and_roundtrips_valid_policy():
+    router = RetryRouter.from_mapping(
+        {
+            "fallback_chains": {
+                "create": [
+                    {"model": "fallback", "reasoning_effort": "high", "tier": "slow"},
+                    {"model": ""},
+                ],
+                "unknown": [{"model": "ignored"}],
+            },
+            "cooldown_seconds": "3.5",
+            "revert_policy": "primary_after_success",
+        }
+    )
+
+    assert router.cooldown_seconds == 3.5
+    assert router.revert_policy == "primary_after_success"
+    assert router.as_config() == {
+        "fallback_chains": {
+            "create": [
+                {"model": "fallback", "reasoning_effort": "high", "tier": "slow"}
+            ]
+        },
+        "cooldown_seconds": 3.5,
+        "revert_policy": "primary_after_success",
+    }
+
+
+def test_from_mapping_invalid_cooldown_fails_closed_to_inert_policy():
+    router = RetryRouter.from_mapping(
+        {"cooldown_seconds": "nan", "revert_policy": "not-a-policy"}
+    )
+
+    assert router.as_config() == {}

@@ -583,6 +583,9 @@ class LLMConfig:
     # 不悄悄改动既有配置：全新用户本机没有 Codex 配置，只有托管入口可用。
     # 无效值一律按默认解释（fail safe），保存时只写规范枚举。
     codex_entry: str = "managed"
+    # R5：角色级 fallback/cooldown/revert 配置。默认空字典，不启用任何
+    # 新的重试路径；由 model_retry.RetryRouter 负责规范化读取。
+    retry: dict[str, object] = field(default_factory=dict)
 
     @property
     def providers(self) -> list[dict]:
@@ -631,6 +634,12 @@ class LLMConfig:
         from openbrep.codex.entry import normalize_codex_entry
 
         return normalize_codex_entry(self.codex_entry)
+
+    def model_retry_router(self):
+        """Return the normalized role-aware retry policy, without side effects."""
+        from openbrep.model_retry import RetryRouter
+
+        return RetryRouter.from_mapping(self.retry)
 
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
@@ -1064,6 +1073,7 @@ class GDLAgentConfig:
         self.agent.agent_loop_budget = _normalize_agent_loop_budget(
             self.agent.agent_loop_budget
         )
+        retry_data = self.llm.model_retry_router().as_config()
         data = {
             "llm": {
                 "model": self.llm.model,
@@ -1086,6 +1096,7 @@ class GDLAgentConfig:
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
+                **({"retry": retry_data} if retry_data else {}),
             },
             "agent": {
                 "max_iterations": self.agent.max_iterations,

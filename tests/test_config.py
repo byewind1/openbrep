@@ -37,6 +37,42 @@ class _CleanEnvMixin:
 
 
 class TestConfigAssistantSettings(unittest.TestCase):
+    def test_retry_policy_loads_and_saves_as_optional_llm_table(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                """
+[llm]
+model = "glm-4-flash"
+
+[llm.retry]
+cooldown_seconds = 4
+revert_policy = "primary_after_success"
+
+[llm.retry.fallback_chains]
+create = [{ model = "gpt-5.4", reasoning_effort = "high", tier = "slow" }]
+""",
+                encoding="utf-8",
+            )
+
+            config = GDLAgentConfig.load(str(config_path))
+            router = config.llm.model_retry_router()
+            assert router.cooldown_seconds == 4.0
+            assert router.revert_policy == "primary_after_success"
+            assert router.fallback_chains["create"][0].model == "gpt-5.4"
+
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            assert reloaded.llm.model_retry_router().as_config() == router.as_config()
+
+    def test_retry_policy_default_is_inert_and_not_written(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config = GDLAgentConfig()
+            config.save(str(config_path))
+            assert "retry" not in config_path.read_text(encoding="utf-8")
+            assert config.llm.model_retry_router().as_config() == {}
+
     def test_custom_model_prefers_custom_provider_credentials_over_top_level_llm_fields(self):
         cfg = LLMConfig(
             model="ymg-gpt-5.3-codex",
