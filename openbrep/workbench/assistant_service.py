@@ -202,6 +202,7 @@ class WorkbenchAssistantService:
         request = TaskRequest(
             user_input=message,
             intent="CHAT",
+            credential_scope=str(getattr(self.session, "session_id", "") or ""),
             project=self.session.project,
             assistant_settings=self.session.assistant_settings,
             history=list(body.get("history") or []),
@@ -383,6 +384,7 @@ class WorkbenchAssistantService:
             )
         request = TaskRequest(
             user_input="",
+            credential_scope=str(getattr(self.session, "session_id", "") or ""),
             assistant_settings=self.session.assistant_settings,
         )
         return pipeline._make_llm(request)
@@ -814,6 +816,7 @@ class WorkbenchAssistantService:
         request = TaskRequest(
             user_input=str(body.get("message") or "").strip(),
             intent=intent,
+            credential_scope=str(getattr(self.session, "session_id", "") or ""),
             project=self.session.project,
             work_dir=str(self.session.source_path.parent),
             output_dir=str(self.session.source_path.parent / "output"),

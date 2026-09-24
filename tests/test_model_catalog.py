@@ -959,3 +959,12 @@ def test_building_the_catalog_never_resolves_credentials():
     assert catalog.resolve("kimi-k3").provider == "gateway"
     assert catalog.resolve("openai-codex/gpt-5.6-luna").kind == "codex"
     assert catalog.by_source("config") != ()
+
+
+def test_catalog_exposes_path_scoped_model_policy(tmp_path):
+    config = GDLAgentConfig()
+    config.llm.enabled_models = [{"path": str(tmp_path), "models": ["glm-4-flash"]}]
+    config.llm.disabled_providers = [{"path": str(tmp_path), "providers": ["openai"]}]
+    catalog = build_model_catalog(config)
+    assert catalog.is_enabled("glm-4-flash", cwd=tmp_path)
+    assert not catalog.is_enabled("gpt-5.4", cwd=tmp_path)

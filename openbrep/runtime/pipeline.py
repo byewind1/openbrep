@@ -211,6 +211,8 @@ class TaskRequest:
     # model/effort。替代"临时改写 config.llm 再恢复"的旧做法：选择随请求不可变地
     # 传递，共享 config 在整次调用期间保持已保存值。绝不进入任何 prompt。
     selection: Optional["ModelSelection"] = None
+    # R7：凭据池的会话/调用作用域；空值由 pipeline 生成稳定作用域。
+    credential_scope: str = ""
 
 
 @dataclass
@@ -299,6 +301,7 @@ class TaskPipeline:
         # D3：Codex CHAT/EXPLAIN 的 provider（workbench 注入 session 共享实例；
         # 未注入时 LLMAdapter 走进程共享默认注册表）。非 codex 模型从不触碰。
         self.codex_provider = codex_provider
+        self.credential_scope = f"pipeline:{id(self):x}"
         # benchmark 传 False：错误学习记忆是累积态，会让 prompt 随运行历史漂移，
         # 破坏黄金语料可复现性；生产默认 True，行为不变
         self.include_learned_skills = include_learned_skills
@@ -2578,6 +2581,13 @@ class TaskPipeline:
         """
         import dataclasses
         cfg = self._effective_llm_config(request.selection)
+        cfg = dataclasses.replace(
+            cfg,
+            credential_scope=request.credential_scope or self.credential_scope,
+        )
+        # dataclasses.replace intentionally omits init=False runtime state;
+        # share the pool cache so session affinity survives per-selection copies.
+        cfg._credential_pools = self.config.llm._credential_pools
 
         resolved = cfg.resolve_api_key(cfg.model)
         if resolved:
@@ -2587,6 +2597,8 @@ class TaskPipeline:
             cfg = dataclasses.replace(cfg, assistant_settings=request.assistant_settings)
 
         adapter = LLMAdapter(cfg)
+        adapter.retry_role = role_for_intent(request.intent or "")
+        adapter.retry_primary = request.selection
         # D3：注入 workbench 共享的 CodexProvider（None = 走默认注册表）。
         if self.codex_provider is not None:
             adapter.codex_provider = self.codex_provider

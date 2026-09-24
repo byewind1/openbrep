@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from openbrep.config import LLMConfig
+from openbrep.llm import LLMAdapter, LLMResponse
 from openbrep.model_catalog import ModelSelection
 from openbrep.model_retry import FallbackCandidate, RetryRouter
 
@@ -130,3 +132,26 @@ def test_from_mapping_invalid_cooldown_fails_closed_to_inert_policy():
     )
 
     assert router.as_config() == {}
+
+
+def test_runtime_adapter_uses_role_fallback_after_primary_failure(monkeypatch):
+    config = LLMConfig(
+        model="primary",
+        api_key="key",
+        retry={"fallback_chains": {"create": [{"model": "fallback"}]}},
+    )
+    adapter = LLMAdapter(config)
+    adapter.retry_role = "create"
+    calls = []
+
+    def fake_once(self, messages, **kwargs):
+        calls.append(self.config.model)
+        if self.config.model == "primary":
+            raise RuntimeError("temporary provider failure")
+        return LLMResponse(content="ok", model=self.config.model)
+
+    monkeypatch.setattr(LLMAdapter, "_generate_once", fake_once)
+    result = adapter.generate([{"role": "user", "content": "hi"}])
+    assert result.content == "ok"
+    assert calls == ["primary", "fallback"]
+    assert result.metadata["retry"]["role"] == "create"

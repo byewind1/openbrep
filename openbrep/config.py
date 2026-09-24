@@ -329,6 +329,7 @@ class ResolvedCredentials:
     api_base: str           # 解析结果（可能为空）
     source: str             # custom_provider | provider_keys | top_level | env | none
     console_url: str = ""   # 对应 provider 的 key 控制台（可能为空）
+    credential_id: str = "" # 仅凭据槽位标识，绝不携带 secret
 
 
 def _auto_detect_converter() -> Optional[str]:
@@ -450,6 +451,12 @@ def provider_entry_to_toml(entry: dict) -> dict:
     extra_body = normalized.get("extra_body")
     if isinstance(extra_body, dict) and extra_body:
         out["extra_body"] = extra_body
+    credentials = normalized.get("credentials")
+    if isinstance(credentials, list) and credentials:
+        out["credentials"] = credentials
+    api_keys = normalized.get("api_keys")
+    if isinstance(api_keys, list) and api_keys:
+        out["api_keys"] = api_keys
     return out
 
 
@@ -588,6 +595,15 @@ class LLMConfig:
     retry: dict[str, object] = field(default_factory=dict)
     # R6：可选、只读、带 commit 戳的 oh-my-pi catalog 快照。
     pi_catalog: dict[str, object] = field(default_factory=dict)
+    # R7：可选的路径作用域模型/提供商策略；空值保持历史行为。
+    enabled_models: list[object] = field(default_factory=list)
+    disabled_providers: list[object] = field(default_factory=list)
+    # Runtime-only credential affinity; never serialized.
+    credential_scope: str = field(default="", repr=False, compare=False)
+    last_credential_id: str = field(default="", init=False, repr=False, compare=False)
+    _credential_pools: dict[str, object] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     @property
     def providers(self) -> list[dict]:
@@ -643,10 +659,41 @@ class LLMConfig:
 
         return RetryRouter.from_mapping(self.retry)
 
+    def _credential_pool_for(self, provider: dict):
+        from openbrep.credential_pool import CredentialPool
+
+        key = f"{provider.get('name', '')}:{id(provider)}"
+        pool = self._credential_pools.get(key)
+        if pool is None:
+            pool = CredentialPool.from_provider(provider)
+            self._credential_pools[key] = pool
+        return pool
+
+    @staticmethod
+    def _provider_has_credential_pool(provider: dict) -> bool:
+        return bool(provider.get("credentials") or provider.get("api_keys"))
+
+    def mark_credential_failure(self, model: str | None = None) -> None:
+        match = self._find_custom_provider_match(model or self.model)
+        provider = match.get("provider") if match else None
+        if (
+            not isinstance(provider, dict)
+            or not self._provider_has_credential_pool(provider)
+            or not self.last_credential_id
+        ):
+            return
+        self._credential_pool_for(provider).mark_failure(self.last_credential_id)
+
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
+            provider = custom_match.get("provider") or {}
+            if isinstance(provider, dict) and self._provider_has_credential_pool(provider):
+                lease = self._credential_pool_for(provider).select(self.credential_scope)
+                if lease is not None:
+                    self.last_credential_id = lease.credential_id
+                    return expand_env_ref(lease.value) or None
             custom_key = expand_env_ref(custom_match.get("api_key", ""))
             return custom_key or None
 
@@ -730,7 +777,17 @@ class LLMConfig:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
-            key = expand_env_ref(custom_match.get("api_key", ""))
+            credential_id = ""
+            key = ""
+            provider = custom_match.get("provider") or {}
+            if isinstance(provider, dict) and self._provider_has_credential_pool(provider):
+                lease = self._credential_pool_for(provider).select(self.credential_scope)
+                if lease is not None:
+                    key = expand_env_ref(lease.value)
+                    credential_id = lease.credential_id
+                    self.last_credential_id = credential_id
+            if not key:
+                key = expand_env_ref(custom_match.get("api_key", ""))
             base = str(custom_match.get("api", "") or custom_match.get("base_url", "") or "").strip() or (self.api_base or "")
             return ResolvedCredentials(
                 provider=str(custom_match.get("provider_name", "custom") or "custom"),
@@ -738,6 +795,7 @@ class LLMConfig:
                 api_base=base,
                 source="custom_provider",
                 console_url="",
+                credential_id=credential_id,
             )
 
         profile = provider_profile_for_model(target_model)
@@ -1103,6 +1161,12 @@ class GDLAgentConfig:
                 "assistant_settings": self.llm.assistant_settings or "",
                 **({"retry": retry_data} if retry_data else {}),
                 **({"pi_catalog": pi_catalog_data} if pi_catalog_data else {}),
+                **({"enabled_models": self.llm.enabled_models} if self.llm.enabled_models else {}),
+                **(
+                    {"disabled_providers": self.llm.disabled_providers}
+                    if self.llm.disabled_providers
+                    else {}
+                ),
             },
             "agent": {
                 "max_iterations": self.agent.max_iterations,

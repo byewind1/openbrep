@@ -12,7 +12,7 @@ import os
 import re
 import time
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from openbrep.codex.errors import error_response
@@ -22,7 +22,7 @@ from openbrep.config import (
     LLMConfig,
     provider_profile_for_model,
 )
-from openbrep.model_catalog import transport_compat
+from openbrep.model_catalog import ModelSelection, transport_compat
 
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = tuple(p.native_prefix for p in PROVIDER_PROFILES if p.native_prefix)
@@ -623,6 +623,71 @@ class LLMAdapter:
         )
 
     def generate(self, messages: list, **kwargs) -> LLMResponse:
+        """Generate with an optional bounded role-aware fallback chain."""
+        role = str(kwargs.pop("retry_role", getattr(self, "retry_role", "main")) or "main")
+        router = self.config.model_retry_router()
+        if not router.fallback_chains.get(role):
+            return self._generate_once(messages, **kwargs)
+
+        primary = getattr(self, "retry_primary", None)
+        if not isinstance(primary, ModelSelection):
+            primary = ModelSelection(
+                model=self.config.model,
+                reasoning_effort=self.config.codex_reasoning_effort(),
+                role=(
+                    role
+                    if role in {"main", "create", "modify", "vision", "repair", "compact", "judge"}
+                    else "main"
+                ),
+            )
+        last_attempt_at = time.monotonic()
+        last_error: Exception | None = None
+        for attempt_index in range(len(router.candidates(primary, role=role))):
+            now = time.monotonic()
+            decision = router.plan(
+                primary,
+                attempt_index=attempt_index,
+                now=now,
+                last_attempt_at=last_attempt_at,
+                role=role,
+            )
+            if not decision.allowed or decision.selection is None:
+                break
+            selection = decision.selection
+            adapter = self
+            try:
+                if attempt_index:
+                    cfg = replace(
+                        self.config,
+                        model=selection.model,
+                        reasoning_effort=selection.reasoning_effort,
+                        retry={},
+                    )
+                    cfg._credential_pools = self.config._credential_pools
+                    adapter = LLMAdapter(cfg)
+                    adapter.codex_provider = getattr(self, "codex_provider", None)
+                response = adapter._generate_once(messages, **dict(kwargs))
+                if attempt_index:
+                    response.metadata = dict(response.metadata or {})
+                    response.metadata["retry"] = {
+                        "attempt": attempt_index,
+                        "role": role,
+                        "model": selection.model,
+                    }
+                return response
+            except Exception as exc:
+                last_error = exc
+                try:
+                    adapter.config.mark_credential_failure(selection.model)
+                except Exception:
+                    pass
+                last_attempt_at = now
+                continue
+        if last_error is not None:
+            raise last_error
+        return self._generate_once(messages, **kwargs)
+
+    def _generate_once(self, messages: list, **kwargs) -> LLMResponse:
         """
         Send messages to the LLM and return the response.
 

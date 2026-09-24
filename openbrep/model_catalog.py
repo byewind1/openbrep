@@ -353,6 +353,27 @@ class ModelCatalog:
     selectors: Mapping[str, tuple[ModelSpec, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    enabled_models: tuple[object, ...] = ()
+    disabled_providers: tuple[object, ...] = ()
+
+    def is_enabled(
+        self,
+        reference: str,
+        *,
+        cwd: str | None = None,
+    ) -> bool:
+        """Return whether path-scoped allow/deny policy permits a model."""
+
+        spec = self.resolve(reference)
+        from openbrep.model_scope import model_enabled
+
+        return model_enabled(
+            reference,
+            provider=spec.provider,
+            enabled_models=self.enabled_models,
+            disabled_providers=self.disabled_providers,
+            cwd=cwd,
+        )
 
     def resolve(self, reference: str) -> ModelSpec:
         """Return the single spec for ``reference``; raise on unknown/ambiguous.
@@ -492,7 +513,13 @@ def build_model_catalog(
             spec.reference,
         ),
     )
-    return ModelCatalog(specs=tuple(ordered), selectors=MappingProxyType(selectors))
+    llm = getattr(config, "llm", None)
+    return ModelCatalog(
+        specs=tuple(ordered),
+        selectors=MappingProxyType(selectors),
+        enabled_models=tuple(getattr(llm, "enabled_models", ()) or ()),
+        disabled_providers=tuple(getattr(llm, "disabled_providers", ()) or ()),
+    )
 
 
 def _pi_catalog_entries(snapshot: PiCatalogSnapshot | None) -> list[_Entry]:

@@ -1366,3 +1366,28 @@ models = ["gpt-5.6-luna"]
             reloaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(reloaded.llm.providers[0]["api_mode"], "codex_app_server")
             self.assertEqual(reloaded.llm.providers[0]["api_key"], "")
+
+
+def test_custom_provider_credentials_rotate_by_scope_and_round_trip(tmp_path):
+    config = GDLAgentConfig()
+    config.llm.providers = [{
+        "name": "pool-provider",
+        "api": "https://example.invalid/v1",
+        "api_key": "fallback",
+        "credentials": [
+            {"id": "one", "value": "secret-one"},
+            {"id": "two", "value": "secret-two"},
+        ],
+        "models": ["demo"],
+    }]
+    config.llm.credential_scope = "scope-a"
+    assert config.llm.resolve_api_key("demo") == "secret-one"
+    assert config.llm.resolve_credentials("demo").credential_id == "one"
+    config.llm.credential_scope = "scope-b"
+    assert config.llm.resolve_api_key("demo") == "secret-two"
+    path = tmp_path / "config.toml"
+    config.save(str(path))
+    text = path.read_text()
+    assert "secret-one" in text
+    reloaded = GDLAgentConfig.load(str(path))
+    assert reloaded.llm.providers[0]["credentials"][0]["id"] == "one"

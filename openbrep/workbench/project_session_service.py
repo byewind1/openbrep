@@ -468,6 +468,7 @@ class WorkbenchProjectSessionService:
             TaskRequest(
                 user_input=prompt,
                 intent="IMAGE" if (image_payload["image_b64"] or image_payload["images"]) else "CREATE",
+                credential_scope=str(getattr(self.session, "session_id", "") or ""),
                 work_dir=str(output_root),
                 output_dir=str(output_root),
                 gsm_name=project_name,
