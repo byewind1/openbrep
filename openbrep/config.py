@@ -586,6 +586,8 @@ class LLMConfig:
     # R5：角色级 fallback/cooldown/revert 配置。默认空字典，不启用任何
     # 新的重试路径；由 model_retry.RetryRouter 负责规范化读取。
     retry: dict[str, object] = field(default_factory=dict)
+    # R6：可选、只读、带 commit 戳的 oh-my-pi catalog 快照。
+    pi_catalog: dict[str, object] = field(default_factory=dict)
 
     @property
     def providers(self) -> list[dict]:
@@ -1074,6 +1076,9 @@ class GDLAgentConfig:
             self.agent.agent_loop_budget
         )
         retry_data = self.llm.model_retry_router().as_config()
+        from openbrep.pi_catalog import normalize_pi_catalog_config
+
+        pi_catalog_data = normalize_pi_catalog_config(self.llm.pi_catalog)
         data = {
             "llm": {
                 "model": self.llm.model,
@@ -1097,6 +1102,7 @@ class GDLAgentConfig:
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
                 **({"retry": retry_data} if retry_data else {}),
+                **({"pi_catalog": pi_catalog_data} if pi_catalog_data else {}),
             },
             "agent": {
                 "max_iterations": self.agent.max_iterations,

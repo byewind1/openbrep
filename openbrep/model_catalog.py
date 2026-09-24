@@ -96,10 +96,11 @@ from openbrep.config import (
     normalize_provider_entry,
     provider_profile_for_model,
 )
+from openbrep.pi_catalog import PiCatalogSnapshot, load_configured_pi_catalog
 
 CapabilityState = Literal["supported", "unsupported", "unknown"]
 ModelKind = Literal["chat", "codex"]
-CatalogSource = Literal["builtin", "config", "codex", "open"]
+CatalogSource = Literal["builtin", "config", "codex", "open", "imported"]
 TaskRole = Literal["main", "create", "modify", "vision", "repair", "compact", "judge"]
 ModelTier = Literal["smol", "balanced", "slow"]
 
@@ -128,8 +129,8 @@ UNKNOWN: CapabilityState = "unknown"
 
 # Merge precedence, highest first: configured providers shadow Codex entries,
 # which shadow built-in presets. Mirrors the existing read path.
-_SOURCE_RANK: dict[str, int] = {"config": 0, "codex": 1, "builtin": 2}
-_SORTED_SOURCES: tuple[str, ...] = ("builtin", "config", "codex")
+_SOURCE_RANK: dict[str, int] = {"config": 0, "codex": 1, "builtin": 2, "imported": 3}
+_SORTED_SOURCES: tuple[str, ...] = ("builtin", "config", "codex", "imported")
 
 # Providers whose model ids are an open set that the closed settings validator
 # accepts and the adapter routes without a catalog entry: today
@@ -222,6 +223,25 @@ class ModelSpec:
     kind: ModelKind
     capabilities: ModelCapabilities
     source: CatalogSource
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __hash__(self) -> int:
+        """Hash identity/facts while treating imported metadata as ancillary."""
+
+        return hash(
+            (
+                self.identity,
+                self.display_name,
+                self.api_mode,
+                self.kind,
+                self.capabilities,
+                self.source,
+                self.context_window,
+                self.max_output_tokens,
+            )
+        )
 
     @property
     def reference(self) -> str:
@@ -442,6 +462,7 @@ def build_model_catalog(
     config,
     *,
     codex_models: Iterable[Mapping[str, object]] = (),
+    pi_catalog: PiCatalogSnapshot | None = None,
 ) -> ModelCatalog:
     """Project current configuration into an immutable catalog.
 
@@ -451,10 +472,15 @@ def build_model_catalog(
     source contributes nothing.
     """
 
+    if pi_catalog is None:
+        llm_pi_catalog = getattr(getattr(config, "llm", None), "pi_catalog", None)
+        pi_catalog = load_configured_pi_catalog(llm_pi_catalog)
+
     entries: list[_Entry] = [
         *_config_entries(config),
         *_codex_entries(codex_models),
         *_builtin_entries(),
+        *_pi_catalog_entries(pi_catalog),
     ]
     selectors = _merge_selectors(entries)
     reachable = {spec for claimants in selectors.values() for spec in claimants}
@@ -467,6 +493,39 @@ def build_model_catalog(
         ),
     )
     return ModelCatalog(specs=tuple(ordered), selectors=MappingProxyType(selectors))
+
+
+def _pi_catalog_entries(snapshot: PiCatalogSnapshot | None) -> list[_Entry]:
+    if snapshot is None:
+        return []
+    entries: list[_Entry] = []
+    for model in snapshot.models:
+        metadata = dict(model.metadata)
+        metadata["catalog_stamp"] = snapshot.stamp
+        metadata["supports_images"] = model.supports_images
+        metadata["supports_reasoning"] = model.supports_reasoning
+        capabilities = ModelCapabilities(
+            vision=SUPPORTED if model.supports_images else UNKNOWN,
+            reasoning=SUPPORTED if model.supports_reasoning else UNKNOWN,
+            tools=UNKNOWN,
+        )
+        spec = ModelSpec(
+            identity=ModelIdentity(
+                provider=model.provider,
+                model_id=model.model_id,
+                reference=model.reference,
+            ),
+            display_name=model.display_name,
+            api_mode="chat_completions",
+            kind="chat",
+            capabilities=capabilities,
+            source="imported",
+            context_window=model.context_window,
+            max_output_tokens=model.max_output_tokens,
+            metadata=metadata,
+        )
+        entries.append(_Entry(spec=spec, selectors=(model.reference,)))
+    return entries
 
 
 def _open_family_spec(reference: str) -> ModelSpec | None:

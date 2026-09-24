@@ -37,6 +37,28 @@ class _CleanEnvMixin:
 
 
 class TestConfigAssistantSettings(unittest.TestCase):
+    def test_pi_catalog_config_loads_and_saves_only_pinned_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                f"""
+[llm]
+model = "glm-4-flash"
+
+[llm.pi_catalog]
+path = "{Path(tmpdir) / 'models.json'}"
+commit = "abc123"
+ignored = "drop-me"
+""",
+                encoding="utf-8",
+            )
+            config = GDLAgentConfig.load(str(config_path))
+            assert config.llm.pi_catalog["commit"] == "abc123"
+            config.save(str(config_path))
+            text = config_path.read_text(encoding="utf-8")
+            assert 'commit = "abc123"' in text
+            assert "drop-me" not in text
+
     def test_retry_policy_loads_and_saves_as_optional_llm_table(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.toml"

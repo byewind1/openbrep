@@ -119,6 +119,23 @@ def test_resolve_selection_marks_codex_transport_and_role():
     )
 
 
+def test_configured_pi_catalog_adds_metadata_without_shadowing_builtin_identity(tmp_path):
+    path = tmp_path / "models.json"
+    path.write_text(
+        '{"openai": {"gpt-imported": {"name": "Imported", "contextWindow": 64000}}}',
+        encoding="utf-8",
+    )
+    config = _config(pi_catalog={"path": str(path), "commit": "abc123"})
+
+    catalog = build_model_catalog(config)
+    imported = catalog.resolve("openai/gpt-imported")
+    assert imported.source == "imported"
+    assert imported.context_window == 64000
+    assert imported.metadata["catalog_stamp"] == "oh-my-pi/pi-catalog@abc123"
+    # Imported metadata never replaces an existing OpenBrep preset/provider entry.
+    assert catalog.resolve("glm-4-flash").source == "builtin"
+
+
 def test_native_prefixed_presets_round_trip_their_reference_unchanged():
     catalog = build_model_catalog(_config())
 
