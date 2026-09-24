@@ -293,11 +293,12 @@ class ModelSelection:
     # alter prompts or the saved provider configuration.
     role: TaskRole = "main"
     tier: ModelTier | None = None
+    resolved_model: ResolvedModel | None = None
 
     def as_metadata(self) -> dict[str, object]:
         """Route provenance for task metadata (never for prompts)."""
 
-        return {
+        metadata = {
             "policy": self.policy,
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,
@@ -305,6 +306,9 @@ class ModelSelection:
             "role": self.role,
             "tier": self.tier,
         }
+        if self.resolved_model is not None:
+            metadata["resolved"] = self.resolved_model.as_metadata()
+        return metadata
 
 
 @dataclass(frozen=True)

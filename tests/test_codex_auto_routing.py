@@ -20,6 +20,7 @@ from openbrep.codex.routing import (
 )
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.model_catalog import build_model_catalog
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
 
 
@@ -231,6 +232,40 @@ def test_runner_records_effective_route_reason_and_escalation_flags():
     assert any(kind == "status" and data.get("stage") == "retry" for kind, data in events)
 
 
+def test_runner_can_attach_resolved_model_provenance_without_changing_route():
+    resolved_catalog = build_model_catalog(
+        GDLAgentConfig(), codex_models=CATALOG_TERRA_HIGH
+    )
+    resolved = []
+
+    def run(decision):
+        resolved.append(decision.resolved_model)
+        return _Result(True)
+
+    result = run_auto_route(
+        complexity="complex",
+        catalog=CATALOG_TERRA_HIGH,
+        status=SIGNED_IN,
+        run=run,
+        make_stop_result=lambda _decision: _Result(False),
+        on_event=lambda *_: None,
+        resolve_selection=lambda decision: resolved_catalog.resolve_selection(
+            decision.model,
+            role=decision.role,
+            tier=decision.tier,
+            reasoning_effort=decision.reasoning_effort,
+        ),
+    )
+
+    assert result.success
+    assert len(resolved) == 1
+    assert resolved[0] is not None
+    assert resolved[0].model == LUNA_MODEL
+    assert resolved[0].transport == "codex_app_server"
+    route = result.metadata["codex_auto_route"]
+    assert route["decisions"][0]["resolved"]["model"] == LUNA_MODEL
+
+
 def test_runner_preserves_non_create_role_in_route_metadata():
     result = run_auto_route(
         complexity="simple",
@@ -416,6 +451,8 @@ def test_auto_pipeline_uses_policy_and_restores_saved_fixed_pair(tmp_path):
     result = pipeline.execute(TaskRequest(user_input="创建简单构件", intent="CREATE"))
 
     assert pipeline.seen[0][:2] == (LUNA_MODEL, "low")
+    assert pipeline.selections[0].resolved_model is not None
+    assert pipeline.selections[0].resolved_model.transport == "codex_app_server"
     assert (config.llm.model, config.llm.reasoning_effort) == (
         "openai-codex/gpt-5.6-sol",
         "medium",

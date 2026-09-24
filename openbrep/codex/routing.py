@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from openbrep.codex.redact import redact_secrets
-from openbrep.model_catalog import ModelTier, TaskRole
+from openbrep.model_catalog import ModelTier, ResolvedModel, TaskRole
 
 LUNA_MODEL = "openai-codex/gpt-5.6-luna"
 TERRA_MODEL = "openai-codex/gpt-5.6-terra"
@@ -76,6 +76,7 @@ class CodexRouteDecision:
     untested_escalation: bool = False
 
     role: TaskRole = "create"
+    resolved_model: ResolvedModel | None = None
 
     @property
     def tier(self) -> ModelTier | None:
@@ -88,7 +89,7 @@ class CodexRouteDecision:
         return None
 
     def to_metadata(self) -> dict[str, Any]:
-        return {
+        metadata = {
             "mode": "auto",
             "role": self.role,
             "tier": self.tier,
@@ -100,6 +101,9 @@ class CodexRouteDecision:
             "untested_escalation": self.untested_escalation,
             **({"code": self.code} if self.code else {}),
         }
+        if self.resolved_model is not None:
+            metadata["resolved"] = self.resolved_model.as_metadata()
+        return metadata
 
 
 def choose_initial_route(
@@ -272,6 +276,7 @@ def run_auto_route(
     on_event: Callable[[str, dict[str, Any]], None],
     should_cancel: Callable[[], bool] | None = None,
     role: TaskRole = "create",
+    resolve_selection: Callable[[CodexRouteDecision], ResolvedModel | None] | None = None,
 ) -> AutoRouteResult:
     """Execute the D8/D13 policy with one bounded, visible escalation at most.
 
@@ -281,7 +286,10 @@ def run_auto_route(
     """
 
     catalog_snapshot = [dict(item) for item in catalog if isinstance(item, Mapping)]
-    initial = replace(choose_initial_route(complexity, catalog_snapshot, status), role=role)
+    initial = _attach_resolved(
+        replace(choose_initial_route(complexity, catalog_snapshot, status), role=role),
+        resolve_selection,
+    )
     decisions = [initial.to_metadata()]
     if not initial.ok:
         result = make_stop_result(initial)
@@ -307,6 +315,7 @@ def run_auto_route(
         choose_escalation(initial, first.verification, catalog_snapshot, attempts=0),
         role=role,
     )
+    escalation = _attach_resolved(escalation, resolve_selection)
     decisions.append(escalation.to_metadata())
     if not escalation.ok:
         _attach_metadata(first, decisions, stopped=escalation)
@@ -336,11 +345,27 @@ def run_auto_route(
         ),
         role=role,
     )
+    exhausted = _attach_resolved(exhausted, resolve_selection)
     decisions.append(exhausted.to_metadata())
     _attach_metadata(second, decisions, stopped=exhausted)
     second.plain_text = _append_stop(second.plain_text, exhausted.error)
     _emit_stop(on_event, exhausted)
     return second
+
+
+def _attach_resolved(
+    decision: CodexRouteDecision,
+    resolver: Callable[[CodexRouteDecision], ResolvedModel | None] | None,
+) -> CodexRouteDecision:
+    """Attach catalog provenance without making resolution part of D8/D13 policy."""
+
+    if not decision.ok or resolver is None:
+        return decision
+    try:
+        resolved = resolver(decision)
+    except Exception:  # noqa: BLE001 — provenance must never alter route behavior
+        return decision
+    return replace(decision, resolved_model=resolved) if resolved is not None else decision
 
 
 def _localized_failure_name(verification: Mapping[str, Any] | None) -> str:

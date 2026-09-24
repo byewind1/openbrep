@@ -55,7 +55,7 @@ from openbrep.knowledge_selector import (
 )
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
-from openbrep.model_catalog import ModelSelection, role_for_intent
+from openbrep.model_catalog import ModelSelection, build_model_catalog, role_for_intent
 from openbrep.object_planner import plan_gdl_object
 from openbrep.project_context import (
     ProjectContext,
@@ -864,6 +864,7 @@ class TaskPipeline:
                 if status.get("connected") and status.get("state") != "quota_exhausted"
                 else []
             )
+            resolved_catalog = build_model_catalog(self.config, codex_models=catalog)
         except Exception:  # noqa: BLE001 — upstream text must never cross this boundary
             unavailable = CodexRouteDecision(
                 ok=False,
@@ -898,6 +899,7 @@ class TaskPipeline:
                 route_reason=decision.reason,
                 role=decision.role,
                 tier=decision.tier,
+                resolved_model=decision.resolved_model,
             )
             try:
                 return self._handle_gdl(request)
@@ -927,6 +929,12 @@ class TaskPipeline:
             on_event=on_event,
             should_cancel=request.should_cancel,
             role=role,
+            resolve_selection=lambda decision: resolved_catalog.resolve_selection(
+                decision.model,
+                role=decision.role,
+                tier=decision.tier,
+                reasoning_effort=decision.reasoning_effort,
+            ),
         )
 
     def _handle_codex_chat(self, request: TaskRequest) -> TaskResult:
