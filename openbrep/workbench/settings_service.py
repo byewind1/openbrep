@@ -612,6 +612,7 @@ class WorkbenchSettingsService:
         """
 
         from openbrep.model_catalog import ModelResolutionError
+        from pathlib import Path
 
         raw = str(model or "")
         target = raw.strip()
@@ -619,7 +620,12 @@ class WorkbenchSettingsService:
         # 沿用原谓词，接受集合与替换前逐例一致（含空串与带空白引用）。
         if target and raw == target:
             try:
-                self._model_catalog().resolve(target)
+                catalog = self._model_catalog()
+                catalog.resolve(target)
+                source_path = getattr(self.session, "source_path", None)
+                cwd = str(Path(source_path).resolve()) if source_path else None
+                if not catalog.is_enabled(target, cwd=cwd):
+                    return False
                 return True
             except ModelResolutionError:
                 pass
