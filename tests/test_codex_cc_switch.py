@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -287,3 +288,62 @@ def test_materialization_failure_removes_partial_home(tmp_path: Path) -> None:
     assert caught.value.code == "cc_switch_runtime_failed"
     assert list(tmp_path.iterdir()) == []
     assert LEAK_CANARY not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "case", ["newer", "other_account", "older", "custom", "inactive", "broken", "other_user"]
+)
+def test_official_runtime_uses_only_newer_same_account_local_auth(
+    cc_switch_db, tmp_path, monkeypatch, case
+):
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    old = {
+        "auth_mode": "chatgpt",
+        "tokens": {"account_id": "account-a", "access_token": "old"},
+        "last_refresh": "2026-09-14T03:00:00Z",
+    }
+    fresh = {
+        "auth_mode": "chatgpt",
+        "tokens": {"account_id": "account-a", "access_token": "new"},
+        "last_refresh": "2026-09-24T03:00:00Z",
+    }
+    token = (
+        "header."
+        + base64.urlsafe_b64encode(json.dumps({"sub": "user-a"}).encode()).decode().rstrip("=")
+        + ".signature"
+    )
+    old["tokens"]["id_token"] = token
+    fresh["tokens"]["id_token"] = token
+    if case == "other_user":
+        fresh["tokens"]["id_token"] = (
+            "header."
+            + base64.urlsafe_b64encode(json.dumps({"sub": "user-b"}).encode()).decode().rstrip("=")
+            + ".signature"
+        )
+    config = 'model = "gpt-5.6-sol"\n'
+    if case == "other_account":
+        fresh["tokens"]["account_id"] = "account-b"
+    if case == "older":
+        fresh["last_refresh"] = "2026-09-01T03:00:00Z"
+    if case == "custom":
+        config += 'model_provider = "custom"\n'
+    auth_file = home / "auth.json"
+    auth_file.write_text("invalid" if case == "broken" else json.dumps(fresh))
+    (home / "config.toml").write_text(config)
+    settings = json.dumps({"config": config, "auth": old})
+    with sqlite3.connect(cc_switch_db) as connection:
+        connection.execute(
+            "UPDATE providers SET settings_config=?, is_current=? WHERE id='geili'",
+            (settings, case != "inactive"),
+        )
+    registry = CcSwitchRegistry(cc_switch_db)
+    before = auth_file.read_bytes()
+    runtime = registry.runtime_config("geili")
+    assert runtime.auth_payload == (fresh if case == "newer" else old)
+    assert auth_file.read_bytes() == before
+    if case == "newer":
+        fresh["tokens"]["access_token"] = "newest"
+        auth_file.write_text(json.dumps(fresh))
+        assert registry.runtime_config("geili").fingerprint != runtime.fingerprint

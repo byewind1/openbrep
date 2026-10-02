@@ -31,10 +31,7 @@ from openbrep.codex.app_server import CodexAppServerError
 from openbrep.compiler import CompileResult
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
-from openbrep.runtime.modify_codex_bridge import (
-    CodexModifyTurnDriver,
-    _modify_ready_error,
-)
+from openbrep.runtime.modify_codex_bridge import CodexModifyTurnDriver, _modify_ready_error
 from openbrep.runtime.pipeline import ImageRef, TaskPipeline, TaskRequest
 from openbrep.semantic_verifier import SemanticIssue, SemanticVerificationResult
 from openbrep.source_fingerprint import compute_source_fingerprint
@@ -1698,3 +1695,68 @@ def test_plain_explanation_with_empty_file_marker_does_not_warn(tmp_path):
     finally:
         provider.close()
         harness.cleanup()
+
+
+def test_modify_retryable_error_waits_for_final_reply(tmp_path):
+    from openbrep.codex.app_server import CodexAppServerClient
+    from tests.test_codex_turn import _RecordingTransport
+
+    transport = _RecordingTransport()
+    client = CodexAppServerClient(transport=transport)
+    client.start()
+
+    def turn_start(params):
+        thread = params["threadId"]
+        transport.deliver(
+            {
+                "method": "error",
+                "params": {
+                    "threadId": thread,
+                    "turnId": "tn-1",
+                    "willRetry": True,
+                    "error": {"message": "CANARY retrying"},
+                },
+            }
+        )
+        transport.deliver(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": thread,
+                    "turnId": "tn-1",
+                    "item": {
+                        "type": "agentMessage",
+                        "id": "msg-1",
+                        "text": "OK",
+                        "phase": "final_answer",
+                    },
+                },
+            }
+        )
+        transport.deliver(
+            {
+                "method": "turn/completed",
+                "params": {
+                    "threadId": thread,
+                    "turn": {"id": "tn-1", "status": "completed"},
+                },
+            }
+        )
+        return {"turn": {"id": "tn-1"}}
+
+    transport.set_script({"turn/start": turn_start})
+    driver = CodexModifyTurnDriver(
+        client=client,
+        model="gpt-5.6-luna",
+        cwd=str(tmp_path),
+        system_text="sys",
+        dynamic_tools=[],
+        executor=lambda *_: ("", True),
+        timeout=1,
+        should_cancel=None,
+        on_delta=None,
+    )
+    result = driver.run("hi")
+    assert result.content == "OK"
+    assert result.finish_reason == "stop"
+    client.close()

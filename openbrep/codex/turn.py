@@ -464,6 +464,8 @@ class CodexTurnRunner:
                 elif kind == "turn_completed":
                     terminal = self._finalize_turn(payload, candidates, result)
                 elif kind == "error":
+                    if payload.get("willRetry") is True:
+                        continue
                     terminal = CodexTurnResult(
                         model=model,
                         finish_reason="error",

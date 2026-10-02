@@ -422,6 +422,56 @@ class TestCodexTurnRunnerRecording(unittest.TestCase):
         self.assertEqual(result.finish_reason, "no_final_message")
         self.assertNotIn("中间思考", result.content)
 
+    def test_retryable_error_waits_for_final_reply(self):
+        runner, client, transport = self._runner()
+
+        def turn_start(params):
+            thread_id = params["threadId"]
+            transport.deliver(
+                {
+                    "method": "error",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": "tn-1",
+                        "willRetry": True,
+                        "error": {"message": "CANARY retrying"},
+                    },
+                }
+            )
+            transport.deliver(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": "tn-1",
+                        "item": {
+                            "type": "agentMessage",
+                            "id": "msg-1",
+                            "text": "OK",
+                            "phase": "final_answer",
+                        },
+                    },
+                }
+            )
+            transport.deliver(
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turn": {"id": "tn-1", "status": "completed"},
+                    },
+                }
+            )
+            return {"turn": {"id": "tn-1"}}
+
+        transport.set_script({"turn/start": turn_start})
+        with tempfile.TemporaryDirectory() as cwd:
+            result = runner.run(
+                model="gpt-5.6-luna", cwd=cwd, messages=[{"role": "user", "content": "hi"}], timeout=1
+            )
+        self.assertEqual(result.content, "OK")
+        self.assertEqual(result.finish_reason, "stop")
+
     def test_error_notification_never_leaks_canary(self):
         runner, client, transport = self._runner()
         canary = "CANARY-LEAK-9f8e"

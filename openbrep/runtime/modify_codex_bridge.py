@@ -433,6 +433,8 @@ class CodexModifyTurnDriver:
                 elif kind == "turn_completed":
                     terminal = self._finalize_turn(payload, candidates, outcome)
                 elif kind == "error":
+                    if payload.get("willRetry") is True:
+                        continue
                     terminal = CodexModifyTurnOutcome(
                         finish_reason="error",
                         thread_id=thread_id,

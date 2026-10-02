@@ -7,6 +7,7 @@ from repr and all stable error messages.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ import shutil
 import sqlite3
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -272,6 +274,59 @@ def _auth_usable(auth: Any) -> bool:
     return auth is not None
 
 
+def _current_official_auth(auth: Any, config: dict, *, is_current: bool) -> Any:
+    """Use refreshed local login only for the active, same-account official row.
+
+    cc-switch snapshots can predate Codex's token rotation. Read the live login
+    without changing either source; custom providers and other accounts stay
+    bound to their saved credentials.
+    """
+    def official(value: dict) -> bool:
+        providers = value.get("model_providers", {})
+        return (
+            value.get("model_provider", "openai") == "openai"
+            and not value.get("openai_base_url")
+            and isinstance(providers, dict)
+            and not providers.get("openai")
+        )
+
+    def login_subject(value: dict) -> str:
+        # Account ids can name shared workspaces. Also match the login identity;
+        # claims are only an equality guard, never an authentication verifier.
+        encoded = value["tokens"]["id_token"].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        subject = claims.get("sub")
+        return subject if isinstance(subject, str) else ""
+
+    if not is_current or not official(config):
+        return auth
+    try:
+        saved = json.loads(auth) if isinstance(auth, str) else auth
+        if not isinstance(saved, dict) or saved.get("auth_mode") != "chatgpt":
+            return auth
+        account = saved.get("tokens", {}).get("account_id")
+        if not isinstance(account, str) or not account:
+            return auth
+        home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+        local_config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
+        if not official(local_config):
+            return auth
+        live = json.loads((home / "auth.json").read_text(encoding="utf-8"))
+        if (
+            live.get("auth_mode") == "chatgpt"
+            and live.get("tokens", {}).get("account_id") == account
+            and login_subject(saved)
+            and login_subject(live) == login_subject(saved)
+            and live.get("tokens", {}).get("access_token")
+            and datetime.fromisoformat(live["last_refresh"].replace("Z", "+00:00"))
+            > datetime.fromisoformat(saved["last_refresh"].replace("Z", "+00:00"))
+        ):
+            return live
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError):
+        pass
+    return auth
+
+
 class CcSwitchRegistry:
     """Read cc-switch provider rows without creating or mutating its database."""
 
@@ -405,17 +460,21 @@ class CcSwitchRegistry:
                 continue
             if parts is None:
                 raise _stable_error(CcSwitchProviderUnusableError)
-            _provider_id, _name, _current, raw_settings, settings = parts
+            _provider_id, _name, current, raw_settings, settings = parts
             config_toml, config = _parse_config(settings.get("config"))
             auth = settings.get("auth")
             if not config_toml or config is None or not _auth_usable(auth):
                 raise _stable_error(CcSwitchProviderUnusableError)
+            live_auth = _current_official_auth(auth, config, is_current=current)
+            fingerprint_input = raw_settings.encode("utf-8")
+            if live_auth is not auth:
+                fingerprint_input += b"\0" + _private_json_bytes(live_auth)
             return CcSwitchRuntimeConfig(
                 provider_id=target,
                 config_toml=config_toml,
-                auth_payload=auth,
+                auth_payload=live_auth,
                 model_catalog_payload=_catalog_payload(settings.get("modelCatalog")),
-                fingerprint=hashlib.sha256(raw_settings.encode("utf-8")).hexdigest(),
+                fingerprint=hashlib.sha256(fingerprint_input).hexdigest(),
             )
         catalog_ids = {provider.id for provider in self.catalog().providers}
         if target in catalog_ids:
