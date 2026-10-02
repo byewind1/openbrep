@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import webbrowser
@@ -18,6 +19,17 @@ DEFAULT_WEB_PORT = 5174
 FALLBACK_API_PORT = 19065
 FALLBACK_WEB_PORT = 19074
 HOST = "127.0.0.1"
+
+# PyInstaller 冻结态：sys.frozen / sys._MEIPASS 由 bootloader 设置
+FROZEN = getattr(sys, "frozen", False)
+
+
+def _runtime_root() -> Path:
+    """资源根目录：冻结态为 sys._MEIPASS（knowledge/ skills/ frontend/dist 都在其中），
+    开发态为仓库根（scripts/ 的上一级）。"""
+    if FROZEN:
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parents[1]
 
 
 def is_port_available(port: int, host: str = HOST) -> bool:
@@ -136,6 +148,29 @@ def resolve_shared_config_path(root: Path) -> Path | None:
 
     candidates.append(root / "config.toml")
     return next((path for path in candidates if path.exists()), None)
+
+
+USER_CONFIG_PATH = Path.home() / ".openbrep" / "config.toml"
+
+
+def resolve_launch_config_path(root: Path) -> Path | None:
+    """API 子进程最终使用的 config.toml（B2）。
+
+    优先 resolve_shared_config_path（env / git common-dir / root 已有配置）。
+    打包态（root 是应用资源目录，无 pyproject.toml）下找不到已有配置时，
+    回退到用户级目录 ~/.openbrep/config.toml 并确保父目录存在——
+    否则全新安装会把 config.toml 写进 .app/Contents/Resources（破坏签名）或
+    Windows Program Files（PermissionError，保存 key 静默 500）。
+    开发态（root 有 pyproject.toml）找不到配置时保持 None：维持
+    cwd/config.toml + example 自动复制的既有行为。
+    """
+    shared = resolve_shared_config_path(root)
+    if shared is not None:
+        return shared
+    if (root / "pyproject.toml").exists():
+        return None
+    USER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return USER_CONFIG_PATH
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -276,9 +311,12 @@ def daemon_spawn(args: argparse.Namespace) -> int:
     _remove_state()  # 清过期状态，让父进程只认本次启动写出的状态
     DAEMON_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     log_fh = DAEMON_LOG_PATH.open("a", encoding="utf-8")
-    root = Path(__file__).resolve().parents[1]
+    root = _runtime_root()
 
-    child_argv = [sys.executable, str(root / "scripts" / "obr7.py"), "--daemon-child"]
+    if FROZEN:
+        child_argv = [sys.executable, "--daemon-child"]
+    else:
+        child_argv = [sys.executable, str(root / "scripts" / "obr7.py"), "--daemon-child"]
     for flag, attr in (("--api-port", "api_port"), ("--web-port", "web_port")):
         value = getattr(args, attr, None)
         if value is not None:
@@ -292,7 +330,7 @@ def daemon_spawn(args: argparse.Namespace) -> int:
 
     proc = subprocess.Popen(
         child_argv,
-        cwd=root,
+        cwd=None if FROZEN else root,  # 冻结态 root 是只读的 _MEIPASS，子进程自己会 chdir 到可写目录
         stdin=subprocess.DEVNULL,
         stdout=log_fh,
         stderr=subprocess.STDOUT,
@@ -323,6 +361,63 @@ def daemon_spawn(args: argparse.Namespace) -> int:
     return 0
 
 
+def _start_api_inprocess(api_port: int, static_dir: str | None) -> threading.Thread:
+    """冻结态：API 直接在进程内跑（冻结二进制没有可用的 `python -m` 子进程）。"""
+    from openbrep.workbench.http_server import run_server
+
+    thread = threading.Thread(
+        target=run_server,
+        kwargs={"host": HOST, "port": api_port, "static_dir": static_dir},
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def _run_frozen(
+    args: argparse.Namespace,
+    *,
+    api_port: int,
+    api_url: str,
+    static_dir: str,
+    tauri_mode: bool,
+    config_path: Path | None,
+) -> int:
+    """冻结态（PyInstaller sidecar）运行路径：进程内 API + 服务打包的前端产物，
+    前端与 API 同端口；/api/shutdown 让 run_server 返回、线程结束后进程自然退出。"""
+    print(f"[obr7] Starting API ({'Tauri' if tauri_mode else 'standalone'} frozen mode): {api_url}")
+    api_thread = _start_api_inprocess(api_port, static_dir)
+    if not wait_for_url(
+        f"{api_url}/api/snapshot",
+        # 冻结态冷启动要把整个 openbrep（含 litellm 等重依赖） import 进内存，
+        # 老 Intel 机器首次启动可能远超默认 12s——这里给足预算；真正的失败
+        # 由 Tauri 外壳通过"子进程提前退出"检出。
+        timeout=60.0,
+        waiting_msg="正在等待后端 API 就绪…",
+    ):
+        print("[obr7] 后端启动超时，请检查环境配置。", file=sys.stderr)
+        return 1
+    print(f"[obr7] OpenBrep ready: {api_url}")
+    print(f"OBR7_READY_URL={api_url}", flush=True)
+    print(f"OBR7_API_URL={api_url}", flush=True)
+    if args.daemon_child:
+        _write_state(
+            pid=os.getpid(), ready=True,
+            api_port=api_port, web_port=None,
+            api_pid=os.getpid(),
+            config=str(config_path or ""),
+        )
+    if not tauri_mode and not args.no_open and os.environ.get("OBR7_NO_OPEN", "").strip() not in {"1", "true", "yes"}:
+        webbrowser.open(api_url)
+    while api_thread.is_alive():
+        time.sleep(0.5)
+    # 直接 _exit：避免 litellm 等在运行期拉起的非 daemon 线程拖住进程退出
+    # （sidecar 的全部职责就是 HTTP 服务，服务线程结束即使命结束）
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     if args.status:
@@ -335,11 +430,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.daemon:
         return daemon_spawn(args)
 
-    root = Path(__file__).resolve().parents[1]
+    root = _runtime_root()
     frontend_dir = root / "frontend"
     if not frontend_dir.exists():
         print(f"[obr7] frontend directory not found: {frontend_dir}", file=sys.stderr)
         return 1
+
+    if FROZEN:
+        # 冻结态 root 是只读的 _MEIPASS；运行时状态（./output、./workdir、
+        # user_knowledge 等 cwd 相对路径）必须落到可写目录。
+        workspace = Path.home() / ".openbrep" / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        os.chdir(workspace)
 
     try:
         api_port, api_shifted = choose_port(
@@ -367,9 +469,12 @@ def main(argv: list[str] | None = None) -> int:
 
     env = os.environ.copy()
     env["VITE_OPENBREP_API"] = api_url
-    config_path = resolve_shared_config_path(root)
+    config_path = resolve_launch_config_path(root)
     if config_path and not env.get("GDL_AGENT_CONFIG"):
         env["GDL_AGENT_CONFIG"] = str(config_path)
+        if FROZEN:
+            # 冻结态 API 在进程内运行，配置走当前进程环境变量
+            os.environ["GDL_AGENT_CONFIG"] = str(config_path)
         print(f"[obr7] Config: {config_path}")
 
     processes: list[subprocess.Popen[bytes]] = []
@@ -388,6 +493,17 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, stop_processes)
 
     tauri_mode = args.tauri or os.environ.get("OBR7_TAURI_MODE", "").strip() in {"1", "true", "yes"}
+
+    if FROZEN:
+        static_dir = args.static_dir or str(frontend_dir / "dist")
+        return _run_frozen(
+            args,
+            api_port=api_port,
+            api_url=api_url,
+            static_dir=static_dir,
+            tauri_mode=tauri_mode,
+            config_path=config_path,
+        )
 
     try:
         if tauri_mode:

@@ -2,6 +2,16 @@ import type { AssistantMessage, AssistantStreamEvent } from '../api/types'
 import type { WorkbenchApi } from './workbenchStore'
 import { createWorkbenchStore } from './workbenchStore'
 
+test('initial load discovers Archicad before the preview source is used', async () => {
+  const api = makeApi()
+  const expected = await api.fetchTapirStatus()
+  expected.tapir!.archicad_connected = true
+  api.fetchTapirStatus = async () => expected
+  const store = createWorkbenchStore(api)
+  await store.getState().load()
+  expect(store.getState().tapirStatus).toEqual(expected.tapir)
+})
+
 function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
   return {
     fetchSnapshot: async () => ({
@@ -63,6 +73,17 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       workspace: '/workspace',
     }),
     fetchPreview: async () => ({ meshes: [], wires: [], warnings: [] }),
+    fetchEffectiveParameters: async () => ({
+      ok: true,
+      project_path: '/workspace/Chair',
+      source_fingerprint: null,
+      supported: true,
+      parameters: [],
+      diagnostics: [],
+    }),
+    fetchAuthoritativePreview: async () => ({ ok: false, error: 'Archicad 未连接' }),
+    fetchHostVerification: async () => ({ status: 'not_checked', stale: false, stale_reasons: [] }),
+    runHostVerification: async () => ({ ok: false, error: 'Archicad 未连接' }),
     fetchPreview2D: async () => ({
       lines: [{ from: [0, 0], to: [1, 1] }],
       polygons: [],
@@ -244,7 +265,10 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       ok: true,
       git: { enabled: true, initialized: true, dirty: false, changes: [], last_commit: 'def5678' },
     }),
-    restoreProjectRevision: async (revisionId: string) => ({
+    restoreProjectRevision: async (
+      revisionId: string,
+      draftPolicy?: 'discard' | 'keep' | null,
+    ) => ({
       ok: true,
       restored_revision_id: revisionId,
       latest_revision_id: 'r0003',
@@ -252,6 +276,22 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
       parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
       preview: { meshes: [], wires: [], warnings: ['restored'] },
       warnings: ['restored'],
+      restore: {
+        revision_id: revisionId,
+        draft_policy: draftPolicy ?? null,
+        hsf_reloaded: true,
+        preview_cleared: true,
+      },
+    }),
+    getProjectRevisionDiff: async (fromRevisionId: string, toRevisionId?: string | null) => ({
+      ok: true,
+      from_revision_id: fromRevisionId,
+      to_revision_id: toRevisionId ?? '__working__',
+      to_working_tree: !toRevisionId,
+      diff: toRevisionId
+        ? `--- ${fromRevisionId}\n+++ ${toRevisionId}\n`
+        : `--- ${fromRevisionId}/scripts/3d.gdl\n+++ __working__/scripts/3d.gdl\n+PRIM 1\n`,
+      changed: true,
     }),
     mockCompile: async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 12 }),
     revealArtifact: async (path = '') => ({ ok: true, path: path || '/workspace/output/Chair.gsm' }),
@@ -359,6 +399,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     requestModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
     confirmModifyPlan: async () => ({ ok: false, error: 'not loaded' }),
     confirmSkillProposal: async () => ({ ok: false, error: 'not loaded' }),
+    listSkillProposals: async () => ({ ok: true, proposals: [], total: 0 }),
     applyParameters: async (parameters: Record<string, unknown>) => ({
       ok: true,
       changed: parameters,
@@ -480,6 +521,76 @@ test('updates draft parameter without changing saved parameter value', async () 
 
   expect(store.getState().draftParameters.A).toBe(2)
   expect(store.getState().parameters[0].value).toBe('1.0')
+})
+
+test('effective parameter response is discarded after project epoch changes', async () => {
+  let resolveEffective!: (value: any) => void
+  const pending = new Promise<any>((resolve) => { resolveEffective = resolve })
+  const store = createWorkbenchStore(makeApi({
+    fetchEffectiveParameters: async () => pending,
+  } as any))
+  store.setState({
+    project: { name: 'Chair', path: '/workspace/Chair' },
+    projectEpoch: 1,
+    sourceFingerprint: 'fp-chair',
+  } as any)
+
+  const request = (store.getState() as any).refreshEffectiveParameters()
+  store.setState({ projectEpoch: 2, project: { name: 'Table', path: '/workspace/Table' } } as any)
+  resolveEffective({
+    ok: true,
+    project_path: '/workspace/Chair',
+    project_epoch: 1,
+    source_fingerprint: 'fp-chair',
+    supported: true,
+    parameters: [{ name: 'A', role: 'derived', effective_value: 2, read_only: true }],
+    diagnostics: [],
+  })
+  await request
+
+  expect((store.getState() as any).effectiveParameters).toEqual({})
+})
+
+test('newer effective parameter request wins and fingerprint mismatch is discarded', async () => {
+  let resolveFirst!: (value: any) => void
+  const first = new Promise<any>((resolve) => { resolveFirst = resolve })
+  let calls = 0
+  const store = createWorkbenchStore(makeApi({
+    fetchEffectiveParameters: async () => {
+      calls += 1
+      if (calls === 1) return first
+      return {
+        ok: true,
+        project_path: '/workspace/Chair',
+        project_epoch: 1,
+        source_fingerprint: 'wrong-fingerprint',
+        supported: true,
+        parameters: [{ name: 'A', role: 'derived', effective_value: 3, read_only: true }],
+        diagnostics: [],
+      }
+    },
+  } as any))
+  store.setState({
+    project: { name: 'Chair', path: '/workspace/Chair' },
+    projectEpoch: 1,
+    sourceFingerprint: 'fp-chair',
+    draftParameters: { A: 2 },
+  } as any)
+
+  const oldRequest = (store.getState() as any).refreshEffectiveParameters({ A: 1.5 })
+  await (store.getState() as any).refreshEffectiveParameters({ A: 2 })
+  resolveFirst({
+    ok: true,
+    project_path: '/workspace/Chair',
+    project_epoch: 1,
+    source_fingerprint: 'fp-chair',
+    supported: true,
+    parameters: [{ name: 'A', role: 'derived', effective_value: 1.5, read_only: true }],
+    diagnostics: [],
+  })
+  await oldRequest
+
+  expect((store.getState() as any).effectiveParameters).toEqual({})
 })
 
 test('applyDraftParameters applies changes and runs mock diagnostics', async () => {
@@ -873,6 +984,81 @@ test('failed GDL import keeps the current project and records an error', async (
   expect(store.getState().loading).toBe(false)
 })
 
+test('cancelled GDL import file chooser is silent (no lastError)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importGdlFile: async () => ({
+        ok: false,
+        cancelled: true,
+        error: 'GDL file selection cancelled.',
+        project: { name: 'Fallback' },
+        parameters: [],
+        preview: { meshes: [], wires: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().importGdlFile()
+
+  expect(store.getState().project?.name).toBe('Chair')
+  expect(store.getState().lastError).toBeNull()
+  expect(store.getState().loading).toBe(false)
+})
+
+test('unavailable GDL import file chooser records an error (not silent)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      importGdlFile: async () => ({
+        ok: false,
+        unavailable: true,
+        error: 'tkinter is not available for native dialogs',
+        project: { name: 'Fallback' },
+        parameters: [],
+        preview: { meshes: [], wires: [] },
+        warnings: [],
+      }),
+    }),
+  )
+
+  await store.getState().load()
+  await store.getState().importGdlFile()
+
+  expect(store.getState().lastError).toBe('tkinter is not available for native dialogs')
+  expect(store.getState().loading).toBe(false)
+})
+
+test('browseProjectDirectory records an error when the native dialog is unavailable', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      chooseProjectDirectory: async () => ({
+        ok: false,
+        unavailable: true,
+        error: 'PowerShell is not available for native dialogs.',
+      }),
+    }),
+  )
+
+  await store.getState().browseProjectDirectory()
+
+  expect(store.getState().lastError).toBe('PowerShell is not available for native dialogs.')
+  expect(store.getState().loading).toBe(false)
+})
+
+test('browseProjectDirectory stays silent on user cancel', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      chooseProjectDirectory: async () => ({ ok: false, cancelled: true, error: 'Directory selection cancelled.' }),
+    }),
+  )
+
+  await store.getState().browseProjectDirectory()
+
+  expect(store.getState().lastError).toBeNull()
+  expect(store.getState().loading).toBe(false)
+})
+
 test('imports a GSM file as a decompiled HSF project and opens its default script', async () => {
   const store = createWorkbenchStore(
     makeApi({
@@ -1022,6 +1208,72 @@ test('saveActiveScript clears dirty state after successful save', async () => {
   expect(store.getState().compileLog.some((entry) => entry.includes('Saved 3d.gdl'))).toBe(true)
 })
 
+test('saveActiveScript refreshes effective values against the new source fingerprint', async () => {
+  let effectiveCalls = 0
+  const store = createWorkbenchStore(makeApi({
+    saveProjectScript: async () => ({
+      success: true,
+      saved_at: '2026-05-27T09:00:00',
+      source_fingerprint: 'fp-after-save',
+    }),
+    fetchEffectiveParameters: async () => {
+      effectiveCalls += 1
+      return {
+        ok: true,
+        project_path: '/workspace/Chair',
+        source_fingerprint: 'fp-after-save',
+        supported: true,
+        parameters: [],
+        diagnostics: [],
+      }
+    },
+  }))
+  await store.getState().load()
+  store.getState().updateActiveScriptContent('changed master content')
+
+  await store.getState().saveActiveScript()
+
+  expect(store.getState().sourceFingerprint).toBe('fp-after-save')
+  expect(effectiveCalls).toBe(1)
+})
+
+test('flushDirtyScripts refreshes effective values once after all saved fingerprints advance', async () => {
+  let saveCalls = 0
+  let effectiveCalls = 0
+  const store = createWorkbenchStore(makeApi({
+    saveProjectScript: async () => {
+      saveCalls += 1
+      return {
+        success: true,
+        saved_at: '2026-05-27T09:00:00',
+        source_fingerprint: `fp-save-${saveCalls}`,
+      }
+    },
+    fetchEffectiveParameters: async () => {
+      effectiveCalls += 1
+      return {
+        ok: true,
+        project_path: '/workspace/Chair',
+        source_fingerprint: 'fp-save-2',
+        supported: true,
+        parameters: [],
+        diagnostics: [],
+      }
+    },
+  }))
+  await store.getState().load()
+  store.setState({
+    scriptContents: { '3d.gdl': 'BLOCK 1, 2, 3', '2d.gdl': 'LINE2 0, 0, 1, 1' },
+    dirtyScripts: { '3d.gdl': true, '2d.gdl': true },
+  })
+
+  const result = await store.getState().flushDirtyScripts()
+
+  expect(result).toEqual({ ok: true, didSave: true })
+  expect(store.getState().sourceFingerprint).toBe('fp-save-2')
+  expect(effectiveCalls).toBe(1)
+})
+
 test('saveActiveScript records save failures without clearing dirty state', async () => {
   const store = createWorkbenchStore(
     makeApi({
@@ -1142,11 +1394,11 @@ test('setPreviewQuality updates state and refetches 3D preview with the tier', a
     }),
   )
 
-  expect(store.getState().previewQuality).toBe('fast')
-  await store.getState().setPreviewQuality('accurate')
-
   expect(store.getState().previewQuality).toBe('accurate')
-  expect(calls).toEqual(['accurate'])
+  await store.getState().setPreviewQuality('fast')
+
+  expect(store.getState().previewQuality).toBe('fast')
+  expect(calls).toEqual(['fast'])
   expect(store.getState().preview?.meshes[0]?.name).toBe('quality-block')
 })
 
@@ -1171,6 +1423,68 @@ test('setPreviewQuality refreshes 2D preview too when the 2D tab is active', asy
 
   expect(preview3d).toEqual(['accurate'])
   expect(preview2d).toEqual(['accurate'])
+})
+
+test('reconciles an injected preview whose quality differs from the selected tier', async () => {
+  const calls: unknown[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      fetchPreview: async (_p, _s, quality) => {
+        calls.push(quality)
+        return { meshes: [{ name: 'refined', vertices: [[0, 0, 0]], faces: [] }], wires: [], warnings: [], quality }
+      },
+    }),
+  )
+  // 模拟 hydrate：快照内嵌 preview 是 fast 档，而当前选择是 accurate（默认）
+  store.setState({
+    preview: { meshes: [{ name: 'coarse', vertices: [[0, 0, 0]], faces: [] }], wires: [], quality: 'fast' },
+  })
+
+  await vi.waitFor(() => expect(calls).toEqual(['accurate']))
+  expect(store.getState().preview?.meshes[0]?.name).toBe('refined')
+  expect(store.getState().preview?.quality).toBe('accurate')
+  // 收敛后不再重复拉取
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(calls).toEqual(['accurate'])
+})
+
+test('does not refetch when the injected preview already matches the selected tier', async () => {
+  const fetchPreview = vi.fn(async () => ({ meshes: [], wires: [], warnings: [] }))
+  const store = createWorkbenchStore(makeApi({ fetchPreview }))
+
+  store.setState({
+    preview: { meshes: [{ name: 'fine', vertices: [[0, 0, 0]], faces: [] }], wires: [], quality: 'accurate' },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(fetchPreview).not.toHaveBeenCalled()
+})
+
+test('does not refetch legacy payloads without a self-described quality', async () => {
+  const fetchPreview = vi.fn(async () => ({ meshes: [], wires: [], warnings: [] }))
+  const store = createWorkbenchStore(makeApi({ fetchPreview }))
+
+  store.setState({
+    preview: { meshes: [{ name: 'legacy', vertices: [[0, 0, 0]], faces: [] }], wires: [] },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(fetchPreview).not.toHaveBeenCalled()
+})
+
+test('stops retrying when the quality refetch fails', async () => {
+  const fetchPreview = vi.fn(async () => {
+    throw new Error('backend down')
+  })
+  const store = createWorkbenchStore(makeApi({ fetchPreview }))
+
+  store.setState({
+    preview: { meshes: [{ name: 'coarse', vertices: [[0, 0, 0]], faces: [] }], wires: [], quality: 'fast' },
+  })
+  await vi.waitFor(() => expect(fetchPreview).toHaveBeenCalledTimes(1))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  expect(fetchPreview).toHaveBeenCalledTimes(1)
 })
 
 test('loadPreview3D carries the current store quality', async () => {
@@ -1247,6 +1561,246 @@ test('loadPreview3D verifies dirty editor buffers without saving first', async (
   expect(calls).toEqual([{ parameters: {}, scripts: { '3d.gdl': 'BLOCK 2, 1, 1' } }])
   expect(store.getState().preview?.meshes[0]?.name).toBe('dirty-block')
   expect(store.getState().warnings).toEqual(['preview uses editor buffer'])
+})
+
+describe('Archicad 权威预览来源', () => {
+  const AUTHORITATIVE_PREVIEW = {
+    meshes: [
+      {
+        name: 'body_1',
+        vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+        faces: [[0, 1, 2]],
+        color: { red: 0.5, green: 0.6, blue: 0.7 },
+      },
+    ],
+    wires: [],
+    warnings: [],
+    source: 'archicad',
+    preview2d: {
+      lines: [{ from: [0, 0] as [number, number], to: [1, 0] as [number, number] }],
+      polygons: [],
+      circles: [],
+      arcs: [],
+      warnings: [],
+    },
+  }
+
+  test('switching to authoritative mode fetches once and caches the payload', async () => {
+    const fetchAuthoritativePreview = vi.fn(async () => ({ ok: true, preview: AUTHORITATIVE_PREVIEW }))
+    const store = createWorkbenchStore(makeApi({ fetchAuthoritativePreview }))
+
+    expect(store.getState().previewSourceMode).toBe('local')
+
+    await store.getState().setPreviewSourceMode('authoritative')
+
+    expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+    expect(store.getState().previewSourceMode).toBe('authoritative')
+    expect(store.getState().previewAuthoritative?.meshes[0]?.name).toBe('body_1')
+    expect(store.getState().previewAuthoritative?.meshes[0]?.color).toEqual({ red: 0.5, green: 0.6, blue: 0.7 })
+    expect(store.getState().previewAuthoritative2d?.lines).toHaveLength(1)
+    expect(store.getState().previewAuthoritativeError).toBeNull()
+    expect(store.getState().previewAuthoritativeLoading).toBe(false)
+
+    // 切回本地再切回权威：已有缓存，不重复调用 Archicad
+    await store.getState().setPreviewSourceMode('local')
+    await store.getState().setPreviewSourceMode('authoritative')
+    expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+    expect(store.getState().previewSourceMode).toBe('authoritative')
+  })
+
+  test('draft parameter changes do not auto-refetch the authoritative preview', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchAuthoritativePreview = vi.fn(async () => ({ ok: true, preview: AUTHORITATIVE_PREVIEW }))
+      const store = createWorkbenchStore(makeApi({ fetchAuthoritativePreview }))
+
+      await store.getState().setPreviewSourceMode('authoritative')
+      expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+      expect(store.getState().previewAuthoritativeParamsKey).toBe('{}')
+
+      // 参数改动只走本地近似预览的防抖刷新；权威预览不重取，指纹留在旧值 → stale
+      await store.getState().setDraftParameter('A', 2)
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(fetchAuthoritativePreview).toHaveBeenCalledTimes(1)
+      expect(store.getState().previewAuthoritativeParamsKey).toBe('{}')
+      expect(store.getState().draftParameters).toEqual({ A: 2 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('manual refresh re-fetches with the current draft parameters', async () => {
+    const seen: Array<Record<string, unknown> | undefined> = []
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchAuthoritativePreview: async (parameters) => {
+          seen.push(parameters)
+          return { ok: true, preview: AUTHORITATIVE_PREVIEW }
+        },
+      }),
+    )
+
+    await store.getState().setPreviewSourceMode('authoritative')
+    store.setState({ draftParameters: { A: 2 } })
+    await store.getState().loadAuthoritativePreview()
+
+    expect(seen).toEqual([{}, { A: 2 }])
+    expect(store.getState().previewAuthoritativeParamsKey).toBe('{"A":2}')
+  })
+
+  test('a failed fetch stores the error and keeps the local preview untouched', async () => {
+    const localPreview = { meshes: [{ name: 'local', vertices: [], faces: [] }], wires: [], warnings: [] }
+    const store = createWorkbenchStore(
+      makeApi({ fetchAuthoritativePreview: async () => ({ ok: false, error: 'Archicad 未连接' }) }),
+    )
+    store.setState({ preview: localPreview })
+
+    await store.getState().setPreviewSourceMode('authoritative')
+
+    expect(store.getState().previewAuthoritativeError).toBe('Archicad 未连接')
+    expect(store.getState().previewAuthoritative).toBeNull()
+    expect(store.getState().previewAuthoritative2d).toBeNull()
+    expect(store.getState().preview).toBe(localPreview)
+    expect(store.getState().previewAuthoritativeLoading).toBe(false)
+  })
+
+  test('a failed refresh after a success keeps the cached payload and shows the error', async () => {
+    let fail = false
+    const store = createWorkbenchStore(
+      makeApi({
+        fetchAuthoritativePreview: async () =>
+          fail ? { ok: false, error: '门窗类物件需要宿主墙' } : { ok: true, preview: AUTHORITATIVE_PREVIEW },
+      }),
+    )
+
+    await store.getState().setPreviewSourceMode('authoritative')
+    expect(store.getState().previewAuthoritative).not.toBeNull()
+
+    fail = true
+    await store.getState().loadAuthoritativePreview()
+
+    expect(store.getState().previewAuthoritativeError).toBe('门窗类物件需要宿主墙')
+    expect(store.getState().previewAuthoritative?.meshes[0]?.name).toBe('body_1')
+  })
+
+  test('project switches reset the authoritative state back to local mode', async () => {
+    const fetchAuthoritativePreview = vi.fn(async () => ({ ok: true, preview: AUTHORITATIVE_PREVIEW }))
+    const store = createWorkbenchStore(makeApi({ fetchAuthoritativePreview }))
+
+    await store.getState().setPreviewSourceMode('authoritative')
+    expect(store.getState().previewAuthoritative).not.toBeNull()
+
+    await store.getState().load()
+
+    expect(store.getState().previewSourceMode).toBe('local')
+    expect(store.getState().previewAuthoritative).toBeNull()
+    expect(store.getState().previewAuthoritativeError).toBeNull()
+    expect(store.getState().previewAuthoritativeParamsKey).toBeNull()
+  })
+
+  test('a late authoritative response cannot leak across a project switch', async () => {
+    let resolvePreview: ((value: { ok: true; preview: typeof AUTHORITATIVE_PREVIEW }) => void) | undefined
+    const pendingPreview = new Promise<{ ok: true; preview: typeof AUTHORITATIVE_PREVIEW }>((resolve) => {
+      resolvePreview = resolve
+    })
+    const store = createWorkbenchStore(
+      makeApi({ fetchAuthoritativePreview: async () => pendingPreview }),
+    )
+
+    store.setState({ projectEpoch: 1 })
+    const loading = store.getState().setPreviewSourceMode('authoritative')
+    store.setState({
+      projectEpoch: 2,
+      previewSourceMode: 'local',
+      previewAuthoritative: null,
+      previewAuthoritativeLoading: false,
+      previewAuthoritativeError: null,
+      previewAuthoritativeParamsKey: null,
+    })
+    resolvePreview?.({ ok: true, preview: AUTHORITATIVE_PREVIEW })
+    await loading
+
+    expect(store.getState().previewSourceMode).toBe('local')
+    expect(store.getState().previewAuthoritative).toBeNull()
+    expect(store.getState().previewAuthoritativeLoading).toBe(false)
+  })
+})
+
+describe('Archicad host verification', () => {
+  const PASSED_RECORD = {
+    schema_version: 1,
+    record_id: 'hv_1',
+    status: 'passed' as const,
+    source_fingerprint: 'sha256:source',
+    contract_hash: 'sha256:contract',
+    gsm_sha256: 'gsm-hash',
+    parameter_fingerprint: 'sha256:params',
+    requested_parameters: { height: 3.2 },
+    applied_parameters: ['height'],
+    skipped_parameters: [],
+    loaded_identity: { gsm_sha256: 'gsm-hash', path: '/library/stair.gsm' },
+    identity_status: 'verified',
+    archicad_version: '29.0',
+    addon_version: '0.9.6',
+    started_at: '2026-09-20T00:00:00Z',
+    finished_at: '2026-09-20T00:00:01Z',
+    diagnostics: [],
+  }
+
+  test('runs only on saved scripts and binds the request to current project inputs', async () => {
+    const runHostVerification = vi.fn(async () => ({
+      ok: true,
+      current: true,
+      stale: false,
+      verification: PASSED_RECORD,
+    }))
+    const store = createWorkbenchStore(makeApi({ runHostVerification }))
+    store.setState({
+      projectEpoch: 4,
+      sourceFingerprint: 'sha256:source',
+      draftParameters: { height: 3.2 },
+      dirtyScripts: {},
+    })
+
+    await store.getState().runHostVerification()
+
+    expect(runHostVerification).toHaveBeenCalledWith({
+      parameters: { height: 3.2 },
+      expected_project_epoch: 4,
+      expected_source_fingerprint: 'sha256:source',
+    })
+    expect(store.getState().hostVerification?.status).toBe('passed')
+    expect(store.getState().hostVerificationError).toBeNull()
+  })
+
+  test('blocks dirty scripts without issuing a verification request', async () => {
+    const runHostVerification = vi.fn()
+    const store = createWorkbenchStore(makeApi({ runHostVerification }))
+    store.setState({ dirtyScripts: { '3d.gdl': true } })
+
+    await store.getState().runHostVerification()
+
+    expect(runHostVerification).not.toHaveBeenCalled()
+    expect(store.getState().hostVerificationError).toContain('保存')
+  })
+
+  test('drops a late result after project or parameter changes', async () => {
+    let resolveResult: ((value: { ok: true; current: true; stale: false; verification: typeof PASSED_RECORD }) => void) | undefined
+    const pending = new Promise<{ ok: true; current: true; stale: false; verification: typeof PASSED_RECORD }>((resolve) => {
+      resolveResult = resolve
+    })
+    const store = createWorkbenchStore(makeApi({ runHostVerification: async () => pending }))
+    store.setState({ projectEpoch: 4, sourceFingerprint: 'sha256:source', draftParameters: { height: 3.2 } })
+
+    const running = store.getState().runHostVerification()
+    store.setState({ projectEpoch: 5, draftParameters: { height: 2.9 }, hostVerification: null })
+    resolveResult?.({ ok: true, current: true, stale: false, verification: PASSED_RECORD })
+    await running
+
+    expect(store.getState().hostVerification).toBeNull()
+    expect(store.getState().hostVerificationLoading).toBe(false)
+  })
 })
 
 test('updates compiler settings through the API', async () => {
@@ -1584,6 +2138,33 @@ test('mock compile uses configured output directory', async () => {
   await store.getState().runMockCompile()
 
   expect(receivedOutputDir).toBe('/workspace/output')
+})
+
+test('configured mock compile reports validation without a GSM artifact', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      compileProject: async () => ({
+        ok: true,
+        compile: {
+          success: true,
+          mode: 'mock',
+          output_path: null,
+          artifact_path: null,
+          stdout: 'Mock validation passed; no GSM artifact was generated.',
+          stderr: '',
+          errors: [],
+          warnings: [],
+          gsm_size_bytes: null,
+          parameter_count: 3,
+        },
+      }),
+    }),
+  )
+
+  await store.getState().compileCurrentProject()
+
+  expect(store.getState().compileLog[0]).toBe('Mock validation passed (no GSM generated).')
+  expect(store.getState().mockCompileResult?.output_path).toBeNull()
 })
 
 test('revealCompileOutput records revealed artifact path', async () => {
@@ -2366,7 +2947,13 @@ test('adopts code blocks from an assistant history message into dirty script buf
 test('sets active rail panel', () => {
   const store = createWorkbenchStore(makeApi())
 
-  store.getState().setActiveRailPanel('ai')
+  store.getState().setActiveRailPanel('3d')
+
+  expect(store.getState().activeRailPanel).toBe('3d')
+})
+
+test('active rail panel defaults to the AI chat panel', () => {
+  const store = createWorkbenchStore(makeApi())
 
   expect(store.getState().activeRailPanel).toBe('ai')
 })
@@ -2460,11 +3047,13 @@ test('generate assistant message refreshes preview and records changed files', a
   expect(store.getState().activeScriptName).toBe('3d.gdl')
   expect(store.getState().mockCompileResult?.success).toBe(true)
   expect(store.getState().compileLog[0]).toContain('Mock compile passed')
-  expect(store.getState().assistantMessages.at(-1)).toEqual({
-    role: 'assistant',
-    content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
-    changedFiles: ['scripts/3d.gdl'],
-  })
+  expect(store.getState().assistantMessages.at(-1)).toEqual(
+    expect.objectContaining({
+      role: 'assistant',
+      content: 'changed 加一块层板\n\nChanged files: scripts/3d.gdl',
+      changedFiles: ['scripts/3d.gdl'],
+    }),
+  )
 })
 
 test('generateAssistantChanges passes image attachments to the API', async () => {
@@ -2550,11 +3139,13 @@ test('generateAssistantChanges exposes image generation failures as lastError', 
   ])
 
   expect(store.getState().lastError).toBe(error)
-  expect(store.getState().assistantMessages.at(-1)).toEqual({
-    role: 'assistant',
-    content: error,
-    errorCategory: 'general',
-  })
+  expect(store.getState().assistantMessages.at(-1)).toEqual(
+    expect.objectContaining({
+      role: 'assistant',
+      content: error,
+      errorCategory: 'general',
+    }),
+  )
 })
 
 test('generateAssistantChanges labels llm configuration errors', async () => {
@@ -2660,7 +3251,19 @@ test('generateAssistantChanges refreshes parameters after successful MODIFY (HF3
 })
 
 test('refreshProjectWorkspace refreshParameters preserves unsaved drafts (HF3)', async () => {
-  const store = createWorkbenchStore(makeApi())
+  let snapshotCalls = 0
+  const store = createWorkbenchStore(makeApi({
+    fetchSnapshot: async () => {
+      snapshotCalls += 1
+      return {
+        project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
+        parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1', is_fixed: false }],
+        preview: { meshes: [], wires: [], warnings: [] },
+        warnings: [],
+        source_fingerprint: snapshotCalls === 1 ? 'fp-loaded-source' : 'fp-refreshed-source',
+      }
+    },
+  }))
   await store.getState().load()
   // 用户改过但未 Apply 的草稿值
   store.getState().setDraftParameter('A', 2)
@@ -2675,6 +3278,7 @@ test('refreshProjectWorkspace refreshParameters preserves unsaved drafts (HF3)',
 
   expect(store.getState().parameters.length).toBeGreaterThan(0)
   expect(store.getState().draftParameters).toEqual({ A: 2 })
+  expect(store.getState().sourceFingerprint).toBe('fp-refreshed-source')
 })
 
 test('setDraftParameter debounces rapid preview requests while updating draft immediately', async () => {
@@ -3201,6 +3805,32 @@ test('sendChat modify falls back to direct result when plan request fails (V3)',
   expect(state.assistantMessages.at(-1)?.content).toContain('直接执行完成')
 })
 
+test.each(['cancel', 'abort', 'save-failure'] as const)(
+  'ST03 continuation does not leak into a new task after %s', async (exit) => {
+    const links: unknown[] = []
+    let calls = 0
+    const store = createWorkbenchStore(makeApi({
+      requestModifyPlan: async (_message, _settings, _images, _signal, _history, link) => {
+        links.push(link)
+        if (++calls === 1 && exit === 'abort') throw new DOMException('Stopped', 'AbortError')
+        return { ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }
+      },
+      confirmModifyPlan: async () => ({ ok: true, cancelled: true }),
+    }))
+    await store.getState().load()
+    const flush = store.getState().flushDirtyScripts
+    if (exit === 'save-failure') store.setState({ flushDirtyScripts: async () => ({ ok: false, didSave: false }) })
+    await store.getState().continueDelivery({
+      originRunId: 'r_original', originalInstruction: '给书架加一层层板',
+    })
+    if (exit === 'cancel') await store.getState().confirmPendingPlan(false)
+    store.setState({ flushDirtyScripts: flush })
+    await store.getState().sendChat('把颜色改成红色')
+    expect(links.at(-1)).toBeNull()
+    expect(store.getState().assistantMessages.at(-2)?.content).toBe('把颜色改成红色')
+  },
+)
+
 test('confirmPendingPlan without a pending plan sets lastError (V3)', async () => {
   const store = createWorkbenchStore(makeApi())
   await store.getState().load()
@@ -3210,10 +3840,20 @@ test('confirmPendingPlan without a pending plan sets lastError (V3)', async () =
 // ── 模式级 skill 提案（P2-d） ─────────────────────────────
 
 const SKILL_PROPOSAL = {
+  proposal_id: 'sp_20260918_abc123',
+  status: 'draft' as const,
   name: 'shelf_loop_pattern',
   pattern_type: 'shelf_loop',
   content: '## 适用场景 / When to Use\n层板循环对象。\n\n## 写法要点\n- FOR 循环 + ADD/DEL 配对。',
-  evidence: { intent: 'MODIFY', changed_files: ['scripts/3d.gdl'], project: 'Shelf' },
+  evidence: {
+    source: 'explicit',
+    intent: 'MODIFY',
+    changed_files: ['scripts/3d.gdl'],
+    project: 'Shelf',
+    source_run_ids: ['r_2026_test'],
+    revisions: ['r0002'],
+    evidence_complete: true,
+  },
 }
 
 test('sendChat stores skill proposal from generate result (P2-d)', async () => {
@@ -3253,10 +3893,12 @@ test('successful generate without proposal clears stale skill proposal (P2-d)', 
 
 test('confirmPendingSkillProposal(true) approves and clears the proposal (P2-d)', async () => {
   let approveArg: boolean | null = null
+  let proposalIdArg: string | undefined
   const store = createWorkbenchStore(
     makeApi({
-      confirmSkillProposal: async (approve: boolean) => {
+      confirmSkillProposal: async (approve: boolean, proposalId?: string) => {
         approveArg = approve
+        proposalIdArg = proposalId
         return { ok: true, skill: 'shelf_loop_pattern', verified: true, gate: 'structural', status: 'verified' }
       },
     }),
@@ -3268,6 +3910,8 @@ test('confirmPendingSkillProposal(true) approves and clears the proposal (P2-d)'
 
   const state = store.getState()
   expect(approveArg).toBe(true)
+  // ST04：审批必须带上持久候选 ID，让后端走 store 路径
+  expect(proposalIdArg).toBe('sp_20260918_abc123')
   expect(state.pendingSkillProposal).toBeNull()
   expect(state.assistantMessages.at(-1)?.content).toContain('已沉淀并通过验证')
 })
@@ -3298,6 +3942,120 @@ test('confirmPendingSkillProposal without a pending proposal sets lastError (P2-
   await store.getState().load()
   await store.getState().confirmPendingSkillProposal(true)
   expect(store.getState().lastError).toContain('没有待确认的 skill 提案')
+})
+
+// ── ST04 返工：重启恢复 + 失败保留可重试 ────────────────────────────────
+
+test('load restores a restorable skill proposal from the store (ST04)', async () => {
+  const approving = { ...SKILL_PROPOSAL, proposal_id: 'sp_approving', status: 'approving' as const, updated_at: '2026-09-18T00:00:00Z' }
+  const rejecting = { ...SKILL_PROPOSAL, proposal_id: 'sp_rejecting', status: 'rejecting' as const, updated_at: '2026-09-18T01:00:00Z' }
+  const draft = { ...SKILL_PROPOSAL, proposal_id: 'sp_draft', status: 'draft' as const, updated_at: '2026-09-18T02:00:00Z' }
+  const approved = { ...SKILL_PROPOSAL, proposal_id: 'sp_done', status: 'approved' as const }
+  const store = createWorkbenchStore(
+    makeApi({
+      listSkillProposals: async () => ({ ok: true, proposals: [draft, approved, approving, rejecting], total: 4 }),
+    }),
+  )
+  await store.getState().load()
+  // rejecting 是已持久化的用户决定，优先恢复以便完成回收。
+  expect(store.getState().pendingSkillProposal?.proposal_id).toBe('sp_rejecting')
+})
+
+test('load clears pending when the store has no restorable proposal (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      listSkillProposals: async () => ({
+        ok: true,
+        proposals: [{ ...SKILL_PROPOSAL, proposal_id: 'sp_done', status: 'approved' as const }],
+        total: 1,
+      }),
+    }),
+  )
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+  await store.getState().load()
+  expect(store.getState().pendingSkillProposal).toBeNull()
+})
+
+test('confirmPendingSkillProposal failure keeps the card for retry (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async () => ({
+        ok: false,
+        code: 'SKILL_PROPOSAL_STATE_SAVE_FAILED',
+        error: 'disk full',
+      }),
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+
+  await store.getState().confirmPendingSkillProposal(true)
+
+  const state = store.getState()
+  expect(state.pendingSkillProposal).toEqual(SKILL_PROPOSAL)
+  expect(state.assistantMessages.at(-1)?.content).toContain('沉淀失败')
+  expect(state.assistantMessages.at(-1)?.content).toContain('可重试')
+  expect(state.assistantMessages.at(-1)?.content).not.toContain('已沉淀并通过验证')
+})
+
+test('confirmPendingSkillProposal reject failure does not claim discarded (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async () => ({ ok: false, error: 'state save failed' }),
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: SKILL_PROPOSAL })
+
+  await store.getState().confirmPendingSkillProposal(false)
+
+  const state = store.getState()
+  expect(state.pendingSkillProposal).toEqual(SKILL_PROPOSAL)
+  expect(state.assistantMessages.at(-1)?.content).toContain('拒绝失败')
+  expect(state.assistantMessages.at(-1)?.content).not.toContain('已丢弃')
+})
+
+test('confirmPendingSkillProposal resumes durable rejecting intent (ST04)', async () => {
+  const calls: boolean[] = []
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async (approve: boolean) => {
+        calls.push(approve)
+        return { ok: true, discarded: true }
+      },
+    }),
+  )
+  await store.getState().load()
+  store.setState({
+    pendingSkillProposal: { ...SKILL_PROPOSAL, status: 'rejecting' },
+  })
+
+  await store.getState().confirmPendingSkillProposal(true)
+
+  expect(calls).toEqual([false])
+  expect(store.getState().pendingSkillProposal).toBeNull()
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('已丢弃')
+  expect(store.getState().assistantMessages.at(-1)?.content).not.toContain('未激活产物')
+})
+
+test('confirmPendingSkillProposal honors explicit retryable errors (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      confirmSkillProposal: async () => ({
+        ok: false,
+        code: 'SKILL_PROPOSAL_RECLAIM_FAILED',
+        error: 'reclaim failed',
+        retryable: true,
+      }),
+    }),
+  )
+  await store.getState().load()
+  store.setState({ pendingSkillProposal: { ...SKILL_PROPOSAL, status: 'rejecting' } })
+
+  await store.getState().confirmPendingSkillProposal(false)
+
+  expect(store.getState().pendingSkillProposal?.status).toBe('rejecting')
+  expect(store.getState().assistantMessages.at(-1)?.content).toContain('可重试')
 })
 
 // ── P2a：修改前后对比 ghost 快照 ─────────────────────────────────────────
@@ -3890,4 +4648,21 @@ test('loadCodexCatalog fetches dynamic catalog only when connected', async () =>
   expect(disconnected.getState().codexCatalog.connected).toBe(false)
   expect(disconnected.getState().codexCatalog.models).toEqual([])
   expect(modelsCalled).toBe(false)
+})
+
+test('sendAssistantMessage surfaces an explicit skill proposal from the explain route (ST04)', async () => {
+  const store = createWorkbenchStore(
+    makeApi({
+      askAssistant: async () => ({
+        ok: true,
+        assistant: { kind: 'skill_proposal', reply: '已生成待审 skill 候选。' },
+        skill_proposal: SKILL_PROPOSAL,
+      }),
+    }),
+  )
+  await store.getState().load()
+
+  await store.getState().sendAssistantMessage('把这轮修改沉淀成楼梯skill')
+
+  expect(store.getState().pendingSkillProposal).toEqual(SKILL_PROPOSAL)
 })

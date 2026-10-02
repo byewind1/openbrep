@@ -32,6 +32,38 @@ export interface WorkbenchParameter {
   range?: number[] | null
 }
 
+export type EffectiveParameterRole = 'input' | 'derived' | 'unknown' | 'material'
+
+export interface EffectiveParameterObservation {
+  name: string
+  role: EffectiveParameterRole
+  source_value: unknown
+  requested_value: unknown
+  effective_value: unknown
+  read_only: boolean
+  depends_on: string[]
+  sources: string[]
+  reason: string | null
+}
+
+export interface EffectiveParameterDiagnostic {
+  code: string
+  line: number
+  command: string
+  message: string
+}
+
+export interface EffectiveParametersResult {
+  ok: boolean
+  project_path?: string
+  project_epoch?: number
+  source_fingerprint?: string | null
+  supported?: boolean
+  parameters?: EffectiveParameterObservation[]
+  diagnostics?: EffectiveParameterDiagnostic[]
+  error?: string
+}
+
 export interface ProjectScript {
   name: string
   path: string
@@ -61,7 +93,89 @@ export interface ProjectRevision {
   compile: Record<string, unknown>
   explanation: string
   is_latest: boolean
+  /** ST02/ST03：revision 与 delivery run 的关联（manifest.metadata.delivery） */
+  delivery?: {
+    run_id?: string | null
+    role?: string | null
+    source_fingerprint?: string | null
+  } | null
 }
+
+// ── ST03：交付状态展示（映射 ST02 delivery_source）────────────────────────
+export type DeliverySourceState =
+  | 'verified_change'
+  | 'unchanged'
+  | 'partial_change'
+  | 'failed_no_change'
+  | 'snapshot_failed'
+
+export type DeliveryPresentationStatus =
+  | 'completed'
+  | 'incomplete'
+  | 'no_change'
+  | 'failed'
+  | 'snapshot_failed'
+  | 'unlinked'
+
+/** ST02 冻结契约（TaskResult.metadata.delivery_source） */
+export interface DeliverySource {
+  schema_version: number
+  run_id: string
+  state: DeliverySourceState
+  before_revision_id: string | null
+  after_revision_id: string | null
+  source_fingerprint: string | null
+  changed_files: string[]
+  snapshot_status: string
+  error_code: string | null
+}
+
+/** ST03 工作台展示态（openbrep/workbench/delivery_presentation.py） */
+export interface DeliveryPresentation {
+  state: DeliverySourceState | null
+  status: DeliveryPresentationStatus
+  unlinked: boolean
+  headline: string
+  reason: string
+  show_success_badge: boolean
+  show_before_after: boolean
+  show_changed_files: boolean
+  can_recover: boolean
+  can_continue: boolean
+  can_view_diff: boolean
+  /** F1：差异目标 — after=before→after；working=before→当前工作源 */
+  diff_target?: 'after' | 'working' | null
+  recover_revision_id: string | null
+  before_revision_id: string | null
+  after_revision_id: string | null
+  changed_files: string[]
+  run_id: string | null
+  error_code: string | null
+  check_status: 'passed' | 'failed' | 'unknown'
+  version_status: string | null
+  original_instruction: string | null
+  continued_from?: {
+    origin_run_id?: string | null
+    original_instruction?: string | null
+  } | null
+}
+
+export interface DeliveryContinueFrom {
+  origin_run_id: string
+  original_instruction: string
+  intent?: string
+}
+
+/** generate 响应 assistant.delivery 完整载荷 */
+export interface DeliveryPayload {
+  delivery_source: DeliverySource | null
+  presentation: DeliveryPresentation
+  continue_from: DeliveryContinueFrom | null
+  original_instruction?: string | null
+}
+
+export type RestoreDraftPolicy = 'discard' | 'keep'
+
 
 export interface PreviewSourceRef {
   script_type: string
@@ -74,6 +188,13 @@ export interface PreviewSourceRef {
   segment_end?: number | null
 }
 
+export interface PreviewMeshColor {
+  /** RGB 0-1 浮点（Archicad 权威预览逐 mesh 颜色） */
+  red: number
+  green: number
+  blue: number
+}
+
 export interface PreviewMesh {
   name: string
   vertices: number[][]
@@ -81,6 +202,21 @@ export interface PreviewMesh {
   /** 生成该 mesh 的 GDL 命令打点（openbrep/gdl_previewer.py 逐命令记录）；
    *  RULED 焊接合并等产物可能没有，此时无法溯源跳转 */
   source_ref?: PreviewSourceRef | null
+  /** 权威预览逐 mesh 颜色（RGB 0-1）；本地近似预览不带，渲染回退到模式默认色 */
+  color?: PreviewMeshColor
+  /** OpenBrep symbolic Material parameter name (offline preview). */
+  material_id?: string | null
+}
+
+export interface PreviewMaterial {
+  family?: string
+  label?: string
+  color: string
+  roughness: number
+  metalness: number
+  opacity: number
+  transmission: number
+  ior: number
 }
 
 export interface PreviewPayload {
@@ -88,13 +224,117 @@ export interface PreviewPayload {
   wires: number[][][]
   warnings?: string[]
   verification?: PreviewVerification
+  /** 生成该 payload 的质量档（自描述）；缺省视为旧后端，不参与质量对账 */
+  quality?: PreviewQuality
+  materials?: Record<string, PreviewMaterial>
+}
+
+/** Archicad 权威预览（/api/preview/authoritative）：meshes/wires 与本地
+ *  PreviewPayload 形状一致，额外带来源、包围盒与参数应用元数据 */
+export interface AuthoritativePreviewPayload extends PreviewPayload {
+  source?: string
+  bounds?: Record<string, number>
+  appliedParameters?: string[]
+  skippedParameters?: string[]
+  /** 同一次 Archicad 求值返回的权威 2D primitives */
+  preview2d?: Preview2DPayload
+}
+
+export interface AuthoritativePreviewResult {
+  ok: boolean
+  preview?: AuthoritativePreviewPayload
+  error?: string
+}
+
+export type HostVerificationRecordStatus = 'passed' | 'failed' | 'unsupported' | 'identity_unverified'
+export type HostVerificationStatus = HostVerificationRecordStatus | 'not_checked' | 'stale'
+
+export interface HostVerificationRecord {
+  schema_version?: number
+  record_id: string
+  run_id?: string | null
+  revision?: string | null
+  status: HostVerificationRecordStatus
+  source_fingerprint: string
+  contract_hash?: string | null
+  gsm_sha256?: string | null
+  parameter_fingerprint: string
+  requested_parameters: Record<string, unknown>
+  applied_parameters: string[]
+  skipped_parameters: string[]
+  loaded_identity?: Record<string, unknown> | null
+  identity_status?: string
+  archicad_version?: string | null
+  addon_version?: string | null
+  started_at?: string
+  finished_at?: string | null
+  diagnostics?: string[]
+  stale?: boolean
+  stale_reasons?: string[]
+}
+
+export interface HostVerificationCurrent {
+  status: HostVerificationStatus
+  stale: boolean
+  stale_reasons: string[]
+  record_id?: string
+  source_fingerprint?: string
+  [key: string]: unknown
+}
+
+export interface HostVerificationRequest {
+  parameters: Record<string, unknown>
+  expected_project_epoch: number
+  expected_source_fingerprint: string
+}
+
+export interface HostVerificationRunResult {
+  ok: boolean
+  verification?: HostVerificationRecord
+  current?: boolean
+  stale?: boolean
+  error?: string
+}
+
+/** L0b：ui.gdl 解析出的 Archicad 风格参数面板控件 */
+export interface UIControl {
+  type: 'infield' | 'outfield' | 'groupbox' | 'separator' | 'button' | string
+  param?: string | null
+  x: number
+  y: number
+  w: number
+  h: number
+  text?: string | null
+  options?: Array<{ value: unknown; label: string } | string> | null
+  line?: number
+  raw?: string
+}
+
+export interface UILayoutPayload {
+  ok: boolean
+  title?: string | null
+  pages?: number[]
+  active_page?: number | null
+  width?: number
+  height?: number
+  controls?: UIControl[]
+  unsupported?: string[]
+  warnings?: string[]
+  has_infield?: boolean
+  error?: string
 }
 
 export interface Preview2DPayload {
   lines: Array<{ from: [number, number]; to: [number, number] }>
   polygons: Array<Array<[number, number]>>
+  // 与 polygons 逐一对齐（POLY2_B 系 frame_fill 位：j1 轮廓 / j2 填充）；
+  // 缺省（旧 payload）时按 [填充+描边] 渲染，保持既有外观。
+  polygon_fills?: boolean[]
+  polygon_contours?: boolean[]
   circles: Array<{ cx: number; cy: number; r: number }>
   arcs: Array<{ cx: number; cy: number; r: number; a0: number; a1: number }>
+  // 富文本（RICHTEXT2/TEXT2）：size 为模型单位字高
+  texts?: Array<{ x: number; y: number; text: string; size: number }>
   warnings?: string[]
   verification?: PreviewVerification
 }
@@ -131,6 +371,8 @@ export interface LlmSettings {
   reasoning_effort?: string
   /** D9：Codex 路由显式 opt-in；缺失/未知均由后端按 fixed 处理。 */
   codex_routing_mode?: 'fixed' | 'auto'
+  /** 双入口（2026-09-17）：Codex 链路入口（默认 managed，保持既有行为） */
+  codex_entry?: CodexEntry
   /** D1：ChatGPT Codex（openai-codex）连接状态。provider 未拉起时为 null */
   codex?: CodexStatus | null
 }
@@ -141,6 +383,10 @@ export interface LlmSettings {
 
 export type CodexState =
   | 'no_cli'
+  /** 双入口（2026-09-17）：本机配置入口专用——没有可读的 Codex 配置/模型 */
+  | 'unconfigured'
+  /** 双入口（2026-09-17）：本机配置入口专用——配置与认证条件都已满足 */
+  | 'ready'
   | 'version_incompatible'
   | 'signed_out'
   | 'signed_in'
@@ -179,6 +425,17 @@ export interface CodexStatus {
   codex_available: boolean
   connected: boolean
   account: CodexAccount | null
+  /** 双入口（2026-09-17）：这条链路走哪个 Codex 入口 */
+  entry?: CodexEntry
+  entry_label?: string
+  /** home 的符号化来源（绝不回传路径）：user_default | env_override | managed | custom */
+  codex_home_kind?: string
+  /** 认证来源：codex_config（用户自己的 Codex 配置）| openbrep_managed */
+  auth_source?: string
+  /** 模型目录来源：model_catalog_json | config | models_cache（本机配置入口） */
+  models_source?: string
+  /** 本机配置入口命中的 provider 展示名（如 deepseek） */
+  provider?: string
   /** D2：脱敏额度摘要（已登录且上游返回时存在） */
   rate_limits?: CodexRateLimits | null
   /** crashed 状态下为 true：UI 提供「重启」动作 */
@@ -191,8 +448,35 @@ export interface CodexStatus {
   error?: string
 }
 
+/** 双入口（2026-09-17）：Codex 链路入口。local = 只读使用本机 Codex 配置；
+ *  managed = OpenBrep 托管 ChatGPT 登录。 */
+export type CodexEntry = 'local' | 'managed'
+
+export interface CodexEntryInfo {
+  entry: CodexEntry
+  label: string
+  auth_source: string
+  recommended: boolean
+}
+
+export interface CodexEntryResult {
+  ok: boolean
+  entry?: CodexEntry
+  entries?: CodexEntryInfo[]
+  /** 只读探测：本机是否已有可用的 Codex 配置（供 UI 给推荐入口加提示） */
+  local_hint?: {
+    detected: boolean
+    state: string
+    models: number
+    home_kind: string
+  }
+  llm?: LlmSettings
+  code?: string
+  error?: string
+}
+
 export interface CodexModelInfo {
-  /** provider-qualified id：openai-codex/<model>（与 API-key OpenAI 分离） */
+  /** Stable id: legacy openai-codex/<model> or cc-switch-qualified ref. */
   id: string
   label: string
   model: string
@@ -203,6 +487,22 @@ export interface CodexModelInfo {
   supported_reasoning_efforts?: { effort: string; description?: string }[]
   /** D6：该模型的默认 reasoning effort（model/list.defaultReasoningEffort） */
   default_reasoning_effort?: string
+  /** 双入口（2026-09-17）：模型目录来源（codex_config = 本机 Codex 配置） */
+  source?: string
+  /** cc-switch stable provider id/label; absent for managed and local-current models. */
+  provider_id?: string
+  provider_label?: string
+  catalog_source?: 'model_catalog' | 'config_default' | 'runtime' | string
+  catalog_complete?: boolean
+}
+
+export interface CodexProviderInfo {
+  id: string
+  name: string
+  is_current: boolean
+  catalog_source: 'model_catalog' | 'config_default' | 'runtime' | string
+  catalog_complete: boolean
+  runnable: boolean
 }
 
 export interface CodexLoginStartResult {
@@ -248,6 +548,9 @@ export interface CodexRateLimitsResult {
 export interface CodexModelsResult {
   ok: boolean
   models?: CodexModelInfo[]
+  providers?: CodexProviderInfo[]
+  cc_switch_detected?: boolean
+  diagnostics?: { code: string; message: string; provider_id?: string }[]
   code?: string
   error?: string
 }
@@ -333,8 +636,13 @@ export interface WorkbenchSnapshot {
   compiler?: CompilerSettings
   llm?: LlmSettings
   error?: string
+  /** 用户取消了原生文件/目录选择对话框（区别于失败，不报错） */
+  cancelled?: boolean
+  /** 原生对话框在本平台不可用（如 Windows 无 PowerShell 且无 tkinter）；与 cancelled 区分 */
+  unavailable?: boolean
   session_id?: string
   project_epoch?: number
+  source_fingerprint?: string | null
   /** 后端 snapshot 的工作区块：无附着为 null（P3-d1） */
   workspace?: WorkspaceInfo | null
 }
@@ -390,7 +698,8 @@ export interface ValidateParametersResult {
 export interface CompileInfo {
   success: boolean
   mode: string
-  output_path: string
+  output_path?: string | null
+  artifact_path?: string | null
   stdout: string
   stderr: string
   errors: string[]
@@ -418,7 +727,7 @@ export interface MockCompileResponse {
   mode: string
   issues: CompileIssue[]
   duration_ms: number
-  output_path?: string
+  output_path?: string | null
   gsm_size_bytes?: number | null
   parameter_count?: number | null
   error?: string
@@ -494,6 +803,7 @@ export interface DirectoryChoiceResult extends Partial<WorkbenchSnapshot> {
   ok: boolean
   path?: string
   cancelled?: boolean
+  unavailable?: boolean
   error?: string
 }
 
@@ -502,6 +812,7 @@ export interface FileChoiceResult {
   path?: string
   compiler?: CompilerSettings
   cancelled?: boolean
+  unavailable?: boolean
   error?: string
 }
 
@@ -527,6 +838,17 @@ export interface ModifyAcceptance {
 export interface AssistantHistoryItem {
   role: 'user' | 'assistant'
   content: string
+  /** ST03 F2：持久化 delivery/continue 关联（不进 LLM prompt） */
+  meta?: {
+    delivery?: DeliveryPresentation | null
+    delivery_source?: DeliverySource | null
+    delivery_continue_from?: DeliveryContinueFrom | null
+    original_instruction?: string | null
+    run_id?: string | null
+    changed_files?: string[]
+    error_category?: string
+    [key: string]: unknown
+  } | null
 }
 
 export interface AssistantMessage {
@@ -546,6 +868,15 @@ export interface AssistantMessage {
   images?: AssistantImageAttachment[]
   // 读图提取卡片（P5d-1，只读）：vision 提取结果渲染（仅当前会话内存活）
   visionExtractions?: VisionExtraction[]
+  /** ST03：交付状态展示（session-only；刷新后降级 unlinked） */
+  delivery?: DeliveryPresentation
+  /** ST03：原始 ST02 dict + continue 关联（session-only） */
+  deliverySource?: DeliverySource | null
+  deliveryContinueFrom?: DeliveryContinueFrom | null
+  /** 本条 assistant 消息对应的用户原始指令（continue 用） */
+  originalInstruction?: string
+  /** 本条任务的 run_id（ST02 delivery_source.run_id） */
+  runId?: string | null
 }
 
 // ── 读图提取卡片（P5d-1，只读）─────────────────────────────────────────────
@@ -670,6 +1001,8 @@ export interface AssistantResult {
     kind: string
     reply: string
   }
+  /** ST04：显式"保存为技能"请求即使走 explain 通道也带回候选，供审批卡展示 */
+  skill_proposal?: SkillProposal | null
   error?: string
 }
 
@@ -856,8 +1189,10 @@ export interface PendingPlan {
   risk: string
 }
 
-// ── 模式级 skill 提案（P2-d）：成功 CREATE/MODIFY 后提炼，用户确认后才落盘晋升 ──
+// ── 模式级 skill 提案（P2-d/ST04）：成功交付后自动提炼，或用户显式"保存为技能"──
 export interface SkillProposal {
+  /** ST04：持久候选 ID；审批时回传以走 store 路径 */
+  proposal_id?: string
   name: string
   pattern_type: string
   content: string
@@ -865,23 +1200,83 @@ export interface SkillProposal {
     params?: Record<string, unknown>
     scripts?: Record<string, string>
   } | null
+  /** ST04：draft（待审）/ approving/rejecting（副作用中或可重试）/ approved / rejected */
+  status?: 'draft' | 'approving' | 'rejecting' | 'approved' | 'rejected'
+  /** ST04：验证态与用户决策分离；claims_unverified = 含未核验技术断言，未晋升 */
+  verification?: {
+    state?: 'unverified' | 'verified' | 'failed' | 'claims_unverified'
+    passed?: boolean
+    gate?: string
+    status?: string
+    error?: string | null
+    unverified_claims?: Array<{ kind?: string; snippet?: string }>
+  } | null
+  /** ST04 K08：未核验技术断言 + 项目选择标注 */
+  claims?: {
+    unverified?: Array<{ kind?: string; snippet?: string }>
+    project_selection?: {
+      project?: string
+      path_hash?: string
+      note?: string
+    } | null
+  } | null
+  /** ST04：落盘产物所有权记录（proposal_id + 内容摘要 + 路径） */
+  artifact?: {
+    name?: string
+    path?: string
+    content_digest?: string
+    proposal_id?: string
+    written_at?: string
+  } | null
+  protection?: { registered?: string[]; errors?: unknown[]; checked_at?: string } | null
+  error?: string | null
+  created_at?: string
+  updated_at?: string
+  reused?: boolean
   evidence?: {
     intent?: string
     changed_files?: string[]
     project?: string
+    project_path_hash?: string
+    /** ST04：证据来源（显式沉淀为 explicit） */
+    source?: string
+    source_run_ids?: string[]
+    revisions?: string[]
+    source_fingerprints?: string[]
+    /** ST04：false = 旧资料/未绑定 after/严格校验不过，不作为已验证知识 */
+    evidence_complete?: boolean
+    /** ST04：严格校验未通过的原因（project/revision/fingerprint…） */
+    validation_reasons?: string[]
+    project_selection?: {
+      project?: string
+      path_hash?: string
+      note?: string
+    } | null
   } | null
 }
 
 export interface SkillProposalConfirmResult {
   ok: boolean
+  proposal_id?: string
   skill?: string
   verified?: boolean
   gate?: string
   status?: string
   path?: string
   discarded?: boolean
+  already_decided?: boolean
+  released_protections?: number
+  verification?: SkillProposal['verification']
   message?: string
   code?: string
+  error?: string
+  retryable?: boolean
+}
+
+export interface SkillProposalListResult {
+  ok: boolean
+  proposals: SkillProposal[]
+  total?: number
   error?: string
 }
 
@@ -894,6 +1289,12 @@ export interface GenerateResult {
     intent: string
     verification?: VerificationReport | null
     acceptance?: ModifyAcceptance | null
+    /** ST03：原始 ST02 delivery_source */
+    delivery_source?: DeliverySource | null
+    /** ST03：工作台展示态 */
+    delivery?: DeliveryPresentation | null
+    run_id?: string | null
+    continue_from?: DeliveryContinueFrom | null
   } | null
   preview?: PreviewPayload | null
   warnings?: string[]
@@ -961,6 +1362,25 @@ export interface RestoreRevisionResponse extends Partial<WorkbenchSnapshot> {
   revision?: ProjectRevision
   latest_revision_id?: string | null
   error?: string
+  /** ST03：恢复结果回执（HSF 重载 + 预览失效） */
+  restore?: {
+    revision_id: string
+    draft_policy?: RestoreDraftPolicy | null
+    hsf_reloaded?: boolean
+    preview_cleared?: boolean
+  }
+}
+
+export interface RevisionDiffResponse {
+  ok: boolean
+  from_revision_id?: string
+  to_revision_id?: string
+  /** true = to 是当前工作源（partial_change 契约） */
+  to_working_tree?: boolean
+  diff?: string
+  changed?: boolean
+  error?: string
+  warning?: string
 }
 
 export interface ProjectGitStatus {
@@ -990,6 +1410,7 @@ export interface SaveScriptResponse {
   ok?: boolean
   success: boolean
   saved_at: string
+  source_fingerprint?: string | null
   error?: string
 }
 

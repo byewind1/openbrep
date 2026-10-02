@@ -3,6 +3,14 @@ from pathlib import Path
 from urllib.error import HTTPError
 
 
+def test_backend_spec_includes_tiktoken_encoding_plugins():
+    """Frozen sidecar must retain tiktoken's plugin-based encoding registry."""
+    spec = Path(__file__).resolve().parents[1] / "openbrep-backend.spec"
+    text = spec.read_text(encoding="utf-8")
+    for module in ("tiktoken", "tiktoken_ext", "tiktoken_ext.openai_public"):
+        assert f'"{module}"' in text
+
+
 def _load_package_smoke():
     path = Path(__file__).resolve().parents[1] / "scripts" / "package_smoke.py"
     spec = importlib.util.spec_from_file_location("_package_smoke_test", path)
@@ -10,6 +18,38 @@ def _load_package_smoke():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def test_desktop_lifecycle_contract_requires_single_instance_before_setup():
+    smoke = _load_package_smoke()
+    repo_root = Path(__file__).resolve().parents[1]
+
+    smoke.validate_desktop_lifecycle_contract(repo_root)
+
+
+def test_desktop_lifecycle_contract_rejects_plugin_after_setup(tmp_path):
+    smoke = _load_package_smoke()
+    tauri_dir = tmp_path / "src-tauri"
+    source_dir = tauri_dir / "src"
+    source_dir.mkdir(parents=True)
+    (tauri_dir / "Cargo.toml").write_text(
+        '[dependencies]\ntauri-plugin-single-instance = "2"\n',
+        encoding="utf-8",
+    )
+    (source_dir / "main.rs").write_text(
+        ".setup(|app| {})\n"
+        ".plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {}))\n"
+        "fn shutdown_backend() {}\n"
+        "WindowEvent::Destroyed\n",
+        encoding="utf-8",
+    )
+
+    try:
+        smoke.validate_desktop_lifecycle_contract(tmp_path)
+    except RuntimeError as exc:
+        assert "before .setup" in str(exc)
+    else:
+        raise AssertionError("plugin ordering violation was accepted")
 
 
 class _Response:

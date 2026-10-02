@@ -895,6 +895,18 @@ class TestGDLPreviewer2DCommands(unittest.TestCase):
         self.assertFalse(any("SET" in w for w in r3d.warnings))
         self.assertEqual(len(r3d.meshes), 1)
 
+    def test_material_parameter_identity_stays_distinct_when_indices_match(self):
+        result = preview_3d_script(
+            "MATERIAL mat_top\nBLOCK 1, 1, 0.1\n"
+            "MATERIAL mat_leg\nCYLIND 1, 0.05\n",
+            parameters={"mat_top": 0, "mat_leg": 0},
+        )
+
+        self.assertEqual(
+            [mesh.material_id for mesh in result.meshes],
+            ["mat_top", "mat_leg"],
+        )
+
     def test_values_silently_ignored_in_2d_and_3d(self):
         values = 'VALUES "A" RANGE [0.30, 3.00]\n'
         r2d = preview_2d_script(values + "RECT2 0, 0, 1, 1\n")
@@ -1632,3 +1644,955 @@ class TestP3cForDoubleGate(unittest.TestCase):
         self.assertTrue(any("FOR 迭代超过上限 10" in w for w in res.warnings))
         self.assertFalse(any("耗时上限" in w for w in res.warnings))
 
+
+
+# ── P3：离线 CALL 执行 MVP + P1 结构化依赖诊断（GSM-CALL 研究 2026-09-12）──
+# 注意（预期内的行为变化）：不传 macro_resolver 时 CALL 不再落入
+# "未支持命令 CALL"，而是发 MACRO_NO_RESOLVER 结构化诊断（P1 要求可诊断）。
+from openbrep.gdl_previewer import MacroLookup
+
+
+def _macro(**kwargs) -> MacroLookup:
+    """构造 resolved MacroLookup 的便捷封装。"""
+    kwargs.setdefault("status", "resolved")
+    return MacroLookup(**kwargs)
+
+
+def _table_resolver(table: dict, calls: list | None = None):
+    """fake MacroResolver：按名查表；calls 非空时记录 (name, guid_hint)。"""
+    def _resolver(name: str, guid: str | None) -> MacroLookup:
+        if calls is not None:
+            calls.append((name, guid))
+        lookup = table.get(name)
+        if lookup is not None:
+            return lookup
+        return MacroLookup(status="missing", name=name, message=f"图库中没有宏 '{name}'")
+    return _resolver
+
+
+def _codes(res) -> list[str]:
+    return [w.code for w in res.warnings_structured]
+
+
+class TestCallMacroExecution(unittest.TestCase):
+    """P3：CALL 宏执行（参数/变换/master script/隔离/结果合并）。"""
+
+    def test_3d_call_inherits_caller_transform_and_marks_source_ref(self):
+        table = {"box宏": _macro(name="box宏", scripts={"3d.gdl": "BLOCK w, 0.1, 0.2"})}
+        res = preview_3d_script(
+            "ROTX 90\nCALL 'box宏' PARAMETERS w=A\nDEL 1\n",
+            parameters={"A": 1.0},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 1)
+        mesh = res.meshes[0]
+        # ROTX 90 继承：(x, y, z) → (x, -z, y)
+        self.assertAlmostEqual(max(mesh.x), 1.0)
+        self.assertAlmostEqual(min(mesh.y), -0.2)
+        self.assertAlmostEqual(max(mesh.z), 0.1)
+        self.assertIsNotNone(mesh.source_ref)
+        self.assertEqual(mesh.source_ref.macro, "box宏")
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+
+    def test_macro_default_parameter_used_when_not_passed(self):
+        table = {"m": _macro(name="m", parameters={"H": "0.5"}, scripts={"3d.gdl": "BLOCK 0.1, 0.1, H"})}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.5)
+
+    def test_explicit_parameter_override_wins(self):
+        table = {"m": _macro(name="m", parameters={"H": "0.5"}, scripts={"3d.gdl": "BLOCK 0.1, 0.1, H"})}
+        res = preview_3d_script("CALL 'm' PARAMETERS H=0.9\n", macro_resolver=_table_resolver(table))
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.9)
+
+    def test_parameters_all_merges_caller_env(self):
+        table = {"m": _macro(name="m", parameters={"H": "0.5"}, scripts={"3d.gdl": "BLOCK 0.1, 0.1, H"})}
+        res = preview_3d_script(
+            "CALL 'm' PARAMETERS ALL\n",
+            parameters={"H": 0.7},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.7)
+
+    def test_string_parameter_with_comma_survives_split(self):
+        # 引号+括号感知的拆分：s="a,b" 不能被拆成两条
+        table = {"m": _macro(name="m", scripts={"3d.gdl": 'IF s = "a,b" THEN BLOCK 1, 1, 1'})}
+        res = preview_3d_script(
+            'CALL \'m\' PARAMETERS s="a,b"\n',
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 1, f"字符串参数应原样传递，warnings={res.warnings}")
+
+    def test_string_parameter_from_caller_env(self):
+        table = {"m": _macro(name="m", scripts={"3d.gdl": 'IF s = "直棂" THEN BLOCK 1, 1, 1'})}
+        res = preview_3d_script(
+            "CALL 'm' PARAMETERS s=PATTERN\n",
+            parameters={"PATTERN": "直棂"},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 1)
+
+    def test_2d_call_merges_macro_2d_geometry(self):
+        table = {"panel宏": _macro(
+            name="panel宏",
+            scripts={"2d.gdl": "LINE2 0, 0, 1, 1\nCIRCLE2 0.5, 0.5, 0.25\n"},
+        )}
+        res = preview_2d_script("CALL 'panel宏' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertEqual(len(res.lines), 1)
+        self.assertEqual(len(res.circles), 1)
+        self.assertAlmostEqual(res.circles[0][2], 0.25)
+
+    def test_master_script_runs_before_mode_script(self):
+        table = {"m": _macro(
+            name="m",
+            parameters={"H": "0.25"},
+            scripts={"1d.gdl": "h2 = H * 2", "3d.gdl": "BLOCK 0.1, 0.1, h2"},
+        )}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.5)
+
+    def test_macro_transform_and_env_do_not_leak_to_caller(self):
+        # 宏内 ADDX 5（无 DEL）+ 给 A 赋值；caller 后续 BLOCK 必须在原点、宽 A=1
+        table = {"shift宏": _macro(
+            name="shift宏",
+            scripts={"3d.gdl": "A = 99\nADDX 5\nBLOCK 1, 1, 1\n"},
+        )}
+        res = preview_3d_script(
+            "CALL 'shift宏' PARAMETERS\nBLOCK A, 1, 1\n",
+            parameters={"A": 1.0},
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.meshes), 2)
+        macro_mesh, caller_mesh = res.meshes
+        self.assertAlmostEqual(min(macro_mesh.x), 5.0)
+        self.assertAlmostEqual(min(caller_mesh.x), 0.0)
+        self.assertAlmostEqual(max(caller_mesh.x), 1.0)
+        self.assertIsNone(caller_mesh.source_ref.macro)
+
+    def test_nested_call_chain_and_guid_hint_passthrough(self):
+        calls: list = []
+        table = {
+            "A宏": _macro(
+                name="A宏",
+                scripts={"3d.gdl": "CALL 'B宏' PARAMETERS"},
+                called_macros={"B宏": "guid-b"},
+            ),
+            "B宏": _macro(name="B宏", scripts={"3d.gdl": "BLOCK 0.1, 0.1, 0.1"}),
+        }
+        res = preview_3d_script(
+            "CALL 'A宏' PARAMETERS\n",
+            macro_resolver=_table_resolver(table, calls),
+            macro_guid_map={"A宏": "guid-a"},
+        )
+        self.assertEqual(len(res.meshes), 1)
+        self.assertEqual(res.meshes[0].source_ref.macro, "A宏/B宏")
+        # caller 的 calledmacros 表给出 A宏 的 GUID；A宏 自己的表给出 B宏 的 GUID
+        self.assertIn(("A宏", "guid-a"), calls)
+        self.assertIn(("B宏", "guid-b"), calls)
+
+    def test_setup_mode_skips_call(self):
+        calls: list = []
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 9, 9, 9"})}
+        res = preview_3d_script(
+            "BLOCK 1, 1, 1\n",
+            setup_script="CALL 'm' PARAMETERS\n",
+            macro_resolver=_table_resolver(table, calls),
+        )
+        self.assertEqual(calls, [])  # master script 里的 CALL 不执行（MVP 近似）
+        self.assertEqual(len(res.meshes), 1)
+
+
+class TestCallMacroDiagnostics(unittest.TestCase):
+    """P1：CALL 结构化依赖诊断（不执行也要可诊断）。"""
+
+    def test_no_resolver_warns_once_per_macro_with_name(self):
+        script = "CALL '煤气报警器立面' PARAMETERS _A=_A\nCALL '煤气报警器立面' PARAMETERS\n"
+        res = preview_3d_script(script)
+        warns = [w for w in res.warnings_structured if w.code == "MACRO_NO_RESOLVER"]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("煤气报警器立面", warns[0].message)
+        self.assertIn("未配置图库上下文", warns[0].message)
+        # 预期内行为变化：不再报"未支持命令 CALL"
+        self.assertFalse(any("未支持命令 CALL" in w for w in res.warnings))
+        self.assertEqual(res.meshes, [])
+
+    def test_missing_ambiguous_error_diagnostics(self):
+        table = {
+            "lost": MacroLookup(status="missing", name="lost", message="已配置图库中没有该名称"),
+            "dup": MacroLookup(status="ambiguous", name="dup", message="候选: a.gsm / b.gsm"),
+            "bad": MacroLookup(status="error", name="bad", message="密码保护，无法转换"),
+        }
+        res = preview_3d_script(
+            "CALL 'lost' PARAMETERS\nCALL 'dup' PARAMETERS\nCALL 'bad' PARAMETERS\n",
+            macro_resolver=_table_resolver(table),
+        )
+        codes = _codes(res)
+        for code, name, snippet in (
+            ("MACRO_MISSING", "lost", "没有该名称"),
+            ("MACRO_AMBIGUOUS", "dup", "候选"),
+            ("MACRO_ERROR", "bad", "密码保护"),
+        ):
+            matched = [w for w in res.warnings_structured if w.code == code]
+            self.assertEqual(len(matched), 1, f"{code} 应恰好一条，实际 {codes}")
+            self.assertIn(name, matched[0].message)
+            self.assertIn(snippet, matched[0].message)
+        self.assertEqual(res.meshes, [])
+
+    def test_parse_fail_without_quoted_name(self):
+        res = preview_3d_script("CALL 煤气报警器 PARAMETERS\n")
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_PARSE_FAIL"]
+        self.assertEqual(len(matched), 1)
+
+    def test_resolved_with_message_warns_guid_mismatch(self):
+        table = {"m": _macro(
+            name="m",
+            message="按名称命中，但 GUID 与 calledmacros 不符",
+            scripts={"3d.gdl": "BLOCK 1, 1, 1"},
+        )}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_GUID_MISMATCH"]
+        self.assertEqual(len(matched), 1)
+        self.assertIn("GUID", matched[0].message)
+        self.assertEqual(len(res.meshes), 1)  # resolved 仍执行
+
+    def test_macro_without_mode_script_warns_no_script(self):
+        table = {"m": _macro(name="m", scripts={"2d.gdl": "LINE2 0, 0, 1, 1"})}
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_NO_SCRIPT"]
+        self.assertEqual(len(matched), 1)
+        self.assertIn("没有 3D 脚本", matched[0].message)
+        self.assertEqual(res.meshes, [])
+
+    def test_child_warnings_passthrough_with_macro_prefix(self):
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 1, 1\n"})}  # 参数不足
+        res = preview_3d_script("CALL 'm' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertTrue(any(w.startswith("[宏 m] ") for w in res.warnings))
+        child_warns = [w for w in res.warnings_structured if "宏 m" in w.message]
+        self.assertTrue(child_warns)
+        # line/code 原样保留（BLOCK 参数不足是宏内第 1 行）
+        self.assertEqual(child_warns[0].line, 1)
+        self.assertIn("参数不足", child_warns[0].message)
+
+
+class TestCallMacroGuards(unittest.TestCase):
+    """P3 闸门：递归环 / 深度 / 总次数预算。"""
+
+    def test_recursion_cycle_detected(self):
+        table = {"self宏": _macro(name="self宏", scripts={"3d.gdl": "CALL 'self宏' PARAMETERS"})}
+        res = preview_3d_script("CALL 'self宏' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_RECURSION"]
+        self.assertEqual(len(matched), 1)
+        self.assertIn("self宏", matched[0].message)
+        self.assertEqual(res.meshes, [])
+
+    def test_depth_limit(self):
+        # m0 → m1 → … → m19（末级 BLOCK）；深度上限 16 → 链路在 m15 处被截断
+        table = {}
+        for i in range(19):
+            table[f"m{i}"] = _macro(name=f"m{i}", scripts={"3d.gdl": f"CALL 'm{i + 1}' PARAMETERS"})
+        table["m19"] = _macro(name="m19", scripts={"3d.gdl": "BLOCK 1, 1, 1"})
+        res = preview_3d_script("CALL 'm0' PARAMETERS\n", macro_resolver=_table_resolver(table))
+        self.assertIn("MACRO_DEPTH_LIMIT", _codes(res))
+        self.assertEqual(res.meshes, [])  # 末级 BLOCK 不可达
+
+    def test_total_call_budget(self):
+        # 300 次 CALL 超过 256 预算：几何截断 + MACRO_BUDGET 只警一次
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 0.01, 0.01, 0.01"})}
+        res = preview_3d_script(
+            "FOR i = 1 TO 300\nCALL 'm' PARAMETERS\nNEXT i\n",
+            macro_resolver=_table_resolver(table),
+        )
+        from openbrep.gdl_previewer import DEFAULT_CALL_BUDGET
+        self.assertEqual(len(res.meshes), DEFAULT_CALL_BUDGET)
+        matched = [w for w in res.warnings_structured if w.code == "MACRO_BUDGET"]
+        self.assertEqual(len(matched), 1)
+
+    def test_timeout_gate(self):
+        # 耗时闸门极小 → 第一次 CALL 前即超时（共享 deadline）
+        table = {"m": _macro(name="m", scripts={"3d.gdl": "BLOCK 1, 1, 1"})}
+        res = preview_3d_script(
+            "CALL 'm' PARAMETERS\n",
+            wall_clock_limit=1e-9,
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertIn("MACRO_TIMEOUT", _codes(res))
+        self.assertEqual(res.meshes, [])
+
+
+# ── P4：2D 命令覆盖扩展（POLY2_ 系状态码 + 文本链）──────────────────────
+# 面向真实图库对象（WL-AC 开关面板宏普查）：poly2_b{5} 主导、define style{2}
+# + paragraph + textblock + richtext2 文本标签链。
+
+import math as _math
+
+
+class TestPoly2Extended(unittest.TestCase):
+    """P4：POLY2_ / POLY2_A / POLY2_B / POLY2_B{5} 附加状态码引擎。"""
+
+    HEADER5 = "0, 3, 1, 1, 0, 0, 1, 0, 0, 1, 0"  # frame_fill 之后的 11 个头值
+
+    def test_rect_frame_fill_draws_fill_and_contour(self):
+        # frame_fill = 1+2+4 = 7（轮廓+填充+闭合），5 记录闭合矩形
+        script = (
+            "poly2_b{5} 5, 7, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  1, 0, 1,\n  1, 1, 1,\n  0, 1, 1,\n  0, 0, 1\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [True])
+        self.assertEqual(res.warnings, [])
+
+    def test_real_fragment_center_angle_arcs_tessellated(self):
+        # 煤气报警器 2d.gdl 真实片段：2 条 900+4001 半圆弧
+        script = (
+            "poly2_b{5} 5, 2, " + self.HEADER5 + ",\n"
+            "  -178.1960276837, 9.752005022221, 1,\n"
+            "  -178.2815750523, 9.752005022221, 900,\n"
+            "  0, 180, 4001,\n"
+            "  -178.2815750523, 9.752005022221, 900,\n"
+            "  0, 180, 4001\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        pts = res.polygons[0]
+        # tessellated：点数(38) > 记录数(5)
+        self.assertGreater(len(pts), 5)
+        # 抽查弧上一点到圆心距离 ≈ r（圆心到前一轮廓点的距离）
+        cx, cy = -178.2815750523, 9.752005022221
+        r = abs(-178.1960276837 - cx)
+        d = _math.hypot(pts[10][0] - cx, pts[10][1] - cy)
+        self.assertAlmostEqual(d, r, places=6)
+        # frame_fill=2：仅填充
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [False])
+
+    def test_center_endpoint_arc_3000(self):
+        # 圆心 (0,0) + 终点 (0,1)：从 (1,0) 逆时针 90°
+        script = (
+            "poly2_b{5} 3, 1, " + self.HEADER5 + ",\n"
+            "  1, 0, 1,\n  0, 0, 900,\n  0, 1, 3000\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        pts = res.polygons[0]
+        self.assertAlmostEqual(pts[-1][0], 0.0, places=9)
+        self.assertAlmostEqual(pts[-1][1], 1.0, places=9)
+        # 中间点应在圆弧上（r=1）
+        mid = pts[len(pts) // 2]
+        self.assertAlmostEqual(_math.hypot(mid[0], mid[1]), 1.0, places=6)
+
+    def test_radius_angle_arc_2000(self):
+        # 从 (1,0) 沿上一段方向（+x）左法向取圆心 (1, 0.5)，r=0.5 转 90°
+        # → 终点 (1.5, 0.5)
+        script = (
+            "poly2_b{5} 3, 1, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  1, 0, 1,\n  0.5, 90, 2000\n"
+        )
+        res = preview_2d_script(script)
+        pts = res.polygons[0]
+        self.assertAlmostEqual(pts[-1][0], 1.5, places=6)
+        self.assertAlmostEqual(pts[-1][1], 0.5, places=6)
+
+    def test_contour_separator_emits_two_polygons(self):
+        # -1 洞分隔：外框 + 内框 → 两个独立 polygon（MVP 不做布尔减除）
+        script = (
+            "poly2_b{5} 9, 3, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  4, 0, 1,\n  4, 4, 1,\n  0, 4, 1,\n"
+            "  0, 0, -1,\n"
+            "  1, 1, 1,\n  2, 1, 1,\n  2, 2, 1,\n  1, 2, 1\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 2)
+        self.assertEqual(res.polygon_fills, [True, True])
+        self.assertEqual(res.polygon_contours, [True, True])
+
+    def test_frame_fill_bits(self):
+        base = "poly2_b{5} 4, %d, " + self.HEADER5 + ",\n  0,0,1,\n  1,0,1,\n  1,1,1,\n  0,1,1\n"
+        res = preview_2d_script(base % 1)
+        self.assertEqual(res.polygon_fills, [False])
+        self.assertEqual(res.polygon_contours, [True])
+        res = preview_2d_script(base % 2)
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [False])
+        # frame_fill=0：不 emit + warning
+        res = preview_2d_script(base % 0)
+        self.assertEqual(res.polygons, [])
+        self.assertTrue(any("frame_fill=0" in w for w in res.warnings))
+
+    def test_unknown_status_code_corner_plus_single_warning(self):
+        script = (
+            "poly2_b{5} 4, 1, " + self.HEADER5 + ",\n"
+            "  0, 0, 1,\n  1, 0, 77,\n  1, 1, 77,\n  0, 1, 1\n"
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(len(res.polygons[0]), 4)  # 77 码记录按角点处理
+        warns = [w for w in res.warnings if "未知状态码 77" in w]
+        self.assertEqual(len(warns), 1)  # 每个码值只警一次
+
+    def test_poly2_legacy_and_rect2_alignment_unchanged(self):
+        # 旧 POLY2 / RECT2：fill=False, contour=True，掩码启发式不回归
+        res = preview_2d_script("RECT2 0, 0, 1, 1\nPOLY2 3, 1, 0,0, 1,0, 0,1\n")
+        self.assertEqual(len(res.polygons), 2)
+        self.assertEqual(res.polygon_fills, [False, False])
+        self.assertEqual(res.polygon_contours, [True, True])
+
+    def test_poly2_b_variants_header_sizes(self):
+        # POLY2_（头 2）/ POLY2_A（头 3）/ POLY2_B（头 4）同一解析路径
+        rec = "  0,0,1,\n  1,0,1,\n  1,1,1\n"
+        res = preview_2d_script("poly2_ 3, 1,\n" + rec)
+        self.assertEqual(len(res.polygons), 1)
+        res = preview_2d_script("poly2_a 3, 1, 5,\n" + rec)
+        self.assertEqual(len(res.polygons), 1)
+        res = preview_2d_script("poly2_b 3, 1, 5, 6,\n" + rec)
+        self.assertEqual(len(res.polygons), 1)
+
+    def test_record_count_cap(self):
+        script = "poly2_b{5} 20000, 1, " + self.HEADER5 + ",\n  0,0,1\n"
+        res = preview_2d_script(script)
+        self.assertEqual(res.polygons, [])
+        self.assertTrue(any("超过上限" in w for w in res.warnings))
+
+
+class TestTextChain(unittest.TestCase):
+    """P4：define style{2} + paragraph + textblock + richtext2 / TEXT2 文本链。"""
+
+    CHAIN = (
+        'define style{2}    "AC_STYLE_1" "微软雅黑", 1.2, 0\n'
+        'paragraph\t\t"AC_PRG_104"      1, 0, 0, 0, 1\n'
+        '    set style "AC_STYLE_1"\n'
+        '        "GAS"\n'
+        'endparagraph\n'
+        'textblock\t\t"AC_TEXTBLOCK_104" 0, 8, 0, 0.5, 1, 1,\n'
+        '        "AC_PRG_104"\n'
+    )
+
+    def test_full_chain_emit_text_with_transform(self):
+        # mul2 A/0.3, B/0.21（A=0.3, B=0.21 → 等比 1）+ add2 平移生效；
+        # size = 1.2mm × 0.001 × 50（名义 1:50 出图比例），不随 MUL2 缩放
+        script = (
+            "mul2 A/0.3, B/0.21\n"
+            "add2 178.4960276837, -9.652005022221\n"
+            + self.CHAIN
+            + 'richtext2\t\t-178.2779917466, 9.654526543995, "AC_TEXTBLOCK_104"\n'
+        )
+        res = preview_2d_script(script, parameters={"A": 0.3, "B": 0.21})
+        self.assertEqual(len(res.texts), 1)
+        t = res.texts[0]
+        self.assertEqual(t.text, "GAS")
+        self.assertAlmostEqual(t.size, 0.0012 * 50, places=9)
+        # 位置过 _p2（继承 mul2/add2 变换）
+        self.assertAlmostEqual(t.x, -178.2779917466 + 178.4960276837, places=9)
+        self.assertAlmostEqual(t.y, 9.654526543995 - 9.652005022221, places=9)
+        # 真实脚本不平衡 DEL（mul2/add2 无配对）——只许这一条栈收敛警告
+        self.assertEqual(res.warnings, ["ADD/DEL 栈未平衡，自动收敛 DEL 2"])
+
+    def test_text2_uses_current_set_style(self):
+        script = (
+            'define style{2} "S1" "Arial", 2.0, 0\n'
+            'set style "S1"\n'
+            'text2 1, 2, "hi"\n'
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.texts), 1)
+        self.assertEqual(res.texts[0].text, "hi")
+        self.assertAlmostEqual(res.texts[0].size, 0.002 * 50, places=9)
+        self.assertEqual(res.texts[0].x, 1.0)
+        self.assertEqual(res.texts[0].y, 2.0)
+        # 顶层 SET STYLE 不再落入静默 no-op，也不报"未支持命令"
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+
+    def test_text2_numeric_and_env_expr(self):
+        res = preview_2d_script('text2 0, 0, A/2\n', parameters={"A": 3})
+        self.assertEqual(res.texts[0].text, "1.5")
+
+    def test_missing_textblock_reference_warns_not_crash(self):
+        res = preview_2d_script('richtext2 0, 0, "NOPE"\n')
+        self.assertEqual(res.texts, [])
+        self.assertTrue(any("未定义的 TEXTBLOCK" in w for w in res.warnings))
+
+    def test_missing_style_reference_warns_not_crash(self):
+        script = (
+            'paragraph "P1" 1, 0, 0, 0, 1\n'
+            '    set style "GHOST"\n'
+            '        "X"\n'
+            'endparagraph\n'
+            'textblock "T1" 0, 8, 0, 0.5, 1, 1, "P1"\n'
+            'richtext2 0, 0, "T1"\n'
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(len(res.texts), 1)  # 文本仍 emit，size=0
+        self.assertEqual(res.texts[0].size, 0.0)
+        self.assertTrue(any("未定义的样式" in w for w in res.warnings))
+
+    def test_paragraph_multi_string_concat(self):
+        script = (
+            'paragraph "P1" 1, 0, 0, 0, 1\n'
+            '    "AB"\n'
+            '    "CD"\n'
+            'endparagraph\n'
+            'textblock "T1" 0, 8, 0, 0.5, 1, 1, "P1"\n'
+            'richtext2 0, 0, "T1"\n'
+        )
+        res = preview_2d_script(script)
+        self.assertEqual(res.texts[0].text, "ABCD")
+
+
+class TestP4SilentAndMacroMerge(unittest.TestCase):
+    """P4：属性命令静默 + CALL 宏内 2D 命令结果合并。"""
+
+    def test_fill_line_property_hotline2_silent(self):
+        script = "fill 1\nline_property 0\nhotline2 0,0,1,1\nhotarc2 0,0,1,0,90\n"
+        res = preview_2d_script(script)
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+        # 3D 路径同样静默（FILL/LINE_PROPERTY 是属性设置语句）
+        res3d = preview_3d_script("fill 1\nline_property 0\n")
+        self.assertFalse(any("未支持命令" in w for w in res3d.warnings))
+
+    def test_macro_2d_poly2_and_texts_merge_into_caller(self):
+        macro_2d = (
+            "poly2_b{5} 4, 3, 0, 3, 1, 1, 0, 0, 1, 0, 0, 1, 0,\n"
+            "  0,0,1,\n  1,0,1,\n  1,1,1,\n  0,1,1\n"
+            'define style{2} "S" "Arial", 1.0, 0\n'
+            'paragraph "P" 1, 0, 0, 0, 1\n'
+            '    set style "S"\n'
+            '        "LBL"\n'
+            'endparagraph\n'
+            'textblock "T" 0, 8, 0, 0.5, 1, 1, "P"\n'
+            'richtext2 0.5, 0.5, "T"\n'
+        )
+        table = {"label宏": _macro(name="label宏", scripts={"2d.gdl": macro_2d})}
+        res = preview_2d_script(
+            "CALL 'label宏' PARAMETERS\n",
+            macro_resolver=_table_resolver(table),
+        )
+        self.assertEqual(len(res.polygons), 1)
+        self.assertEqual(res.polygon_fills, [True])
+        self.assertEqual(res.polygon_contours, [True])
+        self.assertEqual(len(res.texts), 1)
+        self.assertEqual(res.texts[0].text, "LBL")
+        self.assertAlmostEqual(res.texts[0].size, 0.001 * 50, places=9)
+
+
+class TestP14RealWorldWindowSupport(unittest.TestCase):
+    """P14：真实图库窗构件（向日葵格子窗）需要的预览能力——括号感知条件、
+    DIM/二维数组、字符串数组比较、GROUP 布尔近似、PRISM_ 轮廓洞、LIN_、
+    以及 WALLHOLE/SECT_FILL/HOTSPOT 等已知非渲染命令。"""
+
+    def test_condition_paren_aware_or_and(self):
+        # 旧实现在括号内的 or 处切碎 → 条件求值失败 → 整个 IF 块（含 ELSE）
+        # 被跳过，零几何。修复后 ELSE 正常执行。
+        script = (
+            "IF (a=4 or a=24) and flag THEN\n"
+            "BLOCK 9, 9, 9\n"
+            "ELSE\n"
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script, parameters={"a": 1, "flag": 0})
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+
+        res_if = preview_3d_script(script, parameters={"a": 4, "flag": 1})
+        self.assertEqual(len(res_if.meshes), 1)
+        self.assertAlmostEqual(max(res_if.meshes[0].x), 9.0)
+
+    def test_condition_pipe_and_ampersand(self):
+        script = (
+            "IF (a = 1 | a = 2) & b > 0 THEN\n"
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script, parameters={"a": 2, "b": 1})
+        self.assertEqual(len(res.meshes), 1)
+        res_no = preview_3d_script(script, parameters={"a": 3, "b": 1})
+        self.assertEqual(len(res_no.meshes), 0)
+
+    def test_dim_2d_array_and_element_assign(self):
+        script = (
+            "dim coord[3][2]\n"
+            "coord[1][1] = 5\n"
+            "coord[2][2] = coord[1][1] + 1\n"
+            "coord[num+2][1] = 7\n"
+            "BLOCK coord[1][1], coord[2][2], 1\n"
+        )
+        res = preview_3d_script(script, parameters={"num": 0})
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 5.0)
+        self.assertAlmostEqual(max(res.meshes[0].y), 6.0)
+
+    def test_dim_dynamic_array_and_nested_subscript(self):
+        script = (
+            "dim idx[]\n"
+            "dim val[][2]\n"
+            "idx[1] = 2\n"
+            "val[1][1] = 3\n"
+            "val[2][1] = 4\n"
+            "BLOCK val[idx[1]][1], 1, 1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 4.0)
+
+    def test_string_array_and_string_condition(self):
+        script = (
+            'dim pt[2]\n'
+            'pt[1] = "无"\n'
+            'pt[2] = "开"\n'
+            'IF pt[2]="开" or pt[2]="左开" THEN\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+            'IF pt[1]="开" THEN\n'
+            "BLOCK 2, 2, 2\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+
+    def test_backtick_string_and_not_func_and_exor(self):
+        script = (
+            "trim = `开`\n"
+            "IF trim <> `关` THEN\n"
+            "BLOCK 1, 1, 1\n"
+            "ENDIF\n"
+            "x = 5 * not(z)\n"
+            "y = 2 * (a exor b)\n"
+            "ADDX x + y\n"
+            "BLOCK 1, 1, 1\n"
+        )
+        res = preview_3d_script(script, parameters={"z": 0, "a": 1, "b": 0})
+        self.assertEqual(len(res.meshes), 2)
+        self.assertAlmostEqual(max(res.meshes[1].x), 8.0)
+
+    def test_group_place_and_bool_approximation(self):
+        script = (
+            'GROUP "ga"\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDGROUP\n"
+            'GROUP "gb"\n'
+            "ADDX 5\n"
+            "BLOCK 1, 1, 1\n"
+            "DEL 1\n"
+            "ENDGROUP\n"
+            "u = ADDGROUP(\"ga\",\"gb\")\n"
+            "s = SUBGROUP(\"ga\",\"gb\")\n"
+            "i = ISECTGROUP(\"ga\",\"gb\")\n"
+            "PLACEGROUP u\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 2)
+
+        res_sub = preview_3d_script(script.replace("PLACEGROUP u", "PLACEGROUP s"))
+        # SUBGROUP(a,b) ≈ 并集：减体一并渲染（与 P14 前组内几何直出一致）
+        self.assertEqual(len(res_sub.meshes), 2)
+
+        res_isect = preview_3d_script(script.replace("PLACEGROUP u", "PLACEGROUP i"))
+        self.assertEqual(len(res_isect.meshes), 1)
+        # ISECTGROUP(a,b) ≈ b：gb 的 BLOCK 在 x=5 处
+        self.assertAlmostEqual(max(res_isect.meshes[0].x), 6.0)
+
+    def test_group_bool_statement_form(self):
+        # 语句形式（无赋值目标）：结果回写第一个算子组
+        script = (
+            'GROUP "body"\n'
+            "BLOCK 4, 1, 1\n"
+            "ENDGROUP\n"
+            'GROUP "holes"\n'
+            "ADDX 1\n"
+            "CYLIND 0.5, 0.1\n"
+            "DEL 1\n"
+            "ENDGROUP\n"
+            'SUBGROUP "body", "holes"\n'
+            'PLACEGROUP "body"\n'
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 2)
+
+    def test_inline_if_then_else(self):
+        script = (
+            "IF flag=1 THEN x=3 ELSE x=1\n"
+            "BLOCK x, 1, 1\n"
+        )
+        res_on = preview_3d_script(script, parameters={"flag": 1})
+        self.assertAlmostEqual(max(res_on.meshes[0].x), 3.0)
+        res_off = preview_3d_script(script, parameters={"flag": 0})
+        self.assertAlmostEqual(max(res_off.meshes[0].x), 1.0)
+
+    def test_group_content_not_rendered_until_placed(self):
+        script = (
+            'GROUP "hidden"\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDGROUP\n"
+            "BLOCK 2, 2, 2\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 2.0)
+
+    def test_prism_hole_contour(self):
+        # 外方框 + 内方洞：状态码 -1 结束轮廓
+        script = (
+            "PRISM_ 10, 0.1,\n"
+            "0,0,15,\n0,2,15,\n2,2,15,\n2,0,15,\n0,0,-1,\n"
+            "0.5,0.5,15,\n0.5,1.5,15,\n1.5,1.5,15,\n1.5,0.5,15,\n0.5,0.5,-1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertFalse(any("盖帽三角化失败" in w for w in res.warnings))
+        mesh = res.meshes[0]
+        # 顶点：外 4 + 内 4，底顶两环 = 16；面：侧壁 2 环 ×4×2 = 16，
+        # 盖帽每盖 8 三角 ×2 = 16，共 32
+        self.assertEqual(len(mesh.x), 16)
+        self.assertEqual(len(mesh.i), 32)
+
+    def test_prism_hole_cap_covers_opening_not_glass(self):
+        # 洞区域必须不在盖帽面上：洞中心点的 z 面不存在 → 用面数近似校验
+        # （外轮廓盖帽回退会多出警告）
+        script = (
+            "PRISM_ 10, 0.1,\n"
+            "0,0,15,\n0,2,15,\n2,2,15,\n2,0,15,\n0,0,-1,\n"
+            "0.5,0.5,15,\n0.5,1.5,15,\n1.5,1.5,15,\n1.5,0.5,15,\n0.5,0.5,-1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertFalse(any("回退外轮廓盖帽" in w for w in res.warnings))
+
+    def test_group_baseline_no_double_transform(self):
+        # 组外变换（GROUP 前生效）不进入组内容，PLACEGROUP 只应用一次当前
+        # 变换——向日葵格子窗 addx -a/2 未 DEL 导致框体双移位的回归测试。
+        script = (
+            "ADDX 1\n"
+            'GROUP "g"\n'
+            "BLOCK 2, 1, 1\n"
+            "ENDGROUP\n"
+            'PLACEGROUP "g"\n'
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(min(res.meshes[0].x), 1.0)
+        self.assertAlmostEqual(max(res.meshes[0].x), 3.0)
+
+    def test_group_place_many_under_different_transforms(self):
+        # 定义一次、在不同变换下多次放置（椅子腿模式）
+        script = (
+            'GROUP "leg"\n'
+            "BLOCK 0.1, 0.1, 1\n"
+            "ENDGROUP\n"
+            'PLACEGROUP "leg"\n'
+            "ADDX 2\n"
+            'PLACEGROUP "leg"\n'
+            "DEL 1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 2)
+        self.assertAlmostEqual(min(res.meshes[0].x), 0.0)
+        self.assertAlmostEqual(min(res.meshes[1].x), 2.0)
+
+    def test_lin_3d_wire(self):
+        script = "ADDX 1\nLIN_ 0,0,0, 2,0,0\n"
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.wires), 1)
+        self.assertEqual(res.wires[0][0], (1.0, 0.0, 0.0))
+        self.assertEqual(res.wires[0][1], (3.0, 0.0, 0.0))
+
+    def test_wallhole_sect_fill_hotspot_are_silent(self):
+        script = (
+            "SECT_FILL 16,-1,1,1\n"
+            "WALLHOLE 4,1, 0,0,15, 1,0,15, 1,1,15, 0,1,15\n"
+            "HOTSPOT 0,0,0,1\n"
+            "BLOCK 1,1,1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertFalse(any("未支持命令" in w for w in res.warnings))
+
+    def test_group_endgroup_imbalance_warns_and_recovers(self):
+        script = 'GROUP "g"\nBLOCK 1,1,1\n'
+        res = preview_3d_script(script)
+        self.assertTrue(any("GROUP/ENDGROUP 未平衡" in w for w in res.warnings))
+
+
+class TestP14bRealWorldLibraryParts(unittest.TestCase):
+    """P14 第二批：真实图库构件（DAU 停车场、坡道、楼梯、幕墙窗棂）需要的
+    预览能力——{n} 变体、CPRISM 系、ELSE 同行终止、NSP/PUT 栈、ATN/PI/
+    STRSTR、顶层冒号多语句、CUTPLANE/BINARY/XWALL 降级、BASE/COOR 拓扑。"""
+
+    def test_command_variant_tag_stripped(self):
+        # vert{2} 等 {n} 版本标签：剥离后按基本形态解析
+        script = (
+            "vert{2} 0, 0, 0, 1\n"
+            "vert{2} 1, 0, 0, 1\n"
+            "vert{2} 0, 1, 0, 1\n"
+            "edge 1, 2, -1, -1, 0\n"
+            "edge 2, 3, -1, -1, 0\n"
+            "edge 3, 1, -1, -1, 0\n"
+            "pgon 3, 0, -1, 1, 2, 3\n"
+            "body -1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+
+    def test_else_inline_statement_terminates_block(self):
+        # ELSE 同行带语句 = 整个 IF 块结束（无需 ENDIF）
+        script = (
+            "IF flag = 1 THEN\n"
+            "  BLOCK 1, 1, 1\n"
+            "ELSE BLOCK 2, 2, 2\n"
+            "ENDIF\n"
+            "BLOCK 3, 3, 3\n"
+        )
+        res = preview_3d_script(script, parameters={"flag": 1})
+        self.assertEqual(len(res.meshes), 2)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+        self.assertAlmostEqual(max(res.meshes[1].x), 3.0)
+        res_off = preview_3d_script(script, parameters={"flag": 0})
+        self.assertEqual(len(res_off.meshes), 2)
+        self.assertAlmostEqual(max(res_off.meshes[0].x), 2.0)
+
+    def test_nested_block_if_closed_by_inline_else(self):
+        # DAU 实例：外层块 IF 的嵌套块 IF 由 ELSE 同行语句终止，外层 ENDIF
+        # 不能被误吞
+        script = (
+            "IF a = 1 THEN\n"
+            "  IF b = 0 THEN\n"
+            "    BLOCK 1, 1, 1\n"
+            "  ELSE BLOCK 2, 2, 2\n"
+            "ENDIF\n"
+            "BLOCK 9, 9, 9\n"
+        )
+        res = preview_3d_script(script, parameters={"a": 1, "b": 0})
+        self.assertEqual(len(res.meshes), 2)
+        res2 = preview_3d_script(script, parameters={"a": 1, "b": 1})
+        self.assertEqual(len(res2.meshes), 2)
+        self.assertAlmostEqual(max(res2.meshes[0].x), 2.0)
+
+    def test_top_level_colon_statements(self):
+        # 顶层冒号多语句；反引号字符串内的冒号不拆
+        script = "x = 1: y = 2\nBLOCK x + y, 1, 1\n"
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 3.0)
+
+        script_bt = "s = `比例:1`\nIF s = `比例:1` THEN\nBLOCK 1, 1, 1\nENDIF\n"
+        res_bt = preview_3d_script(script_bt)
+        self.assertEqual(len(res_bt.meshes), 1)
+
+    def test_nsp_put_use_builtins(self):
+        # NSP = PUT 栈值个数；use(nsp) 消费全部
+        script = (
+            "PUT 0, 0, 0, 15\n"
+            "PUT 1, 0, 0, 15\n"
+            "PUT 1, 1, 0, 15\n"
+            "n = NSP / 4\n"
+            "PRISM_ n, 0.5, USE(NSP)\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.5)
+
+    def test_atn_pi_strstr_glob_modpar(self):
+        script = (
+            "ang = ATN(1)\n"
+            "IF STRSTR(\"abc\", \"b\") = 2 THEN\n"
+            "BLOCK PI / 4 * 0 + 1, 1, 1\n"
+            "ENDIF\n"
+            "IF GLOB_MODPAR_NAME = \"x\" THEN\n"
+            "BLOCK 9, 9, 9\n"
+            "ENDIF\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 1.0)
+
+    def test_get_in_expression(self):
+        script = "PUT 0.7\nv = GET(1)\nBLOCK v, 1, 1\n"
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].x), 0.7)
+
+    def test_cprism_basic_and_v4(self):
+        script = (
+            'CPRISM_ "m1", "m2", "m3", 4, 0.2,\n'
+            "0, 0, 15,\n1, 0, 15,\n1, 1, 15,\n0, 1, 15\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        self.assertAlmostEqual(max(res.meshes[0].z), 0.2)
+
+        script_v4 = (
+            "cprism_{4} lm, lm, lm, 7,\n"
+            "4, 0.3,\n"
+            "0, 0, 0, 15, lm,\n"
+            "2, 0, 0, 15, lm,\n"
+            "2, 2, 0, 15, lm,\n"
+            "0, 2, 0, -1, lm\n"
+        )
+        res_v4 = preview_3d_script(script_v4, parameters={"lm": 1})
+        self.assertEqual(len(res_v4.meshes), 1)
+        self.assertAlmostEqual(max(res_v4.meshes[0].x), 2.0)
+
+    def test_prism_arc_status_codes(self):
+        # 900 圆心 + 4015 起角/圆心角弧：直角边 + 四分之一圆角
+        script = (
+            "PRISM_ 5, 0.1,\n"
+            "0, 0, 15,\n"
+            "1, 0, 900,\n"
+            "0, 90, 4015,\n"
+            "0, 1, 15,\n"
+            "0, 0, -1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+        # 弧展开后顶点数远大于 5
+        self.assertGreater(len(res.meshes[0].x), 10)
+
+    def test_xwall_binary_cutplane_warn_once(self):
+        script = (
+            "BINARY 0, 1, 1\n"
+            "BINARY 0, 1, 2\n"
+            "XWALL_{2} 1, 2, 3, 4, 1\n"
+            "CUTPLANE\n"
+            "BLOCK 1, 1, 1\n"
+            "CUTEND\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)  # 未裁剪，保留 BLOCK
+        binary_warns = [w for w in res.warnings if "BINARY" in w]
+        cut_warns = [w for w in res.warnings if "暂不支持" in w and "CUT" in w.upper()]
+        xwall_warns = [w for w in res.warnings if "XWALL" in w]
+        self.assertEqual(len(binary_warns), 1)
+        self.assertEqual(len(cut_warns), 1)
+        self.assertEqual(len(xwall_warns), 1)
+
+    def test_base_and_coor_polygon(self):
+        script = (
+            "BASE\n"
+            "VERT 0, 0, 0\n"
+            "VERT 1, 0, 0\n"
+            "VERT 0, 1, 0\n"
+            "COOR 2, -1, -2, -3\n"
+            "BODY 1\n"
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)
+
+    def test_ntr_transform_stack_depth(self):
+        # NTR() = 变换栈深度（GDL 内置）；DEL NTR()-n 清空到指定深度
+        res = preview_3d_script("ADDX 1\nADDX 2\nDEL NTR()\nBLOCK 1, 1, 1\n")
+        self.assertAlmostEqual(min(res.meshes[0].x), 0.0)
+        res2 = preview_3d_script("ADDX 1\nADDX 2\nDEL NTR() - 1\nBLOCK 1, 1, 1\n")
+        self.assertAlmostEqual(min(res2.meshes[0].x), 1.0)
+
+    def test_killgroup_and_paren_group_ref(self):
+        script = (
+            'GROUP "g1"\n'
+            "BLOCK 1, 1, 1\n"
+            "ENDGROUP\n"
+            'PLACEGROUP ("g1")\n'
+            'KILLGROUP ("g1")\n'
+            'PLACEGROUP ("g1")\n'
+        )
+        res = preview_3d_script(script)
+        self.assertEqual(len(res.meshes), 1)  # 删除后第二次放置为空

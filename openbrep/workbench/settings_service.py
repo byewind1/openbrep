@@ -260,6 +260,11 @@ class WorkbenchSettingsService:
                 from openbrep.codex.provider import default_codex_provider
 
                 self.codex_provider = default_codex_provider()
+        # 双入口（2026-09-17）：这条链路走哪个入口由会话配置决定。替身 provider
+        # 没有 set_entry（测试注入），静默跳过，保持既有语义。
+        from openbrep.codex.provider import bind_codex_entry
+
+        bind_codex_entry(self.codex_provider, self.session.config)
         return self.codex_provider
 
     def _known_codex_status(self) -> dict[str, Any] | None:
@@ -269,8 +274,11 @@ class WorkbenchSettingsService:
             return None
         try:
             return self.codex_provider.status()
-        except Exception:
-            return {"state": "error", "connected": False, "account": None}
+        except Exception as exc:
+            # Keep the same stable code/message contract as the explicit status
+            # route.  Omitting these fields made llm_settings() render the
+            # misleading generic "connection status unknown" message.
+            return {"state": "error", "connected": False, "account": None, **error_response(exc)}
 
     @classmethod
     def _codex_error(cls, exc: BaseException, fallback: str = DEFAULT_FALLBACK) -> dict[str, Any]:
@@ -406,6 +414,12 @@ class WorkbenchSettingsService:
             return self.codex_rate_limits()
         if method == "GET" and route == "/api/settings/llm/codex/models":
             return self.codex_models()
+        if method == "POST" and route == "/api/settings/llm/codex/models/refresh":
+            return self.codex_models_refresh(body or {})
+        if method == "GET" and route == "/api/settings/llm/codex/entry":
+            return self.codex_entry()
+        if method == "POST" and route == "/api/settings/llm/codex/entry":
+            return self.codex_entry(body or {})
         return {"ok": False, "error": f"Unknown route: {method} {route}"}
 
     def llm_settings(self) -> dict[str, Any]:
@@ -416,7 +430,25 @@ class WorkbenchSettingsService:
         codex_block = None
         codex_usable = False
         if codex is not None:
-            codex_block = {key: codex.get(key) for key in ("state", "connected", "codex_available", "account")}
+            codex_block = {
+                key: codex.get(key)
+                for key in (
+                    "state",
+                    "connected",
+                    "codex_available",
+                    "account",
+                    # 双入口（2026-09-17）：状态卡要说清这条链路是哪个入口、
+                    # 哪个 home、哪个认证来源，以及不可用的原因。
+                    "entry",
+                    "entry_label",
+                    "codex_home_kind",
+                    "auth_source",
+                    "models_source",
+                    "provider",
+                    "login_error",
+                    "code",
+                )
+            }
             if codex.get("error"):
                 codex_block["error"] = stabilize_message(codex.get("code"), str(codex["error"]))
             # 只有当前模型本身是 codex 订阅模型时才查目录（避免无谓 RPC）
@@ -445,6 +477,8 @@ class WorkbenchSettingsService:
             "reasoning_effort": str(self.session.config.llm.reasoning_effort or ""),
             # D9：Auto 必须显式保存；默认 fixed，前端只把此事实源装入 draft。
             "codex_routing_mode": self.session.config.llm.effective_codex_routing_mode(),
+            # 双入口：生效入口（默认 managed，保持既有行为）
+            "codex_entry": self.session.config.llm.effective_codex_entry(),
             "codex": codex_block,
         }
 
@@ -554,14 +588,52 @@ class WorkbenchSettingsService:
 
     _MODEL_MISSING = object()
 
+    def _model_catalog(self):
+        """只读模型目录（R3）：校验路径的结构化事实源。"""
+
+        from openbrep.model_catalog import build_model_catalog
+
+        return build_model_catalog(self.session.config)
+
     def _catalog_known_model(self, model: str) -> bool:
-        """非 codex 模型的目录校验（D16 会话路由 fail closed 用）：
-        官方预设 / 自定义 provider 目录 / ollama 自由形态本地 id 三者之一。"""
-        if model in ALL_MODELS:
+        """非 codex 模型的目录校验（D16 会话路由 fail closed 用）。
+
+        R3：以只读目录为**主**校验器（严格解析、身份结构化、冲突显式报错），
+        再对目录有意拒绝的两类引用回退到既有读路径——它们今天被校验器接受，
+        直接替换会让既有配置突然解析失败：
+
+        - `provider/<未列出 id>` 直连（`_match_within_provider(explicit_ref=True)`）；
+        - 裸 alias 冲突时按配置顺序取第一条。
+
+        回退只保留既有宽容度，不放宽语义：目录解析成功即接受；失败时沿用原谓词。
+        目录只在引用**已经规范化**（非空且无首尾空白）时参与判定，因为目录内部会
+        裁剪空白而旧谓词不会——否则带空白/空引用会从拒绝变成接受。接受集合因此与
+        替换前逐例一致（由测试固定）。
+        """
+
+        from openbrep.model_catalog import ModelResolutionError
+        from pathlib import Path
+
+        raw = str(model or "")
+        target = raw.strip()
+        # 目录自身会裁剪空白，旧谓词不会：只对已经规范化的引用走目录，否则逐字
+        # 沿用原谓词，接受集合与替换前逐例一致（含空串与带空白引用）。
+        if target and raw == target:
+            try:
+                catalog = self._model_catalog()
+                catalog.resolve(target)
+                source_path = getattr(self.session, "source_path", None)
+                cwd = str(Path(source_path).resolve()) if source_path else None
+                if not catalog.is_enabled(target, cwd=cwd):
+                    return False
+                return True
+            except ModelResolutionError:
+                pass
+        # 兜底两支保持原样：自定义 provider（含 provider/<未列出 id> 直连与裸 alias
+        # 冲突时的顺序取第一条），以及任何 ollama 前缀（本地自由形态 id）。
+        if self.session.config.llm._find_custom_provider_match(raw) is not None:
             return True
-        if self.session.config.llm._find_custom_provider_match(model) is not None:
-            return True
-        return model_to_provider(model) == "ollama"
+        return model_to_provider(raw) == "ollama"
 
     def update_session_llm_model(self, body: dict[str, Any]) -> dict[str, Any]:
         """D16 会话级模型切换：只改 session 生效模型（+ 会话级 effort），config.toml 零写入。
@@ -780,6 +852,83 @@ class WorkbenchSettingsService:
         )
         return payload
 
+    # ── 双入口（2026-09-17）：Codex 链路走哪条入口 ─────────
+
+    def codex_entry(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """GET/POST /api/settings/llm/codex/entry：读取或切换 Codex 入口。
+
+        - ``managed``（默认，保持既有行为）：OpenBrep 托管 ChatGPT 登录
+          （~/.openbrep/codex）；
+        - ``local``（UI 标为推荐）：只读消费用户自己的 Codex 配置
+          （CODEX_HOME / ~/.codex），不接管认证。
+
+        切换是用户显式动作，写 OpenBrep 自己的 config.toml（绝不写 Codex home），
+        且只写规范枚举；值未变化时不落盘。
+        """
+        from openbrep.codex.entry import (
+            CODEX_ENTRIES,
+            entry_auth_source,
+            entry_label,
+            is_codex_entry,
+            normalize_codex_entry,
+        )
+
+        def describe(entry: str) -> dict[str, Any]:
+            return {
+                "entry": entry,
+                "label": entry_label(entry),
+                "auth_source": entry_auth_source(entry),
+                "recommended": entry == "local",
+            }
+
+        current = normalize_codex_entry(getattr(self.session.config.llm, "codex_entry", ""))
+        if body is None:
+            return {
+                "ok": True,
+                "entry": current,
+                "entries": [describe(item) for item in CODEX_ENTRIES],
+                "local_hint": self._local_codex_hint(),
+            }
+        raw = str(body.get("entry") or "").strip().lower()
+        if not is_codex_entry(raw):
+            return {
+                "ok": False,
+                "code": "invalid_codex_entry",
+                "error": "Codex 入口只允许 local（本机配置）或 managed（OpenBrep 托管）。",
+            }
+        if raw != current:
+            self.session.config.llm.codex_entry = raw
+            save_workbench_config(self.session.config, self.session.config_path)
+        return {
+            "ok": True,
+            "entry": raw,
+            "entries": [describe(item) for item in CODEX_ENTRIES],
+            "local_hint": self._local_codex_hint(),
+            "llm": self.llm_settings(),
+        }
+
+    @staticmethod
+    def _local_codex_hint() -> dict[str, Any]:
+        """只读探测本机 Codex 配置是否可用（供 UI 给「推荐」入口加提示）。
+
+        只回枚举与布尔，不回路径、不回凭据——用户机器上有没有配好 Codex，
+        决定 UI 要不要把本机配置入口往前推。
+        """
+        from openbrep.codex.entry import codex_home_for_entry, codex_home_kind
+        from openbrep.codex.local_config import local_entry_verdict, read_local_codex_config
+
+        try:
+            data = read_local_codex_config(codex_home_for_entry("local"))
+            verdict = local_entry_verdict(data, cli_available=True)
+        except Exception:  # noqa: BLE001 —— 探测失败只表示「没提示」，绝不阻塞设置页
+            return {"detected": False, "state": "error", "models": 0, "home_kind": ""}
+        return {
+            "detected": bool(data.get("config_present")),
+            "state": verdict["state"],
+            "models": len(data.get("models") or []),
+            "home_kind": codex_home_kind(codex_home_for_entry("local"), "local"),
+        }
+
     def codex_login_start(self) -> dict[str, Any]:
         """POST /api/settings/llm/codex/login/start：只触发终端用户浏览器 flow。
 
@@ -859,10 +1008,35 @@ class WorkbenchSettingsService:
         """GET /api/settings/llm/codex/models：model/list 动态目录（不硬编码）。"""
         try:
             provider = self._codex_provider()
+            catalog_reader = getattr(provider, "model_catalog", None)
+            if callable(catalog_reader):
+                return {"ok": True, **catalog_reader()}
             models = provider.models()
         except Exception as exc:
             return self._codex_error(exc)
         return {"ok": True, "models": models}
+
+    def codex_models_refresh(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Refresh one cc-switch provider without accepting runtime material."""
+        if set(body) != {"provider_id"}:
+            return {
+                "ok": False,
+                "code": "invalid_request",
+                "error": "请求参数无效。",
+            }
+        provider_id = body.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            return {
+                "ok": False,
+                "code": "invalid_request",
+                "error": "请求参数无效。",
+            }
+        try:
+            provider = self._codex_provider()
+            payload = provider.refresh_cc_switch_models(provider_id.strip())
+        except Exception as exc:
+            return self._codex_error(exc)
+        return {"ok": True, **payload}
 
     def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         model = str(body.get("model") or self.session.llm_model).strip()
@@ -871,6 +1045,8 @@ class WorkbenchSettingsService:
 
         test_config = copy.deepcopy(self.session.config)
         test_config.llm.model = model
+        if is_codex_qualified_model(model):
+            test_config.llm.reasoning_effort = str(body.get("reasoning_effort") or "").strip()
         test_config.llm.assistant_settings = str(body.get("assistant_settings") or self.session.assistant_settings)
         # 连接测试省 token 但不能砍太狠：强制思考的模型（如 kimi-k2.7-code）
         # 需要 reasoning 余量，max_tokens=8/16 会只出思考不出正文，误报失败
@@ -888,11 +1064,37 @@ class WorkbenchSettingsService:
             # 不压 temperature=0：端点约束与 thinking 模式绑定（kimi-k2.6 关思考
             # 只允许 0.6、k2.7-code 只允许 1），硬塞 0 会 400 误报。temperature
             # 交给 adapter 按 provider 条目级/顶层解析（与生产调用同一行为）。
-            response = self.llm_adapter_factory(test_config.llm).generate(
+            adapter = self.llm_adapter_factory(test_config.llm)
+            generate_kwargs: dict[str, Any] = {"timeout": 20}
+            if is_codex_qualified_model(model):
+                adapter.codex_provider = self._codex_provider()
+                generate_kwargs.update(
+                    codex_intent="CHAT",
+                    codex_reasoning_effort=test_config.llm.codex_reasoning_effort(),
+                )
+            response = adapter.generate(
                 [{"role": "user", "content": "Reply with OK."}],
-                timeout=20,
+                **generate_kwargs,
             )
         except Exception as exc:
+            if is_codex_qualified_model(model):
+                current: BaseException | None = exc
+                stable = error_response(exc)
+                seen: set[int] = set()
+                while current is not None and id(current) not in seen:
+                    seen.add(id(current))
+                    candidate = error_response(current)
+                    if candidate["code"] != "codex_error":
+                        stable = candidate
+                        break
+                    current = current.__cause__ or current.__context__
+                return {
+                    "ok": False,
+                    **stable,
+                    "category": stable["code"],
+                    "model": model,
+                    "duration_ms": int((time.perf_counter() - start) * 1000),
+                }
             return {
                 "ok": False,
                 "error": str(exc) or exc.__class__.__name__,

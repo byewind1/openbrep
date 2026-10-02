@@ -29,8 +29,8 @@ _CROSS_SCRIPT_BUDGET_SEC = 0.5
 # 语义验证 sweep 口径标注（AC-G1-3：如实记录现状口径，本单不改扰动逻辑）：
 # semantic_verifier.DEFAULT_SWEEP_MAX_PARAMS=12、数值 +50% 单向扰动、String 跳过。
 _SWEEP_METHOD = (
-    "semantic_verifier param sweep（≤12 个数值参数，+50% 单向扰动，"
-    "Boolean 0/1 翻转，String 跳过）"
+    "semantic_verifier role-aware param sweep（≤12 个独立驱动，"
+    "VALUES/RANGE 合法替代值，Boolean 0/1 翻转，派生关系复算）"
 )
 # sweep issue 在 verification dict 里的可识别标记（我们自己生成的稳定文案）：
 # errors_caught 条目带 "[<check_type>]" 前缀；remaining_risks 只存 detail 文本。
@@ -208,10 +208,19 @@ def _artifact_quality(result: Any) -> dict:
         for name, marker in _SWEEP_MARKERS.items()
     }
     if semantic_ran:
+        structured_sweep = verification.get("parameter_sweep") or {}
         parametricity = {
             "status": "measured",
             "score": None,      # 响应率评分属 G2/§3.3，本单不出分
-            "coverage": None,
+            "coverage": structured_sweep.get("coverage"),
+            "total_parameter_coverage": structured_sweep.get("total_parameter_coverage"),
+            "tested": structured_sweep.get("tested"),
+            "skipped": structured_sweep.get("skipped"),
+            "unknown": structured_sweep.get("unknown"),
+            "failed": structured_sweep.get("failed"),
+            "eligible": structured_sweep.get("eligible"),
+            "total_parameters": structured_sweep.get("total_parameters"),
+            "samples": list(structured_sweep.get("samples") or []),
             "method": _SWEEP_METHOD,
             "sweep_issues": sweep_counts,
         }
@@ -325,15 +334,57 @@ def _provenance(result: Any, context: dict) -> dict:
         if effective and str(effective) not in model_route:
             model_route.append(str(effective))
     knowledge_sources = object_plan.get("knowledge_sources") or []
-    return {
+    # ST02：只消费 delivery_source 显式引用，不再把 latest 当 after。
+    # 旧记录缺字段 → after=None，consumer 显示「旧记录，未关联」。
+    delivery_source = context.get("delivery_source")
+    if not isinstance(delivery_source, dict):
+        raw_ds = metadata.get("delivery_source")
+        delivery_source = raw_ds if isinstance(raw_ds, dict) else None
+    after_revision = context.get("after_revision")
+    if after_revision is None and delivery_source is not None:
+        after_revision = delivery_source.get("after_revision_id") or None
+    before_revision = delivery_source.get("before_revision_id") if delivery_source else None
+    if before_revision is None:
+        before_revision = metadata.get("before_revision_id") or None
+    provenance = {
         "commit": context.get("commit"),
         "score_profile": SCORE_PROFILE,
         "model_route": model_route,
         "knowledge_snapshot": ",".join(str(s) for s in knowledge_sources) or None,
         "learning_snapshot": None,
-        "before_revision": metadata.get("before_revision_id") or None,
-        "after_revision": context.get("after_revision"),
+        "before_revision": before_revision or None,
+        "after_revision": after_revision or None,
+        "delivery_source": delivery_source,
+        "source_fingerprint": (
+            (delivery_source or {}).get("source_fingerprint") or None
+        ),
     }
+    # ST03：继续关系是交付溯源，而不是 prompt 输入。只保留规范化字段，
+    # 原始指令沿用质量账本的隐私上限，避免任意 request metadata 泄漏进档案。
+    continue_from = context.get("continue_from")
+    if not isinstance(continue_from, dict):
+        raw_continue = metadata.get("continue_from")
+        continue_from = raw_continue if isinstance(raw_continue, dict) else None
+    if continue_from:
+        linked: dict[str, str] = {}
+        origin_run_id = str(
+            continue_from.get("origin_run_id") or continue_from.get("run_id") or ""
+        ).strip()
+        original_instruction = str(
+            continue_from.get("original_instruction")
+            or continue_from.get("instruction")
+            or ""
+        ).strip()
+        intent = str(continue_from.get("intent") or "").strip()
+        if origin_run_id:
+            linked["origin_run_id"] = origin_run_id[:128]
+        if original_instruction:
+            linked["original_instruction"] = _truncate(original_instruction)
+        if intent:
+            linked["intent"] = intent[:32]
+        if linked:
+            provenance["continue_from"] = linked
+    return provenance
 
 
 def build_quality_record(

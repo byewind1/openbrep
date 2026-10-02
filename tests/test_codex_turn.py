@@ -271,7 +271,7 @@ class TestCodexTurnRunnerRecording(unittest.TestCase):
         # 只允许 thread/turn 生命周期方法 + initialize
         self.assertIn("thread/start", methods)
         self.assertIn("turn/start", methods)
-        self.assertIn("thread/delete", methods)
+        self.assertNotIn("thread/delete", methods)
         for forbidden in _TOOL_SURFACE_METHODS:
             self.assertNotIn(forbidden, methods, f"D3 客户端不得调用工具面方法 {forbidden}")
 
@@ -362,7 +362,7 @@ class TestCodexTurnRunnerRecording(unittest.TestCase):
         self.assertEqual(result.error, INTERRUPTED_TEXT)
         methods = [m for m, _ in transport.calls]
         self.assertIn("turn/interrupt", methods)
-        self.assertIn("thread/delete", methods)
+        self.assertNotIn("thread/delete", methods)
 
     def test_commentary_messages_are_never_collected(self):
         runner, client, transport = self._runner()

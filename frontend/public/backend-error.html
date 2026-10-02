@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>OpenBrep — 启动失败</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #16181d;
+    color: #d7dae0;
+    display: flex;
+    justify-content: center;
+    padding: 48px 24px;
+    line-height: 1.7;
+  }
+  main { max-width: 640px; }
+  h1 { font-size: 20px; color: #f0f2f5; margin: 0 0 16px; }
+  h1 .badge {
+    display: inline-block;
+    font-size: 12px;
+    color: #ffb4ab;
+    background: rgba(255, 180, 171, 0.12);
+    border: 1px solid rgba(255, 180, 171, 0.35);
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+  h2 { font-size: 14px; color: #9aa0aa; margin: 28px 0 8px; font-weight: 600; }
+  code, pre {
+    font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 12.5px;
+    background: #0f1115;
+    border: 1px solid #2a2e37;
+    border-radius: 6px;
+  }
+  code { padding: 1px 6px; }
+  pre { padding: 12px 14px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  ol { padding-left: 22px; }
+  li { margin: 6px 0; }
+  a { color: #7ab8ff; }
+  .en { color: #9aa0aa; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="badge">启动失败</span>OpenBrep 后端服务未能启动</h1>
+  <p>应用外壳已正常加载，但内置的 Python 后端进程未能就绪。常见原因包括：首次启动时系统安全校验耗时过长、后端进程崩溃、或端口被其他程序占用。</p>
+  <p class="en">The app shell loaded, but the bundled Python backend failed to start. This is usually a slow first-launch security scan, a backend crash, or a port conflict.</p>
+
+  <h2>请先尝试 / What to try first</h2>
+  <ol>
+    <li>完全退出 OpenBrep（⌘Q），等待几秒后重新打开。首次启动较慢，请耐心等待最多两分钟。</li>
+    <li>确认没有别的程序占用 8765 端口（例如仍在运行的旧版 OpenBrep 或 <code>obr serve</code>）。</li>
+    <li>如果刚从 DMG 拷贝，请确认 OpenBrep.app 位于「应用程序」文件夹，而不是直接从 DMG 里运行。</li>
+  </ol>
+
+  <h2>查看详细错误 / Detailed error</h2>
+  <p>详细原因已写入日志文件：</p>
+  <pre>~/Library/Logs/com.openbrep.app/startup-error.log</pre>
+  <p>在访达中按 <code>⇧⌘G</code> 粘贴上述路径即可打开。也可以在「终端」中运行下面的命令直接看到后端输出：</p>
+  <pre>/Applications/OpenBrep.app/Contents/MacOS/openbrep</pre>
+
+  <h2>仍然失败？ / Still failing?</h2>
+  <p>请把 <code>startup-error.log</code> 的内容（以及系统版本、CPU 架构）一并发到
+    <a href="https://github.com/byewind1/openbrep/issues">GitHub Issues</a>，
+    我们会据此修复。</p>
+</main>
+</body>
+</html>

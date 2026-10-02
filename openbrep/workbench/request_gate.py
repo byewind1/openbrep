@@ -17,10 +17,12 @@ from __future__ import annotations
 LOCK_FREE_POST_ROUTES = frozenset({
     "/api/preview",
     "/api/preview/2d",
+    "/api/project/ui-layout",
     "/api/project/parameters/validate",
     "/api/settings/llm/test",
     "/api/assistant/code-blocks",
     "/api/artifact/reveal",
+
     # Copilot 端点：不触碰 session/project 状态（chat 只读 LLM 配置并回写
     # copilot 自身 buffer；clipboard-buffer/clear、summarize-errors 也只操作
     # copilot 的剪贴板 buffer，该 buffer 有 service 内部锁保护），无需持有
@@ -45,6 +47,7 @@ LOCK_FREE_POST_ROUTES = frozenset({
     # D2：restart 只重建 codex app-server 子进程（不触碰 session/project），
     # JSON-RPC 帧由 transport 内部锁串行化，无需 session 级锁。
     "/api/settings/llm/codex/restart",
+    "/api/settings/llm/codex/models/refresh",
 })
 
 
@@ -55,6 +58,10 @@ def is_lock_free_route(normalized_method: str, route: str) -> bool:
     a long time and must never hold the lock (accepted residual risk: the load
     that follows a successful open-directory dialog happens unlocked).
     """
+    # ST04 proposal listing reconciles revision protections and persists the
+    # observable result, so this single GET participates in session serialization.
+    if normalized_method == "GET" and route == "/api/skill/proposals":
+        return False
     if normalized_method == "GET":
         return True
     if route.startswith("/api/dialog/"):

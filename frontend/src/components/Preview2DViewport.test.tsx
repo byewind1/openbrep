@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { Preview2DPayload } from '../api/types'
 import { Preview2DViewport } from './Preview2DViewport'
 import { fitView2D, toViewBoxString } from './preview2dView'
@@ -92,5 +92,68 @@ describe('Preview2DViewport (P3c)', () => {
     expect(aMinY).toBeCloseTo(bMinY - (20 / 400) * bH, 6)
     expect(aW).toBeCloseTo(bW, 9)
     expect(aH).toBeCloseTo(bH, 9)
+  })
+
+  test('polygon fill/contour flags override default styling', () => {
+    const preview: Preview2DPayload = {
+      ...samplePreview(),
+      // fill=false → fill="none"；contour=false → stroke="none"
+      polygon_fills: [false],
+      polygon_contours: [false],
+    }
+    const { container } = render(<Preview2DViewport preview={preview} warnings={[]} />)
+    const polygon = container.querySelector('.preview2d-polygon')!
+    expect(polygon.getAttribute('fill')).toBe('none')
+    expect(polygon.getAttribute('stroke')).toBe('none')
+  })
+
+  test('renders texts and counts them as entities', () => {
+    const preview: Preview2DPayload = {
+      ...samplePreview(),
+      texts: [{ x: 1, y: 1, text: 'GAS', size: 0.0012 }],
+    }
+    render(<Preview2DViewport preview={preview} warnings={[]} />)
+    expect(screen.getByText('GAS')).toBeTruthy()
+    // 3 几何 + 1 文本
+    expect(screen.getByText('4 entities')).toBeTruthy()
+  })
+
+  test('skips texts with non-positive size', () => {
+    const preview: Preview2DPayload = {
+      ...samplePreview(),
+      texts: [{ x: 1, y: 1, text: 'BAD', size: 0 }],
+    }
+    const { container } = render(<Preview2DViewport preview={preview} warnings={[]} />)
+    expect(container.querySelector('.preview2d-text')).toBeNull()
+  })
+
+  test('shows authoritative source controls and explicit stale state', () => {
+    const onModeChange = vi.fn()
+    const onRefresh = vi.fn()
+    render(
+      <Preview2DViewport
+        preview={samplePreview()}
+        warnings={[]}
+        sourceControl={{
+          active: true,
+          loading: false,
+          error: null,
+          stale: true,
+          showingAuthoritative: true,
+          verificationStatus: 'identity_unverified',
+          onVerify: vi.fn(),
+          onModeChange,
+          onRefresh,
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Archicad authoritative')).toBeTruthy()
+    expect(screen.getByText('参数已变更，请刷新权威预览')).toBeTruthy()
+    expect(screen.getByText('身份未核验')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '本地' }))
+    fireEvent.click(screen.getByRole('button', { name: '刷新权威' }))
+    expect(onModeChange).toHaveBeenCalledWith('local')
+    expect(onRefresh).toHaveBeenCalledTimes(1)
   })
 })

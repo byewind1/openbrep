@@ -17,11 +17,13 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       set({ loading: true, lastError: null })
       const snapshot = await api.fetchSnapshot()
       set(hydrateSnapshot(snapshot, get().compilerSettings, get().llmSettings))
+      await get().refreshTapirStatus()
       await get().loadRecentProjects()
       await get().loadScripts()
       await get().loadRevisions()
       await get().loadAssistantHistory()
       await get().loadMemoryStatus()
+      await get().loadHostVerification()
       set({ loading: false })
     },
 
@@ -43,6 +45,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       await get().loadRevisions()
       await get().loadAssistantHistory()
       await get().loadMemoryStatus()
+      await get().loadHostVerification()
       set({ loading: false })
     },
 
@@ -74,7 +77,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       if (snapshot.ok === false) {
         set({
           loading: false,
-          lastError: snapshot.error ?? 'Failed to import GDL file.',
+          lastError: snapshot.cancelled ? null : snapshot.error ?? 'Failed to import GDL file.',
         })
         return
       }
@@ -93,7 +96,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       if (snapshot.ok === false) {
         set({
           loading: false,
-          lastError: snapshot.error ?? 'Failed to import GSM file.',
+          lastError: snapshot.cancelled ? null : snapshot.error ?? 'Failed to import GSM file.',
         })
         return
       }
@@ -112,7 +115,7 @@ export function createProjectActions({ api, get, set }: WorkbenchActionContext) 
       if (snapshot.ok === false) {
         set({
           loading: false,
-          lastError: snapshot.error ?? 'Failed to import Blender script.',
+          lastError: snapshot.cancelled ? null : snapshot.error ?? 'Failed to import Blender script.',
         })
         return
       }

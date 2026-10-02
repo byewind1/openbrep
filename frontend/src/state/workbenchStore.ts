@@ -25,6 +25,9 @@ import {
   fetchProjectGitStatus,
   fetchPreview2D,
   fetchPreview,
+  fetchEffectiveParameters,
+  fetchAuthoritativePreview,
+  fetchHostVerification,
   fetchRuntimeSettings,
   fetchTapirStatus,
   fetchSnapshot,
@@ -33,6 +36,7 @@ import {
   requestModifyPlan,
   confirmModifyPlan,
   confirmSkillProposal,
+  listSkillProposals,
   getProjectScript,
   initializeProjectGit,
   ignoreMemoryLesson,
@@ -52,6 +56,7 @@ import {
   newProject,
   revealArtifact,
   restoreProjectRevision,
+  getProjectRevisionDiff,
   saveProjectRevision,
   saveProject,
   saveProjectScript,
@@ -81,6 +86,7 @@ import {
   workspaceScan,
   workspaceSearch,
   trashWorkspaceProject,
+  runHostVerification,
 } from '../api/client'
 import { createAssistantActions } from './actions/assistantActions'
 import { createCompileActions } from './actions/compileActions'
@@ -102,6 +108,11 @@ export type { WorkbenchApi, WorkbenchState } from './workbenchStoreTypes'
 const defaultWorkbenchApi: WorkbenchApi = {
   fetchSnapshot,
   fetchPreview,
+  fetchEffectiveParameters,
+  fetchAuthoritativePreview,
+  fetchHostVerification,
+  runHostVerification,
+  listSkillProposals,
   workspaceInit,
   workspaceOpen,
   workspaceClose,
@@ -129,6 +140,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
   saveProjectScript,
   saveProjectRevision,
   restoreProjectRevision,
+  getProjectRevisionDiff,
   fetchProjectGitStatus,
   initializeProjectGit,
   updateProjectGitSettings,
@@ -183,7 +195,7 @@ const defaultWorkbenchApi: WorkbenchApi = {
 }
 
 export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
-  return createStore<WorkbenchState>((set, get) => {
+  const store = createStore<WorkbenchState>((set, get) => {
     const context: WorkbenchActionContext = {
       api,
       get,
@@ -210,6 +222,56 @@ export function createWorkbenchStore(api: WorkbenchApi = defaultWorkbenchApi) {
       },
     }
   })
+  installPreviewQualityReconciler(store)
+  return store
+}
+
+/**
+ * 预览质量对账：快照/加载响应里内嵌的 preview 可能与用户所选质量档不一致
+ * （后端快照按固定档生成；旧后端 payload 无 quality 字段则跳过）。preview 对象
+ * 身份变化时比对 payload 自描述的 quality，不一致即按当前档重取。
+ * previewQuality 自身变化不在此处理——setPreviewQuality 已显式重取，
+ * 这里再监听会造成双拉。
+ */
+function installPreviewQualityReconciler(store: {
+  getState: () => WorkbenchState
+  subscribe: (listener: (state: WorkbenchState, prev: WorkbenchState) => void) => void
+}) {
+  let syncing = false
+  // 拉取失败（或后端未按请求档返回）时记下该 mismatch 对，避免无条件重试死循环；
+  // 真正的状态变化（新 preview / 切档）会在 finally 的再审里重新武装
+  let blockedKey: string | null = null
+  function reconcile() {
+    if (syncing) return
+    const state = store.getState()
+    const preview = state.preview
+    if (!preview || preview.meshes.length === 0) return
+    const payloadQuality = preview.quality
+    const targetQuality = state.previewQuality
+    if (!payloadQuality || payloadQuality === targetQuality) return
+    const key = `${payloadQuality}->${targetQuality}`
+    if (key === blockedKey) return
+    syncing = true
+    void state
+      .loadPreview3D()
+      .then(() => {
+        const settled = store.getState()
+        const settledQuality = settled.preview?.quality
+        blockedKey = settledQuality && settledQuality !== settled.previewQuality ? key : null
+      })
+      .catch(() => {
+        blockedKey = key
+      })
+      .finally(() => {
+        syncing = false
+        // 拉取期间 preview/质量档可能又变了：收尾再审一次，保证最终一致
+        const current = store.getState()
+        if (current.preview !== preview || current.previewQuality !== targetQuality) reconcile()
+      })
+  }
+  store.subscribe((state, prev) => {
+    if (state.preview !== prev.preview) reconcile()
+  })
 }
 
 export const workbenchStore = createWorkbenchStore()
@@ -222,11 +284,26 @@ function initialWorkbenchState() {
     parameters: [],
     parameterIssues: [],
     draftParameters: {},
+    sourceFingerprint: null,
+    effectiveParameters: {},
+    effectiveParameterDiagnostics: [],
+    effectiveParametersBusy: false,
+    effectiveParametersError: null,
     preview: null,
     preview2d: null,
-    previewQuality: 'fast' as const,
+    previewQuality: 'accurate' as const,
     previewGhost: null,
     previewGhostLabel: null,
+    previewSourceMode: 'local' as const,
+    previewAuthoritative: null,
+    previewAuthoritative2d: null,
+    previewAuthoritativeLoading: false,
+    previewAuthoritativeError: null,
+    previewAuthoritativeParamsKey: null,
+    hostVerification: null,
+    hostVerificationLoading: false,
+    hostVerificationError: null,
+    hostVerificationParamsKey: null,
     warnings: [],
     loading: false,
     applying: false,
@@ -242,7 +319,8 @@ function initialWorkbenchState() {
     configRevision: null,
     chatAbortController: null,
     interruptedContext: null,
-    activeRailPanel: '3d' as const,
+    pendingDeliveryContinue: null,
+    activeRailPanel: 'ai' as const,
     assistantBusy: false,
     assistantMessages: [],
     assistantDraftSeed: null,

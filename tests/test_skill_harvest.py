@@ -84,9 +84,11 @@ class FakeLLM:
         self.content = content
         self.error = error
         self.calls = 0
+        self.last_kwargs = {}
 
     def generate(self, messages, **kwargs):
         self.calls += 1
+        self.last_kwargs = kwargs
         if self.error:
             raise RuntimeError("llm exploded")
         return LLMResponse(content=self.content, model="fake", usage={}, finish_reason="stop")
@@ -142,6 +144,28 @@ class TestHarvestGate(unittest.TestCase):
         self.assertEqual(proposal["pattern_type"], "shelf_loop")
         self.assertEqual(llm.calls, 1)
         self.assertIn("When to Use", proposal["content"])
+
+    def test_codex_harvest_uses_chat_intent(self):
+        llm = FakeLLM(_proposal_json())
+        llm.config = SimpleNamespace(
+            model="openai-codex/gpt-5.6-sol",
+            codex_reasoning_effort=lambda: "high",
+        )
+
+        proposal = skill_harvest.maybe_harvest(
+            _verified_result(self.project),
+            "给书架加三层板",
+            self.project,
+            llm,
+            self.skills_dir,
+        )
+
+        self.assertIsNotNone(proposal)
+        self.assertEqual(llm.last_kwargs["codex_intent"], "CHAT")
+        self.assertEqual(llm.last_kwargs["codex_reasoning_effort"], "high")
+        self.assertEqual(llm.last_kwargs["temperature"], 0.0)
+        self.assertEqual(llm.last_kwargs["max_tokens"], 900)
+        self.assertIs(llm.last_kwargs["stream"], False)
 
     def test_intent_restricted_to_create_modify(self):
         for intent in ("DEBUG", "REPAIR", "CHAT"):
@@ -793,3 +817,100 @@ class TestAssistantServiceSkillOutcome(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── ST04：显式沉淀提炼（distill_explicit_skill） ─────────────
+
+class TestExplicitDistillation(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.project = _make_project(self.tmp)
+        self.skills_dir = str(self.tmp / "skills")
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _refs(self):
+        return [
+            {
+                "run_id": "r_1",
+                "revision": "r0002",
+                "source_fingerprint": "sha256:" + "b" * 64,
+                "intent": "MODIFY",
+                "changed_files": ["scripts/3d.gdl"],
+                "evidence_complete": True,
+            }
+        ]
+
+    def test_valid_explicit_distillation(self):
+        llm = FakeLLM(_proposal_json())
+        outcome = skill_harvest.distill_explicit_skill(
+            self.project, "把这轮修改沉淀成楼梯 skill", self._refs(), llm, self.skills_dir
+        )
+        self.assertTrue(outcome["ok"], outcome)
+        self.assertEqual(outcome["proposal"]["name"], "shelf_loop_pattern")
+        self.assertEqual(llm.calls, 1)
+
+    def test_prompt_carries_instruction_refs_and_script_excerpt(self):
+        llm = FakeLLM(_proposal_json())
+        skill_harvest.distill_explicit_skill(
+            self.project, "沉淀成 skill", self._refs(), llm, self.skills_dir
+        )
+        messages = skill_harvest.build_explicit_harvest_messages(
+            self.project,
+            "沉淀成 skill",
+            self._refs(),
+            skill_harvest.collect_script_excerpts(self.project, self._refs()),
+        )
+        user = messages[1]["content"]
+        self.assertIn("沉淀成 skill", user)
+        self.assertIn("r_1", user)
+        self.assertIn("r0002", user)
+        self.assertIn("BLOCK A, B, ZZYZX", user)
+
+    def test_invalid_json_returns_explicit_code(self):
+        outcome = skill_harvest.distill_explicit_skill(
+            self.project, "沉淀成 skill", self._refs(), FakeLLM("not json"), self.skills_dir
+        )
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(outcome["code"], "SKILL_PROPOSAL_INVALID_JSON")
+
+    def test_instance_file_block_rejected(self):
+        bad = _proposal_json(content="## 适用场景 / When to Use\n[FILE: scripts/3d.gdl]\nBLOCK 1,1,1")
+        outcome = skill_harvest.distill_explicit_skill(
+            self.project, "沉淀成 skill", self._refs(), FakeLLM(bad), self.skills_dir
+        )
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(outcome["code"], "SKILL_PROPOSAL_INVALID_CONTENT")
+
+    def test_duplicate_skill_returns_explicit_code(self):
+        skills_dir = Path(self.skills_dir)
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        (skills_dir / "shelf_loop_pattern.md").write_text("status: active\n", encoding="utf-8")
+        outcome = skill_harvest.distill_explicit_skill(
+            self.project, "沉淀成 skill", self._refs(), FakeLLM(_proposal_json()), self.skills_dir
+        )
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(outcome["code"], "SKILL_PROPOSAL_DUPLICATE")
+
+    def test_llm_failure_returns_explicit_code(self):
+        outcome = skill_harvest.distill_explicit_skill(
+            self.project, "沉淀成 skill", self._refs(), FakeLLM("", error=True), self.skills_dir
+        )
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(outcome["code"], "SKILL_PROPOSAL_LLM_FAILED")
+
+    def test_missing_llm_returns_unavailable(self):
+        outcome = skill_harvest.distill_explicit_skill(
+            self.project, "沉淀成 skill", self._refs(), None, self.skills_dir
+        )
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(outcome["code"], "SKILL_PROPOSAL_LLM_UNAVAILABLE")
+
+    def test_collect_script_excerpts_only_changed_files(self):
+        self.project.scripts[ScriptType.SCRIPT_2D] = "POLY2 4, 0,0, 1,0, 1,1, 0,1\n"
+        self.project.save_to_disk()
+        excerpts = skill_harvest.collect_script_excerpts(self.project, self._refs())
+        self.assertIn("scripts/3d.gdl", excerpts)
+        self.assertNotIn("scripts/2d.gdl", excerpts)

@@ -53,6 +53,19 @@ def preview_geometry_summary(project: HSFProject) -> dict[str, Any]:
             quality="fast",
         )
         meshes = result_3d.meshes or []
+        from openbrep.workbench.three_preview import preview_3d_to_three_payload
+        from openbrep.runtime.visual_self_check import check_preview_visual
+        from openbrep.materials import load_materials
+        visual_payload = preview_3d_to_three_payload(result_3d)
+        slots, _ = load_materials(project.root)
+        if not slots["slots"]:
+            from openbrep.materials import infer_material_slots, normalize_slots
+            inferred, _ = normalize_slots(infer_material_slots(project.parameters, project.name))
+            slots["slots"] = inferred
+        visual_payload["materials"] = {**slots["slots"], **visual_payload.get("materials", {})}
+        summary["visual_check"] = check_preview_visual(visual_payload)
+        materials = {k.casefold(): v for k, v in {**slots['slots'], **result_3d.materials}.items()}
+        summary['materials'] = [materials.get((mesh.material_id or '').casefold()) for mesh in meshes]
         summary["mesh_count"] = len(meshes)
         xs: list[float] = []
         ys: list[float] = []
@@ -261,6 +274,24 @@ def build_modify_acceptance(
         checks.append({"name": "revision", "status": "skipped", "detail": "未创建版本快照"})
 
     checks.extend(_preview_checks(before, after))
+    if after is not None and 'materials' in after:
+        current = after['materials']
+        unresolved = sum(material is None for material in current)
+        if unresolved:
+            detail = f'{unresolved} 个网格材质未解析，不能确认材质效果；应检查预览支持能力，避免盲目重写几何'
+            status = 'warn'
+        elif current:
+            changed = before is not None and 'materials' in before and before['materials'] != current
+            detail = '当前参数下材质预览数据发生变化' if changed else '当前参数下材质预览数据未变化或缺少修改前记录'
+            detail += '；尚未进行截图视觉验收'
+            status = 'pass' if changed else 'warn'
+        else:
+            detail, status = '没有可验收的网格', 'warn'
+        checks.append({'name': '材质预览', 'status': status, 'detail': detail})
+        summary_lines.append(detail)
+    if after is not None and after.get('visual_check'):
+        visual = after['visual_check']
+        checks.append({'name': '截图视觉验收', 'status': visual.get('status', 'warn'), 'detail': '；'.join(visual.get('diagnostics') or []) or '截图检查通过'})
 
     return {
         "summary_lines": summary_lines,

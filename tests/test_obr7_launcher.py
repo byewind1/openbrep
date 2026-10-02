@@ -123,6 +123,51 @@ def test_python_launcher_respects_explicit_config_env(monkeypatch, tmp_path):
     assert launcher.resolve_shared_config_path(tmp_path) == explicit_config
 
 
+# ── B2：打包态用户级配置目录 ──────────────────────────────
+
+
+def test_launch_config_packaged_falls_back_to_user_dir(monkeypatch, tmp_path):
+    """打包态（root 无 pyproject.toml）无已有配置 → ~/.openbrep/config.toml 且父目录已建。"""
+    launcher = load_launcher_module()
+    resource_root = tmp_path / "App.app" / "Contents" / "Resources"
+    resource_root.mkdir(parents=True)
+    user_config = tmp_path / "home" / ".openbrep" / "config.toml"
+    monkeypatch.delenv("GDL_AGENT_CONFIG", raising=False)
+    monkeypatch.setattr(launcher, "USER_CONFIG_PATH", user_config)
+
+    resolved = launcher.resolve_launch_config_path(resource_root)
+
+    assert resolved == user_config
+    assert user_config.parent.is_dir()  # config.py 的 example 自动复制需要父目录存在
+
+
+def test_launch_config_dev_root_without_config_stays_none(monkeypatch, tmp_path):
+    """开发态（root 有 pyproject.toml）无已有配置 → None，维持 cwd/config.toml 旧行为。"""
+    launcher = load_launcher_module()
+    dev_root = tmp_path / "repo"
+    dev_root.mkdir()
+    (dev_root / "pyproject.toml").write_text("[project]\nname = \"openbrep\"\n", encoding="utf-8")
+    user_config = tmp_path / "home" / ".openbrep" / "config.toml"
+    monkeypatch.delenv("GDL_AGENT_CONFIG", raising=False)
+    monkeypatch.setattr(launcher, "USER_CONFIG_PATH", user_config)
+
+    assert launcher.resolve_launch_config_path(dev_root) is None
+    assert not user_config.parent.exists()  # 开发态不得创建用户目录
+
+
+def test_launch_config_prefers_existing_root_config(monkeypatch, tmp_path):
+    """已有 root/config.toml 时打包态也优先沿用（升级安装不迁移用户配置）。"""
+    launcher = load_launcher_module()
+    resource_root = tmp_path / "resources"
+    resource_root.mkdir()
+    existing = resource_root / "config.toml"
+    existing.write_text("[llm]\nmodel = \"glm-4-flash\"\n", encoding="utf-8")
+    monkeypatch.delenv("GDL_AGENT_CONFIG", raising=False)
+    monkeypatch.setattr(launcher, "USER_CONFIG_PATH", tmp_path / "home" / ".openbrep" / "config.toml")
+
+    assert launcher.resolve_launch_config_path(resource_root) == existing
+
+
 def test_obr7_entrypoint_delegates_to_python_launcher():
     entrypoint = Path(__file__).resolve().parents[1] / "obr7"
 
@@ -250,3 +295,63 @@ def test_daemon_stop_when_not_running(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "未在运行" in out
+
+
+def test_runtime_root_dev_mode():
+    launcher = load_launcher_module()
+    assert launcher.FROZEN is False
+    root = launcher._runtime_root()
+    assert (root / "scripts" / "obr7.py").exists()
+
+
+def test_runtime_root_frozen_uses_meipass(tmp_path, monkeypatch):
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "FROZEN", True)
+    monkeypatch.setattr(launcher.sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert launcher._runtime_root() == tmp_path
+
+
+def test_daemon_spawn_frozen_child_argv_is_binary_only(tmp_path, monkeypatch, capsys):
+    """冻结态 daemon 子进程必须直接拉起二进制本身（无 python 脚本路径参数）。"""
+    import json as _json
+
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "FROZEN", True)
+    monkeypatch.setattr(launcher.sys, "_MEIPASS", str(tmp_path), raising=False)
+    log_path = tmp_path / "obr7.log"
+    state_path = tmp_path / "obr7.json"
+    monkeypatch.setattr(launcher, "DAEMON_LOG_PATH", log_path)
+    monkeypatch.setattr(launcher, "DAEMON_STATE_PATH", state_path)
+
+    popen_calls = []
+
+    class DummyPopen:
+        def __init__(self, argv, **kwargs):
+            popen_calls.append((argv, kwargs))
+
+            class _P:
+                pid = 4242
+
+                @staticmethod
+                def poll():
+                    # 模拟子进程存活；随后由状态文件驱动 ready 退出等待
+                    state_path.write_text(_json.dumps({"pid": 4242, "ready": True, "api_port": 8765}), encoding="utf-8")
+                    return None
+
+            self._p = _P()
+
+        def poll(self):
+            return self._p.poll()
+
+        @property
+        def pid(self):
+            return self._p.pid
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", DummyPopen)
+    args = launcher.parse_args(["--daemon"])
+    rc = launcher.daemon_spawn(args)
+
+    assert rc == 0
+    argv, kwargs = popen_calls[0]
+    assert argv == [launcher.sys.executable, "--daemon-child"]
+    assert kwargs["cwd"] is None  # 冻结态 cwd 不能是只读的 _MEIPASS

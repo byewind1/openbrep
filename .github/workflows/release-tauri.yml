@@ -3,8 +3,14 @@ name: Release Tauri Desktop
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+
+concurrency:
+  group: tauri-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 permissions:
   contents: write
@@ -17,8 +23,15 @@ jobs:
         include:
           - os: macos-latest
             artifact-name: OpenBrep-macOS
+            triple: aarch64-apple-darwin
+          # macos-15-intel：GitHub 仅剩的 Intel (x86_64) macOS runner，
+          # 官方支持到 2027-08（之后 GitHub 不再提供 x86_64 macOS 镜像）。
+          - os: macos-15-intel
+            artifact-name: OpenBrep-macOS-Intel
+            triple: x86_64-apple-darwin
           - os: windows-latest
             artifact-name: OpenBrep-Windows
+            triple: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
 
@@ -26,10 +39,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # main 构建使用“下一补丁版 + 数字运行号”的合法 semver。
+      # MSI 将预发布标识映射到 Windows 版本字段，因此该标识必须为
+      # 不大于 65535 的单个数字，不能使用 nightly.YYYYMMDD.N。
+      # 稳定 tag 构建保持仓库声明版本不变。只改 Tauri bundle 版本即可；
+      # 前后端应用版本均由 Tauri package_info 读取。
+      - name: Set development build version
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          path = Path("src-tauri/tauri.conf.json")
+          config = json.loads(path.read_text())
+          major, minor, patch = map(int, config["version"].split("-")[0].split("."))
+          run = os.environ["GITHUB_RUN_NUMBER"]
+          config["version"] = f"{major}.{minor}.{patch + 1}-{run}"
+          path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+          print(config["version"])
+          PY
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
@@ -45,21 +80,82 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          # 两条 macOS 腿 runner.os 同为 macOS，必须按 triple 分缓存
+          shared-key: ${{ matrix.triple }}
 
       - name: Install Python dependencies
-        run: pip install -e "."
+        run: pip install -e "." pyinstaller
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
 
+      # 关键：必须带 TAURI_ENV_TARGET_TRIPLE 构建——sidecar 内嵌的这份 dist
+      # 才是桌面子窗口实际加载的前端；缺该变量时 VITE_IS_TAURI=false，
+      # 更新 pill/检查逻辑会被 tree-shake 掉（v0.9.2–v0.9.5 的静默故障）。
+      - name: Build frontend (sidecar 内嵌静态资源)
+        working-directory: frontend
+        run: npm run build
+        env:
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.triple }}
+
+      - name: Freeze Python backend (PyInstaller onefile sidecar)
+        run: pyinstaller --clean --noconfirm openbrep-backend.spec
+
+      # 冒烟：冻结后端必须能独立启动并服务 API + 前端（无需系统 Python 环境）
+      - name: Smoke-test frozen backend (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ./dist/obr7-backend --tauri --no-open &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8765/api/snapshot > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8765/api/snapshot > /dev/null
+          curl -sf http://127.0.0.1:8765/ | grep -qi "<title\|<div id=\"root\""
+
+      - name: Smoke-test frozen backend (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath ./dist/obr7-backend.exe -ArgumentList '--tauri','--no-open' -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            foreach ($i in 1..60) {
+              try { Invoke-WebRequest -Uri 'http://127.0.0.1:8765/api/snapshot' -UseBasicParsing -TimeoutSec 2 | Out-Null; $ok = $true; break } catch { Start-Sleep 1 }
+            }
+            if (-not $ok) { throw 'frozen backend did not respond on /api/snapshot' }
+            $html = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing -TimeoutSec 5
+            if ($html.Content -notmatch '<div id="root"') { throw 'frontend index.html not served' }
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Stage sidecar for Tauri externalBin
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/binaries
+          TRIPLE='${{ matrix.triple }}'
+          if [ '${{ runner.os }}' = 'Windows' ]; then SRC=dist/obr7-backend.exe; else SRC=dist/obr7-backend; fi
+          cp "$SRC" "src-tauri/binaries/obr7-backend-${TRIPLE}${EXE_EXT}"
+          ls -la src-tauri/binaries/
+        env:
+          EXE_EXT: ${{ runner.os == 'Windows' && '.exe' || '' }}
+
       # 纯构建：不传 tagName/releaseName/GITHUB_TOKEN —— 绝不在秘密门禁
       # 通过前创建或上传任何 GitHub Release（上传由下方 publish-release 负责）。
+      # TAURI_SIGNING_PRIVATE_KEY 存在时，bundler 会为 updater 包生成 .sig
+      # 签名文件（app.tar.gz.sig / nsis -setup.exe.sig），供 latest.json 使用。
       - name: Build Tauri application
         uses: tauri-apps/tauri-action@v0
         env:
           # Set before Tauri CLI so vite.config.ts picks up VITE_IS_TAURI=true
-          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.triple }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: '.'
           tauriScript: 'npx @tauri-apps/cli@2'
@@ -90,6 +186,20 @@ jobs:
           }
           python scripts/secret_scan.py --tree $staging --report text
 
+      # Tauri v2 生成的 macOS 更新包固定叫 OpenBrep.app.tar.gz（不带架构后缀）。
+      # 两条 macOS 腿的产物会在 publish 阶段平铺到同一目录，必须加架构后缀避免互相覆盖，
+      # latest.json 的 find 模式（*aarch64.app.tar.gz / *x64.app.tar.gz）也依赖该后缀。
+      - name: Arch-suffix macOS updater artifacts
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          cd src-tauri/target/release/bundle/macos
+          SUFFIX='${{ matrix.triple == 'aarch64-apple-darwin' && 'aarch64' || 'x64' }}'
+          for f in OpenBrep.app.tar.gz OpenBrep.app.tar.gz.sig; do
+            if [ -f "$f" ]; then mv "$f" "OpenBrep_${SUFFIX}${f#OpenBrep}"; fi
+          done
+          ls -la
+
       - name: Upload macOS artifacts
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
@@ -98,6 +208,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
 
       - name: Upload Windows artifacts
         if: runner.os == 'Windows'
@@ -107,6 +218,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
 
   publish-release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -121,7 +233,7 @@ jobs:
       - name: Collect release assets
         run: |
           mkdir -p release
-          find release-artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.tar.gz' \) -exec cp {} release/ \;
+          find release-artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.tar.gz' -o -name '*.sig' \) -exec cp {} release/ \;
           ls -la release
 
       - name: Create GitHub Release
@@ -133,10 +245,186 @@ jobs:
           if gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" release/* --clobber --repo "$GH_REPO"
           else
-            gh release create "$TAG_NAME" release/* \
-              --repo "$GH_REPO" \
-              --verify-tag \
-              --title "OpenBrep $TAG_NAME" \
-              --generate-notes \
-              --draft
+            # 发布说明以 docs/releases/<tag>.md 为准（仓库约定，见 RELEASE_PROCESS.md）。
+            # --generate-notes 只对 PR 有效，本仓库提交直推 main，产物会只剩一行
+            # "Full Changelog"，所以仅在缺少发布说明文件时才回退，并显式告警。
+            NOTES_FILE="docs/releases/${TAG_NAME}.md"
+            if [ -f "$NOTES_FILE" ]; then
+              echo "using release notes from $NOTES_FILE"
+              gh release create "$TAG_NAME" release/* \
+                --repo "$GH_REPO" \
+                --verify-tag \
+                --title "OpenBrep $TAG_NAME" \
+                --notes-file "$NOTES_FILE" \
+                --draft
+            else
+              echo "::warning title=Missing release notes::${NOTES_FILE} not found; falling back to --generate-notes"
+              gh release create "$TAG_NAME" release/* \
+                --repo "$GH_REPO" \
+                --verify-tag \
+                --title "OpenBrep $TAG_NAME" \
+                --generate-notes \
+                --draft
+            fi
           fi
+
+      # latest.json 是 updater 的更新清单：version + 各平台更新包 URL + minisign 签名
+      # + notes（Release 正文，客户端更新对话框据此展示更新要点）。
+      # macOS 更新包是 .app.tar.gz，Windows 是 NSIS 的 *-setup.exe。
+      # secrets 未配置时不会有 .sig，跳过清单生成（构建仍可发布，更新通道不生效）。
+      - name: Generate updater manifest (latest.json)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          APP_TAR_ARM=$(basename "$(find release -name '*aarch64.app.tar.gz' | head -1)" || true)
+          APP_TAR_X64=$(basename "$(find release -name '*x64.app.tar.gz' | head -1)" || true)
+          NSIS_EXE=$(basename "$(find release -name '*-setup.exe' ! -name '*.sig' | head -1)" || true)
+          if [ -z "$APP_TAR_ARM" ] && [ -z "$APP_TAR_X64" ] && [ -z "$NSIS_EXE" ]; then
+            echo "no updater artifacts found, skipping latest.json"
+            exit 0
+          fi
+          gh release view "$TAG_NAME" --repo "$GH_REPO" --json body -q .body > release/notes.md || true
+          python3 - "$TAG_NAME" "$GH_REPO" "$APP_TAR_ARM" "$APP_TAR_X64" "$NSIS_EXE" <<'EOF'
+          import json, os, sys, datetime
+          tag, repo, app_tar_arm, app_tar_x64, nsis_exe = sys.argv[1:6]
+          def sig_of(name):
+              path = os.path.join("release", name + ".sig")
+              with open(path) as f:
+                  return f.read().strip()
+          platforms = {}
+          if app_tar_arm:
+              platforms["darwin-aarch64"] = {
+                  "signature": sig_of(app_tar_arm),
+                  "url": f"https://github.com/{repo}/releases/download/{tag}/{app_tar_arm}",
+              }
+          if app_tar_x64:
+              platforms["darwin-x86_64"] = {
+                  "signature": sig_of(app_tar_x64),
+                  "url": f"https://github.com/{repo}/releases/download/{tag}/{app_tar_x64}",
+              }
+          if nsis_exe:
+              platforms["windows-x86_64"] = {
+                  "signature": sig_of(nsis_exe),
+                  "url": f"https://github.com/{repo}/releases/download/{tag}/{nsis_exe}",
+              }
+          notes = ""
+          if os.path.exists("release/notes.md"):
+              with open("release/notes.md") as f:
+                  notes = f.read().strip()
+          manifest = {
+              "version": tag,
+              "notes": notes or f"https://github.com/{repo}/releases/tag/{tag}",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms,
+          }
+          with open("release/latest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+          print(json.dumps(manifest, indent=2)[:2000])
+          EOF
+          gh release upload "$TAG_NAME" release/latest.json --clobber --repo "$GH_REPO"
+
+      # 所有构建、秘密扫描和 updater manifest 生成均完成后，才将草稿公开。
+      # updater 使用 releases/latest，必须发布状态才能让客户端读取 latest.json。
+      - name: Publish release after all gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$TAG_NAME" --draft=false --repo "$GH_REPO"
+
+  publish-nightly:
+    if: github.ref == 'refs/heads/main'
+    needs: build-tauri
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Collect rolling development assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          # Two alternating slots keep the manifest atomic: upload into the
+          # inactive slot first, then switch nightly.json to those signatures.
+          SLOT=$((GITHUB_RUN_NUMBER % 2))
+          cp "$(find release-artifacts -name '*aarch64.app.tar.gz' | head -1)" "release/OpenBrep-nightly-${SLOT}-aarch64.app.tar.gz"
+          cp "$(find release-artifacts -name '*aarch64.app.tar.gz.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-aarch64.app.tar.gz.sig"
+          cp "$(find release-artifacts -name '*x64.app.tar.gz' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.app.tar.gz"
+          cp "$(find release-artifacts -name '*x64.app.tar.gz.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.app.tar.gz.sig"
+          cp "$(find release-artifacts -name '*-setup.exe' ! -name '*.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-setup.exe"
+          cp "$(find release-artifacts -name '*-setup.exe.sig' | head -1)" "release/OpenBrep-nightly-${SLOT}-setup.exe.sig"
+          cp "$(find release-artifacts/OpenBrep-macOS -name '*.dmg' | head -1)" "release/OpenBrep-nightly-${SLOT}-aarch64.dmg"
+          cp "$(find release-artifacts/OpenBrep-macOS-Intel -name '*.dmg' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.dmg"
+          cp "$(find release-artifacts/OpenBrep-Windows -name '*.msi' | head -1)" "release/OpenBrep-nightly-${SLOT}-x64.msi"
+          ls -la release
+
+      - name: Create or update rolling development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view nightly --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload nightly release/* --clobber --repo "$GH_REPO"
+          else
+            gh release create nightly release/* \
+              --repo "$GH_REPO" \
+              --target "$GITHUB_SHA" \
+              --title "OpenBrep Development Builds" \
+              --notes "Rolling development builds from main. These builds may be unstable." \
+              --prerelease
+          fi
+
+      - name: Generate development updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, json, os
+          from pathlib import Path
+
+          repo = os.environ["GH_REPO"]
+          # Every matrix leg used the same generated semver. Recompute it from
+          # the checked-out stable version plus the shared run number.
+          stable = json.loads(Path("src-tauri/tauri.conf.json").read_text())["version"]
+          major, minor, patch = map(int, stable.split("-")[0].split("."))
+          version = f"{major}.{minor}.{patch + 1}-{os.environ['GITHUB_RUN_NUMBER']}"
+          slot = int(os.environ["GITHUB_RUN_NUMBER"]) % 2
+
+          def signature(name):
+              return Path("release", name + ".sig").read_text().strip()
+
+          base = f"https://github.com/{repo}/releases/download/nightly"
+          platforms = {
+              "darwin-aarch64": {
+                  "signature": signature(f"OpenBrep-nightly-{slot}-aarch64.app.tar.gz"),
+                  "url": f"{base}/OpenBrep-nightly-{slot}-aarch64.app.tar.gz",
+              },
+              "darwin-x86_64": {
+                  "signature": signature(f"OpenBrep-nightly-{slot}-x64.app.tar.gz"),
+                  "url": f"{base}/OpenBrep-nightly-{slot}-x64.app.tar.gz",
+              },
+              "windows-x86_64": {
+                  "signature": signature(f"OpenBrep-nightly-{slot}-setup.exe"),
+                  "url": f"{base}/OpenBrep-nightly-{slot}-setup.exe",
+              },
+          }
+          manifest = {
+              "version": version,
+              "notes": f"Development build from main ({os.environ['GITHUB_SHA'][:12]}).",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms,
+          }
+          Path("release/nightly.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+          gh release upload nightly release/nightly.json --clobber --repo "$GH_REPO"

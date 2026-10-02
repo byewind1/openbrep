@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from openbrep.compiler import CompileResult
+from openbrep.compiler import CompileResult, MockHSFCompiler
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
@@ -17,6 +17,7 @@ from openbrep.codex.provider import CodexNotSignedInError
 from openbrep.workbench import settings_service
 from openbrep.workbench.settings_service import WorkbenchSettingsService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
+from openbrep.workbench_tapir import WorkbenchTapirAdapter
 
 
 def test_settings_service_updates_compiler_settings_and_persists_config(tmp_path):
@@ -265,6 +266,106 @@ def test_settings_service_connection_test_failure_returns_full_detail(tmp_path, 
     assert server_body in response["detail"]
 
 
+def test_settings_service_codex_probe_uses_selected_model_and_effort_without_saving(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    config.llm.reasoning_effort = ""
+    session = _make_settings_session(config, config_path)
+    seen: dict[str, object] = {}
+    provider = object()
+
+    class _FakeAdapter:
+        def generate(self, *_args, **kwargs):
+            seen["kwargs"] = kwargs
+            seen["provider"] = getattr(self, "codex_provider", None)
+            return SimpleNamespace(model="openai-codex/gpt-5.6-luna")
+
+    def factory(llm_config):
+        seen["model"] = llm_config.model
+        seen["reasoning_effort"] = llm_config.reasoning_effort
+        return _FakeAdapter()
+
+    service = WorkbenchSettingsService(
+        session,
+        llm_adapter_factory=factory,
+        codex_provider=provider,
+    )
+    response = service.test_llm_settings({
+        "model": "openai-codex/gpt-5.6-luna",
+        "reasoning_effort": "high",
+    })
+
+    assert response["ok"] is True
+    assert seen["model"] == "openai-codex/gpt-5.6-luna"
+    assert seen["reasoning_effort"] == "high"
+    assert seen["kwargs"] == {
+        "timeout": 20,
+        "codex_intent": "CHAT",
+        "codex_reasoning_effort": "high",
+    }
+    assert seen["provider"] is provider
+    assert config.llm.model == "deepseek-chat"
+    assert config.llm.reasoning_effort == ""
+    assert not config_path.exists()
+
+
+def test_settings_service_codex_probe_runtime_conflict_is_stable_and_secret_free(tmp_path):
+    from openbrep.codex.app_server import CodexAppServerError
+
+    config = GDLAgentConfig()
+    session = _make_settings_session(config, tmp_path / "config.toml")
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            root = CodexAppServerError(
+                "Authorization: Bearer PROBE-SECRET",
+                category="runtime_conflict",
+            )
+            raise RuntimeError(
+                "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+            ) from root
+
+    service = WorkbenchSettingsService(
+        session,
+        llm_adapter_factory=lambda _config: _FakeAdapter(),
+        codex_provider=object(),
+    )
+
+    response = service.test_llm_settings({"model": "openai-codex/gpt-5.6-sol"})
+
+    assert response["ok"] is False
+    assert response["code"] == "codex_runtime_conflict"
+    assert response["category"] == "codex_runtime_conflict"
+    assert response["error"] == (
+        "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+    )
+    assert "detail" not in response
+    assert "PROBE-SECRET" not in str(response)
+
+
+def test_settings_service_non_codex_probe_does_not_send_codex_kwargs(tmp_path):
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    session = _make_settings_session(config, tmp_path / "config.toml")
+    seen: dict[str, object] = {}
+
+    class _FakeAdapter:
+        def generate(self, *_args, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(model="deepseek-chat")
+
+    service = WorkbenchSettingsService(
+        session,
+        llm_adapter_factory=lambda _config: _FakeAdapter(),
+    )
+
+    response = service.test_llm_settings({"model": "deepseek-chat"})
+
+    assert response["ok"] is True
+    assert seen == {"timeout": 20}
+
+
 def test_format_llm_exception_detail_handles_plain_exception():
     from openbrep.workbench.settings_service import format_llm_exception_detail
 
@@ -411,6 +512,36 @@ def test_compiler_service_does_not_archive_failed_compile(tmp_path):
 
     assert response["ok"] is False
     assert response["compile"]["artifact_path"] is None
+    assert not (hsf_dir / "artifacts").exists()
+
+
+def test_compiler_service_mock_validation_does_not_expose_or_archive_gsm(tmp_path):
+    project = HSFProject.create_new("ValidationOnly", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+    session = SimpleNamespace(
+        project=project,
+        source_path=hsf_dir,
+        output_dir="",
+        compiler_mode="mock",
+        converter_path="",
+        last_compile_output_path="/previous/real.gsm",
+    )
+    service = WorkbenchCompilerService(
+        session,
+        real_compiler_factory=lambda _path: MockHSFCompiler(),
+        mock_compiler_factory=MockHSFCompiler,
+    )
+
+    response = service.compile_project({})
+
+    assert response["ok"] is True
+    assert response["compile"]["success"] is True
+    assert response["compile"]["mode"] == "mock"
+    assert response["compile"]["output_path"] is None
+    assert response["compile"]["artifact_path"] is None
+    assert response["compile"]["gsm_size_bytes"] is None
+    assert session.last_compile_output_path == "/previous/real.gsm"
+    assert not (hsf_dir.parent / "output" / "ValidationOnly.gsm").exists()
     assert not (hsf_dir / "artifacts").exists()
 
 
@@ -700,6 +831,71 @@ def test_tapir_service_normalizes_missing_parameter_edits():
     assert calls == [None]
 
 
+def test_tapir_artifact_verification_distinguishes_unavailable_host_capabilities():
+    unavailable = WorkbenchTapirAdapter(False, None, lambda: "now")
+    assert unavailable.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc") == {
+        "ok": False,
+        "code": "unsupported",
+        "error": "Tapir bridge 未导入",
+    }
+
+    class DisconnectedBridge:
+        def get_status(self):
+            return {"archicad_connected": False}
+
+    disconnected = WorkbenchTapirAdapter(True, lambda: DisconnectedBridge(), lambda: "now")
+    assert disconnected.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "disconnected"
+
+    class LegacyBridge:
+        def get_status(self):
+            return {"archicad_connected": True}
+
+    legacy = WorkbenchTapirAdapter(True, lambda: LegacyBridge(), lambda: "now")
+    assert legacy.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "unsupported"
+
+    class UnsupportedBridge(LegacyBridge):
+        def verify_library_part_artifact(self, **_request):
+            return {"success": False, "errorMessage": "Unknown command VerifyLibraryPartArtifact"}
+
+    unsupported = WorkbenchTapirAdapter(True, lambda: UnsupportedBridge(), lambda: "now")
+    assert unsupported.verify_library_part_artifact(gsm_path="x", gsm_sha256="abc")["code"] == "unsupported"
+
+
+def test_tapir_artifact_verification_preserves_verified_host_evidence():
+    requests = []
+
+    class Bridge:
+        def get_status(self):
+            return {"archicad_connected": True}
+
+        def verify_library_part_artifact(self, **request):
+            requests.append(request)
+            return {
+                "success": True,
+                "identityStatus": "verified",
+                "loadedIdentity": {"gsmSha256": "abc", "path": "/library/x.gsm"},
+                "archicadVersion": "29.0",
+                "addonVersion": "0.9.6",
+            }
+
+    adapter = WorkbenchTapirAdapter(True, lambda: Bridge(), lambda: "now")
+    result = adapter.verify_library_part_artifact(
+        gsm_path="/artifacts/x.gsm",
+        gsm_sha256="abc",
+        parameters={"A": 2.0},
+        want=["identity"],
+    )
+
+    assert result["ok"] is True
+    assert result["loadedIdentity"] == {"gsmSha256": "abc", "path": "/library/x.gsm"}
+    assert requests == [{
+        "gsm_path": "/artifacts/x.gsm",
+        "gsm_sha256": "abc",
+        "parameters": {"A": 2.0},
+        "want": ["identity"],
+    }]
+
+
 def test_git_service_initializes_enables_and_commits_hsf_project(tmp_path):
     project = HSFProject.create_new("GitShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()
@@ -939,6 +1135,7 @@ class _FakeCodexProvider:
         self.cancel_calls = 0
         self.rate_limits_calls = 0
         self.restart_calls = 0
+        self.refresh_calls: list[str] = []
 
     def status(self, *, refresh=False):
         self.status_calls += 1
@@ -980,6 +1177,27 @@ class _FakeCodexProvider:
         if self.models_result is None:
             raise CodexNotSignedInError("尚未连接 ChatGPT。请先登录。")
         return self.models_result
+
+    def model_catalog(self):
+        return {
+            "models": self.models(),
+            "providers": [
+                {
+                    "id": "deepseek",
+                    "name": "DeepSeek",
+                    "is_current": False,
+                    "catalog_source": "model_catalog",
+                    "catalog_complete": True,
+                    "runnable": True,
+                }
+            ],
+            "cc_switch_detected": True,
+            "diagnostics": [],
+        }
+
+    def refresh_cc_switch_models(self, provider_id: str):
+        self.refresh_calls.append(provider_id)
+        return self.model_catalog()
 
 
 def _make_codex_service(config, config_path, provider=None, factory=None):
@@ -1111,6 +1329,52 @@ def test_codex_models_fail_closed_when_signed_out(tmp_path):
     response = service.codex_models()
     assert response["ok"] is False
     assert response["code"] == "not_signed_in"
+
+
+def test_codex_models_include_secret_free_provider_summary(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    response = service.codex_models()
+
+    assert response["cc_switch_detected"] is True
+    assert response["providers"] == [
+        {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "is_current": False,
+            "catalog_source": "model_catalog",
+            "catalog_complete": True,
+            "runnable": True,
+        }
+    ]
+
+
+def test_codex_models_refresh_accepts_only_provider_id(tmp_path):
+    config = GDLAgentConfig()
+    provider = _FakeCodexProvider(models=_codex_models_payload())
+    service = _make_codex_service(config, tmp_path / "config.toml", provider)
+
+    rejected = service.codex_route(
+        "POST",
+        "/api/settings/llm/codex/models/refresh",
+        {"provider_id": "deepseek", "api_key": "SECRET_CANARY"},
+    )
+    accepted = service.codex_route(
+        "POST",
+        "/api/settings/llm/codex/models/refresh",
+        {"provider_id": "deepseek"},
+    )
+
+    assert rejected == {
+        "ok": False,
+        "code": "invalid_request",
+        "error": "请求参数无效。",
+    }
+    assert provider.refresh_calls == ["deepseek"]
+    assert accepted["ok"] is True
+    assert accepted["cc_switch_detected"] is True
 
 
 def test_llm_settings_codex_block_and_availability(tmp_path, monkeypatch):
@@ -1512,6 +1776,45 @@ def test_codex_status_error_response_redacts_secrets(tmp_path):
     assert response["state"] == "error"
     assert "auth.openai.com" not in str(response.get("error"))
     assert "a0327bbe" not in str(response.get("error"))
+
+
+def test_llm_settings_preserves_stable_codex_error_message(tmp_path):
+    """The settings snapshot must not collapse a Codex failure into unknown."""
+    config = GDLAgentConfig()
+
+    class _FailingProvider(_FakeCodexProvider):
+        def status(self, *, refresh=False):
+            raise CodexNotSignedInError("not signed in")
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _FailingProvider())
+    codex = service.llm_settings()["codex"]
+    assert codex["state"] == "error"
+    assert codex["error"] == "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
+
+
+def test_codex_runtime_conflict_survives_status_and_settings_boundaries(tmp_path):
+    from openbrep.codex.app_server import CodexAppServerError
+
+    config = GDLAgentConfig()
+
+    class _ConflictingProvider(_FakeCodexProvider):
+        def status(self, *, refresh=False):
+            raise CodexAppServerError(
+                "lock owner pid=123 Authorization: Bearer STATUS-SECRET",
+                category="runtime_conflict",
+            )
+
+    service = _make_codex_service(config, tmp_path / "config.toml", _ConflictingProvider())
+    expected = "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
+
+    status = service.codex_status()
+    settings = service.llm_settings()["codex"]
+
+    assert status["code"] == "codex_runtime_conflict"
+    assert status["error"] == expected
+    assert settings["code"] == "codex_runtime_conflict"
+    assert settings["error"] == expected
+    assert "STATUS-SECRET" not in str({"status": status, "settings": settings})
 
 
 def test_codex_service_responses_never_leak_secrets(tmp_path):

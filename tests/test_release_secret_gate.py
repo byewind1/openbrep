@@ -25,8 +25,10 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import io
 import json
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -1369,3 +1371,87 @@ def test_tests_are_hermetic(fake_codex_server, tmp_path):
         client.close()
     assert argv[0] == str(fake_codex_server)
     assert "app-server" in argv
+
+
+def test_cc_switch_catalog_and_runtime_are_read_only_secret_safe_and_ephemeral(
+    tmp_path,
+    caplog,
+):
+    """cc-switch provider selection never mutates user state or leaks runtime material."""
+    from openbrep.codex.cc_switch import CcSwitchRegistry
+    from openbrep.codex.entry import ENTRY_LOCAL
+    from openbrep.codex.model_ref import build_cc_switch_model_ref
+    from openbrep.codex.provider import CodexProvider
+
+    canary = "SECRET_CANARY_cc_switch_release_7819"
+    terminal_home = tmp_path / f"terminal-{canary}"
+    terminal_home.mkdir()
+    (terminal_home / "config.toml").write_text(
+        'model = "terminal-model"\nmodel_provider = "custom"\n',
+        encoding="utf-8",
+    )
+    terminal_before = {
+        path.name: (path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
+        for path in terminal_home.iterdir()
+    }
+
+    database = tmp_path / f"registry-{canary}.db"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "CREATE TABLE providers ("
+        "id TEXT NOT NULL, app_type TEXT NOT NULL, name TEXT NOT NULL, "
+        "is_current INTEGER NOT NULL, settings_config TEXT NOT NULL, "
+        "PRIMARY KEY (id, app_type))"
+    )
+    settings = {
+        "auth": {"OPENAI_API_KEY": canary},
+        "config": (
+            'model = "provider/model"\n'
+            'model_provider = "custom"\n'
+            '[model_providers.custom]\n'
+            'base_url = "https://example.invalid/v1"\n'
+            'wire_api = "responses"\n'
+            'requires_openai_auth = false\n'
+        ),
+        "modelCatalog": {"models": [{"slug": "provider/model"}]},
+    }
+    connection.execute(
+        "INSERT INTO providers VALUES (?, ?, ?, ?, ?)",
+        ("provider-a", "codex", "Provider A", 1, json.dumps(settings)),
+    )
+    connection.commit()
+    connection.close()
+    database_before = (
+        database.stat().st_mtime_ns,
+        hashlib.sha256(database.read_bytes()).hexdigest(),
+    )
+
+    provider = CodexProvider(
+        entry=ENTRY_LOCAL,
+        codex_home=terminal_home,
+        cli_available=False,
+        cc_switch_registry_factory=lambda: CcSwitchRegistry(database),
+        runtime_home_parent=tmp_path,
+    )
+    try:
+        payload = provider.model_catalog()
+        provider.select_model(build_cc_switch_model_ref("provider-a", "provider/model"))
+        runtime_home = provider._runtime_codex_home
+        assert runtime_home is not None and runtime_home.is_dir()
+    finally:
+        provider.close()
+
+    observable = json.dumps(payload, ensure_ascii=False) + "\n" + caplog.text
+    assert canary not in observable
+    assert str(database) not in observable
+    assert str(terminal_home) not in observable
+    assert runtime_home is not None and str(runtime_home) not in observable
+    assert not runtime_home.exists()
+    assert database_before == (
+        database.stat().st_mtime_ns,
+        hashlib.sha256(database.read_bytes()).hexdigest(),
+    )
+    assert terminal_before == {
+        path.name: (path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
+        for path in terminal_home.iterdir()
+    }

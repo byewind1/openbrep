@@ -22,6 +22,7 @@ class TestThreePreview(unittest.TestCase):
                         command="BLOCK",
                         label="3D line 7 BLOCK",
                     ),
+                    material_id="mat_top",
                 )
             ],
             wires=[[(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)]],
@@ -32,6 +33,7 @@ class TestThreePreview(unittest.TestCase):
         self.assertEqual(payload["meshes"][0]["name"], "block")
         self.assertEqual(len(payload["meshes"][0]["vertices"]), 3)
         self.assertEqual(payload["meshes"][0]["faces"], [[0, 1, 2]])
+        self.assertEqual(payload["meshes"][0]["material_id"], "mat_top")
         self.assertEqual(
             payload["meshes"][0]["source_ref"],
             {
@@ -42,6 +44,8 @@ class TestThreePreview(unittest.TestCase):
                 # P1e 可选段字段：未设置时为 None（向后兼容）
                 "segment_start": None,
                 "segment_end": None,
+                # P3 CALL 宏链：非宏几何为 None（向后兼容）
+                "macro": None,
             },
         )
         self.assertEqual(payload["wires"], [[[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]])
@@ -81,7 +85,7 @@ class TestThreePreview(unittest.TestCase):
         self.assertIn("sourceRefText", html)
         self.assertIn("solid.userData.sourceRef", html)
         self.assertIn(
-            '"source_ref":{"script_type":"3d","line":11,"command":"BLOCK","label":"3D line 11 BLOCK","segment_start":null,"segment_end":null}',
+            '"source_ref":{"script_type":"3d","line":11,"command":"BLOCK","label":"3D line 11 BLOCK","segment_start":null,"segment_end":null,"macro":null}',
             html,
         )
 

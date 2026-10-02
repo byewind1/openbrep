@@ -17,6 +17,61 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
   // 旧响应直接丢弃，避免旧帧覆盖新帧。
   let draftPreviewSeq = 0
   let draftPreviewTimer: ReturnType<typeof setTimeout> | null = null
+  let effectiveSeq = 0
+  let effectiveTimer: ReturnType<typeof setTimeout> | null = null
+
+  async function refreshEffectiveParameters(parameters = get().draftParameters) {
+    const requestId = ++effectiveSeq
+    const epoch = get().projectEpoch
+    const projectPath = get().project?.path ?? null
+    const sourceFingerprint = get().sourceFingerprint
+    const parametersKey = JSON.stringify(parameters)
+    if (!get().project) {
+      set({
+        effectiveParameters: {},
+        effectiveParameterDiagnostics: [],
+        effectiveParametersBusy: false,
+        effectiveParametersError: null,
+      })
+      return
+    }
+    set({ effectiveParametersBusy: true, effectiveParametersError: null })
+    const result = await api.fetchEffectiveParameters(parameters)
+    const current = get()
+    const stale = requestId !== effectiveSeq
+      || current.projectEpoch !== epoch
+      || (projectPath !== null && current.project?.path !== projectPath)
+      || JSON.stringify(current.draftParameters) !== parametersKey
+      || (result.project_epoch !== undefined && result.project_epoch !== epoch)
+      || (result.project_path !== undefined && projectPath !== null && result.project_path !== projectPath)
+      || (sourceFingerprint !== null
+        && result.source_fingerprint !== undefined
+        && result.source_fingerprint !== sourceFingerprint)
+    if (stale) return
+    if (!result.ok) {
+      set({
+        effectiveParametersBusy: false,
+        effectiveParametersError: result.error ?? 'Failed to evaluate effective parameters.',
+      })
+      return
+    }
+    set({
+      effectiveParameters: Object.fromEntries(
+        (result.parameters ?? []).map((parameter) => [parameter.name, parameter]),
+      ),
+      effectiveParameterDiagnostics: result.diagnostics ?? [],
+      effectiveParametersBusy: false,
+      effectiveParametersError: null,
+    })
+  }
+
+  function scheduleEffectiveParameters(draftParameters: Record<string, unknown>) {
+    if (effectiveTimer !== null) clearTimeout(effectiveTimer)
+    effectiveTimer = setTimeout(() => {
+      effectiveTimer = null
+      void refreshEffectiveParameters(draftParameters)
+    }, DRAFT_PREVIEW_DEBOUNCE_MS)
+  }
 
   function scheduleDraftPreview(draftParameters: Record<string, unknown>) {
     const requestId = ++draftPreviewSeq
@@ -76,6 +131,9 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       preview: result.preview,
       warnings: result.warnings,
       draftParameters: kept,
+      sourceFingerprint: result.source_fingerprint ?? null,
+      effectiveParameters: {},
+      effectiveParameterDiagnostics: [],
       applying: false,
       // 参数应用/增删改在后端都会 save_to_disk，算一次保存
       lastSavedAt: nowTimeText(),
@@ -126,6 +184,9 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
         return false
       }
       const { kept, dropped } = applyParameterSnapshot(result, appliedDraft, removedName)
+      // main 的参数观察语义：写入成功后按剩余草稿刷新 effective parameters
+      // （applyParameterSnapshot 已把它重置，不刷新则面板空显示）。
+      await refreshEffectiveParameters()
       await refreshParameterSource()
       if (dropped.length > 0) {
         set((state) => ({
@@ -161,7 +222,10 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
       const draftParameters = { ...get().draftParameters, [name]: value }
       set({ draftParameters })
       scheduleDraftPreview(draftParameters)
+      scheduleEffectiveParameters(draftParameters)
     },
+
+    refreshEffectiveParameters,
 
     async addProjectParameter(parameter: AddParameterRequest) {
       return runParameterWrite('add parameter', undefined, undefined, () => api.addProjectParameter(parameter))
@@ -194,6 +258,7 @@ export function createParameterActions({ api, get, set }: WorkbenchActionContext
 
     resetDraftParameters() {
       set({ draftParameters: {} })
+      scheduleEffectiveParameters({})
     },
 
     hasDraftChanges() {

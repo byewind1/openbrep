@@ -9,9 +9,12 @@ import type {
   AssistantMessage,
   AssistantResult,
   AssistantStreamEvent,
+  AuthoritativePreviewResult,
   ClearProjectMemoryResult,
   CompileResult,
   CreateProjectResult,
+  UILayoutPayload,
+
   DeleteMemoryLessonResult,
   IgnoreMemoryLessonResult,
   DistilledLesson,
@@ -22,6 +25,8 @@ import type {
   SetDistilledLessonStatusRequest,
   SetDistilledLessonStatusResult,
   MockCompileResponse,
+  CodexEntry,
+  CodexEntryResult,
   CodexDeviceCodeResult,
   CodexLoginCancelResult,
   CodexLoginStartResult,
@@ -34,9 +39,13 @@ import type {
   CompilerSettingsResult,
   ConfigRevisionResult,
   DirectoryChoiceResult,
+  EffectiveParametersResult,
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  HostVerificationCurrent,
+  HostVerificationRequest,
+  HostVerificationRunResult,
   ImportAssistantHistoryResult,
   DistillAssistantHistoryResult,
   WorkspaceScanResult,
@@ -62,7 +71,9 @@ import type {
   SaveAssistantHistoryResult,
   SaveScriptResponse,
   SaveRevisionResponse,
+  SkillProposal,
   SkillProposalConfirmResult,
+  SkillProposalListResult,
   SummarizeMemoryResult,
   TapirActionResult,
   TapirStatusResult,
@@ -162,6 +173,60 @@ export async function fetchPreview2D(
     { preview: fallbackPreview2D },
   )
   return response.preview
+}
+
+/** Archicad 权威预览：调用 Archicad 渲染当前项目（成本高，只由用户显式刷新触发）。
+ *  parameters 缺省时后端用当前参数值。ok:false 时 error 原文由视口上屏展示。 */
+export async function fetchAuthoritativePreview(
+  parameters?: Record<string, unknown>,
+): Promise<AuthoritativePreviewResult> {
+  return requestJson<AuthoritativePreviewResult>(
+    '/api/preview/authoritative',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parameters ? { parameters } : {}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function fetchHostVerification(): Promise<HostVerificationCurrent> {
+  return requestJson<HostVerificationCurrent>(
+    '/api/verification/host',
+    { method: 'GET' },
+    { status: 'not_checked', stale: false, stale_reasons: [] },
+  )
+}
+
+export async function runHostVerification(
+  request: HostVerificationRequest,
+): Promise<HostVerificationRunResult> {
+  return requestJson<HostVerificationRunResult>(
+    '/api/verification/host',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+/** L0b：解析当前项目 ui.gdl → Archicad 风格参数面板控件树。
+ *  parameters 为草稿覆盖（只影响 IF 分支裁剪，不落盘）。 */
+export async function fetchUiLayout(
+  parameters?: Record<string, unknown>,
+): Promise<UILayoutPayload> {
+  return requestJson<UILayoutPayload>(
+    '/api/project/ui-layout',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parameters ? { parameters } : {}),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.', has_infield: false, controls: [] },
+  )
 }
 
 export async function loadProjectPath(path: string): Promise<WorkbenchSnapshot> {
@@ -389,13 +454,39 @@ export async function saveProjectRevision(message = ''): Promise<SaveRevisionRes
   )
 }
 
-export async function restoreProjectRevision(revisionId: string): Promise<RestoreRevisionResponse> {
+export async function restoreProjectRevision(
+  revisionId: string,
+  draftPolicy?: import('./types').RestoreDraftPolicy | null,
+): Promise<RestoreRevisionResponse> {
   return requestJson<RestoreRevisionResponse>(
     '/api/project/revision/restore',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ revision_id: revisionId }),
+      body: JSON.stringify(
+        draftPolicy
+          ? { revision_id: revisionId, draft_policy: draftPolicy }
+          : { revision_id: revisionId },
+      ),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function getProjectRevisionDiff(
+  fromRevisionId: string,
+  toRevisionId?: string | null,
+): Promise<import('./types').RevisionDiffResponse> {
+  return requestJson<import('./types').RevisionDiffResponse>(
+    '/api/project/revision/diff',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // to 省略或 __working__ → before→当前工作源（ST03 partial_change）
+      body: JSON.stringify({
+        from_revision_id: fromRevisionId,
+        to_revision_id: toRevisionId ?? undefined,
+      }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
@@ -490,6 +581,23 @@ export async function applyParameters(parameters: Record<string, unknown>): Prom
       body: JSON.stringify({ parameters }),
     },
     { ok: true, changed: parameters, ...fallbackSnapshot },
+  )
+}
+
+export async function fetchEffectiveParameters(
+  parameters?: Record<string, unknown>,
+): Promise<EffectiveParametersResult> {
+  const hasDraft = parameters !== undefined
+  return requestJson<EffectiveParametersResult>(
+    '/api/project/parameters/effective',
+    hasDraft
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parameters }),
+        }
+      : { method: 'GET' },
+    { ok: false, parameters: [], diagnostics: [], error: 'OpenBrep local API is not available.' },
   )
 }
 
@@ -589,10 +697,17 @@ export async function openConfig(): Promise<{ ok: boolean; error?: string }> {
   )
 }
 
-export async function testLlmConnection(): Promise<LlmConnectionTestResult> {
+export async function testLlmConnection(model?: string, reasoningEffort?: string): Promise<LlmConnectionTestResult> {
+  const body: Record<string, string> = {}
+  if (model) body.model = model
+  if (reasoningEffort) body.reasoning_effort = reasoningEffort
   return requestJson<LlmConnectionTestResult>(
     '/api/settings/llm/test',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
     { ok: false, error: 'OpenBrep local API is not available.', category: 'llm_configuration' },
   )
 }
@@ -638,6 +753,18 @@ export async function fetchCodexModels(): Promise<CodexModelsResult> {
   )
 }
 
+export async function refreshCodexModels(providerId: string): Promise<CodexModelsResult> {
+  return requestJson<CodexModelsResult>(
+    '/api/settings/llm/codex/models/refresh',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider_id: providerId }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
 // ── Codex BYOA（D2）：取消 / 设备码 / 额度 / 重启 ───────────────────────────
 
 export async function codexLoginCancel(): Promise<CodexLoginCancelResult> {
@@ -668,6 +795,28 @@ export async function codexRestart(): Promise<CodexRestartResult> {
   return requestJson<CodexRestartResult>(
     '/api/settings/llm/codex/restart',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+// ── 双入口（2026-09-17）：Codex 链路入口读取 / 切换 ────────────────────────
+
+export async function fetchCodexEntry(): Promise<CodexEntryResult> {
+  return requestJson<CodexEntryResult>(
+    '/api/settings/llm/codex/entry',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function saveCodexEntry(entry: CodexEntry): Promise<CodexEntryResult> {
+  return requestJson<CodexEntryResult>(
+    '/api/settings/llm/codex/entry',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry }),
+    },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
@@ -990,12 +1139,17 @@ export async function setDistilledLessonStatus(
   )
 }
 
+export interface GenerateContinueOptions {
+  continueFrom?: import('./types').DeliveryContinueFrom | null
+}
+
 export async function generateWithAssistant(
   message: string,
   assistantSettings = '',
   images: AssistantImageAttachment[] = [],
   history: AssistantHistoryItem[] = [],
   signal?: AbortSignal,
+  options?: GenerateContinueOptions,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
@@ -1006,6 +1160,7 @@ export async function generateWithAssistant(
         message,
         assistant_settings: assistantSettings,
         history,
+        continue_from: options?.continueFrom ?? undefined,
         ...assistantImagesPayload(images),
       }),
     },
@@ -1101,6 +1256,7 @@ export async function generateWithAssistantStream(
   onEvent?: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
   history: AssistantHistoryItem[] = [],
+  continueFrom?: import('./types').DeliveryContinueFrom | null,
 ): Promise<GenerateResult> {
   const response = await fetch(`${API_BASE}/api/assistant/generate`, {
     method: 'POST',
@@ -1110,6 +1266,7 @@ export async function generateWithAssistantStream(
       assistant_settings: assistantSettings,
       history,
       stream: true,
+      continue_from: continueFrom ?? undefined,
       ...assistantImagesPayload(images),
     }),
     signal,
@@ -1124,6 +1281,7 @@ export async function requestModifyPlan(
   images: AssistantImageAttachment[] = [],
   signal?: AbortSignal,
   history: AssistantHistoryItem[] = [],
+  continueFrom?: import('./types').DeliveryContinueFrom | null,
 ): Promise<GenerateResult> {
   return requestJson<GenerateResult>(
     '/api/assistant/generate',
@@ -1137,6 +1295,7 @@ export async function requestModifyPlan(
         intent: 'MODIFY',
         confirm_plan: true,
         stream: false,
+        continue_from: continueFrom ?? undefined,
         ...assistantImagesPayload(images),
       }),
     },
@@ -1172,6 +1331,7 @@ export async function confirmModifyPlan(
 /** 模式级 skill 提案（P2-d）：审批待确认提案；approve → propose+verify 双闸晋升。 */
 export async function confirmSkillProposal(
   approve: boolean,
+  proposalId?: string,
   signal?: AbortSignal,
 ): Promise<SkillProposalConfirmResult> {
   return requestJson<SkillProposalConfirmResult>(
@@ -1179,10 +1339,36 @@ export async function confirmSkillProposal(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approve }),
+      // ST04：带 proposal_id 时审批持久候选 store；不带则保留旧 pending 行为
+      body: JSON.stringify(proposalId ? { approve, proposal_id: proposalId } : { approve }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
     signal,
+  )
+}
+
+export async function listSkillProposals(): Promise<SkillProposalListResult> {
+  return requestJson<SkillProposalListResult>(
+    '/api/skill/proposals',
+    { method: 'GET' },
+    { ok: false, proposals: [] },
+  )
+}
+
+export async function proposeSkillCandidate(
+  instruction: string,
+  sourceRunIds?: string[],
+): Promise<SkillProposal | { ok: false; error?: string }> {
+  return requestJson<SkillProposal | { ok: false; error?: string }>(
+    '/api/skill/proposals',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        sourceRunIds && sourceRunIds.length ? { instruction, source_run_ids: sourceRunIds } : { instruction },
+      ),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
   )
 }
 

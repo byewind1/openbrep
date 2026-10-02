@@ -7,13 +7,15 @@ import { useT } from '../i18n'
 import type { AssistantImageAttachment, CompileIssue } from '../api/types'
 import { groupParameters } from '../state/parameterGroups'
 import { useUiPrefsStore } from '../state/uiPrefsStore'
+import { useUpdateStore } from '../state/updateStore'
 import { useWorkbenchStore } from '../state/useWorkbenchStore'
 import { workbenchStore } from '../state/workbenchStore'
 import { ResizableWorkspaceGrid } from './layout/ResizableWorkspaceGrid'
 import { WorkbenchLeftRail } from './layout/WorkbenchLeftRail'
 import { WorkbenchRightRail } from './layout/WorkbenchRightRail'
+import { UpdateDialog } from './update/UpdateDialog'
 import { FloatingPreviewWindow } from './preview/FloatingPreviewWindow'
-import { PreviewWorkspaceStage } from './preview/PreviewWorkspaceStage'
+import { PreviewWorkspaceStage, type CenterView } from './preview/PreviewWorkspaceStage'
 import { ProjectOpenControls } from './project/ProjectOpenControls'
 import { useConfigAutoRefresh } from './useConfigAutoRefresh'
 import { useProjectLeaveGuard } from './useProjectLeaveGuard'
@@ -28,13 +30,19 @@ export function WorkbenchApp() {
     document.documentElement.lang = locale
   }, [locale])
 
+  // 桌面端启动时静默检查更新（仅 Tauri 环境；结果驱动顶栏版本 pill 徽标）
+  useEffect(() => {
+    void useUpdateStore.getState().check()
+  }, [])
+
   const { confirm, prompt, dialogNode } = useThemedDialog()
   // SF1（F04）：所有离开项目入口共用的"取消 / 丢弃并继续"确认守卫
   const { runLeaveAction, dialogNode: leaveDialogNode } = useProjectLeaveGuard()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
-  const [previewWorkspaceOpen, setPreviewWorkspaceOpen] = useState(false)
+  // 中间栏视图：脚本 / 3D / 2D 三舞台互斥（默认编辑器，不改既有默认体验）
+  const [centerView, setCenterView] = useState<CenterView>('editor')
   const [editorFocus, setEditorFocus] = useState<{
     scriptName: string
     line: number | null
@@ -46,6 +54,8 @@ export function WorkbenchApp() {
   const parameters = useWorkbenchStore((state) => state.parameters)
   const parameterIssues = useWorkbenchStore((state) => state.parameterIssues)
   const draftParameters = useWorkbenchStore((state) => state.draftParameters)
+  const effectiveParameters = useWorkbenchStore((state) => state.effectiveParameters)
+  const projectEpoch = useWorkbenchStore((state) => state.projectEpoch)
   const preview = useWorkbenchStore((state) => state.preview)
   const preview2d = useWorkbenchStore((state) => state.preview2d)
   const warnings = useWorkbenchStore((state) => state.warnings)
@@ -117,6 +127,7 @@ export function WorkbenchApp() {
   const deleteProjectParameter = useWorkbenchStore((state) => state.deleteProjectParameter)
   const validateProjectParameters = useWorkbenchStore((state) => state.validateProjectParameters)
   const resetDraftParameters = useWorkbenchStore((state) => state.resetDraftParameters)
+  const refreshEffectiveParameters = useWorkbenchStore((state) => state.refreshEffectiveParameters)
   const loadProjectPath = useWorkbenchStore((state) => state.loadProjectPath)
   const newProject = useWorkbenchStore((state) => state.newProject)
   const importGdlFile = useWorkbenchStore((state) => state.importGdlFile)
@@ -154,6 +165,8 @@ export function WorkbenchApp() {
   const loadPreview2D = useWorkbenchStore((state) => state.loadPreview2D)
   const setActiveRailPanel = useWorkbenchStore((state) => state.setActiveRailPanel)
   const clearAssistantHistory = useWorkbenchStore((state) => state.clearAssistantHistory)
+  const deleteAssistantMessages = useWorkbenchStore((state) => state.deleteAssistantMessages)
+  const resetAssistantConversation = useWorkbenchStore((state) => state.resetAssistantConversation)
   const loadMemoryLessons = useWorkbenchStore((state) => state.loadMemoryLessons)
   const summarizeProjectMemory = useWorkbenchStore((state) => state.summarizeProjectMemory)
   const updateMemoryLesson = useWorkbenchStore((state) => state.updateMemoryLesson)
@@ -181,6 +194,8 @@ export function WorkbenchApp() {
         confirmLabel: t('chat.confirmCreateOk'),
       })
       if (!ok) return
+      // 新建物件使用全新的聊天上下文，避免旧项目记录进入 CREATE prompt。
+      resetAssistantConversation()
     }
     await sendChat(message, images)
   }
@@ -218,17 +233,21 @@ export function WorkbenchApp() {
     }
   }, [activeRailPanel, refreshTapirStatus])
 
-  // 打开/切换到有路径的项目时默认进入预览舞台（建筑师视角先看几何）；
+  // 打开/切换到有路径的项目时默认进入 3D 预览舞台（建筑师视角先看几何）；
   // 点开脚本时再切回编辑器舞台（见 openScriptInEditor）。
   const projectPath = project?.path ?? null
   useEffect(() => {
     if (projectPath) {
-      setPreviewWorkspaceOpen(true)
+      setCenterView('3d')
     }
   }, [projectPath])
 
+  useEffect(() => {
+    if (projectPath) void refreshEffectiveParameters()
+  }, [projectEpoch, projectPath, refreshEffectiveParameters])
+
   function openScriptInEditor(scriptName: string) {
-    setPreviewWorkspaceOpen(false)
+    setCenterView('editor')
     void openScript(scriptName)
   }
 
@@ -395,8 +414,9 @@ export function WorkbenchApp() {
         backendNotice={backendNotice}
         onClearError={clearLastError}
       />
+      <UpdateDialog />
       <ResizableWorkspaceGrid
-        previewWorkspaceOpen={previewWorkspaceOpen}
+        previewWorkspaceOpen={centerView !== 'editor'}
         loading={loading}
         left={(
           <WorkbenchLeftRail
@@ -422,6 +442,7 @@ export function WorkbenchApp() {
             groupedParameters={grouped}
             parameterIssues={parameterIssues}
             draftParameters={draftParameters}
+            effectiveParameters={effectiveParameters}
             applying={applying}
             onSelectScript={openScriptInEditor}
             onChangeParameter={(name, value) => void setDraftParameter(name, value)}
@@ -440,8 +461,9 @@ export function WorkbenchApp() {
         )}
         main={(
           <PreviewWorkspaceStage
-            previewWorkspaceOpen={previewWorkspaceOpen}
+            centerView={centerView}
             preview={preview}
+            preview2d={preview2d}
             warnings={warnings}
             activeScriptName={activeScriptName}
             activeScriptContent={activeScriptContent}
@@ -451,10 +473,11 @@ export function WorkbenchApp() {
             activeFocusEndLine={activeFocusEndLine}
             activeFocusKey={activeFocusKey}
             sourceBusy={sourceActionBusy}
-            onCollapsePreview={() => setPreviewWorkspaceOpen(false)}
+            onCenterViewChange={setCenterView}
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onChangeScript={updateActiveScriptContent}
             onRefreshPreview={() => void loadPreview3D()}
+            onLoadPreview2D={() => void loadPreview2D()}
             onRevealSource={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine)}
           />
         )}
@@ -478,7 +501,7 @@ export function WorkbenchApp() {
             onSetActiveRailPanel={setActiveRailPanel}
             onLoadPreview3D={() => void loadPreview3D()}
             onLoadPreview2D={() => void loadPreview2D()}
-            onExpandPreview={() => setPreviewWorkspaceOpen(true)}
+            onExpandPreview={() => setCenterView('3d')}
             onFloatPreview={() => setFloatingPreviewOpen(true)}
             onRefreshTapirStatus={() => void refreshTapirStatus()}
             onReloadTapirLibraries={() => void reloadTapirLibraries()}
@@ -491,6 +514,7 @@ export function WorkbenchApp() {
             onChat={(message, images) => void handleChat(message, images)}
             onStop={stopChat}
             onClearAssistantHistory={() => void clearAssistantHistory()}
+            onDeleteAssistantMessages={(indices) => deleteAssistantMessages(indices)}
             onAdoptAssistantCode={(index) => void adoptAssistantMessageCode(index)}
             onOpenScript={openScriptInEditor}
             onSaveRevision={(message) => saveRevision(message)}
@@ -525,8 +549,14 @@ export function WorkbenchApp() {
               revisions={revisions}
               latestRevisionId={latestRevisionId}
               loading={revisionLoading}
+              hasUnsavedDrafts={hasAnyDirtyScript || hasDraftChanges()}
               onSave={(message) => saveRevision(message)}
-              onRestore={(revisionId) => void restoreRevision(revisionId)}
+              onRestore={(revisionId, options) =>
+                void restoreRevision(revisionId, {
+                  draftPolicy: options?.draftPolicy ?? 'discard',
+                  source: 'revision_panel',
+                })
+              }
             />
           </Suspense>
         }

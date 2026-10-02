@@ -20,6 +20,7 @@ from openbrep.codex.routing import (
 )
 from openbrep.config import GDLAgentConfig
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.model_catalog import build_model_catalog
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
 
 
@@ -55,6 +56,7 @@ def test_d8_simple_medium_initial_route_remains_luna_low(complexity):
     decision = choose_initial_route(complexity, CATALOG, SIGNED_IN)
     assert decision.ok
     assert (decision.model, decision.reasoning_effort) == (LUNA_MODEL, "low")
+    assert (decision.role, decision.tier) == ("create", "balanced")
     assert "simple/medium CREATE primary" in decision.reason
 
 
@@ -62,6 +64,7 @@ def test_d13_complex_initial_route_is_luna_high():
     decision = choose_initial_route("complex", CATALOG, SIGNED_IN)
     assert decision.ok
     assert (decision.model, decision.reasoning_effort) == (LUNA_MODEL, "high")
+    assert (decision.role, decision.tier) == ("create", "slow")
     assert "D13 complex CREATE primary" in decision.reason
 
 
@@ -222,9 +225,64 @@ def test_runner_records_effective_route_reason_and_escalation_flags():
     assert seen == [(LUNA_MODEL, "high"), (TERRA_MODEL, "high")]
     decisions = result.metadata["codex_auto_route"]["decisions"]
     assert decisions[0]["reason"]
+    assert (decisions[0]["role"], decisions[0]["tier"]) == ("create", "slow")
     assert decisions[0]["escalation"] is False
+    assert (decisions[1]["role"], decisions[1]["tier"]) == ("create", "slow")
     assert decisions[1]["untested_escalation"] is False
     assert any(kind == "status" and data.get("stage") == "retry" for kind, data in events)
+
+
+def test_runner_can_attach_resolved_model_provenance_without_changing_route():
+    resolved_catalog = build_model_catalog(
+        GDLAgentConfig(), codex_models=CATALOG_TERRA_HIGH
+    )
+    resolved = []
+
+    def run(decision):
+        resolved.append(decision.resolved_model)
+        return _Result(True)
+
+    result = run_auto_route(
+        complexity="complex",
+        catalog=CATALOG_TERRA_HIGH,
+        status=SIGNED_IN,
+        run=run,
+        make_stop_result=lambda _decision: _Result(False),
+        on_event=lambda *_: None,
+        resolve_selection=lambda decision: resolved_catalog.resolve_selection(
+            decision.model,
+            role=decision.role,
+            tier=decision.tier,
+            reasoning_effort=decision.reasoning_effort,
+        ),
+    )
+
+    assert result.success
+    assert len(resolved) == 1
+    assert resolved[0] is not None
+    assert resolved[0].model == LUNA_MODEL
+    assert resolved[0].transport == "codex_app_server"
+    route = result.metadata["codex_auto_route"]
+    assert route["decisions"][0]["resolved"]["model"] == LUNA_MODEL
+
+
+def test_runner_preserves_non_create_role_in_route_metadata():
+    result = run_auto_route(
+        complexity="simple",
+        catalog=CATALOG,
+        status=SIGNED_IN,
+        run=lambda _decision: _Result(True),
+        make_stop_result=lambda _decision: _Result(False),
+        on_event=lambda *_: None,
+        role="vision",
+    )
+
+    route = result.metadata["codex_auto_route"]
+    assert (route["role"], route["tier"]) == ("vision", "balanced")
+    assert (route["decisions"][0]["role"], route["decisions"][0]["tier"]) == (
+        "vision",
+        "balanced",
+    )
 
 
 def test_complex_full_chain_decisions_metadata_ends_in_exhausted():
@@ -290,10 +348,27 @@ class _RecordingPipeline(TaskPipeline):
     def __init__(self, *args, outcomes=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.seen = []
+        self.selections = []
+        self.config_seen_during_call = []
+        self.request_ids = []
+        self.project_presence = []
         self.outcomes = list(outcomes or [TaskResult(success=True, intent="CREATE")])
 
     def _handle_gdl(self, request):
-        self.seen.append((self.config.llm.model, self.config.llm.reasoning_effort, request))
+        # R4：调用期间共享 config 必须保持已保存值；本次生效的 model/effort 只能
+        # 来自请求携带的显式选择。`seen` 继续记录生效组合，语义与改动前一致。
+        selection = getattr(request, "selection", None)
+        self.request_ids.append(id(request))
+        self.project_presence.append(request.project is not None)
+        self.config_seen_during_call.append(
+            (self.config.llm.model, self.config.llm.reasoning_effort)
+        )
+        self.selections.append(selection)
+        if selection is not None:
+            effective = (selection.model, selection.reasoning_effort)
+        else:
+            effective = (self.config.llm.model, self.config.llm.reasoning_effort)
+        self.seen.append((*effective, request))
         return self.outcomes.pop(0)
 
 
@@ -317,6 +392,50 @@ def test_fixed_pipeline_request_fingerprint_is_unchanged_and_never_probes_provid
     assert "codex_auto_route" not in result.metadata
 
 
+def test_auto_routing_passes_an_explicit_selection_without_touching_config(tmp_path):
+    """R4: the routed pair travels as a selection; config stays the saved fact."""
+
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-sol"
+    config.llm.reasoning_effort = "medium"
+    config.llm.codex_routing_mode = "auto"
+    SAVED_PAIR = ("openai-codex/gpt-5.6-sol", "medium")
+    pipeline = _RecordingPipeline(
+        config=config,
+        codex_provider=_Provider(),
+        trace_dir=str(tmp_path / "traces"),
+    )
+
+    result = pipeline.execute(TaskRequest(user_input="创建简单构件", intent="CREATE"))
+
+    assert result.success
+    selection = pipeline.selections[0]
+    assert selection is not None
+    assert (selection.model, selection.reasoning_effort) == (LUNA_MODEL, "low")
+    assert selection.policy == "codex_auto"
+    assert (selection.role, selection.tier) == ("create", "balanced")
+    assert selection.route_reason
+    # The shared config was never rewritten, during or after the call.
+    assert pipeline.config_seen_during_call == [SAVED_PAIR]
+    assert (config.llm.model, config.llm.reasoning_effort) == SAVED_PAIR
+    # The routed attempt ran on the pipeline's own request object, so anything it
+    # writes there (project) stays visible to later attempts and the finalizers.
+    assert len(set(pipeline.request_ids)) == 1
+    # The effective config carries the routed pair; the shared config is a literal
+    # constant that must survive building it (a mutating implementation would fail).
+    effective = pipeline._effective_llm_config(selection)
+    assert (effective.model, effective.reasoning_effort) == (LUNA_MODEL, "low")
+    assert effective is not config.llm
+    assert (config.llm.model, config.llm.reasoning_effort) == SAVED_PAIR
+    # Both requests (routed and unrouted) still resolve through the same adapter seam.
+    request = TaskRequest(user_input="创建简单构件", intent="CREATE")
+    request.selection = selection
+    assert LUNA_MODEL in pipeline._make_llm(request)._resolve_model_string()
+    request.selection = None
+    assert config.llm.model in pipeline._make_llm(request)._resolve_model_string()
+    assert (config.llm.model, config.llm.reasoning_effort) == SAVED_PAIR
+
+
 def test_auto_pipeline_uses_policy_and_restores_saved_fixed_pair(tmp_path):
     config = GDLAgentConfig()
     config.llm.model = "openai-codex/gpt-5.6-sol"
@@ -332,11 +451,101 @@ def test_auto_pipeline_uses_policy_and_restores_saved_fixed_pair(tmp_path):
     result = pipeline.execute(TaskRequest(user_input="创建简单构件", intent="CREATE"))
 
     assert pipeline.seen[0][:2] == (LUNA_MODEL, "low")
+    assert pipeline.selections[0].resolved_model is not None
+    assert pipeline.selections[0].resolved_model.transport == "codex_app_server"
     assert (config.llm.model, config.llm.reasoning_effort) == (
         "openai-codex/gpt-5.6-sol",
         "medium",
     )
     assert result.metadata["codex_auto_route"]["decisions"][0]["reason"]
+
+
+def test_escalation_attempt_continues_the_failed_attempts_project(tmp_path):
+    """R4 regression: the escalated retry must inherit attempt 1's project.
+
+    ``_handle_gdl`` creates the project on first entry and writes it back onto the
+    request object; every later attempt (and the execute-time finalizers) read it
+    from there. Building each attempt from a request *copy* silently broke that.
+    """
+
+    class _EscalatingPipeline(_RecordingPipeline):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.created = 0
+
+        def _handle_gdl(self, request):
+            self.selections.append(getattr(request, "selection", None))
+            self.config_seen_during_call.append(
+                (self.config.llm.model, self.config.llm.reasoning_effort)
+            )
+            attempt = len(self.project_presence) + 1
+            if request.project is None:
+                self.created += 1
+                request.project = HSFProject.create_new(
+                    "d9_escalation", work_dir=str(tmp_path)
+                )
+            self.project_presence.append(request.project is not None)
+            if attempt == 1:
+                return TaskResult(success=False, intent="CREATE", verification=_verification())
+            return TaskResult(success=True, intent="CREATE", project=request.project)
+
+    config = GDLAgentConfig()
+    config.llm.model = LUNA_MODEL
+    config.llm.codex_routing_mode = "auto"
+    pipeline = _EscalatingPipeline(
+        config=config,
+        codex_provider=_Provider(catalog=CATALOG_TERRA_HIGH),
+        trace_dir=str(tmp_path / "traces"),
+    )
+
+    result = pipeline.execute(
+        TaskRequest(user_input="create a curtain wall system from scratch", intent="CREATE")
+    )
+
+    assert result.success
+    assert pipeline.created == 1, "the escalated attempt created a fresh project"
+    assert pipeline.project_presence == [True, True]
+    assert [selection.model for selection in pipeline.selections] == [LUNA_MODEL, TERRA_MODEL]
+    assert [selection.reasoning_effort for selection in pipeline.selections] == ["high", "high"]
+    assert [(selection.role, selection.tier) for selection in pipeline.selections] == [
+        ("create", "slow"),
+        ("create", "slow"),
+    ]
+    assert (config.llm.model, config.llm.reasoning_effort) == (LUNA_MODEL, "")
+    # The selection is per-attempt context: it must not survive the routing.
+    assert all(getattr(sel, "policy", "") == "codex_auto" for sel in pipeline.selections)
+
+
+def test_auto_pipeline_restores_saved_fixed_pair_after_generation_exception(tmp_path):
+    """The per-call Auto override must not leak when generation raises."""
+    class ExplodingPipeline(_RecordingPipeline):
+        def _handle_gdl(self, request):
+            selection = request.selection
+            self.config_seen_during_call.append(
+                (self.config.llm.model, self.config.llm.reasoning_effort)
+            )
+            self.selections.append(selection)
+            self.seen.append((selection.model, selection.reasoning_effort, request))
+            raise RuntimeError("simulated generation failure")
+
+    config = GDLAgentConfig()
+    config.llm.model = "openai-codex/gpt-5.6-sol"
+    config.llm.reasoning_effort = "medium"
+    config.llm.codex_routing_mode = "auto"
+    pipeline = ExplodingPipeline(
+        config=config,
+        codex_provider=_Provider(),
+        trace_dir=str(tmp_path / "traces"),
+    )
+
+    result = pipeline.execute(TaskRequest(user_input="创建简单构件", intent="CREATE"))
+
+    assert not result.success
+    assert pipeline.seen[0][:2] == (LUNA_MODEL, "low")
+    assert (config.llm.model, config.llm.reasoning_effort) == (
+        "openai-codex/gpt-5.6-sol",
+        "medium",
+    )
 
 
 def test_auto_pipeline_simple_task_uses_terra_fallback_when_luna_missing(tmp_path):

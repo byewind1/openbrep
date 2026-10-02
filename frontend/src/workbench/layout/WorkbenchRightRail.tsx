@@ -8,6 +8,7 @@ import type {
   TapirStatus,
 } from '../../api/types'
 import { useWorkbenchStore } from '../../state/useWorkbenchStore'
+import { usePreview2DSource, usePreviewSource } from '../preview/usePreviewSource'
 
 const PreviewViewport = lazy(() => import('../../components/PreviewViewport').then((m) => ({ default: m.PreviewViewport })))
 const Preview2DViewport = lazy(() => import('../../components/Preview2DViewport').then((m) => ({ default: m.Preview2DViewport })))
@@ -47,6 +48,7 @@ interface WorkbenchRightRailProps {
   onChat: (message: string, images?: AssistantImageAttachment[]) => void
   onStop: () => void
   onClearAssistantHistory: () => void
+  onDeleteAssistantMessages?: (indices: number[]) => void | Promise<void>
   onAdoptAssistantCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => Promise<boolean> | boolean
@@ -102,6 +104,7 @@ export function WorkbenchRightRail({
   onChat,
   onStop,
   onClearAssistantHistory,
+  onDeleteAssistantMessages,
   onAdoptAssistantCode,
   onOpenScript,
   onSaveRevision,
@@ -126,7 +129,14 @@ export function WorkbenchRightRail({
   const setPreviewQuality = useWorkbenchStore((state) => state.setPreviewQuality)
   // P2a：任务前版本 ghost 快照，视口只读消费
   const previewGhost = useWorkbenchStore((state) => state.previewGhost)
+  // ST03：delivery 卡动作直接挂 store，不另建第二套工作台 state
+  const recoverDeliveryBefore = useWorkbenchStore((state) => state.recoverDeliveryBefore)
+  const viewRevisionDiff = useWorkbenchStore((state) => state.viewRevisionDiff)
+  const continueDelivery = useWorkbenchStore((state) => state.continueDelivery)
   const previewGhostLabel = useWorkbenchStore((state) => state.previewGhostLabel)
+  // Archicad 权威预览：来源切换/缓存/错误在 store，这里只解析出当前应显示的 payload
+  const { preview: displayPreview, sourceControl } = usePreviewSource(preview)
+  const { preview: displayPreview2d, sourceControl: sourceControl2d } = usePreview2DSource(preview2d)
   return (
     <aside className="workbench-right-rail right-rail">
       <div className="rail-tabs" role="tablist" aria-label="Right rail panels">
@@ -154,8 +164,8 @@ export function WorkbenchRightRail({
         {activeRailPanel === '3d' ? (
           <Suspense fallback={<div className="viewport-loading" />}>
             <PreviewViewport
-              preview={preview}
-              warnings={warnings}
+              preview={displayPreview}
+              warnings={displayPreview?.warnings ?? warnings}
               hasDirtyScripts={hasDirtyScripts}
               onExpand={onExpandPreview}
               onFloat={onFloatPreview}
@@ -164,6 +174,7 @@ export function WorkbenchRightRail({
               onQualityChange={(quality) => void setPreviewQuality(quality)}
               previewGhost={previewGhost}
               previewGhostLabel={previewGhostLabel}
+              sourceControl={sourceControl}
               actions={(
                 <button type="button" className="viewport-action-button" onClick={onLoadPreview3D} title="Update preview from current editor buffer">
                   Update
@@ -173,7 +184,11 @@ export function WorkbenchRightRail({
           </Suspense>
         ) : activeRailPanel === '2d' ? (
           <Suspense fallback={<div className="viewport-loading" />}>
-            <Preview2DViewport preview={preview2d} warnings={warnings} />
+            <Preview2DViewport
+              preview={displayPreview2d}
+              warnings={displayPreview2d?.warnings ?? warnings}
+              sourceControl={sourceControl2d}
+            />
           </Suspense>
         ) : activeRailPanel === 'inspect' ? (
           <Suspense fallback={<div className="viewport-loading" />}>
@@ -197,10 +212,31 @@ export function WorkbenchRightRail({
             onChat={onChat}
             onStop={onStop}
             onClearHistory={onClearAssistantHistory}
+            onDeleteMessages={onDeleteAssistantMessages}
             onAdoptCode={onAdoptAssistantCode}
             onOpenScript={onOpenScript}
             onSaveRevision={onSaveRevision}
             onRevealLine={onRevealLine}
+            onRecoverDelivery={async (presentation, policy) => {
+              await recoverDeliveryBefore(presentation, { draftPolicy: policy, source: 'delivery' })
+            }}
+            onViewDeliveryDiff={async (presentation) => {
+              const fromId = presentation.before_revision_id
+              if (!fromId) return null
+              // F1：partial 无 after → before→工作源；有 after → before→after；禁止 before→before
+              let toId: string | null = presentation.after_revision_id ?? null
+              if (presentation.diff_target === 'working') toId = null
+              else if (!toId && presentation.diff_target !== 'after') toId = null
+              if (toId === fromId) toId = null
+              return viewRevisionDiff(fromId, toId)
+            }}
+            onContinueDelivery={(payload) => {
+              void continueDelivery({
+                originRunId: payload.originRunId,
+                originalInstruction: payload.originalInstruction,
+                intent: payload.presentation.state ?? undefined,
+              })
+            }}
             modelOptions={modelOptions}
             currentModel={currentModel}
             onSessionModelChange={onSessionModelChange}

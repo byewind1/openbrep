@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from openbrep.codex.app_server import CodexAppServerError
+from openbrep.codex.errors import error_response
+from openbrep.codex.model_ref import wire_model_name
 from openbrep.codex.turn import (
     INTERRUPTED_TEXT,
     NO_FINAL_MESSAGE_TEXT,
@@ -40,7 +42,6 @@ from openbrep.codex.turn import (
     TIMEOUT_TEXT,
     TURN_ERROR_TEXT,
     build_turn_prompt,
-    wire_model_name,
 )
 from openbrep.llm import ToolCall, ToolDefinition
 
@@ -608,6 +609,8 @@ _MODIFY_BRIDGE_PROTOCOL = """
 ## Agent Loop 工作模式（本次任务生效，Codex 动态工具桥接）
 
 你可以通过工具调用接口使用以下工具，自主推进任务：
+- read_parameters：读取参数与当前 source_fingerprint
+- edit_parameters：结构化批量修改参数（add/set_value/set_description/delete，全或无）
 - patch_script：局部编辑（精确匹配替换若干段文本，diff 级最小改动；优先使用）
 - update_script：全量重写一个脚本/参数文件（仅当需要整文件重写时才用）
 - compile_script：编译当前工程，返回成功或错误信息
@@ -616,14 +619,15 @@ _MODIFY_BRIDGE_PROTOCOL = """
 - preview_geometry：轻量渲染 3D 脚本，返回 mesh 数量与包围盒
 
 工作纪律：
-1. 局部改动优先用 patch_script 做最小 diff，整文件重写才用 update_script；
-   每次修改后调用 compile_script 验证；
+1. 参数增删和值/描述修改必须优先用 edit_parameters；先 read_parameters 取得指纹，
+   SOURCE_CHANGED 后重新读取；脚本局部改动优先用 patch_script，整文件重写才用
+   update_script；每次修改后调用 compile_script 验证；
 2. 编译失败时根据错误信息继续修复，可用 query_knowledge(mode=diagnose) 诊断；
 3. 工具调用预算共 {budget} 次，请规划使用，不要重复调用同一工具空转；
 4. 确认完成后，直接以纯文本答复总结改动与编译结果（不再发起工具调用）；
 5. 若预算不足，如实说明当前进度与遗留问题，禁止谎报完成；
 6. 本通道不接收 [FILE:] 交付块：改动必须通过工具调用落盘
-   （patch_script / update_script），回复里的 [FILE:] 内容不会被应用；
+   （edit_parameters / patch_script / update_script），回复里的 [FILE:] 内容不会被应用；
 7. 完成声明会经过独立的编译 + 语义验证门禁核验，未通过会被打回并附上
    确定性证据，请在剩余预算内继续用工具修复。
 """
@@ -831,6 +835,7 @@ class CodexModifyBridge:
             apply_changes=agent._apply_changes,
             on_event=self.on_event,
         )
+        self.registry.on_before_write = self._ensure_before_revision
         self.tools = self.registry.definitions()
         self.tool_specs = _dynamic_tool_specs(self.tools)
         self.allowlist = _tool_allowlist(self.tools)
@@ -1033,7 +1038,12 @@ class CodexModifyBridge:
                         exc.category or exc.__class__.__name__,
                     )
                     outcome = CodexModifyTurnOutcome(
-                        finish_reason="error", error=TURN_ERROR_TEXT,
+                        finish_reason="error",
+                        error=(
+                            error_response(exc)["error"]
+                            if exc.category == "runtime_conflict"
+                            else TURN_ERROR_TEXT
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001 —— 稳定文案兜底
                     self.logger.warning(
@@ -1152,7 +1162,7 @@ class CodexModifyBridge:
         # 反馈信号采集（只采集，best-effort；不改变任何判定/交付语义）
         if not self.cancelled and not self.epoch_violated:
             from openbrep.feedback import append_feedback
-            blocking_issues = [i for i in semantic_result.issues if i.blocking]
+            blocking_issues = semantic_result.blocking_issues
             if gate_unresolved and compile_result is not None and not compile_result.success:
                 append_feedback(self.project.root, {
                     "kind": "compile_failure",
@@ -1223,7 +1233,7 @@ class CodexModifyBridge:
             parameter_changes=parameter_changes,
             changed_files=list(self.registry.changed_files.keys()),
             compile_result=compile_result,
-            semantic_issues=[i.detail for i in semantic_result.issues if i.blocking],
+            semantic_issues=[i.detail for i in semantic_result.blocking_issues],
         )
 
         diff_warnings, diff_ratios = self.registry.diff_scope_warnings()
@@ -1281,6 +1291,7 @@ class CodexModifyBridge:
                 ),
             },
             "before_revision_id": self.before_revision_id or None,
+            "changed_files": sorted(dict(self.registry.changed_files).keys()),
             "codex_modify": {
                 "model": self.model,
                 "reasoning_effort": self.reasoning_effort,
@@ -1302,6 +1313,15 @@ class CodexModifyBridge:
         # schema/fields/confidence/skipped，前端只读卡片数据源；无图不写）
         if self.vision_extractions:
             metadata["vision_extractions"] = self.vision_extractions
+        # ST02：验证后捕获源指纹；after 由 pipeline delivery finalizer 绑定
+        try:
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            metadata["verified_source_fingerprint"] = compute_source_fingerprint(
+                self.project.root
+            )
+        except Exception:
+            pass
         return TaskResult(
             success=verification_report.passed and not aborted_delivery,
             intent=self.intent,
@@ -1339,7 +1359,14 @@ def _tool_digest(tool_log: list[dict]) -> str:
 
 
 def _has_file_blocks(text: str) -> bool:
-    return "[FILE:" in (text or "")
+    """只识别真实 ``[FILE: path]`` 交付块（共享 matcher，空标记 [FILE:] 不算）。
+
+    提及空标记 ``[FILE:]``（例如在解释里引用协议本身）不算交付块，不能因此报
+    协议错误；冒号后必须跟着非空路径。K09。
+    """
+    from openbrep.file_blocks import has_file_blocks
+
+    return has_file_blocks(text)
 
 
 def _llm_model_name(llm) -> str:
@@ -1361,11 +1388,18 @@ def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str
     from openbrep.codex.provider import CodexNotSignedInError, CodexUnsupportedEffortError
 
     try:
+        selector = getattr(provider, "select_model", None)
+        if callable(selector) and str(model or "").startswith("openai-codex/"):
+            selector(model)
         if getattr(provider, "cli_available", False) is not True:
             return "未检测到 Codex CLI。请先安装 Codex CLI 后重试。"
         status = provider.status(refresh=True)
-        if not status.get("connected"):
-            return "尚未连接 ChatGPT。请先在 AI 设置中点击「连接我的 ChatGPT」完成登录。"
+        if not status.get("codex_ready", status.get("connected")):
+            # 双入口（2026-09-17）：local 入口的不可用原因各有稳定文案，直接透传
+            hint = str(status.get("error") or "").strip()
+            if status.get("entry") == "local" and hint:
+                return hint
+            return "Codex app-server 尚未就绪，请点击重启后重试。"
         if status.get("state") == "quota_exhausted":
             return QUOTA_ERROR_TEXT
         provider.validate_reasoning_effort(model, reasoning_effort)
@@ -1376,6 +1410,12 @@ def _modify_ready_error(provider: Any, model: str, reasoning_effort: str) -> str
             "当前模型不支持所选 reasoning effort，请求已拒绝。"
             "请到 AI 设置中选择该模型支持的 effort。"
         )
+    except CodexAppServerError as exc:
+        _LOGGER.warning(
+            "codex modify ready 检查失败（category=%s）",
+            exc.category or exc.__class__.__name__,
+        )
+        return error_response(exc)["error"]
     except Exception as exc:  # noqa: BLE001 —— 兜底稳定文案
         category = getattr(exc, "category", None)
         _LOGGER.warning(

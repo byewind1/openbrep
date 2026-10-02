@@ -6,8 +6,8 @@
 
 ## 快速开始
 
-1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载 `OpenBrep-*-macOS.zip` 或 `OpenBrep-*-Windows.zip`
-2. 解压后运行 `OpenBrep`
+1. 普通用户：从 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest) 下载桌面安装包（macOS：`OpenBrep_*_aarch64.dmg`（Apple Silicon）或 `OpenBrep_*_x64.dmg`（Intel）；Windows：`OpenBrep_*_x64-setup.exe` 或 `.msi`）
+2. 安装后从「应用程序」/ 开始菜单启动 OpenBrep（独立桌面窗口，无需浏览器）
 3. 命令行 / 开发者用户再使用 `git clone` 或 `pipx` 安装
 
 
@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v1.0.0 — Tauri 桌面工作台正式落地。React + Tauri + Python sidecar 全栈架构，Streamlit 完全退役，自愈编译循环与知识图谱驱动稳定运行。
+> 正式发布版本 v0.10.10 — 预览支持材质（语义材质预设 + 命名 GDL 材质渲染），并继续提供 Apple Silicon、Intel 与 Windows 安装包。
 
 ---
 
@@ -43,21 +43,23 @@
 
 ### 推荐：下载桌面包（普通用户）
 
-访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的压缩包：
+访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep-free-macOS.zip`
-- Windows：`OpenBrep-free-Windows.zip`
+- macOS：`OpenBrep_0.10.10_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.10_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.10.10_x64_en-US.msi` 或 `OpenBrep_0.10.10_x64-setup.exe`
 
-Current macOS package compatibility: Apple Silicon only (`arm64`, M1/M2/M3/M4), macOS 14 Sonoma or later. Intel Mac is not covered by the current macOS zip.
+v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
-On macOS, unzip it, open the `OpenBrep` folder, and double-click `OpenBrep.command`. On Windows, unzip it and run `OpenBrep.exe`. This path does not require users to learn `git clone`, `git pull`, or manual Python dependency installation first.
+Current macOS package compatibility: both Apple Silicon (`arm64`, M1/M2/M3/M4) and Intel (`x86_64`) packages are provided, requiring macOS 11 Big Sur or later (measured from the published binary, `minos 11.0`). The Intel build runs on the GitHub `macos-15-intel` runner (supported until 2027-08).
+
+On macOS, open the dmg and drag OpenBrep into Applications. On Windows, run the msi / setup.exe installer.
 
 Temporary macOS Gatekeeper workaround:
 
-The current macOS zip is not yet Developer ID signed and notarized. If macOS shows security warnings or blocks the app even after you confirm the prompts, remove the quarantine flag from the unzipped folder:
+The current macOS build is not yet Developer ID signed and notarized. If macOS shows security warnings or blocks the app even after you confirm the prompts, remove the quarantine flag:
 
 ```bash
-xattr -dr com.apple.quarantine /path/to/OpenBrep
+xattr -dr com.apple.quarantine /Applications/OpenBrep.app
 ```
 
 Tip: type `xattr -dr com.apple.quarantine ` in Terminal, keep the trailing space, drag the unzipped `OpenBrep` folder into Terminal, then press Enter. After that, run `OpenBrep.command` again.
@@ -96,13 +98,13 @@ obr
 ### 源码升级
 
 ```bash
-cd openbrep
-git pull origin main
-bash install.sh   # 有新依赖时重跑，无害
-obr
+obr source-update --repo /path/to/openbrep --dry-run
+obr source-update --repo /path/to/openbrep
 ```
 
 > 个人配置（config.toml / API Key）升级后保持不变，无需重新配置。
+> 桌面稳定版/开发版通道与源码更新的区别见
+> [更新通道与开发者源码更新](docs/DEVELOPER_UPDATES.zh-CN.md)。
 
 需要 Python 3.10+。真实编译（.gsm 输出）需要安装 ArchiCAD 28/29。
 
@@ -110,7 +112,7 @@ obr
 
 ## 工作台架构
 
-OpenBrep v1.0 采用全栈桌面架构：
+OpenBrep v0.9 采用全栈桌面架构：
 
 ```
 React 前端 (Vite + Monaco + Three.js)
@@ -390,7 +392,21 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
-| v1.0.0 | Tauri 桌面工作台正式落地：彻底退役 Streamlit（79 个文件 + 24 个 UI 测试），迁移域逻辑至 `openbrep/workbench/`，初始化 Rust/Tauri v2 桌面壳，实现 Python sidecar 启动握手、stderr relay、SPA 静态服务、关窗孤儿进程防护；674 测试全绿（见 docs/releases/v1.0.0.md） |
+| v0.10.10 | 预览材质落地（语义材质预设、命名 GDL 材质真实渲染、材质变化进入验收报告），Codex 双入口与 cc-switch 多供应商路由，交付绑定真实 after-revision（见 docs/releases/v0.10.10.md） |
+| v0.10.9 | 修复 Windows 安装包启动时窗口空白，并修复 ChatGPT/Codex 连接流程（见 docs/releases/v0.10.9.md） |
+| v0.10.6 | 同步 Python、前端与 Tauri 发布版本元数据 |
+| v0.10.5 | 修复冻结版后端缺失 tiktoken 编码插件导致 `Unknown encoding cl100k_base`（见 docs/releases/v0.10.5.md） |
+| v0.10.4 | v0.10.2 内容，另修复已撤回 npm 依赖导致三平台构建失败并升级发布 Node 至 22（见 docs/releases/v0.10.4.md） |
+| v0.10.2 | Codex 供应商兼容、app-server runtime 单实例锁，以及 CLI 可运行状态与订阅登录状态分离（构建失败，已由 v0.10.4 替代；见 docs/releases/v0.10.2.md） |
+| v0.10.1 | 修复 macOS Finder 启动时无法发现已安装 Codex CLI（支持用户级 npm/Bun/Hermes 与 Homebrew 路径）（见 docs/releases/v0.10.1.md） |
+| v0.10.0 | Archicad 权威预览通道、真实库部件预览覆盖、Archicad 风格 `ui.gdl` 参数面板与 Tauri 启动错误页（见 docs/releases/v0.10.0.md） |
+| v0.9.6 | 修复自动更新在安装包中静默失效（sidecar 内嵌前端丢失 VITE_IS_TAURI 标记 + 远程来源命令被 ACL 拒绝 + 环境判据过严，v0.9.2–v0.9.5 均受影响）（见 docs/releases/v0.9.6.md） |
+| v0.9.5 | macOS 安装包新增 Intel（x86_64）版：CI 加 `macos-15-intel` 构建腿，`latest.json` 更新清单同步支持 `darwin-x86_64`（见 docs/releases/v0.9.5.md） |
+| v0.9.4 | 图标修订：完整三角形构图 + 右缘文字残影遮罩抹除（见 docs/releases/v0.9.4.md） |
+| v0.9.3 | 稳定性补丁：修复桌面包启动即崩溃（tauri.conf.json 静态 main 窗口与代码建窗 label 冲突，v0.9.0–v0.9.2 均受影响）；Release SOP 增加真机启动验证（见 docs/releases/v0.9.3.md） |
+| v0.9.2 | 桌面版自动更新：tauri-plugin-updater + GitHub Releases latest.json，顶栏版本 pill 弹出更新对话框（更新要点/进度/失败降级），签名的 in-place 更新；安装包启用 OpenBrep 品牌图标替换 Tauri 占位图（见 docs/releases/v0.9.2.md） |
+| v0.9.1 | 安装包真正独立可用：PyInstaller 冻结 Python 后端为 Tauri sidecar（onefile 内嵌 openbrep/知识库/前端产物），下载安装即可用，不再需要本机 Python 与源码；修复 tauri 钩子相对路径与 Windows 缺 icon.ico 的构建问题（见 docs/releases/v0.9.1.md） |
+| v0.9.0 | Tauri 桌面工作台正式落地：彻底退役 Streamlit（79 个文件 + 24 个 UI 测试），迁移域逻辑至 `openbrep/workbench/`，初始化 Rust/Tauri v2 桌面壳，实现 Python sidecar 启动握手、stderr relay、SPA 静态服务、关窗孤儿进程防护；另含语义修复环、Vision Harness、GSM CALL 宏依赖解析、Copilot 集成、质量台账等（见 docs/releases/v0.9.0.md） |
 | v0.8.0 | React 工作台成为默认 UI：合并 react-workbench 分支，`obr` 默认启动 React + Monaco + Three.js 工作台，Streamlit 降级为 fallback；新增 Verification 一等 seam（`openbrep/verification.py`），把散落的 static/lint/compile/plan_checks 聚合成统一验证报告，AI 生成后展示置信度、检查结果、残余风险；CREATE 路径 compile 状态显式可见，MODIFY 路径含 compile + auto-repair 证据（见 docs/releases/v0.8.0.md） |
 | v0.7.0 | GDL 资产生命周期里程碑：新增 modify / repair 前后 revision 快照、`obr history` / `obr rollback`、工程级变更摘要、GDLContractChecker 合规检查输出，以及 `--compare mock|real` 对比编译（见 docs/releases/v0.7.0.md） |
 | v0.6.12 | GDL 知识库校准收口：完成 P0-P6 批次的官方文档/社区/本地知识交叉校验，修正核心命令语义、参数结构、2D/3D 投影与高级几何边界，并补充 Pro 层商业化 Skill 开发方向（见 docs/releases/v0.6.12.md） |

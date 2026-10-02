@@ -38,9 +38,14 @@ class WorkbenchCompilerService:
         output_gsm = output_dir / f"{self.session.project.name}.gsm"
         result = self.mock_compiler_factory().hsf2libpart(str(hsf_dir), str(output_gsm))
         duration_ms = int((time.perf_counter() - start) * 1000)
-        output_path = result.output_path or str(output_gsm)
-        self.session.last_compile_output_path = output_path
-        artifact_path = _archive_compiled_artifact(hsf_dir, output_path) if result.success else None
+        output_path = result.output_path or None
+        if output_path:
+            self.session.last_compile_output_path = output_path
+        artifact_path = (
+            _archive_compiled_artifact(hsf_dir, output_path)
+            if result.success and output_path
+            else None
+        )
         return {
             "ok": True,
             "success": bool(result.success),
@@ -49,7 +54,7 @@ class WorkbenchCompilerService:
             "duration_ms": duration_ms,
             "output_path": output_path,
             "artifact_path": artifact_path,
-            "gsm_size_bytes": file_size_or_none(output_gsm),
+            "gsm_size_bytes": file_size_or_none(Path(output_path)) if output_path else None,
             "parameter_count": len(self.session.project.parameters or []),
         }
 
@@ -74,11 +79,12 @@ class WorkbenchCompilerService:
 
         self.session.project.save_to_disk()
         result = compiler.hsf2libpart(str(self.session.source_path), str(output_gsm))
-        output_path = result.output_path or str(output_gsm)
-        self.session.last_compile_output_path = output_path
+        output_path = result.output_path or None
+        if output_path:
+            self.session.last_compile_output_path = output_path
         artifact_path = (
             _archive_compiled_artifact(self.session.source_path, output_path)
-            if result.success
+            if result.success and output_path
             else None
         )
         return {
@@ -92,7 +98,7 @@ class WorkbenchCompilerService:
                 "stderr": result.stderr,
                 "errors": result.errors,
                 "warnings": result.warnings,
-                "gsm_size_bytes": file_size_or_none(output_gsm),
+                "gsm_size_bytes": file_size_or_none(Path(output_path)) if output_path else None,
                 "parameter_count": len(self.session.project.parameters or []),
             },
             **({} if result.success else {"error": result.stderr or result.stdout or "Compile failed"}),

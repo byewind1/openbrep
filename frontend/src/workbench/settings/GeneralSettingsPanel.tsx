@@ -1,3 +1,5 @@
+import { UpdateSettingsSection } from './UpdateSettingsSection'
+
 interface GeneralSettingsPanelProps {
   configPath: string
   saveState: 'saved' | 'dirty' | 'saving' | null
@@ -35,6 +37,7 @@ export function GeneralSettingsPanel({ configPath, saveState, saveError, onReloa
         ) : null}
         {saveError ? <span className="settings-save-error">{saveError}</span> : null}
       </div>
+      <UpdateSettingsSection />
     </>
   )
 }

@@ -20,6 +20,10 @@ from openbrep.explainer.service import (
 from openbrep.feedback import append_feedback
 from openbrep.learning import ErrorLearningStore
 from openbrep.runtime.pipeline import ImageRef, TaskRequest
+from openbrep.workbench.delivery_presentation import (
+    delivery_payload_from_result,
+    normalize_continue_from,
+)
 from openbrep.workbench.preview_service import preview_payload
 from openbrep.workbench.project_service import validate_image_payload
 from openbrep.workbench.settings_service import effective_session_reasoning_effort
@@ -32,10 +36,90 @@ class WorkbenchAssistantService:
     def __init__(self, session: Any) -> None:
         self.session = session
 
+    @staticmethod
+    def _merge_continue_from(result: Any, continue_from: dict[str, Any] | None) -> Any:
+        """ST03：继续操作显式关联原 run（只写 metadata，不改 prompt）。"""
+        if not continue_from:
+            return result
+        try:
+            metadata = dict(getattr(result, "metadata", None) or {})
+            metadata["continue_from"] = dict(continue_from)
+            result.metadata = metadata
+        except Exception:
+            logger.debug("continue_from metadata attach skipped", exc_info=True)
+        return result
+
+    @staticmethod
+    def _assistant_delivery_block(
+        result: Any,
+        *,
+        instruction: str = "",
+        continue_from: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return delivery_payload_from_result(
+            result,
+            original_instruction=instruction or None,
+            continue_from=continue_from,
+        )
+
+    @staticmethod
+    def _generate_assistant_dict(
+        result: Any,
+        *,
+        instruction: str = "",
+        continue_from: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """三处 generate 路径共用的 assistant 载荷（含 ST03 delivery）。"""
+        scripts = result.scripts or {}
+        delivery = WorkbenchAssistantService._assistant_delivery_block(
+            result,
+            instruction=instruction,
+            continue_from=continue_from,
+        )
+        presentation = delivery.get("presentation") or {}
+        # partial_change / snapshot_failed：已改文件以 delivery_source 为准，
+        # 不再只报 handler 声称的 scripts keys（避免把空 scripts 说成无修改）。
+        if presentation.get("state") in {"partial_change", "snapshot_failed"}:
+            changed_files = list(presentation.get("changed_files") or [])
+            if not changed_files:
+                changed_files = list(scripts.keys())
+        else:
+            changed_files = list(scripts.keys())
+        return {
+            "kind": "generate",
+            "reply": result.plain_text,
+            "changed_files": changed_files,
+            "intent": result.intent,
+            "verification": result.verification,
+            "acceptance": result.metadata.get("acceptance"),
+            "delivery_source": delivery.get("delivery_source"),
+            "delivery": presentation,
+            "run_id": presentation.get("run_id"),
+            "continue_from": delivery.get("continue_from"),
+        }
+
+    def _new_pipeline(self):
+        """构造 pipeline 时显式传 session 解析出的 config 路径（B3）。
+
+        pipeline 每请求新建，TaskPipeline 默认 GDLAgentConfig.load(None) 只有
+        env/cwd 逻辑；git worktree 下直接启动时会与 session 的
+        resolve_workbench_config_path（含 git-common-dir 逻辑）解析到不同的
+        config.toml，丢自定义 provider 的 alias→target_model 映射。config_path
+        为 None（旧式替身 session）时不传，保持原行为。
+        """
+        cfg_path = getattr(self.session, "config_path", None)
+        if cfg_path is None:
+            return self.session.pipeline_class(trace_dir="./traces")
+        return self.session.pipeline_class(trace_dir="./traces", config_path=str(cfg_path))
+
     def assistant_reply(self, body: dict[str, Any]) -> dict[str, Any]:
         message = str(body.get("message") or "").strip()
         if not message:
             return {"ok": False, "error": "Assistant message is empty."}
+
+        # ST04：显式"沉淀成 skill / 保存为技能"走提案路径，绕过修改代码流程
+        if self._is_explicit_skill_request(message):
+            return self._explicit_skill_response(message)
 
         # D3：用户选中的是 ChatGPT Codex（openai-codex）订阅模型 → CHAT/EXPLAIN
         # 由该模型完成（ephemeral thread + 临时只读 cwd + approval never）。
@@ -98,7 +182,7 @@ class WorkbenchAssistantService:
         """
         from openbrep.runtime.pipeline import TaskRequest
 
-        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        pipeline = self._new_pipeline()
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model
             if self.session.llm_api_key:
@@ -118,6 +202,7 @@ class WorkbenchAssistantService:
         request = TaskRequest(
             user_input=message,
             intent="CHAT",
+            credential_scope=str(getattr(self.session, "session_id", "") or ""),
             project=self.session.project,
             assistant_settings=self.session.assistant_settings,
             history=list(body.get("history") or []),
@@ -136,11 +221,27 @@ class WorkbenchAssistantService:
             return {"ok": True, "messages": []}
         try:
             entries = ErrorLearningStore(self.session.source_path).list_chat_transcript()
-            messages = [
-                {"role": entry.role if entry.role in {"user", "assistant"} else "assistant", "content": entry.content}
-                for entry in entries
-                if entry.content
-            ]
+            messages = []
+            for entry in entries:
+                if not entry.content:
+                    continue
+                role = entry.role if entry.role in {"user", "assistant"} else "assistant"
+                item: dict[str, Any] = {"role": role, "content": entry.content}
+                meta = entry.meta if isinstance(entry.meta, dict) else None
+                if meta:
+                    # ST03 F2：把持久化的 delivery / continue 关联原样带回前端
+                    for key in (
+                        "delivery",
+                        "delivery_source",
+                        "delivery_continue_from",
+                        "original_instruction",
+                        "run_id",
+                        "changed_files",
+                        "error_category",
+                    ):
+                        if key in meta and meta[key] is not None:
+                            item[key] = meta[key]
+                messages.append(item)
         except Exception as exc:
             return {"ok": False, "error": f"Failed to load assistant history: {exc}", "messages": []}
         return {"ok": True, "messages": messages}
@@ -268,7 +369,7 @@ class WorkbenchAssistantService:
         先建 pipeline 并灌 session 的 llm_model/api_key/api_base/assistant_settings，
         再经 pipeline._make_llm 拿适配器（与 generate 路径共用同一套配置解析）。
         """
-        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        pipeline = self._new_pipeline()
         if hasattr(pipeline, "config"):
             pipeline.config.llm.model = self.session.llm_model
             if self.session.llm_api_key:
@@ -283,6 +384,7 @@ class WorkbenchAssistantService:
             )
         request = TaskRequest(
             user_input="",
+            credential_scope=str(getattr(self.session, "session_id", "") or ""),
             assistant_settings=self.session.assistant_settings,
         )
         return pipeline._make_llm(request)
@@ -312,6 +414,10 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Generation message is empty."}
 
+        # ST04：显式 skill 沉淀请求绕开 MODIFY/编译工具链，直接产出持久候选
+        if self._is_explicit_skill_request(message):
+            return self._explicit_skill_response(message)
+
         gate_error = self._codex_modify_gate(body)
         if gate_error is not None:
             return {"ok": False, "error": gate_error}
@@ -331,10 +437,12 @@ class WorkbenchAssistantService:
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
 
+        continue_from = normalize_continue_from(body.get("continue_from"))
         pipeline, request = self._build_generate_pipeline(
             body, image_payload, on_event=on_event
         )
         result = pipeline.execute(request)
+        result = self._merge_continue_from(result, continue_from)
         # skill 效果回写（GUI 侧通道，best-effort）：失败任务按注入 skill 计 fail_count
         self._safe_skill_outcome(result)
         # success=False 只在"无可交付物"时才视为硬失败；验证未过但有产出时
@@ -352,14 +460,11 @@ class WorkbenchAssistantService:
         proposal = self._safe_harvest(result, message)
         response: dict[str, Any] = {
             "ok": True,
-            "assistant": {
-                "kind": "generate",
-                "reply": result.plain_text,
-                "changed_files": list((result.scripts or {}).keys()),
-                "intent": result.intent,
-                "verification": result.verification,
-                "acceptance": result.metadata.get("acceptance"),
-            },
+            "assistant": self._generate_assistant_dict(
+                result,
+                instruction=message,
+                continue_from=continue_from,
+            ),
             "preview": preview_payload(self.session.project),
             "warnings": [],
             "events": events,
@@ -388,8 +493,10 @@ class WorkbenchAssistantService:
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
 
+        continue_from = normalize_continue_from(body.get("continue_from"))
         pipeline, request = self._build_generate_pipeline(body, image_payload, on_event=on_event)
         result = pipeline.execute(request)
+        result = self._merge_continue_from(result, continue_from)
         if result.metadata.get("awaiting_confirmation"):
             # 存 session pending_plan（含原始 body 与项目代次，确认时校验不跨项目）
             self.session.pending_plan = {
@@ -415,14 +522,11 @@ class WorkbenchAssistantService:
         proposal = self._safe_harvest(result, instruction)
         response: dict[str, Any] = {
             "ok": True,
-            "assistant": {
-                "kind": "generate",
-                "reply": result.plain_text,
-                "changed_files": list((result.scripts or {}).keys()),
-                "intent": result.intent,
-                "verification": result.verification,
-                "acceptance": result.metadata.get("acceptance"),
-            },
+            "assistant": self._generate_assistant_dict(
+                result,
+                instruction=instruction,
+                continue_from=continue_from,
+            ),
             "preview": preview_payload(self.session.project),
             "warnings": [],
             "events": events,
@@ -500,19 +604,102 @@ class WorkbenchAssistantService:
         return harvest_for_session(self.session, result, instruction)
 
     def confirm_skill_proposal(self, body: dict[str, Any]) -> dict[str, Any]:
-        """POST /api/skill/confirm：审批待确认 skill 提案。
+        """POST /api/skill/confirm：审批 skill 提案/候选。
 
-        approve=True → propose_skill 落盘（status=proposed）→ 立即 verify_skill
-        双闸晋升 → 结果进响应；approve=False → 丢弃。两种结局都写
-        skill_proposal_outcome 反馈事件。无 pending / 跨项目失效 → 明确错误码。
+        带 proposal_id → 从持久候选 store 读取并审批（校验项目身份，draft →
+        approved/rejected）；不带 → 保留原 session.pending_skill_proposal 行为。
         """
         try:
-            from openbrep.runtime.skill_harvest import confirm_skill_proposal as _confirm
-
-            return _confirm(self.session, body)
+            return self._skill_proposal_service().confirm(body)
         except Exception as exc:
             logger.warning("skill proposal confirm failed: %s", exc)
             return {"ok": False, "error": f"Skill proposal confirm failed: {exc}"}
+
+    # ── ST04：显式 skill 沉淀（assistant 文本路由与 REST 路由共用同一 service）──
+
+    def _skill_proposal_service(self):
+        from openbrep.workbench.skill_proposal_service import SkillProposalService
+
+        return SkillProposalService(self.session)
+
+    def propose_skill_candidate(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/skill/proposals 的 assistant 侧入口。"""
+        try:
+            return self._skill_proposal_service().propose(body)
+        except Exception as exc:
+            logger.warning("skill proposal failed: %s", exc)
+            return {"ok": False, "code": "SKILL_PROPOSAL_FAILED", "error": f"skill 沉淀失败：{exc}"}
+
+    def list_skill_proposals(self) -> dict[str, Any]:
+        """GET /api/skill/proposals 的 assistant 侧入口。"""
+        try:
+            return self._skill_proposal_service().list_proposals()
+        except Exception as exc:
+            logger.warning("skill proposal list failed: %s", exc)
+            return {"ok": False, "error": f"skill 候选列表读取失败：{exc}", "proposals": []}
+
+    @staticmethod
+    def is_explicit_skill_request(message: str) -> bool:
+        """公开判定：显式"沉淀成 skill"请求（workbench_api 流式前置用）。"""
+        from openbrep.skill_proposals import detect_explicit_skill_request
+
+        return detect_explicit_skill_request(message)
+
+    @staticmethod
+    def _is_explicit_skill_request(message: str) -> bool:
+        return WorkbenchAssistantService.is_explicit_skill_request(message)
+
+    def generate_with_assistant_route(self, body: dict[str, Any]):
+        """统一入口：显式沉淀同步处理（SSE 仍收 done），其余按 stream 分流。
+
+        workbench_api.route 在锁内调用本方法，因此显式沉淀的候选写入发生在返回
+        生成器之前——不会出现"锁已释放、生成器迭代期间项目已切换"的写入漂移。
+        """
+        message = str(body.get("message") or "").strip()
+        if body.get("stream") and message and self.is_explicit_skill_request(message):
+            result = self.generate_with_assistant({**body, "stream": False})
+
+            def _explicit_done():
+                yield {"type": "done", "data": result}
+
+            return _explicit_done()
+        if body.get("stream"):
+            import threading
+
+            return self.generate_with_assistant_stream(body, cancel_event=threading.Event())
+        return self.generate_with_assistant(body)
+
+    def _explicit_skill_response(self, message: str) -> dict[str, Any]:
+        """显式沉淀的 assistant 载荷（ok/失败都带明确 code，不报 completed）。"""
+        result = self.propose_skill_candidate({"instruction": message})
+        if not result.get("ok"):
+            error = str(result.get("error") or "skill 沉淀失败。")
+            return {
+                "ok": False,
+                "code": result.get("code"),
+                "error": error,
+                "assistant": {"kind": "skill_proposal", "reply": error},
+                "skill_proposal": None,
+                "events": [],
+            }
+        proposal_id = result.get("proposal_id")
+        name = result.get("name")
+        path = f".openbrep/memory/skill-proposals/{proposal_id}.json"
+        evidence = result.get("evidence") or {}
+        evidence_note = (
+            "证据完整" if evidence.get("evidence_complete") else "证据不完整（旧资料/未绑定 after，未核验）"
+        )
+        reply = (
+            f"已生成待审 skill 候选「{name}」（{proposal_id}）。\n"
+            f"候选路径：{path}\n"
+            f"状态：draft（需你确认后才沉淀）。{evidence_note}。"
+        )
+        return {
+            "ok": True,
+            "assistant": {"kind": "skill_proposal", "reply": reply},
+            "skill_proposal": result,
+            "events": [],
+        }
 
     def generate_with_assistant_stream(
         self, body: dict[str, Any], cancel_event: Any | None = None
@@ -528,6 +715,13 @@ class WorkbenchAssistantService:
         message = str(body.get("message") or "").strip()
         if not message:
             yield {"type": "error", "data": {"error": "Generation message is empty."}}
+            return
+
+        # ST04：显式 skill 沉淀请求 → 直接产出候选，不启动 pipeline / 工具链
+        if self._is_explicit_skill_request(message):
+            result = self._explicit_skill_response(message)
+            result.setdefault("events", [])
+            yield {"type": "done", "data": result}
             return
 
         gate_error = self._codex_modify_gate(body)
@@ -551,12 +745,15 @@ class WorkbenchAssistantService:
         def should_cancel():
             return cancel_event is not None and cancel_event.is_set()
 
+        continue_from = normalize_continue_from(body.get("continue_from"))
+
         def run_pipeline():
             try:
                 pipeline, request = self._build_generate_pipeline(
                     body, image_payload, on_event=on_event, should_cancel=should_cancel
                 )
                 result = pipeline.execute(request)
+                result = self._merge_continue_from(result, continue_from)
                 if not result.success and result.project is None and not (result.plain_text or result.scripts):
                     error = result.error or "Generation failed."
                     if image_payload["image_b64"] or image_payload.get("images"):
@@ -572,14 +769,11 @@ class WorkbenchAssistantService:
                 self.session.project.save_to_disk()
                 done_data: dict[str, Any] = {
                     "ok": True,
-                    "assistant": {
-                        "kind": "generate",
-                        "reply": result.plain_text,
-                        "changed_files": list((result.scripts or {}).keys()),
-                        "intent": result.intent,
-                        "verification": result.verification,
-                        "acceptance": result.metadata.get("acceptance"),
-                    },
+                    "assistant": self._generate_assistant_dict(
+                        result,
+                        instruction=message,
+                        continue_from=continue_from,
+                    ),
                     "preview": preview_payload(self.session.project),
                     "warnings": [],
                 }
@@ -616,12 +810,13 @@ class WorkbenchAssistantService:
         should_cancel: Any | None = None,
     ) -> tuple[Any, TaskRequest]:
         """构造 generate 用的 pipeline 与 TaskRequest，供同步/流式复用。"""
-        pipeline = self.session.pipeline_class(trace_dir="./traces")
+        pipeline = self._new_pipeline()
         intent = str(body.get("intent") or "MODIFY")
         epoch_at_start = getattr(self.session, "project_epoch", None)
         request = TaskRequest(
             user_input=str(body.get("message") or "").strip(),
             intent=intent,
+            credential_scope=str(getattr(self.session, "session_id", "") or ""),
             project=self.session.project,
             work_dir=str(self.session.source_path.parent),
             output_dir=str(self.session.source_path.parent / "output"),
@@ -643,6 +838,8 @@ class WorkbenchAssistantService:
             # 计划确认门（V3）：仅 GUI MODIFY 请求置 True；确认后经 confirmed_plan 注入
             confirm_plan=bool(body.get("confirm_plan")) and intent == "MODIFY",
             confirmed_plan=body.get("confirmed_plan") if isinstance(body.get("confirmed_plan"), dict) else None,
+            # ST03 F2：继续关联进入 TaskRequest → pipeline metadata（先于 finalize）
+            continue_from=normalize_continue_from(body.get("continue_from")),
         )
         # D10：会话层 project epoch 守卫（Codex modify 桥接在长任务中拒绝
         # 项目切换后的后续 mutation；非 codex 路径不使用该字段）

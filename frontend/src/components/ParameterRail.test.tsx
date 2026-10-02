@@ -111,15 +111,16 @@ describe('ParameterRail enum dropdown (P11)', () => {
   })
 })
 
-describe('ParameterRail view toggle (P11)', () => {
-  test('defaults to the parameters view with both tabs present', () => {
+describe('ParameterRail view toggle (P11 + L0b)', () => {
+  test('defaults to the parameters view with three tabs present', () => {
     const params = [makeParam()]
     render(<ParameterRail {...baseProps({ parameters: params })} />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['参数', '参数脚本'])
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['参数', '面板', '参数脚本'])
     expect(tabs[0].getAttribute('aria-selected')).toBe('true')
     expect(tabs[1].getAttribute('aria-selected')).toBe('false')
+    expect(tabs[2].getAttribute('aria-selected')).toBe('false')
   })
 
   test('switching to the script tab embeds the script editor for vl.gdl', async () => {
@@ -174,5 +175,67 @@ describe('ParameterRail view toggle (P11)', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '参数' }))
     expect(document.querySelector('.enum-select')).toBeTruthy()
+  })
+})
+
+describe('ParameterRail effective parameter observations (ST06)', () => {
+  test('shows a proven derived calculation and makes only that control read-only', () => {
+    const parameter = makeParam({
+      name: 'step_riser',
+      type_tag: 'Length',
+      value: '0.17',
+      description: 'Riser',
+    })
+    render(
+      <ParameterRail
+        {...baseProps({
+          parameters: [parameter],
+          effectiveParameters: {
+            step_riser: {
+              name: 'step_riser',
+              role: 'derived',
+              source_value: '0.17',
+              requested_value: '0.17',
+              effective_value: 0.18125,
+              read_only: true,
+              depends_on: ['height', 'num_steps'],
+              sources: ['paramlist.xml', 'scripts/1d.gdl:16'],
+              reason: null,
+            },
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByText('0.17 → 0.18125')).toBeTruthy()
+    expect(screen.getByText('本地近似')).toBeTruthy()
+    expect((document.querySelector('.numeric-input') as HTMLInputElement).disabled).toBe(true)
+  })
+
+  test('keeps an unknown role editable even when an effective value is available', () => {
+    const parameter = makeParam({ name: 'conditional_value', type_tag: 'Length', value: '1' })
+    render(
+      <ParameterRail
+        {...baseProps({
+          parameters: [parameter],
+          effectiveParameters: {
+            conditional_value: {
+              name: 'conditional_value',
+              role: 'unknown',
+              source_value: '1',
+              requested_value: '1',
+              effective_value: 2,
+              read_only: false,
+              depends_on: [],
+              sources: ['paramlist.xml'],
+              reason: 'conditional_assignment',
+            },
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByText('1 → 2')).toBeTruthy()
+    expect((document.querySelector('.numeric-input') as HTMLInputElement).disabled).toBe(false)
   })
 })

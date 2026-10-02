@@ -60,6 +60,9 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
           set({
             project: snapshot.project,
             parameters: snapshot.parameters,
+            ...(snapshot.source_fingerprint !== undefined
+              ? { sourceFingerprint: snapshot.source_fingerprint }
+              : {}),
           })
         }
       }
@@ -145,6 +148,9 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
               parameters: snapshot.parameters,
               preview: snapshot.preview,
               warnings: snapshot.warnings ?? [],
+              ...(snapshot.source_fingerprint !== undefined
+                ? { sourceFingerprint: snapshot.source_fingerprint }
+                : {}),
             }
           : {}
       set((state) => ({
@@ -152,8 +158,12 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
         dirtyScripts: { ...state.dirtyScripts, [name]: false },
         lastSavedAt: nowTimeText(),
         compileLog: [`Saved ${name} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
+        ...(result.source_fingerprint !== undefined
+          ? { sourceFingerprint: result.source_fingerprint }
+          : {}),
         ...snapshotFields,
       }))
+      await get().refreshEffectiveParameters()
     },
 
     // 统一的“读当前脚本前先落盘”入口：编译、AI 生成、参数应用等操作必须先走这里，
@@ -194,9 +204,16 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
             dirtyScripts: { ...state.dirtyScripts, [scriptName]: false },
             lastSavedAt: nowTimeText(),
             compileLog: [`Saved ${scriptName}`, ...state.compileLog].slice(0, 20),
+            ...(result.source_fingerprint !== undefined
+              ? { sourceFingerprint: result.source_fingerprint }
+              : {}),
           }
         })
         didSave = true
+      }
+
+      if (didSave) {
+        await get().refreshEffectiveParameters()
       }
 
       return { ok: true, didSave }
@@ -215,6 +232,9 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
           dirtyScripts: { ...state.dirtyScripts, [activeScriptName]: false },
           lastSavedAt: nowTimeText(),
           compileLog: [`Saved ${activeScriptName} at ${result.saved_at}`, ...state.compileLog].slice(0, 20),
+          ...(result.source_fingerprint !== undefined
+            ? { sourceFingerprint: result.source_fingerprint }
+            : {}),
         }))
         await get().refreshProjectWorkspace({
           preferredScriptName: activeScriptName,
@@ -233,9 +253,13 @@ export function createScriptActions({ api, get, set }: WorkbenchActionContext) {
               project: snapshot.project,
               preview: snapshot.preview,
               warnings: snapshot.warnings ?? [],
+              ...(snapshot.source_fingerprint !== undefined
+                ? { sourceFingerprint: snapshot.source_fingerprint }
+                : {}),
             })
           }
         }
+        await get().refreshEffectiveParameters()
         return
       }
       set({

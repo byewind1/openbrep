@@ -74,6 +74,9 @@ class WorkbenchProjectService:
     def restore_project_revision(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.revision_service.restore_project_revision(body)
 
+    def get_revision_diff(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.revision_service.get_revision_diff(body)
+
     def preview(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.preview_service.preview(overrides)
 
@@ -91,6 +94,12 @@ class WorkbenchProjectService:
 
     def apply(self, changes: dict[str, Any]) -> dict[str, Any]:
         return self.parameter_service.apply(changes)
+
+    def ui_layout(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.parameter_service.ui_layout(body)
+
+    def effective_parameters(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.parameter_service.effective_parameters(body)
 
     def add_project_parameter(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.parameter_service.add_project_parameter(body)

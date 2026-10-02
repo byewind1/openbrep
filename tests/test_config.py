@@ -37,6 +37,64 @@ class _CleanEnvMixin:
 
 
 class TestConfigAssistantSettings(unittest.TestCase):
+    def test_pi_catalog_config_loads_and_saves_only_pinned_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                f"""
+[llm]
+model = "glm-4-flash"
+
+[llm.pi_catalog]
+path = "{Path(tmpdir) / 'models.json'}"
+commit = "abc123"
+ignored = "drop-me"
+""",
+                encoding="utf-8",
+            )
+            config = GDLAgentConfig.load(str(config_path))
+            assert config.llm.pi_catalog["commit"] == "abc123"
+            config.save(str(config_path))
+            text = config_path.read_text(encoding="utf-8")
+            assert 'commit = "abc123"' in text
+            assert "drop-me" not in text
+
+    def test_retry_policy_loads_and_saves_as_optional_llm_table(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text(
+                """
+[llm]
+model = "glm-4-flash"
+
+[llm.retry]
+cooldown_seconds = 4
+revert_policy = "primary_after_success"
+
+[llm.retry.fallback_chains]
+create = [{ model = "gpt-5.4", reasoning_effort = "high", tier = "slow" }]
+""",
+                encoding="utf-8",
+            )
+
+            config = GDLAgentConfig.load(str(config_path))
+            router = config.llm.model_retry_router()
+            assert router.cooldown_seconds == 4.0
+            assert router.revert_policy == "primary_after_success"
+            assert router.fallback_chains["create"][0].model == "gpt-5.4"
+
+            config.save(str(config_path))
+            reloaded = GDLAgentConfig.load(str(config_path))
+            assert reloaded.llm.model_retry_router().as_config() == router.as_config()
+
+    def test_retry_policy_default_is_inert_and_not_written(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config = GDLAgentConfig()
+            config.save(str(config_path))
+            assert "retry" not in config_path.read_text(encoding="utf-8")
+            assert config.llm.model_retry_router().as_config() == {}
+
     def test_custom_model_prefers_custom_provider_credentials_over_top_level_llm_fields(self):
         cfg = LLMConfig(
             model="ymg-gpt-5.3-codex",
@@ -512,6 +570,62 @@ class TestResolveCredentials(_CleanEnvMixin, unittest.TestCase):
         self.assertEqual(cred.api_key, "ymg-key")
         self.assertEqual(cred.api_base, "https://api.ymg.com/v1")
 
+    def test_explicit_custom_provider_ref_beats_colliding_bare_model(self):
+        """Qualified identity must select its provider even when model IDs collide."""
+        cfg = LLMConfig(
+            model="provider-b/shared-model",
+            custom_providers=[
+                {
+                    "name": "provider-a",
+                    "api": "https://a.example.test/v1",
+                    "api_key": "test-provider-a-key",
+                    "models": ["shared-model"],
+                },
+                {
+                    "name": "provider-b",
+                    "api": "https://b.example.test/v1",
+                    "api_key": "test-provider-b-key",
+                    "models": ["shared-model"],
+                },
+            ],
+        )
+
+        cred = cfg.resolve_credentials()
+
+        self.assertEqual(cred.source, "custom_provider")
+        self.assertEqual(cred.provider, "provider-b")
+        self.assertEqual(cred.api_base, "https://b.example.test/v1")
+
+    def test_credential_precedence_is_custom_then_provider_then_top_level_then_env(self):
+        """Every higher-priority configured credential shields lower sources."""
+        self._clear_llm_env()
+        os.environ["DEEPSEEK_API_KEY"] = "env-key"
+        self.addCleanup(lambda: os.environ.pop("DEEPSEEK_API_KEY", None))
+
+        cfg = LLMConfig(
+            model="deepseek-chat",
+            api_key="test-top-level-key",
+            provider_keys={"deepseek": "test-provider-key"},
+            custom_providers=[
+                {
+                    "name": "gateway",
+                    "api": "https://gateway.example.test/v1",
+                    "api_key": "test-custom-key",
+                    "models": ["deepseek-chat"],
+                }
+            ],
+        )
+        self.assertEqual(cfg.resolve_credentials().source, "custom_provider")
+
+        cfg.custom_providers = []
+        self.assertEqual(cfg.resolve_credentials().source, "provider_keys")
+
+        cfg.provider_keys = {}
+        self.assertEqual(cfg.resolve_credentials().source, "top_level")
+
+        cfg.api_key = None
+        self.assertEqual(cfg.resolve_credentials().source, "env")
+
     def test_provider_keys_source_carries_console_url(self):
         self._clear_llm_env()
         cfg = LLMConfig(model="qwen-max", provider_keys={"aliyun": "aliyun-key"})
@@ -715,6 +829,67 @@ protocol = "openai"
             self.assertEqual(reloaded.llm.resolve_api_key(), "oc-key")
             self.assertEqual(reloaded.llm.resolve_api_base(), "https://opencode.ai/zen/go/v1")
             self.assertEqual(reloaded.llm.custom_providers[0]["name"], "opencode-go")
+
+    def test_provider_without_api_falls_back_to_top_level_and_roundtrips(self):
+        """B1：未显式配置 api/base_url 的 provider 依赖顶层 api_base 兜底；
+        save→load 往返不得把"未配置"固化成"显式为空"而丢失兜底。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "ymg-gpt-5.3-codex"
+api_base = "https://integrate.api.nvidia.com/v1"
+
+[[llm.providers]]
+name = "ymg"
+api_key = "ymg-key"
+models = ["ymg-gpt-5.3-codex"]
+'''.strip(), encoding="utf-8")
+
+            config = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(
+                config.llm.resolve_api_base(), "https://integrate.api.nvidia.com/v1"
+            )
+            self.assertEqual(config.llm.resolve_api_key(), "ymg-key")
+
+            config.save(str(config_path))
+
+            saved_text = config_path.read_text(encoding="utf-8")
+            self.assertNotIn('api = ""', saved_text)
+
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertEqual(
+                reloaded.llm.resolve_api_base(), "https://integrate.api.nvidia.com/v1"
+            )
+            self.assertEqual(reloaded.llm.resolve_api_key(), "ymg-key")
+
+    def test_provider_explicit_empty_api_roundtrips_without_fallback(self):
+        """显式写 api = "" 的 provider 语义是"绝不回退顶层"，往返后保持不变。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.toml"
+            config_path.write_text('''
+[llm]
+model = "ymg-gpt-5.3-codex"
+api_base = "https://integrate.api.nvidia.com/v1"
+
+[[llm.providers]]
+name = "ymg"
+api = ""
+api_key = "ymg-key"
+models = ["ymg-gpt-5.3-codex"]
+'''.strip(), encoding="utf-8")
+
+            config = GDLAgentConfig.load(str(config_path))
+            self.assertIsNone(config.llm.resolve_api_base())
+
+            config.save(str(config_path))
+
+            saved_text = config_path.read_text(encoding="utf-8")
+            self.assertIn('api = ""', saved_text)
+
+            reloaded = GDLAgentConfig.load(str(config_path))
+            self.assertIsNone(reloaded.llm.resolve_api_base())
+            self.assertEqual(reloaded.llm.resolve_api_key(), "ymg-key")
 
     def test_llm_default_alias_for_model(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1191,3 +1366,28 @@ models = ["gpt-5.6-luna"]
             reloaded = GDLAgentConfig.load(str(config_path))
             self.assertEqual(reloaded.llm.providers[0]["api_mode"], "codex_app_server")
             self.assertEqual(reloaded.llm.providers[0]["api_key"], "")
+
+
+def test_custom_provider_credentials_rotate_by_scope_and_round_trip(tmp_path):
+    config = GDLAgentConfig()
+    config.llm.providers = [{
+        "name": "pool-provider",
+        "api": "https://example.invalid/v1",
+        "api_key": "fallback",
+        "credentials": [
+            {"id": "one", "value": "secret-one"},
+            {"id": "two", "value": "secret-two"},
+        ],
+        "models": ["demo"],
+    }]
+    config.llm.credential_scope = "scope-a"
+    assert config.llm.resolve_api_key("demo") == "secret-one"
+    assert config.llm.resolve_credentials("demo").credential_id == "one"
+    config.llm.credential_scope = "scope-b"
+    assert config.llm.resolve_api_key("demo") == "secret-two"
+    path = tmp_path / "config.toml"
+    config.save(str(path))
+    text = path.read_text()
+    assert "secret-one" in text
+    reloaded = GDLAgentConfig.load(str(path))
+    assert reloaded.llm.providers[0]["credentials"][0]["id"] == "one"

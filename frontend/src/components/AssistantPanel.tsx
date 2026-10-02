@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import type { AssistantImageAttachment, AssistantMessage, CodexModelInfo, LlmModelOption, LlmSettings, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
+import type { AssistantImageAttachment, AssistantMessage, CodexModelInfo, DeliveryPresentation, LlmModelOption, LlmSettings, ModifyAcceptance, PendingExtraction, PendingPlan, SkillProposal, VerificationReport, VisionExtraction, WorkspaceInfo } from '../api/types'
 import { detectChatIntent, isResumeMessage, INTENT_LABELS } from '../state/chatIntent'
 import { attachmentLabel, isImagePathText, MAX_ASSISTANT_IMAGES, validateAssistantImageFile } from './assistantImage'
 import { AssistantThinkingTimeline } from './AssistantThinkingTimeline'
+import { DeliveryCard, shouldSuppressAutoFixLabel } from './DeliveryCard'
 import { ExtractionCardList, ExtractionConfirmCard } from './ExtractionCard'
 import { ModelPill } from './ModelPill'
 import { PanelEmpty } from './PanelEmpty'
@@ -18,10 +19,20 @@ interface AssistantPanelProps {
   onChat: (message: string, images?: AssistantImageAttachment[]) => void
   onStop: () => void
   onClearHistory: () => void
+  onDeleteMessages?: (indices: number[]) => void | Promise<void>
   onAdoptCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
   onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number) => void
+  /** ST03：delivery 卡动作 */
+  onRecoverDelivery?: (presentation: DeliveryPresentation, policy: 'discard' | 'keep') => void | Promise<void>
+  onViewDeliveryDiff?: (presentation: DeliveryPresentation) => Promise<string | null>
+  onContinueDelivery?: (payload: {
+    originRunId: string | null
+    originalInstruction: string
+    intent?: string
+    presentation: DeliveryPresentation
+  }) => void
   modelOptions?: LlmModelOption[]
   currentModel?: string
   /** D16：聊天侧模型切换 = 会话级（不写 config.toml）；slash /model 与 pill 共用 */
@@ -68,10 +79,14 @@ export function AssistantPanel({
   onChat,
   onStop,
   onClearHistory,
+  onDeleteMessages,
   onAdoptCode,
   onOpenScript,
   onSaveRevision,
   onRevealLine,
+  onRecoverDelivery,
+  onViewDeliveryDiff,
+  onContinueDelivery,
   modelOptions = [],
   currentModel = '',
   onSessionModelChange,
@@ -97,7 +112,22 @@ export function AssistantPanel({
   const [attachments, setAttachments] = useState<AttachedImage[]>([])
   const [imageError, setImageError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [selectedMessages, setSelectedMessages] = useState<Set<number>>(new Set())
   const t = useT()
+  const { confirm, dialogNode } = useThemedDialog()
+
+  async function deleteSelectedMessages() {
+    if (!selectedMessages.size || !onDeleteMessages) return
+    const ok = await confirm({
+      title: '删除选中的聊天记录',
+      message: `确定删除选中的 ${selectedMessages.size} 条聊天记录吗？删除后它们不会再进入后续对话。`,
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (!ok) return
+    await onDeleteMessages(Array.from(selectedMessages).sort((a, b) => a - b))
+    setSelectedMessages(new Set())
+  }
 
   // P6b：store 的整理指令草稿到达 → 填入输入框、关抽屉、聚焦，绝不自动发送
   useEffect(() => {
@@ -365,6 +395,11 @@ export function AssistantPanel({
           <button type="button" disabled={busy || messages.length === 0} onClick={onClearHistory}>
             Clear
           </button>
+          {onDeleteMessages && selectedMessages.size > 0 ? (
+            <button type="button" disabled={busy} onClick={() => void deleteSelectedMessages()}>
+              Delete selected ({selectedMessages.size})
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="assistant-thread">
@@ -374,6 +409,21 @@ export function AssistantPanel({
               className={`assistant-message ${message.role}${message.interrupted ? ' is-interrupted' : ''}`}
               key={`${message.role}-${index}`}
             >
+              {onDeleteMessages ? (
+                <input
+                  type="checkbox"
+                  aria-label={`选择第 ${index + 1} 条聊天记录`}
+                  checked={selectedMessages.has(index)}
+                  onChange={(event) => {
+                    setSelectedMessages((current) => {
+                      const next = new Set(current)
+                      if (event.target.checked) next.add(index)
+                      else next.delete(index)
+                      return next
+                    })
+                  }}
+                />
+              ) : null}
               <span>
                 {message.role === 'user' ? '你' : 'OpenBrep'}
                 {message.interrupted ? (
@@ -441,7 +491,44 @@ export function AssistantPanel({
                   ) : null}
                 </div>
               ) : null}
-              {message.verification ? <VerificationCard report={message.verification} onRevealLine={onRevealLine} /> : null}
+              {message.delivery ? (
+                <DeliveryCard
+                  delivery={message.delivery}
+                  originalInstruction={message.originalInstruction || findOriginalInstruction(messages, index)}
+                  busy={busy}
+                  onRecover={
+                    onRecoverDelivery
+                      ? (policy) => onRecoverDelivery(message.delivery!, policy)
+                      : undefined
+                  }
+                  onViewDiff={
+                    onViewDeliveryDiff && message.delivery
+                      ? () => onViewDeliveryDiff(message.delivery!)
+                      : undefined
+                  }
+                  onContinue={
+                    onContinueDelivery && message.delivery
+                      ? () =>
+                          onContinueDelivery({
+                            originRunId: message.delivery!.run_id ?? message.runId ?? null,
+                            originalInstruction:
+                              message.originalInstruction ||
+                              findOriginalInstruction(messages, index) ||
+                              message.delivery!.original_instruction ||
+                              '',
+                            presentation: message.delivery!,
+                          })
+                      : undefined
+                  }
+                />
+              ) : null}
+              {message.verification ? (
+                <VerificationCard
+                  report={message.verification}
+                  onRevealLine={onRevealLine}
+                  suppressAutoFixLabel={shouldSuppressAutoFixLabel(message.delivery)}
+                />
+              ) : null}
               {message.acceptance ? <AcceptanceCard acceptance={message.acceptance} /> : null}
               {message.role === 'assistant' && message.content.includes('```') ? (
                 <button type="button" disabled={busy} onClick={() => onAdoptCode(index)}>
@@ -478,6 +565,7 @@ export function AssistantPanel({
           <SkillProposalCard proposal={pendingSkillProposal} busy={busy} onConfirm={onConfirmSkillProposal} />
         ) : null}
       </div>
+      {dialogNode}
       <form className="assistant-input" aria-label="Assistant input" onSubmit={submitMessage} onDragOver={handleDragOver} onDrop={handleDrop}>
         <div className="assistant-input-wrap">
           {pickerMode === 'commands' && visibleCommands.length > 0 && (
@@ -670,6 +758,16 @@ function errorCategoryLabel(category: NonNullable<AssistantMessage['errorCategor
   return 'Error'
 }
 
+/** ST03：continue 用的原始指令（消息字段优先，否则取最近一条 user 消息全文） */
+function findOriginalInstruction(messages: AssistantMessage[], assistantIndex: number): string {
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      return messages[index].content.trim()
+    }
+  }
+  return ''
+}
+
 // revision 信息取触发本次生成的用户指令（往前找最近一条 user 消息），截断防止过长
 function revisionMessageFor(messages: AssistantMessage[], assistantIndex: number) {
   for (let index = assistantIndex - 1; index >= 0; index -= 1) {
@@ -835,6 +933,12 @@ function SkillProposalCard({
 }) {
   const t = useT()
   const evidence = proposal.evidence ?? null
+  const revisions = evidence?.revisions ?? []
+  const evidenceNote = evidence
+    ? evidence.evidence_complete
+      ? t('assistant.skillProposal.evidenceComplete', { rev: revisions[0] ?? '-' })
+      : t('assistant.skillProposal.evidenceIncomplete')
+    : null
   return (
     <div className="skill-proposal-card" role="group" aria-label={t('assistant.skillProposal.title')}>
       <div className="skill-proposal-header">
@@ -842,12 +946,33 @@ function SkillProposalCard({
         <span className="skill-proposal-type">{proposal.pattern_type}</span>
       </div>
       <p className="skill-proposal-name">{proposal.name}</p>
+      {proposal.status || evidenceNote ? (
+        <p className="skill-proposal-status">
+          {proposal.status ? `${t('assistant.skillProposal.status')}: ${proposal.status}` : null}
+          {proposal.status && evidenceNote ? ' · ' : null}
+          {evidenceNote}
+        </p>
+      ) : null}
+      {proposal.claims?.unverified?.length ? (
+        <p className="skill-proposal-claims">
+          ⚠ {t('assistant.skillProposal.claimsUnverified')}
+          {': '}
+          {(proposal.claims.unverified ?? [])
+            .map((claim) => claim.snippet ?? claim.kind ?? '')
+            .filter(Boolean)
+            .slice(0, 2)
+            .join(' / ')}
+        </p>
+      ) : null}
       <pre className="skill-proposal-content">{proposal.content}</pre>
-      {evidence && (evidence.changed_files?.length || evidence.project) ? (
+      {evidence && (evidence.changed_files?.length || evidence.project || evidence.source_run_ids?.length) ? (
         <div className="skill-proposal-section">
           <strong>{t('assistant.skillProposal.evidence')}</strong>
           <ul>
             {evidence.project ? <li>{t('assistant.skillProposal.project')}: {evidence.project}</li> : null}
+            {(evidence.source_run_ids ?? []).map((run, i) => (
+              <li key={`${run}-${i}`}>{run}</li>
+            ))}
             {(evidence.changed_files ?? []).map((file, i) => (
               <li key={`${file}-${i}`}>{file}</li>
             ))}
@@ -855,14 +980,16 @@ function SkillProposalCard({
         </div>
       ) : null}
       <div className="skill-proposal-actions">
-        <button
-          type="button"
-          className="plan-confirm-approve"
-          disabled={busy}
-          onClick={() => onConfirm?.(true)}
-        >
-          {t('assistant.skillProposal.approve')}
-        </button>
+        {proposal.status !== 'rejecting' ? (
+          <button
+            type="button"
+            className="plan-confirm-approve"
+            disabled={busy}
+            onClick={() => onConfirm?.(true)}
+          >
+            {t('assistant.skillProposal.approve')}
+          </button>
+        ) : null}
         <button
           type="button"
           className="plan-confirm-reject"
@@ -1089,9 +1216,12 @@ const STATUS_ICON: Record<string, string> = {
 function VerificationCard({
   report,
   onRevealLine,
+  suppressAutoFixLabel = false,
 }: {
   report: VerificationReport
   onRevealLine?: (scriptName: string, lineNumber: number) => void
+  /** ST03：delivery 表明未产生源码变化/未完成时，不显示「已修复」 */
+  suppressAutoFixLabel?: boolean
 }) {
   const compileCheck = report.checks.find((c) => c.check_type === 'compile')
   const isSkippedNoCompiler =
@@ -1140,7 +1270,7 @@ function VerificationCard({
           ⚠️ 未配置 LP_XMLConverter，跳过编译验证。请在设置中配置编译器路径以获得完整校验。
         </p>
       ) : null}
-      {report.fixes_applied.length ? (
+      {report.fixes_applied.length && !suppressAutoFixLabel ? (
         <p className="assistant-verification-fixes">
           已修复：{report.fixes_applied.slice(0, 2).join('；')}
         </p>

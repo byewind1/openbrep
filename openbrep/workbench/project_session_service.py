@@ -16,6 +16,7 @@ from typing import Any, Callable
 from openbrep.config import is_codex_qualified_model
 from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, normalize_project_after_import
+from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.naming import (
     DEFAULT_PROJECT_NAME,
     project_name_from_prompt,
@@ -241,6 +242,8 @@ class WorkbenchProjectSessionService:
         if not raw_path:
             try:
                 raw_path = self.session._choose_file_for_purpose("gdl")
+            except DialogUnavailableError as exc:
+                return {"ok": False, "unavailable": True, "error": str(exc)}
             except Exception as exc:
                 return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not raw_path:
@@ -306,6 +309,8 @@ class WorkbenchProjectSessionService:
         if not raw_path:
             try:
                 raw_path = self.session._choose_file_for_purpose("gsm")
+            except DialogUnavailableError as exc:
+                return {"ok": False, "unavailable": True, "error": str(exc)}
             except Exception as exc:
                 return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not raw_path:
@@ -468,6 +473,7 @@ class WorkbenchProjectSessionService:
             TaskRequest(
                 user_input=prompt,
                 intent="IMAGE" if (image_payload["image_b64"] or image_payload["images"]) else "CREATE",
+                credential_scope=str(getattr(self.session, "session_id", "") or ""),
                 work_dir=str(output_root),
                 output_dir=str(output_root),
                 gsm_name=project_name,
@@ -672,6 +678,8 @@ class WorkbenchProjectSessionService:
         if not raw_parent:
             try:
                 raw_parent = self.session.directory_chooser()
+            except DialogUnavailableError as exc:
+                return {"ok": False, "unavailable": True, "error": str(exc)}
             except Exception as exc:
                 return {"ok": False, "error": f"Directory chooser failed: {exc}"}
         if not raw_parent:
@@ -778,6 +786,8 @@ class WorkbenchProjectSessionService:
     def choose_and_load_hsf_directory(self) -> dict[str, Any]:
         try:
             selected = self.session.directory_chooser()
+        except DialogUnavailableError as exc:
+            return {"ok": False, "unavailable": True, "error": str(exc)}
         except Exception as exc:
             return {"ok": False, "error": f"Directory chooser failed: {exc}"}
         if not selected:
@@ -865,10 +875,12 @@ def project_to_snapshot(
 ) -> dict[str, Any]:
     if project is None:
         return empty_project_snapshot()
-    preview = preview_payload(project)
+    # 快照预览直接按 workbench 默认质量档（accurate）生成，使"打开项目即所见"
+    # 与前端默认精细档一致，避免加载后再为质量档二次生成
+    preview = preview_payload(project, quality="accurate")
     # P11：vl.gdl 的 VALUES 声明解析一次，供参数 payload 的 options/range 使用。
     values_map = parse_values_declarations(project.get_script(ScriptType.PARAM))
-    return {
+    snapshot = {
         "project": {
             "name": project.name,
             "source": source,
@@ -881,6 +893,13 @@ def project_to_snapshot(
         "preview": preview,
         "warnings": preview.get("warnings", []),
     }
+    try:
+        from openbrep.source_fingerprint import compute_source_fingerprint
+
+        snapshot["source_fingerprint"] = compute_source_fingerprint(project.root)
+    except Exception:
+        snapshot["source_fingerprint"] = None
+    return snapshot
 
 
 def validate_image_payload(body: dict[str, Any]) -> dict[str, Any]:

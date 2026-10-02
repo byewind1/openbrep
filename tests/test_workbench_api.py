@@ -10,6 +10,7 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.learning import ErrorLearningStore
 from openbrep.llm import LLMResponse
 from openbrep.runtime.pipeline import TaskResult
+from openbrep.source_fingerprint import compute_source_fingerprint
 import openbrep.workbench_api as workbench_api
 from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.workbench.workspace_service import init_workspace
@@ -220,6 +221,167 @@ def test_workbench_tapir_loads_and_applies_selected_parameters():
                 {"name": "is_visible", "value": False},
             ],
         }
+    ]
+
+
+def test_workbench_authoritative_preview_requires_project():
+    session = WorkbenchSession(tapir_import_ok=False)
+    response = session.route("POST", "/api/preview/authoritative")
+    assert response["ok"] is False
+    assert "project" in response["error"].lower() or "项目" in response["error"]
+
+
+def test_workbench_ui_layout_requires_project():
+    session = WorkbenchSession(tapir_import_ok=False)
+    response = session.route("POST", "/api/project/ui-layout")
+    assert response["ok"] is False
+
+
+def test_workbench_ui_layout_parses_project_ui_script(tmp_path):
+    project = HSFProject.create_new("UiLayoutShelf", str(tmp_path))
+    project.set_script(ScriptType.UI, 'UI_INFIELD{2} A, 110, 20, 90, 20\nUI_OUTFIELD "宽度", 20, 20, 80, 16\n')
+    session = WorkbenchSession(tapir_import_ok=False)
+    session.project = project
+    response = session.route("POST", "/api/project/ui-layout")
+    assert response["ok"] is True
+    assert response["has_infield"] is True
+    params = [c["param"] for c in response["controls"] if c["type"] == "infield"]
+    assert "A" in params
+
+
+def test_workbench_authoritative_preview_reshapes_meshes(tmp_path):
+    project = HSFProject.create_new("AuthShelf", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    captured = {}
+
+    class FakeBridge:
+        def get_status(self):
+            return {"archicad_connected": True, "tapir_available": True, "version": "Archicad"}
+
+        def evaluate_library_part(self, lib_part_name="", lib_part_guid="", parameters=None, want=None):
+            captured["name"] = lib_part_name
+            captured["parameters"] = parameters
+            captured["want"] = want
+            return {
+                "success": True,
+                "meshes": [{
+                    "name": "body_1",
+                    "vertices": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                    "faces": [0, 1, 2, -1, 1, 2],
+                    "color": {"red": 0.5, "green": 0.6, "blue": 0.7},
+                }],
+                "bounds": {"xMin": 0.0, "xMax": 1.0},
+                "appliedParameters": ["A"],
+                "skippedParameters": [],
+                "invalidFaceCount": 1,
+                "preview2d": {
+                    "lines": [{"from": [0.0, 0.0], "to": [1.0, 0.0]}],
+                    "polygons": [{"points": [0.0, 0.0, 1.0, 0.0, 0.0, 1.0], "filled": True}],
+                    "arcs": [{"cx": 2.0, "cy": 3.0, "r": 1.0, "a0": 0.0, "a1": 360.0, "whole": True}],
+                    "texts": [],
+                    "unsupportedCount": 0,
+                    "approximatedCurveCount": 1,
+                },
+            }
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+    )
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    response = session.route(
+        "POST",
+        "/api/preview/authoritative",
+        {"parameters": {"A": 1.25}},
+    )
+
+    assert response["ok"] is True
+    assert captured["name"] == "AuthShelf"
+    assert captured["parameters"]["A"] == 1.25
+    assert "parameters" not in captured["parameters"]
+    assert captured["want"] == ["mesh3d", "prims2d"]
+    preview = response["preview"]
+    assert preview["source"] == "archicad"
+    assert preview["meshes"][0]["vertices"] == [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    assert preview["meshes"][0]["faces"] == [[0, 1, 2]]
+    assert preview["meshes"][0]["color"] == {"red": 0.5, "green": 0.6, "blue": 0.7}
+    assert preview["bounds"]["xMax"] == 1.0
+    assert preview["preview2d"]["lines"][0]["to"] == [1.0, 0.0]
+    assert preview["preview2d"]["polygons"][0] == [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+    assert preview["preview2d"]["circles"] == [{"cx": 2.0, "cy": 3.0, "r": 1.0}]
+    assert any("退化子多边形" in warning for warning in preview["warnings"])
+    assert any("弦线近似" in warning for warning in preview["warnings"])
+
+
+def test_workbench_authoritative_preview_error_passthrough(tmp_path):
+    project = HSFProject.create_new("AuthShelf2", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FakeBridge:
+        def get_status(self):
+            return {"archicad_connected": True, "tapir_available": True, "version": "Archicad"}
+
+        def evaluate_library_part(self, lib_part_name="", lib_part_guid="", parameters=None, want=None):
+            return {"success": False, "errorMessage": "门窗/天窗类物件需要宿主墙"}
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+    )
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    response = session.route("POST", "/api/preview/authoritative")
+    assert response["ok"] is False
+    assert "宿主墙" in response["error"]
+
+
+def test_workbench_authoritative_preview_without_archicad(tmp_path):
+    project = HSFProject.create_new("AuthShelf3", str(tmp_path))
+    hsf_dir = project.save_to_disk()
+
+    class FakeBridge:
+        def get_status(self):
+            return {"archicad_connected": False}
+
+    session = WorkbenchSession(
+        tapir_import_ok=True,
+        get_tapir_bridge_fn=lambda: FakeBridge(),
+    )
+    session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+
+    response = session.route("POST", "/api/preview/authoritative")
+    assert response["ok"] is False
+    assert "Archicad" in response["error"]
+
+
+def test_host_verification_routes_are_explicit_and_separate_from_preview():
+    session = WorkbenchSession(tapir_import_ok=False)
+
+    class FakeHostVerificationService:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, body):
+            self.calls.append(("run", body))
+            return {"ok": True, "verification": {"status": "passed"}}
+
+        def current(self, body):
+            self.calls.append(("current", body))
+            return {"ok": True, "status": "not_checked"}
+
+    fake = FakeHostVerificationService()
+    session.host_verification_service = fake
+
+    post = session.route("POST", "/api/verification/host", {"parameters": {"A": 2}})
+    get = session.route("GET", "/api/verification/host")
+
+    assert post["verification"]["status"] == "passed"
+    assert get["status"] == "not_checked"
+    assert fake.calls == [
+        ("run", {"parameters": {"A": 2}}),
+        ("current", {}),
     ]
 
 
@@ -1085,7 +1247,7 @@ def test_workbench_session_creates_project_from_prompt(tmp_path):
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -1123,7 +1285,7 @@ def test_project_create_pipeline_receives_saved_codex_auto_mode_and_provider(tmp
     class FakePipeline:
         instance = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.config = GDLAgentConfig()
             self.codex_provider = None
             FakePipeline.instance = self
@@ -1153,7 +1315,7 @@ def test_project_create_pipeline_receives_saved_codex_auto_mode_and_provider(tmp
 
 def test_workbench_session_create_uses_configured_output_dir(tmp_path):
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -1175,7 +1337,7 @@ def test_workbench_session_create_prefers_workspace_hsf(tmp_path):
     与 Save As 自动落点同口径；请求显式 output_dir 仍最高优先。"""
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -1210,7 +1372,7 @@ def test_workbench_session_creates_project_from_image_prompt(tmp_path):
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -1246,7 +1408,7 @@ def test_workbench_session_creates_project_from_image_prompt(tmp_path):
 
 def test_workbench_session_rejects_unsupported_image_mime_for_create(tmp_path):
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):  # pragma: no cover - validation should stop first
@@ -1343,6 +1505,91 @@ def test_workbench_session_choose_project_directory_handles_cancel():
     assert response["cancelled"] is True
 
 
+def test_workbench_session_choose_project_directory_reports_dialog_unavailable():
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser():
+        raise DialogUnavailableError("tkinter is not available")
+
+    session = WorkbenchSession(directory_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/dialog/open-directory", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+    assert "tkinter" in response["error"]
+
+
+def test_workbench_session_choose_output_directory_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser():
+        raise DialogUnavailableError("PowerShell is not available for native dialogs.")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", directory_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/dialog/output-directory", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_choose_converter_file_reports_dialog_unavailable():
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser():
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/dialog/open-file", {"purpose": "compiler"})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_import_gdl_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser(purpose):
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/project/import-gdl", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_import_blender_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser(purpose):
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/project/import-blender", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
+def test_workbench_session_import_gsm_reports_dialog_unavailable(tmp_path):
+    from openbrep.local_file_dialog import DialogUnavailableError
+
+    def unavailable_chooser(purpose):
+        raise DialogUnavailableError("no dialog backend")
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml", file_chooser=unavailable_chooser)
+    response = session.route("POST", "/api/project/import-gsm", {})
+
+    assert response["ok"] is False
+    assert response["unavailable"] is True
+    assert "cancelled" not in response
+
+
 def test_workbench_session_apply_persists_loaded_hsf_parameters(tmp_path):
     project = HSFProject.create_new("PersistedShelf", str(tmp_path))
     project.parameters.append(GDLParameter("shelf_count", "Integer", "Shelves", "4"))
@@ -1369,13 +1616,14 @@ def test_workbench_session_compile_loaded_hsf_project_with_mock_compiler(tmp_pat
     assert response["ok"] is True
     assert response["compile"]["success"] is True
     assert response["compile"]["mode"] == "mock"
-    assert response["compile"]["output_path"].endswith("CompiledShelf.gsm")
-    assert response["compile"]["gsm_size_bytes"] is not None
+    assert response["compile"]["output_path"] is None
+    assert response["compile"]["artifact_path"] is None
+    assert response["compile"]["gsm_size_bytes"] is None
     assert response["compile"]["parameter_count"] == 3
-    assert (output_dir / "CompiledShelf.gsm").exists()
+    assert not (output_dir / "CompiledShelf.gsm").exists()
 
 
-def test_workbench_session_reveals_last_compiled_artifact(tmp_path):
+def test_workbench_session_does_not_reveal_mock_validation_as_artifact(tmp_path):
     project = HSFProject.create_new("RevealShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()
     revealed: list[Path] = []
@@ -1390,9 +1638,9 @@ def test_workbench_session_reveals_last_compiled_artifact(tmp_path):
     response = session.route("POST", "/api/artifact/reveal", {})
 
     assert compile_response["ok"] is True
-    assert response["ok"] is True
-    assert response["path"] == str(output_dir / "RevealShelf.gsm")
-    assert revealed == [output_dir / "RevealShelf.gsm"]
+    assert response["ok"] is False
+    assert "No compiled artifact" in response["error"]
+    assert revealed == []
 
 
 def test_workbench_session_reveal_artifact_rejects_missing_path(tmp_path):
@@ -1467,6 +1715,7 @@ def test_workbench_session_saves_project_script_content(tmp_path):
     assert response["ok"] is True
     assert response["success"] is True
     assert response["saved_at"]
+    assert response["source_fingerprint"] == compute_source_fingerprint(hsf_dir)
     assert "ADDZ 2" in reloaded.get_script(ScriptType.SCRIPT_3D)
 
 
@@ -1483,7 +1732,7 @@ def test_workbench_session_mock_compile_returns_diagnostics(tmp_path):
     assert response["success"] is False
     assert response["mode"] == "mock"
     assert response["duration_ms"] >= 0
-    assert response["output_path"].endswith("MockCompileDiagnostics.gsm")
+    assert response["output_path"] is None
     assert response["parameter_count"] == 3
     assert response["issues"]
     assert response["issues"][0]["severity"] == "error"
@@ -1528,8 +1777,8 @@ def test_workbench_session_updates_compile_output_directory(tmp_path):
     assert update["ok"] is True
     assert update["compiler"]["output_dir"] == str(output_dir)
     assert response["ok"] is True
-    assert response["compile"]["output_path"] == str(output_dir / "ConfiguredOutputShelf.gsm")
-    assert (output_dir / "ConfiguredOutputShelf.gsm").exists()
+    assert response["compile"]["output_path"] is None
+    assert not (output_dir / "ConfiguredOutputShelf.gsm").exists()
 
 
 def test_workbench_session_persists_compiler_settings_after_llm_settings_save(tmp_path):
@@ -1871,6 +2120,47 @@ def test_workbench_session_tests_llm_connection_success(tmp_path, monkeypatch):
     assert captured_models == ["deepseek-chat"]
 
 
+def test_workbench_session_tests_codex_connection_through_chat_provider_without_saving(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    seen: dict[str, object] = {}
+    provider = object()
+
+    class FakeLLMAdapter:
+        def __init__(self, config):
+            seen["model"] = config.model
+            seen["effort"] = config.reasoning_effort
+
+        def generate(self, _messages, **kwargs):
+            seen["kwargs"] = kwargs
+            seen["provider"] = getattr(self, "codex_provider", None)
+            return type("Response", (), {"model": "openai-codex/gpt-5.6-sol"})()
+
+    monkeypatch.setattr(workbench_api, "LLMAdapter", FakeLLMAdapter)
+    session = WorkbenchSession(config_path=config_path)
+    original_model = session.llm_model
+    session.settings_service.codex_provider = provider
+
+    response = session.route(
+        "POST",
+        "/api/settings/llm/test",
+        {"model": "openai-codex/gpt-5.6-sol", "reasoning_effort": "high"},
+    )
+
+    assert response["ok"] is True
+    assert seen["model"] == "openai-codex/gpt-5.6-sol"
+    assert seen["effort"] == "high"
+    assert seen["kwargs"] == {
+        "timeout": 20,
+        "codex_intent": "CHAT",
+        "codex_reasoning_effort": "high",
+    }
+    assert seen["provider"] is provider
+    assert session.llm_model == original_model
+    assert not config_path.exists()
+
+
 def test_workbench_session_tests_llm_connection_reports_configuration_error(tmp_path, monkeypatch):
     class FakeLLMAdapter:
         def __init__(self, config):
@@ -2045,7 +2335,7 @@ def test_workbench_session_assistant_explains_loaded_project(tmp_path):
     project = HSFProject.create_new("ExplainedShelf", str(tmp_path))
     hsf_dir = project.save_to_disk()
 
-    session = WorkbenchSession()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     response = session.route("POST", "/api/assistant", {"message": "解释这个构件"})
 
@@ -2059,7 +2349,7 @@ def test_workbench_session_assistant_explains_parameter_mentions(tmp_path):
     project.set_script(ScriptType.SCRIPT_3D, "BLOCK A, B, ZZYZX\n")
     hsf_dir = project.save_to_disk()
 
-    session = WorkbenchSession()
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
     response = session.route("POST", "/api/assistant", {"message": "详细解释 A 参数"})
 
@@ -2256,7 +2546,7 @@ def test_workbench_session_distill_history_intent_happy_path(tmp_path):
             return LLMResponse(content="请把书架层板数改成 5，并保留现有 3D 代码。", model="mock", usage={}, finish_reason="stop")
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def _make_llm(self, request):
@@ -2320,7 +2610,7 @@ def test_workbench_session_distill_history_llm_failure_passthrough(tmp_path):
             raise RuntimeError("upstream quota exhausted")
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def _make_llm(self, request):
@@ -2352,7 +2642,7 @@ def test_workbench_session_distill_history_trims_to_recent_messages(tmp_path):
             return LLMResponse(content="整理结果", model="mock", usage={}, finish_reason="stop")
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def _make_llm(self, request):
@@ -2802,7 +3092,7 @@ def test_workbench_session_generate_updates_project_from_pipeline_result(tmp_pat
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -2836,7 +3126,7 @@ def test_workbench_session_generate_passes_reference_image_to_pipeline(tmp_path)
     class FakePipeline:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -2873,7 +3163,7 @@ def test_workbench_session_normalizes_vision_provider_errors(tmp_path):
     hsf_dir = project.save_to_disk()
 
     class FailingVisionPipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):
@@ -2902,7 +3192,7 @@ def test_workbench_session_rejects_oversized_generate_image(tmp_path):
     too_large = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode()
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):  # pragma: no cover - validation should stop first
@@ -2929,7 +3219,7 @@ def test_workbench_session_generate_reports_pipeline_failure(tmp_path):
     hsf_dir = project.save_to_disk()
 
     class FailingPipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):
@@ -2949,7 +3239,7 @@ def test_workbench_session_generate_delivers_output_when_verification_fails(tmp_
     hsf_dir = project.save_to_disk()
 
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             pass
 
         def execute(self, request):
@@ -2974,7 +3264,7 @@ def test_workbench_session_generate_delivers_output_when_verification_fails(tmp_
 
 def test_workbench_session_create_delivers_output_when_verification_fails(tmp_path):
     class FakePipeline:
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -3526,7 +3816,7 @@ def _rename_pipeline_cls(object_type="", gsm_artifact=False):
     class _Pipe:
         last_request = None
 
-        def __init__(self, trace_dir="./traces"):
+        def __init__(self, trace_dir="./traces", config_path=None):
             self.trace_dir = trace_dir
 
         def execute(self, request):
@@ -3841,6 +4131,63 @@ def test_codex_status_route_three_states_distinguishable(tmp_path):
     assert no_cli["codex_available"] is False
 
 
+def test_codex_entry_route_switches_chain_and_never_leaks_paths(tmp_path, monkeypatch):
+    """双入口（2026-09-17）：入口可读可切，切换后状态卡元信息齐全且零路径泄露。"""
+    local_home = tmp_path / "local-codex"
+    local_home.mkdir()
+    (local_home / "config.toml").write_text(
+        'model = "deepseek-v4-flash"\nmodel_provider = "custom"\n'
+        "[model_providers.custom]\n"
+        'name = "deepseek"\nbase_url = "https://api.deepseek.com"\n'
+        "requires_openai_auth = false\n"
+        'experimental_bearer_token = "sk-never-echoed"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(local_home))
+    client = _RouteFakeCodexClient()
+    # 这条链路按入口解析 home（不钉死显式 home），才能验证 local 入口读本机配置
+    from openbrep.codex.provider import CodexProvider
+
+    session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.settings_service.codex_provider_factory = lambda: CodexProvider(
+        client_factory=lambda: client, cli_available=True,
+    )
+
+    listed = session.route("GET", "/api/settings/llm/codex/entry")
+    assert listed["ok"] is True
+    assert listed["entry"] == "managed"
+    assert {item["entry"] for item in listed["entries"]} == {"local", "managed"}
+    recommended = [item for item in listed["entries"] if item["recommended"]]
+    assert [item["entry"] for item in recommended] == ["local"]
+    assert listed["local_hint"]["detected"] is True
+
+    switched = session.route("POST", "/api/settings/llm/codex/entry", {"entry": "local"})
+    assert switched["ok"] is True and switched["entry"] == "local"
+    assert session.settings_service.session.config.llm.codex_entry == "local"
+    assert 'codex_entry = "local"' in (tmp_path / "config.toml").read_text(encoding="utf-8")
+
+    status = session.route("GET", "/api/settings/llm/codex/status")
+    assert status["entry"] == "local"
+    assert status["state"] == "ready" and status["connected"] is True
+    assert status["auth_source"] == "codex_config"
+    assert status["codex_home_kind"] == "env_override"
+    flat = str(status) + str(switched)
+    assert ".codex" not in flat
+    assert "sk-never-echoed" not in flat
+    assert "codex_home" not in status
+
+    # 本机配置入口不接管认证：登录路由显式拒绝，并指向可执行动作
+    login = session.route("POST", "/api/settings/llm/codex/login/start", {})
+    assert login["ok"] is False
+    assert login["code"] == "codex_entry_managed_only"
+    assert client.login_calls == 0
+
+    rejected = session.route("POST", "/api/settings/llm/codex/entry", {"entry": "anthropic"})
+    assert rejected["ok"] is False
+    assert rejected["code"] == "invalid_codex_entry"
+    assert session.settings_service.session.config.llm.codex_entry == "local"
+
+
 def test_codex_login_start_route_opens_browser_and_returns_state_only(tmp_path):
     client = _RouteFakeCodexClient()
     session, opened = _route_codex_session(tmp_path, client)
@@ -3938,6 +4285,7 @@ def test_codex_routes_registered_lock_free():
 
     assert "/api/settings/llm/codex/login/start" in LOCK_FREE_POST_ROUTES
     assert "/api/settings/llm/codex/logout" in LOCK_FREE_POST_ROUTES
+    assert "/api/settings/llm/codex/models/refresh" in LOCK_FREE_POST_ROUTES
 
 
 def test_snapshot_llm_codex_block_and_no_secrets(tmp_path):
@@ -4262,6 +4610,7 @@ def test_assistant_codex_explain_with_project_no_revision(tmp_path):
     response = session.route("POST", "/api/assistant", {"message": "解释一下这个构件"})
 
     assert response["ok"] is True
+    # 无技能信号：规则前置短路，不再为 skill 分类调用 LLM。
     assert provider.chat_calls == 1
     after = len(list(revisions_dir.iterdir())) if revisions_dir.exists() else 0
     assert before == after, "EXPLAIN 不得创建 revision"

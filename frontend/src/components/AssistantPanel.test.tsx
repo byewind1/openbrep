@@ -485,13 +485,19 @@ describe('AssistantPanel plan confirmation card (V3)', () => {
 
 describe('AssistantPanel skill proposal card (P2-d)', () => {
   const proposal = {
+    proposal_id: 'sp_20260918_abc123',
+    status: 'draft' as const,
     name: 'shelf_loop_pattern',
     pattern_type: 'shelf_loop',
     content: '## 适用场景 / When to Use\n层板循环对象。\n\n## 写法要点\n- FOR 循环 + ADD/DEL 配对。',
     evidence: {
+      source: 'explicit',
       intent: 'MODIFY',
       changed_files: ['scripts/3d.gdl'],
       project: 'Shelf',
+      source_run_ids: ['r_2026_test'],
+      revisions: ['r0002'],
+      evidence_complete: true,
     },
   }
 
@@ -503,6 +509,75 @@ describe('AssistantPanel skill proposal card (P2-d)', () => {
     expect(screen.getByText(/层板循环对象/)).toBeTruthy()
     expect(screen.getByText(/Shelf/)).toBeTruthy()
     expect(screen.getByText('scripts/3d.gdl')).toBeTruthy()
+  })
+
+  test('ST04: shows draft status, source run and evidence completeness', () => {
+    render(<AssistantPanel {...baseProps} hasProject pendingSkillProposal={proposal} onConfirmSkillProposal={vi.fn()} />)
+    expect(screen.getByText(/状态: draft/)).toBeTruthy()
+    expect(screen.getByText(/证据完整（已绑定 revision r0002）/)).toBeTruthy()
+    expect(screen.getByText('r_2026_test')).toBeTruthy()
+  })
+
+  test('ST04: old material renders evidence-incomplete warning', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{
+          name: 'legacy_pattern',
+          pattern_type: 'panel',
+          content: '## 适用场景 / When to Use\n正文。',
+          evidence: { source: 'explicit', source_run_ids: [], revisions: [], evidence_complete: false },
+        }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/证据不完整/)).toBeTruthy()
+  })
+
+  test('ST04: unverified technical claims are surfaced (K08)', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{
+          name: 'stair_spacing_rule',
+          pattern_type: 'repeating_geometry',
+          content: '## 适用场景 / When to Use\n正文。',
+          status: 'draft',
+          claims: { unverified: [{ kind: 'measurement_experience', snippet: '踏步高 25mm 经验值' }] },
+        }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/含未核验技术断言/)).toBeTruthy()
+    expect(screen.getByText(/踏步高 25mm 经验值/)).toBeTruthy()
+  })
+
+  test('ST04: approving status is visible for retry', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{ ...proposal, status: 'approving' }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/状态: approving/)).toBeTruthy()
+  })
+
+  test('ST04: rejecting status only offers rejection retry', () => {
+    render(
+      <AssistantPanel
+        {...baseProps}
+        hasProject
+        pendingSkillProposal={{ ...proposal, status: 'rejecting' }}
+        onConfirmSkillProposal={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/状态: rejecting/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '批准沉淀' })).toBeNull()
+    expect(screen.getByRole('button', { name: '忽略' })).toBeTruthy()
   })
 
   test('approve and ignore buttons call onConfirmSkillProposal with the right flag', () => {

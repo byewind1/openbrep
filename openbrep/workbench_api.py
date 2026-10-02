@@ -13,14 +13,20 @@ from urllib.parse import parse_qsl, unquote, urlparse
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
 from openbrep.hsf_project import HSFProject
 from openbrep.llm import LLMAdapter
+from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
 from openbrep.workbench.blender_import_service import WorkbenchBlenderImportService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
 from openbrep.workbench.copilot_service import WorkbenchCopilotService
 from openbrep.workbench.git_service import WorkbenchGitService
+from openbrep.workbench.host_verification_service import HostVerificationService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
-from openbrep.workbench.preview_service import preview_2d_payload, preview_payload
+from openbrep.workbench.preview_service import (
+    authoritative_preview_payload,
+    preview_2d_payload,
+    preview_payload,
+)
 from openbrep.workbench.project_parameter_service import apply_parameter_values
 from openbrep.workbench.project_service import (
     WorkbenchProjectService,
@@ -34,6 +40,7 @@ from openbrep.workbench.settings_service import (
     load_workbench_config,
     resolve_workbench_config_path,
 )
+from openbrep.workbench.skill_proposal_service import SkillProposalService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
 from openbrep.workbench.workspace_service import (
     init_workspace as ws_init_workspace,
@@ -122,6 +129,7 @@ class WorkbenchSession:
         self.git_service = WorkbenchGitService(self)
         self.blender_import_service = WorkbenchBlenderImportService(self)
         self.assistant_service = WorkbenchAssistantService(self)
+        self.skill_proposal_service = SkillProposalService(self)
         self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
         default_bridge_fn, default_import_ok = default_tapir_bridge_loader()
@@ -131,6 +139,7 @@ class WorkbenchSession:
             now_text_fn=now_text_fn or _now_text,
         )
         self.tapir_service = WorkbenchTapirService(self.tapir)
+        self.host_verification_service = HostVerificationService(self)
 
     @property
     def project(self) -> HSFProject | None:
@@ -347,6 +356,9 @@ class WorkbenchSession:
     def restore_project_revision(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.project_service.restore_project_revision(body)
 
+    def get_project_revision_diff(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.project_service.get_revision_diff(body)
+
     def project_git_status(self) -> dict[str, Any]:
         return self.git_service.status()
 
@@ -371,6 +383,8 @@ class WorkbenchSession:
             return {"ok": False, "error": f"Unsupported file chooser purpose: {purpose}"}
         try:
             selected = self._choose_file_for_purpose(purpose)
+        except DialogUnavailableError as exc:
+            return {"ok": False, "unavailable": True, "error": str(exc)}
         except Exception as exc:
             return {"ok": False, "error": f"File chooser failed: {exc}"}
         if not selected:
@@ -394,6 +408,8 @@ class WorkbenchSession:
     def choose_output_directory(self) -> dict[str, Any]:
         try:
             selected = self.directory_chooser()
+        except DialogUnavailableError as exc:
+            return {"ok": False, "unavailable": True, "error": str(exc)}
         except Exception as exc:
             return {"ok": False, "error": f"Directory chooser failed: {exc}"}
         if not selected:
@@ -414,8 +430,20 @@ class WorkbenchSession:
     def preview_2d(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.project_service.preview_2d(overrides)
 
+    def preview_authoritative(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+        """P15：Archicad 权威预览（后台 Archicad 真实求值当前物件）。"""
+        if self.project is None:
+            return {"ok": False, "error": "Create or open a project first."}
+        parameters = overrides if isinstance(overrides, dict) else None
+        return authoritative_preview_payload(self.project, parameters, self.tapir)
+
+    def project_ui_layout(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """L0b：解析 ui.gdl → Archicad 风格参数面板控件树。"""
+        return self.project_service.ui_layout(body if isinstance(body, dict) else {})
+
     def list_project_scripts(self) -> dict[str, Any]:
         return self.project_service.list_project_scripts()
+
 
     def get_project_script(self, script_name: str) -> dict[str, Any]:
         return self.project_service.get_project_script(script_name)
@@ -479,22 +507,12 @@ class WorkbenchSession:
         return self.assistant_service.extract_assistant_code_blocks(body)
 
     def generate_with_assistant(self, body: dict[str, Any]):
-        if body.get("stream"):
-            import threading
-            cancel_event = threading.Event()
-            return self.assistant_service.generate_with_assistant_stream(body, cancel_event=cancel_event)
-        return self.assistant_service.generate_with_assistant(body)
+        """薄转发：流式/同步与显式沉淀前置判定都在 assistant_service 内。"""
+        return self.assistant_service.generate_with_assistant_route(body)
 
     def modify_confirm(self, body: dict[str, Any]):
         """计划确认门：approve 后带已确认计划执行（stream 走 SSE）；拒绝/无 pending 各自返回。"""
         return self.assistant_service.confirm_modify(body)
-
-    def skill_confirm(self, body: dict[str, Any]):
-        """POST /api/skill/confirm：审批待确认 skill 提案（薄转发，request_gate 锁内）。
-
-        approve → propose_skill 落盘 + 立即 verify_skill 双闸晋升；reject → 丢弃。
-        """
-        return self.assistant_service.confirm_skill_proposal(body)
 
     def _knowledge_status(self) -> dict[str, Any]:
         """Return current knowledge base status (Free/Pro doc counts and path info)."""
@@ -628,6 +646,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/project/revision/restore":
             return self.restore_project_revision(body)
 
+        if normalized_method == "POST" and route == "/api/project/revision/diff":
+            return self.get_project_revision_diff(body)
+
         if normalized_method == "GET" and route == "/api/project/git":
             return self.project_git_status()
 
@@ -696,8 +717,22 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/preview":
             return self.preview(body)
 
+        if normalized_method == "POST" and route == "/api/preview/authoritative":
+            overrides = body.get("parameters") if isinstance(body, dict) else None
+            return self.preview_authoritative(overrides if isinstance(overrides, dict) else None)
+
+        if normalized_method == "POST" and route == "/api/verification/host":
+            return self.host_verification_service.run(body)
+
+        if normalized_method == "GET" and route == "/api/verification/host":
+            return self.host_verification_service.current(body)
+
+        if normalized_method == "POST" and route == "/api/project/ui-layout":
+            return self.project_ui_layout(body if isinstance(body, dict) else {})
+
         if normalized_method == "POST" and route == "/api/preview/2d":
             return self.preview_2d(body)
+
 
         if normalized_method == "GET" and route == "/api/project/scripts":
             return self.list_project_scripts()
@@ -714,6 +749,11 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/project/parameters":
             return self.add_project_parameter(body)
+
+        if route == "/api/project/parameters/effective" and normalized_method in {"GET", "POST"}:
+            return self.project_service.effective_parameters(
+                body if normalized_method == "POST" and isinstance(body, dict) else {}
+            )
 
         if normalized_method == "POST" and route == "/api/project/parameters/update":
             return self.update_project_parameter(body)
@@ -769,8 +809,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/modify/confirm":
             return self.modify_confirm(body)
 
-        if normalized_method == "POST" and route == "/api/skill/confirm":
-            return self.skill_confirm(body)
+        if route in ("/api/skill/proposals", "/api/skill/confirm"):
+            # ST04：显式沉淀候选 + 审批（有 proposal_id 走 store，无则旧 pending）
+            return self.skill_proposal_service.route(normalized_method, route, body)
 
         if normalized_method == "GET" and route == "/api/knowledge/status":
             return self._knowledge_status()

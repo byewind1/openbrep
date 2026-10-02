@@ -19,9 +19,59 @@ from openbrep.codex.app_server import (
     CodexAppServerClient,
     CodexAppServerError,
     StdioJsonRpcTransport,
+    resolve_codex_binary,
 )
+from openbrep.codex.errors import error_response
 
 FAKE_SERVER = Path(__file__).resolve().parent / "fake_codex_app_server.py"
+
+
+def test_runtime_conflict_has_stable_actionable_error_response():
+    exc = CodexAppServerError("raw owner detail", category="runtime_conflict")
+
+    payload = error_response(exc)
+
+    assert payload == {
+        "code": "codex_runtime_conflict",
+        "error": "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。",
+    }
+    assert "raw owner detail" not in payload["error"]
+
+
+def test_resolve_codex_binary_finds_user_npm_bin_without_path(monkeypatch, tmp_path):
+    """Finder-launched apps must find a user-level npm install absent from PATH."""
+    binary = tmp_path / ".npm-global" / "bin" / "codex"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr("openbrep.codex.app_server.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("openbrep.codex.app_server.shutil.which", lambda _name: None)
+
+    assert resolve_codex_binary() == str(binary)
+
+
+def test_stdio_transport_falls_back_when_flock_is_not_permitted(monkeypatch, tmp_path):
+    """受限 macOS 沙箱对 flock 返回 EPERM 时仍可启动并释放互斥锁。"""
+    import fcntl
+
+    real_flock = fcntl.flock
+
+    def denied_flock(*args, **kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(fcntl, "flock", denied_flock)
+    lock_dir = tmp_path / "locks"
+    monkeypatch.setenv("OPENBREP_CODEX_LOCK_DIR", str(lock_dir))
+    transport = StdioJsonRpcTransport(
+        codex_binary=sys.executable,
+        codex_home=tmp_path / "home",
+        extra_args=(str(FAKE_SERVER),),
+    )
+    transport.start()
+    assert transport._home_lock is None
+    assert transport._home_lock_dir is not None
+    transport.close()
+    assert not transport._home_lock_dir
 
 
 class _MemoryTransport:

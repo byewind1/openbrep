@@ -2,7 +2,7 @@ import { ParameterRail } from '../../components/ParameterRail'
 import { ScriptTree } from '../../components/ScriptTree'
 import { WorkspacePanel } from '../workspace/WorkspacePanel'
 import type { WorkspaceInfo, WorkspaceSearchHit } from '../../api/types'
-import type { AddParameterRequest, ProjectScript, UpdateParameterRequest, WorkbenchParameter } from '../../api/types'
+import type { AddParameterRequest, EffectiveParameterObservation, ProjectScript, UpdateParameterRequest, WorkbenchParameter } from '../../api/types'
 
 interface WorkbenchLeftRailProps {
   workspace: WorkspaceInfo | null
@@ -28,6 +28,7 @@ interface WorkbenchLeftRailProps {
   }
   parameterIssues: string[]
   draftParameters: Record<string, unknown>
+  effectiveParameters?: Record<string, EffectiveParameterObservation>
   applying: boolean
   /** SF1：源操作进行中参数输入/项目打开临时禁用 */
   sourceBusy?: boolean
@@ -69,6 +70,7 @@ export function WorkbenchLeftRail({
   groupedParameters,
   parameterIssues,
   draftParameters,
+  effectiveParameters = {},
   applying,
   sourceBusy = false,
   onSelectScript,
@@ -115,6 +117,7 @@ export function WorkbenchLeftRail({
         ]}
         parameterIssues={parameterIssues}
         draftParameters={draftParameters}
+        effectiveParameters={effectiveParameters}
         onChange={onChangeParameter}
         onApply={onApplyParameters}
         onReset={onResetParameters}

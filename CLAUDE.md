@@ -115,8 +115,7 @@
 
 ## 版本策略
 - 0.8.x：React 工作台稳定迭代，Tauri 桌面化探索
-- 0.9.0：Streamlit 完全退役，架构债务清算完成
-- 1.0.0：Tauri 桌面壳正式发布，PyInstaller 打包
+- 0.9.0：Streamlit 完全退役 + Tauri 桌面壳正式发布（原 1.0.0 口径已撤回，1.0 留给后续产品形态）
 - 每个版本在 `docs/releases/vX.X.X.md` 记录发布说明
 - README 版本历史统一用表格，不用标题+列表混排
 
@@ -285,16 +284,16 @@ print('custom_providers:', len(c.llm.custom_providers))
   - `tests/test_llm.py`：覆盖 `api_base` 和 `protocol` 分流逻辑。
 
 ## 发布流程
-- **版本号规则**：遵循当前策略（详见"版本策略"一节，当前 1.0.0 系列）。
-- **版本号必须同步更新的文件**：`openbrep/__init__.py`（`__version__`）、`pyproject.toml`、`src-tauri/tauri.conf.json`、`frontend/package.json`、`CHANGELOG.md`。历史教训：v1.0.0 发布时漏改了 `openbrep/__init__.py`，导致 `__version__` 停留在上一版本超过两周才被测试捕获。
+- **版本号规则**：遵循当前策略（详见"版本策略"一节，当前 0.9.x 系列）。
+- **版本号必须同步更新的文件**：`openbrep/__init__.py`（`__version__`）、`pyproject.toml`、`src-tauri/tauri.conf.json`、`frontend/package.json`、`CHANGELOG.md`。历史教训：曾漏改 `openbrep/__init__.py`，导致 `__version__` 停留在上一版本超过两周才被测试捕获。
 - **发布说明**：每次发布在 `docs/releases/vX.X.X.md` 记录变更要点。
 - **README 版本历史**：更新 `README.md` 和 `README.zh-CN.md` 的版本表格；两个语言版本都要改，历史教训：`README.zh-CN.md` 曾整份停留在上一版本内容超过一个发布周期。
 - **发布前检查**：
   - `python3 -m py_compile openbrep/config.py openbrep/llm.py`
   - `uv run pytest tests`
 - **示例命令**：
-  - `git tag v1.0.1`
-  - `git push origin v1.0.1`
+  - `git tag v0.9.1`
+  - `git push origin v0.9.1`
 
 ## 日志与监控
 - **日志位置**：核心流程日志集中在 `openbrep/core.py` 与 `openbrep/llm.py`，UI 日志在 `ui/app.py`。

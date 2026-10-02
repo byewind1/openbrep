@@ -12,7 +12,7 @@ import os
 import re
 import time
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from openbrep.codex.errors import error_response
@@ -22,9 +22,25 @@ from openbrep.config import (
     LLMConfig,
     provider_profile_for_model,
 )
+from openbrep.model_catalog import ModelSelection, transport_compat
 
 logger = logging.getLogger(__name__)
 _NATIVE_PROVIDERS = tuple(p.native_prefix for p in PROVIDER_PROFILES if p.native_prefix)
+
+
+def codex_chat_generate_kwargs(adapter) -> dict[str, str]:
+    """Return explicit CHAT routing only for an adapter using a Codex model."""
+    config = getattr(adapter, "config", None)
+    model = str(getattr(config, "model", "") or "")
+    if not model.startswith("openai-codex/"):
+        return {}
+    effort_resolver = getattr(config, "codex_reasoning_effort", None)
+    effort = str(effort_resolver() if callable(effort_resolver) else "").strip()
+    return {
+        "codex_intent": "CHAT",
+        "codex_reasoning_effort": effort,
+    }
+
 
 @dataclass
 class _ResolvedModelTarget:
@@ -419,15 +435,21 @@ class LLMAdapter:
         没有可用 provider 时返回 None（调用方 fail closed，绝不自动回退）。
         """
         provider = getattr(self, "codex_provider", None)
-        if provider is not None:
-            return provider
-        try:
-            from openbrep.codex.provider import get_default_codex_provider
+        if provider is None:
+            try:
+                from openbrep.codex.provider import get_default_codex_provider
 
-            return get_default_codex_provider()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("codex provider 读取失败（%s）", exc.__class__.__name__)
+                provider = get_default_codex_provider()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("codex provider 读取失败（%s）", exc.__class__.__name__)
+                return None
+        if provider is None:
             return None
+        # 双入口（2026-09-17）：进程共享 provider 的归属由当前 config 决定。
+        from openbrep.codex.provider import bind_codex_entry
+
+        bind_codex_entry(provider, getattr(self, "config", None))
+        return provider
 
     def _codex_turn_generate(self, msg_dicts: list, model: str, **kwargs) -> LLMResponse:
         """CHAT/EXPLAIN、文本 CREATE 与图片 CREATE 走 Codex app-server turn
@@ -528,8 +550,7 @@ class LLMAdapter:
         if instructions:
             resp_kwargs["instructions"] = instructions
 
-        model_lower = model.lower()
-        if any(token in model_lower for token in ("gpt-5", "codex", "o1", "o3", "o4")):
+        if transport_compat(model).omit_temperature:
             # OpenAI 推理模型的 temperature 约束：不传 = 模型默认（与 chat 路径
             # drop_params 的净效果一致），避免 gpt-5 400 / o 系静默忽略
             kwargs.pop("temperature", None)
@@ -602,6 +623,71 @@ class LLMAdapter:
         )
 
     def generate(self, messages: list, **kwargs) -> LLMResponse:
+        """Generate with an optional bounded role-aware fallback chain."""
+        role = str(kwargs.pop("retry_role", getattr(self, "retry_role", "main")) or "main")
+        router = self.config.model_retry_router()
+        if not router.fallback_chains.get(role):
+            return self._generate_once(messages, **kwargs)
+
+        primary = getattr(self, "retry_primary", None)
+        if not isinstance(primary, ModelSelection):
+            primary = ModelSelection(
+                model=self.config.model,
+                reasoning_effort=self.config.codex_reasoning_effort(),
+                role=(
+                    role
+                    if role in {"main", "create", "modify", "vision", "repair", "compact", "judge"}
+                    else "main"
+                ),
+            )
+        last_attempt_at = time.monotonic()
+        last_error: Exception | None = None
+        for attempt_index in range(len(router.candidates(primary, role=role))):
+            now = time.monotonic()
+            decision = router.plan(
+                primary,
+                attempt_index=attempt_index,
+                now=now,
+                last_attempt_at=last_attempt_at,
+                role=role,
+            )
+            if not decision.allowed or decision.selection is None:
+                break
+            selection = decision.selection
+            adapter = self
+            try:
+                if attempt_index:
+                    cfg = replace(
+                        self.config,
+                        model=selection.model,
+                        reasoning_effort=selection.reasoning_effort,
+                        retry={},
+                    )
+                    cfg._credential_pools = self.config._credential_pools
+                    adapter = LLMAdapter(cfg)
+                    adapter.codex_provider = getattr(self, "codex_provider", None)
+                response = adapter._generate_once(messages, **dict(kwargs))
+                if attempt_index:
+                    response.metadata = dict(response.metadata or {})
+                    response.metadata["retry"] = {
+                        "attempt": attempt_index,
+                        "role": role,
+                        "model": selection.model,
+                    }
+                return response
+            except Exception as exc:
+                last_error = exc
+                try:
+                    adapter.config.mark_credential_failure(selection.model)
+                except Exception:
+                    pass
+                last_attempt_at = now
+                continue
+        if last_error is not None:
+            raise last_error
+        return self._generate_once(messages, **kwargs)
+
+    def _generate_once(self, messages: list, **kwargs) -> LLMResponse:
         """
         Send messages to the LLM and return the response.
 
@@ -658,8 +744,7 @@ class LLMAdapter:
             "stream": True,
         }
 
-        model_lower = model.lower()
-        if "gpt-5" in model_lower or "codex" in model_lower:
+        if transport_compat(model).drop_params:
             completion_kwargs["drop_params"] = True
 
         # 透传用户配置的 extra_body（如 DeepSeek 的 thinking={"type": "disabled"}）。
@@ -793,8 +878,7 @@ class LLMAdapter:
             "tool_choice": tool_choice,
         }
 
-        model_lower = model.lower()
-        if "gpt-5" in model_lower or "codex" in model_lower:
+        if transport_compat(model).drop_params:
             completion_kwargs["drop_params"] = True
 
         extra_body = self._effective_extra_body(resolved)
@@ -962,8 +1046,7 @@ class LLMAdapter:
             "stream": True,
         }
 
-        model_lower = model.lower()
-        if "gpt-5" in model_lower or "codex" in model_lower:
+        if transport_compat(model).drop_params:
             completion_kwargs["drop_params"] = True
 
         extra_body = self._effective_extra_body(resolved)

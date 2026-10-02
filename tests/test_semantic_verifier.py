@@ -4,14 +4,19 @@ the lightweight gdl_previewer and compare the resulting mesh against the
 script's own declared A/B/ZZYZX dimensions.
 """
 
+import json
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 
-from openbrep.gdl_previewer import PreviewMesh3D, Preview3DResult
+from openbrep.gdl_previewer import Preview3DResult, PreviewMesh3D
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.semantic_verifier import (
     _perturb_value,
     check_bounding_box_against_dimensions,
     check_mesh_health,
+    sweep_parameter_observations,
     sweep_parameters,
     verify_semantics,
 )
@@ -216,6 +221,75 @@ class TestSweepParameters(unittest.TestCase):
         # (alphabetically first) could ever be flagged, so at most 3 issues total.
         self.assertLessEqual(len(issues), 3)
 
+    def test_proven_derived_parameters_use_relationship_checks_not_driver_sweeps(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("diameter", "Length", "", "2.0"))
+        project.add_parameter(GDLParameter("derived", "Length", "", "1.0"))
+        project.scripts[ScriptType.MASTER] = (
+            "A = diameter\nB = diameter\nderived = diameter / 2\n"
+        )
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+
+        report = sweep_parameter_observations(project)
+
+        self.assertIn("DIAMETER", report.tested_names)
+        self.assertNotIn("A", report.tested_names)
+        self.assertNotIn("B", report.tested_names)
+        self.assertNotIn("DERIVED", report.tested_names)
+        self.assertEqual(report.sample_for("A").kind, "relationship")
+        self.assertEqual(report.sample_for("A").status, "tested")
+        self.assertEqual(report.sample_for("DERIVED").status, "tested")
+        self.assertEqual(report.tested, 2)
+        self.assertEqual(report.unknown, 0)
+
+    def test_disconnected_input_still_reports_unresponsive(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("diameter", "Length", "", "2.0"))
+        project.add_parameter(GDLParameter("derived", "Length", "", "1.0"))
+        project.scripts[ScriptType.MASTER] = "derived = diameter / 2\n"
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
+
+        report = sweep_parameter_observations(project)
+
+        self.assertTrue(any(
+            issue.check_type == "sweep_unresponsive" and "DIAMETER" in issue.detail
+            for issue in report.issues
+        ))
+
+    def test_fixture_boolean_toggle_changes_geometry_and_is_not_persisted(self):
+        root = Path(__file__).parent / "fixtures" / "spiral_stair" / "after_top_option"
+        before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        project = HSFProject.load_from_disk(root)
+
+        report = sweep_parameter_observations(project)
+
+        sample = report.sample_for("SHOW_TOP_TREAD")
+        self.assertEqual(sample.status, "unknown")
+        self.assertTrue(sample.geometry_changed)
+        self.assertEqual(
+            before,
+            {path: path.read_bytes() for path in root.rglob("*") if path.is_file()},
+        )
+
+    def test_range_and_material_skips_have_explicit_reasons(self):
+        project = self._project()
+        project.add_parameter(GDLParameter("fixed_len", "Length", "", "2"))
+        project.add_parameter(GDLParameter("count", "Integer", "", "1"))
+        project.add_parameter(GDLParameter("surface", "Material", "", "1"))
+        project.scripts[ScriptType.PARAM] = (
+            'VALUES "fixed_len" RANGE [2, 2]\n'
+            'VALUES "count" RANGE [1, 2]\n'
+        )
+        project.scripts[ScriptType.SCRIPT_3D] = "BLOCK count, 1, 1\n"
+
+        report = sweep_parameter_observations(project)
+
+        self.assertEqual(report.sample_for("FIXED_LEN").reason, "no_legal_alternative")
+        self.assertEqual(report.sample_for("SURFACE").reason, "non_geometry_parameter")
+        self.assertEqual(report.sample_for("COUNT").candidate_value, 2)
+        self.assertEqual(report.eligible, len(report.tested_names))
+        self.assertGreater(report.total_parameters, report.eligible)
+
 
 class TestVerifySemantics(unittest.TestCase):
     def _project(self, name: str = "T") -> HSFProject:
@@ -231,6 +305,8 @@ class TestVerifySemantics(unittest.TestCase):
         project.scripts[ScriptType.SCRIPT_3D] = ""
         result = verify_semantics(project)
         self.assertTrue(result.passed)
+        self.assertEqual(result.issues, [])
+        self.assertIsNone(result.project_contract)
 
     def test_default_box_matching_reserved_params_passes(self):
         project = self._project()
@@ -264,6 +340,8 @@ class TestVerifySemantics(unittest.TestCase):
         result = verify_semantics(project)
         self.assertTrue(result.passed)  # non-blocking: informational only
         self.assertTrue(any(i.check_type == "sweep_unresponsive" for i in result.issues))
+        self.assertIsNotNone(result.sweep)
+        self.assertIn("N_SHELVES", result.sweep.tested_names)
 
     def test_sweep_false_skips_parameter_sweep_entirely(self):
         project = self._project()
@@ -271,6 +349,89 @@ class TestVerifySemantics(unittest.TestCase):
         project.scripts[ScriptType.SCRIPT_3D] = "BLOCK A, B, ZZYZX\n"
         result = verify_semantics(project, sweep=False)
         self.assertFalse(any(i.check_type.startswith("sweep_") for i in result.issues))
+        self.assertIsNone(result.sweep)
+
+    def test_explicit_stair_contract_reuses_semantic_evaluation_and_preview(self):
+        fixture = Path(__file__).parent / "fixtures" / "spiral_stair" / "after_top_option"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "stair"
+            shutil.copytree(fixture, root)
+            contract_path = root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text(json.dumps({
+                "schema_version": 1,
+                "type": "spiral_stair",
+                "parameter_bindings": {
+                    "height": "height",
+                    "num_steps": "num_steps",
+                    "step_riser": "step_riser",
+                    "show_top_tread": "show_top_tread",
+                },
+                "geometry_bindings": {
+                    "treads": {"command": "PRISM_", "source_line": 48},
+                },
+                "constraints": {},
+                "provenance": {"source": "test_profile"},
+            }), encoding="utf-8")
+            project = HSFProject.load_from_disk(str(root))
+
+            result = verify_semantics(project, sweep=False)
+
+        self.assertIsNotNone(result.project_contract)
+        self.assertEqual(result.project_contract.applicability, "applicable")
+        top_count = next(
+            check for check in result.project_contract.checks
+            if check.check_id == "top_tread_count"
+        )
+        self.assertEqual(top_count.status, "pass")
+        self.assertEqual(top_count.observed, 16)
+
+    def test_explicit_invalid_contract_fails_semantic_result(self):
+        fixture = Path(__file__).parent / "fixtures" / "spiral_stair" / "after_top_option"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "stair"
+            shutil.copytree(fixture, root)
+            contract_path = root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text("{broken", encoding="utf-8")
+            project = HSFProject.load_from_disk(str(root))
+
+            result = verify_semantics(project, sweep=False)
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.project_contract.applicability, "invalid")
+
+    def test_empty_3d_script_does_not_bypass_invalid_explicit_contract(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("T", work_dir=tmpdir)
+            project.save_to_disk()
+            project.scripts[ScriptType.SCRIPT_3D] = ""
+            contract_path = project.root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text("{broken", encoding="utf-8")
+
+            result = verify_semantics(project, sweep=False)
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.project_contract.applicability, "invalid")
+
+    def test_preview_exception_does_not_bypass_invalid_explicit_contract(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = HSFProject.create_new("T", work_dir=tmpdir)
+            project.save_to_disk()
+            contract_path = project.root / ".openbrep" / "contracts" / "stair.json"
+            contract_path.parent.mkdir(parents=True)
+            contract_path.write_text("{broken", encoding="utf-8")
+
+            with unittest.mock.patch(
+                "openbrep.gdl_previewer.preview_3d_script",
+                side_effect=RuntimeError("preview failed"),
+            ):
+                result = verify_semantics(project, sweep=False)
+
+        self.assertFalse(result.passed)
+        self.assertEqual(result.project_contract.applicability, "invalid")
+        self.assertTrue(any(issue.check_type == "preview_error" for issue in result.issues))
 
 
 if __name__ == "__main__":

@@ -54,7 +54,7 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
         # Title and Separator have no value
         if tag == "Title":
             lines.append(f'\t\t<Title Name="{_escape_attr(param.name)}">')
-            lines.append(f'\t\t\t<Description><![CDATA["{description}"]]></Description>')
+            lines.append(f'\t\t\t<Description>{quoted_cdata(description)}</Description>')
             lines.append(f'\t\t</Title>')
             continue
 
@@ -64,7 +64,7 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
 
         # Standard parameter
         lines.append(f'\t\t<{tag} Name="{_escape_attr(param.name)}">')
-        lines.append(f'\t\t\t<Description><![CDATA["{description}"]]></Description>')
+        lines.append(f'\t\t\t<Description>{quoted_cdata(description)}</Description>')
 
         if param.is_fixed:
             lines.append(f'\t\t\t<Fix/>')
@@ -82,8 +82,7 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
             # （同 Description 规则）：<Value><![CDATA["文本"]]></Value>。
             # 裸文本报 "Missing CDATA section"，无引号 CDATA 报
             # "String value error"（漏窗真机编译实测）。
-            value = value.replace("]]>", "]] >")
-            lines.append(f'\t\t\t<Value><![CDATA["{value}"]]></Value>')
+            lines.append(f'\t\t\t<Value>{quoted_cdata(value)}</Value>')
         else:
             lines.append(f'\t\t\t<Value>{value}</Value>')
 
@@ -244,6 +243,43 @@ def validate_paramlist(parameters: list[GDLParameter]) -> list[str]:
     return issues
 
 
+def parameters_semantically_equal(
+    left: list[GDLParameter],
+    right: list[GDLParameter],
+) -> bool:
+    """Compare parameter models while ignoring numeric spelling only.
+
+    HSF serialization legitimately normalizes ``1.00`` to ``1``. That must not
+    invalidate a retained raw document or make untouched parameters appear to
+    change during a structured edit.
+    """
+    if len(left) != len(right):
+        return False
+    numeric_types = {
+        "Length", "Angle", "RealNum", "Integer", "Boolean", "PenColor",
+        "FillPattern", "LineType", "Material",
+    }
+    for a, b in zip(left, right):
+        if (
+            a.name != b.name
+            or a.type_tag != b.type_tag
+            or a.description != b.description
+            or a.is_fixed != b.is_fixed
+            or a.flags != b.flags
+        ):
+            return False
+        if a.type_tag in numeric_types:
+            try:
+                if float(a.value) != float(b.value):
+                    return False
+            except (TypeError, ValueError):
+                if a.value != b.value:
+                    return False
+        elif a.value != b.value:
+            return False
+    return True
+
+
 # ── Internal Helpers ──────────────────────────────────────
 
 def _escape_attr(s: str) -> str:
@@ -253,6 +289,17 @@ def _escape_attr(s: str) -> str:
             .replace('"', "&quot;")
             .replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+def quoted_cdata(value: object) -> str:
+    """Return LP_XMLConverter's quoted CDATA representation losslessly.
+
+    ``]]>`` cannot occur inside one CDATA section, so split it across two
+    adjacent sections. XML parsers concatenate the text back to the exact
+    original value, including quotes and XML metacharacters.
+    """
+    text = str(value or "").replace("]]>", "]]]]><![CDATA[>")
+    return f'<![CDATA["{text}"]]>'
 
 
 _UNIT_MARKER_RE = re.compile(

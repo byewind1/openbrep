@@ -83,6 +83,7 @@ export function BottomDrawer({
             duration={mockCompileResult?.duration_ms ?? null}
             error={mockCompileResult?.error ?? null}
             issueGroups={issueGroups}
+            mode={mockCompileResult?.mode ?? null}
             outputPath={mockCompileResult?.output_path ?? null}
             parameterCount={mockCompileResult?.parameter_count ?? null}
             sizeBytes={mockCompileResult?.gsm_size_bytes ?? null}
@@ -102,6 +103,7 @@ function CompileDiagnostics({
   duration,
   error,
   issueGroups,
+  mode,
   outputPath,
   parameterCount,
   sizeBytes,
@@ -114,6 +116,7 @@ function CompileDiagnostics({
   duration: number | null
   error: string | null
   issueGroups: ReturnType<typeof groupCompileIssuesByScript>
+  mode: string | null
   outputPath: string | null
   parameterCount: number | null
   sizeBytes: number | null
@@ -140,7 +143,11 @@ function CompileDiagnostics({
         <span>{duration !== null ? `${duration} ms` : 'Not compiled'}</span>
       </div>
       {!compiling && error ? <p className="diagnostic-line diagnostic-error">{error}</p> : null}
-      {success && stackedGroups.length === 0 ? <p className="diagnostic-pass">✓ 编译通过</p> : null}
+      {success && stackedGroups.length === 0 ? (
+        <p className="diagnostic-pass">
+          {mode === 'mock' ? '✓ Mock 校验通过（未生成 GSM）' : '✓ 编译通过'}
+        </p>
+      ) : null}
       {stackedGroups.length ? (
         <div className="diagnostic-pills">
           {errorCount ? <span className="diagnostic-pill error">{plural(errorCount, 'error')}</span> : null}

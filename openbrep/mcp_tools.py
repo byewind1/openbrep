@@ -65,6 +65,7 @@ from openbrep.revisions import (
     list_revisions,
     restore_revision,
 )
+from openbrep.skill_proposals import is_valid_skill_name
 from openbrep.skills_loader import SkillsLoader, rewrite_skill_frontmatter
 from openbrep.workbench.project_service import WorkbenchProjectService
 from openbrep.naming import safe_project_name, unique_project_name
@@ -177,10 +178,11 @@ def _resolve_compiler(mode: str) -> tuple[MockHSFCompiler | HSFCompiler, str]:
 
 
 def compile_hsf(path: str, mode: str = "auto") -> dict:
-    """编译 HSF → .gsm（只读：产物写临时目录，不写进项目目录）。
+    """编译 HSF；真实模式产物写临时目录，不写进项目目录。
 
     mode: "auto" | "mock" | "real"。auto = HSFCompiler.is_available 为真走真实，
-    否则 MockHSFCompiler。ok=True 表示工具执行成功；success 表示编译结果。
+    否则 MockHSFCompiler。Mock 只校验，不生成或归档伪 .gsm。
+    ok=True 表示工具执行成功；success 表示编译/校验结果。
     """
     with _locked():
         trace_id = _next_trace_id()
@@ -205,8 +207,8 @@ def compile_hsf(path: str, mode: str = "auto") -> dict:
             # 成品归档：编译成功才归档（unversioned/），失败不归档且不阻断编译结果。
             # 临时目录产物保留，归档是副本。
             artifact_path: str | None = None
-            if result.success:
-                raw_output = result.output_path or output_gsm
+            if result.success and result.output_path:
+                raw_output = result.output_path
                 try:
                     artifact_path = str(archive_artifact(root, raw_output))
                 except Exception:
@@ -242,12 +244,18 @@ def semantic_verify(path: str, sweep: bool = True) -> dict:
                 {"check_type": i.check_type, "detail": i.detail, "blocking": i.blocking}
                 for i in result.issues
             ]
-            return {
+            payload = {
                 "ok": True,
                 "passed": result.passed,
                 "issues": issues,
                 "trace_id": trace_id,
             }
+            if (
+                result.project_contract is not None
+                and result.project_contract.applicability != "not_applicable"
+            ):
+                payload["project_contract"] = result.project_contract.to_dict()
+            return payload
         except Exception as exc:
             return _make_error("mcp_internal_error", f"semantic_verify 失败: {exc}", trace_id)
 
@@ -507,7 +515,13 @@ def _verify_project(root: Path, sweep: bool = True) -> dict:
             {"check_type": i.check_type, "detail": i.detail, "blocking": i.blocking}
             for i in result.issues
         ]
-        return {"passed": result.passed, "issues": issues}
+        payload = {"passed": result.passed, "issues": issues}
+        if (
+            result.project_contract is not None
+            and result.project_contract.applicability != "not_applicable"
+        ):
+            payload["project_contract"] = result.project_contract.to_dict()
+        return payload
     except Exception as exc:
         return {
             "passed": False,
@@ -1037,21 +1051,7 @@ _TRIGGER_SECTION_MARKERS = ("触发关键词", "activation keywords", "适用场
 def _is_valid_skill_name(name: Any) -> bool:
     """skill 名合法性：非空字符串、无首尾空白、非 ./.. /隐藏文件 /README、
     不含路径分隔符或控制字符。"""
-    if not isinstance(name, str) or not name:
-        return False
-    if name != name.strip():
-        return False
-    if name in (".", ".."):
-        return False
-    if name.upper() == "README":
-        return False
-    if name[0] == ".":
-        return False
-    if any(ord(ch) < 32 for ch in name):
-        return False
-    if any(ch in name for ch in ('/', "\\", "\x00", "<", ">", ":", '"', "|", "?", "*")):
-        return False
-    return True
+    return is_valid_skill_name(name)
 
 
 def _fm_scalar_field(value: Any) -> str:
@@ -1272,14 +1272,33 @@ def _has_trigger_section(content: str) -> bool:
     return False
 
 
-def _write_verified_evidence(target: Path, block: dict) -> None:
-    """晋升落盘：status 翻 verified + 写 verified_evidence 块（复用 skills_loader
-    的公开行级写接口；失败静默——证据缺失不影响 status 已落盘）。"""
-    rewrite_skill_frontmatter(
-        target,
-        updates={"status": "verified"},
-        nested_blocks={"verified_evidence": block},
+def _write_verified_evidence(target: Path, block: dict) -> bool:
+    """晋升落盘：status 与证据必须作为同一次成功写入被确认。"""
+    try:
+        return bool(rewrite_skill_frontmatter(
+            target,
+            updates={"status": "verified"},
+            nested_blocks={"verified_evidence": block},
+        ))
+    except Exception:
+        return False
+
+
+def _promotion_failed(name: str, gate: str, trace_id: str, evidence: dict) -> dict:
+    result = _make_error(
+        "skill_promotion_failed",
+        "skill 验证通过，但晋升状态写盘失败；产物保持 proposed，可重试。",
+        trace_id,
+        details={"name": name, "gate": gate},
     )
+    result.update({
+        "name": name,
+        "gate": gate,
+        "passed": False,
+        "status": "proposed",
+        "evidence": evidence,
+    })
+    return result
 
 
 def _verify_full_gate(
@@ -1357,7 +1376,7 @@ def _verify_full_gate(
 
     passed = bool(compile_success and semantic_passed)
     if passed:
-        _write_verified_evidence(
+        promoted = _write_verified_evidence(
             target,
             {
                 "gate": "full",
@@ -1367,6 +1386,8 @@ def _verify_full_gate(
                 "at": today,
             },
         )
+        if not promoted:
+            return _promotion_failed(name, "full", trace_id, evidence)
     return {
         "ok": True,
         "name": name,
@@ -1398,7 +1419,7 @@ def _verify_structural_gate(
         "at": today,
     }
     if passed:
-        _write_verified_evidence(
+        promoted = _write_verified_evidence(
             target,
             {
                 "gate": "structural",
@@ -1407,6 +1428,8 @@ def _verify_structural_gate(
                 "at": today,
             },
         )
+        if not promoted:
+            return _promotion_failed(name, "structural", trace_id, evidence)
     return {
         "ok": True,
         "name": name,
@@ -1516,15 +1539,25 @@ def reuse_skill(query: str, skills_dir: str = "./skills") -> dict:
             loader = SkillsLoader(str(skills_path))
             loader.load()
             skills_text = loader.get_for_task(query)
+            details = {
+                str(item.get("name")): item
+                for item in (getattr(loader, "last_injected_details", None) or [])
+                if isinstance(item, dict)
+            }
             matched = []
             for name, body in _skill_blocks_from_injected(loader, skills_text):
                 meta = loader.skill_meta(name)
+                detail = details.get(name) or {}
                 matched.append({
                     "name": name,
                     "status": meta.get("status"),
                     "pattern_type": meta.get("pattern_type"),
                     "reuse_count": meta.get("reuse_count"),
                     "excerpt": body[:200],
+                    # ST04：匹配来源与理由（审计用；不改变注入文本）
+                    "source": detail.get("source"),
+                    "reason": detail.get("reason"),
+                    "matched_terms": detail.get("matched_terms") or [],
                 })
             return {
                 "ok": True,

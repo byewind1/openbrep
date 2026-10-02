@@ -273,7 +273,7 @@ class GDLAgent:
             if result.success:
                 self.on_event("success", {
                     "attempt": attempt,
-                    "output": output_gsm,
+                    "output": result.output_path,
                 })
                 history.append({
                     "attempt": attempt,
@@ -283,7 +283,7 @@ class GDLAgent:
                 return AgentResult(
                     status=Status.SUCCESS,
                     attempts=attempt,
-                    output_path=output_gsm,
+                    output_path=result.output_path,
                     project=project,
                     history=history,
                 )

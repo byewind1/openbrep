@@ -51,6 +51,39 @@ CLEAN_ENV_STRIP = frozenset(
 _STRIP_PREFIXES = ("OPENAI_", "CODEX_", "GDL_AGENT_")
 
 
+def validate_desktop_lifecycle_contract(repo_root: Path) -> None:
+    """Fail packaging when desktop single-instance/backend cleanup wiring drifts."""
+    tauri_dir = repo_root / "src-tauri"
+    manifest = (tauri_dir / "Cargo.toml").read_text(encoding="utf-8")
+    main_source = (tauri_dir / "src" / "main.rs").read_text(encoding="utf-8")
+    dependency = "tauri-plugin-single-instance"
+    plugin_call = ".plugin(tauri_plugin_single_instance::init("
+    setup_call = ".setup("
+
+    if dependency not in manifest:
+        raise RuntimeError("desktop lifecycle contract missing single-instance dependency")
+    plugin_index = main_source.find(plugin_call)
+    setup_index = main_source.find(setup_call)
+    if plugin_index < 0:
+        raise RuntimeError("desktop lifecycle contract missing single-instance plugin")
+    if setup_index < 0 or plugin_index > setup_index:
+        raise RuntimeError("single-instance plugin must be registered before .setup")
+
+    required_markers = (
+        'get_webview_window("main")',
+        "window.unminimize()",
+        "window.show()",
+        "window.set_focus()",
+        "fn shutdown_backend(",
+        "WindowEvent::Destroyed",
+    )
+    missing = [marker for marker in required_markers if marker not in main_source]
+    if missing:
+        raise RuntimeError(
+            "desktop lifecycle contract missing markers: " + ", ".join(missing)
+        )
+
+
 def _should_strip(name: str) -> bool:
     upper = name.upper()
     if upper in CLEAN_ENV_STRIP:
@@ -219,6 +252,7 @@ def smoke_package(
 
 
 def main() -> int:
+    validate_desktop_lifecycle_contract(Path(__file__).resolve().parents[1])
     parser = argparse.ArgumentParser(description="Smoke-test an OpenBrep release zip")
     parser.add_argument("zip", type=Path, help="Path to OpenBrep-free-*.zip")
     parser.add_argument("--timeout", type=float, default=60.0, help="Health-check timeout seconds")

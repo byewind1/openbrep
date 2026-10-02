@@ -87,27 +87,11 @@ ALL_MODELS = [
     "ollama/deepseek-coder-v2:16b",
 ]
 
-VISION_MODELS = {
-    "qwen-vl-plus",
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "claude-sonnet-4-6",
-    "claude-opus-4-6",
-    "claude-haiku-4-5-20251001",
-    "gemini/gemini-2.5-flash",
-    "gemini/gemini-2.5-pro",
-}
-
-REASONING_MODELS = {
-    "deepseek-v4-flash",
-    "deepseek-v4-pro",
-    "qwq-plus",
-    "o3",
-    "o3-mini",
-    "o4-mini",
-}
+# Capability facts (vision / reasoning / tools) are NOT declared here: they were
+# previously carried as two name sets (VISION_MODELS / REASONING_MODELS) that no
+# code path ever read, so they described no behaviour. Request-shape constraints
+# live in openbrep/model_catalog.transport_compat(); model facts belong to the
+# catalog (openbrep/model_catalog.py), which keeps unproven values as `unknown`.
 
 
 # ── Provider 注册表（LLM 链路单一事实来源）──────────────────────────────────
@@ -345,6 +329,7 @@ class ResolvedCredentials:
     api_base: str           # 解析结果（可能为空）
     source: str             # custom_provider | provider_keys | top_level | env | none
     console_url: str = ""   # 对应 provider 的 key 控制台（可能为空）
+    credential_id: str = "" # 仅凭据槽位标识，绝不携带 secret
 
 
 def _auto_detect_converter() -> Optional[str]:
@@ -445,10 +430,15 @@ def provider_entry_to_toml(entry: dict) -> dict:
     normalized = normalize_provider_entry(entry)
     out: dict = {
         "name": normalized["name"],
-        "api": normalized["api"],
         "api_mode": normalized["api_mode"],
         "api_key": normalized["api_key"],
     }
+    # B1：api 键只在原条目显式提供过 api/base_url（_explicit_base，含 codex 强制
+    # 形态）或值非空时才写出。无条件写 `api = ""` 会让重载时 normalize 把
+    # "保存产生的空 api" 误判为"显式为空"，从而关掉顶层 api_base 兜底
+    # （save→load 往返丢配置的实证断点）。
+    if normalized.get("_explicit_base") or normalized["api"]:
+        out["api"] = normalized["api"]
     if normalized.get("default_model"):
         out["default_model"] = normalized["default_model"]
     out["models"] = normalized.get("models", [])
@@ -461,6 +451,12 @@ def provider_entry_to_toml(entry: dict) -> dict:
     extra_body = normalized.get("extra_body")
     if isinstance(extra_body, dict) and extra_body:
         out["extra_body"] = extra_body
+    credentials = normalized.get("credentials")
+    if isinstance(credentials, list) and credentials:
+        out["credentials"] = credentials
+    api_keys = normalized.get("api_keys")
+    if isinstance(api_keys, list) and api_keys:
+        out["api_keys"] = api_keys
     return out
 
 
@@ -587,6 +583,27 @@ class LLMConfig:
     # D9：Auto 路由必须显式 opt-in；全新/旧配置默认 fixed。
     # 无效值按 fixed 解释并在下次显式保存时规范化，绝不意外启用 Auto。
     codex_routing_mode: str = "fixed"
+    # 双入口（2026-09-17）：Codex 链路走哪条入口。
+    # `managed`（默认，保持既有行为）= OpenBrep 托管 ChatGPT 登录
+    # （~/.openbrep/codex）；`local` = 只读消费用户自己的 Codex 配置
+    # （CODEX_HOME / ~/.codex），不接管认证。UI 把 local 标为推荐，但默认值
+    # 不悄悄改动既有配置：全新用户本机没有 Codex 配置，只有托管入口可用。
+    # 无效值一律按默认解释（fail safe），保存时只写规范枚举。
+    codex_entry: str = "managed"
+    # R5：角色级 fallback/cooldown/revert 配置。默认空字典，不启用任何
+    # 新的重试路径；由 model_retry.RetryRouter 负责规范化读取。
+    retry: dict[str, object] = field(default_factory=dict)
+    # R6：可选、只读、带 commit 戳的 oh-my-pi catalog 快照。
+    pi_catalog: dict[str, object] = field(default_factory=dict)
+    # R7：可选的路径作用域模型/提供商策略；空值保持历史行为。
+    enabled_models: list[object] = field(default_factory=list)
+    disabled_providers: list[object] = field(default_factory=list)
+    # Runtime-only credential affinity; never serialized.
+    credential_scope: str = field(default="", repr=False, compare=False)
+    last_credential_id: str = field(default="", init=False, repr=False, compare=False)
+    _credential_pools: dict[str, object] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     @property
     def providers(self) -> list[dict]:
@@ -630,10 +647,53 @@ class LLMConfig:
         """Return the fail-closed routing mode (``fixed`` or ``auto``)."""
         return "auto" if str(self.codex_routing_mode or "").strip() == "auto" else "fixed"
 
+    def effective_codex_entry(self) -> str:
+        """Codex 入口（双入口 2026-09-17）：只认两个枚举值，其余按默认。"""
+        from openbrep.codex.entry import normalize_codex_entry
+
+        return normalize_codex_entry(self.codex_entry)
+
+    def model_retry_router(self):
+        """Return the normalized role-aware retry policy, without side effects."""
+        from openbrep.model_retry import RetryRouter
+
+        return RetryRouter.from_mapping(self.retry)
+
+    def _credential_pool_for(self, provider: dict):
+        from openbrep.credential_pool import CredentialPool
+
+        key = f"{provider.get('name', '')}:{id(provider)}"
+        pool = self._credential_pools.get(key)
+        if pool is None:
+            pool = CredentialPool.from_provider(provider)
+            self._credential_pools[key] = pool
+        return pool
+
+    @staticmethod
+    def _provider_has_credential_pool(provider: dict) -> bool:
+        return bool(provider.get("credentials") or provider.get("api_keys"))
+
+    def mark_credential_failure(self, model: str | None = None) -> None:
+        match = self._find_custom_provider_match(model or self.model)
+        provider = match.get("provider") if match else None
+        if (
+            not isinstance(provider, dict)
+            or not self._provider_has_credential_pool(provider)
+            or not self.last_credential_id
+        ):
+            return
+        self._credential_pool_for(provider).mark_failure(self.last_credential_id)
+
     def resolve_api_key(self, model: str | None = None) -> Optional[str]:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
+            provider = custom_match.get("provider") or {}
+            if isinstance(provider, dict) and self._provider_has_credential_pool(provider):
+                lease = self._credential_pool_for(provider).select(self.credential_scope)
+                if lease is not None:
+                    self.last_credential_id = lease.credential_id
+                    return expand_env_ref(lease.value) or None
             custom_key = expand_env_ref(custom_match.get("api_key", ""))
             return custom_key or None
 
@@ -717,7 +777,17 @@ class LLMConfig:
         target_model = model or self.model
         custom_match = self._find_custom_provider_match(target_model)
         if custom_match is not None:
-            key = expand_env_ref(custom_match.get("api_key", ""))
+            credential_id = ""
+            key = ""
+            provider = custom_match.get("provider") or {}
+            if isinstance(provider, dict) and self._provider_has_credential_pool(provider):
+                lease = self._credential_pool_for(provider).select(self.credential_scope)
+                if lease is not None:
+                    key = expand_env_ref(lease.value)
+                    credential_id = lease.credential_id
+                    self.last_credential_id = credential_id
+            if not key:
+                key = expand_env_ref(custom_match.get("api_key", ""))
             base = str(custom_match.get("api", "") or custom_match.get("base_url", "") or "").strip() or (self.api_base or "")
             return ResolvedCredentials(
                 provider=str(custom_match.get("provider_name", "custom") or "custom"),
@@ -725,6 +795,7 @@ class LLMConfig:
                 api_base=base,
                 source="custom_provider",
                 console_url="",
+                credential_id=credential_id,
             )
 
         profile = provider_profile_for_model(target_model)
@@ -816,6 +887,31 @@ class CompilerConfig:
 
 
 @dataclass
+class LibraryConfig:
+    """宏解析图库上下文（GSM CALL 依赖，2026-09-12 GSM-CALL 研究 P2）。
+
+    roots：图库根列表，按优先级排序。每项可以是
+      - 包含 .gsm 文件树的目录；
+      - .lcf 容器文件（按需 extractcontainer 到缓存）；
+      - .libpack 包（先 extractpackage 再解内层 .lcf）。
+    不写死任何 Archicad 安装/Teamwork 缓存路径；本机 Archicad Library
+    Packages 目录作为最低优先级兜底自动探测（library_context 负责）。
+    cache_dir：转换/解包容器的内容寻址缓存根；空 = 平台默认用户缓存目录。
+    """
+
+    roots: list[str] = None  # type: ignore[assignment]  # dataclass 默认在 __post_init__
+    cache_dir: str = ""
+
+    def __post_init__(self):
+        if self.roots is None:
+            self.roots = []
+        elif not isinstance(self.roots, list):
+            self.roots = []
+        else:
+            self.roots = [str(r) for r in self.roots if str(r).strip()]
+
+
+@dataclass
 class VisionConfig:
     """Vision Harness 配置（P5b 设计 §10-D5/D9，P5c 加 critic_pass）。
 
@@ -885,6 +981,7 @@ class GDLAgentConfig:
     compiler: CompilerConfig = field(default_factory=CompilerConfig)
     revisions: RevisionsConfig = field(default_factory=RevisionsConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    library: LibraryConfig = field(default_factory=LibraryConfig)
     knowledge_dir: str = "./knowledge"
     user_knowledge_dir: str = "./user_knowledge"
     templates_dir: str = "./templates"
@@ -984,12 +1081,18 @@ class GDLAgentConfig:
             agent_cfg.agent_loop_budget
         )
 
+        library_data = data.get("library", {})
+        if not isinstance(library_data, dict):
+            library_data = {}
+        library_cfg = pick(LibraryConfig, library_data)
+
         return cls(
             llm=llm_cfg,
             agent=agent_cfg,
             compiler=compiler_cfg,
             revisions=revisions_cfg,
             vision=vision_cfg,
+            library=library_cfg,
             knowledge_dir=data.get("knowledge_dir", "./knowledge"),
             user_knowledge_dir=data.get("user_knowledge_dir", "./user_knowledge"),
             templates_dir=data.get("templates_dir", "./templates"),
@@ -1025,10 +1128,15 @@ class GDLAgentConfig:
         providers = normalize_provider_list(self.llm.providers)
         self.llm.providers = providers
         self.llm.codex_routing_mode = self.llm.effective_codex_routing_mode()
+        self.llm.codex_entry = self.llm.effective_codex_entry()
         # D12：单保存边界规范化（负数/非整数 → 0 = 用默认；绝不崩、绝不静默放大）。
         self.agent.agent_loop_budget = _normalize_agent_loop_budget(
             self.agent.agent_loop_budget
         )
+        retry_data = self.llm.model_retry_router().as_config()
+        from openbrep.pi_catalog import normalize_pi_catalog_config
+
+        pi_catalog_data = normalize_pi_catalog_config(self.llm.pi_catalog)
         data = {
             "llm": {
                 "model": self.llm.model,
@@ -1042,9 +1150,23 @@ class GDLAgentConfig:
                 "reasoning_effort": self.llm.reasoning_effort or "",
                 # D9：显式 opt-in；写盘只允许规范枚举。
                 "codex_routing_mode": self.llm.effective_codex_routing_mode(),
+                # 双入口：只有非默认（managed）时才落盘，旧配置模板零变化。
+                **(
+                    {"codex_entry": self.llm.effective_codex_entry()}
+                    if self.llm.effective_codex_entry() != "managed"
+                    else {}
+                ),
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
+                **({"retry": retry_data} if retry_data else {}),
+                **({"pi_catalog": pi_catalog_data} if pi_catalog_data else {}),
+                **({"enabled_models": self.llm.enabled_models} if self.llm.enabled_models else {}),
+                **(
+                    {"disabled_providers": self.llm.disabled_providers}
+                    if self.llm.disabled_providers
+                    else {}
+                ),
             },
             "agent": {
                 "max_iterations": self.agent.max_iterations,
@@ -1061,6 +1183,10 @@ class GDLAgentConfig:
             },
             "revisions": {
                 "keep_last_n": self.revisions.keep_last_n,
+            },
+            "library": {
+                "roots": list(self.library.roots),
+                "cache_dir": self.library.cache_dir or "",
             },
             "vision": {
                 "pass_raw_image": self.vision.pass_raw_image,
@@ -1090,6 +1216,8 @@ class GDLAgentConfig:
             lines.append(f'reasoning_effort = "{self.llm.reasoning_effort}"')
         if self.llm.effective_codex_routing_mode() == "auto":
             lines.append('codex_routing_mode = "auto"')
+        if self.llm.effective_codex_entry() != "managed":
+            lines.append(f'codex_entry = "{self.llm.effective_codex_entry()}"')
         if self.llm.api_base:
             lines.append(f'api_base = "{self.llm.api_base}"')
         lines += [

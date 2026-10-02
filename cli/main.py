@@ -907,9 +907,12 @@ def compile(
         result = compiler.hsf2libpart(str(hsf_dir), str(gsm_path))
 
     if result.success:
-        console.print(f"[green]✅ 编译成功[/green]")
-        console.print(f"[green]📄 文件名：{gsm_path.name}[/green]")
-        console.print(f"[green]📁 完整路径：{gsm_path}[/green]")
+        if mock or getattr(result, "mode", None) == "mock":
+            console.print("[green]✅ Mock 校验通过（未生成可安装的 GSM）[/green]")
+        else:
+            console.print("[green]✅ 编译成功[/green]")
+            console.print(f"[green]📄 文件名：{gsm_path.name}[/green]")
+            console.print(f"[green]📁 完整路径：{gsm_path}[/green]")
     else:
         err_console.print(f"[red]❌ 编译失败：\n{result.stderr or result.stdout}[/red]")
         raise typer.Exit(1)
@@ -1397,6 +1400,37 @@ def cmd_serve(
         raise typer.Exit(0)
 
 
+@app.command("source-update")
+def source_update(
+    repo: str = typer.Option(".", "--repo", help="OpenBrep main 源码 checkout"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="仅预览，不拉取或构建"),
+    restart_service: bool = typer.Option(
+        False,
+        "--restart-service",
+        help="构建后重启 obr serve 后台服务",
+    ),
+):
+    """开发者模式：快进 main、同步依赖并重建本地前端。"""
+    from openbrep.developer_update import SourceUpdateError, run_source_update
+
+    try:
+        plan = run_source_update(
+            Path(repo),
+            dry_run=dry_run,
+            restart_service=restart_service,
+        )
+    except SourceUpdateError as exc:
+        err_console.print(f"[red]❌ 源码更新已停止：{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    if dry_run:
+        console.print("[yellow]源码更新预览（未执行）：[/yellow]")
+        for command in plan:
+            console.print("  " + " ".join(command), markup=False)
+        return
+    console.print("[green]✅ 本地源码已更新，依赖与前端构建已同步。[/green]")
+
+
 @app.command()
 def help():
     """显示常用命令速查"""
@@ -1417,6 +1451,7 @@ def help():
     table.add_row("obr memory status", "查看工作区记忆")
     table.add_row("obr memory export <dir>", "导出工作区记忆")
     table.add_row("obr memory clear", "清除工作区记忆")
+    table.add_row("obr source-update --repo <dir>", "更新开发者源码 checkout 并重建前端")
     table.add_row("obr repair <project_dir>", "按错误日志修复脚本")
     table.add_row("obr import-blender <script.py>", "从 Blender 脚本导入 HSF 项目")
     table.add_row("obr chat", "交互式聊天（可选带 --project）")

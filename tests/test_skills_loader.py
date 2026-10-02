@@ -61,6 +61,57 @@ class TestSkillsLoader(unittest.TestCase):
         self.assertIn("## Skill: my_project_skill", result)
         self.assertIn("层板", result)
 
+    def test_last_injected_details_reports_source_and_reason(self):
+        """ST04：匹配输出来源与理由（task_type / explicit_word / custom_match）。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir)
+            (skills_dir / "create_object.md").write_text("# Create\n\n内置创建规则", encoding="utf-8")
+            (skills_dir / "my_project_skill.md").write_text(
+                "# 项目规范\n\n## 常用模式\n书架 shelf 层板使用 FOR/NEXT。\n",
+                encoding="utf-8",
+            )
+            loader = SkillsLoader(str(skills_dir))
+            loader.get_for_task("生成一个三层书架")
+
+        by_name = {item["name"]: item for item in loader.last_injected_details}
+        self.assertEqual(by_name["create_object"]["source"], "task_type")
+        self.assertIn("内置映射", by_name["create_object"]["reason"])
+        self.assertEqual(by_name["my_project_skill"]["source"], "custom_match")
+        self.assertTrue(by_name["my_project_skill"]["reason"])
+
+    def test_generic_body_match_is_reported_as_suspected_mismatch(self):
+        """ST04 item 8 诊断（收紧 BLOCKED，见实施回执）：如实标注"疑似误匹配"。
+
+        这不代表认可该注入：旋转楼梯语料里 skill_dougong 会因正文通用词
+        （zzyzx/宽度/ROT/数字）被注入到无关任务。收紧需要重录 create+modify 语料，
+        本机唯一免 key 的 modify 通道（qwen2.5:7b）实测 15/20、低于基线，故保留诊断
+        作为可观察证据，等有合格录制通道后再收紧。
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir)
+            (skills_dir / "skill_dougong.md").write_text(
+                "# 斗拱参考\n\n## 架构说明\n坐斗宽度默认 0.42m，使用 BLOCK/PRISM_/ROT 与 ZZYZX。\n",
+                encoding="utf-8",
+            )
+            loader = SkillsLoader(str(skills_dir))
+            loader.get_for_task("做一个简单的长方体柜子，宽600mm，高800mm，用 ZZYZX 和 ROT")
+
+        detail = loader.last_injected_details[0]
+        self.assertEqual(detail["name"], "skill_dougong")
+        self.assertFalse(detail["strong"])
+        self.assertIn("疑似误匹配", detail["reason"])
+
+    def test_explicit_filename_match_keeps_diagnostic_source(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir)
+            (skills_dir / "curtain_wall.md").write_text("# Curtain Wall\n\n幕墙规则", encoding="utf-8")
+            loader = SkillsLoader(str(skills_dir))
+            loader.get_for_task("please apply curtain_wall here")
+
+        by_name = {item["name"]: item for item in loader.last_injected_details}
+        self.assertIn("curtain_wall", by_name)
+        self.assertEqual(by_name["curtain_wall"]["source"], "explicit_word")
+
     def test_unrelated_custom_skill_is_not_loaded(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir)

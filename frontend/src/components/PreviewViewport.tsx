@@ -1,14 +1,14 @@
-import { ContactShadows, Edges, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
+import { ContactShadows, Edges, GizmoHelper, GizmoViewport, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei'
 import { Canvas, useThree } from '@react-three/fiber'
 import type { ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Camera, OrthographicCamera as OrthographicCameraType, PerspectiveCamera as PerspectiveCameraType } from 'three'
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerator, ShaderMaterial, Vector3 } from 'three'
+import { AgXToneMapping, BufferAttribute, BufferGeometry, Color, DoubleSide, Plane, PMREMGenerator, SRGBColorSpace, ShaderMaterial, Vector3 } from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import type { PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
-import type { PreviewGhostLabel } from '../state/workbenchStoreTypes'
+import type { HostVerificationStatus, PreviewMesh, PreviewPayload, PreviewQuality } from '../api/types'
+import type { PreviewGhostLabel, PreviewSourceMode } from '../state/workbenchStoreTypes'
 import { useT } from '../i18n'
 import { PanelEmpty } from './PanelEmpty'
 import { ExplodeControls } from './ExplodeControls'
@@ -26,6 +26,7 @@ import { makeSelection } from './previewPicking'
 import type { PreviewSelection } from './previewPicking'
 import { buildPartsView, componentColorIdentity, filterVisibleMeshes, hashColor } from './previewParts'
 import { sectionPlaneParams } from './previewSection'
+import { materialForMesh } from './previewMaterials'
 import type { SectionState } from './previewSection'
 import {
   computePreviewBounds,
@@ -61,9 +62,35 @@ interface PreviewViewportProps {
   previewGhost?: PreviewPayload | null
   /** ghost 快照原因（i18n key），视口角落标签用 */
   previewGhostLabel?: PreviewGhostLabel | null
+  /** Archicad 权威预览来源控制（usePreviewSource 注入）；缺省 = 只本地模式 */
+  sourceControl?: PreviewSourceControl
 }
 
-type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono'
+type PreviewDisplayMode = 'solid' | 'random' | 'wire' | 'xray' | 'mono' | 'material'
+
+/** 3D 预览来源控制（Archicad 权威预览）：由 usePreviewSource hook 组装注入，
+ *  视口只读消费。缺省（不传）= 纯本地模式，不渲染来源切换 UI */
+export interface PreviewSourceControl {
+  /** Archicad 当前可连接；false 时权威模式入口禁用 */
+  available?: boolean
+  /** 当前选中来源是否为 Archicad 权威 */
+  active: boolean
+  /** 权威取数进行中（刷新按钮 disabled） */
+  loading: boolean
+  /** 权威取数失败原文（如 "Archicad 未连接"）；非 null 时视口显示的是本地预览 */
+  error: string | null
+  /** 取数后参数又变了：轻提示用户手动刷新 */
+  stale: boolean
+  /** 当前画布实际显示的是权威 payload（active 且有缓存且无错误） */
+  showingAuthoritative: boolean
+  onModeChange: (mode: PreviewSourceMode) => void
+  onRefresh: () => void
+  verificationStatus?: HostVerificationStatus
+  verificationLoading?: boolean
+  verificationError?: string | null
+  verificationDisabled?: boolean
+  onVerify?: () => void
+}
 
 const DISPLAY_MODES: Array<{ id: PreviewDisplayMode; label: string; title: string }> = [
   { id: 'solid', label: '实体', title: 'Solid shaded, uniform color' },
@@ -71,6 +98,7 @@ const DISPLAY_MODES: Array<{ id: PreviewDisplayMode; label: string; title: strin
   { id: 'wire', label: '线框', title: 'Feature edges only (hidden line)' },
   { id: 'xray', label: 'X光', title: 'X-ray fresnel ghost' },
   { id: 'mono', label: '单色', title: 'Flat unlit single color' },
+  { id: 'material', label: '材质', title: 'Semantic PBR materials' },
 ]
 
 export function PreviewViewport({
@@ -88,14 +116,16 @@ export function PreviewViewport({
   onQualityChange,
   previewGhost,
   previewGhostLabel,
+  sourceControl,
 }: PreviewViewportProps) {
   const t = useT()
   const [cameraMode, setCameraMode] = useState<PreviewCameraMode>('perspective')
   const [viewPreset, setViewPreset] = useState<PreviewViewPreset>('iso')
   const [fitNonce, setFitNonce] = useState(0)
   const [showEdges, setShowEdges] = useState(true)
-  const [showGrid, setShowGrid] = useState(true)
-  const [displayMode, setDisplayMode] = useState<PreviewDisplayMode>('solid')
+  const [showGrid, setShowGrid] = useState(false)
+  const [chosenDisplayMode, setDisplayMode] = useState<PreviewDisplayMode | null>(null)
+  const displayMode: PreviewDisplayMode = chosenDisplayMode ?? (Object.keys(preview?.materials ?? {}).length ? 'material' : 'solid')
   const [selection, setSelection] = useState<PreviewSelection | null>(null)
   // 部件隐藏是纯视图态：不进 store、不持久化，预览刷新后重置
   const [hiddenParts, setHiddenParts] = useState<ReadonlySet<number>>(new Set())
@@ -129,7 +159,7 @@ export function PreviewViewport({
   const parts = useMemo(() => {
     // wire 与 random 同为逐部件 hash 取色（chip 色与渲染一致）
     if (displayMode === 'random' || displayMode === 'wire') return buildPartsView(preview, 'random', null, hiddenParts)
-    return buildPartsView(preview, 'flat', MODE_COLOR[displayMode], hiddenParts)
+    return buildPartsView(preview, 'flat', displayMode === 'material' ? SOLID_COLOR : MODE_COLOR[displayMode], hiddenParts)
   }, [preview, displayMode, hiddenParts])
   const sourceLabel = previewSourceLabel(preview, hasDirtyScripts)
   // P4-C 空态：真的没内容（未编译 / 空网格）才显示，加载中由 Suspense fallback 管
@@ -175,8 +205,8 @@ export function PreviewViewport({
     setCameraMode('perspective')
     setViewPreset('iso')
     setShowEdges(true)
-    setShowGrid(true)
-    setDisplayMode('solid')
+    setShowGrid(false)
+    setDisplayMode(null)
     setHiddenParts(new Set())
     setShowShadows(null)
     setSection(null)
@@ -192,6 +222,57 @@ export function PreviewViewport({
           <span>{preview?.meshes.length ?? 0} meshes</span>
         </div>
         <div className="viewport-toolbar-actions">
+          {sourceControl ? (
+            <>
+              <button
+                type="button"
+                className={`viewport-action-button${sourceControl.active ? '' : ' active'}`}
+                onClick={() => sourceControl.onModeChange('local')}
+                title="Built-in approximate preview (instant, follows parameter edits)"
+              >
+                本地
+              </button>
+              <button
+                type="button"
+                className={`viewport-action-button${sourceControl.active ? ' active' : ''}`}
+                disabled={sourceControl.available === false}
+                onClick={() => sourceControl.onModeChange('authoritative')}
+                title={sourceControl.available === false
+                  ? 'Archicad 未连接，无法使用权威预览'
+                  : 'Archicad 权威预览（调用 Archicad 渲染，不跟随参数改动，需手动刷新）'}
+              >
+                AC权威
+              </button>
+              {sourceControl.active ? (
+                <button
+                  type="button"
+                  className={`viewport-action-button${sourceControl.stale ? ' viewport-action-attention' : ''}`}
+                  disabled={sourceControl.loading}
+                  onClick={sourceControl.onRefresh}
+                  title={sourceControl.stale ? '参数已变，点击刷新权威预览' : 'Refresh authoritative preview from Archicad'}
+                >
+                  {sourceControl.loading ? '刷新中…' : '刷新权威'}
+                </button>
+              ) : null}
+              {sourceControl.onVerify ? (
+                <>
+                  <button
+                    type="button"
+                    className="viewport-action-button"
+                    disabled={sourceControl.available === false || sourceControl.verificationLoading || sourceControl.verificationDisabled}
+                    onClick={sourceControl.onVerify}
+                    title={sourceControl.verificationDisabled ? '请先保存或取消脚本修改' : '编译当前已保存源码并在 Archicad 中核验准确 GSM'}
+                  >
+                    {sourceControl.verificationLoading ? '验收中…' : '运行 AC 验收'}
+                  </button>
+                  <span className={`viewport-verification-status is-${sourceControl.verificationStatus ?? 'not_checked'}`}>
+                    {hostVerificationLabel(sourceControl.verificationStatus ?? 'not_checked')}
+                  </span>
+                </>
+              ) : null}
+              <span className="viewport-toolbar-sep" aria-hidden="true" />
+            </>
+          ) : null}
           {DISPLAY_MODES.map((mode) => (
             <button
               key={mode.id}
@@ -288,6 +369,22 @@ export function PreviewViewport({
         {isEmpty ? (
           <PanelEmpty overlay icon="◻" title={t('preview.empty.title')} hint={t('preview.empty.hint')} />
         ) : null}
+        {/* 权威预览标注：显示权威 payload 时左上角徽章 */}
+        {sourceControl?.showingAuthoritative ? (
+          <div className="viewport-authoritative-tag">Archicad 权威</div>
+        ) : null}
+        {/* 权威预览轻提示：取数后参数又变了，不自动重取，等用户点「刷新权威」 */}
+        {sourceControl?.active && sourceControl.stale ? (
+          <div className="viewport-authoritative-stale">参数已变，点击「刷新权威」更新</div>
+        ) : null}
+        {/* 权威取数失败：错误原文上屏（不静默），画布保持显示本地预览 */}
+        {(sourceControl?.active && sourceControl.error) || sourceControl?.verificationError ? (
+          <div className="viewport-authoritative-error" role="alert">
+            {sourceControl.verificationError
+              ? `AC 验收失败：${sourceControl.verificationError}`
+              : `权威预览失败：${sourceControl.error}`}
+          </div>
+        ) : null}
         {/* absolute + inset:0：见 styles.css .canvas-wrap 注释，
             防止 canvas 的内联 px 宽度反向撑住容器导致无法收缩 */}
         <Canvas
@@ -296,6 +393,11 @@ export function PreviewViewport({
           onCreated={({ gl }) => {
             // P1c：材质 clippingPlanes（局部剖切）依赖渲染器开关
             gl.localClippingEnabled = true
+            // 与 GLB 查看器一致：AgX 压高光、保留金属层次，避免木材发灰和
+            // 黑色金属直接糊成一团。颜色输入/输出统一走 sRGB。
+            gl.toneMapping = AgXToneMapping
+            gl.toneMappingExposure = 0.9
+            gl.outputColorSpace = SRGBColorSpace
           }}
           onPointerMissed={() => {
             // TransformControls gizmo 的点击不算空白：不清选中
@@ -311,9 +413,9 @@ export function PreviewViewport({
           <PreviewCameraRig bounds={bounds} mode={cameraMode} preset={viewPreset} fitNonce={fitNonce} />
           <color attach="background" args={['#0a0e14']} />
           <StudioEnvironment />
-          <ambientLight intensity={0.25} />
+          <ambientLight intensity={0.08} />
           <directionalLight position={[3, -4, 5]} intensity={1.1} />
-          <directionalLight position={[-4, 2, 3]} intensity={0.5} color="#7cc7f5" />
+          <directionalLight position={[-4, 2, 3]} intensity={0.5} color="#9fb4cc" />
           {/* 接地软阴影（P1b）：落在 bounds 底面；frames 默认每帧重捕，
               隐藏舞台（display:none）恢复后自愈。wire/xray 默认关（消隐线框下
               阴影是噪声），用户可手动开。 */}
@@ -331,12 +433,12 @@ export function PreviewViewport({
           {/* 大坐标模型（毫米级脚本）居中渲染，避免 float32 抖动与深度量化闪烁 */}
           <group position={bounds.center}>
             {showGrid ? <gridHelper args={[4, 8, '#334155', '#182235']} rotation={[Math.PI / 2, 0, 0]} /> : null}
-            <axesHelper args={[1.4]} />
             {preview?.meshes.map((mesh, index) =>
               hiddenParts.has(index) ? null : (
                 <MeshView
                   key={`${mesh.name}-${index}`}
                   mesh={mesh}
+                  preview={preview}
                   index={index}
                   showEdges={showEdges}
                   displayMode={displayMode}
@@ -367,6 +469,10 @@ export function PreviewViewport({
           {/* P2a 对比叠加：任务前版本半透明 ghost；offset 用当前 bounds.center
               （同世界坐标系，减同一中心即对齐） */}
           {showGhost && previewGhost ? <PreviewGhostOverlay ghost={previewGhost} boundsCenter={bounds.center} /> : null}
+          {/* 方向指示坐标系：右上角跟随相机旋转（不遮挡模型，替代原物体原点的 axesHelper） */}
+          <GizmoHelper alignment="top-right" margin={[56, 56]}>
+            <GizmoViewport labelColor="#c7d2e2" axisHeadScale={0.9} />
+          </GizmoHelper>
         </Canvas>
         {selection ? (
           <PreviewPickingBar
@@ -410,8 +516,15 @@ export function PreviewViewport({
         <span>
           {cameraMode === 'orthographic' ? 'Orthographic' : 'Perspective'} | {viewPreset.toUpperCase()}
         </span>
-        <span className="viewport-fidelity-hint" title="The built-in previewer renders a GDL subset. Compile and open in Archicad for the final result.">
-          Approximate preview · verify in Archicad
+        <span
+          className="viewport-fidelity-hint"
+          title={
+            sourceControl?.showingAuthoritative
+              ? 'Rendered by Archicad with the current parameter overrides.'
+              : 'The built-in previewer renders a GDL subset. Compile and open in Archicad for the final result.'
+          }
+        >
+          {sourceControl?.showingAuthoritative ? 'Archicad 权威预览（由 Archicad 渲染）' : 'Approximate preview · verify in Archicad'}
         </span>
         <span>
           {preview?.meshes.length ?? 0} meshes | {warnings.length} warnings | {sourceLabel}
@@ -419,6 +532,17 @@ export function PreviewViewport({
       </footer>
     </section>
   )
+}
+
+function hostVerificationLabel(status: HostVerificationStatus): string {
+  return {
+    passed: '已验收',
+    failed: '未通过',
+    unsupported: '不支持',
+    identity_unverified: '身份未核验',
+    not_checked: '未验收',
+    stale: '已过期',
+  }[status]
 }
 
 function previewSourceLabel(preview: PreviewPayload | null, hasDirtyScripts: boolean) {
@@ -518,7 +642,7 @@ const CANVAS_BG_COLOR = '#05070d'
 const SELECTION_COLOR = '#ffc94d'
 
 // 统一单色模式的显示色（部件面板 chip 与渲染共用；random/wire 为逐部件 hash 色，不在此列）
-const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random' | 'wire'>, string> = {
+const MODE_COLOR: Record<Exclude<PreviewDisplayMode, 'random' | 'wire' | 'material'>, string> = {
   solid: SOLID_COLOR,
   mono: MONO_COLOR,
   xray: XRAY_COLOR,
@@ -604,6 +728,7 @@ function StudioEnvironment() {
 
 function MeshView({
   mesh,
+  preview,
   index,
   showEdges,
   displayMode,
@@ -617,6 +742,7 @@ function MeshView({
   onJump,
 }: {
   mesh: PreviewMesh
+  preview: PreviewPayload | null
   index: number
   showEdges: boolean
   displayMode: PreviewDisplayMode
@@ -659,6 +785,7 @@ function MeshView({
             <PartMesh
               part={part}
               mesh={mesh}
+              preview={preview}
               index={index}
               showEdges={showEdges}
               displayMode={displayMode}
@@ -680,6 +807,7 @@ function MeshView({
     <PartMesh
       part={{ compId: 0, geometry, centroid: [0, 0, 0] }}
       mesh={mesh}
+      preview={preview}
       index={index}
       showEdges={showEdges}
       displayMode={displayMode}
@@ -701,6 +829,7 @@ function MeshView({
 function PartMesh({
   part,
   mesh,
+  preview,
   index,
   showEdges,
   displayMode,
@@ -713,6 +842,7 @@ function PartMesh({
 }: {
   part: ExplodedPart
   mesh: PreviewMesh
+  preview: PreviewPayload | null
   index: number
   showEdges: boolean
   displayMode: PreviewDisplayMode
@@ -767,22 +897,53 @@ function PartMesh({
   }
 
   const isMono = displayMode === 'mono'
+  const semanticMaterial = preview ? materialForMesh(preview, mesh) : null
+  // 权威预览逐 mesh 颜色（RGB 0-1 → three.js Color）；本地预览无 color 字段，
+  // 回退 solid 统一色。random/wire 按部件 hash 取色、mono 单色，均不消费 mesh.color
+  const meshColor = useMemo(
+    () => (mesh.color ? new Color(mesh.color.red, mesh.color.green, mesh.color.blue) : null),
+    [mesh],
+  )
   const color =
     displayMode === 'random'
       ? hashColor(componentColorIdentity(mesh.name, index, colorCompId))
       : isMono
         ? MONO_COLOR
-        : SOLID_COLOR
+        : (meshColor ?? SOLID_COLOR)
   // mono 的材质参数与原分支一致（roughness/metalness/envMapIntensity 不同）
   const shading = isMono
     ? { roughness: 0.7, metalness: 0.0, envMapIntensity: 0.6 }
-    : { roughness: 0.5, metalness: 0.05, envMapIntensity: 0.75 }
+    : { roughness: semanticMaterial?.roughness ?? 0.5, metalness: semanticMaterial?.metalness ?? 0.05, envMapIntensity: 0.75 }
+  const materialColor = displayMode === 'material' && semanticMaterial ? semanticMaterial.color : color
+  if (displayMode === 'material' && semanticMaterial?.transmission) {
+    return (
+      <mesh geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
+        <meshPhysicalMaterial
+          color={semanticMaterial.color}
+          roughness={semanticMaterial.roughness}
+          metalness={semanticMaterial.metalness}
+          transmission={semanticMaterial.transmission}
+          ior={semanticMaterial.ior}
+          transparent
+          opacity={semanticMaterial.opacity}
+          envMapIntensity={0.75}
+          side={DoubleSide}
+          emissive={selected ? SELECTION_COLOR : '#000000'}
+          emissiveIntensity={0.4}
+          clippingPlanes={clippingPlanes}
+        />
+        {showEdges || selected ? <Edges color={selected ? SELECTION_COLOR : EDGE_COLOR} threshold={18} clippingPlanes={clippingPlanes} /> : null}
+      </mesh>
+    )
+  }
   return (
     <mesh geometry={part.geometry} onClick={handleClick} onDoubleClick={handleDoubleClick}>
       <meshStandardMaterial
-        color={color}
+        color={materialColor}
         roughness={shading.roughness}
         metalness={shading.metalness}
+        transparent={displayMode === 'material' && Boolean(semanticMaterial && semanticMaterial.opacity < 1)}
+        opacity={displayMode === 'material' ? semanticMaterial?.opacity ?? 1 : 1}
         envMapIntensity={shading.envMapIntensity}
         side={DoubleSide}
         emissive={selected ? SELECTION_COLOR : '#000000'}

@@ -74,6 +74,33 @@ function makeApi(overrides: ApiOverrides = {}): WorkbenchApi {
     compileProject: vi.fn(async () => ({ ok: true, compile: { success: true, mode: 'mock', output_path: '/tmp/x.gsm' } })),
     mockCompile: vi.fn(async () => ({ success: true, mode: 'mock', issues: [], duration_ms: 1 })),
     fetchPreview: vi.fn(async () => ({ meshes: [], wires: [], warnings: [] })),
+    // main 合并后新增的后端面：load() 会刷 Tapir 状态与宿主校验，
+    // flushDirtyScripts/参数写入后会刷新 effective parameters——mock 缺失会让
+    // SF1 场景在无关路径上抛错（断言本身不变）。
+    fetchTapirStatus: vi.fn(async () => ({
+      ok: true,
+      tapir: {
+        import_ok: false,
+        available: false,
+        archicad_connected: false,
+        tapir_available: false,
+        version: '',
+        message: 'Tapir bridge 未导入',
+        selected_guids: [],
+        selected_details: [],
+        selected_params: [],
+        param_edits: {},
+        last_error: '',
+        last_sync_at: '',
+      },
+    })),
+    fetchHostVerification: vi.fn(async () => ({ status: 'not_checked', stale: false, stale_reasons: [] })),
+    fetchEffectiveParameters: vi.fn(async () => ({
+      ok: true,
+      supported: true,
+      parameters: [],
+      diagnostics: [],
+    })),
     askAssistant: vi.fn(async () => ({ ok: true, assistant: { reply: 'hello' } })),
     generateWithAssistant: vi.fn(async () => ({ ok: true, assistant: { reply: 'done', changed_files: [] } })),
     generateWithAssistantStream: vi.fn(async () => ({ ok: true, assistant: { reply: 'done', changed_files: [] } })),

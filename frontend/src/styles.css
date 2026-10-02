@@ -834,14 +834,38 @@ button:focus-visible {
 
 .workbench-main-stage,
 .editor-stage,
-.preview-workspace-stage {
+.preview-workspace-stage,
+.preview-2d-stage {
   min-width: 0;
   background: var(--main-stage-bg);
 }
 
-.preview-workspace-stage {
+/* 中间栏视图切换（脚本 / 3D / 2D）：切换条 + 三舞台容器；
+   容器作为 workspace-grid 的中栏唯一 grid item，舞台在其内部互斥显示 */
+.center-stage {
+  min-width: 0;
   min-height: 0;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--main-stage-bg);
+}
+
+.center-stage-body {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.preview-workspace-stage,
+.preview-2d-stage {
+  min-height: 0;
+  display: grid;
+}
+
+/* 2D 视口在工作台舞台里撑满（rail 挂载点靠 .viewport-panel 拉伸，此处显式给高） */
+.preview-2d-stage .viewport-surface {
+  height: 100%;
 }
 
 .script-tree {
@@ -1220,6 +1244,35 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.parameter-name-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.parameter-effective-value {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+
+.parameter-effective-value > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parameter-effective-source {
+  flex: none;
+  color: var(--text-secondary);
+}
+
 .numeric-input,
 .text-input,
 .enum-select {
@@ -1337,6 +1390,27 @@ button:focus-visible {
   border-color: var(--accent);
   background: var(--accent-muted);
   color: var(--accent-soft);
+}
+
+.viewport-verification-status {
+  min-width: 44px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.viewport-verification-status.is-passed {
+  color: var(--success);
+}
+
+.viewport-verification-status.is-failed,
+.viewport-verification-status.is-identity_unverified {
+  color: var(--danger);
+}
+
+.viewport-verification-status.is-unsupported,
+.viewport-verification-status.is-stale {
+  color: var(--warning);
 }
 
 .viewport-toolbar-sep {
@@ -1476,6 +1550,61 @@ button:focus-visible {
   font-size: 11px;
   pointer-events: none;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Archicad 权威预览：canvas 左上角徽章（参照 .viewport-ghost-tag，琥珀 accent 区分本地近似） */
+.viewport-authoritative-tag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  padding: 4px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: rgba(5, 7, 13, 0.86);
+  color: var(--accent-soft);
+  font-size: 11px;
+  pointer-events: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* 权威预览"参数已变"轻提示：canvas 顶部居中浮层 */
+.viewport-authoritative-stale {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-muted);
+  color: var(--accent-soft);
+  font-size: 11px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* 权威取数失败条：canvas 底部浮层，错误原文上屏（不静默），画布保持本地预览 */
+.viewport-authoritative-error {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 10;
+  padding: 6px 10px;
+  border: 1px solid var(--status-error-border);
+  border-radius: 6px;
+  background: var(--status-error-bg);
+  color: var(--status-error-text);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* 「刷新权威」按钮的待刷新强调（参数已变） */
+.viewport-action-attention {
+  border-color: var(--accent);
+  color: var(--accent-soft);
 }
 
 /* P4-C 空态：3D 预览 / 编辑器舞台 / AI 面板共用。 */
@@ -1696,7 +1825,8 @@ button:focus-visible {
   min-height: 0;
   display: grid;
   place-items: center;
-  background: var(--bg-canvas);
+  /* 图纸风格：白底黑线，与 Archicad 2D 符号窗口一致（工作台其他面板仍暗色） */
+  background: #ffffff;
 }
 
 .preview2d-svg {
@@ -1706,20 +1836,27 @@ button:focus-visible {
 }
 
 .preview2d-line {
-  stroke: var(--accent-soft);
-  stroke-width: 0.012;
+  stroke: #1e293b;
+  /* non-scaling-stroke uses screen pixels, not model metres. */
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .preview2d-polygon {
-  fill: var(--accent-muted);
-  stroke: var(--accent-soft);
-  stroke-width: 0.012;
+  fill: #e2e8f0;
+  stroke: #1e293b;
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
+.preview2d-text {
+  fill: #1e293b;
+  /* GDL 文本是纸张尺寸：字号随 viewBox 缩放（真实比例），不做非缩放处理 */
+  user-select: none;
+}
+
 .preview2d-empty {
-  color: var(--text-muted);
+  color: #64748b;
   font-size: 12px;
 }
 
@@ -3161,6 +3298,68 @@ button:focus-visible {
   gap: 8px;
 }
 
+.llm-connection-wizard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.llm-connection-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 84px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle, #d9d9d9);
+  border-radius: 12px;
+  background: var(--surface-raised, #fafafa);
+}
+
+.llm-connection-card strong { display: block; font-size: 13px; }
+.llm-connection-card p { margin: 6px 0 0; color: var(--text-muted, #777); font-size: 11px; line-height: 1.4; }
+.llm-connection-card button { white-space: nowrap; }
+.connection-card-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.connection-state { color: var(--text-muted, #777); font-size: 11px; white-space: nowrap; }
+.connection-state.is-ready { color: #16803c; }
+
+.codex-model-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(15 23 42 / 28%);
+}
+
+.codex-model-drawer {
+  width: min(420px, 92vw);
+  height: 100%;
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--surface, #fff);
+  box-shadow: -12px 0 32px rgb(15 23 42 / 18%);
+}
+
+.codex-model-drawer-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
+.codex-model-drawer-header h3 { margin: 4px 0 0; font-size: 18px; }
+.codex-model-drawer-header small { display: block; margin-top: 6px; color: var(--text-muted, #777); font-size: 10px; }
+.settings-kicker { color: var(--text-muted, #777); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.codex-model-drawer-list { display: grid; gap: 8px; }
+.codex-model-provider-group { display: grid; gap: 6px; }
+.codex-model-drawer-list button { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; width: 100%; padding: 12px; text-align: left; border: 1px solid var(--border-subtle, #d9d9d9); border-radius: 10px; background: transparent; }
+.codex-model-drawer-list button:hover:not(:disabled), .codex-model-drawer-list button.is-current { border-color: var(--accent, #2563eb); background: rgb(37 99 235 / 7%); }
+.codex-model-drawer-list small { grid-column: 1; color: var(--text-muted, #777); font-size: 10px; }
+.codex-model-drawer-list em { grid-column: 2; grid-row: 1 / span 2; color: var(--accent, #2563eb); font-size: 10px; font-style: normal; }
+.codex-model-drawer-empty { padding: 24px 0; color: var(--text-muted, #777); }
+.codex-drawer-confirm { display: grid; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border-subtle, #d9d9d9); }
+.codex-drawer-confirm label { display: grid; gap: 6px; font-size: 11px; }
+
+@media (max-width: 640px) {
+  .llm-connection-wizard { grid-template-columns: 1fr; }
+}
+
 .settings-model-row > input {
   min-width: 0;
 }
@@ -3191,6 +3390,18 @@ button:focus-visible {
   border: 1px solid var(--border);
   border-radius: 5px;
   background: rgba(2, 6, 23, 0.34);
+}
+
+.settings-codex-provider-group {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-codex-provider-group + .settings-codex-provider-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
 }
 
 .settings-model-list button {
@@ -3583,6 +3794,11 @@ button:focus-visible {
   min-width: 0;
   color: var(--text-primary);
   text-align: right;
+}
+
+.settings-update-channel-warning {
+  grid-column: 1 / -1;
+  color: var(--warning) !important;
 }
 
 .settings-code-list {
@@ -4734,6 +4950,107 @@ button:focus-visible {
   cursor: not-allowed;
 }
 
+/* ── ST03 交付状态卡 ─────────────────────────────────── */
+.assistant-delivery {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 11px;
+  display: grid;
+  gap: 6px;
+}
+.assistant-delivery.is-incomplete {
+  border-color: var(--status-warning-border, #b45309);
+  background: color-mix(in srgb, var(--status-warning-border, #b45309) 8%, var(--bg-panel));
+}
+.assistant-delivery.is-neutral {
+  border-color: var(--border-strong);
+  opacity: 0.95;
+}
+.assistant-delivery-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.assistant-delivery-title {
+  font-size: 12px;
+}
+.assistant-delivery-run {
+  font-style: normal;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  opacity: 0.75;
+}
+.assistant-delivery-badge.is-pass {
+  color: #16a34a;
+  font-weight: 700;
+}
+.assistant-delivery-headline {
+  margin: 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+.assistant-delivery-reason,
+.assistant-delivery-unlinked,
+.assistant-delivery-continued {
+  margin: 0;
+  opacity: 0.85;
+}
+.assistant-delivery-before-after {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, monospace;
+}
+.assistant-delivery-before-after code {
+  font-size: 10px;
+}
+.assistant-delivery-snapshot-split {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.assistant-delivery-files ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.assistant-delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.assistant-delivery-actions button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.assistant-delivery-diff {
+  border-top: 1px solid var(--border-strong);
+  padding-top: 6px;
+}
+.assistant-delivery-diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.assistant-delivery-diff-body {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px;
+  background: var(--bg-muted, rgba(127, 127, 127, 0.08));
+  border-radius: 4px;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+.assistant-delivery-instruction summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
 /* ── MODIFY 验收报告卡（V5） ─────────────────────────── */
 .acceptance-card {
   margin-top: 10px;
@@ -4797,3 +5114,95 @@ button:focus-visible {
   color: var(--danger, #c0392b);
 }
 
+
+/* L0b：Archicad Ctrl+T 风格参数面板 */
+.archicad-panel-root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.archicad-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.archicad-panel-canvas {
+  background: var(--bg-elevated, var(--bg-panel));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: auto;
+  flex-shrink: 0;
+}
+
+.archicad-outfield {
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+  overflow: hidden;
+  white-space: pre-wrap;
+  line-height: 1.3;
+  padding: 2px 0;
+}
+
+.archicad-groupbox {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-muted, var(--text));
+  padding: 4px 6px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.archicad-separator {
+  border-top: 1px solid var(--border);
+  background: transparent;
+  height: 1px !important;
+}
+
+.archicad-infield {
+  box-sizing: border-box;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-panel);
+  color: var(--text);
+  min-width: 48px;
+}
+
+.archicad-infield:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.archicad-panel-status {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.archicad-panel-hint {
+  opacity: 0.8;
+}
+
+.archicad-panel-unsupported {
+  font-size: 11px;
+  opacity: 0.75;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.archicad-panel-warnings {
+  font-size: 11px;
+  color: var(--warning, var(--text-muted, inherit));
+  opacity: 0.85;
+}

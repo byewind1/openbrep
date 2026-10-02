@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "managed_files": [
+    "ancestry.xml",
+    "calledmacros.xml",
+    "libpartdata.xml",
+    "libpartdocs.xml",
+    "paramlist.xml",
+    "scripts/1d.gdl",
+    "scripts/2d.gdl",
+    "scripts/3d.gdl",
+    "scripts/pr.gdl",
+    "scripts/ui.gdl",
+    "scripts/vl.gdl"
+  ],
+  "states": {
+    "before_top_option": {
+      "kind": "revision",
+      "revision_id": "r0011",
+      "description": "before adding the optional top-tread parameter",
+      "source_fingerprint": "sha256:d64880f5aad7b9498e33ccec5ccf501a75a4cd33b82aa08329956a5b2e5907ae",
+      "files": {
+        "ancestry.xml": "2964a60448e5ecfa6fd29c7375138c36bf698674ffcbb6d8f1f480389692a83e",
+        "calledmacros.xml": "fe8f52f0a196f8b8a2056e2a1d8937abff4cd61fcaa6bf998a87104495a6b03c",
+        "libpartdata.xml": "66bd954c361129268a9fcacca0a2a01db403773ee4e13dfe8f4053fb59e7a361",
+        "libpartdocs.xml": "107eb20654537d452d05a64eb20a886877c60c1f75cbe0d6d737ef7a3d3106a7",
+        "paramlist.xml": "ba362b047bfd80832c8dec5682143d38689c30e8e7fbda75bae38e8757090db1",
+        "scripts/1d.gdl": "bfc2fa05313b8f168cf639facdb8e13091ea13e5fe389932f23c95715e2128de",
+        "scripts/2d.gdl": "36e19804e454dff931be1cd10077bf5f4bdf0bdb18d2c63600b2275efd5c95b7",
+        "scripts/3d.gdl": "dfb00dca8928123550b45703611fe9ed95637243a8ab77ab1064432db291c4ee",
+        "scripts/pr.gdl": "09b57835b8aa0410f4df6535c7b3bcbc4bb14e0a1df2290ac8f9f8fb52ac816d",
+        "scripts/ui.gdl": "d9a8f895e4e70a796548f05255ec8e56db3fa4b850f3558f11bf40b92aab9001",
+        "scripts/vl.gdl": "ace5dce8903bc0767db3548e9b6acca126cf4a994d786ea96b9eb538f4ed5235"
+      }
+    },
+    "partial_top_option": {
+      "kind": "revision",
+      "revision_id": "r0012",
+      "description": "parameter and 1D derivation saved; 3D still ignores the option and retains the landing",
+      "source_fingerprint": "sha256:9bf22d115846112e439497201efb15b452c3e7d5c373b1664fe225ba40eca74a",
+      "files": {
+        "ancestry.xml": "2964a60448e5ecfa6fd29c7375138c36bf698674ffcbb6d8f1f480389692a83e",
+        "calledmacros.xml": "fe8f52f0a196f8b8a2056e2a1d8937abff4cd61fcaa6bf998a87104495a6b03c",
+        "libpartdata.xml": "66bd954c361129268a9fcacca0a2a01db403773ee4e13dfe8f4053fb59e7a361",
+        "libpartdocs.xml": "107eb20654537d452d05a64eb20a886877c60c1f75cbe0d6d737ef7a3d3106a7",
+        "paramlist.xml": "66976468bd8c5a5e11c31bbfb5a8c9671e2d684805d83d2a492d176354a39601",
+        "scripts/1d.gdl": "e95a78a7ad6fcf608371d38073c7513198031c0fb60957e557356c8aa0971309",
+        "scripts/2d.gdl": "36e19804e454dff931be1cd10077bf5f4bdf0bdb18d2c63600b2275efd5c95b7",
+        "scripts/3d.gdl": "dfb00dca8928123550b45703611fe9ed95637243a8ab77ab1064432db291c4ee",
+        "scripts/pr.gdl": "09b57835b8aa0410f4df6535c7b3bcbc4bb14e0a1df2290ac8f9f8fb52ac816d",
+        "scripts/ui.gdl": "d9a8f895e4e70a796548f05255ec8e56db3fa4b850f3558f11bf40b92aab9001",
+        "scripts/vl.gdl": "ace5dce8903bc0767db3548e9b6acca126cf4a994d786ea96b9eb538f4ed5235"
+      }
+    },
+    "after_top_option": {
+      "kind": "current_source",
+      "revision_id": null,
+      "description": "retry-completed source; 3D consumes _tread_count and removes landing geometry",
+      "source_fingerprint": "sha256:af5aa43d52c0df2412226703c8479396b3e3f8966a493f1b6ed8e545b7d44575",
+      "files": {
+        "ancestry.xml": "2964a60448e5ecfa6fd29c7375138c36bf698674ffcbb6d8f1f480389692a83e",
+        "calledmacros.xml": "fe8f52f0a196f8b8a2056e2a1d8937abff4cd61fcaa6bf998a87104495a6b03c",
+        "libpartdata.xml": "66bd954c361129268a9fcacca0a2a01db403773ee4e13dfe8f4053fb59e7a361",
+        "libpartdocs.xml": "107eb20654537d452d05a64eb20a886877c60c1f75cbe0d6d737ef7a3d3106a7",
+        "paramlist.xml": "66976468bd8c5a5e11c31bbfb5a8c9671e2d684805d83d2a492d176354a39601",
+        "scripts/1d.gdl": "e95a78a7ad6fcf608371d38073c7513198031c0fb60957e557356c8aa0971309",
+        "scripts/2d.gdl": "36e19804e454dff931be1cd10077bf5f4bdf0bdb18d2c63600b2275efd5c95b7",
+        "scripts/3d.gdl": "eef9e2d413e1a4649cedd3ff1313813e9d791047c305becdc065183bb4c893af",
+        "scripts/pr.gdl": "09b57835b8aa0410f4df6535c7b3bcbc4bb14e0a1df2290ac8f9f8fb52ac816d",
+        "scripts/ui.gdl": "d9a8f895e4e70a796548f05255ec8e56db3fa4b850f3558f11bf40b92aab9001",
+        "scripts/vl.gdl": "ace5dce8903bc0767db3548e9b6acca126cf4a994d786ea96b9eb538f4ed5235"
+      }
+    }
+  },
+  "expected_transitions": {
+    "before_to_partial": {
+      "changed_files": [
+        "paramlist.xml",
+        "scripts/1d.gdl"
+      ],
+      "meaning": "parameter and derivation landed before timeout"
+    },
+    "partial_to_after": {
+      "changed_files": [
+        "scripts/3d.gdl"
+      ],
+      "meaning": "retry connected the derived count and removed landing geometry"
+    }
+  }
+}

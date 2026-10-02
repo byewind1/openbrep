@@ -31,7 +31,7 @@ from openbrep.mcp_tools import (
     workspace_scan,
     workspace_search,
 )
-from openbrep.revisions import get_latest_revision_id
+from openbrep.revisions import archive_artifact, get_latest_revision_id
 from openbrep.workbench.project_session_service import write_project_origin
 from openbrep.skills_loader import SkillsLoader
 
@@ -100,8 +100,8 @@ def test_compile_hsf_mock_mode_succeeds_on_valid_project(tmp_path):
     assert result["success"] is True
     assert result["exit_code"] == 0
     assert result["errors"] == []
-    assert result["output_path"].endswith(".gsm")
-    assert not result["output_path"].startswith(str(hsf_dir))
+    assert result["output_path"] == ""
+    assert result["artifact_path"] is None
     assert TRACE_RE.match(result["trace_id"])
 
 
@@ -132,26 +132,22 @@ def test_workspace_init_scan_search_return_ok(tmp_path):
     assert TRACE_RE.match(bad["trace_id"])
 
 
-def test_compile_hsf_archives_successful_artifact(tmp_path):
+def test_compile_hsf_mock_mode_does_not_archive_placeholder(tmp_path):
     _project, hsf_dir = _make_project(tmp_path)
     result = compile_hsf(str(hsf_dir), mode="mock")
 
     assert result["ok"] is True
     assert result["success"] is True
-    artifact_path = result["artifact_path"]
-    assert artifact_path
-    archive = Path(artifact_path)
-    assert archive.exists()
-    assert archive.is_file()
-    assert archive.read_bytes() == Path(result["output_path"]).read_bytes()
-    # 归档位：项目目录下 artifacts/unversioned/
-    assert "artifacts" in artifact_path
-    assert "unversioned" in artifact_path
+    assert result["output_path"] == ""
+    assert result["artifact_path"] is None
+    assert not (Path(hsf_dir) / "artifacts").exists()
 
 
 def test_load_project_returns_artifacts_summary(tmp_path):
     _project, hsf_dir = _make_project(tmp_path)
-    compile_hsf(str(hsf_dir), mode="mock")
+    real_gsm = tmp_path / "Shelf.gsm"
+    real_gsm.write_bytes(b"WW.\x00real-binary")
+    archive_artifact(hsf_dir, real_gsm)
 
     loaded = load_project(str(hsf_dir))
 
@@ -194,6 +190,21 @@ def test_semantic_verify_well_formed_project_passes(tmp_path):
     result = semantic_verify(str(hsf_dir))
     assert result["ok"] is True
     assert result["passed"] is True
+    assert "project_contract" not in result
+
+
+def test_semantic_verify_exposes_explicit_contract_failure(tmp_path):
+    _project, hsf_dir = _make_project(tmp_path)
+    contract_path = Path(hsf_dir) / ".openbrep" / "contracts" / "stair.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text("{broken", encoding="utf-8")
+
+    result = semantic_verify(str(hsf_dir), sweep=False)
+
+    assert result["ok"] is True
+    assert result["passed"] is False
+    assert result["project_contract"]["applicability"] == "invalid"
+    assert result["project_contract"]["checks"][0]["check_id"] == "contract_valid"
 
 
 def test_all_tools_return_unified_error_shape_for_missing_path(tmp_path):
@@ -835,6 +846,36 @@ def test_verify_skill_structural_gate_requires_trigger_section_and_pattern_type(
     assert no_pattern["ok"] is True
     assert no_pattern["passed"] is False
     assert no_pattern["evidence"]["structural"]["frontmatter_complete"] is False
+
+
+def test_verify_skill_reports_promotion_write_failure(tmp_path, monkeypatch):
+    skills_dir = tmp_path / "skills"
+    propose_skill(
+        "promotion_failure",
+        "# 策略\n\n## 触发关键词\n- 楼梯\n",
+        pattern_type="structural-pattern",
+        skills_dir=str(skills_dir),
+    )
+    monkeypatch.setattr("openbrep.mcp_tools.rewrite_skill_frontmatter", lambda *a, **k: False)
+
+    result = verify_skill("promotion_failure", skills_dir=str(skills_dir))
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "skill_promotion_failed"
+    assert result["passed"] is False
+    assert result["status"] == "proposed"
+    loader = SkillsLoader(str(skills_dir))
+    loader.load()
+    assert loader.skill_meta("promotion_failure")["status"] == "proposed"
+
+    def raise_write_error(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("openbrep.mcp_tools.rewrite_skill_frontmatter", raise_write_error)
+    raised = verify_skill("promotion_failure", skills_dir=str(skills_dir))
+    assert raised["ok"] is False
+    assert raised["error"]["code"] == "skill_promotion_failed"
+    assert raised["status"] == "proposed"
 
 
 def test_verify_skill_missing_returns_skill_not_found(tmp_path):

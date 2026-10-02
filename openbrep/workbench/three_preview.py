@@ -24,6 +24,8 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
             if _valid_face(mesh.i[idx], mesh.j[idx], mesh.k[idx], vertex_count)
         ]
         item = {"name": mesh.name, "vertices": vertices, "faces": faces}
+        if mesh.material_id is not None:
+            item["material_id"] = mesh.material_id
         if mesh.source_ref is not None:
             item["source_ref"] = {
                 "script_type": mesh.source_ref.script_type,
@@ -33,6 +35,8 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
                 # P1e 相关代码段（可选字段，向后兼容）：无则为 None
                 "segment_start": mesh.source_ref.segment_start,
                 "segment_end": mesh.source_ref.segment_end,
+                # P3 CALL 宏链（可选字段，向后兼容）：非宏几何为 None
+                "macro": getattr(mesh.source_ref, "macro", None),
             }
         meshes.append(item)
 
@@ -42,7 +46,10 @@ def preview_3d_to_three_payload(data: Preview3DResult) -> dict:
         if len(points) >= 2:
             wires.append(points)
 
-    return {"meshes": meshes, "wires": wires}
+    payload = {"meshes": meshes, "wires": wires}
+    if data.materials:
+        payload["materials"] = data.materials
+    return payload
 
 
 def render_three_preview_html(data: Preview3DResult, *, height: int = 500) -> str:

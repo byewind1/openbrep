@@ -24,6 +24,7 @@ from openbrep.importers.blender_script.converter import (
     convert_blender_script,
     probe_object_name,
 )
+from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.naming import safe_project_name, unique_project_name
 from openbrep.workbench.project_session_service import write_project_origin
 
@@ -52,6 +53,8 @@ class WorkbenchBlenderImportService:
             if not raw_path:
                 try:
                     raw_path = self.session._choose_file_for_purpose("blender")
+                except DialogUnavailableError as exc:
+                    return {"ok": False, "unavailable": True, "error": str(exc)}
                 except Exception as exc:
                     return {"ok": False, "error": f"File chooser failed: {exc}"}
             if not raw_path:

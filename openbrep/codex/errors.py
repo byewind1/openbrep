@@ -11,6 +11,7 @@ from openbrep.codex.app_server import CodexAppServerError
 from openbrep.codex.redact import redact_secrets
 
 DEFAULT_FALLBACK = "Codex 操作失败，请稍后重试。"
+RUNTIME_CONFLICT_MESSAGE = "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"
 
 # 稳定文案表：按异常 code（类属性）与 CodexAppServerError.category 映射
 STABLE_MESSAGES: dict[str, str] = {
@@ -20,11 +21,26 @@ STABLE_MESSAGES: dict[str, str] = {
     "version_incompatible": "Codex CLI 版本与 OpenBrep 不兼容，请升级 Codex CLI 后重试。",
     "codex_crashed": "Codex app-server 进程异常退出。请点击「重启」恢复连接。",
     "quota_exhausted": "ChatGPT 订阅额度已耗尽或已达到用量上限。请稍后重试、等待重置，或切换到其他模型/提供商。",
+    # 双入口（2026-09-17）：local 入口不可用 / 账户操作错入口
+    "codex_entry_unavailable": (
+        "本机 Codex 配置当前不可用（未安装 CLI、未配置模型或未登录）。"
+        "请到 AI 设置查看具体原因后重试。"
+    ),
+    "codex_entry_managed_only": (
+        "本机 Codex 配置入口不管理登录与额度。请在终端用 Codex CLI 完成登录，"
+        "或切换到「ChatGPT 账户登录（OpenBrep 托管）」入口。"
+    ),
     # D6：Fixed 模式 effort 门禁（保存与运行时共用，稳定文案零回显）
     "unsupported_reasoning_effort": (
         "当前模型不支持所选 reasoning effort（推理强度），请求已拒绝。"
         "请到 AI 设置中重新选择该模型支持的 effort。"
     ),
+    "cc_switch_unavailable": "未检测到可用的 cc-switch 注册表。",
+    "cc_switch_schema_unsupported": "cc-switch 数据结构不受支持。",
+    "cc_switch_provider_missing": "cc-switch 供应商已不存在，请重新选择。",
+    "cc_switch_provider_unusable": "cc-switch 供应商配置不可用。",
+    "cc_switch_catalog_unavailable": "cc-switch 模型目录暂不可用。",
+    "cc_switch_runtime_failed": "cc-switch Codex 运行环境启动失败。",
     # P0-1 状态门禁（CodexAppServerError.category）
     "already_signed_in": "已连接 ChatGPT 账号。切换账号请先点击「断开连接」退出当前账号，再登录新账号。",
     "login_already_pending": "已有登录流程正在进行。请先取消当前登录，再重新发起。",
@@ -37,6 +53,8 @@ STABLE_MESSAGES: dict[str, str] = {
     "rpc_error": "Codex app-server 请求失败，请稍后重试。",
     "login_failed": "登录服务返回异常，请稍后重试或重新连接。",
     "closed": "Codex app-server 已关闭，请重启工作台后重试。",
+    "runtime_conflict": RUNTIME_CONFLICT_MESSAGE,
+    "codex_runtime_conflict": RUNTIME_CONFLICT_MESSAGE,
 }
 
 
@@ -46,8 +64,9 @@ def error_response(exc: BaseException, fallback: str = DEFAULT_FALLBACK) -> dict
         # 先按 category 细分（CodexAppServerError.code 恒为 codex_app_server，
         # 若先查 code 会盖掉 timeout/process_exited 等细分文案）
         category = getattr(exc, "category", None) or "codex_app_server"
+        code = "codex_runtime_conflict" if category == "runtime_conflict" else "codex_app_server"
         return {
-            "code": "codex_app_server",
+            "code": code,
             "error": STABLE_MESSAGES.get(category, fallback),
         }
     code = getattr(exc, "code", None)

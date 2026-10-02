@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  fetchCodexEntry,
   codexLoginCancel,
   codexLoginDeviceCode,
   codexLoginStart,
@@ -7,10 +8,16 @@ import {
   codexRestart,
   fetchCodexModels,
   fetchCodexStatus,
+  refreshCodexModels,
+  saveCodexEntry,
 } from '../../api/client'
 import type {
   CodexDeviceCodeResult,
+  CodexEntry,
+  CodexEntryInfo,
   CodexModelInfo,
+  CodexModelsResult,
+  CodexProviderInfo,
   CodexStatus,
   LlmConnectionTestResult,
   LlmSettings,
@@ -21,7 +28,7 @@ import { ModelVisibilityPanel } from './ModelVisibilityPanel'
 interface AiSettingsPanelProps {
   llmSettings: LlmSettings
   onOpenConfig: () => void
-  onTestConnection: () => Promise<LlmConnectionTestResult>
+  onTestConnection: (model?: string, reasoningEffort?: string) => Promise<LlmConnectionTestResult>
   onModelChange?: (
     model: string,
     reasoningEffort?: string,
@@ -54,6 +61,8 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   // ── Codex BYOA（D1+D2）：ChatGPT 订阅连接状态 ──
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null)
   const [codexModels, setCodexModels] = useState<CodexModelInfo[]>([])
+  const [codexProviders, setCodexProviders] = useState<CodexProviderInfo[]>([])
+  const [refreshingProvider, setRefreshingProvider] = useState<string | null>(null)
   const [codexBusy, setCodexBusy] = useState(false)
   const [loginStarted, setLoginStarted] = useState(false)
   const [deviceCode, setDeviceCode] = useState<{ verificationUrl: string; userCode: string } | null>(null)
@@ -62,13 +71,33 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [pendingCodexModel, setPendingCodexModel] = useState<string | null>(null)
   const [codexCancelling, setCodexCancelling] = useState(false)
   const [codexRestarting, setCodexRestarting] = useState(false)
+  const [codexDrawerOpen, setCodexDrawerOpen] = useState(false)
+  const [codexExpanded, setCodexExpanded] = useState(false)
+  const [continueToCodexModels, setContinueToCodexModels] = useState(false)
+  const [codexVerifying, setCodexVerifying] = useState(false)
+  const [codexVerifiedModel, setCodexVerifiedModel] = useState<string | null>(null)
+  const [codexConnectionError, setCodexConnectionError] = useState<string | null>(null)
+  // ── 双入口（2026-09-17）：Codex 链路入口（draft + 显式保存，绝不随控件隐式写盘）──
+  const [entryDraft, setEntryDraft] = useState<CodexEntry>('managed')
+  const [entrySaving, setEntrySaving] = useState(false)
+  const [entryFeedback, setEntryFeedback] = useState<{ ok: boolean; text: string } | null>(null)
+  const [entryInfos, setEntryInfos] = useState<CodexEntryInfo[]>([])
+  const [localHint, setLocalHint] = useState<{ detected: boolean; state: string; models: number } | null>(null)
   const loginPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  function applyCodexCatalog(result: CodexModelsResult) {
+    setCodexModels(result.ok ? (result.models ?? []) : [])
+    setCodexProviders(result.ok ? (result.providers ?? []) : [])
+  }
 
   const groups = llmSettings.model_groups
   const customModels = groups?.custom ?? []
   const officialModels = groups?.official ?? []
   const modelAvailable = llmSettings.model_available ?? true
   const isCodexModel = llmSettings.model.startsWith('openai-codex/')
+  // 双入口：生效入口以配置为准；后端状态块也会回同一枚举（provider 未拉起时用配置值）
+  const codexEntry: CodexEntry = llmSettings.codex_entry ?? codexStatus?.entry ?? 'managed'
+  const isLocalEntry = codexEntry === 'local'
   // 当前模型是 Codex 订阅模型时，可用性以后端为准：已登录 且 模型在当前
   // 账户 model/list 目录中（后端 status 的 model_available 已含目录校验，P0-4）
   const effectiveModelAvailable = isCodexModel
@@ -102,6 +131,25 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     setRoutingModeDraft(llmSettings.codex_routing_mode === 'auto' ? 'auto' : 'fixed')
   }, [llmSettings.codex_routing_mode])
 
+  // 双入口：入口枚举是 draft 的事实源（切换保存成功后回填）
+  useEffect(() => {
+    setEntryDraft(codexEntry)
+  }, [codexEntry])
+
+  // 双入口：挂载时读一次入口清单（含「本机是否已有 Codex 配置」的只读探测）
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const result = await fetchCodexEntry()
+      if (cancelled || !result.ok) return
+      setEntryInfos(result.entries ?? [])
+      setLocalHint(result.local_hint ?? null)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // ── Codex：挂载时加载状态；登录后加载动态模型目录 ──
   useEffect(() => {
     let cancelled = false
@@ -114,7 +162,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       if (status.connected) {
         const models = await fetchCodexModels()
         if (!cancelled) {
-          setCodexModels(models.ok ? (models.models ?? []) : [])
+          applyCodexCatalog(models)
           if (!models.ok) setCodexError(models.error ?? null)
         }
       }
@@ -140,7 +188,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
           setLoginStarted(false)
           if (status.connected) {
             const models = await fetchCodexModels()
-            setCodexModels(models.ok ? (models.models ?? []) : [])
+            applyCodexCatalog(models)
             if (!models.ok) setCodexError(models.error ?? null)
           }
         }
@@ -151,6 +199,17 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       loginPollRef.current = null
     }
   }, [loginStarted])
+
+  useEffect(() => {
+    if (continueToCodexModels && codexStatus?.connected) {
+      setContinueToCodexModels(false)
+      setCodexDrawerOpen(true)
+    }
+  }, [codexStatus?.connected, continueToCodexModels])
+
+  useEffect(() => {
+    if (!codexStatus?.connected) setCodexVerifiedModel(null)
+  }, [codexStatus?.connected])
 
   async function handleCodexLogin() {
     setCodexBusy(true)
@@ -230,7 +289,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         setCodexStatus(status)
         if (status.connected) {
           const models = await fetchCodexModels()
-          setCodexModels(models.ok ? (models.models ?? []) : [])
+          applyCodexCatalog(models)
           if (!models.ok) setCodexError(models.error ?? null)
         }
       } else {
@@ -272,6 +331,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         setDeviceCode(null)
         setDeviceCodeCopied(false)
         setCodexModels([])
+        setCodexProviders([])
         setPendingCodexModel(null)
         setCodexStatus({ ...emptyCodexStatus(), state: 'signed_out' })
       } else {
@@ -282,6 +342,74 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
     } finally {
       setCodexBusy(false)
     }
+  }
+
+  // 双入口（2026-09-17）：切换 Codex 链路是显式动作（draft + 保存），
+  // 不改模型、不迁移任何数据；切换后重新拉状态与模型目录。
+  async function applyCodexEntry(entry: CodexEntry): Promise<boolean> {
+    setEntrySaving(true)
+    setEntryFeedback(null)
+    try {
+      const result = await saveCodexEntry(entry)
+      if (!result.ok) {
+        setEntryFeedback({ ok: false, text: result.error ?? t('settings.ai.codex.entrySaveFailed') })
+        return false
+      }
+      setPendingCodexModel(null)
+      setPendingEffort('')
+      setCodexModels([])
+      setCodexProviders([])
+      setEntryFeedback({ ok: true, text: t('settings.ai.codex.entrySaved') })
+      // 入口换了 → 账户/状态/模型目录全部重新解析（本机入口不驱动 app-server）
+      const status = await fetchCodexStatus()
+      setCodexStatus(status)
+      setCodexError(status.ok ? null : (status.error ?? null))
+      if (status.connected) {
+        const models = await fetchCodexModels()
+        applyCodexCatalog(models)
+      }
+      return true
+    } catch (error) {
+      setEntryFeedback({
+        ok: false,
+        text: error instanceof Error ? error.message : t('settings.ai.codex.entrySaveFailed'),
+      })
+      return false
+    } finally {
+      setEntrySaving(false)
+    }
+  }
+
+  async function handleCodexCatalogRefresh(providerId: string) {
+    if (refreshingProvider) return
+    setRefreshingProvider(providerId)
+    setCodexError(null)
+    try {
+      const result = await refreshCodexModels(providerId)
+      if (!result.ok) {
+        setCodexError(result.error ?? t('settings.ai.codex.catalogRefreshFailed'))
+        return
+      }
+      applyCodexCatalog(result)
+    } catch (error) {
+      setCodexError(
+        error instanceof Error ? error.message : t('settings.ai.codex.catalogRefreshFailed'),
+      )
+    } finally {
+      setRefreshingProvider(null)
+    }
+  }
+
+  async function saveCodexEntryDraft() {
+    if (entryDraft === codexEntry || entrySaving) return
+    await applyCodexEntry(entryDraft)
+  }
+
+  // 本机配置入口不接管认证：点「连接我的 ChatGPT」= 显式切到托管入口再登录
+  async function switchToManagedLogin() {
+    if (entrySaving) return
+    const switched = await applyCodexEntry('managed')
+    if (switched) await handleCodexLogin()
   }
 
   function requestCodexModelSwitch(model: string) {
@@ -312,6 +440,31 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
       setSwitchError(error instanceof Error ? error.message : t('settings.ai.switchFailed'))
     } finally {
       setSwitching(false)
+    }
+  }
+
+  async function connectCodexModel() {
+    const model = pendingCodexModel
+    if (!onModelChange || !model || codexVerifying) return
+    setCodexVerifying(true)
+    setCodexConnectionError(null)
+    try {
+      const result = await onTestConnection(model, pendingEffort || undefined)
+      setTestResult(result)
+      if (!result.ok) {
+        setCodexConnectionError(testErrorText(result))
+        return
+      }
+      if (pendingEffort) await onModelChange(model, pendingEffort)
+      else await onModelChange(model)
+      setCodexVerifiedModel(model)
+      setPendingCodexModel(null)
+      setPendingEffort('')
+      setCodexDrawerOpen(false)
+    } catch (error) {
+      setCodexConnectionError(error instanceof Error ? error.message : t('settings.ai.connection.verifyFailed'))
+    } finally {
+      setCodexVerifying(false)
     }
   }
 
@@ -473,6 +626,97 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
 
   return (
     <div className="settings-panel-form">
+      <div className="llm-connection-wizard" data-testid="llm-connection-wizard">
+        <div className="llm-connection-card" data-testid="openai-api-card">
+          <div>
+            <strong>{t('settings.ai.connection.apiTitle')}</strong>
+            <p>{t('settings.ai.connection.apiHint')}</p>
+          </div>
+          <span className={`connection-state ${!isCodexModel && modelAvailable ? 'is-ready' : ''}`}>
+            {!isCodexModel && modelAvailable ? t('settings.ai.connection.ready') : t('settings.ai.connection.configure')}
+          </span>
+        </div>
+        <div className="llm-connection-card" data-testid="chatgpt-codex-card">
+          <div>
+            <strong>{t('settings.ai.connection.codexTitle')}</strong>
+            <p>
+              {isLocalEntry
+                ? t('settings.ai.connection.codexLocalHint')
+                : t('settings.ai.connection.codexHint')}
+            </p>
+          </div>
+          <div className="connection-card-actions">
+            <span className={`connection-state ${codexVerifiedModel || (isLocalEntry && codexStatus?.connected) ? 'is-ready' : ''}`}>
+              {isLocalEntry
+                ? codexStatus?.connected
+                  ? t('settings.ai.connection.ready')
+                  : t('settings.ai.connection.configure')
+                : codexVerifiedModel
+                  ? t('settings.ai.connection.codexReady')
+                  : codexStatus?.connected
+                    ? t('settings.ai.connection.signedInPending')
+                    : t('settings.ai.codex.notConnectedLabel')}
+            </span>
+            <button
+              type="button"
+              disabled={codexBusy || loginStarted || entrySaving}
+              onClick={() => {
+                if (codexStatus?.connected) setCodexDrawerOpen(true)
+                else if (isLocalEntry) {
+                  // 本机入口不接管认证：显式切到托管入口再走登录流程
+                  setContinueToCodexModels(true)
+                  setCodexExpanded(true)
+                  void switchToManagedLogin()
+                }
+                else {
+                  setContinueToCodexModels(true)
+                  setCodexExpanded(true)
+                  void handleCodexLogin()
+                }
+              }}
+              data-testid="codex-model-drawer-open"
+            >
+              {codexStatus?.connected
+                ? t('settings.ai.connection.chooseModel')
+                : loginStarted
+                  ? t('settings.ai.codex.loginPending')
+                  : isLocalEntry
+                    ? t('settings.ai.codex.switchToManaged')
+                    : t('settings.ai.connection.connect')}
+            </button>
+          </div>
+        </div>
+      </div>
+      {codexDrawerOpen ? (
+        <CodexModelDrawer
+          models={codexModels}
+          connected={codexStatus?.connected === true}
+          sourceLabel={
+            codexStatus?.entry === 'local' || isLocalEntry
+              ? t('settings.ai.codex.drawerSourceLocal')
+              : t('settings.ai.codex.drawerSourceManaged')
+          }
+          current={currentId}
+          pending={pendingCodexModel}
+          switching={switching}
+          verifying={codexVerifying}
+          error={codexConnectionError}
+          pendingEffort={pendingEffort}
+          pendingEffortOptions={pendingEffortOptions}
+          onClose={() => setCodexDrawerOpen(false)}
+          onOpenConnection={() => {
+            setCodexDrawerOpen(false)
+            setContinueToCodexModels(true)
+            setCodexExpanded(true)
+          }}
+          onSelect={requestCodexModelSwitch}
+          onPendingEffortChange={(value) => {
+            setPendingEffort(value)
+            setCodexConnectionError(null)
+          }}
+          onConnect={() => void connectCodexModel()}
+        />
+      ) : null}
       <div className="settings-row">
         <span>{t('settings.ai.modelLabel')}</span>
         <code className={`settings-model-display ${effectiveModelAvailable ? 'valid' : 'invalid'}`}>
@@ -543,8 +787,24 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         />
       ) : null}
       <CodexSection
+        expanded={codexExpanded}
+        onExpandedChange={setCodexExpanded}
         status={codexStatus}
         models={codexModels}
+        providers={codexProviders}
+        refreshingProvider={refreshingProvider}
+        entry={codexEntry}
+        entryDraft={entryDraft}
+        entryInfos={entryInfos}
+        entrySaving={entrySaving}
+        entryFeedback={entryFeedback}
+        localHint={localHint}
+        onEntryDraftChange={(value) => {
+          setEntryDraft(value)
+          setEntryFeedback(null)
+        }}
+        onSaveEntry={() => void saveCodexEntryDraft()}
+        onSwitchToManaged={() => void switchToManagedLogin()}
         busy={codexBusy}
         loginStarted={loginStarted}
         deviceCode={deviceCode}
@@ -562,6 +822,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         onCopyDeviceCode={() => void copyDeviceCode()}
         onLogout={() => void handleCodexLogout()}
         onSelect={requestCodexModelSwitch}
+        onRefreshProvider={(providerId) => void handleCodexCatalogRefresh(providerId)}
         onConfirm={() => void confirmCodexModelSwitch()}
         onCancel={() => {
           setPendingCodexModel(null)
@@ -627,13 +888,145 @@ function testErrorText(result: LlmConnectionTestResult | null) {
   return result.detail || result.error || 'Connection test failed.'
 }
 
+function groupCodexModels(models: CodexModelInfo[]) {
+  const groups = new Map<string, { label: string; models: CodexModelInfo[] }>()
+  for (const model of models) {
+    const key = model.source === 'cc_switch' && model.provider_id
+      ? model.provider_id
+      : 'openai-codex'
+    const label = model.source === 'cc_switch'
+      ? (model.provider_label || model.provider_id || key)
+      : 'ChatGPT / Codex'
+    const group = groups.get(key) ?? { label, models: [] }
+    group.models.push(model)
+    groups.set(key, group)
+  }
+  return [...groups.entries()].map(([id, group]) => ({ id, ...group }))
+}
+
+function CodexModelDrawer({
+  models,
+  connected,
+  sourceLabel,
+  current,
+  pending,
+  switching,
+  verifying,
+  error,
+  pendingEffort,
+  pendingEffortOptions,
+  onClose,
+  onOpenConnection,
+  onConnect,
+  onSelect,
+  onPendingEffortChange,
+}: {
+  models: CodexModelInfo[]
+  connected: boolean
+  /** 双入口：模型目录来源标签（本机 Codex 配置 / ChatGPT 账户） */
+  sourceLabel: string
+  current: string
+  pending: string | null
+  switching: boolean
+  verifying: boolean
+  error: string | null
+  pendingEffort: string
+  pendingEffortOptions: { effort: string; description?: string }[]
+  onClose: () => void
+  onOpenConnection: () => void
+  onConnect: () => void
+  onSelect: (model: string) => void
+  onPendingEffortChange: (value: string) => void
+}) {
+  const t = useT()
+  const groups = groupCodexModels(models)
+  return (
+    <div className="codex-model-drawer-backdrop" data-testid="codex-model-drawer">
+      <aside className="codex-model-drawer" role="dialog" aria-modal="true" aria-label={t('settings.ai.connection.drawerTitle')}>
+        <div className="codex-model-drawer-header">
+          <div>
+            <span className="settings-kicker">ChatGPT / Codex</span>
+            <h3>{t('settings.ai.connection.drawerTitle')}</h3>
+            <small data-testid="codex-drawer-source">{sourceLabel}</small>
+          </div>
+          <button type="button" onClick={onClose} aria-label={t('settings.ai.connection.close')}>{t('settings.ai.connection.close')}</button>
+        </div>
+        {!connected ? (
+          <div className="codex-model-drawer-empty">
+            <p>{t('settings.ai.connection.connectFirst')}</p>
+            <button type="button" onClick={onOpenConnection}>{t('settings.ai.connection.openConnection')}</button>
+          </div>
+        ) : models.length === 0 ? (
+          <p className="settings-test-result">{t('settings.ai.codex.noModels')}</p>
+        ) : (<>
+          <div className="codex-model-drawer-list" role="listbox">
+            {groups.map((group) => <div className="codex-model-provider-group" key={group.id}>
+              <div className="settings-row-header">{group.label}</div>
+              {group.models.map((model) => (
+              <button
+                key={model.id}
+                type="button"
+                role="option"
+                aria-selected={model.id === current}
+                className={model.id === current ? 'is-current' : model.id === pending ? 'is-pending' : ''}
+                disabled={switching}
+                onClick={() => onSelect(model.id)}
+              >
+                <span>{model.label}</span>
+                <small>{model.model}</small>
+                {model.id === current ? <em>{t('settings.ai.connection.current')}</em> : null}
+              </button>
+              ))}
+            </div>)}
+          </div>
+          {pending ? (
+            <div className="codex-drawer-confirm" data-testid="codex-drawer-confirm">
+              <span>{t('settings.ai.confirmSwitch', { model: pending })}</span>
+              {pendingEffortOptions.length > 0 ? (
+                <label>
+                  {t('settings.ai.codex.effortLabel')}
+                  <select
+                    aria-label={t('settings.ai.codex.effortLabel')}
+                    value={pendingEffort}
+                    disabled={verifying}
+                    onChange={(event) => onPendingEffortChange(event.target.value)}
+                  >
+                    <option value="">{t('settings.ai.codex.effortDefault')}</option>
+                    {pendingEffortOptions.map((option) => (
+                      <option key={option.effort} value={option.effort}>{option.effort}{option.description ? ` — ${option.description}` : ''}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {error ? <p className="settings-test-result error">{error}</p> : null}
+              <button type="button" disabled={verifying} onClick={onConnect}>
+                {verifying ? t('settings.ai.connection.verifying') : t('settings.ai.connection.verify')}
+              </button>
+            </div>
+          ) : null}
+        </>)}
+      </aside>
+    </div>
+  )
+}
+
 function emptyCodexStatus(): CodexStatus {
   return { state: 'signed_out', codex_available: true, connected: false, account: null }
 }
 
 function CodexSection({
+  expanded,
+  onExpandedChange,
   status,
   models,
+  providers,
+  refreshingProvider,
+  entry,
+  entryDraft,
+  entryInfos,
+  entrySaving,
+  entryFeedback,
+  localHint,
   busy,
   loginStarted,
   deviceCode,
@@ -662,6 +1055,10 @@ function CodexSection({
   onCopyDeviceCode,
   onLogout,
   onSelect,
+  onRefreshProvider,
+  onEntryDraftChange,
+  onSaveEntry,
+  onSwitchToManaged,
   onConfirm,
   onCancel,
   onEffortDraftChange,
@@ -670,8 +1067,19 @@ function CodexSection({
   onRoutingModeDraftChange,
   onSaveRoutingMode,
 }: {
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
   status: CodexStatus | null
   models: CodexModelInfo[]
+  providers: CodexProviderInfo[]
+  refreshingProvider: string | null
+  // 双入口（2026-09-17）：Codex 链路入口（draft + 显式保存）
+  entry: CodexEntry
+  entryDraft: CodexEntry
+  entryInfos: CodexEntryInfo[]
+  entrySaving: boolean
+  entryFeedback: { ok: boolean; text: string } | null
+  localHint: { detected: boolean; state: string; models: number } | null
   busy: boolean
   loginStarted: boolean
   deviceCode: { verificationUrl: string; userCode: string } | null
@@ -701,6 +1109,10 @@ function CodexSection({
   onCopyDeviceCode: () => void
   onLogout: () => void
   onSelect: (model: string) => void
+  onRefreshProvider: (providerId: string) => void
+  onEntryDraftChange: (value: CodexEntry) => void
+  onSaveEntry: () => void
+  onSwitchToManaged: () => void
   onConfirm: () => void
   onCancel: () => void
   onEffortDraftChange: (value: string) => void
@@ -710,36 +1122,115 @@ function CodexSection({
   onSaveRoutingMode: () => void
 }) {
   const t = useT()
-  const [codexExpanded, setCodexExpanded] = useState(false)
+  const modelGroups = groupCodexModels(models)
+  const providerById = new Map(providers.map((provider) => [provider.id, provider]))
   const state = status?.state ?? 'signed_out'
   const connected = status?.connected === true
   const rateLimits = status?.rate_limits
+  // 双入口（2026-09-17）：本机配置入口不接管认证，状态语义与托管入口不同
+  const isLocalEntry = entry === 'local'
+  const homeKindText =
+    status?.codex_home_kind === 'user_default'
+      ? t('settings.ai.codex.entryHomeUserDefault')
+      : status?.codex_home_kind === 'env_override'
+        ? t('settings.ai.codex.entryHomeEnvOverride')
+        : status?.codex_home_kind === 'managed'
+          ? t('settings.ai.codex.entryHomeManaged')
+          : t('settings.ai.codex.entryHomeCustom')
+  const entryLabelText = isLocalEntry
+    ? t('settings.ai.codex.entryLocal')
+    : t('settings.ai.codex.entryManaged')
+  const entryHintText = isLocalEntry
+    ? t('settings.ai.codex.entryLocalHint')
+    : t('settings.ai.codex.entryManagedHint')
   const statusSummary = connected ? t('settings.ai.codex.connectedLabel') : t('settings.ai.codex.notConnectedLabel')
   useEffect(() => {
-    if (connected || current.startsWith('openai-codex/') || loginStarted || state === 'crashed' || state === 'error' || state === 'quota_exhausted') {
-      setCodexExpanded(true)
+    if (
+      connected ||
+      current.startsWith('openai-codex/') ||
+      loginStarted ||
+      state === 'crashed' ||
+      state === 'error' ||
+      state === 'quota_exhausted' ||
+      // 双入口：本机配置入口没连上时，原因（没装 CLI / 没配置 / 没登录）就是
+      // 用户下一步动作，必须直接可见，不能藏在折叠里
+      (isLocalEntry && !connected)
+    ) {
+      onExpandedChange(true)
     }
-  }, [connected, current, loginStarted, state])
+  }, [connected, current, loginStarted, state, isLocalEntry, onExpandedChange])
 
   return (
     <div className="settings-codex-section" data-testid="codex-section">
       <button
         type="button"
         className="settings-row-header"
-        aria-expanded={codexExpanded}
+        aria-expanded={expanded}
         data-testid="codex-toggle"
-        onClick={() => setCodexExpanded((expanded) => !expanded)}
+        onClick={() => onExpandedChange(!expanded)}
       >
-        {t('settings.ai.codex.sectionTitle')} {codexExpanded ? '▾' : '▸'}
+        {t('settings.ai.codex.sectionTitle')} {expanded ? '▾' : '▸'}
         <span className="settings-hint">{t('settings.ai.codex.collapsedSummary', { state: statusSummary })}</span>
       </button>
-      {codexExpanded ? <>
+      {expanded ? <>
       <p className="settings-hint" data-testid="codex-modify-note">
         {t('settings.ai.codex.modifyNotOpen')}
       </p>
+      {/* 双入口（2026-09-17）：两条链路并存，切换是显式保存动作 */}
+      <div className="settings-row" data-testid="codex-entry-row">
+        <span>{t('settings.ai.codex.entryLabel')}</span>
+        <select
+          aria-label={t('settings.ai.codex.entryLabel')}
+          value={entryDraft}
+          disabled={entrySaving}
+          onChange={(event) => onEntryDraftChange(event.target.value as CodexEntry)}
+          data-testid="codex-entry-select"
+        >
+          <option value="local">
+            {t('settings.ai.codex.entryLocal')}
+            {localHint?.detected ? ` · ${t('settings.ai.codex.entryDetected')}` : ''}
+          </option>
+          <option value="managed">{t('settings.ai.codex.entryManaged')}</option>
+        </select>
+        <button
+          type="button"
+          disabled={entrySaving || entryDraft === entry}
+          onClick={onSaveEntry}
+          data-testid="codex-entry-save"
+        >
+          {entrySaving ? '…' : t('settings.ai.codex.entrySave')}
+        </button>
+      </div>
+      <p className="settings-hint" data-testid="codex-entry-hint">
+        {entryHintText}
+      </p>
+      <div className="settings-row" data-testid="codex-entry-active">
+        <span>{t('settings.ai.codex.entryActive')}</span>
+        <code className="settings-model-display valid">
+          {entryLabelText}
+          {status?.codex_home_kind ? ` · ${homeKindText}` : ''}
+          {isLocalEntry
+            ? ` · ${t('settings.ai.codex.entryAuthConfig')}`
+            : ` · ${t('settings.ai.codex.entryAuthManaged')}`}
+          {status?.provider ? ` · ${status.provider}` : ''}
+        </code>
+      </div>
+      {entryFeedback ? (
+        <p
+          className={`settings-test-result ${entryFeedback.ok ? 'success' : 'error'}`}
+          data-testid="codex-entry-feedback"
+        >
+          {entryFeedback.text}
+        </p>
+      ) : null}
       {state === 'no_cli' ? (
         <p className="settings-test-result error" data-testid="codex-no-cli">
           {t('settings.ai.codex.noCli')}
+        </p>
+      ) : null}
+      {state === 'unconfigured' ? (
+        <p className="settings-test-result error" data-testid="codex-unconfigured">
+          {status?.error ?? t('settings.ai.codex.localUnavailable')}
         </p>
       ) : null}
       {state === 'version_incompatible' ? (
@@ -800,7 +1291,7 @@ function CodexSection({
           </code>
         </div>
       ) : null}
-      {!connected && state !== 'no_cli' && state !== 'error' && state !== 'version_incompatible' && state !== 'crashed' ? (
+      {!isLocalEntry && !connected && state !== 'no_cli' && state !== 'error' && state !== 'unconfigured' && state !== 'version_incompatible' && state !== 'crashed' ? (
         <div className="settings-row" data-testid="codex-login-row">
           <span>{t('settings.ai.codex.notConnectedLabel')}</span>
           <button
@@ -821,6 +1312,19 @@ function CodexSection({
               {t('settings.ai.codex.deviceCode')}
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {isLocalEntry && state === 'signed_out' ? (
+        <p className="settings-test-result error" data-testid="codex-local-login-hint">
+          {status?.error ?? t('settings.ai.codex.localHint')}
+        </p>
+      ) : null}
+      {isLocalEntry ? (
+        <div className="settings-row" data-testid="codex-switch-managed-row">
+          <span>{t('settings.ai.codex.localHint')}</span>
+          <button type="button" disabled={entrySaving} onClick={onSwitchToManaged} data-testid="codex-switch-managed">
+            {t('settings.ai.codex.switchToManaged')}
+          </button>
         </div>
       ) : null}
       {status?.login_error && !loginStarted ? (
@@ -864,12 +1368,40 @@ function CodexSection({
       {error ? <p className="settings-test-result error">{error}</p> : null}
       {connected ? (
         <>
-          <div className="settings-row-header">{t('settings.ai.codex.modelsLabel')}</div>
+          <div className="settings-row-header" data-testid="codex-models-label">
+            {isLocalEntry ? t('settings.ai.codex.localModelsLabel') : t('settings.ai.codex.modelsLabel')}
+          </div>
           {models.length === 0 ? (
-            <p className="settings-test-result">{t('settings.ai.codex.noModels')}</p>
+            <p className="settings-test-result">
+              {isLocalEntry ? t('settings.ai.codex.localNoModels') : t('settings.ai.codex.noModels')}
+            </p>
           ) : (
             <div className="settings-model-list">
-              {models.map((m) => (
+              {modelGroups.map((group) => {
+                const provider = providerById.get(group.id)
+                return <div className="settings-codex-provider-group" key={group.id}>
+                  <div className="settings-visibility-group-header">
+                    <strong>{group.label}</strong>
+                    {provider?.is_current ? (
+                      <span className="settings-hint">{t('settings.ai.codex.ccSwitchCurrent')}</span>
+                    ) : null}
+                    {provider && !provider.catalog_complete ? (
+                      <>
+                        <span className="settings-hint">{t('settings.ai.codex.catalogIncomplete')}</span>
+                        <button
+                          type="button"
+                          className="workspace-icon-button"
+                          aria-label={t('settings.ai.codex.catalogRefreshLabel', { provider: provider.name })}
+                          title={t('settings.ai.codex.catalogRefreshLabel', { provider: provider.name })}
+                          disabled={refreshingProvider !== null || !provider.runnable}
+                          onClick={() => onRefreshProvider(provider.id)}
+                        >
+                          {refreshingProvider === provider.id ? '…' : '↻'}
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                  {group.models.map((m) => (
                 <button
                   key={m.id}
                   type="button"
@@ -880,7 +1412,9 @@ function CodexSection({
                 >
                   {m.label}
                 </button>
-              ))}
+                  ))}
+                </div>
+              })}
             </div>
           )}
           {current.startsWith('openai-codex/') && !pending ? (

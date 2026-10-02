@@ -8,6 +8,7 @@ import type {
   AssistantImageAttachment,
   AssistantMessage,
   AssistantResult,
+  AuthoritativePreviewResult,
   ClearProjectMemoryResult,
   CompileResult,
   CompilerSettings,
@@ -19,6 +20,9 @@ import type {
 
   DeleteMemoryLessonResult,
   DirectoryChoiceResult,
+  EffectiveParameterDiagnostic,
+  EffectiveParameterObservation,
+  EffectiveParametersResult,
   DeleteParameterResult,
   DistilledLessonsResult,
   DistillLessonsResult,
@@ -26,6 +30,10 @@ import type {
   FileChoiceResult,
   GenerateResult,
   HsfExportResult,
+  HostVerificationCurrent,
+  HostVerificationRecord,
+  HostVerificationRequest,
+  HostVerificationRunResult,
   ImportAssistantHistoryResult,
   DistillAssistantHistoryResult,
   IgnoreMemoryLessonResult,
@@ -94,6 +102,11 @@ export interface WorkbenchApi {
     scripts?: Record<string, string>,
     quality?: PreviewQuality,
   ) => Promise<Preview2DPayload>
+  /** Archicad 权威预览（/api/preview/authoritative）；parameters 缺省 = 后端用当前参数值 */
+  fetchAuthoritativePreview: (parameters?: Record<string, unknown>) => Promise<AuthoritativePreviewResult>
+  fetchHostVerification: () => Promise<HostVerificationCurrent>
+  runHostVerification: (request: HostVerificationRequest) => Promise<HostVerificationRunResult>
+  fetchEffectiveParameters: (parameters?: Record<string, unknown>) => Promise<EffectiveParametersResult>
   loadProjectPath: (path: string) => Promise<WorkbenchSnapshot>
   newProject: () => Promise<WorkbenchSnapshot>
   importGdlFile: (path?: string) => Promise<WorkbenchSnapshot>
@@ -120,7 +133,14 @@ export interface WorkbenchApi {
   getProjectScript: (scriptName: string) => Promise<ProjectScriptContentResponse | null>
   saveProjectScript: (scriptName: string, content: string) => Promise<SaveScriptResponse>
   saveProjectRevision: (message?: string) => Promise<SaveRevisionResponse>
-  restoreProjectRevision: (revisionId: string) => Promise<RestoreRevisionResponse>
+  restoreProjectRevision: (
+    revisionId: string,
+    draftPolicy?: import('../api/types').RestoreDraftPolicy | null,
+  ) => Promise<RestoreRevisionResponse>
+  getProjectRevisionDiff: (
+    fromRevisionId: string,
+    toRevisionId?: string | null,
+  ) => Promise<import('../api/types').RevisionDiffResponse>
   fetchProjectGitStatus: () => Promise<ProjectGitResponse>
   initializeProjectGit: () => Promise<ProjectGitResponse>
   updateProjectGitSettings: (enabled: boolean) => Promise<ProjectGitResponse>
@@ -131,7 +151,7 @@ export interface WorkbenchApi {
   fetchRuntimeSettings: () => Promise<RuntimeSettingsResult>
   fetchConfigRevision: () => Promise<ConfigRevisionResult>
   openConfig: () => Promise<{ ok: boolean; error?: string }>
-  testLlmConnection: () => Promise<LlmConnectionTestResult>
+  testLlmConnection: (model?: string, reasoningEffort?: string) => Promise<LlmConnectionTestResult>
   updateLlmModel: (
     model: string,
     reasoningEffort?: string,
@@ -175,6 +195,7 @@ export interface WorkbenchApi {
     images?: AssistantImageAttachment[],
     history?: AssistantHistoryItem[],
     signal?: AbortSignal,
+    options?: { continueFrom?: import('../api/types').DeliveryContinueFrom | null },
   ) => Promise<GenerateResult>
   generateWithAssistantStream: (
     message: string,
@@ -183,6 +204,7 @@ export interface WorkbenchApi {
     onEvent?: (event: import('../api/types').AssistantStreamEvent) => void,
     signal?: AbortSignal,
     history?: AssistantHistoryItem[],
+    continueFrom?: import('../api/types').DeliveryContinueFrom | null,
   ) => Promise<GenerateResult>
   requestModifyPlan: (
     message: string,
@@ -190,6 +212,7 @@ export interface WorkbenchApi {
     images?: AssistantImageAttachment[],
     signal?: AbortSignal,
     history?: AssistantHistoryItem[],
+    continueFrom?: import('../api/types').DeliveryContinueFrom | null,
   ) => Promise<GenerateResult>
   confirmModifyPlan: (
     approve: boolean,
@@ -198,7 +221,14 @@ export interface WorkbenchApi {
     signal?: AbortSignal,
     history?: AssistantHistoryItem[],
   ) => Promise<GenerateResult>
-  confirmSkillProposal: (approve: boolean, signal?: AbortSignal) => Promise<import('../api/types').SkillProposalConfirmResult>
+  // ST04：proposalId 用于审批持久候选 store；省略时保留旧 pending 行为
+  confirmSkillProposal: (
+    approve: boolean,
+    proposalId?: string,
+    signal?: AbortSignal,
+  ) => Promise<import('../api/types').SkillProposalConfirmResult>
+  // ST04：项目加载/重启后恢复持久候选（GET /api/skill/proposals）
+  listSkillProposals: () => Promise<import('../api/types').SkillProposalListResult>
   applyParameters: (parameters: Record<string, unknown>) => Promise<ApplyResult>
   addProjectParameter: (parameter: AddParameterRequest) => Promise<AddParameterResult>
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<UpdateParameterResult>
@@ -207,6 +237,9 @@ export interface WorkbenchApi {
 }
 
 export type BackendErrorKind = 'down' | 'starting' | 'timeout'
+
+/** 3D 预览来源：本地内置近似预览（默认）/ Archicad 权威预览（手动刷新） */
+export type PreviewSourceMode = 'local' | 'authoritative'
 
 /** P2a ghost 快照原因（i18n key）；扩展新原因时保持该 union 与 zh/en 文案同步 */
 export type PreviewGhostLabel = 'preview.ghost.preTask'
@@ -220,6 +253,11 @@ export interface WorkbenchState {
   parameters: WorkbenchParameter[]
   parameterIssues: string[]
   draftParameters: Record<string, unknown>
+  sourceFingerprint: string | null
+  effectiveParameters: Record<string, EffectiveParameterObservation>
+  effectiveParameterDiagnostics: EffectiveParameterDiagnostic[]
+  effectiveParametersBusy: boolean
+  effectiveParametersError: string | null
   preview: PreviewPayload | null
   preview2d: Preview2DPayload | null
   /** 预览质量档（P1b）：会话态，不持久化到用户配置 */
@@ -230,6 +268,21 @@ export interface WorkbenchState {
   previewGhost: PreviewPayload | null
   /** ghost 快照原因（i18n key，目前只有"任务前"）；与 previewGhost 同生共死 */
   previewGhostLabel: PreviewGhostLabel | null
+  /** 3D 预览来源（Archicad 权威预览）：'local' = 内置近似预览（默认，行为不变） */
+  previewSourceMode: PreviewSourceMode
+  /** 最近一次成功的权威预览 payload；独立于 preview，本地近似预览刷新链不受影响 */
+  previewAuthoritative: PreviewPayload | null
+  /** 与 3D 同一次 Archicad 求值返回的 2D primitives */
+  previewAuthoritative2d: Preview2DPayload | null
+  previewAuthoritativeLoading: boolean
+  /** 权威取数失败（如 Archicad 未连接）：视口上屏显示，同时回退显示本地预览 */
+  previewAuthoritativeError: string | null
+  /** 权威取数时 draftParameters 的 JSON 指纹；与当前指纹不一致 = 参数已变（轻提示刷新） */
+  previewAuthoritativeParamsKey: string | null
+  hostVerification: HostVerificationRecord | null
+  hostVerificationLoading: boolean
+  hostVerificationError: string | null
+  hostVerificationParamsKey: string | null
   warnings: string[]
   loading: boolean
   applying: boolean
@@ -248,6 +301,8 @@ export interface WorkbenchState {
   configRevision: string | null
   chatAbortController: AbortController | null
   interruptedContext: { message: string; intent: string } | null
+  /** ST03：delivery continue 上下文（原 run + 原始指令；项目切换/恢复后清空） */
+  pendingDeliveryContinue: import('../api/types').DeliveryContinueFrom | null
   activeRailPanel: '3d' | '2d' | 'inspect' | 'ai'
   assistantBusy: boolean
   assistantMessages: AssistantMessage[]
@@ -312,7 +367,7 @@ export interface WorkbenchState {
   browseOutputDirectory: () => Promise<CompilerSettings | null>
   setCompilerSettings: (settings: CompilerSettings) => Promise<CompilerSettings>
   openConfig: () => Promise<void>
-  testLlmConnection: () => Promise<LlmConnectionTestResult>
+  testLlmConnection: (model?: string, reasoningEffort?: string) => Promise<LlmConnectionTestResult>
   switchLlmModel: (
     model: string,
     reasoningEffort?: string,
@@ -333,6 +388,8 @@ export interface WorkbenchState {
   /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建；false 取消清态 */
   confirmPendingExtraction: (extractions: VisionExtraction[], approve: boolean) => Promise<void>
   confirmPendingSkillProposal: (approve: boolean) => Promise<void>
+  /** ST04：项目加载/重启后从 store 恢复最近一个待审/审批中候选到审批卡 */
+  restoreSkillProposals: () => Promise<void>
   reloadRuntimeSettings: () => Promise<void>
   pollConfigRevision: () => Promise<void>
   refreshTapirStatus: () => Promise<void>
@@ -345,6 +402,8 @@ export interface WorkbenchState {
   setActiveRailPanel: (panel: '3d' | '2d' | 'inspect' | 'ai') => void
   loadAssistantHistory: () => Promise<void>
   clearAssistantHistory: () => Promise<void>
+  resetAssistantConversation: () => void
+  deleteAssistantMessages: (indices: number[]) => Promise<void>
   importAssistantHistory: (sourcePath: string) => Promise<void>
   /** P6b：LLM 把当前项目聊天记录整理成指令 → 填入 AI 输入框草稿（不自动发送） */
   distillAssistantHistory: () => Promise<void>
@@ -359,6 +418,7 @@ export interface WorkbenchState {
   updateProjectParameter: (parameter: UpdateParameterRequest) => Promise<boolean>
   deleteProjectParameter: (name: string) => Promise<boolean>
   validateProjectParameters: () => Promise<void>
+  refreshEffectiveParameters: (parameters?: Record<string, unknown>) => Promise<void>
   applyDraftParameters: () => Promise<boolean>
   resetDraftParameters: () => void
   refreshProjectWorkspace: (options?: ProjectWorkspaceRefreshOptions) => Promise<void>
@@ -379,7 +439,21 @@ export interface WorkbenchState {
   distillLessons: () => Promise<void>
   setDistilledLessonStatus: (fingerprint: string, decision: 'promote' | 'reject' | 'demote') => Promise<void>
   saveRevision: (message?: string) => Promise<boolean>
-  restoreRevision: (revisionId: string) => Promise<void>
+  restoreRevision: (
+    revisionId: string,
+    options?: import('./actions/revisionActions').RestoreRevisionOptions,
+  ) => Promise<void>
+  viewRevisionDiff: (fromRevisionId: string, toRevisionId?: string | null) => Promise<string | null>
+  recoverDeliveryBefore: (
+    presentation: import('../api/types').DeliveryPresentation | null | undefined,
+    options?: { draftPolicy?: import('../api/types').RestoreDraftPolicy; source?: string },
+  ) => Promise<boolean>
+  continueDelivery: (payload: {
+    originRunId: string | null
+    originalInstruction: string
+    intent?: string
+  }) => Promise<void>
+  clearPendingDeliveryContinue: () => void
   loadProjectGitStatus: () => Promise<void>
   initializeProjectGit: () => Promise<void>
   setProjectGitEnabled: (enabled: boolean) => Promise<void>
@@ -406,6 +480,12 @@ export interface WorkbenchState {
   loadPreview2D: () => Promise<void>
   /** 切换预览质量档并立即重取预览（2D tab 活跃时一并刷新） */
   setPreviewQuality: (quality: PreviewQuality) => Promise<void>
+  /** 切换 3D 预览来源；首次切到权威模式且无缓存时立即取一次 */
+  setPreviewSourceMode: (mode: PreviewSourceMode) => Promise<void>
+  /** 显式刷新 Archicad 权威预览（不跟随参数改动自动触发） */
+  loadAuthoritativePreview: () => Promise<void>
+  loadHostVerification: () => Promise<void>
+  runHostVerification: () => Promise<void>
   clearLastError: () => void
   hasDraftChanges: () => boolean
 }

@@ -164,7 +164,7 @@ class TestWorkbenchCreateWithImages(unittest.TestCase):
         captured = {}
 
         class FakePipeline:
-            def __init__(self, trace_dir="./traces"):
+            def __init__(self, trace_dir="./traces", config_path=None):
                 pass
 
             def execute(self, request):
@@ -229,7 +229,7 @@ class TestWorkbenchCreateWithImages(unittest.TestCase):
         captured = {}
 
         class FakePipeline:
-            def __init__(self, trace_dir="./traces"):
+            def __init__(self, trace_dir="./traces", config_path=None):
                 pass
 
             def execute(self, request):
@@ -280,7 +280,7 @@ class TestWorkbenchCreateWithImages(unittest.TestCase):
         captured = {}
 
         class FakePipeline:
-            def __init__(self, trace_dir="./traces"):
+            def __init__(self, trace_dir="./traces", config_path=None):
                 pass
 
             def execute(self, request):

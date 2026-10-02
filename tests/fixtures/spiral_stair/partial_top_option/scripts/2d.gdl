@@ -1,0 +1,11 @@
+﻿! =========================================================
+! 2D Script - plan symbol
+! HOTSPOT2 without id = non-editable reference corners so
+! the circular footprint is framed but not drag-conflicted.
+! PROJECT2 derives the plan from the 3D spiral geometry.
+! =========================================================
+HOTSPOT2 0, 0
+HOTSPOT2 A, 0
+HOTSPOT2 0, B
+HOTSPOT2 A, B
+PROJECT2 3, 270, 2

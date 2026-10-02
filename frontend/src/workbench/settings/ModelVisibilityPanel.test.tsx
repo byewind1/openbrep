@@ -79,6 +79,36 @@ describe('ModelVisibilityPanel', () => {
     expect(onSelect).toHaveBeenCalledWith('openai-codex/gpt-5.6-luna', 'codex')
   })
 
+  test('cc-switch providers render as distinct groups even with the same model id', () => {
+    renderPanel({
+      codex: {
+        connected: true,
+        models: [
+          {
+            id: 'openai-codex/ccswitch/a/same-model',
+            label: 'Same Model',
+            model: 'same-model',
+            source: 'cc_switch',
+            provider_id: 'a',
+            provider_label: 'Provider A',
+          },
+          {
+            id: 'openai-codex/ccswitch/b/same-model',
+            label: 'Same Model',
+            model: 'same-model',
+            source: 'cc_switch',
+            provider_id: 'b',
+            provider_label: 'Provider B',
+          },
+        ],
+      },
+    })
+
+    expect(screen.getByRole('button', { name: /Provider A/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Provider B/ })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: /same-model/ })).toHaveLength(2)
+  })
+
   test('current model row shows the current marker and active highlight', () => {
     renderPanel({ currentId: 'glm-4-flash' })
     const nameButton = screen.getByRole('button', { name: 'glm-4-flash' })

@@ -190,6 +190,19 @@ class BenchmarkRunner:
         )
         pipeline._make_llm = lambda _req: self.llm
         pipeline._make_compiler = lambda: self.compiler
+        # Codex 录制：生产入口由 workbench 创建设置服务时初始化共享 provider，
+        # benchmark 进程没有这一步，Codex CREATE 会 fail closed（provider unavailable）。
+        # 只在"真实录制 + Codex 模型"时创建并绑定；回放（ReplayLLM）绝不拉起
+        # app-server，保持密封。
+        if self.llm_source.startswith("record:"):
+            from openbrep.config import is_codex_qualified_model
+
+            if is_codex_qualified_model(self.config.llm.model):
+                from openbrep.codex.provider import bind_codex_entry, default_codex_provider
+
+                provider = default_codex_provider()
+                bind_codex_entry(provider, self.config)
+                pipeline.codex_provider = provider
         return pipeline
 
     def _run_create_task(self, task, start: float) -> dict:

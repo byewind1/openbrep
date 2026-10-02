@@ -40,7 +40,7 @@ from openbrep.explainer.context_builder import (
 from openbrep.explainer.service import explain_parameter_context, explain_project_context, explain_script_context
 from openbrep.compiler import CompileComparison, CompileResult, CompileSnapshot, HSFCompiler, MockHSFCompiler
 from openbrep.chat_history import trim_history_messages
-from openbrep.config import GDLAgentConfig
+from openbrep.config import GDLAgentConfig, is_codex_qualified_model
 from openbrep.core import GDLAgent
 from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
@@ -55,6 +55,7 @@ from openbrep.knowledge_selector import (
 )
 from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
+from openbrep.model_catalog import ModelSelection, build_model_catalog, role_for_intent
 from openbrep.object_planner import plan_gdl_object
 from openbrep.project_context import (
     ProjectContext,
@@ -204,6 +205,14 @@ class TaskRequest:
     epoch_guard: Optional[Callable[[], bool]] = None
     confirm_extraction: bool = False       # 提取确认门（P5d-2）：GUI CREATE 带图置 True（提取后早退等确认）
     confirmed_extractions: Optional[list[dict]] = None  # 用户确认/编辑后的提取 dict 列表（跳过 harness 重建 plans）
+    # ST03 F2：继续操作显式关联原 run + 原始指令（进入 metadata/quality/revision，不进 prompt）
+    continue_from: Optional[dict] = None
+    # R4：本次调用的显式模型选择（Codex Auto 路由注入）。None = 用配置里的已保存
+    # model/effort。替代"临时改写 config.llm 再恢复"的旧做法：选择随请求不可变地
+    # 传递，共享 config 在整次调用期间保持已保存值。绝不进入任何 prompt。
+    selection: Optional["ModelSelection"] = None
+    # R7：凭据池的会话/调用作用域；空值由 pipeline 生成稳定作用域。
+    credential_scope: str = ""
 
 
 @dataclass
@@ -292,6 +301,7 @@ class TaskPipeline:
         # D3：Codex CHAT/EXPLAIN 的 provider（workbench 注入 session 共享实例；
         # 未注入时 LLMAdapter 走进程共享默认注册表）。非 codex 模型从不触碰。
         self.codex_provider = codex_provider
+        self.credential_scope = f"pipeline:{id(self):x}"
         # benchmark 传 False：错误学习记忆是累积态，会让 prompt 随运行历史漂移，
         # 破坏黄金语料可复现性；生产默认 True，行为不变
         self.include_learned_skills = include_learned_skills
@@ -417,6 +427,10 @@ class TaskPipeline:
             merged = dict(result.metadata or {})
             merged["injected_skills"] = injected
             merged["run_id"] = run_id
+            # ST03 F2：continue 关联在 pipeline 入口合并（trace/quality/revision 可追溯）
+            continue_from = getattr(request, "continue_from", None)
+            if isinstance(continue_from, dict) and continue_from:
+                merged["continue_from"] = dict(continue_from)
             execution = dict(merged.get("execution") or {})
             execution.setdefault("llm_calls", None)     # 未埋点路径 = unavailable
             execution.setdefault("tool_calls", None)
@@ -431,6 +445,17 @@ class TaskPipeline:
         except Exception:
             pass
 
+        # 3b. ST02 交付源终结器：在写 trace/quality 前完成一次。
+        # 共享契约：真实终局 + 验证结果 + 实际变更 → 明确 delivery_source；
+        # 失败不伪造 after；快照失败时 TaskResult 不宣称完整成功。
+        try:
+            self._finalize_delivery_source(request, result, run_id=run_id)
+        except Exception as exc:
+            logger.exception("delivery finalizer failed")
+            self._record_delivery_finalizer_failure(
+                request, result, run_id=run_id, error=exc,
+            )
+
         # 4. Trace (never blocks execution)
         try:
             trace_path = self.tracer.record(request, result, run_id=run_id)
@@ -439,7 +464,7 @@ class TaskPipeline:
             pass
 
         # 4b. G1 质量账本：单点写入（成功失败路径都覆盖），best-effort ——
-        # 写失败只 warning，绝不改变 TaskResult 或抛出。
+        # 写失败只 warning，绝不改变 TaskResult 或抛出。observer 不得改判交付。
         self._write_quality_record(request, result, run_id=run_id)
 
         # 5. AC-2：成功交付后沉淀紧凑项目记忆（规则式、零额外 LLM）。
@@ -450,6 +475,119 @@ class TaskPipeline:
             logger.debug("Failed to record delivery memory", exc_info=True)
 
         return result
+
+    def _finalize_delivery_source(
+        self, request: TaskRequest, result: TaskResult, *, run_id: str
+    ) -> None:
+        """ST02：pipeline 唯一 delivery_source 终结点（写 trace/quality 之前）。"""
+        from openbrep.runtime.delivery_finalizer import (
+            DeliverySource,
+            FinalizeDeliveryInputs,
+            apply_delivery_source_to_result,
+            finalize_delivery,
+        )
+
+        metadata = dict(result.metadata or {})
+        # handler 路径已自行终结（例如测试注入）→ 不重复处理
+        if DeliverySource.from_dict(metadata.get("delivery_source")) is not None:
+            return
+
+        project = result.project or request.project
+        intent = (result.intent or request.intent or "").upper()
+        execution = metadata.get("execution") or {}
+        codex_meta = metadata.get("codex_modify") or {}
+        interrupted = bool(
+            execution.get("cancelled")
+            or execution.get("timeout")
+            or execution.get("budget_exhausted")
+            or codex_meta.get("cancelled")
+            or codex_meta.get("epoch_violated")
+            or metadata.get("epoch_violated")
+        )
+        verification = result.verification
+        if isinstance(verification, dict) and verification:
+            verified = bool(verification.get("passed"))
+        elif result.compile_result is not None:
+            verified = bool(result.compile_result.success) and bool(result.success)
+        else:
+            verified = bool(result.success)
+
+        changed_files = _delivery_changed_files(result)
+        # ``claimed_change`` means the handler reports concrete source output,
+        # not merely that the routed intent was mutating.  A MODIFY turn may
+        # legitimately conclude that no edit is needed; successful write tools
+        # and deterministic paths expose their files through changed_files.
+        claimed_change = bool(changed_files)
+        # CHAT/解释类：无变更且无修改意图 → unchanged，不制造 revision
+        if intent == "CHAT":
+            claimed_change = False
+            verified = bool(result.success) if not changed_files else verified
+
+        before_id = metadata.get("before_revision_id") or None
+        existing_after = metadata.get("after_revision_id") or None
+        verified_fp = metadata.get("verified_source_fingerprint") or None
+        compile_meta = metadata.get("compile_revision_metadata") or None
+        continue_from = metadata.get("continue_from") if isinstance(metadata.get("continue_from"), dict) else None
+
+        inputs = FinalizeDeliveryInputs(
+            run_id=run_id,
+            project=project,
+            intent=intent,
+            handler_success=bool(result.success),
+            claimed_change=claimed_change,
+            changed_files=changed_files,
+            interrupted=interrupted,
+            verified=verified,
+            before_revision_id=before_id,
+            existing_after_revision_id=existing_after,
+            verified_source_fingerprint=verified_fp,
+            epoch_guard=getattr(request, "epoch_guard", None),
+            compile_metadata=compile_meta if isinstance(compile_meta, dict) else None,
+            continue_from=continue_from,
+        )
+        delivery_source, warnings = finalize_delivery(inputs)
+        apply_delivery_source_to_result(result, delivery_source, warnings)
+
+    def _record_delivery_finalizer_failure(
+        self,
+        request: TaskRequest,
+        result: TaskResult,
+        *,
+        run_id: str,
+        error: Exception,
+    ) -> None:
+        """Fail closed for mutating tasks when the shared finalizer crashes."""
+        from openbrep.runtime.delivery_finalizer import (
+            ERR_DELIVERY_FINALIZER_FAILED,
+            SNAPSHOT_FAILED,
+            SNAPSHOT_NOT_ATTEMPTED,
+            STATE_SNAPSHOT_FAILED,
+            STATE_UNCHANGED,
+            DeliverySource,
+            apply_delivery_source_to_result,
+        )
+
+        metadata = dict(result.metadata or {})
+        intent = (result.intent or request.intent or "").upper()
+        changed_files = _delivery_changed_files(result)
+        mutating = bool(changed_files) or intent in {
+            "MODIFY", "DEBUG", "REPAIR", "CREATE", "IMAGE",
+        }
+        delivery_source = DeliverySource(
+            run_id=run_id,
+            state=STATE_SNAPSHOT_FAILED if mutating else STATE_UNCHANGED,
+            before_revision_id=metadata.get("before_revision_id") or None,
+            after_revision_id=None,
+            source_fingerprint=metadata.get("verified_source_fingerprint") or None,
+            changed_files=changed_files,
+            snapshot_status=SNAPSHOT_FAILED if mutating else SNAPSHOT_NOT_ATTEMPTED,
+            error_code=ERR_DELIVERY_FINALIZER_FAILED,
+        )
+        apply_delivery_source_to_result(
+            result,
+            delivery_source,
+            [f"交付版本终结失败：{error}"],
+        )
 
     def _append_feedback(self, project_root: Any, event: dict) -> bool:
         """append_feedback 的 pipeline 包装：自动带上当前 run_id（复用 trace_id 字段）。"""
@@ -464,6 +602,7 @@ class TaskPipeline:
 
         - 只观测：不进任何 prompt、不改任何判定、不影响 TaskResult；
         - 无项目（未落盘 HSF 目录）无处落档 → 跳过（与 feedback 同语义）；
+        - after_revision 只消费 delivery_source 显式引用，不再把 latest 当 after；
         - 写成功后向 feedback.jsonl 留一条 quality_recorded 指针（关联键 run_id）。
         """
         if not self.quality_ledger_enabled:
@@ -472,10 +611,21 @@ class TaskPipeline:
             project = result.project or request.project
             if project is None:
                 return
+            # epoch 变化：不给新项目写质量档案
+            epoch_guard = getattr(request, "epoch_guard", None)
+            if callable(epoch_guard):
+                try:
+                    if not epoch_guard():
+                        logger.info("quality ledger skipped: project epoch changed")
+                        return
+                except Exception:
+                    pass
             from openbrep.quality.evaluator import build_quality_record, repo_commit
             from openbrep.quality.store import write_record
+            from openbrep.runtime.delivery_finalizer import DeliverySource
 
             execution = (result.metadata or {}).get("execution") or {}
+            ds = DeliverySource.from_dict((result.metadata or {}).get("delivery_source"))
             record = build_quality_record(
                 request,
                 result,
@@ -485,10 +635,12 @@ class TaskPipeline:
                 context={
                     "commit": repo_commit(),
                     "model": str(getattr(self.config.llm, "model", "") or ""),
-                    "after_revision": (
-                        get_latest_revision_id(project.root)
-                        if _can_revision_project(project) else None
-                    ),
+                    # 显式引用：verified_change 时才非空；缺 delivery_source 的旧运行
+                    # 记 null，消费端显示「旧记录，未关联」，禁止 latest 猜测
+                    "after_revision": (ds.after_revision_id if ds else None),
+                    "delivery_source": (ds.to_dict() if ds else None),
+                    # ST03 F2：continue 溯源进入质量档案（刷新后可重新读取）
+                    "continue_from": (result.metadata or {}).get("continue_from"),
                 },
             )
             path = write_record(project.root, record)
@@ -496,7 +648,12 @@ class TaskPipeline:
                 self._append_feedback(project.root, {
                     "kind": "quality_recorded",
                     "summary": f"质量档案已记录（{run_id}，outcome={record.outcome}）",
-                    "detail": {"run_id": run_id, "outcome": record.outcome},
+                    "detail": {
+                        "run_id": run_id,
+                        "outcome": record.outcome,
+                        "delivery_state": (ds.state if ds else None),
+                        "after_revision": (ds.after_revision_id if ds else None),
+                    },
                 })
         except Exception as exc:  # best-effort：观测层任何失败只 warning
             logger.warning("quality ledger write failed (best-effort): %s", exc)
@@ -691,6 +848,7 @@ class TaskPipeline:
 
         on_event = request.on_event or (lambda *_: None)
         complexity = classify_create_complexity(request.user_input)
+        role = role_for_intent(request.intent)
         try:
             provider = self.codex_provider
             if provider is None:
@@ -699,12 +857,17 @@ class TaskPipeline:
                 provider = get_default_codex_provider()
             if provider is None:
                 raise RuntimeError("provider unavailable")
+            # 双入口（2026-09-17）：Auto 路由同样走当前配置选定的入口
+            from openbrep.codex.provider import bind_codex_entry
+
+            bind_codex_entry(provider, self.config)
             status = provider.status(refresh=True)
             catalog = (
                 provider.models(refresh=True)
                 if status.get("connected") and status.get("state") != "quota_exhausted"
                 else []
             )
+            resolved_catalog = build_model_catalog(self.config, codex_models=catalog)
         except Exception:  # noqa: BLE001 — upstream text must never cross this boundary
             unavailable = CodexRouteDecision(
                 ok=False,
@@ -712,6 +875,7 @@ class TaskPipeline:
                 code="auto_catalog_unavailable",
                 error="无法读取当前 ChatGPT 账户的模型目录，Auto 路由已停止。",
                 complexity=complexity,
+                role=role,
             )
             result = TaskResult(
                 success=False,
@@ -726,12 +890,20 @@ class TaskPipeline:
             on_event("status", {"stage": "budget", "message": unavailable.error})
             return result
 
-        original_model = self.config.llm.model
-        original_effort = self.config.llm.reasoning_effort
-
         def run(decision: CodexRouteDecision) -> TaskResult:
-            self.config.llm.model = decision.model
-            self.config.llm.reasoning_effort = decision.reasoning_effort
+            # R4：把本次调用选定的 model/effort 作为显式选择挂在**请求**上，绝不动
+            # config.llm（配置是已保存事实源）。这里就地写 request 而不是传副本：
+            # _handle_gdl 本就会就地写 request.project，后续升级尝试与 execute 末尾的
+            # delivery/quality finalizer 都依赖同一个请求对象看到该项目。
+            request.selection = ModelSelection(
+                model=decision.model,
+                reasoning_effort=decision.reasoning_effort,
+                policy="codex_auto",
+                route_reason=decision.reason,
+                role=decision.role,
+                tier=decision.tier,
+                resolved_model=decision.resolved_model,
+            )
             try:
                 return self._handle_gdl(request)
             except Exception:  # noqa: BLE001 — never reflect upstream text in Auto metadata/UI
@@ -740,6 +912,9 @@ class TaskPipeline:
                     intent=request.intent or "CREATE",
                     error="Codex Auto 路由执行失败，任务已停止。",
                 )
+            finally:
+                # 选择是本次尝试的调用上下文，不留给后续路径（配置本就未变）。
+                request.selection = None
 
         def make_stop(decision: CodexRouteDecision) -> TaskResult:
             return TaskResult(
@@ -748,20 +923,22 @@ class TaskPipeline:
                 error=decision.error,
             )
 
-        try:
-            return run_auto_route(
-                complexity=complexity,
-                catalog=catalog,
-                status=status,
-                run=run,
-                make_stop_result=make_stop,
-                on_event=on_event,
-                should_cancel=request.should_cancel,
-            )
-        finally:
-            # Auto is per-call routing. Saved Fixed model/effort remain the config fact source.
-            self.config.llm.model = original_model
-            self.config.llm.reasoning_effort = original_effort
+        return run_auto_route(
+            complexity=complexity,
+            catalog=catalog,
+            status=status,
+            run=run,
+            make_stop_result=make_stop,
+            on_event=on_event,
+            should_cancel=request.should_cancel,
+            role=role,
+            resolve_selection=lambda decision: resolved_catalog.resolve_selection(
+                decision.model,
+                role=decision.role,
+                tier=decision.tier,
+                reasoning_effort=decision.reasoning_effort,
+            ),
+        )
 
     def _handle_codex_chat(self, request: TaskRequest) -> TaskResult:
         """Codex 模型 CHAT/EXPLAIN（D3）：ephemeral thread + 临时只读 cwd +
@@ -831,8 +1008,22 @@ class TaskPipeline:
             # 稳定文案）；此处只兜底，绝不把上游原文透传给用户。
             return TaskResult(success=False, intent="CHAT", error=str(exc))
 
+    def _effective_llm_config(self, selection: "ModelSelection | None" = None):
+        """本次调用生效的 llm 配置：显式选择优先，绝不改写共享 config。
+
+        无选择时直接返回 ``config.llm`` 本身（调用点语义与改动前逐字一致）；
+        有选择时返回一份替换了 model/effort 的副本，供本次 adapter 与 effort
+        解析使用。配置对象本身在整个调用期间保持不变。
+        """
+
+        cfg = self.config.llm
+        if selection is None:
+            return cfg
+        return replace(cfg, model=selection.model, reasoning_effort=selection.reasoning_effort)
+
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
+        effective = self._effective_llm_config(request.selection)
         llm = self._make_llm(request)
         compiler = self._make_compiler()
 
@@ -845,14 +1036,15 @@ class TaskPipeline:
         # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
         # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
         codex_kwargs: dict = {}
-        if self._is_codex_model_selected() and request.intent in ("CREATE", "IMAGE"):
+        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
             codex_kwargs = {
                 "codex_intent": "CREATE",
                 "codex_should_cancel": request.should_cancel,
                 "codex_on_event": request.on_event,
                 # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
-                # provider.chat 运行时刻再校验支持性，fail closed）
-                "codex_reasoning_effort": self.config.llm.codex_reasoning_effort(),
+                # provider.chat 运行时刻再校验支持性，fail closed）。
+                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
+                "codex_reasoning_effort": effective.codex_reasoning_effort(),
             }
 
         # Ensure project exists
@@ -1227,6 +1419,7 @@ class TaskPipeline:
         _graph_powered_repair = False
         _MAX_CREATE_REPAIR = 3
         _create_repair_rounds = 0
+        create_metadata: dict = {}
 
         if not self.config.compiler.path:
             compile_not_run_reason = (
@@ -1335,7 +1528,7 @@ class TaskPipeline:
 
                 # 编译通过后创建 Revision（与 MODIFY 路径对称）
                 if compile_result is not None and compile_result.success and cleaned:
-                    _create_auto_revision(
+                    _create_rev, _create_warn = _create_auto_revision(
                         project,
                         message="auto: after create (compile ok)",
                         trigger="create",
@@ -1351,6 +1544,9 @@ class TaskPipeline:
                             "explanation": "",
                         },
                     )
+                    create_metadata["after_revision_id"] = _create_rev
+                    if _create_warn:
+                        create_metadata.setdefault("revision_warnings", []).append(_create_warn)
                     logger.info(
                         "[create] compile ok after %d repair round(s); revision created",
                         _create_repair_rounds,
@@ -1409,7 +1605,7 @@ class TaskPipeline:
             and compile_result.success
             and cleaned
         ):
-            _create_auto_revision(
+            _sem_after_id, _sem_after_warn = _create_auto_revision(
                 project,
                 message="auto: after create (semantic repair)",
                 trigger="create",
@@ -1425,6 +1621,10 @@ class TaskPipeline:
                     "explanation": "",
                 },
             )
+            if _sem_after_id:
+                create_metadata["after_revision_id"] = _sem_after_id
+            if _sem_after_warn:
+                create_metadata.setdefault("revision_warnings", []).append(_sem_after_warn)
         # ─────────────────────────────────────────────────────────────────────
 
         # 反馈信号采集（只采集，best-effort；不改判定）：
@@ -1473,10 +1673,21 @@ class TaskPipeline:
             # P8 交付完整性（CREATE/IMAGE 专属；MODIFY 路径不传 → 不启用）
             enable_delivery_integrity=(request.intent in ("CREATE", "IMAGE")),
         )
+        # Save material intent only for a deliverable project.  It is inferred
+        # from existing generated Material parameters, so no extra LLM call or
+        # prompt change is introduced.
+        if verification_report.passed and request.intent in ("CREATE", "IMAGE"):
+            from openbrep.materials import infer_material_slots, save_materials
+            inferred = infer_material_slots(project.parameters, request.user_input)
+            if inferred:
+                try:
+                    save_materials(project.root, {"version": 1, "slots": inferred})
+                except (OSError, ValueError) as exc:
+                    logger.warning("Material metadata save skipped: %s", exc)
         create_text_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
 
-        result_metadata: dict = {}
+        result_metadata: dict = dict(create_metadata)
         if vision_extractions:
             # P5d-1：vision 提取透出（无提取时为空 dict，避免污染 metadata）
             result_metadata["vision_extractions"] = vision_extractions
@@ -1485,6 +1696,15 @@ class TaskPipeline:
             # D6：任务结果元数据记录实际 effective model/effort
             # （来自真实 turn 结果，与 fake server 实收逐字节一致）
             result_metadata["codex_effective"] = dict(codex_effective)
+        if cleaned:
+            try:
+                from openbrep.source_fingerprint import compute_source_fingerprint
+
+                result_metadata["verified_source_fingerprint"] = compute_source_fingerprint(
+                    project.root
+                )
+            except Exception:
+                pass
         return TaskResult(
             success=verification_report.passed,
             intent=request.intent or "CREATE",
@@ -1609,7 +1829,7 @@ class TaskPipeline:
             from openbrep.semantic_verifier import verify_semantics
 
             semantic_result = verify_semantics(project)
-            blocking = [issue for issue in semantic_result.issues if issue.blocking]
+            blocking = semantic_result.blocking_issues
             semantic_issues = [issue.detail for issue in blocking]
             if blocking:
                 semantic_note = "⚠️ 几何验证警告：\n" + "\n".join(f"- {issue.detail}" for issue in blocking)
@@ -1643,6 +1863,25 @@ class TaskPipeline:
         if revision_warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {w}" for w in revision_warnings))
 
+        micro_meta = {
+            "acceptance": acceptance,
+            "changed_files": ["paramlist.xml"],
+            # G1：确定性微修改零 LLM 零工具调用（真实计数，非文本反推）
+            "execution": {"llm_calls": 0, "tool_calls": 0},
+            "before_revision_id": _revision_id or None,
+            "micro_modify": {
+                "param": micro.param_name,
+                "from": micro.old_value,
+                "to": micro.new_value,
+            },
+        }
+        try:
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            micro_meta["verified_source_fingerprint"] = compute_source_fingerprint(project.root)
+        except Exception:
+            pass
+
         return TaskResult(
             success=compile_result.success if compile_result is not None else True,
             intent="MODIFY",
@@ -1650,13 +1889,7 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=revision_warnings,
-            metadata={
-                "acceptance": acceptance,
-                "changed_files": ["paramlist.xml"],
-                # G1：确定性微修改零 LLM 零工具调用（真实计数，非文本反推）
-                "execution": {"llm_calls": 0, "tool_calls": 0},
-                "before_revision_id": _revision_id or None,
-            },
+            metadata=micro_meta,
         )
 
     def _try_param_modify(self, request: TaskRequest) -> Optional[TaskResult]:
@@ -1857,7 +2090,7 @@ class TaskPipeline:
             from openbrep.semantic_verifier import verify_semantics
 
             semantic_result = verify_semantics(project)
-            semantic_issues = [issue.detail for issue in semantic_result.issues if issue.blocking]
+            semantic_issues = [issue.detail for issue in semantic_result.blocking_issues]
         except Exception:
             pass
 
@@ -1896,6 +2129,24 @@ class TaskPipeline:
         if outcome.warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {w}" for w in outcome.warnings))
 
+        param_meta: dict = {
+            "param_modify": {
+                "plan": plan.to_dict(),
+                "compile_success": compile_result.success if compile_result is not None else None,
+                "semantic_issues": semantic_issues,
+                "changed_files": outcome.changed_files or [],
+            },
+            "acceptance": acceptance,
+            "before_revision_id": outcome.revision_id or None,
+            **(result_metadata_extra or {}),
+        }
+        try:
+            from openbrep.source_fingerprint import compute_source_fingerprint
+
+            param_meta["verified_source_fingerprint"] = compute_source_fingerprint(project.root)
+        except Exception:
+            pass
+
         return TaskResult(
             success=compile_result.success if compile_result is not None else True,
             intent="MODIFY",
@@ -1903,17 +2154,7 @@ class TaskPipeline:
             compile_result=compile_result,
             plain_text="\n\n".join(output_parts),
             revision_warnings=outcome.warnings,
-            metadata={
-                "param_modify": {
-                    "plan": plan.to_dict(),
-                    "compile_success": compile_result.success if compile_result is not None else None,
-                    "semantic_issues": semantic_issues,
-                    "changed_files": outcome.changed_files or [],
-                },
-                "acceptance": acceptance,
-                "before_revision_id": outcome.revision_id or None,
-                **(result_metadata_extra or {}),
-            },
+            metadata=param_meta,
         )
 
     def _handle_modify_agent_loop(self, request: TaskRequest) -> TaskResult:
@@ -2269,6 +2510,8 @@ class TaskPipeline:
             )
             if after_revision_warning:
                 revision_warnings.append(after_revision_warning)
+        else:
+            _after_revision_id = None
 
         if revision_warnings:
             output_parts.append("**版本快照提示：**\n" + "\n".join(f"- {warning}" for warning in revision_warnings))
@@ -2293,6 +2536,20 @@ class TaskPipeline:
         output_parts.append(verification_report.to_summary_text())
         # ─────────────────────────────────────────────────────────────────────
 
+        modify_metadata: dict = {
+            "before_revision_id": before_revision_id or None,
+            "after_revision_id": _after_revision_id or None,
+        }
+        if cleaned:
+            try:
+                from openbrep.source_fingerprint import compute_source_fingerprint
+
+                modify_metadata["verified_source_fingerprint"] = compute_source_fingerprint(
+                    project.root
+                )
+            except Exception:
+                pass
+
         return TaskResult(
             success=verification_report.passed,
             intent=request.intent or "MODIFY",
@@ -2308,6 +2565,7 @@ class TaskPipeline:
                 "attempted": _sem_outcome.rounds_attempted,
                 "accepted": _sem_outcome.accepted_rounds,
             },
+            metadata=modify_metadata,
         )
 
     # ── Initialization Helpers ────────────────────────────
@@ -2318,9 +2576,18 @@ class TaskPipeline:
 
         Key/base selection is centralized in LLMConfig.resolve_api_key/
         resolve_api_base to avoid diverging UI/runtime routing behavior.
+        R4：``request.selection`` 提供本次调用的 model/effort，写入的是配置副本
+        （``_effective_llm_config``），共享 config 不被改写。
         """
         import dataclasses
-        cfg = self.config.llm
+        cfg = self._effective_llm_config(request.selection)
+        cfg = dataclasses.replace(
+            cfg,
+            credential_scope=request.credential_scope or self.credential_scope,
+        )
+        # dataclasses.replace intentionally omits init=False runtime state;
+        # share the pool cache so session affinity survives per-selection copies.
+        cfg._credential_pools = self.config.llm._credential_pools
 
         resolved = cfg.resolve_api_key(cfg.model)
         if resolved:
@@ -2330,6 +2597,8 @@ class TaskPipeline:
             cfg = dataclasses.replace(cfg, assistant_settings=request.assistant_settings)
 
         adapter = LLMAdapter(cfg)
+        adapter.retry_role = role_for_intent(request.intent or "")
+        adapter.retry_primary = request.selection
         # D3：注入 workbench 共享的 CodexProvider（None = 走默认注册表）。
         if self.codex_provider is not None:
             adapter.codex_provider = self.codex_provider
@@ -2907,11 +3176,18 @@ def _delivery_changed_files(result: TaskResult) -> list[str]:
     主交付路径（CREATE / MODIFY agent loop / script update）把变更文件放
     result.scripts 的 key；确定性路径（micro/param modify）不带 scripts，
     回退查 metadata（含嵌套的 param_modify / micro_modify 子表）。
+    ST02：metadata.changed_files 优先于 scripts（与契约字段名对齐）。
     """
+    meta = result.metadata or {}
+    explicit = meta.get("changed_files")
+    if explicit:
+        if isinstance(explicit, dict):
+            explicit = explicit.get("changed_files") or explicit.get("files") or []
+        if explicit:
+            return sorted(str(p) for p in explicit)
     files = [str(p) for p in (result.scripts or {}).keys()]
     if files:
         return sorted(files)
-    meta = result.metadata or {}
     for key in ("changed_files", "param_modify", "micro_modify"):
         raw = meta.get(key)
         if isinstance(raw, dict):

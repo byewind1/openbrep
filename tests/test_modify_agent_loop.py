@@ -21,6 +21,7 @@ from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.llm import MockLLM
 from openbrep.runtime.modify_agent_tools import ModifyToolRegistry, normalize_script_path
 from openbrep.runtime.pipeline import TaskPipeline, TaskRequest, TaskResult
+from openbrep.source_fingerprint import compute_source_fingerprint
 
 
 # ── 公共构造 ──────────────────────────────────────────────
@@ -65,6 +66,36 @@ def _make_registry(project: HSFProject, tmp_path) -> ModifyToolRegistry:
 # ── Agent loop 主流程 ─────────────────────────────────────
 
 class TestAgentLoopFlow(unittest.TestCase):
+    def test_structured_parameter_edit_creates_one_before_and_verified_after(self):
+        project = _make_project(self.tmp)
+        project.save_to_disk()
+        fingerprint = compute_source_fingerprint(project.root)
+        mock_llm = MockLLM(responses=[
+            {"tool_calls": [{"name": "read_parameters", "arguments": {}}]},
+            {"tool_calls": [{"name": "edit_parameters", "arguments": {
+                "expected_source_fingerprint": fingerprint,
+                "operations": [{
+                    "op": "add", "name": "show_top_tread", "type": "Boolean",
+                    "value": 1, "description": "显示顶部踏步",
+                }],
+            }}]},
+            {"tool_calls": [{"name": "compile_script", "arguments": {}}]},
+            "参数已添加并编译通过。",
+        ])
+        result = _make_pipeline(mock_llm, self.tmp).execute(
+            _make_request(project, self.tmp, user_input="增加显示顶部踏步参数")
+        )
+
+        self.assertTrue(result.success, result.plain_text)
+        self.assertEqual(result.project.get_parameter("show_top_tread").value, "1")
+        self.assertEqual(set(result.scripts), {"paramlist.xml"})
+        delivery = result.metadata["delivery_source"]
+        self.assertEqual(delivery["state"], "verified_change")
+        self.assertTrue(delivery["before_revision_id"])
+        self.assertTrue(delivery["after_revision_id"])
+        self.assertNotEqual(delivery["before_revision_id"], delivery["after_revision_id"])
+        self.assertEqual(delivery["changed_files"], ["paramlist.xml"])
+
     def test_normal_termination_applies_scripts_and_compiles(self):
         """改脚本 → 编译 → 纯文本完成：正常退出，变更落进工程与 TaskResult。"""
         new_3d = "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.018\nDEL 1\nEND\n"
@@ -354,6 +385,36 @@ class TestModifyToolRegistry(unittest.TestCase):
         empty = registry.execute(_call("update_script", {"file_path": "scripts/3d.gdl", "content": "  "}))
         self.assertFalse(empty.ok)
 
+    def test_structured_parameter_tool_contract_is_visible_and_compact(self):
+        project = _make_project(self.tmp)
+        project.save_to_disk()
+        before_calls: list[str] = []
+        registry = _make_registry(project, self.tmp)
+        registry.on_before_write = lambda: before_calls.append("before")
+        definitions = {tool.name: tool for tool in registry.definitions()}
+        self.assertIn("read_parameters", definitions)
+        self.assertIn("edit_parameters", definitions)
+        schema = definitions["edit_parameters"].parameters
+        self.assertEqual(
+            schema["properties"]["operations"]["items"]["properties"]["op"]["enum"],
+            ["add", "set_value", "set_description", "delete"],
+        )
+
+        read = registry.execute(_call("read_parameters", {}))
+        self.assertTrue(read.ok)
+        edited = registry.execute(_call("edit_parameters", {
+            "expected_source_fingerprint": read.data["source_fingerprint"],
+            "operations": [{
+                "op": "add", "name": "show_top_tread", "type": "Boolean", "value": 1,
+            }],
+        }))
+        self.assertTrue(edited.ok)
+        self.assertEqual(before_calls, ["before"])
+        self.assertEqual(edited.data["changed_files"], ["paramlist.xml"])
+        self.assertNotIn('"parameters"', edited.summary)
+        self.assertIn("source_fingerprint", edited.summary)
+        self.assertIn("paramlist.xml", registry.changed_files)
+
     def test_update_script_applies_paramlist_changes(self):
         project = _make_project(self.tmp)
         registry = _make_registry(project, self.tmp)
@@ -433,6 +494,10 @@ from openbrep.semantic_verifier import (  # noqa: E402
     SemanticIssue,
     SemanticVerificationResult,
 )
+from openbrep.contracts.stair import (  # noqa: E402
+    StairContractCheck,
+    StairContractReport,
+)
 
 
 def _blocking_semantic():
@@ -467,6 +532,42 @@ class TestCompletionGate(unittest.TestCase):
         self.assertIn("mesh_empty", convo)
         self.assertIn("打回 1 次", result.plain_text)
         self.assertTrue(result.success)
+
+    def test_gate_rejects_blocking_project_contract_without_generic_issue(self):
+        contract_failure = SemanticVerificationResult(
+            passed=False,
+            project_contract=StairContractReport(
+                applicability="applicable",
+                contract_hash="sha256:test",
+                checks=[StairContractCheck(
+                    check_id="step_riser_relation",
+                    status="fail",
+                    observed=0.3,
+                    expected=0.2,
+                    tolerance=1e-6,
+                    evidence_source="master_parameter_environment",
+                    blocking=True,
+                    detail="step_riser 必须等于 height / num_steps",
+                )],
+            ),
+        )
+        mock_llm = MockLLM(responses=[
+            {"content": "改完了。", "tool_calls": []},
+            {"content": "无法满足合同，停止。", "tool_calls": []},
+        ])
+        with unittest.mock.patch(
+            "openbrep.semantic_verifier.verify_semantics",
+            side_effect=[contract_failure, SemanticVerificationResult(passed=True)],
+        ):
+            with __import__("tempfile").TemporaryDirectory() as tmp:
+                from pathlib import Path
+                tmp_path = Path(tmp)
+                pipeline = _make_pipeline(mock_llm, tmp_path)
+                result = pipeline.execute(_make_request(_make_project(tmp_path), tmp_path))
+
+        self.assertEqual(mock_llm.call_count, 2)
+        self.assertIn("project_contract:step_riser_relation", str(mock_llm.call_history))
+        self.assertIn("打回 1 次", result.plain_text)
 
     def test_gate_rejections_bounded(self):
         """连续谎报：打回 MAX_GATE_REJECTIONS 次后强制交付并如实标注。"""

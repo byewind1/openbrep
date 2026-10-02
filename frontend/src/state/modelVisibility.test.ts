@@ -141,14 +141,14 @@ describe('buildVisibilityCatalog', () => {
     },
   }
 
-  test('default rules: custom configured → visible; official with key → visible; without key → hidden; ollama → visible', () => {
+  test('default rules: custom configured → visible; official with key → visible; without key and ollama → hidden', () => {
     const catalog = buildVisibilityCatalog(llmSettings, { connected: false, models: [] })
     const bySlug = new Map(catalog.map((p) => [p.slug, p]))
     expect(bySlug.get('ymg')?.defaultVisible).toBe(true)
     expect(bySlug.get('ymg')?.kind).toBe('custom')
     expect(bySlug.get('deepseek')?.defaultVisible).toBe(true)
     expect(bySlug.get('zhipu')?.defaultVisible).toBe(false)
-    expect(bySlug.get('ollama')?.defaultVisible).toBe(true)
+    expect(bySlug.get('ollama')?.defaultVisible).toBe(false)
     expect(bySlug.has('openai-codex')).toBe(false)
   })
 
@@ -163,6 +163,40 @@ describe('buildVisibilityCatalog', () => {
     expect(codex?.models[0]?.label).toBe('GPT-5.6 Luna')
     const disconnected = buildVisibilityCatalog(llmSettings, { connected: false, models: codexModels })
     expect(disconnected.find((p) => p.slug === 'openai-codex')).toBeUndefined()
+  })
+
+  test('cc-switch models use stable provider ids and do not collapse same-name models', () => {
+    const models = [
+      {
+        id: 'openai-codex/ccswitch/provider-a/same-model',
+        label: 'Same Model',
+        model: 'same-model',
+        source: 'cc_switch',
+        provider_id: 'provider-a',
+        provider_label: 'Provider A',
+      },
+      {
+        id: 'openai-codex/ccswitch/provider-b/same-model',
+        label: 'Same Model',
+        model: 'same-model',
+        source: 'cc_switch',
+        provider_id: 'provider-b',
+        provider_label: 'Provider B',
+      },
+      { id: 'openai-codex/gpt-5.6-luna', label: 'Luna', model: 'gpt-5.6-luna' },
+    ]
+
+    const catalog = buildVisibilityCatalog(llmSettings, { connected: true, models })
+    const codexProviders = catalog.filter((entry) => entry.kind === 'codex')
+
+    expect(codexProviders.map((entry) => [entry.slug, entry.label])).toEqual([
+      ['openai-codex:ccswitch:provider-a', 'Provider A'],
+      ['openai-codex:ccswitch:provider-b', 'Provider B'],
+      ['openai-codex', 'openai-codex'],
+    ])
+    expect(modelVisibilityKey(codexProviders[0].slug, codexProviders[0].models[0].id)).toBe(
+      'openai-codex:ccswitch:provider-a::openai-codex/ccswitch/provider-a/same-model',
+    )
   })
 })
 
