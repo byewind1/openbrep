@@ -20,6 +20,7 @@ import itertools
 import json
 import logging
 import os
+import platform
 import shlex
 import shutil
 import signal
@@ -164,6 +165,115 @@ def _run_login_shell_lookup(name: str) -> str | None:
         if candidate.startswith("/") and Path(candidate).is_file() and os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+# ── spawn argv 解析（node 包装脚本兼容）─────────────────────────────────────
+# npm 发行版的 ``bin/codex.js`` 是 node 包装脚本（shebang ``#!/usr/bin/env
+# node``）。GUI 环境（macOS launchd 给 .app 的默认 PATH 只有 /usr/bin:/bin:…）
+# 没有 node，内核执行包装脚本时 ``env node`` 直接失败：进程 spawn 成功但立即
+# 以 exit 127 退出（stderr "env: node: No such file or directory"），transport
+# 只能看到「进程秒退」，上层报告成 crashed 且「重启」永远无效（2026-10-02 实测）。
+# 因此 spawn 前把包装脚本换掉：优先 npm 包内自带的原生二进制（免 node），否则
+# 解析 node 解释器，以 [node, wrapper] 启动。
+_SPAWN_ARGV_CACHE: dict[str, list[str]] = {}
+
+
+def resolve_codex_spawn_argv(binary: str) -> list[str]:
+    """解析出能真实启动 codex 的 argv 前缀。
+
+    返回 ``[可执行文件]`` 或 ``[node, 包装脚本]``；调用方在其后追加
+    app-server 参数。解析结果按 resolved 路径缓存（含负结果——机器环境在
+    进程生命周期内不变，重启应用后自然重建）。
+    """
+    resolved = resolve_codex_binary(binary) or str(binary)
+    cached = _SPAWN_ARGV_CACHE.get(resolved)
+    if cached is not None:
+        return list(cached)
+    prefix: list[str] = [resolved]
+    wrapper = Path(resolved)
+    if wrapper.is_file() and os.access(wrapper, os.X_OK) and _is_node_script(wrapper):
+        vendor = _npm_vendor_native_binary(wrapper)
+        if vendor is not None:
+            prefix = [str(vendor)]
+        else:
+            node = _resolve_node_interpreter()
+            if node is not None:
+                prefix = [node, resolved]
+    _SPAWN_ARGV_CACHE[resolved] = list(prefix)
+    return prefix
+
+
+def reset_spawn_argv_cache() -> None:
+    """清空 spawn argv 解析缓存（测试专用）。"""
+    _SPAWN_ARGV_CACHE.clear()
+
+
+def _is_node_script(path: Path) -> bool:
+    """shebang 是否依赖 node 解释器（npm 发行版的 bin/codex.js）。"""
+    try:
+        with path.open("rb") as fh:
+            head = fh.readline(128)
+    except OSError:
+        return False
+    if not head.startswith(b"#!"):
+        return False
+    return b"node" in head.split(b"\n", 1)[0]
+
+
+def _npm_vendor_native_binary(wrapper: Path) -> Path | None:
+    """npm 包布局内自带的原生 codex 二进制（@openai/codex-* vendor）。
+
+    布局（npm 官方发行版实测，nested 与 hoisted 两种安装形态都认）：
+      <npm>/node_modules/@openai/codex/bin/codex.js                    ← 包装脚本
+      <npm>/node_modules/@openai/codex/node_modules/@openai/codex-<target>/vendor/<target>/bin/codex
+      <npm>/node_modules/@openai/codex-<target>/vendor/<target>/bin/codex
+    """
+    try:
+        real = wrapper.resolve()
+    except OSError:
+        return None
+    pkg_dir = real.parent.parent
+    if pkg_dir.name != "codex" or pkg_dir.parent.name != "@openai":
+        return None
+    nm = pkg_dir.parent.parent
+    if nm.name != "node_modules":
+        return None
+    machine = platform.machine().lower()
+    want = "aarch64" if machine in ("arm64", "aarch64") else machine
+    best: Path | None = None
+    patterns = (
+        "@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex",
+        "@openai/codex-*/vendor/*/bin/codex",
+    )
+    for pattern in patterns:
+        for cand in sorted(nm.glob(pattern)):
+            if not (cand.is_file() and os.access(cand, os.X_OK)):
+                continue
+            if best is None:
+                best = cand
+            if want and want in cand.parent.parent.name:
+                return cand
+    return best
+
+
+def _resolve_node_interpreter() -> str | None:
+    """解析 node 解释器：PATH → 常见用户安装目录 → 登录 shell（均缓存）。"""
+    found = shutil.which("node")
+    if found:
+        return found
+    home = Path.home()
+    candidates = (
+        home / ".npm-global" / "bin" / "node",
+        home / ".local" / "bin" / "node",
+        home / ".bun" / "bin" / "node",
+        home / ".hermes" / "node" / "bin" / "node",
+        Path("/opt/homebrew/bin") / "node",
+        Path("/usr/local/bin") / "node",
+    )
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return _resolve_via_login_shell("node")
 
 
 def parse_codex_version(user_agent: str) -> tuple[int, int, int] | None:
@@ -350,8 +460,10 @@ class StdioJsonRpcTransport:
                     ) from exc
         env = dict(os.environ)
         env["CODEX_HOME"] = str(self.codex_home)
-        resolved_binary = resolve_codex_binary(self.codex_binary)
-        argv = [resolved_binary or self.codex_binary, *self.extra_args]
+        # node 包装脚本（npm 发行版）在精简 PATH 的 GUI 环境下会 spawn 后秒退
+        # （exit 127），必须先解析成可真实执行的 argv（原生 vendor 二进制或
+        # [node, wrapper]），否则上层只会看到 crashed 且重启无效。
+        argv = [*resolve_codex_spawn_argv(self.codex_binary), *self.extra_args]
         # 日志不输出 codex_home（auth 文件所在路径属敏感信息，见 D1 秘密门禁）
         self.logger.info("starting codex app-server: argv=%s", argv)
         try:

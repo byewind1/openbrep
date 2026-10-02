@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import sys
 import threading
 import time
@@ -20,6 +21,8 @@ from openbrep.codex.app_server import (
     CodexAppServerError,
     StdioJsonRpcTransport,
     resolve_codex_binary,
+    resolve_codex_spawn_argv,
+    reset_spawn_argv_cache,
 )
 from openbrep.codex.errors import error_response
 
@@ -1009,3 +1012,117 @@ class TestCodexD2DuplicateResponseFirstWins(unittest.TestCase):
         with transport._cv:
             self.assertEqual(transport._responses, {})
         transport.close()
+
+
+# ── spawn argv 解析（node 包装脚本兼容，2026-10-02 127 崩溃修复）──────────────
+
+
+def _make_npm_layout(tmp_path, *, arch="x86_64-apple-darwin", with_vendor=True):
+    """构造 npm 官方发行版布局：bin/codex.js 包装脚本 + 可选 vendor 原生二进制。"""
+    pkg = tmp_path / "node_modules" / "@openai" / "codex"
+    (pkg / "bin").mkdir(parents=True)
+    wrapper = pkg / "bin" / "codex.js"
+    wrapper.write_text("#!/usr/bin/env node\nrequire('../lib/main.js');\n")
+    wrapper.chmod(0o755)
+    vendor = None
+    if with_vendor:
+        vendor_bin = (
+            pkg / "node_modules" / "@openai" / f"codex-{arch}" / "vendor" / arch / "bin"
+        )
+        vendor_bin.mkdir(parents=True)
+        vendor = vendor_bin / "codex"
+        vendor.write_text("#!/bin/sh\nexit 0\n")
+        vendor.chmod(0o755)
+    return wrapper, vendor
+
+
+def test_spawn_argv_rewrites_npm_node_wrapper_to_vendor_native_binary(
+    monkeypatch, tmp_path
+):
+    """npm node 包装脚本必须被替换为包内自带的原生二进制（免 node）。"""
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    reset_spawn_argv_cache()
+    wrapper, vendor = _make_npm_layout(tmp_path, arch="aarch64-apple-darwin")
+    monkeypatch.setattr(
+        "openbrep.codex.app_server.shutil.which", lambda _name: None
+    )
+
+    assert resolve_codex_spawn_argv(str(wrapper)) == [str(vendor)]
+
+
+def test_spawn_argv_prefers_matching_arch_vendor(monkeypatch, tmp_path):
+    """vendor 同时存在多架构时优先当前机器架构。"""
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    reset_spawn_argv_cache()
+    wrapper, _ = _make_npm_layout(tmp_path, arch="x86_64-apple-darwin")
+    matching = (
+        wrapper.parent.parent
+        / "node_modules"
+        / "@openai"
+        / "codex-aarch64-apple-darwin"
+        / "vendor"
+        / "aarch64-apple-darwin"
+        / "bin"
+    )
+    matching.mkdir(parents=True)
+    matching_bin = matching / "codex"
+    matching_bin.write_text("#!/bin/sh\nexit 0\n")
+    matching_bin.chmod(0o755)
+    monkeypatch.setattr(
+        "openbrep.codex.app_server.shutil.which", lambda _name: None
+    )
+
+    assert resolve_codex_spawn_argv(str(wrapper)) == [str(matching_bin)]
+
+
+def test_spawn_argv_falls_back_to_node_interpreter_without_vendor(
+    monkeypatch, tmp_path
+):
+    """没有 vendor 二进制时解析 node 解释器，以 [node, wrapper] 启动。"""
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    reset_spawn_argv_cache()
+    wrapper, _ = _make_npm_layout(tmp_path, with_vendor=False)
+    node = tmp_path / ".local" / "bin" / "node"
+    node.parent.mkdir(parents=True)
+    node.write_text("#!/bin/sh\nexit 0\n")
+    node.chmod(0o755)
+    monkeypatch.setattr(
+        "openbrep.codex.app_server.shutil.which", lambda _name: None
+    )
+    monkeypatch.setattr("openbrep.codex.app_server.Path.home", lambda: tmp_path)
+
+    assert resolve_codex_spawn_argv(str(wrapper)) == [str(node), str(wrapper)]
+
+
+def test_spawn_argv_keeps_native_binary_unchanged(monkeypatch, tmp_path):
+    """普通原生二进制（非 node 包装脚本）不做任何改写。"""
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    reset_spawn_argv_cache()
+    native = tmp_path / "codex-native"
+    native.write_text("#!/bin/sh\nexit 0\n")
+    native.chmod(0o755)
+
+    assert resolve_codex_spawn_argv(str(native)) == [str(native)]
+
+
+def test_stdio_transport_spawns_vendor_binary_for_node_wrapper(tmp_path):
+    """端到端：codex_binary 指向 node 包装脚本时，transport 实际启动的是
+    vendor 原生二进制（包装脚本在精简 PATH 下会 exit 127 秒退）。"""
+    reset_spawn_argv_cache()
+    wrapper, vendor = _make_npm_layout(tmp_path, arch="aarch64-apple-darwin")
+    vendor.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    vendor.chmod(0o755)
+
+    transport = StdioJsonRpcTransport(
+        codex_binary=str(wrapper),
+        codex_home=tmp_path / "home",
+        extra_args=(str(FAKE_SERVER),),
+    )
+    transport.start()
+    try:
+        client = CodexAppServerClient(transport=transport)
+        result = client.initialize()
+        assert "openbrep/" in result["userAgent"]
+    finally:
+        transport.close()
+    reset_spawn_argv_cache()
