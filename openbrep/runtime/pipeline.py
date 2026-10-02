@@ -1655,6 +1655,118 @@ class TaskPipeline:
             lint_summary,
         )
 
+    def _run_semantic_repair_phase(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        agent: GDLAgent,
+        compiler,
+        cleaned: dict,
+        compile_result: Optional[CompileResult],
+        enriched_instruction: str,
+        knowledge: str,
+        skills_text: str,
+        lint_summary: str,
+        auto_repair_info: str,
+        create_metadata: dict,
+        on_event: Callable,
+    ):
+        """语义验证（Phase 1）+ 语义修复闭环（S1）+ 修复后 revision + 反馈采集。
+
+        轻量 previewer 检查几何是否非空/非退化、包围盒是否匹配声明的
+        A/B/ZZYZX；不依赖 LP_XMLConverter，never raises。编译通过但几何验证有
+        blocking issue 时，把确定性证据喂回 LLM 做有界修复；接受/回退判定在
+        semantic_repair 模块。
+        """
+        from openbrep.semantic_verifier import verify_semantics
+        semantic_result = verify_semantics(project)
+
+        from openbrep.runtime.semantic_repair import run_semantic_repair_loop
+        _sem_gsm_path: Optional[str] = None
+        if self.config.compiler.path:
+            _sem_out_dir = Path(request.output_dir) if request.output_dir else Path(
+                tempfile.mkdtemp(prefix="obr_create_sem_")
+            )
+            _sem_out_dir.mkdir(parents=True, exist_ok=True)
+            _sem_gsm_path = str(_sem_out_dir / f"{request.gsm_name or project.name}.gsm")
+        _sem_outcome = run_semantic_repair_loop(
+            agent=agent,
+            project=project,
+            cleaned=cleaned,
+            compile_result=compile_result,
+            semantic_result=semantic_result,
+            instruction=enriched_instruction,
+            knowledge=knowledge,
+            skills_text=skills_text,
+            history=request.history,
+            compiler=compiler,
+            compiler_configured=bool(self.config.compiler.path),
+            gsm_path=_sem_gsm_path,
+            lint_summary=lint_summary,
+            auto_repair_info=auto_repair_info,
+            on_event=on_event,
+            lint_fn=_run_gdl_linter,
+        )
+        cleaned = _sem_outcome.cleaned
+        compile_result = _sem_outcome.compile_result
+        semantic_result = _sem_outcome.semantic_result
+        lint_summary = _sem_outcome.lint_summary
+        auto_repair_info = _sem_outcome.auto_repair_info
+
+        # 语义修复被接受后补一个 revision（编译成功时的主 revision 已在前面创建）
+        if (
+            _sem_outcome.accepted_rounds > 0
+            and self.config.compiler.path
+            and compile_result is not None
+            and compile_result.success
+            and cleaned
+        ):
+            _sem_after_id, _sem_after_warn = _create_auto_revision(
+                project,
+                message="auto: after create (semantic repair)",
+                trigger="create",
+                intent=request.intent or "CREATE",
+                user_instruction=request.user_input,
+                changed_files=list(cleaned.keys()),
+                parent_revision_id=(
+                    get_latest_revision_id(project.root)
+                    if _can_revision_project(project) else None
+                ),
+                metadata={
+                    "compile": _compile_revision_metadata(compile_result, project),
+                    "explanation": "",
+                },
+            )
+            if _sem_after_id:
+                create_metadata["after_revision_id"] = _sem_after_id
+            if _sem_after_warn:
+                create_metadata.setdefault("revision_warnings", []).append(_sem_after_warn)
+
+        # 反馈信号采集（只采集，best-effort；不改判定）：
+        # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
+        if _sem_outcome.rounds_attempted > 0:
+            self._append_feedback(project.root, {
+                "kind": "semantic_repair_outcome",
+                "summary": (
+                    f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"
+                    f"接受 {_sem_outcome.accepted_rounds} 轮"
+                ),
+                "detail": {
+                    "attempted": _sem_outcome.rounds_attempted,
+                    "accepted": _sem_outcome.accepted_rounds,
+                    "intent": request.intent or "CREATE",
+                },
+            })
+        return (
+            semantic_result,
+            compile_result,
+            cleaned,
+            lint_summary,
+            auto_repair_info,
+            _sem_outcome,
+            create_metadata,
+        )
+
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
         effective = self._effective_llm_config(request.selection)
@@ -1745,91 +1857,12 @@ class TaskPipeline:
         )
         # ─────────────────────────────────────────────────────────────────────
 
-        # ── 语义验证（Phase 1）：轻量 previewer 检查几何是否非空/非退化、
-        # 包围盒是否匹配声明的 A/B/ZZYZX；不依赖 LP_XMLConverter，never raises ──
-        from openbrep.semantic_verifier import verify_semantics
-        semantic_result = verify_semantics(project)
-        # ─────────────────────────────────────────────────────────────────────
-
-        # ── 语义修复闭环（S1）：编译通过但几何验证有 blocking issue 时，
-        # 把确定性证据喂回 LLM 做有界修复；接受/回退判定在 semantic_repair 模块 ──
-        from openbrep.runtime.semantic_repair import run_semantic_repair_loop
-        _sem_gsm_path: Optional[str] = None
-        if self.config.compiler.path:
-            _sem_out_dir = Path(request.output_dir) if request.output_dir else Path(
-                tempfile.mkdtemp(prefix="obr_create_sem_")
-            )
-            _sem_out_dir.mkdir(parents=True, exist_ok=True)
-            _sem_gsm_path = str(_sem_out_dir / f"{request.gsm_name or project.name}.gsm")
-        _sem_outcome = run_semantic_repair_loop(
-            agent=agent,
-            project=project,
-            cleaned=cleaned,
-            compile_result=compile_result,
-            semantic_result=semantic_result,
-            instruction=enriched_instruction,
-            knowledge=knowledge,
-            skills_text=skills_text,
-            history=request.history,
-            compiler=compiler,
-            compiler_configured=bool(self.config.compiler.path),
-            gsm_path=_sem_gsm_path,
-            lint_summary=lint_summary,
-            auto_repair_info=auto_repair_info,
-            on_event=on_event,
-            lint_fn=_run_gdl_linter,
+        semantic_result, compile_result, cleaned, lint_summary, auto_repair_info, _sem_outcome, create_metadata = self._run_semantic_repair_phase(
+            request, project, agent, compiler, cleaned, compile_result,
+            enriched_instruction, knowledge, skills_text, lint_summary,
+            auto_repair_info, create_metadata, on_event,
         )
-        cleaned = _sem_outcome.cleaned
-        compile_result = _sem_outcome.compile_result
-        semantic_result = _sem_outcome.semantic_result
-        lint_summary = _sem_outcome.lint_summary
-        auto_repair_info = _sem_outcome.auto_repair_info
-
-        # 语义修复被接受后补一个 revision（编译成功时的主 revision 已在前面创建）
-        if (
-            _sem_outcome.accepted_rounds > 0
-            and self.config.compiler.path
-            and compile_result is not None
-            and compile_result.success
-            and cleaned
-        ):
-            _sem_after_id, _sem_after_warn = _create_auto_revision(
-                project,
-                message="auto: after create (semantic repair)",
-                trigger="create",
-                intent=request.intent or "CREATE",
-                user_instruction=request.user_input,
-                changed_files=list(cleaned.keys()),
-                parent_revision_id=(
-                    get_latest_revision_id(project.root)
-                    if _can_revision_project(project) else None
-                ),
-                metadata={
-                    "compile": _compile_revision_metadata(compile_result, project),
-                    "explanation": "",
-                },
-            )
-            if _sem_after_id:
-                create_metadata["after_revision_id"] = _sem_after_id
-            if _sem_after_warn:
-                create_metadata.setdefault("revision_warnings", []).append(_sem_after_warn)
         # ─────────────────────────────────────────────────────────────────────
-
-        # 反馈信号采集（只采集，best-effort；不改判定）：
-        # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
-        if _sem_outcome.rounds_attempted > 0:
-            self._append_feedback(project.root, {
-                "kind": "semantic_repair_outcome",
-                "summary": (
-                    f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"
-                    f"接受 {_sem_outcome.accepted_rounds} 轮"
-                ),
-                "detail": {
-                    "attempted": _sem_outcome.rounds_attempted,
-                    "accepted": _sem_outcome.accepted_rounds,
-                    "intent": request.intent or "CREATE",
-                },
-            })
 
         create_text_parts = []
         if object_plan is not None:
