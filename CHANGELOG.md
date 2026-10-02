@@ -5,6 +5,16 @@ Format: [Semantic Versioning](https://semver.org), entries newest-first.
 
 ---
 
+## [0.10.12] — 2026-10-02
+
+> 完整发布说明见 `docs/releases/v0.10.12.md`。
+
+- 修复桌面 PATH 缺少 Node 时 npm 版 Codex app-server 启动退出。
+- 当前 cc-switch 官方供应商读取同账号、同登录用户的更新凭据，修复旧凭据导致的 401；更新使运行缓存失效。
+- CHAT / MODIFY 等待 `willRetry=true` 的上游重试，不再提前报告失败。
+
+---
+
 ## [0.10.11] — 2026-10-02
 
 > 完整发布说明见 `docs/releases/v0.10.11.md`。
