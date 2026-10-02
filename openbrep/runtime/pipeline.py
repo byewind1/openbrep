@@ -2428,40 +2428,21 @@ class TaskPipeline:
         repair_request.intent = "REPAIR"
         return self._handle_script_update(repair_request)
 
-    def _handle_script_update(self, request: TaskRequest) -> TaskResult:
-        """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
-        llm = self._make_llm(request)
-        compiler = self._make_compiler()
-        clean_instruction, syntax_report = _normalize_modify_request(request)
-
-        # Prepare project — create empty one if none provided
-        project = request.project
-        if project is None:
-            gsm_name = request.gsm_name or "untitled"
-            project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
-        request.project = project
-        assembled_context = self._assemble_context(
-            request,
-            project,
-            instruction=clean_instruction,
-            include_modify_rules=True,
-        )
-        knowledge = assembled_context.generation_context
-        skills_text = assembled_context.skills_text
-        self._record_user_error_learning(request, project, clean_instruction)
-
-        # Snapshot BEFORE state for rule-based summary and optional compile comparison.
-        before_project_snapshot = deepcopy(project)
-        compare_mode = _normalize_compare_compile_mode(request.compare_compile)
-        before_compile_snapshot = _compile_snapshot_for_project(
-            before_project_snapshot,
-            mode=compare_mode,
-            config=self.config,
-            label="before",
-        )
-
-        on_event = request.on_event or (lambda *_: None)
-
+    def _modify_generate_changes(
+        self,
+        request: TaskRequest,
+        llm: LLMAdapter,
+        compiler,
+        clean_instruction: str,
+        syntax_report: str,
+        project: HSFProject,
+        knowledge: str,
+        skills_text: str,
+        on_event: Callable,
+    ) -> tuple[GDLAgent, dict, str, str]:
+        """构建 GDLAgent 并执行首轮 generate_only（MODIFY/DEBUG/REPAIR 共用），
+        随后 sanitizer + linter 清洗。返回 (agent, cleaned, plain_text, lint_summary)。
+        """
         # 多图通道（P5a）：路径来源读取 + 预处理（仅 images 非空时生效；旧字段不受影响）
         multi_images: list[ImageRef] = []
         if request.images and not request.image_b64:
@@ -2500,6 +2481,46 @@ class TaskPipeline:
 
         cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}
         cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
+        return agent, cleaned, plain_text, lint_summary
+
+    def _handle_script_update(self, request: TaskRequest) -> TaskResult:
+        """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
+        llm = self._make_llm(request)
+        compiler = self._make_compiler()
+        clean_instruction, syntax_report = _normalize_modify_request(request)
+
+        # Prepare project — create empty one if none provided
+        project = request.project
+        if project is None:
+            gsm_name = request.gsm_name or "untitled"
+            project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
+        request.project = project
+        assembled_context = self._assemble_context(
+            request,
+            project,
+            instruction=clean_instruction,
+            include_modify_rules=True,
+        )
+        knowledge = assembled_context.generation_context
+        skills_text = assembled_context.skills_text
+        self._record_user_error_learning(request, project, clean_instruction)
+
+        # Snapshot BEFORE state for rule-based summary and optional compile comparison.
+        before_project_snapshot = deepcopy(project)
+        compare_mode = _normalize_compare_compile_mode(request.compare_compile)
+        before_compile_snapshot = _compile_snapshot_for_project(
+            before_project_snapshot,
+            mode=compare_mode,
+            config=self.config,
+            label="before",
+        )
+
+        on_event = request.on_event or (lambda *_: None)
+
+        agent, cleaned, plain_text, lint_summary = self._modify_generate_changes(
+            request, llm, compiler, clean_instruction, syntax_report, project,
+            knowledge, skills_text, on_event,
+        )
 
         before_revision_id: str | None = None
         revision_warnings: list[str] = []
