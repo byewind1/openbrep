@@ -9,6 +9,8 @@ interface ScriptEditorProps {
   content: string
   onChange: (value: string) => void
   isDirty: boolean
+  /** SF1：源操作（Save/Apply/Save As/Revision）期间临时只读 */
+  readOnly?: boolean
   focusLine?: number | null
   /** P1e：相关代码段末行，整段亮显；无/非法时退化为单行 */
   focusEndLine?: number | null
@@ -20,6 +22,7 @@ export function ScriptEditor({
   content,
   onChange,
   isDirty,
+  readOnly = false,
   focusLine,
   focusEndLine,
   focusKey,
@@ -75,12 +78,15 @@ export function ScriptEditor({
           value={content}
           theme={scriptName.endsWith('.gdl') ? GDL_THEME_ID : 'vs-dark'}
           beforeMount={registerGdlLanguage}
-          onChange={(value) => onChange(value ?? '')}
+          onChange={(value) => {
+            if (!readOnly) onChange(value ?? '')
+          }}
           onMount={(editor, monaco) => {
             editorRef.current = editor
             monacoRef.current = monaco
           }}
           options={{
+            readOnly,
             fontSize: 13,
             fontFamily: 'JetBrains Mono, Consolas, monospace',
             automaticLayout: true,

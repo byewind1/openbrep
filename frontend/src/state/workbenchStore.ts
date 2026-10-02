@@ -308,6 +308,7 @@ function initialWorkbenchState() {
     loading: false,
     applying: false,
     compiling: false,
+    sourceActionBusy: false,
     lastError: null,
     backendError: null,
     backendNotice: null,

@@ -30,6 +30,8 @@ interface WorkbenchLeftRailProps {
   draftParameters: Record<string, unknown>
   effectiveParameters?: Record<string, EffectiveParameterObservation>
   applying: boolean
+  /** SF1：源操作进行中参数输入/项目打开临时禁用 */
+  sourceBusy?: boolean
   onSelectScript: (name: string) => void
   onChangeParameter: (name: string, value: unknown) => void
   onApplyParameters: () => void
@@ -70,6 +72,7 @@ export function WorkbenchLeftRail({
   draftParameters,
   effectiveParameters = {},
   applying,
+  sourceBusy = false,
   onSelectScript,
   onChangeParameter,
   onApplyParameters,
@@ -103,6 +106,7 @@ export function WorkbenchLeftRail({
         onDismissInitHint={onDismissInitHint}
         onTrashWorkspaceProject={onTrashWorkspaceProject}
         onLoadProjectPath={onSelectProjectPath}
+        projectOpenDisabled={sourceBusy}
       />
       <ScriptTree scripts={scripts} activeScript={activeScriptName} dirtyScripts={dirtyScripts} onSelect={onSelectScript} />
       <ParameterRail
@@ -122,6 +126,7 @@ export function WorkbenchLeftRail({
         onDeleteParameter={onDeleteParameter}
         onValidateParameters={onValidateParameters}
         applying={applying}
+        sourceBusy={sourceBusy}
       />
     </aside>
   )

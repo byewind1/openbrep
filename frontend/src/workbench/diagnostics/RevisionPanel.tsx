@@ -7,9 +7,10 @@ interface RevisionPanelProps {
   revisions: ProjectRevision[]
   latestRevisionId: string | null
   loading: boolean
+  /** SF1：返回是否成功；仅成功后组件清空 message 输入 */
+  onSave: (message: string) => Promise<boolean> | boolean
   /** 是否存在未保存脚本/参数草稿（ST03 恢复前草稿保护） */
   hasUnsavedDrafts?: boolean
-  onSave: (message: string) => void
   /** draftPolicy 由本面板在确认后传入：discard / keep */
   onRestore: (revisionId: string, options?: { draftPolicy: 'discard' | 'keep' }) => void
 }
@@ -26,9 +27,10 @@ export function RevisionPanel({
   const [message, setMessage] = useState('')
   const { confirm, dialogNode } = useThemedDialog()
 
-  function saveRevision() {
-    onSave(message)
-    setMessage('')
+  async function saveRevision() {
+    const ok = await onSave(message)
+    // SF1：仅成功后清空输入；失败保留用户填写的版本说明
+    if (ok) setMessage('')
   }
 
   async function restoreRevision(revisionId: string) {
@@ -55,7 +57,7 @@ export function RevisionPanel({
     }
     const ok = await confirm({
       title: 'Restore revision',
-      message: `Restore ${revisionId}? Current source files will be replaced.`,
+      message: `Restore ${revisionId}? Current source files will be replaced. Unsaved script edits and parameter drafts will also be discarded.`,
       danger: true,
     })
     if (!ok) return

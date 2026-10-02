@@ -22,7 +22,7 @@ interface AssistantPanelProps {
   onDeleteMessages?: (indices: number[]) => void | Promise<void>
   onAdoptCode: (index: number) => void
   onOpenScript?: (scriptName: string) => void
-  onSaveRevision?: (message: string) => void
+  onSaveRevision?: (message: string) => Promise<boolean> | boolean
   onRevealLine?: (scriptName: string, lineNumber: number) => void
   /** ST03：delivery 卡动作 */
   onRecoverDelivery?: (presentation: DeliveryPresentation, policy: 'discard' | 'keep') => void | Promise<void>

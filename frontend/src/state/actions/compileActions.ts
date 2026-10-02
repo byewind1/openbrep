@@ -21,6 +21,10 @@ export function createCompileActions({ api, get, set }: WorkbenchActionContext) 
 
   return {
     async compileCurrentProject() {
+      if (get().sourceActionBusy) {
+        set({ lastError: 'A source operation is in progress.' })
+        return
+      }
       set({ compiling: true })
       const saveResult = await saveDirtyScriptsBeforeCompile()
       if (!saveResult) return
