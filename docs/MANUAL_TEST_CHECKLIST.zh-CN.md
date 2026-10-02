@@ -1,13 +1,13 @@
 # OpenBrep 手工测试清单
 
-日期：2026-04-27  
-目标：覆盖自动测试难以覆盖的 Streamlit、LP_XMLConverter、Archicad/Tapir 路径。
+日期：2026-10-02  
+目标：覆盖自动测试难以覆盖的工作台 UI（React + 本地 API）、LP_XMLConverter、Archicad/Tapir 路径。
 
 ## 启动
 
 ```bash
 python -m pytest tests/ -q
-streamlit run ui/app.py
+obr
 ```
 
 ## 必测路径
@@ -33,7 +33,7 @@ streamlit run ui/app.py
 
 ## 通过标准
 
-- 无 Streamlit traceback。
+- 工作台控制台无未捕获 traceback。
 - 不会把 `.gsm` 当源文件修改。
 - 编译不会创建新的 HSF 源目录。
 - 解释类请求不写入脚本。

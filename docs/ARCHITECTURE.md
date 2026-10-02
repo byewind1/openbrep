@@ -35,8 +35,8 @@ same domain core and generation pipeline.
 Baseline:
 
 ```text
-python tests: 1078 passed, 64 subtests passed
-frontend: 166 passed (vitest) + tsc clean
+python tests: 3098 passed, 87 subtests passed
+frontend: 780 passed (vitest) + tsc clean
 ```
 
 `openbrep/workbench_api.py` (`WorkbenchSession`) is the composition root. Real
@@ -507,7 +507,7 @@ The current baseline is:
 
 ```text
 python -m pytest tests/ -q
-1078 passed, 64 subtests passed
+3098 passed, 87 subtests passed
 
 frontend
 cd frontend && npx vitest run
@@ -672,7 +672,7 @@ Completed:
 
 ```text
 Phase 4: React workbench becomes the default UI (v0.8.0)
-Phase 5: Tauri desktop shell lands; the React workbench becomes the only UI (v1.0.0)
+Phase 5: Tauri desktop shell lands; the React workbench becomes the only UI (v0.9.0)
 ```
 
 Completed in the latest cleanup:

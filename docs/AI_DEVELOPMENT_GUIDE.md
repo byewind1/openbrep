@@ -1,6 +1,6 @@
 # OpenBrep AI Development Guide
 
-Date: 2026-04-27  
+Date: 2026-10-02  
 Audience: Codex, Claude Code, Qwen Code, Cursor, Copilot agents, and human
 maintainers using AI-assisted development tools.
 中文版本：[AI_DEVELOPMENT_GUIDE.zh-CN.md](AI_DEVELOPMENT_GUIDE.zh-CN.md)
@@ -79,37 +79,40 @@ Do not start by rewriting large files. Understand the current boundary first.
 
 ## Current Safe Baseline
 
-As of 2026-04-27:
+As of 2026-10-02:
 
 ```text
 main should be clean and pushed before new work starts
-ui/app.py: 1588 lines
-test baseline: 474 passed, 6 subtests passed
+python tests: 3098 passed, 87 subtests passed
+frontend: 780 passed (vitest) + tsc clean
 ```
 
-Core refactor boundaries already merged:
+Core seams already in place:
 
 ```text
-ui/project_service.py
-ui/generation_service.py
-ui/app_shell.py
-ui/chat_controller.py
-ui/chat_render.py
-ui/session_defaults.py
-ui/views/*
+frontend/src/workbench/*, frontend/src/state/*, frontend/src/components/*
+openbrep/workbench_api.py (composition root, thin adapter)
+openbrep/workbench/*_service.py
+openbrep/runtime/pipeline.py
 ```
+
+The retired Streamlit `ui/` package no longer exists; do not use it as a
+reference for new code.
 
 ## Non-Negotiable Rules
 
-1. Do not add substantial new logic to `ui/app.py`.
+1. Do not reintroduce imports of the retired Streamlit `ui/` package.
 2. Do not bypass `HSFProject` for source state.
 3. Do not treat `.gsm` as editable source.
-4. Do not duplicate chat bubble rendering.
-5. Do not add scattered `st.session_state` default initialization.
+4. Do not grow `workbench_api.py` beyond a thin adapter; put real behavior in
+   `openbrep/workbench/*_service.py`.
+5. Do not silently write user configuration from incidental UI changes
+   (settings use draft state plus an explicit save action).
 6. Do not rewrite `run_agent_generate` behavior without tests.
 7. Do not change intent routing order casually.
-8. Do not remove compatibility wrappers just because they look redundant.
-9. Do not make Streamlit views instantiate LLMs, compilers, or pipelines.
+8. Do not mix unrelated seams in one service module.
+9. Do not make React views instantiate LLMs, compilers, or pipelines — they go
+   through the local API and services.
 10. Do not break the flat workspace layout.
 
 ## Placement Rules
@@ -120,69 +123,58 @@ Use this map when deciding where code belongs:
 Pure domain behavior
   openbrep/*
 
-Streamlit page shell / CSS / optional dependency probe
-  ui/app_shell.py
+React workbench UI (pages, panels, store, actions)
+  frontend/src/workbench/*
+  frontend/src/components/*
+  frontend/src/state/*
 
-Session defaults
-  ui/session_defaults.py
+Local API composition root (thin adapter)
+  openbrep/workbench_api.py
 
-Project import / load / compile workflow
-  ui/project_service.py
-  ui/project_io.py
+Backend services
+  openbrep/workbench/*_service.py
 
 AI generation workflow
-  ui/generation_service.py
   openbrep/runtime/pipeline.py
 
-Vision/image workflow
-  ui/vision_controller.py
+Deterministic parameter edit
+  openbrep/runtime/micro_modify.py
 
-Chat turn orchestration
-  ui/chat_controller.py
-
-Chat rendering
-  ui/chat_render.py
-
-Streamlit panels
-  ui/views/*
-
-Simple formatting / parsing helpers for UI
-  ui/view_models.py
+Blender script → GDL importer (BS2G)
+  openbrep/importers/blender_script/*
 
 Tapir/Archicad workflow
-  ui/tapir_controller.py
-  ui/tapir_views.py
   openbrep/tapir_bridge.py
+  openbrep/tapir_controller.py
+  openbrep/workbench/tapir_service.py
+  openbrep/workbench_tapir.py
+
+CLI (obr)
+  cli/main.py
 ```
 
-If the correct place is unclear, prefer a small adapter in `ui/app.py` and put
-real behavior in a testable module.
+If the correct place is unclear, keep `workbench_api.py` a thin adapter and put
+real behavior in a testable service module.
 
 ## Compatibility Wrappers
 
-Several functions in `ui/app.py` remain as public compatibility wrappers because
-tests and UI callbacks patch or import them directly.
-
-Examples:
+The Streamlit-era `ui/app.py` wrappers (`run_agent_generate`, `chat_respond`,
+...) were removed together with the retired `ui/` package. The current stable
+entry points are:
 
 ```text
-run_agent_generate
-chat_respond
-classify_and_extract
-_handle_unified_import
-_handle_hsf_directory_load
-import_gsm
-do_compile
-_apply_generation_result
-_apply_generation_plan
+openbrep.runtime.pipeline.TaskPipeline.execute     (CLI + workbench generation)
+openbrep/workbench_api.py WorkbenchSession routes  (local API contract)
 ```
 
-Do not remove or rename these wrappers unless you migrate all tests and callers
-in the same change.
+Do not change their behavior or route payloads without migrating all tests and
+callers in the same change.
 
 ## Session State Discipline
 
-Add new persistent keys in `ui/session_defaults.py`.
+The React workbench keeps UI state in the Zustand store
+(`frontend/src/state/`). Server-side session state lives in `WorkbenchSession`
+(`openbrep/workbench_api.py`) and is the public application contract.
 
 When changing scripts or parameters:
 
@@ -194,37 +186,39 @@ bump editor version if editor content changes programmatically
 capture snapshot before irreversible AI writes
 ```
 
-Do not mutate important state from views directly. Pass callbacks into views.
+Do not mutate important state from views directly. Pass callbacks/actions
+through the store, and keep settings writes behind draft state plus an explicit
+save action.
 
 ## Generation Path Contract
 
 The generation path currently flows like this:
 
 ```text
-ui/app.py.run_agent_generate
-  → ui/generation_service.GenerationService.run_agent_generate
+CLI or React workbench assistant route
+  → openbrep/workbench/assistant_service.py
   → openbrep.runtime.pipeline.TaskPipeline.execute
-  → build_generation_result_plan
-  → ui/actions.apply_generation_plan
-  → ui/view_models.build_generation_reply
+  → compile gate + verify_semantics (bounded repair rounds)
+  → TaskResult (success = verification report passed)
 ```
 
-Intent routing order:
+Intent routing order (`IntentRouter.classify()`):
 
 ```text
-debug intent                  → REPAIR
-modify bridge prompt          → MODIFY
-post clarification explain    → CHAT
-post clarification check      → MODIFY
-explainer intent              → CHAT
-existing script content       → MODIFY
-otherwise                     → CREATE
+pure chat / GDL teaching question          → CHAT
+debug prefix / error log / strong debug    → DEBUG
+explicit modify/check keyword              → MODIFY
+explicit creation keyword                  → CREATE
+generic GDL keyword                        → MODIFY if project loaded, else CREATE
+image present, unclear text                → IMAGE
+project loaded, ambiguous                  → MODIFY
+no project, ambiguous                      → LLM fallback, else CHAT
 ```
 
 Tests to run for generation changes:
 
 ```bash
-python -m pytest tests/test_generation_service.py tests/test_llm.py tests/test_llm_adapter.py tests/test_config_service.py -q
+python -m pytest tests/test_pipeline_create_compile.py tests/test_pipeline_modify.py tests/test_micro_modify.py tests/test_pipeline_semantic_repair.py -q
 python -m pytest tests/ -q
 ```
 
@@ -233,9 +227,8 @@ python -m pytest tests/ -q
 The project path currently flows like this:
 
 ```text
-ui/app.py wrapper
-  → ui/project_service.ProjectService
-  → ui/project_io
+workbench route
+  → openbrep/workbench/project_service.py / project_session_service.py
   → openbrep.hsf_project.HSFProject
   → openbrep.compiler
 ```
@@ -253,8 +246,8 @@ Compile does not create a new source directory.
 Tests to run for project changes:
 
 ```bash
-python -m pytest tests/test_project_service.py tests/test_project_io.py tests/test_project_io_compile.py -q
-python -m pytest tests/test_llm.py -q
+python -m pytest tests/test_workbench_api.py tests/test_workbench_services.py -q
+python -m pytest tests/ -q
 ```
 
 ## UI Design Rules
@@ -287,32 +280,36 @@ explanatory UI text that belongs in docs
 Use the smallest useful test set while editing, then full tests before merge.
 
 ```text
-Shell/bootstrap
-  tests/test_app_shell.py
-
-Session defaults
-  tests/test_session_defaults.py
-
-Chat renderer/panel/controller
-  tests/test_chat_render.py
-  tests/test_chat_panel_render.py
-  tests/test_chat_controller_single_panel.py
-  tests/test_chat_flow.py
+Workbench API / services
+  tests/test_workbench_api.py
+  tests/test_workbench_services.py
+  tests/test_workbench_concurrency.py
 
 Generation
-  tests/test_generation_service.py
-  tests/test_llm.py
+  tests/test_pipeline_create_compile.py
+  tests/test_pipeline_modify.py
+  tests/test_micro_modify.py
+  tests/test_pipeline_semantic_repair.py
 
-Project lifecycle
-  tests/test_project_service.py
-  tests/test_project_io.py
-  tests/test_project_io_compile.py
+Verification / naming
+  tests/test_semantic_verifier.py
+  tests/test_naming_alignment.py
+  tests/test_bs2g_gdl_purity.py tests/test_bs2g_compile_gate.py
+
+Blender importer
+  tests/test_blender_script_importer.py
+  tests/test_bs2g_mesh_loft.py
+  tests/test_bs2g_shim.py
 
 Preview
-  tests/test_preview_controller.py
+  tests/test_gdl_previewer.py tests/test_three_preview.py
 
 Vision
   tests/test_vision.py
+
+Frontend
+  cd frontend && npx vitest run
+  npx tsc --noEmit -p tsconfig.app.json
 
 Whole suite
   python -m pytest tests/ -q
@@ -324,7 +321,7 @@ For changes that affect UI, generation, compile, Tapir, or Archicad behavior,
 manual smoke testing is expected:
 
 ```text
-1. streamlit run ui/app.py
+1. obr  (launch the workbench)
 2. Generate a simple object.
 3. Modify the generated object.
 4. Ask for explanation only and verify no code mutation.
@@ -396,13 +393,14 @@ Did this update session defaults if new state was added?
 Did this add or update tests?
 Did this run the right targeted tests?
 Did this run full tests before merge?
-Could this break Streamlit UI manually even if unit tests pass?
+Could this break the workbench UI manually even if unit tests pass?
 Does the final answer mention untested manual risks?
 ```
 
 ## Latest Cleanup Milestone
 
-Completed:
+Completed (Streamlit era, before the React workbench migration — kept as
+history; the current state lives in ARCHITECTURE.md):
 
 ```text
 1. Config/model source handling moved to ui/config_service.py.

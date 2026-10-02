@@ -199,7 +199,7 @@ bash install.sh
 
 **会发生什么：**
 
-- 终端会显示一堆文字，下载 Streamlit、litellm 等工具
+- 终端会显示一堆文字，下载 litellm 等依赖工具
 - 这很正常，**不要关闭终端**，耐心等待（2-3 分钟）
 - 最后会显示 `Successfully installed ...`
 
@@ -217,15 +217,6 @@ python -m pip install -e ".[ui]"
 
 ```bash
 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[ui]"
-```
-
-**常见问题 3：streamlit-ace 安装失败？**
-
-这个包有时候在某些系统上比较挑，可以先装基础版本（去掉代码高亮，功能不受影响）：
-
-```bash
-pip install -e ".[ui]" --no-deps
-pip install streamlit litellm click rich tomli
 ```
 
 ---
@@ -394,18 +385,6 @@ pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e "."
 **A：** 这说明你还没配置 LP_XMLConverter（ArchiCAD 的编译工具）。
 
 **目前可以先用 Mock 模式测试**（不需要 ArchiCAD）。真实编译的设置见 [用户手册第 9.2 节](docs/manual.md#92-lp_xmlconverter-配置)。
-
----
-
-### Q：streamlit-ace 编辑框显示为空白
-
-**A：** streamlit-ace 包没装对。运行：
-
-```bash
-pip install streamlit-ace
-```
-
-重启应用。如果还是不行，功能会自动降级到普通文本框，不影响使用。
 
 ---
 

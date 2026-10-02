@@ -87,8 +87,9 @@ key contract.
 
 Installer verification must cover both startup and browser rendering.
 
-- Never use only `/_stcore/health` as success. Streamlit can report health
-  while `/` still returns `404` if frozen frontend assets are missing.
+- Never use only a health endpoint as success. (Historical example from the
+  retired Streamlit era: the app could report `/_stcore/health` while `/`
+  still returned `404` when frozen frontend assets were missing.)
 - Never treat a page load alone as success. The browser must finish loading the
   app without `ModuleNotFoundError`, `ImportError`, or `Traceback` in the log.
 - Test the zip itself, not the local `obr` command.

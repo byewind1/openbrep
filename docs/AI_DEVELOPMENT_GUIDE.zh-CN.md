@@ -1,6 +1,6 @@
 # OpenBrep AI 开发指南
 
-日期：2026-04-27  
+日期：2026-10-02  
 对象：Codex、Claude Code、Qwen Code、Cursor、Copilot Agent，以及使用 AI 辅助开发的人类维护者  
 英文版：[AI_DEVELOPMENT_GUIDE.md](AI_DEVELOPMENT_GUIDE.md)
 
@@ -68,37 +68,38 @@ python -m pytest tests/ -q
 
 ## 当前安全基线
 
-截至 2026-04-27：
+截至 2026-10-02：
 
 ```text
 新工作开始前 main 应保持干净且已 push
-ui/app.py: 1588 行
-测试基线：474 passed, 6 subtests passed
+python tests: 3098 passed, 87 subtests passed
+frontend: 780 passed (vitest) + tsc clean
 ```
 
-已经合入的核心重构边界：
+已经就位的核心 seam：
 
 ```text
-ui/project_service.py
-ui/generation_service.py
-ui/app_shell.py
-ui/chat_controller.py
-ui/chat_render.py
-ui/session_defaults.py
-ui/views/*
+frontend/src/workbench/*, frontend/src/state/*, frontend/src/components/*
+openbrep/workbench_api.py（组合根，薄适配层）
+openbrep/workbench/*_service.py
+openbrep/runtime/pipeline.py
 ```
+
+已退役的 Streamlit `ui/` 包在仓库中已不存在，不要把它当作新代码的参照。
 
 ## 绝对规则
 
-1. 不要把实质新逻辑继续堆进 `ui/app.py`。
+1. 不要重新引入已退役 Streamlit `ui/` 包的 import。
 2. 不要绕过 `HSFProject` 管理源状态。
 3. 不要把 `.gsm` 当作可编辑源文件。
-4. 不要复制聊天气泡渲染代码。
-5. 不要分散添加 `st.session_state` 默认值。
+4. 不要让 `workbench_api.py` 长出实质逻辑；真实行为放进
+   `openbrep/workbench/*_service.py`。
+5. 不要从附带 UI 变更静默写入用户配置（设置面板用 draft 状态加显式保存）。
 6. 没有测试时不要重写 `run_agent_generate` 行为。
 7. 不要随意改变 intent 路由顺序。
-8. 不要因为 wrapper 看起来重复就删除兼容 wrapper。
-9. 不要让 Streamlit view 实例化 LLM、compiler 或 pipeline。
+8. 不要在一个 service 模块里混入不相关 seam。
+9. 不要让 React 视图直接实例化 LLM、compiler 或 pipeline——必须经本地 API 与
+   service 层。
 10. 不要破坏 flat workspace 布局兼容性。
 
 ## 代码放置规则
@@ -109,66 +110,56 @@ ui/views/*
 纯 domain 行为
   openbrep/*
 
-Streamlit page shell / CSS / 可选依赖探测
-  ui/app_shell.py
+React 工作台 UI（页面、面板、store、actions）
+  frontend/src/workbench/*
+  frontend/src/components/*
+  frontend/src/state/*
 
-Session 默认值
-  ui/session_defaults.py
+本地 API 组合根（薄适配层）
+  openbrep/workbench_api.py
 
-项目导入 / 加载 / 编译工作流
-  ui/project_service.py
-  ui/project_io.py
+后端服务
+  openbrep/workbench/*_service.py
 
 AI 生成工作流
-  ui/generation_service.py
   openbrep/runtime/pipeline.py
 
-Vision / 图片工作流
-  ui/vision_controller.py
+确定性参数修改
+  openbrep/runtime/micro_modify.py
 
-聊天单轮编排
-  ui/chat_controller.py
-
-聊天渲染
-  ui/chat_render.py
-
-Streamlit 面板
-  ui/views/*
-
-UI 纯格式化 / 解析 helper
-  ui/view_models.py
+Blender 脚本 → GDL 导入器（BS2G）
+  openbrep/importers/blender_script/*
 
 Tapir / Archicad 工作流
-  ui/tapir_controller.py
-  ui/tapir_views.py
   openbrep/tapir_bridge.py
+  openbrep/tapir_controller.py
+  openbrep/workbench/tapir_service.py
+  openbrep/workbench_tapir.py
+
+CLI（obr）
+  cli/main.py
 ```
 
-如果位置不明确，优先在 `ui/app.py` 保留很薄的 adapter，把真实行为放进可测试模块。
+如果位置不明确，保持 `workbench_api.py` 为薄适配层，把真实行为放进可测试的
+service 模块。
 
 ## 兼容 Wrapper
 
-`ui/app.py` 中保留了一些公开兼容 wrapper，因为测试和 UI callback 仍会直接 import 或 patch 它们。
-
-典型例子：
+Streamlit 时代的 `ui/app.py` wrapper（`run_agent_generate`、`chat_respond`
+等）已随 `ui/` 包一起移除。当前的稳定入口是：
 
 ```text
-run_agent_generate
-chat_respond
-classify_and_extract
-_handle_unified_import
-_handle_hsf_directory_load
-import_gsm
-do_compile
-_apply_generation_result
-_apply_generation_plan
+openbrep.runtime.pipeline.TaskPipeline.execute      （CLI 与工作台生成）
+openbrep/workbench_api.py WorkbenchSession 路由      （本地 API 合约）
 ```
 
-除非在同一个变更里迁移所有测试和调用方，否则不要删除或改名。
+除非在同一个变更里迁移所有测试和调用方，否则不要改变它们的行为或路由 payload。
 
 ## Session State 纪律
 
-新增持久 key 时，放到 `ui/session_defaults.py`。
+React 工作台的 UI 状态在 Zustand store（`frontend/src/state/`）里。服务端
+session 状态在 `WorkbenchSession`（`openbrep/workbench_api.py`），是公开应用
+合约。
 
 脚本或参数发生变更时：
 
@@ -180,37 +171,38 @@ _apply_generation_plan
 不可逆 AI 写入前 capture snapshot
 ```
 
-View 不应直接修改关键状态。通过 callback 注入行为。
+View 不应直接修改关键状态。行为通过 store 的 actions 传递，设置类写入必须走
+draft 状态加显式保存动作。
 
 ## 生成链路契约
 
 当前生成链路：
 
 ```text
-ui/app.py.run_agent_generate
-  → ui/generation_service.GenerationService.run_agent_generate
+CLI 或 React 工作台 assistant 路由
+  → openbrep/workbench/assistant_service.py
   → openbrep.runtime.pipeline.TaskPipeline.execute
-  → build_generation_result_plan
-  → ui/actions.apply_generation_plan
-  → ui/view_models.build_generation_reply
+  → 编译门禁 + verify_semantics（有界修复轮）
+  → TaskResult（success = 验证报告 passed）
 ```
 
-Intent 路由顺序：
+Intent 路由顺序（`IntentRouter.classify()`）：
 
 ```text
-debug intent                  → REPAIR
-modify bridge prompt          → MODIFY
-post clarification explain    → CHAT
-post clarification check      → MODIFY
-explainer intent              → CHAT
-existing script content       → MODIFY
-otherwise                     → CREATE
+纯聊天 / GDL 教学问题                       → CHAT
+debug 前缀 / 错误日志 / 强 debug            → DEBUG
+明确的修改/检查关键词                        → MODIFY
+明确的创建关键词                             → CREATE
+泛 GDL 关键词                               → 有项目则 MODIFY，否则 CREATE
+有图片且文本含糊                             → IMAGE
+有项目且含糊                                 → MODIFY
+无项目且含糊                                 → LLM 兜底，否则 CHAT
 ```
 
 生成相关改动至少跑：
 
 ```bash
-python -m pytest tests/test_generation_service.py tests/test_llm.py tests/test_llm_adapter.py tests/test_config_service.py -q
+python -m pytest tests/test_pipeline_create_compile.py tests/test_pipeline_modify.py tests/test_micro_modify.py tests/test_pipeline_semantic_repair.py -q
 python -m pytest tests/ -q
 ```
 
@@ -306,9 +298,8 @@ python scripts/verify_gdl_knowledge_sources.py --offline-ok
 当前项目路径：
 
 ```text
-ui/app.py wrapper
-  → ui/project_service.ProjectService
-  → ui/project_io
+workbench 路由
+  → openbrep/workbench/project_service.py / project_session_service.py
   → openbrep.hsf_project.HSFProject
   → openbrep.compiler
 ```
@@ -326,8 +317,8 @@ ui/app.py wrapper
 项目相关改动至少跑：
 
 ```bash
-python -m pytest tests/test_project_service.py tests/test_project_io.py tests/test_project_io_compile.py -q
-python -m pytest tests/test_llm.py -q
+python -m pytest tests/test_workbench_api.py tests/test_workbench_services.py -q
+python -m pytest tests/ -q
 ```
 
 ## UI 设计规则
@@ -360,32 +351,36 @@ OpenBrep 是工作台，不是营销页。
 编辑时跑最小有效测试，合并前跑全量测试。
 
 ```text
-Shell / bootstrap
-  tests/test_app_shell.py
-
-Session defaults
-  tests/test_session_defaults.py
-
-Chat renderer / panel / controller
-  tests/test_chat_render.py
-  tests/test_chat_panel_render.py
-  tests/test_chat_controller_single_panel.py
-  tests/test_chat_flow.py
+Workbench API / services
+  tests/test_workbench_api.py
+  tests/test_workbench_services.py
+  tests/test_workbench_concurrency.py
 
 Generation
-  tests/test_generation_service.py
-  tests/test_llm.py
+  tests/test_pipeline_create_compile.py
+  tests/test_pipeline_modify.py
+  tests/test_micro_modify.py
+  tests/test_pipeline_semantic_repair.py
 
-Project lifecycle
-  tests/test_project_service.py
-  tests/test_project_io.py
-  tests/test_project_io_compile.py
+验证 / 命名
+  tests/test_semantic_verifier.py
+  tests/test_naming_alignment.py
+  tests/test_bs2g_gdl_purity.py tests/test_bs2g_compile_gate.py
+
+Blender 导入器
+  tests/test_blender_script_importer.py
+  tests/test_bs2g_mesh_loft.py
+  tests/test_bs2g_shim.py
 
 Preview
-  tests/test_preview_controller.py
+  tests/test_gdl_previewer.py tests/test_three_preview.py
 
 Vision
   tests/test_vision.py
+
+Frontend
+  cd frontend && npx vitest run
+  npx tsc --noEmit -p tsconfig.app.json
 
 全量
   python -m pytest tests/ -q
@@ -396,7 +391,7 @@ Vision
 影响 UI、生成、编译、Tapir 或 Archicad 行为时，需要手工 smoke test：
 
 ```text
-1. streamlit run ui/app.py
+1. obr  （启动工作台）
 2. 生成一个简单对象。
 3. 修改生成对象。
 4. 只要求解释，确认不会修改代码。
@@ -468,13 +463,14 @@ git rev-parse origin/main
 是否新增或更新测试？
 是否跑了正确的目标测试？
 merge 前是否跑了全量测试？
-即使单元测试通过，是否仍可能破坏 Streamlit 手工路径？
+即使单元测试通过，是否仍可能破坏工作台手工路径？
 最终回复是否说明未覆盖的手工风险？
 ```
 
 ## 已知技术债
 
-已完成的治理里程碑：
+Streamlit 时代（React 工作台迁移之前）完成的治理里程碑，仅作历史保留；当前
+状态以 ARCHITECTURE.zh-CN.md 为准：
 
 ```text
 1. config/model source 处理已下沉到 ui/config_service.py。

@@ -26,11 +26,15 @@ OpenBrep 的使命不是做一个通用 AI 聊天壳，而是做面向 Archicad 
 - **Preview Verification**：管理 2D/3D 预览、预览预检、编译前后验证和可见编辑器缓冲同步。
 - **Knowledge Memory**：管理官方知识、项目知识、Pro Skill、错题本、聊天记录和二阶段整理。
 - **Archicad Adapter**：管理 Tapir/Archicad 实机联动，作为可选 Adapter，不污染核心链路。
-- **Streamlit Shell**：只负责装配、布局和依赖注入，不承载业务规则。
+- **React Workbench Shell**：只负责装配、布局和依赖注入，不承载业务规则（原 Streamlit Shell 已随 `ui/` 包退役，现状见 `openbrep/workbench_api.py` 与 `frontend/src/workbench/`）。
 
 这些 Seam 对应 OpenBrep 的产品合同，不能再按 UI 控件或临时按钮拆分逻辑。
 
 ### 2. 把 `ui/app.py` 压成装配入口
+
+> 现状（2026-10-02）：该目标已被更彻底的方案取代——Streamlit `ui/` 包已于
+> v0.9.0 整体退役，薄装配入口的现状等价物是 `openbrep/workbench_api.py`
+> （组合根）+ `frontend/src/workbench/WorkbenchApp.tsx`。以下为当时的历史策略。
 
 `ui/app.py` 的最终状态应是：
 

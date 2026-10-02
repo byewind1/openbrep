@@ -2,6 +2,11 @@
 
 # Project Vision & Roadmap
 
+> **现状说明（2026-10-02）**：本文保留早期（Streamlit 时代）的愿景与路线图原文，
+> 仅作历史参考。文中提到的 Streamlit Web UI / `ui/app.py` 已于 v0.9.0 整体退役；
+> 当前 shell 是 React 工作台（`frontend/`）+ 本地 API（`openbrep/workbench_api.py`）
+> + Tauri 桌面壳（`src-tauri/`），见 `ARCHITECTURE.zh-CN.md`。
+
 ---
 
 ## 一句话定位 / Elevator Pitch
