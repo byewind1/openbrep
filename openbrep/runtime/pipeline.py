@@ -1279,6 +1279,59 @@ class TaskPipeline:
             )
         return enriched_instruction, _graph_constraint_injected
 
+    def _generate_with_agent(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        llm: LLMAdapter,
+        compiler,
+        codex_kwargs: dict,
+        on_event: Callable,
+        debug_mode: bool,
+        enriched_instruction: str,
+        knowledge: str,
+        skills_text: str,
+        image_b64: Optional[str],
+        image_mime: str,
+        multi_images: list[ImageRef],
+    ) -> tuple[GDLAgent, dict, str, str]:
+        """构建 GDLAgent 并执行首轮 generate_only，随后做 sanitizer + linter 清洗。
+
+        返回 (agent, cleaned, plain_text, lint_summary)；agent 供后续
+        零产出重试 / 静态修复 / 编译自愈 / 语义修复复用。
+        """
+        agent = GDLAgent(
+            llm=llm,
+            compiler=compiler,
+            on_event=on_event,
+            assistant_settings=request.assistant_settings,
+            should_cancel=request.should_cancel,
+            llm_kwargs=codex_kwargs or None,
+        )
+
+        changes, plain_text = agent.generate_only(
+            instruction=enriched_instruction,
+            project=project,
+            knowledge=knowledge,
+            skills=skills_text,
+            include_all_scripts=debug_mode,
+            last_code_context=request.last_code_context,
+            syntax_report=request.syntax_report,
+            history=request.history,
+            image_b64=image_b64,
+            image_mime=image_mime,
+            # 多图通道：仅 images 非空时生效（生成调用改用多图 content 数组）。
+            # P5b 角色过滤（设计 D5/D9）：pass_raw_image=on 时只带
+            # role ∈ {outline, pattern, auto} 的图（material 只参与提取）；
+            # off 时生成不带原图（只靠 ModelingPlan hint）。单图旧路径不受影响。
+            images=_generation_images(multi_images, self.config),
+        )
+
+        # Strip markdown fences the LLM sometimes leaks into scripts
+        cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}
+        cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
+        return agent, cleaned, plain_text, lint_summary
+
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
         effective = self._effective_llm_config(request.selection)
@@ -1339,36 +1392,11 @@ class TaskPipeline:
             enriched_instruction, request.user_input, on_event,
         )
 
-        agent = GDLAgent(
-            llm=llm,
-            compiler=compiler,
-            on_event=on_event,
-            assistant_settings=request.assistant_settings,
-            should_cancel=request.should_cancel,
-            llm_kwargs=codex_kwargs or None,
+        agent, cleaned, plain_text, lint_summary = self._generate_with_agent(
+            request, project, llm, compiler, codex_kwargs, on_event, debug_mode,
+            enriched_instruction, knowledge, skills_text, image_b64, image_mime,
+            multi_images,
         )
-
-        changes, plain_text = agent.generate_only(
-            instruction=enriched_instruction,
-            project=project,
-            knowledge=knowledge,
-            skills=skills_text,
-            include_all_scripts=debug_mode,
-            last_code_context=request.last_code_context,
-            syntax_report=request.syntax_report,
-            history=request.history,
-            image_b64=image_b64,
-            image_mime=image_mime,
-            # 多图通道：仅 images 非空时生效（生成调用改用多图 content 数组）。
-            # P5b 角色过滤（设计 D5/D9）：pass_raw_image=on 时只带
-            # role ∈ {outline, pattern, auto} 的图（material 只参与提取）；
-            # off 时生成不带原图（只靠 ModelingPlan hint）。单图旧路径不受影响。
-            images=_generation_images(multi_images, self.config),
-        )
-
-        # Strip markdown fences the LLM sometimes leaks into scripts
-        cleaned = {k: sanitize_llm_script_output(v, k) for k, v in changes.items()} if changes else {}
-        cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
 
         # ── P8 CREATE 零产出守卫：首轮解析零 [FILE:] → 重试一次；重试仍零 → 硬失败 ──
         # 事故回归：CREATE 零产出（模型只输出规划+提问）时旧代码静默交付 create_new
