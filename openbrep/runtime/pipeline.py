@@ -2785,6 +2785,38 @@ class TaskPipeline:
         )
         # ─────────────────────────────────────────────────────────────────────
 
+        return self._modify_finalize_result(
+            request, project, clean_instruction, before_project_snapshot,
+            compare_mode, before_compile_snapshot, compile_result, cleaned,
+            plain_text, lint_summary, preflight_summary, static_result,
+            semantic_result, auto_repair_info, _graph_powered_repair,
+            before_revision_id, revision_warnings, _sem_outcome,
+        )
+
+    def _modify_finalize_result(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        clean_instruction: str,
+        before_project_snapshot: HSFProject,
+        compare_mode,
+        before_compile_snapshot,
+        compile_result: Optional[CompileResult],
+        cleaned: dict,
+        plain_text: str,
+        lint_summary: str,
+        preflight_summary: str,
+        static_result,
+        semantic_result,
+        auto_repair_info: str,
+        graph_powered_repair: bool,
+        before_revision_id: str | None,
+        revision_warnings: list[str],
+        sem_outcome,
+    ) -> TaskResult:
+        """组装 MODIFY/DEBUG/REPAIR 交付：编译对比 + 结构化摘要 + after revision
+        + 统一验证报告 + metadata。
+        """
         compile_comparison: CompileComparison | None = None
         if before_compile_snapshot is not None:
             after_compile_snapshot = _compile_snapshot_from_result(
@@ -2875,7 +2907,7 @@ class TaskPipeline:
             lint_summary=lint_summary,
             compile_result=compile_result,
             auto_repair_info=auto_repair_info,
-            graph_powered=_graph_powered_repair,
+            graph_powered=graph_powered_repair,
             reserved_conflicts=detect_reserved_param_misuse(project),
         )
         output_parts.append(verification_report.to_summary_text())
@@ -2907,8 +2939,8 @@ class TaskPipeline:
             compile_comparison=compile_comparison,
             verification=verification_report.to_dict(),
             semantic_repair={
-                "attempted": _sem_outcome.rounds_attempted,
-                "accepted": _sem_outcome.accepted_rounds,
+                "attempted": sem_outcome.rounds_attempted,
+                "accepted": sem_outcome.accepted_rounds,
             },
             metadata=modify_metadata,
         )
