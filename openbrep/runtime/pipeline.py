@@ -1054,56 +1054,26 @@ class TaskPipeline:
             multi_images = resolve_and_preprocess(request.images)
         return image_b64, image_mime, multi_images
 
-    def _handle_gdl(self, request: TaskRequest) -> TaskResult:
-        """GDL generation / modification via GDLAgent.generate_only()."""
-        effective = self._effective_llm_config(request.selection)
-        llm = self._make_llm(request)
-        compiler = self._make_compiler()
+    def _run_vision_pre_analysis(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        llm: LLMAdapter,
+        codex_kwargs: dict,
+        image_b64: Optional[str],
+        image_mime: str,
+        multi_images: list[ImageRef],
+        on_event: Callable,
+    ) -> tuple[str, list[dict], Optional[TaskResult]]:
+        """Phase 1 Vision Pre-analysis：有图 + 生成类意图（CREATE / IMAGE）→
+        先结构化再生成；MODIFY / DEBUG 有图时直接传图作上下文，不跑结构化分析。
 
-        # D4 + D5：Codex CREATE——Codex 只负责生成 final text（[FILE:] 协议），
-        # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
-        # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
-        # 分派与 turn 层临时只读 cwd 隔离）。D5 起带图 CREATE 走同一通道：
-        # 图经 Vision Harness 提取 → 用户确认（confirm_extraction 早退）→ 确认后
-        # 生成时把授权图物化进 turn 临时 cwd（localImage，见 provider.chat），
-        # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
-        # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
-        codex_kwargs: dict = {}
-        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
-            codex_kwargs = {
-                "codex_intent": "CREATE",
-                "codex_should_cancel": request.should_cancel,
-                "codex_on_event": request.on_event,
-                # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
-                # provider.chat 运行时刻再校验支持性，fail closed）。
-                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
-                "codex_reasoning_effort": effective.codex_reasoning_effort(),
-            }
-
-        # Ensure project exists
-        project = request.project
-        if project is None:
-            gsm_name = request.gsm_name or "untitled"
-            project = HSFProject.create_new(
-                gsm_name,
-                work_dir=request.work_dir,
-            )
-        request.project = project
-        assembled_context = self._assemble_context(request, project)
-        knowledge = assembled_context.generation_context
-        skills_text = assembled_context.skills_text
-
-        image_b64, image_mime, multi_images = self._load_request_images(request)
-
-        on_event = request.on_event or (lambda *_: None)
-        debug_mode = request.intent == "DEBUG"
+        返回 (enriched_instruction, vision_extractions, 早退结果)。
+        早退结果非 None 时调用方必须原样返回（P5d-2 提取确认门）。
+        """
+        enriched_instruction = request.user_input
         # P5d-1：vision 提取透出（多图分支填充；无图/单图旧路径保持空列表）
         vision_extractions: list[dict] = []
-
-        # ── Phase 1 Vision Pre-analysis ──────────────────────────────────────
-        # 有图 + 生成类意图（CREATE / IMAGE）→ 先结构化再生成
-        # MODIFY / DEBUG 有图时直接传图作上下文，不跑结构化分析
-        enriched_instruction = request.user_input
         if image_b64 and request.intent in ("CREATE", "IMAGE"):
             try:
                 on_event("status", {"message": "正在分析参考图结构…"})
@@ -1173,7 +1143,7 @@ class TaskPipeline:
                 if request.confirm_extraction and not confirmed:
                     non_skipped = [e for e in vision_extractions if not e.get("skipped")]
                     if non_skipped:
-                        return TaskResult(
+                        return enriched_instruction, vision_extractions, TaskResult(
                             success=True,
                             intent=request.intent or "CREATE",
                             project=project,
@@ -1184,6 +1154,57 @@ class TaskPipeline:
                         )
             except Exception as exc:
                 logger.warning("Vision harness failed, falling back to direct vision: %s", exc)
+        return enriched_instruction, vision_extractions, None
+
+    def _handle_gdl(self, request: TaskRequest) -> TaskResult:
+        """GDL generation / modification via GDLAgent.generate_only()."""
+        effective = self._effective_llm_config(request.selection)
+        llm = self._make_llm(request)
+        compiler = self._make_compiler()
+
+        # D4 + D5：Codex CREATE——Codex 只负责生成 final text（[FILE:] 协议），
+        # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
+        # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
+        # 分派与 turn 层临时只读 cwd 隔离）。D5 起带图 CREATE 走同一通道：
+        # 图经 Vision Harness 提取 → 用户确认（confirm_extraction 早退）→ 确认后
+        # 生成时把授权图物化进 turn 临时 cwd（localImage，见 provider.chat），
+        # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
+        # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
+        codex_kwargs: dict = {}
+        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
+            codex_kwargs = {
+                "codex_intent": "CREATE",
+                "codex_should_cancel": request.should_cancel,
+                "codex_on_event": request.on_event,
+                # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
+                # provider.chat 运行时刻再校验支持性，fail closed）。
+                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
+                "codex_reasoning_effort": effective.codex_reasoning_effort(),
+            }
+
+        # Ensure project exists
+        project = request.project
+        if project is None:
+            gsm_name = request.gsm_name or "untitled"
+            project = HSFProject.create_new(
+                gsm_name,
+                work_dir=request.work_dir,
+            )
+        request.project = project
+        assembled_context = self._assemble_context(request, project)
+        knowledge = assembled_context.generation_context
+        skills_text = assembled_context.skills_text
+
+        image_b64, image_mime, multi_images = self._load_request_images(request)
+
+        on_event = request.on_event or (lambda *_: None)
+        debug_mode = request.intent == "DEBUG"
+
+        enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
+            request, project, llm, codex_kwargs, image_b64, image_mime, multi_images, on_event,
+        )
+        if early_exit is not None:
+            return early_exit
         # ─────────────────────────────────────────────────────────────────────
 
         object_plan = None
