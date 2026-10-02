@@ -1864,6 +1864,35 @@ class TaskPipeline:
         )
         # ─────────────────────────────────────────────────────────────────────
 
+        return self._finalize_create_result(
+            request, project, llm, object_plan, static_result, semantic_result,
+            compile_result, compile_not_run_reason, undef_errors, lint_summary,
+            auto_repair_info, _graph_constraint_injected, _graph_powered_repair,
+            vision_extractions, _sem_outcome, cleaned, create_metadata, plain_text,
+        )
+
+    def _finalize_create_result(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        llm: LLMAdapter,
+        object_plan,
+        static_result,
+        semantic_result,
+        compile_result: Optional[CompileResult],
+        compile_not_run_reason: str,
+        undef_errors: list,
+        lint_summary: str,
+        auto_repair_info: str,
+        graph_constraint_injected: bool,
+        graph_powered_repair: bool,
+        vision_extractions: list[dict],
+        sem_outcome,
+        cleaned: dict,
+        create_metadata: dict,
+        plain_text: str,
+    ) -> TaskResult:
+        """组装 CREATE/IMAGE 交付：文本分节 + 统一验证报告 + 素材推断 + metadata。"""
         create_text_parts = []
         if object_plan is not None:
             create_text_parts.append(object_plan.to_user_summary())
@@ -1889,7 +1918,7 @@ class TaskPipeline:
             compile_not_run_reason=compile_not_run_reason,
             static_repair_triggered=bool(undef_errors),
             auto_repair_info=auto_repair_info,
-            graph_powered=_graph_constraint_injected or _graph_powered_repair,
+            graph_powered=graph_constraint_injected or graph_powered_repair,
             reserved_conflicts=detect_reserved_param_misuse(project),
             # P8 交付完整性（CREATE/IMAGE 专属；MODIFY 路径不传 → 不启用）
             enable_delivery_integrity=(request.intent in ("CREATE", "IMAGE")),
@@ -1937,8 +1966,8 @@ class TaskPipeline:
             object_plan=object_plan.to_dict() if object_plan is not None else {},
             verification=verification_report.to_dict(),
             semantic_repair={
-                "attempted": _sem_outcome.rounds_attempted,
-                "accepted": _sem_outcome.accepted_rounds,
+                "attempted": sem_outcome.rounds_attempted,
+                "accepted": sem_outcome.accepted_rounds,
             },
             metadata=result_metadata,
         )
