@@ -1,10 +1,10 @@
 # Codex 交接：React Workbench Beta 剩余任务（P2/P3/P4）
 
 > ⚠️ **已完成归档（2026-06-11）**：本文所有任务已完成（P2-1 由 codex 实现，其余由 Claude 完成）。
-> 最新交接见 `docs/REACT_WORKBENCH_BETA_HANDOFF.md`，本文仅作历史参考。
+> 最新交接见 `REACT_WORKBENCH_BETA_HANDOFF.md`，本文仅作历史参考。
 
 > 写给执行 agent 的完整上下文。按任务顺序逐个实现，每个任务独立 commit。
-> 总纲领见 `docs/REACT_WORKBENCH_BETA_PLAN.md`，本文是它的可执行版。
+> 总纲领见 `REACT_WORKBENCH_BETA_PLAN.md`，本文是它的可执行版。
 
 ## 0. 工作环境
 
@@ -126,7 +126,7 @@ OpenBrep 是 AI 辅助的 GDL（Archicad 对象语言）工作台。React Workbe
 
 ### P4 桌面壳评估（只写文档，不写代码）
 
-- 产出 `docs/DESKTOP_SHELL_EVALUATION.md`：Tauri vs Electron 最小壳对比。
+- 产出 `DESKTOP_SHELL_EVALUATION.md`：Tauri vs Electron 最小壳对比。
 - 必答：本地 Python API 的启动/端口探测/进程关闭方案；原生文件对话框迁移路径
   （现有 Python chooser `ui/local_file_dialog.py` 作为 fallback）；打包体积与签名成本。
 - 给出明确推荐，不要各打五十大板。
@@ -136,4 +136,4 @@ OpenBrep 是 AI 辅助的 GDL（Archicad 对象语言）工作台。React Workbe
 1. 验证命令全过（第 0 节）
 2. 新行为有针对性测试
 3. 独立 commit（中文信息），推送 origin + gitee
-4. `docs/REACT_WORKBENCH_BETA_PLAN.md` 对应任务行标记 ✅ 并附一句实现说明
+4. `REACT_WORKBENCH_BETA_PLAN.md` 对应任务行标记 ✅ 并附一句实现说明

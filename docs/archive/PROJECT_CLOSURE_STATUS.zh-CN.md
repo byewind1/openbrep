@@ -57,8 +57,8 @@
 已完成：
 
 - 将“必须收口”从大路线图里抽成三项。
-- `docs/v0.7_revision_management_design.md` 已标记为部分实现并列出剩余收口项。
-- `docs/install_distribution_strategy_2026-05-01.md` 已补签名公证状态。
+- `v0.7_revision_management_design.md` 已标记为部分实现并列出剩余收口项。
+- `install_distribution_strategy_2026-05-01.md` 已补签名公证状态。
 
 后续规则：
 

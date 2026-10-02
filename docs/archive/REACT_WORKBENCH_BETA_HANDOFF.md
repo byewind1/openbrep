@@ -2,7 +2,7 @@
 
 > 日期：2026-06-11
 > 取代 `CODEX_HANDOFF_BETA_P2_P4.md`（其任务已全部完成，仅作历史参考）
-> 总纲领：`docs/REACT_WORKBENCH_BETA_PLAN.md`（所有任务行已标 ✅）
+> 总纲领：`REACT_WORKBENCH_BETA_PLAN.md`（所有任务行已标 ✅）
 
 ## 当前状态一句话
 
