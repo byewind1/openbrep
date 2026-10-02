@@ -28,10 +28,7 @@ from openbrep.codex.entry import (
     entry_label,
     normalize_codex_entry,
 )
-from openbrep.codex.local_config import (
-    local_entry_verdict,
-    read_local_codex_config,
-)
+from openbrep.codex.local_config import local_entry_verdict, read_local_codex_config
 from openbrep.codex.provider import (
     CodexEntryManagedOnlyError,
     CodexNotSignedInError,

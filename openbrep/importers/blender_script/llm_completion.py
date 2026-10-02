@@ -12,7 +12,7 @@ deterministic output.
 from __future__ import annotations
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from openbrep.importers.blender_script.generator import generate_fallback_2d
 from openbrep.importers.blender_script.ir import IRScript, IRUnsupported
@@ -43,8 +43,6 @@ def complete_with_llm(
         {"scripts/2d.gdl": "...", "scripts/1d.gdl": "..."}.
         Falls back to minimal 2D on LLM failure.
     """
-    warnings_text = _format_warnings(ir.warnings)
-
     prompt = f"""\
 You are completing a GDL library part converted from a Blender Python script.
 

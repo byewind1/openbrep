@@ -14,10 +14,10 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
-from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.gdl_keywords import GDL_BUILTINS_CASEFOLD, GLOBAL_PREFIXES, OUTPUT_METADATA_WORDS
+from openbrep.gdl_sanitizer import sanitize_llm_script_output
 
 if TYPE_CHECKING:
     from openbrep.hsf_project import HSFProject

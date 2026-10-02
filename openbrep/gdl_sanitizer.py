@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 _FENCE_START_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*\n?", re.MULTILINE)
 _FENCE_END_RE = re.compile(r"\n?```\s*$", re.MULTILINE)
 

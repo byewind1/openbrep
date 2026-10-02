@@ -7,7 +7,6 @@ not a substitute for a real parser.
 
 from __future__ import annotations
 
-
 CONTROL_FLOW: frozenset[str] = frozenset({
     "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "STEP", "NEXT",
     "WHILE", "ENDWHILE", "REPEAT", "UNTIL", "GOTO", "GOSUB", "RETURN",

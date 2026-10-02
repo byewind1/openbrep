@@ -18,12 +18,9 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from openbrep.importers.blender_script.converter import (
-    convert_blender_script,
-    probe_object_name,
-)
+from openbrep.importers.blender_script.converter import convert_blender_script, probe_object_name
 from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.naming import safe_project_name, unique_project_name
 from openbrep.workbench.project_session_service import write_project_origin
@@ -143,11 +140,11 @@ class WorkbenchBlenderImportService:
     def _run_llm_completion(self, project: Any, ir: Any) -> None:
         """Attempt LLM completion for 2D script; silently fall back."""
         try:
+            from openbrep.config import LLMConfig
+            from openbrep.hsf_project import ScriptType
             from openbrep.importers.blender_script.llm_completion import complete_with_llm
             from openbrep.llm import LLMAdapter
             from openbrep.paramlist_builder import build_paramlist_xml
-            from openbrep.hsf_project import ScriptType
-            from openbrep.config import LLMConfig
 
             llm_config = LLMConfig(
                 model=self.session.llm_model,

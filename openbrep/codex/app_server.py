@@ -21,8 +21,8 @@ import json
 import logging
 import os
 import shlex
-import signal
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading

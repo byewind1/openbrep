@@ -27,14 +27,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from openbrep.gdl_keywords import (
-    GDL_BUILTINS,
-    GDL_BUILTINS_CASEFOLD,
-    GLOBAL_PREFIXES,
-)
-from openbrep.gdl_ast import parse_gdl_script, ControlBlock, TransformFrame
+from openbrep.gdl_ast import ControlBlock, TransformFrame, parse_gdl_script
+from openbrep.gdl_keywords import GDL_BUILTINS, GDL_BUILTINS_CASEFOLD, GLOBAL_PREFIXES
 
 __all__ = [
     "GDL_BUILTINS",
@@ -69,7 +65,7 @@ def _load_gdl_commands() -> frozenset[str]:
 GDL_COMMANDS: frozenset[str] = _load_gdl_commands()
 
 if TYPE_CHECKING:
-    from openbrep.hsf_project import HSFProject, ScriptType
+    from openbrep.hsf_project import HSFProject
 
 
 # ── GDL built-in keywords to exclude from undefined_var check ────────────────
@@ -352,7 +348,7 @@ class StaticChecker:
 
             # Per-block DELALL guard — skip when DELALL appears in either branch
             all_raw = cb.raw_lines + cb.else_raw_lines
-            if any(re.match(r"^\s*DELALL\b", l, re.IGNORECASE) for l in all_raw):
+            if any(re.match(r"^\s*DELALL\b", raw_line, re.IGNORECASE) for raw_line in all_raw):
                 continue
 
             then_push = sum(1 for c in cb.children if isinstance(c, TransformFrame))

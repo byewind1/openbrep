@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 
-from openbrep.gdl_keywords import GDL_BUILTINS as SHARED_GDL_BUILTINS, GLOBAL_PREFIXES
+from openbrep.gdl_keywords import GDL_BUILTINS as SHARED_GDL_BUILTINS
+from openbrep.gdl_keywords import GLOBAL_PREFIXES
 from openbrep.hsf_project import ScriptType
 from openbrep.validator import ValidationIssue
-
 
 _IDENT_RE = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\b')
 _ASSIGN_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)', re.MULTILINE)

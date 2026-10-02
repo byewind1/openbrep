@@ -19,7 +19,6 @@ from openbrep.source_fingerprint import (
 )
 from openbrep.workbench.project_parameter_service import parameter_values
 
-
 HOST_RECORD_DIR = Path(".openbrep/verification/host")
 
 

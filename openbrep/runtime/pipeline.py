@@ -29,6 +29,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from openbrep.chat_history import trim_history_messages
+from openbrep.compiler import (
+    CompileComparison,
+    CompileResult,
+    CompileSnapshot,
+    HSFCompiler,
+    MockHSFCompiler,
+)
+from openbrep.config import GDLAgentConfig, is_codex_qualified_model
+from openbrep.core import GDLAgent
 from openbrep.explainer.chat_adapter import build_chat_explanation_reply
 from openbrep.explainer.context_builder import (
     build_project_context,
@@ -37,11 +47,11 @@ from openbrep.explainer.context_builder import (
     resolve_parameter_targets,
     resolve_script_target,
 )
-from openbrep.explainer.service import explain_parameter_context, explain_project_context, explain_script_context
-from openbrep.compiler import CompileComparison, CompileResult, CompileSnapshot, HSFCompiler, MockHSFCompiler
-from openbrep.chat_history import trim_history_messages
-from openbrep.config import GDLAgentConfig, is_codex_qualified_model
-from openbrep.core import GDLAgent
+from openbrep.explainer.service import (
+    explain_parameter_context,
+    explain_project_context,
+    explain_script_context,
+)
 from openbrep.feedback import append_feedback
 from openbrep.gdl_sanitizer import sanitize_llm_script_output, strip_md_fences
 from openbrep.hsf_project import HSFProject, ScriptType
@@ -57,25 +67,24 @@ from openbrep.learning import ErrorLearningStore, looks_like_error_report
 from openbrep.llm import LLMAdapter
 from openbrep.model_catalog import ModelSelection, build_model_catalog, role_for_intent
 from openbrep.object_planner import plan_gdl_object
+from openbrep.preflight import PreflightAnalyzer
 from openbrep.project_context import (
     ProjectContext,
     append_project_decision,
     build_project_context_prompt,
-    load_project_memory,
     load_project_knowledge,
+    load_project_memory,
     load_project_skills,
     resolve_project_context,
 )
-from openbrep.skill_creator import SkillCreator
-from openbrep.user_knowledge import load_user_knowledge
-from openbrep.wiki_knowledge import WikiKnowledge
-from openbrep.skills_loader import SkillsLoader
+from openbrep.revisions import create_revision, get_latest_revision_id, is_hsf_project_dir
 from openbrep.runtime.router import IntentRouter
 from openbrep.runtime.tracer import Tracer
-from openbrep.preflight import PreflightAnalyzer
-from openbrep.revisions import create_revision, get_latest_revision_id, is_hsf_project_dir
+from openbrep.skill_creator import SkillCreator
+from openbrep.skills_loader import SkillsLoader
+from openbrep.user_knowledge import load_user_knowledge
 from openbrep.vision.image_to_plan import analyze_reference_image, visual_structure_to_gdl_hint
-
+from openbrep.wiki_knowledge import WikiKnowledge
 
 # ── 多图摄取通道（Vision Harness S0，P5a）──────────────────
 # ImageRef 契约见设计文档 §6：token 与用户文本中的 [图N] 引用对应；
@@ -1103,8 +1112,8 @@ class TaskPipeline:
             # 多图：Vision Harness（P5b）——S1 分型 + S2 定向提取（schema 驱动）+ S4 合成。
             # generic schema 平移现有 analyze_reference_image（原函数原 prompt），
             # 各图 hint 以 【图N】 前缀标注后拼入 enriched_instruction（与 P5a 逐字节一致）。
-            from openbrep.vision.harness import run as vision_harness_run
             from openbrep.vision.extraction_store import plan_to_dict
+            from openbrep.vision.harness import run as vision_harness_run
 
             # P5d-2 提取确认门：confirmed_extractions 非空 = 用户确认后的重发。
             # 跳过 harness（零 vision 重调），从确认的 dict 重建 ModelingPlan
@@ -1202,10 +1211,17 @@ class TaskPipeline:
         _graph_constraint_injected = False
         try:
             from openbrep.gdl_keywords import (
-                GEOMETRY_COMMANDS, TRANSFORM_COMMANDS, ATTRIBUTE_COMMANDS,
-                TWO_D_COMMANDS, MISC_COMMANDS, CONTROL_FLOW, PARAMETER_COMMANDS,
-                GROUP_COMMANDS, LOW_LEVEL_BODY_COMMANDS, BUILTIN_FUNCTIONS,
+                ATTRIBUTE_COMMANDS,
+                BUILTIN_FUNCTIONS,
+                CONTROL_FLOW,
+                GEOMETRY_COMMANDS,
+                GROUP_COMMANDS,
+                LOW_LEVEL_BODY_COMMANDS,
+                MISC_COMMANDS,
+                PARAMETER_COMMANDS,
                 SYSTEM_IDENTIFIERS,
+                TRANSFORM_COMMANDS,
+                TWO_D_COMMANDS,
             )
             # 按类别组织，让 LLM 更容易理解结构
             _whitelist_sections = [
@@ -1654,8 +1670,8 @@ class TaskPipeline:
             create_text_parts.append(auto_repair_info)
 
         # ── Verification report ──────────────────────────────────────────────
-        from openbrep.verification import build_verification_report
         from openbrep.naming_alignment import detect_reserved_param_misuse
+        from openbrep.verification import build_verification_report
         verification_report = build_verification_report(
             intent=request.intent or "CREATE",
             user_input=request.user_input,
@@ -1903,11 +1919,7 @@ class TaskPipeline:
         几何语义验证只做 advisory 警告、不拦截；plan 与校验结果写入
         TaskResult.metadata 与版本快照 metadata。
         """
-        from openbrep.runtime.param_modify import (
-            apply_param_modify,
-            format_op_summary,
-            parse_param_modify,
-        )
+        from openbrep.runtime.param_modify import format_op_summary, parse_param_modify
 
         if (request.intent or "MODIFY") != "MODIFY":
             return None  # DEBUG/REPAIR 带错误上下文，必须走 LLM
@@ -2095,7 +2107,10 @@ class TaskPipeline:
             pass
 
         # 确定性验收摘要（不调 LLM）：参数变更 + 前后几何对比 + 验证结论
-        from openbrep.runtime.modify_acceptance import build_modify_acceptance, preview_geometry_summary
+        from openbrep.runtime.modify_acceptance import (
+            build_modify_acceptance,
+            preview_geometry_summary,
+        )
         after_preview = preview_geometry_summary(project)
         acceptance = build_modify_acceptance(
             before=before_preview,
@@ -2396,8 +2411,8 @@ class TaskPipeline:
         # 尺寸错 / 参数是哑的都会直接交付。判决者 verify_semantics 是纯确定性
         # previewer，与生成上下文独立（防自我确认）；修复轮接受/回退语义与
         # CREATE 一致：编译（若配置）仍通过且 blocking issue 数严格下降。
-        from openbrep.semantic_verifier import verify_semantics
         from openbrep.runtime.semantic_repair import run_semantic_repair_loop
+        from openbrep.semantic_verifier import verify_semantics
         semantic_result = verify_semantics(project)
         _sem_outcome = run_semantic_repair_loop(
             agent=agent,
@@ -2518,8 +2533,8 @@ class TaskPipeline:
 
         # ── Verification report (Phase 3/4): aggregate static/lint/compile
         # (and any compile auto-repair) into a proof-oriented report. ────────
-        from openbrep.verification import build_verification_report
         from openbrep.naming_alignment import detect_reserved_param_misuse
+        from openbrep.verification import build_verification_report
         verification_report = build_verification_report(
             intent=request.intent or "MODIFY",
             user_input=request.user_input,
@@ -2902,7 +2917,7 @@ class TaskPipeline:
         try:
             resp = llm.generate(messages)
             return TaskResult(success=True, intent="CHAT", plain_text=resp.content)
-        except Exception as exc:
+        except Exception:
             return None
 
 

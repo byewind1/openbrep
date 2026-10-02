@@ -16,11 +16,8 @@ Design principle: "Separation of Concerns" for context windows.
 
 from __future__ import annotations
 
-import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from typing import Optional
-
 
 # ── Intent-to-Section mapping ──────────────────────────────────────────
 

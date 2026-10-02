@@ -186,7 +186,7 @@ class GDLGraphManager:
 
         # ── 1. 走 ErrorClassifier 分类（阶段3：与 error_classifier.py 深度对齐）──
         try:
-            from openbrep.error_classifier import ErrorClassifier, ErrorCategory
+            from openbrep.error_classifier import ErrorCategory, ErrorClassifier
             ec = ErrorClassifier()
             case = ec.classify(error_msg)
 

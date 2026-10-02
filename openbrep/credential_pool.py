@@ -13,7 +13,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-
 _ENV_REF_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
 

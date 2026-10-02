@@ -1206,7 +1206,7 @@ class GDLAgentConfig:
         lines = [
             "# openbrep configuration", "",
             "[llm]", f'model = "{self.llm.model}"',
-            f'# api_key = "your-key-here"',
+            '# api_key = "your-key-here"',
         ]
         if self.llm.assistant_settings:
             lines.append('assistant_settings = """' + self.llm.assistant_settings + '"""')

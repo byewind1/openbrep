@@ -16,7 +16,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-
 # ── Script Types ──────────────────────────────────────────
 
 class ScriptType(Enum):
@@ -379,7 +378,7 @@ class HSFProject:
 
     def _build_libpartdata(self) -> str:
         """Generate libpartdata.xml content.
-        
+
         Format reverse-engineered from real LP_XMLConverter libpart2hsf output.
         Root tag is <LibpartData> with Owner/Signature/Version as attributes.
         """
@@ -569,7 +568,7 @@ class HSFProject:
         for p in self.parameters:
             fixed = " [FIXED]" if p.is_fixed else ""
             lines.append(f"     {p.type_tag:10s} {p.name:20s} = {p.value}{fixed}")
-        lines.append(f"   Scripts:")
+        lines.append("   Scripts:")
         for st, content in self.scripts.items():
             line_count = content.count("\n") + 1
             lines.append(f"     {st.value:10s} ({line_count} lines)")

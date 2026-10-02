@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import shutil
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -541,7 +540,7 @@ def build_handoff(workspace_path: str, limit: int = 10) -> dict[str, Any]:
         lines.append("| 项目 | revision | 触发 | 意图 | 时间 | 指令 |")
         lines.append("| --- | --- | --- | --- | --- | --- |")
         for e in entries:
-            instruction = str(e["user_instruction"] or "").replace("|", "\|")[:60]
+            instruction = str(e["user_instruction"] or "").replace("|", r"\|")[:60]
             lines.append(
                 f"| {e['project']} | {e['revision_id']} | {e['trigger']} | "
                 f"{e['intent']} | {e['created_at']} | {instruction} |"

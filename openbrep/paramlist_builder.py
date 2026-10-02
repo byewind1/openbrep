@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from typing import Optional
 
-from openbrep.hsf_project import GDLParameter, VALID_PARAM_TYPES
+from openbrep.hsf_project import VALID_PARAM_TYPES, GDLParameter
 
 
 def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
@@ -55,11 +54,11 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
         if tag == "Title":
             lines.append(f'\t\t<Title Name="{_escape_attr(param.name)}">')
             lines.append(f'\t\t\t<Description>{quoted_cdata(description)}</Description>')
-            lines.append(f'\t\t</Title>')
+            lines.append('\t\t</Title>')
             continue
 
         if tag == "Separator":
-            lines.append(f'\t\t<Separator/>')
+            lines.append('\t\t<Separator/>')
             continue
 
         # Standard parameter
@@ -67,13 +66,13 @@ def build_paramlist_xml(parameters: list[GDLParameter]) -> str:
         lines.append(f'\t\t\t<Description>{quoted_cdata(description)}</Description>')
 
         if param.is_fixed:
-            lines.append(f'\t\t\t<Fix/>')
+            lines.append('\t\t\t<Fix/>')
 
         if param.flags:
-            lines.append(f'\t\t\t<Flags>')
+            lines.append('\t\t\t<Flags>')
             for flag in param.flags:
                 lines.append(f'\t\t\t\t<{flag}/>')
-            lines.append(f'\t\t\t</Flags>')
+            lines.append('\t\t\t</Flags>')
 
         # Value formatting
         value = _format_value(tag, param.value)
@@ -326,7 +325,7 @@ def clean_parameter_description(description: str, type_tag: str = "") -> str:
 
 def _format_value(type_tag: str, value: str) -> str:
     """Format parameter value according to its type.
-    
+
     CRITICAL: Material, FillPattern, LineType in HSF paramlist.xml
     must be INTEGER indices, not string names.
     LP_XMLConverter rejects string values like "Wood - Oak".

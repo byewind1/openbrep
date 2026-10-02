@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from openbrep.context import detect_relevant_sections, slice_context, ContextSlice
+from openbrep.context import ContextSlice, detect_relevant_sections, slice_context
 from openbrep.dependencies import DependencyResolver
 
 

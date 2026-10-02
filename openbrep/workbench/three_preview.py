@@ -8,7 +8,6 @@ import json
 
 from openbrep.gdl_previewer import Preview3DResult
 
-
 THREE_VERSION = "0.164.1"
 
 

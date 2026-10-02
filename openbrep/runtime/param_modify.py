@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from openbrep.hsf_project import GDLParameter, HSFProject, VALID_PARAM_TYPES
+from openbrep.hsf_project import VALID_PARAM_TYPES, GDLParameter, HSFProject
 from openbrep.naming_alignment import _is_reserved, replace_identifier
 from openbrep.revisions import get_latest_revision_id, is_hsf_project_dir
 

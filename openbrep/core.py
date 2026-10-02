@@ -14,18 +14,18 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Callable, Optional
 
 from openbrep.chat_history import trim_history_messages
-from openbrep.gdl_sanitizer import sanitize_llm_script_output
-from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
-from openbrep.compiler import CompileResult, HSFCompiler, MockHSFCompiler
-from openbrep.paramlist_builder import clean_parameter_description, validate_paramlist
-from openbrep.validator import GDLValidator
+from openbrep.compiler import MockHSFCompiler
 from openbrep.error_classifier import ErrorCategory, ErrorClassifier
+from openbrep.gdl_sanitizer import sanitize_llm_script_output
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
+from openbrep.paramlist_builder import clean_parameter_description, validate_paramlist
+from openbrep.script_generator import ScriptGenerator
+from openbrep.script_generator import ScriptType as SGScriptType
 from openbrep.static_checker import StaticChecker
-from openbrep.script_generator import ScriptGenerator, ScriptType as SGScriptType
+from openbrep.validator import GDLValidator
 
 logger = logging.getLogger(__name__)
 

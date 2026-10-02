@@ -92,8 +92,8 @@ def _render_param_text(parameters: list) -> str:
 
 def _param_text_ok(text: str) -> bool:
     """补丁后的参数行文本是否仍是结构合法的简化格式（防静默丢参数）。"""
-    lines = [l for l in text.splitlines() if l.strip() and not l.strip().startswith("!")]
-    return bool(lines) and all(_PARAM_LINE_RE.match(l.strip()) for l in lines)
+    lines = [line for line in text.splitlines() if line.strip() and not line.strip().startswith("!")]
+    return bool(lines) and all(_PARAM_LINE_RE.match(line.strip()) for line in lines)
 
 
 # P12 字符串参数引用一致性守卫：从简化参数行文本里提取 {name: (type_tag, value)}。

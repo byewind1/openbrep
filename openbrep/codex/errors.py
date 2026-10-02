@@ -8,7 +8,6 @@ redact_secrets 只作为最后一道纵深防御。
 from __future__ import annotations
 
 from openbrep.codex.app_server import CodexAppServerError
-from openbrep.codex.redact import redact_secrets
 
 DEFAULT_FALLBACK = "Codex 操作失败，请稍后重试。"
 RUNTIME_CONFLICT_MESSAGE = "Codex 正被另一个 OpenBrep 实例使用。请关闭其他 OpenBrep 窗口后重试。"

@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-
 MEMORY_DIR = ".openbrep/memory"
 LEARNINGS_DIR = f"{MEMORY_DIR}/learnings"
 CHATS_DIR = f"{MEMORY_DIR}/chats"

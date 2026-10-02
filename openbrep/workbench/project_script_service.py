@@ -8,7 +8,6 @@ from typing import Any
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.source_fingerprint import compute_source_fingerprint
 
-
 SCRIPT_FILE_ORDER = [
     "3d.gdl",
     "2d.gdl",

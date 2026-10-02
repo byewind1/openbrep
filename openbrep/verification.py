@@ -168,7 +168,7 @@ class VerificationReport:
                 # P8：交付完整性检查也是 static 类型；聚合展示所有 static FAIL，
                 # 避免占位交付时摘要仍显示"静态检查 ✅ 无问题"（空转全绿事故回归）。
                 parts = [f"{c.name}：{c.detail or '失败'}" for c in failed_static]
-                lines.append(f"- 静态检查：❌ " + "；".join(parts))
+                lines.append("- 静态检查：❌ " + "；".join(parts))
             else:
                 first = static_chks[0]
                 lines.append(

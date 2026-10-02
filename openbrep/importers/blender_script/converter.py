@@ -26,13 +26,7 @@ from openbrep.importers.blender_script.generator import (
     generate_gdl_3d,
     generate_paramlist,
 )
-from openbrep.importers.blender_script.ir import (
-    IRCondition,
-    IRLoop,
-    IRNode,
-    IRPrimitive,
-    IRScript,
-)
+from openbrep.importers.blender_script.ir import IRCondition, IRLoop, IRNode, IRPrimitive, IRScript
 from openbrep.importers.blender_script.parser import parse_blender_script
 
 _BMESH_MARKER_RE = re.compile(r"\bbmesh\b")
@@ -172,19 +166,10 @@ def _convert_mesh_loft(
     Anything else → VERT/EDGE/PGON/BODY topology dump (baked but
     universal), with a header note explaining the fallback.
     """
-    from openbrep.importers.blender_script.loft_detect import (
-        LoftDetectError,
-        detect_loft,
-    )
-    from openbrep.importers.blender_script.loft_gdl import (
-        generate_loft_3d,
-        loft_bbox_params,
-    )
+    from openbrep.importers.blender_script.loft_detect import LoftDetectError, detect_loft
+    from openbrep.importers.blender_script.loft_gdl import generate_loft_3d, loft_bbox_params
     from openbrep.importers.blender_script.mesh_capture import run_mesh_capture
-    from openbrep.importers.blender_script.mesh_gdl import (
-        generate_mesh_3d,
-        mesh_bbox_params,
-    )
+    from openbrep.importers.blender_script.mesh_gdl import generate_mesh_3d, mesh_bbox_params
 
     mesh = run_mesh_capture(code, script_path=script_path)
 

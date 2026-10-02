@@ -19,7 +19,6 @@ from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.workbench.project_parameter_service import to_preview_number
 
-
 # ── 轻量几何摘要（只读消费预览，不改渲染器/返回结构） ──────
 
 def preview_geometry_summary(project: HSFProject) -> dict[str, Any]:
@@ -53,9 +52,9 @@ def preview_geometry_summary(project: HSFProject) -> dict[str, Any]:
             quality="fast",
         )
         meshes = result_3d.meshes or []
-        from openbrep.workbench.three_preview import preview_3d_to_three_payload
-        from openbrep.runtime.visual_self_check import check_preview_visual
         from openbrep.materials import load_materials
+        from openbrep.runtime.visual_self_check import check_preview_visual
+        from openbrep.workbench.three_preview import preview_3d_to_three_payload
         visual_payload = preview_3d_to_three_payload(result_3d)
         slots, _ = load_materials(project.root)
         if not slots["slots"]:

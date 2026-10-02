@@ -8,8 +8,6 @@ No Streamlit dependencies — usable from CLI and pipeline contexts.
 from __future__ import annotations
 
 import re
-from typing import Optional
-
 
 # ── Keyword Sets ──────────────────────────────────────────
 

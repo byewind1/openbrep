@@ -11,7 +11,6 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -100,8 +99,8 @@ def validate_gdl_structure(content: str) -> list[str]:
         # IF/ENDIF: distinguish single-line IF (no ENDIF needed) from multi-line
         # Single-line: "IF x THEN y = z" (entire IF on one line, no block)
         # Multi-line: "IF x THEN\n  ...\nENDIF"
-        all_if_lines = [l.strip() for l in script.splitlines()
-                        if re.match(r"\s*IF\b", l, re.IGNORECASE)]
+        all_if_lines = [line.strip() for line in script.splitlines()
+                        if re.match(r"\s*IF\b", line, re.IGNORECASE)]
         multiline_ifs = 0
         for if_line in all_if_lines:
             # A single-line IF has THEN followed by a statement on the SAME line

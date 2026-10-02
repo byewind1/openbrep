@@ -4,7 +4,6 @@ import re
 
 from openbrep.hsf_project import HSFProject, ScriptType
 
-
 _SCRIPT_LABELS = {
     ScriptType.MASTER: "1D",
     ScriptType.SCRIPT_2D: "2D",

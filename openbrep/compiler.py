@@ -7,10 +7,8 @@ Also supports l2hsf / libpart2hsf for decompiling existing .gsm files.
 
 from __future__ import annotations
 
-import os
 import platform
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path

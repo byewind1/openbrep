@@ -17,7 +17,6 @@ import json
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from openbrep.compiler import CompileResult
 from openbrep.core import GDLAgent
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 from openbrep.hsf_project import HSFProject
@@ -300,8 +299,8 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     """
     # 延迟导入 pipeline 内部工具函数，避免模块级循环依赖
     from openbrep.runtime.pipeline import TaskResult, _normalize_modify_request
-    from openbrep.verification import build_verification_report
     from openbrep.static_checker import StaticChecker
+    from openbrep.verification import build_verification_report
 
     llm = pipeline._make_llm(request)
     compiler = pipeline._make_compiler()
@@ -354,7 +353,6 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     vision_extractions: list[dict] = []
     if request.images:
         try:
-            from openbrep.vision.multi_image import resolve_and_preprocess
             from openbrep.vision.extraction_store import (
                 load_extraction,
                 plan_to_dict,
@@ -362,6 +360,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             )
             from openbrep.vision.harness import run as vision_harness_run
             from openbrep.vision.modeling_plan import ModelingPlan
+            from openbrep.vision.multi_image import resolve_and_preprocess
 
             multi_images = resolve_and_preprocess(request.images)
             hint_parts: list[str] = []
@@ -878,10 +877,10 @@ def _build_cancelled_result(
     tool_calls: int = 0,
 ) -> "TaskResult":
     """用户在计划阶段取消时，返回一个干净的 TaskResult（未开始修改）。"""
-    from openbrep.runtime.pipeline import TaskResult
-    from openbrep.verification import build_verification_report
-    from openbrep.static_checker import StaticChecker
     from openbrep.naming_alignment import detect_reserved_param_misuse
+    from openbrep.runtime.pipeline import TaskResult
+    from openbrep.static_checker import StaticChecker
+    from openbrep.verification import build_verification_report
 
     hsf_dir = project.save_to_disk()
     compile_result = compiler.hsf2libpart(str(hsf_dir), gsm_path)

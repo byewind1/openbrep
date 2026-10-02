@@ -25,10 +25,9 @@ from __future__ import annotations
 import os
 import re
 import time
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Any, Callable, Optional
 
 # ── 可选依赖：没有也不崩溃 ─────────────────────────────────────────────────
 
@@ -40,8 +39,10 @@ except ImportError:
     _AC_AVAILABLE = False
 
 try:
-    from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler
+    # 可用性探测导入：本模块只用 _WATCHDOG_AVAILABLE 判断依赖是否在位，
+    # 但 import 本身还要验证 watchdog 能完整加载，不能改成 find_spec。
+    from watchdog.events import FileSystemEventHandler  # noqa: F401
+    from watchdog.observers import Observer  # noqa: F401
     _WATCHDOG_AVAILABLE = True
 except ImportError:
     _WATCHDOG_AVAILABLE = False

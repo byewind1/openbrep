@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from openbrep.codex.errors import DEFAULT_FALLBACK, error_response, stabilize_message
-from openbrep.codex.redact import redact_secrets
 from openbrep.config import (
     ALL_MODELS,
     GDLAgentConfig,
@@ -611,8 +610,9 @@ class WorkbenchSettingsService:
         替换前逐例一致（由测试固定）。
         """
 
-        from openbrep.model_catalog import ModelResolutionError
         from pathlib import Path
+
+        from openbrep.model_catalog import ModelResolutionError
 
         raw = str(model or "")
         target = raw.strip()

@@ -24,11 +24,7 @@ import traceback
 import types
 from dataclasses import dataclass, field
 
-from openbrep.importers.blender_script.mathutils_shim import (
-    Matrix,
-    Vector,
-    make_mathutils_module,
-)
+from openbrep.importers.blender_script.mathutils_shim import Matrix, Vector, make_mathutils_module
 
 
 class MeshCaptureError(Exception):

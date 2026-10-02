@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from openbrep.explainer.schema import ExplanationSection, ParameterExplanation, ProjectExplanation, ScriptExplanation
+from openbrep.explainer.schema import (
+    ExplanationSection,
+    ParameterExplanation,
+    ProjectExplanation,
+    ScriptExplanation,
+)
 
 
 def explain_script_context(context: dict) -> ScriptExplanation:

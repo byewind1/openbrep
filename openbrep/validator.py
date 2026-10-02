@@ -7,7 +7,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from openbrep.hsf_project import HSFProject, ScriptType, GDLParameter
+from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.paramlist_builder import validate_paramlist
 
 

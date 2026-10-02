@@ -11,11 +11,7 @@ from __future__ import annotations
 
 import ast
 
-from openbrep.importers.blender_script.ir import (
-    IRPrimitive,
-    IRTransform,
-)
-
+from openbrep.importers.blender_script.ir import IRPrimitive, IRTransform
 
 # ── Primitive → GDL geometry command ────────────────────────
 #
@@ -138,19 +134,19 @@ def _eval_numeric(expr: str) -> float | None:
                 return v
             return None
         if isinstance(node, ast.BinOp):
-            l, r = ev(node.left), ev(node.right)
-            if l is None or r is None:
+            lhs, rhs = ev(node.left), ev(node.right)
+            if lhs is None or rhs is None:
                 return None
             if isinstance(node.op, ast.Add):
-                return l + r
+                return lhs + rhs
             if isinstance(node.op, ast.Sub):
-                return l - r
+                return lhs - rhs
             if isinstance(node.op, ast.Mult):
-                return l * r
+                return lhs * rhs
             if isinstance(node.op, ast.Div):
-                if r == 0:
+                if rhs == 0:
                     return None
-                return l / r
+                return lhs / rhs
             return None
         return None
 

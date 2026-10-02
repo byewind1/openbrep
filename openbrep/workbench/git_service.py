@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 GIT_SETTINGS_PATH = Path(".openbrep") / "git.json"
 
 # OpenBrep 托管忽略条目：(pattern, 说明注释)。initialize 时按 pattern 行去重，

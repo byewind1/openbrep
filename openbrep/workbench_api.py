@@ -5,9 +5,9 @@ import re
 import subprocess
 import threading
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from datetime import datetime
 from urllib.parse import parse_qsl, unquote, urlparse
 
 from openbrep.compiler import HSFCompiler, MockHSFCompiler
@@ -22,16 +22,14 @@ from openbrep.workbench.copilot_service import WorkbenchCopilotService
 from openbrep.workbench.git_service import WorkbenchGitService
 from openbrep.workbench.host_verification_service import HostVerificationService
 from openbrep.workbench.memory_service import WorkbenchMemoryService
-from openbrep.workbench.preview_service import (
-    authoritative_preview_payload,
-    preview_2d_payload,
-    preview_payload,
-)
-from openbrep.workbench.project_parameter_service import apply_parameter_values
+from openbrep.workbench.preview_service import authoritative_preview_payload
 from openbrep.workbench.project_service import (
     WorkbenchProjectService,
+    apply_parameter_values,
     build_demo_project,
     build_demo_snapshot,
+    preview_2d_payload,
+    preview_payload,
     project_to_snapshot,
 )
 from openbrep.workbench.request_gate import is_lock_free_route
@@ -42,16 +40,15 @@ from openbrep.workbench.settings_service import (
 )
 from openbrep.workbench.skill_proposal_service import SkillProposalService
 from openbrep.workbench.tapir_service import WorkbenchTapirService
-from openbrep.workbench.workspace_service import (
-    init_workspace as ws_init_workspace,
-    resolve_workspace as ws_resolve_workspace,
-    scan_workspace as ws_scan_workspace,
-    search_workspace as ws_search_workspace,
-    trash_project as ws_trash_project,
-    workspace_root_for_project as ws_root_for_project,
-)
+from openbrep.workbench.workspace_service import init_workspace as ws_init_workspace
+from openbrep.workbench.workspace_service import resolve_workspace as ws_resolve_workspace
+from openbrep.workbench.workspace_service import scan_workspace as ws_scan_workspace
+from openbrep.workbench.workspace_service import search_workspace as ws_search_workspace
+from openbrep.workbench.workspace_service import trash_project as ws_trash_project
+from openbrep.workbench.workspace_service import workspace_root_for_project as ws_root_for_project
 from openbrep.workbench_tapir import WorkbenchTapirAdapter, default_tapir_bridge_loader
 
+__all__ = ["apply_parameter_values", "build_demo_project", "build_demo_snapshot", "preview_2d_payload", "preview_payload"]
 
 _WORKSPACE_TOML_REL = Path(".openbrep") / "workspace.toml"
 

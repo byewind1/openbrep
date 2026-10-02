@@ -178,7 +178,6 @@ class Vector:
             side = alt.cross(t)
         side = side.normalized()
         third = t.cross(side).normalized()
-        axes = {"X": side, "Y": third, "Z": t}
         if track.upper() == "X":
             basis = (t, third, side)
         elif track.upper() == "Y":

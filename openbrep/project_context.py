@@ -8,15 +8,15 @@ runtime learnings may append compact memory records under ``.openbrep/memory``.
 from __future__ import annotations
 
 import datetime as _dt
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import tomllib
+
 from openbrep.hsf_project import HSFProject
 from openbrep.knowledge import KnowledgeBase
 from openbrep.skills_loader import SkillsLoader
-
 
 OPENBREP_DIR = ".openbrep"
 PROJECT_TOML = "project.toml"

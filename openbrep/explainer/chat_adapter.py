@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from openbrep.explainer.schema import ParameterExplanation, ProjectExplanation, ScriptExplanation
 
-
 _CODE_ANALYSIS_KEYWORDS = (
     "代码分析",
     "逐行",

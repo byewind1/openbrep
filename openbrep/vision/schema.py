@@ -6,6 +6,7 @@ VisualStructure — 参考图结构化表示
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 

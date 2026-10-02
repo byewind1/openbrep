@@ -18,7 +18,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-
 DEFAULT_FOR_LIMIT = 5000
 DEFAULT_WALL_CLOCK_LIMIT = 10.0  # seconds; wall-clock gate for FOR loops
 
@@ -2172,7 +2171,7 @@ class _PreviewRuntime:
                 if 0 <= p1 < len(self._verts) and 0 <= p2 < len(self._verts):
                     self._edges.append((p1, p2))
                 else:
-                    self._warn(line_no, f"EDGE 顶点索引越界，已忽略")
+                    self._warn(line_no, "EDGE 顶点索引越界，已忽略")
             return True
 
         if cmd == "PGON":

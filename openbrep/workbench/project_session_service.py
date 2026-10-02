@@ -9,13 +9,19 @@ import os
 import re
 import shutil
 import tempfile
-import tomllib
 from pathlib import Path
 from typing import Any, Callable
 
+import tomllib
+
 from openbrep.config import is_codex_qualified_model
 from openbrep.gdl_parser import gdl_source_has_sections, parse_gdl_source_with_warnings
-from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType, normalize_project_after_import
+from openbrep.hsf_project import (
+    GDLParameter,
+    HSFProject,
+    ScriptType,
+    normalize_project_after_import,
+)
 from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.naming import (
     DEFAULT_PROJECT_NAME,
@@ -25,7 +31,10 @@ from openbrep.naming import (
 )
 from openbrep.runtime.pipeline import TaskRequest
 from openbrep.workbench.preview_service import preview_payload
-from openbrep.workbench.project_parameter_service import parameter_to_dict, parse_values_declarations
+from openbrep.workbench.project_parameter_service import (
+    parameter_to_dict,
+    parse_values_declarations,
+)
 from openbrep.workbench.project_script_service import (
     SCRIPT_NAME_TO_TYPE,
     apply_script_overrides,
@@ -36,7 +45,6 @@ from openbrep.workbench.settings_service import (
     save_workbench_config,
 )
 from openbrep.workbench.view_models import classify_vision_error
-
 
 MAX_WORKBENCH_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_WORKBENCH_IMAGES = 4

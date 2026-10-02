@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import shutil
-from difflib import unified_diff
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from difflib import unified_diff
 from pathlib import Path
 from typing import Any
-
 
 REVISION_SCHEMA_VERSION = 1
 OPENBREP_DIR = ".openbrep"

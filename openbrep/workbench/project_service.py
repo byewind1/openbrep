@@ -3,15 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from openbrep.workbench.preview_service import WorkbenchPreviewService, preview_payload
-from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService, parameter_to_dict
+from openbrep.workbench.preview_service import WorkbenchPreviewService
+
+# facade 再导出：workbench_api / assistant_service / tests 从本模块导入这些名字，
+# 冗余别名（as x as x）是刻意的再导出标记，不要改成普通导入。
+from openbrep.workbench.preview_service import preview_2d_payload as preview_2d_payload
+from openbrep.workbench.preview_service import preview_payload as preview_payload
+from openbrep.workbench.project_parameter_service import WorkbenchProjectParameterService
+from openbrep.workbench.project_parameter_service import (
+    apply_parameter_values as apply_parameter_values,
+)
 from openbrep.workbench.project_script_service import WorkbenchProjectScriptService
+from openbrep.workbench.project_session_service import WorkbenchProjectSessionService
+from openbrep.workbench.project_session_service import build_demo_project as build_demo_project
+from openbrep.workbench.project_session_service import build_demo_snapshot as build_demo_snapshot
+from openbrep.workbench.project_session_service import project_to_snapshot as project_to_snapshot
 from openbrep.workbench.project_session_service import (
-    WorkbenchProjectSessionService,
-    build_demo_project,
-    build_demo_snapshot,
-    project_to_snapshot,
-    validate_image_payload,
+    validate_image_payload as validate_image_payload,
 )
 from openbrep.workbench.revision_service import WorkbenchRevisionService
 

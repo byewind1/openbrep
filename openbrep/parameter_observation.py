@@ -9,12 +9,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Literal, Mapping, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 
-from openbrep.gdl_previewer import (
-    ParameterEvaluationDiagnostic,
-    evaluate_parameter_environment,
-)
+from openbrep.gdl_previewer import ParameterEvaluationDiagnostic, evaluate_parameter_environment
 
 if TYPE_CHECKING:
     from openbrep.hsf_project import GDLParameter

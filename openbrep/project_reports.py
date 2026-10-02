@@ -10,7 +10,6 @@ from typing import Any
 from openbrep.hsf_project import HSFProject
 from openbrep.project_context import OPENBREP_DIR
 
-
 REPORTS_DIR = "reports"
 OBJECT_PLAN_PREFIX = "object_plan"
 

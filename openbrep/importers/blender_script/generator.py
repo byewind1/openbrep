@@ -27,7 +27,6 @@ from openbrep.importers.blender_script.mapper import (
     primitive_half_extents,
 )
 
-
 # ── 3D script generation ────────────────────────────────────
 
 
@@ -273,7 +272,6 @@ def _emit_loop(node: IRLoop, indent: int, emitted_vars: set[str]) -> list[str]:
 def _emit_condition(node: IRCondition, indent: int, emitted_vars: set[str]) -> list[str]:
     """Emit an IF/THEN/ELSE/ENDIF block."""
     pad = "    " * indent
-    inner = "    " * (indent + 1)
 
     lines = [f"{pad}IF {node.condition} THEN"]
 
@@ -319,7 +317,7 @@ def generate_paramlist(ir: IRScript) -> list[GDLParameter]:
         params.append(GDLParameter(
             name=p.name,
             type_tag=type_tag,
-            description=f"From Blender script parameter",
+            description="From Blender script parameter",
             value=value,
         ))
 

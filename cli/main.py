@@ -54,8 +54,8 @@ COPILOT_SERVICE_PORT = 8765
 
 def _load_pipeline(work_dir: str, trace_dir: str):
     """Load config and initialize pipeline, with friendly error on missing config."""
-    from openbrep.runtime.pipeline import TaskPipeline
     from openbrep.config import GDLAgentConfig
+    from openbrep.runtime.pipeline import TaskPipeline
 
     try:
         config = GDLAgentConfig.load()
@@ -84,7 +84,7 @@ def _make_on_event(show_progress: bool):
             scripts = data.get("affected_scripts", [])
             console.print(f"  [dim]🔍 分析脚本: {', '.join(scripts)}[/dim]")
         elif event_type == "attempt":
-            console.print(f"  [dim]🧠 调用 AI...[/dim]")
+            console.print("  [dim]🧠 调用 AI...[/dim]")
         elif event_type == "llm_response":
             console.print(f"  [dim]✏️  收到 {data.get('length', 0)} 字符[/dim]")
         elif event_type == "validate":
@@ -645,8 +645,8 @@ def _launch_ui() -> int:
 
 
 def _run_chat_repl(project_dir: Optional[str] = None) -> None:
-    from openbrep.runtime.pipeline import TaskRequest, TaskPipeline
     from openbrep.config import GDLAgentConfig
+    from openbrep.runtime.pipeline import TaskPipeline, TaskRequest
 
     try:
         config = GDLAgentConfig.load()
@@ -767,7 +767,7 @@ def create(
     target_path, project_name, was_aliased = _resolve_create_target(output, prompt)
     work_dir = str(output_root.parent)
 
-    console.print(f"\n[bold]OpenBrep[/bold] — 创建 GDL 对象")
+    console.print("\n[bold]OpenBrep[/bold] — 创建 GDL 对象")
     console.print(f"指令: [cyan]{prompt}[/cyan]")
     console.print(f"输出根目录: [dim]{output_root}[/dim]")
     if was_aliased:
@@ -823,8 +823,8 @@ def modify(
     compare: str = typer.Option("off", "--compare", help="对比编译模式：off / mock / real"),
 ):
     """修改现有 GDL 对象"""
-    from openbrep.runtime.pipeline import TaskRequest
     from openbrep.hsf_project import HSFProject
+    from openbrep.runtime.pipeline import TaskRequest
 
     pipeline = _load_pipeline(work_dir=str(Path(project_dir).parent), trace_dir=trace_dir)
 
@@ -872,8 +872,8 @@ def compile(
     mock: bool = typer.Option(False, "--mock", help="Mock 编译（无需 ArchiCAD）"),
 ):
     """编译 HSF → .gsm"""
-    from openbrep.hsf_project import HSFProject
     from openbrep.compiler import HSFCompiler, MockHSFCompiler
+    from openbrep.hsf_project import HSFProject
 
     try:
         project = HSFProject.load_from_disk(project_dir)
@@ -959,7 +959,12 @@ def cmd_rollback(
     yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认"),
 ):
     """回滚项目到指定版本（回滚前自动保存当前状态）"""
-    from openbrep.revisions import create_revision, get_latest_revision_id, list_revisions, restore_revision
+    from openbrep.revisions import (
+        create_revision,
+        get_latest_revision_id,
+        list_revisions,
+        restore_revision,
+    )
 
     try:
         revisions = list_revisions(project)
@@ -1303,8 +1308,8 @@ def repair(
     trace_dir: str = typer.Option("./traces", "--trace-dir"),
 ):
     """修复 GDL 脚本编译错误"""
-    from openbrep.runtime.pipeline import TaskRequest
     from openbrep.hsf_project import HSFProject
+    from openbrep.runtime.pipeline import TaskRequest
 
     pipeline = _load_pipeline(work_dir=str(Path(project_dir).parent), trace_dir=trace_dir)
 
@@ -1502,7 +1507,7 @@ def import_blender(
     output_root = Path(output).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"\n[bold]OpenBrep BS2G[/bold] — Blender Script → GDL")
+    console.print("\n[bold]OpenBrep BS2G[/bold] — Blender Script → GDL")
     console.print(f"脚本: [cyan]{script_path}[/cyan]")
     console.print(f"输出: [dim]{output_root}[/dim]\n")
 
@@ -1518,7 +1523,7 @@ def import_blender(
         raise typer.Exit(1)
 
     # Report parsing results
-    console.print(f"[green]✅ 解析完成[/green]")
+    console.print("[green]✅ 解析完成[/green]")
     console.print(f"   函数: [cyan]{ir.function_name}[/cyan]")
     console.print(f"   参数: {len(ir.parameters)} 个")
     for p in ir.parameters:
@@ -1533,10 +1538,10 @@ def import_blender(
     if not no_llm:
         try:
             from openbrep.config import GDLAgentConfig
-            from openbrep.llm import LLMAdapter
-            from openbrep.importers.blender_script.llm_completion import complete_with_llm
-            from openbrep.paramlist_builder import build_paramlist_xml
             from openbrep.hsf_project import ScriptType
+            from openbrep.importers.blender_script.llm_completion import complete_with_llm
+            from openbrep.llm import LLMAdapter
+            from openbrep.paramlist_builder import build_paramlist_xml
 
             config = GDLAgentConfig.load()
             api_key = config.llm.resolve_api_key()
@@ -1610,9 +1615,9 @@ def _try_compile(project, mock: bool = False):
 
     if result.success:
         if compiler_mode == "mock" or mock:
-            console.print(f"[green]✅ Mock 编译通过（仅语法检查）[/green]")
+            console.print("[green]✅ Mock 编译通过（仅语法检查）[/green]")
         else:
-            console.print(f"[green]✅ 编译成功[/green]")
+            console.print("[green]✅ 编译成功[/green]")
     else:
         err_console.print(f"[red]❌ 编译失败：{result.stderr or result.stdout}[/red]")
 

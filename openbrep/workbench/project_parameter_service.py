@@ -3,11 +3,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from openbrep.hsf_project import GDLParameter, HSFProject, VALID_PARAM_TYPES
+from openbrep.hsf_project import VALID_PARAM_TYPES, GDLParameter, HSFProject
 from openbrep.parameter_mutations import mutate_parameters
 from openbrep.paramlist_builder import validate_paramlist
 from openbrep.source_fingerprint import compute_source_fingerprint
-
 
 GDL_PARAMETER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 AUTHORABLE_PARAM_TYPES = {"Length", "RealNum", "Integer", "Boolean", "String"}

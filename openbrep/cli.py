@@ -68,9 +68,9 @@ def _print(msg: str, style: str = ""):
 def _print_result(result):
     """Pretty-print an AgentResult."""
     try:
+        from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
-        from rich.console import Console
 
         console = Console()
 
@@ -127,7 +127,7 @@ def _cli_event_handler(event: str, **kwargs):
 
         match event:
             case "start":
-                console.print(f"\n[bold cyan]🚀 GDL Agent[/]")
+                console.print("\n[bold cyan]🚀 GDL Agent[/]")
                 console.print(f"{prefix}Task: {kwargs.get('instruction', '')[:80]}")
                 console.print(f"{prefix}File: [dim]{kwargs.get('source', '')}[/]")
                 console.print(f"{prefix}Max retries: {kwargs.get('max_iterations', '?')}\n")
@@ -181,7 +181,6 @@ def init(dir: str):
     config = GDLAgentConfig()
 
     # Auto-detect compiler
-    from openbrep.config import _auto_detect_converter
     converter = _auto_detect_converter()
     if converter:
         config.compiler.path = converter
@@ -198,9 +197,9 @@ def init(dir: str):
     config_path = workspace / "config.toml"
     if not config_path.exists():
         config_path.write_text(config.to_toml_string(), encoding="utf-8")
-        _print(f"  [green]✓[/] Created config.toml")
+        _print("  [green]✓[/] Created config.toml")
     else:
-        _print(f"  [dim]  config.toml already exists, skipping[/]")
+        _print("  [dim]  config.toml already exists, skipping[/]")
 
     # Write system prompt
     prompt_dir = workspace / "prompts"
@@ -210,12 +209,12 @@ def init(dir: str):
         src = Path(__file__).parent / "prompts" / "system.md"
         if src.exists():
             system_prompt_path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-            _print(f"  [green]✓[/] Created prompts/system.md")
+            _print("  [green]✓[/] Created prompts/system.md")
 
     # Write starter knowledge files
     _write_starter_knowledge(workspace / "knowledge")
 
-    _print(f"\n  [bold green]✓ Workspace ready![/] Run [cyan]openbrep run \"your task\"[/] to start.\n")
+    _print("\n  [bold green]✓ Workspace ready![/] Run [cyan]openbrep run \"your task\"[/] to start.\n")
 
 
 @cli.command()
@@ -344,16 +343,15 @@ def doctor(config_path):
 def show_config(config_path):
     """Display current configuration."""
     config = GDLAgentConfig.load(config_path)
-    _print(f"\n[bold]Configuration[/]\n")
+    _print("\n[bold]Configuration[/]\n")
     _print(config.to_toml_string())
 
     # Show compiler status
-    from openbrep.config import _auto_detect_converter
     converter = config.compiler.path or _auto_detect_converter()
     if converter and Path(converter).is_file():
         _print(f"[green]✓ LP_XMLConverter:[/] {converter}")
     else:
-        _print(f"[red]✗ LP_XMLConverter:[/] Not found")
+        _print("[red]✗ LP_XMLConverter:[/] Not found")
 
 
 # ── Factory helpers ───────────────────────────────────────────────────

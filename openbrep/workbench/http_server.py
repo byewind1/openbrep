@@ -12,7 +12,6 @@ import json
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlparse
 
 from openbrep.workbench_api import _default_session, route_rpc

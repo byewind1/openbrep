@@ -278,12 +278,9 @@ def sweep_parameter_observations(
     if project is None:
         return report
 
-    from openbrep.hsf_project import ScriptType
     from openbrep.gdl_previewer import evaluate_parameter_environment, preview_3d_script
-    from openbrep.parameter_observation import (
-        classify_parameter_roles,
-        select_alternative_value,
-    )
+    from openbrep.hsf_project import ScriptType
+    from openbrep.parameter_observation import classify_parameter_roles, select_alternative_value
     from openbrep.workbench.project_parameter_service import (
         parameter_values,
         parse_values_declarations,

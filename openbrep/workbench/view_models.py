@@ -8,7 +8,6 @@ import re
 
 from openbrep.gdl_sanitizer import sanitize_llm_script_output
 
-
 _PARAM_TYPE_RE = re.compile(
     r'^\s*(Length|Angle|RealNum|Integer|Boolean|String|PenColor|FillPattern|LineType|Material)'
     r'\s+\w+\s*=',
