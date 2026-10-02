@@ -2507,59 +2507,24 @@ class TaskPipeline:
                 revision_warnings.append(before_revision_warning)
         return before_revision_id, revision_warnings
 
-    def _handle_script_update(self, request: TaskRequest) -> TaskResult:
-        """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
-        llm = self._make_llm(request)
-        compiler = self._make_compiler()
-        clean_instruction, syntax_report = _normalize_modify_request(request)
+    def _modify_compile_with_repair(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        compiler,
+        agent: GDLAgent,
+        cleaned: dict,
+        lint_summary: str,
+        clean_instruction: str,
+        knowledge: str,
+        skills_text: str,
+        on_event: Callable,
+    ) -> tuple[Optional[CompileResult], Optional[str], str, bool, dict, str]:
+        """编译验证 + 失败自动修复（最多 2 轮，含错误学习与图谱诊断）。
 
-        # Prepare project — create empty one if none provided
-        project = request.project
-        if project is None:
-            gsm_name = request.gsm_name or "untitled"
-            project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
-        request.project = project
-        assembled_context = self._assemble_context(
-            request,
-            project,
-            instruction=clean_instruction,
-            include_modify_rules=True,
-        )
-        knowledge = assembled_context.generation_context
-        skills_text = assembled_context.skills_text
-        self._record_user_error_learning(request, project, clean_instruction)
-
-        # Snapshot BEFORE state for rule-based summary and optional compile comparison.
-        before_project_snapshot = deepcopy(project)
-        compare_mode = _normalize_compare_compile_mode(request.compare_compile)
-        before_compile_snapshot = _compile_snapshot_for_project(
-            before_project_snapshot,
-            mode=compare_mode,
-            config=self.config,
-            label="before",
-        )
-
-        on_event = request.on_event or (lambda *_: None)
-
-        agent, cleaned, plain_text, lint_summary = self._modify_generate_changes(
-            request, llm, compiler, clean_instruction, syntax_report, project,
-            knowledge, skills_text, on_event,
-        )
-
-        before_revision_id, revision_warnings = self._modify_before_revision(
-            request, project, clean_instruction, cleaned,
-        )
-
-        # Apply changes to project in-place
-        if cleaned:
-            agent._apply_changes(project, cleaned)
-
-        preflight_summary = _run_modify_preflight(clean_instruction, project)
-
-        # Static check
-        from openbrep.static_checker import StaticChecker
-        static_result = StaticChecker().check(project)
-
+        返回 (compile_result, gsm_path, auto_repair_info, graph_powered_repair,
+        cleaned, lint_summary)。
+        """
         # Compile validation
         compile_result: Optional[CompileResult] = None
         gsm_name = request.gsm_name or project.name
@@ -2673,6 +2638,72 @@ class TaskPipeline:
                 logger.warning("Auto-repair attempt round %d failed: %s", _modify_repair_round, exc)
                 auto_repair_info = f"🔧 第 {_modify_repair_round} 轮自动修复尝试失败：{exc}"
                 break
+        return (
+            compile_result,
+            gsm_path,
+            auto_repair_info,
+            _graph_powered_repair,
+            cleaned,
+            lint_summary,
+        )
+
+    def _handle_script_update(self, request: TaskRequest) -> TaskResult:
+        """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
+        llm = self._make_llm(request)
+        compiler = self._make_compiler()
+        clean_instruction, syntax_report = _normalize_modify_request(request)
+
+        # Prepare project — create empty one if none provided
+        project = request.project
+        if project is None:
+            gsm_name = request.gsm_name or "untitled"
+            project = HSFProject.create_new(gsm_name, work_dir=request.work_dir)
+        request.project = project
+        assembled_context = self._assemble_context(
+            request,
+            project,
+            instruction=clean_instruction,
+            include_modify_rules=True,
+        )
+        knowledge = assembled_context.generation_context
+        skills_text = assembled_context.skills_text
+        self._record_user_error_learning(request, project, clean_instruction)
+
+        # Snapshot BEFORE state for rule-based summary and optional compile comparison.
+        before_project_snapshot = deepcopy(project)
+        compare_mode = _normalize_compare_compile_mode(request.compare_compile)
+        before_compile_snapshot = _compile_snapshot_for_project(
+            before_project_snapshot,
+            mode=compare_mode,
+            config=self.config,
+            label="before",
+        )
+
+        on_event = request.on_event or (lambda *_: None)
+
+        agent, cleaned, plain_text, lint_summary = self._modify_generate_changes(
+            request, llm, compiler, clean_instruction, syntax_report, project,
+            knowledge, skills_text, on_event,
+        )
+
+        before_revision_id, revision_warnings = self._modify_before_revision(
+            request, project, clean_instruction, cleaned,
+        )
+
+        # Apply changes to project in-place
+        if cleaned:
+            agent._apply_changes(project, cleaned)
+
+        preflight_summary = _run_modify_preflight(clean_instruction, project)
+
+        # Static check
+        from openbrep.static_checker import StaticChecker
+        static_result = StaticChecker().check(project)
+
+        compile_result, gsm_path, auto_repair_info, _graph_powered_repair, cleaned, lint_summary = self._modify_compile_with_repair(
+            request, project, compiler, agent, cleaned, lint_summary,
+            clean_instruction, knowledge, skills_text, on_event,
+        )
 
         # ── 语义验证 + 语义修复闭环（S1，与 CREATE 共用同一实现）────────────
         # MODIFY / DEBUG / REPAIR 此前完全没有几何验证：编译通过但几何为空 /
