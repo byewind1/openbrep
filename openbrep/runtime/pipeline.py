@@ -1156,6 +1156,42 @@ class TaskPipeline:
                 logger.warning("Vision harness failed, falling back to direct vision: %s", exc)
         return enriched_instruction, vision_extractions, None
 
+    def _plan_gdl_object_phase(
+        self,
+        request: TaskRequest,
+        llm: LLMAdapter,
+        enriched_instruction: str,
+        assembled_context,
+        skills_text: str,
+        codex_kwargs: dict,
+        on_event: Callable,
+    ) -> tuple[Optional[object], str]:
+        """CREATE/IMAGE 的 GDL 对象规划（planner_context + 知识来源合并）。"""
+        object_plan = None
+        if request.intent in ("CREATE", "IMAGE"):
+            on_event("status", {"message": "正在规划 GDL 对象结构…"})
+            object_plan = plan_gdl_object(
+                llm,
+                instruction=enriched_instruction,
+                knowledge=assembled_context.planner_context,
+                skills=skills_text,
+                llm_kwargs=codex_kwargs or None,
+            )
+            object_plan = replace(
+                object_plan,
+                knowledge_sources=_merge_list_values(
+                    object_plan.knowledge_sources,
+                    assembled_context.source_ids,
+                ),
+            )
+            enriched_instruction = (
+                f"{enriched_instruction}\n\n"
+                f"{object_plan.to_prompt()}\n\n"
+                "请严格按上述规划生成可继续工程化修改的 HSF/GDL 源码。"
+            )
+            on_event("object_plan_done", {"object_type": object_plan.object_type})
+        return object_plan, enriched_instruction
+
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
         effective = self._effective_llm_config(request.selection)
@@ -1207,29 +1243,10 @@ class TaskPipeline:
             return early_exit
         # ─────────────────────────────────────────────────────────────────────
 
-        object_plan = None
-        if request.intent in ("CREATE", "IMAGE"):
-            on_event("status", {"message": "正在规划 GDL 对象结构…"})
-            object_plan = plan_gdl_object(
-                llm,
-                instruction=enriched_instruction,
-                knowledge=assembled_context.planner_context,
-                skills=skills_text,
-                llm_kwargs=codex_kwargs or None,
-            )
-            object_plan = replace(
-                object_plan,
-                knowledge_sources=_merge_list_values(
-                    object_plan.knowledge_sources,
-                    assembled_context.source_ids,
-                ),
-            )
-            enriched_instruction = (
-                f"{enriched_instruction}\n\n"
-                f"{object_plan.to_prompt()}\n\n"
-                "请严格按上述规划生成可继续工程化修改的 HSF/GDL 源码。"
-            )
-            on_event("object_plan_done", {"object_type": object_plan.object_type})
+        object_plan, enriched_instruction = self._plan_gdl_object_phase(
+            request, llm, enriched_instruction, assembled_context, skills_text,
+            codex_kwargs, on_event,
+        )
 
         # ── 图谱注入（阶段2）：两层叠加，均有异常保护，失败静默降级 ──────────
         # 层1：API 白名单（全量，来自 gdl_keywords.py，每次 CREATE 都注入）
