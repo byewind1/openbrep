@@ -1425,6 +1425,64 @@ class TaskPipeline:
                 return cleaned, plain_text, lint_summary, hard_fail
         return cleaned, plain_text, lint_summary, None
 
+    def _static_check_and_repair(
+        self,
+        request: TaskRequest,
+        agent: GDLAgent,
+        project: HSFProject,
+        cleaned: dict,
+        lint_summary: str,
+        enriched_instruction: str,
+        knowledge: str,
+        skills_text: str,
+        on_event: Callable,
+    ) -> tuple[object, list, dict, str]:
+        """静态检查：catch undefined_var / forward_decl before returning。
+
+        Only trigger repair for these two checks (uninitialized variable errors).
+        stack_imbalance / block_mismatch are left for the user to fix manually.
+
+        返回 (static_result, undef_errors, cleaned, lint_summary)。
+        """
+        from openbrep.static_checker import StaticChecker
+        static_result = StaticChecker().check(project)
+        undef_errors = [
+            e for e in static_result.errors
+            if e.check_type in ("undefined_var", "forward_decl")
+        ]
+        if undef_errors:
+            error_detail = "\n".join(f"  - [{e.file}] {e.detail}" for e in undef_errors)
+            on_event("status", {"message": f"🔍 发现 {len(undef_errors)} 个变量问题，自动修复中…"})
+            logger.info("Static check found %d undefined/forward-decl errors; triggering repair", len(undef_errors))
+            repair_instruction = (
+                f"{enriched_instruction}\n\n"
+                f"生成后静态检查发现以下变量问题，请修正脚本（只修这些问题，不改其他）：\n"
+                f"{error_detail}"
+            )
+            try:
+                repair_changes, _repair_plain = agent.generate_only(
+                    instruction=repair_instruction,
+                    project=project,
+                    knowledge=knowledge,
+                    skills=skills_text,
+                    include_all_scripts=True,
+                    history=request.history,
+                    # 不重传图片，repair 只需文字上下文
+                )
+                repair_cleaned = (
+                    {k: sanitize_llm_script_output(v, k) for k, v in repair_changes.items()}
+                    if repair_changes else {}
+                )
+                repair_cleaned, repair_lint_summary = _run_gdl_linter(repair_cleaned, on_event=on_event)
+                if repair_cleaned:
+                    agent._apply_changes(project, repair_cleaned)
+                    cleaned.update(repair_cleaned)
+                if repair_lint_summary:
+                    lint_summary = "\n\n".join(part for part in [lint_summary, repair_lint_summary] if part)
+            except Exception as exc:
+                logger.warning("Static-check repair failed: %s", exc)
+        return static_result, undef_errors, cleaned, lint_summary
+
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
         effective = self._effective_llm_config(request.selection)
@@ -1503,46 +1561,10 @@ class TaskPipeline:
         if cleaned:
             agent._apply_changes(project, cleaned)
 
-        # ── Static check: catch undefined_var / forward_decl before returning ──
-        # Only trigger repair for these two checks (uninitialized variable errors).
-        # stack_imbalance / block_mismatch are left for the user to fix manually.
-        from openbrep.static_checker import StaticChecker
-        static_result = StaticChecker().check(project)
-        undef_errors = [
-            e for e in static_result.errors
-            if e.check_type in ("undefined_var", "forward_decl")
-        ]
-        if undef_errors:
-            error_detail = "\n".join(f"  - [{e.file}] {e.detail}" for e in undef_errors)
-            on_event("status", {"message": f"🔍 发现 {len(undef_errors)} 个变量问题，自动修复中…"})
-            logger.info("Static check found %d undefined/forward-decl errors; triggering repair", len(undef_errors))
-            repair_instruction = (
-                f"{enriched_instruction}\n\n"
-                f"生成后静态检查发现以下变量问题，请修正脚本（只修这些问题，不改其他）：\n"
-                f"{error_detail}"
-            )
-            try:
-                repair_changes, _repair_plain = agent.generate_only(
-                    instruction=repair_instruction,
-                    project=project,
-                    knowledge=knowledge,
-                    skills=skills_text,
-                    include_all_scripts=True,
-                    history=request.history,
-                    # 不重传图片，repair 只需文字上下文
-                )
-                repair_cleaned = (
-                    {k: sanitize_llm_script_output(v, k) for k, v in repair_changes.items()}
-                    if repair_changes else {}
-                )
-                repair_cleaned, repair_lint_summary = _run_gdl_linter(repair_cleaned, on_event=on_event)
-                if repair_cleaned:
-                    agent._apply_changes(project, repair_cleaned)
-                    cleaned.update(repair_cleaned)
-                if repair_lint_summary:
-                    lint_summary = "\n\n".join(part for part in [lint_summary, repair_lint_summary] if part)
-            except Exception as exc:
-                logger.warning("Static-check repair failed: %s", exc)
+        static_result, undef_errors, cleaned, lint_summary = self._static_check_and_repair(
+            request, agent, project, cleaned, lint_summary,
+            enriched_instruction, knowledge, skills_text, on_event,
+        )
         # ─────────────────────────────────────────────────────────────────────
 
         # ── CREATE 路径：编译验证 + 多轮自愈闭环 ────────────────────────────
