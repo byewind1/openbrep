@@ -1030,6 +1030,30 @@ class TaskPipeline:
             return cfg
         return replace(cfg, model=selection.model, reasoning_effort=selection.reasoning_effort)
 
+    def _load_request_images(
+        self, request: TaskRequest
+    ) -> tuple[Optional[str], str, list[ImageRef]]:
+        """载入单图旧字段与多图通道（P5a）；仅读取 request，不改会话状态。"""
+        # Load image if provided
+        image_b64: Optional[str] = request.image_b64
+        image_mime = request.image_mime or "image/png"
+        if request.image_path and not image_b64:
+            import base64
+            img_path = Path(request.image_path)
+            if img_path.exists():
+                image_b64 = base64.b64encode(img_path.read_bytes()).decode()
+                if img_path.suffix.lower() in (".jpg", ".jpeg"):
+                    image_mime = "image/jpeg"
+
+        # ── 多图通道（P5a）：仅当 request.images 非空时生效的新路径 ────────
+        # 单图旧字段（image_b64 / image_path）存在时完全走旧路径，不经过这里。
+        multi_images: list[ImageRef] = []
+        if request.images and not image_b64:
+            from openbrep.vision.multi_image import resolve_and_preprocess
+
+            multi_images = resolve_and_preprocess(request.images)
+        return image_b64, image_mime, multi_images
+
     def _handle_gdl(self, request: TaskRequest) -> TaskResult:
         """GDL generation / modification via GDLAgent.generate_only()."""
         effective = self._effective_llm_config(request.selection)
@@ -1069,24 +1093,7 @@ class TaskPipeline:
         knowledge = assembled_context.generation_context
         skills_text = assembled_context.skills_text
 
-        # Load image if provided
-        image_b64: Optional[str] = request.image_b64
-        image_mime = request.image_mime or "image/png"
-        if request.image_path and not image_b64:
-            import base64
-            img_path = Path(request.image_path)
-            if img_path.exists():
-                image_b64 = base64.b64encode(img_path.read_bytes()).decode()
-                if img_path.suffix.lower() in (".jpg", ".jpeg"):
-                    image_mime = "image/jpeg"
-
-        # ── 多图通道（P5a）：仅当 request.images 非空时生效的新路径 ────────
-        # 单图旧字段（image_b64 / image_path）存在时完全走旧路径，不经过这里。
-        multi_images: list[ImageRef] = []
-        if request.images and not image_b64:
-            from openbrep.vision.multi_image import resolve_and_preprocess
-
-            multi_images = resolve_and_preprocess(request.images)
+        image_b64, image_mime, multi_images = self._load_request_images(request)
 
         on_event = request.on_event or (lambda *_: None)
         debug_mode = request.intent == "DEBUG"
