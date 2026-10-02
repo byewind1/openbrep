@@ -240,8 +240,13 @@ def case_compile_multiple_dirty(probe: Probe, root: Path) -> dict[str, Any]:
     probe.edit_script("3d.gdl", "BLOCK A, B, ZZYZX\n! CONTROL_3D\n")
     probe.edit_script("2d.gdl", "PROJECT2 3, 270, 2\n! CONTROL_2D\n")
     probe.page.get_by_test_id("compile-button").click()
+    # 9a20fea 改写 mock 编译文案为 "Mock validation passed (no GSM generated)."；
+    # 旧文案 "Mock compile passed"/"编译通过" 一并兼容。
     probe.page.wait_for_function(
-        "() => document.body.innerText.includes('Mock compile passed') || document.body.innerText.includes('编译通过')",
+        "() => document.body.innerText.includes('Mock compile passed')"
+        " || document.body.innerText.includes('Mock validation passed')"
+        " || document.body.innerText.includes('编译通过')"
+        " || document.body.innerText.includes('Mock 校验通过')",
         timeout=int(probe.timeout * 1000),
     )
     ok = "CONTROL_3D" in (target / "scripts" / "3d.gdl").read_text(encoding="utf-8") and (

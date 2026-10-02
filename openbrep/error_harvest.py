@@ -80,7 +80,9 @@ def _harvest_traces_aggregate(trace_dir: Path) -> dict[str, dict]:
     aggregate: dict[str, dict] = {}
     if not trace_dir.is_dir():
         return aggregate
-    for fp in trace_dir.glob("*.json"):
+    # 文件名排序保证遍历顺序跨平台/跨文件系统确定（ext4 readdir 哈希序
+    # 与 APFS 不同，会让同指纹候选的 example_excerpt 取到不同先见者）。
+    for fp in sorted(trace_dir.glob("*.json")):
         try:
             data = json.loads(fp.read_text(encoding="utf-8"))
         except Exception:
@@ -126,7 +128,8 @@ def harvest_error_lessons(workdir: Path) -> Counter:
     """扫描 workdir 下所有错题本 jsonl，raw_excerpt 按 count 计权（向后兼容）。"""
     aggregate: dict[str, dict] = {}
     if workdir.is_dir():
-        for fp in workdir.rglob("error_lessons.jsonl"):
+        # 与 traces 同理：排序保证跨文件系统的先见者确定性。
+        for fp in sorted(workdir.rglob("error_lessons.jsonl")):
             _merge_aggregate(aggregate, _lessons_file_counter(fp, "workdir_lessons"))
     return Counter({text: entry["count"] for text, entry in aggregate.items()})
 
@@ -161,7 +164,7 @@ def build_candidates(
     aggregate: dict[str, dict] = {}
     _merge_aggregate(aggregate, _harvest_traces_aggregate(trace_dir))
     if workdir.is_dir():
-        for fp in workdir.rglob("error_lessons.jsonl"):
+        for fp in sorted(workdir.rglob("error_lessons.jsonl")):
             _merge_aggregate(aggregate, _lessons_file_counter(fp, "workdir_lessons"))
     _merge_aggregate(
         aggregate,

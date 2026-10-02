@@ -17,7 +17,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SMOKE_EDIT_MARKER = "! browser smoke edit"
 SMOKE_SCRIPT_CONTENT = f"BLOCK A, B, ZZYZX\n{SMOKE_EDIT_MARKER}\n"
@@ -100,7 +99,22 @@ def workbench_markers_ready_script() -> str:
 
 def body_has_mock_compile_result(body: str) -> bool:
     normalized = body.casefold()
-    return "mock compile passed" in normalized or "编译通过" in body
+    # 9a20fea 把 mock 编译日志改写为 "Mock validation passed (no GSM generated)."，
+    # 面板摘要为 "✓ Mock 校验通过（未生成 GSM）"；旧文案一并兼容。
+    return (
+        "mock compile passed" in normalized
+        or "mock validation passed" in normalized
+        or "编译通过" in body
+        or "Mock 校验通过" in body
+    )
+
+
+COMPILE_OK_WAIT_JS = (
+    "() => document.body.innerText.includes('Mock compile passed')"
+    " || document.body.innerText.includes('Mock validation passed')"
+    " || document.body.innerText.includes('编译通过')"
+    " || document.body.innerText.includes('Mock 校验通过')"
+)
 
 
 def body_has_script_save_result(body: str) -> bool:
@@ -321,13 +335,26 @@ def run_smoke(
                         body = page.locator("body").inner_text(timeout=5000)
                         saved_script = (smoke_hsf_dir / "scripts" / "3d.gdl").read_text(encoding="utf-8")
                         save_interaction_ok = body_has_script_save_result(body) and SMOKE_EDIT_MARKER in saved_script
-                        page.get_by_test_id("compile-button").click()
-                        page.wait_for_function(
-                            "() => document.body.innerText.includes('Mock compile passed') || document.body.innerText.includes('编译通过')",
-                            timeout=int(timeout_seconds * 1000),
-                        )
+                        # SF1 统一 Save 是 sourceActionBusy 源操作：save 等待可能在
+                        # flush 日志出现时就满足（操作尚未收尾），此时编译按钮处于
+                        # 禁用窗口，点击可能被吞。带界定的重试点击覆盖该竞态。
+                        compile_ok = False
+                        compile_last_exc: Exception | None = None
+                        for _ in range(3):
+                            page.get_by_test_id("compile-button").click()
+                            try:
+                                page.wait_for_function(
+                                    COMPILE_OK_WAIT_JS,
+                                    timeout=int(timeout_seconds * 1000),
+                                )
+                                compile_ok = True
+                                break
+                            except Exception as exc:  # noqa: BLE001 - 记录后重试
+                                compile_last_exc = exc
+                        if compile_last_exc is not None and not compile_ok:
+                            raise compile_last_exc
                         body = page.locator("body").inner_text(timeout=5000)
-                        compile_interaction_ok = body_has_mock_compile_result(body)
+                        compile_interaction_ok = compile_ok and body_has_mock_compile_result(body)
                     browser.close()
             except Exception as exc:
                 browser_error = f"{type(exc).__name__}: {exc}"
