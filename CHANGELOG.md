@@ -5,6 +5,45 @@ Format: [Semantic Versioning](https://semver.org), entries newest-first.
 
 ---
 
+## [0.10.11] — 2026-10-02
+
+> 完整发布说明见 `docs/releases/v0.10.11.md`。
+
+### 工作台草稿保护（SF1）
+
+- 修复五类丢稿场景（F01–F05）：Save 不再只看当前标签脏、Save As 包含未保存编辑、
+  参数应用不覆盖脚本草稿、打开其他项目前先确认、修订与工作树一致
+- 过期响应隔离（R2）：`saveProject` / `runParameterWrite` / `exportHsfProject` /
+  `saveRevision` 在异步写后与 catch 分支校验项目身份，晚到的旧响应不再污染新项目
+- 新增回归测试：`sourceDraftSafety.test.ts`、`WorkbenchAppDraftSafety.test.tsx`、
+  `useProjectLeaveGuard`（含 10 个 R2 回归用例）
+
+### 模型路由与重试（R 线）
+
+- 角色与分层契约：模型选择携带任务角色与 tier，路由结果作为显式选择传递，
+  请求身份全程保留，配置不可变性钉死
+- 角色级 fallback 重试策略（R5）；pi 模型目录元数据导入（R6）；
+  目录校验器接受集合与此前完全一致（R3b）
+- 多 key 凭据池与按项目路径限制模型（R7，path-scoped model policy）
+- 性能：无技能信号时技能意图检测短路
+
+### 工程质量与 CI
+
+- ruff 门禁进入 CI：`openbrep` + `cli` 清理至零发现后强制执行
+  （E501 豁免 + 棘轮计划；F401 保留 facade 再导出）
+- 错误收割按确定性顺序遍历，修复 ext4（CI）与 APFS 遍历顺序不同的稳定失败；
+  浏览器冒烟对齐现行 mock 编译文案
+- `TaskPipeline` 结构化拆分：`_handle_gdl` 701→104 行、`_handle_script_update`
+  391→72 行，行为不变、benchmark 回放零退化
+
+### 文档
+
+- 回填 ADR 0004（Streamlit 退役）/ 0005（黄金语料回放）/ 0006（Codex 双入口）
+- 14 份过期一次性文档归档至 `docs/archive/`；README / INSTALL / 架构文档
+  澄清 Streamlit 退役现状
+
+---
+
 ## [0.10.10] — 2026-09-21
 
 > 完整发布说明见 `docs/releases/v0.10.10.md`。
