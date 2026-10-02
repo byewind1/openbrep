@@ -2483,6 +2483,30 @@ class TaskPipeline:
         cleaned, lint_summary = _run_gdl_linter(cleaned, on_event=on_event)
         return agent, cleaned, plain_text, lint_summary
 
+    def _modify_before_revision(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        clean_instruction: str,
+        cleaned: dict,
+    ) -> tuple[str | None, list[str]]:
+        """写入前捕获 before revision（回滚与可追溯锚点）。"""
+        before_revision_id: str | None = None
+        revision_warnings: list[str] = []
+        if cleaned:
+            before_revision_id, before_revision_warning = _create_auto_revision(
+                project,
+                message=f"auto: before {(request.intent or 'MODIFY').lower()}",
+                trigger=(request.intent or "MODIFY").lower(),
+                intent=request.intent or "MODIFY",
+                user_instruction=clean_instruction,
+                changed_files=list(cleaned.keys()),
+                parent_revision_id=get_latest_revision_id(project.root) if _can_revision_project(project) else None,
+            )
+            if before_revision_warning:
+                revision_warnings.append(before_revision_warning)
+        return before_revision_id, revision_warnings
+
     def _handle_script_update(self, request: TaskRequest) -> TaskResult:
         """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
         llm = self._make_llm(request)
@@ -2522,20 +2546,9 @@ class TaskPipeline:
             knowledge, skills_text, on_event,
         )
 
-        before_revision_id: str | None = None
-        revision_warnings: list[str] = []
-        if cleaned:
-            before_revision_id, before_revision_warning = _create_auto_revision(
-                project,
-                message=f"auto: before {(request.intent or 'MODIFY').lower()}",
-                trigger=(request.intent or "MODIFY").lower(),
-                intent=request.intent or "MODIFY",
-                user_instruction=clean_instruction,
-                changed_files=list(cleaned.keys()),
-                parent_revision_id=get_latest_revision_id(project.root) if _can_revision_project(project) else None,
-            )
-            if before_revision_warning:
-                revision_warnings.append(before_revision_warning)
+        before_revision_id, revision_warnings = self._modify_before_revision(
+            request, project, clean_instruction, cleaned,
+        )
 
         # Apply changes to project in-place
         if cleaned:
