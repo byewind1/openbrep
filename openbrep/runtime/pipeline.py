@@ -2647,6 +2647,80 @@ class TaskPipeline:
             lint_summary,
         )
 
+    def _modify_semantic_phase(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        agent: GDLAgent,
+        compiler,
+        cleaned: dict,
+        compile_result: Optional[CompileResult],
+        clean_instruction: str,
+        knowledge: str,
+        skills_text: str,
+        gsm_path: Optional[str],
+        lint_summary: str,
+        auto_repair_info: str,
+        on_event: Callable,
+    ):
+        """语义验证 + 语义修复闭环（S1，与 CREATE 共用同一实现）+ 反馈采集。
+
+        MODIFY / DEBUG / REPAIR 此前完全没有几何验证：编译通过但几何为空 /
+        尺寸错 / 参数是哑的都会直接交付。判决者 verify_semantics 是纯确定性
+        previewer，与生成上下文独立（防自我确认）；修复轮接受/回退语义与
+        CREATE 一致：编译（若配置）仍通过且 blocking issue 数严格下降。
+        """
+        from openbrep.runtime.semantic_repair import run_semantic_repair_loop
+        from openbrep.semantic_verifier import verify_semantics
+        semantic_result = verify_semantics(project)
+        _sem_outcome = run_semantic_repair_loop(
+            agent=agent,
+            project=project,
+            cleaned=cleaned,
+            compile_result=compile_result,
+            semantic_result=semantic_result,
+            instruction=clean_instruction,
+            knowledge=knowledge,
+            skills_text=skills_text,
+            history=request.history,
+            compiler=compiler,
+            compiler_configured=bool(self.config.compiler.path),
+            gsm_path=gsm_path,
+            lint_summary=lint_summary,
+            auto_repair_info=auto_repair_info,
+            on_event=on_event,
+            lint_fn=_run_gdl_linter,
+        )
+        cleaned = _sem_outcome.cleaned
+        compile_result = _sem_outcome.compile_result
+        semantic_result = _sem_outcome.semantic_result
+        lint_summary = _sem_outcome.lint_summary
+        auto_repair_info = _sem_outcome.auto_repair_info
+
+        # 反馈信号采集（只采集，best-effort；不改判定）：
+        # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
+        if _sem_outcome.rounds_attempted > 0:
+            self._append_feedback(project.root, {
+                "kind": "semantic_repair_outcome",
+                "summary": (
+                    f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"
+                    f"接受 {_sem_outcome.accepted_rounds} 轮"
+                ),
+                "detail": {
+                    "attempted": _sem_outcome.rounds_attempted,
+                    "accepted": _sem_outcome.accepted_rounds,
+                    "intent": request.intent or "MODIFY",
+                },
+            })
+        return (
+            semantic_result,
+            compile_result,
+            cleaned,
+            lint_summary,
+            auto_repair_info,
+            _sem_outcome,
+        )
+
     def _handle_script_update(self, request: TaskRequest) -> TaskResult:
         """Shared implementation for MODIFY / DEBUG / REPAIR tasks."""
         llm = self._make_llm(request)
@@ -2705,54 +2779,11 @@ class TaskPipeline:
             clean_instruction, knowledge, skills_text, on_event,
         )
 
-        # ── 语义验证 + 语义修复闭环（S1，与 CREATE 共用同一实现）────────────
-        # MODIFY / DEBUG / REPAIR 此前完全没有几何验证：编译通过但几何为空 /
-        # 尺寸错 / 参数是哑的都会直接交付。判决者 verify_semantics 是纯确定性
-        # previewer，与生成上下文独立（防自我确认）；修复轮接受/回退语义与
-        # CREATE 一致：编译（若配置）仍通过且 blocking issue 数严格下降。
-        from openbrep.runtime.semantic_repair import run_semantic_repair_loop
-        from openbrep.semantic_verifier import verify_semantics
-        semantic_result = verify_semantics(project)
-        _sem_outcome = run_semantic_repair_loop(
-            agent=agent,
-            project=project,
-            cleaned=cleaned,
-            compile_result=compile_result,
-            semantic_result=semantic_result,
-            instruction=clean_instruction,
-            knowledge=knowledge,
-            skills_text=skills_text,
-            history=request.history,
-            compiler=compiler,
-            compiler_configured=bool(self.config.compiler.path),
-            gsm_path=gsm_path,
-            lint_summary=lint_summary,
-            auto_repair_info=auto_repair_info,
-            on_event=on_event,
-            lint_fn=_run_gdl_linter,
+        semantic_result, compile_result, cleaned, lint_summary, auto_repair_info, _sem_outcome = self._modify_semantic_phase(
+            request, project, agent, compiler, cleaned, compile_result, clean_instruction,
+            knowledge, skills_text, gsm_path, lint_summary, auto_repair_info, on_event,
         )
-        cleaned = _sem_outcome.cleaned
-        compile_result = _sem_outcome.compile_result
-        semantic_result = _sem_outcome.semantic_result
-        lint_summary = _sem_outcome.lint_summary
-        auto_repair_info = _sem_outcome.auto_repair_info
         # ─────────────────────────────────────────────────────────────────────
-
-        # 反馈信号采集（只采集，best-effort；不改判定）：
-        # 语义修复闭环实际跑了轮次 → semantic_repair_outcome
-        if _sem_outcome.rounds_attempted > 0:
-            self._append_feedback(project.root, {
-                "kind": "semantic_repair_outcome",
-                "summary": (
-                    f"语义修复跑了 {_sem_outcome.rounds_attempted} 轮，"
-                    f"接受 {_sem_outcome.accepted_rounds} 轮"
-                ),
-                "detail": {
-                    "attempted": _sem_outcome.rounds_attempted,
-                    "accepted": _sem_outcome.accepted_rounds,
-                    "intent": request.intent or "MODIFY",
-                },
-            })
 
         compile_comparison: CompileComparison | None = None
         if before_compile_snapshot is not None:
