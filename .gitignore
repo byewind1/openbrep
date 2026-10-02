@@ -63,3 +63,9 @@ scripts/gen_license.py
 scripts/pack_pro.py
 tests/fixtures/blender/make_bookshelf/
 src-tauri/binaries/
+
+# local tool dirs / dev scratch (removal is a maintainer decision)
+.mindfs/
+.understand-anything/
+minimock-mimo-code/
+config.toml.bak*

@@ -228,11 +228,11 @@ python -m pytest tests/test_gdl_previewer.py tests/test_blender_script_importer.
 
 ## Current Baseline
 
-As of 2026-08-13:
+As of 2026-10-02:
 
 ```text
-python tests: 1839 passed, 66 subtests passed
-frontend: 458 passed (vitest) + tsc clean
+python tests: 3098 passed, 87 subtests passed
+frontend: 780 passed (vitest) + tsc clean
 benchmark replay: create/modify zero regression; vision suite 1/3 (recorded baseline)
 ```
 
