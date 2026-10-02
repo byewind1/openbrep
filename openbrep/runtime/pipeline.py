@@ -1483,93 +1483,27 @@ class TaskPipeline:
                 logger.warning("Static-check repair failed: %s", exc)
         return static_result, undef_errors, cleaned, lint_summary
 
-    def _handle_gdl(self, request: TaskRequest) -> TaskResult:
-        """GDL generation / modification via GDLAgent.generate_only()."""
-        effective = self._effective_llm_config(request.selection)
-        llm = self._make_llm(request)
-        compiler = self._make_compiler()
+    def _compile_create_with_repair(
+        self,
+        request: TaskRequest,
+        project: HSFProject,
+        compiler,
+        agent: GDLAgent,
+        cleaned: dict,
+        lint_summary: str,
+        enriched_instruction: str,
+        knowledge: str,
+        skills_text: str,
+        on_event: Callable,
+    ) -> tuple[Optional[CompileResult], str, str, bool, dict, dict, str]:
+        """CREATE 路径：编译验证 + 多轮自愈闭环。
 
-        # D4 + D5：Codex CREATE——Codex 只负责生成 final text（[FILE:] 协议），
-        # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
-        # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
-        # 分派与 turn 层临时只读 cwd 隔离）。D5 起带图 CREATE 走同一通道：
-        # 图经 Vision Harness 提取 → 用户确认（confirm_extraction 早退）→ 确认后
-        # 生成时把授权图物化进 turn 临时 cwd（localImage，见 provider.chat），
-        # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
-        # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
-        codex_kwargs: dict = {}
-        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
-            codex_kwargs = {
-                "codex_intent": "CREATE",
-                "codex_should_cancel": request.should_cancel,
-                "codex_on_event": request.on_event,
-                # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
-                # provider.chat 运行时刻再校验支持性，fail closed）。
-                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
-                "codex_reasoning_effort": effective.codex_reasoning_effort(),
-            }
+        仅当真实编译器（LP_XMLConverter）已配置时执行；
+        未配置时明确标记 SKIPPED_NO_COMPILER，不再返回含糊的 NOT_RUN。
 
-        # Ensure project exists
-        project = request.project
-        if project is None:
-            gsm_name = request.gsm_name or "untitled"
-            project = HSFProject.create_new(
-                gsm_name,
-                work_dir=request.work_dir,
-            )
-        request.project = project
-        assembled_context = self._assemble_context(request, project)
-        knowledge = assembled_context.generation_context
-        skills_text = assembled_context.skills_text
-
-        image_b64, image_mime, multi_images = self._load_request_images(request)
-
-        on_event = request.on_event or (lambda *_: None)
-        debug_mode = request.intent == "DEBUG"
-
-        enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
-            request, project, llm, codex_kwargs, image_b64, image_mime, multi_images, on_event,
-        )
-        if early_exit is not None:
-            return early_exit
-        # ─────────────────────────────────────────────────────────────────────
-
-        object_plan, enriched_instruction = self._plan_gdl_object_phase(
-            request, llm, enriched_instruction, assembled_context, skills_text,
-            codex_kwargs, on_event,
-        )
-
-        enriched_instruction, _graph_constraint_injected = self._inject_generation_constraints(
-            enriched_instruction, request.user_input, on_event,
-        )
-
-        agent, cleaned, plain_text, lint_summary = self._generate_with_agent(
-            request, project, llm, compiler, codex_kwargs, on_event, debug_mode,
-            enriched_instruction, knowledge, skills_text, image_b64, image_mime,
-            multi_images,
-        )
-
-        cleaned, plain_text, lint_summary, hard_fail = self._retry_zero_create_output(
-            request, agent, project, cleaned, plain_text, lint_summary,
-            enriched_instruction, knowledge, skills_text, debug_mode,
-            image_b64, image_mime, multi_images, on_event, llm,
-        )
-        if hard_fail is not None:
-            return hard_fail
-
-        # Apply changes to the project in-place
-        if cleaned:
-            agent._apply_changes(project, cleaned)
-
-        static_result, undef_errors, cleaned, lint_summary = self._static_check_and_repair(
-            request, agent, project, cleaned, lint_summary,
-            enriched_instruction, knowledge, skills_text, on_event,
-        )
-        # ─────────────────────────────────────────────────────────────────────
-
-        # ── CREATE 路径：编译验证 + 多轮自愈闭环 ────────────────────────────
-        # 仅当真实编译器（LP_XMLConverter）已配置时执行；
-        # 未配置时明确标记 SKIPPED_NO_COMPILER，不再返回含糊的 NOT_RUN。
+        返回 (compile_result, compile_not_run_reason, auto_repair_info,
+        graph_powered_repair, create_metadata, cleaned, lint_summary)。
+        """
         compile_result: Optional[CompileResult] = None
         auto_repair_info = ""
         _graph_powered_repair = False
@@ -1711,6 +1645,104 @@ class TaskPipeline:
             except Exception as exc:
                 logger.warning("CREATE compile verification failed: %s", exc)
                 compile_not_run_reason = f"编译调用异常：{exc}"
+        return (
+            compile_result,
+            compile_not_run_reason,
+            auto_repair_info,
+            _graph_powered_repair,
+            create_metadata,
+            cleaned,
+            lint_summary,
+        )
+
+    def _handle_gdl(self, request: TaskRequest) -> TaskResult:
+        """GDL generation / modification via GDLAgent.generate_only()."""
+        effective = self._effective_llm_config(request.selection)
+        llm = self._make_llm(request)
+        compiler = self._make_compiler()
+
+        # D4 + D5：Codex CREATE——Codex 只负责生成 final text（[FILE:] 协议），
+        # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
+        # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
+        # 分派与 turn 层临时只读 cwd 隔离）。D5 起带图 CREATE 走同一通道：
+        # 图经 Vision Harness 提取 → 用户确认（confirm_extraction 早退）→ 确认后
+        # 生成时把授权图物化进 turn 临时 cwd（localImage，见 provider.chat），
+        # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
+        # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
+        codex_kwargs: dict = {}
+        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
+            codex_kwargs = {
+                "codex_intent": "CREATE",
+                "codex_should_cancel": request.should_cancel,
+                "codex_on_event": request.on_event,
+                # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
+                # provider.chat 运行时刻再校验支持性，fail closed）。
+                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
+                "codex_reasoning_effort": effective.codex_reasoning_effort(),
+            }
+
+        # Ensure project exists
+        project = request.project
+        if project is None:
+            gsm_name = request.gsm_name or "untitled"
+            project = HSFProject.create_new(
+                gsm_name,
+                work_dir=request.work_dir,
+            )
+        request.project = project
+        assembled_context = self._assemble_context(request, project)
+        knowledge = assembled_context.generation_context
+        skills_text = assembled_context.skills_text
+
+        image_b64, image_mime, multi_images = self._load_request_images(request)
+
+        on_event = request.on_event or (lambda *_: None)
+        debug_mode = request.intent == "DEBUG"
+
+        enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
+            request, project, llm, codex_kwargs, image_b64, image_mime, multi_images, on_event,
+        )
+        if early_exit is not None:
+            return early_exit
+        # ─────────────────────────────────────────────────────────────────────
+
+        object_plan, enriched_instruction = self._plan_gdl_object_phase(
+            request, llm, enriched_instruction, assembled_context, skills_text,
+            codex_kwargs, on_event,
+        )
+
+        enriched_instruction, _graph_constraint_injected = self._inject_generation_constraints(
+            enriched_instruction, request.user_input, on_event,
+        )
+
+        agent, cleaned, plain_text, lint_summary = self._generate_with_agent(
+            request, project, llm, compiler, codex_kwargs, on_event, debug_mode,
+            enriched_instruction, knowledge, skills_text, image_b64, image_mime,
+            multi_images,
+        )
+
+        cleaned, plain_text, lint_summary, hard_fail = self._retry_zero_create_output(
+            request, agent, project, cleaned, plain_text, lint_summary,
+            enriched_instruction, knowledge, skills_text, debug_mode,
+            image_b64, image_mime, multi_images, on_event, llm,
+        )
+        if hard_fail is not None:
+            return hard_fail
+
+        # Apply changes to the project in-place
+        if cleaned:
+            agent._apply_changes(project, cleaned)
+
+        static_result, undef_errors, cleaned, lint_summary = self._static_check_and_repair(
+            request, agent, project, cleaned, lint_summary,
+            enriched_instruction, knowledge, skills_text, on_event,
+        )
+        # ─────────────────────────────────────────────────────────────────────
+
+        compile_result, compile_not_run_reason, auto_repair_info, _graph_powered_repair, create_metadata, cleaned, lint_summary = self._compile_create_with_repair(
+            request, project, compiler, agent, cleaned, lint_summary,
+            enriched_instruction, knowledge, skills_text, on_event,
+        )
         # ─────────────────────────────────────────────────────────────────────
 
         # ── 语义验证（Phase 1）：轻量 previewer 检查几何是否非空/非退化、
