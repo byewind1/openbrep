@@ -21,6 +21,9 @@ OpenBrep 是面向 Archicad 高阶用户和 GDL 开发者的 AI 辅助 GDL 工�
 - [ADR 0001: HSF 项目目录是 OpenBrep 的源格式](adr/0001-hsf-as-source.zh-CN.md)
 - [ADR 0002: AI 生成写入由 generation service 边界承接](adr/0002-generation-service-boundary.zh-CN.md)
 - [ADR 0003: 自定义 Skill 是用户经验的可追溯输入](adr/0003-custom-skill-workflow.zh-CN.md)
+- [ADR 0004: React 工作台是唯一 shell，Streamlit UI 退役](adr/0004-react-workbench-only-shell.zh-CN.md)
+- [ADR 0005: benchmark 黄金语料密封化与"prompt 变化即重录"判据](adr/0005-benchmark-golden-corpus-replay.zh-CN.md)
+- [ADR 0006: Codex 双入口（local / managed）](adr/0006-codex-dual-entry.zh-CN.md)
 
 功能基本定型后的长期治理路径见：[OpenBrep 顶级架构优化路径](ARCHITECTURE_TOP_LEVEL_PATH.zh-CN.md)。
 
