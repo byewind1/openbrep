@@ -1192,63 +1192,15 @@ class TaskPipeline:
             on_event("object_plan_done", {"object_type": object_plan.object_type})
         return object_plan, enriched_instruction
 
-    def _handle_gdl(self, request: TaskRequest) -> TaskResult:
-        """GDL generation / modification via GDLAgent.generate_only()."""
-        effective = self._effective_llm_config(request.selection)
-        llm = self._make_llm(request)
-        compiler = self._make_compiler()
-
-        # D4 + D5：Codex CREATE——Codex 只负责生成 final text（[FILE:] 协议），
-        # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
-        # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
-        # 分派与 turn 层临时只读 cwd 隔离）。D5 起带图 CREATE 走同一通道：
-        # 图经 Vision Harness 提取 → 用户确认（confirm_extraction 早退）→ 确认后
-        # 生成时把授权图物化进 turn 临时 cwd（localImage，见 provider.chat），
-        # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
-        # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
-        codex_kwargs: dict = {}
-        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
-            codex_kwargs = {
-                "codex_intent": "CREATE",
-                "codex_should_cancel": request.should_cancel,
-                "codex_on_event": request.on_event,
-                # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
-                # provider.chat 运行时刻再校验支持性，fail closed）。
-                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
-                "codex_reasoning_effort": effective.codex_reasoning_effort(),
-            }
-
-        # Ensure project exists
-        project = request.project
-        if project is None:
-            gsm_name = request.gsm_name or "untitled"
-            project = HSFProject.create_new(
-                gsm_name,
-                work_dir=request.work_dir,
-            )
-        request.project = project
-        assembled_context = self._assemble_context(request, project)
-        knowledge = assembled_context.generation_context
-        skills_text = assembled_context.skills_text
-
-        image_b64, image_mime, multi_images = self._load_request_images(request)
-
-        on_event = request.on_event or (lambda *_: None)
-        debug_mode = request.intent == "DEBUG"
-
-        enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
-            request, project, llm, codex_kwargs, image_b64, image_mime, multi_images, on_event,
-        )
-        if early_exit is not None:
-            return early_exit
-        # ─────────────────────────────────────────────────────────────────────
-
-        object_plan, enriched_instruction = self._plan_gdl_object_phase(
-            request, llm, enriched_instruction, assembled_context, skills_text,
-            codex_kwargs, on_event,
-        )
-
-        # ── 图谱注入（阶段2）：两层叠加，均有异常保护，失败静默降级 ──────────
+    def _inject_generation_constraints(
+        self,
+        enriched_instruction: str,
+        user_input: str,
+        on_event: Callable,
+    ) -> tuple[str, bool]:
+        """图谱注入（阶段2）：层1 API 白名单 + 层2 BIM 概念约束，两层叠加，
+        均有异常保护，失败静默降级。返回 (enriched_instruction, 白名单是否注入)。
+        """
         # 层1：API 白名单（全量，来自 gdl_keywords.py，每次 CREATE 都注入）
         #      解决"幻觉命令名"问题——LLM 不可能使用列表外的命令
         # 层2：BIM 概念约束（仅当意图命中图谱别名时）
@@ -1313,7 +1265,7 @@ class TaskPipeline:
             if _graph_constraint:
                 enriched_instruction = f"{enriched_instruction}\n\n{_graph_constraint}"
                 on_event("status", {"message": "📐 图谱概念约束已注入"})
-                logger.info("[graph] concept constraint injected for intent: %s", request.user_input[:60])
+                logger.info("[graph] concept constraint injected for intent: %s", user_input[:60])
         except Exception as _graph_exc:
             logger.debug("Graph concept constraint injection skipped: %s", _graph_exc)
 
@@ -1325,7 +1277,67 @@ class TaskPipeline:
                 "禁止在 3D 脚本中使用 2D 专属命令（如 LINE2、RECT2、CIRCLE2、"
                 "ARC2、HOTSPOT2、POLY2、PROJECT2）。"
             )
+        return enriched_instruction, _graph_constraint_injected
+
+    def _handle_gdl(self, request: TaskRequest) -> TaskResult:
+        """GDL generation / modification via GDLAgent.generate_only()."""
+        effective = self._effective_llm_config(request.selection)
+        llm = self._make_llm(request)
+        compiler = self._make_compiler()
+
+        # D4 + D5：Codex CREATE——Codex 只负责生成 final text（[FILE:] 协议），
+        # [FILE:] 解析 / HSFProject 落盘 / 命名 / 编译 / 静态检查 / 语义验证 /
+        # 修复 / delivery gate 全部由 OpenBrep 负责（见 llm.py codex_intent="CREATE"
+        # 分派与 turn 层临时只读 cwd 隔离）。D5 起带图 CREATE 走同一通道：
+        # 图经 Vision Harness 提取 → 用户确认（confirm_extraction 早退）→ 确认后
+        # 生成时把授权图物化进 turn 临时 cwd（localImage，见 provider.chat），
+        # 绝不把用户路径转发给 app-server。codex kwargs 只注入 CREATE/IMAGE
+        # 意图（含提取与生成）；MODIFY/DEBUG 不注入 → llm.py 保持 fail closed。
+        codex_kwargs: dict = {}
+        if is_codex_qualified_model(effective.model) and request.intent in ("CREATE", "IMAGE"):
+            codex_kwargs = {
+                "codex_intent": "CREATE",
+                "codex_should_cancel": request.should_cancel,
+                "codex_on_event": request.on_event,
+                # D6：Fixed 模式 reasoning effort（"" = 不覆盖模型默认；
+                # provider.chat 运行时刻再校验支持性，fail closed）。
+                # R4：Auto 路由的 effort 来自显式选择，同样不写回配置。
+                "codex_reasoning_effort": effective.codex_reasoning_effort(),
+            }
+
+        # Ensure project exists
+        project = request.project
+        if project is None:
+            gsm_name = request.gsm_name or "untitled"
+            project = HSFProject.create_new(
+                gsm_name,
+                work_dir=request.work_dir,
+            )
+        request.project = project
+        assembled_context = self._assemble_context(request, project)
+        knowledge = assembled_context.generation_context
+        skills_text = assembled_context.skills_text
+
+        image_b64, image_mime, multi_images = self._load_request_images(request)
+
+        on_event = request.on_event or (lambda *_: None)
+        debug_mode = request.intent == "DEBUG"
+
+        enriched_instruction, vision_extractions, early_exit = self._run_vision_pre_analysis(
+            request, project, llm, codex_kwargs, image_b64, image_mime, multi_images, on_event,
+        )
+        if early_exit is not None:
+            return early_exit
         # ─────────────────────────────────────────────────────────────────────
+
+        object_plan, enriched_instruction = self._plan_gdl_object_phase(
+            request, llm, enriched_instruction, assembled_context, skills_text,
+            codex_kwargs, on_event,
+        )
+
+        enriched_instruction, _graph_constraint_injected = self._inject_generation_constraints(
+            enriched_instruction, request.user_input, on_event,
+        )
 
         agent = GDLAgent(
             llm=llm,
