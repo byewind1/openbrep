@@ -23,7 +23,6 @@ from typing import Any
 
 from openbrep.config import (
     CODEX_PROVIDER_NAME,
-    PROVIDER_PROFILES,
     _normalize_api_mode,
     iter_custom_provider_model_entries,
     normalize_provider_entry,
@@ -35,7 +34,7 @@ from openbrep.workbench.config_commit import (
     file_revision,
     resolve_api_key_update,
 )
-from openbrep.workbench.config_port import export_llm_config
+from openbrep.workbench.config_port import export_llm_config, reserved_provider_names
 from openbrep.workbench.credential_status import (
     credential_status,
     has_credential_pool,
@@ -121,13 +120,6 @@ def provider_info(entry: dict, config, codex_available: bool | None = None) -> d
     }
 
 
-def reserved_provider_names() -> set[str]:
-    """不可被新条目占用的保留名：openai-codex 与官方 profile 名（小写）。"""
-    names = {profile.name.lower() for profile in PROVIDER_PROFILES}
-    names.add(CODEX_PROVIDER_NAME.lower())
-    return names
-
-
 def locate_provider_entry(providers: list[dict], name: str) -> dict | None:
     """按解析器同口径（大小写不敏感）定位条目；无则 None。"""
     target = str(name or "").strip().lower()
@@ -191,6 +183,8 @@ class ProviderSettingsService:
             return self.update_provider(body)
         if method == "POST" and route == "/api/settings/llm/providers/delete":
             return self.delete_provider(body)
+        if method == "POST" and route == "/api/settings/llm/import":
+            return self.import_providers(body)
         if method == "POST" and route == "/api/settings/llm/providers/discover-models":
             # 卡08：无锁路由（request_gate 例外）——只读配置/只操作草稿副本，
             # 绝不 select 凭据池、不触碰 session/project 状态。
@@ -269,6 +263,55 @@ class ProviderSettingsService:
             self._apply_update_to_entry(entry, provider_req)
 
         return self._commit(mutate, expected_revision=str(body.get("expected_revision")), name=name)
+
+    def import_providers(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/settings/llm/import：两段式导入（confirm=false 预览 / true 提交）。
+
+        合同：预览纯读零写入；提交在会话锁内经卡00 原语复查 expected_revision
+        后原子落盘（绝不把预览时的旧配置直接写入）；codex/保留名条目 skipped；
+        key 缺省/空保留、显式非空替换；错误与 diff 文本过脱敏。
+        """
+        from openbrep.workbench.config_port import apply_import, plan_import
+
+        content = body.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return {"ok": False, "code": "invalid_request", "error": "content 必填（TOML 文本）。"}
+        confirm = bool(body.get("confirm"))
+
+        if not confirm:
+            plan = plan_import(self.session.config, content)
+            return {
+                "ok": True,
+                "confirm": False,
+                "revision": file_revision(self.session.config_path),
+                **plan,
+            }
+
+        expected = body.get("expected_revision")
+        if expected is None:
+            return {"ok": False, "code": "invalid_request", "error": "提交导入必须携带 expected_revision（来自预览响应）。"}
+
+        def mutate(working: Any) -> None:
+            # 锁内以 working 副本重算计划并应用——预览后配置被外部修改时，
+            # revision 检查先行拒绝；同进程内其余变更由会话锁排除。
+            apply_import(working, content)
+
+        result = commit_config_change(
+            self.session.config,
+            self.session.config_path,
+            expected_revision=str(expected),
+            mutate=mutate,
+            on_committed=self._publish_config,
+        )
+        if not result.get("ok"):
+            return result
+        config = self.session.config
+        return {
+            "ok": True,
+            "confirm": True,
+            "providers": [provider_info(item, config) for item in config.llm.providers],
+            "revision": result["revision"],
+        }
 
     def delete_provider(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST /api/settings/llm/providers/delete：引用命中即拒绝并列出全部引用点。
