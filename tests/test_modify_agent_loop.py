@@ -215,8 +215,7 @@ class TestAgentLoopFlow(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertIn("scripts/3d.gdl", result.scripts)
         plan_events = [e for e in events if e["type"] == "plan"]
-        self.assertEqual(len(plan_events), 1)
-        self.assertEqual(plan_events[0]["data"].get("intent_summary"), "给书架加一层层板")
+        self.assertEqual(len(plan_events), 0)  # internal planning no longer displays a user approval card
         # planning + 3 轮主循环 = 4 次 LLM 调用
         self.assertEqual(mock_llm.call_count, 4)
         # plan 被注入对话历史，最后一次调用应包含计划文本

@@ -408,6 +408,12 @@ class WorkbenchProjectSessionService:
         prompt = str(body.get("prompt") or body.get("message") or "").strip()
         if not prompt:
             return {"ok": False, "error": "Create prompt is empty."}
+        from openbrep.runtime.turn_policy import explicit_policy
+        policy = explicit_policy(prompt)
+        supplied = body.get("execution_policy")
+        mode = supplied.get("mode") if isinstance(supplied, dict) else None
+        if body.get("confirm_plan") or mode in {"consult", "plan"} or (policy and policy.mode in {"consult", "plan"} and not body.get("confirmed_plan")):
+            return {"ok": False, "code": "READ_ONLY_TURN", "error": "请通过统一顾问入口请求咨询或计划；项目未创建。"}
         image_payload = validate_image_payload(body)
         if not image_payload["ok"]:
             return {"ok": False, "error": image_payload["error"]}
@@ -451,6 +457,9 @@ class WorkbenchProjectSessionService:
 
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
+            callback = body.get("_turn_on_event")
+            if callable(callback):
+                callback(event_type, data)
 
         pipeline = self.session.pipeline_class(trace_dir="./traces")
         if hasattr(pipeline, "config"):
@@ -491,6 +500,9 @@ class WorkbenchProjectSessionService:
                 assistant_settings=str(body.get("assistant_settings") or self.session.assistant_settings),
                 history=list(body.get("history") or []),
                 on_event=on_event,
+                execution_policy=body.get("execution_policy"),
+                conversation_context=body.get("conversation_context"),
+                should_cancel=body.get("_turn_should_cancel") if callable(body.get("_turn_should_cancel")) else None,
                 # P5d-2 提取确认门：确认/重发状态透传给 pipeline
                 confirm_extraction=confirm_extraction,
                 confirmed_extractions=confirmed_extractions,

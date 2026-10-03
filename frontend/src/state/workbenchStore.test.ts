@@ -1,6 +1,13 @@
 import type { AssistantMessage, AssistantStreamEvent } from '../api/types'
 import type { WorkbenchApi } from './workbenchStore'
-import { createWorkbenchStore } from './workbenchStore'
+import { createWorkbenchStore as createStore } from './workbenchStore'
+
+// These characterization tests explicitly exercise the legacy entry.
+function createWorkbenchStore(api: WorkbenchApi) {
+  const store = createStore(api)
+  store.setState({ llmSettings: { ...store.getState().llmSettings, conversation_entry: 'legacy' } })
+  return store
+}
 
 test('initial load discovers Archicad before the preview source is used', async () => {
   const api = makeApi()
@@ -14,6 +21,7 @@ test('initial load discovers Archicad before the preview source is used', async 
 
 function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
   return {
+    conversationTurn: async () => ({ ok: false, error: 'Unified entry is not mocked in this legacy test.' }),
     fetchSnapshot: async () => ({
       project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' },
       parameters: [{ name: 'A', type_tag: 'Length', description: 'Width', value: '1.0', is_fixed: true }],
@@ -1855,6 +1863,7 @@ test('reloadRuntimeSettings refreshes compiler and llm settings', async () => {
         ok: true,
         compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
         llm: {
+          conversation_entry: 'legacy',
           model: 'gpt-4.1-mini',
           models: ['gpt-4.1-mini'],
           api_key: 'openai-key',
@@ -1897,6 +1906,7 @@ test('pollConfigRevision refreshes llm settings but not compiler when config fil
         ok: true,
         compiler: { mode: 'lp', converter_path: '/Applications/LP_XMLConverter', output_dir: '' },
         llm: {
+          conversation_entry: 'legacy',
           model: 'deepseek-chat',
           models: ['deepseek-chat'],
           api_key: 'deepseek-key',
@@ -3739,6 +3749,23 @@ test('sendChat modify requests plan and awaits confirmation (V3)', async () => {
   expect(last?.thinkingSteps?.[0]?.userVisibleChanges).toEqual(PENDING_PLAN.user_visible_changes)
 })
 
+test('S0 characterization: source drafts flush before the legacy modification plan request', async () => {
+  const calls: string[] = []
+  const store = createWorkbenchStore(makeApi({
+    requestModifyPlan: async () => {
+      calls.push('plan')
+      return { ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }
+    },
+  }))
+  await store.getState().load()
+  store.setState({ flushDirtyScripts: async () => {
+    calls.push('flush')
+    return { ok: true, didSave: true }
+  } })
+  await store.getState().sendChat('给书架加一层层板')
+  expect(calls).toEqual(['flush', 'plan'])
+})
+
 test('confirmPendingPlan(true) runs the confirmed execution stream (V3)', async () => {
   let confirmArgs: [boolean, boolean] | null = null
   const store = createWorkbenchStore(
@@ -4321,6 +4348,7 @@ test('sendChat forwards modify intent for codex model without a client-side gate
         warnings: [],
         compiler: { mode: 'mock', converter_path: '', output_dir: '' },
         llm: {
+          conversation_entry: 'legacy',
           model: 'openai-codex/gpt-5.6-luna',
           models: ['openai-codex/gpt-5.6-luna'],
           api_key: '',
@@ -4357,6 +4385,7 @@ test('sendChat forwards debug intent for codex model without a client-side gate'
         warnings: [],
         compiler: { mode: 'mock', converter_path: '', output_dir: '' },
         llm: {
+          conversation_entry: 'legacy',
           model: 'openai-codex/gpt-5.6-luna',
           models: ['openai-codex/gpt-5.6-luna'],
           api_key: '',
@@ -4568,6 +4597,7 @@ test('switchSessionLlmModel updates llmSettings from the session route response'
         return {
           ok: true,
           llm: {
+          conversation_entry: 'legacy',
             model: 'glm-4-flash',
             session_model: 'glm-4-flash',
             models: [],
@@ -4609,6 +4639,7 @@ test('resetSessionLlmModel sends model=null (clear override)', async () => {
         return {
           ok: true,
           llm: {
+          conversation_entry: 'legacy',
             model: 'deepseek-chat',
             session_model: null,
             models: [],
@@ -4834,4 +4865,85 @@ test('草稿测试通过自动打 tested 点', async () => {
   await store.getState().testLlmDraftConnection({ name: 'relay', api: 'https://x' }, 'relay/m')
 
   expect(store.getState().llmProviderActivity.relay?.tested).toBeGreaterThan(0)
+})
+
+function unifiedStore(conversationTurn: WorkbenchApi['conversationTurn']) {
+  const store = createStore(makeApi({ conversationTurn }))
+  store.setState({ project: { name: 'Chair', source: 'hsf', path: '/workspace/Chair' }, projectEpoch: 3,
+    scriptContents: { '3d.gdl': 'BLOCK 2,2,2' }, dirtyScripts: { '3d.gdl': true } })
+  return store
+}
+
+test('unified advice sends dirty drafts without saving or refreshing project state', async () => {
+  const calls: Record<string, unknown>[] = []
+  const store = unifiedStore(async (body) => {
+    calls.push(body)
+    return { ok: true, result_kind: 'advice', turn_id: 't1', assistant: { kind: 'advisor', reply: '建议', changed_files: [], intent: 'CHAT' } }
+  })
+  const flush = vi.fn(async () => ({ ok: true, didSave: false }))
+  store.setState({ flushDirtyScripts: flush })
+  await store.getState().sendChat('这个参数有什么用')
+  expect(calls).toHaveLength(1)
+  expect(calls[0].draft_scripts).toEqual({ '3d.gdl': 'BLOCK 2,2,2' })
+  expect(flush).not.toHaveBeenCalled()
+  expect(store.getState().dirtyScripts['3d.gdl']).toBe(true)
+  expect(store.getState().previewGhost).toBeNull()
+  expect(store.getState().assistantMessages.at(-1)?.delivery).toBeUndefined()
+})
+
+test('unified execute flushes only after prepare and reuses server token', async () => {
+  const calls: string[] = []
+  const store = unifiedStore(async (body) => {
+    calls.push(String(body.phase))
+    return body.phase === 'prepare'
+      ? { ok: true, result_kind: 'ready_to_execute', turn_id: 'token', task_intent: 'MODIFY' }
+      : { ok: true, result_kind: 'execution', turn_id: 'token', assistant: { kind: 'generate', reply: 'done', changed_files: [], intent: 'MODIFY' } }
+  })
+  store.setState({ flushDirtyScripts: async () => { calls.push('flush'); return { ok: true, didSave: false } } })
+  await store.getState().sendChat('加背板')
+  expect(calls.slice(0, 3)).toEqual(['prepare', 'flush', 'execute'])
+})
+
+test('unified plan and cancellation never flush drafts', async () => {
+  const calls: Record<string, unknown>[] = []
+  const store = unifiedStore(async (body) => {
+    calls.push(body)
+    return body.phase === 'prepare'
+      ? { ok: true, result_kind: 'awaiting_confirmation', turn_id: 'plan-turn', pending_plan: {
+        intent_summary: '背板', user_visible_changes: [], affected_files: [], risk: '', plan_id: 'p1', plan_version: 1 } }
+      : { ok: true, result_kind: 'cancelled', cancelled: true }
+  })
+  const flush = vi.fn(async () => ({ ok: true, didSave: false }))
+  store.setState({ flushDirtyScripts: flush })
+  await store.getState().sendChat('加背板', [], 'plan')
+  expect(calls[0].requested_mode).toBe('plan')
+  expect(store.getState().pendingPlan?.turn_id).toBe('plan-turn')
+  await store.getState().confirmPendingPlan(false)
+  expect(calls[1]).toMatchObject({ phase: 'execute', turn_id: 'plan-turn', approve: false })
+  expect(flush).not.toHaveBeenCalled()
+})
+
+test('unified failed draft save prevents execution', async () => {
+  const calls: string[] = []
+  const store = unifiedStore(async (body) => {
+    calls.push(String(body.phase))
+    return { ok: true, result_kind: 'ready_to_execute', turn_id: 't1', task_intent: 'MODIFY' }
+  })
+  store.setState({ flushDirtyScripts: async () => ({ ok: false, didSave: false }) })
+  await store.getState().sendChat('加背板')
+  expect(calls).toEqual(['prepare'])
+  expect(store.getState().lastError).toContain('草稿保存失败')
+})
+
+test('unified source changed retries prepare at most once', async () => {
+  const calls: string[] = []
+  const store = unifiedStore(async (body) => {
+    calls.push(String(body.phase))
+    return body.phase === 'prepare'
+      ? { ok: true, result_kind: 'ready_to_execute', turn_id: 't1', task_intent: 'MODIFY' }
+      : { ok: false, result_kind: 'failed', code: 'SOURCE_CHANGED', error: 'changed' }
+  })
+  store.setState({ flushDirtyScripts: async () => ({ ok: true, didSave: false }) })
+  await store.getState().sendChat('加背板')
+  expect(calls).toEqual(['prepare', 'execute', 'prepare', 'execute'])
 })

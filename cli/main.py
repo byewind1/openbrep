@@ -1627,4 +1627,6 @@ app.add_typer(memory_app, name="memory")
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     app()

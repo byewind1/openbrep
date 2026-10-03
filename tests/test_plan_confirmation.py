@@ -111,7 +111,7 @@ class TestPipelinePlanConfirmation(unittest.TestCase):
         self.assertEqual(project.get_script(ScriptType.SCRIPT_3D), "BLOCK A, B, ZZYZX\nEND\n")
         self.assertEqual(mock_llm.call_count, 1)
 
-    def test_confirm_plan_true_bad_json_falls_back_and_notes(self):
+    def test_confirm_plan_true_bad_json_fails_closed(self):
         mock_llm = MockLLM(responses=[
             "not json at all",  # 计划调用失败
             {"tool_calls": [{"name": "patch_script", "arguments": {"file_path": "scripts/3d.gdl", "patches": [{"old": "BLOCK A, B, ZZYZX", "new": "BLOCK A, B, ZZYZX\nADDZ ZZYZX\nBLOCK A, B, 0.018\nDEL 1"}]}}]},
@@ -123,9 +123,9 @@ class TestPipelinePlanConfirmation(unittest.TestCase):
         result = pipeline.execute(_modify_request(self.tmp, project=project, confirm_plan=True))
 
         self.assertFalse(result.metadata.get("awaiting_confirmation"))
-        self.assertIn("计划生成失败", result.plain_text)
-        self.assertIn("ADDZ ZZYZX", project.get_script(ScriptType.SCRIPT_3D))
-        self.assertEqual(mock_llm.call_count, 4)
+        self.assertEqual(result.error, "PLAN_GENERATION_FAILED")
+        self.assertNotIn("ADDZ ZZYZX", project.get_script(ScriptType.SCRIPT_3D))
+        self.assertEqual(mock_llm.call_count, 1)
 
     def test_confirmed_plan_injected_without_replan_call(self):
         confirmed = json.loads(_plan_json())
@@ -161,13 +161,13 @@ class TestPipelinePlanConfirmation(unittest.TestCase):
         self.assertEqual(mock_llm.call_count, 3)
         self.assertNotIn("计划生成失败", result.plain_text)
 
-    def test_debug_intent_not_gated(self):
-        # DEBUG 不走确认门：即使 confirm_plan=True 也不出 awaiting
+    def test_debug_intent_also_respects_explicit_plan(self):
+        # Characterization change: confirm_plan applies to DEBUG too.
         mock_llm = MockLLM(responses=["分析完毕，没有问题。"])
         pipeline = _make_pipeline(mock_llm, self.tmp)
         project = _make_project(self.tmp)
         result = pipeline.execute(_modify_request(self.tmp, project=project, intent="DEBUG", confirm_plan=True))
-        self.assertFalse(result.metadata.get("awaiting_confirmation"))
+        self.assertEqual(result.error, "PLAN_GENERATION_FAILED")
 
 
 class TestPendingPlanLifecycle(unittest.TestCase):

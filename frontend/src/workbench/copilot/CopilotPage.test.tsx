@@ -390,7 +390,7 @@ describe('CopilotPage responsive structure (T7)', () => {
     fireEvent.click(screen.getByRole('button', { name: /发送/ }))
 
     // 消息/代码容器：assistant 气泡内存在 .copilot-code，复制按钮与 pre 是 .copilot-code 的子元素
-    await waitFor(() => expect(container.querySelectorAll('.copilot-msg').length).toBeGreaterThan(1))
+    await waitFor(() => expect(container.querySelector('.copilot-code')).toBeTruthy())
     const codeBlock = container.querySelector('.copilot-code')
     expect(codeBlock).toBeTruthy()
     expect(codeBlock!.querySelector('pre')).toBeTruthy()

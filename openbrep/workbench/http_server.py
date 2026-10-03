@@ -110,7 +110,7 @@ class _WorkbenchRequestHandler(BaseHTTPRequestHandler):
             return
 
         ok = payload.get("ok", True)
-        response_status = status or (200 if ok else 404)
+        response_status = status or payload.get("http_status") or (200 if ok else 404)
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(response_status)
         self.send_header("Content-Type", "application/json; charset=utf-8")

@@ -45,7 +45,8 @@ interface WorkbenchRightRailProps {
   onApplyTapirParameters: () => void
   hasProject: boolean
   interruptedContext?: { message: string; intent: string } | null
-  onChat: (message: string, images?: AssistantImageAttachment[]) => void
+  onProposalAction?: (id: string, action: 'select' | 'execute') => void
+  onChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan') => void
   onStop: () => void
   onClearAssistantHistory: () => void
   onDeleteAssistantMessages?: (indices: number[]) => void | Promise<void>
@@ -101,6 +102,7 @@ export function WorkbenchRightRail({
   onApplyTapirParameters,
   hasProject,
   interruptedContext,
+  onProposalAction,
   onChat,
   onStop,
   onClearAssistantHistory,
@@ -210,6 +212,7 @@ export function WorkbenchRightRail({
             hasProject={hasProject}
             interruptedContext={interruptedContext}
             onChat={onChat}
+            onProposalAction={onProposalAction}
             onStop={onStop}
             onClearHistory={onClearAssistantHistory}
             onDeleteMessages={onDeleteAssistantMessages}

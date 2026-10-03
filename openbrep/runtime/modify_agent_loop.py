@@ -270,6 +270,9 @@ def _render_confirmed_plan(plan: dict) -> str:
     if files:
         parts.append("- 影响文件：" + ", ".join(files))
     parts.append(f"- 风险：{plan.get('risk') or '无'}")
+    for field, label in (("constraints", "必须遵守"), ("assumptions", "采用的假设"), ("acceptance_criteria", "验收")):
+        for item in plan.get(field) or []:
+            parts.append(f"- {label}：{item}")
     return "\n".join(parts)
 
 
@@ -301,6 +304,15 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     from openbrep.runtime.pipeline import TaskResult, _normalize_modify_request
     from openbrep.static_checker import StaticChecker
     from openbrep.verification import build_verification_report
+
+    # Direct callers share the pipeline's authorization gate too. In particular,
+    # plan requests must not create an output directory or mutation registry.
+    from openbrep.runtime.turn_policy import explicit_policy
+    policy = explicit_policy(request.user_input)
+    supplied = getattr(request, "execution_policy", None)
+    mode = supplied.get("mode") if isinstance(supplied, dict) else None
+    if (request.confirm_plan and request.confirmed_plan is None) or mode in {"consult", "plan"} or (policy and policy.mode in {"consult", "plan"} and request.confirmed_plan is None):
+        return pipeline.execute(request)
 
     llm = pipeline._make_llm(request)
     compiler = pipeline._make_compiler()
@@ -502,7 +514,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     if request.confirmed_plan is not None:
         # 确认门 approve 后：跳过重新规划，把已确认计划注入对话约束执行
         plan_data = request.confirmed_plan
-        on_event("plan", plan_data)
+        on_event("status", _architect_status("plan"))
         messages.append({"role": "assistant", "content": _render_confirmed_plan(plan_data)})
         messages.append({
             "role": "user",
@@ -523,7 +535,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             llm_calls += 1
             plan_data = _parse_plan_response(plan_response.content or "")
             if plan_data:
-                on_event("plan", plan_data)
+                on_event("status", _architect_status("plan"))
             if request.should_cancel and request.should_cancel():
                 cancelled = True
                 on_event("status", _architect_status("cancel"))

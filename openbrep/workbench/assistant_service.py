@@ -117,6 +117,11 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Assistant message is empty."}
 
+        conversation = getattr(self.session, "conversation_service", None)
+        if conversation is not None and self.session.config.llm.effective_conversation_entry() == "unified":
+            return conversation.handle({**body, "phase": "prepare", "client_turn_id": body.get("client_turn_id") or __import__("uuid").uuid4().hex,
+                                        "requested_mode": "consult", "project_epoch": self.session.project_epoch})
+
         # ST04：显式"沉淀成 skill / 保存为技能"走提案路径，绕过修改代码流程
         if self._is_explicit_skill_request(message):
             return self._explicit_skill_response(message)
@@ -414,6 +419,26 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Generation message is empty."}
 
+        from openbrep.runtime.turn_policy import explicit_policy
+        policy = explicit_policy(message)
+        supplied = body.get("execution_policy")
+        supplied_mode = supplied.get("mode") if isinstance(supplied, dict) else None
+        if supplied_mode == "consult" or (policy is not None and policy.mode == "consult"):
+            if body.get("intent") == "CHAT" and supplied is None:
+                if self.session.source_path is None:
+                    return self.assistant_reply(body)
+                payload = validate_image_payload(body)
+                if not payload["ok"]:
+                    return {"ok": False, "error": payload["error"]}
+                events = []
+                pipeline, request = self._build_generate_pipeline(body, payload, on_event=lambda kind, data: events.append({"type": kind, "data": data}))
+                result = pipeline.execute(request)
+                return {"ok": result.success, "error": result.error,
+                        "assistant": {"kind": "explain", "reply": result.plain_text}, "events": events}
+            return {"ok": False, "code": "READ_ONLY_TURN", "error": "本轮只读，请使用顾问入口。"}
+        if supplied_mode == "plan" or (policy is not None and policy.mode == "plan" and not body.get("confirmed_plan")):
+            body = {**body, "confirm_plan": True}
+
         # ST04：显式 skill 沉淀请求绕开 MODIFY/编译工具链，直接产出持久候选
         if self._is_explicit_skill_request(message):
             return self._explicit_skill_response(message)
@@ -423,7 +448,7 @@ class WorkbenchAssistantService:
             return {"ok": False, "error": gate_error}
 
         # 计划确认门（V3）：仅 GUI MODIFY（非 DEBUG/REPAIR）请求，先出计划等确认
-        if body.get("confirm_plan") and str(body.get("intent") or "MODIFY") == "MODIFY":
+        if body.get("confirm_plan"):
             return self._generate_with_confirmation(body)
 
         if self.session.source_path is None:
@@ -436,10 +461,14 @@ class WorkbenchAssistantService:
 
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
+            callback = body.get("_turn_on_event")
+            if callable(callback):
+                callback(event_type, data)
 
         continue_from = normalize_continue_from(body.get("continue_from"))
         pipeline, request = self._build_generate_pipeline(
-            body, image_payload, on_event=on_event
+            body, image_payload, on_event=on_event,
+            should_cancel=body.get("_turn_should_cancel") if callable(body.get("_turn_should_cancel")) else None,
         )
         result = pipeline.execute(request)
         result = self._merge_continue_from(result, continue_from)
@@ -476,8 +505,7 @@ class WorkbenchAssistantService:
     def _generate_with_confirmation(self, body: dict[str, Any]) -> dict[str, Any]:
         """confirm_plan=True 的 MODIFY 请求：先做一次计划调用，返回 awaiting_confirmation。
 
-        计划调用失败/JSON 不合法 → pipeline 已回落为直接执行（旧行为），
-        本方法原样返回执行结果并带 plan_failed 标记，不卡死用户。
+        计划调用失败/JSON 不合法时返回失败，绝不进入写入收尾。
         """
         gate_error = self._codex_modify_gate(body)
         if gate_error is not None:
@@ -499,8 +527,13 @@ class WorkbenchAssistantService:
         result = self._merge_continue_from(result, continue_from)
         if result.metadata.get("awaiting_confirmation"):
             # 存 session pending_plan（含原始 body 与项目代次，确认时校验不跨项目）
+            from openbrep.source_snapshot import capture_snapshot
+            import uuid
+            bound = {**result.metadata["pending_plan"], "plan_id": uuid.uuid4().hex, "plan_version": 1}
+            result.metadata["pending_plan"] = bound
             self.session.pending_plan = {
-                "plan": result.metadata["pending_plan"],
+                "snapshot": capture_snapshot(self.session.project, self.session.project_epoch),
+                "plan": bound,
                 "body": body,
                 "project_epoch": self.session.project_epoch,
             }
@@ -511,30 +544,10 @@ class WorkbenchAssistantService:
                 "events": events,
             }
 
-        # 计划失败回落 / micro_modify / V1 DSL 命中：直接交付执行结果
-        # skill 效果回写（GUI 侧通道，best-effort）
-        self._safe_skill_outcome(result)
-        if result.project is not None:
-            self.session.project = result.project
-        self.session.project.save_to_disk()
-        # 模式级 skill 提案（best-effort；提炼失败不影响交付）
-        instruction = str(body.get("message") or "").strip()
-        proposal = self._safe_harvest(result, instruction)
-        response: dict[str, Any] = {
-            "ok": True,
-            "assistant": self._generate_assistant_dict(
-                result,
-                instruction=instruction,
-                continue_from=continue_from,
-            ),
-            "preview": preview_payload(self.session.project),
-            "warnings": [],
-            "events": events,
-            "plan_failed": True,
+        return {
+            "ok": False, "code": result.error or "PLAN_GENERATION_FAILED",
+            "error": result.error or "计划生成失败，项目未修改。", "events": events,
         }
-        if proposal:
-            response["skill_proposal"] = proposal
-        return response
 
     def confirm_modify(self, body: dict[str, Any]):
         """POST /api/modify/confirm：审批待确认计划。
@@ -542,12 +555,31 @@ class WorkbenchAssistantService:
         approve=True → 清 pending_plan 并带已确认计划执行（stream=True 走 SSE）；
         approve=False → 清 pending_plan 返回已取消；无 pending → NO_PENDING_PLAN。
         """
+        conversation = getattr(self.session, "conversation_service", None)
+        if conversation is not None and self.session.config.llm.effective_conversation_entry() == "unified":
+            candidates = [t for t in conversation.turns.values() if t.plan and t.state == "pending"]
+            if body.get("plan_id"):
+                candidates = [t for t in candidates if t.plan["plan_id"] == body["plan_id"]]
+            if len(candidates) == 1:
+                turn = candidates[0]
+                return conversation.route({"phase": "execute", "turn_id": turn.turn_id,
+                                           "plan_id": body.get("plan_id", turn.plan["plan_id"]),
+                                           "plan_version": body.get("plan_version", turn.plan["plan_version"]),
+                                           "approve": body.get("approve"), "stream": body.get("stream", False)})
+            if body.get("plan_id"):
+                return {"ok": False, "code": "PLAN_VERSION_MISMATCH", "error": "计划不存在或已失效。"}
         pending = getattr(self.session, "pending_plan", None)
         if pending is None:
             return {"ok": False, "code": "NO_PENDING_PLAN", "error": "没有待确认的修改计划，请先发起一次修改。"}
         if pending.get("project_epoch") != getattr(self.session, "project_epoch", None):
             self.session.pending_plan = None
             return {"ok": False, "code": "NO_PENDING_PLAN", "error": "待确认的修改计划已失效（项目已切换），请重新发起修改。"}
+        plan = pending.get("plan") or {}
+        if body.get("plan_id") is not None and (body["plan_id"] != plan.get("plan_id") or body.get("plan_version") != plan.get("plan_version")):
+            return {"ok": False, "code": "PLAN_VERSION_MISMATCH", "error": "计划版本不匹配。"}
+        snapshot = pending.get("snapshot")
+        if body.get("approve") is True and snapshot is not None and not snapshot.matches(self.session.project, self.session.project_epoch):
+            return {"ok": False, "code": "PLAN_STALE", "error": "源码已变化，请重新生成计划。", "pending_plan": plan}
         self.session.pending_plan = None
         if body.get("approve") is not True:
             # 反馈信号采集（best-effort，不改判定）：用户拒绝计划 → plan_rejected
@@ -655,7 +687,18 @@ class WorkbenchAssistantService:
         workbench_api.route 在锁内调用本方法，因此显式沉淀的候选写入发生在返回
         生成器之前——不会出现"锁已释放、生成器迭代期间项目已切换"的写入漂移。
         """
+        if body.get("confirmed_plan") is not None:
+            return {"ok": False, "code": "PLAN_APPROVAL_REQUIRED", "error": "请通过计划批准入口执行服务端保存的计划。"}
         message = str(body.get("message") or "").strip()
+        from openbrep.runtime.turn_policy import explicit_policy
+        policy = explicit_policy(message)
+        supplied = body.get("execution_policy")
+        mode = supplied.get("mode") if isinstance(supplied, dict) else None
+        if body.get("confirm_plan") or mode in {"consult", "plan"} or (policy and policy.mode in {"consult", "plan"}):
+            result = self.generate_with_assistant({**body, "stream": False})
+            if body.get("stream"):
+                return iter([*result.get("events", []), {"type": "done", "data": result}])
+            return result
         if body.get("stream") and message and self.is_explicit_skill_request(message):
             result = self.generate_with_assistant({**body, "stream": False})
 
@@ -715,6 +758,16 @@ class WorkbenchAssistantService:
         message = str(body.get("message") or "").strip()
         if not message:
             yield {"type": "error", "data": {"error": "Generation message is empty."}}
+            return
+
+        from openbrep.runtime.turn_policy import explicit_policy
+        policy = explicit_policy(message)
+        supplied = body.get("execution_policy")
+        mode = supplied.get("mode") if isinstance(supplied, dict) else None
+        if body.get("confirm_plan") or mode in {"consult", "plan"} or (policy and policy.mode in {"consult", "plan"} and not body.get("confirmed_plan")):
+            result = self.generate_with_assistant({**body, "stream": False})
+            yield from result.get("events", [])
+            yield {"type": "done", "data": result}
             return
 
         # ST04：显式 skill 沉淀请求 → 直接产出候选，不启动 pipeline / 工具链
@@ -833,10 +886,12 @@ class WorkbenchAssistantService:
             should_cancel=should_cancel,
             # agent_loop 默认 None：由 pipeline 按 intent 默认策略启用
             agent_loop=body.get("agent_loop") if "agent_loop" in body else None,
-            # 流式请求默认开启 plan 阶段，让前端可展示可审查计划；非流式保持兼容
-            agent_loop_plan=body.get("agent_loop_plan", should_cancel is not None),
-            # 计划确认门（V3）：仅 GUI MODIFY 请求置 True；确认后经 confirmed_plan 注入
-            confirm_plan=bool(body.get("confirm_plan")) and intent == "MODIFY",
+            # Internal planning is opt-in; streaming alone never grants visible planning.
+            agent_loop_plan=body.get("agent_loop_plan", False),
+            # All task/engine branches share the authorization guard.
+            confirm_plan=bool(body.get("confirm_plan")),
+            execution_policy=body.get("execution_policy"),
+            conversation_context=body.get("conversation_context"),
             confirmed_plan=body.get("confirmed_plan") if isinstance(body.get("confirmed_plan"), dict) else None,
             # ST03 F2：继续关联进入 TaskRequest → pipeline metadata（先于 finalize）
             continue_from=normalize_continue_from(body.get("continue_from")),

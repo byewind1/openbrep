@@ -195,13 +195,22 @@ export function WorkbenchApp() {
   const setProjectGitEnabled = useWorkbenchStore((state) => state.setProjectGitEnabled)
   const commitProjectGit = useWorkbenchStore((state) => state.commitProjectGit)
   const adoptAssistantMessageCode = useWorkbenchStore((state) => state.adoptAssistantMessageCode)
+  const actOnAdvisorProposal = useWorkbenchStore((state) => state.actOnAdvisorProposal)
   const sendChat = useWorkbenchStore((state) => state.sendChat)
   const t = useT()
 
   // P0-C：有项目打开时的"生成"意图先确认（建筑基础_v1 事故：
   // "参考图1生成坐斗"被当成改当前项目，全文重写覆盖了打开的项目）。
   // 新建项目不会改动当前项目文件；想改当前项目可取消后改用修改类表述。
-  async function handleChat(message: string, images?: AssistantImageAttachment[]) {
+  async function handleChat(message: string, images?: AssistantImageAttachment[], requestedMode: 'auto' | 'plan' = 'auto') {
+    if (llmSettings.conversation_entry !== 'legacy') {
+      await sendChat(message, images, requestedMode, () => confirm({
+        title: t('chat.confirmCreateTitle'),
+        message: t('chat.confirmCreateMessage', { name: project?.name || '' }),
+        confirmLabel: t('chat.confirmCreateOk'),
+      }))
+      return
+    }
     if (project && detectChatIntent(message, true) === 'create') {
       const ok = await confirm({
         title: t('chat.confirmCreateTitle'),
@@ -526,7 +535,8 @@ export function WorkbenchApp() {
             onApplyTapirParameters={() => void applyTapirParameters()}
             hasProject={!!project}
             interruptedContext={interruptedContext}
-            onChat={(message, images) => void handleChat(message, images)}
+            onProposalAction={(id, action) => void actOnAdvisorProposal(id, action, () => confirm({ title: t('chat.confirmCreateTitle'), message: t('chat.confirmCreateMessage', { name: project?.name || '' }), confirmLabel: t('chat.confirmCreateOk') }))}
+            onChat={(message, images, requestedMode) => void handleChat(message, images, requestedMode)}
             onStop={stopChat}
             onClearAssistantHistory={() => void clearAssistantHistory()}
             onDeleteAssistantMessages={(indices) => deleteAssistantMessages(indices)}

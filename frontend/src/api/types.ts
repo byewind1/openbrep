@@ -351,6 +351,7 @@ export interface CompilerSettings {
 }
 
 export interface LlmSettings {
+  conversation_entry?: 'unified' | 'legacy'
   /** 生效模型（会话覆盖存在时即覆盖值） */
   model: string
   /** D16：会话级模型覆盖（pill/聊天侧切换）；无覆盖时为 null。写默认仍只有设置页一扇门 */
@@ -944,6 +945,7 @@ export interface AssistantHistoryItem {
 }
 
 export interface AssistantMessage {
+  advisor?: { proposals?: Array<{ proposal_id: string; title: string; goal: string; scope: string[]; constraints: string[]; tradeoffs: string[] }>; inspection?: { checks: Array<{ kind: string; status: string; unavailable_reason?: string | null }> } }
   role: 'user' | 'assistant'
   content: string
   // 以下字段仅在当前会话内存活：后端聊天历史只持久化 role/content，
@@ -1275,6 +1277,12 @@ export interface SetDistilledLessonStatusResult {
 
 // ── 计划确认门（V3）：MODIFY 先出非代码语言计划，用户确认后才执行 ─────────
 export interface PendingPlan {
+  turn_id?: string
+  plan_id?: string
+  plan_version?: number
+  constraints?: string[]
+  assumptions?: string[]
+  acceptance_criteria?: string[]
   intent_summary: string
   user_visible_changes: string[]
   affected_files: string[]
@@ -1419,6 +1427,7 @@ export interface CreateProjectResult extends WorkbenchSnapshot {
 
 /** P5d-2 提取确认门：待用户确认/编辑的读图结果（含原消息与图片，确认时原样重发） */
 export interface PendingExtraction {
+  turn_id?: string
   extractions: VisionExtraction[]
   message: string
   images: AssistantImageAttachment[]
@@ -1592,4 +1601,16 @@ export interface LlmConfigImportResult {
   revision?: string
   code?: string
   error?: string
+}
+
+export type ConversationTurnResult = GenerateResult & Partial<Omit<WorkbenchSnapshot, 'preview'>> & {
+  result_kind?: 'advice' | 'awaiting_confirmation' | 'ready_to_execute' | 'execution' | 'failed' | 'cancelled'
+  turn_id?: string
+  project_epoch?: number
+  task_intent?: string
+  code?: string
+  advisor?: AssistantMessage['advisor']
+  cancelled?: boolean
+  awaiting_extraction_confirmation?: boolean
+  extractions?: VisionExtraction[]
 }

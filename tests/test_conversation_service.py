@@ -1,0 +1,243 @@
+from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
+
+from openbrep.config import GDLAgentConfig
+from openbrep.hsf_project import HSFProject, ScriptType
+from openbrep.workbench_api import WorkbenchSession
+
+
+def session_at(tmp_path):
+    config = tmp_path / 'test.toml'
+    cfg = GDLAgentConfig()
+    cfg.compiler.mode = 'mock'
+    cfg.save(str(config))
+    session = WorkbenchSession(config_path=config)
+    project = HSFProject.create_new('Shelf', str(tmp_path))
+    project.save_to_disk()
+    session.project = project
+    session.source_path = project.root
+    session.assistant_service.generate_with_assistant = Mock(return_value={'ok': True, 'assistant': {'reply': 'done'}})
+    return session
+
+
+def prepare(session, **extra):
+    return session.route('POST', '/api/assistant/turn', {'phase': 'prepare', 'client_turn_id': 'c1', 'message': '添加背板', 'project_epoch': session.project_epoch, **extra})
+
+
+def test_two_phases_and_retry_cannot_replace_server_task(tmp_path):
+    session = session_at(tmp_path)
+    ready = prepare(session)
+    assert ready['result_kind'] == 'ready_to_execute'
+    assert prepare(session, message='删除参数')['turn_id'] == ready['turn_id']
+    body = {'phase': 'execute', 'turn_id': ready['turn_id'], 'message': '恶意替换'}
+    done = session.route('POST', '/api/assistant/turn', body)
+    assert done['result_kind'] == 'execution'
+    assert session.route('POST', '/api/assistant/turn', body) == done
+    call = session.assistant_service.generate_with_assistant
+    assert call.call_count == 1
+    assert call.call_args.args[0]['message'] == '添加背板'
+
+
+def test_drafts_only_flush_after_prepare_then_execute(tmp_path):
+    session = session_at(tmp_path)
+    old = session.project.get_script(ScriptType.SCRIPT_3D)
+    ready = prepare(session, draft_scripts={'3d.gdl': 'BLOCK 1, 2, 3\n'})
+    assert session.project.get_script(ScriptType.SCRIPT_3D) == old
+    session.project.set_script(ScriptType.SCRIPT_3D, 'BLOCK 1, 2, 3\n')
+    session.project.save_to_disk()
+    result = session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    assert result['ok']
+    assert session.assistant_service.generate_with_assistant.call_count == 1
+
+
+def test_source_change_and_project_epoch_reject_execution(tmp_path):
+    session = session_at(tmp_path)
+    ready = prepare(session)
+    session.project.parameters[0].value = '2'
+    session.project.save_to_disk()
+    result = session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    assert result['code'] == 'SOURCE_CHANGED'
+    session.assistant_service.generate_with_assistant.assert_not_called()
+    session.project = HSFProject.create_new('Other', str(tmp_path))
+    assert prepare(session, client_turn_id='c2', project_epoch=1)['code'] == 'PROJECT_CHANGED'
+
+
+def test_cancel_expire_and_restart_never_revive_tokens(tmp_path):
+    session = session_at(tmp_path)
+    ready = prepare(session)
+    cancel = {'phase': 'execute', 'turn_id': ready['turn_id'], 'approve': False}
+    result = session.route('POST', '/api/assistant/turn', cancel)
+    assert result['cancelled']
+    assert session.route('POST', '/api/assistant/turn', {**cancel, 'approve': True})['cancelled']
+    ready = prepare(session, client_turn_id='c2')
+    turn = session.conversation_service.turns[ready['turn_id']]
+    turn.created_at -= 1900
+    assert session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})['code'] == 'TURN_EXPIRED'
+    restarted = session_at(tmp_path)
+    assert restarted.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})['code'] == 'TURN_NOT_FOUND'
+    session.assistant_service.generate_with_assistant.assert_not_called()
+
+
+def test_legacy_switch_is_explicit_and_non_default_only(tmp_path):
+    session = session_at(tmp_path)
+    assert 'conversation_entry' not in Path(session.config_path).read_text()
+    session.config.llm.conversation_entry = 'legacy'
+    session.config.save(str(session.config_path))
+    assert GDLAgentConfig.load(str(session.config_path)).llm.effective_conversation_entry() == 'legacy'
+    result = prepare(session)
+    assert result['http_status'] == 501
+    assert result['code'] == 'UNIFIED_ENTRY_DISABLED'
+
+
+def test_stream_worker_protects_validation_and_execution_with_session_lock(tmp_path):
+    import threading
+    session = session_at(tmp_path)
+    ready = prepare(session)
+    entered, release, changed = threading.Event(), threading.Event(), threading.Event()
+    def execute(_body):
+        entered.set()
+        assert release.wait(2)
+        return {'ok': True}
+    session.assistant_service.generate_with_assistant.side_effect = execute
+    stream = session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id'], 'stream': True})
+    consume = threading.Thread(target=lambda: list(stream))
+    consume.start()
+    assert entered.wait(2)
+    def mutate():
+        with session._op_lock:
+            changed.set()
+    writer = threading.Thread(target=mutate)
+    writer.start()
+    assert not changed.wait(0.05)
+    release.set()
+    consume.join(2)
+    writer.join(2)
+    assert changed.is_set()
+    assert not consume.is_alive()
+
+
+def test_api_advice_is_model_backed_and_has_no_mutation_or_preview(tmp_path):
+    import json
+    from openbrep.llm import MockLLM
+    from openbrep.source_fingerprint import compute_source_fingerprint
+    session = session_at(tmp_path)
+    llm = MockLLM(responses=[json.dumps({'conclusion': '建议加背板', 'suggestions': [], 'tradeoffs': []}, ensure_ascii=False)])
+    session.settings_service.llm_adapter_factory = lambda config: llm
+    before = compute_source_fingerprint(session.project.root)
+    result = prepare(session, message='这个柜子比例不协调，有什么思路')
+    assert result['result_kind'] == 'advice'
+    assert result['assistant']['reply'] == '建议加背板'
+    assert llm.call_count == 1
+    assert compute_source_fingerprint(session.project.root) == before
+    assert 'preview' not in result
+    assert 'verification' not in result['assistant']
+    session.assistant_service.generate_with_assistant.assert_not_called()
+
+
+def test_assistant_compatibility_adapter_is_readonly_without_project(tmp_path):
+    import json
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.project = None
+    session.source_path = None
+    llm = MockLLM(responses=[json.dumps({'conclusion': '用PRISM_', 'suggestions': [], 'tradeoffs': []})])
+    session.settings_service.llm_adapter_factory = lambda config: llm
+    result = session.route('POST', '/api/assistant', {'message': '讲讲PRISM_'})
+    assert result['result_kind'] == 'advice'
+    assert llm.call_count == 1
+    assert not (tmp_path / 'output').exists()
+
+
+def plan_answer():
+    import json
+    return json.dumps({'conclusion': '建议先加背板', 'suggestions': [], 'tradeoffs': [], 'plan': {
+        'intent_summary': '加背板', 'user_visible_changes': ['封闭背部'], 'affected_files': ['scripts/3d.gdl'], 'risk': '几何变化',
+        'constraints': [], 'assumptions': [], 'acceptance_criteria': ['编译与验证通过'], 'finding_refs': [], 'optional_suggestions': ['可另行增加踢脚']
+    }}, ensure_ascii=False)
+
+
+def test_plan_lifecycle_approval_version_and_retries(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    result = prepare(session, message='先别改，给我个方案添加背板')
+    assert result['result_kind'] == 'awaiting_confirmation'
+    plan = result['pending_plan']
+    for key in ('plan_id', 'plan_version', 'task_intent', 'constraints', 'assumptions', 'acceptance_criteria', 'finding_refs', 'optional_suggestions', 'project_epoch', 'source_version', 'working_intent_version'):
+        assert key in plan
+    token = {'phase': 'execute', 'turn_id': result['turn_id'], 'plan_id': plan['plan_id'], 'plan_version': 1}
+    assert session.route('POST', '/api/assistant/turn', token)['code'] == 'APPROVAL_REQUIRED'
+    assert session.route('POST', '/api/assistant/turn', {**token, 'approve': True, 'plan_version': 2})['code'] == 'PLAN_VERSION_MISMATCH'
+    assert session.route('POST', '/api/assistant/turn', {**token, 'approve': True, 'plan_version': True})['code'] == 'PLAN_VERSION_MISMATCH'
+    done = session.route('POST', '/api/assistant/turn', {**token, 'approve': True})
+    assert done['result_kind'] == 'execution'
+    assert session.route('POST', '/api/assistant/turn', {**token, 'approve': True}) == done
+    assert session.assistant_service.generate_with_assistant.call_count == 1
+
+
+def test_plan_failure_and_stale_source_cannot_execute(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=['not json'])
+    failed = prepare(session, requested_mode='plan')
+    assert failed['code'] == 'PLAN_GENERATION_FAILED'
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    result = prepare(session, client_turn_id='c2', requested_mode='plan')
+    session.project.set_script(ScriptType.SCRIPT_3D, 'BLOCK 1, 2, 3\n')
+    session.project.save_to_disk()
+    plan = result['pending_plan']
+    stale = session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': result['turn_id'], 'plan_id': plan['plan_id'], 'plan_version': 1, 'approve': True})
+    assert stale['code'] == 'PLAN_STALE'
+    assert stale['pending_plan'] == plan
+    session.assistant_service.generate_with_assistant.assert_not_called()
+
+
+def test_compatible_confirm_uses_only_unique_server_plan(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    result = prepare(session, requested_mode='plan')
+    done = session.route('POST', '/api/modify/confirm', {'approve': True})
+    assert done['result_kind'] == 'execution'
+    assert session.assistant_service.generate_with_assistant.call_count == 1
+
+
+def test_no_project_plan_does_not_create_and_executes_create(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.project = None
+    session.source_path = None
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    session.create_project_from_prompt = Mock(return_value={'ok': True})
+    result = prepare(session, message='先给我一个书柜的建模方案')
+    assert result['pending_plan']['task_intent'] == 'CREATE'
+    assert not (tmp_path / 'output').exists()
+    plan = result['pending_plan']
+    assert session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': result['turn_id'], 'plan_id': plan['plan_id'], 'plan_version': 1, 'approve': True})['ok']
+    session.create_project_from_prompt.assert_called_once()
+
+
+def test_unified_image_create_keeps_extraction_gate_and_server_task(tmp_path):
+    session = session_at(tmp_path)
+    session.project = None
+    session.create_project_from_prompt = Mock(side_effect=[
+        {'ok': True, 'awaiting_extraction_confirmation': True, 'extractions': [{'fields': {'width': 2}}]},
+        {'ok': True, 'assistant': {'reply': 'created'}}])
+    ready = prepare(session, message='创建书架', images=[{'b64': 'aQ==', 'mime': 'image/png'}], confirmed_extractions=[{'untrusted': True}])
+    token = {'phase': 'execute', 'turn_id': ready['turn_id']}
+    pending = session.route('POST', '/api/assistant/turn', token)
+    assert pending['awaiting_extraction_confirmation']
+    assert session.create_project_from_prompt.call_args.args[0]['confirm_extraction'] is True
+    assert 'confirmed_extractions' not in session.create_project_from_prompt.call_args.args[0]
+    assert session.route('POST', '/api/assistant/turn', token) == pending
+    assert session.create_project_from_prompt.call_count == 1
+    completed = session.route('POST', '/api/assistant/turn', {**token, 'approve_extraction': True, 'confirmed_extractions': [{'fields': {'width': 3}}], 'message': 'replace task'})
+    assert completed['ok']
+    request = session.create_project_from_prompt.call_args.args[0]
+    assert request['message'] == '创建书架'
+    assert request['confirmed_extractions'] == [{'fields': {'width': 3}}]
+    assert session.create_project_from_prompt.call_count == 2
+    session.route('POST', '/api/assistant/turn', token)
+    assert session.create_project_from_prompt.call_count == 2
