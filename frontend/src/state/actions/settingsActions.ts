@@ -183,6 +183,24 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
       }
     },
 
+    async exportLlmConfig(includeKeys: boolean) {
+      return api.exportLlmConfig(includeKeys)
+    },
+
+    async importLlmConfig(content: string, expectedRevision: string, confirm: boolean) {
+      const result = await api.importLlmConfig(content, expectedRevision, confirm)
+      // 卡14：导入提交成功 → 刷新 provider 列表与 revision
+      if (result.ok && confirm && 'providers' in result && result.providers) {
+        set({
+          llmProviders: result.providers,
+          llmProvidersRevision: result.revision ?? null,
+          llmProvidersConflict: null,
+          lastError: null,
+        })
+      }
+      return result
+    },
+
     async discoverProviderModels(request: LlmDiscoveryRequest, providerName?: string): Promise<LlmDiscoveryResult> {
       const result = await api.discoverProviderModels(request)
       // 卡11：本会话发现成功 → discovered 时间戳

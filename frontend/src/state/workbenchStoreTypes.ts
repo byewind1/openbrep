@@ -164,6 +164,14 @@ export interface WorkbenchApi {
   updateLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettingsResult>
   /** D16：会话级模型切换（不写 config.toml）；model=null 清除覆盖 */
   updateSessionLlmModel: (model: string | null, reasoningEffort?: string) => Promise<LlmSettingsResult>
+  /** 卡14：配置导出（include_keys 需前端二次确认后才允许） */
+  exportLlmConfig: (includeKeys: boolean) => Promise<import('../api/types').LlmConfigExportResult>
+  /** 卡14：配置导入（confirm=false 预览 / true 提交） */
+  importLlmConfig: (
+    content: string,
+    expectedRevision: string,
+    confirm: boolean,
+  ) => Promise<import('../api/types').LlmConfigImportResponse>
   /** 卡09：模型发现（无锁；结果由组件按 epoch 守卫后合并） */
   discoverProviderModels: (request: import('../api/types').LlmDiscoveryRequest) => Promise<import('../api/types').LlmDiscoveryResult>
   /** 卡07：草稿连接测试（draft_config 副本通道） */
@@ -406,6 +414,13 @@ export interface WorkbenchState {
   markProviderActivity: (name: string, kind: 'discovered' | 'tested') => void
   /** 卡05：懒加载 provider 总览（对照 loadCodexCatalog；失败不清空已加载数据） */
   loadLlmProviders: () => Promise<void>
+  /** 卡14：导入导出透传 */
+  exportLlmConfig: (includeKeys: boolean) => Promise<import('../api/types').LlmConfigExportResult>
+  importLlmConfig: (
+    content: string,
+    expectedRevision: string,
+    confirm: boolean,
+  ) => Promise<import('../api/types').LlmConfigImportResponse>
   /** 卡09：模型发现透传 */
   discoverProviderModels: (request: import('../api/types').LlmDiscoveryRequest) => Promise<import('../api/types').LlmDiscoveryResult>
   /** 卡07：草稿连接测试透传（结果由组件渲染） */

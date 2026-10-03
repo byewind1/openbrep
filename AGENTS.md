@@ -290,8 +290,10 @@ Architecture notes:
   `[llm] default` as an alias of `model`. Official built-in models keep the
   2026-08-01 `PROVIDER_PROFILES` + `provider_keys` path (preset data, not
   resolution logic); `provider_templates()` exposes their default endpoints
-  (`PROVIDER_API_TEMPLATES`) for future "add from template" UI. The settings
-  UI key editor now works for custom providers too (ollama excluded).
+  (`PROVIDER_API_TEMPLATES`); since 2026-10-03 the settings panel's
+  ProviderManagerPanel is the first UI consumer (template grid + draft form +
+  explicit Save, backed by `openbrep/workbench/provider_service.py`). The
+  settings UI key editor now works for custom providers too (ollama excluded).
 - Deterministic micro-modify (2026-08-01, plan P2): pure parameter-value
   changes ("把层板数改成 5" / "set shelf_count to 5") are intercepted before
   the LLM MODIFY path — `openbrep/runtime/micro_modify.py` does high-precision
@@ -420,8 +422,10 @@ Architecture notes:
   (`openbrep.visible-models`, `provider::model` keys + three-state + hide-all
   sentinel, state machine ported from Hermes Agent MIT —
   `frontend/src/state/modelVisibility.ts`); default rule: configured providers
-  / connected Codex / ollama visible, unconfigured official presets hidden;
-  the settings-page toggle panel never triggers a model switch or config write.
+  / connected Codex visible; ollama and other unconfigured official presets are
+  hidden by default (modelVisibility.ts — ollama models carry no key, so they
+  fail the same `has_api_key` gate as other official presets); the
+  settings-page toggle panel never triggers a model switch or config write.
 - Quality ledger (2026-09-05, G0+G1): every `TaskPipeline.execute()` gets a
   stable `run_id` at entry (`r_<date>_<ts>_<rand>`), threaded into trace JSON
   (optional `run_id` field), feedback events (reuses `trace_id`), and an
@@ -576,6 +580,8 @@ Important architecture boundaries already exist:
 ```text
 openbrep/workbench_api.py
 openbrep/workbench/*_service.py
+openbrep/workbench/provider_service.py (+ provider_refs.py / credential_status.py / config_commit.py)
+openbrep/workbench/model_discovery.py / llm_diagnostics.py / config_port.py
 openbrep/workbench/request_gate.py
 openbrep/runtime/pipeline.py
 openbrep/runtime/semantic_repair.py

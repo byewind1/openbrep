@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  LlmConfigExportResult,
+  LlmConfigImportPreview,
   LlmConnectionTestResult,
   LlmDiscoveryRequest,
   LlmDiscoveryResult,
@@ -46,6 +48,14 @@ export interface ProviderManagerPanelProps {
   activity?: Record<string, LlmProviderActivity>
   /** 卡11：当前生效模型（高亮所属 provider 行） */
   currentModel?: string | null
+  /** 卡14：配置导出（include_keys=true 前端先二次确认） */
+  onExportConfig: (includeKeys: boolean) => Promise<LlmConfigExportResult>
+  /** 卡14：配置导入（confirm=false 预览 / true 提交，revision 来自预览响应） */
+  onImportConfig: (
+    content: string,
+    expectedRevision: string,
+    confirm: boolean,
+  ) => Promise<import('../../api/types').LlmConfigImportResponse>
 }
 
 interface DiscoveryState {
@@ -78,6 +88,8 @@ export function ProviderManagerPanel({
   onDiscoverModels,
   activity,
   currentModel,
+  onExportConfig,
+  onImportConfig,
 }: ProviderManagerPanelProps) {
   const t = useT()
   const [editor, setEditor] = useState<EditorState | null>(null)
@@ -95,6 +107,12 @@ export function ProviderManagerPanel({
   const [discoverySelection, setDiscoverySelection] = useState<Record<string, boolean>>({})
   const [discoveryEpochRender, setDiscoveryEpochRender] = useState(0)
   const discoveryEpochRef = useRef(0)
+  // 卡14：导入导出工具区状态
+  const [includeKeys, setIncludeKeys] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importPreview, setImportPreview] = useState<LlmConfigImportPreview | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
   // 卡11：三态徽标与当前 provider 高亮
   const currentProvider = useMemo(() => providerForModel(providers, currentModel), [providers, currentModel])
 
@@ -292,9 +310,186 @@ export function ProviderManagerPanel({
     }
   }
 
+  async function exportConfig() {
+    // 卡14：默认不带 key；勾选"包含 API Key"必须先经用户二次确认
+    if (includeKeys && !window.confirm(t('providerPanel.includeKeysConfirm'))) return
+    const result = await onExportConfig(includeKeys)
+    if (!result.ok || !result.content) {
+      setFeedback({ ok: false, text: result.error ?? t('providerPanel.exportFailed') })
+      return
+    }
+    try {
+      const blob = new Blob([result.content], { type: 'application/toml' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = result.filename ?? 'openbrep-llm.toml'
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // 下载失败时内容仍在响应里，提示用户复制
+      setFeedback({ ok: false, text: t('providerPanel.exportFailed') })
+      return
+    }
+    setFeedback({ ok: true, text: t('providerPanel.exported') })
+  }
+
+  async function previewImport() {
+    if (!importText.trim() || importing) return
+    setImportError(null)
+    setImporting(true)
+    try {
+      const result = await onImportConfig(importText, '', false)
+      if (!result.ok) {
+        setImportError(result.error ?? t('providerPanel.importFailed'))
+        setImportPreview(null)
+        return
+      }
+      setImportPreview(result as LlmConfigImportPreview)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  async function confirmImport() {
+    if (!importPreview?.revision || importing) return
+    setImportError(null)
+    setImporting(true)
+    try {
+      const result = await onImportConfig(importText, importPreview.revision, true)
+      if (!result.ok) {
+        setImportError(result.error ?? t('providerPanel.importFailed'))
+        return
+      }
+      setImportPreview(null)
+      setImportText('')
+      setFeedback({ ok: true, text: t('providerPanel.imported') })
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className="provider-manager" data-testid="provider-manager">
       <h4>{t('providerPanel.title')}</h4>
+
+      {/* ── 卡14：导入导出工具区 ── */}
+      <div className="provider-tools" data-testid="provider-tools">
+        <div className="settings-actions inline">
+          <button type="button" data-testid="provider-export" onClick={() => void exportConfig()}>
+            {t('providerPanel.exportLabel')}
+          </button>
+          <label className="provider-include-keys">
+            <input
+              type="checkbox"
+              data-testid="provider-include-keys"
+              checked={includeKeys}
+              onChange={(e) => setIncludeKeys(e.target.checked)}
+            />
+            {t('providerPanel.includeKeysLabel')}
+          </label>
+        </div>
+        <div className="settings-actions inline">
+          <textarea
+            className="provider-import-input"
+            data-testid="provider-import-input"
+            rows={4}
+            placeholder={t('providerPanel.importPlaceholder')}
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+          />
+        </div>
+        <div className="settings-actions inline">
+          <button
+            type="button"
+            data-testid="provider-import-preview"
+            disabled={importing || !importText.trim()}
+            onClick={() => void previewImport()}
+          >
+            {t('providerPanel.importPreview')}
+          </button>
+          <small>{t('providerPanel.importHint')}</small>
+        </div>
+        {importError ? (
+          <p className="provider-form-error" data-testid="provider-import-error" role="alert">
+            {importError}
+          </p>
+        ) : null}
+        {importPreview ? (
+          <div className="provider-import-preview" data-testid="provider-import-preview-result">
+            {importPreview.notes?.map((note, i) => (
+              <p key={i} className="provider-import-note">{note}</p>
+            ))}
+            {importPreview.errors?.length ? (
+              <div className="provider-import-errors" role="alert">
+                {importPreview.errors.map((error, i) => (
+                  <p key={i}>{error}</p>
+                ))}
+              </div>
+            ) : null}
+            {importPreview.to_add?.length ? (
+              <div data-testid="provider-import-to-add">
+                <strong>{t('providerPanel.importToAdd')}</strong>
+                <ul>
+                  {importPreview.to_add.map((item) => (
+                    <li key={item.name}>
+                      {item.name} · {item.api || '—'} · {item.api_mode}
+                      {item.has_credential ? '' : ` · ${t('providerPanel.importNoCredential')}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {importPreview.to_update?.length ? (
+              <div data-testid="provider-import-to-update">
+                <strong>{t('providerPanel.importToUpdate')}</strong>
+                <ul>
+                  {importPreview.to_update.map((item) => (
+                    <li key={item.name}>
+                      {item.name}：
+                      {item.changes.map((change) => `${change.field}: ${String(change.old)} → ${String(change.new)}`).join('；')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {importPreview.conflicts?.length ? (
+              <div data-testid="provider-import-conflicts">
+                <strong>{t('providerPanel.importConflicts')}</strong>
+                <ul>
+                  {importPreview.conflicts.map((item) => (
+                    <li key={`${item.name}-${item.field}`}>
+                      {item.name} · {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {importPreview.skipped?.length ? (
+              <div data-testid="provider-import-skipped">
+                <strong>{t('providerPanel.importSkipped')}</strong>
+                <ul>
+                  {importPreview.skipped.map((item) => (
+                    <li key={item.name}>{item.name}：{item.reason}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <div className="settings-actions inline">
+              <button
+                type="button"
+                className="primary-action"
+                data-testid="provider-import-confirm"
+                disabled={importing}
+                onClick={() => void confirmImport()}
+              >
+                {t('providerPanel.importConfirm')}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       {conflict ? (
         <div className="provider-conflict-banner" data-testid="provider-conflict" role="alert">
           <span>{conflict}</span>

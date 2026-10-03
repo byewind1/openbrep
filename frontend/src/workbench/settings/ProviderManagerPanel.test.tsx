@@ -49,6 +49,8 @@ function makeProps(overrides: Partial<ProviderManagerPanelProps> = {}): Provider
     onDeleteProvider: vi.fn().mockResolvedValue(okResult({ deleted: 'relay' })),
     onTestDraft: vi.fn().mockResolvedValue({ ok: true, message: 'LLM connection OK', model: 'x', duration_ms: 12 } as LlmConnectionTestResult),
     onDiscoverModels: vi.fn().mockResolvedValue({ ok: true, models: [], raw_count: 0, truncated: false, page_count: 1 }),
+    onExportConfig: vi.fn().mockResolvedValue({ ok: true, filename: 'openbrep-llm.toml', content: '[llm]' }),
+    onImportConfig: vi.fn().mockResolvedValue({ ok: true, confirm: false, revision: 'rev-1' }),
     ...overrides,
   }
 }
@@ -482,5 +484,94 @@ describe('ProviderManagerPanel states & highlight (卡11)', () => {
     )
 
     expect(screen.getByTestId('provider-row-relay').getAttribute('data-current')).toBe('true')
+  })
+})
+
+// ── 卡14：导入导出工具区 ─────────────────────────────────────────────────
+
+describe('ProviderManagerPanel export/import (卡14)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test('默认导出不带 key；勾选后需二次确认才带参', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const onExportConfig = vi.fn().mockResolvedValue({ ok: true, filename: 'f.toml', content: 'x' })
+    render(<ProviderManagerPanel {...makeProps({ onExportConfig })} />)
+
+    fireEvent.click(screen.getByTestId('provider-export'))
+    await waitFor(() => expect(onExportConfig).toHaveBeenCalledWith(false))
+
+    fireEvent.click(screen.getByTestId('provider-include-keys'))
+    fireEvent.click(screen.getByTestId('provider-export'))
+    // 二次确认拒绝 → 不调用
+    expect(onExportConfig).toHaveBeenCalledTimes(1)
+
+    confirmSpy.mockReturnValue(true)
+    fireEvent.click(screen.getByTestId('provider-export'))
+    await waitFor(() => expect(onExportConfig).toHaveBeenCalledWith(true))
+    confirmSpy.mockRestore()
+  })
+
+  test('导入两段式：先预览（confirm=false）再确认（confirm=true，revision 来自预览）', async () => {
+    const onImportConfig = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        confirm: false,
+        revision: 'rev-preview-1',
+        to_add: [{ name: 'fresh', api: 'https://f.example/v1', api_mode: 'chat_completions', default_model: '', model_count: 1, has_credential: false }],
+        to_update: [{ name: 'relay', changes: [{ field: 'api', old: 'https://old.example/v1', new: 'https://new.example/v1' }] }],
+        conflicts: [{ name: 'relay', field: 'default_model', incoming: 'x', existing: 'y', rule: 'keep_existing', reason: '以现有为准' }],
+        skipped: [{ name: 'openai-codex', reason: 'codex_entry_protected' }],
+        errors: [],
+        notes: ['导入文件中的默认模型不会应用'],
+      })
+      .mockResolvedValueOnce({ ok: true, confirm: true, providers: [], revision: 'rev-after' })
+    render(<ProviderManagerPanel {...makeProps({ onImportConfig })} />)
+
+    fireEvent.change(screen.getByTestId('provider-import-input'), { target: { value: '[[llm.providers]]\nname = "fresh"' } })
+    fireEvent.click(screen.getByTestId('provider-import-preview'))
+
+    const preview = await screen.findByTestId('provider-import-preview-result')
+    expect(preview.textContent).toContain('fresh')
+    expect(preview.textContent).toContain('https://old.example/v1 → https://new.example/v1')
+    expect(preview.textContent).toContain('以现有为准')
+    expect(preview.textContent).toContain('codex_entry_protected')
+    expect(preview.textContent).toContain('不会应用')
+
+    fireEvent.click(screen.getByTestId('provider-import-confirm'))
+
+    await waitFor(() => expect(onImportConfig).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(onImportConfig).mock.calls[1]).toEqual([
+      '[[llm.providers]]\nname = "fresh"',
+      'rev-preview-1',
+      true,
+    ])
+    // 成功后清空输入与预览
+    expect((screen.getByTestId('provider-import-input') as HTMLTextAreaElement).value).toBe('')
+    expect(screen.queryByTestId('provider-import-preview-result')).toBeNull()
+  })
+
+  test('导入确认冲突（config_modified）→ 结构化错误渲染且不清空内容', async () => {
+    const onImportConfig = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, confirm: false, revision: 'rev-1', to_add: [], to_update: [], conflicts: [], skipped: [], errors: [] })
+      .mockResolvedValueOnce({ ok: false, code: 'config_modified', error: '配置文件已被外部修改，请刷新设置后重试。' })
+    render(<ProviderManagerPanel {...makeProps({ onImportConfig })} />)
+
+    fireEvent.change(screen.getByTestId('provider-import-input'), { target: { value: 'x' } })
+    fireEvent.click(screen.getByTestId('provider-import-preview'))
+    await screen.findByTestId('provider-import-preview-result')
+    fireEvent.click(screen.getByTestId('provider-import-confirm'))
+
+    const error = await screen.findByTestId('provider-import-error')
+    expect(error.textContent).toContain('外部修改')
+    expect((screen.getByTestId('provider-import-input') as HTMLTextAreaElement).value).toBe('x')
   })
 })

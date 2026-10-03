@@ -58,6 +58,9 @@ import type {
   LlmProvidersResult,
   LlmDiscoveryRequest,
   LlmDiscoveryResult,
+  LlmConfigExportResult,
+  LlmConfigImportPreview,
+  LlmConfigImportResult,
   LlmConnectionTestResult,
   Preview2DPayload,
   PreviewPayload,
@@ -943,6 +946,32 @@ export async function deleteLlmProvider(name: string, expectedRevision: string):
       body: JSON.stringify({ name, expected_revision: expectedRevision }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+// ── 卡14：配置导入导出 ─────────────────────────────────────────────────────
+
+export async function exportLlmConfig(includeKeys: boolean): Promise<LlmConfigExportResult> {
+  return requestJson<LlmConfigExportResult>(
+    `/api/settings/llm/export?include_keys=${includeKeys ? 'true' : 'false'}`,
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function importLlmConfig(
+  content: string,
+  expectedRevision: string,
+  confirm: boolean,
+): Promise<LlmConfigImportPreview | LlmConfigImportResult> {
+  return requestJson<LlmConfigImportPreview | LlmConfigImportResult>(
+    '/api/settings/llm/import',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, expected_revision: expectedRevision, confirm }),
+    },
+    { ok: false, confirm, error: 'OpenBrep local API is not available.' },
   )
 }
 

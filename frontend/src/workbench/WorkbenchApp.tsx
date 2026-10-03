@@ -160,6 +160,8 @@ export function WorkbenchApp() {
   const testLlmDraftConnection = useWorkbenchStore((state) => state.testLlmDraftConnection)
   const discoverProviderModels = useWorkbenchStore((state) => state.discoverProviderModels)
   const llmProviderActivity = useWorkbenchStore((state) => state.llmProviderActivity)
+  const exportLlmConfig = useWorkbenchStore((state) => state.exportLlmConfig)
+  const importLlmConfig = useWorkbenchStore((state) => state.importLlmConfig)
   const providerTemplates = llmSettings?.provider_templates ?? []
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
@@ -618,6 +620,8 @@ export function WorkbenchApp() {
           onDiscoverModels: discoverProviderModels,
           activity: llmProviderActivity,
           currentModel: llmSettings?.model ?? null,
+          onExportConfig: exportLlmConfig,
+          onImportConfig: importLlmConfig,
         }}
         onReloadRuntimeSettings={reloadRuntimeSettings}
         onBrowseCompilerFile={browseCompilerFile}

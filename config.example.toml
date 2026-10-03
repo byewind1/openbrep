@@ -1,5 +1,9 @@
 # openbrep Configuration Example
 # Copy this to config.toml and fill in your own API keys and paths
+#
+# 推荐路径：不需要手改本文件——在 设置 → AI → 服务商管理 里从模板添加服务商
+# （填名称/端点/Key/模型，草稿测试后保存）。本文件是持久化载体与高级路径；
+# 也可以用服务商管理面板的"导出/导入"备份或迁移整套 provider 配置。
 
 [llm]
 # 当前模型：写模型 id（命中某个 provider 的 models 列表），

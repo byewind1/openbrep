@@ -254,6 +254,8 @@ const providerManagerStub: import('./ProviderManagerPanel').ProviderManagerPanel
   onDeleteProvider: vi.fn().mockResolvedValue({ ok: true }),
   onTestDraft: vi.fn().mockResolvedValue({ ok: true }),
   onDiscoverModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
+  onExportConfig: vi.fn().mockResolvedValue({ ok: true, filename: 'x.toml', content: '' }),
+  onImportConfig: vi.fn().mockResolvedValue({ ok: true, confirm: false }),
 }
 
 test('接线后 AiSettingsPanel 渲染服务商管理入口', () => {

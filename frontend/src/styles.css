@@ -5436,3 +5436,42 @@ button:focus-visible {
   border-color: var(--ob-success-border, #2e7d32);
   color: var(--ob-success-border, #2e7d32);
 }
+
+.provider-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px dashed var(--ob-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+}
+
+.provider-import-input {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.provider-import-preview {
+  padding: 6px 8px;
+  border: 1px solid var(--ob-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+}
+
+.provider-import-preview ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.provider-import-note {
+  margin: 2px 0;
+  opacity: 0.8;
+}
+
+.provider-include-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
