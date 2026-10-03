@@ -2333,3 +2333,159 @@ def test_route_device_code_while_signed_in_rejected(tmp_path):
     assert "已连接" in response["error"]
     assert client.login_calls == 0
     provider.close()
+
+
+# ── 卡01：Provider 只读总览（provider_service）──────────────────
+
+
+def _provider_session(tmp_path, config_text: str):
+    from types import SimpleNamespace as _NS
+
+    from openbrep.workbench.config_commit import file_revision
+    from openbrep.workbench.provider_service import ProviderSettingsService
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(config_text, encoding="utf-8")
+    config = GDLAgentConfig.load(str(config_path))
+    session = _NS(config=config, config_path=config_path)
+    return ProviderSettingsService(session), config_path, file_revision(config_path)
+
+
+def test_provider_service_lists_providers_with_credential_status(tmp_path, monkeypatch):
+    for name in ["ZAI_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY"]:
+        monkeypatch.delenv(name, raising=False)
+    service, _, revision = _provider_session(
+        tmp_path,
+        """
+[llm]
+model = "glm-4-flash"
+api_key = "test-top-level"
+
+[[llm.providers]]
+name = "relay"
+api = "https://relay.example/v1"
+api_mode = "chat_completions"
+api_key = "test-key-1234567890"
+default_model = "relay-main"
+models = ["relay-main", {alias = "alias-one", model = "real-model"}]
+
+[[llm.providers]]
+name = "dry"
+api = "https://dry.example/v1"
+models = []
+""",
+    )
+
+    response = service.route("GET", "/api/settings/llm/providers")
+
+    assert response["ok"] is True
+    assert response["revision"] == revision
+    by_name = {p["name"]: p for p in response["providers"]}
+    relay = by_name["relay"]
+    assert relay["api"] == "https://relay.example/v1"
+    assert relay["api_mode"] == "chat_completions"
+    assert relay["default_model"] == "relay-main"
+    assert relay["models"] == ["relay-main", "alias-one"]
+    assert relay["model_count"] == 2
+    assert relay["key_display"] == "tes…7890"
+    assert relay["has_api_key"] is True
+    assert relay["is_codex"] is False
+    assert relay["credential"] == {"location": "entry", "form": "direct", "resolvable": True}
+    dry = by_name["dry"]
+    assert dry["credential"]["location"] == "top_level"  # 顶层 key 兜底可解析
+    assert dry["has_api_key"] is True
+
+
+def test_provider_service_lists_codex_entry_without_key_semantics(tmp_path):
+    service, _, _ = _provider_session(
+        tmp_path,
+        """
+[llm]
+model = "openai-codex/gpt-5.6-luna"
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "codex_app_server"
+api_key = ""
+models = []
+""",
+    )
+
+    response = service.route("GET", "/api/settings/llm/providers")
+
+    codex = next(p for p in response["providers"] if p["is_codex"])
+    assert codex["name"] == "openai-codex"
+    assert codex["api_mode"] == "codex_app_server"
+    assert codex["key_display"] == ""
+    assert codex["has_api_key"] is False
+    assert codex["credential"]["location"] == "none"
+
+
+def test_provider_service_response_contains_no_plaintext_secrets(tmp_path):
+    plaintext = "sk-super-secret-9876543210"
+    service, _, _ = _provider_session(
+        tmp_path,
+        f"""
+[llm]
+model = "relay/relay-main"
+api_key = "{plaintext}"
+
+[[llm.providers]]
+name = "relay"
+api = "https://relay.example/v1"
+api_key = "{plaintext}"
+models = ["relay-main"]
+""",
+    )
+
+    response = service.route("GET", "/api/settings/llm/providers")
+
+    import json
+
+    dumped = json.dumps(response, ensure_ascii=False)
+    assert plaintext not in dumped
+    relay = next(p for p in response["providers"] if p["name"] == "relay")
+    assert plaintext not in relay["key_display"]
+    assert relay["key_display"].startswith("sk-…")
+
+
+def test_provider_service_pool_listing_never_selects(tmp_path, monkeypatch):
+    from openbrep.credential_pool import CredentialPool
+
+    service, _, _ = _provider_session(
+        tmp_path,
+        """
+[llm]
+model = "relay/relay-main"
+
+[[llm.providers]]
+name = "relay"
+api = "https://relay.example/v1"
+credentials = [{id = "c1", value = "sk-pool-one"}, {id = "c2", value = "sk-pool-two"}]
+models = ["relay-main"]
+""",
+    )
+    select_calls: list = []
+    monkeypatch.setattr(
+        CredentialPool, "select", lambda self, scope="default", **kwargs: select_calls.append(scope)
+    )
+
+    response = service.route("GET", "/api/settings/llm/providers")
+
+    relay = next(p for p in response["providers"] if p["name"] == "relay")
+    assert relay["credential"] == {"location": "entry", "form": "pool", "resolvable": True}
+    assert relay["key_display"] == "池×2"
+    assert relay["has_api_key"] is True
+    assert select_calls == []
+
+
+def test_provider_service_unknown_route(tmp_path):
+    service, _, _ = _provider_session(tmp_path, """
+[llm]
+model = "glm-4-flash"
+""")
+
+    response = service.route("POST", "/api/settings/llm/providers/delete", {})
+
+    assert response["ok"] is False
+    assert "Unknown route" in response["error"]

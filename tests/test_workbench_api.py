@@ -1,6 +1,8 @@
 import base64
 import copy
 import json
+
+import pytest
 from pathlib import Path
 
 from openbrep import feedback_distill
@@ -4708,3 +4710,114 @@ def test_settings_route_does_not_expose_removed_codex_modify_flag(tmp_path):
     snapshot = _codex_modify_config_session(tmp_path).route("GET", "/api/snapshot", {})
     assert snapshot["ok"] is True
     assert "codex_modify_enabled" not in snapshot["llm"]
+
+
+# ── 卡01：GET /api/settings/llm/providers 只读总览 ───────────────
+
+
+def test_workbench_api_get_llm_providers_returns_readonly_projection(tmp_path, monkeypatch):
+    for name in ["ZAI_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY", "RELAY_KEY_VAR"]:
+        monkeypatch.delenv(name, raising=False)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "relay/relay-main"
+
+[[llm.providers]]
+name = "relay"
+api = "https://relay.example/v1"
+api_key = "test-key-1234567890"
+models = ["relay-main"]
+
+[[llm.providers]]
+name = "openai-codex"
+api_mode = "codex_app_server"
+api_key = ""
+models = []
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+
+    response = session.route("GET", "/api/settings/llm/providers")
+
+    assert response["ok"] is True
+    assert response["revision"] == session.settings_service.config_revision()["revision"]
+    relay = next(p for p in response["providers"] if p["name"] == "relay")
+    assert relay["models"] == ["relay-main"]
+    assert relay["key_display"] == "tes…7890"
+    assert relay["credential"] == {"location": "entry", "form": "direct", "resolvable": True}
+    codex = next(p for p in response["providers"] if p["is_codex"])
+    assert codex["name"] == "openai-codex"
+    # 未知 provider 写路由仍被 service 明确拒绝（只读卡不开放写路径）
+    assert session.route("POST", "/api/settings/llm/providers", {})["ok"] is False
+
+
+def test_workbench_api_get_llm_providers_never_calls_resolve_credentials(tmp_path, monkeypatch):
+    """只读投影绝不触发凭据解析/池选择（评审 §4：select 有副作用）。"""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "relay/relay-main"
+
+[[llm.providers]]
+name = "relay"
+api = "https://relay.example/v1"
+credentials = [{id = "c1", value = "sk-pool-one"}]
+models = ["relay-main"]
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+    from openbrep.config import LLMConfig
+    from openbrep.credential_pool import CredentialPool
+
+    select_calls: list = []
+    monkeypatch.setattr(
+        CredentialPool, "select", lambda self, scope="default", **kwargs: select_calls.append(scope)
+    )
+    resolve_calls: list = []
+    monkeypatch.setattr(
+        LLMConfig,
+        "resolve_credentials",
+        lambda self, model=None: resolve_calls.append(model),
+    )
+
+    response = session.route("GET", "/api/settings/llm/providers")
+
+    assert response["ok"] is True
+    assert select_calls == []
+    assert resolve_calls == []
+
+
+@pytest.mark.xfail(reason="评审 §4：旧快照 llm.api_key 通道仍回明文；卡10/11 统一展示合同时翻转", strict=False)
+def test_workbench_api_snapshot_key_channel_contains_no_plaintext(tmp_path):
+    """卡01 钩子（评审 §4）：锁定"快照 api_key 与 GET providers 均不含明文"的
+    目标合同。GET providers 已达标；旧快照通道今天仍返回解析后明文 key，
+    以 xfail 挂起，待统一展示合同收口时翻转。"""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[llm]
+model = "relay/relay-main"
+
+[[llm.providers]]
+name = "relay"
+api = "https://relay.example/v1"
+api_key = "test-plain-0001"
+models = ["relay-main"]
+""",
+        encoding="utf-8",
+    )
+    session = WorkbenchSession(config_path=config_path)
+    plaintext = "test-plain-0001"
+
+    import json
+
+    providers_payload = json.dumps(session.route("GET", "/api/settings/llm/providers"))
+    snapshot_payload = json.dumps(session.route("GET", "/api/snapshot"))
+
+    assert plaintext not in providers_payload  # 新通道：脱敏合同已生效
+    assert plaintext not in snapshot_payload  # 旧快照通道：待卡10/11 统一收口
