@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import multiprocessing
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from openbrep.values_declarations import parse_values_declarations
 
 LOCAL_BUDGET_SECONDS = 2.0
 INSPECTION_CONTEXT_TOKENS = 2000
-CHECKER_VERSION = 'assistant-inspection-v1'
+CHECKER_VERSION = 'assistant-inspection-v2'
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ def _check(kind, status, findings=(), coverage=None, reason=None):
             'coverage': coverage or {}, 'unavailable_reason': reason, 'truncated_count': 0}
 
 
-def _worker(project, sender):
+def _worker(project, sender, previews=()):
     try:
         result = StaticChecker().check(project)
         findings = []
@@ -50,6 +51,30 @@ def _worker(project, sender):
             findings.append({'id': f'values:{name}', 'severity': 'info', 'message': f'VALUES {name}: {json.dumps(values, ensure_ascii=False)}',
                              'evidence_location': {'file': 'scripts/vl.gdl', 'parameter': name}, 'source': 'values_static_declaration'})
         sender.send(_check('parameters', 'completed', findings, {'static_declarations_only': True, 'dynamic_expressions_not_evaluated': True}))
+        for kind in previews:
+            from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
+            params = {p.name: p.value for p in project.parameters}
+            script = project.get_script(ScriptType.SCRIPT_2D if kind == 'preview_2d' else ScriptType.SCRIPT_3D) or ''
+            setup = project.get_script(ScriptType.MASTER) or ''
+            kwargs = {'parameters': params, 'setup_script': setup, 'wall_clock_limit': 0.5}
+            if kind == 'preview_2d':
+                result = preview_2d_script(script, script_3d=project.get_script(ScriptType.SCRIPT_3D), **kwargs)
+                count = len(result.lines) + len(result.polygons) + len(result.circles) + len(result.arcs) + len(result.texts)
+            else:
+                result = preview_3d_script(script, **kwargs)
+                count = len(result.meshes) + len(result.wires)
+            warnings = list(result.warnings)
+            string_branch = bool(re.search(r'\bIF\b[^\n]*"', setup + '\n' + script, re.I))
+            incomplete = bool(warnings or string_branch)
+            coverage = {'local_approximation': True, 'current_parameter_values_only': True,
+                        'all_string_branches_evaluated': not string_branch, 'dependencies_resolved': not bool(re.search(r'\bCALL\b', setup + '\n' + script, re.I)),
+                        'primitive_count': count}
+            findings = [{'id': f'{kind}:warning:{i}', 'severity': 'warning', 'message': text,
+                         'evidence_location': {'file': 'scripts/' + ('2d.gdl' if kind == 'preview_2d' else '3d.gdl')}, 'source': 'local_previewer'} for i, text in enumerate(warnings)]
+            if count == 0 and script.strip() and not incomplete:
+                findings.append({'id': f'{kind}:empty', 'severity': 'warning', 'message': '当前参数值下的受支持脚本未产生本地预览几何。',
+                                 'evidence_location': {'file': 'scripts/' + ('2d.gdl' if kind == 'preview_2d' else '3d.gdl')}, 'source': 'local_previewer'})
+            sender.send(_check(kind, 'partial' if incomplete else 'completed', findings, coverage))
         sender.send(None)
     except Exception as exc:
         sender.send(_check('inspection', 'unavailable', reason=type(exc).__name__))
@@ -58,7 +83,7 @@ def _worker(project, sender):
         sender.close()
 
 
-def inspect_snapshot(snapshot: SourceSnapshot, *, requested=True, budget_seconds=LOCAL_BUDGET_SECONDS, should_cancel=None) -> InspectionReport:
+def inspect_snapshot(snapshot: SourceSnapshot, *, requested=True, budget_seconds=LOCAL_BUDGET_SECONDS, should_cancel=None, previews=(), recent_verification=None) -> InspectionReport:
     start = time.monotonic()
     checks = []
     project = snapshot.project_copy()
@@ -70,7 +95,7 @@ def inspect_snapshot(snapshot: SourceSnapshot, *, requested=True, budget_seconds
     else:
         ctx = multiprocessing.get_context('spawn')
         receiver, sender = ctx.Pipe(duplex=False)
-        process = ctx.Process(target=_worker, args=(project, sender), daemon=True)
+        process = ctx.Process(target=_worker, args=(project, sender, tuple(previews)), daemon=True)
         try:
             process.start()
             sender.close()
@@ -107,10 +132,13 @@ def inspect_snapshot(snapshot: SourceSnapshot, *, requested=True, budget_seconds
                     process.join()
             receiver.close()
     present = {c['kind'] for c in checks}
-    for kind in ('static', 'parameters'):
+    for kind in ('static', 'parameters', *previews):
         if kind not in present:
             checks.append(_check(kind, 'unavailable', reason=reason or 'not_completed'))
-    checks.extend(_check(kind, 'not_requested') for kind in ('preview_2d', 'preview_3d', 'recent_verification'))
+    checks.extend(_check(kind, 'not_requested') for kind in ('preview_2d', 'preview_3d') if kind not in previews)
+    verified = recent_verification and recent_verification.get('source_fingerprint') == snapshot.source_fingerprint and snapshot.source_fingerprint is not None and not snapshot.drafts
+    checks.append(_check('recent_verification', 'completed' if verified else 'not_requested', coverage={'source_matched': bool(verified)},
+                         findings=recent_verification.get('findings', []) if verified else []))
     return InspectionReport(uuid.uuid4().hex, snapshot.source_version, round((time.monotonic() - start) * 1000, 2), tuple(checks))
 
 
@@ -129,3 +157,27 @@ def render_inspection(report: InspectionReport, *, token_budget=INSPECTION_CONTE
         else:
             omitted += 1
     return {'checks': entries, 'findings': included, 'truncated_count': omitted}
+
+
+class InspectionCache:
+    """Only reusable with an explicit dependency version; failures never persist."""
+    def __init__(self, limit=32):
+        from collections import OrderedDict
+        self.entries = OrderedDict()
+        self.limit = limit
+
+    def inspect(self, snapshot, *, requested=True, previews=(), should_cancel=None, **kwargs):
+        key = (snapshot.context_fingerprint, CHECKER_VERSION, snapshot.dependency_context_version, tuple(previews), requested,
+               json.dumps(kwargs.get('recent_verification'), sort_keys=True, default=str), snapshot.source_fingerprint if kwargs.get('recent_verification') else None)
+        if should_cancel and should_cancel():
+            return inspect_snapshot(snapshot, requested=requested, previews=previews, should_cancel=should_cancel, **kwargs)
+        if snapshot.dependency_context_version is not None and key in self.entries:
+            cached = self.entries[key]
+            self.entries.move_to_end(key)
+            return InspectionReport(uuid.uuid4().hex, snapshot.source_version, 0, copy.deepcopy(cached.checks))
+        report = inspect_snapshot(snapshot, requested=requested, previews=previews, should_cancel=should_cancel, **kwargs)
+        if snapshot.dependency_context_version is not None and all(c['status'] != 'unavailable' for c in report.checks):
+            self.entries[key] = report
+            while len(self.entries) > self.limit:
+                self.entries.popitem(last=False)
+        return report

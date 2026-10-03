@@ -105,6 +105,9 @@ class SourceSnapshot:
     def matches(self, project: HSFProject | None, epoch: int, dependency_version: str | None = None) -> bool:
         if epoch != self.project_epoch or dependency_version != self.dependency_context_version:
             return False
+        if project is not None and self._project is not None:
+            if not parameters_semantically_equal(project.parameters, self._project.parameters) or project.scripts != self._project.scripts:
+                return False
         now = capture_snapshot(project, epoch, dependency_context_version=dependency_version)
         if now.context_fingerprint != self.context_fingerprint:
             return False
@@ -141,8 +144,10 @@ def capture_snapshot(project: HSFProject | None, project_epoch: int, draft_scrip
         saved = compute_source_fingerprint(project.root)
         # Disk XML may have been externally edited without refreshing session.
         disk = HSFProject.load_from_disk(str(project.root))
-        disk.scripts = copy.deepcopy(project.scripts)
-        disk.parameters = copy.deepcopy(project.parameters)
+        # Persisted scripts come from the same bytes whose source hash we bind.
+        # Editor changes are supplied explicitly as drafts, never inferred.
+        if project._paramlist_raw is not None and _xml(project._paramlist_raw) == _xml(disk._paramlist_raw or ''):
+            disk.parameters = copy.deepcopy(project.parameters)
         effective = disk
     for name, content in drafts.items():
         if name == 'paramlist.xml':

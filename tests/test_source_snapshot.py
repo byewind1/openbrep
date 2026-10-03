@@ -54,3 +54,14 @@ def test_bom_change_is_byte_sensitive_but_context_stable(tmp_path):
     after = capture_snapshot(project, 1)
     assert before.source_fingerprint != after.source_fingerprint
     assert before.context_fingerprint == after.context_fingerprint
+
+
+def test_external_scripts_and_xml_are_the_actual_advisor_source(tmp_path):
+    project = HSFProject.create_new('Shelf', str(tmp_path));project.save_to_disk()
+    before = capture_snapshot(project, 1)
+    (project.root/'scripts/3d.gdl').write_text('BLOCK 2,3,4\n')
+    after = capture_snapshot(project, 1)
+    assert after.project_copy().get_script(ScriptType.SCRIPT_3D) == 'BLOCK 2,3,4\n'
+    assert after.context_fingerprint != before.context_fingerprint
+    assert not before.matches(project, 1)
+    assert not after.matches(project, 1)  # reload session before executing externally changed source
