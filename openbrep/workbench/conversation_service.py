@@ -43,6 +43,8 @@ class WorkbenchConversationService:
         self.pending_turn_id: str | None = None
         self.selected_proposal: dict | None = None
         self.proposals: OrderedDict[str, dict] = OrderedDict()
+        from openbrep.runtime.inspection import InspectionCache
+        self.inspection_cache = InspectionCache()
         self.advisor = self._answer
         self.semantic_decision = self._semantic_decision
 
@@ -80,7 +82,9 @@ class WorkbenchConversationService:
         message = turn.body['message']
         project = turn.snapshot.project_copy()
         needs_inspection = turn.policy.mode == 'plan' or bool(project and any(word in message.lower() for word in ('这个', '脚本', '参数', '报错', '比例', '检查', '优化', '柜子', 'project', 'script', 'error', 'parameter', 'check')))
-        report = inspect_snapshot(turn.snapshot, requested=needs_inspection, should_cancel=should_cancel)
+        geometry = turn.policy.mode == 'plan' or any(word in message.lower() for word in ('几何', '比例', '结构', '预览', '平面', 'geometry', 'preview', 'structure'))
+        previews = ('preview_2d', 'preview_3d') if geometry and project else ()
+        report = self.inspection_cache.inspect(turn.snapshot, requested=needs_inspection, previews=previews, should_cancel=should_cancel)
         payload = validate_image_payload(turn.body)
         if not payload['ok']:
             turn.state = 'failed'
