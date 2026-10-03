@@ -35,6 +35,7 @@ from openbrep.workbench.config_commit import (
     file_revision,
     resolve_api_key_update,
 )
+from openbrep.workbench.config_port import export_llm_config
 from openbrep.workbench.credential_status import (
     credential_status,
     has_credential_pool,
@@ -178,6 +179,12 @@ class ProviderSettingsService:
         body = body or {}
         if method == "GET" and route == "/api/settings/llm/providers":
             return self.list_providers()
+        if method == "GET" and route == "/api/settings/llm/export":
+            # 卡12：导出（GET 无锁；只读序列化，不改任何状态）
+            return export_llm_config(
+                self.session.config,
+                include_keys=str(body.get("include_keys") or "false").strip().lower() == "true",
+            )
         if method == "POST" and route == "/api/settings/llm/providers":
             return self.create_provider(body)
         if method in ("PUT", "PATCH") and route == "/api/settings/llm/providers":
