@@ -572,12 +572,19 @@ export interface LlmProviderCredentialStatus {
   resolvable: boolean
 }
 
+export interface LlmProviderModelEntry {
+  alias: string
+  model: string
+}
+
 export interface LlmProviderInfo {
   name: string
   api: string
   api_mode: string
   default_model: string
   models: string[]
+  /** 卡06：alias/model 对（编辑表单无损往返用；models 只含 alias） */
+  model_entries?: LlmProviderModelEntry[]
   model_count: number
   has_api_key: boolean
   /** 掩码展示（前3…末4）或 ${ENV} 原样；池为 池×N；永不含明文 */

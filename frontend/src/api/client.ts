@@ -715,6 +715,22 @@ export async function testLlmConnection(model?: string, reasoningEffort?: string
   )
 }
 
+/** 卡06：草稿连接测试——draft_config 走后端副本通道，不触碰已保存配置。 */
+export async function testLlmDraftConnection(
+  draft: LlmProviderDraft,
+  model: string,
+): Promise<LlmConnectionTestResult> {
+  return requestJson<LlmConnectionTestResult>(
+    '/api/settings/llm/test',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, draft_config: draft }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
 // ── Codex BYOA（D1）：ChatGPT 订阅登录 / 状态 / 动态模型目录 ────────────────
 
 export async function fetchCodexStatus(): Promise<CodexStatus> {

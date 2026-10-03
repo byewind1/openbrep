@@ -1038,12 +1038,61 @@ class WorkbenchSettingsService:
             return self._codex_error(exc)
         return {"ok": True, **payload}
 
+    @staticmethod
+    def _inject_draft_provider(test_config: Any, draft: dict[str, Any]) -> dict[str, Any] | None:
+        """把草稿 provider 条目注入连接测试副本；返回 None 表示注入成功。
+
+        - name 缺省 "draft"；openai-codex 保留身份拒绝（草稿不参与订阅链路）。
+        - api 显式（含空串）→ _explicit_base=True：草稿端点绝不回退顶层。
+        - api_mode 沿用 _normalize_api_mode 报错语义（未知值显式失败）。
+        """
+        from openbrep.config import CODEX_PROVIDER_NAME, normalize_provider_entry
+
+        name = str(draft.get("name") or "").strip() or "draft"
+        if name.lower() == CODEX_PROVIDER_NAME.lower():
+            return {
+                "ok": False,
+                "code": "codex_entry_protected",
+                "error": "草稿名称 openai-codex 是保留订阅身份，不能用于草稿测试。",
+                "category": "llm_configuration",
+            }
+        try:
+            entry = normalize_provider_entry({
+                "name": name,
+                "api": str(draft.get("api") or ""),
+                "api_mode": str(draft.get("api_mode") or "chat_completions"),
+                "api_key": str(draft.get("api_key") or ""),
+                "models": [],
+                "_explicit_base": True,
+            })
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), "category": "llm_configuration"}
+        # 同名既有条目从副本移除：草稿测试必须测到草稿内容，不是已保存的旧配置
+        test_config.llm.providers = [
+            p
+            for p in test_config.llm.providers
+            if str(p.get("name", "") or "").strip().lower() != name.lower()
+        ]
+        test_config.llm.providers.append(entry)
+        return None
+
     def test_llm_settings(self, body: dict[str, Any]) -> dict[str, Any]:
         model = str(body.get("model") or self.session.llm_model).strip()
         if not model:
             return {"ok": False, "error": "Model is required.", "category": "llm_configuration"}
 
         test_config = copy.deepcopy(self.session.config)
+        # 卡06：草稿测试（draft_config）——把未保存的 provider 草稿注入测试副本，
+        # 全程不触碰真实配置/凭据池（无锁合同只操作副本）。key 用完即弃：
+        # test_config 在本方法结束时被丢弃，绝不落盘、不进日志。
+        draft = body.get("draft_config")
+        if isinstance(draft, dict):
+            draft_error = self._inject_draft_provider(test_config, draft)
+            if draft_error is not None:
+                return draft_error
+            if "/" not in model:
+                draft_name = str(draft.get("name") or "").strip() or "draft"
+                model = f"{draft_name}/{model}"
         test_config.llm.model = model
         if is_codex_qualified_model(model):
             test_config.llm.reasoning_effort = str(body.get("reasoning_effort") or "").strip()
