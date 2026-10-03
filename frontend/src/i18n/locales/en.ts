@@ -533,4 +533,10 @@ export const en: Record<LocaleKey, string> = {
   'settings.ai.testPossibleCause': 'Possible cause ({category})',
   'settings.ai.showTechDetail': 'Show technical details',
   'settings.ai.hideTechDetail': 'Hide technical details',
+  // ── 卡11：三态徽标与当前高亮 ──
+  'providerPanel.currentBadge': 'Current',
+  'providerPanel.stateConfigured': 'Configured',
+  'providerPanel.stateUnconfigured': 'Unconfigured',
+  'providerPanel.stateDiscovered': 'List fetched {time}',
+  'providerPanel.stateTested': 'Tested OK {time}',
 }

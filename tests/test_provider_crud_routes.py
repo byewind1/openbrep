@@ -467,3 +467,77 @@ def test_delete_not_blocked_by_other_provider_references(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+# ── 卡11：available 状态（fail-closed）──────────────────────────
+
+
+def test_provider_available_ollama_without_key(tmp_path):
+    """ollama 免 key：available=true。"""
+    from types import SimpleNamespace
+
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.append({
+        "name": "ollama", "api": "http://127.0.0.1:11434/v1", "api_mode": "chat_completions",
+        "api_key": "", "models": [{"alias": "qwen", "model": "qwen2.5:14b"}],
+    })
+    config.save(str(config_path))
+    session = SimpleNamespace(
+        config=GDLAgentConfig.load(str(config_path)), config_path=config_path, llm_model="glm-4-flash"
+    )
+    service = ProviderSettingsService(session)
+
+    response = service.route("GET", "/api/settings/llm/providers")
+
+    ollama = next(p for p in response["providers"] if p["name"] == "ollama")
+    assert ollama["available"] is True
+    assert ollama["credential"]["resolvable"] is False
+
+
+def test_provider_available_codex_fail_closed_without_login(tmp_path):
+    """codex 条目：无登录态时 available=false（fail-closed，绝不隐式拉起 app-server）。"""
+    from types import SimpleNamespace
+
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.append({
+        "name": "openai-codex", "api_mode": "codex_app_server", "api_key": "", "models": [],
+        "_explicit_base": True,
+    })
+    config.save(str(config_path))
+    session = SimpleNamespace(
+        config=GDLAgentConfig.load(str(config_path)), config_path=config_path, llm_model="glm-4-flash"
+    )
+    service = ProviderSettingsService(session)
+
+    response = service.route("GET", "/api/settings/llm/providers")
+
+    codex = next(p for p in response["providers"] if p["is_codex"])
+    assert codex["available"] is False
+
+
+def test_provider_available_requires_resolvable_credential(tmp_path):
+    from types import SimpleNamespace
+
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.append({
+        "name": "relay", "api": "https://relay.example/v1", "api_mode": "chat_completions",
+        "api_key": "test-key-000000001", "models": [{"alias": "m", "model": "m"}],
+    })
+    config.llm.providers.append({
+        "name": "dry", "api": "https://dry.example/v1", "api_mode": "chat_completions",
+        "api_key": "", "models": [{"alias": "m", "model": "m"}],
+    })
+    config.save(str(config_path))
+    session = SimpleNamespace(
+        config=GDLAgentConfig.load(str(config_path)), config_path=config_path, llm_model="glm-4-flash"
+    )
+    service = ProviderSettingsService(session)
+
+    response = service.route("GET", "/api/settings/llm/providers")
+
+    by_name = {p["name"]: p for p in response["providers"]}
+    assert by_name["relay"]["available"] is True
+    assert by_name["dry"]["available"] is False

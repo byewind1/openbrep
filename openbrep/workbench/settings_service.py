@@ -17,6 +17,7 @@ from openbrep.config import (
     model_to_provider,
     provider_templates,
 )
+from openbrep.workbench.credential_status import mask_secret
 
 
 def load_workbench_config(config_path: Path) -> GDLAgentConfig:
@@ -467,7 +468,10 @@ class WorkbenchSettingsService:
             "model_options": model_options,
             "model_groups": groups,
             "provider_templates": provider_templates(),
-            "api_key": self.session.llm_api_key,
+            # 卡11 收口（评审 §4）：旧快照通道不再回明文——改为掩码展示
+            # （前3…末4 / ${ENV} 原样 / 空）。key 编辑框 write-only，前端无明文消费者；
+            # 已保存 key 的替换/清除仍走 /api/settings/llm/api-key 与 provider 设置。
+            "api_key": mask_secret(self.session.llm_api_key),
             "api_base": self.session.llm_api_base,
             "max_retries": self.session.max_retries,
             "assistant_settings": self.session.assistant_settings,

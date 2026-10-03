@@ -3,6 +3,7 @@ import type {
   LlmConnectionTestResult,
   LlmDiscoveryRequest,
   LlmDiscoveryResult,
+  LlmProviderActivity,
   LlmProviderDraft,
   LlmProviderInfo,
   LlmProviderTemplate,
@@ -15,10 +16,12 @@ import {
   credentialBadgeKey,
   draftTestModel,
   emptyProviderForm,
+  formatActivityTime,
   formFromProvider,
   formFromTemplate,
   formToDraft,
   isProviderFormDirty,
+  providerForModel,
   removeModelEntry,
   type ProviderFormState,
 } from './providerForm'
@@ -39,6 +42,10 @@ export interface ProviderManagerPanelProps {
   onTestDraft: (draft: LlmProviderDraft, model: string) => Promise<LlmConnectionTestResult>
   /** 卡09：模型发现（无锁路由；结果由组件按 epoch 守卫后显式勾选合并） */
   onDiscoverModels: (request: LlmDiscoveryRequest) => Promise<LlmDiscoveryResult>
+  /** 卡11：discovered/tested 会话级时间戳（configured 来自 provider.credential） */
+  activity?: Record<string, LlmProviderActivity>
+  /** 卡11：当前生效模型（高亮所属 provider 行） */
+  currentModel?: string | null
 }
 
 interface DiscoveryState {
@@ -69,6 +76,8 @@ export function ProviderManagerPanel({
   onDeleteProvider,
   onTestDraft,
   onDiscoverModels,
+  activity,
+  currentModel,
 }: ProviderManagerPanelProps) {
   const t = useT()
   const [editor, setEditor] = useState<EditorState | null>(null)
@@ -86,6 +95,8 @@ export function ProviderManagerPanel({
   const [discoverySelection, setDiscoverySelection] = useState<Record<string, boolean>>({})
   const [discoveryEpochRender, setDiscoveryEpochRender] = useState(0)
   const discoveryEpochRef = useRef(0)
+  // 卡11：三态徽标与当前 provider 高亮
+  const currentProvider = useMemo(() => providerForModel(providers, currentModel), [providers, currentModel])
 
   useEffect(() => {
     if (!loaded) void onLoadProviders()
@@ -321,15 +332,43 @@ export function ProviderManagerPanel({
 
       {/* ── 列表 ── */}
       <ul className="provider-list" data-testid="provider-list">
-        {providers.map((info) => (
-          <li key={info.name} className="provider-row" data-testid={`provider-row-${info.name}`}>
+        {providers.map((info) => {
+          const rowActivity = activity?.[info.name]
+          return (
+          <li
+            key={info.name}
+            className={`provider-row${info.name === currentProvider ? ' current' : ''}`}
+            data-testid={`provider-row-${info.name}`}
+            data-current={info.name === currentProvider || undefined}
+          >
             <strong>{info.name}</strong>
+            {info.name === currentProvider ? (
+              <span className="provider-current-badge" data-testid={`provider-current-${info.name}`}>
+                {t('providerPanel.currentBadge')}
+              </span>
+            ) : null}
             <small className="provider-api">{info.api || '—'}</small>
             <small>{t('providerPanel.modelCount', { count: info.model_count })}</small>
             <small className="provider-key-display">{info.key_display || '—'}</small>
             <span className="provider-credential-badge" data-testid={`provider-credential-${info.name}`}>
               {t(credentialBadgeKey(info.credential))}
             </span>
+            <span
+              className={`provider-state-badge${info.credential.resolvable ? ' ok' : ''}`}
+              data-testid={`provider-configured-${info.name}`}
+            >
+              {info.credential.resolvable ? t('providerPanel.stateConfigured') : t('providerPanel.stateUnconfigured')}
+            </span>
+            {rowActivity?.discovered ? (
+              <span className="provider-state-badge" data-testid={`provider-discovered-${info.name}`}>
+                {t('providerPanel.stateDiscovered', { time: formatActivityTime(rowActivity.discovered) })}
+              </span>
+            ) : null}
+            {rowActivity?.tested ? (
+              <span className="provider-state-badge ok" data-testid={`provider-tested-${info.name}`}>
+                {t('providerPanel.stateTested', { time: formatActivityTime(rowActivity.tested) })}
+              </span>
+            ) : null}
             {info.is_codex ? null : (
               <>
                 <button type="button" data-testid={`provider-edit-${info.name}`} onClick={() => openEdit(info)}>
@@ -341,7 +380,8 @@ export function ProviderManagerPanel({
               </>
             )}
           </li>
-        ))}
+          )
+        })}
         {providers.length === 0 ? <li className="provider-empty">{t('providerPanel.empty')}</li> : null}
       </ul>
 

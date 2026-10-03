@@ -140,3 +140,25 @@ export function credentialBadgeKey(status: LlmProviderInfo['credential']): impor
       return 'providerPanel.credential.none'
   }
 }
+
+/** 卡11：当前生效模型所属 provider（provider/model head 或裸 alias 匹配；解析器同口径的小写比较） */
+export function providerForModel(
+  providers: LlmProviderInfo[],
+  currentModel: string | null | undefined,
+): string | null {
+  const target = (currentModel ?? '').trim().toLowerCase()
+  if (!target) return null
+  if (target.includes('/')) {
+    const head = target.split('/')[0].trim()
+    const found = providers.find((p) => p.name.toLowerCase() === head)
+    return found?.name ?? null
+  }
+  const found = providers.find((p) => p.models.some((m) => m.toLowerCase() === target))
+  return found?.name ?? null
+}
+
+/** 卡11：时间戳 → HH:MM（会话级展示；测试只断言徽标存在） */
+export function formatActivityTime(ts: number | undefined): string {
+  if (!ts) return ''
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
