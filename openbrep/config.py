@@ -590,6 +590,7 @@ class LLMConfig:
     # 不悄悄改动既有配置：全新用户本机没有 Codex 配置，只有托管入口可用。
     # 无效值一律按默认解释（fail safe），保存时只写规范枚举。
     codex_entry: str = "managed"
+    conversation_entry: str = "unified"
     # R5：角色级 fallback/cooldown/revert 配置。默认空字典，不启用任何
     # 新的重试路径；由 model_retry.RetryRouter 负责规范化读取。
     retry: dict[str, object] = field(default_factory=dict)
@@ -646,6 +647,9 @@ class LLMConfig:
     def effective_codex_routing_mode(self) -> str:
         """Return the fail-closed routing mode (``fixed`` or ``auto``)."""
         return "auto" if str(self.codex_routing_mode or "").strip() == "auto" else "fixed"
+
+    def effective_conversation_entry(self) -> str:
+        return "legacy" if self.conversation_entry == "legacy" else "unified"
 
     def effective_codex_entry(self) -> str:
         """Codex 入口（双入口 2026-09-17）：只认两个枚举值，其余按默认。"""
@@ -1156,6 +1160,7 @@ class GDLAgentConfig:
                     if self.llm.effective_codex_entry() != "managed"
                     else {}
                 ),
+                **({"conversation_entry": "legacy"} if self.llm.effective_conversation_entry() == "legacy" else {}),
                 # 统一注册表：保存即迁移，只写规范键（api/api_mode），不再写 custom_providers
                 "providers": [provider_entry_to_toml(p) for p in providers],
                 "assistant_settings": self.llm.assistant_settings or "",
@@ -1218,6 +1223,8 @@ class GDLAgentConfig:
             lines.append('codex_routing_mode = "auto"')
         if self.llm.effective_codex_entry() != "managed":
             lines.append(f'codex_entry = "{self.llm.effective_codex_entry()}"')
+        if self.llm.effective_conversation_entry() == "legacy":
+            lines.append('conversation_entry = "legacy"')
         if self.llm.api_base:
             lines.append(f'api_base = "{self.llm.api_base}"')
         lines += [

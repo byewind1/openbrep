@@ -456,10 +456,14 @@ class WorkbenchAssistantService:
 
         def on_event(event_type, data):
             events.append({"type": event_type, "data": data})
+            callback = body.get("_turn_on_event")
+            if callable(callback):
+                callback(event_type, data)
 
         continue_from = normalize_continue_from(body.get("continue_from"))
         pipeline, request = self._build_generate_pipeline(
-            body, image_payload, on_event=on_event
+            body, image_payload, on_event=on_event,
+            should_cancel=body.get("_turn_should_cancel") if callable(body.get("_turn_should_cancel")) else None,
         )
         result = pipeline.execute(request)
         result = self._merge_continue_from(result, continue_from)

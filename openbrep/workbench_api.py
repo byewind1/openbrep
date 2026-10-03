@@ -16,6 +16,7 @@ from openbrep.llm import LLMAdapter
 from openbrep.local_file_dialog import DialogUnavailableError
 from openbrep.runtime.pipeline import TaskPipeline
 from openbrep.workbench.assistant_service import WorkbenchAssistantService
+from openbrep.workbench.conversation_service import WorkbenchConversationService
 from openbrep.workbench.blender_import_service import WorkbenchBlenderImportService
 from openbrep.workbench.compiler_service import WorkbenchCompilerService
 from openbrep.workbench.copilot_service import WorkbenchCopilotService
@@ -128,6 +129,7 @@ class WorkbenchSession:
         self.git_service = WorkbenchGitService(self)
         self.blender_import_service = WorkbenchBlenderImportService(self)
         self.assistant_service = WorkbenchAssistantService(self)
+        self.conversation_service = WorkbenchConversationService(self)
         self.skill_proposal_service = SkillProposalService(self)
         self.copilot_service = WorkbenchCopilotService(self)
         self.memory_service = WorkbenchMemoryService(self)
@@ -799,6 +801,9 @@ class WorkbenchSession:
         # 记忆/蒸馏教训路由：分发下沉 memory_service（request_gate 锁在 route 层）
         if route == "/api/memory" or route.startswith(("/api/memory/", "/api/lessons")):
             return self.memory_service.memory_route(normalized_method, route, body)
+
+        if normalized_method == "POST" and route == "/api/assistant/turn":
+            return self.conversation_service.route(body)
 
         if normalized_method == "POST" and route == "/api/assistant":
             return self.assistant_reply(body)

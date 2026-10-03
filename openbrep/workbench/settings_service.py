@@ -457,6 +457,7 @@ class WorkbenchSettingsService:
         return {
             # model = 生效模型（会话覆盖存在时即覆盖值）；session_model = 会话覆盖
             # 模型（D16，无覆盖时为 None）。前端 pill 据此显示覆盖态。
+            "conversation_entry": self.session.config.llm.effective_conversation_entry(),
             "model": self.session.llm_model,
             "session_model": session_llm_model_override(self.session),
             "model_available": llm_model_available(
