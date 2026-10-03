@@ -241,3 +241,62 @@ def test_unified_image_create_keeps_extraction_gate_and_server_task(tmp_path):
     assert session.create_project_from_prompt.call_count == 2
     session.route('POST', '/api/assistant/turn', token)
     assert session.create_project_from_prompt.call_count == 2
+
+
+def test_working_intent_failed_continue_retains_original_goal_and_does_not_call_router(tmp_path):
+    session = session_at(tmp_path)
+    session.conversation_service.semantic_decision = Mock(side_effect=AssertionError('No extra model call'))
+    session.assistant_service.generate_with_assistant = Mock(return_value={'ok': False, 'error':'failed'})
+    first = prepare(session)
+    session.route('POST','/api/assistant/turn',{'phase':'execute','turn_id':first['turn_id']})
+    continued = prepare(session, client_turn_id='c2', message='继续')
+    assert continued['result_kind'] == 'ready_to_execute'
+    session.route('POST','/api/assistant/turn',{'phase':'execute','turn_id':continued['turn_id']})
+    request = session.assistant_service.generate_with_assistant.call_args.args[0]
+    assert '添加背板' in request['message']
+    assert '当前工作计划' in request['assistant_settings']
+    assert request['conversation_context']['message_refs']
+    session.conversation_service.semantic_decision.assert_not_called()
+
+
+def test_effective_constraint_blocks_micro_fastpath_and_clear_invalidates_tokens(tmp_path):
+    from openbrep.workbench.working_intent import reduce_intent
+    session = session_at(tmp_path)
+    service = session.conversation_service
+    service._sync_epoch()
+    service.working_intent = reduce_intent(service.working_intent, {'kind':'turn','message_id':'old','message':'不改宽度','constraints':['不改宽度']})
+    ready = prepare(session, message='把A改成2')
+    result = session.route('POST','/api/assistant/turn',{'phase':'execute','turn_id':ready['turn_id']})
+    assert result['code'] == 'CONSTRAINT_CONFLICT'
+    session.assistant_service.generate_with_assistant.assert_not_called()
+    session.route('DELETE','/api/assistant/history',{})
+    assert not service.working_intent['goals']
+    assert service.turns[ready['turn_id']].state == 'cancelled'
+
+
+def test_plan_working_version_and_same_project_reload_preserve_goals(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    plan = prepare(session, requested_mode='plan')
+    session.conversation_service.working_intent['version'] += 1
+    result = session.route('POST','/api/assistant/turn',{'phase':'execute','turn_id':plan['turn_id'], 'approve':True,
+        'plan_id':plan['pending_plan']['plan_id'],'plan_version':1})
+    assert result['code'] == 'PLAN_STALE'
+    assert result['pending_plan'] == plan['pending_plan']
+    ready = prepare(session, client_turn_id='c2')
+    goals = session.conversation_service.working_intent['goals'][:]
+    session.project = HSFProject.load_from_disk(str(session.source_path))
+    session.conversation_service._sync_epoch()
+    assert session.conversation_service.working_intent['goals'] == goals
+    assert session.conversation_service.turns[ready['turn_id']].state == 'stale'
+
+
+def test_gui_context_absence_keeps_generation_request_bytes_identical(tmp_path):
+    from openbrep.workbench.project_session_service import validate_image_payload
+    session = session_at(tmp_path)
+    body = {'message': '添加背板', 'assistant_settings': ' exact settings\n  '}
+    _, first = session.assistant_service._build_generate_pipeline(body, validate_image_payload(body))
+    _, second = session.assistant_service._build_generate_pipeline({**body,'conversation_context':None}, validate_image_payload(body))
+    assert first.assistant_settings.encode() == second.assistant_settings.encode() == body['assistant_settings'].encode()
+    assert first.conversation_context is None and second.conversation_context is None

@@ -73,9 +73,15 @@ def decide_turn(
     """At most one semantic call; unavailable/invalid decisions never authorize writes."""
     policy = explicit_policy(message, requested_mode)
     state = project_state or {}
-    if policy is None and _REFERENCE.search(message):
-        if (working_intent or {}).get('proposals') or (working_intent or {}).get('pending_plan'):
-            policy = TurnPolicy('execute', 'MODIFY')
+    context = working_intent or {}
+    continuation = message.strip().lower() in {'好的', '好', '继续', 'ok', 'continue'}
+    if policy is None and (_REFERENCE.search(message) or continuation):
+        target = context.get('pending_plan') or context.get('active_task')
+        proposals = context.get('proposals') or []
+        if target:
+            policy = TurnPolicy('execute', target.get('task_intent', 'MODIFY'))
+        elif _REFERENCE.search(message) and proposals:
+            policy = TurnPolicy('execute', proposals[0].get('target_intent', 'MODIFY') if len(proposals) == 1 else 'MODIFY')
     if policy is None:
         if semantic_decision is None:
             return TurnPolicy('consult', decision_source='unavailable', error='DECISION_UNAVAILABLE')

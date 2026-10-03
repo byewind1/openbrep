@@ -268,6 +268,8 @@ class WorkbenchAssistantService:
         return {"ok": True, "count": count}
 
     def clear_assistant_history(self) -> dict[str, Any]:
+        if getattr(self.session, 'conversation_service', None) is not None:
+            self.session.conversation_service.clear()
         if self.session.source_path is None:
             return {"ok": True, "count": 0}
         try:
