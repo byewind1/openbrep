@@ -51,6 +51,24 @@ class TestDetectMicroModify(unittest.TestCase):
         self.assertEqual(micro.old_value, "4")
         self.assertEqual(micro.matched_via, "name")
 
+    def test_negation_and_plan_never_apply_parameter(self):
+        for text in (
+            "不要把 shelf_count 改成 5", "先别改，出个计划把 shelf_count 改成 5",
+            "不用改 shelf_count", "别把层板数量设为 5", "暂不把 shelf_count 改为 5",
+            "不把 shelf_count 改成 5", "先出计划，把 shelf_count 改成 5",
+            "把 shelf_count 改成 5，先出个计划", "给我个方案，把 shelf_count 改成 5",
+            "别动手，把 shelf_count 改成 5", "不要打开 show_frame",
+            "Don't set shelf_count to 5", "do not increase shelf_count by 1",
+            "plan first: set shelf_count to 5", "set shelf_count to 5, plan only",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(self.detect(text))
+
+    def test_positive_description_still_applies(self):
+        micro = self.detect("把层板数量改成 5")
+        self.assertIsNotNone(micro)
+        self.assertEqual(micro.new_value, "5")
+
     def test_m03_benchmark_phrasing(self):
         micro = self.detect(
             "把层板厚度参数 shelf_thk 的默认值从 18mm 改为 25mm（即 0.025 米），"

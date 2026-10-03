@@ -76,6 +76,17 @@ _COMPOUND_HINTS = ("然后", "并且", "顺便", "还有", "另外", "同时", "
 # 疑问句不是修改指令
 _QUESTION_HINTS = ("为什么", "为啥", "怎么看", "吗？", "吗?", "？", "?")
 
+# 只负责拒绝快路径，不据此决定整轮权限。混合约束交给 turn policy。
+# 限定在修改动词之前，避免把“其他内容保持不变”当成禁止本次赋值。
+_READ_ONLY_RE = re.compile(
+    r"先别改|先不要改|先出(?:个)?计划|出(?:个)?计划|给我(?:个|一个)?方案|别动手|"
+    r"(?:不要|别|不用|不需(?:要)?|暂不|不把)[^，。；\n]{0,80}"
+    r"(?:改|设为|设置|调整|调成|变为|增加|减少|打开|关闭|启用|禁用)|"
+    r"\b(?:do\s+not|don't|never)\s+(?:set|change|update|increase|decrease|enable|disable|turn)\b|"
+    r"\b(?:plan\s+only|only\s+plan|plan\s+first|before\s+(?:changing|editing))\b",
+    re.IGNORECASE,
+)
+
 _NUMERIC_TYPES = {"Integer", "RealNum", "Length"}
 
 _LENGTH_FACTORS = {
@@ -100,6 +111,8 @@ def detect_micro_modify(instruction: str, project: HSFProject) -> Optional[Micro
     """识别"把参数 X 改成值 V"。识别不出返回 None（调用方回落 LLM 路径）。"""
     text = (instruction or "").strip()
     if not text or not project.parameters:
+        return None
+    if _READ_ONLY_RE.search(text):
         return None
     if any(hint in text for hint in _COMPOUND_HINTS):
         return None
