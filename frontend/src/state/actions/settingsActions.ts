@@ -1,4 +1,4 @@
-import type { CompilerSettings } from '../../api/types'
+import type { CompilerSettings, LlmProviderDraft, LlmProviderWriteResult } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 
 export function createSettingsActions({ api, set, get }: WorkbenchActionContext) {
@@ -9,6 +9,36 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
     }
     set({ gitStatus: result.git, gitBusy: false, lastError: null })
     return true
+  }
+
+  // 卡05：写操作前确保有 revision 快照（懒加载对照 loadCodexCatalog）
+  async function ensureProvidersRevision(): Promise<string> {
+    if (!get().llmProvidersRevision || !get().llmProvidersLoaded) {
+      await get().loadLlmProviders()
+    }
+    return get().llmProvidersRevision ?? ''
+  }
+
+  // 卡05：写结果统一落地；冲突/结构化错误码原样透传，不覆盖既有状态
+  function applyProviderWriteResult(result: LlmProviderWriteResult) {
+    if (result.ok && result.providers) {
+      set({
+        llmProviders: result.providers,
+        llmProvidersRevision: result.revision ?? null,
+        llmProvidersConflict: null,
+        lastError: null,
+      })
+      return
+    }
+    if (result.code === 'config_modified') {
+      set({ llmProvidersConflict: result.error ?? '配置已被外部修改，请刷新后重试（本地草稿已保留）。' })
+      return
+    }
+    // in_use / name_conflict / rename_not_supported 等结构化错误由 UI 内联渲染
+    // （refs 随 result 返回），不写全局 lastError；仅传输级失败兜底提示。
+    if (!result.code) {
+      set({ lastError: result.error ?? 'Provider settings operation failed.' })
+    }
   }
 
   return {
@@ -115,6 +145,53 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
           loaded: true,
         },
       })
+    },
+
+    // ── 卡05：provider 设置工作流 ──────────────────────────────
+    // 合同：错误码透传不吞（返回完整 result 供 UI 按码分支渲染）；
+    // config_modified → 置冲突态、绝不覆盖既有 providers/草稿。
+
+    async loadLlmProviders() {
+      const result = await api.listLlmProviders()
+      if (result.ok && result.providers) {
+        set({
+          llmProviders: result.providers,
+          llmProvidersRevision: result.revision ?? null,
+          llmProvidersLoaded: true,
+          llmProvidersConflict: null,
+        })
+        return
+      }
+      if (result.code === 'config_modified') {
+        // 冲突是数据态不是传输故障：保留已加载列表，UI 提示刷新
+        set({ llmProvidersConflict: result.error ?? '配置已被外部修改，请刷新后重试。', llmProvidersLoaded: true })
+        return
+      }
+      // 传输/未知失败：不清空已加载列表；无已加载数据时才写 lastError 兜底
+      if (!get().llmProvidersLoaded) {
+        set({ lastError: result.error ?? 'Provider list is unavailable.' })
+      }
+    },
+
+    async createLlmProvider(provider: LlmProviderDraft): Promise<LlmProviderWriteResult> {
+      const revision = await ensureProvidersRevision()
+      const result = await api.createLlmProvider(provider, revision)
+      applyProviderWriteResult(result)
+      return result
+    },
+
+    async updateLlmProvider(name: string, provider: LlmProviderDraft): Promise<LlmProviderWriteResult> {
+      const revision = await ensureProvidersRevision()
+      const result = await api.updateLlmProvider(name, provider, revision)
+      applyProviderWriteResult(result)
+      return result
+    },
+
+    async deleteLlmProvider(name: string): Promise<LlmProviderWriteResult> {
+      const revision = await ensureProvidersRevision()
+      const result = await api.deleteLlmProvider(name, revision)
+      applyProviderWriteResult(result)
+      return result
     },
 
     async saveLlmApiKey(model: string, apiKey: string) {      const result = await api.updateLlmApiKey(model, apiKey)

@@ -53,6 +53,9 @@ import type {
   WorkspaceTrashResult,
   LlmSettings,
   LlmSettingsResult,
+  LlmProviderDraft,
+  LlmProviderWriteResult,
+  LlmProvidersResult,
   LlmConnectionTestResult,
   Preview2DPayload,
   PreviewPayload,
@@ -867,6 +870,59 @@ export async function updateLlmApiKey(model: string, apiKey: string): Promise<Ll
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, api_key: apiKey }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+// ── 卡05：Provider 设置（列表只读 + CRUD；写操作带 expected_revision）───────
+
+export async function listLlmProviders(): Promise<LlmProvidersResult> {
+  return requestJson<LlmProvidersResult>(
+    '/api/settings/llm/providers',
+    { method: 'GET' },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function createLlmProvider(
+  provider: LlmProviderDraft,
+  expectedRevision: string,
+): Promise<LlmProviderWriteResult> {
+  return requestJson<LlmProviderWriteResult>(
+    '/api/settings/llm/providers',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, expected_revision: expectedRevision }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function updateLlmProvider(
+  name: string,
+  provider: LlmProviderDraft,
+  expectedRevision: string,
+): Promise<LlmProviderWriteResult> {
+  return requestJson<LlmProviderWriteResult>(
+    '/api/settings/llm/providers',
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, provider, expected_revision: expectedRevision }),
+    },
+    { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+export async function deleteLlmProvider(name: string, expectedRevision: string): Promise<LlmProviderWriteResult> {
+  return requestJson<LlmProviderWriteResult>(
+    '/api/settings/llm/providers/delete',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, expected_revision: expectedRevision }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
   )

@@ -507,6 +507,10 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     updateLlmModel: async () => ({ ok: true }),
     updateLlmApiKey: async () => ({ ok: true }),
     updateSessionLlmModel: async () => ({ ok: true }),
+    listLlmProviders: async () => ({ ok: true, providers: [], revision: 'rev-providers-0' }),
+    createLlmProvider: async () => ({ ok: false, error: 'not stubbed', code: 'invalid_request' }),
+    updateLlmProvider: async () => ({ ok: false, error: 'not stubbed', code: 'invalid_request' }),
+    deleteLlmProvider: async () => ({ ok: false, error: 'not stubbed', code: 'invalid_request' }),
     fetchCodexStatus: async () => ({ ok: true, state: 'signed_out' as const, codex_available: true, connected: false, account: null }),
     fetchCodexModels: async () => ({ ok: true, models: [] }),
     ...overrides,
@@ -4665,4 +4669,132 @@ test('sendAssistantMessage surfaces an explicit skill proposal from the explain 
   await store.getState().sendAssistantMessage('把这轮修改沉淀成楼梯skill')
 
   expect(store.getState().pendingSkillProposal).toEqual(SKILL_PROPOSAL)
+})
+
+
+// ── 卡05：provider 数据层（列表 + CRUD + revision 冲突）───────────────────
+
+function makeProviderInfo(name: string): import('../api/types').LlmProviderInfo {
+  return {
+    name,
+    api: `https://${name}.example/v1`,
+    api_mode: 'chat_completions',
+    default_model: '',
+    models: [`${name}-main`],
+    model_count: 1,
+    has_api_key: true,
+    key_display: 'tes…7890',
+    is_codex: false,
+    credential: { location: 'entry', form: 'direct', resolvable: true },
+  }
+}
+
+test('loadLlmProviders 懒加载快照并记录 revision', async () => {
+  const listLlmProviders = async () => ({
+    ok: true,
+    providers: [makeProviderInfo('relay')],
+    revision: 'rev-providers-1',
+  })
+  const store = createWorkbenchStore(makeApi({ listLlmProviders }))
+  expect(store.getState().llmProvidersLoaded).toBe(false)
+
+  await store.getState().loadLlmProviders()
+
+  expect(store.getState().llmProvidersLoaded).toBe(true)
+  expect(store.getState().llmProviders.map((p) => p.name)).toEqual(['relay'])
+  expect(store.getState().llmProvidersRevision).toBe('rev-providers-1')
+  expect(store.getState().llmProvidersConflict).toBeNull()
+})
+
+test('createLlmProvider 成功后更新列表与 revision；无快照时先懒加载取 revision', async () => {
+  const calls: string[] = []
+  const listLlmProviders = async () => {
+    calls.push('list')
+    return { ok: true, providers: [makeProviderInfo('relay')], revision: 'rev-1' }
+  }
+  const createLlmProvider = async (_provider: unknown, expectedRevision: string) => {
+    calls.push(`create:${expectedRevision}`)
+    return { ok: true, providers: [makeProviderInfo('relay'), makeProviderInfo('fresh')], revision: 'rev-2' }
+  }
+  const store = createWorkbenchStore(makeApi({ listLlmProviders, createLlmProvider }))
+
+  const result = await store.getState().createLlmProvider({ name: 'fresh', models: ['fresh-main'] })
+
+  expect(result.ok).toBe(true)
+  expect(calls).toEqual(['list', 'create:rev-1'])
+  expect(store.getState().llmProviders.map((p) => p.name)).toEqual(['relay', 'fresh'])
+  expect(store.getState().llmProvidersRevision).toBe('rev-2')
+  expect(store.getState().llmProvidersConflict).toBeNull()
+})
+
+test('config_modified 冲突：置冲突态、保留已加载列表（旧草稿不被覆盖）', async () => {
+  const createLlmProvider = async () => ({
+    ok: false,
+    code: 'config_modified',
+    error: '配置文件已被外部修改，请刷新设置后重试。',
+  })
+  const store = createWorkbenchStore(makeApi({
+    listLlmProviders: async () => ({ ok: true, providers: [makeProviderInfo('relay')], revision: 'rev-1' }),
+    createLlmProvider,
+  }))
+  await store.getState().loadLlmProviders()
+
+  const result = await store.getState().createLlmProvider({ name: 'fresh' })
+
+  expect(result.ok).toBe(false)
+  expect(result.code).toBe('config_modified')
+  expect(store.getState().llmProvidersConflict).toContain('外部修改')
+  expect(store.getState().llmProviders.map((p) => p.name)).toEqual(['relay'])
+  expect(store.getState().llmProvidersRevision).toBe('rev-1')
+  expect(store.getState().lastError).toBeNull()
+})
+
+test('in_use 引用拦截：错误码与 refs 原样透传，不改全局 lastError', async () => {
+  const refs = [
+    { location: 'llm.model', blocking: true, context: 'relay/main', detail: '当前默认模型指向该服务商。' },
+    { location: 'frontend_visibility', blocking: false, context: 'relay', detail: '提示' },
+  ]
+  const deleteLlmProvider = async () => ({ ok: false, code: 'in_use', error: '服务商仍被引用。', refs })
+  const store = createWorkbenchStore(makeApi({
+    listLlmProviders: async () => ({ ok: true, providers: [makeProviderInfo('relay')], revision: 'rev-1' }),
+    deleteLlmProvider,
+  }))
+  await store.getState().loadLlmProviders()
+
+  const result = await store.getState().deleteLlmProvider('relay')
+
+  expect(result.ok).toBe(false)
+  expect(result.code).toBe('in_use')
+  expect(result.refs?.map((r) => r.location)).toEqual(['llm.model', 'frontend_visibility'])
+  expect(store.getState().llmProviders).toHaveLength(1)
+  expect(store.getState().lastError).toBeNull()
+})
+
+test('updateLlmProvider 正常流转：列表与 revision 随写结果刷新', async () => {
+  const updateLlmProvider = async (name: string, _provider: unknown, expectedRevision: string) => ({
+    ok: true,
+    providers: [{ ...makeProviderInfo(name), model_count: 3 }],
+    revision: `rev-after-${expectedRevision}`,
+  })
+  const store = createWorkbenchStore(makeApi({
+    listLlmProviders: async () => ({ ok: true, providers: [makeProviderInfo('relay')], revision: 'rev-1' }),
+    updateLlmProvider,
+  }))
+  await store.getState().loadLlmProviders()
+
+  const result = await store.getState().updateLlmProvider('relay', { models: ['a', 'b', 'c'] })
+
+  expect(result.ok).toBe(true)
+  expect(store.getState().llmProviders[0].model_count).toBe(3)
+  expect(store.getState().llmProvidersRevision).toBe('rev-after-rev-1')
+})
+
+test('传输级失败（无 code）：写 lastError 兜底且不清空已加载列表', async () => {
+  const store = createWorkbenchStore(makeApi({
+    listLlmProviders: async () => ({ ok: false, error: 'OpenBrep local API is not available.' }),
+  }))
+  await store.getState().loadLlmProviders()
+
+  expect(store.getState().llmProvidersLoaded).toBe(false)
+  expect(store.getState().lastError).toBe('OpenBrep local API is not available.')
 })

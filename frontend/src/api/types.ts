@@ -564,6 +564,65 @@ export interface LlmProviderTemplate {
   models?: string[]
 }
 
+// ── 卡05：Provider 设置工作流（只读总览 + CRUD + revision 合同）────────────
+
+export interface LlmProviderCredentialStatus {
+  location: 'entry' | 'provider_keys' | 'top_level' | 'env' | 'none'
+  form: 'direct' | 'env_ref' | 'pool'
+  resolvable: boolean
+}
+
+export interface LlmProviderInfo {
+  name: string
+  api: string
+  api_mode: string
+  default_model: string
+  models: string[]
+  model_count: number
+  has_api_key: boolean
+  /** 掩码展示（前3…末4）或 ${ENV} 原样；池为 池×N；永不含明文 */
+  key_display: string
+  is_codex: boolean
+  credential: LlmProviderCredentialStatus
+}
+
+/** 删除/导入时后端返回的结构化引用点（前端可见性提示项 blocking=false） */
+export interface LlmProviderRef {
+  location: string
+  blocking: boolean
+  context: string
+  detail?: string
+}
+
+/** provider 草稿（卡06 表单态）：key 三态由后端解释——缺省=保持、空串=清除 */
+export interface LlmProviderDraft {
+  name?: string
+  api?: string
+  api_mode?: string
+  api_key?: string
+  default_model?: string
+  models?: (string | { alias: string; model: string })[]
+}
+
+export interface LlmProvidersResult {
+  ok: boolean
+  providers?: LlmProviderInfo[]
+  revision?: string
+  error?: string
+  code?: string
+}
+
+export interface LlmProviderWriteResult {
+  ok: boolean
+  provider?: LlmProviderInfo | null
+  providers?: LlmProviderInfo[]
+  revision?: string
+  deleted?: string
+  error?: string
+  code?: string
+  refs?: LlmProviderRef[]
+}
+
 export interface LlmModelOption {
   id: string
   label: string

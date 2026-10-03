@@ -426,3 +426,72 @@ describe('skill proposal routes (ST04)', () => {
     expect(body.source_run_ids).toEqual(['r_1'])
   })
 })
+
+// ── 卡05：provider 数据层 API ─────────────────────────────────────────────
+
+import {
+  createLlmProvider,
+  deleteLlmProvider,
+  listLlmProviders,
+  updateLlmProvider,
+} from './client'
+
+describe('provider settings API (卡05)', () => {
+  test('listLlmProviders 走 GET /api/settings/llm/providers', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ ok: true, providers: [], revision: 'rev-1' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await listLlmProviders()
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/settings/llm/providers')
+    expect(init.method).toBe('GET')
+    expect(result.revision).toBe('rev-1')
+  })
+
+  test('createLlmProvider POST body 带 provider + expected_revision', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ ok: true, revision: 'rev-2' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await createLlmProvider({ name: 'relay', api_key: 'test-key', models: ['m1'] }, 'rev-1')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/settings/llm/providers')
+    expect(init.method).toBe('POST')
+    const body = JSON.parse(String(init.body))
+    expect(body.provider).toEqual({ name: 'relay', api_key: 'test-key', models: ['m1'] })
+    expect(body.expected_revision).toBe('rev-1')
+  })
+
+  test('updateLlmProvider 走 PUT 且 body 带 name/provider/expected_revision', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: true, json: async () => ({ ok: true }) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await updateLlmProvider('relay', { api_key: '' }, 'rev-3')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/settings/llm/providers')
+    expect(init.method).toBe('PUT')
+    const body = JSON.parse(String(init.body))
+    expect(body).toEqual({ name: 'relay', provider: { api_key: '' }, expected_revision: 'rev-3' })
+  })
+
+  test('deleteLlmProvider 走 /providers/delete 且 body 带 name/expected_revision', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: true, json: async () => ({ ok: true, deleted: 'relay' }) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await deleteLlmProvider('relay', 'rev-4')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/settings/llm/providers/delete')
+    expect(init.method).toBe('POST')
+    const body = JSON.parse(String(init.body))
+    expect(body).toEqual({ name: 'relay', expected_revision: 'rev-4' })
+  })
+})
