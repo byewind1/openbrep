@@ -324,7 +324,14 @@ kimi      = "your-kimi-key"
 - `gpt-` / `o1` / `o3` / `o4` → `openai`
 - `ollama/` → 本地模式，不需要 API Key
 
-### 2) 自定义 provider（推荐对象写法）
+### 2) 自定义 provider
+
+**主路径：设置面板添加（推荐）**。打开 设置 → AI → 服务商管理：从模板卡片
+（zhipu / deepseek / openai / ollama 等）或「自定义」开始，填写名称、端点、
+API Key 与模型（可手输模型 ID），点「测试连接」探测草稿副本后「保存」。
+全程不打开 config.toml；保存失败或被外部修改时草稿保留并有提示。
+
+**高级路径：直接编辑 config.toml**（适合批量脚本化或无 UI 场景）：
 
 ```toml
 [llm]
@@ -342,6 +349,10 @@ api_key = "YOUR_YMG_KEY"
 alias = "ymg-gpt-5.3-codex"   # UI 里选择的名字
 model = "gpt-5.3-codex"       # 实际请求给 provider 的模型名
 ```
+
+> 注：推荐使用 `[[llm.providers]]` 新键（name / api / api_mode / api_key /
+> models）；上面的旧键 `[[llm.custom_providers]]` 仍兼容，保存后会自动迁移
+> 为新键。
 
 ### 3) 路由优先级（重要）
 

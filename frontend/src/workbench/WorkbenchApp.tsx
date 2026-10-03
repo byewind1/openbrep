@@ -149,6 +149,16 @@ export function WorkbenchApp() {
   const codexCatalog = useWorkbenchStore((state) => state.codexCatalog)
   const loadCodexCatalog = useWorkbenchStore((state) => state.loadCodexCatalog)
   const saveLlmApiKey = useWorkbenchStore((state) => state.saveLlmApiKey)
+  // 卡07：服务商管理接线（数据层动作 + 草稿测试走 store api）
+  const llmProviders = useWorkbenchStore((state) => state.llmProviders)
+  const llmProvidersLoaded = useWorkbenchStore((state) => state.llmProvidersLoaded)
+  const llmProvidersConflict = useWorkbenchStore((state) => state.llmProvidersConflict)
+  const loadLlmProviders = useWorkbenchStore((state) => state.loadLlmProviders)
+  const createLlmProvider = useWorkbenchStore((state) => state.createLlmProvider)
+  const updateLlmProvider = useWorkbenchStore((state) => state.updateLlmProvider)
+  const deleteLlmProvider = useWorkbenchStore((state) => state.deleteLlmProvider)
+  const testLlmDraftConnection = useWorkbenchStore((state) => state.testLlmDraftConnection)
+  const providerTemplates = llmSettings?.provider_templates ?? []
   const reloadRuntimeSettings = useWorkbenchStore((state) => state.reloadRuntimeSettings)
   const refreshTapirStatus = useWorkbenchStore((state) => state.refreshTapirStatus)
   const reloadTapirLibraries = useWorkbenchStore((state) => state.reloadTapirLibraries)
@@ -593,6 +603,17 @@ export function WorkbenchApp() {
         onTestLlmConnection={testLlmConnection}
         onModelChange={switchLlmModel}
         onSaveLlmApiKey={saveLlmApiKey}
+        providerManager={{
+          providers: llmProviders,
+          providerTemplates,
+          loaded: llmProvidersLoaded,
+          conflict: llmProvidersConflict,
+          onLoadProviders: loadLlmProviders,
+          onCreateProvider: createLlmProvider,
+          onUpdateProvider: updateLlmProvider,
+          onDeleteProvider: deleteLlmProvider,
+          onTestDraft: testLlmDraftConnection,
+        }}
         onReloadRuntimeSettings={reloadRuntimeSettings}
         onBrowseCompilerFile={browseCompilerFile}
         onBrowseOutputDirectory={browseOutputDirectory}

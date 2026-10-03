@@ -226,3 +226,58 @@ describe('AiSettingsPanel save-and-verify', () => {
     expect(screen.queryByLabelText('API Key')).toBeNull()
   })
 })
+
+// ── 卡07：服务商管理接线 ──────────────────────────────────────────────────
+
+const providerManagerStub: import('./ProviderManagerPanel').ProviderManagerPanelProps = {
+  providers: [
+    {
+      name: 'relay',
+      api: 'https://relay.example/v1',
+      api_mode: 'chat_completions',
+      default_model: '',
+      models: ['relay-main'],
+      model_entries: [{ alias: 'relay-main', model: 'relay-main' }],
+      model_count: 1,
+      has_api_key: true,
+      key_display: 'tes…7890',
+      is_codex: false,
+      credential: { location: 'entry', form: 'direct', resolvable: true },
+    },
+  ],
+  providerTemplates: [],
+  loaded: true,
+  conflict: null,
+  onLoadProviders: vi.fn().mockResolvedValue(undefined),
+  onCreateProvider: vi.fn().mockResolvedValue({ ok: true }),
+  onUpdateProvider: vi.fn().mockResolvedValue({ ok: true }),
+  onDeleteProvider: vi.fn().mockResolvedValue({ ok: true }),
+  onTestDraft: vi.fn().mockResolvedValue({ ok: true }),
+}
+
+test('接线后 AiSettingsPanel 渲染服务商管理入口', () => {
+  render(
+    <AiSettingsPanel
+      llmSettings={makeSettings()}
+      onOpenConfig={() => {}}
+      onTestConnection={vi.fn().mockResolvedValue({ ok: true })}
+      providerManager={providerManagerStub}
+    />,
+  )
+
+  expect(screen.getByTestId('provider-manager-section')).toBeTruthy()
+  expect(screen.getByTestId('provider-row-relay')).toBeTruthy()
+})
+
+test('未接线（providerManager 缺省）时旧 UI 原样，无服务商管理区', () => {
+  render(
+    <AiSettingsPanel
+      llmSettings={makeSettings()}
+      onOpenConfig={() => {}}
+      onTestConnection={vi.fn().mockResolvedValue({ ok: true })}
+    />,
+  )
+
+  expect(screen.queryByTestId('provider-manager-section')).toBeNull()
+  expect(screen.getByTestId('llm-connection-wizard')).toBeTruthy()
+})

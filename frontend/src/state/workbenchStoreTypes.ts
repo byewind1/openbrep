@@ -164,6 +164,8 @@ export interface WorkbenchApi {
   updateLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettingsResult>
   /** D16：会话级模型切换（不写 config.toml）；model=null 清除覆盖 */
   updateSessionLlmModel: (model: string | null, reasoningEffort?: string) => Promise<LlmSettingsResult>
+  /** 卡07：草稿连接测试（draft_config 副本通道） */
+  testLlmDraftConnection: (draft: LlmProviderDraft, model: string) => Promise<import('../api/types').LlmConnectionTestResult>
   /** 卡05：provider 设置工作流（列表只读 + CRUD；写操作带 expected_revision） */
   listLlmProviders: () => Promise<LlmProvidersResult>
   createLlmProvider: (provider: LlmProviderDraft, expectedRevision: string) => Promise<LlmProviderWriteResult>
@@ -398,6 +400,8 @@ export interface WorkbenchState {
   loadCodexCatalog: () => Promise<void>
   /** 卡05：懒加载 provider 总览（对照 loadCodexCatalog；失败不清空已加载数据） */
   loadLlmProviders: () => Promise<void>
+  /** 卡07：草稿连接测试透传（结果由组件渲染） */
+  testLlmDraftConnection: (draft: LlmProviderDraft, model: string) => Promise<import('../api/types').LlmConnectionTestResult>
   /** 卡05：CRUD——返回完整结果（错误码透传不吞）；config_modified 置冲突态且绝不覆盖既有状态 */
   createLlmProvider: (provider: LlmProviderDraft) => Promise<LlmProviderWriteResult>
   updateLlmProvider: (name: string, provider: LlmProviderDraft) => Promise<LlmProviderWriteResult>
