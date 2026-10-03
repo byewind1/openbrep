@@ -79,6 +79,26 @@ describe('AiSettingsPanel Codex BYOA section', () => {
     mockedSaveEntry.mockResolvedValue({ ok: true, entry: 'local' })
   })
 
+  test('model drawer handles Escape and backdrop while restoring focus to its opener', async () => {
+    mockedStatus.mockResolvedValue({ ok: true, state: 'signed_in', codex_available: true, connected: true, account: null })
+    mockedModels.mockResolvedValue({ ok: true, models: [{ id: 'gpt-test', model: 'gpt-test', label: 'GPT test', supported_reasoning_efforts: [] }] })
+    render(<AiSettingsPanel llmSettings={makeSettings()} onOpenConfig={() => {}}
+      onTestConnection={vi.fn()} onModelChange={vi.fn()} />)
+    const opener = await screen.findByTestId('codex-model-drawer-open')
+    opener.focus()
+    fireEvent.click(opener)
+    const drawer = within(await screen.findByTestId('codex-model-drawer')).getByRole('dialog')
+    await waitFor(() => expect(document.activeElement).toBe(drawer))
+    fireEvent.click(drawer)
+    expect(screen.getByTestId('codex-model-drawer')).toBeTruthy()
+    fireEvent.keyDown(drawer, { key: 'Escape' })
+    expect(screen.queryByTestId('codex-model-drawer')).toBeNull()
+    expect(document.activeElement).toBe(opener)
+    fireEvent.click(opener)
+    fireEvent.click(await screen.findByTestId('codex-model-drawer'))
+    expect(screen.queryByTestId('codex-model-drawer')).toBeNull()
+  })
+
   test('signed out shows the login button and starts the browser flow only', async () => {
     mockedLogin.mockResolvedValue({ ok: true, state: 'login_started' })
 

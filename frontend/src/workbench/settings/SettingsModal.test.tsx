@@ -1,16 +1,16 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { ComponentProps } from 'react'
+import { cloneElement, type ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
-import { clampSettingsDrawerWidth, SettingsDrawer } from './SettingsDrawer'
+import { SettingsModal } from './SettingsModal'
 import type { DistilledLesson, LlmSettings } from '../../api/types'
 
-function renderSettingsDrawer(
+function renderSettingsModal(
   llmSettings: LlmSettings,
   _unused?: unknown,
-  overrides: Partial<ComponentProps<typeof SettingsDrawer>> = {},
+  overrides: Partial<ComponentProps<typeof SettingsModal>> = {},
 ) {
-  return render(
-    <SettingsDrawer
+  const element = (
+    <SettingsModal
       open
       compilerSettings={{ mode: 'mock', converter_path: '', output_dir: '' }}
       llmSettings={llmSettings}
@@ -53,13 +53,16 @@ function renderSettingsDrawer(
       onDistillLessons={vi.fn()}
       onSetDistilledLessonStatus={vi.fn()}
       {...overrides}
-    />,
+    />
   )
+  const view = render(element)
+  return { ...view, rerenderSettings: (patch: Partial<ComponentProps<typeof SettingsModal>>) =>
+    view.rerender(cloneElement(element, patch)) }
 }
 
-describe('SettingsDrawer AI model settings', () => {
+describe('SettingsModal AI model settings', () => {
   test('shows common settings by default and keeps low-frequency sections collapsed', () => {
-    renderSettingsDrawer({
+    renderSettingsModal({
       model: 'deepseek-chat',
       models: ['deepseek-chat'],
       model_groups: {
@@ -82,7 +85,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 
   test('shows an interface section for language selection, collapsed by default', () => {
-    renderSettingsDrawer({
+    renderSettingsModal({
       model: 'deepseek-chat',
       models: ['deepseek-chat'],
       model_groups: { custom: [], official: [] },
@@ -92,10 +95,10 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     })
 
-    expect(screen.getByRole('button', { name: /界面/ })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /界面/ })).toBeTruthy()
     expect(screen.queryByText('语言')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /界面/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /界面/ }))
     expect(screen.getByText('语言')).toBeTruthy()
     expect(screen.getByRole('radio', { name: '中文' })).toHaveProperty('checked', true)
   })
@@ -104,15 +107,15 @@ describe('SettingsDrawer AI model settings', () => {
     const saveOrder: string[] = []
     const onCompilerSettingsChange = vi.fn(async (settings) => { saveOrder.push('compiler'); return settings })
     const onReloadRuntimeSettings = vi.fn(async () => { saveOrder.push('reload') })
-    renderSettingsDrawer(
+    renderSettingsModal(
       { model: 'deepseek-chat', models: ['deepseek-chat'], model_groups: { custom: [], official: [] }, api_key: '', api_base: '', max_retries: 5, assistant_settings: '' },
       undefined,
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /编译器/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /编译器/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
-    expect(screen.getByText('未保存')).toBeTruthy()
+    expect(screen.getAllByText('未保存').length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -124,55 +127,24 @@ describe('SettingsDrawer AI model settings', () => {
   test('keeps settings dirty and reports save errors when compiler settings fail', async () => {
     const onCompilerSettingsChange = vi.fn(async () => { throw new Error('Compiler settings were not saved') })
     const onReloadRuntimeSettings = vi.fn(async () => undefined)
-    renderSettingsDrawer(
+    renderSettingsModal(
       { model: 'deepseek-chat', models: ['deepseek-chat'], model_groups: { custom: [], official: [] }, api_key: '', api_base: '', max_retries: 5, assistant_settings: '' },
       undefined,
       { onCompilerSettingsChange, onReloadRuntimeSettings },
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /编译器/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /编译器/ }))
     fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(screen.getByTitle('Compiler settings were not saved')).toBeTruthy())
     expect(screen.queryByText('已保存')).toBeNull()
-    expect(screen.getByText('未保存')).toBeTruthy()
+    expect(screen.getAllByText('未保存').length).toBeGreaterThan(0)
     expect(onReloadRuntimeSettings).not.toHaveBeenCalled()
   })
 
-  test('resizes the settings panel from the left edge', () => {
-    renderSettingsDrawer({
-      model: 'deepseek-chat',
-      models: ['deepseek-chat'],
-      model_groups: {
-        custom: [],
-        official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }],
-      },
-      api_key: '',
-      api_base: '',
-      max_retries: 5,
-      assistant_settings: '',
-    })
-
-    const drawer = screen.getByLabelText('工作台设置')
-    const handle = screen.getByRole('separator', { name: '调整设置面板宽度' })
-
-    expect(drawer.style.width).toBe('430px')
-
-    fireEvent.pointerDown(handle, { button: 0, clientX: 0, pointerId: 1 })
-    fireEvent.pointerMove(window, { clientX: -120 })
-
-    expect(drawer.style.width).toBe('550px')
-  })
-
-  test('keeps resized settings width inside the viewport', () => {
-    expect(clampSettingsDrawerWidth(900, 1024)).toBe(760)
-    expect(clampSettingsDrawerWidth(100, 1024)).toBe(360)
-    expect(clampSettingsDrawerWidth(900, 380)).toBe(356)
-  })
-
   test('shows current model name and Edit config.toml button', () => {
-    renderSettingsDrawer({
+    renderSettingsModal({
       model: 'deepseek-chat',
       models: ['deepseek-chat'],
       model_groups: { custom: [], official: [] },
@@ -189,7 +161,7 @@ describe('SettingsDrawer AI model settings', () => {
 
   test('calls onOpenConfig when Edit config.toml is clicked', () => {
     const onOpenConfig = vi.fn()
-    renderSettingsDrawer(
+    renderSettingsModal(
       { model: 'deepseek-chat', models: [], model_groups: { custom: [], official: [] }, api_key: '', api_base: '', max_retries: 5, assistant_settings: '' },
       undefined,
       { onOpenConfig },
@@ -199,7 +171,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 
   test('renders grouped model list and highlights the current model', () => {
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat', 'glm-4-flash'],
@@ -229,7 +201,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 
   test('shows the current model at the top with a valid highlight', () => {
-    const { container } = renderSettingsDrawer({
+    const { container } = renderSettingsModal({
       model: 'deepseek-chat',
       model_available: true,
       models: ['deepseek-chat'],
@@ -247,7 +219,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 
   test('warns and points to Edit config.toml when the current model is unavailable', () => {
-    const { container } = renderSettingsDrawer({
+    const { container } = renderSettingsModal({
       model: 'gpt-4o',
       model_available: false,
       models: ['gpt-4o'],
@@ -267,7 +239,7 @@ describe('SettingsDrawer AI model settings', () => {
 
   test('shows an API key editor for official models and saves the key', async () => {
     const onSaveLlmApiKey = vi.fn(async () => undefined)
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'gpt-4o',
         model_available: false,
@@ -294,7 +266,7 @@ describe('SettingsDrawer AI model settings', () => {
 
   test('shows the API key editor for custom provider models (unified registry)', async () => {
     const onSaveLlmApiKey = vi.fn(async () => undefined)
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'ymg/deepseek-v3',
         model_available: true,
@@ -320,7 +292,7 @@ describe('SettingsDrawer AI model settings', () => {
   test('asks for confirmation, then switches and auto-tests the connection', async () => {
     const onModelChange = vi.fn(async () => undefined)
     const onTestLlmConnection = vi.fn(async () => ({ ok: true, message: 'LLM connection OK', duration_ms: 12 }))
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat', 'glm-4-flash'],
@@ -353,7 +325,7 @@ describe('SettingsDrawer AI model settings', () => {
 
   test('does not switch when the confirmation is cancelled', () => {
     const onModelChange = vi.fn(async () => undefined)
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat', 'glm-4-flash'],
@@ -383,7 +355,7 @@ describe('SettingsDrawer AI model settings', () => {
   test('shows the switch error verbatim when the model change fails', async () => {
     const onModelChange = vi.fn(async () => { throw new Error('config.toml is read-only') })
     const onTestLlmConnection = vi.fn(async () => ({ ok: true }))
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat', 'glm-4-flash'],
@@ -414,7 +386,7 @@ describe('SettingsDrawer AI model settings', () => {
   test('shows the auto-test failure verbatim after a successful switch', async () => {
     const onModelChange = vi.fn(async () => undefined)
     const onTestLlmConnection = vi.fn(async () => ({ ok: false, error: 'HTTP 401: invalid api key' }))
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat', 'glm-4-flash'],
@@ -450,7 +422,7 @@ describe('SettingsDrawer AI model settings', () => {
     const writeText = vi.fn(async () => undefined)
     Object.defineProperty(window.navigator, 'clipboard', { value: { writeText }, configurable: true })
 
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat'],
@@ -481,7 +453,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 
   test('highlights the custom model when config stores its target model name', () => {
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'gpt-5.4',
         models: ['ymg/gpt-5.4'],
@@ -506,7 +478,7 @@ describe('SettingsDrawer AI model settings', () => {
 
   test('does not call onModelChange when clicking the current model', () => {
     const onModelChange = vi.fn(async () => undefined)
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat'],
@@ -528,7 +500,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 
   test('filters models by search query', () => {
-    renderSettingsDrawer(
+    renderSettingsModal(
       {
         model: 'deepseek-chat',
         models: ['deepseek-chat', 'glm-4-flash', 'qwen-plus'],
@@ -558,7 +530,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 
   test('hides model list when onModelChange is not provided', () => {
-    renderSettingsDrawer({
+    renderSettingsModal({
       model: 'deepseek-chat',
       models: ['deepseek-chat'],
       model_groups: {
@@ -592,7 +564,7 @@ describe('SettingsDrawer AI model settings', () => {
       assistant_settings: '',
     }
 
-    const view = renderSettingsDrawer(llmSettings, undefined, {
+    const view = renderSettingsModal(llmSettings, undefined, {
       onLoadMemoryLessons: loadMemory,
       onLoadProjectGitStatus: firstLoadGit,
     })
@@ -601,7 +573,7 @@ describe('SettingsDrawer AI model settings', () => {
     expect(firstLoadGit).toHaveBeenCalledTimes(1)
 
     view.rerender(
-      <SettingsDrawer
+      <SettingsModal
         open
         compilerSettings={{ mode: 'mock', converter_path: '', output_dir: '' }}
         llmSettings={llmSettings}
@@ -651,7 +623,7 @@ describe('SettingsDrawer AI model settings', () => {
   })
 })
 
-describe('SettingsDrawer distilled lessons section (G4)', () => {
+describe('SettingsModal distilled lessons section (G4)', () => {
   const llmSettings: LlmSettings = {
     model: 'deepseek-chat',
     models: ['deepseek-chat'],
@@ -694,19 +666,19 @@ describe('SettingsDrawer distilled lessons section (G4)', () => {
 
   test('loads distilled lessons once when the drawer opens', () => {
     const load = vi.fn()
-    renderSettingsDrawer(llmSettings, undefined, { onLoadDistilledLessons: load })
+    renderSettingsModal(llmSettings, undefined, { onLoadDistilledLessons: load })
 
     expect(load).toHaveBeenCalledTimes(1)
   })
 
   test('section summary counts pending lessons and expansion renders confirm cards', () => {
     const setStatus = vi.fn()
-    renderSettingsDrawer(llmSettings, undefined, {
+    renderSettingsModal(llmSettings, undefined, {
       distilledLessons: lessonFixtures,
       onSetDistilledLessonStatus: setStatus,
     })
 
-    const header = screen.getByRole('button', { name: /蒸馏教训/ })
+    const header = screen.getByRole('tab', { name: /蒸馏教训/ })
     expect(header.textContent).toContain('1 条待审')
     expect(screen.queryByText('RANGE 越界防护')).toBeNull()
 
@@ -721,7 +693,7 @@ describe('SettingsDrawer distilled lessons section (G4)', () => {
   })
 
   test('ignore on a card routes to onSetDistilledLessonStatus with reject', () => {
-    renderSettingsDrawer(llmSettings, undefined, {
+    renderSettingsModal(llmSettings, undefined, {
       distilledLessons: lessonFixtures,
       onSetDistilledLessonStatus: (fingerprint, decision) => {
         expect(fingerprint).toBe('quality:sum1')
@@ -729,7 +701,120 @@ describe('SettingsDrawer distilled lessons section (G4)', () => {
       },
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /蒸馏教训/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /蒸馏教训/ }))
     fireEvent.click(screen.getByRole('button', { name: '忽略' }))
+  })
+})
+
+
+describe('SettingsModal navigation and keyboard contract', () => {
+  const llmSettings: LlmSettings = {
+    model: 'deepseek-chat', models: ['deepseek-chat'],
+    model_groups: { custom: [], official: [{ id: 'deepseek-chat', label: 'deepseek-chat', kind: 'official', provider: 'deepseek' }] },
+    api_key: '', api_base: '', max_retries: 5, assistant_settings: '',
+  }
+
+  test('only exposes the active panel and supports initialSection on every opening', () => {
+    const view = renderSettingsModal(llmSettings, undefined, { initialSection: 'compiler' })
+    expect(screen.getByRole('tabpanel').id).toBe('settings-panel-compiler')
+    fireEvent.click(screen.getByRole('tab', { name: /界面/ }))
+    expect(screen.getByRole('tabpanel').id).toBe('settings-panel-interface')
+    view.rerenderSettings({ open: false })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    view.rerenderSettings({ open: true, initialSection: 'knowledge' })
+    expect(screen.getByRole('tabpanel').id).toBe('settings-panel-knowledge')
+  })
+
+  test('enters focus, restores the trigger and supports Escape/backdrop/close button', async () => {
+    const trigger = document.createElement('button')
+    document.body.append(trigger)
+    trigger.focus()
+    const onClose = vi.fn()
+    const view = renderSettingsModal(llmSettings, undefined, { onClose })
+    const dialog = screen.getByRole('dialog')
+    await waitFor(() => expect(document.activeElement).toBe(dialog))
+    fireEvent.click(dialog)
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    fireEvent.click(dialog.parentElement!)
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    expect(onClose).toHaveBeenCalledTimes(3)
+    view.rerenderSettings({ open: false })
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
+  })
+
+  test('vertical tabs use roving focus with arrows and Home/End', () => {
+    renderSettingsModal(llmSettings)
+    const ai = screen.getByRole('tab', { name: /AI/ })
+    fireEvent.keyDown(ai, { key: 'ArrowDown' })
+    expect(document.activeElement?.id).toBe('settings-tab-compiler')
+    expect(screen.getByRole('tabpanel').id).toBe('settings-panel-compiler')
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(document.activeElement?.id).toBe('settings-tab-knowledge')
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    expect(document.activeElement?.id).toBe('settings-tab-interface')
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' })
+    expect(document.activeElement?.id).toBe('settings-tab-knowledge')
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' })
+    expect(document.activeElement?.id).toBe('settings-tab-interface')
+    expect(screen.getAllByRole('tab').filter((tab) => tab.tabIndex === 0)).toHaveLength(1)
+  })
+
+  test('retains provider and API key drafts across navigation without writing config', () => {
+    const create = vi.fn()
+    const update = vi.fn()
+    renderSettingsModal(llmSettings, undefined, { providerManager: {
+      providers: [], providerTemplates: [], loaded: true, conflict: null,
+      onLoadProviders: vi.fn(), onCreateProvider: create, onUpdateProvider: update,
+      onDeleteProvider: vi.fn(), onTestDraft: vi.fn(), onDiscoverModels: vi.fn(),
+      onExportConfig: vi.fn(), onImportConfig: vi.fn(),
+    } })
+    fireEvent.click(screen.getByTestId('provider-template-custom'))
+    fireEvent.change(screen.getByTestId('provider-name'), { target: { value: 'draft-provider' } })
+    fireEvent.change(screen.getByTestId('provider-api-key'), { target: { value: 'test-draft-key' } })
+    fireEvent.click(screen.getByRole('tab', { name: /编译器/ }))
+    fireEvent.change(screen.getByLabelText('Compiler mode'), { target: { value: 'lp' } })
+    fireEvent.click(screen.getByRole('tab', { name: /AI/ }))
+    expect((screen.getByTestId('provider-name') as HTMLInputElement).value).toBe('draft-provider')
+    expect((screen.getByTestId('provider-api-key') as HTMLInputElement).value).toBe('test-draft-key')
+    fireEvent.click(screen.getByRole('tab', { name: /编译器/ }))
+    expect((screen.getByLabelText('Compiler mode') as HTMLSelectElement).value).toBe('lp')
+    expect(create).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  test('visibility deep link moves focus to the visibility panel', async () => {
+    renderSettingsModal(llmSettings, undefined, { initialFocus: 'visibility', onModelChange: vi.fn() })
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('model-visibility-panel')))
+  })
+
+  test('Tab wraps around visible enabled controls and ignores hidden panels', () => {
+    renderSettingsModal(llmSettings, undefined, { initialSection: 'compiler' })
+    fireEvent.click(screen.getByRole('tab', { name: /界面/ }))
+    const first = screen.getByTitle('从磁盘重新加载配置')
+    const radios = screen.getAllByRole('radio')
+    const last = radios.at(-1)!
+    last.focus()
+    fireEvent.keyDown(last, { key: 'Tab' })
+    expect(document.activeElement).toBe(first)
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
+  })
+
+  test('a higher dialog owns Escape and Tab without closing settings', () => {
+    const onClose = vi.fn()
+    renderSettingsModal(llmSettings, undefined, { onClose })
+    const overlay = document.createElement('div')
+    overlay.style.zIndex = '40'
+    overlay.innerHTML = '<div role="dialog" aria-modal="true"><button>Confirm</button></div>'
+    document.body.append(overlay)
+    const confirm = overlay.querySelector('button')!
+    confirm.focus()
+    fireEvent.keyDown(confirm, { key: 'Escape' })
+    fireEvent.keyDown(confirm, { key: 'Tab' })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(confirm)
+    overlay.remove()
   })
 })

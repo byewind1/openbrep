@@ -20,16 +20,11 @@ import { GitSettingsPanel } from './GitSettingsPanel'
 import { InterfaceSettingsPanel, interfaceSummary } from './InterfaceSettingsPanel'
 import { KnowledgePanel } from './KnowledgePanel'
 import { MemoryLessonsPanel } from './MemoryLessonsPanel'
-import { SettingsSection } from './SettingsSection'
+import { SettingsPanel } from './SettingsPanel'
+import { useSettingsDialog } from './useSettingsDialog'
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel'
 
-const SETTINGS_DRAWER_DEFAULT_WIDTH = 430
-const SETTINGS_DRAWER_MIN_WIDTH = 360
-const SETTINGS_DRAWER_MAX_WIDTH = 760
-const SETTINGS_DRAWER_VIEWPORT_MARGIN = 24
-const SETTINGS_DRAWER_KEY_STEP = 24
-
-type SettingsSectionId =
+export type SettingsSectionId =
   | 'interface'
   | 'ai'
   | 'compiler'
@@ -39,19 +34,10 @@ type SettingsSectionId =
   | 'lessons'
   | 'knowledge'
 
-const DEFAULT_EXPANDED_SECTIONS: Record<SettingsSectionId, boolean> = {
-  interface: false,
-  ai: true,
-  compiler: false,
-  workspace: false,
-  git: false,
-  memory: false,
-  lessons: false,
-  knowledge: false,
-}
-
-interface SettingsDrawerProps {
+interface SettingsModalProps {
   open: boolean
+  initialSection?: SettingsSectionId
+  initialFocus?: 'visibility'
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
   recentProjects: RecentProject[]
@@ -102,8 +88,10 @@ interface SettingsDrawerProps {
   onSetDistilledLessonStatus: (fingerprint: string, decision: 'promote' | 'reject' | 'demote') => void
 }
 
-export function SettingsDrawer({
+export function SettingsModal({
   open,
+  initialSection = 'ai',
+  initialFocus,
   compilerSettings,
   llmSettings,
   recentProjects,
@@ -147,7 +135,7 @@ export function SettingsDrawer({
   onLoadDistilledLessons,
   onDistillLessons,
   onSetDistilledLessonStatus,
-}: SettingsDrawerProps) {
+}: SettingsModalProps) {
   const t = useT()
   const locale = useUiPrefsStore((state) => state.locale)
   const setLocale = useUiPrefsStore((state) => state.setLocale)
@@ -155,10 +143,11 @@ export function SettingsDrawer({
   const [settingsSaveState, setSettingsSaveState] = useState<'saved' | 'dirty' | 'saving' | null>(null)
   const [settingsSaveError, setSettingsSaveError] = useState('')
   const [gitMessage, setGitMessage] = useState('OpenBrep HSF checkpoint')
-  const [drawerWidth, setDrawerWidth] = useState(SETTINGS_DRAWER_DEFAULT_WIDTH)
-  const [expandedSections, setExpandedSections] = useState(DEFAULT_EXPANDED_SECTIONS)
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection)
+  const [visitedSections, setVisitedSections] = useState<Set<SettingsSectionId>>(() => new Set([initialSection]))
+  const dialogRef = useSettingsDialog(open, onClose)
+  const navRef = useRef<HTMLDivElement>(null)
   const wasOpenRef = useRef(false)
-  const resizeStartRef = useRef<{ pointerX: number; width: number } | null>(null)
   const isCompilerDirty = compilerDirty(compilerDraft, compilerSettings)
 
   useEffect(() => {
@@ -168,55 +157,30 @@ export function SettingsDrawer({
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setSettingsSaveState(null)
+      setActiveSection(initialSection)
+      setVisitedSections((previous) => new Set([...previous, initialSection]))
       onLoadMemoryLessons()
       onLoadDistilledLessons()
       onLoadProjectGitStatus()
       onLoadKnowledgeStatus()
     }
     wasOpenRef.current = open
-  }, [open, onLoadMemoryLessons, onLoadDistilledLessons, onLoadProjectGitStatus, onLoadKnowledgeStatus])
+  }, [open, initialSection, onLoadMemoryLessons, onLoadDistilledLessons, onLoadProjectGitStatus, onLoadKnowledgeStatus])
+
+  function selectSection(id: SettingsSectionId) {
+    setActiveSection(id)
+    setVisitedSections((previous) => new Set([...previous, id]))
+  }
 
   useEffect(() => {
-    if (!open) {
-      resizeStartRef.current = null
-      return
-    }
-
-    setDrawerWidth((width) => clampSettingsDrawerWidth(width))
-
-    function handlePointerMove(event: PointerEvent) {
-      const resizeStart = resizeStartRef.current
-      if (!resizeStart) {
-        return
-      }
-
-      setDrawerWidth(clampSettingsDrawerWidth(resizeStart.width + resizeStart.pointerX - event.clientX))
-    }
-
-    function handlePointerUp() {
-      resizeStartRef.current = null
-    }
-
-    function handleWindowResize() {
-      setDrawerWidth((width) => clampSettingsDrawerWidth(width))
-    }
-
-    window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', handlePointerUp)
-    window.addEventListener('resize', handleWindowResize)
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove)
-      window.removeEventListener('pointerup', handlePointerUp)
-      window.removeEventListener('resize', handleWindowResize)
-    }
-  }, [open])
-
-  function toggleSection(id: string) {
-    setExpandedSections((sections) => ({
-      ...sections,
-      [id]: !sections[id as SettingsSectionId],
-    }))
-  }
+    if (!open || activeSection !== 'ai' || initialFocus !== 'visibility') return
+    const frame = requestAnimationFrame(() => {
+      const target = dialogRef.current?.querySelector<HTMLElement>('[data-settings-focus="visibility"]')
+      target?.scrollIntoView?.({ block: 'nearest' })
+      target?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, activeSection, initialFocus, dialogRef])
 
   function updateCompilerDraft(settings: CompilerSettings) {
     setCompilerDraft(settings)
@@ -257,49 +221,25 @@ export function SettingsDrawer({
     }
   }
 
+  const sections: { id: SettingsSectionId; summary: string }[] = [
+    { id: 'interface', summary: interfaceSummary(locale) },
+    { id: 'ai', summary: aiSummary(t, llmSettings) },
+    { id: 'compiler', summary: compilerSummary(t, compilerDraft) },
+    { id: 'workspace', summary: workspaceSummary(t, recentProjects) },
+    { id: 'git', summary: gitSummary(t, gitStatus) },
+    { id: 'memory', summary: memorySummary(t, memoryStatus, memoryLessons.length) },
+    { id: 'lessons', summary: lessonsSummary(t, distilledLessons) },
+    { id: 'knowledge', summary: knowledgeSummary(t, knowledgeStatus) },
+  ]
+
+  if (!open) return null
+
   return (
-    <>
-      {open ? (
-        <button
-          className="settings-scrim"
-          type="button"
-          aria-label={t('settings.header.closeAriaLabel')}
-          onClick={onClose}
-        />
-      ) : null}
-      <aside
-        className={`settings-drawer${open ? ' open' : ''}`}
-        style={{ width: drawerWidth }}
-        aria-hidden={!open}
-        aria-label={t('settings.header.drawerAriaLabel')}
-      >
-        <div
-          className="settings-resize-handle"
-          role="separator"
-          aria-label={t('settings.header.resizeAriaLabel')}
-          aria-orientation="vertical"
-          aria-valuemin={SETTINGS_DRAWER_MIN_WIDTH}
-          aria-valuemax={getSettingsDrawerMaxWidth()}
-          aria-valuenow={drawerWidth}
-          tabIndex={0}
-          onPointerDown={(event) => {
-            if (event.button !== 0) {
-              return
-            }
-            resizeStartRef.current = { pointerX: event.clientX, width: drawerWidth }
-            event.currentTarget.setPointerCapture?.(event.pointerId)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') {
-              event.preventDefault()
-              setDrawerWidth((width) => clampSettingsDrawerWidth(width + SETTINGS_DRAWER_KEY_STEP))
-            }
-            if (event.key === 'ArrowRight') {
-              event.preventDefault()
-              setDrawerWidth((width) => clampSettingsDrawerWidth(width - SETTINGS_DRAWER_KEY_STEP))
-            }
-          }}
-        />
+    <div className="settings-modal-overlay" onClick={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <div className="settings-modal" role="dialog" aria-modal="true"
+        aria-label={t('settings.header.drawerAriaLabel')} tabIndex={-1} ref={dialogRef}>
         <div className="settings-header">
           <div>
             <strong>{t('settings.header.title')}</strong>
@@ -336,146 +276,175 @@ export function SettingsDrawer({
             >
               {settingsSaveState === 'saving' ? '…' : t('settings.header.saveButton')}
             </button>
-            <button type="button" className="settings-icon-btn" title={t('settings.header.closeTitle')} onClick={onClose}>
+            <button type="button" className="settings-icon-btn" title={t('settings.header.closeTitle')}
+              aria-label={t('settings.header.closeAriaLabel')} onClick={onClose}>
               ✕
             </button>
           </div>
         </div>
 
-        <SettingsSection
-          id="interface"
-          title={t('settings.section.interface')}
-          summary={interfaceSummary(locale)}
-          expanded={expandedSections.interface}
-          onToggle={toggleSection}
-        >
-          <InterfaceSettingsPanel locale={locale} onLocaleChange={setLocale} />
-        </SettingsSection>
+        <div className="settings-modal-body">
+          <div className="settings-nav" role="tablist" aria-orientation="vertical"
+            aria-label={t('settings.header.title')} ref={navRef}>
+            {sections.map(({ id, summary }, index) => (
+              <button key={id} type="button" role="tab" id={`settings-tab-${id}`}
+                className={`settings-nav-item${activeSection === id ? ' active' : ''}`}
+                aria-selected={activeSection === id} aria-controls={`settings-panel-${id}`}
+                tabIndex={activeSection === id ? 0 : -1}
+                onClick={() => selectSection(id)}
+                onKeyDown={(event) => {
+                  let next: number
+                  if (event.key === 'ArrowDown') next = (index + 1) % sections.length
+                  else if (event.key === 'ArrowUp') next = (index + sections.length - 1) % sections.length
+                  else if (event.key === 'Home') next = 0
+                  else if (event.key === 'End') next = sections.length - 1
+                  else return
+                  event.preventDefault()
+                  selectSection(sections[next].id)
+                  navRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+                }}>
+                <strong>{t(`settings.section.${id}`)}</strong>
+                <small>{summary}</small>
+                {id === 'compiler' && isCompilerDirty ? <em>{t('settings.header.unsaved')}</em> : null}
+              </button>
+            ))}
+          </div>
+          <div className="settings-content">
+            <SettingsPanel
+              id="interface"
+              title={t('settings.section.interface')}
+              summary={interfaceSummary(locale)}
+              active={activeSection === 'interface'}
+              visited={visitedSections.has('interface')}
+            >
+              <InterfaceSettingsPanel locale={locale} onLocaleChange={setLocale} />
+            </SettingsPanel>
 
-        <SettingsSection
-          id="ai"
-          title={t('settings.section.ai')}
-          summary={aiSummary(t, llmSettings)}
-          expanded={expandedSections.ai}
-          onToggle={toggleSection}
-        >
-          <AiSettingsPanel
-            llmSettings={llmSettings}
-            onOpenConfig={onOpenConfig}
-            onTestConnection={onTestLlmConnection}
-            onModelChange={onModelChange}
-            onSaveApiKey={onSaveLlmApiKey}
-            providerManager={providerManager}
-          />
-        </SettingsSection>
+            <SettingsPanel
+              id="ai"
+              title={t('settings.section.ai')}
+              summary={aiSummary(t, llmSettings)}
+              active={activeSection === 'ai'}
+              visited={visitedSections.has('ai')}
+            >
+              <AiSettingsPanel
+                llmSettings={llmSettings}
+                onOpenConfig={onOpenConfig}
+                onTestConnection={onTestLlmConnection}
+                onModelChange={onModelChange}
+                onSaveApiKey={onSaveLlmApiKey}
+                providerManager={providerManager}
+              />
+            </SettingsPanel>
 
-        <SettingsSection
-          id="compiler"
-          title={t('settings.section.compiler')}
-          summary={compilerSummary(t, compilerDraft)}
-          modified={isCompilerDirty}
-          expanded={expandedSections.compiler}
-          onToggle={toggleSection}
-        >
-          <CompilerSettingsPanel
-            draft={compilerDraft}
-            onChange={updateCompilerDraft}
-            onBrowseCompilerFile={() => void browseCompilerDraft()}
-            onBrowseOutputDirectory={() => void browseOutputDraft()}
-          />
-        </SettingsSection>
+            <SettingsPanel
+              id="compiler"
+              title={t('settings.section.compiler')}
+              summary={compilerSummary(t, compilerDraft)}
+              modified={isCompilerDirty}
+              active={activeSection === 'compiler'}
+              visited={visitedSections.has('compiler')}
+            >
+              <CompilerSettingsPanel
+                draft={compilerDraft}
+                onChange={updateCompilerDraft}
+                onBrowseCompilerFile={() => void browseCompilerDraft()}
+                onBrowseOutputDirectory={() => void browseOutputDraft()}
+              />
+            </SettingsPanel>
 
-        <SettingsSection
-          id="workspace"
-          title={t('settings.section.workspace')}
-          summary={workspaceSummary(t, recentProjects)}
-          expanded={expandedSections.workspace}
-          onToggle={toggleSection}
-        >
-          <WorkspaceSettingsPanel
-            recentProjects={recentProjects}
-            onOpenProjectPath={onOpenProjectPath}
-            onExportHsfProject={onExportHsfProject}
-            onResetCurrentProject={onResetCurrentProject}
-          />
-        </SettingsSection>
+            <SettingsPanel
+              id="workspace"
+              title={t('settings.section.workspace')}
+              summary={workspaceSummary(t, recentProjects)}
+              active={activeSection === 'workspace'}
+              visited={visitedSections.has('workspace')}
+            >
+              <WorkspaceSettingsPanel
+                recentProjects={recentProjects}
+                onOpenProjectPath={onOpenProjectPath}
+                onExportHsfProject={onExportHsfProject}
+                onResetCurrentProject={onResetCurrentProject}
+              />
+            </SettingsPanel>
 
-        <SettingsSection
-          id="git"
-          title={t('settings.section.git')}
-          summary={gitSummary(t, gitStatus)}
-          expanded={expandedSections.git}
-          onToggle={toggleSection}
-        >
-          <GitSettingsPanel
-            gitStatus={gitStatus}
-            gitBusy={gitBusy}
-            message={gitMessage}
-            onMessageChange={setGitMessage}
-            onRefresh={onLoadProjectGitStatus}
-            onInitialize={onInitializeProjectGit}
-            onSetEnabled={onSetProjectGitEnabled}
-            onCommit={onCommitProjectGit}
-          />
-        </SettingsSection>
+            <SettingsPanel
+              id="git"
+              title={t('settings.section.git')}
+              summary={gitSummary(t, gitStatus)}
+              active={activeSection === 'git'}
+              visited={visitedSections.has('git')}
+            >
+              <GitSettingsPanel
+                gitStatus={gitStatus}
+                gitBusy={gitBusy}
+                message={gitMessage}
+                onMessageChange={setGitMessage}
+                onRefresh={onLoadProjectGitStatus}
+                onInitialize={onInitializeProjectGit}
+                onSetEnabled={onSetProjectGitEnabled}
+                onCommit={onCommitProjectGit}
+              />
+            </SettingsPanel>
 
-        <SettingsSection
-          id="memory"
-          title={t('settings.section.memory')}
-          summary={memorySummary(t, memoryStatus, memoryLessons.length)}
-          expanded={expandedSections.memory}
-          onToggle={toggleSection}
-        >
-          <MemoryLessonsPanel
-            memoryStatus={memoryStatus}
-            lessons={memoryLessons}
-            skillPreview={memorySkillPreview}
-            busy={memoryBusy}
-            formatBytes={formatBytes}
-            onRefresh={onLoadMemoryLessons}
-            onSummarize={onSummarizeProjectMemory}
-            onUpdateLesson={onUpdateMemoryLesson}
-            onDeleteLesson={onDeleteMemoryLesson}
-            onIgnoreLesson={onIgnoreMemoryLesson}
-            onClear={onClearProjectMemory}
-          />
-        </SettingsSection>
+            <SettingsPanel
+              id="memory"
+              title={t('settings.section.memory')}
+              summary={memorySummary(t, memoryStatus, memoryLessons.length)}
+              active={activeSection === 'memory'}
+              visited={visitedSections.has('memory')}
+            >
+              <MemoryLessonsPanel
+                memoryStatus={memoryStatus}
+                lessons={memoryLessons}
+                skillPreview={memorySkillPreview}
+                busy={memoryBusy}
+                formatBytes={formatBytes}
+                onRefresh={onLoadMemoryLessons}
+                onSummarize={onSummarizeProjectMemory}
+                onUpdateLesson={onUpdateMemoryLesson}
+                onDeleteLesson={onDeleteMemoryLesson}
+                onIgnoreLesson={onIgnoreMemoryLesson}
+                onClear={onClearProjectMemory}
+              />
+            </SettingsPanel>
 
-        <SettingsSection
-          id="lessons"
-          title={t('settings.section.lessons')}
-          summary={lessonsSummary(t, distilledLessons)}
-          expanded={expandedSections.lessons}
-          onToggle={toggleSection}
-        >
-          <DistilledLessonsPanel
-            lessons={distilledLessons}
-            busy={distilledLessonsBusy}
-            projectName={projectName}
-            message={distilledLessonsMessage}
-            onRefresh={onLoadDistilledLessons}
-            onDistill={onDistillLessons}
-            onSetStatus={onSetDistilledLessonStatus}
-          />
-        </SettingsSection>
+            <SettingsPanel
+              id="lessons"
+              title={t('settings.section.lessons')}
+              summary={lessonsSummary(t, distilledLessons)}
+              active={activeSection === 'lessons'}
+              visited={visitedSections.has('lessons')}
+            >
+              <DistilledLessonsPanel
+                lessons={distilledLessons}
+                busy={distilledLessonsBusy}
+                projectName={projectName}
+                message={distilledLessonsMessage}
+                onRefresh={onLoadDistilledLessons}
+                onDistill={onDistillLessons}
+                onSetStatus={onSetDistilledLessonStatus}
+              />
+            </SettingsPanel>
 
-        <SettingsSection
-          id="knowledge"
-          title={t('settings.section.knowledge')}
-          summary={knowledgeSummary(t, knowledgeStatus)}
-          expanded={expandedSections.knowledge}
-          onToggle={toggleSection}
-        >
-          <KnowledgePanel
-            status={knowledgeStatus}
-            busy={knowledgeBusy}
-            onRefresh={onLoadKnowledgeStatus}
-            onReload={onReloadKnowledge}
-          />
-        </SettingsSection>
-
-      </aside>
-    </>
+            <SettingsPanel
+              id="knowledge"
+              title={t('settings.section.knowledge')}
+              summary={knowledgeSummary(t, knowledgeStatus)}
+              active={activeSection === 'knowledge'}
+              visited={visitedSections.has('knowledge')}
+            >
+              <KnowledgePanel
+                status={knowledgeStatus}
+                busy={knowledgeBusy}
+                onRefresh={onLoadKnowledgeStatus}
+                onReload={onReloadKnowledge}
+              />
+            </SettingsPanel>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -529,17 +498,3 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function clampSettingsDrawerWidth(width: number, viewportWidth = getViewportWidth()) {
-  const viewportMax = Math.max(280, viewportWidth - SETTINGS_DRAWER_VIEWPORT_MARGIN)
-  const minWidth = Math.min(SETTINGS_DRAWER_MIN_WIDTH, viewportMax)
-  const maxWidth = Math.max(minWidth, Math.min(SETTINGS_DRAWER_MAX_WIDTH, viewportMax))
-  return Math.min(Math.max(width, minWidth), maxWidth)
-}
-
-function getSettingsDrawerMaxWidth() {
-  return Math.max(SETTINGS_DRAWER_MIN_WIDTH, Math.min(SETTINGS_DRAWER_MAX_WIDTH, getViewportWidth() - SETTINGS_DRAWER_VIEWPORT_MARGIN))
-}
-
-function getViewportWidth() {
-  return typeof window === 'undefined' ? 1024 : window.innerWidth
-}

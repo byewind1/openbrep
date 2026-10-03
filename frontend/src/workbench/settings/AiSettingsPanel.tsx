@@ -24,6 +24,7 @@ import type {
 } from '../../api/types'
 import { useT } from '../../i18n'
 import { ModelVisibilityPanel } from './ModelVisibilityPanel'
+import { useSettingsDialog } from './useSettingsDialog'
 import { ProviderManagerPanel, type ProviderManagerPanelProps } from './ProviderManagerPanel'
 
 interface AiSettingsPanelProps {
@@ -962,9 +963,12 @@ function CodexModelDrawer({
 }) {
   const t = useT()
   const groups = groupCodexModels(models)
+  const dialogRef = useSettingsDialog(true, onClose)
   return (
-    <div className="codex-model-drawer-backdrop" data-testid="codex-model-drawer">
-      <aside className="codex-model-drawer" role="dialog" aria-modal="true" aria-label={t('settings.ai.connection.drawerTitle')}>
+    <div className="codex-model-drawer-backdrop" data-testid="codex-model-drawer" onClick={(event) => {
+      if (event.target === event.currentTarget) onClose()
+    }}>
+      <div ref={dialogRef} tabIndex={-1} className="codex-model-drawer" role="dialog" aria-modal="true" aria-label={t('settings.ai.connection.drawerTitle')}>
         <div className="codex-model-drawer-header">
           <div>
             <span className="settings-kicker">ChatGPT / Codex</span>
@@ -1027,7 +1031,7 @@ function CodexModelDrawer({
             </div>
           ) : null}
         </>)}
-      </aside>
+      </div>
     </div>
   )
 }

@@ -77,7 +77,7 @@ export function ModelVisibilityPanel({
   }
 
   return (
-    <div data-testid="model-visibility-panel">
+    <div data-testid="model-visibility-panel" data-settings-focus="visibility" tabIndex={-1}>
       <p className="settings-hint">{t('settings.ai.visibility.hint')}</p>
       {sections.map((section) => (
         <div className="settings-visibility-section" key={section.id}>

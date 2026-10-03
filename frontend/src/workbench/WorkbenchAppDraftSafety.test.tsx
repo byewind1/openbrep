@@ -43,9 +43,9 @@ vi.mock('./useConfigAutoRefresh', () => ({
   useConfigAutoRefresh: () => {},
 }))
 
-vi.mock('./settings/SettingsDrawer', () => ({
-  SettingsDrawer: ({ onExportHsfProject }: { onExportHsfProject: () => void }) => (
-    <div data-testid="settings-drawer">
+vi.mock('./settings/SettingsModal', () => ({
+  SettingsModal: ({ onExportHsfProject }: { onExportHsfProject: () => void }) => (
+    <div data-testid="settings-modal">
       <button type="button" data-testid="export-hsf-button" onClick={onExportHsfProject}>
         Export HSF
       </button>
@@ -83,13 +83,13 @@ async function openProjectMenu() {
 }
 
 describe('WorkbenchApp SF1/R1 接线', () => {
-  test('SettingsDrawer 导出 callback 调用 exportHsfProject（无参，由 action 统一收集草稿）', async () => {
+  test('SettingsModal 导出 callback 调用 exportHsfProject（无参，由 action 统一收集草稿）', async () => {
     const exportSpy = vi.fn(async () => true)
     resetStore({ exportHsfProject: exportSpy } as never)
 
     render(<WorkbenchApp />)
     fireEvent.click(document.querySelector('.settings-trigger') as HTMLElement)
-    await waitFor(() => expect(screen.queryByTestId('settings-drawer')).toBeTruthy())
+    await waitFor(() => expect(screen.queryByTestId('settings-modal')).toBeTruthy())
     fireEvent.click(screen.getByTestId('export-hsf-button'))
 
     await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1))
