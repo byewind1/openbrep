@@ -42,6 +42,7 @@ class WorkbenchConversationService:
         self.active_turn_id: str | None = None
         self.pending_turn_id: str | None = None
         self.selected_proposal: dict | None = None
+        self.proposals: OrderedDict[str, dict] = OrderedDict()
         self.advisor = self._answer
         self.semantic_decision = self._semantic_decision
 
@@ -99,7 +100,11 @@ class WorkbenchConversationService:
             return self._failure(turn, 'PLAN_GENERATION_FAILED' if turn.policy.mode == 'plan' else 'ADVICE_FAILED', '计划生成失败，项目未修改。' if turn.policy.mode == 'plan' else '无法完成本轮顾问回答；项目未修改。')
         proposals = []
         for proposal in answer.proposals:
-            proposals.append({**proposal, 'proposal_id': uuid.uuid4().hex, 'source_version': turn.snapshot.source_version})
+            bound = {**proposal, 'proposal_id': uuid.uuid4().hex, 'source_version': turn.snapshot.source_version, 'state': 'proposed'}
+            proposals.append(bound)
+            self.proposals[bound['proposal_id']] = copy.deepcopy(bound)
+            while len(self.proposals) > 20:
+                self.proposals.popitem(last=False)
         details = {**answer.to_dict(), 'proposals': proposals, 'inspection': report.to_dict(), 'knowledge_sources': knowledge.source_ids}
         if turn.policy.mode == 'plan':
             old = self.turns.get(self.pending_turn_id or '')
@@ -129,6 +134,7 @@ class WorkbenchConversationService:
                 turn.result = self._response(turn, 'cancelled', cancelled=True)
         self.pending_turn_id = None
         self.selected_proposal = None
+        self.proposals.clear()
         self.epoch = self.session.project_epoch
 
     def _sync_epoch(self):
@@ -219,6 +225,66 @@ class WorkbenchConversationService:
         while len(self.turns) > MAX_RECENT_TURNS:
             old_id, old = self.turns.popitem(last=False)
             self.client_ids.pop(old.client_turn_id, None)
+        import re
+        pending = self.turns.get(self.pending_turn_id or '')
+        reference = re.search(r'按.*(?:方案|计划)|执行.*(?:方案|计划)|^(?:好的|继续|好|ok|continue)$', message, re.I)
+        if re.search(r'取消.*计划|cancel.*plan', message, re.I) and pending and pending.state == 'pending':
+            pending.state = 'cancelled'
+            pending.result = self._response(pending, 'cancelled', cancelled=True)
+            self.pending_turn_id = None
+            turn.state = 'cancelled'
+            turn.result = self._response(turn, 'cancelled', cancelled=True)
+            return copy.deepcopy(turn.result)
+        proposal_id = body.get('proposal_id')
+        if not proposal_id and reference and self.proposals:
+            number = re.search(r'方案([一二三四五1-5])', message)
+            available = [p for p in self.proposals.values() if p['state'] not in {'discarded', 'superseded'}]
+            if number:
+                index = '一二三四五'.find(number.group(1)) if not number.group(1).isdigit() else int(number.group(1)) - 1
+                if 0 <= index < len(available):
+                    proposal_id = available[index]['proposal_id']
+            elif self.selected_proposal:
+                proposal_id = self.selected_proposal['proposal_id']
+            elif len(available) == 1:
+                proposal_id = available[0]['proposal_id']
+        if proposal_id:
+            proposal = self.proposals.get(proposal_id)
+            if not proposal:
+                turn.state = 'failed'
+                turn.result = self._failure(turn, 'PROPOSAL_NOT_FOUND')
+                return copy.deepcopy(turn.result)
+            if body.get('proposal_action') == 'select':
+                proposal['state'] = 'selected'
+                self.selected_proposal = copy.deepcopy(proposal)
+                turn.state = 'completed'
+                turn.result = self._response(turn, 'advice', assistant={'kind': 'advisor', 'reply': '已选择该方案；尚未执行。'})
+                return copy.deepcopy(turn.result)
+            if body.get('proposal_action') == 'execute' or (reference and policy.mode == 'execute'):
+                if proposal['source_version']['context_fingerprint'] != snapshot.context_fingerprint:
+                    turn.state = 'failed'
+                    turn.result = self._failure(turn, 'PROPOSAL_STALE')
+                    return copy.deepcopy(turn.result)
+                policy = TurnPolicy('execute', proposal['target_intent'], tuple([*proposal['constraints'], *policy.constraints]))
+                turn.policy = policy
+                turn.body['message'] = proposal['goal'] + '\n用户本轮要求：' + message + '\n范围：' + '\n'.join(proposal['scope']) + '\n约束：' + '\n'.join(policy.constraints)
+                proposal['state'] = 'selected'
+                self.selected_proposal = copy.deepcopy(proposal)
+        elif reference and pending and pending.state == 'pending' and policy.mode == 'execute':
+            if pending.snapshot.context_fingerprint != snapshot.context_fingerprint:
+                turn.state = 'failed'
+                turn.result = self._failure(turn, 'PLAN_STALE')
+                return copy.deepcopy(turn.result)
+            turn.plan = copy.deepcopy(pending.plan)
+            turn.plan['constraints'] = list(dict.fromkeys([*turn.plan['constraints'], *policy.constraints]))
+            turn.policy = replace(policy, task_intent=pending.plan['task_intent'])
+            policy = turn.policy
+            pending.state = 'cancelled'
+            pending.result = self._failure(pending, 'PLAN_REPLACED_BY_TURN')
+            self.pending_turn_id = None
+        elif reference and policy.mode == 'execute':
+            turn.state = 'failed'
+            turn.result = self._failure(turn, 'REFERENCE_UNAVAILABLE')
+            return copy.deepcopy(turn.result)
         if policy.error:
             turn.state = 'failed'
             turn.result = self._failure(turn, policy.error)
@@ -234,7 +300,7 @@ class WorkbenchConversationService:
     def intent_summary(self) -> dict:
         pending = self.turns.get(self.pending_turn_id or '')
         return {'pending_plan': pending.plan if pending and pending.state == 'pending' else None,
-                'proposals': [self.selected_proposal] if self.selected_proposal else []}
+                'proposals': list(self.proposals.values()), 'selected_proposal_id': self.selected_proposal.get('proposal_id') if self.selected_proposal else None}
 
     def _prepare_advice(self, turn: PreparedTurn, *, should_cancel=None):
         if self.advisor is None:
@@ -265,7 +331,7 @@ class WorkbenchConversationService:
         if turn.policy.mode == 'plan':
             if body.get('approve') is not True:
                 return self._failure(turn, 'APPROVAL_REQUIRED')
-            if not turn.plan or body.get('plan_id') != turn.plan['plan_id'] or body.get('plan_version') != turn.plan['plan_version']:
+            if not turn.plan or body.get('plan_id') != turn.plan['plan_id'] or (type(body.get('plan_version')) is not int or body.get('plan_version') != turn.plan['plan_version']):
                 return self._failure(turn, 'PLAN_VERSION_MISMATCH')
         if not turn.snapshot.matches(self.session.project, self.session.project_epoch, self._dependency_version()):
             turn.state = 'stale'

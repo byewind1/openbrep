@@ -270,6 +270,9 @@ def _render_confirmed_plan(plan: dict) -> str:
     if files:
         parts.append("- 影响文件：" + ", ".join(files))
     parts.append(f"- 风险：{plan.get('risk') or '无'}")
+    for field, label in (("constraints", "必须遵守"), ("assumptions", "采用的假设"), ("acceptance_criteria", "验收")):
+        for item in plan.get(field) or []:
+            parts.append(f"- {label}：{item}")
     return "\n".join(parts)
 
 
@@ -511,7 +514,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     if request.confirmed_plan is not None:
         # 确认门 approve 后：跳过重新规划，把已确认计划注入对话约束执行
         plan_data = request.confirmed_plan
-        on_event("plan", plan_data)
+        on_event("status", _architect_status("plan"))
         messages.append({"role": "assistant", "content": _render_confirmed_plan(plan_data)})
         messages.append({
             "role": "user",
@@ -532,7 +535,7 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
             llm_calls += 1
             plan_data = _parse_plan_response(plan_response.content or "")
             if plan_data:
-                on_event("plan", plan_data)
+                on_event("status", _architect_status("plan"))
             if request.should_cancel and request.should_cancel():
                 cancelled = True
                 on_event("status", _architect_status("cancel"))

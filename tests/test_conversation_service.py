@@ -148,3 +148,72 @@ def test_assistant_compatibility_adapter_is_readonly_without_project(tmp_path):
     assert result['result_kind'] == 'advice'
     assert llm.call_count == 1
     assert not (tmp_path / 'output').exists()
+
+
+def plan_answer():
+    import json
+    return json.dumps({'conclusion': '建议先加背板', 'suggestions': [], 'tradeoffs': [], 'plan': {
+        'intent_summary': '加背板', 'user_visible_changes': ['封闭背部'], 'affected_files': ['scripts/3d.gdl'], 'risk': '几何变化',
+        'constraints': [], 'assumptions': [], 'acceptance_criteria': ['编译与验证通过'], 'finding_refs': [], 'optional_suggestions': ['可另行增加踢脚']
+    }}, ensure_ascii=False)
+
+
+def test_plan_lifecycle_approval_version_and_retries(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    result = prepare(session, message='先别改，给我个方案添加背板')
+    assert result['result_kind'] == 'awaiting_confirmation'
+    plan = result['pending_plan']
+    for key in ('plan_id', 'plan_version', 'task_intent', 'constraints', 'assumptions', 'acceptance_criteria', 'finding_refs', 'optional_suggestions', 'project_epoch', 'source_version', 'working_intent_version'):
+        assert key in plan
+    token = {'phase': 'execute', 'turn_id': result['turn_id'], 'plan_id': plan['plan_id'], 'plan_version': 1}
+    assert session.route('POST', '/api/assistant/turn', token)['code'] == 'APPROVAL_REQUIRED'
+    assert session.route('POST', '/api/assistant/turn', {**token, 'approve': True, 'plan_version': 2})['code'] == 'PLAN_VERSION_MISMATCH'
+    assert session.route('POST', '/api/assistant/turn', {**token, 'approve': True, 'plan_version': True})['code'] == 'PLAN_VERSION_MISMATCH'
+    done = session.route('POST', '/api/assistant/turn', {**token, 'approve': True})
+    assert done['result_kind'] == 'execution'
+    assert session.route('POST', '/api/assistant/turn', {**token, 'approve': True}) == done
+    assert session.assistant_service.generate_with_assistant.call_count == 1
+
+
+def test_plan_failure_and_stale_source_cannot_execute(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=['not json'])
+    failed = prepare(session, requested_mode='plan')
+    assert failed['code'] == 'PLAN_GENERATION_FAILED'
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    result = prepare(session, client_turn_id='c2', requested_mode='plan')
+    session.project.set_script(ScriptType.SCRIPT_3D, 'BLOCK 1, 2, 3\n')
+    session.project.save_to_disk()
+    plan = result['pending_plan']
+    stale = session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': result['turn_id'], 'plan_id': plan['plan_id'], 'plan_version': 1, 'approve': True})
+    assert stale['code'] == 'PLAN_STALE'
+    assert stale['pending_plan'] == plan
+    session.assistant_service.generate_with_assistant.assert_not_called()
+
+
+def test_compatible_confirm_uses_only_unique_server_plan(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    result = prepare(session, requested_mode='plan')
+    done = session.route('POST', '/api/modify/confirm', {'approve': True})
+    assert done['result_kind'] == 'execution'
+    assert session.assistant_service.generate_with_assistant.call_count == 1
+
+
+def test_no_project_plan_does_not_create_and_executes_create(tmp_path):
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.project = None
+    session.source_path = None
+    session.settings_service.llm_adapter_factory = lambda config: MockLLM(responses=[plan_answer()])
+    session.create_project_from_prompt = Mock(return_value={'ok': True})
+    result = prepare(session, message='先给我一个书柜的建模方案')
+    assert result['pending_plan']['task_intent'] == 'CREATE'
+    assert not (tmp_path / 'output').exists()
+    plan = result['pending_plan']
+    assert session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': result['turn_id'], 'plan_id': plan['plan_id'], 'plan_version': 1, 'approve': True})['ok']
+    session.create_project_from_prompt.assert_called_once()

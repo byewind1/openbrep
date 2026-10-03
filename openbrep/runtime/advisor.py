@@ -106,6 +106,10 @@ def parse_advisor_output(content: str, report: InspectionReport, *, mode='consul
         parts.append('取舍：\n' + '\n'.join(tradeoffs))
     if assumptions:
         parts.append('假设（未验证）：\n' + '\n'.join(assumptions))
+    if re.search(r'已修改|已保存|编译通过|验证通过|已交付', data['conclusion']):
+        raise ValueError('Read-only advisor cannot claim execution or verification')
+    if re.search(r'检查发现|已检查|检查证明', data['conclusion']) and not facts:
+        raise ValueError('Inspection claim requires finding evidence')
     return AdvisorResult('\n\n'.join(parts), data['conclusion'], tuple(facts), tuple(assumptions), tuple(suggestions), tuple(tradeoffs), tuple(proposals), plan, tuple(omitted_sections))
 
 
@@ -142,7 +146,9 @@ def advise(snapshot: SourceSnapshot, message: str, *, llm, report: InspectionRep
     kwargs = codex_chat_generate_kwargs(llm)
     if kwargs:
         kwargs['codex_should_cancel'] = should_cancel
-    response = llm.generate([{'role': 'system', 'content': _SYSTEM}, {'role': 'user', 'content': user_content if images else user_content[0]['text']}], max_tokens=ADVISOR_OUTPUT_TOKENS, stream=False, **kwargs)
+        if images:
+            kwargs['images'] = images
+    response = llm.generate([{'role': 'system', 'content': _SYSTEM}, {'role': 'user', 'content': user_content if images and not kwargs else user_content[0]['text']}], max_tokens=ADVISOR_OUTPUT_TOKENS, stream=False, **kwargs)
     if should_cancel and should_cancel():
         raise ValueError('CANCELLED')
     return parse_advisor_output(response.content or '', report, mode=mode, omitted_sections=omitted)

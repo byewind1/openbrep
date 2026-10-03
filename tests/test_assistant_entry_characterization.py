@@ -46,7 +46,7 @@ def test_characterization_invalid_plan_now_fails_closed(tmp_path):
     save.assert_not_called()
 
 
-def test_characterization_stream_defaults_to_visible_planning(tmp_path):
+def test_characterization_stream_no_longer_implies_visible_planning(tmp_path):
     project = HSFProject.create_new('Shelf', work_dir=str(tmp_path))
     session = SimpleNamespace(
         source_path=project.root, project=project, project_epoch=1,
@@ -60,4 +60,4 @@ def test_characterization_stream_defaults_to_visible_planning(tmp_path):
             {'image_b64': None, 'image_mime': 'image/png'},
             on_event=None, should_cancel=lambda: False,
         )
-    assert request.agent_loop_plan is True
+    assert request.agent_loop_plan is False  # characterization change (card06)

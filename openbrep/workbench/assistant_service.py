@@ -527,8 +527,13 @@ class WorkbenchAssistantService:
         result = self._merge_continue_from(result, continue_from)
         if result.metadata.get("awaiting_confirmation"):
             # 存 session pending_plan（含原始 body 与项目代次，确认时校验不跨项目）
+            from openbrep.source_snapshot import capture_snapshot
+            import uuid
+            bound = {**result.metadata["pending_plan"], "plan_id": uuid.uuid4().hex, "plan_version": 1}
+            result.metadata["pending_plan"] = bound
             self.session.pending_plan = {
-                "plan": result.metadata["pending_plan"],
+                "snapshot": capture_snapshot(self.session.project, self.session.project_epoch),
+                "plan": bound,
                 "body": body,
                 "project_epoch": self.session.project_epoch,
             }
@@ -550,12 +555,31 @@ class WorkbenchAssistantService:
         approve=True → 清 pending_plan 并带已确认计划执行（stream=True 走 SSE）；
         approve=False → 清 pending_plan 返回已取消；无 pending → NO_PENDING_PLAN。
         """
+        conversation = getattr(self.session, "conversation_service", None)
+        if conversation is not None and self.session.config.llm.effective_conversation_entry() == "unified":
+            candidates = [t for t in conversation.turns.values() if t.plan and t.state == "pending"]
+            if body.get("plan_id"):
+                candidates = [t for t in candidates if t.plan["plan_id"] == body["plan_id"]]
+            if len(candidates) == 1:
+                turn = candidates[0]
+                return conversation.route({"phase": "execute", "turn_id": turn.turn_id,
+                                           "plan_id": body.get("plan_id", turn.plan["plan_id"]),
+                                           "plan_version": body.get("plan_version", turn.plan["plan_version"]),
+                                           "approve": body.get("approve"), "stream": body.get("stream", False)})
+            if body.get("plan_id"):
+                return {"ok": False, "code": "PLAN_VERSION_MISMATCH", "error": "计划不存在或已失效。"}
         pending = getattr(self.session, "pending_plan", None)
         if pending is None:
             return {"ok": False, "code": "NO_PENDING_PLAN", "error": "没有待确认的修改计划，请先发起一次修改。"}
         if pending.get("project_epoch") != getattr(self.session, "project_epoch", None):
             self.session.pending_plan = None
             return {"ok": False, "code": "NO_PENDING_PLAN", "error": "待确认的修改计划已失效（项目已切换），请重新发起修改。"}
+        plan = pending.get("plan") or {}
+        if body.get("plan_id") is not None and (body["plan_id"] != plan.get("plan_id") or body.get("plan_version") != plan.get("plan_version")):
+            return {"ok": False, "code": "PLAN_VERSION_MISMATCH", "error": "计划版本不匹配。"}
+        snapshot = pending.get("snapshot")
+        if body.get("approve") is True and snapshot is not None and not snapshot.matches(self.session.project, self.session.project_epoch):
+            return {"ok": False, "code": "PLAN_STALE", "error": "源码已变化，请重新生成计划。", "pending_plan": plan}
         self.session.pending_plan = None
         if body.get("approve") is not True:
             # 反馈信号采集（best-effort，不改判定）：用户拒绝计划 → plan_rejected
@@ -862,8 +886,8 @@ class WorkbenchAssistantService:
             should_cancel=should_cancel,
             # agent_loop 默认 None：由 pipeline 按 intent 默认策略启用
             agent_loop=body.get("agent_loop") if "agent_loop" in body else None,
-            # 流式请求默认开启 plan 阶段，让前端可展示可审查计划；非流式保持兼容
-            agent_loop_plan=body.get("agent_loop_plan", should_cancel is not None),
+            # Internal planning is opt-in; streaming alone never grants visible planning.
+            agent_loop_plan=body.get("agent_loop_plan", False),
             # All task/engine branches share the authorization guard.
             confirm_plan=bool(body.get("confirm_plan")),
             execution_policy=body.get("execution_policy"),
