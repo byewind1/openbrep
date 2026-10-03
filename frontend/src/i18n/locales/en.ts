@@ -23,7 +23,7 @@ export const en: Record<LocaleKey, string> = {
   'topMenu.status.savedAt': 'Saved {time}',
   'topMenu.status.modelTitle': 'Current AI model · click to switch',
 
-  // SettingsDrawer header
+  // SettingsModal header
   'settings.header.title': 'Settings',
   'settings.header.saving': 'Saving',
   'settings.header.unsaved': 'Unsaved',
@@ -36,7 +36,7 @@ export const en: Record<LocaleKey, string> = {
   'settings.header.drawerAriaLabel': 'Workbench settings',
   'settings.header.resizeAriaLabel': 'Resize settings panel',
 
-  // SettingsDrawer section titles
+  // SettingsModal section titles
   'settings.section.interface': 'Interface',
   'settings.section.ai': 'AI',
   'settings.section.compiler': 'Compiler',
@@ -46,7 +46,7 @@ export const en: Record<LocaleKey, string> = {
   'settings.section.lessons': 'Distilled lessons',
   'settings.section.knowledge': 'Knowledge',
 
-  // SettingsDrawer section summaries
+  // SettingsModal section summaries
   'settings.summary.compilerLp': 'LP',
   'settings.summary.compilerMock': 'Mock',
   'settings.summary.aiNoModel': 'No model',

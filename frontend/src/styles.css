@@ -2805,22 +2805,6 @@ button:focus-visible {
   margin: 0;
 }
 
-.settings-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  width: auto;
-  height: auto;
-  border: 0;
-  border-radius: 0;
-  background: rgba(2, 6, 23, 0.46);
-  padding: 0;
-}
-
-.settings-scrim:hover:not(:disabled) {
-  background: rgba(2, 6, 23, 0.52);
-}
-
 .themed-dialog-overlay {
   position: fixed;
   inset: 0;
@@ -2875,57 +2859,78 @@ button:focus-visible {
   color: var(--status-error-text);
 }
 
-.settings-drawer {
+.settings-modal-overlay {
   position: fixed;
-  top: 0;
-  right: 0;
-  z-index: 21;
-  min-width: min(360px, calc(100vw - 24px));
-  max-width: calc(100vw - 24px);
-  height: 100vh;
+  inset: 0;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.56);
+}
+
+.settings-modal {
+  width: min(960px, calc(100vw - 64px));
+  height: min(720px, calc(100vh - 96px));
   display: grid;
-  grid-auto-rows: min-content;
-  border-left: 1px solid var(--border);
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   background: var(--bg-panel);
-  transform: translateX(100%);
-  transition: transform 160ms ease-out;
-  box-shadow: none;
+  color: var(--text-primary);
+  font-size: var(--settings-body-size);
+  line-height: 1.5;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.settings-modal-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
   overflow-y: auto;
 }
 
-.settings-drawer.open {
-  transform: translateX(0);
-}
-
-.settings-resize-handle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -5px;
-  width: 10px;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.settings-resize-handle::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 4px;
-  width: 1px;
+.settings-nav-item {
+  flex-shrink: 0;
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  height: auto;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
   background: transparent;
-  transition: background 140ms ease-out;
+  text-align: left;
 }
 
-.settings-resize-handle:hover::after,
-.settings-resize-handle:focus-visible::after {
-  background: rgba(125, 211, 252, 0.74);
+.settings-nav-item strong { font-size: var(--settings-nav-size); font-weight: 600; }
+.settings-nav-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--settings-hint-size);
 }
+.settings-nav-item.active { background: var(--accent-muted); border-color: var(--accent); }
+.settings-nav-item.active strong { color: var(--accent-soft); }
+.settings-nav-item em { font-size: var(--settings-badge-size); font-style: normal; color: var(--accent-soft); }
+.settings-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-.settings-resize-handle:focus-visible {
-  outline: none;
-}
+.settings-content { min-width: 0; min-height: 0; overflow-y: auto; padding: 20px 24px; }
+.settings-panel[hidden] { display: none; }
+.settings-panel-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.settings-panel-head h2 { margin: 0; font-size: var(--settings-section-size); font-weight: 600; }
+.settings-panel-head > span { font-size: var(--settings-hint-size); color: var(--text-muted); }
+.settings-panel-head em { font-style: normal; }
 
 .settings-header {
   display: flex;
@@ -2933,7 +2938,7 @@ button:focus-visible {
   justify-content: space-between;
   gap: 8px;
   border-bottom: 1px solid var(--border);
-  padding: 7px 10px 7px 14px;
+  padding: 14px 20px;
 }
 
 .settings-header-actions {
@@ -2951,7 +2956,7 @@ button:focus-visible {
   min-width: 26px;
   padding: 0;
   border-radius: 5px;
-  font-size: 13px;
+  font-size: var(--settings-nav-size);
   line-height: 26px;
   text-align: center;
   flex-shrink: 0;
@@ -2965,7 +2970,7 @@ button:focus-visible {
   border: 1px solid var(--accent);
   background: var(--accent-muted);
   color: var(--accent-soft);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -2979,113 +2984,43 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-.settings-header > div:first-child,
-.settings-section-heading {
+.settings-header > div:first-child {
   min-width: 0;
   display: grid;
   gap: 2px;
 }
 
-.settings-header strong,
-.settings-section-heading strong {
+.settings-header strong {
   color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--settings-title-size);
+  font-weight: 600;
   line-height: 1.25;
 }
 
-.settings-header span,
-.settings-section-heading span {
+.settings-header span {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   line-height: 1.35;
 }
 
 .settings-row > span,
 .settings-field > span {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--settings-label-size);
   line-height: 1.35;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.settings-section {
-  display: grid;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  padding: 0;
-}
-
-.settings-section-toggle {
-  width: 100%;
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 8px 14px;
-  text-align: left;
-}
-
-.settings-section-toggle:hover:not(:disabled) {
-  background: rgba(148, 163, 184, 0.08);
-}
-
-.settings-section-toggle:focus-visible {
-  outline: 1px solid rgba(125, 211, 252, 0.74);
-  outline-offset: -1px;
-}
-
-.settings-section-toggle > span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.settings-section-toggle strong {
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: 0.01em;
-}
-
-.settings-section-toggle small {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-section-toggle em {
-  border: 1px solid var(--warning);
-  border-radius: 999px;
-  padding: 3px 7px;
-  color: var(--warning);
-  font-size: 10px;
-  font-style: normal;
-  line-height: 1;
-  white-space: nowrap;
-}
-
 .settings-section-body,
 .settings-panel-form {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .settings-section-body {
-  padding: 0 14px 10px;
-}
-
-.settings-section.collapsed .settings-section-toggle {
-  min-height: 38px;
+  min-width: 0;
+  padding: 0;
 }
 
 .settings-actions {
@@ -3110,20 +3045,9 @@ button:focus-visible {
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px 7px;
-  font-size: 10px;
+  font-size: var(--settings-badge-size);
   line-height: 1;
   white-space: nowrap;
-}
-
-.settings-provider-badge {
-  display: inline-block;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 6px;
-  color: var(--text-muted);
-  font-size: 10px;
-  line-height: 1.5;
-  letter-spacing: 0.03em;
 }
 
 .settings-row-header {
@@ -3131,28 +3055,6 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.settings-inline-toggle {
-  height: 20px;
-  padding: 0 7px;
-  border-radius: 4px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.settings-prompt-preview {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  opacity: 0.7;
 }
 
 .settings-dirty-state {
@@ -3174,18 +3076,10 @@ button:focus-visible {
   max-width: 220px;
   overflow: hidden;
   color: var(--status-error-text);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.settings-section.muted {
-  gap: 0;
-}
-
-.settings-section.muted .settings-section-heading strong {
-  color: var(--text-secondary);
 }
 
 .settings-row {
@@ -3215,7 +3109,7 @@ button:focus-visible {
 .settings-description {
   margin: 0 0 10px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   line-height: 1.5;
 }
 
@@ -3229,7 +3123,7 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--settings-body-size);
   cursor: pointer;
 }
 
@@ -3239,7 +3133,7 @@ button:focus-visible {
 
 .settings-field-hint {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .settings-segmented {
@@ -3252,7 +3146,7 @@ button:focus-visible {
   min-height: 24px;
   flex: 1 1 80px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .settings-segmented button.active {
@@ -3312,16 +3206,16 @@ button:focus-visible {
   gap: 12px;
   min-height: 84px;
   padding: 14px;
-  border: 1px solid var(--border-subtle, #d9d9d9);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--surface-raised, #fafafa);
+  background: var(--bg-card);
 }
 
-.llm-connection-card strong { display: block; font-size: 13px; }
-.llm-connection-card p { margin: 6px 0 0; color: var(--text-muted, #777); font-size: 11px; line-height: 1.4; }
+.llm-connection-card strong { display: block; font-size: var(--settings-nav-size); }
+.llm-connection-card p { margin: 6px 0 0; color: var(--text-muted, #777); font-size: var(--settings-hint-size); line-height: 1.4; }
 .llm-connection-card button { white-space: nowrap; }
 .connection-card-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-.connection-state { color: var(--text-muted, #777); font-size: 11px; white-space: nowrap; }
+.connection-state { color: var(--text-muted, #777); font-size: var(--settings-hint-size); white-space: nowrap; }
 .connection-state.is-ready { color: #16803c; }
 
 .codex-model-drawer-backdrop {
@@ -3338,23 +3232,23 @@ button:focus-visible {
   height: 100%;
   padding: 24px;
   overflow-y: auto;
-  background: var(--surface, #fff);
+  background: var(--bg-panel);
   box-shadow: -12px 0 32px rgb(15 23 42 / 18%);
 }
 
 .codex-model-drawer-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
-.codex-model-drawer-header h3 { margin: 4px 0 0; font-size: 18px; }
-.codex-model-drawer-header small { display: block; margin-top: 6px; color: var(--text-muted, #777); font-size: 10px; }
-.settings-kicker { color: var(--text-muted, #777); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.codex-model-drawer-header h3 { margin: 4px 0 0; font-size: var(--settings-section-size); }
+.codex-model-drawer-header small { display: block; margin-top: 6px; color: var(--text-muted, #777); font-size: var(--settings-badge-size); }
+.settings-kicker { color: var(--text-muted, #777); font-size: var(--settings-badge-size); letter-spacing: .08em; text-transform: uppercase; }
 .codex-model-drawer-list { display: grid; gap: 8px; }
 .codex-model-provider-group { display: grid; gap: 6px; }
-.codex-model-drawer-list button { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; width: 100%; padding: 12px; text-align: left; border: 1px solid var(--border-subtle, #d9d9d9); border-radius: 10px; background: transparent; }
-.codex-model-drawer-list button:hover:not(:disabled), .codex-model-drawer-list button.is-current { border-color: var(--accent, #2563eb); background: rgb(37 99 235 / 7%); }
-.codex-model-drawer-list small { grid-column: 1; color: var(--text-muted, #777); font-size: 10px; }
-.codex-model-drawer-list em { grid-column: 2; grid-row: 1 / span 2; color: var(--accent, #2563eb); font-size: 10px; font-style: normal; }
+.codex-model-drawer-list button { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; width: 100%; padding: 12px; text-align: left; border: 1px solid var(--border); border-radius: 10px; background: transparent; }
+.codex-model-drawer-list button:hover:not(:disabled), .codex-model-drawer-list button.is-current { border-color: var(--accent); background: var(--accent-muted); }
+.codex-model-drawer-list small { grid-column: 1; color: var(--text-muted, #777); font-size: var(--settings-badge-size); }
+.codex-model-drawer-list em { grid-column: 2; grid-row: 1 / span 2; color: var(--accent); font-size: var(--settings-badge-size); font-style: normal; }
 .codex-model-drawer-empty { padding: 24px 0; color: var(--text-muted, #777); }
-.codex-drawer-confirm { display: grid; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border-subtle, #d9d9d9); }
-.codex-drawer-confirm label { display: grid; gap: 6px; font-size: 11px; }
+.codex-drawer-confirm { display: grid; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+.codex-drawer-confirm label { display: grid; gap: 6px; font-size: var(--settings-hint-size); }
 
 @media (max-width: 640px) {
   .llm-connection-wizard { grid-template-columns: 1fr; }
@@ -3377,7 +3271,7 @@ button:focus-visible {
 
 .settings-apikey-row > button {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .settings-model-list {
@@ -3410,7 +3304,7 @@ button:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   padding: 0 7px;
   border-radius: 3px;
   transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
@@ -3441,7 +3335,7 @@ button:focus-visible {
   width: 100%;
   justify-content: flex-start;
   min-height: 22px;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   padding: 0 4px;
   color: var(--text-muted);
 }
@@ -3455,7 +3349,7 @@ button:focus-visible {
   gap: 6px;
   justify-content: flex-start;
   min-height: 22px;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   padding: 0 4px;
   color: var(--text-muted);
 }
@@ -3509,7 +3403,7 @@ button:focus-visible {
 
 .settings-visibility-current {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--settings-badge-size);
   padding: 0 5px;
   border-radius: 3px;
   border: 1px solid var(--accent);
@@ -3671,7 +3565,7 @@ button:focus-visible {
   border: 1px solid var(--accent);
   border-radius: 5px;
   background: var(--accent-muted);
-  font-size: 12px;
+  font-size: var(--settings-body-size);
 }
 
 .settings-model-confirm-actions {
@@ -3681,7 +3575,7 @@ button:focus-visible {
 
 .settings-model-confirm-actions button {
   min-height: 22px;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   padding: 0 8px;
 }
 
@@ -3697,7 +3591,7 @@ button:focus-visible {
   max-height: 200px;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
@@ -3711,13 +3605,13 @@ button:focus-visible {
 .settings-copy-error-btn {
   align-self: flex-start;
   min-height: 22px;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   padding: 0 8px;
 }
 
 .settings-model-display {
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
+  font-size: var(--settings-body-size);
   color: var(--text-primary);
   background: transparent;
   border: none;
@@ -3740,7 +3634,7 @@ button:focus-visible {
 .settings-open-config-btn {
   border-color: var(--border-strong);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .settings-open-config-btn:hover:not(:disabled) {
@@ -3782,7 +3676,7 @@ button:focus-visible {
   border: 1px solid var(--border);
   background: var(--bg-card);
   padding: 10px;
-  font-size: 12px;
+  font-size: var(--settings-body-size);
 }
 
 .settings-metadata-grid span {
@@ -3812,7 +3706,7 @@ button:focus-visible {
 }
 
 .settings-code-list code {
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -3823,7 +3717,7 @@ button:focus-visible {
   border-radius: 6px;
   padding: 8px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--settings-body-size);
   line-height: 1.4;
 }
 
@@ -3848,12 +3742,12 @@ button:focus-visible {
 
 .memory-status-grid span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--settings-label-size);
 }
 
 .memory-status-grid strong {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--settings-body-size);
   font-weight: 600;
 }
 
@@ -3884,13 +3778,13 @@ button:focus-visible {
   justify-content: space-between;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   text-transform: uppercase;
 }
 
 .memory-lesson-meta strong {
   color: var(--accent-soft);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .memory-lesson-controls {
@@ -3904,7 +3798,7 @@ button:focus-visible {
 .memory-lesson-ignore {
   min-height: 22px;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .memory-lesson-delete {
@@ -3925,13 +3819,13 @@ button:focus-visible {
 .memory-lesson-item p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--settings-body-size);
   line-height: 1.35;
 }
 
 .memory-lesson-item small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   line-height: 1.35;
 }
 
@@ -3948,7 +3842,7 @@ button:focus-visible {
   background: var(--bg-base);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--settings-body-size);
   resize: vertical;
 }
 
@@ -3967,7 +3861,7 @@ button:focus-visible {
   cursor: pointer;
   padding: 8px 10px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--settings-body-size);
 }
 
 .memory-skill-preview pre {
@@ -3977,7 +3871,7 @@ button:focus-visible {
   border-top: 1px solid var(--border);
   padding: 10px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--settings-mono-size);
   line-height: 1.45;
   white-space: pre-wrap;
 }
@@ -3987,7 +3881,7 @@ button:focus-visible {
   overflow: hidden;
   color: var(--text-muted);
   font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4007,7 +3901,7 @@ button:focus-visible {
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   line-height: 1.4;
 }
 
@@ -4050,7 +3944,7 @@ button:focus-visible {
   border: 1px solid rgba(245, 158, 11, 0.4);
   border-radius: 999px;
   color: var(--accent-soft);
-  font-size: 10px;
+  font-size: var(--settings-badge-size);
   letter-spacing: 0.4px;
   text-transform: uppercase;
 }
@@ -4069,7 +3963,7 @@ button:focus-visible {
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--settings-badge-size);
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
@@ -4077,14 +3971,14 @@ button:focus-visible {
 
 .distilled-lesson-pattern {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--settings-nav-size);
   line-height: 1.4;
 }
 
 .distilled-lesson-guidance {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   line-height: 1.5;
 }
 
@@ -4096,7 +3990,7 @@ button:focus-visible {
 
 .distilled-lesson-evidence-label {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--settings-badge-size);
   letter-spacing: 0.4px;
   text-transform: uppercase;
 }
@@ -4106,7 +4000,7 @@ button:focus-visible {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  font-size: 10px;
+  font-size: var(--settings-badge-size);
 }
 
 .distilled-lesson-check,
@@ -4144,7 +4038,7 @@ button:focus-visible {
 .distilled-lesson-actions button {
   min-height: 24px;
   padding: 0 12px;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .distilled-lesson-approve {
@@ -4188,13 +4082,13 @@ button:focus-visible {
 .recent-project-item small {
   grid-column: 1 / -1;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
 }
 
 .recent-project-item em,
 .settings-empty {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   font-style: normal;
 }
 
@@ -4317,7 +4211,7 @@ button:focus-visible {
   display: inline-block;
   padding: 1px 7px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: var(--settings-badge-size);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -4345,12 +4239,12 @@ button:focus-visible {
 }
 
 .knowledge-count {
-  font-size: 12px;
+  font-size: var(--settings-body-size);
   color: var(--text-muted);
 }
 
 .knowledge-hint {
-  font-size: 11.5px;
+  font-size: var(--settings-hint-size);
   color: var(--text-muted);
   line-height: 1.5;
 }
@@ -4360,7 +4254,7 @@ button:focus-visible {
 }
 
 .knowledge-error {
-  font-size: 11.5px;
+  font-size: var(--settings-hint-size);
   color: var(--error, #c0392b);
 }
 
@@ -4368,12 +4262,12 @@ button:focus-visible {
   display: block;
   margin-top: 4px;
   word-break: break-all;
-  font-size: 11px;
+  font-size: var(--settings-hint-size);
   opacity: 0.75;
 }
 
 .knowledge-pro-list {
-  font-size: 11.5px;
+  font-size: var(--settings-hint-size);
   color: var(--text-muted);
 }
 
@@ -4522,7 +4416,6 @@ button:focus-visible {
 .timeline-plan-section li {
   margin: 1px 0;
 }
-
 
 /* ── Workspace panel（P3-d2） ───────────────────────────── */
 .workspace-panel {
@@ -5114,7 +5007,6 @@ button:focus-visible {
   color: var(--danger, #c0392b);
 }
 
-
 /* L0b：Archicad Ctrl+T 风格参数面板 */
 .archicad-panel-root {
   display: flex;
@@ -5227,7 +5119,7 @@ button:focus-visible {
 .provider-template-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 6px;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
@@ -5258,7 +5150,7 @@ button:focus-visible {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
 .provider-row {
@@ -5280,7 +5172,7 @@ button:focus-visible {
 }
 
 .provider-credential-badge {
-  font-size: 12px;
+  font-size: var(--settings-badge-size);
   padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid var(--ob-border, rgba(128, 128, 128, 0.35));
@@ -5288,7 +5180,7 @@ button:focus-visible {
 
 .provider-key-display {
   font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-size: var(--settings-mono-size);
   opacity: 0.8;
 }
 
@@ -5312,7 +5204,7 @@ button:focus-visible {
 .provider-form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   padding: 10px;
   border: 1px solid var(--ob-border, rgba(128, 128, 128, 0.35));
   border-radius: 6px;
@@ -5337,7 +5229,7 @@ button:focus-visible {
   padding: 2px 6px;
   border-radius: 999px;
   border: 1px solid var(--ob-border, rgba(128, 128, 128, 0.35));
-  font-size: 12px;
+  font-size: var(--settings-body-size);
 }
 
 .provider-model-input-row {
@@ -5417,7 +5309,7 @@ button:focus-visible {
 }
 
 .provider-current-badge {
-  font-size: 12px;
+  font-size: var(--settings-badge-size);
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--ob-accent, #4a90d9);
@@ -5425,7 +5317,7 @@ button:focus-visible {
 }
 
 .provider-state-badge {
-  font-size: 12px;
+  font-size: var(--settings-badge-size);
   padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid var(--ob-border, rgba(128, 128, 128, 0.35));
@@ -5450,7 +5342,7 @@ button:focus-visible {
 .provider-import-input {
   width: 100%;
   font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-size: var(--settings-mono-size);
 }
 
 .provider-import-preview {
@@ -5473,5 +5365,24 @@ button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--settings-body-size);
 }
+
+/* Settings text roles include formerly inherited browser heading/body sizes. */
+.settings-modal :where(input, select, textarea, button),
+.codex-model-drawer :where(input, select, textarea, button) { font-size: var(--settings-body-size); }
+.settings-hint { color: var(--text-muted); font-size: var(--settings-hint-size); line-height: 1.5; }
+.settings-row-header, .provider-manager h4, .provider-form h5 {
+  font-size: var(--settings-nav-size); font-weight: 600;
+}
+.provider-manager { font-size: var(--settings-body-size); line-height: 1.5; }
+.provider-template-card strong { font-size: var(--settings-nav-size); }
+.provider-template-card small, .provider-import-note, .provider-api { font-size: var(--settings-hint-size); }
+.provider-template-card { min-height: 54px; }
+.settings-modal .settings-save-btn { font-size: var(--settings-label-size); }
+
+.settings-header-actions :is(.settings-dirty-state, .settings-saving-state, .settings-saved-state),
+.connection-state { font-size: var(--settings-badge-size); }
+
+.settings-modal fieldset { min-width: 0; margin: 0; border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.settings-row input[type='checkbox'] { width: 16px; height: 16px; justify-self: start; accent-color: var(--accent); }

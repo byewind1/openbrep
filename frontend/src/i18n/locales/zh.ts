@@ -20,7 +20,7 @@ export const zh = {
   'topMenu.status.savedAt': '已保存 {time}',
   'topMenu.status.modelTitle': '当前 AI 模型 · 点击切换',
 
-  // SettingsDrawer header
+  // SettingsModal header
   'settings.header.title': '设置',
   'settings.header.saving': '保存中',
   'settings.header.unsaved': '未保存',
@@ -33,7 +33,7 @@ export const zh = {
   'settings.header.drawerAriaLabel': '工作台设置',
   'settings.header.resizeAriaLabel': '调整设置面板宽度',
 
-  // SettingsDrawer section titles
+  // SettingsModal section titles
   'settings.section.interface': '界面',
   'settings.section.ai': 'AI',
   'settings.section.compiler': '编译器',
@@ -43,7 +43,7 @@ export const zh = {
   'settings.section.lessons': '蒸馏教训',
   'settings.section.knowledge': '知识库',
 
-  // SettingsDrawer section summaries
+  // SettingsModal section summaries
   'settings.summary.compilerLp': 'LP',
   'settings.summary.compilerMock': 'Mock',
   'settings.summary.aiNoModel': '无模型',

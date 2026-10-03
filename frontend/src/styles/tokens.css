@@ -33,6 +33,16 @@
   --border: #334155;
   --border-strong: #475569;
 
+  /* Settings typography: one size per semantic role. */
+  --settings-title-size: 15px;
+  --settings-section-size: 14px;
+  --settings-nav-size: 13px;
+  --settings-body-size: 12.5px;
+  --settings-label-size: 11px;
+  --settings-hint-size: 11px;
+  --settings-badge-size: 10px;
+  --settings-mono-size: 12px;
+
   /* Dimensions */
   --panel-width-left: 240px;
   --panel-width-right: 320px;

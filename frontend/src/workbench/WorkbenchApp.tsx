@@ -22,7 +22,7 @@ import { useProjectLeaveGuard } from './useProjectLeaveGuard'
 import { captureProjectIdentity, sameProjectIdentity } from '../state/actions/sourceActionHelpers'
 
 const RevisionPanel = lazy(() => import('./diagnostics/RevisionPanel').then((m) => ({ default: m.RevisionPanel })))
-const SettingsDrawer = lazy(() => import('./settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })))
+const SettingsModal = lazy(() => import('./settings/SettingsModal').then((m) => ({ default: m.SettingsModal })))
 
 export function WorkbenchApp() {
   const locale = useUiPrefsStore((state) => state.locale)
@@ -39,6 +39,7 @@ export function WorkbenchApp() {
   // SF1（F04）：所有离开项目入口共用的"取消 / 丢弃并继续"确认守卫
   const { runLeaveAction, dialogNode: leaveDialogNode } = useProjectLeaveGuard()
 
+  const [settingsInitialFocus, setSettingsInitialFocus] = useState<'visibility' | undefined>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [floatingPreviewOpen, setFloatingPreviewOpen] = useState(false)
   // 中间栏视图：脚本 / 3D / 2D 三舞台互斥（默认编辑器，不改既有默认体验）
@@ -416,7 +417,7 @@ export function WorkbenchApp() {
         onCompile={() => void compileCurrentProject()}
         onMockCompile={() => void runMockCompile()}
         onSave={() => void saveCurrentProject()}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => { setSettingsInitialFocus(undefined); setSettingsOpen(true) }}
         applying={applying}
         loading={loading}
         compiling={compiling}
@@ -540,7 +541,7 @@ export function WorkbenchApp() {
             codexCatalog={codexCatalog}
             onResetSessionModel={resetSessionLlmModel}
             onLoadCodexCatalog={loadCodexCatalog}
-            onOpenModelSettings={() => setSettingsOpen(true)}
+            onOpenModelSettings={() => { setSettingsInitialFocus('visibility'); setSettingsOpen(true) }}
             workspace={workspace}
             currentProjectPath={project?.path ?? null}
             onImportAssistantHistory={(sourcePath) => void importAssistantHistory(sourcePath)}
@@ -584,8 +585,10 @@ export function WorkbenchApp() {
         onRevealSource={(scriptName, lineNumber, endLine) => focusDiagnosticIssue({ script: scriptName, line: lineNumber, severity: 'error', message: '' }, endLine)}
       />
       <Suspense fallback={null}>
-      <SettingsDrawer
+      <SettingsModal
         open={settingsOpen}
+        initialSection="ai"
+        initialFocus={settingsInitialFocus}
         compilerSettings={compilerSettings}
         llmSettings={llmSettings}
         recentProjects={recentProjects}
