@@ -39,6 +39,10 @@ import type {
   IgnoreMemoryLessonResult,
   KnowledgeStatus,
   LlmSettings,
+  LlmProviderDraft,
+  LlmProviderInfo,
+  LlmProviderWriteResult,
+  LlmProvidersResult,
   LlmConnectionTestResult,
   LlmSettingsResult,
   MockCompileResponse,
@@ -160,6 +164,11 @@ export interface WorkbenchApi {
   updateLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettingsResult>
   /** D16：会话级模型切换（不写 config.toml）；model=null 清除覆盖 */
   updateSessionLlmModel: (model: string | null, reasoningEffort?: string) => Promise<LlmSettingsResult>
+  /** 卡05：provider 设置工作流（列表只读 + CRUD；写操作带 expected_revision） */
+  listLlmProviders: () => Promise<LlmProvidersResult>
+  createLlmProvider: (provider: LlmProviderDraft, expectedRevision: string) => Promise<LlmProviderWriteResult>
+  updateLlmProvider: (name: string, provider: LlmProviderDraft, expectedRevision: string) => Promise<LlmProviderWriteResult>
+  deleteLlmProvider: (name: string, expectedRevision: string) => Promise<LlmProviderWriteResult>
   fetchCodexStatus: () => Promise<import('../api/types').CodexStatus>
   fetchCodexModels: () => Promise<import('../api/types').CodexModelsResult>
   fetchTapirStatus: () => Promise<TapirStatusResult>
@@ -299,6 +308,12 @@ export interface WorkbenchState {
   compilerSettings: CompilerSettings
   llmSettings: LlmSettings
   configRevision: string | null
+  /** 卡05：provider 总览快照（懒加载；写操作用它携带 expected_revision） */
+  llmProviders: LlmProviderInfo[]
+  llmProvidersRevision: string | null
+  llmProvidersLoaded: boolean
+  /** config_modified 冲突态：非 null = 外部修改检测到，草稿保留、UI 提示刷新 */
+  llmProvidersConflict: string | null
   chatAbortController: AbortController | null
   interruptedContext: { message: string; intent: string } | null
   /** ST03：delivery continue 上下文（原 run + 原始指令；项目切换/恢复后清空） */
@@ -381,6 +396,12 @@ export interface WorkbenchState {
   codexCatalog: { connected: boolean; models: import('../api/types').CodexModelInfo[]; loaded: boolean }
   /** D16：拉取 codex 状态 + 动态目录（pill 打开时调用；失败降级 connected=false） */
   loadCodexCatalog: () => Promise<void>
+  /** 卡05：懒加载 provider 总览（对照 loadCodexCatalog；失败不清空已加载数据） */
+  loadLlmProviders: () => Promise<void>
+  /** 卡05：CRUD——返回完整结果（错误码透传不吞）；config_modified 置冲突态且绝不覆盖既有状态 */
+  createLlmProvider: (provider: LlmProviderDraft) => Promise<LlmProviderWriteResult>
+  updateLlmProvider: (name: string, provider: LlmProviderDraft) => Promise<LlmProviderWriteResult>
+  deleteLlmProvider: (name: string) => Promise<LlmProviderWriteResult>
   saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
   sendChat: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
   stopChat: () => void
