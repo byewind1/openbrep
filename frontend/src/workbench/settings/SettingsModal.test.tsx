@@ -789,12 +789,12 @@ describe('SettingsModal navigation and keyboard contract', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('model-visibility-panel')))
   })
 
-  test('Tab wraps around visible enabled controls and ignores hidden panels', () => {
+  test('Tab wraps at the checked radio group stop and ignores hidden panels', () => {
     renderSettingsModal(llmSettings, undefined, { initialSection: 'compiler' })
     fireEvent.click(screen.getByRole('tab', { name: /界面/ }))
     const first = screen.getByTitle('从磁盘重新加载配置')
     const radios = screen.getAllByRole('radio')
-    const last = radios.at(-1)!
+    const last = radios.find((radio) => (radio as HTMLInputElement).checked)!
     last.focus()
     fireEvent.keyDown(last, { key: 'Tab' })
     expect(document.activeElement).toBe(first)

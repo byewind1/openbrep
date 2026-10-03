@@ -50,9 +50,17 @@ export function useSettingsDialog(open: boolean, onClose: () => void) {
         event.stopPropagation()
         closeRef.current()
       } else if (event.key === 'Tab') {
-        const items = Array.from(dialog.querySelectorAll<HTMLElement>(
+        const candidates = Array.from(dialog.querySelectorAll<HTMLElement>(
           'button, input, select, textarea, a[href], [tabindex], summary',
         )).filter((element) => visible(element) && element.tabIndex >= 0 && !element.matches(':disabled'))
+        // A radio group contributes one native Tab stop: its checked item.
+        const items = candidates.filter((element) => {
+          if (!(element instanceof HTMLInputElement) || element.type !== 'radio' || !element.name) return true
+          const group = candidates.filter((item): item is HTMLInputElement =>
+            item instanceof HTMLInputElement && item.type === 'radio' &&
+            item.name === element.name && item.form === element.form)
+          return element === (group.find((item) => item.checked) ?? group[0])
+        })
         const first = items[0]
         const last = items.at(-1)
         const active = document.activeElement
