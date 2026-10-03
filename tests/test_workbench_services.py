@@ -2485,7 +2485,7 @@ def test_provider_service_unknown_route(tmp_path):
 model = "glm-4-flash"
 """)
 
-    response = service.route("POST", "/api/settings/llm/providers/delete", {})
+    response = service.route("POST", "/api/settings/llm/providers/nonexistent", {})
 
     assert response["ok"] is False
     assert "Unknown route" in response["error"]

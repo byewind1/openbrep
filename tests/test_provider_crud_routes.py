@@ -307,3 +307,163 @@ def test_models_request_dedup_and_alias_pairs(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+# ── 卡04：删除 + 引用拦截 ────────────────────────────────────────
+
+
+def _delete(service, name: str, expected_revision: str, **extra):
+    return service.route(
+        "POST", "/api/settings/llm/providers/delete", {"name": name, "expected_revision": expected_revision, **extra}
+    )
+
+
+def _relay_only_session(tmp_path):
+    from types import SimpleNamespace
+
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.append({
+        "name": "relay", "api": "https://relay.example/v1", "api_key": "test-key-1234567890",
+        "models": [{"alias": "relay-main", "model": "relay-main"}, {"alias": "alias-one", "model": "real-one"}],
+    })
+    config.save(str(config_path))
+    session = SimpleNamespace(
+        config=GDLAgentConfig.load(str(config_path)),
+        config_path=config_path,
+        llm_model="glm-4-flash",
+    )
+    return ProviderSettingsService(session), session
+
+
+def test_delete_success_round_trip(tmp_path):
+    service, session = _relay_only_session(tmp_path)
+
+    response = _delete(service, "relay", file_revision(session.config_path))
+
+    assert response["ok"] is True
+    assert response["deleted"] == "relay"
+    assert response["providers"] == []
+    reloaded = GDLAgentConfig.load(str(session.config_path))
+    assert reloaded.llm.providers == []
+    assert session.config.llm.providers == []  # 内存同步发布
+
+
+def test_delete_missing_revision_conflict(tmp_path):
+    service, session = _relay_only_session(tmp_path)
+    before = session.config_path.read_text(encoding="utf-8")
+
+    response = _delete(service, "relay", "stale-revision")
+
+    assert response["ok"] is False
+    assert response["code"] == "config_modified"
+    assert session.config_path.read_text(encoding="utf-8") == before
+
+
+def test_delete_not_found(tmp_path):
+    service, session = _relay_only_session(tmp_path)
+
+    response = _delete(service, "ghost", file_revision(session.config_path))
+
+    assert response["ok"] is False
+    assert response["code"] == "not_found"
+
+
+def test_delete_codex_entry_rejected(tmp_path):
+    from types import SimpleNamespace
+
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.append({
+        "name": "openai-codex", "api_mode": "codex_app_server", "api_key": "", "models": [],
+        "_explicit_base": True,
+    })
+    config.save(str(config_path))
+    session = SimpleNamespace(
+        config=GDLAgentConfig.load(str(config_path)), config_path=config_path, llm_model="glm-4-flash"
+    )
+    service = ProviderSettingsService(session)
+
+    response = _delete(service, "openai-codex", file_revision(config_path))
+
+    assert response["ok"] is False
+    assert response["code"] == "codex_entry_protected"
+    assert GDLAgentConfig.load(str(config_path)).llm.providers != []
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected_location"),
+    [
+        (lambda c: setattr(c.llm, "model", "relay/real-one"), "llm.model"),
+        (lambda c: setattr(c.llm, "retry", {"fallback_chains": {"modify": [{"model": "relay/real-one"}]}}), "llm.retry"),
+        (lambda c: setattr(c.llm, "enabled_models", ["relay/real-one"]), "enabled_models"),
+        (lambda c: setattr(c.llm, "disabled_providers", ["relay"]), "disabled_providers"),
+    ],
+)
+def test_delete_blocked_by_each_reference_class(tmp_path, setup, expected_location):
+    service, session = _relay_only_session(tmp_path)
+    setup(session.config)
+
+    response = _delete(service, "relay", file_revision(session.config_path))
+
+    assert response["ok"] is False
+    assert response["code"] == "in_use"
+    locations = [r["location"] for r in response["refs"]]
+    assert expected_location in locations
+    # 前端可见性提示作为非阻塞项并入报告
+    assert "frontend_visibility" in locations
+    assert GDLAgentConfig.load(str(session.config_path)).llm.providers != []  # 零写入
+
+
+def test_delete_blocked_by_session_model_override(tmp_path):
+    from types import SimpleNamespace as _NS
+
+    service, session = _relay_only_session(tmp_path)
+    session.session_llm_model = "relay-main"
+
+    response = _delete(service, "relay", file_revision(session.config_path))
+
+    assert response["ok"] is False
+    assert response["code"] == "in_use"
+    assert "session_model" in [r["location"] for r in response["refs"]]
+    # 只读探测：session_llm_model 不被引用检查改动
+    assert session.session_llm_model == "relay-main"
+
+
+def test_delete_refs_context_is_readable(tmp_path):
+    service, session = _relay_only_session(tmp_path)
+    session.config.llm.model = "relay/real-one"
+
+    response = _delete(service, "relay", file_revision(session.config_path))
+
+    ref = next(r for r in response["refs"] if r["location"] == "llm.model")
+    assert ref["context"] == "relay/real-one"
+    assert ref["blocking"] is True
+    assert ref["detail"]
+
+
+def test_delete_not_blocked_by_other_provider_references(tmp_path):
+    from types import SimpleNamespace
+
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.extend([
+        {"name": "relay", "api": "https://relay.example/v1", "models": ["relay-main"]},
+        {"name": "alpha", "api": "https://alpha.example/v1", "models": ["alpha-model"]},
+    ])
+    config.llm.model = "alpha/alpha-model"
+    config.llm.disabled_providers = ["alpha"]
+    config.save(str(config_path))
+    session = SimpleNamespace(
+        config=GDLAgentConfig.load(str(config_path)), config_path=config_path, llm_model="alpha/alpha-model"
+    )
+    service = ProviderSettingsService(session)
+
+    response = _delete(service, "relay", file_revision(config_path))
+
+    assert response["ok"] is True
+    assert [p["name"] for p in response["providers"]] == ["alpha"]
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])
