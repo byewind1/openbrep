@@ -17,7 +17,7 @@
 
 > **Code Your Boundaries**
 
-> 正式发布版本 v0.10.12 — 修复 Codex 在桌面环境启动退出、cc-switch 官方账号凭据过期，以及重试通知被提前判定失败的问题。
+> 正式发布版本 v0.11.0 — 可视化服务商管理、模型发现与连接诊断、配置导入导出，以及更宽的设置弹窗。
 
 ---
 
@@ -45,8 +45,8 @@
 
 访问 [GitHub Releases](https://github.com/byewind1/openbrep/releases/latest)，下载对应系统的安装包（v0.9.0 起为 Tauri 桌面安装包，具体文件名以 Release 页面为准）：
 
-- macOS：`OpenBrep_0.10.12_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.10.12_x64.dmg`（Intel）
-- Windows：`OpenBrep_0.10.12_x64_en-US.msi` 或 `OpenBrep_0.10.12_x64-setup.exe`
+- macOS：`OpenBrep_0.11.0_aarch64.dmg`（Apple Silicon）或 `OpenBrep_0.11.0_x64.dmg`（Intel）
+- Windows：`OpenBrep_0.11.0_x64_en-US.msi` 或 `OpenBrep_0.11.0_x64-setup.exe`
 
 v0.9.1 起安装包内嵌 Python 后端（PyInstaller sidecar），下载安装即可用，不需要本机 Python 环境或源码。
 
@@ -392,6 +392,7 @@ path = "/Applications/GRAPHISOFT/Archicad 29/.../LP_XMLConverter"
 
 | 版本 | 主要内容 |
 |---|---|
+| v0.11.0 | 服务商管理、模型发现与连接诊断、配置导入导出、设置弹窗与统一排版（见 docs/releases/v0.11.0.md） |
 | v0.10.12 | 修复桌面环境 Codex 启动退出、cc-switch 官方登录凭据过期与对话重试处理（见 docs/releases/v0.10.12.md） |
 | v0.10.11 | 工作台草稿保护落地（保存/另存/参数应用/打开/修订五类丢稿场景修复 + 过期响应隔离），模型路由角色级重试与按路径模型策略，ruff 门禁进 CI，pipeline 大函数拆分（行为不变、回放零退化）（见 docs/releases/v0.10.11.md） |
 | v0.10.10 | 预览材质落地（语义材质预设、命名 GDL 材质真实渲染、材质变化进入验收报告），Codex 双入口与 cc-switch 多供应商路由，交付绑定真实 after-revision（见 docs/releases/v0.10.10.md） |

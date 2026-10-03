@@ -14,6 +14,8 @@ import json
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -43,6 +45,15 @@ class TestReleaseNotes(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("--notes-file", workflow)
         self.assertIn("docs/releases/${TAG_NAME}.md", workflow)
+
+    def test_release_job_checks_out_notes_and_keeps_draft_for_desktop_smoke(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release-tauri.yml").read_text())
+        steps = workflow["jobs"]["publish-release"]["steps"]
+        checkout = next(i for i, step in enumerate(steps) if "actions/checkout@" in step.get("uses", ""))
+        create = next(i for i, step in enumerate(steps) if step.get("name") == "Create GitHub Release")
+        self.assertLess(checkout, create)
+        self.assertIn("--draft", steps[create]["run"])
+        self.assertFalse(any("--draft=false" in step.get("run", "") for step in steps))
 
 
 if __name__ == "__main__":
