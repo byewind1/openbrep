@@ -41,6 +41,7 @@ from openbrep.workbench.credential_status import (
     mask_secret,
     pool_entries,
 )
+from openbrep.workbench.provider_refs import find_provider_refs, frontend_visibility_hint
 
 _NAME_FORBIDDEN_RE = re.compile(r"[\s/]")
 # 请求对象允许进入新建条目的透传字段（与 provider_entry_to_toml 的持久化键一致）
@@ -141,6 +142,8 @@ class ProviderSettingsService:
             return self.create_provider(body)
         if method in ("PUT", "PATCH") and route == "/api/settings/llm/providers":
             return self.update_provider(body)
+        if method == "POST" and route == "/api/settings/llm/providers/delete":
+            return self.delete_provider(body)
         return {"ok": False, "error": f"Unknown route: {method} {route}"}
 
     # ── 只读总览（卡01）────────────────────────────────────────
@@ -215,6 +218,65 @@ class ProviderSettingsService:
             self._apply_update_to_entry(entry, provider_req)
 
         return self._commit(mutate, expected_revision=str(body.get("expected_revision")), name=name)
+
+    def delete_provider(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/settings/llm/providers/delete：引用命中即拒绝并列出全部引用点。
+
+        引用检查（卡02 ``find_provider_refs``）在本路由内执行——POST 写路由由
+        会话锁串行化，检查与提交之间不会被其他会话变更插入；外部文件修改由
+        expected_revision 拦截。前端可见性引用（localStorage，后端不可见）按
+        卡02 语义作非阻塞提示项并入 refs 报告，不阻塞删除。
+        """
+        name = str(body.get("name") or "").strip()
+        if not name:
+            return {"ok": False, "code": "invalid_request", "error": "name 必填。"}
+        guard = self._require_revision(body)
+        if guard is not None:
+            return guard
+        if name.lower() == CODEX_PROVIDER_NAME.lower():
+            return {
+                "ok": False,
+                "code": "codex_entry_protected",
+                "error": "openai-codex 是保留订阅身份，不能删除。",
+            }
+        if locate_provider_entry(list(self.session.config.llm.providers), name) is None:
+            return {"ok": False, "code": "not_found", "error": f"服务商 {name} 不存在。"}
+
+        refs = find_provider_refs(self.session.config, name, session=self.session)
+        if refs:
+            return {
+                "ok": False,
+                "code": "in_use",
+                "error": f"服务商 {name} 仍被引用，请先处理以下引用再删除。",
+                "refs": [*refs, frontend_visibility_hint(name)],
+            }
+
+        def mutate(working: Any) -> None:
+            entry = locate_provider_entry(working.llm.providers, name)
+            if entry is None:
+                raise ConfigCommitError("not_found", f"服务商 {name} 不存在。")
+            if str(entry.get("name", "") or "").strip().lower() == CODEX_PROVIDER_NAME.lower():
+                raise ConfigCommitError(
+                    "codex_entry_protected", "openai-codex 是保留订阅身份，不能删除。"
+                )
+            working.llm.providers.remove(entry)
+
+        result = commit_config_change(
+            self.session.config,
+            self.session.config_path,
+            expected_revision=str(body.get("expected_revision")),
+            mutate=mutate,
+            on_committed=self._publish_config,
+        )
+        if not result.get("ok"):
+            return result
+        config = self.session.config
+        return {
+            "ok": True,
+            "deleted": name,
+            "providers": [provider_info(item, config) for item in config.llm.providers],
+            "revision": result["revision"],
+        }
 
     # ── 内部：校验、条目构造与提交 ─────────────────────────────
 
