@@ -296,7 +296,7 @@ def test_gui_context_absence_keeps_generation_request_bytes_identical(tmp_path):
     from openbrep.workbench.project_session_service import validate_image_payload
     session = session_at(tmp_path)
     body = {'message': '添加背板', 'assistant_settings': ' exact settings\n  '}
-    _, first = session.assistant_service._build_generate_pipeline(body, validate_image_payload(body))
-    _, second = session.assistant_service._build_generate_pipeline({**body,'conversation_context':None}, validate_image_payload(body))
+    _, first = session.assistant_service._build_generate_pipeline(body, validate_image_payload(body), on_event=None)
+    _, second = session.assistant_service._build_generate_pipeline({**body,'conversation_context':None}, validate_image_payload(body), on_event=None)
     assert first.assistant_settings.encode() == second.assistant_settings.encode() == body['assistant_settings'].encode()
     assert first.conversation_context is None and second.conversation_context is None
