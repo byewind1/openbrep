@@ -48,6 +48,7 @@ function makeProps(overrides: Partial<ProviderManagerPanelProps> = {}): Provider
     onUpdateProvider: vi.fn().mockResolvedValue(okResult()),
     onDeleteProvider: vi.fn().mockResolvedValue(okResult({ deleted: 'relay' })),
     onTestDraft: vi.fn().mockResolvedValue({ ok: true, message: 'LLM connection OK', model: 'x', duration_ms: 12 } as LlmConnectionTestResult),
+    onDiscoverModels: vi.fn().mockResolvedValue({ ok: true, models: [], raw_count: 0, truncated: false, page_count: 1 }),
     ...overrides,
   }
 }
@@ -272,5 +273,157 @@ describe('ProviderManagerPanel (卡06)', () => {
 
     expect(screen.queryByTestId('provider-edit-openai-codex')).toBeNull()
     expect(screen.queryByTestId('provider-delete-openai-codex')).toBeNull()
+  })
+})
+
+
+// ── 卡09：获取模型列表（合并保序 + 版本守卫）─────────────────────────────
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
+describe('ProviderManagerPanel discovery (卡09)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  test('发现成功：勾选合并保序，手输条目不被冲掉', async () => {
+    const onDiscoverModels = vi.fn().mockResolvedValue({
+      ok: true,
+      models: ['glm-4.6', 'glm-4-flash', 'glm-4.7'],
+      raw_count: 3,
+      truncated: false,
+      page_count: 1,
+    })
+    render(<ProviderManagerPanel {...makeProps({ onDiscoverModels })} />)
+
+    fireEvent.click(screen.getByTestId('provider-template-custom'))
+    fireEvent.change(screen.getByTestId('provider-name'), { target: { value: 'my-relay' } })
+    // 手输一个模型
+    fireEvent.change(screen.getByTestId('provider-model-input'), { target: { value: 'my-manual-model' } })
+    fireEvent.click(screen.getByTestId('provider-model-add'))
+    // 发现
+    fireEvent.click(screen.getByTestId('provider-discover'))
+
+    const panel = await screen.findByTestId('provider-discovery-panel')
+    expect(panel.textContent).toContain('glm-4.6')
+
+    // 全选 → 并入
+    fireEvent.click(screen.getByTestId('provider-discovery-select-all'))
+    fireEvent.click(screen.getByTestId('provider-discovery-apply'))
+
+    const tags = screen.getByTestId('provider-model-tags').textContent ?? ''
+    expect(tags).toContain('my-manual-model')  // 手输保留在前
+    expect(tags).toContain('glm-4.6')          // 并入追加在后
+    expect(screen.queryByTestId('provider-discovery-panel')).toBeNull()
+  })
+
+  test('重复模型（大小写不敏感）不重复并入', async () => {
+    const onDiscoverModels = vi.fn().mockResolvedValue({
+      ok: true,
+      models: ['my-manual-model', 'GLM-4.6'],
+      raw_count: 2,
+      truncated: false,
+      page_count: 1,
+    })
+    render(<ProviderManagerPanel {...makeProps({ onDiscoverModels })} />)
+
+    fireEvent.click(screen.getByTestId('provider-template-custom'))
+    fireEvent.change(screen.getByTestId('provider-model-input'), { target: { value: 'my-manual-model' } })
+    fireEvent.click(screen.getByTestId('provider-model-add'))
+    fireEvent.click(screen.getByTestId('provider-discover'))
+
+    await screen.findByTestId('provider-discovery-panel')
+    fireEvent.click(screen.getByTestId('provider-discovery-select-all'))
+    fireEvent.click(screen.getByTestId('provider-discovery-apply'))
+
+    const tags = screen.getByTestId('provider-model-tags').textContent ?? ''
+    expect(tags).toContain('my-manual-model')
+    // GLM-4.6 与已有 my-manual-model 不冲突，应并入；重复的 my-manual-model 被跳过
+    expect(tags).toContain('GLM-4.6')
+    expect((tags.match(/my-manual-model/g) ?? []).length).toBe(1)
+  })
+
+  test('epoch 守卫：请求期间修改端点 → 过期结果被丢弃', async () => {
+    const deferredResult = deferred<{ ok: boolean; models?: string[]; raw_count?: number; truncated?: boolean; page_count?: number }>()
+    const onDiscoverModels = vi.fn().mockReturnValue(deferredResult.promise)
+    render(<ProviderManagerPanel {...makeProps({ onDiscoverModels })} />)
+
+    fireEvent.click(screen.getByTestId('provider-template-custom'))
+    fireEvent.click(screen.getByTestId('provider-discover'))
+    // 请求在途时修改端点 → epoch 前移
+    fireEvent.change(screen.getByTestId('provider-api'), { target: { value: 'https://changed.example/v1' } })
+    deferredResult.resolve({ ok: true, models: ['stale-model'], raw_count: 1, truncated: false, page_count: 1 })
+
+    await waitFor(() => expect(screen.queryByTestId('provider-discovery-panel')).toBeNull())
+    const tags = screen.getByTestId('provider-model-tags').textContent ?? ''
+    expect(tags).not.toContain('stale-model')
+  })
+
+  test('已展示的发现结果在端点修改后标记过期', async () => {
+    const onDiscoverModels = vi.fn().mockResolvedValue({
+      ok: true,
+      models: ['m-1'],
+      raw_count: 1,
+      truncated: false,
+      page_count: 1,
+    })
+    render(<ProviderManagerPanel {...makeProps({ onDiscoverModels })} />)
+
+    fireEvent.click(screen.getByTestId('provider-template-custom'))
+    fireEvent.click(screen.getByTestId('provider-discover'))
+    await screen.findByTestId('provider-discovery-panel')
+
+    fireEvent.change(screen.getByTestId('provider-api'), { target: { value: 'https://changed.example/v1' } })
+
+    expect(screen.getByTestId('provider-discovery-stale')).toBeTruthy()
+  })
+
+  test('发现失败：category + fix_hint 渲染，并明确可手输', async () => {
+    const onDiscoverModels = vi.fn().mockResolvedValue({
+      ok: false,
+      category: 'not_found',
+      message: 'HTTP 404：端点路径不存在。',
+      fix_hint: '发现接口不可用或路径待检查（尝试在 api 末尾补 /v1）。',
+    })
+    const onCreateProvider = vi.fn().mockResolvedValue({ ok: true, revision: 'rev-2' })
+    render(<ProviderManagerPanel {...makeProps({ onDiscoverModels, onCreateProvider })} />)
+
+    fireEvent.click(screen.getByTestId('provider-template-custom'))
+    fireEvent.click(screen.getByTestId('provider-discover'))
+
+    const errorBlock = await screen.findByTestId('provider-discovery-error')
+    expect(errorBlock.textContent).toContain('not_found')
+    expect(errorBlock.textContent).toContain('/v1')
+    expect(errorBlock.textContent).toContain('手输')
+
+    // 失败后仍可手输保存
+    fireEvent.change(screen.getByTestId('provider-name'), { target: { value: 'my-relay' } })
+    fireEvent.change(screen.getByTestId('provider-model-input'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByTestId('provider-model-add'))
+    fireEvent.click(screen.getByTestId('provider-save'))
+    await waitFor(() => expect(onCreateProvider).toHaveBeenCalled())
+    expect(vi.mocked(onCreateProvider).mock.calls[0][0].models).toEqual([{ alias: 'm1', model: 'm1' }])
+  })
+
+  test('已保存 provider 且未改端点/凭据 → 用 {name} 发现；草稿 → 内联参数', async () => {
+    const onDiscoverModels = vi.fn().mockResolvedValue({ ok: true, models: [], raw_count: 0, truncated: false, page_count: 1 })
+    render(<ProviderManagerPanel {...makeProps({ providers: [makeProviderInfo('relay')], onDiscoverModels })} />)
+
+    fireEvent.click(screen.getByTestId('provider-edit-relay'))
+    fireEvent.click(screen.getByTestId('provider-discover'))
+    await waitFor(() => expect(onDiscoverModels).toHaveBeenCalledWith({ name: 'relay' }))
+
+    // 修改 key 后改用内联草稿
+    fireEvent.change(screen.getByTestId('provider-api-key'), { target: { value: 'test-new-key-0001' } })
+    fireEvent.click(screen.getByTestId('provider-discover'))
+    await waitFor(() =>
+      expect(onDiscoverModels).toHaveBeenLastCalledWith({ api: 'https://relay.example/v1', api_mode: 'chat_completions', api_key: 'test-new-key-0001' }),
+    )
   })
 })

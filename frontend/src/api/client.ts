@@ -56,6 +56,8 @@ import type {
   LlmProviderDraft,
   LlmProviderWriteResult,
   LlmProvidersResult,
+  LlmDiscoveryRequest,
+  LlmDiscoveryResult,
   LlmConnectionTestResult,
   Preview2DPayload,
   PreviewPayload,
@@ -941,6 +943,19 @@ export async function deleteLlmProvider(name: string, expectedRevision: string):
       body: JSON.stringify({ name, expected_revision: expectedRevision }),
     },
     { ok: false, error: 'OpenBrep local API is not available.' },
+  )
+}
+
+/** 卡09：模型发现（无锁路由；草稿 key 用完即弃）。 */
+export async function discoverProviderModels(request: LlmDiscoveryRequest): Promise<LlmDiscoveryResult> {
+  return requestJson<LlmDiscoveryResult>(
+    '/api/settings/llm/providers/discover-models',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+    { ok: false, category: 'network', message: 'OpenBrep local API is not available.', fix_hint: '' },
   )
 }
 

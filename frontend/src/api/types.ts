@@ -611,6 +611,27 @@ export interface LlmProviderDraft {
   models?: (string | { alias: string; model: string })[]
 }
 
+/** 卡09：模型发现请求（{name} 或内联草稿） */
+export interface LlmDiscoveryRequest {
+  name?: string
+  api?: string
+  api_mode?: string
+  api_key?: string
+}
+
+export interface LlmDiscoveryResult {
+  ok: boolean
+  models?: string[]
+  raw_count?: number
+  truncated?: boolean
+  page_count?: number
+  provider?: string
+  category?: string
+  message?: string
+  fix_hint?: string
+  error?: string
+}
+
 export interface LlmProvidersResult {
   ok: boolean
   providers?: LlmProviderInfo[]

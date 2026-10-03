@@ -5369,3 +5369,35 @@ button:focus-visible {
   border: 1px solid var(--ob-danger-border, #c0392b);
   background: var(--ob-danger-bg, rgba(192, 57, 43, 0.1));
 }
+
+.provider-discovery-error {
+  padding: 8px 10px;
+  border: 1px solid var(--ob-danger-border, #c0392b);
+  border-radius: 6px;
+}
+
+.provider-discovery-error p {
+  margin: 2px 0;
+}
+
+.provider-discovery-panel {
+  padding: 8px 10px;
+  border: 1px solid var(--ob-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+}
+
+.provider-discovery-stale {
+  color: var(--ob-warning-border, #b58a2c);
+  margin: 0 0 4px;
+}
+
+.provider-discovery-models {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

@@ -512,6 +512,19 @@ export const zh = {
   'providerPanel.credential.env': '环境变量',
   'providerPanel.credential.none': '未配置凭据',
   'providerPanel.credential.pool': '凭据池',
+
+  // ── 卡09：模型发现 ──
+  'providerPanel.discover': '获取模型列表',
+  'providerPanel.discovering': '发现中…',
+  'providerPanel.discoverHint': '发现是辅助不是门槛：失败时仍可手输模型完成接入。',
+  'providerPanel.discoverFail': '模型发现失败（{category}）。',
+  'providerPanel.discoverFailManual': '发现失败仍可手输模型完成接入。',
+  'providerPanel.discoverStale': '端点/协议/凭据已修改，以下发现结果可能已过期。',
+  'providerPanel.discoverMeta': '远程返回 {count} 个模型（并入后 {kept} 个，{pages} 页）',
+  'providerPanel.discoverTruncated': '已截断',
+  'providerPanel.discoverySelectAll': '全选',
+  'providerPanel.discoveryInvert': '反选',
+  'providerPanel.discoveryApply': '并入草稿',
 } as const
 
 export type LocaleKey = keyof typeof zh
