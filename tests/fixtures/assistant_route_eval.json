@@ -1,0 +1,444 @@
+[
+  {
+    "id": "route_001",
+    "input": "这个柜子比例不协调，有什么思路",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_002",
+    "input": "比例不协调，你直接帮我优化",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_003",
+    "input": "还是太笨重了",
+    "context": {
+      "has_project": true,
+      "active_task": "优化柜子比例",
+      "previous_outcome": "completed"
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_004",
+    "input": "比例不协调",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_005",
+    "input": "先别改，看看怎么优化",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation"
+  },
+  {
+    "id": "route_006",
+    "input": "不要改，只解释这次报错",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_007",
+    "input": "把 shelf_count 改成 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_008",
+    "input": "先出计划，把 shelf_count 改成 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation"
+  },
+  {
+    "id": "route_009",
+    "input": "不要把 shelf_count 改成 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_010",
+    "input": "不改宽度，把高度改为 2m",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_011",
+    "input": "给这个柜子加个背板",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_012",
+    "input": "给这个柜子加个背板？",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_013",
+    "input": "给我讲讲加背板的优缺点",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_014",
+    "input": "按刚才方案二做，宽度保持不变",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p2",
+          "goal": "加背板"
+        }
+      ]
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_015",
+    "input": "先给我一个书柜的建模方案",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation"
+  },
+  {
+    "id": "route_016",
+    "input": "生成一个书柜",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_017",
+    "input": "看看这个结构怎么做，先别生成",
+    "context": {
+      "has_project": true,
+      "has_images": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_018",
+    "input": "新建另一个对象",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_019",
+    "input": "修改这个柜子",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_020",
+    "input": "Do not set shelf_count to 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_021",
+    "input": "Don't change the width",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_022",
+    "input": "Explain the error without fixing it",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_023",
+    "input": "Plan first: set shelf_count to 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation"
+  },
+  {
+    "id": "route_024",
+    "input": "Set shelf_count to 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_025",
+    "input": "Keep the width, change the height to 2m",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_026",
+    "input": "What are the tradeoffs of adding a back panel?",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_027",
+    "input": "Generate a bookshelf",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_028",
+    "input": "Only explain this code",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_029",
+    "input": "先别动手，出个计划",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation"
+  },
+  {
+    "id": "route_030",
+    "input": "不用修改，解释错误",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_031",
+    "input": "暂不把层板数改为 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_032",
+    "input": "给我个方案，把层板数改成 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "plan",
+    "expected_outcome": "awaiting_confirmation"
+  },
+  {
+    "id": "route_033",
+    "input": "把层板数量改成 5",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_034",
+    "input": "打开 show_frame",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_035",
+    "input": "不要打开 show_frame",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_036",
+    "input": "这次不改材质，只增加背板",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_037",
+    "input": "你好",
+    "context": {
+      "has_project": false
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_038",
+    "input": "好的",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_039",
+    "input": "好的",
+    "context": {
+      "has_project": true,
+      "pending_plan": {
+        "plan_id": "plan1",
+        "status": "pending"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_040",
+    "input": "继续",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_041",
+    "input": "继续",
+    "context": {
+      "has_project": true,
+      "interrupted_task": {
+        "message": "添加背板",
+        "status": "incomplete"
+      }
+    },
+    "expected_mode": "execute",
+    "expected_outcome": "ready_to_execute"
+  },
+  {
+    "id": "route_042",
+    "input": "我更喜欢方案二",
+    "context": {
+      "has_project": true,
+      "proposals": [
+        {
+          "proposal_id": "p2",
+          "goal": "加背板"
+        }
+      ]
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_043",
+    "input": "取消刚才的计划",
+    "context": {
+      "has_project": true,
+      "pending_plan": {
+        "plan_id": "plan1",
+        "status": "pending"
+      }
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "cancelled"
+  },
+  {
+    "id": "route_044",
+    "input": "只分析，不保存草稿",
+    "context": {
+      "has_project": true,
+      "has_drafts": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_045",
+    "input": "If I set shelf_count to 5, what happens?",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  },
+  {
+    "id": "route_046",
+    "input": "例如“把 shelf_count 改成 5”，这条命令如何解析",
+    "context": {
+      "has_project": true
+    },
+    "expected_mode": "consult",
+    "expected_outcome": "advice"
+  }
+]

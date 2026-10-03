@@ -3739,6 +3739,23 @@ test('sendChat modify requests plan and awaits confirmation (V3)', async () => {
   expect(last?.thinkingSteps?.[0]?.userVisibleChanges).toEqual(PENDING_PLAN.user_visible_changes)
 })
 
+test('S0 characterization: source drafts flush before the legacy modification plan request', async () => {
+  const calls: string[] = []
+  const store = createWorkbenchStore(makeApi({
+    requestModifyPlan: async () => {
+      calls.push('plan')
+      return { ok: true, awaiting_confirmation: true, pending_plan: PENDING_PLAN }
+    },
+  }))
+  await store.getState().load()
+  store.setState({ flushDirtyScripts: async () => {
+    calls.push('flush')
+    return { ok: true, didSave: true }
+  } })
+  await store.getState().sendChat('给书架加一层层板')
+  expect(calls).toEqual(['flush', 'plan'])
+})
+
 test('confirmPendingPlan(true) runs the confirmed execution stream (V3)', async () => {
   let confirmArgs: [boolean, boolean] | null = null
   const store = createWorkbenchStore(
