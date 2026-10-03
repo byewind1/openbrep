@@ -16,7 +16,7 @@ vi.mock('../state/uiPrefsStore', () => ({
 }))
 
 vi.mock('./layout/ResizableWorkspaceGrid', () => ({
-  ResizableWorkspaceGrid: () => <div data-testid="grid">grid</div>,
+  ResizableWorkspaceGrid: ({ right }: { right: React.ReactNode }) => <div data-testid="grid">{right}</div>,
 }))
 
 vi.mock('./preview/FloatingPreviewWindow', () => ({
@@ -32,7 +32,8 @@ vi.mock('./layout/WorkbenchLeftRail', () => ({
 }))
 
 vi.mock('./layout/WorkbenchRightRail', () => ({
-  WorkbenchRightRail: () => <div data-testid="right-rail">right</div>,
+  WorkbenchRightRail: ({ onChat }: { onChat: (message: string, images: [], mode: 'plan') => void }) =>
+    <button data-testid="right-rail-plan" onClick={() => onChat('加背板', [], 'plan')}>plan</button>,
 }))
 
 vi.mock('../components/BottomDrawer', () => ({
@@ -177,4 +178,12 @@ describe('WorkbenchApp SF1/R1 接线', () => {
     expect(workbenchStore.getState().dirtyScripts['3d.gdl']).toBe(true)
     expect(workbenchStore.getState().scriptContents['3d.gdl']).toBe('draft')
   })
+})
+
+test('WorkbenchApp preserves the one-turn plan choice through the right rail callback', async () => {
+  const send = vi.fn(async () => {})
+  resetStore({ sendChat: send, llmSettings: { ...workbenchStore.getState().llmSettings, conversation_entry: 'unified' } })
+  render(<WorkbenchApp />)
+  fireEvent.click(screen.getByTestId('right-rail-plan'))
+  await waitFor(() => expect(send).toHaveBeenCalledWith('加背板', [], 'plan', expect.any(Function)))
 })

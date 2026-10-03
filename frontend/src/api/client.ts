@@ -1302,6 +1302,7 @@ async function readAssistantStream(
   // P5e：流式过程事件原样累积进最终结果（vision_analysis_done 等供
   // 只读提取卡片 / 事件摘要消费；与同步路径 response.events 同构）
   const accumulatedEvents: Array<{ type: string; data: unknown }> = []
+  let currentEvent: AssistantStreamEvent | null = null
 
   try {
     while (true) {
@@ -1312,7 +1313,6 @@ async function readAssistantStream(
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
 
-      let currentEvent: AssistantStreamEvent | null = null
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           currentEvent = { type: line.slice(7).trim() as AssistantStreamEvent['type'], data: {} }
@@ -1344,8 +1344,10 @@ async function readAssistantStream(
           currentEvent = null
         }
       }
+      if (finalResult) break
     }
   } finally {
+    if (finalResult || signal?.aborted) await reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 
@@ -1613,4 +1615,19 @@ function assistantImagesPayload(images: AssistantImageAttachment[]) {
       ...(img.path ? { path: img.path } : {}),
     })),
   }
+}
+
+/** Unified conversation: prepare is read-only; execute consumes the server token. */
+export async function conversationTurn(
+  body: Record<string, unknown>,
+  onEvent?: (event: AssistantStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<import('./types').ConversationTurnResult> {
+  if (!body.stream) return requestJson('/api/assistant/turn', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }, { ok: false, error: 'OpenBrep local API is not available.' }, signal)
+  const response = await fetch(`${API_BASE}/api/assistant/turn`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+  })
+  return readAssistantStream(response, onEvent, signal)
 }

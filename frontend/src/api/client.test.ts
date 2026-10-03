@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   askAssistant,
+  conversationTurn,
   confirmModifyPlan,
   fetchAuthoritativePreview,
   fetchHostVerification,
@@ -494,4 +495,19 @@ describe('provider settings API (卡05)', () => {
     const body = JSON.parse(String(init.body))
     expect(body).toEqual({ name: 'relay', expected_revision: 'rev-4' })
   })
+})
+
+test('unified stream keeps event framing across network chunks and server token', async () => {
+  const encoder = new TextEncoder()
+  const chunks = ['event: status\n', 'data: {"message":"执行","turn_id":"t1","project_epoch":3}\n\n',
+    'event: done\ndata: {"ok":true,"result_kind":"execution","turn_id":"t1"}\n\n']
+  const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(new ReadableStream({
+    start(controller) { chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk))) },
+  })))
+  vi.stubGlobal('fetch', fetchMock)
+  const onEvent = vi.fn()
+  const result = await conversationTurn({ phase: 'execute', turn_id: 't1', stream: true }, onEvent)
+  expect(result.result_kind).toBe('execution')
+  expect(onEvent).toHaveBeenCalledWith({ type: 'status', data: { message: '执行', turn_id: 't1', project_epoch: 3 } })
+  expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ turn_id: 't1', phase: 'execute' })
 })

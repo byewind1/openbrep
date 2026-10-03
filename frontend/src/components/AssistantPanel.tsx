@@ -16,7 +16,8 @@ interface AssistantPanelProps {
   busy: boolean
   hasProject: boolean
   interruptedContext?: { message: string; intent: string } | null
-  onChat: (message: string, images?: AssistantImageAttachment[]) => void
+  onChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan') => void
+  onProposalAction?: (id: string, action: 'select' | 'execute') => void
   onStop: () => void
   onClearHistory: () => void
   onDeleteMessages?: (indices: number[]) => void | Promise<void>
@@ -77,6 +78,7 @@ export function AssistantPanel({
   hasProject,
   interruptedContext,
   onChat,
+  onProposalAction,
   onStop,
   onClearHistory,
   onDeleteMessages,
@@ -145,12 +147,15 @@ export function AssistantPanel({
   const [modelSwitching, setModelSwitching] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // intent indicator: computed from current draft
+  const [planOnly, setPlanOnly] = useState(false)
+  const legacyEntry = llmSettings?.conversation_entry === 'legacy'
+
+  // intent indicator: computed only for the legacy entry
   const detectedIntent = useMemo(() => {
     const t = draft.trim()
-    if (!t || pickerMode !== null) return null
+    if (!legacyEntry || !t || pickerMode !== null) return null
     return detectChatIntent(t, hasProject)
-  }, [draft, hasProject, pickerMode])
+  }, [draft, hasProject, pickerMode, legacyEntry])
 
   // slash command derived values
   const commandQuery = pickerMode === 'commands' ? draft.slice(1).toLowerCase() : ''
@@ -175,9 +180,12 @@ export function AssistantPanel({
     const message = draft.trim()
     if (!message) return
     setDraft('')
+    setPlanOnly(false)
     onChat(
       message,
       attachments.map(({ token: _token, ...img }) => img),
+      planOnly ? 'plan' : 'auto',
+
     )
     setAttachments([])
   }
@@ -435,6 +443,18 @@ export function AssistantPanel({
                 ) : null}
               </span>
               <p>{message.content}</p>
+              {message.advisor && <details><summary>只读建议 · 未修改项目</summary>
+                {message.advisor.inspection?.checks.map((check) => <p key={check.kind}>
+                  {({ static: '静态检查', parameters: '参数声明', preview_2d: '2D预览', preview_3d: '3D预览', recent_verification: '已有验证' } as Record<string, string>)[check.kind] ?? check.kind}：
+                  {({ completed: '已检查', partial: '部分覆盖', unavailable: '不可用', not_requested: '本轮未检查' } as Record<string, string>)[check.status] ?? check.status}
+                </p>)}
+              </details>}
+              {message.advisor?.proposals?.map((proposal) => <div className="plan-confirm-card" key={proposal.proposal_id}>
+                <strong>{proposal.title}</strong><p>{proposal.goal}</p>
+                {proposal.tradeoffs.map((item, i) => <p key={i}>{item}</p>)}
+                <button type="button" disabled={busy} onClick={() => onProposalAction?.(proposal.proposal_id, 'select')}>选择方案</button>
+                <button type="button" disabled={busy} onClick={() => onProposalAction?.(proposal.proposal_id, 'execute')}>执行方案</button>
+              </div>)}
               {message.role === 'user' && message.images?.length ? (
                 <div className="assistant-message-images">
                   {message.images.map((img, i) => (
@@ -723,6 +743,8 @@ export function AssistantPanel({
               ↩ 重试上次
             </button>
           )}
+          {!legacyEntry && <button type="button" aria-pressed={planOnly} disabled={busy}
+            onClick={() => setPlanOnly(!planOnly)}>先出计划（不改项目）{planOnly ? ' ✓' : ''}</button>}
           <div className="assistant-actions">
             {busy ? (
               <button type="button" className="chat-stop-btn" onClick={onStop}>
@@ -910,6 +932,11 @@ function PlanConfirmCard({
           </ul>
         </div>
       ) : null}
+      {(['constraints', 'assumptions', 'acceptance_criteria'] as const).map((key) => plan[key]?.length ?
+        <div className="plan-confirm-section" key={key}>
+          <strong>{{ constraints: '必须遵守', assumptions: '采用的假设', acceptance_criteria: '验收条件' }[key]}</strong>
+          <ul>{plan[key]!.map((item, i) => <li key={i}>{item}</li>)}</ul>
+        </div> : null)}
       <div className="plan-confirm-actions">
         <button type="button" className="plan-confirm-approve" disabled={busy} onClick={() => onConfirm?.(true)}>
           {t('assistant.plan.confirm')}

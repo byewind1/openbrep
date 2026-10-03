@@ -89,6 +89,7 @@ import type {
 } from '../api/types'
 
 export interface WorkbenchApi {
+  conversationTurn: typeof import('../api/client').conversationTurn
   fetchSnapshot: () => Promise<WorkbenchSnapshot>
   workspaceInit: (path: string) => Promise<WorkspaceScanResult>
   workspaceOpen: (path: string) => Promise<WorkspaceScanResult>
@@ -430,7 +431,8 @@ export interface WorkbenchState {
   updateLlmProvider: (name: string, provider: LlmProviderDraft) => Promise<LlmProviderWriteResult>
   deleteLlmProvider: (name: string) => Promise<LlmProviderWriteResult>
   saveLlmApiKey: (model: string, apiKey: string) => Promise<LlmSettings>
-  sendChat: (message: string, images?: AssistantImageAttachment[]) => Promise<void>
+  actOnAdvisorProposal: (id: string, action: 'select' | 'execute', approveCreate?: () => Promise<boolean>) => Promise<void>
+  sendChat: (message: string, images?: AssistantImageAttachment[], requestedMode?: 'auto' | 'plan', approveCreate?: () => Promise<boolean>) => Promise<void>
   stopChat: () => void
   confirmPendingPlan: (approve: boolean) => Promise<void>
   /** P5d-2 提取确认门：approve=true 用编辑后的 extractions 重发创建；false 取消清态 */

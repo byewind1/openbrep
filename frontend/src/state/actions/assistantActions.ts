@@ -354,6 +354,111 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     }
   }
 
+  async function finishUnified(result: import('../../api/types').ConversationTurnResult, epoch: number,
+    steps: AssistantThinkingStep[], message: string) {
+    if (projectSwitchedSince(epoch)) return discardStaleResult('Conversation result discarded: project switched.')
+    if (result.awaiting_extraction_confirmation && result.extractions?.length) {
+      set((state) => ({ assistantBusy: false, pendingExtraction: { turn_id: result.turn_id, extractions: result.extractions!, message, images: [] },
+        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, EXTRACTION_PENDING_CONTENT) }))
+      return
+    }
+    if (result.result_kind === 'awaiting_confirmation' && result.pending_plan) {
+      set((state) => ({ assistantBusy: false,
+        pendingPlan: { ...result.pending_plan!, turn_id: result.turn_id },
+        assistantMessages: replacePendingAssistantMessage(state.assistantMessages, PLAN_PENDING_CONTENT),
+      }))
+      return
+    }
+    if (result.result_kind === 'execution' && result.project && result.parameters && result.preview) {
+      set(hydrateSnapshot(result as import('../../api/types').WorkbenchSnapshot, get().compilerSettings, get().llmSettings))
+      await get().loadScripts()
+      await get().loadRevisions()
+      await get().loadRecentProjects()
+      set((state) => ({ assistantBusy: false, assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
+        result.assistant?.reply ?? 'Project created.', { verification: result.assistant?.verification ?? undefined }) }))
+      await persistAssistantHistory()
+      return
+    }
+    if (result.result_kind === 'execution' || (result.assistant?.delivery && result.result_kind !== 'advice')) {
+      await finishModifyStream(result, epoch, ASSISTANT_PENDING_PREFIX, steps, message)
+      return
+    }
+    const reply = result.assistant?.reply ?? result.error ?? (result.cancelled ? '⏹ 已取消本轮。' : '本轮未执行。')
+    set((state) => ({ assistantBusy: false,
+      assistantMessages: replacePendingAssistantMessage(state.assistantMessages, reply, { advisor: result.advisor }),
+      lastError: result.ok ? null : reply,
+    }))
+  }
+
+  async function executeUnified(turnId: string, epoch: number, message: string,
+    signal?: AbortSignal, approval?: PendingPlan) {
+    if (projectSwitchedSince(epoch)) return
+    const saved = await get().flushDirtyScripts()
+    if (!saved.ok) throw new Error(saved.error ?? '草稿保存失败，本轮未执行。')
+    if (projectSwitchedSince(epoch) || signal?.aborted) return
+    const preview = get().preview
+    set({ previewGhost: preview, previewGhostLabel: preview ? PREVIEW_GHOST_LABEL_PRE_TASK : null })
+    const steps: AssistantThinkingStep[] = []
+    const result = await api.conversationTurn({ phase: 'execute', turn_id: turnId, stream: true,
+      ...(approval ? { approve: true, plan_id: approval.plan_id, plan_version: approval.plan_version } : {}),
+    }, (event) => {
+      if (projectSwitchedSince(epoch) || event.data.turn_id !== turnId || event.data.project_epoch !== epoch) return
+      const step = eventToThinkingStep(event)
+      if (step) steps.push(step)
+      set((state) => ({ assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
+        PLAN_EXECUTING_CONTENT, { thinkingSteps: [...steps] }) }))
+    }, signal)
+    return { result, steps }
+  }
+
+  async function sendUnified(message: string, images: AssistantImageAttachment[], requestedMode: 'auto' | 'plan',
+    approveCreate?: () => Promise<boolean>, proposal?: { id: string; action: 'select' | 'execute' }) {
+    const epoch = get().projectEpoch
+    const controller = new AbortController()
+    const history = buildAssistantHistory(get().assistantMessages)
+    set((state) => ({ assistantBusy: true, chatAbortController: controller, pendingDeliveryContinue: null,
+      assistantMessages: [...state.assistantMessages,
+        { role: 'user', content: userMessageContent(message, images), images: images.length ? images : undefined },
+        { role: 'assistant', content: ASSISTANT_PENDING_PREFIX }],
+    }))
+    const prepare = () => api.conversationTurn({ phase: 'prepare', client_turn_id: crypto.randomUUID(),
+      message, history, images, requested_mode: proposal?.action === 'select' ? 'consult' : requestedMode, project_epoch: epoch,
+      ...(proposal ? { proposal_id: proposal.id, proposal_action: proposal.action } : {}),
+      assistant_settings: get().llmSettings.assistant_settings,
+      draft_scripts: Object.fromEntries(Object.entries(get().dirtyScripts).filter(([, dirty]) => dirty)
+        .map(([name]) => [name, get().scriptContents[name] ?? ''])),
+    }, undefined, controller.signal)
+    try {
+      let result = await prepare()
+      if (projectSwitchedSince(epoch) || controller.signal.aborted) return
+      if (result.result_kind === 'ready_to_execute' && result.turn_id) {
+        if (result.task_intent === 'CREATE' && get().project && !(await approveCreate?.())) {
+          result = await api.conversationTurn({ phase: 'execute', turn_id: result.turn_id, approve: false })
+        } else {
+          let execution = await executeUnified(result.turn_id, epoch, message, controller.signal)
+          if (execution?.result.code === 'SOURCE_CHANGED' && requestedMode !== 'plan') {
+            result = await prepare()
+            if (result.result_kind === 'ready_to_execute' && result.turn_id) {
+              execution = await executeUnified(result.turn_id, epoch, message, controller.signal)
+            } else execution = { result, steps: [] }
+          }
+          if (execution) {
+            await finishUnified(execution.result, epoch, execution.steps, message)
+            return
+          }
+        }
+      }
+      await finishUnified(result, epoch, [], message)
+    } catch (error) {
+      if (!projectSwitchedSince(epoch)) set((state) => ({ assistantBusy: false,
+        lastError: String(error), assistantMessages: replacePendingAssistantMessage(state.assistantMessages,
+          controller.signal.aborted ? INTERRUPTED_CONTENT : String(error)),
+      }))
+    } finally {
+      if (get().chatAbortController === controller) set({ assistantBusy: false, chatAbortController: null })
+    }
+  }
+
   async function _createProject(
     message: string,
     images: AssistantImageAttachment[] = [],
@@ -715,10 +820,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     // ── Unified chat entry point ───────────────────────────────────────────
     // Detects intent → routes to explain / generate / create.
     // Supports AbortController for ESC / stop-button interruption.
-    async sendChat(message: string, images: AssistantImageAttachment[] = []) {
+    async sendChat(message: string, images: AssistantImageAttachment[] = [], requestedMode: 'auto' | 'plan' = 'auto', approveCreate?: () => Promise<boolean>) {
       if (!guardSourceBusy()) return
       const trimmed = message.trim()
       if (!trimmed) return
+      if (get().llmSettings.conversation_entry !== 'legacy') return sendUnified(trimmed, images, requestedMode, approveCreate)
 
       const hasProject = !!get().project
       const interrupted = get().interruptedContext
@@ -934,6 +1040,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       }
     },
 
+    async actOnAdvisorProposal(id: string, action: 'select' | 'execute', approveCreate?: () => Promise<boolean>) {
+      if (!guardSourceBusy() || get().assistantBusy) return
+      await sendUnified(action === 'execute' ? '执行该方案' : '选择该方案', [], 'auto', approveCreate, { id, action })
+    },
+
     stopChat() {
       get().chatAbortController?.abort()
     },
@@ -944,6 +1055,29 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       const plan = get().pendingPlan
       if (!plan) {
         set({ lastError: '没有待确认的修改计划，请先发起一次修改。' })
+        return
+      }
+      if (plan.turn_id) {
+        const epoch = get().projectEpoch
+        const controller = new AbortController()
+        set({ assistantBusy: true, chatAbortController: controller })
+        try {
+          if (!approve) {
+            const result = await api.conversationTurn({ phase: 'execute', turn_id: plan.turn_id, approve: false })
+            set({ pendingPlan: null })
+            await finishUnified(result, epoch, [], '')
+          } else {
+            const execution = await executeUnified(plan.turn_id, epoch, '', controller.signal, plan)
+            if (execution) {
+              if (execution.result.code !== 'PLAN_STALE') set({ pendingPlan: null })
+              await finishUnified(execution.result, epoch, execution.steps, '')
+            }
+          }
+        } catch (error) {
+          set({ lastError: String(error) })
+        } finally {
+          if (get().chatAbortController === controller) set({ assistantBusy: false, chatAbortController: null })
+        }
         return
       }
       if (!approve) {
@@ -989,6 +1123,23 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
       const pending = get().pendingExtraction
       if (!pending) {
         set({ lastError: '没有待确认的读图结果，请先发起一次带图的创建。' })
+        return
+      }
+      if (pending.turn_id) {
+        const epoch = get().projectEpoch
+        const controller = new AbortController()
+        set({ assistantBusy: true, chatAbortController: controller })
+        try {
+          const result = await api.conversationTurn({ phase: 'execute', turn_id: pending.turn_id,
+            approve, approve_extraction: approve, confirmed_extractions: approve ? extractions : undefined, stream: true,
+          }, undefined, controller.signal)
+          if (result.ok) set({ pendingExtraction: null })
+          await finishUnified(result, epoch, [], pending.message)
+        } catch (error) {
+          set({ lastError: String(error) })
+        } finally {
+          if (get().chatAbortController === controller) set({ assistantBusy: false, chatAbortController: null })
+        }
         return
       }
       if (!approve) {

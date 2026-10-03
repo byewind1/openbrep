@@ -28,6 +28,7 @@ describe('AssistantPanel', () => {
     expect(onChat).toHaveBeenCalledWith(
       '按图调整比例[图1]',
       [expect.objectContaining({ name: 'shelf.png', mime: 'image/png', b64: expect.any(String) })],
+      'auto',
     )
   })
 
@@ -41,7 +42,7 @@ describe('AssistantPanel', () => {
     expect(onChat).not.toHaveBeenCalled()
 
     fireEvent.keyDown(ta, { key: 'Enter', shiftKey: false })
-    expect(onChat).toHaveBeenCalledWith('测试消息', [])
+    expect(onChat).toHaveBeenCalledWith('测试消息', [], 'auto')
   })
 
   test('shows stop button when busy and ESC calls onStop', () => {
@@ -888,4 +889,29 @@ describe('AssistantPanel editable extraction gate (P5d-2)', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
+})
+
+test('plan-only composer choice resets after one turn', () => {
+  const onChat = vi.fn()
+  render(<AssistantPanel {...baseProps} onChat={onChat} />)
+  fireEvent.click(screen.getByRole('button', { name: '先出计划（不改项目）' }))
+  fireEvent.change(screen.getByLabelText('Ask or generate'), { target: { value: '加背板' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送' }))
+  expect(onChat).toHaveBeenLastCalledWith('加背板', [], 'plan')
+  fireEvent.change(screen.getByLabelText('Ask or generate'), { target: { value: '加层板' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送' }))
+  expect(onChat).toHaveBeenLastCalledWith('加层板', [], 'auto')
+})
+
+test('advisor proposals separate selection from execution and display read-only coverage', () => {
+  const action = vi.fn()
+  render(<AssistantPanel {...baseProps} onProposalAction={action} messages={[{ role: 'assistant', content: '建议',
+    advisor: { proposals: [{ proposal_id: 'p1', title: '轻量背板', goal: '加背板', scope: [], constraints: [], tradeoffs: ['重量增加'] }],
+      inspection: { checks: [{ kind: 'preview_3d', status: 'not_requested' }] } } }]} />)
+  fireEvent.click(screen.getByRole('button', { name: '选择方案' }))
+  expect(action).toHaveBeenLastCalledWith('p1', 'select')
+  fireEvent.click(screen.getByRole('button', { name: '执行方案' }))
+  expect(action).toHaveBeenLastCalledWith('p1', 'execute')
+  expect(screen.getByText('只读建议 · 未修改项目')).toBeTruthy()
+  expect(document.querySelector('.delivery-card')).toBeNull()
 })

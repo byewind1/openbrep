@@ -218,7 +218,7 @@ class WorkbenchConversationService:
                                  semantic_decision=self.semantic_decision)
         except (ValueError, TypeError) as exc:
             return self._failure(None, 'INVALID_TURN', str(exc))
-        allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'confirm_extraction', 'confirmed_extractions', 'output_dir', 'project_name'}
+        allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'output_dir', 'project_name'}
         turn = PreparedTurn(uuid.uuid4().hex, client_id, copy.deepcopy({k: v for k, v in body.items() if k in allowed}), policy, snapshot, self.clock())
         self.turns[turn.turn_id] = turn
         self.client_ids[client_id] = turn.turn_id
@@ -259,7 +259,7 @@ class WorkbenchConversationService:
                 turn.state = 'completed'
                 turn.result = self._response(turn, 'advice', assistant={'kind': 'advisor', 'reply': '已选择该方案；尚未执行。'})
                 return copy.deepcopy(turn.result)
-            if body.get('proposal_action') == 'execute' or (reference and policy.mode == 'execute'):
+            if policy.mode == 'execute' and (body.get('proposal_action') == 'execute' or reference):
                 if proposal['source_version']['context_fingerprint'] != snapshot.context_fingerprint:
                     turn.state = 'failed'
                     turn.result = self._failure(turn, 'PROPOSAL_STALE')
@@ -314,6 +314,13 @@ class WorkbenchConversationService:
             return self._failure(None, 'TURN_NOT_FOUND')
         if turn.state in {'completed', 'failed', 'cancelled', 'stale'}:
             return copy.deepcopy(turn.result)
+        if turn.state == 'extraction_pending' and body.get('approve') is not False:
+            if body.get('approve_extraction') is not True:
+                return copy.deepcopy(turn.result)
+            extractions = body.get('confirmed_extractions')
+            if not isinstance(extractions, list) or not extractions or not all(isinstance(item, dict) for item in extractions):
+                return self._failure(turn, 'INVALID_EXTRACTIONS')
+            turn.body['confirmed_extractions'] = copy.deepcopy(extractions)
         if turn.state == 'executing':
             return self._response(turn, 'executing', state='executing')
         if body.get('approve') is False:
@@ -348,11 +355,15 @@ class WorkbenchConversationService:
         self.active_turn_id = turn.turn_id
         turn.state = 'executing'
         def emit(kind, data):
+            if kind == 'plan':
+                kind, data = 'status', {'stage': 'plan', 'message': '正在准备执行步骤…'}
             if on_event:
                 on_event(kind, {**data, 'turn_id': turn.turn_id, 'project_epoch': turn.snapshot.project_epoch})
         request = {**turn.body, 'intent': turn.policy.task_intent, 'stream': False, 'confirm_plan': False,
                    'execution_policy': {**turn.policy.to_dict(), 'mode': 'execute'},
                    '_turn_should_cancel': should_cancel, '_turn_on_event': emit}
+        if turn.policy.task_intent == 'CREATE' and (turn.body.get('images') or turn.body.get('image_b64')):
+            request['confirm_extraction'] = True
         if turn.plan:
             request['confirmed_plan'] = copy.deepcopy(turn.plan)
         try:
@@ -363,7 +374,7 @@ class WorkbenchConversationService:
             if self.session.project is not None and turn.snapshot._project is not None and self.session.project.root == turn.snapshot._project.root:
                 self.epoch = self.session.project_epoch
             kind = 'execution' if response.get('ok') else 'failed'
-            turn.state = 'completed' if response.get('ok') else 'failed'
+            turn.state = 'extraction_pending' if response.get('awaiting_extraction_confirmation') else ('completed' if response.get('ok') else 'failed')
             turn.result = self._response(turn, kind, **{k: v for k, v in response.items() if k not in {'turn_id', 'project_epoch', 'result_kind'}})
             if should_cancel and should_cancel():
                 # Keep real delivery evidence if changes already happened.

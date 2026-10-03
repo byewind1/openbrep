@@ -217,3 +217,27 @@ def test_no_project_plan_does_not_create_and_executes_create(tmp_path):
     plan = result['pending_plan']
     assert session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': result['turn_id'], 'plan_id': plan['plan_id'], 'plan_version': 1, 'approve': True})['ok']
     session.create_project_from_prompt.assert_called_once()
+
+
+def test_unified_image_create_keeps_extraction_gate_and_server_task(tmp_path):
+    session = session_at(tmp_path)
+    session.project = None
+    session.create_project_from_prompt = Mock(side_effect=[
+        {'ok': True, 'awaiting_extraction_confirmation': True, 'extractions': [{'fields': {'width': 2}}]},
+        {'ok': True, 'assistant': {'reply': 'created'}}])
+    ready = prepare(session, message='创建书架', images=[{'b64': 'aQ==', 'mime': 'image/png'}], confirmed_extractions=[{'untrusted': True}])
+    token = {'phase': 'execute', 'turn_id': ready['turn_id']}
+    pending = session.route('POST', '/api/assistant/turn', token)
+    assert pending['awaiting_extraction_confirmation']
+    assert session.create_project_from_prompt.call_args.args[0]['confirm_extraction'] is True
+    assert 'confirmed_extractions' not in session.create_project_from_prompt.call_args.args[0]
+    assert session.route('POST', '/api/assistant/turn', token) == pending
+    assert session.create_project_from_prompt.call_count == 1
+    completed = session.route('POST', '/api/assistant/turn', {**token, 'approve_extraction': True, 'confirmed_extractions': [{'fields': {'width': 3}}], 'message': 'replace task'})
+    assert completed['ok']
+    request = session.create_project_from_prompt.call_args.args[0]
+    assert request['message'] == '创建书架'
+    assert request['confirmed_extractions'] == [{'fields': {'width': 3}}]
+    assert session.create_project_from_prompt.call_count == 2
+    session.route('POST', '/api/assistant/turn', token)
+    assert session.create_project_from_prompt.call_count == 2
