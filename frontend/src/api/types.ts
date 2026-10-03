@@ -591,6 +591,8 @@ export interface LlmProviderInfo {
   key_display: string
   is_codex: boolean
   credential: LlmProviderCredentialStatus
+  /** 卡11：configured/available（fail-closed；codex 需登录，ollama 免 key） */
+  available?: boolean
 }
 
 /** 删除/导入时后端返回的结构化引用点（前端可见性提示项 blocking=false） */
@@ -1514,4 +1516,10 @@ export interface KnowledgeStatus {
   pro_dir_exists: boolean
   message?: string
   error?: string
+}
+
+/** 卡11：provider 三态时间戳（store 内存态，刷新即清） */
+export interface LlmProviderActivity {
+  discovered?: number
+  tested?: number
 }

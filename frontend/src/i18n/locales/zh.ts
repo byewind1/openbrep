@@ -529,6 +529,12 @@ export const zh = {
   'settings.ai.testPossibleCause': '可能原因（{category}）',
   'settings.ai.showTechDetail': '展开技术详情',
   'settings.ai.hideTechDetail': '收起技术详情',
+  // ── 卡11：三态徽标与当前高亮 ──
+  'providerPanel.currentBadge': '当前',
+  'providerPanel.stateConfigured': '已配置',
+  'providerPanel.stateUnconfigured': '未配置',
+  'providerPanel.stateDiscovered': '列表已获取 {time}',
+  'providerPanel.stateTested': '测试通过 {time}',
 } as const
 
 export type LocaleKey = keyof typeof zh

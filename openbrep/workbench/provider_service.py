@@ -56,7 +56,40 @@ def provider_key_display(entry: dict) -> str:
     return mask_secret(entry.get("api_key"))
 
 
-def provider_info(entry: dict, config) -> dict[str, Any]:
+def provider_available(config: Any, name: str, codex_available: bool | None = None) -> bool:
+    """provider 是否有立即可调用的模型（卡11）：复用 llm_model_available 的
+    fail-closed 语义——codex 订阅模型必须已登录且在目录中；ollama 免 key；
+    其余需要可解析凭据。条目无模型时按 default_model 判定。
+
+    池条目例外：resolve_credentials/llm_model_available 会 select 池（创建租约、
+    推进轮转指针），只读展示绝不允许——池条目改用 credential_status 的只读
+    peek（from_provider 同款展开，绝不 select），零副作用语义不变。
+    """
+    from openbrep.workbench.credential_status import credential_status
+    from openbrep.workbench.settings_service import llm_model_available
+
+    entry = locate_provider_entry(list(config.llm.providers), name)
+    if entry is None:
+        return False
+    if has_credential_pool(entry):
+        return bool(credential_status(entry, config)["resolvable"])
+    candidates: list[str] = []
+    default_model = str(entry.get("default_model") or "").strip()
+    if default_model:
+        candidates.append(f"{name}/{default_model}")
+    for model_entry in iter_custom_provider_model_entries(entry):
+        candidates.append(f"{name}/{model_entry['model']}")
+        if len(candidates) >= 2:
+            break
+    if not candidates:
+        candidates.append(f"{name}/{name}")
+    return any(
+        llm_model_available(config, candidate, codex_available=codex_available)
+        for candidate in candidates[:2]
+    )
+
+
+def provider_info(entry: dict, config, codex_available: bool | None = None) -> dict[str, Any]:
     """单个 provider 条目的只读投影（ProviderInfo，§4 契约定型）。"""
     normalized = normalize_provider_entry(entry)
     name = str(normalized.get("name", "") or "")
@@ -82,6 +115,8 @@ def provider_info(entry: dict, config) -> dict[str, Any]:
         "key_display": provider_key_display(entry),
         "is_codex": name == CODEX_PROVIDER_NAME,
         "credential": credential_status(entry, config),
+        # 卡11：configured/available 状态（fail-closed，复用 llm_model_available）
+        "available": provider_available(config, name, codex_available=codex_available),
     }
 
 

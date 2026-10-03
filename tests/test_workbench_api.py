@@ -1849,7 +1849,8 @@ timeout = 60
 
     assert response["ok"] is True
     assert response["llm"]["model"] == "deepseek-chat"
-    assert response["llm"]["api_key"] == "deepseek-key"
+    # 卡11：快照 api_key 掩码化（dee…-key），不再回明文
+    assert response["llm"]["api_key"] == "dee…-key"
     assert response["llm"]["api_base"] == "https://api.deepseek.com/v1"
     assert response["llm"]["max_retries"] == 7
     assert response["llm"]["assistant_settings"] == "prefer concise GDL diffs"
@@ -1938,7 +1939,8 @@ timeout = 60
 
     assert response["ok"] is True
     assert response["llm"]["model"] == "mimo-v2.5-pro"
-    assert response["llm"]["api_key"] == "mimo-key"
+    # 卡11：快照 api_key 掩码化（mim…-key）
+    assert response["llm"]["api_key"] == "mim…-key"
     assert response["llm"]["api_base"] == "https://token-plan-cn.xiaomimimo.com/v1"
     assert response["llm"]["max_retries"] == 8
     assert response["llm"]["assistant_settings"] == "new"
@@ -2015,7 +2017,8 @@ assistant_settings = "personal preference"
 
     assert session.config_path == config_path
     assert response["llm"]["model"] == "mimo-v2.5-pro"
-    assert response["llm"]["api_key"] == "mimo-key"
+    # 卡11：快照 api_key 掩码化
+    assert response["llm"]["api_key"] == "mim…-key"
     assert response["llm"]["api_base"] == "https://token-plan-cn.xiaomimimo.com/v1"
     assert response["llm"]["assistant_settings"] == "personal preference"
 
@@ -2092,7 +2095,8 @@ timeout = 60
     saved = GDLAgentConfig.load(str(config_path))
 
     assert response["ok"] is True
-    assert response["llm"]["api_key"] == "existing-openai-key"
+    # 卡11：快照掩码；运行时/持久化明文语义不变（下方断言）
+    assert response["llm"]["api_key"] == "exi…-key"
     assert saved.llm.provider_keys["openai"] == "existing-openai-key"
     assert WorkbenchSession(config_path=config_path).llm_api_key == "existing-openai-key"
 
@@ -4794,7 +4798,6 @@ models = ["relay-main"]
     assert resolve_calls == []
 
 
-@pytest.mark.xfail(reason="评审 §4：旧快照 llm.api_key 通道仍回明文；卡10/11 统一展示合同时翻转", strict=False)
 def test_workbench_api_snapshot_key_channel_contains_no_plaintext(tmp_path):
     """卡01 钩子（评审 §4）：锁定"快照 api_key 与 GET providers 均不含明文"的
     目标合同。GET providers 已达标；旧快照通道今天仍返回解析后明文 key，
@@ -4820,6 +4823,10 @@ models = ["relay-main"]
 
     providers_payload = json.dumps(session.route("GET", "/api/settings/llm/providers"))
     snapshot_payload = json.dumps(session.route("GET", "/api/snapshot"))
+    snapshot = session.route("GET", "/api/snapshot")
 
     assert plaintext not in providers_payload  # 新通道：脱敏合同已生效
-    assert plaintext not in snapshot_payload  # 旧快照通道：待卡10/11 统一收口
+    assert plaintext not in snapshot_payload  # 旧快照通道已收口（卡11）：掩码
+    # 快照仍带 api_key 字段（旧字段保留）但为掩码形态
+    assert snapshot["llm"]["api_key"] != plaintext
+    assert "…" in snapshot["llm"]["api_key"] or snapshot["llm"]["api_key"] == ""

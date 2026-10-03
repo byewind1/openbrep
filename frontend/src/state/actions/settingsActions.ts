@@ -11,6 +11,16 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
     return true
   }
 
+  // 卡11：会话级三态打点（内存态；configured 由后端只读数据提供）
+  function markProviderActivity(name: string, kind: 'discovered' | 'tested') {
+    set((state) => ({
+      llmProviderActivity: {
+        ...state.llmProviderActivity,
+        [name]: { ...state.llmProviderActivity[name], [kind]: Date.now() },
+      },
+    }))
+  }
+
   // 卡05：写操作前确保有 revision 快照（懒加载对照 loadCodexCatalog）
   async function ensureProvidersRevision(): Promise<string> {
     if (!get().llmProvidersRevision || !get().llmProvidersLoaded) {
@@ -173,12 +183,25 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
       }
     },
 
-    async discoverProviderModels(request: LlmDiscoveryRequest): Promise<LlmDiscoveryResult> {
-      return api.discoverProviderModels(request)
+    async discoverProviderModels(request: LlmDiscoveryRequest, providerName?: string): Promise<LlmDiscoveryResult> {
+      const result = await api.discoverProviderModels(request)
+      // 卡11：本会话发现成功 → discovered 时间戳
+      if (result.ok) {
+        const name = providerName ?? request.name
+        if (name) markProviderActivity(name, 'discovered')
+      }
+      return result
+    },
+
+    markProviderActivity(name: string, kind: 'discovered' | 'tested') {
+      markProviderActivity(name, kind)
     },
 
     async testLlmDraftConnection(draft: LlmProviderDraft, model: string) {
-      return api.testLlmDraftConnection(draft, model)
+      const result = await api.testLlmDraftConnection(draft, model)
+      // 卡11：所选模型测试通过 → tested 时间戳
+      if (result.ok && draft.name) markProviderActivity(draft.name, 'tested')
+      return result
     },
 
     async createLlmProvider(provider: LlmProviderDraft): Promise<LlmProviderWriteResult> {

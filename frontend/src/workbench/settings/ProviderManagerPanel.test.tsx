@@ -427,3 +427,60 @@ describe('ProviderManagerPanel discovery (卡09)', () => {
     )
   })
 })
+
+// ── 卡11：三态徽标 + 当前高亮 ────────────────────────────────────────────
+
+describe('ProviderManagerPanel states & highlight (卡11)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  test('三态独立显示：configured 来自凭据数据，discovered/tested 来自会话时间戳', () => {
+    render(
+      <ProviderManagerPanel
+        {...makeProps({
+          providers: [makeProviderInfo('relay'), makeProviderInfo('dry', { has_api_key: false, credential: { location: 'none', form: 'direct', resolvable: false } })],
+          activity: {
+            relay: { discovered: Date.parse('2026-10-03T09:00:00'), tested: Date.parse('2026-10-03T09:05:00') },
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('provider-configured-relay').textContent).toContain('已配置')
+    expect(screen.getByTestId('provider-configured-dry').textContent).toContain('未配置')
+    expect(screen.getByTestId('provider-discovered-relay').textContent).toContain('列表已获取')
+    expect(screen.getByTestId('provider-tested-relay').textContent).toContain('测试通过')
+    // dry 无会话事实 → 徽标不渲染
+    expect(screen.queryByTestId('provider-discovered-dry')).toBeNull()
+    expect(screen.queryByTestId('provider-tested-dry')).toBeNull()
+  })
+
+  test('当前生效模型 provider 高亮（provider/model 头部匹配）', () => {
+    render(
+      <ProviderManagerPanel
+        {...makeProps({
+          providers: [makeProviderInfo('relay'), makeProviderInfo('alpha')],
+          currentModel: 'relay/main-model',
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('provider-row-relay').getAttribute('data-current')).toBe('true')
+    expect(screen.getByTestId('provider-current-relay')).toBeTruthy()
+    expect(screen.getByTestId('provider-row-alpha').getAttribute('data-current')).toBeNull()
+  })
+
+  test('裸 alias 当前模型经 models 列表匹配高亮', () => {
+    render(
+      <ProviderManagerPanel
+        {...makeProps({
+          providers: [makeProviderInfo('relay'), makeProviderInfo('alpha')],
+          currentModel: 'relay-main',
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('provider-row-relay').getAttribute('data-current')).toBe('true')
+  })
+})

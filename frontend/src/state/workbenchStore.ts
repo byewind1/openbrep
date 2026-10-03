@@ -332,6 +332,7 @@ function initialWorkbenchState() {
     llmProvidersRevision: null,
     llmProvidersLoaded: false,
     llmProvidersConflict: null,
+    llmProviderActivity: {},
     configRevision: null,
     chatAbortController: null,
     interruptedContext: null,

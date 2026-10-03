@@ -318,6 +318,8 @@ export interface WorkbenchState {
   llmProvidersLoaded: boolean
   /** config_modified 冲突态：非 null = 外部修改检测到，草稿保留、UI 提示刷新 */
   llmProvidersConflict: string | null
+  /** 卡11：discovered/tested 三态时间戳（内存态；configured 来自后端只读数据） */
+  llmProviderActivity: Record<string, import('../api/types').LlmProviderActivity>
   chatAbortController: AbortController | null
   interruptedContext: { message: string; intent: string } | null
   /** ST03：delivery continue 上下文（原 run + 原始指令；项目切换/恢复后清空） */
@@ -400,6 +402,8 @@ export interface WorkbenchState {
   codexCatalog: { connected: boolean; models: import('../api/types').CodexModelInfo[]; loaded: boolean }
   /** D16：拉取 codex 状态 + 动态目录（pill 打开时调用；失败降级 connected=false） */
   loadCodexCatalog: () => Promise<void>
+  /** 卡11：会话级三态时间戳（发现成功/测试通过时打点；刷新即清） */
+  markProviderActivity: (name: string, kind: 'discovered' | 'tested') => void
   /** 卡05：懒加载 provider 总览（对照 loadCodexCatalog；失败不清空已加载数据） */
   loadLlmProviders: () => Promise<void>
   /** 卡09：模型发现透传 */

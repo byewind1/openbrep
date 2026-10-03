@@ -96,7 +96,8 @@ def test_settings_service_model_switch_resolves_api_key_for_new_model(tmp_path):
     assert session.llm_model == "glm-4-flash"
     assert session.llm_api_key == "zk-new"
     assert response["llm"]["model"] == "glm-4-flash"
-    assert response["llm"]["api_key"] == "zk-new"
+    # 卡11：快照 api_key 掩码化（zk-new <8 字符 → 全掩码）
+    assert response["llm"]["api_key"] == "•••"
     reloaded = GDLAgentConfig.load(str(config_path))
     assert reloaded.llm.model == "glm-4-flash"
 
@@ -1066,7 +1067,8 @@ def test_update_llm_model_only_custom_provider_resolves_without_top_level_pollut
     assert response["ok"] is True
     assert session.llm_api_key == "sk-qwen-key"
     assert session.llm_api_base == "https://token-plan.example.com/compatible-mode/v1"
-    assert response["llm"]["api_key"] == "sk-qwen-key"
+    # 卡11：快照掩码；session 运行时明文不变（上方断言）
+    assert response["llm"]["api_key"] == "sk-…-key"
 
     reloaded = GDLAgentConfig.load(str(config_path))
     assert reloaded.llm.model == "qwen3.8-max-preview"

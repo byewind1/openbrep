@@ -5410,3 +5410,29 @@ button:focus-visible {
 .settings-test-fix-hint {
   margin: 2px 0 6px;
 }
+
+.provider-row.current {
+  border-color: var(--ob-accent, #4a90d9);
+  background: var(--ob-accent-bg, rgba(74, 144, 217, 0.08));
+}
+
+.provider-current-badge {
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--ob-accent, #4a90d9);
+  color: #fff;
+}
+
+.provider-state-badge {
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--ob-border, rgba(128, 128, 128, 0.35));
+  opacity: 0.85;
+}
+
+.provider-state-badge.ok {
+  border-color: var(--ob-success-border, #2e7d32);
+  color: var(--ob-success-border, #2e7d32);
+}

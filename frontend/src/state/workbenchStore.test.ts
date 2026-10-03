@@ -4800,3 +4800,36 @@ test('传输级失败（无 code）：写 lastError 兜底且不清空已加载�
   expect(store.getState().llmProvidersLoaded).toBe(false)
   expect(store.getState().lastError).toBe('OpenBrep local API is not available.')
 })
+
+
+// ── 卡11：三态时间戳（store 内存态）──────────────────────────────────────
+
+test('markProviderActivity 打点 discovered/tested；新 store 刷新即清', async () => {
+  const store = createWorkbenchStore(makeApi())
+  store.getState().markProviderActivity('relay', 'discovered')
+  expect(store.getState().llmProviderActivity.relay?.discovered).toBeGreaterThan(0)
+  store.getState().markProviderActivity('relay', 'tested')
+  expect(store.getState().llmProviderActivity.relay?.tested).toBeGreaterThan(0)
+
+  // 刷新即清：新建 store（内存态，不持久化）
+  const fresh = createWorkbenchStore(makeApi())
+  expect(fresh.getState().llmProviderActivity).toEqual({})
+})
+
+test('发现成功（带 name 请求）自动打 discovered 点', async () => {
+  const discoverProviderModels = async () => ({ ok: true, models: ['m'], raw_count: 1, truncated: false, page_count: 1 })
+  const store = createWorkbenchStore(makeApi({ discoverProviderModels }))
+
+  await store.getState().discoverProviderModels({ name: 'relay' })
+
+  expect(store.getState().llmProviderActivity.relay?.discovered).toBeGreaterThan(0)
+})
+
+test('草稿测试通过自动打 tested 点', async () => {
+  const testLlmDraftConnection = async () => ({ ok: true, message: 'OK', model: 'x', duration_ms: 3 })
+  const store = createWorkbenchStore(makeApi({ testLlmDraftConnection }))
+
+  await store.getState().testLlmDraftConnection({ name: 'relay', api: 'https://x' }, 'relay/m')
+
+  expect(store.getState().llmProviderActivity.relay?.tested).toBeGreaterThan(0)
+})
