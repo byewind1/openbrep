@@ -24,28 +24,26 @@ def test_route_fixture_schema():
         assert row['expected_outcome'] in {'advice', 'awaiting_confirmation', 'ready_to_execute', 'cancelled', 'failed'}
 
 
-def test_characterization_invalid_plan_falls_back_to_execution(tmp_path):
+def test_characterization_invalid_plan_now_fails_closed(tmp_path):
+    # Characterization change (cards 03/06): maintainer approved fail-closed
+    # in both unified and legacy. Planning happens before mutation dispatch.
     project = HSFProject.create_new('Shelf', work_dir=str(tmp_path))
     project.scripts[ScriptType.SCRIPT_3D] = 'BLOCK A, B, ZZYZX\nEND\n'
     project.save_to_disk()
-    llm = MockLLM(responses=['not JSON', '[FILE: scripts/3d.gdl]\nBLOCK A, B, 0.5\nEND\n'])
+    llm = MockLLM(responses=['not JSON'])
     pipeline = TaskPipeline(config=GDLAgentConfig(), trace_dir=str(tmp_path / 'traces'))
     pipeline._make_llm = lambda request: llm
-    pipeline._make_compiler = lambda: MockHSFCompiler()
-    result = pipeline.execute(TaskRequest(
-        user_input='给书架加一层层板', intent='MODIFY', project=project,
-        work_dir=str(tmp_path), output_dir=str(tmp_path / 'out'), confirm_plan=True,
-    ))
-    assert not result.metadata.get('awaiting_confirmation')
-    assert '计划生成失败' in result.plain_text
-    assert 'BLOCK A, B, 0.5' in project.get_script(ScriptType.SCRIPT_3D)
-    # The service also exposes plan_failed after this fallthrough.
+    result = pipeline.execute(TaskRequest(user_input='给书架加一层层板', intent='MODIFY', project=project, confirm_plan=True))
+    assert result.error == 'PLAN_GENERATION_FAILED'
+    assert project.get_script(ScriptType.SCRIPT_3D) == 'BLOCK A, B, ZZYZX\nEND\n'
     session = SimpleNamespace(source_path=project.root, project=project)
     service = WorkbenchAssistantService(session)
     with patch.object(service, '_build_generate_pipeline', return_value=(MagicMock(execute=lambda _: result), None)), \
-         patch.object(service, '_safe_skill_outcome'), patch.object(service, '_safe_harvest', return_value=None):
+         patch.object(project, 'save_to_disk') as save:
         response = service._generate_with_confirmation({'message': '给书架加一层层板'})
-    assert response['plan_failed'] is True
+    assert response['code'] == 'PLAN_GENERATION_FAILED'
+    assert not response['ok']
+    save.assert_not_called()
 
 
 def test_characterization_stream_defaults_to_visible_planning(tmp_path):

@@ -222,6 +222,8 @@ class TaskRequest:
     selection: Optional["ModelSelection"] = None
     # R7：凭据池的会话/调用作用域；空值由 pipeline 生成稳定作用域。
     credential_scope: str = ""
+    execution_policy: Optional[dict] = None
+    conversation_context: Optional[dict] = None
 
 
 @dataclass
@@ -345,6 +347,33 @@ class TaskPipeline:
         run_id = _new_run_id()
         self._current_run_id = run_id
         started_at = time.monotonic()
+
+        # Authorization precedes routing and every mutation fast path. The GUI
+        # handles read-only answers with advisor; direct callers get a clear
+        # read-only result and never accidentally enter an execution engine.
+        from openbrep.runtime.turn_policy import explicit_policy
+
+        explicit = explicit_policy(request.user_input) if request.user_input.strip() else None
+        supplied = request.execution_policy
+        mode = supplied.get("mode") if isinstance(supplied, dict) else None
+        if supplied is not None and mode not in {"consult", "plan", "execute"}:
+            return TaskResult(success=False, error="INVALID_EXECUTION_POLICY", metadata={"run_id": run_id})
+        if explicit is not None and explicit.mode in {"consult", "plan"}:
+            if not (explicit.mode == "plan" and request.confirmed_plan is not None):
+                mode = explicit.mode if mode != "consult" else "consult"
+        if supplied is None and mode == "consult" and (request.intent == "CHAT" or _is_greeting_only(request.user_input)):
+            mode = None  # Existing CHAT is already read-only; preserve its prompt.
+        if request.confirm_plan and mode != "consult" and request.confirmed_plan is None:
+            mode = "plan"
+        if mode == "plan":
+            return self._handle_read_only_plan(request, run_id)
+        if mode in {"consult", "plan"}:
+            return TaskResult(
+                success=False, intent=request.intent or "CHAT",
+                plain_text="本轮只读，请通过顾问入口获取回答或计划。",
+                error="READ_ONLY_TURN" if mode == "consult" else "PLAN_REQUIRES_ADVISOR",
+                metadata={"run_id": run_id, "mode": mode, "task_intent": request.intent},
+            )
 
         # 1. Classify
         if not request.intent:
@@ -948,6 +977,54 @@ class TaskPipeline:
                 reasoning_effort=decision.reasoning_effort,
             ),
         )
+
+    def _handle_read_only_plan(self, request: TaskRequest, run_id: str) -> TaskResult:
+        """Plan before any compiler/output/registry setup, including fast paths."""
+        from openbrep.runtime.micro_modify import detect_micro_modify
+        from openbrep.runtime.modify_agent_loop import _parse_confirm_plan, _PLAN_CONFIRM_PROTOCOL
+        from openbrep.llm import codex_chat_generate_kwargs
+
+        metadata = {"run_id": run_id, "mode": "plan"}
+        if request.should_cancel and request.should_cancel():
+            return TaskResult(success=False, error="CANCELLED", metadata=metadata)
+        plan = None
+        if request.project is not None:
+            # Only strip an explicit leading plan clause; never remove negation
+            # inside the operation itself to manufacture an executable command.
+            command = re.sub(r"^(?:先出(?:个)?计划|出(?:个)?计划)[，,:：\s]*", "", request.user_input)
+            micro = detect_micro_modify(command, request.project)
+            if micro:
+                plan = {
+                    "intent_summary": request.user_input,
+                    "user_visible_changes": [f"{micro.param_name}: {micro.old_value} → {micro.new_value}"],
+                    "affected_files": ["paramlist.xml"], "risk": "参数默认值改变",
+                }
+        if plan is None:
+            context = ""
+            if request.project is not None:
+                context = request.project.summary() + "\n" + "\n".join(
+                    f"[{st.value}]\n{content}" for st, content in request.project.scripts.items()
+                )
+            messages = [{"role": "system", "content": "只读规划，不使用工具或修改文件。\n" + context + _PLAN_CONFIRM_PROTOCOL}]
+            messages.extend(trim_history_messages(request.history))
+            messages.append({"role": "user", "content": request.user_input})
+            try:
+                llm = self._make_llm(request)
+                kwargs = codex_chat_generate_kwargs(llm)
+                if kwargs:
+                    kwargs.update(codex_should_cancel=request.should_cancel)
+                response = llm.generate(messages, max_tokens=2048, stream=False, **kwargs)
+                plan = _parse_confirm_plan(response.content or "")
+            except Exception:
+                plan = None
+        if request.should_cancel and request.should_cancel():
+            return TaskResult(success=False, error="CANCELLED", metadata=metadata)
+        if plan is None:
+            return TaskResult(success=False, intent=request.intent or "MODIFY", error="PLAN_GENERATION_FAILED", metadata=metadata)
+        metadata.update(awaiting_confirmation=True, pending_plan=plan)
+        if request.on_event:
+            request.on_event("plan", plan)
+        return TaskResult(success=True, intent=request.intent or "MODIFY", plain_text="修改计划已生成，等待执行指令。", metadata=metadata)
 
     def _handle_codex_chat(self, request: TaskRequest) -> TaskResult:
         """Codex 模型 CHAT/EXPLAIN（D3）：ephemeral thread + 临时只读 cwd +

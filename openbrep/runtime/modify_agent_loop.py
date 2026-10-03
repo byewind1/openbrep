@@ -302,6 +302,15 @@ def run_modify_agent_loop(pipeline: "TaskPipeline", request: "TaskRequest") -> "
     from openbrep.static_checker import StaticChecker
     from openbrep.verification import build_verification_report
 
+    # Direct callers share the pipeline's authorization gate too. In particular,
+    # plan requests must not create an output directory or mutation registry.
+    from openbrep.runtime.turn_policy import explicit_policy
+    policy = explicit_policy(request.user_input)
+    supplied = getattr(request, "execution_policy", None)
+    mode = supplied.get("mode") if isinstance(supplied, dict) else None
+    if (request.confirm_plan and request.confirmed_plan is None) or mode in {"consult", "plan"} or (policy and policy.mode in {"consult", "plan"} and request.confirmed_plan is None):
+        return pipeline.execute(request)
+
     llm = pipeline._make_llm(request)
     compiler = pipeline._make_compiler()
     clean_instruction, syntax_report = _normalize_modify_request(request)
