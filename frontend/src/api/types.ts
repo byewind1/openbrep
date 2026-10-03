@@ -1523,3 +1523,73 @@ export interface LlmProviderActivity {
   discovered?: number
   tested?: number
 }
+
+// ── 卡14：配置导入导出（OpenBrep 自身格式）────────────────────────────────
+
+export interface LlmConfigExportResult {
+  ok: boolean
+  filename?: string
+  include_keys?: boolean
+  content?: string
+  warnings?: string[]
+  error?: string
+}
+
+export interface LlmImportToAdd {
+  name: string
+  api: string
+  api_mode: string
+  default_model: string
+  model_count: number
+  has_credential: boolean
+}
+
+export interface LlmImportFieldChange {
+  field: string
+  old: unknown
+  new: unknown
+}
+
+export interface LlmImportToUpdate {
+  name: string
+  changes: LlmImportFieldChange[]
+}
+
+export interface LlmImportConflict {
+  name: string
+  field: string
+  incoming: unknown
+  existing: unknown
+  rule: string
+  reason: string
+}
+
+export interface LlmImportSkipped {
+  name: string
+  reason: string
+}
+
+export interface LlmConfigImportPreview {
+  ok: boolean
+  confirm: false
+  revision?: string
+  to_add?: LlmImportToAdd[]
+  to_update?: LlmImportToUpdate[]
+  conflicts?: LlmImportConflict[]
+  skipped?: LlmImportSkipped[]
+  errors?: string[]
+  notes?: string[]
+  code?: string
+  error?: string
+}
+
+export type LlmConfigImportResponse = LlmConfigImportPreview | LlmConfigImportResult
+
+export interface LlmConfigImportResult {
+  ok: boolean
+  confirm: true
+  providers?: LlmProviderInfo[]
+  revision?: string
+  code?: string
+  error?: string
+}

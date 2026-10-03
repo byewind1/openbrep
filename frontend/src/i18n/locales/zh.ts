@@ -535,6 +535,23 @@ export const zh = {
   'providerPanel.stateUnconfigured': '未配置',
   'providerPanel.stateDiscovered': '列表已获取 {time}',
   'providerPanel.stateTested': '测试通过 {time}',
+  // ── 卡14：导入导出工具区 ──
+  'providerPanel.exportLabel': '导出配置',
+  'providerPanel.includeKeysLabel': '包含 API Key（明文，导出前需确认）',
+  'providerPanel.includeKeysConfirm': '即将导出包含明文 API Key 的配置文件，确认继续？',
+  'providerPanel.exported': '已导出。',
+  'providerPanel.exportFailed': '导出失败。',
+  'providerPanel.importPlaceholder': '粘贴 OpenBrep 导出的 TOML 配置（[llm] 表或 [[llm.providers]] 片段）',
+  'providerPanel.importPreview': '预览导入',
+  'providerPanel.importConfirm': '确认导入',
+  'providerPanel.importHint': '先预览 diff，确认后才写入；默认模型以现有配置为准。',
+  'providerPanel.importFailed': '导入失败。',
+  'providerPanel.imported': '导入完成。',
+  'providerPanel.importToAdd': '将新增',
+  'providerPanel.importToUpdate': '将更新',
+  'providerPanel.importConflicts': '冲突（以现有为准）',
+  'providerPanel.importSkipped': '跳过',
+  'providerPanel.importNoCredential': '无凭据，导入后需补填',
 } as const
 
 export type LocaleKey = keyof typeof zh
