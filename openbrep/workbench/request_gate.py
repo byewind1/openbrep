@@ -48,6 +48,10 @@ LOCK_FREE_POST_ROUTES = frozenset({
     # JSON-RPC 帧由 transport 内部锁串行化，无需 session 级锁。
     "/api/settings/llm/codex/restart",
     "/api/settings/llm/codex/models/refresh",
+    # 卡08：模型发现。无锁合同：只读 config / 只操作内联草稿副本（key 用完即弃），
+    # 绝不调用 CredentialPool.select()、不触碰 session/project 状态；与
+    # /api/settings/llm/test 同一合同。发现失败不影响手输模型接入。
+    "/api/settings/llm/providers/discover-models",
 })
 
 
