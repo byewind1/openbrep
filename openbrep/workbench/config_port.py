@@ -131,3 +131,289 @@ def export_llm_config(config: GDLAgentConfig, *, include_keys: bool = False) -> 
         "content": header + body,
         "warnings": missing,
     }
+
+
+# ── 卡13：OpenBrep 配置导入（dry-run 预览 + 提交复查 revision）──────────────
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11（config.py 同款先例，不新增依赖）
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:  # pragma: no cover
+        tomllib = None  # type: ignore[assignment]
+
+from openbrep.config import (  # noqa: E402
+    CODEX_PROVIDER_NAME,
+    PROVIDER_PROFILES,
+    _normalize_api_mode,
+)
+from openbrep.workbench.llm_diagnostics import redact_secrets  # noqa: E402
+
+
+def reserved_provider_names() -> set[str]:
+    """不可占用的保留名：openai-codex 与官方 profile 名（小写）。"""
+    names = {profile.name.lower() for profile in PROVIDER_PROFILES}
+    names.add(CODEX_PROVIDER_NAME.lower())
+    return names
+
+
+def parse_import_content(content: str) -> dict[str, Any]:
+    """解析导入的 TOML 片段：完整 [llm] 表、仅 [[llm.providers]] 数组、或顶层
+    [[providers]] 片段；legacy [[llm.custom_providers]] 一并接受。
+
+    返回 {entries, incoming_model, errors}；解析失败时 errors 给可读原因。
+    """
+    errors: list[str] = []
+    if tomllib is None:
+        return {"entries": [], "incoming_model": None, "errors": ["当前 Python 缺少 tomllib/tomli，无法解析 TOML。"]}
+    try:
+        data = tomllib.loads(str(content or ""))
+    except Exception as exc:  # noqa: BLE001 —— 解析错误文本不含用户 secret，仍过脱敏
+        errors.append(f"TOML 解析失败：{exc}")
+        return {"entries": [], "incoming_model": None, "errors": errors}
+
+    llm_block = data.get("llm") if isinstance(data.get("llm"), dict) else {}
+    raw_entries: list[Any] = []
+    for key in ("providers", "custom_providers"):
+        raw = llm_block.get(key)
+        if isinstance(raw, list):
+            raw_entries.extend(item for item in raw if isinstance(item, dict))
+    if not raw_entries and isinstance(data.get("providers"), list):
+        raw_entries.extend(item for item in data["providers"] if isinstance(item, dict))
+
+    incoming_model = str(llm_block.get("model") or llm_block.get("default") or "").strip() or None
+    return {"entries": raw_entries, "incoming_model": incoming_model, "errors": errors}
+
+
+def _incoming_api_mode(entry: dict) -> str | None:
+    try:
+        return _normalize_api_mode(entry.get("api_mode") or entry.get("protocol"))
+    except ValueError:
+        return None
+
+
+def _secret_candidates(entries: list[dict]) -> list[str]:
+    secrets: list[str] = []
+    for entry in entries:
+        value = str(entry.get("api_key") or "").strip()
+        if value and not value.startswith("${"):
+            secrets.append(value)
+        for pool in (entry.get("credentials") or entry.get("api_keys") or []):
+            if isinstance(pool, dict):
+                value = str(pool.get("value") or pool.get("api_key") or pool.get("apiKey") or "").strip()
+                if value and not value.startswith("${"):
+                    secrets.append(value)
+            else:
+                value = str(pool or "").strip()
+                if value and not value.startswith("${"):
+                    secrets.append(value)
+    return secrets
+
+
+def _mask_value(value: Any) -> str:
+    from openbrep.workbench.credential_status import mask_secret
+
+    return mask_secret(value)
+
+
+def _models_signature(raw: Any) -> list[dict[str, str]] | None:
+    from openbrep.workbench.provider_service import normalize_models_request
+
+    if raw is None:
+        return None
+    return normalize_models_request(raw)
+
+
+def plan_import(config: Any, content: str) -> dict[str, Any]:
+    """dry-run 预览：{to_add, to_update, conflicts, skipped, errors, notes}。
+
+    合同（评审 §7.1 / 卡13）：
+    - key 保留规则：incoming 缺省/空 → 保留现有；显式非空 → 替换（导入的
+      两态语义——导入文件不带 key 不应抹掉既有 key）；
+    - 默认模型：以现有为准——incoming model/default_model 只在 notes 中标注，
+      绝不静默覆盖（保存服务商不顺手改默认模型）；
+    - openai-codex 条目一律 skipped；保留名条目 skipped；
+    - diff 中的凭据只显示掩码，不泄露 secret。
+    """
+    parsed = parse_import_content(content)
+    errors = list(parsed["errors"])
+    secrets = _secret_candidates(parsed["entries"])
+    errors = [redact_secrets(error, secrets) for error in errors]
+
+    to_add: list[dict[str, Any]] = []
+    to_update: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    existing_by_name = {
+        str(entry.get("name", "") or "").strip().lower(): entry
+        for entry in config.llm.providers
+        if isinstance(entry, dict)
+    }
+
+    for incoming in parsed["entries"]:
+        name = str(incoming.get("name") or "").strip()
+        if name.lower() == CODEX_PROVIDER_NAME.lower():
+            skipped.append({"name": name or "openai-codex", "reason": "codex_entry_protected：保留订阅身份，不参与导入。"})
+            continue
+        if not name or _NAME_FORBIDDEN_RE_IMPORT.search(name):
+            skipped.append({"name": name or "(未命名)", "reason": "invalid_name：名称为空或含空白/斜杠。"})
+            continue
+        if name.lower() in reserved_provider_names():
+            skipped.append({"name": name, "reason": "reserved_name：内置服务商保留名，不能占用。"})
+            continue
+        existing = existing_by_name.get(name.lower())
+        if existing is None:
+            to_add.append({
+                "name": name,
+                "api": str(incoming.get("api") or incoming.get("base_url") or "").strip(),
+                "api_mode": _incoming_api_mode(incoming) or "chat_completions",
+                "default_model": str(incoming.get("default_model") or "").strip(),
+                "model_count": len(_models_signature(incoming.get("models")) or []),
+                "has_credential": bool(str(incoming.get("api_key") or "").strip() or incoming.get("credentials") or incoming.get("api_keys")),
+            })
+            continue
+
+        changes: list[dict[str, Any]] = []
+        # api（显式覆盖语义：incoming 提供即写入，含显式空）
+        if "api" in incoming or "base_url" in incoming:
+            new_api = str(incoming.get("api") or incoming.get("base_url") or "").strip()
+            old_api = str(existing.get("api") or existing.get("base_url") or "").strip()
+            if new_api != old_api:
+                changes.append({"field": "api", "old": old_api, "new": new_api})
+        # api_mode
+        new_mode = _incoming_api_mode(incoming)
+        if new_mode is not None:
+            old_mode = str(existing.get("api_mode") or "chat_completions")
+            if new_mode != old_mode:
+                changes.append({"field": "api_mode", "old": old_mode, "new": new_mode})
+        # api_key：缺省/空 → 保留；显式非空 → 替换（diff 显示掩码）
+        incoming_key = str(incoming.get("api_key") or "").strip()
+        if incoming_key:
+            old_key = str(existing.get("api_key") or "").strip()
+            if incoming_key != old_key:
+                changes.append({"field": "api_key", "old": _mask_value(old_key), "new": _mask_value(incoming_key)})
+        # models：incoming 提供即整体替换
+        new_models = _models_signature(incoming.get("models"))
+        if new_models is not None:
+            from openbrep.workbench.provider_service import normalize_models_request
+
+            old_models = normalize_models_request(existing.get("models") or [])
+            if new_models != old_models:
+                changes.append({"field": "models", "old": [m["alias"] for m in old_models], "new": [m["alias"] for m in new_models]})
+        # 高级字段：incoming 提供即替换
+        for field in ("temperature", "extra_body", "credentials", "api_keys"):
+            if field in incoming:
+                old_value = existing.get(field)
+                if incoming[field] != old_value:
+                    shown_old = _mask_value(old_value) if field in ("credentials", "api_keys") else old_value
+                    shown_new = _mask_value(incoming[field]) if field in ("credentials", "api_keys") else incoming[field]
+                    changes.append({"field": field, "old": shown_old, "new": shown_new})
+        # 默认模型冲突：以现有为准，预览标注
+        incoming_default = str(incoming.get("default_model") or "").strip()
+        existing_default = str(existing.get("default_model") or "").strip()
+        if incoming_default and incoming_default != existing_default:
+            conflicts.append({
+                "name": name,
+                "field": "default_model",
+                "incoming": incoming_default,
+                "existing": existing_default,
+                "rule": "keep_existing",
+                "reason": "默认模型以现有配置为准，incoming 值不会应用。",
+            })
+        if changes:
+            to_update.append({"name": name, "changes": changes})
+
+    if parsed["incoming_model"]:
+        notes.append(
+            f"导入文件中的默认模型 {parsed['incoming_model']} 不会应用：[llm].model 以现有配置为准（切换默认模型是独立动作）。"
+        )
+    return {
+        "to_add": to_add,
+        "to_update": to_update,
+        "conflicts": conflicts,
+        "skipped": skipped,
+        "errors": errors,
+        "notes": notes,
+    }
+
+
+import re as _re  # noqa: E402
+
+_NAME_FORBIDDEN_RE_IMPORT = _re.compile(r"[\s/]")
+
+
+def apply_import(config: GDLAgentConfig, content: str) -> dict[str, Any]:
+    """在（副本）配置上应用导入计划：新增条目 + 按合同更新既有条目。"""
+    parsed = parse_import_content(content)
+    secrets = _secret_candidates(parsed["entries"])
+    existing_by_name = {
+        str(entry.get("name", "") or "").strip().lower(): entry
+        for entry in config.llm.providers
+        if isinstance(entry, dict)
+    }
+    applied = 0
+    for incoming in parsed["entries"]:
+        name = str(incoming.get("name") or "").strip()
+        if not name or name.lower() == CODEX_PROVIDER_NAME.lower() or _NAME_FORBIDDEN_RE_IMPORT.search(name):
+            continue
+        if name.lower() in reserved_provider_names():
+            continue
+        existing = existing_by_name.get(name.lower())
+        if existing is None:
+            from openbrep.workbench.provider_service import normalize_models_request
+
+            entry: dict[str, Any] = {"name": name}
+            if "api" in incoming or "base_url" in incoming:
+                entry["api"] = str(incoming.get("api") or incoming.get("base_url") or "").strip()
+                entry["base_url"] = entry["api"]
+                entry["_explicit_base"] = True
+            new_mode = _incoming_api_mode(incoming)
+            if new_mode is not None:
+                entry["api_mode"] = new_mode
+            if str(incoming.get("api_key") or "").strip():
+                entry["api_key"] = str(incoming.get("api_key")).strip()
+            if str(incoming.get("default_model") or "").strip():
+                entry["default_model"] = str(incoming.get("default_model")).strip()
+            models = normalize_models_request(incoming.get("models") or [])
+            entry["models"] = models
+            for field in ("temperature", "extra_body", "credentials", "api_keys"):
+                if field in incoming:
+                    entry[field] = incoming[field]
+            config.llm.providers.append(entry)
+            existing_by_name[name.lower()] = entry
+            applied += 1
+            continue
+        changed = False
+        if "api" in incoming or "base_url" in incoming:
+            new_api = str(incoming.get("api") or incoming.get("base_url") or "").strip()
+            old_api = str(existing.get("api") or existing.get("base_url") or "").strip()
+            if new_api != old_api:
+                existing["api"] = new_api
+                existing["base_url"] = new_api
+                existing["_explicit_base"] = True
+                changed = True
+        new_mode = _incoming_api_mode(incoming)
+        if new_mode is not None and new_mode != str(existing.get("api_mode") or "chat_completions"):
+            existing["api_mode"] = new_mode
+            changed = True
+        incoming_key = str(incoming.get("api_key") or "").strip()
+        if incoming_key and incoming_key != str(existing.get("api_key") or "").strip():
+            existing["api_key"] = incoming_key
+            changed = True
+        new_models = _models_signature(incoming.get("models"))
+        if new_models is not None:
+            from openbrep.workbench.provider_service import normalize_models_request
+
+            if new_models != normalize_models_request(existing.get("models") or []):
+                existing["models"] = new_models
+                changed = True
+        for field in ("temperature", "extra_body", "credentials", "api_keys"):
+            if field in incoming and incoming[field] != existing.get(field):
+                existing[field] = incoming[field]
+                changed = True
+        if changed:
+            applied += 1
+    return {"applied": applied, "errors": [redact_secrets(error, secrets) for error in parsed["errors"]]}
