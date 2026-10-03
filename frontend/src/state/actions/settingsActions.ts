@@ -173,6 +173,10 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
       }
     },
 
+    async testLlmDraftConnection(draft: LlmProviderDraft, model: string) {
+      return api.testLlmDraftConnection(draft, model)
+    },
+
     async createLlmProvider(provider: LlmProviderDraft): Promise<LlmProviderWriteResult> {
       const revision = await ensureProvidersRevision()
       const result = await api.createLlmProvider(provider, revision)

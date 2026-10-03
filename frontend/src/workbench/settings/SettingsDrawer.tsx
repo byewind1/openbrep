@@ -77,6 +77,8 @@ interface SettingsDrawerProps {
     codexRoutingMode?: 'fixed' | 'auto',
   ) => Promise<void>
   onSaveLlmApiKey?: (model: string, apiKey: string) => Promise<unknown>
+  /** 卡07：服务商管理接线（透传给 AiSettingsPanel） */
+  providerManager?: import('./ProviderManagerPanel').ProviderManagerPanelProps
   onReloadRuntimeSettings: () => Promise<void>
   onBrowseCompilerFile: () => Promise<CompilerSettings | null>
   onBrowseOutputDirectory: () => Promise<CompilerSettings | null>
@@ -123,6 +125,7 @@ export function SettingsDrawer({
   onTestLlmConnection,
   onModelChange,
   onSaveLlmApiKey,
+  providerManager,
   onReloadRuntimeSettings,
   onBrowseCompilerFile,
   onBrowseOutputDirectory,
@@ -362,6 +365,7 @@ export function SettingsDrawer({
             onTestConnection={onTestLlmConnection}
             onModelChange={onModelChange}
             onSaveApiKey={onSaveLlmApiKey}
+            providerManager={providerManager}
           />
         </SettingsSection>
 

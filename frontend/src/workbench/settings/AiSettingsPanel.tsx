@@ -24,6 +24,7 @@ import type {
 } from '../../api/types'
 import { useT } from '../../i18n'
 import { ModelVisibilityPanel } from './ModelVisibilityPanel'
+import { ProviderManagerPanel, type ProviderManagerPanelProps } from './ProviderManagerPanel'
 
 interface AiSettingsPanelProps {
   llmSettings: LlmSettings
@@ -35,9 +36,11 @@ interface AiSettingsPanelProps {
     codexRoutingMode?: 'fixed' | 'auto',
   ) => Promise<void>
   onSaveApiKey?: (model: string, apiKey: string) => Promise<unknown>
+  /** 卡07：服务商管理接线（未接线时保持旧 UI 原样） */
+  providerManager?: ProviderManagerPanelProps
 }
 
-export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, onModelChange, onSaveApiKey }: AiSettingsPanelProps) {
+export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, onModelChange, onSaveApiKey, providerManager }: AiSettingsPanelProps) {
   const t = useT()
   const [testResult, setTestResult] = useState<LlmConnectionTestResult | null>(null)
   const [testing, setTesting] = useState(false)
@@ -855,6 +858,11 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
         }}
         onSaveRoutingMode={() => void saveCodexRoutingMode()}
       />
+      {providerManager ? (
+        <div className="provider-manager-section" data-testid="provider-manager-section">
+          <ProviderManagerPanel {...providerManager} />
+        </div>
+      ) : null}
       <div className="settings-submit-row">
         <button type="button" className="settings-open-config-btn" onClick={onOpenConfig}>
           Edit config.toml ↗
