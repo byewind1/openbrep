@@ -32,6 +32,7 @@ from openbrep.workbench.project_service import (
     preview_payload,
     project_to_snapshot,
 )
+from openbrep.workbench.provider_service import ProviderSettingsService
 from openbrep.workbench.request_gate import is_lock_free_route
 from openbrep.workbench.settings_service import (
     WorkbenchSettingsService,
@@ -114,6 +115,7 @@ class WorkbenchSession:
             self,
             llm_adapter_factory=lambda config: LLMAdapter(config),
         )
+        self.provider_settings_service = ProviderSettingsService(self)
         self.compiler_service = WorkbenchCompilerService(
             self,
             real_compiler_factory=lambda converter_path: HSFCompiler(converter_path),
@@ -441,7 +443,6 @@ class WorkbenchSession:
     def list_project_scripts(self) -> dict[str, Any]:
         return self.project_service.list_project_scripts()
 
-
     def get_project_script(self, script_name: str) -> dict[str, Any]:
         return self.project_service.get_project_script(script_name)
 
@@ -693,6 +694,9 @@ class WorkbenchSession:
         if normalized_method == "POST" and route == "/api/settings/llm":
             return self.settings_service.update_llm_settings(body)
 
+        if route.startswith(("/api/settings/llm/providers", "/api/settings/llm/export", "/api/settings/llm/import")):
+            return self.provider_settings_service.route(normalized_method, route, body)
+
         if normalized_method == "GET" and route == "/api/tapir/status":
             return self.tapir_service.status_response()
 
@@ -729,7 +733,6 @@ class WorkbenchSession:
 
         if normalized_method == "POST" and route == "/api/preview/2d":
             return self.preview_2d(body)
-
 
         if normalized_method == "GET" and route == "/api/project/scripts":
             return self.list_project_scripts()
