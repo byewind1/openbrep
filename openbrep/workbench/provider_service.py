@@ -60,9 +60,11 @@ def provider_info(entry: dict, config) -> dict[str, Any]:
     normalized = normalize_provider_entry(entry)
     name = str(normalized.get("name", "") or "")
     models: list[str] = []
+    model_entries: list[dict[str, str]] = []
     seen: set[str] = set()
     for model_entry in iter_custom_provider_model_entries(normalized):
         alias = model_entry["alias"]
+        model_entries.append({"alias": alias, "model": model_entry["model"]})
         if alias not in seen:
             seen.add(alias)
             models.append(alias)
@@ -72,6 +74,8 @@ def provider_info(entry: dict, config) -> dict[str, Any]:
         "api_mode": str(normalized.get("api_mode", "") or ""),
         "default_model": str(normalized.get("default_model", "") or ""),
         "models": models,
+        # 卡06：编辑表单需要 alias/model 对才能无损往返（models 只含 alias）
+        "model_entries": model_entries,
         "model_count": len(models),
         "has_api_key": bool(credential_status(entry, config)["resolvable"]),
         "key_display": provider_key_display(entry),

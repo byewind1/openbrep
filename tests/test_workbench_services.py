@@ -2489,3 +2489,99 @@ model = "glm-4-flash"
 
     assert response["ok"] is False
     assert "Unknown route" in response["error"]
+
+
+# ── 卡06：草稿测试（draft_config 副本通道）──────────────────────────
+
+
+def test_settings_service_draft_test_uses_copy_not_saved_config(tmp_path):
+    """draft_config 注入测试副本：测的是草稿内容，已保存配置零改动。"""
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "glm-4-flash"
+    session = _make_settings_session(config, config_path)
+    seen: dict[str, str] = {}
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            return SimpleNamespace(model="draft-relay/relay-main")
+
+    def factory(llm_config):
+        seen["api_key"] = llm_config.resolve_api_key("draft-relay/relay-main")
+        seen["api_base"] = llm_config.resolve_api_base("draft-relay/relay-main")
+        return _FakeAdapter()
+
+    service = WorkbenchSettingsService(session, llm_adapter_factory=factory)
+
+    response = service.test_llm_settings({
+        "model": "relay-main",
+        "draft_config": {
+            "name": "draft-relay",
+            "api": "https://draft.example/v1",
+            "api_mode": "chat_completions",
+            "api_key": "test-draft-key-001",
+        },
+    })
+
+    assert response["ok"] is True
+    # 测试走的是草稿端点与草稿 key
+    assert seen["api_key"] == "test-draft-key-001"
+    assert seen["api_base"] == "https://draft.example/v1"
+    # 真实配置未被触碰
+    assert config.llm.custom_providers == []
+    assert config.llm.model == "glm-4-flash"
+
+
+def test_settings_service_draft_test_overrides_same_name_entry(tmp_path):
+    """同名既有条目从副本移除：草稿测试必须测到草稿，不是已保存旧配置。"""
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.append({
+        "name": "relay", "api": "https://saved.example/v1", "api_key": "test-saved-key-00001",
+        "models": [{"alias": "relay-main", "model": "relay-main"}],
+    })
+    session = _make_settings_session(config, config_path)
+    seen: dict[str, str] = {}
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            return SimpleNamespace(model="relay/relay-main")
+
+    def factory(llm_config):
+        seen["api_key"] = llm_config.resolve_api_key("relay/relay-main")
+        seen["api_base"] = llm_config.resolve_api_base("relay/relay-main")
+        return _FakeAdapter()
+
+    service = WorkbenchSettingsService(session, llm_adapter_factory=factory)
+
+    response = service.test_llm_settings({
+        "model": "relay-main",
+        "draft_config": {"name": "relay", "api": "https://draft.example/v1", "api_key": "test-draft-key-002"},
+    })
+
+    assert response["ok"] is True
+    assert seen["api_base"] == "https://draft.example/v1"
+    assert seen["api_key"] == "test-draft-key-002"
+    # 已保存条目原样
+    assert config.llm.custom_providers[0]["api"] == "https://saved.example/v1"
+
+
+def test_settings_service_draft_test_rejects_codex_name_and_bad_api_mode(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    session = _make_settings_session(config, config_path)
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _c: None)
+
+    codex = service.test_llm_settings({
+        "model": "x",
+        "draft_config": {"name": "openai-codex", "api": "https://x.example"},
+    })
+    assert codex["ok"] is False
+    assert codex["code"] == "codex_entry_protected"
+
+    bad_mode = service.test_llm_settings({
+        "model": "x",
+        "draft_config": {"name": "relay", "api_mode": "grpc"},
+    })
+    assert bad_mode["ok"] is False
+    assert "api_mode" in bad_mode["error"]
