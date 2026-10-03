@@ -508,6 +508,7 @@ function makeApi(overrides: Partial<WorkbenchApi> = {}): WorkbenchApi {
     updateLlmApiKey: async () => ({ ok: true }),
     updateSessionLlmModel: async () => ({ ok: true }),
     testLlmDraftConnection: async () => ({ ok: true, message: 'LLM connection OK', model: 'x', duration_ms: 1 }),
+    discoverProviderModels: async () => ({ ok: false, category: 'network', message: 'not stubbed' }),
     listLlmProviders: async () => ({ ok: true, providers: [], revision: 'rev-providers-0' }),
     createLlmProvider: async () => ({ ok: false, error: 'not stubbed', code: 'invalid_request' }),
     updateLlmProvider: async () => ({ ok: false, error: 'not stubbed', code: 'invalid_request' }),

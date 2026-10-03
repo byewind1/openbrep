@@ -1,4 +1,4 @@
-import type { CompilerSettings, LlmProviderDraft, LlmProviderWriteResult } from '../../api/types'
+import type { CompilerSettings, LlmDiscoveryRequest, LlmDiscoveryResult, LlmProviderDraft, LlmProviderWriteResult } from '../../api/types'
 import type { WorkbenchActionContext } from '../workbenchStoreTypes'
 
 export function createSettingsActions({ api, set, get }: WorkbenchActionContext) {
@@ -171,6 +171,10 @@ export function createSettingsActions({ api, set, get }: WorkbenchActionContext)
       if (!get().llmProvidersLoaded) {
         set({ lastError: result.error ?? 'Provider list is unavailable.' })
       }
+    },
+
+    async discoverProviderModels(request: LlmDiscoveryRequest): Promise<LlmDiscoveryResult> {
+      return api.discoverProviderModels(request)
     },
 
     async testLlmDraftConnection(draft: LlmProviderDraft, model: string) {

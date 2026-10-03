@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   LlmConnectionTestResult,
+  LlmDiscoveryRequest,
+  LlmDiscoveryResult,
   LlmProviderDraft,
   LlmProviderInfo,
   LlmProviderTemplate,
@@ -35,6 +37,16 @@ export interface ProviderManagerPanelProps {
   onUpdateProvider: (name: string, draft: LlmProviderDraft) => Promise<LlmProviderWriteResult>
   onDeleteProvider: (name: string) => Promise<LlmProviderWriteResult>
   onTestDraft: (draft: LlmProviderDraft, model: string) => Promise<LlmConnectionTestResult>
+  /** 卡09：模型发现（无锁路由；结果由组件按 epoch 守卫后显式勾选合并） */
+  onDiscoverModels: (request: LlmDiscoveryRequest) => Promise<LlmDiscoveryResult>
+}
+
+interface DiscoveryState {
+  epoch: number
+  models: string[]
+  rawCount: number
+  truncated: boolean
+  pageCount: number
 }
 
 interface EditorState {
@@ -56,6 +68,7 @@ export function ProviderManagerPanel({
   onUpdateProvider,
   onDeleteProvider,
   onTestDraft,
+  onDiscoverModels,
 }: ProviderManagerPanelProps) {
   const t = useT()
   const [editor, setEditor] = useState<EditorState | null>(null)
@@ -66,6 +79,13 @@ export function ProviderManagerPanel({
   const [aliasInput, setAliasInput] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<LlmConnectionTestResult | null>(null)
+  // 卡09：发现状态与草稿 epoch（端点/协议/凭据变化即过期；响应回带比对，不匹配丢弃）
+  const [discovery, setDiscovery] = useState<DiscoveryState | null>(null)
+  const [discoveryError, setDiscoveryError] = useState<LlmDiscoveryResult | null>(null)
+  const [discovering, setDiscovering] = useState(false)
+  const [discoverySelection, setDiscoverySelection] = useState<Record<string, boolean>>({})
+  const [discoveryEpochRender, setDiscoveryEpochRender] = useState(0)
+  const discoveryEpochRef = useRef(0)
 
   useEffect(() => {
     if (!loaded) void onLoadProviders()
@@ -82,6 +102,11 @@ export function ProviderManagerPanel({
     setTestResult(null)
     setModelInput('')
     setAliasInput('')
+    setDiscovery(null)
+    setDiscoveryError(null)
+    setDiscoverySelection({})
+    discoveryEpochRef.current = 0
+    setDiscoveryEpochRender(0)
   }
 
   function confirmDiscard(): boolean {
@@ -95,6 +120,11 @@ export function ProviderManagerPanel({
     setTestResult(null)
     setModelInput('')
     setAliasInput('')
+    setDiscovery(null)
+    setDiscoveryError(null)
+    setDiscoverySelection({})
+    discoveryEpochRef.current = 0
+    setDiscoveryEpochRender(0)
     setEditor({ mode: 'create', originalName: '', form, initial: form })
   }
 
@@ -104,6 +134,11 @@ export function ProviderManagerPanel({
     setTestResult(null)
     setModelInput('')
     setAliasInput('')
+    setDiscovery(null)
+    setDiscoveryError(null)
+    setDiscoverySelection({})
+    discoveryEpochRef.current = 0
+    setDiscoveryEpochRender(0)
     const form = formFromProvider(info)
     setEditor({ mode: 'edit', originalName: info.name, form, initial: form })
   }
@@ -114,6 +149,85 @@ export function ProviderManagerPanel({
 
   function updateForm(patch: Partial<ProviderFormState>) {
     setEditor((current) => (current ? { ...current, form: { ...current.form, ...patch } } : current))
+    // 卡09：端点/协议/凭据变化 → 旧发现结果标记过期（epoch 前移）
+    if ('api' in patch || 'apiMode' in patch || 'apiKeyDraft' in patch || 'apiKeyTouched' in patch) {
+      discoveryEpochRef.current += 1
+      setDiscoveryEpochRender(discoveryEpochRef.current)
+    }
+  }
+
+  function discoveryRequest(state: EditorState): LlmDiscoveryRequest {
+    // 已保存 provider 且端点/协议/凭据未改 → 按 {name} 发现；否则用内联草稿（不先落盘）
+    const modified =
+      state.form.api !== state.initial.api ||
+      state.form.apiMode !== state.initial.apiMode ||
+      state.form.apiKeyTouched
+    if (state.mode === 'edit' && !modified) return { name: state.originalName }
+    const request: LlmDiscoveryRequest = { api: state.form.api, api_mode: state.form.apiMode }
+    if (state.form.apiKeyTouched) request.api_key = state.form.apiKeyDraft
+    return request
+  }
+
+  async function discoverModels() {
+    if (!editor || discovering) return
+    const requestEpoch = discoveryEpochRef.current
+    setDiscoveryError(null)
+    setDiscovering(true)
+    try {
+      const result = await onDiscoverModels(discoveryRequest(editor))
+      if (!result.ok) {
+        setDiscoveryError(result)
+        return
+      }
+      if (requestEpoch !== discoveryEpochRef.current) {
+        // 版本守卫：请求期间草稿端点/协议/凭据已变 → 丢弃过期结果，只标过期
+        setDiscovery(null)
+        setDiscoverySelection({})
+        return
+      }
+      const models = result.models ?? []
+      setDiscovery({
+        epoch: requestEpoch,
+        models,
+        rawCount: result.raw_count ?? models.length,
+        truncated: Boolean(result.truncated),
+        pageCount: result.page_count ?? 1,
+      })
+      setDiscoverySelection(Object.fromEntries(models.map((m) => [m, false])))
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
+  function applyDiscovery() {
+    if (!editor || !discovery) return
+    let form = editor.form
+    for (const model of discovery.models) {
+      if (!discoverySelection[model]) continue
+      // 增量并入：已有手输/alias/默认模型条目原样保留，重复（大小写不敏感）跳过
+      const duplicate = form.models.some(
+        (e) => e.alias.toLowerCase() === model.toLowerCase() || e.model.toLowerCase() === model.toLowerCase(),
+      )
+      if (duplicate) continue
+      form = { ...form, models: [...form.models, { alias: model, model }], modelsTouched: true }
+    }
+    setEditor({ ...editor, form })
+    setDiscovery(null)
+    setDiscoverySelection({})
+  }
+
+  function setAllDiscoverySelection(checked: boolean) {
+    if (!discovery) return
+    setDiscoverySelection(Object.fromEntries(discovery.models.map((m) => [m, checked])))
+  }
+
+  function invertDiscoverySelection() {
+    if (!discovery) return
+    setDiscoverySelection((current) => {
+      const next: Record<string, boolean> = { ...current }
+      for (const model of discovery.models) next[model] = !next[model]
+      return next
+    })
   }
 
   async function save() {
@@ -369,8 +483,72 @@ export function ProviderManagerPanel({
             <button type="button" data-testid="provider-test" disabled={testing} onClick={() => void testDraft()}>
               {testing ? t('providerPanel.testing') : t('providerPanel.test')}
             </button>
+            <button
+              type="button"
+              data-testid="provider-discover"
+              disabled={discovering}
+              onClick={() => void discoverModels()}
+            >
+              {discovering ? t('providerPanel.discovering') : t('providerPanel.discover')}
+            </button>
             <small>{t('providerPanel.testHint')}</small>
           </div>
+          <small>{t('providerPanel.discoverHint')}</small>
+
+          {discoveryError ? (
+            <div className="provider-discovery-error" data-testid="provider-discovery-error" role="alert">
+              <p>{t('providerPanel.discoverFail', { category: discoveryError.category ?? '' })}</p>
+              {discoveryError.message ? <p>{discoveryError.message}</p> : null}
+              {discoveryError.fix_hint ? <p>{discoveryError.fix_hint}</p> : null}
+              <small>{t('providerPanel.discoverFailManual')}</small>
+            </div>
+          ) : null}
+
+          {discovery ? (
+            <div className="provider-discovery-panel" data-testid="provider-discovery-panel">
+              {discovery.epoch !== discoveryEpochRender ? (
+                <p className="provider-discovery-stale" data-testid="provider-discovery-stale">
+                  {t('providerPanel.discoverStale')}
+                </p>
+              ) : null}
+              <p>
+                {t('providerPanel.discoverMeta', {
+                  count: String(discovery.rawCount),
+                  kept: String(discovery.models.length),
+                  pages: String(discovery.pageCount),
+                })}
+                {discovery.truncated ? ` · ${t('providerPanel.discoverTruncated')}` : ''}
+              </p>
+              <div className="settings-actions inline">
+                <button type="button" data-testid="provider-discovery-select-all" onClick={() => setAllDiscoverySelection(true)}>
+                  {t('providerPanel.discoverySelectAll')}
+                </button>
+                <button type="button" data-testid="provider-discovery-invert" onClick={() => invertDiscoverySelection()}>
+                  {t('providerPanel.discoveryInvert')}
+                </button>
+                <button type="button" className="primary-action" data-testid="provider-discovery-apply" onClick={applyDiscovery}>
+                  {t('providerPanel.discoveryApply')}
+                </button>
+              </div>
+              <ul className="provider-discovery-models">
+                {discovery.models.map((model) => (
+                  <li key={model}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        data-testid={`provider-discovery-model-${model}`}
+                        checked={Boolean(discoverySelection[model])}
+                        onChange={(e) =>
+                          setDiscoverySelection((current) => ({ ...current, [model]: e.target.checked }))
+                        }
+                      />
+                      {model}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {feedback && !feedback.ok ? (
             <p className="provider-form-error" data-testid="provider-form-error" role="alert">

@@ -516,4 +516,17 @@ export const en: Record<LocaleKey, string> = {
   'providerPanel.credential.env': 'Environment variable',
   'providerPanel.credential.none': 'No credential',
   'providerPanel.credential.pool': 'Credential pool',
+
+  // ── 卡09：模型发现 ──
+  'providerPanel.discover': 'Fetch model list',
+  'providerPanel.discovering': 'Fetching…',
+  'providerPanel.discoverHint': 'Discovery is optional: manual model entry always works when it fails.',
+  'providerPanel.discoverFail': 'Model discovery failed ({category}).',
+  'providerPanel.discoverFailManual': 'Discovery failed — you can still type models manually.',
+  'providerPanel.discoverStale': 'Endpoint/protocol/credential changed — these results may be stale.',
+  'providerPanel.discoverMeta': 'Remote returned {count} models ({kept} after dedup, {pages} pages)',
+  'providerPanel.discoverTruncated': 'truncated',
+  'providerPanel.discoverySelectAll': 'Select all',
+  'providerPanel.discoveryInvert': 'Invert',
+  'providerPanel.discoveryApply': 'Merge into draft',
 }
