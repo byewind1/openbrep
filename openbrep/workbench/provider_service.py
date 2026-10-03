@@ -41,6 +41,7 @@ from openbrep.workbench.credential_status import (
     mask_secret,
     pool_entries,
 )
+from openbrep.workbench.model_discovery import discover_provider_models
 from openbrep.workbench.provider_refs import find_provider_refs, frontend_visibility_hint
 
 _NAME_FORBIDDEN_RE = re.compile(r"[\s/]")
@@ -148,6 +149,10 @@ class ProviderSettingsService:
             return self.update_provider(body)
         if method == "POST" and route == "/api/settings/llm/providers/delete":
             return self.delete_provider(body)
+        if method == "POST" and route == "/api/settings/llm/providers/discover-models":
+            # 卡08：无锁路由（request_gate 例外）——只读配置/只操作草稿副本，
+            # 绝不 select 凭据池、不触碰 session/project 状态。
+            return discover_provider_models(self.session.config, body)
         return {"ok": False, "error": f"Unknown route: {method} {route}"}
 
     # ── 只读总览（卡01）────────────────────────────────────────
