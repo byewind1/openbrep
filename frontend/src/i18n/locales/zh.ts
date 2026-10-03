@@ -525,6 +525,10 @@ export const zh = {
   'providerPanel.discoverySelectAll': '全选',
   'providerPanel.discoveryInvert': '反选',
   'providerPanel.discoveryApply': '并入草稿',
+  // ── 卡10：连接测试结构化诊断 ──
+  'settings.ai.testPossibleCause': '可能原因（{category}）',
+  'settings.ai.showTechDetail': '展开技术详情',
+  'settings.ai.hideTechDetail': '收起技术详情',
 } as const
 
 export type LocaleKey = keyof typeof zh

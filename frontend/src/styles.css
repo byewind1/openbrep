@@ -5401,3 +5401,12 @@ button:focus-visible {
   flex-direction: column;
   gap: 2px;
 }
+
+.settings-test-category {
+  margin: 2px 0;
+  font-weight: 600;
+}
+
+.settings-test-fix-hint {
+  margin: 2px 0 6px;
+}

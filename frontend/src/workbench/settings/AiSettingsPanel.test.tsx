@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { AiSettingsPanel } from './AiSettingsPanel'
 import type { LlmConnectionTestResult, LlmSettings } from '../../api/types'
@@ -281,4 +281,54 @@ test('未接线（providerManager 缺省）时旧 UI 原样，无服务商管理
 
   expect(screen.queryByTestId('provider-manager-section')).toBeNull()
   expect(screen.getByTestId('llm-connection-wizard')).toBeTruthy()
+})
+
+// ── 卡10：连接测试结构化诊断 ─────────────────────────────────────────────
+
+test('连接测试失败显示可能原因与修复提示，技术详情默认折叠', async () => {
+  const onTestConnection = vi.fn().mockResolvedValue({
+    ok: false,
+    category: 'auth',
+    fix_hint: 'API Key 可能无效、过期，或没有访问该资源的权限。',
+    error: 'LLM 认证失败：API Key 可能无效',
+    detail: 'RuntimeError: LLM 认证失败\n\nHTTP 401 响应原文：\n{"error":{"code":"invalid_api_key"}}',
+  })
+  render(
+    <AiSettingsPanel
+      llmSettings={makeSettings({ model: 'deepseek-chat' })}
+      onOpenConfig={() => {}}
+      onTestConnection={onTestConnection}
+    />,
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+
+  const block = await screen.findByTestId('llm-test-error')
+  expect(within(block).getByTestId('llm-test-category').textContent).toContain('auth')
+  expect(within(block).getByTestId('llm-test-fix-hint').textContent).toContain('API Key 可能无效')
+  // 技术详情默认不展示，点开才见
+  expect(block.querySelector('pre')).toBeNull()
+  fireEvent.click(within(block).getByRole('button', { name: '展开技术详情' }))
+  expect(block.querySelector('pre')?.textContent).toContain('invalid_api_key')
+})
+
+test('连接测试成功路径旧字段渲染不变', async () => {
+  const onTestConnection = vi.fn().mockResolvedValue({
+    ok: true,
+    message: 'LLM connection OK',
+    model: 'deepseek-chat',
+    duration_ms: 42,
+  })
+  render(
+    <AiSettingsPanel
+      llmSettings={makeSettings({ model: 'deepseek-chat' })}
+      onOpenConfig={() => {}}
+      onTestConnection={onTestConnection}
+    />,
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+
+  expect(await screen.findByText(/LLM connection OK/)).toBeTruthy()
+  expect(screen.queryByTestId('llm-test-error')).toBeNull()
 })

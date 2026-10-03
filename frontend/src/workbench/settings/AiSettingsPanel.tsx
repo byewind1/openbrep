@@ -49,6 +49,7 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
   const [pendingModel, setPendingModel] = useState<string | null>(null)
   const [switchError, setSwitchError] = useState<string | null>(null)
   const [errorCopied, setErrorCopied] = useState(false)
+  const [showTestTechDetail, setShowTestTechDetail] = useState(false)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
   const [keyFeedback, setKeyFeedback] = useState<{ ok: boolean; text: string } | null>(null)
@@ -879,7 +880,20 @@ export function AiSettingsPanel({ llmSettings, onOpenConfig, onTestConnection, o
           </p>
         ) : (
           <div className="settings-test-error-block" data-testid="llm-test-error">
-            <pre className="settings-test-detail">{testErrorText(testResult)}</pre>
+            {testResult.category ? (
+              <p className="settings-test-category" data-testid="llm-test-category">
+                {t('settings.ai.testPossibleCause', { category: testResult.category })}
+              </p>
+            ) : null}
+            {testResult.fix_hint ? (
+              <p className="settings-test-fix-hint" data-testid="llm-test-fix-hint">
+                {testResult.fix_hint}
+              </p>
+            ) : null}
+            <button type="button" className="settings-tech-detail-btn" onClick={() => setShowTestTechDetail((v) => !v)}>
+              {showTestTechDetail ? t('settings.ai.hideTechDetail') : t('settings.ai.showTechDetail')}
+            </button>
+            {showTestTechDetail ? <pre className="settings-test-detail">{testErrorText(testResult)}</pre> : null}
             <button type="button" className="settings-copy-error-btn" onClick={() => void copyTestError()}>
               {errorCopied ? t('settings.ai.copied') : t('settings.ai.copyError')}
             </button>

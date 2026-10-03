@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2585,3 +2586,56 @@ def test_settings_service_draft_test_rejects_codex_name_and_bad_api_mode(tmp_pat
     })
     assert bad_mode["ok"] is False
     assert "api_mode" in bad_mode["error"]
+
+
+# ── 卡10：连接测试结构化诊断 ───────────────────────────────────────
+
+
+def test_settings_service_connection_test_structured_auth_diagnosis(tmp_path):
+    """mock 401 → category=auth + fix_hint；旧字段 error/detail/model/duration_ms 全保留。"""
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.model = "deepseek-chat"
+    session = _make_settings_session(config, config_path)
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            root = RuntimeError("401 Unauthorized")
+            root.response = SimpleNamespace(status_code=401, text='{"error":{"code":"invalid_api_key"}}')
+            raise RuntimeError("LLM 认证失败：API Key 可能无效") from root
+
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: _FakeAdapter())
+    response = service.test_llm_settings({"model": "deepseek-chat"})
+
+    assert response["ok"] is False
+    assert response["category"] == "auth"
+    assert response["fix_hint"]
+    # 旧字段全保留
+    assert response["error"] == "LLM 认证失败：API Key 可能无效"
+    assert "AuthenticationError" not in response["detail"] or response["detail"]
+    assert response["model"] == "deepseek-chat"
+    assert isinstance(response["duration_ms"], int)
+
+
+def test_settings_service_connection_test_redacts_resolved_key(tmp_path):
+    """错误文本经脱敏：解析到的 key 不出现在 error/detail/fix_hint。"""
+    config_path = tmp_path / "config.toml"
+    config = GDLAgentConfig()
+    config.llm.providers.append({
+        "name": "relay", "api": "https://relay.example/v1", "api_key": "test-secret-key-987654",
+        "models": [{"alias": "relay-main", "model": "relay-main"}],
+    })
+    session = _make_settings_session(config, config_path)
+
+    class _FakeAdapter:
+        def generate(self, *_args, **_kwargs):
+            # 上游错误回显了请求使用的 key（常见于网关报错）
+            raise RuntimeError("request failed with key test-secret-key-987654 (Bearer test-secret-key-987654)")
+
+    service = WorkbenchSettingsService(session, llm_adapter_factory=lambda _config: _FakeAdapter())
+    response = service.test_llm_settings({"model": "relay-main"})
+
+    assert response["ok"] is False
+    dumped = json.dumps(response, ensure_ascii=False)
+    assert "test-secret-key-987654" not in dumped
+    assert "***" in response["error"]
