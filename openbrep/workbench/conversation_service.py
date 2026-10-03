@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from openbrep.hsf_project import HSFProject
@@ -42,8 +42,85 @@ class WorkbenchConversationService:
         self.active_turn_id: str | None = None
         self.pending_turn_id: str | None = None
         self.selected_proposal: dict | None = None
-        self.advisor = None
-        self.semantic_decision = None
+        self.advisor = self._answer
+        self.semantic_decision = self._semantic_decision
+
+    def _llm(self):
+        from openbrep.config import is_codex_qualified_model
+        from openbrep.workbench.settings_service import effective_session_reasoning_effort
+        config = copy.copy(self.session.config.llm)
+        config.model = self.session.llm_model
+        config.reasoning_effort = effective_session_reasoning_effort(self.session)
+        config.credential_scope = self.session.session_id
+        llm = self.session.settings_service.llm_adapter_factory(config)
+        if is_codex_qualified_model(config.model):
+            llm.codex_provider = self.session.settings_service._codex_provider()
+        return llm
+
+    def _semantic_decision(self, payload):
+        import json
+        from openbrep.chat_history import trim_history_messages
+        from openbrep.llm import codex_chat_generate_kwargs
+        data = {**payload, 'history': trim_history_messages(payload.get('history'))}
+        llm = self._llm()
+        response = llm.generate([
+            {'role': 'system', 'content': '判断本轮执行方式。只输出JSON：mode(consult/plan/execute)、task_intent(CREATE/MODIFY/DEBUG/REPAIR/CHAT)、constraints(字符串数组)。明确禁止优先；普通需求执行，寻求思路咨询，先别改给方案仅计划；当前修改任务的纠偏可执行；只有唯一有效pending计划或中断任务时“好的/继续”才授权；引用、代码、假设示例不授权。无法确认执行含义时consult，不能因为已打开项目就执行。'},
+            {'role': 'user', 'content': json.dumps(data, ensure_ascii=False)}
+        ], max_tokens=800, stream=False, **codex_chat_generate_kwargs(llm))
+        return response.content
+
+    def _answer(self, turn, *, should_cancel=None):
+        from pathlib import Path
+        from openbrep.knowledge_selector import select_gdl_knowledge
+        from openbrep.project_context import resolve_project_context, load_project_knowledge, load_project_skills
+        from openbrep.runtime.advisor import advise
+        from openbrep.runtime.inspection import inspect_snapshot
+        from openbrep.workbench.project_session_service import validate_image_payload
+        message = turn.body['message']
+        project = turn.snapshot.project_copy()
+        needs_inspection = turn.policy.mode == 'plan' or bool(project and any(word in message.lower() for word in ('这个', '脚本', '参数', '报错', '比例', '检查', '优化', '柜子', 'project', 'script', 'error', 'parameter', 'check')))
+        report = inspect_snapshot(turn.snapshot, requested=needs_inspection, should_cancel=should_cancel)
+        payload = validate_image_payload(turn.body)
+        if not payload['ok']:
+            turn.state = 'failed'
+            return self._failure(turn, 'INVALID_IMAGE', payload['error'])
+        images = list(payload.get('images') or [])
+        if payload.get('image_b64') and not images:
+            images = [{'b64': payload['image_b64'], 'mime': payload['image_mime']}]
+        context = resolve_project_context(project)
+        knowledge = select_gdl_knowledge(instruction=message, intent='all', knowledge_dir=Path(__file__).resolve().parents[2] / 'knowledge',
+                                         project_knowledge=load_project_knowledge(context))
+        try:
+            answer = advise(turn.snapshot, message, llm=self._llm(), report=report, mode=turn.policy.mode,
+                            history=turn.body.get('history'), working_intent=self.intent_summary(),
+                            knowledge=knowledge.generation_context + load_project_skills(context, message), images=images, should_cancel=should_cancel)
+        except Exception:
+            turn.state = 'failed'
+            return self._failure(turn, 'PLAN_GENERATION_FAILED' if turn.policy.mode == 'plan' else 'ADVICE_FAILED', '计划生成失败，项目未修改。' if turn.policy.mode == 'plan' else '无法完成本轮顾问回答；项目未修改。')
+        proposals = []
+        for proposal in answer.proposals:
+            proposals.append({**proposal, 'proposal_id': uuid.uuid4().hex, 'source_version': turn.snapshot.source_version})
+        details = {**answer.to_dict(), 'proposals': proposals, 'inspection': report.to_dict(), 'knowledge_sources': knowledge.source_ids}
+        if turn.policy.mode == 'plan':
+            old = self.turns.get(self.pending_turn_id or '')
+            if old and old.state == 'pending':
+                old.state = 'stale'
+                old.result = self._failure(old, 'PLAN_SUPERSEDED')
+                old.result['pending_plan'] = old.plan
+            intent = turn.policy.task_intent
+            if intent == 'CHAT' or (project is None and intent == 'MODIFY'):
+                intent = 'MODIFY' if project else 'CREATE'
+            turn.policy = replace(turn.policy, task_intent=intent)
+            turn.plan = {**answer.plan, 'plan_id': uuid.uuid4().hex, 'plan_version': 1, 'task_intent': intent,
+                         'constraints': list(dict.fromkeys([*turn.policy.constraints, *answer.plan['constraints']])),
+                         'project_epoch': turn.snapshot.project_epoch, 'source_version': turn.snapshot.source_version,
+                         'working_intent_version': turn.working_intent_version}
+            turn.state = 'pending'
+            self.pending_turn_id = turn.turn_id
+            return self._response(turn, 'awaiting_confirmation', awaiting_confirmation=True, pending_plan=turn.plan,
+                                  advisor=details, assistant={'kind': 'advisor', 'reply': answer.reply})
+        turn.state = 'completed'
+        return self._response(turn, 'advice', advisor=details, assistant={'kind': 'advisor', 'reply': answer.reply})
 
     def clear(self):
         for turn in self.turns.values():
@@ -135,7 +212,8 @@ class WorkbenchConversationService:
                                  semantic_decision=self.semantic_decision)
         except (ValueError, TypeError) as exc:
             return self._failure(None, 'INVALID_TURN', str(exc))
-        turn = PreparedTurn(uuid.uuid4().hex, client_id, copy.deepcopy({k: v for k, v in body.items() if k not in {'stream', 'phase'}}), policy, snapshot, self.clock())
+        allowed = {'client_turn_id', 'message', 'history', 'images', 'image_b64', 'image_mime', 'requested_mode', 'project_epoch', 'draft_scripts', 'proposal_id', 'continue_from', 'proposal_action', 'assistant_settings', 'confirm_extraction', 'confirmed_extractions', 'output_dir', 'project_name'}
+        turn = PreparedTurn(uuid.uuid4().hex, client_id, copy.deepcopy({k: v for k, v in body.items() if k in allowed}), policy, snapshot, self.clock())
         self.turns[turn.turn_id] = turn
         self.client_ids[client_id] = turn.turn_id
         while len(self.turns) > MAX_RECENT_TURNS:
@@ -216,6 +294,8 @@ class WorkbenchConversationService:
                 response = self.session.create_project_from_prompt(request)
             else:
                 response = self.session.assistant_service.generate_with_assistant(request)
+            if self.session.project is not None and turn.snapshot._project is not None and self.session.project.root == turn.snapshot._project.root:
+                self.epoch = self.session.project_epoch
             kind = 'execution' if response.get('ok') else 'failed'
             turn.state = 'completed' if response.get('ok') else 'failed'
             turn.result = self._response(turn, kind, **{k: v for k, v in response.items() if k not in {'turn_id', 'project_epoch', 'result_kind'}})

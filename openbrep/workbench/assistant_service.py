@@ -117,6 +117,11 @@ class WorkbenchAssistantService:
         if not message:
             return {"ok": False, "error": "Assistant message is empty."}
 
+        conversation = getattr(self.session, "conversation_service", None)
+        if conversation is not None and self.session.config.llm.effective_conversation_entry() == "unified":
+            return conversation.handle({**body, "phase": "prepare", "client_turn_id": body.get("client_turn_id") or __import__("uuid").uuid4().hex,
+                                        "requested_mode": "consult", "project_epoch": self.session.project_epoch})
+
         # ST04：显式"沉淀成 skill / 保存为技能"走提案路径，绕过修改代码流程
         if self._is_explicit_skill_request(message):
             return self._explicit_skill_response(message)
@@ -658,6 +663,8 @@ class WorkbenchAssistantService:
         workbench_api.route 在锁内调用本方法，因此显式沉淀的候选写入发生在返回
         生成器之前——不会出现"锁已释放、生成器迭代期间项目已切换"的写入漂移。
         """
+        if body.get("confirmed_plan") is not None:
+            return {"ok": False, "code": "PLAN_APPROVAL_REQUIRED", "error": "请通过计划批准入口执行服务端保存的计划。"}
         message = str(body.get("message") or "").strip()
         from openbrep.runtime.turn_policy import explicit_policy
         policy = explicit_policy(message)

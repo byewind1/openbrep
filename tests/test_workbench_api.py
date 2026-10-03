@@ -2345,6 +2345,7 @@ def test_workbench_session_assistant_explains_loaded_project(tmp_path):
 
     session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.config.llm.conversation_entry = "legacy"  # legacy contract; unified is covered separately
     response = session.route("POST", "/api/assistant", {"message": "解释这个构件"})
 
     assert response["ok"] is True
@@ -2359,6 +2360,7 @@ def test_workbench_session_assistant_explains_parameter_mentions(tmp_path):
 
     session = WorkbenchSession(config_path=tmp_path / "config.toml")
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.config.llm.conversation_entry = "legacy"  # legacy contract; unified is covered separately
     response = session.route("POST", "/api/assistant", {"message": "详细解释 A 参数"})
 
     assert response["ok"] is True
@@ -4594,6 +4596,7 @@ def test_assistant_codex_chat_no_project_no_crash(tmp_path):
     before = sorted(p.name for p in workspace.iterdir())
     session, provider = _codex_chat_session(tmp_path)
 
+    session.config.llm.conversation_entry = "legacy"  # legacy contract; unified is covered separately
     response = session.route("POST", "/api/assistant", {"message": "你好"})
 
     assert response["ok"] is True
@@ -4615,6 +4618,7 @@ def test_assistant_codex_explain_with_project_no_revision(tmp_path):
 
     session, provider = _codex_chat_session(tmp_path)
     session.route("POST", "/api/project/load", {"path": str(hsf_dir)})
+    session.config.llm.conversation_entry = "legacy"  # legacy contract; unified is covered separately
     response = session.route("POST", "/api/assistant", {"message": "解释一下这个构件"})
 
     assert response["ok"] is True
@@ -4630,6 +4634,7 @@ def test_assistant_codex_explain_with_project_no_revision(tmp_path):
 def test_assistant_non_codex_no_project_graceful_error(tmp_path):
     """非 Codex 模型 + 无项目：本地解释器给可操作提示（不再 500）。"""
     session = WorkbenchSession(config_path=tmp_path / "config.toml")
+    session.config.llm.conversation_entry = "legacy"  # legacy contract; unified is covered separately
     response = session.route("POST", "/api/assistant", {"message": "你好"})
     assert response["ok"] is False
     assert "项目" in response["error"]

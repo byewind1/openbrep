@@ -116,3 +116,35 @@ def test_stream_worker_protects_validation_and_execution_with_session_lock(tmp_p
     writer.join(2)
     assert changed.is_set()
     assert not consume.is_alive()
+
+
+def test_api_advice_is_model_backed_and_has_no_mutation_or_preview(tmp_path):
+    import json
+    from openbrep.llm import MockLLM
+    from openbrep.source_fingerprint import compute_source_fingerprint
+    session = session_at(tmp_path)
+    llm = MockLLM(responses=[json.dumps({'conclusion': '建议加背板', 'suggestions': [], 'tradeoffs': []}, ensure_ascii=False)])
+    session.settings_service.llm_adapter_factory = lambda config: llm
+    before = compute_source_fingerprint(session.project.root)
+    result = prepare(session, message='这个柜子比例不协调，有什么思路')
+    assert result['result_kind'] == 'advice'
+    assert result['assistant']['reply'] == '建议加背板'
+    assert llm.call_count == 1
+    assert compute_source_fingerprint(session.project.root) == before
+    assert 'preview' not in result
+    assert 'verification' not in result['assistant']
+    session.assistant_service.generate_with_assistant.assert_not_called()
+
+
+def test_assistant_compatibility_adapter_is_readonly_without_project(tmp_path):
+    import json
+    from openbrep.llm import MockLLM
+    session = session_at(tmp_path)
+    session.project = None
+    session.source_path = None
+    llm = MockLLM(responses=[json.dumps({'conclusion': '用PRISM_', 'suggestions': [], 'tradeoffs': []})])
+    session.settings_service.llm_adapter_factory = lambda config: llm
+    result = session.route('POST', '/api/assistant', {'message': '讲讲PRISM_'})
+    assert result['result_kind'] == 'advice'
+    assert llm.call_count == 1
+    assert not (tmp_path / 'output').exists()
