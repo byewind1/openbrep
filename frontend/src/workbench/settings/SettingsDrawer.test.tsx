@@ -437,6 +437,9 @@ describe('SettingsDrawer AI model settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'glm-4-flash' }))
     fireEvent.click(screen.getByRole('button', { name: '确认切换' }))
 
+    await waitFor(() => expect(screen.getByTestId('llm-test-error')).toBeTruthy())
+    // 卡10：技术详情默认折叠，先展开再断言原文
+    fireEvent.click(screen.getByRole('button', { name: '展开技术详情' }))
     await waitFor(() => expect(screen.getByText('HTTP 401: invalid api key')).toBeTruthy())
   })
 
@@ -467,6 +470,8 @@ describe('SettingsDrawer AI model settings', () => {
     fireEvent.click(screen.getByRole('button', { name: /Test connection/ }))
 
     const block = await screen.findByTestId('llm-test-error')
+    // 卡10：技术详情默认折叠，先展开再断言原文
+    fireEvent.click(within(block).getByRole('button', { name: '展开技术详情' }))
     expect(within(block).getByText(/Incorrect API key provided/)).toBeTruthy()
     expect(block.querySelector('pre')?.textContent).toBe(detail)
 

@@ -2176,7 +2176,9 @@ def test_workbench_session_tests_llm_connection_reports_configuration_error(tmp_
     response = session.route("POST", "/api/settings/llm/test", {"model": "deepseek-chat"})
 
     assert response["ok"] is False
-    assert response["category"] == "llm_configuration"
+    # 卡10：结构化诊断——认证类失败分类为 auth，并给出可能原因式 fix_hint
+    assert response["category"] == "auth"
+    assert response["fix_hint"]
     assert "API Key invalid" in response["error"]
 
 

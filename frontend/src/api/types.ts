@@ -881,7 +881,10 @@ export interface LlmConnectionTestResult {
   message?: string
   model?: string
   duration_ms?: number
+  /** 卡10：结构化诊断分类（auth/not_found/timeout/network/protocol/rate_limited/unknown） */
   category?: string
+  /** 卡10：可能原因 + 修复提示（不断定根因） */
+  fix_hint?: string
   error?: string
   detail?: string
 }

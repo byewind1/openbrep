@@ -529,4 +529,8 @@ export const en: Record<LocaleKey, string> = {
   'providerPanel.discoverySelectAll': 'Select all',
   'providerPanel.discoveryInvert': 'Invert',
   'providerPanel.discoveryApply': 'Merge into draft',
+  // ── 卡10：连接测试结构化诊断 ──
+  'settings.ai.testPossibleCause': 'Possible cause ({category})',
+  'settings.ai.showTechDetail': 'Show technical details',
+  'settings.ai.hideTechDetail': 'Hide technical details',
 }

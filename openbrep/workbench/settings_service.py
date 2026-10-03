@@ -1144,11 +1144,34 @@ class WorkbenchSettingsService:
                     "model": model,
                     "duration_ms": int((time.perf_counter() - start) * 1000),
                 }
+            # 卡10：结构化诊断（纯复用 llm_diagnostics.classify_llm_error，不重复实现）。
+            # 旧字段 error/detail/model/duration_ms 全保留；detail 仍是完整异常链
+            # 供复制，但先脱敏（可能含解析到的 key）。401/404 等给可能原因，不断根因。
+            from openbrep.workbench.llm_diagnostics import classify_llm_error, redact_secrets
+
+            diagnosis = classify_llm_error(exc)
+            body_text = None
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    body_text = getattr(response, "text", None)
+                except Exception:  # noqa: BLE001
+                    body_text = None
+            if not isinstance(body_text, str):
+                body_text = None
+            resolved = test_config.llm.resolve_credentials(model)
+            secrets = [
+                value
+                for value in (resolved.api_key, str(body.get("api_key") or ""), test_config.llm.api_key or "")
+                if value
+            ]
+            detail_text = format_llm_exception_detail(exc)
             return {
                 "ok": False,
-                "error": str(exc) or exc.__class__.__name__,
-                "detail": format_llm_exception_detail(exc),
-                "category": "llm_configuration",
+                "error": redact_secrets(str(exc) or exc.__class__.__name__, secrets),
+                "detail": redact_secrets(detail_text, secrets),
+                "category": diagnosis["category"],
+                "fix_hint": redact_secrets(diagnosis["fix_hint"], secrets),
                 "model": model,
                 "duration_ms": int((time.perf_counter() - start) * 1000),
             }
