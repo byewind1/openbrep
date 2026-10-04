@@ -19,8 +19,8 @@ from openbrep.gdl_previewer import preview_2d_script, preview_3d_script
 from openbrep.hsf_project import HSFProject, ScriptType
 from openbrep.runtime.effect_contract import (
     compute_geometry_signature,
-    count_mesh_components,
     evaluate_effect_contract,
+    mesh_components_detail,
 )
 from openbrep.workbench.project_parameter_service import parameter_values
 
@@ -87,8 +87,11 @@ def preview_geometry_summary(project: HSFProject, overrides: dict | None = None)
         # P0-A：规范化几何签名——等价源码改写稳定、真实顶点变化敏感、
         # 同数量不同形态可区分（mesh_count/bbox 做不到）。
         summary["geometry_signature"] = compute_geometry_signature(meshes)
-        # P1-C：连通分量数（require_connected 契约的可观察依据；不可算为 None）
-        summary["mesh_components"] = count_mesh_components(meshes)
+        # P1-C/F6：连通分量数 + 可靠性（require_connected 契约的可观察依据；
+        # 仅全轴对齐盒网格 reliable=True，否则契约按 unverifiable 处理）
+        components, reliable = mesh_components_detail(meshes)
+        summary["mesh_components"] = components
+        summary["mesh_components_reliable"] = reliable
     except Exception as exc:
         errors.append(f"3D 预览不可用：{exc}")
 

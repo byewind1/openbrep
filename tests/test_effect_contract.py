@@ -23,6 +23,7 @@ from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.runtime.effect_contract import (
     compute_geometry_signature,
     evaluate_effect_contract,
+    mesh_components_detail,
     normalize_effect_contract,
 )
 from openbrep.runtime.modify_acceptance import (
@@ -393,3 +394,85 @@ class TestWorkingIntentEffectGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConnectivityReliability(unittest.TestCase):
+    """F6（review 2026-10-04）：连通判定不得把交叠实体误判为断开，
+    非轴对齐盒网格必须 unverifiable 而非阻断。"""
+
+    class _Mesh:
+        def __init__(self, x, y, z, i, j, k):
+            self.x, self.y, self.z = x, y, z
+            self.i, self.j, self.k = i, j, k
+
+    @staticmethod
+    def _box(ox, oy, sx, sy, sz):
+        x = [ox, ox + sx, ox, ox + sx, ox, ox + sx, ox, ox + sx]
+        y = [oy, oy, oy + sy, oy + sy, oy, oy, oy + sy, oy + sy]
+        z = [0.0, 0.0, 0.0, 0.0, sz, sz, sz, sz]
+        quads = [(0, 1, 3, 2), (4, 5, 7, 6), (0, 1, 5, 4), (2, 3, 7, 6), (0, 2, 6, 4), (1, 3, 7, 5)]
+        i, j, k = [], [], []
+        for a, b, c, d in quads:
+            i += [a, a]
+            j += [b, c]
+            k += [c, d]
+        return TestConnectivityReliability._Mesh(x, y, z, i, j, k)
+
+    def _summary(self, signature, components=None, reliable=False):
+        return {
+            "available": True, "reason": "", "mesh_count": 2,
+            "bbox": {"min": [0.0, 0.0, 0.0], "max": [2.0, 2.0, 1.0]},
+            "line_count": 0, "polygon_count": 0, "circle_count": 0, "arc_count": 0,
+            "geometry_signature": signature,
+            "mesh_components": components, "mesh_components_reliable": reliable,
+        }
+
+    def test_overlapping_blocks_are_one_component(self):
+        """review F6 探针：BLOCK(2,1,1) + 平移(0.5,0.5,0) 的 BLOCK(1,2,1)
+        正体积交叠、无重合角点 → 必须判 1 个组件（顶点共享会误判 2）。"""
+        a = self._box(0.0, 0.0, 2.0, 1.0, 1.0)
+        b = self._box(0.5, 0.5, 1.0, 2.0, 1.0)
+        components, reliable = mesh_components_detail([a, b])
+        self.assertEqual(components, 1)
+        self.assertTrue(reliable)
+
+    def test_disconnected_blocks_stay_two_components(self):
+        a = self._box(0.0, 0.0, 2.0, 1.0, 1.0)
+        c = self._box(5.0, 0.0, 1.0, 1.0, 1.0)
+        components, reliable = mesh_components_detail([a, c])
+        self.assertEqual(components, 2)
+        self.assertTrue(reliable)
+
+    def test_unreliable_mesh_verdicts_unverifiable(self):
+        tri = self._Mesh([0, 1, 0], [0, 0, 1], [0, 0, 0], [0, 0], [1, 1], [2, 2])
+        components, reliable = mesh_components_detail([tri])
+        self.assertFalse(reliable)
+        effect = evaluate_effect_contract(
+            {"change_kind": "geometry", "require_connected": True},
+            before=self._summary("a"),
+            after=self._summary("b", components=1, reliable=False),
+        )
+        self.assertEqual(effect["status"], "unverifiable")
+        self.assertFalse(effect["satisfied"])
+
+    def test_connected_overlap_satisfies_require_connected(self):
+        a = self._box(0.0, 0.0, 2.0, 1.0, 1.0)
+        b = self._box(0.5, 0.5, 1.0, 2.0, 1.0)
+        components, reliable = mesh_components_detail([a, b])
+        effect = evaluate_effect_contract(
+            {"change_kind": "geometry", "require_connected": True},
+            before=self._summary("a"),
+            after=self._summary("b", components=components, reliable=reliable),
+        )
+        self.assertEqual(effect["status"], "satisfied")
+
+    def test_disconnected_overlap_fails_require_connected(self):
+        a = self._box(0.0, 0.0, 2.0, 1.0, 1.0)
+        c = self._box(5.0, 0.0, 1.0, 1.0, 1.0)
+        components, reliable = mesh_components_detail([a, c])
+        effect = evaluate_effect_contract(
+            {"change_kind": "geometry", "require_connected": True},
+            before=self._summary("a"),
+            after=self._summary("b", components=components, reliable=reliable),
+        )
+        self.assertEqual(effect["status"], "shape_check_failed")

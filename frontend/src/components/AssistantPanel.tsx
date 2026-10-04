@@ -120,7 +120,9 @@ export function AssistantPanel({
   const [selectedMessages, setSelectedMessages] = useState<Set<number>>(new Set())
   // P0-B/P1-A：当前采用的执行参考图（显式选择；渲染图片不自动成为参考）。
   // 采用动作经后端取回为会话参考资产（hash + 状态），下一轮执行注入允许列表。
+  // F2（review）：采用/取消以后端响应为准，失败必须可见（不得静默忽略）。
   const [adoptedReference, setAdoptedReference] = useState<{ id: string; url: string } | null>(null)
+  const [adoptError, setAdoptError] = useState('')
   useEffect(() => {
     let cancelled = false
     void fetchSelectedReferences().then((assets) => {
@@ -134,15 +136,22 @@ export function AssistantPanel({
   const { confirm, dialogNode } = useThemedDialog()
 
   async function adoptGalleryReference(url: string | null, alt: string) {
+    setAdoptError('')
     if (!url) {
       if (adoptedReference) {
-        setAdoptedReference(null)
-        void setReferenceSelection(adoptedReference.id, false)
+        const result = await setReferenceSelection(adoptedReference.id, false)
+        if (result.ok) setAdoptedReference(null)
+        else setAdoptError(result.error || '取消采用失败，请重试。')
       }
       return
     }
     const result = await adoptReference(url, alt)
-    if (result.ok && result.asset) setAdoptedReference({ id: result.asset.id, url: url })
+    if (result.ok && result.asset) {
+      // F2：单选语义以后端 replace-selection 结果为准
+      setAdoptedReference({ id: result.asset.id, url: url })
+    } else {
+      setAdoptError(result.error || '参考图采用失败（取图被拒绝或网络不可用）。')
+    }
   }
 
   async function deleteSelectedMessages() {
@@ -755,6 +764,7 @@ export function AssistantPanel({
             <span>{'Paste, drop, or type a local image path'}</span>
           )}
           {imageError ? <span className="assistant-attach-error">{imageError}</span> : null}
+          {adoptError ? <span className="assistant-attach-error">{adoptError}</span> : null}
         </div>
         {llmSettings && onSessionModelChange && onResetSessionModel && onOpenModelSettings ? (
           <div className="assistant-model-row">

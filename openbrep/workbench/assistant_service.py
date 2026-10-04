@@ -898,6 +898,12 @@ class WorkbenchAssistantService:
             # ST03 F2：继续关联进入 TaskRequest → pipeline metadata（先于 finalize）
             continue_from=normalize_continue_from(body.get("continue_from")),
         )
+        # F1（review 2026-10-04）：效果契约必须在真实请求构造处透传并规范化——
+        # 此前只透传到 conversation 层的 body，TaskRequest 一直是默认 None，
+        # 实际执行完全绕过效果门。
+        from openbrep.runtime.effect_contract import normalize_effect_contract
+
+        request.effect_contract = normalize_effect_contract(body.get("effect_contract"))
         # D10：会话层 project epoch 守卫（Codex modify 桥接在长任务中拒绝
         # 项目切换后的后续 mutation；非 codex 路径不使用该字段）
         from openbrep.config import is_codex_qualified_model

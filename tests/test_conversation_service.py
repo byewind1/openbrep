@@ -340,7 +340,7 @@ def test_selected_reference_injected_into_execution(tmp_path, monkeypatch):
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
     )
     monkeypatch.setattr(
-        'openbrep.workbench.reference_service._download_image', lambda url: (png, 'image/png')
+        'openbrep.workbench.reference_service._download_image', lambda url, **kwargs: (png, 'image/png')
     )
     session = session_at(tmp_path)
     assert isinstance(session.reference_service, WorkbenchReferenceService)
@@ -354,3 +354,93 @@ def test_selected_reference_injected_into_execution(tmp_path, monkeypatch):
     contract = call['effect_contract']
     assert contract['change_kind'] == 'geometry'
     assert adopt['asset']['id'] in contract['reference_asset_ids']
+
+
+# ── F1（review 2026-10-04）：贯穿 prepare→execute→真实 assistant service→TaskRequest ──
+
+class _RecordingPipeline:
+    """替身 pipeline：捕获构造与 execute 收到的 TaskRequest。"""
+
+    captured: list = []
+    result = None
+
+    def __init__(self, **kwargs):
+        _RecordingPipeline.captured.append(self)
+        self.kwargs = kwargs
+        self.request = None
+
+    def execute(self, request):
+        self.request = request
+        return _RecordingPipeline.result
+
+
+def _real_session(tmp_path, result):
+    from openbrep.workbench.assistant_service import WorkbenchAssistantService
+
+    tmp_path = Path(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    session = session_at(tmp_path)
+    # 恢复被 session_at mock 掉的真实 generate 方法（贯穿到真实 TaskRequest 构造）
+    session.assistant_service.generate_with_assistant = (
+        WorkbenchAssistantService.generate_with_assistant.__get__(session.assistant_service, WorkbenchAssistantService)
+    )
+    _RecordingPipeline.captured = []
+    _RecordingPipeline.result = result
+    session.pipeline_class = _RecordingPipeline
+    return session
+
+
+def test_effect_contract_reaches_real_task_request(tmp_path):
+    """F1：conversation 层透传的 effect_contract 必须出现在真实 TaskRequest 上
+    （此前 _build_generate_pipeline 丢弃该字段，实际执行完全绕过效果门）。"""
+    from openbrep.runtime.pipeline import TaskResult
+
+    session = _real_session(tmp_path, TaskResult(
+        success=True, plain_text='done', scripts={'paramlist.xml': 'x'}))
+    ready = prepare(session, client_turn_id='c-f1a', effect_contract={'change_kind': 'geometry'})
+    session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    pipelines = [p for p in _RecordingPipeline.captured if p.request is not None]
+    assert pipelines, 'assistant service must run the real pipeline construction'
+    request = pipelines[-1].request
+    assert request.effect_contract == {'change_kind': 'geometry'}, request.effect_contract
+
+
+def test_selected_reference_reaches_real_task_request(tmp_path, monkeypatch):
+    """F1：跨轮采用路径——已采用参考资产注入真实 TaskRequest 的 images 与
+    effect_contract.reference_asset_ids。"""
+    import base64 as _b64
+
+    png = _b64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    monkeypatch.setattr(
+        'openbrep.workbench.reference_service._download_image', lambda url, **kwargs: (png, 'image/png')
+    )
+    from openbrep.runtime.pipeline import TaskResult
+
+    session = _real_session(tmp_path, TaskResult(success=True, plain_text='done', scripts={'scripts/3d.gdl': 'x'}))
+    adopt = session.route('POST', '/api/references/adopt', {'url': 'https://images.example.com/hw.png'})
+    assert adopt['ok'], adopt.get('error')
+    ready = prepare(session, client_turn_id='c-f1b')
+    session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    pipelines = [p for p in _RecordingPipeline.captured if p.request is not None]
+    assert pipelines
+    request = pipelines[-1].request
+    assert request.images and request.images[0].mime == 'image/png'
+    assert adopt['asset']['id'] in (request.effect_contract or {}).get('reference_asset_ids', [])
+
+
+def test_no_effect_result_keeps_task_incomplete_through_real_service(tmp_path):
+    """F1：真实服务链返回 no_effect 验收时，任务不得关闭为 completed。"""
+    from openbrep.runtime.pipeline import TaskResult
+
+    session = _real_session(tmp_path, TaskResult(
+        success=False, plain_text='已写源码但无形态效果', scripts={'scripts/3d.gdl': 'x'},
+        metadata={'acceptance': {'effect': {'required': True, 'change_kind': 'geometry',
+                                             'satisfied': False, 'status': 'no_effect', 'reason': '签名相同'}}},
+    ))
+    ready = prepare(session, client_turn_id='c-f1c', effect_contract={'change_kind': 'geometry'})
+    result = session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    assert result['ok'] is True  # 有产出照常交付（verification 如实 FAIL）
+    tasks = session.conversation_service.working_intent['tasks']
+    assert tasks[-1]['state'] == 'incomplete'

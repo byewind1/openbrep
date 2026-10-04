@@ -425,6 +425,11 @@ export function createAssistantActions({ api, get, set }: WorkbenchActionContext
     }))
     const prepare = () => api.conversationTurn({ phase: 'prepare', client_turn_id: crypto.randomUUID(),
       message, history, images, requested_mode: proposal?.action === 'select' ? 'consult' : requestedMode, project_epoch: epoch,
+      // F1（review 2026-10-04）：GUI 显式提供最小效果契约。本轮带参考图附件
+      // → 期望几何形态变化（带图修改的目标几乎总是形态；纯参数微修改已被
+      // micro_modify 在 LLM 之前拦截，不受此门影响）。跨轮采用参考的契约由
+      // 后端 execute 注入（reference_service.selected_assets）。
+      ...(images.length ? { effect_contract: { change_kind: 'geometry' } } : {}),
       ...(proposal ? { proposal_id: proposal.id, proposal_action: proposal.action } : {}),
       assistant_settings: get().llmSettings.assistant_settings,
       draft_scripts: Object.fromEntries(Object.entries(get().dirtyScripts).filter(([, dirty]) => dirty)

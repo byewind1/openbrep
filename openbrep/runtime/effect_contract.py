@@ -33,12 +33,23 @@ _SIGNATURE_TOLERANCE = 6
 
 
 def count_mesh_components(meshes: Any) -> Optional[int]:
-    """P1-C：三角面网格的连通分量数（按共享同坐标顶点聚类，并查集）。
+    """P1-C：网格连通分量数（返回分量数；可靠性语义见 mesh_components_detail）。"""
+    components, _reliable = mesh_components_detail(meshes)
+    return components
 
-    适用本例一类轴对齐 BLOCK 棂条形态："声明一条连续回纹但棂条互不连通"
-    的假完成可被确定性识破。只按顶点坐标判连接（不处理解析曲面相切等），
-    不作为任意网格的通用拓扑算法；仅在被显式契约要求时使用。
-    坐标量化容差与签名一致（1e-6）。
+
+def mesh_components_detail(meshes: Any) -> tuple[Optional[int], bool]:
+    """F6（review 2026-10-04）：连通分量数 + 可靠性标记。
+
+    连接判定 = 顶点共享聚类 **∪** 轴对齐包围盒接触/交叠（eps=1e-6）。
+    顶点共享单独使用会漏掉"实体交叠但无重合角点"的合法连接（两个交叠
+    BLOCK 被误判为断开——review F6 探针场景）；AABB 接触对轴对齐盒
+    （BLOCK）是精确等价，对一般非凸网格则偏保守（可能高估连通性）。
+
+    可靠性（第二返回值）：所有 mesh 都是轴对齐盒（去重顶点 8 个且全部
+    落在 (min,max) 角点组合上）→ True，连通判定精确；否则 False——此时
+    分量数只是保守近似，require_connected 契约必须按 unverifiable 处理，
+    不得用顶点共享近似阻断交付。
     """
     parent: dict[tuple[int, int, int], tuple[int, int, int]] = {}
 
@@ -53,6 +64,8 @@ def count_mesh_components(meshes: Any) -> Optional[int]:
         if ra != rb:
             parent[ra] = rb
 
+    boxes: list[tuple[tuple[float, float, float], tuple[float, float, float]]] = []
+    all_boxed = True
     for mesh in meshes or []:
         try:
             keys = [
@@ -60,16 +73,55 @@ def count_mesh_components(meshes: Any) -> Optional[int]:
                 for x, y, z in zip(mesh.x, mesh.y, mesh.z)
             ]
         except (TypeError, ValueError):
-            return None
+            return None, False
         for key in keys:
             if key not in parent:
                 parent[key] = key
         for i, j, k in zip(mesh.i, mesh.j, mesh.k):
             union(keys[i], keys[j])
             union(keys[j], keys[k])
+        xs, ys, zs = zip(*keys)
+        min_key = (min(xs), min(ys), min(zs))
+        max_key = (max(xs), max(ys), max(zs))
+        boxes.append((min_key, max_key))
+        distinct = set(keys)
+        corners = {
+            (x, y, z)
+            for x in (min_key[0], max_key[0])
+            for y in (min_key[1], max_key[1])
+            for z in (min_key[2], max_key[2])
+        }
+        if len(distinct) != 8 or not distinct <= corners:
+            all_boxed = False
     if not parent:
-        return None
-    return len({find(key) for key in parent})
+        return None, False
+    if all_boxed and len(boxes) > 1:
+        # F6：轴对齐盒接触/交叠合并（含 eps 容差；接触也算连接——棂条拼花
+        # 通常共面拼接）。全部 mesh 都是盒时该判定精确。
+        eps = 1e-6
+        box_comp = list(range(len(boxes)))
+
+        def bfind(a: int) -> int:
+            while box_comp[a] != a:
+                box_comp[a] = box_comp[box_comp[a]]
+                a = box_comp[a]
+            return a
+
+        for i in range(len(boxes)):
+            min_i, max_i = boxes[i]
+            for j in range(i + 1, len(boxes)):
+                min_j, max_j = boxes[j]
+                overlap = all(
+                    min_i[axis] <= max_j[axis] + eps and min_j[axis] <= max_i[axis] + eps
+                    for axis in range(3)
+                )
+                if overlap:
+                    ri, rj = bfind(i), bfind(j)
+                    if ri != rj:
+                        box_comp[ri] = rj
+        return len({bfind(i) for i in range(len(boxes))}), True
+    ordered_roots = list({find(key) for key in parent})
+    return len(ordered_roots), all_boxed
 
 
 def normalize_effect_contract(raw: Any) -> Optional[dict]:
@@ -258,8 +310,17 @@ def evaluate_effect_contract(
             result["reason"] = "几何签名不可用，无法确认形态变化；不得宣称按图完成"
             return result
         if geometry_changed:
+            # F6：require_connected 只消费可靠（全轴对齐盒）的连通证据；
+            # 不可靠/不可求值时如实 unverifiable，绝不拿顶点共享近似阻断交付。
             components_after = after.get("mesh_components") if isinstance(after, dict) else None
-            if contract.get("require_connected") and components_after not in (None, 0, 1):
+            reliable = after.get("mesh_components_reliable", False) if isinstance(after, dict) else False
+            if contract.get("require_connected") and (components_after is None or not reliable):
+                result["status"] = "unverifiable"
+                result["reason"] = (
+                    "几何发生了变化，但连通性无法可靠求值（非轴对齐盒网格）——"
+                    "连续目标是否达成需人工/截图复核，不自动判定"
+                )
+            elif contract.get("require_connected") and components_after > 1:
                 result["status"] = "shape_check_failed"
                 result["reason"] = (
                     f"几何发生了变化，但结果形成 {components_after} 个互不连通的组件"

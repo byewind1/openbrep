@@ -143,7 +143,7 @@ function BlockView({ block, onOpenImage }: { block: Block; onOpenImage: (info: M
   return <>{parts}</>
 }
 
-function ImageLightbox({ image, onClose }: { image: MarkdownImageInfo; onClose: () => void }) {
+export function ImageLightbox({ image, onClose }: { image: MarkdownImageInfo; onClose: () => void }) {
   return (
     <div className="assistant-md-lightbox" role="dialog" aria-modal="true" onClick={onClose}>
       <img src={image.url} alt={image.alt || '参考图'} />
