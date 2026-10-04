@@ -346,7 +346,8 @@ def test_selected_reference_injected_into_execution(tmp_path, monkeypatch):
     assert isinstance(session.reference_service, WorkbenchReferenceService)
     adopt = session.route('POST', '/api/references/adopt', {'url': 'https://images.example.com/hw.png', 'alt': '回纹'})
     assert adopt['ok'], adopt.get('error')
-    ready = prepare(session, client_turn_id='c-ref')  # 与既有 execute 路由用例同款本地规则消息
+    # R2：契约 change_kind 来自消息意图（"回纹"→ geometry），不来自"有参考资产"
+    ready = prepare(session, client_turn_id='c-ref', message='把回纹改成连续方折')
     session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
     call = session.assistant_service.generate_with_assistant.call_args.args[0]
     assert call['images'][0]['mime'] == 'image/png'
@@ -354,6 +355,27 @@ def test_selected_reference_injected_into_execution(tmp_path, monkeypatch):
     contract = call['effect_contract']
     assert contract['change_kind'] == 'geometry'
     assert adopt['asset']['id'] in contract['reference_asset_ids']
+
+
+def test_ambiguous_message_with_reference_gets_no_forced_contract(tmp_path, monkeypatch):
+    """R2：意图不明的带参考轮不得强加契约（有图 ≠ 要求形状变化）。"""
+    import base64 as _b64
+
+    png = _b64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    monkeypatch.setattr(
+        'openbrep.workbench.reference_service._download_image', lambda url, **kwargs: (png, 'image/png')
+    )
+    session = session_at(tmp_path)
+    adopt = session.route('POST', '/api/references/adopt', {'url': 'https://images.example.com/hw.png'})
+    assert adopt['ok']
+    ready = prepare(session, client_turn_id='c-ref2')  # '添加背板'——无明确变化意图
+    session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
+    call = session.assistant_service.generate_with_assistant.call_args.args[0]
+    # 图仍注入（模型可以看到参考），但不强加效果门
+    assert call['images'] and call['images'][0]['mime'] == 'image/png'
+    assert 'effect_contract' not in call
 
 
 # ── F1（review 2026-10-04）：贯穿 prepare→execute→真实 assistant service→TaskRequest ──
@@ -421,7 +443,7 @@ def test_selected_reference_reaches_real_task_request(tmp_path, monkeypatch):
     session = _real_session(tmp_path, TaskResult(success=True, plain_text='done', scripts={'scripts/3d.gdl': 'x'}))
     adopt = session.route('POST', '/api/references/adopt', {'url': 'https://images.example.com/hw.png'})
     assert adopt['ok'], adopt.get('error')
-    ready = prepare(session, client_turn_id='c-f1b')
+    ready = prepare(session, client_turn_id='c-f1b', message='把回纹改成连续方折')
     session.route('POST', '/api/assistant/turn', {'phase': 'execute', 'turn_id': ready['turn_id']})
     pipelines = [p for p in _RecordingPipeline.captured if p.request is not None]
     assert pipelines

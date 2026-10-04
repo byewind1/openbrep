@@ -28,7 +28,10 @@ _PNG_1PX = base64.b64decode(
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
+    requested_paths: list[str] = []
+
     def do_GET(self):  # noqa: N802
+        _Handler.requested_paths.append(self.path)
         if self.path == "/img.png":
             self._png(200)
         elif self.path == "/hop1":
@@ -49,6 +52,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(REFERENCE_MAX_BYTES + 10))
             self.end_headers()
             self.wfile.write(b"\x89PNG" + b"0" * (REFERENCE_MAX_BYTES + 6))
+        elif self.path == "/img2.png":
+            body = _PNG_1PX[:-1] + b"\x00"  # 同型不同字节 → 不同 hash
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/page.html":
             body = b"<html>not an image</html>"
             self.send_response(200)
@@ -102,7 +112,7 @@ class TestReferenceService(unittest.TestCase):
         self._td = tempfile.TemporaryDirectory()
         self.root = Path(self._td.name)
         self.session = _FakeSession()
-        self.session.attach(self.root)
+        self.session.attach_project(self.root)
         self.service = WorkbenchReferenceService(self.session, allow_private=True)
 
     def tearDown(self):
@@ -149,7 +159,7 @@ class TestReferenceService(unittest.TestCase):
             with self.assertRaises(ReferenceFetchError):
                 assert_public_http_url(bad)
         strict_session = _FakeSession()
-        strict_session.attach(self.root / "strict")
+        strict_session.attach_project(self.root / "strict")
         strict = WorkbenchReferenceService(strict_session)
         result = strict.adopt({"url": f"{self.base}/img.png"})
         self.assertFalse(result["ok"])
@@ -160,7 +170,7 @@ class TestReferenceService(unittest.TestCase):
         allow_private 会话对入口放行；跳转目标 127.0.0.1 在真实边界下会被
         _assert_public_ip 拒绝——这里用严格服务验证同一 URL 被拒。"""
         strict_session = _FakeSession()
-        strict_session.attach(self.root / "strict2")
+        strict_session.attach_project(self.root / "strict2")
         strict = WorkbenchReferenceService(strict_session)
         result = strict.adopt({"url": f"{self.base}/hop1"})
         self.assertFalse(result["ok"])
@@ -213,7 +223,7 @@ class TestReferenceService(unittest.TestCase):
         service = WorkbenchReferenceService(session, allow_private=True)
         self.assertEqual(service.list_assets(), [])
         # 模拟先在该项目下采用过（写 meta）
-        session.attach(project_root)
+        session.attach_project(project_root)
         first = WorkbenchReferenceService(session, allow_private=True)
         adopted = first.adopt({"url": f"{self.base}/img.png"})["asset"]
         self.assertTrue(adopted["selected"])
@@ -221,7 +231,7 @@ class TestReferenceService(unittest.TestCase):
         session2 = _FakeSession()
         revived = WorkbenchReferenceService(session2, allow_private=True)
         self.assertEqual(revived.list_assets(), [])  # 尚未附着
-        session2.attach(project_root)
+        session2.attach_project(project_root)
         self.assertEqual(len(revived.list_assets()), 1)  # 惰性附着后恢复
         selected = revived.selected_assets()
         self.assertEqual([x.id for x in selected], [adopted["id"]])
@@ -233,10 +243,10 @@ class TestReferenceService(unittest.TestCase):
         self.service.adopt({"url": f"{self.base}/img.png"})
         self.assertEqual(len(self.service.selected_assets()), 1)
         other = self.root / "other-project"
-        self.session.attach(other)
+        self.session.attach_project(other)
         self.assertEqual(self.service.selected_assets(), [])  # B 下无参考
         self.assertEqual(self.service.execution_images(), [])
-        self.session.attach(self.root)
+        self.session.attach_project(self.root)
         self.assertEqual(len(self.service.selected_assets()), 1)  # 切回 A 恢复
 
     # ── F4：跨项目同图复用 ──────────────────────────────────
@@ -246,7 +256,7 @@ class TestReferenceService(unittest.TestCase):
         且归属 B，执行注入非空（不再出现 ok=True 但注入为空）。"""
         self.service.adopt({"url": f"{self.base}/img.png"})
         project_b = self.root / "project-b"
-        self.session.attach(project_b)
+        self.session.attach_project(project_b)
         result = self.service.adopt({"url": f"{self.base}/img.png"})
         self.assertTrue(result["ok"])
         selected = self.service.selected_assets()
@@ -322,3 +332,180 @@ class TestReferenceRoutes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSameWorkspaceProjectIsolation(unittest.TestCase):
+    """R1（二轮 review）：同一工作区内 hsf/A → hsf/B 切换必须隔离——
+    workspace_path 恒定，身份只能来自 source_path。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        cls.port = cls.server.server_address[1]
+        cls.base = f"http://127.0.0.1:{cls.port}"
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._td.name) / "workspace"
+        self.project_a = self.workspace / "hsf" / "A"
+        self.project_b = self.workspace / "hsf" / "B"
+        self.session = _FakeSession()
+        self.session.workspace_path = self.workspace  # 工作区恒定附着
+        self.session.source_path = self.project_a
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_same_workspace_project_switch_isolates(self):
+        service = WorkbenchReferenceService(self.session, allow_private=True)
+        service.adopt({"url": f"{self.base}/img.png"})
+        self.assertEqual(len(service.selected_assets()), 1)
+        self.assertEqual(len(service.execution_images()), 1)
+        # 同工作区切到 B：A 的参考不得注入
+        self.session.source_path = self.project_b
+        self.assertEqual(service.selected_assets(), [])
+        self.assertEqual(service.execution_images(), [])
+        # B 下无新附件执行 → 注入为空（不再按旧图修改）
+        # 切回 A：恢复 A 的采用
+        self.session.source_path = self.project_a
+        self.assertEqual(len(service.selected_assets()), 1)
+
+    def test_readopt_same_image_in_sibling_project_binds_b(self):
+        service = WorkbenchReferenceService(self.session, allow_private=True)
+        service.adopt({"url": f"{self.base}/img.png"})
+        self.session.source_path = self.project_b
+        result = service.adopt({"url": f"{self.base}/img.png"})
+        self.assertTrue(result["ok"])
+        selected = service.selected_assets()
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0].project_root, str(self.project_b))
+        self.assertEqual(len(service.execution_images()), 1)
+        # 各项目 meta 独立：A 的 meta 仍记录 A 的采用
+        self.session.source_path = self.project_a
+        self.assertEqual(len(service.selected_assets()), 1)
+
+    def test_no_project_state_clears_injection(self):
+        """附着项目 → 无项目（关闭）→ 注入清空；重开项目恢复。"""
+        service = WorkbenchReferenceService(self.session, allow_private=True)
+        service.adopt({"url": f"{self.base}/img.png"})
+        self.assertEqual(len(service.execution_images()), 1)
+        self.session.source_path = None
+        self.assertEqual(service.execution_images(), [])
+        self.session.source_path = self.project_a
+        self.assertEqual(len(service.execution_images()), 1)
+
+
+class TestRedirectPerHopValidation(unittest.TestCase):
+    """二轮 review 覆盖缺口：公网入口允许 → 跳转私网必须被逐跳校验拒绝，
+    并断言私网目标请求没有真正发出（用受控 DNS 替身驱动逐跳逻辑）。"""
+
+    escape_requests: list[str] = []
+
+    @classmethod
+    def setUpClass(cls):
+        cls._td = tempfile.TemporaryDirectory()
+        cls.root = Path(cls._td.name)
+        cls.escape_requests = []
+
+        class _EscapeHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                TestRedirectPerHopValidation.escape_requests.append(self.path)
+                if self.path == "/hop-escape":
+                    # 302 → 同服务器环回地址的 /img.png（真实可达，若校验被绕过
+                    # 替身就会收到 ESCAPED 请求）
+                    port = escape_server.server_address[1]
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{port}/img.png")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                else:
+                    TestRedirectPerHopValidation.escape_requests.append(f"ESCAPED:{self.path}")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(_PNG_1PX)))
+                    self.end_headers()
+                    self.wfile.write(_PNG_1PX)
+
+            def log_message(self, _format, *_args):
+                return
+
+        escape_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _EscapeHandler)
+        cls.escape_server = escape_server
+        threading.Thread(target=escape_server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.escape_server.shutdown()
+        cls._td.cleanup()
+
+    def test_public_entry_redirecting_to_private_is_refused_on_hop(self):
+        import socket as _socket
+        from unittest.mock import patch
+
+        import openbrep.workbench.reference_service as rs
+
+        TestRedirectPerHopValidation.escape_requests = []
+        escape_port = self.escape_server.server_address[1]
+
+        # DNS 替身（按 getaddrinfo 调用次序）：第一跳解析为公网 IP（放行），
+        # 第二跳解析为环回（必须拒绝）——模拟"公网入口 302 → 私网目标"。
+        # URL host 用 127.0.0.1 保证真实连接可达本地替身；校验层看到的解析
+        # 完全由替身决定。
+        lookup_calls = {"n": 0}
+
+        def fake_getaddrinfo(host, port, proto=0, *args, **kwargs):
+            lookup_calls["n"] += 1
+            ip = "93.184.216.34" if lookup_calls["n"] == 1 else "127.0.0.1"
+            return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port))]
+
+        session = _FakeSession()
+        session.attach_project(self.root / "hop")
+        service = WorkbenchReferenceService(session, allow_private=False)
+        with patch.object(rs.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+            result = service.adopt({"url": f"http://127.0.0.1:{escape_port}/hop-escape"})
+        self.assertFalse(result["ok"])
+        self.assertIn("内网", result["error"])
+        # 第二跳目标请求未发出：替身只收到入口 302，没有收到 /img.png
+        self.assertEqual(TestRedirectPerHopValidation.escape_requests, ["/hop-escape"])
+
+
+class TestAdoptReplaceFlow(unittest.TestCase):
+    """二轮 review 覆盖缺口：真实两图 A→B→取消 B，旧参考 A 不得隐式回流。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        cls.port = cls.server.server_address[1]
+        cls.base = f"http://127.0.0.1:{cls.port}"
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.session = _FakeSession()
+        self.session.attach_project(Path(self._td.name))
+        self.service = WorkbenchReferenceService(self.session, allow_private=True)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_adopt_a_then_b_then_cancel_b_leaves_empty(self):
+        a = self.service.adopt({"url": f"{self.base}/img.png"})["asset"]
+        b = self.service.adopt({"url": f"{self.base}/img2.png"})["asset"]
+        self.assertNotEqual(a["id"], b["id"], "两个不同字节必须产生两个资产")
+        selected = self.service.selected_assets()
+        self.assertEqual([x.id for x in selected], [b["id"]], "adopt B 必须原子替换 A")
+        # 取消 B → 采用集合为空，A 不回流
+        self.service.set_selection({"id": b["id"], "selected": False})
+        self.assertEqual(self.service.selected_assets(), [])
+        self.assertEqual(self.service.execution_images(), [])
+        # 资产表仍保留两条（列表可见，字节未丢）
+        self.assertEqual(len(self.service.list_assets()), 2)

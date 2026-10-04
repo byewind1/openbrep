@@ -123,20 +123,31 @@ export function AssistantPanel({
   // F2（review）：采用/取消以后端响应为准，失败必须可见（不得静默忽略）。
   const [adoptedReference, setAdoptedReference] = useState<{ id: string; url: string } | null>(null)
   const [adoptError, setAdoptError] = useState('')
+  // R3（二轮 review）：采用状态跟随项目身份刷新——项目/工作区切换后重新拉取
+  // 后端选择；空列表显式清空 UI（不显示过期采用）；异步响应带发起时项目
+  // 身份守卫，跨项目的迟到结果一律丢弃。
+  const projectRef = useRef(currentProjectPath)
+  projectRef.current = currentProjectPath
   useEffect(() => {
     let cancelled = false
+    const projectAtStart = currentProjectPath
     void fetchSelectedReferences().then((assets) => {
-      if (cancelled || !assets.length) return
+      if (cancelled || projectRef.current !== projectAtStart) return
+      if (!assets.length) {
+        setAdoptedReference(null)
+        return
+      }
       const latest = assets[assets.length - 1]
       setAdoptedReference({ id: latest.id, url: latest.url })
     })
     return () => { cancelled = true }
-  }, [])
+  }, [currentProjectPath])
   const t = useT()
   const { confirm, dialogNode } = useThemedDialog()
 
   async function adoptGalleryReference(url: string | null, alt: string) {
     setAdoptError('')
+    const projectAtStart = projectRef.current
     if (!url) {
       if (adoptedReference) {
         const result = await setReferenceSelection(adoptedReference.id, false)
@@ -146,6 +157,8 @@ export function AssistantPanel({
       return
     }
     const result = await adoptReference(url, alt)
+    // R3：项目已切换 → 迟到响应丢弃（不把旧项目的采用写进新项目 UI）
+    if (projectRef.current !== projectAtStart) return
     if (result.ok && result.asset) {
       // F2：单选语义以后端 replace-selection 结果为准
       setAdoptedReference({ id: result.asset.id, url: url })

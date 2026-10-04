@@ -22,6 +22,7 @@ from pathlib import Path
 from openbrep.hsf_project import GDLParameter, HSFProject, ScriptType
 from openbrep.runtime.effect_contract import (
     compute_geometry_signature,
+    derive_change_kind,
     evaluate_effect_contract,
     mesh_components_detail,
     normalize_effect_contract,
@@ -476,3 +477,44 @@ class TestConnectivityReliability(unittest.TestCase):
             after=self._summary("b", components=components, reliable=reliable),
         )
         self.assertEqual(effect["status"], "shape_check_failed")
+
+
+class TestDeriveChangeKind(unittest.TestCase):
+    """R2（二轮 review）：change_kind 必须来自任务意图，不来自"有没有图片"。
+
+    "按图把材质改为金属，形状不变"是 material 任务——GUI 旧逻辑强加 geometry
+    门会把合法交付误判为 no_effect。推导不出明确意图 → None（不设门）。
+    """
+
+    def test_material_intent_wins_over_shape_words(self):
+        self.assertEqual(derive_change_kind("按图把材质改为金属，形状不变"), "material")
+        self.assertEqual(derive_change_kind("换成金属材质并保持形状"), "material")
+
+    def test_new_option_intent(self):
+        self.assertEqual(derive_change_kind("新增一个回纹样式选项"), "new-option")
+        self.assertEqual(derive_change_kind("加个六角形选项"), "new-option")
+
+    def test_geometry_intent(self):
+        self.assertEqual(derive_change_kind("把回纹改成连续方折"), "geometry")
+        self.assertEqual(derive_change_kind("优化一下脚本结构"), "geometry")
+
+    def test_parameter_intent(self):
+        self.assertEqual(derive_change_kind("把 shelf_count 改成 5"), "parameter")
+        self.assertEqual(derive_change_kind("把宽度改成2"), "parameter")
+        self.assertEqual(derive_change_kind("检查一下参数面板"), "parameter")
+
+    def test_ambiguous_messages_get_no_contract(self):
+        for text in ("你好", "继续", "按这张图调整这个构件", "帮我看看这个构件", ""):
+            self.assertIsNone(derive_change_kind(text), text)
+
+    def test_material_task_with_gui_geometry_gate_would_fail_but_correct_kind_passes(self):
+        """R2 探针回归：材质变化、几何签名相同——material 契约 satisfied，
+        geometry 契约 no_effect（这正是旧 GUI 强加 geometry 的误拦场景）。"""
+        before = {"available": True, "mesh_count": 2, "materials": ["wood"],
+                  "geometry_signature": "same", "line_count": 0, "polygon_count": 0,
+                  "circle_count": 0, "arc_count": 0}
+        after = {**before, "materials": ["metal"]}
+        material = evaluate_effect_contract({"change_kind": "material"}, before=before, after=after)
+        self.assertEqual(material["status"], "satisfied")
+        geometry = evaluate_effect_contract({"change_kind": "geometry"}, before=before, after=after)
+        self.assertEqual(geometry["status"], "no_effect")

@@ -915,3 +915,55 @@ test('advisor proposals separate selection from execution and display read-only 
   expect(screen.getByText('只读建议 · 未修改项目')).toBeTruthy()
   expect(document.querySelector('.delivery-card')).toBeNull()
 })
+
+// ── R3（二轮 review）：参考采用状态跟随项目身份 ──────────────────
+vi.mock('../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/client')>()),
+  // 默认实现必须返回 Promise：Panel 挂载即拉取采用状态（既有用例共享此 mock）
+  fetchSelectedReferences: vi.fn(async () => []),
+  adoptReference: vi.fn(async () => ({ ok: false })),
+  setReferenceSelection: vi.fn(async () => ({ ok: false })),
+}))
+
+const REFERENCE_MESSAGE = {
+  role: 'assistant' as const,
+  content: '![回纹参考](https://images.example.com/hw1.jpg)',
+}
+
+describe('AssistantPanel reference adoption lifecycle (R3)', () => {
+  test('restores backend selection on mount and re-fetches when the project changes', async () => {
+    const client = await import('../api/client')
+    const fetchSelected = client.fetchSelectedReferences as ReturnType<typeof vi.fn>
+    fetchSelected.mockClear()
+    fetchSelected.mockResolvedValue([{ id: 'ref_1', url: 'https://images.example.com/hw1.jpg' }])
+
+    const { rerender } = render(
+      <AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/A" />,
+    )
+    await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByText(/参考图（1）/))
+    expect(screen.getByText('✓ 已采用')).toBeTruthy()
+
+    // 项目切换 → 重新拉取（新项目后端无选择 → UI 清空）
+    fetchSelected.mockResolvedValue([])
+    rerender(<AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/B" />)
+    await waitFor(() => expect(fetchSelected).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByText('采用')).toBeTruthy())
+    expect(screen.queryByText('✓ 已采用')).toBeNull()
+  })
+
+  test('shows adopt failure instead of silently ignoring it', async () => {
+    const client = await import('../api/client')
+    ;(client.fetchSelectedReferences as ReturnType<typeof vi.fn>).mockClear()
+    ;(client.fetchSelectedReferences as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(client.adoptReference as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      error: '图片地址指向内网/本机，已拒绝获取',
+    })
+
+    render(<AssistantPanel {...baseProps} messages={[REFERENCE_MESSAGE]} currentProjectPath="/ws/hsf/A" />)
+    fireEvent.click(screen.getByText(/参考图（1）/))
+    fireEvent.click(screen.getByText('采用'))
+    await waitFor(() => expect(screen.getByText(/参考图采用失败|已拒绝获取/)).toBeTruthy())
+  })
+})

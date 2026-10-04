@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Optional
 
 VALID_CHANGE_KINDS = ("geometry", "material", "parameter", "behavior", "new-option")
@@ -30,6 +31,10 @@ VALID_CHANGE_KINDS = ("geometry", "material", "parameter", "behavior", "new-opti
 # 签名容差：GDL 单位为米，1e-6（微米级）吸收等价算式的浮点 rounding 差异，
 # 对真实几何变化（毫米级以上）不敏感丢失。
 _SIGNATURE_TOLERANCE = 6
+
+
+def _substr(word: str) -> "re.Pattern[str]":
+    return re.compile(re.escape(word), re.IGNORECASE)
 
 
 def count_mesh_components(meshes: Any) -> Optional[int]:
@@ -351,3 +356,50 @@ def evaluate_effect_contract(
         result["status"] = "no_effect"
         result["reason"] = "本轮要求行为变化，但预览的几何与 2D 观察面均未变化"
     return result
+
+
+# ── R2（二轮 review）：从本轮消息确定性推导期望变化种类 ──────────────
+# 有图片 ≠ 要求形状变化（"按图把材质改为金属，形状不变"是 material 任务）。
+# change_kind 必须来自任务意图；推导不出明确意图时返回 None（不强加几何门）。
+# 词序即优先级：material > new-option > geometry > parameter——复合/歧义任务
+# 取第一明确命中；全部未命中则不设门（由通用验证与用户复核兜底）。
+
+_KIND_MATCHERS: tuple[tuple[str, tuple[Any, ...]], ...] = (
+    ("material", tuple(_substr(w) for w in (
+        "材质", "材料", "质感", "颜色", "配色", "上色", "金属", "木纹", "玻璃", "贴图",
+        "texture", "material", "colour", "color",
+    ))),
+    # "新增一个回纹样式选项"——动词与宾语之间允许少量间隔词
+    ("new-option", (
+        re.compile(r"(?:新增|添加|增加|加个|加一个|加一种)[^，。；！?？]{0,10}(?:选项|枚举)"),
+        re.compile(r"add (?:an? )?(?:new )?option", re.I),
+        re.compile(r"new option", re.I),
+    )),
+    ("geometry", tuple(_substr(w) for w in (
+        "图案", "纹样", "花纹", "形态", "形状", "外形", "轮廓", "几何", "结构", "改形",
+        "镂空", "棂条", "回纹", "回字纹", "方折", "冰裂", "菱花", "海棠",
+        "pattern", "outline", "shape", "geometry", "lattice",
+    ))),
+    ("parameter", tuple(_substr(w) for w in (
+        "参数", "改成", "改为", "设为", "设置为", "调为", "调大", "调小",
+        "加宽", "加高", "加深", "缩小", "parameter",
+    ))),
+)
+
+
+def derive_change_kind(message: str) -> Optional[str]:
+    """确定性推导本轮期望变化种类；无明确意图返回 None（不设效果门）。
+
+    只做关键词命中，不做语义理解；误判方向的代价不对称：
+    - 误加 geometry 门：形态没变的合法任务会被拦（R2 的教训）——所以
+      宁可 None 也不要在含义模糊时给 geometry；
+    - 漏加门：退化为"变化探测门不启用"，通用验证仍然兜底。
+    """
+    text = (message or "")
+    if not text.strip():
+        return None
+    for kind, matchers in _KIND_MATCHERS:
+        for matcher in matchers:
+            if matcher.search(text):
+                return kind
+    return None

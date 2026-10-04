@@ -428,14 +428,22 @@ class WorkbenchConversationService:
             reference_images = self.session.reference_service.execution_images()
         except AttributeError:
             reference_images = []
+        injected_reference_ids: list[str] = []
         if reference_images and not request.get('images') and not request.get('image_b64'):
             request['images'] = reference_images
-            contract = request.get('effect_contract') if isinstance(request.get('effect_contract'), dict) else {}
-            request['effect_contract'] = {
-                **contract,
-                'change_kind': contract.get('change_kind') or 'geometry',
-                'reference_asset_ids': [asset.id for asset in self.session.reference_service.selected_assets()],
-            }
+            injected_reference_ids = [asset.id for asset in self.session.reference_service.selected_assets()]
+        # R2（二轮 review）：效果契约的 change_kind 必须来自本轮任务意图，
+        # 不来自"有没有图片/参考资产"（有图 ≠ 要求形状变化——材质/新增选项
+        # 任务会被 geometry 门误拦）。确定性关键词推导；显式契约（调用方
+        # 传入）优先；推导不出明确意图 → 不设门，通用验证与用户复核兜底。
+        if not request.get('effect_contract'):
+            from openbrep.runtime.effect_contract import derive_change_kind
+            derived_kind = derive_change_kind(turn.body.get('message') or '')
+            if derived_kind:
+                contract: dict = {'change_kind': derived_kind}
+                if injected_reference_ids:
+                    contract['reference_asset_ids'] = injected_reference_ids
+                request['effect_contract'] = contract
         try:
             request['assistant_settings'] = gui_instruction(str(turn.body.get('assistant_settings') or self.session.assistant_settings), request['conversation_context'])
         except ValueError:

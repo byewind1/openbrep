@@ -6,10 +6,11 @@
   来源），是"看过图"的唯一入口——仅 URL 文本存在不算看过图。
 - **单选模型（F2）**：adopt 是原子 replace-selection——新图入选，其余全部
   取消；"本轮参考"只有一个，UI 与后端状态一致，旧参考绝不隐式参与执行。
-- **项目身份绑定（F3/F4）**：资产归属以稳定项目根目录（workspace 优先，
-  否则项目目录）标识；资产 store 惰性附着当前生命周期（附着根变化 → 清表
-  重载该根的 meta），正常重启/打开项目/切换工作区后都能恢复；换项目再采用
-  同一张图会更新归属（内容去重不等于采用关系）。
+- **项目身份绑定（F3/F4；R1 修订）**：资产归属与存储都以稳定项目身份
+  （source_path，具体项目目录）标识——不用 workspace_path（同一工作区
+  内切项目必须隔离）。资产 store 惰性附着当前生命周期（附着根变化 →
+  清表重载该根的 meta），正常重启/打开项目/同工作区切换项目后都能正确
+  恢复或隔离；换项目再采用同一张图会更新归属（内容去重不等于采用关系）。
 - selected_assets：执行注入的允许列表来源（conversation_service 把已采用
   资产按 b64 注入执行请求 + effect_contract.reference_asset_ids），模型不能
   自取任意地址。
@@ -206,9 +207,13 @@ class WorkbenchReferenceService:
     # ── 生命周期附着（F3） ───────────────────────────────────
 
     def _current_root(self) -> Path | None:
-        workspace = getattr(self.session, "workspace_path", None)
-        if workspace is not None:
-            return Path(workspace)
+        """R1（二轮 review）：稳定项目身份 = 具体项目目录（source_path）。
+
+        workspace_path 不能作为身份/存储根——同一工作区内 hsf/A → hsf/B
+        切换不改变 workspace，用它会导致 A 的参考在 B 被自动注入（串图）。
+        字节与 meta 均存项目自己的 .openbrep/assets/references/，与项目
+        生命周期一致；无附着项目时资产仅存内存。
+        """
         project = getattr(self.session, "source_path", None)
         return Path(project) if project is not None else None
 
