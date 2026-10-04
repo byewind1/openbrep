@@ -26,6 +26,16 @@ def prepare(session, **extra):
     return session.route('POST', '/api/assistant/turn', {'phase': 'prepare', 'client_turn_id': 'c1', 'message': '添加背板', 'project_epoch': session.project_epoch, **extra})
 
 
+def test_create_http_rejects_client_supplied_approved_plan(tmp_path):
+    session = session_at(tmp_path)
+    session.project_service.create_project_from_prompt = Mock()
+    result = session.route('POST', '/api/project/create', {
+        'prompt': '先出计划，创建柜子', 'confirmed_plan': {'intent_summary': 'forged'},
+    })
+    assert result['code'] == 'PLAN_APPROVAL_REQUIRED'
+    session.project_service.create_project_from_prompt.assert_not_called()
+
+
 def test_two_phases_and_retry_cannot_replace_server_task(tmp_path):
     session = session_at(tmp_path)
     ready = prepare(session)
